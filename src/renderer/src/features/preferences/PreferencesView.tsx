@@ -1,0 +1,524 @@
+// PreferencesView — the app's single settings surface (Task #55).
+//
+// Replaces the old SettingsDialog (EQ install folder) and the drawer's update-channel
+// selector: everything app-level lives here, reached from the drawer's bottom-aligned
+// "Preferences" item, the title-bar gear, and the fresh-machine empty state.
+//
+// Layout: a [section rail | content] split, where the rail is a TRUE SWITCHER — one
+// section is mounted at a time. (It was originally a scroll-spy page: every section
+// rendered at once and the rail called scrollIntoView. Inside the app's overflow:auto
+// content area the scroll barely moved and `active` never followed, so the rail read
+// as dead and the tab as one endless column. That machinery is gone.)
+//
+// SEARCH IS AN EXPLICIT MODE, not the default rendering. The field sits at the top of
+// the content column so it lines up with the cards it filters; it echoes instantly from
+// local state and filters a DEFERRED copy (AGENTS.md search pattern). While the query is
+// non-empty the content column shows matches from EVERY section, each still under its
+// section overline so a hit always carries its context; section labels match too, so
+// typing "updates" pulls that whole section in. The rail keeps listing every section,
+// dims the ones with no matches, and clicking any row exits search mode back to that
+// section.
+//
+// Sections:
+//   Game     — EverQuest install-folder discovery/override (effective path + how it
+//             resolved + a folder picker + character-log validation). Lives in
+//             ./EqFolderSetting.tsx, like Updates does — this file only names it.
+//   Overlays — when the floating meters get out of the way: hide them while EverQuest isn't
+//             running (on by default) and/or while it isn't the window you're in (off).
+//             Lives in ./OverlayAutoHideSetting.tsx.
+//   Cursor ring — the opt-in white halo that follows the mouse over the EQ window (off by
+//             default; size + thickness). Lives in ./CursorRingSetting.tsx.
+//   Voice    — spoken alerts (docs/plans/voice-alerts.md §2): the master switch, engine tier,
+//             default voice + preview, speed and volume. Lives in ./VoiceSetting.tsx.
+//   Profiles — export your GLOBAL settings as a paste-safe share string / file, and import
+//             someone else's ADDITIVELY (see src/shared/profiles.ts for the data model).
+//   Updates — app version, last-checked time, a manual check, background download
+//             progress, and the "Relaunch to update" action when one is waiting.
+//             Lives in ./UpdateSetting.tsx; this file only names it in the table.
+//   Usage analytics — the anonymous-counts switch, the rotatable id, and the payload
+//             viewer that makes the privacy claim checkable. ./TelemetrySetting.tsx.
+//   Performance — the title-bar CPU/memory HUD switch (off by default) and the read-only
+//             breakdown of how long this launch's startup took, phase by phase.
+//             Lives in ./PerfSetting.tsx.
+//   Feedback — the second entry point into the feedback DIALOG (the first is the nav
+//             drawer's footer). Feedback is not a view, so this section only opens it.
+
+import { type JSX, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import {
+  Box,
+  FormControlLabel,
+  List,
+  ListItemButton,
+  ListItemText,
+  Paper,
+  Stack,
+  Switch,
+  TextField,
+  Typography
+} from '@mui/material'
+import SearchIcon from '@mui/icons-material/Search'
+import SportsEsportsIcon from '@mui/icons-material/SportsEsports'
+import BarChartIcon from '@mui/icons-material/BarChart'
+import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt'
+import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver'
+import IosShareIcon from '@mui/icons-material/IosShare'
+import FeedbackIcon from '@mui/icons-material/Feedback'
+import PrivacyTipIcon from '@mui/icons-material/PrivacyTip'
+import LayersIcon from '@mui/icons-material/Layers'
+import AdjustIcon from '@mui/icons-material/Adjust'
+import { ExportSettingsSetting, ImportSettingsSetting } from '../profiles/ProfileSharing'
+import { ClassComboSetting } from '../profiles/ClassComboPanel'
+import { useCombinePetRow } from '../combat/useCombatPrefs'
+import { UpdateSetting, VersionSetting, useUpdateStatus } from './UpdateSetting'
+import type { UpdateStatus } from '@shared/types'
+import { EqFolderSetting } from './EqFolderSetting'
+import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
+import { VoiceSetting } from './VoiceSetting'
+import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
+import { CursorRingSetting } from './CursorRingSetting'
+import { TelemetrySetting } from './TelemetrySetting'
+// Performance is the one section whose DESCRIPTOR lives with its card rather than here: this
+// file sits at the 400-code-line factoring ceiling, and the section's own file is the honest
+// place for the label, icon and search keywords that name it. See ./PerfSetting.tsx.
+import { perfSection } from './PerfSetting'
+import { normalizeQuery } from '../../lib/search'
+
+// -------------------------------------------------------------- Combat section
+
+/**
+ * Pet nesting (owner direction, 2026-08-03). ON by default: the game is mostly played solo, so
+ * "you and your pet" is the shape of nearly every fight, and a two-row source meter is a lid on
+ * the only list worth reading. Combined, the pet is ONE line item inside your breakdown —
+ * labelled with its real name, drillable into its own skills, and never summed into a skill row
+ * of yours (features/combat/petRows.ts). Off, it is a separate source row, as it always was.
+ *
+ * Renderer-local (localStorage, like the Fight/Overall scope), so it needs no store migration —
+ * and it applies LIVE: the Combat dashboard and the Overview card subscribe to the same value.
+ */
+function PetNestingSetting(): JSX.Element {
+  const [combine, setCombine] = useCombinePetRow()
+  return (
+    <Stack spacing={1}>
+      <FormControlLabel
+        control={
+          <Switch
+            size="small"
+            checked={combine}
+            data-testid="pref-combine-pet"
+            onChange={(e) => setCombine(e.target.checked)}
+          />
+        }
+        label={<Typography variant="body2">Show your pet inside your damage</Typography>}
+      />
+      <Typography variant="caption" color="text.secondary">
+        {combine
+          ? 'Your pet is one row inside your damage breakdown — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
+          : 'Your pet is listed as its own source, beside you, on the meter.'}
+      </Typography>
+    </Stack>
+  )
+}
+
+// ------------------------------------------------------------------- the view
+
+export interface PrefItem {
+  id: string
+  label: string
+  /** Extra searchable words that aren't shown in the label. */
+  keywords?: string
+  content: JSX.Element
+}
+
+/** Exported so a section whose descriptor lives with its own card (./PerfSetting.tsx) names the
+ *  same shape. TYPE-ONLY in both directions, so the import cycle it forms is erased at compile
+ *  time and no module ever waits on the other. */
+export interface PrefSection {
+  id: string
+  label: string
+  icon: JSX.Element
+  items: PrefItem[]
+}
+
+const RAIL_WIDTH = 168
+
+/**
+ * Spoken alerts (docs/plans/voice-alerts.md §2). Its own factory rather than a literal inside
+ * `buildSections` only because that function is at the 100-code-line ceiling; nothing about
+ * this section is special, and it depends on none of buildSections' inputs.
+ */
+function voiceSection(): PrefSection {
+  return {
+    id: 'voice',
+    label: 'Voice',
+    icon: <RecordVoiceOverIcon fontSize="small" />,
+    items: [
+      {
+        id: 'voice-alerts',
+        label: 'Spoken alerts',
+        keywords:
+          'voice speech speak tts talk say spoken narrate announce engine kokoro sapi rate speed volume alert sound',
+        content: <VoiceSetting />
+      }
+    ]
+  }
+}
+
+/**
+ * The floating overlays' auto-hide rules. Its own factory for the same reason `voiceSection` is
+ * one — `buildSections` sits against the 100-code-line ceiling — and, like that one, it depends
+ * on none of buildSections' inputs.
+ */
+function overlaysSection(): PrefSection {
+  return {
+    id: 'overlays',
+    label: 'Overlays',
+    icon: <LayersIcon fontSize="small" />,
+    items: [
+      {
+        id: 'overlay-autohide',
+        label: 'Hide overlays automatically',
+        keywords:
+          'overlay overlays meter meters hide auto autohide show running focus focused unfocused alt tab background desktop game closed floating',
+        content: <OverlayAutoHideSetting />
+      }
+    ]
+  }
+}
+
+/**
+ * Usage analytics (docs/plans/usage-analytics.md). Its own factory for the same reason the two
+ * above are — `buildSections` sits against the 100-code-line ceiling.
+ *
+ * It is a SECTION rather than a line inside another one because of what it contains: the switch
+ * is one control, but the payload viewer beside it is the whole privacy claim made checkable,
+ * and that does not belong tucked under "Updates".
+ */
+function analyticsSection(): PrefSection {
+  return {
+    id: 'analytics',
+    label: 'Usage analytics',
+    icon: <PrivacyTipIcon fontSize="small" />,
+    items: [
+      {
+        id: 'telemetry',
+        label: 'Anonymous usage counts',
+        keywords:
+          'telemetry analytics usage privacy tracking opt out optout data collect anonymous id rotate payload send stats metrics',
+        content: <TelemetrySetting />
+      }
+    ]
+  }
+}
+
+/** The cursor ring (the "where is my mouse" halo). Same factory rationale as above. */
+function cursorRingSection(): PrefSection {
+  return {
+    id: 'cursor',
+    label: 'Cursor ring',
+    icon: <AdjustIcon fontSize="small" />,
+    items: [
+      {
+        id: 'cursor-ring',
+        label: 'Cursor ring',
+        keywords:
+          'cursor mouse pointer ring circle halo highlight find lost locate ultimate size thickness white',
+        content: <CursorRingSetting />
+      }
+    ]
+  }
+}
+
+/** The whole settings table, in render order. Rebuilt only when its inputs change. */
+function buildSections(
+  version: string,
+  status: UpdateStatus,
+  onSendFeedback: OpenFeedback
+): PrefSection[] {
+  return [
+    {
+      id: 'game',
+      label: 'Game',
+      icon: <SportsEsportsIcon fontSize="small" />,
+      items: [
+        {
+          id: 'eq-folder',
+          label: 'EverQuest install folder',
+          keywords: 'path directory logs eqlog character detect override install location',
+          content: <EqFolderSetting />
+        }
+      ]
+    },
+    {
+      id: 'combat',
+      label: 'Combat',
+      icon: <BarChartIcon fontSize="small" />,
+      items: [
+        {
+          id: 'combine-pet',
+          label: 'Combine pet into your damage',
+          keywords: 'pet combine merge damage breakdown solo meter drill charm nest source',
+          content: <PetNestingSetting />
+        }
+      ]
+    },
+    overlaysSection(),
+    cursorRingSection(),
+    voiceSection(),
+    {
+      id: 'profiles',
+      label: 'Profiles',
+      icon: <IosShareIcon fontSize="small" />,
+      items: [
+        {
+          id: 'export-settings',
+          label: 'Export your settings',
+          keywords: 'share export copy backup string bundle profile send give clipboard file',
+          content: <ExportSettingsSetting />
+        },
+        {
+          id: 'import-settings',
+          label: 'Import settings',
+          keywords: 'share import paste restore string bundle profile receive add merge file',
+          content: <ImportSettingsSetting />
+        },
+        {
+          id: 'class-combo',
+          label: 'Class loadout history',
+          keywords: 'class combo loadout classes swap paladin rogue berserker who correction slot',
+          content: <ClassComboSetting />
+        }
+      ]
+    },
+    {
+      id: 'updates',
+      label: 'Updates',
+      icon: <SystemUpdateAltIcon fontSize="small" />,
+      items: [
+        {
+          id: 'version',
+          label: 'Version',
+          keywords: 'about build release app version',
+          content: <VersionSetting version={version} />
+        },
+        {
+          id: 'app-updates',
+          label: 'App updates',
+          keywords: 'update upgrade check relaunch restart install download automatic release',
+          content: <UpdateSetting status={status} version={version} />
+        }
+      ]
+    },
+    analyticsSection(),
+    perfSection(),
+    {
+      id: 'feedback',
+      label: 'Feedback',
+      icon: <FeedbackIcon fontSize="small" />,
+      items: [
+        {
+          id: 'send-feedback',
+          label: 'Send feedback',
+          keywords: 'feedback bug report problem crash issue feature request idea suggest contact support log',
+          content: <FeedbackSetting onSend={onSendFeedback} />
+        }
+      ]
+    }
+  ]
+}
+
+// Lowercased search keys, recomputed only when the section set changes — the
+// per-keystroke filter is then a plain substring test.
+function sectionKeys(sections: PrefSection[]): Record<string, string> {
+  const m: Record<string, string> = {}
+  for (const s of sections) {
+    for (const i of s.items) m[`${s.id}/${i.id}`] = `${i.label} ${i.keywords ?? ''}`.toLowerCase()
+  }
+  return m
+}
+
+function filterSections(
+  sections: PrefSection[],
+  keys: Record<string, string>,
+  q: string
+): PrefSection[] {
+  if (!q) return sections
+  return sections
+    .map((s) => {
+      // A section-label match keeps the whole section (typing "updates" is a jump).
+      if (s.label.toLowerCase().includes(q)) return s
+      return { ...s, items: s.items.filter((i) => keys[`${s.id}/${i.id}`]?.includes(q)) }
+    })
+    .filter((s) => s.items.length > 0)
+}
+
+/**
+ * Left rail: one row per section, ALWAYS all of them — it is the switcher, so it can
+ * never shrink out from under the user's pointer. `active` is null while searching
+ * (there is no single active section in that mode, so nothing is highlighted), and
+ * `unmatched` holds the sections the current query found nothing in — those rows dim
+ * to say so. They stay clickable on purpose: a query that matches nothing would
+ * otherwise disable every row and strand the user in search mode.
+ */
+function SectionRail({
+  sections,
+  active,
+  unmatched,
+  onPick
+}: {
+  sections: PrefSection[]
+  active: string | null
+  unmatched: ReadonlySet<string>
+  onPick: (id: string) => void
+}): JSX.Element {
+  return (
+    <List dense disablePadding sx={{ width: RAIL_WIDTH, flexShrink: 0 }}>
+      {sections.map((s) => {
+        const dim = unmatched.has(s.id)
+        return (
+          <ListItemButton
+            key={s.id}
+            dense
+            data-testid={`prefs-rail-${s.id}`}
+            selected={active === s.id}
+            aria-disabled={dim}
+            onClick={() => onPick(s.id)}
+            sx={{ borderRadius: 1, gap: 1, opacity: dim ? 0.38 : 1 }}
+          >
+            <Box sx={{ display: 'flex', color: 'text.secondary' }}>{s.icon}</Box>
+            <ListItemText slotProps={{ primary: { variant: 'body2' } }} primary={s.label} />
+          </ListItemButton>
+        )
+      })}
+    </List>
+  )
+}
+
+/** One section header plus its settings cards. */
+function PrefSectionBlock({ section }: { section: PrefSection }): JSX.Element {
+  return (
+    <Box>
+      <Typography
+        variant="overline"
+        color="text.secondary"
+        sx={{ display: 'block', letterSpacing: 1, mb: 0.5 }}
+      >
+        {section.label}
+      </Typography>
+      <Stack spacing={1.5}>
+        {section.items.map((i) => (
+          <Paper key={i.id} variant="outlined" sx={{ p: 1.5 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              {i.label}
+            </Typography>
+            {i.content}
+          </Paper>
+        ))}
+      </Stack>
+    </Box>
+  )
+}
+
+/** The search field, sized to the content column so it aligns with the cards it filters. */
+function PrefSearch({
+  query,
+  onQuery
+}: {
+  query: string
+  onQuery: (q: string) => void
+}): JSX.Element {
+  return (
+    <TextField
+      size="small"
+      fullWidth
+      data-testid="prefs-search"
+      placeholder="Search preferences…"
+      value={query}
+      onChange={(e) => onQuery(e.target.value)}
+      slotProps={{
+        input: {
+          startAdornment: <SearchIcon fontSize="small" sx={{ mr: 0.75, color: 'text.secondary' }} />
+        }
+      }}
+    />
+  )
+}
+
+export default function PreferencesView({
+  onSendFeedback,
+  section = null
+}: {
+  onSendFeedback: OpenFeedback
+  /** A deep link's landing section, or null for the usual one. App KEYS this component on it,
+   *  so an arriving link paints its section on the first frame and needs no effect here. */
+  section?: string | null
+}): JSX.Element {
+  const [query, setQuery] = useState('')
+  const deferred = useDeferredValue(query)
+  const [active, setActive] = useState(section ?? 'game')
+  const [version, setVersion] = useState('')
+  const status = useUpdateStatus()
+
+  useEffect(() => {
+    let alive = true
+    void window.eq.getAppVersion().then((v) => {
+      if (alive) setVersion(v)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const sections = useMemo(
+    () => buildSections(version, status, onSendFeedback),
+    [version, status, onSendFeedback]
+  )
+  const keys = useMemo(() => sectionKeys(sections), [sections])
+  const q = normalizeQuery(deferred)
+  const searching = q !== ''
+  const matches = useMemo(() => filterSections(sections, keys, q), [sections, keys, q])
+
+  // Rail rows to dim: only meaningful while searching, empty otherwise.
+  const unmatched = useMemo(() => {
+    if (!searching) return new Set<string>()
+    const hit = new Set(matches.map((s) => s.id))
+    return new Set(sections.filter((s) => !hit.has(s.id)).map((s) => s.id))
+  }, [searching, matches, sections])
+
+  // A rail click is always an exit from search mode into that one section.
+  const pick = useCallback((id: string): void => {
+    setQuery('')
+    setActive(id)
+  }, [])
+
+  const shown = searching ? matches : sections.filter((s) => s.id === active)
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Typography variant="h6" sx={{ fontWeight: 700 }}>
+        Preferences
+      </Typography>
+
+      <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start' }}>
+        <SectionRail
+          sections={sections}
+          active={searching ? null : active}
+          unmatched={unmatched}
+          onPick={pick}
+        />
+
+        <Box sx={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+          <PrefSearch query={query} onQuery={setQuery} />
+
+          {searching && matches.length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              No preferences match “{query.trim()}”.
+            </Typography>
+          )}
+          {shown.map((s) => (
+            <PrefSectionBlock key={s.id} section={s} />
+          ))}
+        </Box>
+      </Box>
+    </Box>
+  )
+}

@@ -1,0 +1,300 @@
+// AlertsView — manage triggered-sound alerts + global sound preferences.
+//
+// Layout (dense, dark, matches the app):
+//   - a top bar with the global volume slider + mute toggle, "Sound packs…"
+//     (opens the openpeon.com registry browser — Task #29), "Add alert", and a
+//     "Reset to defaults" button (restores the seeded built-in set, confirmed)
+//     — AlertsToolbar.tsx,
+//   - a list of alerts, each with an enable switch, per-alert volume, a
+//     pack→sound picker, a compact trigger chip, Test / Edit / Delete, and an
+//     expandable "recent fires" panel (time + the actual matched log line)
+//     — AlertList.tsx,
+//   - an add/EDIT dialog: every alert — including the seeded built-ins — opens in
+//     it (name, trigger type/kind/where, raw regex with live validation, sound,
+//     volume, cooldown). Built-ins are just stored defs with stable ids
+//     — AlertDialog.tsx (+ ConditionEditor.tsx / conditionDraft.ts).
+//
+// This file is now the composition root: dialog open/close state, the share
+// toast, and wiring the pieces to useAlertsStore.ts (defs/prefs/packs over IPC
+// plus the live recent-fires history from the alerts module).
+
+import { type JSX, useCallback, useState } from 'react'
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Stack,
+  Typography
+} from '@mui/material'
+import Snackbar from '@mui/material/Snackbar'
+import MuiAlert from '@mui/material/Alert'
+import type { AlertDef } from '@shared/types'
+import type { ShareApplyResult } from '@shared/profiles'
+import { playAlertNow, refreshAlertStore } from './player'
+import SoundPacksDialog from './SoundPacksDialog'
+import SuggestAlertsDialog from './SuggestAlertsDialog'
+import AlertDialog from './AlertDialog'
+import AlertList from './AlertList'
+import AlertsToolbar from './AlertsToolbar'
+import UpgradeOffers from './UpgradeOffers'
+import { useUpgradeOffers } from './lineIntel'
+import { useAlertsStore, type AlertsStore } from './useAlertsStore'
+import ShareImportDialog from '../profiles/ShareImportDialog'
+import { copyText } from '../../lib/clipboard'
+
+interface Toast {
+  severity: 'success' | 'warning'
+  text: string
+}
+
+/**
+ * Play an alert directly at the current global × per-alert volume, as if it had just fired —
+ * including its speech, so Test is what the user is actually configuring.
+ *
+ * `enabled` is forced so a disabled alert can still be auditioned, and `alwaysPlay` so the
+ * cross-alert audio throttle (audioThrottle.ts) can never swallow a button the user just
+ * pressed — a Test that does nothing because an unrelated alert fired 1s ago reads as a broken
+ * sound file. MUTE is still honored: the master mute means the app makes no noise, and a Test
+ * is not an exception to that (the toolbar's mute toggle is right there).
+ */
+function testAlert(def: AlertDef): void {
+  playAlertNow({ ...def, enabled: true, alwaysPlay: true })
+}
+
+/** Toast for a share-string copy of one alert (`ids:[id]`) or every alert. */
+function shareToast(ok: boolean, ids: string[] | undefined, len: number): Toast {
+  const what = ids?.length === 1 ? 'Alert' : 'All alerts'
+  return ok
+    ? { severity: 'success', text: `${what} copied — paste it to share (${len} chars).` }
+    : { severity: 'warning', text: 'Could not reach the clipboard.' }
+}
+
+/** Toast for an applied (additive) share import. */
+function importToast(res: ShareApplyResult): Toast {
+  return {
+    severity: res.ok ? 'success' : 'warning',
+    text: res.ok
+      ? res.added
+        ? `Added ${res.added} alert${res.added === 1 ? '' : 's'}${res.skipped ? `, skipped ${res.skipped} you already had` : ''}.`
+        : 'Nothing to add — you already have every alert in that string.'
+      : res.error ?? 'Import failed.'
+  }
+}
+
+function AlertsToast({ toast, onClose }: { toast: Toast | null; onClose: () => void }): JSX.Element {
+  return (
+    <Snackbar
+      open={!!toast}
+      autoHideDuration={5000}
+      onClose={onClose}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+    >
+      <MuiAlert severity={toast?.severity ?? 'success'} variant="filled" onClose={onClose}>
+        {toast?.text}
+      </MuiAlert>
+    </Snackbar>
+  )
+}
+
+/** Open/close + "add vs edit" state for the one AlertDialog instance. */
+interface EditDialog {
+  open: boolean
+  target: AlertDef | null
+  openAdd: () => void
+  openEdit: (def: AlertDef) => void
+  close: () => void
+}
+
+function useEditDialog(): EditDialog {
+  const [open, setOpen] = useState(false)
+  const [target, setTarget] = useState<AlertDef | null>(null)
+  return {
+    open,
+    target,
+    openAdd: () => {
+      setTarget(null)
+      setOpen(true)
+    },
+    openEdit: (def) => {
+      setTarget(def)
+      setOpen(true)
+    },
+    close: () => setOpen(false)
+  }
+}
+
+function ConfirmResetDialog({
+  open,
+  onCancel,
+  onConfirm
+}: {
+  open: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}): JSX.Element {
+  return (
+    <Dialog open={open} onClose={onCancel} maxWidth="xs">
+      <DialogTitle>Reset alerts to defaults?</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2" color="text.secondary">
+          This replaces all alerts — including any you added or edited — with the
+          seeded built-in set (Charm break + Raid target defeated). This can&apos;t be undone.
+        </Typography>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onCancel}>Cancel</Button>
+        <Button color="warning" variant="contained" onClick={onConfirm}>
+          Reset
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+/** The share/import toast, plus the one action that raises it (copy a share string). */
+function useShareToast(): {
+  toast: Toast | null
+  setToast: (t: Toast | null) => void
+  copyShare: (ids?: string[]) => Promise<void>
+} {
+  const [toast, setToast] = useState<Toast | null>(null)
+  /** Copy a share string for one alert (`ids:[id]`) or every alert (`ids` omitted). */
+  const copyShare = useCallback(async (ids?: string[]) => {
+    const text = await window.eq.exportAlertsShare(ids)
+    const ok = await copyText(text)
+    setToast(shareToast(ok, ids, text.length))
+  }, [])
+  return { toast, setToast, copyShare }
+}
+
+/**
+ * THE UPGRADE STRIP — the one place THIS view volunteers an alert, and it never acts on its own
+ * (AGENTS.md: state, never process). Levelling intelligence: an alert pinned to a rank you have
+ * outgrown. "Add alongside" (the default) keeps the old rank firing for the loadout that still
+ * uses it. It renders nothing at all when there is nothing to say.
+ *
+ * IT BELONGS HERE BECAUSE IT EDITS THIS LIST. The observed-driven poison-slow offer used to sit
+ * beside it and does NOT (docs/plans/suggest-dialog-redesign.md §2): that one CREATES an alert
+ * from something the log showed, which is exactly what the suggest dialog is for, so it moved
+ * into that dialog's "From your fights" section. This strip rewrites alerts that already exist.
+ */
+function OfferStrips({ store }: { store: AlertsStore }): JSX.Element {
+  const { alerts, spellLastCast, persistAlerts } = store
+  const upgrades = useUpgradeOffers(alerts, spellLastCast)
+  const persist = (def: AlertDef): void => void persistAlerts(def)
+  return (
+    <UpgradeOffers
+      offers={upgrades.offers}
+      alerts={alerts}
+      onPersist={persist}
+      onDismiss={upgrades.dismiss}
+    />
+  )
+}
+
+export default function AlertsView(): JSX.Element {
+  const store = useAlertsStore()
+  const { alerts, prefs, sortedPacks, history, persistAlerts, removeAlert } = store
+
+  const edit = useEditDialog()
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [packsDialogOpen, setPacksDialogOpen] = useState(false)
+  const [suggestOpen, setSuggestOpen] = useState(false)
+  // Sharing (src/shared/profiles.ts): copy one/all alerts as a paste-safe EQC1- string, or
+  // import someone else's ADDITIVELY through the shared preview dialog.
+  const [importOpen, setImportOpen] = useState(false)
+  const { toast, setToast, copyShare } = useShareToast()
+
+  const doReset = useCallback(async () => {
+    await store.resetAlerts()
+    setConfirmReset(false)
+  }, [store])
+
+  return (
+    <Stack spacing={2} sx={{ height: '100%' }}>
+      {/* Global controls */}
+      <AlertsToolbar
+        prefs={prefs}
+        onPrefsDrag={store.setPrefs}
+        onPrefsCommit={(next) => void store.persistPrefs(next)}
+        hasAlerts={alerts.length > 0}
+        onOpenPacks={() => setPacksDialogOpen(true)}
+        onCopyAll={() => void copyShare()}
+        onOpenImport={() => setImportOpen(true)}
+        onReset={() => setConfirmReset(true)}
+      />
+
+      {/* What the app has noticed and would like to offer — see OfferStrips above. */}
+      <OfferStrips store={store} />
+
+      {/* Alert list */}
+      <AlertList
+        alerts={alerts}
+        history={history}
+        packs={sortedPacks}
+        onAddSuggestion={() => setSuggestOpen(true)}
+        handlers={{
+          onPersist: (def) => void persistAlerts(def),
+          onVolumeDrag: store.setAlertVolume,
+          onTest: testAlert,
+          onCopyShare: (ids) => void copyShare(ids),
+          onEdit: edit.openEdit,
+          onRemove: (id) => void removeAlert(id)
+        }}
+      />
+
+      <AlertDialog
+        open={edit.open}
+        initial={edit.target}
+        packs={sortedPacks}
+        onClose={edit.close}
+        onSave={(def) => {
+          void persistAlerts(def)
+          edit.close()
+        }}
+      />
+
+      <SoundPacksDialog
+        open={packsDialogOpen}
+        onClose={() => setPacksDialogOpen(false)}
+        onInstalledChange={() => void store.refreshPacks()}
+      />
+
+      <SuggestAlertsDialog
+        open={suggestOpen}
+        alerts={alerts}
+        poisonSlowSeen={store.poisonSlowSeen}
+        onClose={() => setSuggestOpen(false)}
+        onCreate={persistAlerts}
+        onDelete={removeAlert}
+        spellLastCast={store.spellLastCast}
+        onCreateManually={() => {
+          // Escape hatch: close the picker and open the blank manual editor.
+          setSuggestOpen(false)
+          edit.openAdd()
+        }}
+      />
+
+      <ShareImportDialog
+        open={importOpen}
+        scope="alerts"
+        onClose={() => setImportOpen(false)}
+        onApplied={(res) => {
+          void store.reload()
+          void refreshAlertStore()
+          setToast(importToast(res))
+        }}
+      />
+
+      <AlertsToast toast={toast} onClose={() => setToast(null)} />
+
+      <ConfirmResetDialog
+        open={confirmReset}
+        onCancel={() => setConfirmReset(false)}
+        onConfirm={() => void doReset()}
+      />
+    </Stack>
+  )
+}

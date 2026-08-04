@@ -1,0 +1,393 @@
+// Central registry of IPC channel names so main/preload/renderer stay in sync.
+
+export const IPC = {
+  // ---- module transport (the one pattern for loot/turnins/kills/leveling/character) ----
+  // renderer -> main
+  getModuleSnapshot: 'module:getSnapshot',
+  // main -> renderer
+  onModuleDelta: 'module:delta',
+
+  // ---- progress / inventory (per-character persisted state) ----
+  getProgress: 'progress:get',
+  reloadInventory: 'inventory:reload',
+  setQuestComplete: 'progress:setQuestComplete',
+  // main -> renderer: progress changed (quest completion / inventory), so every
+  // view that shows progress stays consistent without re-fetching on a timer.
+  onProgress: 'progress:changed',
+  // main -> renderer: the active character's *-Inventory.txt was auto-reloaded.
+  onInventoryReload: 'inventory:autoReloaded',
+
+  // ---- character selection ----
+  getCharacter: 'character:get',
+  listCharacters: 'character:list',
+  setCharacter: 'character:set',
+
+  // ---- EQ install-dir discovery + override (Settings gear) ----
+  // renderer -> main: read the effective EQ config (root + how it resolved + log count).
+  getEqConfig: 'eqconfig:get',
+  // renderer -> main: open the OS folder-picker; on pick, persist the override + re-list.
+  pickEqDir: 'eqconfig:pick',
+  // renderer -> main: set the override to an explicit dir (undefined/'' ⇒ auto-detect).
+  setEqDir: 'eqconfig:set',
+  // renderer -> main: clear the override (revert to auto-discovery).
+  resetEqDir: 'eqconfig:reset',
+  // main -> renderer: the effective EQ config changed (override applied/cleared),
+  // so the Settings dialog + any config-derived UI refresh.
+  onEqConfigChanged: 'eqconfig:changed',
+
+  // ---- combat (its own snapshot transport — see modules/types.ts) ----
+  getCombatSnapshot: 'combat:snapshot',
+  onCombatActivity: 'combat:activity',
+  // renderer -> main: fuzzy-search the WHOLE (uncapped) fight history + the live fight by
+  // name/zone (Task #61). Args: (text, limit?). Returns FightSearchResult.
+  searchFights: 'combat:searchFights',
+
+  // ---- alerts extension (Task #18) ----
+  // CRUD over alert defs + global sound prefs (renderer -> main).
+  listAlerts: 'alerts:list',
+  saveAlert: 'alerts:save',
+  deleteAlert: 'alerts:delete',
+  // test = renderer plays the alert's sound directly (main just echoes the def).
+  testAlert: 'alerts:test',
+  // reset all alert defs back to the seeded built-in set (Task #22).
+  resetAlerts: 'alerts:reset',
+  // renderer reports an 'app'-triggered fire (e.g. bossDefeat) so the module's
+  // history stays the single source of truth (Task #22). Payload {alertId, context}.
+  appFired: 'alerts:appFired',
+  getAlertPrefs: 'alertPrefs:get',
+  setAlertPrefs: 'alertPrefs:set',
+  // sound packs (discovery + audio bytes)
+  listSoundPacks: 'sounds:listPacks',
+  getSoundData: 'sounds:getData',
+  // main -> renderer: the set of available sound packs changed (e.g. a shipped
+  // default pack was auto-provisioned in the background at startup — Task #39). The
+  // renderer re-lists packs + invalidates its sound caches so it becomes usable live.
+  onSoundPacksChanged: 'sounds:changed',
+  // suggested-alerts wizard (Task #38): a slim, searchable spell catalog derived from
+  // the scraped spell DB + live per-spell usage from the buffs module's snapshot.
+  spellsCatalog: 'spells:catalog',
+
+  // ---- voice alerts / TTS (docs/plans/voice-alerts.md §3) ----
+  // The 'system' engine tier needs NO channel at all: Chromium's own `speechSynthesis` lives in
+  // the renderer. These three exist for the DOWNLOADED tier (Kokoro), whose model, worker and
+  // wav cache all live in main — and they ship as honest stubs until that wave lands, so the UI
+  // can be written against a real, typed door instead of a promise.
+  // renderer -> main: synthesize + cache one utterance. Arg: SpeechSayRequest (VALIDATED AT THE
+  // HANDLER — text and voiceId are renderer strings and reach a cache key). Returns
+  // SpeechSayResult: `{ok:true,url}` once an engine exists, `{ok:false,reason}` today.
+  speechSay: 'speech:say',
+  // renderer -> main: the voices the DOWNLOADED tier can speak with. Returns SpeechVoice[] —
+  // empty until a tier is installed. System-tier voices come from `getVoices()`, not from here.
+  speechVoices: 'speech:voices',
+  // renderer -> main: provision an engine tier (pinned release, sha256-verified, atomic).
+  // Arg: SpeechEngine. Returns SpeechInstallResult.
+  speechInstall: 'speech:install',
+  // renderer -> main: how many bytes provisioning a tier would download, so the button can say
+  // the price before the user pays it. Arg: SpeechEngine. Returns a number (0 for a tier with
+  // nothing to download). It is an IPC read rather than a shared constant because the sizes live
+  // with the sha256s in main's pinned.ts — one file decides what we download, and a second copy
+  // of the number in shared/ could drift from the bytes actually fetched.
+  speechInstallSize: 'speech:installSize',
+  // main -> renderer: where a RUNNING install is (W3). `speech:install` resolves only when a
+  // ~120 MB download has finished, so the panel that started it needs somewhere to hear
+  // 'downloading 40%' meanwhile. Payload: SpeechInstallProgress (shared/alertTypes.ts). Sent
+  // only while an install is in flight, and its terminal phase always matches the invoke's
+  // own verdict.
+  onSpeechInstallProgress: 'speech:installProgress',
+  // renderer -> main: read/write the global voice prefs blob (§2). Unlike the three above these
+  // are REAL from day one — the store is main-owned, so the Preferences panel has no other door.
+  // The setter re-clamps every field at the handler.
+  voicePrefsGet: 'voicePrefs:get',
+  voicePrefsSet: 'voicePrefs:set',
+
+  // ---- sound-pack registry (openpeon.com integration, Task #29) ----
+  // renderer -> main: list registry packs annotated with installed flags.
+  packsRegistry: 'packs:registry',
+  // renderer -> main: install a pack by name (streams progress via onPackProgress).
+  packsInstall: 'packs:install',
+  // renderer -> main: uninstall a user-installed pack by name.
+  packsUninstall: 'packs:uninstall',
+  // main -> renderer: install progress {name, phase, percent?, message?}.
+  onPackProgress: 'packs:progress',
+  // renderer -> main: preview a registry pack BEFORE install (Task #31).
+  // list a pack's sounds (name -> PackPreviewList) …
+  packsPreviewList: 'packs:previewList',
+  // … and stream a single preview audio file's bytes (name, file -> SoundData).
+  packsPreviewSound: 'packs:previewSound',
+
+  // ---- frameless window controls (Task #23) ----
+  // renderer -> main: title-bar buttons drive the (frameless) native window.
+  windowMinimize: 'window:minimize',
+  windowToggleMaximize: 'window:toggleMaximize',
+  windowClose: 'window:close',
+  // main -> renderer: maximize state changed (bool) so the max/restore icon swaps.
+  onWindowMaximized: 'window:maximized',
+
+  // ---- floating overlay DPS meter (Task #52; per-kind windows in Task #54) ----
+  // All overlay channels carry an OverlayKind ('fight' | 'overall') as their first arg so the
+  // two independent overlay windows are addressed separately.
+  // renderer(main app) -> main: toggle a kind's overlay window open/closed. Arg: kind.
+  overlayToggle: 'overlay:toggle',
+  // renderer(main app) -> main: query the open-state map for all kinds. Returns Record<kind,bool>.
+  overlayGetState: 'overlay:getState',
+  // main -> renderer(main app): a kind's open-state changed. Payload: {kind, open}. Keeps the
+  // TitleBar overlay menu in sync (also fires when an overlay closes itself).
+  onOverlayState: 'overlay:state',
+  // renderer(overlay) -> main: set click-through (locked) vs interactive. Args: kind, locked.
+  overlaySetLocked: 'overlay:setLocked',
+  // renderer(overlay) -> main: fine-grained mouse-event pass-through toggle used by the
+  // hover sensor while locked. Args: kind, ignore (true = pass through, false = capture).
+  overlaySetIgnoreMouse: 'overlay:setIgnoreMouse',
+  // renderer(overlay) -> main: close the overlay from its own close button. Arg: kind.
+  overlayClose: 'overlay:close',
+  // renderer(overlay) -> main: read a kind's persisted config. Arg: kind. Returns OverlayConfig.
+  overlayGetConfig: 'overlay:getConfig',
+  // renderer(overlay) -> main: persist a kind's config (partial merge). Args: kind, patch.
+  overlaySetConfig: 'overlay:setConfig',
+  // main -> renderer(overlay): the persisted config changed. Payload: {kind, config}. The overlay
+  // ignores pushes that aren't its own kind.
+  onOverlayConfig: 'overlay:config',
+
+  // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
+  // Both blobs are main-owned (electron-store), so Preferences has no other door. The setters
+  // are MERGE-PATCHES and every field is re-validated + clamped AT THE HANDLER through
+  // `shared/presencePrefs.ts` — the same normalizer the store migration uses, so a renderer and
+  // a hand-edited file can never disagree about what a valid ring is.
+  // renderer(main app) -> main: read / patch the cursor-ring prefs. Returns CursorRingPrefs.
+  cursorRingGet: 'cursorRing:get',
+  cursorRingSet: 'cursorRing:set',
+  // renderer(main app) -> main: read / patch the overlay auto-hide prefs. Returns OverlayAutoHidePrefs.
+  overlayAutoHideGet: 'overlayAutoHide:get',
+  overlayAutoHideSet: 'overlayAutoHide:set',
+  // main -> renderer(ring window ONLY): the ring's size/thickness changed. Payload CursorRingPrefs.
+  onCursorRingConfig: 'cursorRing:config',
+  // main -> renderer(ring window ONLY): one cursor sample, in the ring window's own CSS px.
+  // THE HOT CHANNEL: ~8 ms cadence, and ONLY while the ring is enabled AND EQ is focused AND
+  // the point actually moved. Nothing is sent otherwise — that gating is the performance
+  // contract, and it is asserted in tests/presence.test.mts.
+  onCursorPoint: 'cursorRing:point',
+
+  // ---- auto-update (Task #27; reworked in Task #55) ----
+  // main -> renderer: push update lifecycle {state, version?, percent?, message?, checkedAt?}.
+  onUpdateStatus: 'update:status',
+  // renderer -> main: PULL the last status. The push above only reaches renderers that
+  // were mounted at the transition; Preferences mounts late, so it hydrates from here.
+  getUpdateStatus: 'update:getStatus',
+  // renderer -> main: run a check now ("Check for updates"). Resolves to the resulting
+  // status; a no-op idle status in dev.
+  checkForUpdates: 'update:checkNow',
+  // renderer -> main: apply the downloaded update now (quit + install + relaunch).
+  installUpdate: 'update:install',
+  // renderer -> main: the running app's version (app.getVersion()), shown in Preferences.
+  getAppVersion: 'app:getVersion',
+
+  // ---- event feed / 'events' overlay (Task #59) ----
+  // renderer(main app) -> main: report a renderer-DETECTED feed event (today: a Sky quest
+  // completed live — only the renderer's posky/turn-in machinery can see that). Main owns the
+  // ring + ids; the entry then reaches the overlay over the ordinary module transport.
+  // Payload: FeedReport. Fire-and-forget.
+  feedReport: 'feed:report',
+
+  // ---- cross-window deep link (Task #64) ----
+  // renderer(overlay) -> main: "focus the app on this" (AppFocus). Main shows/restores/focuses
+  // the MAIN window and forwards the payload on `onFocusView`. Fire-and-forget; the payload's
+  // `view` is re-validated at the handler against the closed AppFocusView union.
+  focusView: 'app:focusView',
+  // main -> renderer(main app): a deep link landed. App.tsx switches to the named view and
+  // hands the target down (today: the mob to drill into).
+  onFocusView: 'app:focusedView',
+
+  // ---- class-combo corrections (docs/plans/class-combo-inference.md § 5.3) ----
+  // READS need no channel of their own — the combo module rides the generic module transport
+  // (`module:getSnapshot('combo')` + `module:delta`). These two exist because a correction is a
+  // WRITE: the user telling the app "that span was PAL/ROG/BER", which is persisted per
+  // character and outlives every replay.
+  // renderer -> main: record a correction. Payload {startTs, endTs, classes}. `classes` must be
+  // a 1-3 list of the 16 ClassAbbr literals and the timestamps must be finite and ordered —
+  // VALIDATED AT THE HANDLER, never trusted because today's only caller is the app's own UI.
+  comboSetCorrection: 'combo:setCorrection',
+  // renderer -> main: drop every correction overlapping [startTs, endTs] ("Reset to detected").
+  // A TIME RANGE, not an interval id: ids are recompute-unstable by design (§ 5.4).
+  comboClearCorrection: 'combo:clearCorrection',
+
+  // ---- item knowledge ("what's this lore/quest item for", Task #53) ----
+  // renderer -> main: look up an item's lore/quest knowledge (local posky-first, then a
+  // cached, politely-throttled wiki lookup). Returns ItemKnowledge.
+  itemsLookup: 'items:lookup',
+
+  // ---- mob knowledge ("what does this thing drop", Task #63) ----
+  // renderer -> main: look up a mob's drop knowledge (own loot history + local quest catalog
+  // first, then a cached, politely-throttled wiki lookup). Returns MobKnowledge. Exposed on
+  // BOTH bridges — the main window's "recently considered" card and the events overlay's
+  // consider rows ask the same question of the same cache-first door.
+  mobsLookup: 'mobs:lookup',
+
+  // ---- map viewer (docs/plans/map-viewer.md §4.2) ----
+  // Main owns `fs` and owns effectiveEqRoot(), so main reads and parses `<eqRoot>\maps` and
+  // the renderer receives columnar typed arrays (~690 KB worst case, once per zone change).
+  // `zone` and every packId reach a join() and are validated AT THE HANDLER (isSafePackId).
+  // renderer -> main: the installed packs (no absolute paths). Returns MapPackListResult.
+  mapsListPacks: 'maps:listPacks',
+  // renderer -> main: zone stems, all packs or one. Args: (packId?). Returns ZoneShort[].
+  mapsListZones: 'maps:listZones',
+  // renderer -> main: one zone's parsed map. Args: (zone, prefs?) where prefs picks the pack
+  // PER LAYER — geometry and labels routinely come from different packs (§6.3), and the
+  // outcome is reported back in MapData.sources. Returns MapGetResult.
+  mapsGet: 'maps:get',
+  // renderer -> main: fuzzy label search — one zone (opts.zone) or the whole corpus.
+  // Args: (query, opts?). Returns MapSearchHit[].
+  mapsSearch: 'maps:search',
+
+  // ---- settings / alert sharing ("profiles" — src/shared/profiles.ts) ----
+  // Every call carries the renderer's whitelisted localStorage prefs (UI_PREF_SPECS): main
+  // owns the electron-store half of a bundle, the renderer owns the localStorage half.
+  // renderer -> main: encode the GLOBAL settings bundle. Args: (uiPrefs). Returns the string.
+  shareExportSettings: 'share:exportSettings',
+  // renderer -> main: encode one alert (ids:[id]) or all of them (ids omitted/empty).
+  shareExportAlerts: 'share:exportAlerts',
+  // renderer -> main: save an already-encoded string to a file via the OS save dialog.
+  // Args: (text, suggestedName). Returns {ok, path?, canceled?}.
+  shareSaveFile: 'share:saveFile',
+  // renderer -> main: open a .eqshare/.txt via the OS picker and PREVIEW it. Args: (uiPrefs).
+  shareOpenFile: 'share:openFile',
+  // renderer -> main: decode + plan a pasted string WITHOUT writing anything. Args:
+  // (text, uiPrefs). Returns SharePreview (never throws; failures come back as prose).
+  sharePreview: 'share:preview',
+  // renderer -> main: apply a previewed string additively. Args: (text, uiPrefs, selection).
+  // Returns ShareApplyResult, incl. the localStorage writes the renderer must perform.
+  shareApply: 'share:apply',
+
+  // ---- clipboard (the combat "Copy this view as text" buttons) ----
+  // renderer -> main: put plain text on the OS clipboard. Arg: text. Returns boolean (written).
+  // WHY THIS IS AN IPC CHANNEL AND NOT `navigator.clipboard.writeText`: the async Clipboard API
+  // is permission-gated in Chromium ('clipboard-sanitized-write'), and this app denies EVERY
+  // web permission wholesale (`hardenSession` in src/main/windows.ts — deliberate, deny-by-
+  // default policy). So writeText rejects with `NotAllowedError: Write permission denied.` in
+  // every window, verified in the real app. Electron's main-process `clipboard` module is not a
+  // web API and consults no permission, so the copy goes through here instead — the policy
+  // stays shut and the feature works. The text is VALIDATED AT THE HANDLER (non-empty string,
+  // length cap), never trusted because today's only caller is the app's own UI.
+  clipboardWrite: 'clipboard:write',
+
+  // ---- in-app feedback (Task #65 — docs/plans/feedback-triage.md §4.3) ----
+  // renderer -> main: the dialog's header context (versions, channel, queued count,
+  // whether this build has an endpoint compiled in). Returns FeedbackContext.
+  feedbackContext: 'feedback:context',
+  // renderer -> main: build the scrubbed log slice for a window (minutes) and return a
+  // CAPPED preview + the real counts. The bytes never cross IPC — only PREVIEW_MAX_LINES
+  // of text plus the metadata. Returns FeedbackSlicePreview | null.
+  feedbackBuildSlice: 'feedback:buildSlice',
+  // renderer -> main: save the FULL slice to disk via the OS save dialog, so a user who
+  // wants to read every byte before sending can. Returns {ok, path?, canceled?}.
+  feedbackSaveSlice: 'feedback:saveSlice',
+  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes}). Never rejects;
+  // a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
+  feedbackSubmit: 'feedback:submit',
+
+  // ---- usage analytics (docs/plans/usage-analytics.md wave A1) ------------------------
+  //
+  // NONE OF THESE CAN PUT A BYTE ON THE WIRE. They move events into the local ring, read and
+  // write the switch, and render the payload viewer. The only thing that transmits is main's
+  // flush loop, gated in src/main/telemetry/net.ts — there is no "send now" channel, on purpose.
+  //
+  // renderer -> main, FIRE-AND-FORGET: record one event. The payload is VALIDATED AT THE
+  // HANDLER with the shared `validateTelemetryEvent` — the renderer is untrusted here like
+  // everywhere else, and the schema is a closed allowlist, so an unknown tag or an unlisted
+  // enum member is dropped rather than buffered. Arg: TelemetryEvent.
+  telemetryTrack: 'telemetry:track',
+  // renderer -> main: the persisted prefs {enabled, noticeShown, analyticsId}. Returns
+  // TelemetryPrefs.
+  telemetryPrefsGet: 'telemetryPrefs:get',
+  // renderer -> main: flip the master switch. OFF drops the local buffer immediately.
+  // Arg: boolean. Returns TelemetryPrefs.
+  telemetrySetEnabled: 'telemetry:setEnabled',
+  // renderer -> main: the first-run notice has been ANSWERED (or dismissed — dismissal keeps
+  // it on, that is what opt-out means). Sets noticeShown either way. Arg: boolean (keep on).
+  telemetryNoticeShown: 'telemetry:noticeShown',
+  // renderer -> main: mint a new anonymous analyticsId and DROP the local buffer (T3).
+  // Returns TelemetryPrefs.
+  telemetryRotate: 'telemetry:rotate',
+  // renderer -> main: everything the Preferences payload viewer renders — prefs, whether this
+  // build has an endpoint at all, the live buffer, and the last batch sent (permanently null
+  // while dark). Returns TelemetryPayloadView.
+  telemetryPayload: 'telemetry:payload',
+
+  // ---- performance HUD + startup profile (docs/plans/perf-profiling.md) ----------------
+  //
+  // NOTHING ON THIS CHANNEL SET COSTS ANYTHING WHILE THE HUD IS OFF. Main creates no timer at
+  // all until `perf:setEnabled` says so, so an install that never opens the section never sees
+  // a single `perf:sample`.
+  //
+  // main -> renderer, PUSH: one `PerfSample` every 2 s while the HUD is enabled — or `null`,
+  // sent exactly once when it is switched off, which is how the title-bar chip learns to
+  // disappear instead of freezing on the last numbers it saw.
+  onPerfSample: 'perf:sample',
+  // renderer -> main: the persisted HUD pref ({enabled}). Returns PerfHudPrefs.
+  perfPrefsGet: 'perfPrefs:get',
+  // renderer -> main: flip the HUD switch. Starts/stops the sampler in the SAME call, so the
+  // pref and this session's timers can never disagree. A non-boolean leaves the pref alone.
+  // Arg: boolean. Returns PerfHudPrefs.
+  perfSetEnabled: 'perf:setEnabled',
+  // renderer -> main: the last startup profile — the launch you are in (it is written to disk
+  // for the next one). Returns StartupProfile. Read by Preferences → Performance.
+  perfGetStartup: 'perf:getStartup',
+  // renderer -> main, FIRE-AND-FORGET: "the renderer has mounted" — the `rendererHydrated`
+  // startup phase, which only the renderer can observe. Sent once per window lifetime; a
+  // repeat is refused by the phase accounting itself (shared/perf.ts `addMark`).
+  perfRendererHydrated: 'perf:rendererHydrated',
+
+  // ---- feedback TRIAGE (the dev-only operator tab — src/main/triage/**) ----------------
+  //
+  // ============ DEV BUILDS ONLY. NO SHIPPED APP EVER REGISTERS THESE HANDLERS. ============
+  //
+  // The names live here because every channel name in this app lives here — but nothing in a
+  // packaged build listens on them. Registration happens from `src/main/index.ts` behind
+  // `if (!app.isPackaged && !E2E)` via a dynamic import, and the module it imports reaches
+  // `pg` + `@aws-sdk/*`, which are devDependencies and therefore never packaged. Calling one
+  // of these from a shipped build rejects with "No handler registered", which is the correct
+  // and intended outcome.
+  //
+  // These channels read the OWNER'S FEEDBACK BACKLOG (Aurora DSQL + S3) using the launching
+  // shell's AWS profile (AWS_PROFILE, default 'eqc'). Possession of those IAM credentials is
+  // the access control; there is no password and no server-side read API to secure.
+  //
+  // Every argument is VALIDATED AT THE HANDLER (src/main/triage/validate.ts) — `reportId`
+  // reaches a file path as well as a SQL parameter and must be a 26-character ULID. Every
+  // reply is a `TriageResult<T>` (never a rejection), so an IAM denial renders as prose.
+  //
+  // renderer -> main: the filtered backlog. Arg: TriageListQuery. Returns TriageRow[].
+  triageList: 'triage:list',
+  // renderer -> main: one full record + the S3-resolved log state. Arg: reportId.
+  triageDetail: 'triage:detail',
+  // renderer -> main: download (cached) + gunzip a report's log slice and return CAPPED text.
+  // The gz bytes never cross; at most PREVIEW_MAX_LINES lines do. Arg: reportId.
+  triageSlice: 'triage:slice',
+  // renderer -> main: the triage-only writes (status/severity/cluster/dupe/note). Args:
+  // (reportId, TriagePatch). `issueUrl` is deliberately NOT writable from the UI.
+  triagePatch: 'triage:patch',
+  // renderer -> main: §3.5 forget — strip the contact, delete the slice object, keep the
+  // report. Arg: reportId.
+  triageForget: 'triage:forget',
+  // renderer -> main: the kill switch + block list. Returns TriageOpsState.
+  triageOps: 'triage:ops',
+  // renderer -> main: set the kill switch. POSITIVE polarity — `accepting:false` is what the
+  // CLI spells `closed on`. Args: (accepting, message?).
+  triageSetAccepting: 'triage:setAccepting',
+  // renderer -> main: block/unblock one install. Args: (installId, blocked, reason).
+  triageSetBlocked: 'triage:setBlocked',
+  // renderer -> main: the CLI's markdown digest + its deterministic clusters. Arg: query.
+  triageDigest: 'triage:digest',
+  // renderer -> main: usage analytics over a window (arg: days, one of TRIAGE_ANALYTICS_DAYS).
+  // Reads usage_daily + usage_funnel_daily + analytics_install; `available:false` means the
+  // tables are missing (a cluster that predates the A2 migration), NOT that they are empty.
+  triageAnalytics: 'triage:analytics',
+
+  // ---- misc pushes ----
+  onLine: 'log:line',
+  onCharacter: 'log:character',
+
+  // ---- error harness (renderer -> main, fire-and-forget) ----
+  // window.onerror / onunhandledrejection / React ErrorBoundary report here so
+  // renderer crashes land in errors.log + dev stdout and never leave a blank window.
+  reportError: 'error:report'
+} as const
