@@ -1,0 +1,157 @@
+// THE KILL RECORD — per-mob kill history broken down PER INSTANCE TIER, the pure helpers
+// that derive its convenience scalars, and the kills module's IPC shapes. Re-exported from
+// types.ts (which sits at the 400-line factoring cap), so every existing
+// `import type { KillInfo, KillMap } from '@shared/types'` keeps working unchanged.
+//
+// WHY PER TIER (2026-08-04, owner-verified misattribution). The record used to be five
+// scalars — {count, bestTier, firstTs, lastTs, display} — and the fold took Math.max on BOTH
+// the tier and the timestamp, so those two facts could come from DIFFERENT kills. The bosses
+// view then grouped each target by the class-combo interval covering its `lastTs` while
+// painting `bestTier`: Lord of Ire, killed at d4 on Aug 01 (a PAL/MNK/ENC loadout) and again
+// at d0 on Aug 03 (ROG/PAL/BER), rendered a d4 badge filed under ROG/PAL/BER — a loadout that
+// never killed it at d4. The combo-interval layer was right; the KILL RECORD was lossy.
+//
+// `tiers` is the TRUTH. The four scalars are DERIVED from it (`killTotals`) and kept only so
+// consumers that legitimately want the whole-mob summary (mob page, loot sourcing, the
+// new-defeat signal) keep working. One fold writes the tiers map; nothing writes a scalar by
+// hand. See world-model law 10: the tier is a fact ABOUT a kill, so it lives with the kill —
+// the combo interval, which is revisable, is still joined at read time and never stamped.
+
+/**
+ * One mob's kills at ONE instance difficulty tier. `firstTs`/`lastTs` bracket that tier's
+ * kills only — which is what makes an honest per-tier time join possible.
+ */
+export interface KillTierRun {
+  count: number
+  /** first kill of this mob AT THIS TIER (ms) */
+  firstTs: number
+  /** most recent kill of this mob AT THIS TIER (ms) */
+  lastTs: number
+}
+
+/** Aggregated kill info for a mob (for loot sourcing + boss instance tiers). */
+export interface KillInfo {
+  /** DERIVED from `tiers`: total kills across every tier. */
+  count: number
+  /** DERIVED from `tiers`: highest instance difficulty tier (0=base … 4=Refined). */
+  bestTier: number
+  /** DERIVED from `tiers`: first time this mob was killed at ANY tier (ms). */
+  firstTs: number
+  /** DERIVED from `tiers`: most recent kill at ANY tier (ms). */
+  lastTs: number
+  /**
+   * Human-readable display name (original casing/article of the first-seen slain
+   * line). The KillMap is KEYED by the canonical lowercase name so that
+   * sentence-start "A thunder spirit princess" (slain-by lines) and mid-sentence
+   * "a thunder spirit princess" (You-have-slain lines) fold into one entry.
+   */
+  display: string
+  /**
+   * THE RECORD. Per-instance-tier breakdown keyed by tier number; a tier with no kills is
+   * absent, never a zero row. Every scalar above is a fold of this map.
+   */
+  tiers: Record<number, KillTierRun>
+}
+
+/** Kill info keyed by CANONICAL (lowercase) mob name; see KillInfo.display. */
+export type KillMap = Record<string, KillInfo>
+
+/**
+ * Shape version of a KillInfo entry, stamped onto every kills snapshot and delta.
+ *
+ * 1 = the five-scalar record (no `tiers`); 2 = the per-tier record above. It exists for ONE
+ * hazard, which is real in dev and at every app update: the delta is a PER-MOB merge, so a
+ * renderer holding a v1 baseline that starts receiving v2 deltas would keep every untouched
+ * mob's narrow entry forever — a stale record surviving the fix that replaced it. The
+ * renderer compares the delta's version against the baseline it hydrated and, on a mismatch,
+ * throws the baseline away and re-hydrates rather than merging across shapes. Bump this
+ * whenever a KillInfo field changes meaning.
+ */
+export const KILLS_SHAPE_VERSION = 2
+
+/** kills module snapshot: the map plus the shape version its entries were written at. */
+export interface KillsSnap {
+  v: number
+  mobs: KillMap
+}
+
+/**
+ * kills module delta: the per-mob entries that changed, stamped with the shape version.
+ * A changed entry REPLACES its mob wholesale — entries are never merged field-by-field, so a
+ * mob's tiers map can only ever be the one main just wrote.
+ */
+export interface KillsDelta {
+  v: number
+  changed: KillMap
+}
+
+/** The four derived scalars of a KillInfo, folded from its per-tier runs. */
+export function killTotals(tiers: Record<number, KillTierRun>): {
+  count: number
+  bestTier: number
+  firstTs: number
+  lastTs: number
+} {
+  let count = 0
+  let bestTier = 0
+  let firstTs = 0
+  let lastTs = 0
+  for (const [key, run] of Object.entries(tiers)) {
+    if (run.count <= 0) continue
+    count += run.count
+    bestTier = Math.max(bestTier, Number(key))
+    firstTs = firstTs ? Math.min(firstTs, run.firstTs) : run.firstTs
+    lastTs = Math.max(lastTs, run.lastTs)
+  }
+  return { count, bestTier, firstTs, lastTs }
+}
+
+/** One tier run with its tier number attached, oldest LAST kill first. */
+export interface TierRun extends KillTierRun {
+  tier: number
+}
+
+/**
+ * The per-tier runs as a list ordered by their OWN most recent kill — the order a
+ * chronological grouping wants, since each run joins the timeline at its own `lastTs`.
+ */
+export function tierRuns(tiers: Record<number, KillTierRun>): TierRun[] {
+  const out: TierRun[] = []
+  for (const [key, run] of Object.entries(tiers)) {
+    if (run.count > 0) out.push({ tier: Number(key), ...run })
+  }
+  out.sort((a, b) => a.lastTs - b.lastTs || a.tier - b.tier)
+  return out
+}
+
+/** Fold one tier run into an accumulating tiers map (union of counts and time spans). */
+export function addTierRun(into: Record<number, KillTierRun>, tier: number, run: KillTierRun): void {
+  const prev = into[tier]
+  if (!prev) {
+    into[tier] = { count: run.count, firstTs: run.firstTs, lastTs: run.lastTs }
+    return
+  }
+  prev.count += run.count
+  prev.firstTs = prev.firstTs ? Math.min(prev.firstTs, run.firstTs) : run.firstTs
+  prev.lastTs = Math.max(prev.lastTs, run.lastTs)
+}
+
+/**
+ * True when a delta was written by a main process using a DIFFERENT kill-record shape than
+ * the baseline the renderer is holding. Merging across that boundary is what leaves stale
+ * narrow entries alive, so the caller re-hydrates instead (see KILLS_SHAPE_VERSION).
+ */
+export function killsBaselineStale(state: KillsSnap, delta: KillsDelta): boolean {
+  return state.v !== delta.v
+}
+
+/**
+ * Apply a kills delta to a baseline. Per-mob WHOLESALE replacement: a changed mob's entry is
+ * the one main just wrote, never a field-wise merge of old and new. On a shape mismatch the
+ * stale baseline is dropped rather than merged forward (the caller should also re-hydrate;
+ * `killsBaselineStale` is the predicate for that).
+ */
+export function mergeKillsDelta(state: KillsSnap, delta: KillsDelta): KillsSnap {
+  if (killsBaselineStale(state, delta)) return { v: delta.v, mobs: { ...delta.changed } }
+  return { v: state.v, mobs: { ...state.mobs, ...delta.changed } }
+}

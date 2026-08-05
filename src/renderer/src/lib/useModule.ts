@@ -14,23 +14,33 @@
 // Deltas that arrive between the getModuleSnapshot call and the subscription are
 // not lost: we subscribe BEFORE awaiting the snapshot and buffer, then replay the
 // buffer (dropping anything already covered by the snapshot's seq).
+//
+// The optional `stale` predicate covers the ONE gap the above cannot: a delta the held
+// baseline is unable to absorb because it was written under a different SHAPE (main restarted
+// on new code while this window kept running — routine in dev, and the update path in
+// general). A per-key merge across that boundary silently preserves old-shaped entries
+// forever, so the module says so and the hook re-hydrates instead of merging. See
+// shared/kills.ts (KILLS_SHAPE_VERSION), the first module to need it.
 
 import { useEffect, useRef, useState } from 'react'
 import type { ModuleDelta } from '@shared/types'
 
-// `Delta` appears once in the signature, which no-unnecessary-type-parameters reads as
-// removable. It is not: every call site passes its own delta shape explicitly, and
-// widening the parameter to `unknown` would make each module's typed applyDelta
-// unassignable (parameters are contravariant). The type parameter IS the safety.
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+// `Delta` used to appear ONCE in the signature, which no-unnecessary-type-parameters reads as
+// removable (it was suppressed here: every call site passes its own delta shape explicitly, and
+// widening the parameter to `unknown` would make each module's typed applyDelta unassignable —
+// parameters are contravariant, so the type parameter IS the safety). `stale` is its second
+// use, so the suppression is no longer needed; the reasoning still is.
 export function useModule<Snap, Delta>(
   moduleId: string,
-  applyDelta: (state: Snap, delta: Delta) => Snap
+  applyDelta: (state: Snap, delta: Delta) => Snap,
+  stale?: (state: Snap, delta: Delta) => boolean
 ): Snap | null {
   const [state, setState] = useState<Snap | null>(null)
   // Latest applyDelta without making the effect depend on its identity.
   const applyRef = useRef(applyDelta)
   applyRef.current = applyDelta
+  const staleRef = useRef(stale)
+  staleRef.current = stale
 
   useEffect(() => {
     let cancelled = false
@@ -39,21 +49,37 @@ export function useModule<Snap, Delta>(
     // Deltas that arrive before hydration completes, replayed after.
     const buffered: ModuleDelta<Delta>[] = []
     let hydrated = false
+    // The state the folds have produced so far, mirrored out of setState so `stale` can be
+    // asked BEFORE a delta is applied (a React updater is the wrong place to start an IPC).
+    let current: Snap | null = null
 
     const applyOne = (d: ModuleDelta<Delta>): void => {
       if (d.moduleId !== moduleId) return
       if (d.seq <= knownSeq) return // dupe or already-covered
+      if (current != null && staleRef.current?.(current, d.delta) === true) {
+        // This baseline cannot absorb this delta. Re-fetch rather than merge; the fresh
+        // snapshot carries whatever shape main is on now, and the delta is re-covered by seq.
+        hydrate()
+        return
+      }
       knownSeq = d.seq
-      setState((prev) => (prev == null ? prev : applyRef.current(prev, d.delta)))
+      setState((prev) => {
+        if (prev == null) return prev
+        const next = applyRef.current(prev, d.delta)
+        current = next
+        return next
+      })
     }
 
     const hydrate = (): void => {
       hydrated = false
       buffered.length = 0
+      current = null
       void window.eq.getModuleSnapshot<Snap>(moduleId).then((snap) => {
         if (cancelled || !snap) return
         knownSeq = snap.seq
         setState(snap.state)
+        current = snap.state
         hydrated = true
         // Replay anything that landed during the await, in seq order.
         for (const d of buffered.sort((a, b) => a.seq - b.seq)) applyOne(d)

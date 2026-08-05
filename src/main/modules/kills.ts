@@ -7,7 +7,12 @@ import type { EqModule } from './types'
 import { isCountedKill, recordKill } from '../log/reducers'
 import { zoneTier, idKey } from '../log/parser'
 import type { LogEvent } from '../../shared/logEvents'
-import type { KillMap, KillsDelta, KillsSnap } from '../../shared/types'
+import {
+  KILLS_SHAPE_VERSION,
+  type KillMap,
+  type KillsDelta,
+  type KillsSnap
+} from '../../shared/kills'
 
 export class KillsModule implements EqModule<KillsSnap, KillsDelta> {
   readonly id = 'kills'
@@ -51,14 +56,21 @@ export class KillsModule implements EqModule<KillsSnap, KillsDelta> {
   }
 
   snapshot(): { seq: number; state: KillsSnap } {
-    return { seq: this.seq, state: this.kills }
+    return { seq: this.seq, state: { v: KILLS_SHAPE_VERSION, mobs: this.kills } }
   }
 
+  /**
+   * Only the mobs touched since the last flush, each carrying its WHOLE entry (tiers map
+   * included) — the renderer replaces that mob wholesale rather than merging fields, so a
+   * mob's per-tier breakdown is always exactly the one folded here. The version stamp lets a
+   * renderer holding an older-shaped baseline detect it and re-hydrate instead of merging
+   * across shapes (shared/kills.ts, KILLS_SHAPE_VERSION).
+   */
   flushDelta(): { seq: number; delta: KillsDelta } | null {
     if (this.dirty.size === 0) return null
     const changed: KillMap = {}
     for (const mob of this.dirty) changed[mob] = this.kills[mob]
     this.dirty = new Set()
-    return { seq: this.seq, delta: { changed } }
+    return { seq: this.seq, delta: { v: KILLS_SHAPE_VERSION, changed } }
   }
 }

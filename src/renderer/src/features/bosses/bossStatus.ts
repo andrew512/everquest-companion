@@ -2,15 +2,25 @@
 // app-wide "raid target defeated" snackbar), so both agree on exactly what counts
 // as a defeat and when a NEW defeat happened.
 
-import type { KillMap, RaidTarget } from '@shared/types'
+import type { KillMap, KillTierRun, RaidTarget } from '@shared/types'
+// RELATIVE value import: this module is unit-tested under node/tsx, which has no `@shared`
+// alias (the mobSearch.ts precedent — AGENTS.md, Toolchain gotchas).
+import { addTierRun, killTotals } from '../../../../shared/kills'
 
 export interface TargetStatus {
   target: RaidTarget
   killed: boolean
+  /** highest tier across `tiers` — for a per-tier row this IS that row's tier. */
   bestTier: number
   count: number
   firstTs: number
   lastTs: number
+  /**
+   * The per-instance-tier breakdown of this target's kills, folded across every one of its
+   * roster `match` names. A card grouped by class loadout is built from ONE of these runs, so
+   * the tier it badges and the timestamp it joins on come from the same kills (shared/kills.ts).
+   */
+  tiers: Record<number, KillTierRun>
 }
 
 /**
@@ -42,22 +52,26 @@ export function lowerKillMap(kills: KillMap): KillMap {
 
 /** Fold a target's roster `match` names against the (article-insensitive) kill map. */
 export function statusFor(target: RaidTarget, killByLower: KillMap): TargetStatus {
-  let bestTier = 0
-  let count = 0
-  let firstTs = 0
-  let lastTs = 0
+  const tiers: Record<number, KillTierRun> = {}
   let killed = false
   for (const name of target.match) {
     const info = killByLower[matchKey(name)]
-    if (info) {
-      killed = true
-      bestTier = Math.max(bestTier, info.bestTier)
-      count += info.count
-      firstTs = firstTs ? Math.min(firstTs, info.firstTs) : info.firstTs
-      lastTs = Math.max(lastTs, info.lastTs)
-    }
+    if (!info) continue
+    killed = true
+    for (const [tier, run] of Object.entries(info.tiers)) addTierRun(tiers, Number(tier), run)
   }
-  return { target, killed, bestTier, count, firstTs, lastTs }
+  // The scalars are a fold of `tiers`, exactly as KillInfo's are — one source, no drift.
+  return { target, killed, ...killTotals(tiers), tiers }
+}
+
+/**
+ * The same target seen through ONE of its tier runs: the card a loadout section draws. Every
+ * scalar is re-derived from the given runs, so the badge, the dates and the count all describe
+ * the same kills — which is the whole point of the per-tier record. A target with a single
+ * tier projects to a status identical to its unprojected self (pinned in tests).
+ */
+export function projectStatus(s: TargetStatus, tiers: Record<number, KillTierRun>): TargetStatus {
+  return { target: s.target, killed: true, ...killTotals(tiers), tiers }
 }
 
 export function allStatuses(targets: RaidTarget[], kills: KillMap): TargetStatus[] {

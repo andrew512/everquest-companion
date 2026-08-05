@@ -145,7 +145,7 @@ test('golden window: the beta-wipe boundary resets every character-scoped module
 
   // Kills: the beta clay gargoyle is gone; post-epoch has the crab spiderling + water moccasin
   // (the KillMap is keyed by canonical lowercase name).
-  const killKeys = Object.keys(after.kills)
+  const killKeys = Object.keys(after.kills.mobs)
   assert.ok(!killKeys.some((k) => k.includes('clay gargoyle')), 'beta kill (clay gargoyle) discarded')
   assert.ok(killKeys.some((k) => k.includes('crab spiderling')), 'post-epoch kill present')
 })
@@ -192,8 +192,8 @@ test('full-log replay: post-epoch AA is refund-proof-clean and contamination is 
   assert.ok(acctBefore.allocated > acct.allocated, `AA allocated ${acctBefore.allocated} → ${acct.allocated} (beta churn removed)`)
 
   // CONTAMINATION removal — the beta character was inflating every character-scoped tally.
-  const betaKills = Object.values(before.kills).reduce((s, k) => s + k.count, 0)
-  const curKills = Object.values(after.kills).reduce((s, k) => s + k.count, 0)
+  const betaKills = Object.values(before.kills.mobs).reduce((s, k) => s + k.count, 0)
+  const curKills = Object.values(after.kills.mobs).reduce((s, k) => s + k.count, 0)
   assert.ok(after.loot.length < before.loot.length, `loot ${before.loot.length} → ${after.loot.length}`)
   assert.ok(curKills < betaKills, `kills ${betaKills} → ${curKills}`)
   // Turn-ins: under the LAUNCH-DATE anchor the current character's Jul-28 Gloomingdeep tutorial

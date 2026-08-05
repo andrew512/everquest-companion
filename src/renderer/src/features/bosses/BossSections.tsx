@@ -5,24 +5,30 @@
 // TWO GROUPINGS, ONE GRID. `CategorySection` is EQ raid progression order (Open World → Fear →
 // Hate → Sky) and stays the default: it is what the roster is FOR. `LoadoutSections` answers the
 // other question this app can now ask — "which classes was I running when I killed these?" — by
-// TIME-JOINING each target's latest kill against the class-combo intervals (shared/comboIndex).
+// TIME-JOINING each kill run against the class-combo intervals (loadoutGroups.ts, which owns
+// the pure half of that join, over shared/comboIndex).
 //
 // THE JOIN IS A DISPLAY GROUPING AND NOTHING ELSE. bossStatus.ts stays combo-unaware, no kill
 // record is stamped with an interval id (ids are recompute-unstable by design — see
 // shared/comboIndex.ts), and no signal changes: the same kills, the same confetti, the same
 // bossDefeat sound. Only the headers above them are new.
 //
-// A target killed repeatedly lands under the loadout of its MOST RECENT kill, which is the only
-// rule a per-target roster can state honestly — `TargetStatus` carries first/last and a count,
-// never a per-kill list. The section header says so.
+// ONE ROW PER TIER-RUN, not per target (2026-08-04). The rule used to be "a target killed
+// repeatedly lands under the loadout of its MOST RECENT kill" — the only rule the old
+// five-scalar kill record could state, since it carried a `bestTier` and a `lastTs` that could
+// come from different kills. It filed Lord of Ire's d4 badge (Aug 01, PAL/MNK/ENC) under the
+// ROG/PAL/BER interval covering its Aug 03 d0 kill. The record is now per instance tier
+// (shared/kills.ts), so a multi-tier target splits into one card per tier: each joins the
+// combo interval at ITS OWN most recent kill and wears ITS OWN tier badge, and the header's
+// claim is true of every card under it. Single-tier targets — nearly all of them — project to
+// exactly the card they rendered before.
 
 import { type JSX, useMemo, useState } from 'react'
 import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material'
 import CheckIcon from '@mui/icons-material/Check'
 import type { RaidTarget } from '@shared/types'
-import type { ComboInterval } from '@shared/classCombo'
-import { groupByCombo } from '@shared/comboIndex'
 import type { TargetStatus } from './bossStatus'
+import { loadoutGroups, type LoadoutCard, type LoadoutGrouping } from './loadoutGroups'
 import type { MobTarget } from '../mobs/mobTarget'
 import { tierStyle, type TierStyle } from '../../lib/tierChip'
 import { formatDate, formatDateTime } from '../../lib/formatDate'
@@ -224,7 +230,7 @@ function TargetCard({
   s: TargetStatus
   compact: boolean
   flash?: boolean
-  onOpen: (s: TargetStatus) => void
+  onOpen: () => void
 }): JSX.Element {
   const imgH = compact ? 70 : 120
   const tier = tierStyle(s.bestTier)
@@ -233,7 +239,7 @@ function TargetCard({
     <Paper
       variant="outlined"
       // A raid target IS a mob, so it opens the same mob PAGE everything else does (Task #64).
-      onClick={() => onOpen(s)}
+      onClick={onOpen}
       title={`${s.target.name} — drops, quests, your kills`}
       sx={{
         overflow: 'hidden',
@@ -258,17 +264,34 @@ function TargetCard({
   )
 }
 
-/** Everything a section needs to draw its grid — identical for both groupings. */
-export interface SectionProps {
-  list: TargetStatus[]
+/** The grid's presentation knobs — everything a section needs except its rows. */
+interface GridProps {
   compact: boolean
   minCol: number
   flashing: Set<string>
   onOpenMob: (t: MobTarget) => void
 }
 
+/** Everything a section needs to draw its grid — identical for both groupings. */
+export interface SectionProps extends GridProps {
+  list: TargetStatus[]
+}
+
+/**
+ * One card. `s` is what the card DRAWS (for a loadout section, the target seen through one
+ * tier run); `whole` is the target's complete kill record, which is what the mob page opens
+ * with — clicking the d4 card must not tell the mob page you killed it once. Defined by the
+ * loadout grouping, which is the only producer that makes the two differ.
+ */
+type CardRow = LoadoutCard
+
+/** The identity rows: a card that is its own whole target (both category sections + undefeated). */
+function wholeRows(list: TargetStatus[]): CardRow[] {
+  return list.map((s) => ({ s, whole: s }))
+}
+
 /** A header plus the grid under it. The ONE grid in this feature; both groupings use it. */
-function Section({ header, list, compact, minCol, flashing, onOpenMob }: SectionProps & { header: JSX.Element }): JSX.Element {
+function Section({ header, rows, compact, minCol, flashing, onOpenMob }: GridProps & { header: JSX.Element; rows: CardRow[] }): JSX.Element {
   return (
     <Box sx={{ mb: compact ? 1.5 : 2.5 }}>
       {header}
@@ -279,13 +302,13 @@ function Section({ header, list, compact, minCol, flashing, onOpenMob }: Section
           gap: compact ? 1 : 1.5
         }}
       >
-        {list.map((s) => (
+        {rows.map((row) => (
           <TargetCard
-            key={s.target.name}
-            s={s}
+            key={row.s.target.name}
+            s={row.s}
             compact={compact}
-            flash={flashing.has(s.target.name)}
-            onOpen={(t) => onOpenMob(mobTargetForStatus(t))}
+            flash={flashing.has(row.s.target.name)}
+            onOpen={() => onOpenMob(mobTargetForStatus(row.whole))}
           />
         ))}
       </Box>
@@ -294,15 +317,16 @@ function Section({ header, list, compact, minCol, flashing, onOpenMob }: Section
 }
 
 /** One progression category (Open World, Fear, Hate, Sky) and its grid of target cards. */
-export function CategorySection({ category, ...rest }: SectionProps & { category: string }): JSX.Element {
+export function CategorySection({ category, list, ...grid }: SectionProps & { category: string }): JSX.Element {
   return (
     <Section
-      {...rest}
+      {...grid}
+      rows={wholeRows(list)}
       header={
         <Typography variant="subtitle2" sx={{ mb: 0.75, color: 'primary.main' }}>
           {category}{' '}
           <Typography component="span" variant="caption" color="text.secondary">
-            ({rest.list.filter((s) => s.killed).length}/{rest.list.length})
+            ({list.filter((s) => s.killed).length}/{list.length})
           </Typography>
         </Typography>
       }
@@ -310,17 +334,12 @@ export function CategorySection({ category, ...rest }: SectionProps & { category
   )
 }
 
-const GROUP_RULE = 'Grouped by the loadout you were running at your most recent kill of each target.'
-
-/** One loadout section: the interval (null = no interval covers those kills) and its targets. */
-interface LoadoutGroup {
-  key: string
-  interval: ComboInterval | null
-  list: TargetStatus[]
-}
+const GROUP_RULE =
+  'Grouped by the loadout you were running for these kills. A target killed at more than one ' +
+  'instance tier files one card per tier, each under the loadout of its own kills.'
 
 /** The loadout header: the slots as chips, its provenance, and the span they cover. */
-function LoadoutHeader({ group }: { group: LoadoutGroup }): JSX.Element {
+function LoadoutHeader({ group }: { group: LoadoutGrouping }): JSX.Element {
   const interval = group.interval
   return (
     <Tooltip title={GROUP_RULE}>
@@ -339,42 +358,35 @@ function LoadoutHeader({ group }: { group: LoadoutGroup }): JSX.Element {
           </Typography>
         )}
         <Typography variant="caption" color="text.secondary">
-          ({group.list.length})
+          ({group.rows.length})
         </Typography>
       </Stack>
     </Tooltip>
   )
 }
 
-/** Defeated targets, time-joined to the combo intervals; undefeated ones are not grouped. */
-function useLoadoutGroups(list: TargetStatus[]): LoadoutGroup[] {
+/** Defeated targets, split per tier run and time-joined to the combo intervals (loadoutGroups). */
+function useLoadoutGroups(list: TargetStatus[]): LoadoutGrouping[] {
   const intervals = useComboIntervals()
-  return useMemo(() => {
-    const rows = list.filter((s) => s.killed && s.lastTs > 0).map((s) => ({ ts: s.lastTs, status: s }))
-    return groupByCombo(intervals, rows).map((g) => ({
-      key: g.interval?.id ?? 'unknown',
-      interval: g.interval,
-      list: g.rows.map((r) => r.status)
-    }))
-  }, [intervals, list])
+  return useMemo(() => loadoutGroups(intervals, list), [intervals, list])
 }
 
 /**
  * The roster sectioned by class loadout. Undefeated targets carry no timestamp to join on, so
  * they keep their own trailing section instead of being silently dropped or attributed.
  */
-export function LoadoutSections({ list, ...rest }: SectionProps): JSX.Element {
+export function LoadoutSections({ list, ...grid }: SectionProps): JSX.Element {
   const groups = useLoadoutGroups(list)
   const undefeated = list.filter((s) => !s.killed || s.lastTs === 0)
   return (
     <>
       {groups.map((group) => (
-        <Section key={group.key} {...rest} list={group.list} header={<LoadoutHeader group={group} />} />
+        <Section key={group.key} {...grid} rows={group.rows} header={<LoadoutHeader group={group} />} />
       ))}
       {undefeated.length > 0 && (
         <Section
-          {...rest}
-          list={undefeated}
+          {...grid}
+          rows={wholeRows(undefeated)}
           header={
             <Typography variant="subtitle2" sx={{ mb: 0.75 }} color="text.secondary">
               Not defeated{' '}

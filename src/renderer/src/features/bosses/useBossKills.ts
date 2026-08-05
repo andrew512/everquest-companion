@@ -16,13 +16,10 @@
 // on the first state we see and only emit for changes after that.
 
 import { useEffect, useRef, useState } from 'react'
-import type { KillMap, KillsDelta, RaidTarget } from '@shared/types'
+import type { KillMap, KillsDelta, KillsSnap, RaidTarget } from '@shared/types'
+import { killsBaselineStale, mergeKillsDelta } from '@shared/kills'
 import { useModule } from '../../lib/useModule'
 import { allStatuses, bossKills, newDefeats, type TargetStatus } from './bossStatus'
-
-function applyKillsDelta(state: KillMap, delta: KillsDelta): KillMap {
-  return { ...state, ...delta.changed }
-}
 
 export interface BossKillCallbacks {
   /** Fired for ANY roster-boss kill seen live (incl. repeats) — confetti/snackbar. */
@@ -35,7 +32,10 @@ export function useBossKills(
   targets: RaidTarget[],
   cbs?: BossKillCallbacks
 ): { kills: KillMap; statuses: TargetStatus[] } {
-  const kills = useModule<KillMap, KillsDelta>('kills', applyKillsDelta)
+  // Per-mob wholesale replace, with the shape guard: a delta stamped with a version the held
+  // baseline was not written at re-hydrates instead of merging (shared/kills.ts).
+  const snap = useModule<KillsSnap, KillsDelta>('kills', mergeKillsDelta, killsBaselineStale)
+  const kills = snap?.mobs
   const [statuses, setStatuses] = useState<TargetStatus[]>([])
   // Previous per-target status; seeded silently on first snapshot.
   const prevRef = useRef<Map<string, TargetStatus> | null>(null)

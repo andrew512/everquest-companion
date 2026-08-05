@@ -159,25 +159,10 @@ export interface AASpendEvent {
   rank?: number
 }
 
-/** Aggregated kill info for a mob (for loot sourcing + boss instance tiers). */
-export interface KillInfo {
-  count: number
-  /** highest instance difficulty tier the mob was killed at (0=base … 4=Refined) */
-  bestTier: number
-  /** first time this mob was killed (ms) */
-  firstTs: number
-  lastTs: number
-  /**
-   * Human-readable display name (original casing/article of the first-seen slain
-   * line). The KillMap is KEYED by the canonical lowercase name so that
-   * sentence-start "A thunder spirit princess" (slain-by lines) and mid-sentence
-   * "a thunder spirit princess" (You-have-slain lines) fold into one entry.
-   */
-  display: string
-}
-
-/** Kill info keyed by CANONICAL (lowercase) mob name; see KillInfo.display. */
-export type KillMap = Record<string, KillInfo>
+// Aggregated kill info for a mob (for loot sourcing + boss instance tiers). The record is
+// PER INSTANCE TIER and lives in ./kills (this file is at its factoring cap); re-exported
+// here so every existing `from '@shared/types'` import keeps working.
+export type { KillInfo, KillMap, KillTierRun } from './kills'
 
 // ----- Plane of Sky quest data (produced by scripts/scrape-posky.ts) -----
 
@@ -560,11 +545,9 @@ export interface TurnInDelta {
   appended: TurnInEvent[]
 }
 
-/** kills module. Delta = the per-mob KillInfo entries that changed. */
-export type KillsSnap = KillMap
-export interface KillsDelta {
-  changed: KillMap
-}
+// kills module. Snapshot = the map + its shape version; delta = the per-mob entries that
+// changed, each REPLACING its mob wholesale. Defined in ./kills beside the record itself.
+export type { KillsSnap, KillsDelta } from './kills'
 
 /** leveling module: levels + AA gains + AA spends. */
 export interface LevelingSnap {

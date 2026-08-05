@@ -274,7 +274,7 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   const lvlState = levelingModule.snapshot().state
   logInfo(
     `[everquest-companion] Loaded ${lootState.length} loot, ${turnInsModule.snapshot().state.length} turn-ins, ${
-      Object.keys(killState).length
+      Object.keys(killState.mobs).length
     } mobs, ${lvlState.levels.length} level-ups, ${lvlState.aaGains.length} AA gains, ${lvlState.aaSpends.length} AA buys.`
   )
 

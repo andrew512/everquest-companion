@@ -51,8 +51,10 @@ import type {
   ConsiderSnap,
   KillMap,
   KillsDelta,
+  KillsSnap,
   MobEntry
 } from '@shared/types'
+import { killsBaselineStale, mergeKillsDelta } from '@shared/kills'
 import { useModule } from '../../lib/useModule'
 import { MobPage } from './MobPage'
 import { RecentlyConsidered, applyConsiderDelta } from './RecentlyConsidered'
@@ -60,8 +62,13 @@ import { MOB_CATALOG, searchMobs } from './mobSearch'
 import { mobsInZone } from './mobZone'
 import type { MobTarget } from './mobTarget'
 
-function applyKillsDelta(state: KillMap, delta: KillsDelta): KillMap {
-  return { ...state, ...delta.changed }
+/**
+ * The kills module: per-mob WHOLESALE replace plus the shape guard (shared/kills.ts) — a delta
+ * written under a different kill-record shape re-hydrates the baseline instead of merging into
+ * it, so a stale narrow entry cannot outlive an update in a running window.
+ */
+function useKills(): KillMap {
+  return useModule<KillsSnap, KillsDelta>('kills', mergeKillsDelta, killsBaselineStale)?.mobs ?? {}
 }
 
 /** The character module's delta is a partial merge (see main/modules/character.ts). */
@@ -257,7 +264,7 @@ export default function MobsView({
   const deferred = useDeferredValue(query)
   const [drill, setDrill] = useState<MobTarget | null>(target ?? null)
 
-  const kills = useModule<KillMap, KillsDelta>('kills', applyKillsDelta) ?? {}
+  const kills = useKills()
   const considered = useModule<ConsiderSnap, ConsiderDelta>('consider', applyConsiderDelta) ?? []
   // WHERE YOU ARE. The character module carries the RAW display zone off the `zone` log event;
   // it is undefined until the log prints one (a fresh log, or before the replay reaches a zone

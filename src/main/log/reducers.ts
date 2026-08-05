@@ -7,7 +7,7 @@
 // one definition. Keep this pure and side-effect-free.
 
 import type { LogEvent } from '../../shared/logEvents'
-import type { KillMap } from '../../shared/types'
+import { killTotals, type KillMap } from '../../shared/kills'
 
 /**
  * Whether a `death` event counts as a kill for the kills tracker. Self-slain
@@ -34,12 +34,18 @@ export interface KillRecord {
  * Keying by the canonical name folds the two casings EQ emits (sentence-start
  * "A froglok…" vs mid-sentence "a froglok…") into a single entry; the display is
  * set once, from the first-seen kill.
+ *
+ * THE FOLD WRITES ONE THING: the per-tier run (`tiers[tier]`). The four scalars are then
+ * re-derived from the whole map by `killTotals`, never incremented alongside it — that is
+ * what keeps "bestTier" and "lastTs" from describing two different kills, which is exactly
+ * the misattribution this shape replaced (see shared/kills.ts).
  */
 export function recordKill(kills: KillMap, kill: KillRecord): void {
   const { key, display, tier, ts } = kill
-  const k = (kills[key] ??= { count: 0, bestTier: 0, firstTs: 0, lastTs: 0, display })
-  k.count += 1
-  k.bestTier = Math.max(k.bestTier, tier)
-  k.firstTs = k.firstTs ? Math.min(k.firstTs, ts) : ts
-  k.lastTs = Math.max(k.lastTs, ts)
+  const k = (kills[key] ??= { count: 0, bestTier: 0, firstTs: 0, lastTs: 0, display, tiers: {} })
+  const run = (k.tiers[tier] ??= { count: 0, firstTs: ts, lastTs: ts })
+  run.count += 1
+  run.firstTs = Math.min(run.firstTs, ts)
+  run.lastTs = Math.max(run.lastTs, ts)
+  Object.assign(k, killTotals(k.tiers))
 }
