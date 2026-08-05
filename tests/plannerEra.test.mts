@@ -232,8 +232,10 @@ test('the big rooms resolve, and to the right expansion', () => {
     ['Plane of Fear', 'classic'],
     ['Plane of Hate', 'classic'],
     ['Paineel', 'classic'], // the late-1999 heretic patch, still months before Kunark
-    ['Stonebrunt Mountains', 'classic'],
-    ['The Warrens', 'classic'],
+    // Jan-2001 patch zones, NOT original 1999 — and owner-observed out-of-era in EQL
+    // (Stonebrunt loot surfacing in the planner was the report, 2026-08-04).
+    ['Stonebrunt Mountains', 'velious'],
+    ['The Warrens', 'velious'],
     ['Qeynos Aqueducts', 'classic'], // alias of Qeynos Catacombs
     ['BBM', 'classic'], // a mobCatalogNames initialism, reached through the reverse index
     ['WFP', 'classic'],

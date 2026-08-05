@@ -321,9 +321,13 @@ export const ZONES: readonly ZoneEntry[] = [
   }, // brewall only
   { short: 'soldunga', name: "Solusek's Eye", era: 'classic' }, // brewall only
   { short: 'steamfont', name: 'Steamfont Mountains', era: 'classic' }, // classic stem; `steamfontmts` is the revamp
-  { short: 'stonebrunt', name: 'Stonebrunt Mountains', era: 'classic' },
+  // Stonebrunt + The Warrens are NOT original-1999 EQ: both arrived in the January 2001
+  // patch (Velious era), and the owner confirmed their loot reads out-of-era in EQL
+  // (2026-08-04 — Stonebrunt drops surfacing in the planner were the report). Bucketed
+  // 'velious' as "post-classic"; re-examine if EQL ever gates them separately.
+  { short: 'stonebrunt', name: 'Stonebrunt Mountains', era: 'velious' },
   { short: 'unrest', name: 'The Estate of Unrest', aliases: ['Unrest'], era: 'classic' }, // brewall only
-  { short: 'warrens', name: 'The Warrens', era: 'classic' }, // brewall only
+  { short: 'warrens', name: 'The Warrens', era: 'velious' }, // brewall only; Jan-2001 patch, see stonebrunt
   {
     short: 'qey2hh1',
     name: 'The Western Plains of Karana',
