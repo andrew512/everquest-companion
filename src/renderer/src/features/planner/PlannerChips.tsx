@@ -17,7 +17,7 @@ import { Box, Chip } from '@mui/material'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
 import { Tooltip } from '../../lib/Tooltip'
-import { eraChipLabel } from './plannerData'
+import { eraChip, type EraSubject } from './plannerData'
 import type { DonorProgress, DonorState } from './plannerProgress'
 
 const CHIP_SX = { height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.6 } } as const
@@ -66,26 +66,24 @@ export function StateChip({ progress }: { progress: DonorProgress }): JSX.Elemen
 
 /**
  * The era chip, or nothing. An in-era donor says nothing at all (that is the normal case and
- * needs no decoration); `era?` means no source zone states an era, which is a fact about our
- * table, not about the item.
+ * needs no decoration); `era?` means NOTHING states an era — not the catalog, not the item page's
+ * own drop list, not its era banner — which is a fact about our tables, not about the item.
+ *
+ * The subject is the donor ROW wherever the caller has one, because the page's drop list and era
+ * banner ride on it; a plan entry the corpus has no row for passes `{ key }` and gets the
+ * catalog-only answer. `plannerData.eraChip` writes the tooltip, so the chip never has to guess
+ * which witness spoke.
  */
-export function EraChip({ donorKey }: { donorKey: string }): JSX.Element | null {
-  const label = eraChipLabel(donorKey)
-  if (label === null) return null
-  const unknown = label === 'era?'
+export function EraChip({ subject }: { subject: EraSubject }): JSX.Element | null {
+  const info = eraChip(subject)
+  if (info === null) return null
   return (
-    <Tooltip
-      title={
-        unknown
-          ? 'No zone this donor drops in is in the era table, so we do not claim it is out of era.'
-          : `This donor's sources are in ${label}.`
-      }
-    >
+    <Tooltip title={info.tooltip}>
       <Chip
         size="small"
-        label={label}
+        label={info.label}
         data-testid="planner-era-chip"
-        color={unknown ? 'default' : 'warning'}
+        color={info.unknown ? 'default' : 'warning'}
         variant="outlined"
         sx={CHIP_SX}
       />

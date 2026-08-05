@@ -68,7 +68,7 @@ function Row({ row }: { row: FarmRow }): JSX.Element {
         {costText(row.tierRequired)}
       </Typography>
       <Box sx={{ flexGrow: 1, minWidth: 4 }} />
-      <EraChip donorKey={row.donorKey} />
+      <EraChip subject={row.donor ?? { key: row.donorKey }} />
       <StateChip progress={row.progress} />
     </Stack>
   )
@@ -112,7 +112,7 @@ export default function FarmList({ plan, progress }: FarmListProps): JSX.Element
 
   const { groups, hidden, outstanding } = useMemo(() => {
     const needs = collectNeeds(plan, index, progress.of).filter((n) => n.progress.state !== 'ready')
-    const kept = needs.filter((n) => !eraHides(n.donorKey, eraOnly))
+    const kept = needs.filter((n) => !eraHides(n.donor ?? { key: n.donorKey }, eraOnly))
     return { groups: groupNeeds(kept), hidden: needs.length - kept.length, outstanding: needs.length }
   }, [plan, index, progress, eraOnly])
 

@@ -23,6 +23,9 @@
 //   |merchant_value, |soldby, |bookcontents, |foraged,
 //   |second_image / |third_image  (present in the template; not consumed here)
 //
+// One piece of knowledge lives OUTSIDE the template: the page-top `{{Velious Era}}` banner that
+// 7,315 of the 11,247 item pages open with. It is read too (`parseEraTag`, censused there).
+//
 // TRADESKILL FIELDS — the "QUEST ITEM flag but no quest anywhere" gap. Plenty of items
 // carry `QUEST ITEM` in their stats block yet appear in NO quest on the whole wiki: they
 // are tradeskill INGREDIENTS, and the item page says so in `|recipes`. Shapes verified
@@ -441,6 +444,48 @@ function dropSourcesField(raw: string | null): ItemDropSource[] | undefined {
   return sources.length > 0 ? sources : undefined
 }
 
+// ---- the page-top era tag (`{{Velious Era}}`) -----------------------------------
+//
+// The one era signal the wiki actually carries, and it is NOT an {{Itempage}} field: it is a
+// bare template invoked at the TOP of the page, above `<onlyinclude>{{Itempage`, that renders the
+// coloured "Velious Era" banner. Zone provenance is still the better witness (a zone is where you
+// physically go), so this is LAYER 2 — consulted only when no source zone resolves.
+//
+// CENSUS, measured 2026-08-04 over the full scrape cache (369 batch files, 11,247 item pages):
+// 7,315 pages carry one in the head. Velious 2,761 · Classic 2,422 · Kunark 1,224 · Sky 349 ·
+// Chardok Revamp 136 · Epics 113 · Temple 98 · EpicQuests 76 · FearHateRevamp 53 · Fear 27 ·
+// Luclin 25 · Paineel 22 · Hate 5 · Unknown 2 · `kunark` 1 · `Chardok` 1. The token is the
+// template NAME minus its ` Era` suffix, and the dirt in it is exactly three pages deep:
+// `{{Velious  Era}}` (double space, 2), `{{Kunark_Era}}` (underscore, 1) and `{{kunark Era}}`
+// (lowercase, 1) — hence the whitespace/underscore fold here, and the case fold in the mapping
+// table (`shared/planner/era.ts`, which is the only place a token becomes an expansion).
+//
+// WHAT IS DELIBERATELY NOT READ:
+//   * `{{Era}}` (1), `{{Era|Velious}}` / `{{Era | Hole}}` (6) — a DIFFERENT template with the
+//     name in an argument, and all but one of them sit inline in prose or a drop list rather than
+//     at the page top. Six occurrences is not a shape, it is a typo; a name we can't read is
+//     `undefined`, never a guess (law 1).
+//   * `{{P99 Era Header| Nov | 2000 }}` (16) — a date banner, not an era claim; it does not end
+//     in ` Era` so the pattern never sees it.
+//   * 36 pages ("Small Fine Plate Boots" and its 35 siblings) whose only `{{Classic Era}}` was
+//     pasted INSIDE `|playercrafted`. Scanning past `{{Itempage` to catch them would also start
+//     reading the inline `{{Era|Kunark}}` notes above — the head is the shape the wiki means, and
+//     36 crafted-armour pages are not worth widening it for.
+const ERA_TAG_RE = /\{\{\s*([A-Za-z][A-Za-z0-9 _'`-]*?)[ _]+Era\s*\}\}/
+
+/**
+ * The page-top era template's token — `{{Velious Era}}` → `Velious` — or `undefined` when the
+ * page carries none in its head (3,932 of 11,247 pages don't). Whitespace and underscores are
+ * folded to single spaces; CASE IS PRESERVED, because this function reports what the page said
+ * and the mapping table is the place that decides what a spelling means.
+ */
+export function parseEraTag(wikitext: string): string | undefined {
+  const at = wikitext.search(/\{\{\s*Itempage\b/i)
+  if (at < 0) return undefined
+  const m = ERA_TAG_RE.exec(wikitext.slice(0, at))
+  return m ? m[1].replace(/[_\s]+/g, ' ').trim() || undefined : undefined
+}
+
 /** Collapse a `notes` field to a single trimmed prose line (strips wiki markup, caps length). */
 export function cleanSummary(notes: string): string | undefined {
   const text = notes
@@ -498,7 +543,8 @@ function tradeskillFields(
  * LORE/QUEST text flags, `|relatedquests` a bulleted [[link]] list, `|notes` prose,
  * `|recipes` the tradeskill recipes that CONSUME this item, `|playercrafted` how the
  * item is itself made and `|dropsfrom` where the page says it drops (shapes documented in the
- * file header + the census above `parseDropSources`).
+ * file header + the census above `parseDropSources`). The page-top `{{X Era}}` banner — the one
+ * field that is not a template field at all — comes through as `eraTag`.
  *
  * `stats` is the same block parsed into the game item WINDOW's structure (see
  * shared/itemStats.ts) so the UI can draw it with the game's hierarchy and colors
@@ -523,6 +569,7 @@ export function parseItemWikitext(
   | 'playerCrafted'
   | 'craftedBy'
   | 'craftedNote'
+  | 'eraTag'
 > {
   const statsBlock = templateField(wikitext, 'statsblock') ?? undefined
   const relatedRaw = templateField(wikitext, 'relatedquests')
@@ -559,6 +606,7 @@ export function parseItemWikitext(
     summary,
     stats,
     iconId,
+    eraTag: parseEraTag(wikitext),
     ...tradeskillFields(recipeParse, craftParse),
     statsBlock: statsBlock
       ? statsBlock.replace(/<br\s*\/?>/gi, '\n').replace(/[ \t]{2,}/g, ' ').trim()

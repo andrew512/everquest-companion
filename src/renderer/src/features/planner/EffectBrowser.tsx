@@ -250,7 +250,7 @@ function DonorLine({ donor, planClasses, planned, onAdd }: DonorLineProps): JSX.
         <Chip size="small" color="secondary" variant="outlined" label={`+${String(donor.tierRequired)} to extract`} sx={{ height: 18, fontSize: 10 }} />
       </Tooltip>
       {donor.hasteLocked && <Chip size="small" color="warning" label="haste — can't move" sx={{ height: 18, fontSize: 10 }} />}
-      <EraChip donorKey={donor.key} />
+      <EraChip subject={donor} />
       <Box sx={{ flexGrow: 1, minWidth: 8 }} />
       <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1, maxWidth: 320 }}>
         {src.text}

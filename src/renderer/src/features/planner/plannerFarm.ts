@@ -19,7 +19,7 @@
 // donor with no source at all is a fact about our knowledge, not about the game. Each says which
 // one it is rather than being dropped into a zone we invented.
 
-import type { EquipSlot, ExaltPlan, ExtractTier, SocketType } from '@shared/planner/types'
+import type { EquipSlot, ExaltPlan, ExtractTier, PlannerDonor, SocketType } from '@shared/planner/types'
 import { extractionCost, extractionTier } from '@shared/planner/rules'
 import type { DonorRow } from './plannerData'
 import { donorFor } from './plannerData'
@@ -38,8 +38,9 @@ export interface FarmNeed {
   donor: DonorRow | null
   /** the merge tier the effect extracts at — known from the SOCKET even without a donor row */
   tierRequired: ExtractTier
+  /** every mob EITHER witness names — the mob catalog first, then page-only mobs (`mergedSources`) */
   sources: readonly PlannerSource[]
-  /** distinct zones across every source, in catalog order */
+  /** distinct zones across every source, catalog order first */
   zones: string[]
   progress: DonorProgress
 }
@@ -69,6 +70,36 @@ const HEADINGS: Record<Exclude<FarmGroupKind, 'zone'>, string> = {
 const TAIL: Exclude<FarmGroupKind, 'zone'>[] = ['quest', 'crafted', 'unstated', 'unknown']
 
 /**
+ * BOTH WITNESSES TO "WHO DROPS THIS", AS ONE CAMP LIST.
+ *
+ * The mob catalog (`|known_loot`, inverted renderer-side) and the item page (`|dropsfrom`, served
+ * on the donor row) are the two halves of the same wiki, and they omit different things — measured
+ * 2026-08-04, 126 effect-bearing donors have NO catalog source at all while their own page names a
+ * mob for a third of them. A rollup that read only the catalog answered those with "No known
+ * source" while the page it was scraped from said otherwise.
+ *
+ * WHEN BOTH NAME THE SAME MOB THE CATALOG ROW WINS WHOLE (matched case-folded — the two sides of
+ * the wiki disagree about capitalisation constantly). It is the EQL-specific witness and the only
+ * one carrying level text; folding the page's zone into it as well would split one camp across two
+ * spellings of one place ("Lower Guk" and "The City of Guk" as separate farm headings) to learn
+ * nothing. A page-only mob contributes a row with no level text, which renders as a bare name.
+ */
+function mergedSources(
+  catalog: readonly PlannerSource[],
+  wiki: PlannerDonor['wikiSources']
+): PlannerSource[] {
+  const out = [...catalog]
+  const seen = new Set(catalog.map((s) => s.mob.trim().toLowerCase()))
+  for (const w of wiki ?? []) {
+    const id = w.mob.trim().toLowerCase()
+    if (id === '' || seen.has(id)) continue
+    seen.add(id)
+    out.push({ mob: w.mob, zones: w.zone === undefined ? [] : [w.zone] })
+  }
+  return out
+}
+
+/**
  * Every planned socket of a set, resolved. Includes the ones already satisfied — the caller
  * decides what "still needed" means (Farm mode drops `ready`, so a finished set empties out).
  */
@@ -85,7 +116,7 @@ export function collectNeeds(
       const socket = socketName as SocketType
       const donor = donorFor(index, planned.donorKey, planned.effect)
       const tierRequired = donor?.tierRequired ?? extractionTier(socket)
-      const sources = sourcesFor(planned.donorKey)
+      const sources = mergedSources(sourcesFor(planned.donorKey), donor?.wikiSources)
       needs.push({
         slot: slotName as EquipSlot,
         socket,
@@ -180,8 +211,9 @@ export function costText(tierRequired: ExtractTier): string {
 }
 
 /**
- * The camp line for one row: the first mob the catalog names for this donor, with its level text
- * VERBATIM (a range as often as a number). Empty when the catalog names nobody.
+ * The camp line for one row: the first mob EITHER witness names for this donor, with its level
+ * text VERBATIM (a range as often as a number) when the catalog knew it — a mob only the item page
+ * names renders as a bare name, which is exactly what the page stated. Empty when nobody is named.
  */
 export function campText(row: FarmNeed): string {
   const first = row.sources[0]

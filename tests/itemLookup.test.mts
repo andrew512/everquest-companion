@@ -18,6 +18,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   parseDropSources,
+  parseEraTag,
   parseItemWikitext,
   parseQuestLinks,
   templateField,
@@ -314,6 +315,34 @@ test('parseDropSources: what it REFUSES to read — sub-rows, prose bullets, pro
   // Nothing here throws, whatever the field holds — the file's standing contract.
   assert.deepEqual(parseDropSources(''), [])
   assert.deepEqual(parseDropSources('|Description: drops off random goblins\n<br>\n***'), [])
+})
+
+test('parseEraTag reads the page-top banner, and refuses everything that only looks like one', () => {
+  // The shape, verbatim from Engraved Bone Pauldrons: the template, then the item template.
+  assert.equal(parseEraTag('{{Velious Era}}\n\n\n<onlyinclude>{{Itempage\n|notes = \n}}'), 'Velious')
+  // The corpus's three spelling accidents, folded to one token each (case is NOT folded here —
+  // that is the mapping table's job, so this function keeps reporting what the page said).
+  assert.equal(parseEraTag('{{Velious  Era}}\n{{Itempage}}'), 'Velious')
+  assert.equal(parseEraTag('{{Kunark_Era}}\n{{Itempage}}'), 'Kunark')
+  assert.equal(parseEraTag('{{kunark Era}}\n{{Itempage}}'), 'kunark')
+  // Two-word tokens survive whole; a leading `__NOTOC__`/comment before the banner is fine.
+  assert.equal(parseEraTag('{{Chardok Revamp Era}}\n{{Itempage}}'), 'Chardok Revamp')
+  assert.equal(parseEraTag('<!-- x -->\n{{Sky Era}}\n{{Itempage}}'), 'Sky')
+
+  // REFUSALS. `{{Era|Velious}}` is a different template whose 8 uses sit inline in prose; a
+  // banner BELOW the item template (36 pages paste one inside `|playercrafted`) is not a page-top
+  // banner; a page with no {{Itempage}} at all has no head to read; and `P99 Era Header` is a
+  // date banner that merely contains the word.
+  assert.equal(parseEraTag('{{Era|Velious}}\n{{Itempage}}'), undefined)
+  assert.equal(parseEraTag('{{Era}}\n{{Itempage}}'), undefined)
+  assert.equal(parseEraTag('{{Itempage\n|playercrafted = \n{{Classic Era}}\n}}'), undefined)
+  assert.equal(parseEraTag('{{Velious Era}}\nnot an item page'), undefined)
+  assert.equal(parseEraTag('{{P99 Era Header| Nov | 2000 }}\n{{Itempage}}'), undefined)
+  assert.equal(parseEraTag(''), undefined)
+
+  // And end to end: the trimmed fixtures in this file open at `{{Itempage`, so they state none.
+  assert.equal(parseItemWikitext('Sphinx Claw', SPHINX_CLAW).eraTag, undefined)
+  assert.equal(parseItemWikitext('Sphinx Claw', `{{Fear Era}}\n${SPHINX_CLAW}`).eraTag, 'Fear')
 })
 
 // The tradeskill NEGATIVE for this page lives here rather than in the tradeskill file

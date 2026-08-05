@@ -29,7 +29,7 @@ import {
   searchPlannerItems
 } from '../src/main/planner/effectIndex'
 import { EQUIP_SLOTS, SOCKET_TYPES } from '../src/shared/planner/types'
-import { zoneEra } from '../src/shared/planner/era'
+import { eraFromTag, layeredVerdict, zoneEra } from '../src/shared/planner/era'
 import { isClassAbbr } from '../src/shared/classCombo'
 
 const file = itemsJson as unknown as ItemDbFile
@@ -164,6 +164,49 @@ test('the Coldain anchor: a Velious donor the mob catalog cannot place', () => {
     (d) => (d.wikiSources?.length ?? 0) > 0 && d.wikiSources?.every((s) => s.zone !== undefined && zoneEra(s.zone) === 'velious')
   )
   assert.ok(velious.length >= 50, `only ${velious.length} donors are Velious-only by wiki source`)
+})
+
+test('donors carry the page-top era banner (`eraTag`) — the last-resort witness', () => {
+  const tagged = donors.filter((d) => d.eraTag !== undefined)
+  const mapped = tagged.filter((d) => eraFromTag(d.eraTag ?? '') !== null)
+  const tokens = [...new Set(tagged.map((d) => d.eraTag ?? ''))].sort()
+  console.log('planner eraTag', { rows: tagged.length, mapped: mapped.length, tokens })
+
+  // FLOOR under the 2026-08-04 build (1,258 of 1,508 donor rows carry a banner). A parser change
+  // that silently stops reading the template must turn this red, not quietly drop 700 donors back
+  // into `era?`.
+  assert.ok(tagged.length >= 1_000, `only ${tagged.length} donors carry an eraTag`)
+
+  // The table has to actually cover what the corpus says. A NEW token appearing in a rescrape is
+  // allowed (it reads as `null` = unknown, which is honest) — the table going stale wholesale is
+  // not, so this is a ratio floor rather than a set identity.
+  const covered = (100 * mapped.length) / tagged.length
+  assert.ok(covered >= 95, `eraFromTag maps only ${covered.toFixed(1)}% of tagged donors`)
+
+  for (const d of tagged) {
+    assert.doesNotMatch(d.eraTag ?? '', /[{}|]|\bEra\b/, `${d.name}: raw markup in eraTag "${d.eraTag ?? ''}"`)
+    assert.equal(d.eraTag, (d.eraTag ?? '').trim(), `${d.name}: untrimmed eraTag`)
+  }
+})
+
+test('the Coldain anchor, layer 2: no zone anywhere, but the page says Velious', () => {
+  // The sibling of the `|dropsfrom` anchor above, and the case the banner layer exists for: eight
+  // of the nine Coldain Velium weapons are VENDOR SOLD, so neither the mob catalog nor the item
+  // page places them — before the banner they read `era?` and stayed in a classic-era player's
+  // farm list forever. The page opens `{{Velious Era}}`, and that is now enough to say so.
+  const sword = donors.find((d) => d.key === 'coldain velium long sword')
+  assert.ok(sword, 'Coldain Velium Long Sword is no longer a donor')
+  assert.equal(sword.wikiSources, undefined, 'the long sword states no drop source')
+  assert.equal(sword.eraTag, 'Velious')
+  assert.equal(eraFromTag(sword.eraTag), 'velious')
+  // The whole family agrees — this is a set of pages, not one lucky row.
+  const coldain = donors.filter((d) => d.key.startsWith('coldain velium'))
+  assert.ok(coldain.length >= 5, `only ${coldain.length} Coldain Velium donors`)
+  for (const d of coldain) assert.equal(d.eraTag, 'Velious', d.name)
+
+  // WITHOUT a zone the layered verdict is the banner's; with one, the zone still wins.
+  assert.equal(layeredVerdict([], sword.eraTag), 'out-of-era')
+  assert.equal(layeredVerdict(['Lower Guk'], sword.eraTag), 'in-era')
 })
 
 test('host search: substring, prefix-first, shortest-first, capped', () => {

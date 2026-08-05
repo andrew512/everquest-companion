@@ -353,6 +353,13 @@ export interface ItemKnowledge {
   questUses: ItemQuestUse[]
   /** where the ITEM PAGE says it drops (`|dropsfrom`) — mob + the zone heading it sat under */
   dropsFrom?: ItemDropSource[]
+  /**
+   * The page-top `{{X Era}}` banner's token, VERBATIM ("Velious", "Chardok Revamp", "kunark") —
+   * the wiki's own era claim, and the only one an item page ever makes. It is not an
+   * `{{Itempage}}` field; see `parseEraTag` for the shapes and the census. Absent when the page
+   * opened with no banner. What a token MEANS is decided in `shared/planner/era.ts`, never here.
+   */
+  eraTag?: string
   /** one-line freeform summary (from the wiki `notes` field), trimmed */
   summary?: string
   /** the raw stat/flag block text from the item page (LORE/NO DROP/slot/…) */

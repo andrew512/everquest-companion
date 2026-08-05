@@ -111,7 +111,7 @@ function SocketLine({
         </Typography>
       </Box>
       <Box sx={{ flexGrow: 1, minWidth: 4 }} />
-      <EraChip donorKey={donorKey} />
+      <EraChip subject={donor ?? { key: donorKey }} />
       <StateChip progress={state} />
       <Tooltip title="Remove this socket from the set">
         <IconButton

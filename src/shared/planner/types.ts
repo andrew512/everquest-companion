@@ -119,6 +119,13 @@ export interface PlannerDonor {
    * the page listed the mob under no zone heading (unknown, never guessed — law 1).
    */
   wikiSources?: { mob: string; zone?: string }[]
+  /**
+   * The item page's own era banner, VERBATIM ("Velious", "Chardok Revamp") — the THIRD witness,
+   * and the weakest, so it is the last one consulted. Zone provenance decides an era whenever it
+   * can; this tag only speaks when neither the mob catalog nor `wikiSources` placed the item
+   * anywhere (`shared/planner/era.ts layeredVerdict`). Absent when the page opened with no banner.
+   */
+  eraTag?: string
 }
 
 /**

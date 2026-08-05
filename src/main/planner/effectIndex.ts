@@ -40,6 +40,11 @@
 // measured 2026-08-04, 126 effect-bearing donors are neither quest nor crafted and have no
 // catalog source at all, and 43 of those name a zone on their own page. Serving both and joining
 // them at the consumer is the honest arrangement; this file never merges or ranks them.
+//
+// THE PAGE'S ERA BANNER rides along the same way (`eraTag`, the `{{Velious Era}}` token). It is
+// the last-resort witness for the donors neither source places — 94 of those 126 carry one — and
+// like `wikiSources` it is carried VERBATIM: `shared/planner/era.ts` is the only file that decides
+// what a token means, and the renderer is the only place the two witnesses are folded together.
 
 import { itemKey, knowledgeFromDb, type ItemDbEntry, type ItemDbFile } from '../itemsDb'
 import {
@@ -104,6 +109,8 @@ interface PageCtx {
   playerCrafted: boolean
   /** what the item page's `|dropsfrom` stated; absent when it carried none */
   wikiSources?: ItemDropSource[]
+  /** the page-top `{{X Era}}` banner's token; absent when the page opened with none */
+  eraTag?: string
   /** the page TITLE keys to the item name — this is the item's own page, not a variant of it */
   canonical: boolean
 }
@@ -163,6 +170,7 @@ function pageContext(entry: ItemDbEntry): {
       // Carried through verbatim, not merged with the renderer's catalog index: the two are
       // independent witnesses and the join belongs where both are in hand (design §4.2).
       wikiSources: k.dropsFrom,
+      eraTag: k.eraTag,
       canonical: itemKey(entry.page) === key
     },
     effects: k.stats?.effects ?? [],
@@ -187,7 +195,8 @@ function donorRow(ctx: PageCtx, effect: ItemEffect, socket: SocketType): Planner
     reqLevel: effect.reqLevel,
     // Copied per row (donors are denormalized by effect) so a consumer never has to hold a
     // second index to answer "where does this one drop".
-    wikiSources: ctx.wikiSources ? ctx.wikiSources.map((s) => ({ ...s })) : undefined
+    wikiSources: ctx.wikiSources ? ctx.wikiSources.map((s) => ({ ...s })) : undefined,
+    eraTag: ctx.eraTag
   }
 }
 

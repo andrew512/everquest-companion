@@ -15,7 +15,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { EquipSlot, PlannerDonor, SocketType } from '@shared/planner/types'
-import { CURRENT_ERA, eraRank, eraVerdict, zoneEra, type Era, type EraVerdict } from '@shared/planner/era'
+import {
+  CURRENT_ERA,
+  eraFromTag,
+  eraRank,
+  layeredVerdict,
+  zoneEra,
+  type Era,
+  type EraVerdict
+} from '@shared/planner/era'
 import { sourcesFor } from './sourceIndex'
 
 /** A donor row with its search haystack precomputed. `searchKey` is never displayed. */
@@ -127,62 +135,128 @@ export function donorFor(
 // ---- era scoping --------------------------------------------------------------------
 
 /**
- * WHERE THIS DONOR LIVES, IN EXPANSION TERMS (shared/planner/era.ts owns the zone→era table).
+ * WHERE THIS DONOR LIVES, IN EXPANSION TERMS (shared/planner/era.ts owns both tables).
  *
  * The committed corpus is scraped from a wiki that documents every expansion, so more than half
  * of the proc donors drop in Kunark or Velious zones that this server has not opened. Planning
  * around them is not planning — it is a shopping list for a game that isn't running yet.
  *
- * The verdict is derived from the donor's DROP zones. A donor with no drop source at all (a quest
- * reward, a crafted item) gets `[]`, which is `unknown` — the row stays visible and says so,
- * because "we don't know where this comes from" must never be dressed up as "it's out of era".
+ * THREE WITNESSES, FOLDED HERE BECAUSE THIS IS WHERE ALL THREE ARE IN HAND:
+ *   1. the MOB CATALOG's zones for this key (`sourceIndex`, the renderer's own inversion of
+ *      `|known_loot`), and
+ *   2. the zones the ITEM PAGE named (`wikiSources`, from `|dropsfrom`) — main serves them
+ *      verbatim precisely so the union happens once, here. Either one placing the donor in a
+ *      reachable zone settles it.
+ *   3. the page's own `{{X Era}}` banner (`eraTag`), consulted ONLY when neither zone list
+ *      resolved to anything. That is what finally answers for quest rewards, crafted goods, and
+ *      the donors the catalog never links.
+ *
+ * A donor none of the three place stays `unknown` — the row is visible and says so, because "we
+ * don't know where this comes from" must never be dressed up as "it's out of era".
  */
 export interface DonorEra {
   verdict: EraVerdict
-  /** the LATEST era among its source zones — what the chip names; null when nothing states one */
+  /** the era the chip names: the LATEST among its source zones, else the tag's. Null when silent. */
   era: Era | null
+  /** which witness produced `era` — the chip's tooltip must not claim a zone we never saw */
+  by: 'zone' | 'tag' | null
 }
+
+/**
+ * What the era join needs from a donor. A LOOSE shape rather than `DonorRow` because a plan can
+ * name a (key, effect) pair the corpus has no row for — Board and Farm pass `{ key }` alone then,
+ * and the answer degrades to the catalog's zones, which is exactly the evidence available.
+ */
+export type EraSubject = Pick<PlannerDonor, 'key'> & Partial<Pick<PlannerDonor, 'wikiSources' | 'eraTag'>>
 
 // Release order comes from era.ts (`eraRank`) — the planner never re-states which expansion came
 // first. Only the DISPLAY spelling lives here.
-const ERA_LABEL: Record<Era, string> = { classic: 'Classic', kunark: 'Kunark', velious: 'Velious' }
+const ERA_LABEL: Record<Era, string> = {
+  classic: 'Classic',
+  kunark: 'Kunark',
+  velious: 'Velious',
+  luclin: 'Luclin'
+}
 
 /** The era the app is currently scoped to, spelled for a tooltip. */
 export const CURRENT_ERA_LABEL = ERA_LABEL[CURRENT_ERA]
 
-// Keyed by donor KEY (the verdict depends only on where the item drops), built on demand and kept
-// for the window's life: the zone lists it reads are immutable committed data.
+// Built on demand and kept for the window's life: every input is immutable committed data. The
+// identity is the EVIDENCE, not just the key — the same key reaches this function with a corpus
+// row (zones + tag) or as a bare `{ key }`, and those two are entitled to different answers.
 const ERA_CACHE = new Map<string, DonorEra>()
 
-export function donorEra(key: string): DonorEra {
-  const hit = ERA_CACHE.get(key)
-  if (hit) return hit
-  const zones = [...new Set(sourcesFor(key).flatMap((s) => s.zones))]
+/** The LATEST expansion any of these zones claims, or null when none of them resolves. */
+function latestZoneEra(zones: readonly string[]): Era | null {
   let era: Era | null = null
   for (const zone of zones) {
     const z = zoneEra(zone)
     if (z !== null && (era === null || eraRank(z) > eraRank(era))) era = z
   }
-  const value: DonorEra = { verdict: eraVerdict(zones), era }
-  ERA_CACHE.set(key, value)
+  return era
+}
+
+/** Catalog zones ∪ the zones the item page named. One list, deduped, order irrelevant to a fold. */
+function eraZones(subject: EraSubject): string[] {
+  const catalog = sourcesFor(subject.key).flatMap((s) => s.zones)
+  const page = (subject.wikiSources ?? []).flatMap((s) => (s.zone === undefined ? [] : [s.zone]))
+  return [...new Set([...catalog, ...page])]
+}
+
+export function donorEra(subject: EraSubject): DonorEra {
+  const id = `${subject.key} ${subject.eraTag ?? ''} ${String(subject.wikiSources?.length ?? 0)}`
+  const hit = ERA_CACHE.get(id)
+  if (hit) return hit
+  const zones = eraZones(subject)
+  const fromZone = latestZoneEra(zones)
+  const fromTag = subject.eraTag === undefined ? null : eraFromTag(subject.eraTag)
+  const era = fromZone ?? fromTag
+  const value: DonorEra = {
+    verdict: layeredVerdict(zones, subject.eraTag),
+    era,
+    by: fromZone !== null ? 'zone' : era === null ? null : 'tag'
+  }
+  ERA_CACHE.set(id, value)
   return value
 }
 
+/** The era chip's whole content, or null when the donor is in-era and there is nothing to say. */
+export interface EraChipInfo {
+  /** what the chip reads: an expansion name, `out of era`, or `era?` */
+  label: string
+  /** the `era?` case — chipped quietly, because it is a fact about our tables, not about the item */
+  unknown: boolean
+  /** why it says that, naming the witness — a banner is not a drop zone and must not pose as one */
+  tooltip: string
+}
+
+const UNKNOWN_TOOLTIP =
+  'Nothing places this donor: no mob catalog zone, no zone on its page, and no era banner. We will not claim it is out of era.'
+
 /**
- * The one chip the era join draws, or null when there is nothing to say.
+ * The one chip the era join draws.
  *   out-of-era → the expansion's name ("Velious") — shown only while the filter is OFF
- *   unknown    → `era?` — no source zone states an era, and we will not guess one
+ *   unknown    → `era?` — nothing states an era, and we will not guess one
+ *   in-era     → null, the normal case, which needs no decoration
  */
-export function eraChipLabel(key: string): string | null {
-  const { verdict, era } = donorEra(key)
-  if (verdict === 'unknown') return 'era?'
-  if (verdict === 'out-of-era') return era === null ? 'out of era' : ERA_LABEL[era]
-  return null
+export function eraChip(subject: EraSubject): EraChipInfo | null {
+  const { verdict, era, by } = donorEra(subject)
+  if (verdict === 'in-era') return null
+  if (verdict === 'unknown') return { label: 'era?', unknown: true, tooltip: UNKNOWN_TOOLTIP }
+  const label = era === null ? 'out of era' : ERA_LABEL[era]
+  return {
+    label,
+    unknown: false,
+    tooltip:
+      by === 'tag'
+        ? `No zone places this donor; its wiki page is banner-tagged ${label}.`
+        : `This donor's sources are in ${label}.`
+  }
 }
 
 /** Does the current-era filter hide this donor? Only a POSITIVE out-of-era verdict ever does. */
-export function eraHides(key: string, eraOnly: boolean): boolean {
-  return eraOnly && donorEra(key).verdict === 'out-of-era'
+export function eraHides(subject: EraSubject, eraOnly: boolean): boolean {
+  return eraOnly && donorEra(subject).verdict === 'out-of-era'
 }
 
 const ERA_KEY = 'eq.planner.era'
@@ -230,7 +304,7 @@ export function filterDonors(
     if (d.socket !== filters.socket) return false
     if (filters.slot !== null && !d.slots.includes(filters.slot)) return false
     if (filters.trioOnly && classFit(d, planClasses) === 'no') return false
-    if (eraHides(d.key, eraOnly)) return false
+    if (eraHides(d, eraOnly)) return false
     return needle === '' || d.searchKey.includes(needle)
   })
 }

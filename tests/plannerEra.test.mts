@@ -11,6 +11,11 @@
 //   2. THE ORDERING IS THE SEMANTIC, not today's constant. `CURRENT_ERA` is one line that flips
 //      when Kunark launches, so the tests exercise `eraVerdictAt` at each era instead of hard-
 //      coding "kunark is out" — the day the flip happens this file must stay green unchanged.
+//   3. THE LAYERING (added 2026-08-04 with the page-top `{{X Era}}` banner). Zones win in BOTH
+//      directions; the banner is consulted only where nothing resolved. The mapping from a banner
+//      token to an expansion is a hand-authored table and is pinned here token for token —
+//      including `FearHateRevamp`, whose row is re-derived from the mob catalog rather than
+//      asserted, so the decision cannot outlive its evidence.
 //
 // COVERAGE IS A FLOOR, NEVER AN EXACT COUNT (AGENTS.md: frozen numbers rot). Measured 2026-08-04
 // over the 192 distinct catalog zone strings / 8,214 mob-zone links: 159 names resolve, carrying
@@ -24,9 +29,12 @@ import assert from 'node:assert/strict'
 import {
   CURRENT_ERA,
   ERA_ORDER,
+  eraFromTag,
   eraRank,
   eraVerdict,
   eraVerdictAt,
+  layeredVerdict,
+  layeredVerdictAt,
   zoneEra,
   type Era
 } from '../src/shared/planner/era'
@@ -146,11 +154,15 @@ test('one reachable zone wins: a mixed drop list is in-era, not out', () => {
 // ---- the ordering, which is what CURRENT_ERA means -------------------------------------------
 
 test('ERA_ORDER is release order, and eraRank agrees with it', () => {
-  assert.deepEqual([...ERA_ORDER], ['classic', 'kunark', 'velious'])
+  // 'luclin' is here because 25 item PAGES are banner-tagged `{{Luclin Era}}` and `eraFromTag`
+  // has to be able to rank what it reads. No ZONE claims it (ZoneEra deliberately stops at
+  // Velious), so this list is one longer than the zone table's vocabulary — by design.
+  assert.deepEqual([...ERA_ORDER], ['classic', 'kunark', 'velious', 'luclin'])
   assert.equal(eraRank('classic'), 0)
   assert.ok(eraRank('classic') < eraRank('kunark'))
   assert.ok(eraRank('kunark') < eraRank('velious'))
-  assert.ok(ERA_ORDER.includes(CURRENT_ERA), 'CURRENT_ERA must be one of the three')
+  assert.ok(eraRank('velious') < eraRank('luclin'))
+  assert.ok(ERA_ORDER.includes(CURRENT_ERA), 'CURRENT_ERA must be one of the ranked eras')
 })
 
 test('the verdict is a comparison against CURRENT_ERA, not a hardcoded era list', () => {
@@ -168,7 +180,8 @@ test('the verdict is a comparison against CURRENT_ERA, not a hardcoded era list'
   const expected: Record<Era, [string, string, string]> = {
     classic: ['in-era', 'out-of-era', 'out-of-era'],
     kunark: ['in-era', 'in-era', 'out-of-era'],
-    velious: ['in-era', 'in-era', 'in-era']
+    velious: ['in-era', 'in-era', 'in-era'],
+    luclin: ['in-era', 'in-era', 'in-era']
   }
   for (const era of ERA_ORDER) {
     const [g, c, s] = expected[era]
@@ -180,6 +193,110 @@ test('the verdict is a comparison against CURRENT_ERA, not a hardcoded era list'
   // eraVerdict is exactly eraVerdictAt(CURRENT_ERA) — no second opinion.
   for (const zones of [guk, chardok, sleeper, ['Various'], []]) {
     assert.equal(eraVerdict(zones), eraVerdictAt(zones, CURRENT_ERA))
+  }
+})
+
+// ---- layer 2: the item page's era banner -------------------------------------------------------
+
+test('eraFromTag is the hand-authored table, token for token (law 12)', () => {
+  // EVERY token the corpus actually carries, measured 2026-08-04 over the scrape cache: Velious
+  // 2,761 · Classic 2,422 · Kunark 1,224 · Sky 349 · Chardok Revamp 136 · Epics 113 · Temple 98 ·
+  // EpicQuests 76 · FearHateRevamp 53 · Fear 27 · Luclin 25 · Paineel 22 · Hate 5 · Unknown 2 ·
+  // `kunark` 1 · `Chardok` 1. Pinned as a table, not a rule, because these are the wiki's SECTION
+  // HEADINGS — half of them name a place, and no amount of string logic turns "Temple" into an
+  // expansion.
+  const TABLE: readonly (readonly [string, Era | null])[] = [
+    ['Classic', 'classic'],
+    ['Sky', 'classic'], // Plane of Sky is 1999 raid content, not a later expansion
+    ['Fear', 'classic'],
+    ['Hate', 'classic'],
+    ['Temple', 'classic'], // Temple of Solusek Ro
+    ['Paineel', 'classic'], // the late-1999 heretic patch
+    ['Epics', 'classic'],
+    ['EpicQuests', 'classic'],
+    ['Kunark', 'kunark'],
+    ['Chardok Revamp', 'kunark'], // Chardok is a Kunark zone whatever the revamp did to it
+    ['Chardok', 'kunark'],
+    ['Velious', 'velious'],
+    ['Luclin', 'luclin'],
+    ['Unknown', null] // the wiki saying it does not know must not become our guess
+  ]
+  for (const [tag, era] of TABLE) assert.equal(eraFromTag(tag), era, tag)
+
+  // FEARHATEREVAMP → CLASSIC, and this row was MEASURED, not reasoned. 53 pages carry the tag; 26
+  // of them appear in the EQL mob catalog's loot lists, and every one of those 26 drops off a
+  // Plane of Fear (14) or Plane of Hate (12) mob — zones this server ships. The catalog is a
+  // scrape of THIS server, so its revamp loot is live loot; anything but classic would hide
+  // Greenmist armour from a player who can camp it tonight. Re-derived from the catalog here so
+  // the decision cannot quietly outlive its evidence.
+  assert.equal(eraFromTag('FearHateRevamp'), 'classic')
+  const greenmist = catalog.mobs.filter((m) => (m.drops ?? []).some((d) => /^Greenmist /i.test(d)))
+  assert.ok(greenmist.length > 0, 'the catalog no longer lists Greenmist armour at all')
+  for (const mob of greenmist) {
+    assert.equal(eraVerdict(mob.zones ?? []), 'in-era', `${mob.name} ${JSON.stringify(mob.zones)}`)
+  }
+
+  // CASE is folded (the corpus's one `{{kunark Era}}` typo), whitespace is already normalized by
+  // the parser, and anything the table does not name is null — never a nearest match.
+  assert.equal(eraFromTag('kunark'), 'kunark')
+  assert.equal(eraFromTag('  VELIOUS  '), 'velious')
+  for (const junk of ['', 'Planes of Power', 'Hole', 'P99 Era Header', 'xyzzy']) {
+    assert.equal(eraFromTag(junk), null, junk)
+  }
+})
+
+test('layeredVerdict: the ZONE wins in both directions, the tag speaks only into silence', () => {
+  const guk = ['Lower Guk'] // classic
+  const sleeper = ["Sleeper's Tomb"] // velious
+  const junk = ['Various'] // resolves to nothing
+
+  // 1. Zone IN beats tag OUT. A Velious-bannered item that a Lower Guk mob drops is farmable
+  //    tonight — measured, 29 donors are exactly this shape (Blazing Gauntlets of Fennin Ro is
+  //    tagged Kunark and drops in Nagafen's Lair).
+  assert.equal(layeredVerdict(guk, 'Velious'), 'in-era')
+  assert.equal(layeredVerdict(guk, 'Kunark'), 'in-era')
+
+  // 2. Zone OUT beats tag IN. Stonebrunt Mountains is a Jan-2001 patch zone the owner observed as
+  //    unreachable, and its pages are bannered `{{Classic Era}}`; where you have to go wins.
+  assert.equal(layeredVerdict(sleeper, 'Classic'), 'out-of-era')
+  assert.equal(layeredVerdict(['Stonebrunt Mountains'], 'Classic'), 'out-of-era')
+
+  // 3. Into silence, the tag decides — BOTH directions.
+  assert.equal(layeredVerdict([], 'Classic'), 'in-era')
+  assert.equal(layeredVerdict([], 'Velious'), 'out-of-era')
+  assert.equal(layeredVerdict(junk, 'Sky'), 'in-era')
+  assert.equal(layeredVerdict(junk, 'Luclin'), 'out-of-era')
+
+  // 4. No tag, an unreadable tag, or an `Unknown` one leaves silence as silence (law 1).
+  for (const tag of [undefined, '', 'Unknown', 'Planes of Power']) {
+    assert.equal(layeredVerdict([], tag), 'unknown', String(tag))
+    assert.equal(layeredVerdict(junk, tag), 'unknown', String(tag))
+  }
+
+  // 5. With no tag at all, layeredVerdict IS eraVerdict — the layer adds, never alters.
+  for (const zones of [guk, sleeper, junk, [], ['Kael Drakkel', 'Lower Guk']]) {
+    assert.equal(layeredVerdict(zones, undefined), eraVerdict(zones), JSON.stringify(zones))
+  }
+})
+
+test('the tag layer moves with CURRENT_ERA too — it is the same rank comparison', () => {
+  // Asserted through the `At` form so the day Kunark launches this file stays green unchanged.
+  const expected: Record<Era, [string, string]> = {
+    classic: ['in-era', 'out-of-era'],
+    kunark: ['in-era', 'in-era'],
+    velious: ['in-era', 'in-era'],
+    luclin: ['in-era', 'in-era']
+  }
+  for (const era of ERA_ORDER) {
+    const [classicTag, kunarkTag] = expected[era]
+    assert.equal(layeredVerdictAt([], 'Classic', era), classicTag, `Classic tag @ ${era}`)
+    assert.equal(layeredVerdictAt([], 'Kunark', era), kunarkTag, `Kunark tag @ ${era}`)
+    // A zone still overrules the tag at every ceiling.
+    assert.equal(layeredVerdictAt(['Lower Guk'], 'Luclin', era), 'in-era', `Guk @ ${era}`)
+  }
+  // And the shipped wrapper is exactly the CURRENT_ERA case — no second opinion.
+  for (const tag of ['Classic', 'Velious', 'Unknown', undefined]) {
+    assert.equal(layeredVerdict([], tag), layeredVerdictAt([], tag, CURRENT_ERA), String(tag))
   }
 })
 
