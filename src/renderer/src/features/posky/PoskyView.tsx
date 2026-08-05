@@ -1,7 +1,6 @@
 import { type JSX, useCallback, useEffect, useState } from 'react'
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -26,6 +25,7 @@ import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
 import { useQuestList, type QuestListState, type SortKey, type TabKey } from './useQuestList'
 import type { MobTarget } from '../mobs/mobTarget'
+import ChipMultiSelect from '../../components/ChipMultiSelect'
 import Confetti from '../../lib/Confetti'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -97,14 +97,12 @@ function FilterBar({
 }): JSX.Element {
   return (
     <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center" useFlexGap>
-      <Autocomplete
-        multiple
-        size="small"
+      <ChipMultiSelect
         options={classes}
         value={list.selectedClasses}
-        onChange={(_e, v) => list.setSelectedClasses(v)}
-        sx={{ minWidth: 280 }}
-        renderInput={(params) => <TextField {...params} label="Filter by class" placeholder="All classes" />}
+        onChange={(v) => list.setSelectedClasses(v)}
+        label="Filter by class"
+        placeholder="All classes"
       />
       <TextField
         size="small"

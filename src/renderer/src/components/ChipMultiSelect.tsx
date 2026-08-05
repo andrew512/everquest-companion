@@ -1,0 +1,58 @@
+// ChipMultiSelect — THE "pick several from a closed list" control (docs/plans/planner-v2.md V3).
+//
+// A closed list is not a search: every option is known up front, the list is short enough to
+// scroll, and what you have already picked must stay VISIBLE while you pick the next one — which
+// is why the selection renders as chips inside the field rather than as a count beside it. The
+// shape started as nine inline lines in the Sky tracker's class filter and moved here the moment
+// a second surface (the planner's target classes) wanted exactly it.
+//
+// EMPTY IS "NO FILTER", never "none" (world-model law 1). The component never substitutes a
+// selection of its own; the caller's `placeholder` is what says so out loud.
+//
+// `max` is a CAP, not a truncation: at the cap the unpicked options go disabled rather than
+// disappearing, so the list keeps showing what exists and why you cannot have more of it.
+
+import type { JSX } from 'react'
+import { Autocomplete, TextField } from '@mui/material'
+
+export interface ChipMultiSelectProps<T extends string> {
+  options: readonly T[]
+  value: T[]
+  onChange: (next: T[]) => void
+  label: string
+  /** shown while nothing is picked — the place to state what an empty selection MEANS */
+  placeholder?: string
+  /** how many may be picked at once; unset = unlimited */
+  max?: number
+  /** the control never shrinks inside a nowrap toolbar, so its floor is the caller's call */
+  minWidth?: number
+  testId?: string
+}
+
+export function ChipMultiSelect<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+  placeholder,
+  max,
+  minWidth = 280,
+  testId
+}: ChipMultiSelectProps<T>): JSX.Element {
+  const full = max !== undefined && value.length >= max
+  return (
+    <Autocomplete
+      multiple
+      size="small"
+      options={options}
+      value={value}
+      onChange={(_e, v) => onChange(max === undefined ? v : v.slice(0, max))}
+      getOptionDisabled={(o) => full && !value.includes(o)}
+      sx={{ minWidth }}
+      data-testid={testId}
+      renderInput={(params) => <TextField {...params} label={label} placeholder={placeholder} />}
+    />
+  )
+}
+
+export default ChipMultiSelect
