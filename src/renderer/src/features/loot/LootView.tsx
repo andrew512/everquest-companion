@@ -1,4 +1,23 @@
-import { type JSX, useEffect, useRef, useState } from 'react'
+// LootView — the loot ledger, and (since 2026-08-04) the item drill-down that TAKES THE PANE.
+//
+// TWO STATES, ONE VIEW. `selected === null` is the ledger: toolbar, summary, notable pickups,
+// and the windowed table. A selection swaps the whole body for `ItemDetailPane` — breadcrumb
+// "Loot › <item>", a back chevron, and the drill-down at full width. The old modal is gone; see
+// that file's header for why.
+//
+// SCROLL POSITION IS SAVED ACROSS THE SWAP, and that is not a nicety: this table is the
+// character's entire loot history, and a reader who clicks a row two thousand rows down must
+// come back to it rather than to the top. The list unmounts on the swap (it is the pane that
+// takes over), so the offset is captured on the way in and re-applied in a LAYOUT effect on the
+// way back — before paint, so there is no visible jump. The windowing hook re-reads the offset
+// from the scroll event that assignment fires.
+//
+// A DEEP LINK LANDS DIRECTLY ON THE DETAIL PANE. `focusItem`/`focusNonce` come from App.tsx's
+// `openLoot` (the Overview's drop rows). Keyed on the NONCE, exactly like the Mobs tab's target:
+// this view is remounted per character rebuild and unmounted whenever you leave the tab, so the
+// effect runs on arrival, and asking for the same item twice must open it twice.
+
+import { type JSX, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -20,7 +39,7 @@ import { itemCountKey } from '../../lib/itemName'
 import { formatDateTime, formatTime } from '../../lib/formatDate'
 import { useFavorites } from '../favorites/useFavorites'
 import { useProgress } from '../posky/useProgress'
-import { ItemDetailDialog } from './ItemDetailDialog'
+import { ItemDetailPane } from './ItemDetailPane'
 import { itemStats, questItemNames } from './lootItemData'
 import { ROW_HEIGHT } from './lootRows'
 import { LootTable } from './LootTables'
@@ -148,7 +167,67 @@ function NoLootYet(): JSX.Element {
   )
 }
 
-export default function LootView(): JSX.Element {
+export interface LootViewProps {
+  /** An item to open on arrival — the Overview's drop rows deep-linking in. Re-applied whenever
+   *  `focusNonce` changes, so the same item asked for twice opens twice. */
+  focusItem?: string | null
+  focusNonce?: number
+  /** Told the moment the focus has been applied, so the router drops it and a later plain visit
+   *  to this tab lands on the ledger rather than on wherever the last link pointed. */
+  onFocusConsumed?: () => void
+}
+
+/** Which item the pane has taken over for, and the two ways in and out of it. */
+interface LootDetail {
+  selected: string | null
+  open: (item: string) => void
+  close: () => void
+}
+
+/**
+ * THE PANE-TAKEOVER STATE, and the scroll contract it owes the ledger it replaces.
+ *
+ * The list unmounts on the swap, so the offset is captured on the way in and re-applied in a
+ * LAYOUT effect on the way back — before paint, so returning never flashes the top of an
+ * eleven-thousand-row table. A DEEP-LINKED entry saves 0 instead: the reader was on the Overview,
+ * so there is no position of theirs to return to and "back" means the top of the ledger.
+ *
+ * Its own hook rather than inline, so `LootView` itself stays inside the measured
+ * lines-per-function ceiling and this rule is readable in one screen.
+ */
+function useLootDetail(
+  props: LootViewProps,
+  scrollRef: React.RefObject<HTMLDivElement | null>
+): LootDetail {
+  const { focusItem, focusNonce, onFocusConsumed } = props
+  const [selected, setSelected] = useState<string | null>(null)
+  const savedScroll = useRef(0)
+
+  // An inbound focus opens the detail pane, then is consumed. Keyed on the NONCE, not the item's
+  // identity — the same item asked for twice must open twice.
+  useEffect(() => {
+    if (focusItem == null) return
+    savedScroll.current = 0
+    setSelected(focusItem)
+    onFocusConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNonce])
+
+  useLayoutEffect(() => {
+    if (selected === null && scrollRef.current) scrollRef.current.scrollTop = savedScroll.current
+  }, [selected, scrollRef])
+
+  return {
+    selected,
+    open: (item) => {
+      savedScroll.current = scrollRef.current?.scrollTop ?? 0
+      setSelected(item)
+    },
+    close: () => setSelected(null)
+  }
+}
+
+export default function LootView(props: LootViewProps = {}): JSX.Element {
   const { isFavorite, toggle: toggleFavorite } = useFavorites()
   // ONE subscription to the loot module: useProgress already owns it (and needs it for the
   // reconcile), so the merged view reads its history from there rather than holding a
@@ -165,7 +244,6 @@ export default function LootView(): JSX.Element {
   const [groupByItem, setGroupByItem] = useState(true)
   const [questOnly, setQuestOnly] = useState(false)
   const [showInventoryOnly, setShowInventoryOnly] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   // When main auto-reloads the *-Inventory.txt (chokidar watch), surface it quietly.
   const [autoUpdatedAt, setAutoUpdatedAt] = useState<number | null>(null)
@@ -191,9 +269,23 @@ export default function LootView(): JSX.Element {
   // mounted, so a filter keystroke never mounts hundreds of MUI rows synchronously.
   const rowCount = groupByItem ? groupRows.length : events.length
   const win = useWindowedRows({ count: rowCount, rowHeight: ROW_HEIGHT, scrollRef })
+  const detail = useLootDetail(props, scrollRef)
+
+  const selected = detail.selected
+  if (selected !== null) {
+    return (
+      <ItemDetailPane
+        item={selected}
+        events={history.filter((e) => e.item.toLowerCase() === selected.toLowerCase())}
+        stats={itemStats[itemCountKey(selected)]}
+        isQuestItem={questItemNames.has(itemCountKey(selected))}
+        onBack={detail.close}
+      />
+    )
+  }
 
   return (
-    <Stack spacing={2} sx={{ height: '100%' }}>
+    <Stack spacing={2} data-testid="loot-list" sx={{ height: '100%' }}>
       <LootToolbar
         query={query}
         setQuery={setQuery}
@@ -216,7 +308,7 @@ export default function LootView(): JSX.Element {
         autoUpdatedAt={autoUpdatedAt}
       />
 
-      <NotablePickupsStrip {...strip} onSelect={setSelected} />
+      <NotablePickupsStrip {...strip} onSelect={detail.open} />
 
       {history.length === 0 && <NoLootYet />}
 
@@ -228,20 +320,9 @@ export default function LootView(): JSX.Element {
           groupByItem={groupByItem}
           rows={groupRows}
           events={events}
-          ctx={{ win, isFavorite, knowledgeByKey, invByKey, onToggleFavorite: toggleFavorite, onSelect: setSelected }}
+          ctx={{ win, isFavorite, knowledgeByKey, invByKey, onToggleFavorite: toggleFavorite, onSelect: detail.open }}
         />
       </Box>
-
-      {selected && (
-        <ItemDetailDialog
-          open
-          onClose={() => setSelected(null)}
-          item={selected}
-          events={history.filter((e) => e.item.toLowerCase() === selected.toLowerCase())}
-          stats={itemStats[itemCountKey(selected)]}
-          isQuestItem={questItemNames.has(itemCountKey(selected))}
-        />
-      )}
 
       <Snackbar
         open={!!toast}

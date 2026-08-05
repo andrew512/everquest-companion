@@ -1,4 +1,4 @@
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useEffect, useState } from 'react'
 import { Box, Button, CssBaseline, Snackbar, Alert, Typography } from '@mui/material'
 import SettingsIcon from '@mui/icons-material/Settings'
 import TravelExploreIcon from '@mui/icons-material/TravelExplore'
@@ -8,15 +8,15 @@ import type { CharacterRef } from '@shared/types'
 import TitleBar from './components/TitleBar'
 import NavDrawer from './components/NavDrawer'
 import { VIEW_KEY, loadView, type View } from './appViews'
+// The app's navigation MODEL — the deep-link routers and their nonce contract. See appRouting.ts.
+import { useAppRouting, usePrefsRouting, type AppRouting, type PrefsRouting } from './appRouting'
 import PoskyView from './features/posky/PoskyView'
 import LootView from './features/loot/LootView'
 import LevelingView from './features/leveling/LevelingView'
 import BossView from './features/bosses/BossView'
 import MobsView from './features/mobs/MobsView'
 import MapsView from './features/maps/MapsView'
-import type { MobTarget } from './features/mobs/mobTarget'
 import CombatView from './features/combat/CombatView'
-import type { CombatFocus } from './features/combat/combatFocus'
 import OverviewView from './features/overview/OverviewView'
 import AlertsView from './features/alerts/AlertsView'
 import BuffsView from './features/buffs/BuffsView'
@@ -84,109 +84,46 @@ function NoLogsEmptyState({ onOpenPreferences }: { onOpenPreferences: () => void
 }
 
 /**
- * App-wide DEEP-LINK routing: one detail surface per subject, so the thing that ROUTES to it
- * is app-level. Mobs (Task #64) has three callers — a Raid Targets roster card, the Overview
- * mob card, and the `app:focusView` deep link from the events overlay's con rows; Combat has
- * Overview's DPS card linking down to the fight it is already showing.
- *
- * The NONCE is the load-bearing part: the destination view keys its effect on it and stays
- * MOUNTED across a link, so asking for the same subject twice arrives twice instead of looking
- * broken. `clear*` is called the moment the payload is applied, so a stale one can't re-fire
- * when you next return to that tab.
- */
-interface AppRouting {
-  mobTarget: MobTarget | null
-  mobNonce: number
-  openMob: (t: MobTarget) => void
-  clearMob: () => void
-  combatFocus: CombatFocus | null
-  combatNonce: number
-  openCombat: (f: CombatFocus) => void
-  clearCombatFocus: () => void
-}
-
-function useAppRouting(setView: (v: View) => void): AppRouting {
-  const [mobTarget, setMobTarget] = useState<MobTarget | null>(null)
-  const [mobNonce, setMobNonce] = useState(0)
-  const [combatFocus, setCombatFocus] = useState<CombatFocus | null>(null)
-  const [combatNonce, setCombatNonce] = useState(0)
-  // The openers are memoized because one of them is a DEPENDENCY of the mount-only effect that
-  // installs the cross-window `app:focusView` listener — a fresh identity each render would
-  // tear down and re-register that subscription on every render.
-  const openMob = useCallback(
-    (t: MobTarget) => {
-      setMobTarget(t)
-      setMobNonce((n) => n + 1)
-      setView('mobs')
-    },
-    [setView]
-  )
-  const openCombat = useCallback(
-    (f: CombatFocus) => {
-      setCombatFocus(f)
-      setCombatNonce((n) => n + 1)
-      setView('combat')
-    },
-    [setView]
-  )
-  return {
-    mobTarget,
-    mobNonce,
-    openMob,
-    clearMob: () => setMobTarget(null),
-    combatFocus,
-    combatNonce,
-    openCombat,
-    clearCombatFocus: () => setCombatFocus(null)
-  }
-}
-
-/**
- * A deep link INTO a Preferences section. No nonce: PreferencesView is KEYED on the section, so
- * asking for one always lands there — even from Preferences itself. The request is dropped the
- * moment the user leaves the view, so a later plain visit opens on the usual section rather
- * than wherever the last link pointed.
- *
- * Today's only caller is the first-run telemetry notice's "Details" link (plan T1): the notice
- * is one sentence, and this is where the rest of that sentence lives.
- */
-interface PrefsRouting {
-  section: string | null
-  openSection: (id: string) => void
-}
-
-function usePrefsRouting(view: View, setView: (v: View) => void): PrefsRouting {
-  const [section, setSection] = useState<string | null>(null)
-  useEffect(() => {
-    if (view !== 'preferences') setSection(null)
-  }, [view])
-  const openSection = useCallback(
-    (id: string) => {
-      setSection(id)
-      setView('preferences')
-    },
-    [setView]
-  )
-  return { section, openSection }
-}
-
-/**
- * The views that take NOTHING but a remount key — split out of `ViewContent` purely as
+ * The views the router reaches with at most ONE callback — split out of `ViewContent` purely as
  * factoring: the switch is one branch per view, so every view added to the app costs the
- * enclosing function a point of cyclomatic complexity, and the routed views (the ones carrying
- * a deep-link payload) are the half worth reading. Behaviour is identical: the `key` still
- * lives on each view, so a character rebuild still remounts them.
+ * enclosing function a point of cyclomatic complexity, and the deep-linked views (the ones
+ * carrying a nonce'd payload) are the half worth reading. Behaviour is identical: the `key`
+ * still lives on each view, so a character rebuild still remounts them.
+ *
+ * Loot rides here rather than beside Mobs and Combat because its payload is a plain string with
+ * no defaults to compose — but it IS a deep link, and it obeys the same nonce contract they do.
  */
-function PlainView({ view, viewKey }: { view: View; viewKey: string }): JSX.Element {
+function PlainView({
+  view,
+  viewKey,
+  routing,
+  onOpenVoicePrefs
+}: {
+  view: View
+  viewKey: string
+  routing: AppRouting
+  /** CONTRACT with the alerts wave: AlertsView's optional "take me to the voice settings" hook.
+   *  Spread rather than named so this tree compiles whether or not that prop exists yet. */
+  onOpenVoicePrefs: () => void
+}): JSX.Element {
   return (
     <>
-      {view === 'loot' && <LootView key={viewKey} />}
+      {/* The Loot tab stays MOUNTED across a deep link (no `key` churn on item change) —
+          remounting per character rebuild only, exactly like Mobs and Combat. */}
+      {view === 'loot' && (
+        <LootView
+          key={viewKey}
+          focusItem={routing.lootItem}
+          focusNonce={routing.lootNonce}
+          onFocusConsumed={routing.clearLootFocus}
+        />
+      )}
       {/* Maps remounts per character rebuild like the rest: the zone it auto-opens comes from
           the character module, which re-hydrates under the new character anyway. */}
       {view === 'maps' && <MapsView key={viewKey} />}
       {view === 'leveling' && <LevelingView key={viewKey} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
-      {view === 'alerts' && <AlertsView key={viewKey} />}
+      {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
     </>
   )
 }
@@ -199,7 +136,6 @@ function ViewContent({
   viewKey,
   routing,
   onOpenPreferences,
-  onOpenLoot,
   onOpenLeveling,
   onSendFeedback,
   prefs
@@ -209,12 +145,11 @@ function ViewContent({
   viewKey: string
   routing: AppRouting
   onOpenPreferences: () => void
-  onOpenLoot: () => void
   /** Preferences' Feedback section opens the app-level dialog, preselecting a type. */
   onSendFeedback: (prefill?: FeedbackPrefill) => void
-  /** Overview's leveling card → the Leveling tab. A PLAIN tab switch, so it rides here beside
-   *  `onOpenLoot` rather than in `AppRouting`: that hook is for DEEP links, and its nonce
-   *  machinery exists to re-deliver a PAYLOAD. This destination carries none. */
+  /** Overview's leveling card → the Leveling tab. A PLAIN tab switch, so it rides here rather
+   *  than in `AppRouting`: that hook is for DEEP links, and its nonce machinery exists to
+   *  re-deliver a PAYLOAD. This destination carries none. */
   onOpenLeveling: () => void
   /** Which Preferences section a deep link asked for, and the way to retire that request. */
   prefs: PrefsRouting
@@ -230,7 +165,12 @@ function ViewContent({
   if (!hasCharacters) return <NoLogsEmptyState onOpenPreferences={onOpenPreferences} />
   return (
     <>
-      <PlainView view={view} viewKey={viewKey} />
+      <PlainView
+        view={view}
+        viewKey={viewKey}
+        routing={routing}
+        onOpenVoicePrefs={() => prefs.openSection('voice')}
+      />
       {/* The Mobs tab stays MOUNTED across a deep link (no `key` churn on target
           change) — remounting per character rebuild only, like every other view. */}
       {view === 'mobs' && (
@@ -251,7 +191,7 @@ function ViewContent({
           key={viewKey}
           onOpenCombat={routing.openCombat}
           onOpenMob={routing.openMob}
-          onOpenLoot={onOpenLoot}
+          onOpenLoot={routing.openLoot}
           onOpenLeveling={onOpenLeveling}
         />
       )}
@@ -475,7 +415,6 @@ export default function App(): JSX.Element {
               routing={routing}
               prefs={prefsRouting}
               onOpenPreferences={() => setView('preferences')}
-              onOpenLoot={() => setView('loot')}
               onOpenLeveling={() => setView('leveling')}
               onSendFeedback={feedback.openFeedback}
             />

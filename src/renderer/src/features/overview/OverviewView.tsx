@@ -12,7 +12,14 @@
 // panel used to push the page taller — Task #56). The view owns exactly the height it is given
 // and scrolls INSIDE the grid, so the app's content area never gains a page-level scrollbar.
 //
-// THREE REGIONS, NOT SEVEN CARDS (symmetry pass, 2026-08-03). The page is NOW (four peer cards),
+// THE CLASS-LOADOUT CARD IS GONE FROM HERE (owner decision, 2026-08-04). The FEATURE is not —
+// it lives on in Preferences → Profiles (the history + the correction editor) and in the boss
+// surfaces that read a kill's loadout. What it was not is a GLANCE: your three classes change a
+// few times a month, and a card restating them every second is the one thing on this page that
+// never answers "what is happening right now". Dropping it also gives the NOW rank three cards
+// instead of four, which is a better band at every width the grid offers.
+//
+// THREE REGIONS, NOT SEVEN CARDS (symmetry pass, 2026-08-03). The page is NOW (three peer cards),
 // then the curve, then HISTORY (two twin feeds) — so it is built as three region grids rather than
 // one flat grid the cards fall into in DOM order. That is what buys the two things a flat grid
 // cannot express: the NOW rank can carry its own column rule (1 → 2 → 4 across) and its own row
@@ -33,12 +40,10 @@ import type { JSX } from 'react'
 import { Box, CircularProgress, Paper, Skeleton, Stack, Typography } from '@mui/material'
 import type { CombatFocus } from '../combat/combatFocus'
 import type { MobTarget } from '../mobs/mobTarget'
-import { ComboCard } from './ComboCard'
 import { DpsCard } from './DpsCard'
 import { DpsCurveCard } from './DpsCurveCard'
 import { CurrentMobCard } from './CurrentMobCard'
 import { LevelingCard } from './LevelingCard'
-import { useComboSnap } from '../profiles/ClassComboData'
 import { RecentDropsCard } from './RecentDropsCard'
 import { RecentKillsCard } from './RecentKillsCard'
 import { ZoneStrip } from './ZoneStrip'
@@ -51,10 +56,15 @@ import { useRecentKills } from './useRecentKills'
 export interface OverviewViewProps {
   /** DPS card → "Open in Combat": jump to an explicit scope + selection. */
   onOpenCombat: (f: CombatFocus) => void
-  /** Mob card → the app-wide mob detail router (Mobs tab), seeded with what we already hold. */
+  /** Mob card AND the recent-kills feed → the app-wide mob detail router (Mobs tab), seeded
+   *  with whatever the caller already holds. */
   onOpenMob: (t: MobTarget) => void
-  /** Drops feed → "All loot": the Loot tab is the ledger, this card is the glance. */
-  onOpenLoot: () => void
+  /**
+   * The Loot tab. Called with an item it is a DEEP LINK — that item's detail pane opens
+   * directly, breadcrumb and all — and called bare it is the plain "All loot" switch. The
+   * drops feed uses both: the header link is the ledger, a row is the item.
+   */
+  onOpenLoot: (item?: string) => void
   /** Leveling card → the Leveling tab: charts, the drag-selected range, AA. */
   onOpenLeveling: () => void
 }
@@ -64,9 +74,9 @@ export interface OverviewViewProps {
  *
  * MEASURED, never guessed (the e2e harness dumps every card's box): the tallest natural card in
  * the rank is the DPS card at 303px — label, headline, supporting line, drill strip, five bars and
- * the "+N more" tail. A floor a hair above that lands every row of the rank on ONE height, so md's
- * 2x2 is a rectangle and xl's four-across is a single band, instead of the ragged 303/198 pair the
- * cards' natural heights produce on their own.
+ * the "+N more" tail. A floor a hair above that lands every row of the rank on ONE height, so the
+ * rank reads as a single band instead of the ragged 303/198 pair the cards' natural heights
+ * produce on their own.
  *
  * It is a FLOOR and not a cap on purpose (`minmax(N, auto)`, never `minmax(N, min-content)`): a
  * card whose content legitimately outgrows it pushes its whole row taller rather than being
@@ -74,8 +84,8 @@ export interface OverviewViewProps {
  * one already bounds it internally (AGENTS.md's fixed-height law), which is precisely what lets
  * this be a floor at all.
  *
- * xs is exempt: stacked in one column, four 304px cards would be 1.2k of scrolling before the
- * feeds even start.
+ * xs is exempt: stacked in one column, three 304px cards would be most of a screen of scrolling
+ * before the feeds even start.
  */
 const NOW_ROW_MIN_PX = 304
 
@@ -113,9 +123,6 @@ export default function OverviewView({
   // Its own module, its own hook: the leveling card asks for what it needs, exactly like every
   // other card here, so nothing about it touches the combat snapshot.
   const leveling = useOverviewLeveling()
-  // Same rule again: its own module, its own hook. The combo card reads the class-combo module
-  // directly and nothing about it touches the combat snapshot.
-  const combo = useComboSnap()
   const hydrating = snap?.hydrating ?? true
 
   return (
@@ -146,11 +153,10 @@ export default function OverviewView({
           <OverviewHydrating />
         ) : (
           <>
-            {/* THE NOW RANK — four peers, one height. 1 → 2 → 4 across, and the pairing on md is
-                deliberate: each row carries one DENSE card (the DPS breakdown, the target's drop
-                list) and one LIGHTER one (the leveling readout, the loadout), so neither row is a
-                wall of rows beside a four-line card. Read across on xl it is the same rhythm —
-                the two rate headlines, then the two context cards. */}
+            {/* THE NOW RANK — three peers, one height. 1 → 2 → 3 across: at md the pair-plus-one
+                keeps the two DENSE cards (the DPS breakdown, the target's drop list) from
+                sharing a row, and at lg the rank is one band read left to right — how fast you
+                are killing, how fast you are levelling, what you are killing. */}
             <Box
               data-testid="overview-now"
               sx={{
@@ -160,7 +166,7 @@ export default function OverviewView({
                 gridTemplateColumns: {
                   xs: 'minmax(0, 1fr)',
                   md: 'repeat(2, minmax(0, 1fr))',
-                  xl: 'repeat(4, minmax(0, 1fr))'
+                  lg: 'repeat(3, minmax(0, 1fr))'
                 },
                 gridAutoRows: { xs: 'min-content', md: `minmax(${String(NOW_ROW_MIN_PX)}px, auto)` },
                 '& > *': { minWidth: 0, minHeight: 0 }
@@ -172,9 +178,6 @@ export default function OverviewView({
                   past. */}
               <LevelingCard state={leveling} onOpenLeveling={onOpenLeveling} />
               <CurrentMobCard state={mob} onOpenMob={onOpenMob} />
-              {/* Gated with the NOW row for the same reason: mid-replay the "current" interval is
-                  wherever the fold has reached, which is an arbitrary point in your past. */}
-              <ComboCard snap={combo} />
             </Box>
             {/* Full width, directly under the NOW rank and gated with it: the curve describes the
                 SAME fight the DPS card above names, so showing it while the replay still calls an
@@ -197,7 +200,7 @@ export default function OverviewView({
           }}
         >
           <RecentDropsCard rows={rows} onOpenLoot={onOpenLoot} />
-          <RecentKillsCard rows={kills} onOpenLeveling={onOpenLeveling} />
+          <RecentKillsCard rows={kills} onOpenLeveling={onOpenLeveling} onOpenMob={onOpenMob} />
         </Box>
       </Box>
     </Stack>

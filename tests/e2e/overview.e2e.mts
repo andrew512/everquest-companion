@@ -24,6 +24,12 @@
  * and — the headline — "Open in Combat" navigates AND selects the same fight the glance showed.
  * Floors and identities only, never today's numbers (AGENTS.md: frozen numbers rot).
  *
+ * WAVE 2026-08-04 added three: the leveling panel is TILES plus a sparkline (or the honest
+ * at-cap refusal) rather than the naked text it was; the nav puts Loot directly after Mobs; and
+ * a drop row DEEP-LINKS into the Loot tab's detail PANE — breadcrumb and all, no dialog — whose
+ * breadcrumb root comes back to the ledger. The class-loadout card is gone from this page (the
+ * feature lives on in Preferences → Profiles), so nothing here looks for it any more.
+ *
  * Run: `npm run test:e2e` (this spec runs second).
  */
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
@@ -340,6 +346,104 @@ async function stepRoundTrip(page: Page): Promise<void> {
   )
 }
 
+/**
+ * 11. THE LEVELING PANEL IS TILES + A SPARKLINE (owner request, 2026-08-04). It used to be four
+ *     stacked lines of prose; it is now 2–4 stat tiles and a twelve-column inline SVG of the
+ *     hour. Both halves are conditional on the log actually holding progression — a fresh
+ *     character legitimately shows the card's quiet empty state — so the assertion is an
+ *     identity: tiles are present iff the card is not empty, and the spark is present iff the
+ *     hour stated at least one level-bar percentage (an at-cap hour draws the refusal instead,
+ *     which is the OTHER honest answer and is asserted as such).
+ */
+async function stepLevelingPanel(page: Page): Promise<void> {
+  const tiles = await countOf(page, '[data-testid="overview-leveling-tiles"] [data-testid^="overview-leveling-tile-"]')
+  if (tiles === 0) {
+    note('the log holds no progression in the last hour — the leveling card shows its quiet empty state')
+    return
+  }
+  check(
+    'the leveling panel states 2–4 stat tiles (a tile the log cannot support is absent, not blank)',
+    tiles >= 2 && tiles <= 4,
+    `${tiles} tiles`
+  )
+  const spark = await countOf(page, '[data-testid="overview-leveling-spark"]')
+  const refused = await countOf(page, '[data-testid="overview-leveling-spark-none"]')
+  check(
+    'the hour is drawn as a sparkline, or REFUSED with a reason — exactly one of the two',
+    spark + refused === 1,
+    `spark ${spark} · refusal ${refused}`
+  )
+  // The pace tile always exists once the window does; its unit is the app's ONE rate wording.
+  const rate = (await textOf(page, '[data-testid="overview-leveling-tile-rate"]')).replace(/\s+/g, ' ').trim()
+  check(
+    'the pace tile speaks the app’s rate vocabulary (never "/hr" alone, never "/s")',
+    rate.includes('lvl/hr') && !rate.includes('/s'),
+    rate.slice(0, 60) || 'empty'
+  )
+}
+
+/**
+ * 12. THE NAV PUTS LOOT DIRECTLY AFTER MOBS (owner decision, 2026-08-04) and leaves the rest of
+ *     the order alone. Read as ADJACENCY, not as a frozen list: the assertion survives a later
+ *     tab being added anywhere else, which a hard-coded array would not.
+ */
+async function stepNavOrder(page: Page): Promise<void> {
+  const order = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid^="nav-"]')].map((el) => el.getAttribute('data-testid') ?? '')
+  )
+  const mobs = order.indexOf('nav-mobs')
+  const loot = order.indexOf('nav-loot')
+  check(
+    'the nav puts Loot directly after Mobs',
+    mobs >= 0 && loot === mobs + 1,
+    order.join(' · ')
+  )
+}
+
+/**
+ * 13. THE LOOT DEEP LINK, AND THE PANE TAKEOVER IT LANDS ON — the wave's headline.
+ *
+ * Click a drop row and two things must be true at once: we are on the Loot tab, and it opened
+ * that ITEM's detail pane rather than the ledger. The pane is a TAKEOVER, not a dialog, so the
+ * proof is that the ledger is GONE (`loot-list` unmounted) while the breadcrumb is mounted — a
+ * popover would leave both on screen. The breadcrumb root then has to come back.
+ */
+async function stepLootLink(page: Page): Promise<void> {
+  const rows = await countOf(page, '[data-testid="overview-drop-row"]')
+  if (rows === 0) {
+    note('no loot in the log yet — the drops feed has no row to deep-link from this run')
+    return
+  }
+  const item = (await textOf(page, '[data-testid="overview-drop-name"]')).replace(/\s+/g, ' ').trim()
+  await page.click('[data-testid="overview-drop-row"]', { timeout: 15_000 })
+  const onDetail = await page.waitForSelector('[data-testid="loot-detail"]', { timeout: 30_000 }).then(
+    () => true,
+    () => false
+  )
+  if (!check('clicking a drop row opens the Loot tab on that item’s detail pane', onDetail)) return
+  check(
+    '…as a PANE TAKEOVER, not a popover (the ledger is not underneath it)',
+    (await countOf(page, '[data-testid="loot-list"]')) === 0
+  )
+  const title = (await textOf(page, '[data-testid="loot-detail-title"]')).replace(/\s+/g, ' ').trim()
+  // The feed shows a `N× ` stack prefix the ledger's item name does not carry, so the identity
+  // is asserted the way round that survives it.
+  check(
+    '…on the SAME item the row named',
+    title.length > 0 && item.includes(title),
+    `row "${item.slice(0, 40)}" · breadcrumb "${title.slice(0, 40)}"`
+  )
+  check('…with a breadcrumb root back to the list', (await countOf(page, '[data-testid="loot-breadcrumb-root"]')) === 1)
+
+  await page.click('[data-testid="loot-breadcrumb-root"]', { timeout: 15_000 })
+  const back = await page.waitForSelector('[data-testid="loot-list"]', { timeout: 20_000 }).then(
+    () => true,
+    () => false
+  )
+  check('the breadcrumb root returns to the loot ledger', back)
+  check('…and the detail pane is gone', (await countOf(page, '[data-testid="loot-detail"]')) === 0)
+}
+
 async function main(): Promise<void> {
   buildIfStale()
   // Fresh userData is load-bearing for assertion 1 — see the file header. ARTIFACTS is left
@@ -369,11 +473,15 @@ async function main(): Promise<void> {
     await stepGridAndDps(page, snap)
     await stepHeadLabel(page, snap)
     await stepZoneAndMob(page, snap)
+    await stepLevelingPanel(page)
+    await stepNavOrder(page)
     await stepDropsFeed(page)
     await stepLinkDown(page)
     await stepRoundTrip(page)
+    // Runs LAST: it navigates away from the Overview and stays on the Loot tab.
+    await stepLootLink(page)
 
-    // 11. No renderer console errors across the whole run.
+    // 14. No renderer console errors across the whole run.
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 
     if (failures.length) await dumpArtifacts(page, 'overview-FAIL')

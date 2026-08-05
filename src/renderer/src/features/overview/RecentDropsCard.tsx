@@ -33,7 +33,12 @@ const ICON_PX = 18
 
 export interface RecentDropsCardProps {
   rows: DropRow[]
-  onOpenLoot: () => void
+  /**
+   * The Loot tab. With an item it is a DEEP LINK — the loot view opens that item's detail pane
+   * directly, breadcrumb and all; without one it is the plain "show me the ledger" switch the
+   * header link has always been. One callback, because they are one destination.
+   */
+  onOpenLoot: (item?: string) => void
 }
 
 /** The item icon, or nothing. A 404 hides it (negatives are never cached — the next load retries). */
@@ -56,7 +61,14 @@ function provenance(row: DropRow): string {
   return [row.source, row.zone].filter((s): s is string => !!s).join(' · ')
 }
 
-function Row({ row, onOpenLoot }: { row: DropRow; onOpenLoot: () => void }): JSX.Element {
+function Row({ row, onOpenLoot }: { row: DropRow; onOpenLoot: (item?: string) => void }): JSX.Element {
+  // The DEEP LINK: this row's own item, opened on the Loot tab's detail pane. The whole row is
+  // the target (a 18px icon and a timestamp are not a click), and the NAME additionally carries
+  // the app's in-place link treatment — the dotted underline the Target card's mob name uses —
+  // so the row reads as a link to a thing rather than as a link to a tab.
+  const open = (): void => {
+    onOpenLoot(row.item)
+  }
   return (
     <KnownItemTooltip name={row.item} knowledge={row.knowledge}>
       <Stack
@@ -66,9 +78,9 @@ function Row({ row, onOpenLoot }: { row: DropRow; onOpenLoot: () => void }): JSX
         role="button"
         tabIndex={0}
         data-testid="overview-drop-row"
-        onClick={onOpenLoot}
+        onClick={open}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') onOpenLoot()
+          if (e.key === 'Enter' || e.key === ' ') open()
         }}
         sx={{
           minWidth: 0,
@@ -81,11 +93,22 @@ function Row({ row, onOpenLoot }: { row: DropRow; onOpenLoot: () => void }): JSX
           ...(row.highlighted
             ? { bgcolor: 'action.hover', borderLeft: 3, borderColor: 'secondary.main', pl: 0.25 }
             : { borderLeft: 3, borderColor: 'transparent', pl: 0.25 }),
-          '&:hover': { bgcolor: 'action.selected' }
+          '&:hover': { bgcolor: 'action.selected' },
+          '&:hover [data-testid="overview-drop-name"]': { color: 'primary.main' }
         }}
       >
         <DropIcon iconId={row.knowledge?.iconId} />
-        <Typography variant="caption" noWrap sx={{ fontWeight: row.highlighted ? 700 : 400, minWidth: 0 }}>
+        <Typography
+          variant="caption"
+          noWrap
+          data-testid="overview-drop-name"
+          sx={{
+            fontWeight: row.highlighted ? 700 : 400,
+            minWidth: 0,
+            textDecoration: 'underline dotted',
+            textUnderlineOffset: 3
+          }}
+        >
           {row.count != null && row.count > 1 && `${String(row.count)}× `}
           {row.item}
         </Typography>
@@ -110,7 +133,8 @@ export function RecentDropsCard({ rows, onOpenLoot }: RecentDropsCardProps): JSX
           variant="caption"
           role="button"
           tabIndex={0}
-          onClick={onOpenLoot}
+          data-testid="overview-open-loot"
+          onClick={() => onOpenLoot()}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') onOpenLoot()
           }}

@@ -92,6 +92,7 @@ import { NONE, activeIdleText, idleRuleCaption, offlineText } from '../leveling/
 import { fmtDelta, fmtDuration } from '../leveling/levelChartGeometry'
 import { formatKillRate, formatLevelRate } from '../../lib/formatRate'
 import { formatTime } from '../../lib/formatDate'
+import { levelingSpark, levelingTiles, type LevelingSpark, type LevelingTile } from './overviewLevelingTiles'
 
 /** Window A's length: the last hour of LOG time. */
 export const HEADLINE_WINDOW_MS = 60 * 60_000
@@ -465,6 +466,15 @@ export interface OverviewLevelingState {
   idleCaption: string
   /** credited kills in window A — context for the rate, so '0 kills' can't read as a bug. */
   kills: number
+  /**
+   * The stat tiles the panel draws, in order — 2 to 4 of them (overviewLevelingTiles.ts). A
+   * tile whose fact the log cannot state is ABSENT from this array rather than present with an
+   * em-dash: the row is a set of facts, and its length is one of them.
+   */
+  tiles: LevelingTile[]
+  /** Window A in twelve five-minute columns, tinted by zone — the panel's sparkline. Present
+   *  even when it is entirely flat: a quiet hour is a measurement. */
+  spark: LevelingSpark
 }
 
 /** The empty snapshot's answer: every number an em-dash, nothing invented. */
@@ -486,7 +496,11 @@ function emptyState(): OverviewLevelingState {
     historyTitle: '',
     level: null,
     idleCaption: idleRuleCaption(IDLE_GAP_MS),
-    kills: 0
+    kills: 0,
+    // No window means no columns to draw: an empty spark, never twelve zero bars implying a
+    // measured-quiet hour that was never measured.
+    tiles: [],
+    spark: { buckets: [], peak: 0, stated: 0, unstated: 0 }
   }
 }
 
@@ -512,9 +526,12 @@ export function overviewLeveling(snap: ProgressionSnap): OverviewLevelingState {
   const eta = levelEta(snap, a)
   const spans = recentLevelSpans(snap)
   const verdict = paceVerdict(spans, a.levelsPerHourWall)
+  const rateText = rate(a.levelsPerHourActive, formatLevelRate)
+  const level = currentLevel(snap)
+  const idleCaption = idleRuleCaption(a.idleThresholdMs)
   return {
     empty: false,
-    rate: rate(a.levelsPerHourActive, formatLevelRate),
+    rate: rateText,
     killRate: rate(a.killsPerHourActive, formatKillRate),
     activity: activeIdleText(a),
     offline: offlineText(a),
@@ -527,8 +544,10 @@ export function overviewLeveling(snap: ProgressionSnap): OverviewLevelingState {
     history: historyText(spans),
     verdict: verdict && VERDICT_TEXT[verdict],
     historyTitle: historyTitleText(spans, a.levelsPerHourWall),
-    level: currentLevel(snap),
-    idleCaption: idleRuleCaption(a.idleThresholdMs),
-    kills: a.kills
+    level,
+    idleCaption,
+    kills: a.kills,
+    tiles: levelingTiles({ level, hour: a, eta, rateText, idleCaption }),
+    spark: levelingSpark(snap, hour)
   }
 }

@@ -24,6 +24,7 @@ import { Box, Chip, Stack, Tooltip, Typography } from '@mui/material'
 import type { ProgressionKill } from '@shared/types'
 import { DashCard, QuietNote } from '../combat/combatShared'
 import { formatTime } from '../../lib/formatDate'
+import type { MobTarget } from '../mobs/mobTarget'
 
 /** The scroll box's height. Explicit, and the panel's whole size contract. */
 const FEED_HEIGHT = 258
@@ -34,6 +35,12 @@ const EXP_PARTY = 2
 export interface RecentKillsCardProps {
   rows: ProgressionKill[]
   onOpenLeveling: () => void
+  /**
+   * The kill-side deep link: a mob's name opens its page on the Mobs tab. `ProgressionKill.name`
+   * is the RAW line spelling and carries NO spawn-generation suffix (law 2's ' (N)' rides on
+   * `WorldModel.label()` output, which never reaches this ring), so it travels as-is.
+   */
+  onOpenMob: (t: MobTarget) => void
 }
 
 /**
@@ -61,8 +68,11 @@ function ExpCell({ row }: { row: ProgressionKill }): JSX.Element {
   )
 }
 
-function Row({ row }: { row: ProgressionKill }): JSX.Element {
+function Row({ row, onOpenMob }: { row: ProgressionKill; onOpenMob: (t: MobTarget) => void }): JSX.Element {
   const party = ((row.expFlag ?? 0) & EXP_PARTY) !== 0
+  const open = (): void => {
+    onOpenMob({ mob: row.name })
+  }
   return (
     <Stack
       direction="row"
@@ -71,7 +81,27 @@ function Row({ row }: { row: ProgressionKill }): JSX.Element {
       data-testid="overview-kill-row"
       sx={{ minWidth: 0, py: 0.3, px: 0.5, borderRadius: 0.5 }}
     >
-      <Typography variant="caption" noWrap sx={{ minWidth: 0 }}>
+      {/* The name is the link, not the row: the rest of the row is facts about the KILL (what it
+          paid, where, when) and clicking a percentage should not navigate. Same in-place link
+          treatment as the Target card's mob name — the app's one precedent for this. */}
+      <Typography
+        variant="caption"
+        noWrap
+        role="button"
+        tabIndex={0}
+        data-testid="overview-kill-name"
+        onClick={open}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') open()
+        }}
+        sx={{
+          minWidth: 0,
+          cursor: 'pointer',
+          textDecoration: 'underline dotted',
+          textUnderlineOffset: 3,
+          '&:hover': { color: 'primary.main' }
+        }}
+      >
         {row.name}
       </Typography>
       {row.credit === 1 && (
@@ -98,7 +128,7 @@ function Row({ row }: { row: ProgressionKill }): JSX.Element {
   )
 }
 
-export function RecentKillsCard({ rows, onOpenLeveling }: RecentKillsCardProps): JSX.Element {
+export function RecentKillsCard({ rows, onOpenLeveling, onOpenMob }: RecentKillsCardProps): JSX.Element {
   return (
     <DashCard
       title="Recent kills"
@@ -121,7 +151,9 @@ export function RecentKillsCard({ rows, onOpenLeveling }: RecentKillsCardProps):
         {rows.length === 0 ? (
           <QuietNote>Nothing killed yet — your kills land here as you make them.</QuietNote>
         ) : (
-          rows.map((row, i) => <Row key={`${String(row.ts)}|${row.name}|${String(i)}`} row={row} />)
+          rows.map((row, i) => (
+            <Row key={`${String(row.ts)}|${row.name}|${String(i)}`} row={row} onOpenMob={onOpenMob} />
+          ))
         )}
       </Box>
     </DashCard>

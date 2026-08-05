@@ -40,16 +40,22 @@ const IN_DEV = (
 )
 
 // Row ORDER is the nav's order. Overview leads: it is the at-a-glance landing surface.
+//
+// LOOT SITS BESIDE MOBS (owner decision, 2026-08-04) and everything else keeps its place. The
+// two tabs answer halves of one question — what drops it, and what did I get — and they link
+// into each other constantly (a mob page's drop rows open an item, the Overview's drop rows open
+// the loot detail). Loot's old home at the bottom of the list put five unrelated tabs between
+// them.
 const ROWS: NavRow[] = [
   { view: 'overview', label: 'Overview', icon: <SpaceDashboardIcon /> },
   { view: 'combat', label: 'Combat', icon: <BarChartIcon /> },
   { view: 'mobs', label: 'Mobs', icon: <PetsIcon /> },
+  { view: 'loot', label: 'Loot', icon: <ReceiptLongIcon /> },
   { view: 'maps', label: 'Maps', icon: <MapIcon /> },
   { view: 'bosses', label: 'Raid Targets', icon: <EmojiEventsIcon /> },
   { view: 'posky', label: 'Plane of Sky', icon: <ShieldMoonIcon /> },
   { view: 'alerts', label: 'Alerts', icon: <NotificationsActiveIcon /> },
   { view: 'leveling', label: 'Leveling', icon: <TrendingUpIcon /> },
-  { view: 'loot', label: 'Loot', icon: <ReceiptLongIcon /> },
   { view: 'buffs', label: 'Buffs', icon: <AutoFixHighIcon />, badge: IN_DEV }
 ]
 

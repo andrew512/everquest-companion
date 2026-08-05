@@ -283,6 +283,41 @@ function ObservedColumn({
   )
 }
 
+export interface ItemDetailProps {
+  item: string
+  events: LootEvent[]
+  stats?: string
+  isQuestItem: boolean
+}
+
+/**
+ * THE ITEM DRILL-DOWN ITSELF, chrome-free — the game's item window beside everything the live
+ * log adds to it.
+ *
+ * Split out of the dialog (2026-08-04) because the Loot tab retired its popover for a PANE
+ * TAKEOVER with a breadcrumb (`ItemDetailPane`), while the Mobs tab's drop rows still open the
+ * same drill-down as a dialog over a page they must not lose. Two chromes, ONE body: a second
+ * copy would drift the moment either surface gained a section.
+ *
+ * `active` gates the knowledge fetch. The dialog passes its own `open` (a closed dialog stays
+ * mounted); the pane passes true, because a pane that is rendered IS the screen.
+ */
+export function ItemDetailContent({
+  item,
+  events,
+  stats,
+  active
+}: Omit<ItemDetailProps, 'isQuestItem'> & { active: boolean }): JSX.Element {
+  const agg = useMemo(() => aggregateLoot(events), [events])
+  const knowledge = useItemKnowledge(item, active)
+  return (
+    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems="flex-start">
+      <ItemWindowColumn item={item} stats={stats} knowledge={knowledge} />
+      <ObservedColumn events={events} agg={agg} knowledge={knowledge} />
+    </Stack>
+  )
+}
+
 export function ItemDetailDialog({
   open,
   onClose,
@@ -290,17 +325,7 @@ export function ItemDetailDialog({
   events,
   stats,
   isQuestItem
-}: {
-  open: boolean
-  onClose: () => void
-  item: string
-  events: LootEvent[]
-  stats?: string
-  isQuestItem: boolean
-}): JSX.Element {
-  const agg = useMemo(() => aggregateLoot(events), [events])
-  const knowledge = useItemKnowledge(item, open)
-
+}: ItemDetailProps & { open: boolean; onClose: () => void }): JSX.Element {
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle sx={{ pr: 6 }}>
@@ -315,10 +340,7 @@ export function ItemDetailDialog({
         </IconButton>
       </DialogTitle>
       <DialogContent dividers>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems="flex-start">
-          <ItemWindowColumn item={item} stats={stats} knowledge={knowledge} />
-          <ObservedColumn events={events} agg={agg} knowledge={knowledge} />
-        </Stack>
+        <ItemDetailContent item={item} events={events} stats={stats} active={open} />
       </DialogContent>
     </Dialog>
   )
