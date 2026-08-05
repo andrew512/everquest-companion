@@ -18,8 +18,10 @@ import {
   invalidateEqDiscovery,
   listCharacters,
   parseLogName,
+  refreshEqDiscoveryCheaply,
   resolveActiveCharacter,
-  resolveEqDir
+  resolveEqDir,
+  tailSurvivesRootChange
 } from './log/config'
 import { Tailer } from './log/Tailer'
 import { parseEvent, parseLine } from './log/parser'
@@ -120,10 +122,15 @@ export function buildEqConfig(): EqConfig {
 
 /**
  * Apply a change to the effective EQ install dir (override set/cleared). Re-lists
- * characters and, if the currently-tailed character's log no longer exists under
- * the new dir, retails the most-recent character there (or clears if none). A
- * no-op re-tail is avoided when the active log is still valid, so a settings save
- * that didn't actually move the dir never disrupts an in-flight tail.
+ * characters and, unless the currently-tailed log lives under the NEW Logs dir,
+ * retails the most-recent character there (or idles + watches if the dir has none).
+ * A no-op re-tail is avoided when the active log is still the right one, so a
+ * settings save that didn't actually move the dir never disrupts an in-flight tail.
+ *
+ * THE PREDICATE IS "UNDER THE NEW DIR", NOT "STILL EXISTS" (bug 01KZ9BF43KYH…): the old
+ * root's log file is still perfectly readable after the user points us somewhere else, so
+ * an existence test kept the app reading a folder the user had just told us to stop reading.
+ * `tailSurvivesRootChange` (log/discovery.ts) is the pure, unit-tested form of that rule.
  */
 export async function applyEqDirChange(): Promise<EqConfig> {
   // The override just changed, which is the ONE moment a person can tell us that where EQ lives
@@ -135,10 +142,9 @@ export async function applyEqDirChange(): Promise<EqConfig> {
   const chars = listCharacters()
   sendToMain(IPC.onEqConfigChanged, config)
 
-  const activeStillValid = character != null && existsSync(character.logPath)
-  if (activeStillValid) return config // don't disturb a healthy tail
+  if (tailSurvivesRootChange(character?.logPath, config.logsDir, existsSync)) return config
 
-  // The active log vanished (dir moved) or we had none: pick the best character
+  // The dir moved out from under the tail (or we had none): pick the best character
   // under the new dir and re-tail, or gracefully idle if the dir has no logs.
   const next = resolveActiveCharacter() ?? chars[0] ?? null
   if (next) {
@@ -157,8 +163,69 @@ export async function applyEqDirChange(): Promise<EqConfig> {
     // stale one attribute the next log's rows to the character we just stopped tailing.
     installCharacterName(undefined)
     sendToMain(IPC.onCharacter, null)
+    // …and start looking, because the empty state's own advice is "type /log on" and that is
+    // the moment the log we are missing comes into existence. See `watchForFirstLog`.
+    watchForFirstLog()
   }
   return config
+}
+
+/**
+ * THE IDLE RESCAN — the other half of bug 01KZ9BF43KYH…, and the half the user actually hit.
+ *
+ * With no character attached the app shows a quiet empty state whose copy reads "Make sure
+ * logging is on in-game (type /log on), or point us at your install folder" (App.tsx). A player
+ * who has never enabled EQ logging has NO `eqlog_*.txt` at all, so pointing us at the right
+ * folder legitimately finds nothing — and then they do as they are told, `/log on` creates the
+ * file, and NOTHING in this process ever looks at that directory again. The instruction had no
+ * observer. Their only way out was to re-pick the folder or restart the app.
+ *
+ * So while (and only while) nothing is attached, re-run the ordinary resolution every couple of
+ * seconds and attach the instant a log appears. The cost is one `readdir` of one directory, the
+ * same one `countCharacterLogs` already does per Settings render; the timer exists ONLY in the
+ * idle state and is cleared by `tailCharacter` the moment it succeeds, so an app that is tailing
+ * pays nothing. It is `unref`'d — a rescan must never be the reason the process stays alive.
+ *
+ * The zero-logs empty state is unchanged: this does not error, does not nag, and shows nothing
+ * new. It just ends by itself when the log the user was told to create shows up.
+ */
+const LOG_RESCAN_MS = 2000
+let rescanTimer: ReturnType<typeof setInterval> | null = null
+
+function stopWatchingForFirstLog(): void {
+  if (rescanTimer) clearInterval(rescanTimer)
+  rescanTimer = null
+}
+
+function watchForFirstLog(): void {
+  stopWatchingForFirstLog()
+  rescanTimer = setInterval(() => {
+    if (character !== null) {
+      stopWatchingForFirstLog()
+      return
+    }
+    // A log that appears where auto-discovery could have found it (no override, non-default
+    // install) also un-sticks the memoized "found nothing" — fs probes only, see config.ts.
+    refreshEqDiscoveryCheaply()
+    const next = resolveActiveCharacter()
+    if (!next) return
+    stopWatchingForFirstLog()
+    logInfo(`[everquest-companion] A character log appeared: ${next.logPath}`)
+    void tailCharacter(next).then(
+      () => {
+        // The selector + the no-logs empty state are driven by the character LIST, which the
+        // renderer refreshes on `eqconfig:changed` — and the config really did change: its
+        // `characterCount` just went from 0 to N. `onCharacter` alone would light the title bar
+        // and leave the empty state on screen.
+        sendToMain(IPC.onEqConfigChanged, buildEqConfig())
+      },
+      (err: unknown) => {
+        logConsoleError('[everquest-companion] attach after rescan failed', err)
+        watchForFirstLog() // it appeared and we fumbled it; keep looking
+      }
+    )
+  }, LOG_RESCAN_MS)
+  rescanTimer.unref?.()
 }
 
 /**
@@ -246,6 +313,8 @@ export interface TailResult {
 
 /** Point the tailer + loot history at a character (used at startup and on switch). */
 export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
+  // We have a log; the idle rescan (if it was running) has nothing left to look for.
+  stopWatchingForFirstLog()
   await tailer?.stop()
   tailer = null
   character = ref
@@ -325,16 +394,20 @@ function startInventoryWatch(ref: CharacterRef): void {
 export async function startTailing(): Promise<TailResult | null> {
   const ref = resolveInitialCharacter()
   if (!ref) {
-    logWarn('[everquest-companion] No EQ log found; log tailing disabled.')
+    logWarn('[everquest-companion] No EQ log found; watching for one to appear.')
+    // Same trap as a dir change that finds nothing: the app launched before the player ever
+    // typed `/log on`. Keep looking rather than requiring a restart.
+    watchForFirstLog()
     return null
   }
   return tailCharacter(ref)
 }
 
-/** Release the session's OS resources (tail, watcher, heartbeat) on the way out. */
+/** Release the session's OS resources (tail, watcher, heartbeat, rescan) on the way out. */
 export function stopSession(): void {
   void tailer?.stop()
   void inventoryWatcher?.close()
+  stopWatchingForFirstLog()
   if (tickTimer) clearInterval(tickTimer)
   tickTimer = null
 }

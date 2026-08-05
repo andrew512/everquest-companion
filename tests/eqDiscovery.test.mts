@@ -19,6 +19,8 @@ import {
   discoverEqRoot,
   rootHasLogs,
   countCharacterLogs,
+  logIsUnderLogsDir,
+  tailSurvivesRootChange,
   type DiscoveryProbes
 } from '../src/main/log/discovery'
 
@@ -79,6 +81,58 @@ test('discoverEqRoot: probes each candidate at most once (dedupe)', () => {
   assert.equal(hits.length, 1)
 })
 
+// --- the ROOT-CHANGE decision (bug 01KZ9BF43KYH…) ---------------------------
+//
+// When the user picks a new EverQuest folder in Settings, may the tail that is already
+// running survive it? The old rule was "does its file still exist", which is true of every
+// log under the OLD root — so the folder the user just picked did nothing until a restart.
+// The rule is "is it under the NEW Logs dir, and still there".
+
+const NEW_LOGS = 'D:\\Games\\EverQuest Legends\\Logs'
+const yes = (): boolean => true
+const no = (): boolean => false
+
+test('logIsUnderLogsDir: a log directly in the dir matches, case/separator-insensitively', () => {
+  assert.equal(logIsUnderLogsDir(`${NEW_LOGS}\\eqlog_Primitive_freeport.txt`, NEW_LOGS), true)
+  // NTFS is case-insensitive and these paths arrive from three sources (store, picker, readdir).
+  assert.equal(logIsUnderLogsDir('d:/games/everquest legends/logs/eqlog_A_b.txt', NEW_LOGS), true)
+  // A trailing separator on the dir is not a difference.
+  assert.equal(logIsUnderLogsDir(`${NEW_LOGS}\\eqlog_A_b.txt`, `${NEW_LOGS}\\`), true)
+})
+
+test('logIsUnderLogsDir: a log under a DIFFERENT root does not match', () => {
+  const oldLog =
+    'C:\\Users\\Public\\Daybreak Game Company\\Installed Games\\EverQuest Legends\\Logs\\eqlog_A_b.txt'
+  assert.equal(logIsUnderLogsDir(oldLog, NEW_LOGS), false)
+})
+
+test('logIsUnderLogsDir: a nested subdirectory is not "in" the Logs dir', () => {
+  assert.equal(logIsUnderLogsDir(`${NEW_LOGS}\\archive\\eqlog_A_b.txt`, NEW_LOGS), false)
+  // …and a prefix that is not a path boundary must not match either.
+  assert.equal(logIsUnderLogsDir('D:\\Games\\EverQuest Legends\\LogsOld\\eqlog_A_b.txt', NEW_LOGS), false)
+})
+
+test('tailSurvivesRootChange: the reported bug — an existing OLD-root log does not survive', () => {
+  const oldLog =
+    'C:\\Users\\Public\\Daybreak Game Company\\Installed Games\\EverQuest Legends\\Logs\\eqlog_A_b.txt'
+  // The file is perfectly readable (exists → true) and that is exactly what used to keep it.
+  assert.equal(tailSurvivesRootChange(oldLog, NEW_LOGS, yes), false)
+})
+
+test('tailSurvivesRootChange: a healthy tail under the same dir is not disturbed', () => {
+  assert.equal(tailSurvivesRootChange(`${NEW_LOGS}\\eqlog_A_b.txt`, NEW_LOGS, yes), true)
+})
+
+test('tailSurvivesRootChange: a vanished log under the new dir does not survive', () => {
+  assert.equal(tailSurvivesRootChange(`${NEW_LOGS}\\eqlog_A_b.txt`, NEW_LOGS, no), false)
+})
+
+test('tailSurvivesRootChange: nothing attached ⇒ nothing to keep', () => {
+  assert.equal(tailSurvivesRootChange(null, NEW_LOGS, yes), false)
+  assert.equal(tailSurvivesRootChange(undefined, NEW_LOGS, yes), false)
+  assert.equal(tailSurvivesRootChange('', NEW_LOGS, yes), false)
+})
+
 // --- rootHasLogs / countCharacterLogs against real temp fixtures ------------
 
 test('rootHasLogs / countCharacterLogs: real fixture dirs', () => {
@@ -108,6 +162,32 @@ test('rootHasLogs / countCharacterLogs: real fixture dirs', () => {
     assert.equal(countCharacterLogs(join(good, 'Logs')), 2)
     assert.equal(countCharacterLogs(join(emptyLogs, 'Logs')), 0)
     assert.equal(countCharacterLogs(join(tmp, 'does-not-exist')), 0)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('discovery is re-runnable: the same root fails before /log on and succeeds after', () => {
+  // The reported bug's shape (01KZ9BF43KYH…): a player who has never enabled EQ logging has no
+  // eqlog_*.txt at all, so the folder they pick legitimately resolves to nothing. The moment
+  // `/log on` creates the file, the SAME probe set must answer differently — which is what makes
+  // an idle rescan (session.ts `watchForFirstLog`) a correct fix rather than a hopeful one.
+  const tmp = mkdtempSync(join(tmpdir(), 'eq-disc3-'))
+  try {
+    const install = join(tmp, 'Games', 'EverQuest Legends')
+    mkdirSync(join(install, 'Logs'), { recursive: true })
+    const p: DiscoveryProbes = {
+      hasLogs: rootHasLogs,
+      extraCandidates: () => [install],
+      fixedDrives: () => []
+    }
+    assert.equal(discoverEqRoot(p), null, 'a Logs dir with no character log is not a match')
+    assert.equal(countCharacterLogs(join(install, 'Logs')), 0)
+
+    writeFileSync(join(install, 'Logs', 'eqlog_Primitive_freeport.txt'), '[Wed] *ON*\n')
+
+    assert.equal(discoverEqRoot(p), install)
+    assert.equal(countCharacterLogs(join(install, 'Logs')), 1)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }

@@ -68,6 +68,42 @@ export function countCharacterLogs(logsDir: string): number {
 }
 
 /**
+ * Normalize a Windows path for comparison: one separator style, no trailing
+ * separator, case-folded (NTFS is case-insensitive and the log/override paths
+ * reach us from three different sources — the store, a folder picker, readdir).
+ */
+function normPath(p: string): string {
+  return p.replace(/[\\/]+/g, '\\').replace(/\\+$/, '').toLowerCase()
+}
+
+/** Is `logPath` a file sitting DIRECTLY in `logsDir` (not merely existing somewhere)? */
+export function logIsUnderLogsDir(logPath: string, logsDir: string): boolean {
+  const dir = normPath(logsDir)
+  const file = normPath(logPath)
+  const cut = file.lastIndexOf('\\')
+  return cut > 0 && file.slice(0, cut) === dir
+}
+
+/**
+ * THE ROOT-CHANGE DECISION, pure and injected so it can be tested without a disk.
+ *
+ * When the effective EQ root moves (the Settings override is set or cleared), may the tail
+ * that is already running survive it? ONLY if its log lives under the NEW `Logs` dir and is
+ * still there. "The file still exists" is NOT sufficient and was the bug: a user whose game
+ * lives off the default path gets auto-discovery pointed somewhere else (or nowhere), and if
+ * anything was being tailed from the OLD root its file is still perfectly readable — so the
+ * app kept reading it and the folder the user just picked did nothing until a restart.
+ */
+export function tailSurvivesRootChange(
+  logPath: string | null | undefined,
+  logsDir: string,
+  exists: (p: string) => boolean
+): boolean {
+  if (!logPath) return false
+  return logIsUnderLogsDir(logPath, logsDir) && exists(logPath)
+}
+
+/**
  * Pure ordered discovery: return the first candidate root whose `Logs` dir holds
  * an `eqlog_*.txt`, or null if none match. Candidates, in order:
  *   1. `extraCandidates()` (env override, then registry InstallLocations)

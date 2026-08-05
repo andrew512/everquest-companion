@@ -7,8 +7,10 @@ import {
   countCharacterLogs,
   discoverEqRoot,
   fixedDrives,
+  logIsUnderLogsDir,
   registryInstallCandidates,
   rootHasLogs,
+  tailSurvivesRootChange,
   type DiscoveryProbes
 } from './discovery'
 
@@ -23,7 +25,15 @@ import {
 
 // Re-export the canonical default + pure discovery pieces so existing importers of
 // `../log/config` keep working (EQ_ROOT was imported by inventory/parseInventory).
-export { EQ_ROOT, discoverEqRoot, rootHasLogs, countCharacterLogs, type DiscoveryProbes }
+export {
+  EQ_ROOT,
+  discoverEqRoot,
+  rootHasLogs,
+  countCharacterLogs,
+  logIsUnderLogsDir,
+  tailSurvivesRootChange,
+  type DiscoveryProbes
+}
 
 /** The env escape hatch: an explicit install dir (tests/dev), highest priority. */
 function envCandidates(): string[] {
@@ -81,6 +91,25 @@ function discoverOnce(): string | null {
 /** Forget the discovered root, so the next resolution probes the machine again. */
 export function invalidateEqDiscovery(): void {
   discoveredRoot = undefined
+}
+
+/**
+ * CHEAP re-discovery, for the idle rescan only (session.ts `watchForFirstLog`).
+ *
+ * `discoverOnce` memoizes a NULL result too, which is right for the 150 ms registry sweep but
+ * wrong for a machine that simply had no `eqlog_*.txt` yet: the player types `/log on`, the log
+ * appears, and discovery's own predicate ("a Logs dir with a character log in it") would now
+ * succeed — except nothing re-probes. So the idle path re-runs discovery with the FS half only:
+ * env candidates + the drive sweep, no `reg query` subprocesses. That is a dozen `existsSync`
+ * calls, affordable every couple of seconds, and it covers the install that discovery could
+ * always have found and simply looked for too early. A manual override needs no discovery at
+ * all and returns immediately; a memoized root that still has logs is left alone.
+ */
+export function refreshEqDiscoveryCheaply(): void {
+  if (getEqInstallDir()?.trim()) return
+  if (discoveredRoot && rootHasLogs(discoveredRoot)) return
+  const found = discoverEqRoot({ hasLogs: rootHasLogs, extraCandidates: envCandidates, fixedDrives })
+  if (found) discoveredRoot = found
 }
 
 // ---------------------------------------------------------------------------
