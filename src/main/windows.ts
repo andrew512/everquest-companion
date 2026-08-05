@@ -371,19 +371,33 @@ export function createMainWindow(): void {
 //     setIgnoreMouseEvents(true, {forward:true}); the renderer's hover sensor toggles capture
 //     back on so the hover-revealed pin stays clickable. Never steals focus. No drilling.
 
+/**
+ * Set a kind's click-through state. ONE definition, used by the lock toggle below and by the
+ * renderer's fine-grained `overlay:setIgnoreMouse` — two call sites disagreeing about
+ * `forward` would be a performance bug nobody could see.
+ *
+ * WHY `forward` IS PER-KIND. On Windows, `forward:true` installs a low-level mouse hook
+ * (WH_MOUSE_LL) owned by the MAIN process: every system mouse event then waits on our message
+ * loop, so a blocked main freezes the user's cursor system-wide (measured — it is why the
+ * cursor ring deliberately does NOT forward). The METERS pay that cost for a reason: their
+ * hover sensor is what re-enables capture over the pin button, and it only ever sees a
+ * mouse-move if we forward one. The TOAST has no hover sensor — its capture is driven by its
+ * QUEUE (a card is on screen, or it is not), which it learns over IPC — so it would pay the
+ * hook for a window that is empty and idle almost all of the time. It does not forward.
+ */
+export function setOverlayIgnoreMouse(kind: OverlayKind, ignore: boolean): void {
+  const w = overlayWindows[kind]
+  if (!w || w.isDestroyed()) return
+  if (ignore) w.setIgnoreMouseEvents(true, { forward: kind !== 'toast' })
+  else w.setIgnoreMouseEvents(false)
+}
+
 /** Apply the locked/interactive mouse + focus behavior to a kind's overlay window. */
 export function applyOverlayLocked(kind: OverlayKind, locked: boolean): void {
   const w = overlayWindows[kind]
   if (!w || w.isDestroyed()) return
-  if (locked) {
-    // Pass clicks through to the game; forward:true keeps mouse-move events so the
-    // renderer's hover sensor can re-enable capture over the pin button.
-    w.setIgnoreMouseEvents(true, { forward: true })
-    w.setFocusable(false)
-  } else {
-    w.setIgnoreMouseEvents(false)
-    w.setFocusable(true)
-  }
+  setOverlayIgnoreMouse(kind, locked)
+  w.setFocusable(!locked)
 }
 
 /** Per-kind title (the OS window title; never user-visible on a frameless overlay, but it is
@@ -394,7 +408,8 @@ const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   overall: 'Zone Overlay',
   events: 'Event Log Overlay',
   'heal-fight': 'Fight Healing Overlay',
-  'heal-overall': 'Zone Healing Overlay'
+  'heal-overall': 'Zone Healing Overlay',
+  toast: 'Celebration Overlay'
 }
 
 /**
@@ -424,10 +439,14 @@ export function createOverlayWindow(kind: OverlayKind): void {
     minHeight: 90,
     maxWidth: 720,
     maxHeight: 820,
+    // The toast strip is a fixed-width card LANE, not a resizable panel: the card sizes itself
+    // and everything around it is transparent, so resizing that window would only change how
+    // much invisible nothing surrounds the card. It still MOVES, and its bounds still persist —
+    // position is the knob that matters for a notifier.
+    resizable: kind !== 'toast',
     show: false,
     frame: false,
     transparent: true,
-    resizable: true,
     // Never take focus from the game when it appears (locked mode). We also avoid
     // adding it to the taskbar — it's an accessory of the main app.
     skipTaskbar: true,

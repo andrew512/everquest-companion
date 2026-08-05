@@ -188,6 +188,23 @@ export const IPC = {
   // Payload: FeedReport. Fire-and-forget.
   feedReport: 'feed:report',
 
+  // ---- celebration toasts (docs/plans/celebration-toasts.md) ----
+  // renderer(main app) -> main, FIRE-AND-FORGET: "celebrate this" (ToastRequest). The producers
+  // are the app's EXISTING always-mounted celebration detectors (T4), which already own the
+  // live-only/replay-silence discipline — there is no second gate anywhere below this call.
+  // The payload is VALIDATED AT THE HANDLER (`validateToastRequest`, shared/toast.ts): unknown
+  // kinds, over-long text and unlisted focus views are dropped, never forwarded to a window.
+  // Main then RESOLVES the reward item card (lookupItem) and fans out on the two channels below.
+  toastShow: 'toast:show',
+  // main -> renderer(toast overlay): one resolved ToastPayload to render. The overlay times,
+  // stacks and dismisses it locally and fetches NOTHING (T3/T5) — everything it draws is here.
+  onToast: 'toast:card',
+  // main -> renderer(main app): play this toast's sound (T7). The overlay bundle has no audio
+  // stack, so the MAIN window's existing alert player does it — one more caller of `playSound`,
+  // not a second audio path. Payload {packId, soundId, volume}; nothing is sent when the
+  // toast's configured sound is null (mute).
+  onToastSound: 'toast:sound',
+
   // ---- cross-window deep link (Task #64) ----
   // renderer(overlay) -> main: "focus the app on this" (AppFocus). Main shows/restores/focuses
   // the MAIN window and forwards the payload on `onFocusView`. Fire-and-forget; the payload's

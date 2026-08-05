@@ -7,6 +7,9 @@ import type { MobKnowledge } from './mobTypes'
 // The exaltation planner's model lives in ./planner/ beside its pure normalizer and rules; only
 // the persisted array is named here, on ProgressState.
 import type { ExaltPlan } from './planner/types'
+// The toast overlay's per-kind knobs live beside its payload in ./toast (this file is at its
+// factoring ceiling); OverlayConfig names the blob, that file owns its shape + normalizer.
+import type { ToastOverlayConfig } from './toast'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -19,11 +22,14 @@ export type { LootDisposition, ItemStatBlock }
  *   - 'heal-fight' / 'heal-overall' (Task #59): the HEALING pair — the same two selection
  *                 semantics as the damage pair ('heal-fight' = current encounter, 'heal-overall'
  *                 = zone session), rendering `SegmentView.healing` instead of the damage bars.
+ *   - 'toast' (docs/plans/celebration-toasts.md): the CELEBRATION strip — normally renders
+ *                 nothing; a boss kill or a Sky quest completion animates a card in, holds, and
+ *                 leaves. Not a meter: it has no selector, no drill and no scope.
  * Each kind has its own independently-persisted OverlayConfig (bounds/alpha/lock/topN/drill) and
  * can be open simultaneously. IPC channels + the store are keyed by this.
  */
-export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall'
-export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall']
+export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast'
+export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast']
 
 /** True for the two HEALING overlay kinds (they render HealMeter, not OverlayMeter). */
 export function isHealOverlayKind(kind: OverlayKind): boolean {
@@ -67,6 +73,12 @@ export interface OverlayConfig {
    * back/undrill (or picking a different fight/zone session) clears it.
    */
   drill?: OverlayDrill | null
+  /**
+   * The 'toast' kind's own knobs (sound / volume / duration — shared/toast.ts). Present only
+   * on that kind; every other kind ignores it. Optional so a store written before the toast
+   * landed round-trips untouched and `getOverlayConfig` fills it from the defaults.
+   */
+  toast?: ToastOverlayConfig
 }
 
 /** One EverQuest character whose log we watch. */
@@ -662,8 +674,12 @@ export interface ProgressState {
 // spelled out here (and re-validated at the IPC handler) instead of being whatever text the
 // asking window happened to send.
 
-/** Destinations a deep link may name. One today; the union is the extension point. */
-export type AppFocusView = 'mobs'
+/**
+ * Destinations a deep link may name. Two today; the union is the extension point.
+ * 'posky' is the celebration toast's click target (docs/plans/celebration-toasts.md T6): a Sky
+ * quest completed, its reward card is on screen, and clicking it opens the Plane of Sky tab.
+ */
+export type AppFocusView = 'mobs' | 'posky'
 
 /** "Focus the app on this." `mob` is the RAW display name, as the log printed it. */
 export interface AppFocus {

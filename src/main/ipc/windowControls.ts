@@ -13,6 +13,7 @@ import {
   getOverlayWindow,
   isOverlayOpen,
   overlayStateMap,
+  setOverlayIgnoreMouse,
   setOverlayOpen
 } from '../windows'
 import type { AppFocus, AppFocusView, OverlayConfig, OverlayKind } from '../../shared/types'
@@ -31,7 +32,9 @@ export function registerWindowIpc(): void {
   // E2E never shows a window (src/main/e2e.ts is the whole test mode), so the raise is skipped
   // there; the forward still happens, which is the half a test could observe.
   ipcMain.on(IPC.focusView, (_e, focus: AppFocus) => {
-    const views: AppFocusView[] = ['mobs']
+    // The closed vocabulary, restated here on purpose (see above): 'mobs' from the events
+    // overlay's con rows, 'posky' from a celebration toast's reward card.
+    const views: AppFocusView[] = ['mobs', 'posky']
     if (!focus || !(views as string[]).includes(focus.view)) return
     const w = getMainWindow()
     if (!w || w.isDestroyed()) return
@@ -71,18 +74,22 @@ export function registerWindowIpc(): void {
     getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })
     return next
   })
-  // Locked (click-through) vs interactive. Persist + apply to the live window.
+  // Locked (click-through) vs interactive. Persist + apply to the live window + ECHO.
+  //
+  // The echo is not decoration: this used to be called only BY the overlay that owns the lock
+  // (which patches its own state first), so nothing had to tell it. The celebration toast is
+  // driven from PREFERENCES as well — "Move it" is in the main window — and a toast overlay
+  // that never heard about the change would keep rendering as though it were still locked.
   ipcMain.on(IPC.overlaySetLocked, (_e, kind: OverlayKind, locked: boolean) => {
-    setOverlayConfig(kind, { locked })
+    const next = setOverlayConfig(kind, { locked })
     applyOverlayLocked(kind, locked)
+    getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })
   })
-  // Fine-grained pass-through toggle from the overlay's hover sensor (locked mode).
-  // forward:true so mouse-move keeps flowing and the sensor can flip capture back.
+  // Fine-grained pass-through toggle: the meters' hover sensor (locked mode), and the toast
+  // overlay's queue transitions (empty ⇒ pass everything through; a card on screen ⇒ capture).
+  // Whether mouse-move is FORWARDED is decided per kind in windows.ts, in one place.
   ipcMain.on(IPC.overlaySetIgnoreMouse, (_e, kind: OverlayKind, ignore: boolean) => {
-    const w = getOverlayWindow(kind)
-    if (!w || w.isDestroyed()) return
-    if (ignore) w.setIgnoreMouseEvents(true, { forward: true })
-    else w.setIgnoreMouseEvents(false)
+    setOverlayIgnoreMouse(kind, ignore)
   })
   ipcMain.on(IPC.overlayClose, (_e, kind: OverlayKind) => setOverlayOpen(kind, false))
 

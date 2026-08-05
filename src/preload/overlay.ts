@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { CombatSnapshot, SnapshotOpts } from '../shared/combat'
 import type {
+  AppFocus,
   ItemKnowledge,
   MobKnowledge,
   ModuleDelta,
@@ -11,6 +12,7 @@ import type {
   OverlayKind
 } from '../shared/types'
 import { OVERLAY_KINDS } from '../shared/types'
+import type { ToastPayload } from '../shared/toast'
 
 export type { CombatSnapshot, SnapshotOpts, OverlayConfig, OverlayDrill, OverlayKind, MobKnowledge }
 
@@ -108,6 +110,22 @@ const overlayApi = {
    * law, so it has no clicks to give.
    */
   focusMob: (mob: string): void => ipcRenderer.send(IPC.focusView, { view: 'mobs', mob }),
+  /**
+   * The same deep link, aimed at a payload-chosen destination — the celebration toast's card
+   * click (T6). The payload comes from MAIN (it built the toast), not from page text, and the
+   * handler re-validates `view` against the closed AppFocusView union regardless.
+   */
+  focusApp: (focus: AppFocus): void => ipcRenderer.send(IPC.focusView, focus),
+
+  /**
+   * TOAST (docs/plans/celebration-toasts.md): one finished card to render, pushed by main.
+   * Self-contained by law — the overlay times and dismisses it locally and fetches nothing.
+   */
+  onToast: (cb: (t: ToastPayload) => void): (() => void) => {
+    const listener = (_e: unknown, t: ToastPayload): void => cb(t)
+    ipcRenderer.on(IPC.onToast, listener)
+    return () => ipcRenderer.removeListener(IPC.onToast, listener)
+  },
 
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)

@@ -35,6 +35,8 @@
     // src/preload/index.ts as a dependency of it. With `composite: true` every file TypeScript
     // reaches has to be LISTED, so a module index.ts imports must be named here too — that is
     // what `perf.ts` (the HUD's slice of the bridge) is doing in this list.
-    "src/preload/perf.ts"
+    "src/preload/perf.ts",
+    // …and `windows.ts` (the overlays + the celebration toast), for the same reason.
+    "src/preload/windows.ts"
   ]
 }

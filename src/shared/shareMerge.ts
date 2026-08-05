@@ -197,7 +197,11 @@ const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
   overall: 'Overall meter',
   'heal-fight': 'Healing (fight)',
   'heal-overall': 'Healing (overall)',
-  events: 'Event feed'
+  events: 'Event feed',
+  // The toast strip has no bgAlpha/topN row to share today (src/main/share.ts's KINDS list
+  // does not include it), but the label map is keyed by the whole union, so it is named here
+  // rather than letting a future shared field render as a raw kind id.
+  toast: 'Celebration toasts'
 }
 
 /**

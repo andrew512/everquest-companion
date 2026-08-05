@@ -81,6 +81,7 @@ import { EqFolderSetting } from './EqFolderSetting'
 import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
 import { VoiceSetting } from './VoiceSetting'
 import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
+import { ToastSetting } from './ToastSetting'
 import { CursorRingSetting } from './CursorRingSetting'
 import { TelemetrySetting } from './TelemetrySetting'
 // Performance is the one section whose DESCRIPTOR lives with its card rather than here: this
@@ -193,6 +194,13 @@ function overlaysSection(): PrefSection {
         keywords:
           'overlay overlays meter meters hide auto autohide show running focus focused unfocused alt tab background desktop game closed floating',
         content: <OverlayAutoHideSetting />
+      },
+      {
+        id: 'toast',
+        label: 'Celebration toasts',
+        keywords:
+          'toast toasts celebrate celebration boss kill raid target defeated quest complete sky plane of sky notification popup card sound silent position move top',
+        content: <ToastSetting />
       }
     ]
   }

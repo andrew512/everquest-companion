@@ -17,6 +17,13 @@ import { useEffect, useRef, useState } from 'react'
 import type { OverlayConfig, OverlayDrill } from '@shared/types'
 
 export interface OverlayChrome {
+  /**
+   * Has the persisted config actually arrived? Every field below has a sensible default, so
+   * most surfaces never need this — but a window that DECIDES something from `locked` before
+   * the answer lands (the celebration toast, which asks main to capture or pass through the
+   * mouse) must not act on the default first and correct itself a frame later.
+   */
+  ready: boolean
   /** click-through + no chrome; the persisted lock state */
   locked: boolean
   bgAlpha: number
@@ -84,6 +91,7 @@ export function useOverlayChrome(): OverlayChrome {
   }
 
   return {
+    ready: cfg !== null,
     locked,
     bgAlpha,
     topN,

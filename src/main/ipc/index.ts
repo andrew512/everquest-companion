@@ -27,6 +27,9 @@ import { registerShareIpc } from './share'
 import { registerSoundsIpc } from './sounds'
 import { registerSpeechIpc } from './speech'
 import { registerTelemetryIpc } from './telemetry'
+// The celebration toast's producer channel. It lives beside the window it feeds (src/main/toast.ts)
+// rather than in this folder, because everything it does is window fan-out + item resolution.
+import { registerToastIpc } from '../toast'
 import { registerWindowIpc } from './windowControls'
 import { registerWorldIpc } from './world'
 
@@ -43,6 +46,7 @@ export function registerIpc(): void {
   registerMapsIpc()
   registerPresenceIpc()
   registerWindowIpc()
+  registerToastIpc()
   registerClipboardIpc()
   registerFeedbackIpc()
   registerTelemetryIpc()

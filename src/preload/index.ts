@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
+import { windowsApi } from './windows'
 import type {
   AlertDef,
   AlertPrefs,
@@ -43,7 +44,7 @@ import type {
   MapSearchOpts,
   ZoneShort
 } from '../shared/maps'
-import type { OverlayKind, UpdateStatus } from '../shared/types'
+import type { UpdateStatus } from '../shared/types'
 // Presence-driven prefs live beside their normalizers, not in shared/types.ts — see the note at
 // the bottom of that file.
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '../shared/presencePrefs'
@@ -509,17 +510,10 @@ const api = {
   /** The running app's version (app.getVersion()). */
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(IPC.getAppVersion),
 
-  // ---- floating overlay DPS meters (Task #52; per-kind in Task #54) ----
-  /** Toggle a kind's overlay window; resolves to the resulting open-state. */
-  toggleOverlay: (kind: OverlayKind): Promise<boolean> => ipcRenderer.invoke(IPC.overlayToggle, kind),
-  /** Read the open-state map for all overlay kinds. */
-  getOverlayState: (): Promise<Record<OverlayKind, boolean>> => ipcRenderer.invoke(IPC.overlayGetState),
-  /** Subscribe to overlay open-state changes (so the TitleBar menu stays in sync). Payload {kind, open}. */
-  onOverlayState: (cb: (s: { kind: OverlayKind; open: boolean }) => void): (() => void) => {
-    const listener = (_e: unknown, s: { kind: OverlayKind; open: boolean }): void => cb(s)
-    ipcRenderer.on(IPC.onOverlayState, listener)
-    return () => ipcRenderer.removeListener(IPC.onOverlayState, listener)
-  },
+  // ---- the app's OTHER WINDOWS: the floating overlays' open-state (Task #52; per-kind in
+  // Task #54) and the celebration toast (docs/plans/celebration-toasts.md). Written next door
+  // for file mass only — see preload/windows.ts, the same split perf.ts uses.
+  ...windowsApi,
 
   // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
   // Both are main-owned store blobs, so Preferences has no other door. The setters take a

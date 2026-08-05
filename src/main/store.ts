@@ -21,6 +21,7 @@ import {
   type OverlayAutoHidePrefs
 } from '../shared/presencePrefs'
 import { normalizeTelemetryPrefs, type TelemetryPrefs } from '../shared/telemetry'
+import { DEFAULT_TOAST_CONFIG, normalizeToastConfig } from '../shared/toast'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import type { ComboCorrection } from '../shared/classCombo'
 // The exaltation planner's sets. The validator is main-side and pure; it runs on the way OUT as
@@ -329,7 +330,22 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // The HEALING pair (Task #59). Same knobs as the damage meters — a solo player usually has a
   // single healer row, so 5 is plenty and the interesting depth is one drill down.
   'heal-fight': { open: false, locked: false, bgAlpha: 0.72, topN: 5, bounds: undefined, drill: null },
-  'heal-overall': { open: false, locked: false, bgAlpha: 0.72, topN: 5, bounds: undefined, drill: null }
+  'heal-overall': { open: false, locked: false, bgAlpha: 0.72, topN: 5, bounds: undefined, drill: null },
+  // The CELEBRATION TOAST (docs/plans/celebration-toasts.md). `locked: true` is the resting
+  // state that makes it a notifier rather than a window: locked = click-through, and the
+  // overlay flips capture on only while a card is actually on screen. Unlocking is how you
+  // reposition it (Preferences → Overlays), exactly as with the meters. Its sound defaults to
+  // SILENT: both producers already have a seeded, enabled alert with its own voice line, so a
+  // default toast sound would speak twice over every boss kill.
+  toast: {
+    open: false,
+    locked: true,
+    bgAlpha: 0.72,
+    topN: 5,
+    bounds: undefined,
+    drill: null,
+    toast: { ...DEFAULT_TOAST_CONFIG }
+  }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.
@@ -338,7 +354,12 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
  *  startup — an ad-hoc fixup in a hot read path is exactly what the chain replaces. */
 export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   const all = store.get('overlays') ?? {}
-  return { ...DEFAULT_OVERLAY_CONFIG[kind], ...(all[kind] ?? {}) }
+  const cfg: OverlayConfig = { ...DEFAULT_OVERLAY_CONFIG[kind], ...(all[kind] ?? {}) }
+  // The spread above is SHALLOW, so a stored `toast` blob written by an older build (or by
+  // hand) replaces the defaults wholesale. Normalizing it here means every reader — including
+  // the one that decides what sound to play — sees a complete, clamped blob.
+  if (kind === 'toast') cfg.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...cfg.toast })
+  return cfg
 }
 
 /** Merge-patch a kind's overlay config (only the provided keys change). Returns the merged value. */
@@ -350,6 +371,11 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // The drill is remembered UI state from the overlay renderer — normalize anything malformed
   // (and `undefined`) down to level 1 so the stored shape stays exactly `{entityId} | null`.
   next.drill = next.drill && typeof next.drill.entityId === 'string' ? { entityId: next.drill.entityId } : null
+  // The toast blob is renderer-writable too (the Preferences sound picker), so it is clamped
+  // by its own normalizer rather than trusted — same rule as bgAlpha/topN above. Only the
+  // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
+  if (kind === 'toast') next.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...next.toast })
+  else delete next.toast
   const all = store.get('overlays') ?? {}
   all[kind] = next
   store.set('overlays', all)

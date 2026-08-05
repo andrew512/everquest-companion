@@ -33,14 +33,43 @@ export interface Bounds extends Size {
  */
 const DEFAULT_SIZE: Size = { width: 380, height: 320 }
 
-/** The first-open size for a kind — the same for all of them. */
-export function overlayDefaultSize(_kind: OverlayKind): Size {
-  return { ...DEFAULT_SIZE }
+/**
+ * THE TOAST IS NOT A METER, and its geometry says so (docs/plans/celebration-toasts.md §3).
+ * It is a transparent strip at the TOP CENTRE of the screen that normally renders nothing: it
+ * has no selector, no drill and no bars, so the uniform meter size and the bottom-right stack
+ * are both wrong for it. Width 440 (the card's own width), and tall enough to hold the capped
+ * queue of three cards — the window is transparent, so unused height costs nothing visually
+ * and the empty window is fully click-through.
+ */
+const TOAST_SIZE: Size = { width: 440, height: 300 }
+/** Gap from the top of the work area to the first card. */
+const TOAST_TOP = 12
+
+/** The first-open size for a kind — the same for all the meters; the toast is its own strip. */
+export function overlayDefaultSize(kind: OverlayKind): Size {
+  return kind === 'toast' ? { ...TOAST_SIZE } : { ...DEFAULT_SIZE }
+}
+
+/**
+ * The toast's first-open placement: horizontally CENTRED on the work area, 12px from its top.
+ * Clamped like every other kind so a display narrower than the strip still lands on-screen.
+ */
+function toastBounds(workArea: Bounds): Bounds {
+  const size = { ...TOAST_SIZE }
+  const x = workArea.x + Math.round((workArea.width - size.width) / 2)
+  return {
+    ...size,
+    x: Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - size.width)),
+    y: Math.max(workArea.y, Math.min(workArea.y + TOAST_TOP, workArea.y + workArea.height - size.height))
+  }
 }
 
 /** Gap from the screen edge and between stacked overlays. */
 const MARGIN = 16
 const GUTTER = 10
+
+/** The kinds that dock into the bottom-right stack — every kind except the toast strip. */
+export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => k !== 'toast')
 
 /**
  * Where a kind's window goes when it has no persisted bounds: docked bottom-right, offset upward
@@ -50,8 +79,11 @@ const GUTTER = 10
  * hold even one full column.
  */
 export function defaultOverlayBounds(kind: OverlayKind, workArea: Bounds): Bounds {
+  if (kind === 'toast') return toastBounds(workArea)
   const size = overlayDefaultSize(kind)
-  const idx = Math.max(0, OVERLAY_KINDS.indexOf(kind))
+  // The toast holds no slot in the meter stack (it lives at the top centre), so it must not
+  // consume an index either — otherwise adding it would shift every meter's reserved slot.
+  const idx = Math.max(0, METER_KINDS.indexOf(kind))
   // How many uniform slots fit between the bottom and top margins of this work area.
   const perColumn = Math.max(
     1,

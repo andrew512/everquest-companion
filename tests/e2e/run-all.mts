@@ -29,6 +29,9 @@ const SPECS = [
   'copy.e2e.mts',
   'feedback.e2e.mts',
   'voice-alerts.e2e.mts',
+  // Celebration toasts: the only spec that drives a SECOND window (the toast overlay), so it
+  // opens one and reads its DOM — sequential like every other spec here.
+  'toast.e2e.mts',
   // Telemetry launches the app TWICE against one userData dir (the restart is the assertion),
   // so it must stay in this sequential list and must never be run beside another spec.
   'telemetry.e2e.mts',

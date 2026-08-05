@@ -77,13 +77,14 @@ export const TELEMETRY_VIEWS = [
 ] as const
 export type TelemetryView = (typeof TELEMETRY_VIEWS)[number]
 
-/** The five floating-overlay kinds (`shared/types.ts OVERLAY_KINDS`; parity is pinned). */
+/** The floating-overlay kinds (`shared/types.ts OVERLAY_KINDS`; parity is pinned). */
 export const TELEMETRY_OVERLAY_KINDS = [
   'fight',
   'overall',
   'heal-fight',
   'heal-overall',
-  'events'
+  'events',
+  'toast'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 
