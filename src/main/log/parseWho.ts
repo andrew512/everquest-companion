@@ -71,6 +71,18 @@ const CORPSE_SUFFIX_RE = /['`’]s corpse$/
 const SKILL_UP_RE = /^You have become better at (.+?)!(?: \((\d+)\))?$/
 
 /**
+ * `You will now use <X>[ instead of <Y>] while [auto ]attacking.` — see SpecialAttackEvent for
+ * the full sweep. One regex for both shapes: the ` instead of <Y>` clause and the `auto `
+ * qualifier are independent optional groups, so all four grammatical combinations parse even
+ * though the real log only ever prints two of them.
+ *
+ * Both name captures are LAZY and each is bounded by literal text the line always prints
+ * (` instead of ` / ` while `), so a multi-word skill ("Round Kick", "Dragon Punch") is kept
+ * whole and neither capture can swallow the other's clause.
+ */
+const SPECIAL_ATTACK_RE = /^You will now use (.+?)(?: instead of (.+?))? while (auto )?attacking\.$/
+
+/**
  * An item's own effect firing. The two phrases are EXACT — a full-log sweep of every line
  * containing "shimmer" or "alive with power" found exactly one `Your …` shape each, and the
  * neighbouring flavour ("<Mob> is cloaked in a shimmer of glowing symbols.", "<Name>'s image
@@ -141,6 +153,33 @@ export function classifySkillUp({ text, ts, seq, raw }: ClassifyCtx): LogEvent |
   return m[2] === undefined
     ? { kind: 'skillUp', seq, ts, raw, skill }
     : { kind: 'skillUp', seq, ts, raw, skill, value: Number(m[2]) }
+}
+
+/**
+ * THE ACTIVE SPECIAL ATTACK — `You will now use Dragon Punch instead of Eagle Strike while
+ * attacking.` (see SpecialAttackEvent for the shapes, counts and what each one means).
+ *
+ * It lives beside the `/who` row and the skill-up for the same reason they live together: all
+ * three are STATEMENTS ABOUT THE CHARACTER rather than events in the world, and this one is the
+ * only line the game ever prints that says which special a swing is. Gated on a `You will now
+ * use ` prefix, which no other family in the cascade starts with; a full-log sweep found all 21
+ * lines previously falling through to `{kind:'unknown'}`, so it can neither shadow nor be
+ * shadowed by anything.
+ *
+ * A blank skill is refused rather than emitted — an empty lane label is worse than none.
+ */
+export function classifySpecialAttack({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  if (!text.startsWith('You will now use ')) return null
+  const m = SPECIAL_ATTACK_RE.exec(text)
+  if (!m) return null
+  const skill = m[1].trim()
+  if (!skill) return null
+  const ev: LogEvent & { kind: 'specialAttack' } = {
+    kind: 'specialAttack', seq, ts, raw, skill, autoAttack: m[3] !== undefined
+  }
+  const replaces = m[2]?.trim()
+  if (replaces) ev.replaces = replaces
+  return ev
 }
 
 /**

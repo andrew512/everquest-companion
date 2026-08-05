@@ -32,6 +32,10 @@ export interface DamageEvent {
   category: DamageCategory
   /** Parsed paren-modifier tokens (Task #51), e.g. ["Riposte","Critical"]. */
   modifiers: string[]
+  /** The un-conjugated melee verb ('strike', 'kick'), on melee/slay lines only. The join key
+   *  between a swing and the active special attack (see combat/specialAttacks.ts). Read ONCE,
+   *  by ingest's lane naming; no accumulator touches it. */
+  verb?: string
 }
 
 /** The identity of a meter ROW (aggregate key + display name + kind). Bundled because the

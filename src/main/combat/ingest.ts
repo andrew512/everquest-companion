@@ -7,7 +7,10 @@
 //   ingestCombat   — damage / heal / mitigation / miss / resist: the meter itself.
 //   ingestCast     — castBegin / fizzle / interrupt: the own-cast lifecycle both ownership
 //                    inferences (cast-less procs, charm/CC binding) run off.
-//   ingestModifier — stance / invocation / coats / procs / dispel landings: annotations.
+//   ingestChoice   — stance / invocation / active special attack: the character's STANDING
+//                    choices, which persist across pulls and zones until the game prints a
+//                    different one. Not events in a fight; they change what a swing MEANS.
+//   ingestModifier — coats / procs / dispel landings / Quick Buff / your own death: annotations.
 //
 // The families are disjoint on `ev.kind`, so the chain is exactly the old switch: each tries
 // its own cases and reports whether it consumed the event. Any other kind is ignored.
@@ -39,7 +42,8 @@ import type {
   LogEvent,
   MissEvent,
   MitigationEvent,
-  PetClaimEvent
+  PetClaimEvent,
+  SpecialAttackEvent
 } from '../../shared/logEvents'
 
 /**
@@ -151,6 +155,10 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       // An epoch severs every active-state span: the beta character's stances, coats and buffs
       // are not this character's. CENSORED, never 'observed' (proc-analytics §3.1 boundaries).
       st.stateTimeline.censorAll(ev.ts)
+      // …and the same reasoning retires the special-attack lanes: "you will now use Dragon
+      // Punch" was said to the PREVIOUS character. The lanes fall back to the parser's generic
+      // names until this character's own state line says otherwise (never a carried-over guess).
+      st.specials.reset()
       return true
     }
     case 'zone': {
@@ -211,7 +219,7 @@ function toDamageEvent(ev: DamageEventE, attacker: string): DamageEvent {
   const modifiers = ev.modifiers ?? []
   return {
     ts: ev.ts, attacker, target: ev.target, amount: ev.amount,
-    dtype: ev.dtype, dclass: ev.dclass, skill: ev.skill, crit: ev.crit, modifier: ev.modifier,
+    dtype: ev.dtype, dclass: ev.dclass, skill: ev.skill, verb: ev.verb, crit: ev.crit, modifier: ev.modifier,
     // Prefer the parse-time category; derive as a fallback so pre-#51 events (or
     // any path that omits it) still aggregate under the right axis.
     category: ev.category ?? damageCategory(ev.dtype, modifiers),
@@ -325,6 +333,27 @@ function foldMissAnalytics(st: EngineState, ev: MissEvent): void {
   })
 }
 
+/**
+ * NAME THE LANE — the one place a special attack's damage stops being anonymous.
+ *
+ * EQ Legends' upgraded specials print no verb of their own (a Dragon Punch lands as `You strike
+ * …`), so the parser can only ever answer "Melee" for them. This applies the log's OWN statement
+ * of which special is live in that verb's lane (specialAttacks.ts holds the state and the
+ * evidence). It is a pure RENAME of `skill`: the amount, the type, the category and the
+ * attribution are untouched, so every damage total stays byte-identical (law 8's tripwire).
+ *
+ * Gated on the attacker being YOU. The state line is first-person-only, so nothing is known
+ * about anyone else's specials, and a mob's `strikes` must stay generic melee.
+ *
+ * Returns the SAME object when nothing changes — a fresh copy otherwise, never a mutation: the
+ * canonical LogEvent is shared with every other module on the bus and the engine does not own it.
+ */
+function nameSpecialLane(st: EngineState, ev: DamageEvent): DamageEvent {
+  if (idKey(ev.attacker) !== 'you') return ev
+  const lane = st.specials.laneSkill(ev.verb)
+  return lane === undefined || lane === ev.skill ? ev : { ...ev, skill: lane }
+}
+
 /** One canonical `damage` line: route it, then index it. */
 function ingestDamage(st: EngineState, ev: DamageEventE): void {
   // Caster-less other-player DoTs (attacker:null) are not our fight.
@@ -335,7 +364,7 @@ function ingestDamage(st: EngineState, ev: DamageEventE): void {
   // Close any pending encounter at this ts BEFORE routing, so attributed damage
   // after a closure starts a fresh encounter rather than reviving the old one.
   evalClosure(st, ev.ts)
-  const dmgEv = toDamageEvent(ev, ev.attacker)
+  const dmgEv = nameSpecialLane(st, toDamageEvent(ev, ev.attacker))
   // Read the engine's active-time clock either side of route(): the DIFFERENCE is the exact
   // capped-gap delta it accrued for this hit. A fresh encounter (route() opened one)
   // contributes 0, which is precisely what routing.ts does for a first hit.
@@ -405,17 +434,52 @@ function ingestCast(st: EngineState, ev: LogEvent): boolean {
   }
 }
 
-/** stance / invocation / coats / procs / dispel landings. */
-function ingestModifier(st: EngineState, ev: LogEvent): void {
+/**
+ * `You will now use Dragon Punch instead of Eagle Strike while attacking.` — the ONE line that
+ * names the special behind an otherwise anonymous `You strike …`. It opens nothing, closes
+ * nothing, and moves no total; it changes what a later swing is CALLED (specialAttacks.ts).
+ */
+function ingestSpecialAttack(st: EngineState, ev: SpecialAttackEvent): void {
+  const lane = st.specials.note(ev)
+  // A special outside the verified lane table (Smite, Backstab, Frenzy — which print their own
+  // verb and need no attribution; Slam — whose evidence refuses the claim, see specialAttacks.ts)
+  // is still SEEN and still logged. Saying so is the honest report: the line was read and
+  // deliberately not acted on.
+  const note = lane === undefined ? ' (no verb lane — label unchanged)' : ` (${lane} lane)`
+  const from = ev.replaces === undefined ? '' : ` instead of ${ev.replaces}`
+  st.log(ev.ts, 'special', 'info', `▸ special attack: ${ev.skill}${from}${note}`)
+}
+
+/**
+ * THE CHARACTER'S STANDING CHOICES — stance, invocation, and the active special attack.
+ *
+ * Its own family (rather than three more cases in ingestModifier) because the three answer the
+ * same question and none of them is an event in a fight: they are what the character has DECIDED
+ * to do, persisting across pulls and zones until the game prints a different decision. The
+ * annotations in ingestModifier below, by contrast, all describe something that just HAPPENED.
+ * Returns true if consumed.
+ */
+function ingestChoice(st: EngineState, ev: LogEvent): boolean {
   switch (ev.kind) {
     case 'stanceChange':
       applyStance(st, 'stance', ev.stance, ev.ts)
       st.log(ev.ts, 'stance', 'info', `▸ stance: ${ev.stance}`)
-      return
+      return true
     case 'invocationChange':
       applyStance(st, 'invocation', ev.invocation, ev.ts)
       st.log(ev.ts, 'invocation', 'info', `▸ invocation: ${ev.invocation}`)
-      return
+      return true
+    case 'specialAttack':
+      ingestSpecialAttack(st, ev)
+      return true
+    default:
+      return false
+  }
+}
+
+/** coats / procs / dispel landings / Quick Buff / your own death. */
+function ingestModifier(st: EngineState, ev: LogEvent): void {
+  switch (ev.kind) {
     case 'poisonCoat':
       routeCoat(st, ev)
       return
@@ -494,5 +558,6 @@ export function ingestEvent(st: EngineState, ev: LogEvent, live: boolean): void 
   if (ingestWorld(st, ev)) return
   if (ingestCombat(st, ev)) return
   if (ingestCast(st, ev)) return
+  if (ingestChoice(st, ev)) return
   ingestModifier(st, ev)
 }

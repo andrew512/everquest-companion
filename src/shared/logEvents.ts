@@ -162,6 +162,22 @@ export interface DamageEventE extends LogEventBase {
    * presence of "Critical" here.
    */
   modifiers?: string[]
+  /**
+   * THE RAW MELEE VERB, lowercased and un-conjugated ('strike', 'kick', 'crush') — present on
+   * melee/slay lines only, absent for every spell/dot/ds shape.
+   *
+   * `skill` is already the verb's SKILL NAME, but that mapping is many-to-one on purpose
+   * (`hit`/`claw`/`punch`/`slash`/`crush`/`strike` all read "Melee"), so it cannot answer the
+   * one question the special-attack model asks: WHICH generic verb printed this swing. EQ
+   * Legends' upgraded specials print no verb of their own — a Dragon Punch is a `strike`, a
+   * Flying Kick is a `kick` — so the verb is the join key between a swing and the special the
+   * log SAID was active (see SpecialAttackEvent and combat/specialAttacks.ts).
+   *
+   * It stays here rather than being re-derived downstream because the parser is the only place
+   * that ever sees the sentence; a second verb regex over `raw` would be a second opinion that
+   * could drift from MELEE_VERBS.
+   */
+  verb?: string
 }
 
 /**
@@ -716,6 +732,49 @@ export interface SkillUpEvent extends LogEventBase {
 }
 
 /**
+ * THE ACTIVE SPECIAL ATTACK CHANGED — the ONLY line that ever names which special attack a
+ * character is currently using, and the fix for "Dragon Punch DPS isn't tracked" (user report
+ * 01KZ9AAQ4ES1R2NVYK0JJ68EBQ). EQ Legends' upgraded specials NEVER print their own verb: a
+ * Dragon Punch lands as `You strike <mob> for N points of damage.`, exactly like the Eagle
+ * Strike and the Tiger Claw before it. So the damage was always counted — it just folded into
+ * an anonymous melee lane and no Dragon Punch row could ever exist.
+ *
+ * TWO VERIFIED SHAPES (full-log sweep 2026-08-05, 1.35M lines — 21 lines, ALL previously
+ * `{kind:'unknown'}`, and NO third-person variant exists: every one of them starts `You will
+ * now use`, and the log contains no other `now use` line at all):
+ *
+ *   `You will now use Tiger Claw while auto attacking.`                  11×  autoAttack:true
+ *   `You will now use Dragon Punch instead of Eagle Strike while attacking.` 10×  autoAttack:false
+ *
+ * The two clauses are strictly correlated in the real log — the bare form always says `while
+ * auto attacking.` and the replacement form always says `while attacking.` — but they are
+ * captured INDEPENDENTLY so a future line that mixes them still parses honestly rather than
+ * being silently reshaped to fit the correlation.
+ *
+ * WHAT EACH SHAPE MEANS, read off the real log rather than assumed:
+ *   - the bare form is a GRANT: the character now HAS this special. The Aug 02 01:55 loadout
+ *     swap prints six of them in nine seconds (Backstab, Bash, Frenzy, Kick, Smite, + a Slam
+ *     replacement) — one per special the new loadout confers. It is also how a lane RESETS: that
+ *     burst's `Kick while auto attacking.` put the kick lane back to plain Kick, and the
+ *     skill-up stream agrees exactly (Flying Kick ticks stop dead, Kick ticks resume).
+ *   - the `instead of` form is an UPGRADE WITHIN A LANE: Tiger Claw → Eagle Strike → Dragon
+ *     Punch, Kick → Round Kick → Flying Kick, Bash ↔ Slam.
+ *
+ * SELF ONLY, structurally: the line has no third-person grammar, so this can only ever describe
+ * the tailed character. Nothing here can label a mob's or a pet's swing.
+ */
+export interface SpecialAttackEvent extends LogEventBase {
+  kind: 'specialAttack'
+  /** the special now in use, client spelling verbatim ('Dragon Punch', 'Round Kick'). */
+  skill: string
+  /** the special it displaced; absent on the bare grant form. */
+  replaces?: string
+  /** true for `while auto attacking.` (a grant / lane reset), false for `instead of … while
+   *  attacking.` (an in-lane upgrade). */
+  autoAttack: boolean
+}
+
+/**
  * AN ITEM'S OWN EFFECT FIRED — a click or a proc (class-combo inference Wave 3). TWO verified
  * shapes, and a full-log sweep found no third `Your <item> …` activation family:
  *
@@ -1043,6 +1102,7 @@ export type LogEvent =
   | InvocationChangeEvent
   | SelfWhoEvent
   | SkillUpEvent
+  | SpecialAttackEvent
   | ItemActivateEvent
   | ItemMergeEvent
   | ItemMergeFailedEvent

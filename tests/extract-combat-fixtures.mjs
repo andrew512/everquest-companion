@@ -266,3 +266,62 @@ slice(213988, 214240, 'w45-owner-charm-bind.log')
 // slowExpected:false and an EMPTY strike ledger — a poison feature that lights up on a fight
 // with no poison would be worthless.
 slice(1095620, 1096030, 'w37-dispel-variants.log')
+
+// ---------------------------------------------------------------------------
+// SPECIAL-ATTACK LANES (user report 01KZ9AAQ4ES1R2NVYK0JJ68EBQ, "Dragon Punch DPS isn't
+// tracked"). EQ Legends' upgraded specials print NO verb of their own — a Dragon Punch, an
+// Eagle Strike and a Tiger Claw all land as `You strike <mob> …` — so the only thing that can
+// name the lane is the state line the game prints once at the switch. See
+// src/main/combat/specialAttacks.ts for the full sweep behind the lane table.
+//
+// The three windows below are cut so that each one carries BOTH sides of a transition, and so
+// that replaying a window IN ISOLATION exercises the pre-state: none of them contains the
+// earlier state line that would have established its lane, so every swing before the window's
+// own state line must keep the parser's generic name.
+// ---------------------------------------------------------------------------
+
+// W46 THE EAGLE STRIKE ERA (Tue Jul 28 22:06:00 → 22:10:00, raw 273133..274518) — a dense
+// froglok grind in Guk straddling the FIRST in-lane upgrade this character ever made:
+//   22:07:16  `You will now use Eagle Strike instead of Tiger Claw while attacking.`
+// The owner's own `strike` swings sit on BOTH sides of that line — 10 landing before it, 8
+// after — so one replay pins the pre-state (generic "Melee": the window does NOT contain the
+// Tiger Claw grant from 16:09:14, and inventing it would be a guess) and the post-state
+// ("Eagle Strike"). Three further things earn their place here:
+//   - `You have become better at Eagle Strike!` ticks 2→7 land beside the strikes, which is the
+//     corroboration the lane table was built on — but NOT an input to the model (see
+//     specialAttacks.ts on why skill-ups can never drive the state).
+//   - the ROUND KICK era is live and its state line is far outside the window, so every kick
+//     swing must stay plain "Kick": a lane the log has not spoken about in this replay is never
+//     guessed from the table.
+//   - Dranix (another player) strikes throughout. His swings are the not-you control: the state
+//     line is first-person-only, so nobody else's `strikes` may ever be relabelled.
+// The window stops one line short of a `/who`-shaped friends list at 22:11:00 (whose rows the
+// scrub would drop anyway) — nothing after 22:10:00 is load-bearing.
+slice(273133, 274518, 'w46-special-eagle-strike.log')
+
+// W47 THE DRAGON PUNCH SWITCH (Wed Jul 29 14:53:00 → 14:58:00, raw 327002..327849) — the exact
+// transition the user's report is about, in a zol-ghoul-knight grind:
+//   14:53:00→ Eagle-Strike-era strikes open the window (the first line IS one).
+//   14:54:14  `You will now use Dragon Punch instead of Eagle Strike while attacking.`
+//   14:56:17→ `You have become better at Dragon Punch!` ticks 2→27, every one of them beside a
+//             `You strike …` line — the log itself saying what the strikes were.
+// 27 self strikes across the two eras, plus slash/crush/bash/kick/smite lanes running the whole
+// time, which is what makes this window the law-8 tripwire as well as the labeling test: the
+// melee category total must come out to exactly what it was before any of this existed.
+slice(327002, 327849, 'w47-special-dragon-punch.log')
+
+// W48 A GRANT RESETS A LANE — AND SLAM DOES NOT CLAIM ONE (Sun Aug 02 01:55:04 → 02:03:51, raw
+// 969559..970396). The Aug 02 loadout swap prints six state lines in nine seconds:
+//   01:55:04 Backstab · :06 Bash · :08 Frenzy · :09 Kick · :12 Slam instead of Bash · :13 Smite
+// Two of them are the whole point:
+//   `Kick while auto attacking.` is a bare GRANT, and it RESETS the kick lane — the character
+//     had been on Flying Kick since Jul 29. The log agrees without being asked: Flying Kick
+//     skill-ups stop dead here and `You have become better at Kick!` ticks 21→30 resume inside
+//     this very window. The test primes Flying Kick first (one verbatim line from Jul 29
+//     21:28:03) so the reset is observable rather than merely absent.
+//   `Slam instead of Bash` is the lane the evidence REFUSED (specialAttacks.ts): 35 self bash
+//     swings follow it in this window and must all stay "Bash", because Bash skill-ups keep
+//     firing during Slam eras log-wide and a `better at Slam!` line does not exist.
+// The window also crosses THREE zone lines (West Commonlands → Befallen → Befallen 4), which is
+// how it proves the lane state survives zoning — a special is chosen once, not per zone.
+slice(969559, 970396, 'w48-special-lane-reset.log')

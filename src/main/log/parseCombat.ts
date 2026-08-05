@@ -139,6 +139,37 @@ const RESIST_YOURS_RE = /^(.+?) resisted your (.+?)!$/
 const RESIST_CASTER_RE = /^(.+?) resisted (.+?)'s (.+?)!$/
 const RESIST_INCOMING_RE = /^You resist(?:ed)? (.+?)'s (.+?)!$/
 
+/**
+ * The BASE (first-person) form of every verb MELEE_VERBS spells out. Kept as its own set
+ * rather than derived from that alternation, because the alternation is deliberately written
+ * long-hand (see its comment) and must stay readable; `tests/specialAttackWindows.test.mts` pins the
+ * two against each other, so a verb added to one and forgotten in the other fails a test rather
+ * than silently un-naming a lane.
+ */
+const MELEE_VERB_BASES = new Set([
+  'hit', 'slash', 'pierce', 'crush', 'bash', 'kick', 'bite', 'claw', 'gore', 'maul', 'punch',
+  'strike', 'slice', 'backstab', 'slam', 'sting', 'rend', 'smash', 'gnaw', 'lash', 'smite',
+  'cleave', 'reave', 'shoot', 'frenzy', 'flurry'
+])
+
+/**
+ * Un-conjugate a matched melee verb to its base form ('slashes' → 'slash', 'crushes' → 'crush',
+ * 'frenzies on' → 'frenzy'). The suffix rules are tried longest-first and each is CONFIRMED
+ * against the base set before it is accepted, so `slices` cannot become `slic` — the `-es` rule
+ * declines it and the `-s` rule answers `slice`. An unrecognized word is returned unchanged
+ * rather than mangled (law 1: never invent).
+ */
+export function meleeVerbBase(verb: string): string {
+  const v = verb.toLowerCase()
+  // The two prepositional/irregular pairs ("frenzies on"/"frenzy on", "flurries"/"flurry").
+  if (v.startsWith('frenz')) return 'frenzy'
+  if (v.startsWith('flurr')) return 'flurry'
+  if (MELEE_VERB_BASES.has(v)) return v
+  if (v.endsWith('es') && MELEE_VERB_BASES.has(v.slice(0, -2))) return v.slice(0, -2)
+  if (v.endsWith('s') && MELEE_VERB_BASES.has(v.slice(0, -1))) return v.slice(0, -1)
+  return v
+}
+
 function meleeSkill(verb: string): string {
   const v = verb.toLowerCase()
   if (v.startsWith('backstab')) return 'Backstab'
@@ -277,10 +308,14 @@ function pointsDamage(c: ClassifyCtx): LogEvent | null {
     const verbM = MELEE_VERB_RE.exec(text)
     const modifier = m[4]
     const mods = parseModifiers(modifier)
+    // The un-conjugated verb rides along on melee lines ONLY (see DamageEventE.verb): it is the
+    // join key between a swing and the special attack the log said was active, and `skill` is
+    // many-to-one so it cannot serve. Purely additive — nothing here reads it.
+    const verb = meleeVerbBase(verbM ? verbM[1] : 'hit')
     return {
       kind: 'damage', seq, ts, raw,
       attacker: norm(m[1]), target: norm(m[2]), amount: Number(m[3]),
-      dtype: 'melee', skill: meleeSkill(verbM ? verbM[1] : 'hit'),
+      dtype: 'melee', skill: meleeSkill(verb), verb,
       crit: hasCritical(mods), modifier, modifiers: mods, category: damageCategory('melee', mods)
     }
   }

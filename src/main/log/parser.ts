@@ -44,7 +44,7 @@ import {
   classifyStance,
   classifyWornOff
 } from './parseCasts'
-import { classifyItemActivate, classifySelfWho, classifySkillUp } from './parseWho'
+import { classifyItemActivate, classifySelfWho, classifySkillUp, classifySpecialAttack } from './parseWho'
 import { classifyCamp, classifySessionStart } from './parseSession'
 import {
   classifyAa,
@@ -134,6 +134,11 @@ const CLASSIFIERS: readonly Classifier[] = [
   // ahead of the DB-driven buff matchers, which no /who or skill-up line can reach anyway.
   classifySelfWho,
   classifySkillUp,
+  // THE ACTIVE SPECIAL ATTACK (`You will now use Dragon Punch instead of Eagle Strike while
+  // attacking.`). Beside its two siblings for the same reason they are adjacent — all three are
+  // statements about the CHARACTER — and, like them, MEASURED to claim only lines that were
+  // `{kind:'unknown'}` before it existed (all 21).
+  classifySpecialAttack,
   classifyIllusionFade,
   classifyPoisonCoat,
   classifyPoisonProc,

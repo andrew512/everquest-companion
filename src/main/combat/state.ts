@@ -22,6 +22,7 @@ import {
 import { idKey } from '../log/parser'
 import { StateTimeline } from './stateTimeline'
 import { CharmModel } from './charmModel'
+import { SpecialAttacks } from './specialAttacks'
 import type { RecentCasts } from './procDetect'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 
@@ -148,6 +149,14 @@ export class EngineState {
    * proc inference must not read those landings as procs (procDetect's Quick Buff gate).
    */
   quickBuffTs = 0
+  /**
+   * WHICH SPECIAL ATTACK IS LIVE IN EACH VERB LANE (specialAttacks.ts). The log states the switch
+   * once — `You will now use Dragon Punch instead of Eagle Strike while attacking.` — and every
+   * swing afterwards prints only the generic verb, so this is the ONLY thing that can name the
+   * lane. Session-scoped and zone-surviving (the state line is printed once and holds across
+   * hundreds of zone lines), cleared by reset() and by the epoch boundary.
+   */
+  specials = new SpecialAttacks()
 
   /** Enable classification logging (after the historical scan, for the live tail), and
    *  flip HYDRATION off — from here on every snapshot describes the real present. */
@@ -200,6 +209,7 @@ export class EngineState {
     this.stateTimeline.reset()
     this.recentCasts.clear()
     this.quickBuffTs = 0
+    this.specials.reset()
   }
 
   log(ts: number, cat: string, role: ClassifiedLine['role'], text: string): void {
