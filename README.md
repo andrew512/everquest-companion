@@ -140,7 +140,8 @@ Contributions welcome. Everything about building, testing, and the architecture 
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). Copyright (c) 2026 Josh Moyers.
+FSL-1.1-MIT (Functional Source License, converting to MIT after two years) — see
+[`LICENSE`](LICENSE). Copyright (c) 2026 Josh Moyers.
 
 The bundled **Alan Rickman** voice pack comes from
 [utensils/openpeon-alan-rickman-soundpack](https://github.com/utensils/openpeon-alan-rickman-soundpack)
