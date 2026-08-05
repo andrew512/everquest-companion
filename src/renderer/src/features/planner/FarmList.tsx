@@ -16,13 +16,19 @@
 // THE ERA TOGGLE IS SHARED WITH THE EFFECT BROWSER (one localStorage key, default ON). Out-of-era
 // donors are HIDDEN rather than deleted from the plan — the count of what it hid is stated beside
 // the toggle, because a rollup that silently drops half your set would be lying about the route.
+//
+// THE BROWSER'S NON-EQUIPPABLE FILTER DELIBERATELY DOES NOT REACH HERE. That filter governs what
+// you can PICK; this list is what you already picked. A slotless donor sitting in a plan (added
+// before the rule was enforced, or from a set someone else built) still renders, chipped `no slot`
+// so the reason it will not work is on screen — silently dropping planned work would leave a set
+// that says it needs eight sockets and a route that mentions six.
 
 import { type JSX, useMemo } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import type { ExaltPlan } from '@shared/planner/types'
 import { Tooltip } from '../../lib/Tooltip'
-import { DonorName, EraChip, StateChip } from './PlannerChips'
-import { CURRENT_ERA_LABEL, eraHides, indexDonors, useDonors, useEraOnly } from './plannerData'
+import { DonorName, EraChip, NoSlotChip, StateChip } from './PlannerChips'
+import { CURRENT_ERA_LABEL, eraHides, indexDonors, isNonEquippable, useDonors, useEraOnly } from './plannerData'
 import { campText, collectNeeds, costText, groupNeeds, type FarmGroup, type FarmRow } from './plannerFarm'
 import type { PlannerProgressApi } from './plannerProgress'
 
@@ -34,7 +40,7 @@ const KIND_HINT: Record<FarmGroup['kind'], string> = {
   unknown: 'Nothing in the committed data says where these come from.'
 }
 
-function Row({ row }: { row: FarmRow }): JSX.Element {
+function Row({ row, onOpenLoot }: { row: FarmRow; onOpenLoot?: (item: string) => void }): JSX.Element {
   const camp = campText(row)
   return (
     <Stack
@@ -46,7 +52,7 @@ function Row({ row }: { row: FarmRow }): JSX.Element {
     >
       <Box sx={{ minWidth: 0, flexShrink: 1, width: 260 }}>
         <Typography variant="body2" component="div" noWrap sx={{ minWidth: 0 }}>
-          <DonorName name={row.donorName} bold />
+          <DonorName name={row.donorName} bold onOpen={onOpenLoot} />
         </Typography>
         <Typography variant="caption" noWrap sx={{ display: 'block', color: 'text.secondary' }}>
           {row.effect} · {row.slot}
@@ -68,13 +74,14 @@ function Row({ row }: { row: FarmRow }): JSX.Element {
         {costText(row.tierRequired)}
       </Typography>
       <Box sx={{ flexGrow: 1, minWidth: 4 }} />
+      {row.donor !== null && isNonEquippable(row.donor) && <NoSlotChip />}
       <EraChip subject={row.donor ?? { key: row.donorKey }} />
       <StateChip progress={row.progress} />
     </Stack>
   )
 }
 
-function Group({ group }: { group: FarmGroup }): JSX.Element {
+function Group({ group, onOpenLoot }: { group: FarmGroup; onOpenLoot?: (item: string) => void }): JSX.Element {
   return (
     <Paper variant="outlined" data-testid="planner-farm-group" sx={{ mb: 1 }}>
       <Stack
@@ -94,7 +101,7 @@ function Group({ group }: { group: FarmGroup }): JSX.Element {
         </Typography>
       </Stack>
       {group.rows.map((row) => (
-        <Row key={`${row.slot}:${row.socket}:${row.donorKey}`} row={row} />
+        <Row key={`${row.slot}:${row.socket}:${row.donorKey}`} row={row} onOpenLoot={onOpenLoot} />
       ))}
     </Paper>
   )
@@ -103,9 +110,11 @@ function Group({ group }: { group: FarmGroup }): JSX.Element {
 export interface FarmListProps {
   plan: ExaltPlan
   progress: PlannerProgressApi
+  /** deep-link a donor into the Loot tab's item drill-down (App's `openLoot`) */
+  onOpenLoot?: (item: string) => void
 }
 
-export default function FarmList({ plan, progress }: FarmListProps): JSX.Element {
+export default function FarmList({ plan, progress, onOpenLoot }: FarmListProps): JSX.Element {
   const { donors, ready } = useDonors()
   const [eraOnly, setEraOnly] = useEraOnly()
   const index = useMemo(() => indexDonors(donors), [donors])
@@ -143,7 +152,7 @@ export default function FarmList({ plan, progress }: FarmListProps): JSX.Element
 
       <Box data-testid="planner-farm-list" sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
         {groups.map((group) => (
-          <Group key={`${group.kind}:${group.title}`} group={group} />
+          <Group key={`${group.kind}:${group.title}`} group={group} onOpenLoot={onOpenLoot} />
         ))}
         {groups.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>

@@ -19,8 +19,9 @@
 // donor with no source at all is a fact about our knowledge, not about the game. Each says which
 // one it is rather than being dropped into a zone we invented.
 
-import type { EquipSlot, ExaltPlan, ExtractTier, PlannerDonor, SocketType } from '@shared/planner/types'
+import type { EquipSlot, ExaltPlan, ExtractTier, SocketType } from '@shared/planner/types'
 import { extractionCost, extractionTier } from '@shared/planner/rules'
+import { mergeItemSources } from '../../lib/itemSources'
 import type { DonorRow } from './plannerData'
 import { donorFor } from './plannerData'
 import { sourcesFor, type PlannerSource } from './sourceIndex'
@@ -70,34 +71,12 @@ const HEADINGS: Record<Exclude<FarmGroupKind, 'zone'>, string> = {
 const TAIL: Exclude<FarmGroupKind, 'zone'>[] = ['quest', 'crafted', 'unstated', 'unknown']
 
 /**
- * BOTH WITNESSES TO "WHO DROPS THIS", AS ONE CAMP LIST.
+ * BOTH WITNESSES TO "WHO DROPS THIS", AS ONE CAMP LIST — `lib/itemSources.mergeItemSources`.
  *
- * The mob catalog (`|known_loot`, inverted renderer-side) and the item page (`|dropsfrom`, served
- * on the donor row) are the two halves of the same wiki, and they omit different things — measured
- * 2026-08-04, 126 effect-bearing donors have NO catalog source at all while their own page names a
- * mob for a third of them. A rollup that read only the catalog answered those with "No known
- * source" while the page it was scraped from said otherwise.
- *
- * WHEN BOTH NAME THE SAME MOB THE CATALOG ROW WINS WHOLE (matched case-folded — the two sides of
- * the wiki disagree about capitalisation constantly). It is the EQL-specific witness and the only
- * one carrying level text; folding the page's zone into it as well would split one camp across two
- * spellings of one place ("Lower Guk" and "The City of Guk" as separate farm headings) to learn
- * nothing. A page-only mob contributes a row with no level text, which renders as a bare name.
+ * The rule (catalog row wins whole on a case-folded mob match; a page-only mob contributes a bare
+ * name) lives in lib/ because the Loot tab's drill-down needs the identical fold for the identical
+ * reason. Its header states why. This rollup only decides what to DO with the merged list.
  */
-function mergedSources(
-  catalog: readonly PlannerSource[],
-  wiki: PlannerDonor['wikiSources']
-): PlannerSource[] {
-  const out = [...catalog]
-  const seen = new Set(catalog.map((s) => s.mob.trim().toLowerCase()))
-  for (const w of wiki ?? []) {
-    const id = w.mob.trim().toLowerCase()
-    if (id === '' || seen.has(id)) continue
-    seen.add(id)
-    out.push({ mob: w.mob, zones: w.zone === undefined ? [] : [w.zone] })
-  }
-  return out
-}
 
 /**
  * Every planned socket of a set, resolved. Includes the ones already satisfied — the caller
@@ -116,7 +95,7 @@ export function collectNeeds(
       const socket = socketName as SocketType
       const donor = donorFor(index, planned.donorKey, planned.effect)
       const tierRequired = donor?.tierRequired ?? extractionTier(socket)
-      const sources = mergedSources(sourcesFor(planned.donorKey), donor?.wikiSources)
+      const sources = mergeItemSources(sourcesFor(planned.donorKey), donor?.wikiSources)
       needs.push({
         slot: slotName as EquipSlot,
         socket,

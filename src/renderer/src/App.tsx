@@ -4,7 +4,7 @@ import SettingsIcon from '@mui/icons-material/Settings'
 import TravelExploreIcon from '@mui/icons-material/TravelExplore'
 import ShieldMoonIcon from '@mui/icons-material/ShieldMoon'
 import EmojiEventsIcon2 from '@mui/icons-material/EmojiEvents'
-import type { CharacterRef } from '@shared/types'
+import type { AppFocus, CharacterRef } from '@shared/types'
 import TitleBar from './components/TitleBar'
 import NavDrawer from './components/NavDrawer'
 import { VIEW_KEY, loadView, type View } from './appViews'
@@ -41,6 +41,7 @@ import { useBossKills } from './features/bosses/useBossKills'
 import type { TargetStatus } from './features/bosses/bossStatus'
 import { useProgress } from './features/posky/useProgress'
 import { skyQuestPage } from '@shared/wiki'
+import { tierStyle } from './lib/tierChip'
 
 const bossData = getBossData()
 
@@ -123,10 +124,10 @@ function PlainView({
           the character module, which re-hydrates under the new character anyway. */}
       {view === 'maps' && <MapsView key={viewKey} />}
       {view === 'leveling' && <LevelingView key={viewKey} />}
-      {/* Planner takes no props at all: the sets it edits are character-scoped in the store, so
-          the remount `key` is the whole character contract — a rebuild reloads the new
-          character's sets, exactly like every other view here. */}
-      {view === 'planner' && <PlannerView key={viewKey} />}
+      {/* The Planner's SETS need no props: they are character-scoped in the store, so the
+          remount `key` is the whole character contract. The one prop it takes is the app's own
+          router — every donor name in the pane links OUT to that item's Loot drill-down. */}
+      {view === 'planner' && <PlannerView key={viewKey} onOpenLoot={routing.openLoot} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
       {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
     </>
@@ -188,9 +189,13 @@ function ViewContent({
       )}
       {view === 'bosses' && <BossView key={viewKey} onOpenMob={routing.openMob} />}
       {/* Sky quest items name the mob that drops them, so the tracker links out to the Mobs
-          tab exactly the way the boss roster does. It keeps its remount `key`: the deep link
-          runs the other way (out of posky), so there is no payload to preserve across one. */}
-      {view === 'posky' && <PoskyView key={viewKey} onOpenMob={routing.openMob} />}
+          tab exactly the way the boss roster does — and, since 2026-08-04, out to the LOOT
+          drill-down for the item itself (owner: clicking a Sky item you are hovering should
+          take you to its item page). It keeps its remount `key`: both deep links run the other
+          way (out of posky), so there is no payload to preserve across one. */}
+      {view === 'posky' && (
+        <PoskyView key={viewKey} onOpenMob={routing.openMob} onOpenLoot={routing.openLoot} />
+      )}
       {view === 'overview' && (
         <OverviewView
           key={viewKey}
@@ -299,6 +304,12 @@ function useAppCelebrations(
     onKill: (s) => {
       onDefeat(s)
       fireAppSignal('bossDefeat', s.target.name)
+      window.eq.showToast({
+        id: `boss:${s.target.name}:${String(s.lastTs)}`,
+        kind: 'bossKill',
+        title: `${s.target.name} defeated`,
+        subtitle: [tierStyle(s.bestTier).long, s.target.zone].filter(Boolean).join(' · ')
+      })
     }
   })
 
@@ -306,6 +317,17 @@ function useAppCelebrations(
     onQuestComplete: (q) => {
       onQuestComplete(q.name)
       fireAppSignal('questComplete', q.name)
+      // The celebration toast (docs/plans/celebration-toasts.md T4) rides the SAME detector as
+      // the sound and the snackbar — one live-only gate, three surfaces. The reward is sent by
+      // NAME; main resolves the item card, because the overlay fetches nothing.
+      window.eq.showToast({
+        id: `quest:${q.className}::${q.name}`,
+        kind: 'skyQuestComplete',
+        title: `Quest complete: ${q.name}`,
+        subtitle: q.giver ? `${q.className} · turned in to ${q.giver}` : q.className,
+        itemName: q.reward,
+        focus: { view: 'posky' }
+      })
       window.eq.reportFeedEvent({
         kind: 'quest',
         ts: Date.now(),
@@ -316,6 +338,30 @@ function useAppCelebrations(
       })
     }
   })
+}
+
+/**
+ * A DEEP LINK from another window landed (Task #64) — main has already raised + focused us.
+ * Two destinations today: the Mobs tab, optionally drilled into a specific mob (a click on the
+ * events overlay's con rows), and the Plane of Sky tab (a click on a celebration toast's reward
+ * card, docs/plans/celebration-toasts.md T6). The per-quest ANCHOR inside PoS is not wired yet:
+ * the tab is the destination, and the payload names no quest.
+ *
+ * A module-level function rather than an inline closure because App is at its factoring ceiling
+ * and this is the branchy part of that effect, not the subscription bookkeeping around it.
+ */
+function applyDeepLink(
+  focus: AppFocus | null,
+  setView: (v: View) => void,
+  openMob: (t: { mob: string }) => void
+): void {
+  if (focus?.view === 'posky') {
+    setView('posky')
+    return
+  }
+  if (focus?.view !== 'mobs') return
+  if (focus.mob) openMob({ mob: focus.mob })
+  else setView('mobs')
 }
 
 export default function App(): JSX.Element {
@@ -369,14 +415,7 @@ export default function App(): JSX.Element {
     const offEqConfig = window.eq.onEqConfigChanged(() => {
       void window.eq.listCharacters().then(setCharacters)
     })
-    // Deep link from another window (Task #64): main has already raised + focused us. Today
-    // the only destination is the Mobs tab, optionally drilled into a specific mob — a click
-    // on the events overlay's con rows.
-    const offFocus = window.eq.onFocusView((focus) => {
-      if (focus?.view !== 'mobs') return
-      if (focus.mob) openMob({ mob: focus.mob })
-      else setView('mobs')
-    })
+    const offFocus = window.eq.onFocusView((focus) => applyDeepLink(focus, setView, openMob))
     return () => {
       offDelta()
       offChar()

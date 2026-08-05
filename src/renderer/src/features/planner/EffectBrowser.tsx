@@ -13,10 +13,13 @@
 // (law 1). Class chips are lit for the classes the SET can actually use — the wide-class donors
 // light up most, which is precisely the R2 signal that makes them valuable.
 //
-// THE DONOR NAME OPENS THE APP'S ITEM WINDOW (`PlannerChips.DonorName` → lib/KnownItemTooltip),
-// the same popup every other item name in the app opens. The loot tab's `ItemDetailDialog` is
-// deliberately NOT the one: it is the LOOT drill-down, and it would answer this row's source line
-// with "Times looted 0 · Distinct mobs 0 · No source recorded".
+// THE DONOR NAME HOVERS THE ITEM WINDOW AND CLICKS THROUGH TO THE LOOT DRILL-DOWN
+// (`PlannerChips.DonorName`). Both affordances at once: the popup answers "what is it", the link
+// answers "and everything else we know about it" — the drill now states the committed DBs' drop
+// sources beside the observed ones, which is what made it a fair destination for a never-looted
+// donor (see PlannerChips' header, and features/loot/ItemDbSources.tsx).
+//
+// TWO FILTERS SHRINK THE CORPUS BEFORE ANY OF THAT, and they are opposites in spirit.
 //
 // THE ERA FILTER IS ON BY DEFAULT and is the difference between a plan and a wish list. The
 // committed corpus is scraped from a wiki that documents every expansion, so more than half the
@@ -24,135 +27,43 @@
 // donors whose zones the era table cannot place stay visible with a quiet `era?`, and an effect
 // whose every donor was hidden disappears with them — an effect row promising four donors that
 // expand into nothing would be worse than not listing it.
+//
+// THE NON-EQUIPPABLE FILTER IS OFF BY DEFAULT, and it is R2 rather than taste: a donor with no
+// equipment slot shares a slot with nothing, so its effect can never be socketed anywhere. 287 of
+// the 1,508 donor rows are slotless — 220 of them in the Click tab, which is the potion mass, and
+// 67 procs, which are poisons and coatings. Turning it on shows them chipped `no slot`, because an
+// empty slot list is "the page stated none" (law 1) and just occasionally that is a wiki gap.
 
 import { type JSX, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  Menu,
-  MenuItem,
-  Stack,
-  TextField,
-  ToggleButton,
-  ToggleButtonGroup,
-  Typography
-} from '@mui/material'
+import { Box, Button, Chip, IconButton, Menu, MenuItem, Stack, Typography } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import type { ClassAbbr } from '@shared/classCombo'
-import { EQUIP_SLOTS, type EquipSlot, type ExaltPlan, type SocketType } from '@shared/planner/types'
+import type { EquipSlot, ExaltPlan, SocketType } from '@shared/planner/types'
 import { extractionTier } from '@shared/planner/rules'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemIconUrl } from '../../lib/ItemWindow'
 import { Tooltip } from '../../lib/Tooltip'
+import EffectFilterBar, { SOCKET_LABEL } from './EffectFilterBar'
 import {
-  CURRENT_ERA_LABEL,
   DEFAULT_FILTERS,
   classFit,
   filterDonors,
   groupByEffect,
+  isNonEquippable,
   useDonors,
   useEraOnly,
+  useNonEquip,
   type DonorFilters,
   type DonorRow,
   type EffectGroup
 } from './plannerData'
-import { DonorName, EraChip } from './PlannerChips'
+import { DonorName, EraChip, NoSlotChip } from './PlannerChips'
 import { sourceIndex, sourcesFor } from './sourceIndex'
 
 const ROW_HEIGHT = 44
-const SOCKETS: SocketType[] = ['proc', 'worn', 'focus', 'click']
-const SOCKET_LABEL: Record<SocketType, string> = {
-  proc: 'Proc',
-  worn: 'Worn',
-  focus: 'Focus',
-  click: 'Click'
-}
 /** How many class chips fit on a dense row before the rest collapse into "+N". */
 const CLASS_CHIP_CAP = 6
-
-// ---- the filter bar ------------------------------------------------------------------
-
-/** ONE nowrap row (the flexWrap law): controls never shrink, the search box is the one that does. */
-interface FilterBarProps {
-  filters: DonorFilters
-  setFilters: (f: DonorFilters) => void
-  text: string
-  setText: (v: string) => void
-  era: [boolean, (v: boolean) => void]
-}
-
-function FilterBar({ filters, setFilters, text, setText, era }: FilterBarProps): JSX.Element {
-  const [eraOnly, setEraOnly] = era
-  return (
-    <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1 }}>
-      <ToggleButtonGroup
-        exclusive
-        size="small"
-        value={filters.socket}
-        onChange={(_e, v: SocketType | null) => {
-          if (v !== null) setFilters({ ...filters, socket: v })
-        }}
-        sx={{ flexShrink: 0 }}
-      >
-        {SOCKETS.map((s) => (
-          <ToggleButton key={s} value={s} data-testid={`planner-socket-${s}`} sx={{ px: 1.5 }}>
-            {SOCKET_LABEL[s]}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
-
-      <TextField
-        size="small"
-        label="Search effect or item"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        sx={{ minWidth: 140, flexShrink: 1 }}
-      />
-
-      <TextField
-        select
-        size="small"
-        label="Slot"
-        value={filters.slot ?? 'ALL'}
-        onChange={(e) => setFilters({ ...filters, slot: e.target.value === 'ALL' ? null : (e.target.value as EquipSlot) })}
-        sx={{ minWidth: 130, flexShrink: 0 }}
-      >
-        <MenuItem value="ALL">Any slot</MenuItem>
-        {EQUIP_SLOTS.map((s) => (
-          <MenuItem key={s} value={s}>
-            {s}
-          </MenuItem>
-        ))}
-      </TextField>
-
-      <Tooltip title="Hide donors no class in this set can use. Donors whose page states no class list are kept and chipped 'class unknown'.">
-        <Chip
-          size="small"
-          label="Usable by this set"
-          color={filters.trioOnly ? 'primary' : 'default'}
-          variant={filters.trioOnly ? 'filled' : 'outlined'}
-          onClick={() => setFilters({ ...filters, trioOnly: !filters.trioOnly })}
-          sx={{ flexShrink: 0 }}
-        />
-      </Tooltip>
-
-      <Tooltip title={`Hide donors whose only known sources are outside ${CURRENT_ERA_LABEL}. Donors no zone places stay, chipped 'era?'.`}>
-        <Chip
-          size="small"
-          label="Current era"
-          data-testid="planner-era-toggle"
-          color={eraOnly ? 'primary' : 'default'}
-          variant={eraOnly ? 'filled' : 'outlined'}
-          onClick={() => setEraOnly(!eraOnly)}
-          sx={{ flexShrink: 0 }}
-        />
-      </Tooltip>
-    </Stack>
-  )
-}
 
 // ---- one donor's source line ---------------------------------------------------------
 
@@ -214,9 +125,11 @@ interface DonorLineProps {
   planClasses: readonly ClassAbbr[]
   planned: boolean
   onAdd: (donor: DonorRow, anchor: HTMLElement) => void
+  /** deep-link this donor into the Loot drill-down; absent when the app wired no router */
+  onOpenLoot?: (item: string) => void
 }
 
-function DonorLine({ donor, planClasses, planned, onAdd }: DonorLineProps): JSX.Element {
+function DonorLine({ donor, planClasses, planned, onAdd, onOpenLoot }: DonorLineProps): JSX.Element {
   const src = sourceText(donor)
   return (
     <Stack
@@ -238,13 +151,14 @@ function DonorLine({ donor, planClasses, planned, onAdd }: DonorLineProps): JSX.
         />
       )}
       <Typography variant="body2" component="div" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
-        <DonorName name={donor.name} bold />
+        <DonorName name={donor.name} bold onOpen={onOpenLoot} />
       </Typography>
       <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
         {donor.slots.map((s) => (
           <Chip key={s} size="small" variant="outlined" label={s} sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.5 } }} />
         ))}
       </Stack>
+      {isNonEquippable(donor) && <NoSlotChip />}
       <ClassChips donor={donor} planClasses={planClasses} />
       <Tooltip title={`This effect only extracts once the donor is merged to +${String(donor.tierRequired)}.`}>
         <Chip size="small" color="secondary" variant="outlined" label={`+${String(donor.tierRequired)} to extract`} sx={{ height: 18, fontSize: 10 }} />
@@ -363,11 +277,14 @@ export interface EffectBrowserProps {
   plan: ExaltPlan
   /** write one socket of the selected set (usePlans' `setSocket`) */
   onSocket: (slot: EquipSlot, socket: SocketType, planned: { effect: string; donorKey: string }) => void
+  /** deep-link a donor into the Loot tab's item drill-down (App's `openLoot`) */
+  onOpenLoot?: (item: string) => void
 }
 
-export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): JSX.Element {
+export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrowserProps): JSX.Element {
   const { donors, ready } = useDonors()
   const era = useEraOnly()
+  const nonEquip = useNonEquip()
   const [filters, setFilters] = useState<DonorFilters>(DEFAULT_FILTERS)
   const [text, setText] = useState('')
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -382,10 +299,16 @@ export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): J
 
   // The input echoes instantly; the FILTER runs on the deferred value (the standing search law).
   const deferredText = useDeferredValue(text)
+  // Read out of the tuples so the memo's dependency list names the BOOLEANS: the setter half of
+  // each tuple is a fresh identity nothing here depends on.
   const eraOnly = era[0]
+  const showNonEquip = nonEquip[0]
   const groups = useMemo(
-    () => groupByEffect(filterDonors(donors, { ...filters, text: deferredText }, plan.classes, eraOnly)),
-    [donors, filters, deferredText, plan.classes, eraOnly]
+    () =>
+      groupByEffect(
+        filterDonors(donors, { ...filters, text: deferredText }, plan.classes, { eraOnly, nonEquip: showNonEquip })
+      ),
+    [donors, filters, deferredText, plan.classes, eraOnly, showNonEquip]
   )
   const rows = useMemo(() => flatten(groups, open), [groups, open])
   const planned = useMemo(() => plannedPairs(plan), [plan])
@@ -413,7 +336,14 @@ export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): J
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
-      <FilterBar filters={filters} setFilters={setFilters} text={text} setText={setText} era={era} />
+      <EffectFilterBar
+        filters={filters}
+        setFilters={setFilters}
+        text={text}
+        setText={setText}
+        era={era}
+        nonEquip={nonEquip}
+      />
 
       <Box
         ref={scrollRef}
@@ -431,6 +361,7 @@ export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): J
               planClasses={plan.classes}
               planned={planned.has(`${row.donor.key}::${row.donor.effect}`)}
               onAdd={add}
+              onOpenLoot={onOpenLoot}
             />
           )
         )}

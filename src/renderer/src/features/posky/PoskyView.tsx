@@ -225,13 +225,15 @@ function QuestList({
   sharedItems,
   ambiguousNames,
   setQuestComplete,
-  onOpenMob
+  onOpenMob,
+  onOpenLoot
 }: {
   list: QuestListState
   sharedItems: SharedItemsMap
   ambiguousNames: Set<string>
   setQuestComplete: (key: string, complete: boolean) => Promise<void>
   onOpenMob: (t: MobTarget) => void
+  onOpenLoot?: (item: string) => void
 }): JSX.Element {
   return (
     <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
@@ -249,6 +251,7 @@ function QuestList({
           onSetComplete={(complete) => void setQuestComplete(q.key, complete)}
           onSelectQuest={(name) => list.setQuery(name)}
           onOpenMob={onOpenMob}
+          onOpenLoot={onOpenLoot}
         />
       ))}
       {list.filtered.length > list.visibleCount && (
@@ -262,7 +265,14 @@ function QuestList({
   )
 }
 
-export default function PoskyView({ onOpenMob }: { onOpenMob: (t: MobTarget) => void }): JSX.Element {
+export default function PoskyView({
+  onOpenMob,
+  onOpenLoot
+}: {
+  onOpenMob: (t: MobTarget) => void
+  /** an item name → the Loot tab's drill-down (App's `openLoot`); optional so the pane stands alone */
+  onOpenLoot?: (item: string) => void
+}): JSX.Element {
   // A quest completing via a LIVE turn-in bursts confetti over this view (mirrors
   // BossView's onKill confetti, Task #46). useProgress gates out the historical
   // baseline, so this only fires for a real turn-in observed while the app is open.
@@ -325,6 +335,7 @@ export default function PoskyView({ onOpenMob }: { onOpenMob: (t: MobTarget) => 
             ambiguousNames={ambiguousQuestNames}
             setQuestComplete={setQuestComplete}
             onOpenMob={onOpenMob}
+            onOpenLoot={onOpenLoot}
           />
         </>
       )}

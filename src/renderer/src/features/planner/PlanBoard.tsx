@@ -36,8 +36,8 @@ import {
 import { extractionTier, narrowedClasses } from '@shared/planner/rules'
 import { Tooltip } from '../../lib/Tooltip'
 import HostPicker from './HostPicker'
-import { DonorName, EraChip, StateChip } from './PlannerChips'
-import { donorFor, indexDonors, useDonors, type DonorRow } from './plannerData'
+import { DonorName, EraChip, NoSlotChip, StateChip } from './PlannerChips'
+import { donorFor, indexDonors, isNonEquippable, useDonors, type DonorRow } from './plannerData'
 import type { PlannerProgressApi } from './plannerProgress'
 
 const SOCKET_LABEL: Record<SocketType, string> = {
@@ -79,7 +79,8 @@ function SocketLine({
   donorKey,
   index,
   progress,
-  onRemove
+  onRemove,
+  onOpenLoot
 }: {
   slot: EquipSlot
   socket: SocketType
@@ -88,6 +89,7 @@ function SocketLine({
   index: DonorIndex
   progress: PlannerProgressApi
   onRemove: (slot: EquipSlot, socket: SocketType) => void
+  onOpenLoot?: (item: string) => void
 }): JSX.Element {
   const donor = donorFor(index, donorKey, effect)
   // No corpus row (a donor the DB no longer carries) still has a KNOWN extraction tier: it is a
@@ -107,10 +109,11 @@ function SocketLine({
           {effect}
         </Typography>
         <Typography variant="caption" component="div" noWrap sx={{ color: 'text.secondary' }}>
-          {donor === null ? donorKey : <DonorName name={donor.name} />}
+          {donor === null ? donorKey : <DonorName name={donor.name} onOpen={onOpenLoot} />}
         </Typography>
       </Box>
       <Box sx={{ flexGrow: 1, minWidth: 4 }} />
+      {donor !== null && isNonEquippable(donor) && <NoSlotChip />}
       <EraChip subject={donor ?? { key: donorKey }} />
       <StateChip progress={state} />
       <Tooltip title="Remove this socket from the set">
@@ -134,6 +137,8 @@ export interface PlanBoardProps {
   progress: PlannerProgressApi
   onSocket: (slot: EquipSlot, socket: SocketType, planned: null) => void
   onHost: (slot: EquipSlot, host: { key: string; name: string } | null) => void
+  /** deep-link a donor (or the host item) into the Loot tab's drill-down — App's `openLoot` */
+  onOpenLoot?: (item: string) => void
 }
 
 interface CellProps extends PlanBoardProps {
@@ -146,12 +151,14 @@ function HostLine({
   slot,
   planSlot,
   onPickHost,
-  onHost
+  onHost,
+  onOpenLoot
 }: {
   slot: EquipSlot
   planSlot: PlanSlot
   onPickHost: (slot: EquipSlot, anchor: HTMLElement) => void
   onHost: (slot: EquipSlot, host: null) => void
+  onOpenLoot?: (item: string) => void
 }): JSX.Element {
   const name = planSlot.hostName
   return (
@@ -168,7 +175,7 @@ function HostLine({
       ) : (
         <>
           <Box sx={{ minWidth: 0, flexShrink: 1 }} data-testid="planner-host-name">
-            <DonorName name={name} bold />
+            <DonorName name={name} bold onOpen={onOpenLoot} />
           </Box>
           <Tooltip title="Pick a different host item">
             <Typography
@@ -191,7 +198,7 @@ function HostLine({
   )
 }
 
-function Cell({ slot, plan, index, progress, onSocket, onHost, onPickHost }: CellProps): JSX.Element {
+function Cell({ slot, plan, index, progress, onSocket, onHost, onPickHost, onOpenLoot }: CellProps): JSX.Element {
   const planSlot: PlanSlot = plan.slots[slot] ?? { sockets: {} }
   const planned = SOCKET_TYPES.filter((s) => planSlot.sockets[s] !== undefined)
   const empty = planned.length === 0 && planSlot.hostName === undefined
@@ -207,7 +214,7 @@ function Cell({ slot, plan, index, progress, onSocket, onHost, onPickHost }: Cel
       <Typography variant="caption" sx={{ color: 'text.secondary', letterSpacing: 0.6, fontWeight: 700 }}>
         {slot}
       </Typography>
-      <HostLine slot={slot} planSlot={planSlot} onPickHost={onPickHost} onHost={onHost} />
+      <HostLine slot={slot} planSlot={planSlot} onPickHost={onPickHost} onHost={onHost} onOpenLoot={onOpenLoot} />
       {narrowed.length > 0 && (
         <Tooltip title="Socketing narrows the host item's class list to the overlap with every donor it carries.">
           <Typography variant="caption" data-testid="planner-narrowed" sx={{ color: 'text.secondary' }}>
@@ -228,6 +235,7 @@ function Cell({ slot, plan, index, progress, onSocket, onHost, onPickHost }: Cel
             index={index}
             progress={progress}
             onRemove={(s, k) => onSocket(s, k, null)}
+            onOpenLoot={onOpenLoot}
           />
         )
       })}

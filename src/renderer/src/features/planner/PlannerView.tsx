@@ -228,17 +228,27 @@ function NoSets({ onNew }: { onNew: () => void }): JSX.Element {
 function ModePane({
   plan,
   plans,
-  progress
+  progress,
+  onOpenLoot
 }: {
   plan: ExaltPlan
   plans: PlansApi
   progress: PlannerProgressApi
+  onOpenLoot?: (item: string) => void
 }): JSX.Element {
   if (plans.mode === 'board') {
-    return <PlanBoard plan={plan} progress={progress} onSocket={plans.setSocket} onHost={plans.setHost} />
+    return (
+      <PlanBoard
+        plan={plan}
+        progress={progress}
+        onSocket={plans.setSocket}
+        onHost={plans.setHost}
+        onOpenLoot={onOpenLoot}
+      />
+    )
   }
-  if (plans.mode === 'farm') return <FarmList plan={plan} progress={progress} />
-  return <EffectBrowser plan={plan} onSocket={plans.setSocket} />
+  if (plans.mode === 'farm') return <FarmList plan={plan} progress={progress} onOpenLoot={onOpenLoot} />
+  return <EffectBrowser plan={plan} onSocket={plans.setSocket} onOpenLoot={onOpenLoot} />
 }
 
 // ---- the view ------------------------------------------------------------------------
@@ -251,7 +261,16 @@ interface Editing {
 
 const NO_EDIT: Editing = { rename: null, classes: null, menu: null }
 
-export default function PlannerView(): JSX.Element {
+export interface PlannerViewProps {
+  /**
+   * Deep-link an item name into the Loot tab's drill-down (App's `openLoot`). Optional so the
+   * pane still renders standalone; every donor name in all three modes becomes a link when it
+   * is supplied, and stays a pure hover surface when it is not.
+   */
+  onOpenLoot?: (item: string) => void
+}
+
+export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.Element {
   const plans = usePlans()
   const combo = useComboSnap()
   const progress = usePlannerProgress()
@@ -290,7 +309,7 @@ export default function PlannerView(): JSX.Element {
         </ToggleButtonGroup>
       </Stack>
 
-      <ModePane plan={selected} plans={plans} progress={progress} />
+      <ModePane plan={selected} plans={plans} progress={progress} onOpenLoot={onOpenLoot} />
 
       <Menu anchorEl={editing.menu} open={editing.menu !== null} onClose={() => setEditing(NO_EDIT)}>
         <MenuItem onClick={() => setEditing({ ...NO_EDIT, rename: selected })}>Rename</MenuItem>

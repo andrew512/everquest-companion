@@ -90,6 +90,33 @@ test('every emitted token is canonical — slots, classes, sockets, tiers', () =
   assert.deepEqual(index.stats.unknownSlotTokens, [], 'unknown slot tokens in the corpus')
 })
 
+test('R2 has real work to do: a large slotless minority can never legally donate', () => {
+  // WHY THIS IS PINNED IN THE CORPUS TEST. The effect browser's default filter drops donors with
+  // no equipment slot, because R2 only lets an exaltation move between items that SHARE a slot —
+  // so a donor with none shares a slot with nothing. That filter is only defensible if the corpus
+  // really does carry a mass of slotless rows (it is the potion aisle) AND they really are a
+  // minority (a filter that hid most of the planner would be a bug, not a rule).
+  //
+  // MEASURED 2026-08-04: 287 of 1,508 rows — click 220/813, proc 67/448, focus 0/143, worn 0/104.
+  // Floors and identities only; a rescrape may move every one of those numbers.
+  const slotless = donors.filter((d) => d.slots.length === 0)
+  const per = Object.fromEntries(
+    SOCKET_TYPES.map((s) => [s, slotless.filter((d) => d.socket === s).length])
+  )
+  console.log('planner slotless donors', { total: slotless.length, ...per })
+
+  assert.ok(slotless.length >= 150, `only ${slotless.length} slotless donors — the filter would be pointless`)
+  assert.ok(
+    slotless.length * 2 < donors.length,
+    `${slotless.length} of ${donors.length} rows are slotless — a default filter must never hide the majority`
+  )
+  // The shape of the mass, as an IDENTITY rather than a count: the consumable sockets carry it.
+  // Focus and worn effects only ever appear on things you wear, and if that ever stops being true
+  // the browser's default is hiding real worn/focus donors and this test is the one that says so.
+  assert.equal(per.focus, 0, 'a slotless FOCUS donor appeared — re-check the default filter')
+  assert.equal(per.worn, 0, 'a slotless WORN donor appeared — re-check the default filter')
+})
+
 test('R1 holds per socket: the extraction tier comes from the rules, not from here', () => {
   const tiers = new Map<string, Set<number>>()
   for (const d of donors) {

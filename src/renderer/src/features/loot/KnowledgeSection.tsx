@@ -4,6 +4,7 @@ import AutoStoriesIcon from '@mui/icons-material/AutoStories'
 import type { ItemKnowledge, ItemQuestUse, ItemRecipeUse } from '@shared/types'
 import { craftedByLabel, recipeUseLabel } from '@shared/itemKnowledge'
 import { wikiPageUrl } from '@shared/wiki'
+import { questUseWhere } from '../../lib/itemKnowledgeView'
 
 // The quiet "still asking" state — shown only while the FIRST lookup for this item is in
 // flight (a re-open with cached data never flashes it).
@@ -39,7 +40,23 @@ function KnowledgeHeader({ offline }: { offline?: boolean }): JSX.Element {
   )
 }
 
-// The quest chips (with giver when known), or — when the wiki flagged the item but named no
+/**
+ * ONE QUEST USE, SPELLED IN FULL: the quest, what this item IS to it, and where it happens.
+ *
+ * The chip used to read `quest · giver` and drop the rest on the floor — so a use that knew its
+ * start zone, or that this item is the quest's REWARD rather than its turn-in, said neither. The
+ * hover card (`lib/KnownItemTooltip`) already stated all three, which meant the drill-down knew
+ * less than the tooltip it replaced. Roles are the source's words, not ours: `role` is present
+ * only on the quests-catalog uses, so an absent one prints nothing rather than assuming "turn-in".
+ * `questUseWhere` is the ONE spelling of "giver · zone" (lib/itemKnowledgeView), shared with the
+ * tooltip so the two surfaces can never word it differently.
+ */
+function questUseLabel(u: ItemQuestUse): string {
+  const role = u.role === undefined ? undefined : u.role === 'reward' ? 'reward' : 'turn-in'
+  return [u.quest, role, questUseWhere(u)].filter((s): s is string => s !== undefined && s !== '').join(' · ')
+}
+
+// The quest chips (quest · role · giver · zone), or — when the wiki flagged the item but named no
 // quest — the honest admission. That admission is worth printing ONLY when we genuinely have
 // nothing else: the recipe list below explains most QUEST-ITEM-flagged components.
 function QuestUsesBlock({
@@ -60,11 +77,12 @@ function QuestUsesBlock({
         <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
           {data.questUses.map((u) => (
             <Chip
-              key={`${u.source}:${u.quest}`}
+              key={`${u.source}:${u.quest}:${u.role ?? ''}`}
               size="small"
               variant="outlined"
+              data-testid="loot-quest-use"
               color={u.source === 'posky' ? 'primary' : 'default'}
-              label={u.giver ? `${u.quest} · ${u.giver}` : u.quest}
+              label={questUseLabel(u)}
               sx={{ height: 22 }}
             />
           ))}

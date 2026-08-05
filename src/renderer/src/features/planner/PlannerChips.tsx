@@ -1,16 +1,23 @@
-// planner/PlannerChips.tsx — the planner's three shared atoms: the state chip, the era chip, and
-// a donor NAME that opens the app's item window.
+// planner/PlannerChips.tsx — the planner's shared atoms: the state chip, the era chip, the
+// no-slot chip, and a donor NAME that both hovers and links.
 //
 // ONE CHIP PER SOCKET (UI conventions: chips convey STATE, never process). The Board cell and the
 // Farm row show the same four states in the same colours, so a socket you looked at on the board
 // is recognisable in the rollup without re-reading it.
 //
-// THE DONOR NAME IS THE APP'S EXISTING ITEM POPUP. `KnownItemTooltip` (lib/) is what every other
-// item name in this app opens — the EQ-style item window over `window.eq.lookupItem`, plus the
-// quests and recipes the item is part of — and it fetches only while it is open, so a Farm list
-// of forty donors costs zero lookups until one is pointed at. The loot tab's `ItemDetailDialog`
-// was deliberately NOT reused: it is the LOOT drill-down, and it would answer a donor row that
-// just told you where an item drops with "Times looted 0 · No source recorded".
+// THE DONOR NAME HOVERS *AND* CLICKS (owner, 2026-08-04). The hover is unchanged:
+// `KnownItemTooltip` (lib/) is what every other item name in this app opens — the EQ-style item
+// window over `window.eq.lookupItem`, plus the quests and recipes the item is part of — and it
+// fetches only while it is open, so a Farm list of forty donors costs zero lookups until one is
+// pointed at. The CLICK is new, and it is the app's standing link idiom (`openLoot`, appRouting):
+// it takes the Loot tab over with that item's drill-down.
+//
+// WHY THE DRILL-DOWN IS NOW A FAIR DESTINATION. It used to be exactly the wrong one — its "Dropped
+// by / Zones" columns were built from OBSERVED loot events alone, so a donor you have never looted
+// answered "Times looted 0 · No source recorded" one click after a planner row told you which mob
+// in which zone drops it. That contradiction is what `features/loot/ItemDbSources.tsx` closes: the
+// drill now also states what the committed DBs know, labelled `db` beside the `observed` columns.
+// With both witnesses on screen, the deep link is a promotion, not a downgrade.
 
 import type { JSX } from 'react'
 import { Box, Chip } from '@mui/material'
@@ -91,21 +98,61 @@ export function EraChip({ subject }: { subject: EraSubject }): JSX.Element | nul
   )
 }
 
-/** An item name that opens the app's item window on hover, in the game's own item colour. */
-export function DonorName({ name, bold }: { name: string; bold?: boolean }): JSX.Element {
+/**
+ * NO EQUIP SLOT — the R2 disqualifier, stated rather than assumed.
+ *
+ * An exaltation can only be socketed into an item sharing the donor's equipment slot, so a donor
+ * with no slot can never legally donate; the browser's default filter drops these entirely and
+ * this chip only ever appears once the escape toggle is on. It is worded as a fact about the PAGE,
+ * not about the game (law 1): an empty slot list means the wiki stated none, which is nearly
+ * always a consumable and occasionally a gap in the scrape.
+ */
+export function NoSlotChip(): JSX.Element {
+  return (
+    <Tooltip title="This page states no equipment slot, so nothing shares a slot with it and its effect can never be socketed elsewhere (R2). Usually a potion or a poison; occasionally a gap on the wiki page.">
+      <Chip
+        size="small"
+        label="no slot"
+        data-testid="planner-noslot-chip"
+        color="warning"
+        variant="outlined"
+        sx={CHIP_SX}
+      />
+    </Tooltip>
+  )
+}
+
+/**
+ * An item name: the app's item window on HOVER, the Loot drill-down on CLICK.
+ *
+ * `onOpen` is optional and the cursor follows it exactly — a hand only ever appears where a click
+ * actually goes somewhere (the complaint behind e8d0fd0's cursor fix). Without it the name is a
+ * pure hover surface and keeps the default cursor, which is what a name inside a tooltip card or
+ * any other non-routed context should be.
+ */
+export function DonorName({
+  name,
+  bold,
+  onOpen
+}: {
+  name: string
+  bold?: boolean
+  onOpen?: (name: string) => void
+}): JSX.Element {
+  const linked = onOpen !== undefined
   return (
     <KnownItemTooltip name={name}>
       <Box
         component="span"
         data-testid="planner-donor-name"
+        onClick={linked ? () => onOpen(name) : undefined}
         sx={{
           color: EQ_ITEM_COLORS.name,
           fontWeight: bold === true ? 600 : 400,
           textDecoration: 'underline dotted',
           textUnderlineOffset: 2,
-          // NOT a pointer: the name is a hover surface, not a link. A hand cursor here would
-          // promise a click that does nothing (the exact complaint behind e8d0fd0's cursor fix).
-          cursor: 'default',
+          cursor: linked ? 'pointer' : 'default',
+          ...(linked ? { '&:hover': { textDecoration: 'underline' } } : {}),
           minWidth: 0,
           overflow: 'hidden',
           textOverflow: 'ellipsis',

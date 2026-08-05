@@ -54,6 +54,21 @@ export interface DonorFilters {
   trioOnly: boolean
 }
 
+/**
+ * The two PERSISTED, machine-side toggles the browser applies on top of `DonorFilters`. They live
+ * apart from it because they are remembered across sessions (`eq.planner.*`) and shared with Farm
+ * mode, while the filters above are this mount's own state. Passed as one object so the filter
+ * keeps four parameters (the measured `max-params` ceiling).
+ */
+export interface DonorView {
+  /** hide donors whose only known sources are outside `CURRENT_ERA`. Default ON. */
+  eraOnly: boolean
+  /** show donors with NO equipment slot — the R2 escape hatch. Default OFF. */
+  nonEquip: boolean
+}
+
+export const DEFAULT_VIEW: DonorView = { eraOnly: true, nonEquip: false }
+
 export const DEFAULT_FILTERS: DonorFilters = {
   // Proc leads: it is the effect players plan around, and the one whose +4 extraction cost makes
   // the farm rollup worth having.
@@ -275,6 +290,43 @@ export function useEraOnly(): [boolean, (v: boolean) => void] {
   return [on, set]
 }
 
+// ---- the equippability rule (R2) ----------------------------------------------------
+
+const NONEQUIP_KEY = 'eq.planner.nonequip'
+
+/**
+ * NO EQUIPMENT SLOT ⇒ NO LEGAL DONATION. This is R2, not a heuristic: an exaltation may only be
+ * socketed into an item that SHARES the donor's equipment slot, so a donor the wiki gives no slot
+ * shares a slot with nothing and can never be the source of one.
+ *
+ * MEASURED over the committed corpus (2026-08-04, `buildPlannerDonors`): 287 of 1,508 donor rows
+ * are slotless — 220 of the 813 click rows (the potion mass: "10 Dose Blood of the Wolf" and its
+ * nine hundred cousins) and 67 of the 448 proc rows (poisons and weapon coatings, which are
+ * consumed rather than worn). Zero focus and zero worn rows are slotless, which is itself the
+ * tell: those two effect families only ever appear on things you wear.
+ *
+ * SO THE DEFAULT FILTER DROPS THEM — and the toggle below is the escape hatch, because an empty
+ * slot list is "the page stated none" (law 1), which is USUALLY a consumable and occasionally a
+ * wiki gap. The rows are shown chipped `no slot` rather than silently trusted or silently lost.
+ */
+export function isNonEquippable(donor: Pick<PlannerDonor, 'slots'>): boolean {
+  return donor.slots.length === 0
+}
+
+/**
+ * The "non-equippable" toggle, DEFAULT OFF, persisted machine-side beside the era key. Absent
+ * value means off — the opposite default to the era toggle, and deliberately so: era hides things
+ * you cannot reach YET, this hides things the rules say can never donate at all.
+ */
+export function useNonEquip(): [boolean, (v: boolean) => void] {
+  const [on, setOn] = useState(() => localStorage.getItem(NONEQUIP_KEY) === '1')
+  const set = useCallback((v: boolean) => {
+    localStorage.setItem(NONEQUIP_KEY, v ? '1' : '0')
+    setOn(v)
+  }, [])
+  return [on, set]
+}
+
 // ---- the filter model ---------------------------------------------------------------
 
 /**
@@ -288,23 +340,27 @@ export function classFit(donor: PlannerDonor, planClasses: readonly ClassAbbr[])
 }
 
 /**
- * The browser's filter: socket type, then slot, then trio compatibility, then the text match.
+ * The browser's filter: equippability, then socket type, then slot, then trio compatibility, then
+ * era, then the text match.
  *
  * `trioOnly` keeps UNKNOWN rows. Hiding a donor whose page never stated a class list would be the
- * planner asserting a fact the wiki declined to state; the row is shown and chipped instead.
+ * planner asserting a fact the wiki declined to state; the row is shown and chipped instead. The
+ * SLOT half is different in kind and that is why it is filtered by default: an absent slot is not
+ * an unknown the user can resolve by squinting at it, it is R2 saying no.
  */
 export function filterDonors(
   rows: readonly DonorRow[],
   filters: DonorFilters,
   planClasses: readonly ClassAbbr[],
-  eraOnly = false
+  view: DonorView = DEFAULT_VIEW
 ): DonorRow[] {
   const needle = filters.text.trim().toLowerCase()
   return rows.filter((d) => {
+    if (!view.nonEquip && isNonEquippable(d)) return false
     if (d.socket !== filters.socket) return false
     if (filters.slot !== null && !d.slots.includes(filters.slot)) return false
     if (filters.trioOnly && classFit(d, planClasses) === 'no') return false
-    if (eraHides(d, eraOnly)) return false
+    if (eraHides(d, view.eraOnly)) return false
     return needle === '' || d.searchKey.includes(needle)
   })
 }

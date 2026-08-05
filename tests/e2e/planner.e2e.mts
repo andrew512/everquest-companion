@@ -65,6 +65,15 @@ const HOST_NAME = '[data-testid="planner-host-name"]'
 const STATE_CHIP = '[data-testid="planner-state-chip"]'
 const FARM_LIST = '[data-testid="planner-farm-list"]'
 const FARM_ROW = '[data-testid="planner-farm-row"]'
+const MODE_EFFECTS = '[data-testid="planner-mode-effects"]'
+const NONEQUIP_TOGGLE = '[data-testid="planner-nonequip-toggle"]'
+const NOSLOT_CHIP = '[data-testid="planner-noslot-chip"]'
+const DONOR_NAME = '[data-testid="planner-donor-name"]'
+
+/** The Loot tab's drill-down, where a donor name deep-links to. */
+const LOOT_DETAIL = '[data-testid="loot-detail"]'
+const LOOT_TITLE = '[data-testid="loot-detail-title"]'
+const LOOT_DB_SOURCES = '[data-testid="loot-db-sources"]'
 
 /** An effect group header — the browser lists one per effect, and expanding it lists its donors. */
 const EFFECT_ROW = '[data-testid="planner-effect-row"]'
@@ -196,6 +205,33 @@ async function stepEra(page: Page): Promise<void> {
 }
 
 /**
+ * 4b. THE NON-EQUIPPABLE FILTER IS OFF BY DEFAULT, AND TURNING IT ON REVEALS MORE.
+ *
+ * The mirror image of the era check, and an identity for the same reason: R2 only lets an
+ * exaltation move between items sharing an equipment slot, so the 287 slotless donor rows in the
+ * committed corpus (the potion aisle, plus poisons on the Proc tab) can never legally donate and
+ * are hidden by default. Switching the escape hatch on can therefore only ADD rows — and each one
+ * it adds must carry the `no slot` chip that says why it was hidden.
+ */
+async function stepNonEquip(page: Page): Promise<void> {
+  if (!check('the effect browser offers the non-equippable escape toggle', (await countOf(page, NONEQUIP_TOGGLE)) > 0)) return
+  const hidden = await listHeight(page)
+  check('slotless donors are hidden by default, so no row claims "no slot"', (await countOf(page, NOSLOT_CHIP)) === 0)
+
+  await page.click(NONEQUIP_TOGGLE, { timeout: 15_000 })
+  const shown = await heightAfterToggle(page, hidden)
+  check(
+    'turning non-equippable ON can only reveal more donors (R2 hides them, it never invents them)',
+    shown > hidden,
+    `list ${String(hidden)}px equippable-only → ${String(shown)}px with consumables`
+  )
+
+  await page.click(NONEQUIP_TOGGLE, { timeout: 15_000 })
+  const again = await heightAfterToggle(page, shown)
+  check('…and switching it back off restores exactly the equippable list', again === hidden, `${String(again)}px`)
+}
+
+/**
  * Expand an effect group so its donors are on screen. Retried once: the view remounts while the
  * app is still reading the log (App keys it on the character), and a remount collapses the tree —
  * which is correct behaviour for a fresh mount, and must not be read as "effects have no donors".
@@ -296,10 +332,43 @@ async function stepFarm(page: Page): Promise<void> {
   )
 }
 
+/**
+ * 8. A DONOR NAME DEEP-LINKS INTO THE LOOT DRILL-DOWN — and the drill is worth the trip.
+ *
+ * The click is the app's standing link idiom (`openLoot`, appRouting.ts): it takes the Loot pane
+ * over with that item's detail. The second half of the check is the one that matters — the drill
+ * used to build "Dropped by / Zones" from OBSERVED loot events alone, so a donor you have never
+ * looted answered "No source recorded" one click after the planner told you which mob drops it.
+ * `loot-db-sources` is the section that closes that contradiction, so its presence is the actual
+ * contract this link depends on.
+ *
+ * Runs LAST: it leaves the app on the Loot tab, so every planner-scoped measurement above it must
+ * already have been taken.
+ */
+async function stepDeepLink(page: Page): Promise<void> {
+  await page.click(MODE_EFFECTS, { timeout: 15_000 })
+  if (!(await ensureDonorRow(page))) {
+    note('no donor row on screen to click through — the deep-link step is skipped this run')
+    return
+  }
+  const name = (await textOf(page, DONOR_NAME)).trim()
+  await page.click(DONOR_NAME, { timeout: 15_000 })
+
+  const landed = await until(async () => (await countOf(page, LOOT_DETAIL)) > 0, 20_000)
+  if (!check('clicking a donor name opens the Loot tab’s item drill-down', landed, `donor "${name}"`)) return
+  const title = (await textOf(page, LOOT_TITLE)).replace(/\s+/g, ' ').trim()
+  check('…on the item that was clicked, not on the ledger', title === name, `"${title}" vs "${name}"`)
+  check(
+    'the drill states what the committed DBs know about where it drops (never-looted items included)',
+    (await countOf(page, LOOT_DB_SOURCES)) > 0
+  )
+}
+
 /** Everything downstream of "there is a set to plan into", in order. */
 async function steps(page: Page): Promise<void> {
   if (await stepEffects(page)) {
     await stepEra(page)
+    await stepNonEquip(page)
     if (await stepAddAndBoard(page)) {
       await stepHostPicker(page)
       await stepFarm(page)
@@ -311,6 +380,7 @@ async function steps(page: Page): Promise<void> {
     over.doc === 0 && over.content === 0,
     `document +${String(over.doc)}px · content area +${String(over.content)}px`
   )
+  await stepDeepLink(page)
 }
 
 async function main(): Promise<void> {

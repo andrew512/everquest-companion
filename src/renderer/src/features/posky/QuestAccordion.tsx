@@ -4,6 +4,18 @@
 // "how close am I, and is anything else competing for these drops?" at a glance, and an expanded
 // panel that spells out every required item with who drops it and where. PoskyView owns the
 // filtering, sorting and paging; everything below owns the drawing of a single quest.
+//
+// ITEM NAMES LINK TO THE LOOT DRILL-DOWN (owner, 2026-08-04): "clicking on a sky item while you
+// are hovering should take you to the item drill-down page." The hover card is unchanged — it is
+// still `ItemTooltip`, the compact game-window popover — and the click is the app's standing link
+// idiom (`openLoot`, appRouting.ts), the same one the Planner's donor names now use.
+//
+// WHICH NAMES, AND WHY NOT ALL OF THEM. The two names that had NO click before become links: the
+// item name in the expanded table, and the reward caption in the summary row. The required-item
+// CHIPS in the summary row keep their existing click, which toggles the favorite star — that is a
+// documented affordance with no other home, and quietly replacing it would trade one deep link for
+// one lost feature. A summary-row link stops propagation, because the row it sits in is the
+// accordion's own expand control.
 
 import { type JSX } from 'react'
 import {
@@ -17,11 +29,6 @@ import {
   LinearProgress,
   Link,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   Typography
 } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
@@ -33,11 +40,11 @@ import { Tooltip } from '../../lib/Tooltip'
 import { skyQuestPage, wikiPageUrl } from '@shared/wiki'
 import type { QuestProgress } from './useProgress'
 import { ItemTooltip } from './ItemTooltip'
-import { DropperCell, KillTargetCaption } from './DropperCell'
+import { ItemNameLink, QuestItemsTable } from './QuestItemsTable'
+import { KillTargetCaption } from './DropperCell'
 import { questKillTargets, type KillTarget } from './poskyDroppers'
 import type { MobTarget } from '../mobs/mobTarget'
 import { sharingQuestLabel, type SharedItem, type SharingQuest } from './sharedItems'
-import { FavoriteStar } from '../favorites/FavoriteStar'
 import { QuestIgnoreButton, QuestStarButton } from '../favorites/QuestFlagButtons'
 
 // Wiki URLs are built in ONE place (src/shared/wiki.ts) — the verified root-path convention.
@@ -154,7 +161,8 @@ function QuestSummaryRow({
   sharedCount,
   favorited,
   onToggleFavorite,
-  onToggleIgnore
+  onToggleIgnore,
+  onOpenLoot
 }: {
   q: QuestProgress
   killTargets: KillTarget[]
@@ -162,6 +170,7 @@ function QuestSummaryRow({
   favorited: boolean
   onToggleFavorite: () => void
   onToggleIgnore: () => void
+  onOpenLoot?: (item: string) => void
 }): JSX.Element {
   return (
     <Stack direction="row" spacing={2} alignItems="center">
@@ -178,7 +187,7 @@ function QuestSummaryRow({
         {q.reward && (
           <ItemTooltip name={q.reward} stats={q.rewardStats}>
             <Typography variant="caption" color="primary.main">
-              → {q.reward}
+              → <ItemNameLink name={q.reward} onOpenLoot={onOpenLoot} inSummary />
             </Typography>
           </ItemTooltip>
         )}
@@ -304,68 +313,6 @@ function QuestDetailsToolbar({
   )
 }
 
-// The expanded panel's item table — the full "what, how many, who drops it, where" listing.
-function QuestItemsTable({
-  q,
-  isFavorite,
-  toggleFavorite,
-  onOpenMob
-}: {
-  q: QuestProgress
-  isFavorite: (name: string) => boolean
-  toggleFavorite: (name: string) => void
-  onOpenMob: (t: MobTarget) => void
-}): JSX.Element {
-  return (
-    <Table size="small">
-      <TableHead>
-        <TableRow>
-          <TableCell padding="checkbox" />
-          <TableCell>Item</TableCell>
-          <TableCell>Have</TableCell>
-          <TableCell>Dropped by</TableCell>
-          <TableCell>Where</TableCell>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {q.items.map((it) => {
-          const done = it.have >= it.need
-          return (
-            <TableRow key={it.name}>
-              <TableCell padding="checkbox">
-                <FavoriteStar name={it.name} favorited={isFavorite(it.name)} onToggle={toggleFavorite} />
-              </TableCell>
-              <TableCell sx={{ color: done ? 'success.main' : 'text.primary' }}>
-                <ItemTooltip
-                  name={it.name}
-                  stats={it.stats}
-                  who={it.who}
-                  where={it.where}
-                  droppers={it.droppers}
-                >
-                  <span>{it.name}</span>
-                </ItemTooltip>
-              </TableCell>
-              <TableCell>
-                {it.have}/{it.need}
-              </TableCell>
-              <TableCell sx={{ color: 'text.secondary' }}>
-                <DropperCell
-                  droppers={it.droppers}
-                  who={it.who}
-                  where={it.where}
-                  onOpenMob={onOpenMob}
-                />
-              </TableCell>
-              <TableCell sx={{ color: 'text.secondary' }}>{it.where}</TableCell>
-            </TableRow>
-          )
-        })}
-      </TableBody>
-    </Table>
-  )
-}
-
 export function QuestAccordion({
   q,
   shared,
@@ -377,7 +324,8 @@ export function QuestAccordion({
   toggleFavorite,
   onSetComplete,
   onSelectQuest,
-  onOpenMob
+  onOpenMob,
+  onOpenLoot
 }: {
   q: QuestProgress
   shared: SharedItem[]
@@ -391,6 +339,8 @@ export function QuestAccordion({
   onSelectQuest: (name: string) => void
   /** a dropper name → the Mobs tab's page for that catalog row (App-level routing) */
   onOpenMob: (t: MobTarget) => void
+  /** an item name → the Loot tab's drill-down for it (App-level routing, `openLoot`) */
+  onOpenLoot?: (item: string) => void
 }): JSX.Element {
   const wikiHref = wikiClassPage(q.className)
   // A turned-in quest has nothing left to kill for, whatever its item counts say.
@@ -406,6 +356,7 @@ export function QuestAccordion({
             favorited={favorited}
             onToggleFavorite={onToggleFavorite}
             onToggleIgnore={onToggleIgnore}
+            onOpenLoot={onOpenLoot}
           />
           <QuestItemChips q={q} isFavorite={isFavorite} toggleFavorite={toggleFavorite} />
         </Stack>
@@ -425,6 +376,7 @@ export function QuestAccordion({
           isFavorite={isFavorite}
           toggleFavorite={toggleFavorite}
           onOpenMob={onOpenMob}
+          onOpenLoot={onOpenLoot}
         />
       </AccordionDetails>
     </Accordion>

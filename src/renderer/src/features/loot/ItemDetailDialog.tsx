@@ -17,6 +17,7 @@ import type { ItemKnowledge, LootEvent } from '@shared/types'
 import { formatDate } from '../../lib/formatDate'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { ObservedItemWindow } from '../../lib/ObservedItemWindow'
+import { ItemDbSources, ObservedChip } from './ItemDbSources'
 import { KnowledgeSection } from './KnowledgeSection'
 
 /**
@@ -216,16 +217,29 @@ function ItemWindowColumn({
   )
 }
 
+/* The observed columns are YOUR loot history — chipped `observed` since 2026-08-04, because the
+   `db` columns below them answer the same question from the committed wiki data and the two must
+   never read as one list. "You have never looted this" is now a statement about you, not about
+   the item. */
+function ObservedHead({ title, hint }: { title: string; hint?: string }): JSX.Element {
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5 }}>
+      <Typography variant="subtitle2">{title}</Typography>
+      {hint !== undefined && (
+        <Typography component="span" variant="caption" color="text.secondary">
+          {hint}
+        </Typography>
+      )}
+      <ObservedChip />
+    </Stack>
+  )
+}
+
 function DroppedByColumn({ sources, max }: { sources: LootTally[]; max: number }): JSX.Element {
   return (
-    <Box sx={{ flex: 1 }}>
-      <Typography variant="subtitle2" gutterBottom>
-        Dropped by{' '}
-        <Typography component="span" variant="caption" color="text.secondary">
-          (times seen)
-        </Typography>
-      </Typography>
-      {sources.length === 0 && <Typography variant="caption">No source recorded.</Typography>}
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <ObservedHead title="Dropped by" hint="(times seen)" />
+      {sources.length === 0 && <Typography variant="caption">You have not looted this yet.</Typography>}
       {sources.map((s) => (
         <Bar key={s.name} label={s.name} value={s.count} max={max} right={`${s.count}× seen`} />
       ))}
@@ -235,10 +249,8 @@ function DroppedByColumn({ sources, max }: { sources: LootTally[]; max: number }
 
 function ZonesColumn({ zones, max }: { zones: LootTally[]; max: number }): JSX.Element {
   return (
-    <Box sx={{ flex: 1 }}>
-      <Typography variant="subtitle2" gutterBottom>
-        Seen in zones
-      </Typography>
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <ObservedHead title="Seen in zones" />
       {zones.length === 0 && <Typography variant="caption">No zone recorded.</Typography>}
       {zones.map((z) => (
         <Bar key={z.name} label={z.name} value={z.count} max={max} right={`${z.count}×`} />
@@ -248,15 +260,22 @@ function ZonesColumn({ zones, max }: { zones: LootTally[]; max: number }): JSX.E
 }
 
 /* Everything BELOW/BESIDE the game block is OUR knowledge — what the live log and the local
-   dataset add that the in-game window can't tell you. */
+   dataset add that the in-game window can't tell you.
+
+   TWO PROVENANCES, IN ORDER. Your own history comes first (it is the only one with counts, and it
+   is what you came here for), then the committed DBs' answer to the same question, chipped `db`.
+   The second half is why a never-looted item is worth opening at all — a Planner donor deep-links
+   straight here, and "No source recorded" would contradict the row that sent you. */
 function ObservedColumn({
   events,
   agg,
-  knowledge
+  knowledge,
+  item
 }: {
   events: LootEvent[]
   agg: LootBreakdown
   knowledge: ItemKnowledgeState
+  item: string
 }): JSX.Element {
   return (
     <Box sx={{ flex: 1, minWidth: 0, width: '100%' }}>
@@ -273,6 +292,8 @@ function ObservedColumn({
         <DroppedByColumn sources={agg.sources} max={agg.sources[0]?.count ?? 1} />
         <ZonesColumn zones={agg.zones} max={agg.zones[0]?.count ?? 1} />
       </Stack>
+
+      <ItemDbSources item={item} knowledge={knowledge.data} />
 
       <Divider sx={{ my: 2 }} />
       <Typography variant="subtitle2" gutterBottom>
@@ -313,7 +334,7 @@ export function ItemDetailContent({
   return (
     <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems="flex-start">
       <ItemWindowColumn item={item} stats={stats} knowledge={knowledge} />
-      <ObservedColumn events={events} agg={agg} knowledge={knowledge} />
+      <ObservedColumn events={events} agg={agg} knowledge={knowledge} item={item} />
     </Stack>
   )
 }
