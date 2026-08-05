@@ -17,8 +17,11 @@
  * between a crisp map and a blurry one); when the log has stated a zone AND the hand-authored
  * table resolves it, the header states that zone and names a source pack per layer; the
  * search-hit list is a BOUNDED scroll box (the Task-#56 law, measured); a label prefix taken
- * from the map on screen finds itself; clicking a hit leaves the transient marker; and there are
- * no renderer console errors.
+ * from the map on screen finds itself; clicking a hit leaves the transient marker; the ZONE PANE
+ * is absent until its toolbar toggle is pressed, then lists the wiki's mobs and the map's own
+ * labels, filters both from one box, centres the viewport on a clicked row (asserted through the
+ * pin's screen position — a real transform change) and gives the width back on close; and there
+ * are no renderer console errors.
  *
  * FRESH-MACHINE HONESTY, twice over. A machine with no EQ install has no logs (so the app shows
  * its no-logs empty state and no feature view mounts at all) and no `maps\` directory (so the
@@ -61,6 +64,14 @@ const POINT = '[data-testid="map-point"]'
 const HITS = '[data-testid="maps-hits"]'
 const HIT_ROW = '[data-testid="maps-hit-row"]'
 const SEARCH = '[data-testid="maps-search-input"]'
+const PANE = '[data-testid="maps-pane"]'
+const PANE_TOGGLE = '[data-testid="maps-pane-toggle"]'
+const PANE_SEARCH = '[data-testid="maps-pane-search"]'
+const PANE_MOB = '[data-testid="maps-pane-mob"]'
+/** A mob row the wiki actually placed — the only kind that is clickable (the rest are disabled). */
+const PANE_MOB_PINNED = '[data-testid="maps-pane-mob"]:has([data-testid="maps-pane-pin"])'
+const PANE_LABEL = '[data-testid="maps-pane-label"]'
+const PANE_MARKER = '[data-testid="maps-pane-marker"]'
 
 /** The fixed-height law's ceiling for a hit list, in CSS pixels (MapSearch.HIT_LIST_MAX_H + trim). */
 const HIT_LIST_CEILING = 320
@@ -277,6 +288,121 @@ async function stepSearch(page: Page): Promise<void> {
   check('clicking a hit centres the view on it and flashes a marker', marked)
 }
 
+/** The viewport transform, as the surface itself reports it. Proves the view actually MOVED. */
+function viewOf(page: Page): Promise<{ w: number } | null> {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s)
+    if (!el) return null
+    return { w: Math.round(el.getBoundingClientRect().width) }
+  }, SURFACE)
+}
+
+/**
+ * The zone pane's own transform probe: where the FIRST mob pin sits on screen.
+ *
+ * Centring is a change of `MapViewport.view`, which no DOM attribute states — but every pin is
+ * positioned THROUGH that transform, so a pin that moved is a view that moved. Returns null when
+ * no pin is drawn (a zone whose catalog rows state no coordinates — a real, correct state).
+ */
+function pinAt(page: Page): Promise<{ x: number; y: number } | null> {
+  return page.evaluate(() => {
+    const el = document.querySelector('[data-testid="maps-mob-pin"]') as HTMLElement | null
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { x: Math.round(r.left), y: Math.round(r.top) }
+  })
+}
+
+/** ONE box, BOTH sections: a query that matches nothing must empty the mob list and the label list. */
+async function stepPaneFilter(page: Page): Promise<void> {
+  const mobRows = await countOf(page, PANE_MOB)
+  const labelRows = await countOf(page, PANE_LABEL)
+  check(
+    'the pane lists something from at least one of its two authorities',
+    mobRows + labelRows > 0,
+    `${String(mobRows)} wiki mobs · ${String(labelRows)} map labels`
+  )
+  await page.fill(PANE_SEARCH, 'zzzqqq', { timeout: 15_000 })
+  const emptied = await until(
+    async () => (await countOf(page, PANE_MOB)) === 0 && (await countOf(page, PANE_LABEL)) === 0,
+    6000
+  )
+  check('the pane’s one search box filters BOTH sections', emptied)
+  await page.fill(PANE_SEARCH, '', { timeout: 15_000 })
+  await until(async () => (await countOf(page, PANE_MOB)) + (await countOf(page, PANE_LABEL)) > 0, 6000)
+}
+
+/**
+ * CLICK ⇒ RING + CENTRE.
+ *
+ * The centring is asserted through the first pin's SCREEN position, which is a real check on the
+ * viewport transform rather than "a ring appeared": every pin is placed THROUGH that transform,
+ * so a pin that moved is a view that moved. A zone the catalog cannot place draws no pin, which
+ * is a correct state — noted and skipped, never a failure.
+ */
+async function stepPaneSelect(page: Page): Promise<void> {
+  // Prefer a mob row that HAS a pin — it exercises the wiki join and the pin layer, and it is the
+  // only kind that is clickable at all (a mob whose page states no position is deliberately
+  // disabled). Fall back to a map label, which is always a coordinate.
+  const clickable = (await countOf(page, PANE_MOB_PINNED)) > 0 ? PANE_MOB_PINNED : PANE_LABEL
+  if ((await countOf(page, clickable)) === 0) {
+    note('this zone yields no pane rows at all — the click-to-centre half is not asserted this run')
+    return
+  }
+  const before = await pinAt(page)
+  await page.click(clickable, { timeout: 15_000 })
+  const ringed = await until(async () => (await countOf(page, PANE_MARKER)) > 0, 4000)
+  check('clicking a pane row highlights it on the map with a persistent ring', ringed)
+  if (before == null) {
+    note('no wiki pin is drawn for this zone (its catalog rows state no coordinates) — the transform check is skipped')
+    return
+  }
+  const after = await pinAt(page)
+  check(
+    '…and centres the viewport on it (the projection actually moved)',
+    after != null && (after.x !== before.x || after.y !== before.y),
+    after ? `pin ${String(before.x)},${String(before.y)} → ${String(after.x)},${String(after.y)}` : 'pin gone'
+  )
+}
+
+/**
+ * 7. THE ZONE PANE (wiki mobs + this map's labels).
+ *
+ * ABSENT BY DEFAULT is the first assertion, and it is a layout claim as much as a state one: a
+ * pane that is off must not be a zero-width box stealing from the map. So the surface's width is
+ * measured before, during and after, and the map is required to actually GIVE UP width when the
+ * pane opens and to take all of it back when it closes — the fixed-size-math bug class, measured.
+ */
+async function stepPane(page: Page): Promise<void> {
+  check('the zone pane is absent until it is asked for', (await countOf(page, PANE)) === 0)
+  const widthClosed = (await viewOf(page))?.w ?? 0
+
+  await page.click(PANE_TOGGLE, { timeout: 15_000 })
+  const opened = await until(async () => (await countOf(page, PANE)) > 0, 8000)
+  if (!check('the toolbar toggle opens the pane', opened)) return
+  await sleep(600) // let the ResizeObserver deliver the new surface size
+
+  const widthOpen = (await viewOf(page))?.w ?? 0
+  check(
+    'opening the pane takes width from the MAP, and the map relayouts (no fixed-size arithmetic)',
+    widthOpen > 0 && widthOpen < widthClosed,
+    `surface ${String(widthClosed)}px → ${String(widthOpen)}px`
+  )
+
+  await stepPaneFilter(page)
+  await stepPaneSelect(page)
+
+  await page.click(PANE_TOGGLE, { timeout: 15_000 })
+  const closed = await until(async () => (await countOf(page, PANE)) === 0, 8000)
+  await sleep(600)
+  const widthAgain = (await viewOf(page))?.w ?? 0
+  check(
+    'closing the pane gives the width back to the map',
+    closed && Math.abs(widthAgain - widthClosed) <= 2,
+    `surface ${String(widthOpen)}px → ${String(widthAgain)}px (was ${String(widthClosed)}px)`
+  )
+}
+
 async function main(): Promise<void> {
   buildIfStale()
   // See the header: a remembered `eq.maps.zone` would make the auto-open assertion vacuous.
@@ -308,6 +434,7 @@ async function main(): Promise<void> {
         await stepCanvas(page)
         await stepHeader(page, zone)
         await stepSearch(page)
+        await stepPane(page)
       }
     }
 

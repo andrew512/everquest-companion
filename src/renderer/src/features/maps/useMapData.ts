@@ -30,6 +30,24 @@ import type { MapData, MapPackInfo, MapPackPrefs, ZoneShort } from '@shared/maps
 export const PACK_PREFS_KEY = 'eq.maps.packs'
 /** The zone stem the viewer was last showing, so a relaunch opens where you left off. */
 export const LAST_ZONE_KEY = 'eq.maps.zone'
+/**
+ * Is the right-hand "what's in this zone" pane open? `'1'` / absent.
+ *
+ * OFF BY DEFAULT, and it lives here rather than in `UI_PREF_SPECS` for the same reason the other
+ * two do: it is a fact about this window's layout, not a setting worth carrying to another
+ * machine. The TOGGLE is on the map toolbar (MapToolbar), beside the layer and floor controls it
+ * belongs with — Preferences is for things you set once, and this is a thing you flick.
+ */
+export const PANE_OPEN_KEY = 'eq.maps.pane'
+
+export function loadPaneOpen(): boolean {
+  return localStorage.getItem(PANE_OPEN_KEY) === '1'
+}
+
+export function savePaneOpen(open: boolean): void {
+  if (open) localStorage.setItem(PANE_OPEN_KEY, '1')
+  else localStorage.removeItem(PANE_OPEN_KEY)
+}
 
 function nonEmpty(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined

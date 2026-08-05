@@ -33,6 +33,7 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
+import ViewSidebarIcon from '@mui/icons-material/ViewSidebar'
 import ZoomInIcon from '@mui/icons-material/ZoomIn'
 import ZoomOutIcon from '@mui/icons-material/ZoomOut'
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong'
@@ -230,6 +231,9 @@ export interface MapToolbarProps {
   /** > 1 zooms in, < 1 out, around the pane centre. */
   onZoom: (factor: number) => void
   onFit: () => void
+  /** Is the zone pane (named mobs + this map's labels) open? Off by default. */
+  paneOpen: boolean
+  onPaneOpen: (open: boolean) => void
 }
 
 /**
@@ -276,19 +280,9 @@ function PackSelect({
   )
 }
 
-export default function MapToolbar({
-  layers,
-  onLayers,
-  bands,
-  floor,
-  onFloor,
-  packs,
-  prefs,
-  onPrefs,
-  zoomedIn,
-  onZoom,
-  onFit
-}: MapToolbarProps): JSX.Element {
+export default function MapToolbar(props: MapToolbarProps): JSX.Element {
+  const { layers, onLayers, bands, floor, onFloor, packs, prefs, onPrefs } = props
+  const { zoomedIn, onZoom, onFit, paneOpen, onPaneOpen } = props
   const on = TOGGLEABLE.filter((t) => layers[t.layer]).map((t) => String(t.layer))
   return (
     <Stack
@@ -353,6 +347,25 @@ export default function MapToolbar({
           onPrefs({ ...prefs, ...(id == null ? { labels: undefined } : { labels: id }) })
         }}
       />
+
+      {/* THE ZONE PANE'S TOGGLE LIVES HERE, not in Preferences. It is a thing you flick while
+          reading a map — like the layer and floor controls it sits beside — not a thing you set
+          once for every machine you own. Its state is remembered in `eq.maps.pane`, alongside
+          the pack choice and the last zone (useMapData.ts). */}
+      <Tooltip title={paneOpen ? 'Hide this zone’s mobs and labels' : 'Show this zone’s mobs and labels'}>
+        <ToggleButton
+          size="small"
+          value="pane"
+          selected={paneOpen}
+          data-testid="maps-pane-toggle"
+          onChange={() => {
+            onPaneOpen(!paneOpen)
+          }}
+        >
+          <ViewSidebarIcon fontSize="small" sx={{ mr: 0.5 }} />
+          Zone
+        </ToggleButton>
+      </Tooltip>
     </Stack>
   )
 }

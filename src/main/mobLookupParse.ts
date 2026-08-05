@@ -44,7 +44,7 @@
 // simply comes back with no `dropsWiki`.
 
 import { templateField } from './itemLookupParse'
-import type { MobDrop, MobQuestUse, MobSeenDrop } from '../shared/types'
+import type { MobDrop, MobLoc, MobQuestUse, MobSeenDrop } from '../shared/types'
 
 /**
  * Canonical identity key for a MOB name. The same rule as parser.idKey (lowercase + trim) plus
@@ -166,6 +166,57 @@ export function parseMobQuestLinks(block: string): MobQuestUse[] {
   return uses
 }
 
+/**
+ * `|location` — one or more SPAWN POINTS, in the page's own `/loc` order (see `MobLoc`).
+ *
+ * MEASURED across all 7,866 catalog pages (2026-08-04): 6,309 state numbers, and they do it in
+ * these verbatim shapes, which is why the scan is shape-based rather than a single anchored
+ * pattern:
+ *
+ *     (131, 342)                     2,349   the plain case
+ *     60% @ (131, 342)               2,193   a spawn-point share, often repeated:
+ *     50% @ (a, b), 50% @ (c, d)       182   …two, three, up to eight per page
+ *     131, 342                         112   no parentheses at all
+ *     @ (131, 342)                      79   the share elided
+ *     (131, 342), (204, 88)             74   several points, no shares
+ *     (131, 342, 4)                    120   with a height (all shapes combined)
+ *     Basement 50% @ (a, b)             11   prose prefix
+ *     50% @ (a, b) Level 2              22   prose suffix
+ *     50% @ (a, b) at [[The Velium Keg]] No. 3 on map
+ *
+ * So: find every comma-separated NUMBER PAIR (optionally a triple, optionally parenthesised),
+ * and attach the `NN%` that immediately precedes it when one does. Prose either side is ignored
+ * rather than parsed — `Basement`/`Level 2`/`No. 3 on map` are notes for a human, and inventing
+ * a floor from them would be exactly the silent inference law 1 forbids.
+ *
+ * WHAT IT REFUSES: everything with no comma-joined pair in it. `Various` (533 pages), `?` (273),
+ * `''Need Info''` (79), `Wanders` (10) and `Droga Main` (11) yield nothing at all, and the
+ * trailing `No. 3` of the last shape above is a lone number, so it cannot be mistaken for one
+ * half of a coordinate.
+ */
+const LOC_RE =
+  /(?:(\d{1,3})\s*%\s*@?\s*)?\(?\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?:,\s*(-?\d+(?:\.\d+)?)\s*)?\)?/g
+
+export function parseMobLocations(field: string): MobLoc[] {
+  const out: MobLoc[] = []
+  LOC_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = LOC_RE.exec(field)) !== null) {
+    const ns = Number(m[2])
+    const ew = Number(m[3])
+    if (!Number.isFinite(ns) || !Number.isFinite(ew)) continue
+    const z = m[4] === undefined ? undefined : Number(m[4])
+    const pct = m[1] === undefined ? undefined : Number(m[1])
+    out.push({
+      ns,
+      ew,
+      ...(z !== undefined && Number.isFinite(z) ? { z } : {}),
+      ...(pct !== undefined && Number.isFinite(pct) ? { pct } : {})
+    })
+  }
+  return out
+}
+
 /** What a mob page states. Every field is optional — absent means "the page didn't say". */
 export interface MobPageFacts {
   /** the page's own `|name` value, for the identity check on a non-exact search hit */
@@ -174,6 +225,8 @@ export interface MobPageFacts {
   zone?: string
   dropsWiki?: MobDrop[]
   quests?: MobQuestUse[]
+  /** `|location`'s spawn points, in page order. Absent when it stated no numbers. */
+  locations?: MobLoc[]
 }
 
 /**
@@ -204,6 +257,14 @@ export function parseMobWikitext(wikitext: string): MobPageFacts {
   if (quests) {
     const uses = parseMobQuestLinks(quests)
     if (uses.length) out.quests = uses
+  }
+  // Read from the RAW field, not `unlink()`ed: `50% @ (a, b) at [[The Velium Keg]] No. 3 on map`
+  // is one of the observed shapes, and stripping the link would leave `No. 3` adjacent to the
+  // pair — harmless here (a lone number is not a pair) but the scan wants the text as written.
+  const location = templateField(wikitext, 'location')
+  if (location) {
+    const spawns = parseMobLocations(location)
+    if (spawns.length) out.locations = spawns
   }
   return out
 }

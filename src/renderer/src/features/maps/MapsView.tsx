@@ -37,6 +37,9 @@ import { useModule } from '../../lib/useModule'
 import { trackFeature } from '../../lib/telemetry'
 import { MapCanvas } from './MapCanvas'
 import { MapPointsLayer, labelPosition } from './MapPointsLayer'
+import { MapMobPins } from './MapMobPins'
+import MapMobPane from './MapMobPane'
+import { paneOverlay, useZonePane, type PaneOverlay, type ZonePaneState } from './useMapPane'
 import { DEFAULT_LAYERS, type LayerMask } from './mapGeometry'
 import { bandRange, floorBands, type FloorBand } from './floorSlice'
 import { useMapViewport, type MapViewport } from './useMapViewport'
@@ -69,6 +72,19 @@ function applyCharacterDelta(state: CharacterSnap, delta: CharacterDelta): Chara
  */
 function headerTitle(zone: ZoneShort | null, raw: string | undefined): string {
   if (zone == null) return 'Maps'
+  return zoneLongName(zone, raw) ?? 'Maps'
+}
+
+/**
+ * The LONG zone name for the map on screen — what the mob catalog is joined on (`mobsInZone`
+ * folds instance suffixes and articles itself, so the log's raw spelling is fine as-is).
+ *
+ * The log's own spelling wins when it resolved to THIS map; a manually picked stem falls back to
+ * the zone table's name. `null` when nothing is open. Same rule the header displays by, on
+ * purpose: the pane's list and the title must be describing one place.
+ */
+function zoneLongName(zone: ZoneShort | null, raw: string | undefined): string | null {
+  if (zone == null) return null
   if (raw != null && zoneShortName(raw) === zone) return raw
   return zoneLabel(zone)
 }
@@ -269,7 +285,8 @@ function MapSurface({
   layers,
   bands,
   floor,
-  marker
+  marker,
+  pane
 }: {
   data: MapData
   vp: MapViewport
@@ -278,8 +295,14 @@ function MapSurface({
   bands: readonly FloorBand[]
   floor: number | null
   marker: Marker | null
+  /** The zone pane's contribution, or null when the pane is closed and draws nothing. */
+  pane: PaneOverlay | null
 }): JSX.Element {
   const at = marker == null ? null : labelPosition(vp, marker)
+  // The SELECTION ring — one symbol for both kinds of pane row, so a wiki mob and a map label
+  // are marked identically once clicked. Persistent, unlike the search jump's flash: a selection
+  // is a state you can look away from and come back to.
+  const ringAt = pane?.selectedAt == null ? null : labelPosition(vp, pane.selectedAt)
   // Resolved here rather than inside the canvas so the canvas stays ignorant of clustering: it
   // takes a z window and dims what falls outside it, nothing more. Memoized because it is a
   // canvas redraw dependency — a fresh object every render would repaint on every render.
@@ -304,6 +327,24 @@ function MapSurface({
     >
       <MapCanvas lines={data.lines} vp={vp} layers={layers} zBand={zBand} />
       <MapPointsLayer points={data.points} vp={vp} layers={layers} bands={bands} floor={floor} />
+      {pane != null && <MapMobPins pins={pane.pins} vp={vp} selectedId={pane.selectedId} />}
+      {ringAt != null && (
+        <Box
+          data-testid="maps-pane-marker"
+          sx={{
+            position: 'absolute',
+            left: ringAt.px,
+            top: ringAt.py,
+            width: 26,
+            height: 26,
+            transform: 'translate(-50%, -50%)',
+            borderRadius: '50%',
+            border: '2px solid',
+            borderColor: 'warning.main',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       {at != null && (
         <Box
           data-testid="maps-marker"
@@ -322,6 +363,66 @@ function MapSurface({
         />
       )}
     </Box>
+  )
+}
+
+/**
+ * THE MAP AND ITS PANE — one flex row.
+ *
+ * When the pane is off it is not rendered AT ALL, so the surface is the row's only child and
+ * takes the full width. That is the whole anti-flicker design: no zero-width box, no width
+ * transition, no fixed-size arithmetic on either side. The surface is `flexGrow:1; minHeight:0`
+ * and the pane is a fixed `flexShrink:0` column, so a toggle is one layout pass and the
+ * viewport's ResizeObserver sees exactly one new size — it can never feed back into itself,
+ * because nothing here is sized from its own content.
+ */
+function MapBody({
+  data,
+  vp,
+  hostRef,
+  layers,
+  bands,
+  floor,
+  marker,
+  pane,
+  zoneName
+}: {
+  data: MapData
+  vp: MapViewport
+  hostRef: RefObject<HTMLDivElement | null>
+  layers: LayerMask
+  bands: readonly FloorBand[]
+  floor: number | null
+  marker: Marker | null
+  pane: ZonePaneState
+  zoneName: string | null
+}): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1.5} sx={{ flexGrow: 1, minHeight: 0 }}>
+      <MapSurface
+        data={data}
+        vp={vp}
+        hostRef={hostRef}
+        layers={layers}
+        bands={bands}
+        floor={floor}
+        marker={marker}
+        pane={paneOverlay(pane)}
+      />
+      {pane.open && (
+        <MapMobPane
+          zoneName={zoneName}
+          mobs={pane.mobs}
+          labels={pane.labels}
+          counts={pane.counts}
+          query={pane.query}
+          onQuery={pane.setQuery}
+          selectedId={pane.selectedId}
+          onSelect={pane.select}
+          pinsCapped={pane.pinsCapped}
+        />
+      )}
+    </Stack>
   )
 }
 
@@ -402,6 +503,11 @@ export default function MapsView(): JSX.Element {
   const vp = useMapViewport({ bounds: data?.bounds ?? EMPTY_BOUNDS, id: data?.zone ?? '', hostRef })
   const { marker, onJump } = useSearchJump({ vp, zone: data?.zone, pick })
 
+  // THE ZONE PANE. Off by default, remembered in `eq.maps.pane`, toggled from the toolbar. Its
+  // filtered rows are derived ONCE and read by both the list and the surface's pins.
+  const zoneName = zoneLongName(zone, raw)
+  const pane = useZonePane({ vp, data, zoneName })
+
   return (
     <Stack spacing={1.5} sx={{ height: '100%' }}>
       <MapsHeader title={headerTitle(zone, raw)} zone={zone} data={data} />
@@ -421,12 +527,14 @@ export default function MapsView(): JSX.Element {
           zoomedIn={vp.zoomedIn}
           onZoom={vp.zoomBy}
           onFit={vp.fit}
+          paneOpen={pane.open}
+          onPaneOpen={pane.setOpen}
         />
       )}
       <MapSearch zone={zone} prefs={prefs} onJump={onJump} />
 
       {data != null ? (
-        <MapSurface
+        <MapBody
           data={data}
           vp={vp}
           hostRef={hostRef}
@@ -434,6 +542,8 @@ export default function MapsView(): JSX.Element {
           bands={bands}
           floor={floor}
           marker={marker}
+          pane={pane}
+          zoneName={zoneName}
         />
       ) : (
         // Nothing is claimed before the pack listing and the first fetch have answered — a

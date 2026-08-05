@@ -76,5 +76,9 @@ export function parseMobPage(title: string, wikitext: string): MobEntry | null {
   if (zones.length) entry.zones = zones
   const drops = (facts.dropsWiki ?? []).map((d) => d.item)
   if (drops.length) entry.drops = drops
+  // Spawn points, when the page states numbers. 6,309 of 7,866 pages do (see MobLoc) — enough
+  // for the map viewer to pin a zone's named mobs, and the ~20% that only say "Various" stay
+  // absent rather than acquiring a guessed one.
+  if (facts.locations?.length) entry.loc = facts.locations
   return entry
 }
