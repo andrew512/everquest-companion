@@ -19,11 +19,19 @@
 //   4. turning the preference off yields EXACTLY today's list (your skills, no pet row);
 //   5. bar widths are re-based over the merged list, so the biggest row — usually the pet — is
 //      the one that renders full width.
+//
+// THE PREFERENCE IS ALSO THE ZOOM (owner direction, 2026-08-04) — `defaultDrill` decides which
+// LEVEL the dashboard opens on, and the last block below walks the owner's whole navigation loop
+// (in → out → in) in both preference states. Verified against a real charmed-pet fight before it
+// was written: Plane of Sky, Tue Aug 04 22:48–22:52, `a thunder spirit` charmed with Allure VI —
+// the engine binds it, hands it over as a `kind: 'pet'` SourceView, and one segment of that
+// session legitimately carries TWO pet sources (the first charm broke and a second was landed),
+// which is the multi-line case pinned at the bottom of this file.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { flattenSkills } from '../src/renderer/src/features/combat/dashboardData'
-import { nestedRows, ownBreakdown, petSources, selfSource } from '../src/renderer/src/features/combat/petRows'
+import { flattenSkills, type Drill } from '../src/renderer/src/features/combat/dashboardData'
+import { defaultDrill, nestedRows, ownBreakdown, petSources, selfSource } from '../src/renderer/src/features/combat/petRows'
 import type { SkillView, SourceView } from '../src/shared/combat'
 
 function skill(name: string, over: Partial<SkillView> = {}): SkillView {
@@ -169,4 +177,93 @@ test('the source split is by KIND, never by the aggregate’s key spelling', () 
     ['Vebarn', 'Garer']
   )
   assert.equal(b.total, 16500)
+})
+
+// ── THE DEFAULT ZOOM, AND THE WHOLE NAVIGATION LOOP ────────────────────────────────────────
+//
+// One preference, both halves of one choice: it decides how the pet is LAID OUT *and* which
+// level the dashboard OPENS on. The panel below is a faithful model of `SegmentPanel`'s
+// three-way body (level 1 = the source rows; a drilled source = `nestedRows` of it, with pets
+// nested only into YOURS and only while the preference is on), so a whole in → out → in loop
+// can be asserted as a sequence of renders rather than described in a comment.
+
+const SELF_ID = selfSource(ENTITIES)?.id ?? null
+
+interface Panel {
+  level: 1 | 2
+  subject: string
+  rows: string[]
+}
+
+function panel(entities: SourceView[], combine: boolean, drill: Drill | null): Panel {
+  const pets = combine ? petSources(entities) : []
+  const e = drill?.kind === 'entity' ? entities.find((s) => s.id === drill.entityId) : undefined
+  if (!e) return { level: 1, subject: 'sources', rows: entities.map((s) => s.name) }
+  const rows = nestedRows(e, e.kind === 'you' ? pets : [])
+  return { level: 2, subject: e.name, rows: rows.map((r) => (r.kind === 'pet' ? r.pet.name : r.skill.name)) }
+}
+
+test('preference ON: the default view is YOUR breakdown with the pet as one ranked line item', () => {
+  const opening = defaultDrill(SELF_ID, true)
+  assert.deepEqual(opening, { kind: 'entity', entityId: 'you' })
+  assert.deepEqual(panel(ENTITIES, true, opening), {
+    level: 2,
+    subject: 'You',
+    rows: ['Vebarn', 'Melee', 'Backstab', 'Ancient Wrath']
+  })
+})
+
+test('preference OFF: the default view is FULLY ZOOMED OUT — one bar per source', () => {
+  const opening = defaultDrill(SELF_ID, false)
+  assert.equal(opening, null, 'no drill at all: level 1')
+  // The level-1 list is the engine's own source rows, in its own ranking — you and your pet.
+  assert.deepEqual(panel(ENTITIES, false, opening), {
+    level: 1,
+    subject: 'sources',
+    rows: ['Vebarn', 'You']
+  })
+})
+
+test('preference OFF: your bar drills to your skills with NO pet line; the pet bar to the pet', () => {
+  const mine = panel(ENTITIES, false, { kind: 'entity', entityId: 'you' })
+  assert.deepEqual(mine.rows, ['Melee', 'Backstab', 'Ancient Wrath'], 'nothing is nested while it is off')
+  const pet = panel(ENTITIES, false, { kind: 'entity', entityId: 'pet:7' })
+  assert.deepEqual(pet, { level: 2, subject: 'Vebarn', rows: ['Melee'] })
+  // …and backing out of either lands on the same two-bar list it opened on.
+  assert.deepEqual(panel(ENTITIES, false, null), panel(ENTITIES, false, defaultDrill(SELF_ID, false)))
+})
+
+test('preference ON: in → out → in — pet drill, Back, and the combined view is exactly as it opened', () => {
+  const opening = panel(ENTITIES, true, defaultDrill(SELF_ID, true))
+  assert.ok(opening.rows.includes('Vebarn'), 'the pet is a line item of the opening view')
+
+  // IN: clicking that line drills to JUST the pet — no pet nested inside a pet.
+  const petView = panel(ENTITIES, true, { kind: 'entity', entityId: 'pet:7' })
+  assert.deepEqual(petView, { level: 2, subject: 'Vebarn', rows: ['Melee'] })
+
+  // OUT: the pet's Back goes to its PARENT (your breakdown), not to level 1 — and lands on a
+  // view byte-identical to the one it was clicked from.
+  assert.deepEqual(panel(ENTITIES, true, { kind: 'entity', entityId: 'you' }), opening)
+
+  // …and all the way out is still reachable, one more Back / the "All" crumb.
+  assert.equal(panel(ENTITIES, true, null).level, 1)
+})
+
+test('the preference is the ONLY thing that moves the default level', () => {
+  assert.notDeepEqual(defaultDrill(SELF_ID, true), defaultDrill(SELF_ID, false))
+  // A segment with no outgoing damage of yours has no "your breakdown" to open: level 1 either
+  // way, so the pet's own row is what you see rather than an empty pane.
+  assert.equal(defaultDrill(null, true), null)
+  assert.deepEqual(panel([PET], true, defaultDrill(null, true)).rows, ['Vebarn'])
+})
+
+test('two pets in one segment are two line items, each drilling to its own breakdown', () => {
+  const second = source('pet:9', 'Garer', 'pet', [cat('melee', [skill('Melee', { total: 500, hits: 9, max: 80, min: 4 })])])
+  const segment = [YOU, PET, second]
+  const opening = panel(segment, true, defaultDrill(SELF_ID, true))
+  assert.deepEqual(opening.rows, ['Vebarn', 'Melee', 'Backstab', 'Ancient Wrath', 'Garer'])
+  assert.equal(panel(segment, true, { kind: 'entity', entityId: 'pet:9' }).subject, 'Garer')
+  assert.equal(panel(segment, true, { kind: 'entity', entityId: 'pet:7' }).subject, 'Vebarn')
+  // Zoomed out, the same segment is three bars.
+  assert.deepEqual(panel(segment, false, defaultDrill(SELF_ID, false)).rows, ['You', 'Vebarn', 'Garer'])
 })

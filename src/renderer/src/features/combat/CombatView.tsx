@@ -8,8 +8,8 @@ import { SegmentBody } from './SegmentPanel'
 import { DpsChartCard, MobDamageCard, type Ringless } from './CombatDashboard'
 import { BreakdownPreviewCard } from './BreakdownCard'
 import { scopeOptions, type CombatScope, type Drill, type ScopeOptions } from './dashboardData'
-import { selfSource } from './petRows'
-import { useStartDrilled } from './useCombatPrefs'
+import { defaultDrill, selfSource } from './petRows'
+import { useCombinePetRow } from './useCombatPrefs'
 import type { CombatFocus } from './combatFocus'
 import type { CombatSnapshot, SegmentView, SourceView, TimelineView } from '@shared/combat'
 
@@ -130,24 +130,22 @@ function DashboardGrid({
 /**
  * DRILL STATE for the main panel — and the DEFAULT it opens on.
  *
- * DEFAULT DRILLED (owner direction, 2026-08-03): the game is mostly played solo, so level 1 is
- * a two-row list (you, your pet) standing in front of the only list worth reading. The dashboard
- * therefore OPENS on your damage breakdown, with the pet nested inside it as one drillable line
- * item (petRows.ts). Un-drilling is exactly what it always was — Back / the "All" crumb / Esc —
- * and the choice STICKS, in localStorage under `eq.combat.drill`, alongside `eq.combat.scope`.
+ * THE PET PREFERENCE IS THE DEFAULT ZOOM (owner direction, 2026-08-04) — `petRows.defaultDrill`
+ * carries the whole rule and why. On: your breakdown with the pet nested in it as one line item.
+ * Off: fully zoomed out, one bar per source. There is no second persisted bit any more: the old
+ * `eq.combat.drill` made "off" still open on your (pet-less) breakdown, and let one Back click
+ * quietly redefine what every later fight opened on.
  *
  * Three states, deliberately, not two:
- *   undefined — the user hasn't chosen for THIS selection: the persisted default applies.
+ *   undefined — the user hasn't navigated within THIS selection: the preference's default level.
  *   null      — an explicit un-drill: level 1, even though the default says otherwise.
  *   Drill     — an explicit subject.
- * Collapsing null into undefined would make a persisted "drilled" default silently re-drill the
- * list the user just backed out of.
+ * Collapsing null into undefined would re-drill the list the user just backed out of.
  *
- * Only YOUR breakdown moves the persisted bit. Drilling a mob (the Damage-by-mob panel) or a
- * nested pet, and backing out of either, is navigation inside one fight — it must not decide
- * what the NEXT fight opens on. (A nested pet's Back hands us its PARENT, your breakdown, not
- * `null` — the crumb spells that hierarchy out — so backing out of a pet never reads here as
- * "show me the sources".)
+ * Navigation NEVER writes the preference: drilling your row, a mob or a nested pet — and backing
+ * out of any of them — is movement inside one fight, and the next fight still opens where the
+ * preference says. (A nested pet's Back hands us its PARENT, your breakdown, not `null`; the
+ * crumb spells that hierarchy out.)
  */
 function useDashboardDrill({
   seg,
@@ -160,29 +158,21 @@ function useDashboardDrill({
   selection: string
   view: 'dash' | 'timeline'
 }): { drill: Drill | null; setDrill: (d: Drill | null) => void } {
-  const [startDrilled, setStartDrilled] = useStartDrilled()
+  const [combinePetRow] = useCombinePetRow()
   const [chosen, setChosen] = useState<Drill | null | undefined>(undefined)
 
   // Incoming is a list of ENEMIES — there is no "your breakdown" to default into, so the
   // default only ever applies to Outgoing.
   const rows = mode === 'out' ? seg?.entities ?? [] : []
   const selfId = selfSource(rows)?.id ?? null
-  const fallback = useMemo(
-    (): Drill | null => (startDrilled && selfId ? { kind: 'entity', entityId: selfId } : null),
-    [startDrilled, selfId]
-  )
+  // Memoized on the two values the answer depends on, so a live fight's per-second snapshot
+  // doesn't hand the view (and the Esc listener below) a brand-new drill object every tick.
+  const fallback = useMemo((): Drill | null => defaultDrill(selfId, combinePetRow), [selfId, combinePetRow])
   const drill = chosen === undefined ? fallback : chosen
 
-  const isSelfDrill = drill?.kind === 'entity' && drill.entityId === selfId
-
-  const setDrill = useCallback(
-    (next: Drill | null): void => {
-      if (next === null && isSelfDrill) setStartDrilled(false)
-      else if (next?.kind === 'entity' && next.entityId === selfId) setStartDrilled(true)
-      setChosen(next)
-    },
-    [isSelfDrill, selfId, setStartDrilled]
-  )
+  // Narrower than `setChosen` on purpose: a panel may name a subject or un-drill, and nothing
+  // else — `undefined` is the default's own state, not something a click can ask for.
+  const setDrill = useCallback((next: Drill | null): void => setChosen(next), [])
 
   // A drill is per-fight and per-direction: changing either returns to the default.
   useEffect(() => setChosen(undefined), [selection, mode])

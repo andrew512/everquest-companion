@@ -16,16 +16,14 @@ import { useCallback, useSyncExternalStore } from 'react'
  * Nest the pet as ONE line item inside your damage breakdown (drillable to the pet's own
  * skills) instead of listing it as a separate source. Default ON: the game is mostly played
  * solo, so "you and your pet" is the shape of nearly every fight (owner direction, 2026-08-03).
+ *
+ * It is also the DEFAULT ZOOM (owner direction, 2026-08-04): on ⇒ the dashboard opens on your
+ * breakdown with the pet nested in it, off ⇒ it opens fully zoomed out on the source list. One
+ * choice, one key — `petRows.defaultDrill` is the rule, and `eq.combat.drill` (a second bit
+ * that used to decide the opening level on its own, and that plain navigation rewrote) is
+ * RETIRED. Nothing reads that key any more; a stale one in localStorage is inert.
  */
 export const COMBINE_PET_ROW_KEY = 'eq.combat.petRow'
-
-/**
- * Does the Combat dashboard OPEN on your damage breakdown (level 2) rather than the source
- * list (level 1)? Default ON, for the same reason: with one or two sources, the source list is
- * a lid on the only list worth reading. Un-drilling is unchanged, and this key is what makes
- * that choice stick across fights and sessions.
- */
-export const DRILL_KEY = 'eq.combat.drill'
 
 const listeners = new Set<() => void>()
 
@@ -60,13 +58,8 @@ export function useBoolPref(key: string, dflt: boolean): [boolean, (v: boolean) 
   return [value, set]
 }
 
-/** See COMBINE_PET_ROW_KEY. Read by the Combat dashboard AND the Overview DPS card. */
+/** See COMBINE_PET_ROW_KEY. Read by the Combat dashboard AND the Overview DPS card — both
+ *  take their opening level from it, and only the Preferences tab ever writes it. */
 export function useCombinePetRow(): [boolean, (v: boolean) => void] {
   return useBoolPref(COMBINE_PET_ROW_KEY, true)
-}
-
-/** See DRILL_KEY. Read (and written) by the Combat dashboard only — the Overview card's drill
- *  is card-local by design and must never move the Combat tab's. */
-export function useStartDrilled(): [boolean, (v: boolean) => void] {
-  return useBoolPref(DRILL_KEY, true)
 }

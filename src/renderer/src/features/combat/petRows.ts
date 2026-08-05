@@ -6,8 +6,15 @@
 // WHY (owner direction, 2026-08-03): the game is mostly played solo, so "your damage" and "the
 // pet's damage" are two rows of a two-row meter and the interesting list is one level down. The
 // default view is therefore YOUR breakdown with the pet as ONE line item inside it, drillable to
-// the pet's own skills. A preference ('Combine pet into your damage') turns the nesting off and
-// restores today's separate sources.
+// the pet's own skills. A preference ('Show your pet inside your damage') turns the nesting off
+// and restores the separate sources.
+//
+// THE PREFERENCE IS THE ZOOM (owner direction, 2026-08-04). Layout and default LEVEL are one
+// choice, not two — see `defaultDrill` below. It used to be two: a second persisted bit
+// (`eq.combat.drill`) decided the opening level on its own, so the preference OFF still opened
+// on your breakdown (level 2, pet-less) instead of the fully-zoomed-out source list the owner
+// asked for, and backing out once quietly re-taught the app to open zoomed out with the
+// preference ON. That bit is retired; this module owns the whole rule now.
 //
 // HONESTY (world-model law 4 — "pet" is presentation, never a data-model class; law 5 —
 // aggregates lie, derive from identities):
@@ -23,7 +30,7 @@
 //     keys outgoing damage as 'you' or 'pet:<id>'). Every surface that shows a combined headline
 //     reads `outTotal`, so the two can't drift.
 
-import { flattenSkills, type SkillRow } from './dashboardData'
+import { flattenSkills, type Drill, type SkillRow } from './dashboardData'
 import type { SourceView } from '@shared/combat'
 
 /** The synthetic line item that stands for ONE pet inside your breakdown. */
@@ -70,6 +77,30 @@ export function selfSource(entities: SourceView[]): SourceView | null {
  *  retires the prior pet — but a segment spanning two pets legitimately carries both). */
 export function petSources(entities: SourceView[]): SourceView[] {
   return entities.filter((e) => e.kind === 'pet')
+}
+
+/**
+ * THE DEFAULT ZOOM — which level the dashboard OPENS on, decided by the same preference that
+ * decides the pet's layout (owner direction, 2026-08-04):
+ *
+ *   ON  ⇒ your breakdown (level 2), with each pet nested inside it as one line item ranked
+ *         among your skills. Clicking the pet line drills to JUST that pet; Back returns to
+ *         this combined view (the crumb spells the hierarchy out).
+ *   OFF ⇒ fully zoomed out (level 1): one bar per source — you, your pet. Clicking the pet bar
+ *         drills to the pet's skills, clicking yours drills to your skills with NO pet line
+ *         (nothing is nested while the preference is off); Back returns to the two-bar list.
+ *
+ * Both directions of the loop (in → out → in) are ordinary navigation and DO NOT write the
+ * preference — a fight you happened to back out of must not redefine what the next one opens on.
+ *
+ * Takes the self row's ID rather than the row (or the whole source list) on purpose: every
+ * snapshot tick rebuilds those objects, and the caller memoizes this on a value that only
+ * changes when the answer can — so a live fight doesn't hand the view a new drill object every
+ * second. `null` (a segment with no outgoing damage of yours) has no "your breakdown" to open,
+ * so the source list is the only honest default there whatever the preference says.
+ */
+export function defaultDrill(selfId: string | null, combine: boolean): Drill | null {
+  return combine && selfId ? { kind: 'entity', entityId: selfId } : null
 }
 
 function toPetRow(p: SourceView): PetRow {

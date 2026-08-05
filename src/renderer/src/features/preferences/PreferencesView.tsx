@@ -101,6 +101,10 @@ import { normalizeQuery } from '../../lib/search'
  * labelled with its real name, drillable into its own skills, and never summed into a skill row
  * of yours (features/combat/petRows.ts). Off, it is a separate source row, as it always was.
  *
+ * It is also the DEFAULT ZOOM (owner direction, 2026-08-04): on ⇒ the Combat tab opens on your
+ * breakdown (pet nested); off ⇒ it opens fully zoomed out on the source list. One switch, both
+ * halves of one choice — `petRows.defaultDrill`.
+ *
  * Renderer-local (localStorage, like the Fight/Overall scope), so it needs no store migration —
  * and it applies LIVE: the Combat dashboard and the Overview card subscribe to the same value.
  */
@@ -121,8 +125,8 @@ function PetNestingSetting(): JSX.Element {
       />
       <Typography variant="caption" color="text.secondary">
         {combine
-          ? 'Your pet is one row inside your damage breakdown — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
-          : 'Your pet is listed as its own source, beside you, on the meter.'}
+          ? 'The Combat tab opens on your damage breakdown with your pet as one row inside it — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
+          : 'The Combat tab opens on the source list — one bar for you, one for your pet — and each bar drills into its own skills.'}
       </Typography>
     </Stack>
   )
@@ -264,8 +268,8 @@ function buildSections(
       items: [
         {
           id: 'combine-pet',
-          label: 'Combine pet into your damage',
-          keywords: 'pet combine merge damage breakdown solo meter drill charm nest source',
+          label: 'Show your pet inside your damage',
+          keywords: 'pet combine merge damage breakdown solo meter drill charm nest source zoom default level',
           content: <PetNestingSetting />
         }
       ]

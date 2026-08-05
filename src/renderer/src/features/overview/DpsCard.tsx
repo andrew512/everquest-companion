@@ -214,7 +214,7 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
   const head = fightScopeOptions(snap?.segments ?? []).head
   const seg = snap?.selected ?? null
   const [combinePetRow] = useCombinePetRow()
-  // Card-local, unpersisted: the Combat tab owns the drill that sticks (`eq.combat.drill`).
+  // Card-local, unpersisted: nothing here may move the Combat tab's drill.
   // The level the card OPENS on follows the preference — combined, your breakdown is the
   // interesting list; uncombined, the pet is a source of its own and hiding it behind a drill
   // would make the glance card show strictly less than it used to.
