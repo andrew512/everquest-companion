@@ -13,11 +13,17 @@
 // (law 1). Class chips are lit for the classes the SET can actually use — the wide-class donors
 // light up most, which is precisely the R2 signal that makes them valuable.
 //
-// NO ITEM POPUP YET, deliberately. The obvious candidate (`loot/ItemDetailDialog`) is the LOOT
-// drill-down: it renders "Times looted 0 · Distinct mobs 0 · No source recorded" for an item you
-// have never looted, which would contradict the source line two pixels above it. Wave 3 wires a
-// planner-appropriate popup; a donor name is plain text until then, so there is no affordance
-// promising something that isn't there.
+// THE DONOR NAME OPENS THE APP'S ITEM WINDOW (`PlannerChips.DonorName` → lib/KnownItemTooltip),
+// the same popup every other item name in the app opens. The loot tab's `ItemDetailDialog` is
+// deliberately NOT the one: it is the LOOT drill-down, and it would answer this row's source line
+// with "Times looted 0 · Distinct mobs 0 · No source recorded".
+//
+// THE ERA FILTER IS ON BY DEFAULT and is the difference between a plan and a wish list. The
+// committed corpus is scraped from a wiki that documents every expansion, so more than half the
+// proc donors drop in Kunark and Velious zones this server has not opened; the toggle hides them,
+// donors whose zones the era table cannot place stay visible with a quiet `era?`, and an effect
+// whose every donor was hidden disappears with them — an effect row promising four donors that
+// expand into nothing would be worse than not listing it.
 
 import { type JSX, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -42,15 +48,18 @@ import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemIconUrl } from '../../lib/ItemWindow'
 import { Tooltip } from '../../lib/Tooltip'
 import {
+  CURRENT_ERA_LABEL,
   DEFAULT_FILTERS,
   classFit,
   filterDonors,
   groupByEffect,
   useDonors,
+  useEraOnly,
   type DonorFilters,
   type DonorRow,
   type EffectGroup
 } from './plannerData'
+import { DonorName, EraChip } from './PlannerChips'
 import { sourceIndex, sourcesFor } from './sourceIndex'
 
 const ROW_HEIGHT = 44
@@ -67,17 +76,16 @@ const CLASS_CHIP_CAP = 6
 // ---- the filter bar ------------------------------------------------------------------
 
 /** ONE nowrap row (the flexWrap law): controls never shrink, the search box is the one that does. */
-function FilterBar({
-  filters,
-  setFilters,
-  text,
-  setText
-}: {
+interface FilterBarProps {
   filters: DonorFilters
   setFilters: (f: DonorFilters) => void
   text: string
   setText: (v: string) => void
-}): JSX.Element {
+  era: [boolean, (v: boolean) => void]
+}
+
+function FilterBar({ filters, setFilters, text, setText, era }: FilterBarProps): JSX.Element {
+  const [eraOnly, setEraOnly] = era
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1 }}>
       <ToggleButtonGroup
@@ -127,6 +135,18 @@ function FilterBar({
           color={filters.trioOnly ? 'primary' : 'default'}
           variant={filters.trioOnly ? 'filled' : 'outlined'}
           onClick={() => setFilters({ ...filters, trioOnly: !filters.trioOnly })}
+          sx={{ flexShrink: 0 }}
+        />
+      </Tooltip>
+
+      <Tooltip title={`Hide donors whose only known sources are outside ${CURRENT_ERA_LABEL}. Donors no zone places stay, chipped 'era?'.`}>
+        <Chip
+          size="small"
+          label="Current era"
+          data-testid="planner-era-toggle"
+          color={eraOnly ? 'primary' : 'default'}
+          variant={eraOnly ? 'filled' : 'outlined'}
+          onClick={() => setEraOnly(!eraOnly)}
           sx={{ flexShrink: 0 }}
         />
       </Tooltip>
@@ -203,6 +223,7 @@ function DonorLine({ donor, planClasses, planned, onAdd }: DonorLineProps): JSX.
       direction="row"
       spacing={1}
       alignItems="center"
+      data-testid="planner-donor-row"
       sx={{ height: ROW_HEIGHT, pl: 5, pr: 1, flexWrap: 'nowrap', borderBottom: 1, borderColor: 'divider' }}
     >
       {donor.iconId !== undefined && (
@@ -216,8 +237,8 @@ function DonorLine({ donor, planClasses, planned, onAdd }: DonorLineProps): JSX.
           sx={{ width: 22, height: 22, imageRendering: 'pixelated', flexShrink: 0 }}
         />
       )}
-      <Typography variant="body2" noWrap sx={{ minWidth: 0, flexShrink: 1, fontWeight: 500 }}>
-        {donor.name}
+      <Typography variant="body2" component="div" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
+        <DonorName name={donor.name} bold />
       </Typography>
       <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
         {donor.slots.map((s) => (
@@ -229,6 +250,7 @@ function DonorLine({ donor, planClasses, planned, onAdd }: DonorLineProps): JSX.
         <Chip size="small" color="secondary" variant="outlined" label={`+${String(donor.tierRequired)} to extract`} sx={{ height: 18, fontSize: 10 }} />
       </Tooltip>
       {donor.hasteLocked && <Chip size="small" color="warning" label="haste — can't move" sx={{ height: 18, fontSize: 10 }} />}
+      <EraChip donorKey={donor.key} />
       <Box sx={{ flexGrow: 1, minWidth: 8 }} />
       <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1, maxWidth: 320 }}>
         {src.text}
@@ -241,6 +263,7 @@ function DonorLine({ donor, planClasses, planned, onAdd }: DonorLineProps): JSX.
       {planned && <Chip size="small" color="success" variant="outlined" label="in set" sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />}
       <Button
         size="small"
+        data-testid="planner-add"
         disabled={donor.slots.length === 0}
         onClick={(e) => onAdd(donor, e.currentTarget)}
         sx={{ flexShrink: 0, minWidth: 88 }}
@@ -267,6 +290,7 @@ function EffectLine({
       direction="row"
       spacing={1}
       alignItems="center"
+      data-testid="planner-effect-row"
       onClick={() => onToggle(group.effect)}
       sx={{
         height: ROW_HEIGHT,
@@ -342,7 +366,8 @@ export interface EffectBrowserProps {
 }
 
 export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): JSX.Element {
-  const { donors, ready, unavailable } = useDonors()
+  const { donors, ready } = useDonors()
+  const era = useEraOnly()
   const [filters, setFilters] = useState<DonorFilters>(DEFAULT_FILTERS)
   const [text, setText] = useState('')
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -357,9 +382,10 @@ export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): J
 
   // The input echoes instantly; the FILTER runs on the deferred value (the standing search law).
   const deferredText = useDeferredValue(text)
+  const eraOnly = era[0]
   const groups = useMemo(
-    () => groupByEffect(filterDonors(donors, { ...filters, text: deferredText }, plan.classes)),
-    [donors, filters, deferredText, plan.classes]
+    () => groupByEffect(filterDonors(donors, { ...filters, text: deferredText }, plan.classes, eraOnly)),
+    [donors, filters, deferredText, plan.classes, eraOnly]
   )
   const rows = useMemo(() => flatten(groups, open), [groups, open])
   const planned = useMemo(() => plannedPairs(plan), [plan])
@@ -387,7 +413,7 @@ export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): J
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
-      <FilterBar filters={filters} setFilters={setFilters} text={text} setText={setText} />
+      <FilterBar filters={filters} setFilters={setFilters} text={text} setText={setText} era={era} />
 
       <Box
         ref={scrollRef}
@@ -411,11 +437,7 @@ export default function EffectBrowser({ plan, onSocket }: EffectBrowserProps): J
         <Box sx={{ height: win.bottomPad }} />
         {rows.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-            {unavailable
-              ? 'The effect index is not available in this build yet.'
-              : ready
-                ? 'No effects match these filters.'
-                : 'Reading the item database…'}
+            {ready ? 'No effects match these filters.' : 'Reading the item database…'}
           </Typography>
         )}
       </Box>

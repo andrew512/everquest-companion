@@ -11,8 +11,10 @@
 // ONE NOWRAP TOOLBAR ROW (the flexWrap law): controls never shrink, and the one thing carrying
 // world-supplied text — the set names — is the group allowed to scroll.
 //
-// Board and Farm are declared here but not built here: they are wave 3 (§5.3/§5.4). Their
-// placeholder states what IS, in one line, with no methodology prose.
+// THREE MODES, ONE SET: Effects picks what you want, Board shows where it all goes, Farm turns
+// what is missing into a route. All three read the SAME selected plan, and the progress join is
+// mounted ONCE here and handed to Board and Farm — two mounts would subscribe to the inventory,
+// the loot module and the observed tiers twice over to compute the identical answer.
 
 import { type JSX, useState } from 'react'
 import {
@@ -26,7 +28,6 @@ import {
   IconButton,
   Menu,
   MenuItem,
-  Paper,
   Stack,
   TextField,
   ToggleButton,
@@ -41,6 +42,9 @@ import type { ExaltPlan } from '@shared/planner/types'
 import { useComboSnap } from '../profiles/ClassComboData'
 import { Tooltip } from '../../lib/Tooltip'
 import EffectBrowser from './EffectBrowser'
+import FarmList from './FarmList'
+import PlanBoard from './PlanBoard'
+import { usePlannerProgress, type PlannerProgressApi } from './plannerProgress'
 import { usePlans, type PlannerMode, type PlansApi } from './usePlans'
 
 const MODES: { value: PlannerMode; label: string }[] = [
@@ -220,14 +224,21 @@ function NoSets({ onNew }: { onNew: () => void }): JSX.Element {
   )
 }
 
-function NotInThisBuild({ mode }: { mode: PlannerMode }): JSX.Element {
-  return (
-    <Paper variant="outlined" sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>
-      <Typography variant="body2">
-        {mode === 'board' ? 'Board' : 'Farm'} — not in this build yet.
-      </Typography>
-    </Paper>
-  )
+/** The three modes over ONE selected set. Split out so the view itself stays a shell. */
+function ModePane({
+  plan,
+  plans,
+  progress
+}: {
+  plan: ExaltPlan
+  plans: PlansApi
+  progress: PlannerProgressApi
+}): JSX.Element {
+  if (plans.mode === 'board') {
+    return <PlanBoard plan={plan} progress={progress} onSocket={plans.setSocket} onHost={plans.setHost} />
+  }
+  if (plans.mode === 'farm') return <FarmList plan={plan} progress={progress} />
+  return <EffectBrowser plan={plan} onSocket={plans.setSocket} />
 }
 
 // ---- the view ------------------------------------------------------------------------
@@ -243,6 +254,7 @@ const NO_EDIT: Editing = { rename: null, classes: null, menu: null }
 export default function PlannerView(): JSX.Element {
   const plans = usePlans()
   const combo = useComboSnap()
+  const progress = usePlannerProgress()
   const [editing, setEditing] = useState<Editing>(NO_EDIT)
   const selected = plans.selected
 
@@ -259,11 +271,6 @@ export default function PlannerView(): JSX.Element {
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} data-testid="planner-view">
       <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1.5 }}>
         <SetSwitcher plans={plans} onNew={newSet} onMenu={(menu) => setEditing({ ...NO_EDIT, menu })} />
-        {/* Honest about the one thing this build can get wrong: without the store channel a set
-            lives only until the window closes. Renders nothing the moment the preload has it. */}
-        {plans.unavailable && (
-          <Chip size="small" color="warning" variant="outlined" label="not saved" sx={{ flexShrink: 0 }} />
-        )}
         <Box sx={{ flexGrow: 1, minWidth: 8 }} />
         <TrioChips plan={selected} onEdit={() => setEditing({ ...NO_EDIT, classes: selected })} />
         <ToggleButtonGroup
@@ -283,11 +290,7 @@ export default function PlannerView(): JSX.Element {
         </ToggleButtonGroup>
       </Stack>
 
-      {plans.mode === 'effects' ? (
-        <EffectBrowser plan={selected} onSocket={plans.setSocket} />
-      ) : (
-        <NotInThisBuild mode={plans.mode} />
-      )}
+      <ModePane plan={selected} plans={plans} progress={progress} />
 
       <Menu anchorEl={editing.menu} open={editing.menu !== null} onClose={() => setEditing(NO_EDIT)}>
         <MenuItem onClick={() => setEditing({ ...NO_EDIT, rename: selected })}>Rename</MenuItem>

@@ -22,6 +22,9 @@ const SPECS = [
   'timeline.e2e.mts',
   'overview.e2e.mts',
   'maps.e2e.mts',
+  // The Planner wipes userData (its first assertion is the create-a-set empty state), so it must
+  // stay in this sequential list like every other spec that does.
+  'planner.e2e.mts',
   'leveling.e2e.mts',
   'copy.e2e.mts',
   'feedback.e2e.mts',
