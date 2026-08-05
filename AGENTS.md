@@ -15,9 +15,13 @@ search, label declutter, floor slicing), class-combo inference with user
 corrections, proc analytics (PPM + state attribution), raid targets, buffs
 simulation, alerts with sounds + rank-upgrade intelligence, a Details-style
 DPS meter with drill-down/timeline (drilled by default, pet nested), and
-floating overlay meters. Committed knowledge DBs: mobs (7.9k), items
-(11.2k), spells (1.9k), classes, zones. First stable release v0.2.0
-(2026-08-03). Layout: `src/main` (Node), `src/preload`, `src/renderer`,
+floating overlay meters, an Exaltation/BiS Planner (multi-set socket
+planning over a class-filtered effect browser with layered era filtering —
+docs/plans/exaltation-planner.md; era = zone provenance ∪ page dropsfrom,
+page-top era banner resolves unknowns, shared/planner/*), and celebration
+toasts (docs/plans/celebration-toasts.md). Committed knowledge DBs: mobs
+(7.9k), items (11.2k incl. dropsfrom + eraTag), spells (1.9k), classes,
+zones (era-annotated). First stable release v0.2.0 (2026-08-03). Layout: `src/main` (Node), `src/preload`, `src/renderer`,
 `src/shared`, `tests/`, `scripts/`.
 
 - Repo: `C:\Users\jmoye\everquest-companion` (public: github.com/jmoyers/everquest-companion).
@@ -859,7 +863,11 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   stays fully click-through but RENDERS the persisted drill read-only. The
   drill persists per kind in `overlays.<kind>.drill` (config IS the drill
   state — no renderer mirror; stale ids render level 1 without clearing).
-  FIVE kinds now: fight/overall (damage), heal-fight/heal-overall, events.
+  SIX kinds now: fight/overall (damage), heal-fight/heal-overall, events,
+  and toast (celebration cards — docs/plans/celebration-toasts.md: transient
+  top-center, hover pins, queue reducer in overlay/toastQueue.ts, ships
+  SILENT because the seeded boss/quest audio alerts speak from the same
+  callbacks; producers in App.tsx, payloads resolved in main/toast.ts).
   Each kind's selector is SCOPE-FILTERED (`scopeOptions`) and never crosses
   over. Selectors are the custom `OverlaySelect` (no native `<select>`: its
   OS popup ignores the theme) — the overlay bundle stays MUI-free by law.
