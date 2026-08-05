@@ -284,6 +284,24 @@ export interface ItemQuestUse {
 }
 
 /**
+ * One place the ITEM PAGE itself says this item drops (`|dropsfrom`) — a mob, and the zone
+ * heading it was listed under when the page grouped its mobs by zone.
+ *
+ * This is a SECOND, independent witness to the mob catalog's `|known_loot` inversion, not a
+ * replacement for it: the catalog answers "what does this mob drop", the item page answers
+ * "where does this item come from", and the two disagree by omission in both directions (43 of
+ * the 126 effect-bearing donors the catalog knows no source for are zone-resolvable from their
+ * own page). `zone` is absent when the page listed mobs with no zone heading above them — an
+ * unknown zone, never a guessed one (law 1).
+ */
+export interface ItemDropSource {
+  /** the mob as the page writes it ("a froglok gaz squire") — display text, wiki markup stripped */
+  mob: string
+  /** the nearest preceding zone heading; absent when the page stated none */
+  zone?: string
+}
+
+/**
  * One tradeskill recipe that CONSUMES this item as an ingredient (item page `|recipes`).
  * This is the answer for the large family of items whose stats block says QUEST ITEM but
  * which appear in no quest anywhere on the wiki: they are tradeskill components.
@@ -333,6 +351,8 @@ export interface ItemKnowledge {
   quest: boolean
   /** quests this item is required by / used in */
   questUses: ItemQuestUse[]
+  /** where the ITEM PAGE says it drops (`|dropsfrom`) — mob + the zone heading it sat under */
+  dropsFrom?: ItemDropSource[]
   /** one-line freeform summary (from the wiki `notes` field), trimmed */
   summary?: string
   /** the raw stat/flag block text from the item page (LORE/NO DROP/slot/…) */

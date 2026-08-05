@@ -29,6 +29,7 @@ import {
   searchPlannerItems
 } from '../src/main/planner/effectIndex'
 import { EQUIP_SLOTS, SOCKET_TYPES } from '../src/shared/planner/types'
+import { zoneEra } from '../src/shared/planner/era'
 import { isClassAbbr } from '../src/shared/classCombo'
 
 const file = itemsJson as unknown as ItemDbFile
@@ -115,6 +116,54 @@ test('the anchor row: Improved Healing is a FOCUS donor extractable at +1', () =
   }
   // R3's other half, on the same principle: haste effects are FLAGGED, never dropped.
   assert.ok(donors.some((d) => d.hasteLocked), 'no haste-locked donors — R3 is not being applied')
+})
+
+test('donors carry the item page’s OWN drop sources (`|dropsfrom`)', () => {
+  const withWiki = donors.filter((d) => (d.wikiSources?.length ?? 0) > 0)
+  const withZone = withWiki.filter((d) => d.wikiSources?.some((s) => s.zone !== undefined))
+  console.log('planner wikiSources', { rows: withWiki.length, withZone: withZone.length })
+
+  // FLOORS under the 2026-08-04 build (804 rows carry sources, 796 of them naming a zone) —
+  // this is the second witness to "where does this drop", beside the renderer's mob-catalog
+  // inversion, and a parser change that silently stops reading the field must turn this red.
+  assert.ok(withWiki.length >= 700, `only ${withWiki.length} donors carry wikiSources`)
+  assert.ok(withZone.length >= 700, `only ${withZone.length} name a zone`)
+
+  for (const d of withWiki) {
+    for (const s of d.wikiSources ?? []) {
+      assert.ok(s.mob.length > 0, `${d.name}: an unnamed drop source`)
+      // Absent means UNKNOWN; an empty string would render as a zone chip with no zone in it.
+      assert.ok(s.zone === undefined || s.zone.length > 0, `${d.name}: empty zone string`)
+      assert.doesNotMatch(s.mob, /\[\[|\{\{|<\w/, `${d.name}: unstripped markup in "${s.mob}"`)
+    }
+  }
+  // Mob-only entries are real (8 rows): a page that lists mobs under no heading states a mob and
+  // no zone, and that is kept rather than dropped.
+  assert.ok(
+    withWiki.some((d) => d.wikiSources?.some((s) => s.zone === undefined)),
+    'no zone-less wiki sources at all — the mob-only shape stopped parsing'
+  )
+})
+
+test('the Coldain anchor: a Velious donor the mob catalog cannot place', () => {
+  // The owner saw the Coldain Velium weapons as era-unknown. MEASURED against the scrape cache:
+  // eight of the nine carry NO `|dropsfrom` at all (they are VENDOR SOLD — their provenance sits
+  // in `|soldby`, unparsed), and exactly one states a source. That one is the anchor, because it
+  // is the shape the whole task is for: a wiki-stated zone that resolves to VELIOUS.
+  const sword = donors.find((d) => d.key === 'coldain velium short sword')
+  assert.ok(sword, 'Coldain Velium Short Sword is no longer a donor')
+  assert.deepEqual(
+    sword.wikiSources?.map((s) => s.zone),
+    ['Eastern Wastes'],
+    'the sword must still name its zone'
+  )
+  assert.equal(zoneEra('Eastern Wastes'), 'velious')
+
+  // …and the general form: donors whose only stated zone is Velious content exist in numbers.
+  const velious = donors.filter(
+    (d) => (d.wikiSources?.length ?? 0) > 0 && d.wikiSources?.every((s) => s.zone !== undefined && zoneEra(s.zone) === 'velious')
+  )
+  assert.ok(velious.length >= 50, `only ${velious.length} donors are Velious-only by wiki source`)
 })
 
 test('host search: substring, prefix-first, shortest-first, capped', () => {

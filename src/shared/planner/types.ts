@@ -108,6 +108,17 @@ export interface PlannerDonor {
   quest: boolean
   playerCrafted: boolean
   reqLevel?: number
+  /**
+   * What the ITEM PAGE itself says about where this drops (`|dropsfrom`) — a SECOND witness
+   * beside the renderer's mob-catalog inversion (`features/planner/sourceIndex.ts`), which
+   * inverts `|known_loot` from the other side of the same wiki.
+   *
+   * They disagree by omission in both directions: measured 2026-08-04, 126 effect-bearing donor
+   * keys are neither quest nor crafted and yet have NO catalog source, and 43 of those name a
+   * zone here. Absent when the page carried no `|dropsfrom`; an entry's `zone` is absent when
+   * the page listed the mob under no zone heading (unknown, never guessed — law 1).
+   */
+  wikiSources?: { mob: string; zone?: string }[]
 }
 
 /**

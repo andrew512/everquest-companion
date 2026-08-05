@@ -16,7 +16,7 @@
 //                    `Effect:` / `Combat Effect:` / `Click Effect:` lines)
 //   |focus_effect  = a focus effect name, OUTSIDE the stats block ("Spell Haste II")
 //   |relatedquests = * [[Quest Page|Label]] …   (bulleted link list)
-//   |dropsfrom     = zone heading + * [[mob]] bullets
+//   |dropsfrom     = zone heading + * [[mob]] bullets (PARSED — see the census below)
 //   |notes         = freeform prose (lore, quirks) — our one-line summary
 //   |recipes       = recipes that CONSUME this item (see shapes below)
 //   |playercrafted = how this item is itself made (see shapes below)
@@ -127,6 +127,7 @@
 
 import type {
   ItemCraftRecipe,
+  ItemDropSource,
   ItemKnowledge,
   ItemQuestUse,
   ItemRecipeUse
@@ -347,6 +348,99 @@ export function parseCraftRecipes(block: string): { recipes: ItemCraftRecipe[]; 
   return withNote(recipes, leftovers)
 }
 
+// ---- drop sources (`|dropsfrom`) -----------------------------------------------
+//
+// CENSUS, measured 2026-08-04 over the full scrape cache (369 batch files, 11,247 item pages):
+// 5,769 pages carry the field, 71 of them empty — 5,698 with content, 10,699 heading lines and
+// 25,955 `*` bullets. The shapes, in the order this parser handles them:
+//
+//   ZONE-HEADED (the norm, ~4.4k pages) — a bare `[[Zone]]` line, then `*` mob bullets:
+//       [[Upper Guk]]
+//
+//       * [[a froglok gaz squire]]
+//   SEVERAL ZONES on one page (1,017): the heading/bullets pair simply repeats, so the zone is
+//       the NEAREST PRECEDING heading and nothing more.
+//   MOB-ONLY (36): bullets with no heading at all → entries with no zone.
+//   PIPED headings (229): `[[Freeport|East Freeport]]` — the DISPLAY text is what the page calls
+//       the zone, so that is what is kept.
+//   PROSE headings (235): `Various Zones`, `'''Pre-Revamp'''`, a revamp caption. They name no
+//       page, so they CLEAR the zone rather than letting the mobs below inherit the section
+//       above — an unknown zone, never a borrowed one (law 1).
+//   BULLETS NAMING NO PAGE (452): `* Newbie mobs.`, `* ?`, `* Ground Spawn`. Dropped: a mob we
+//       cannot name is not a mob we may invent.
+//   `**` SUB-ROWS (69): `{{Loc|…}}` ground-spawn coordinates under a bullet — detail of the row
+//       above, not a second mob.
+//   WRAPPER TEMPLATES (176 bullets, a handful of headings): `{{VeliousGray| [[a cold shade]] }}`
+//       wraps the row for styling; it is unwrapped, not dropped.
+//   HTML (8 lines): a trailing `<br>`, an `<s>` strikeout, one comment. Stripped like everywhere.
+//   `:`-INDENTED BULLETS (10) and `'''bold'''` rows (a handful): decoration around a normal row.
+//
+// The link is taken from ANYWHERE in the line, not just its start — MEASURED, 14 lines in the
+// whole corpus put words first ("Confirmed drop from [[Retseth Tretse]]", "various [[Chetari]]"),
+// and 4 of the 6 such bullets name a real mob. Demanding a leading link would lose those to spare
+// two ("Random mobs in [[Plane of Growth]]" reads a zone as a mob), which is the worse trade.
+//
+// Yield in the committed DB: 25,494 sources on 5,439 item pages (+1.31 MB of items.json).
+
+/** Wiki decoration that is never part of a name: HTML, bold markers, the `:` indent a few pages
+ *  bullet with, and the `{{Wrapper|…}}` a row may sit in ({{VeliousGray}}, {{Loc}}). Templates are
+ *  UNWRAPPED — the link inside is the answer — rather than cut. */
+function cleanDropLine(line: string): string {
+  return line
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\{\{[^|{}]*\|/g, ' ')
+    .replace(/\}\}/g, ' ')
+    .replace(/'''?/g, '')
+    .replace(/^:+\s*/, '')
+    .trim()
+}
+
+/** One `*` bullet → the mob it links. Null for a `**` sub-row (detail of the bullet above) and
+ *  for a bullet naming no page ("* Newbie mobs.") — we never invent a mob name. */
+function dropMob(line: string): string | null {
+  if (line.startsWith('**')) return null
+  return firstLink(line.replace(/^\*+\s*/, ''))?.label ?? null
+}
+
+/**
+ * Parse `|dropsfrom` — where the ITEM PAGE says this item comes from. Line-oriented: a non-bullet
+ * line sets (or, naming no page, clears) the current zone; each `*` bullet under it is one mob in
+ * that zone. Shapes and their counts are censused above; anything unrecognized yields FEWER
+ * entries and never throws, which is this file's standing contract.
+ *
+ * `(mob, zone)` is the entry identity — a page that lists the same mob under two zones states two
+ * real facts, while the same pair twice states one.
+ */
+export function parseDropSources(block: string): ItemDropSource[] {
+  const out: ItemDropSource[] = []
+  const seen = new Set<string>()
+  let zone: string | undefined
+  for (const raw of bulletLines(block)) {
+    const line = cleanDropLine(raw)
+    if (!line) continue
+    if (!line.startsWith('*')) {
+      zone = firstLink(line)?.label
+      continue
+    }
+    const mob = dropMob(line)
+    if (mob === null) continue
+    // NUL-joined (the effectIndex precedent): mob and zone names both contain spaces, so a
+    // printable separator would let two different pairs share one identity.
+    const id = `${mob}\u0000${zone ?? ''}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push(zone === undefined ? { mob } : { mob, zone })
+  }
+  return out
+}
+
+/** The `|dropsfrom` half of the result: the sources, or `undefined` when the page stated none.
+ *  Never an empty list — "drops from nobody" is a claim no item page ever made. */
+function dropSourcesField(raw: string | null): ItemDropSource[] | undefined {
+  const sources = raw ? parseDropSources(raw) : []
+  return sources.length > 0 ? sources : undefined
+}
+
 /** Collapse a `notes` field to a single trimmed prose line (strips wiki markup, caps length). */
 export function cleanSummary(notes: string): string | undefined {
   const text = notes
@@ -402,8 +496,9 @@ function tradeskillFields(
 /**
  * PURE: turn item-page wikitext into the knowledge fields. `|statsblock` carries the
  * LORE/QUEST text flags, `|relatedquests` a bulleted [[link]] list, `|notes` prose,
- * `|recipes` the tradeskill recipes that CONSUME this item and `|playercrafted` how the
- * item is itself made (shapes documented in the file header).
+ * `|recipes` the tradeskill recipes that CONSUME this item, `|playercrafted` how the
+ * item is itself made and `|dropsfrom` where the page says it drops (shapes documented in the
+ * file header + the census above `parseDropSources`).
  *
  * `stats` is the same block parsed into the game item WINDOW's structure (see
  * shared/itemStats.ts) so the UI can draw it with the game's hierarchy and colors
@@ -418,6 +513,7 @@ export function parseItemWikitext(
   | 'lore'
   | 'quest'
   | 'questUses'
+  | 'dropsFrom'
   | 'summary'
   | 'statsBlock'
   | 'stats'
@@ -435,6 +531,7 @@ export function parseItemWikitext(
   const iconRaw = templateField(wikitext, 'lucy_img_ID')
   const recipesRaw = templateField(wikitext, 'recipes')
   const craftedRaw = templateField(wikitext, 'playercrafted')
+  const dropsFrom = dropSourcesField(templateField(wikitext, 'dropsfrom'))
 
   const flags = (statsBlock ?? '').toUpperCase()
   const lore = /\bLORE ITEM\b/.test(flags) || /\bLORE EQUIPPED\b/.test(flags)
@@ -458,6 +555,7 @@ export function parseItemWikitext(
     lore,
     quest,
     questUses,
+    dropsFrom,
     summary,
     stats,
     iconId,

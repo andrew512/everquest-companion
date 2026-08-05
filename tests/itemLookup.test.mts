@@ -17,6 +17,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  parseDropSources,
   parseItemWikitext,
   parseQuestLinks,
   templateField,
@@ -208,6 +209,111 @@ test('cleanSummary strips markup + caps to one sentence', () => {
 test('normalizeItemName strips a trailing +N upgrade suffix only', () => {
   assert.equal(normalizeItemName('Sphinx Claw +1'), 'Sphinx Claw')
   assert.equal(normalizeItemName('Coin of Tash'), 'Coin of Tash')
+})
+
+// =================================================================================
+// DROP SOURCES (`|dropsfrom`) — the field the parser read past for two tasks, now the item
+// page's own answer to "where does this come from". Blocks below are VERBATIM values pulled
+// from the scrape cache (scripts/sources/cache/items, 2026-08-04); only Loaf of Bread's list
+// is trimmed, to the two zones that carry the shapes under test.
+//
+// Every structural variant the census in itemLookupParse.ts measured is represented here, so a
+// future edit to the parser has to answer to the real corpus, not to an invented shape.
+// =================================================================================
+
+/** SEVERAL zone headings on one page — the zone is the NEAREST PRECEDING heading, nothing more. */
+const MULTI_ZONE = `[[Lake of Ill Omen]]
+* [[a Sarnak flunkie]]
+
+[[Overthere]]
+* [[a Sarnak flunkie]]`
+
+/** No heading at all: mobs with an honestly UNKNOWN zone (the brief's Alania Peaceheart shape). */
+const MOB_ONLY = `
+
+* [[Alania Peaceheart]]
+
+`
+
+/** `{{VeliousGray|…}}` wraps rows for styling; `<s>…</s>` strikes one out. Both unwrap to the row. */
+const WRAPPED = `[[Lake Rathetear]]
+
+* [[a gnoll high shaman]]
+
+{{VeliousGray| [[Velketor's Labyrinth]] }}
+
+* {{VeliousGray| [[a cold shade]] }}
+* <s>[[a cold spectre]]</s>`
+
+/** A heading trailing prose, a `{{Loc}}` bullet naming no page, and `**` sub-rows under it. */
+const GROUND_SPAWN = `[[Misty Thicket]] As of some previous patch, groundspawns are now random... the locs below are not reliable sources of misty acorns :/
+* {{Loc|Misty Thicket|(284, -1810)(-233, -1616)|Ground Spawns}}
+** {{Loc|Misty Thicket|284, -1810|(284, -1810)}}
+** {{Loc|Misty Thicket|-233, -1616|(-233, -1616)}}`
+
+/** A prose heading ("Various Zones") must CLEAR the zone, never let its mobs inherit the one above. */
+const PROSE_HEADING = `[[Befallen]]
+
+* [[a necro theurgist]]
+
+Various Zones
+
+* [[a shadowed man]]
+* Newbie Mobs`
+
+test('parseDropSources: zone headings, mob bullets, and the identity of a source', () => {
+  // The plain shape, through the whole parser: one heading, one bullet under it.
+  const claw = parseItemWikitext('Sphinx Claw', SPHINX_CLAW)
+  assert.deepEqual(claw.dropsFrom, [{ mob: 'Sister of the Spire', zone: 'Plane of Sky' }])
+
+  assert.deepEqual(parseDropSources(MULTI_ZONE), [
+    { mob: 'a Sarnak flunkie', zone: 'Lake of Ill Omen' },
+    { mob: 'a Sarnak flunkie', zone: 'Overthere' }
+  ])
+  // …which is the point of `(mob, zone)` being the identity: the same mob in two zones is two
+  // facts. The same pair twice is one.
+  assert.deepEqual(parseDropSources('[[Overthere]]\n* [[a Sarnak flunkie]]\n* [[a Sarnak flunkie]]'), [
+    { mob: 'a Sarnak flunkie', zone: 'Overthere' }
+  ])
+
+  // No heading ⇒ no zone key at all. Absent means UNKNOWN, and the object must not carry
+  // `zone: undefined` (it is serialized into the committed DB).
+  const bare = parseDropSources(MOB_ONLY)
+  assert.deepEqual(bare, [{ mob: 'Alania Peaceheart' }])
+  assert.equal('zone' in bare[0], false)
+})
+
+test('parseDropSources: markup is decoration — wrappers, strikeouts, piped links', () => {
+  assert.deepEqual(parseDropSources(WRAPPED), [
+    { mob: 'a gnoll high shaman', zone: 'Lake Rathetear' },
+    { mob: 'a cold shade', zone: "Velketor's Labyrinth" },
+    { mob: 'a cold spectre', zone: "Velketor's Labyrinth" }
+  ])
+  // A piped link states a page and a DISPLAY name; the display name is what the page calls the
+  // place, so that is what is kept (law 2 — display raw).
+  assert.deepEqual(parseDropSources('[[Freeport|East Freeport]]\n* [[Gregor Nasin]]'), [
+    { mob: 'Gregor Nasin', zone: 'East Freeport' }
+  ])
+})
+
+test('parseDropSources: what it REFUSES to read — sub-rows, prose bullets, prose headings', () => {
+  // A `{{Loc}}` bullet and its `**` coordinate sub-rows name no mob. Zero entries, not a guess.
+  assert.deepEqual(parseDropSources(GROUND_SPAWN), [])
+
+  // "Various Zones" names no page, so it CLEARS the zone rather than lending Befallen to the
+  // shadowed man; "* Newbie Mobs" names no page at all and is dropped (law 1).
+  assert.deepEqual(parseDropSources(PROSE_HEADING), [
+    { mob: 'a necro theurgist', zone: 'Befallen' },
+    { mob: 'a shadowed man' }
+  ])
+
+  // Water Flask is that shape end to end (prose heading + prose bullet) and Golden Earring is a
+  // heading with nothing under it: both state no source, so both leave the field OFF.
+  assert.equal(parseItemWikitext('Water Flask', WATER_FLASK).dropsFrom, undefined)
+  assert.equal(parseItemWikitext('Golden Earring', GOLDEN_EARRING).dropsFrom, undefined)
+  // Nothing here throws, whatever the field holds — the file's standing contract.
+  assert.deepEqual(parseDropSources(''), [])
+  assert.deepEqual(parseDropSources('|Description: drops off random goblins\n<br>\n***'), [])
 })
 
 // The tradeskill NEGATIVE for this page lives here rather than in the tradeskill file

@@ -33,6 +33,13 @@
 //
 // Everything the rows say about slots, classes, sockets, tiers and haste is read out of the
 // shared planner modules — this file measures the corpus, it never re-states a rule.
+//
+// WIKI DROP SOURCES ride along on every donor row (`wikiSources`, from the item page's own
+// `|dropsfrom`). They are the SECOND witness to "where does this drop": the renderer already
+// inverts the mob catalog's `|known_loot`, and the two sides of the wiki omit different things —
+// measured 2026-08-04, 126 effect-bearing donors are neither quest nor crafted and have no
+// catalog source at all, and 43 of those name a zone on their own page. Serving both and joining
+// them at the consumer is the honest arrangement; this file never merges or ranks them.
 
 import { itemKey, knowledgeFromDb, type ItemDbEntry, type ItemDbFile } from '../itemsDb'
 import {
@@ -44,6 +51,7 @@ import {
 import { extractionTier } from '../../shared/planner/rules'
 import type { ClassAbbr } from '../../shared/classCombo'
 import type { ItemEffect } from '../../shared/itemStats'
+import type { ItemDropSource } from '../../shared/types'
 import type {
   EquipSlot,
   PlannerDonor,
@@ -94,6 +102,8 @@ interface PageCtx {
   classes: ClassAbbr[]
   quest: boolean
   playerCrafted: boolean
+  /** what the item page's `|dropsfrom` stated; absent when it carried none */
+  wikiSources?: ItemDropSource[]
   /** the page TITLE keys to the item name — this is the item's own page, not a variant of it */
   canonical: boolean
 }
@@ -150,6 +160,9 @@ function pageContext(entry: ItemDbEntry): {
       classes: normalizeClasses(k.stats?.classes),
       quest: k.quest,
       playerCrafted: k.playerCrafted ?? false,
+      // Carried through verbatim, not merged with the renderer's catalog index: the two are
+      // independent witnesses and the join belongs where both are in hand (design §4.2).
+      wikiSources: k.dropsFrom,
       canonical: itemKey(entry.page) === key
     },
     effects: k.stats?.effects ?? [],
@@ -171,7 +184,10 @@ function donorRow(ctx: PageCtx, effect: ItemEffect, socket: SocketType): Planner
     hasteLocked: isHasteEffect(effect.name, effect.detail),
     quest: ctx.quest,
     playerCrafted: ctx.playerCrafted,
-    reqLevel: effect.reqLevel
+    reqLevel: effect.reqLevel,
+    // Copied per row (donors are denormalized by effect) so a consumer never has to hold a
+    // second index to answer "where does this one drop".
+    wikiSources: ctx.wikiSources ? ctx.wikiSources.map((s) => ({ ...s })) : undefined
   }
 }
 
