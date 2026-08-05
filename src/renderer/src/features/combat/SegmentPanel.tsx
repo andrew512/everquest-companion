@@ -15,7 +15,7 @@ import { PetBar } from './PetBar'
 import { CAT_COLOR, CopyButton, KIND_COLOR, QuietNote, RESIST_COLOR, SkillBar, fmtDur } from './combatShared'
 import { skillsForTarget, type Drill, type TargetDetail } from './dashboardData'
 import { procAnnotationFor, procTagIndex } from './procRows'
-import { nestedRows, petSources, selfSource } from './petRows'
+import { meterPanel, type MeterPanel, type OwnRow } from './petRows'
 import { useCombinePetRow } from './useCombatPrefs'
 import { fmtElapsed, formatEntityText, formatSegmentText, formatTargetText } from './copyText'
 import { formatNum as fmt, formatRate } from '../../lib/formatRate'
@@ -133,28 +133,28 @@ function MeleeRoundsNote({ rounds }: { rounds: SourceView['rounds'] }): React.JS
  * Level-2 (one of two level-2 subjects): the category legend + ONE flat ranked list of every
  * skill/spell this entity landed. The melee-rounds heuristic footer rides along.
  *
- * `pets` are the pet sources NESTED into this list (see petRows.ts) — non-empty only for YOUR
- * row, and only while the 'Combine pet into your damage' preference is on. Each nests as one
- * line item that drills into that pet's own breakdown; nothing about your per-skill rows
- * changes, because a pet's damage is never folded into a lane of yours.
+ * `rows` are `MeterPanel.rows` — built by `petRows.meterPanel`, the ONE row builder the floating
+ * overlay uses too. They are this entity's skill lanes with any nested pets ranked among them
+ * (non-empty only for YOUR row, and only while the 'Combine pet into your damage' preference is
+ * on). Each pet nests as one line item that drills into that pet's own breakdown; nothing about
+ * your per-skill rows changes, because a pet's damage is never folded into a lane of yours.
  *
  * A category filter hides them: the legend filters YOUR categories, and a pet is not one of
  * them — showing it under "Melee only" would claim it was melee damage of yours.
  */
 function EntitySkillBars({
   e,
-  pets,
+  rows: all,
   procs,
   onDrillPet
 }: {
   e: SourceView
-  pets: SourceView[]
+  rows: OwnRow[]
   /** The is-a-proc tags for THIS source — empty for anyone but you (see `SegmentContent`). */
   procs: readonly ProcSkillTag[]
   onDrillPet: (id: string) => void
 }): React.JSX.Element {
   const [filter, setFilter] = useState<DamageCategory | null>(null)
-  const all = nestedRows(e, pets)
   const rows = filter ? all.filter((r) => r.kind === 'skill' && r.skill.category === filter) : all
   const tags = useMemo(() => procTagIndex(procs), [procs])
   return (
@@ -337,11 +337,13 @@ interface DrillState {
 }
 
 /**
- * If a stale drill points at an entity no longer present (fight changed), fall back to
- * level 1. The mob drill goes stale the same way when the ring disappears.
+ * The ENTITY half of the drill is `MeterPanel`'s business — including the stale case, where a
+ * drill pointing at an entity no longer present (the fight changed) resolves to level 1. This
+ * hook only adds the MOB drill, which is this surface's alone: it reads the timeline's ring, and
+ * goes stale the same way when the ring disappears.
  */
-function useDrillState(rows: SourceView[], tl: TimelineView | null, drill: Drill | null): DrillState {
-  const entity = drill?.kind === 'entity' ? rows.find((r) => r.id === drill.entityId) : undefined
+function useDrillState(panel: MeterPanel, tl: TimelineView | null, drill: Drill | null): DrillState {
+  const entity = panel.level === 2 ? panel.subject : undefined
   const targetName = drill?.kind === 'target' ? drill.target : null
   const targetDetail = useMemo(
     () => (tl && targetName ? skillsForTarget(tl, targetName) : null),
@@ -367,15 +369,15 @@ function SegmentContent({
   seg,
   mode,
   rows,
-  pets,
+  ownRows,
   d,
   setDrill
 }: {
   seg: SegmentView
   mode: 'out' | 'in'
   rows: SourceView[]
-  /** pet sources to NEST inside your breakdown (empty when the preference is off). */
-  pets: SourceView[]
+  /** the drilled source's rows (skill lanes + nested pets) — `MeterPanel.rows`, empty at level 1. */
+  ownRows: OwnRow[]
   d: DrillState
   setDrill: (drill: Drill | null) => void
 }): React.JSX.Element {
@@ -404,7 +406,7 @@ function SegmentContent({
         <EntitySkillBars
           key={d.entity.id}
           e={d.entity}
-          pets={d.entity.kind === 'you' ? pets : []}
+          rows={ownRows}
           procs={ownProcTags(seg, d.entity)}
           onDrillPet={(id) => setDrill({ kind: 'entity', entityId: id })}
         />
@@ -436,20 +438,25 @@ export function SegmentBody({
   // aggregate the Overview card headlines, so the two surfaces can never disagree on a number.
   const total = mode === 'out' ? seg.outTotal : seg.inTotal
   const dps = mode === 'out' ? seg.outDps : seg.inDps
-  const d = useDrillState(rows, tl, drill)
   const [combinePetRow] = useCombinePetRow()
-  const pets = mode === 'out' && combinePetRow ? petSources(rows) : []
+  // THE one row builder — the same call the floating overlay makes (petRows.meterPanel). Nesting
+  // is an OUTGOING idea: the Incoming direction lists enemies, and none of them owns a pet of
+  // yours, so the preference is folded into the `combine` argument rather than tested downstream.
+  const panel = meterPanel(rows, mode === 'out' && combinePetRow, drill?.kind === 'entity' ? drill.entityId : null)
+  const d = useDrillState(panel, tl, drill)
+  const ownRows = panel.level === 2 ? panel.rows : []
+  const pets = panel.level === 2 ? panel.pets : []
   // A drilled pet is NESTED (and so has a parent in the trail) only while it is actually being
   // shown as a line item inside your row — i.e. while the preference is on and you have a row.
-  const nestedIn = d.entity?.kind === 'pet' && pets.some((p) => p.id === d.entity?.id) ? selfSource(rows) : null
+  const nestedIn = panel.level === 2 ? panel.parent : null
 
   // "Copy this view" means THIS view: the same three-way choice the body below makes, so the
   // clipboard can never hold a level the user isn't looking at. Built on click, never on render.
   const copyView = (): string =>
     d.entity
-      ? // The SAME pets the body nests into this list (`SegmentContent` uses this exact test),
+      ? // The SAME pets the body nests into this list — `MeterPanel.pets` IS what was nested,
         // so the clipboard can no longer drop a row the reader can see on screen.
-        formatEntityText(seg, d.entity, d.entity.kind === 'you' ? pets : [])
+        formatEntityText(seg, d.entity, pets)
       : d.targetDetail && d.targetName
         ? formatTargetText(seg, d.targetName, d.targetDetail)
         : formatSegmentText(seg, mode)
@@ -473,7 +480,7 @@ export function SegmentBody({
     >
       <SegmentHeader seg={seg} mode={mode} total={total} dps={dps} copyView={copyView} />
       {d.crumb && <DrillCrumb crumb={d.crumb} isTarget={!!d.targetDetail} parent={nestedIn} setDrill={setDrill} />}
-      <SegmentContent seg={seg} mode={mode} rows={rows} pets={pets} d={d} setDrill={setDrill} />
+      <SegmentContent seg={seg} mode={mode} rows={rows} ownRows={ownRows} d={d} setDrill={setDrill} />
     </Paper>
   )
 }

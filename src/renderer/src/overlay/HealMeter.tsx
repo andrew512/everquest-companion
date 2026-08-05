@@ -149,9 +149,7 @@ export default function HealMeter(): JSX.Element {
   // Selection mirrors the damage pair exactly: LIVE / a finalized fight id, or 'zone' / a zs<n>.
   const [selection, setSelection] = useState<string>(isFight ? LIVE : 'zone')
 
-  // combinePets folds pet DAMAGE into You; healing rows are keyed by HEALER regardless, so this
-  // only affects the (unused here) damage bars. Kept aligned with the fight overlay's choice.
-  const snap = useOverlayCombat(selection === LIVE ? undefined : selection, isFight)
+  const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
   const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
     useOverlayChrome()
   const now = Date.now()

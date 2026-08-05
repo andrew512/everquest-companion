@@ -76,10 +76,10 @@ export function useCombat(): UseCombat {
   useEffect(() => {
     let alive = true
     const tick = async (): Promise<void> => {
+      // The engine-side pet fold is GONE (not "off"): pet presentation is the renderer's nesting
+      // pref (eq.combat.petRow) applied by petRows.meterPanel, and the snapshot always carries
+      // the separate, authoritative sources — for this view and for the overlays alike.
       const s = await window.eq.getCombatSnapshot({
-        // The engine-side pet fold is retired UI: pet presentation is the renderer's
-        // nesting pref (eq.combat.petRow); the snapshot always carries separate sources.
-        combinePets: false,
         selectedId: selection === LIVE ? undefined : selection,
         showUnparsed,
         maxSegments,

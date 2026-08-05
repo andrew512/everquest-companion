@@ -1,7 +1,20 @@
 // PET NESTING — a PRESENTATION regrouping of the snapshot's existing source rows. No JSX, no
-// MUI, no engine involvement: the snapshot is still pulled with `combinePets: false`, so the
-// engine hands us YOU and each PET as separate, authoritative `SourceView`s and this module
-// only decides how they are LAID OUT.
+// MUI, no engine involvement: the engine hands us YOU and each PET as separate, authoritative
+// `SourceView`s and this module only decides how they are LAID OUT.
+//
+// IT IS *THE* METER, NOT ONE METER'S HELPER (owner ruling, 2026-08-04): "the overlay is using a
+// different source of data — combat has a breakdown with pet appropriately merged and overlay
+// does not — this should not be possible, they should be using the same underlying api and
+// abstraction — if not, collapse." They were two folds giving two answers: the Combat tab built
+// its rows here, while the floating overlay asked the ENGINE for a `combinePets` fold (a
+// synthetic "You +pets" source with namespaced skill lanes and no pet line at all). That engine
+// fold is now DELETED — not deprecated, deleted, along with its parameter — and `meterPanel`
+// below is the single row builder every damage-meter surface calls: the Combat tab's panel, the
+// floating overlay, the Overview card. A second builder has nowhere left to live.
+//
+// MUI-FREE AND JSX-FREE ON PURPOSE. The overlay is its own renderer entry (overlay.html) with no
+// theme and no component library, so the shared abstraction has to be plain TS to be importable
+// from both bundles. Keep it that way: colors, bar chrome and crumbs stay in each surface.
 //
 // WHY (owner direction, 2026-08-03): the game is mostly played solo, so "your damage" and "the
 // pet's damage" are two rows of a two-row meter and the interesting list is one level down. The
@@ -22,9 +35,8 @@
 //     never a coined label ("Pet"), and it is never folded into one of YOUR skill lanes: your
 //     per-skill numbers stay exactly the engine's, and the pet's total sits BESIDE them as its
 //     own row. Nothing here adds a point of pet damage to a row of yours.
-//   - The engine's own `combinePets` fold is a DIFFERENT thing (it merges the pet's lanes into
-//     a synthetic "You +pets" source with namespaced skill names). This module deliberately does
-//     not use it: one line item that drills is what the owner asked for, not a merged lane list.
+//   - One line item that DRILLS is what the owner asked for, not a merged lane list. The engine's
+//     retired `combinePets` fold did the latter, which is why it is gone rather than reused.
 //   - `total` here is self + nested pets, which is exactly `SegmentView.outTotal` whenever the
 //     only outgoing sources are you and your pets (they are, by construction — the aggregate
 //     keys outgoing damage as 'you' or 'pet:<id>'). Every surface that shows a combined headline
@@ -98,9 +110,20 @@ export function petSources(entities: SourceView[]): SourceView[] {
  * changes when the answer can — so a live fight doesn't hand the view a new drill object every
  * second. `null` (a segment with no outgoing damage of yours) has no "your breakdown" to open,
  * so the source list is the only honest default there whatever the preference says.
+ *
+ * TWO SPELLINGS, ONE RULE. The Combat tab's drill is a union that can also name a MOB
+ * (`dashboardData.Drill`); the overlay's persisted drill is the bare `{ entityId }` of
+ * `OverlayConfig`. `defaultEntityId` is the rule itself, and each surface wraps it in its own
+ * token — so the two can never open on different levels for the same preference.
  */
+export function defaultEntityId(selfId: string | null, combine: boolean): string | null {
+  return combine ? selfId : null
+}
+
+/** `defaultEntityId` in the Combat tab's drill spelling. */
 export function defaultDrill(selfId: string | null, combine: boolean): Drill | null {
-  return combine && selfId ? { kind: 'entity', entityId: selfId } : null
+  const id = defaultEntityId(selfId, combine)
+  return id ? { kind: 'entity', entityId: id } : null
 }
 
 function toPetRow(p: SourceView): PetRow {
@@ -155,4 +178,46 @@ export function ownBreakdown(entities: SourceView[], combine: boolean): OwnBreak
     rows: nestedRows(self, pets),
     total: (self?.total ?? 0) + pets.reduce((n, p) => n + p.total, 0)
   }
+}
+
+/**
+ * WHAT ONE DAMAGE METER IS SHOWING — the whole answer, for every surface that shows one.
+ *
+ * Level 1 is the ranked source list (you, your pets, and in Incoming the enemies). Level 2 is ONE
+ * source's breakdown: its skill lanes, with the pets nested in as line items when the subject is
+ * YOU and the preference is on. `parent` is the source the subject is currently being shown as a
+ * line item OF — non-null only for a nested pet — and it is what lets a Back button return to the
+ * view the pet was clicked FROM instead of pretending the pet was ever a top-level bar.
+ *
+ * A drill id that resolves to nothing (a `pet:<instanceId>` from a past session, a fight that
+ * moved on, a 'you' that blinks out between fights) yields LEVEL 1 for this render — the caller's
+ * stored value is never touched, so the drill re-applies the moment the entity is back.
+ */
+export type MeterPanel =
+  | { level: 1; sources: SourceView[] }
+  | {
+      level: 2
+      subject: SourceView
+      /** the source `subject` is nested inside right now (a pet's owner), else null. */
+      parent: SourceView | null
+      /** the pets nested into `rows` — empty unless `subject` is you and the preference is on. */
+      pets: SourceView[]
+      rows: OwnRow[]
+    }
+
+/**
+ * THE ROW BUILDER. Both damage meters call exactly this, with exactly their own drill id: the
+ * Combat tab passes `drill.kind === 'entity' ? drill.entityId : null`, the overlay passes its
+ * persisted `drill?.entityId ?? defaultEntityId(...)`. Everything downstream — nesting, ranking,
+ * bar widths, the pet's real name, the parent for the crumb — is decided here, once.
+ */
+export function meterPanel(entities: SourceView[], combine: boolean, entityId: string | null): MeterPanel {
+  const subject = entityId === null ? undefined : entities.find((e) => e.id === entityId)
+  if (!subject) return { level: 1, sources: entities }
+  // Pets nest into YOUR row only: a pet inside a pet would be a fiction, and an enemy's row in
+  // the Incoming direction has no pets of yours in it at all.
+  const nestable = combine ? petSources(entities) : []
+  const pets = subject.kind === 'you' ? nestable : []
+  const parent = subject.kind === 'pet' && nestable.some((p) => p.id === subject.id) ? selfSource(entities) : null
+  return { level: 2, subject, parent, pets, rows: nestedRows(subject, pets) }
 }

@@ -102,12 +102,18 @@ import { normalizeQuery } from '../../lib/search'
  * labelled with its real name, drillable into its own skills, and never summed into a skill row
  * of yours (features/combat/petRows.ts). Off, it is a separate source row, as it always was.
  *
- * It is also the DEFAULT ZOOM (owner direction, 2026-08-04): on ⇒ the Combat tab opens on your
+ * It is also the DEFAULT ZOOM (owner direction, 2026-08-04): on ⇒ the meter opens on your
  * breakdown (pet nested); off ⇒ it opens fully zoomed out on the source list. One switch, both
  * halves of one choice — `petRows.defaultDrill`.
  *
+ * ONE SWITCH, EVERY DAMAGE METER (owner ruling, 2026-08-04 — the floating overlay used to render
+ * the engine's own pet fold instead, and showed a different breakdown for the same fight). The
+ * Combat tab, the Overview card and the floating overlay meters all read THIS value and build
+ * their rows with `petRows.meterPanel`.
+ *
  * Renderer-local (localStorage, like the Fight/Overall scope), so it needs no store migration —
- * and it applies LIVE: the Combat dashboard and the Overview card subscribe to the same value.
+ * and it applies LIVE, across windows: same-window readers are notified directly, and the overlay
+ * windows are same-origin, so they get the DOM's own 'storage' event (useCombatPrefs.ts).
  */
 function PetNestingSetting(): JSX.Element {
   const [combine, setCombine] = useCombinePetRow()
@@ -126,8 +132,8 @@ function PetNestingSetting(): JSX.Element {
       />
       <Typography variant="caption" color="text.secondary">
         {combine
-          ? 'The Combat tab opens on your damage breakdown with your pet as one row inside it — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
-          : 'The Combat tab opens on the source list — one bar for you, one for your pet — and each bar drills into its own skills.'}
+          ? 'The Combat tab and the floating meters open on your damage breakdown with your pet as one row inside it — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
+          : 'The Combat tab and the floating meters open on the source list — one bar for you, one for your pet — and each bar drills into its own skills.'}
       </Typography>
     </Stack>
   )

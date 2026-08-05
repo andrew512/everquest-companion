@@ -39,7 +39,6 @@ export function useOverviewCombat(): CombatSnapshot | null {
     let alive = true
     const tick = async (): Promise<void> => {
       const s = await window.eq.getCombatSnapshot({
-        combinePets: false,
         timeline: true,
         maxSegments: 1
       })

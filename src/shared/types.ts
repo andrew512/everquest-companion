@@ -65,12 +65,17 @@ export interface OverlayConfig {
   /** Persisted window bounds so position + size survive a restart. */
   bounds?: { x: number; y: number; width: number; height: number }
   /**
-   * Persisted mini drill-down: the entity whose flat skill list is showing, or null for the
-   * entity bars. Remembered state, not a preference — a drill survives a restart exactly like
-   * position does. A stale id (per-session `pet:<instanceId>` ids don't survive a restart; the
-   * fight changed; 'you' is briefly absent between fights) renders level 1 WITHOUT clearing the
-   * stored value, so the drill re-applies the moment the entity reappears. Only an explicit
-   * back/undrill (or picking a different fight/zone session) clears it.
+   * Persisted mini drill-down: the entity whose breakdown is showing. Remembered state, not a
+   * preference — a drill survives a restart exactly like position does. A stale id (per-session
+   * `pet:<instanceId>` ids don't survive a restart; the fight changed; 'you' is briefly absent
+   * between fights) renders level 1 WITHOUT clearing the stored value, so the drill re-applies
+   * the moment the entity reappears. Only an explicit back/undrill (or picking a different
+   * fight/zone session) clears it.
+   *
+   * `null` is "no drill of my own", NOT "level 1": the damage meter then opens where the shared
+   * 'Combine pet into your damage' preference says it should (renderer
+   * `features/combat/petRows.ts` — `defaultEntityId`), which is the same default zoom the Combat
+   * tab opens on. That is what keeps one preference from meaning two things on two surfaces.
    */
   drill?: OverlayDrill | null
   /**

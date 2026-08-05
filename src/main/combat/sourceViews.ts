@@ -1,15 +1,22 @@
 // SERIALIZATION of a frozen aggregate into the snapshot's source/category/skill/rounds
 // views — extracted verbatim from engine.ts. Pure functions over `Agg` maps: no engine
-// state, no world model, no clock. The combine-pets fold lives here too, since it is a
-// presentation-only regrouping of the same numbers (AGENTS.md law 4).
+// state, no world model, no clock.
+//
+// THE COMBINE-PETS FOLD USED TO LIVE HERE AND IS GONE (owner ruling, 2026-08-04). It merged each
+// pet's lanes into a synthetic "You +pets" source with namespaced skill names ("Vebarn: Slash")
+// and no pet row at all — a SECOND presentation of the same numbers, alongside the renderer's
+// `petRows`, and the two disagreed on screen: the Combat tab showed the pet as a drillable line
+// item while the floating overlay (the fold's only consumer) showed merged lanes. "They should be
+// using the same underlying api and abstraction — if not, collapse." So: one abstraction, in the
+// renderer, where a LAYOUT belongs; this module now emits exactly the engine's own attribution —
+// you and each pet as their own authoritative row — and every meter lays it out with petRows.
+// The fold's parameter is gone from `sourceViews`, `buildView`, `buildSelected`, `snapshot()` and
+// `SnapshotOpts` too: a flag no caller can pass is not a seam a second fold can grow back in.
 
 import {
-  MISS_KEYS,
   finalizeRounds,
-  mergeMin,
   newCategory,
   newSkill,
-  newSource,
   type CategoryStat,
   type RoundsAccum,
   type SkillStat,
@@ -57,119 +64,28 @@ function withLandings(s: SourceStat, lands: EffectLandings): SourceStat {
   return { ...s, bySkill, byCategory }
 }
 
-/** Copy a lane map and every lane in it. The combine fold accumulates IN PLACE, so every
- *  object it can reach has to be one we own (see `cloneSource`). */
-function cloneSkills(m: Map<string, SkillStat>): Map<string, SkillStat> {
-  const out = new Map<string, SkillStat>()
-  for (const [k, v] of m) out.set(k, { ...v })
-  return out
-}
-
 /**
- * DEEP-ENOUGH COPY of a source: every object `mergePetInto` writes into gets its own
- * instance. The values in the map handed to `sourceViews` are the engine's LIVE
- * accumulators — `segmentViews.buildView` passes `agg.out` straight through, and `Agg.addOut`
- * keeps folding into those same objects — so a fold that touched one of them would add the
- * pet's damage to your row permanently, and again on every snapshot
- * (tests/combatCombinePetsPurity.test.mts). Copying here is what makes the fold a VIEW.
- *
- * Cost is one shallow object per lane of yours (tens), paid once per combined build — not
- * per row, and only when there is actually a pet to fold.
+ * A view build MAY NOT TOUCH THE AGGREGATE. The values in the map handed to `sourceViews` are the
+ * engine's LIVE accumulators — `segmentViews.buildView` passes `agg.out` straight through, and
+ * `Agg.addOut` keeps folding into those same objects — so anything that wrote into one of them
+ * would corrupt the fight, the zone session and every later snapshot, permanently. That is not
+ * hypothetical: the deleted combine-pets fold did exactly this before it was made to copy first
+ * (tests/combatSourceViewsPurity.test.mts still pins the invariant, because `withLandings` is a
+ * second thing that reshapes a row and has to keep copying rather than grafting in place).
  */
-function cloneSource(s: SourceStat): SourceStat {
-  const byCategory = new Map<DamageCategory, CategoryStat>()
-  for (const [cat, c] of s.byCategory) byCategory.set(cat, { ...c, bySkill: cloneSkills(c.bySkill) })
-  return {
-    ...s,
-    miss: { ...s.miss },
-    bySkill: cloneSkills(s.bySkill),
-    byCategory,
-    rounds: { bucket: new Map(s.rounds.bucket) }
-  }
-}
-
-/**
- * Fold one source's per-skill lanes into another's, namespacing each lane by the source it
- * came from ("<pet>: Slash") so a combined row still says which entity landed what. Used for
- * both the top-level bySkill map and each category's own bySkill map.
- */
-function mergeSkills(into: Map<string, SkillStat>, from: Map<string, SkillStat>, sourceName: string): void {
-  for (const [k, sk] of from) {
-    const key = `${sourceName}: ${k}`
-    const prev = into.get(key)
-    if (prev) {
-      prev.total += sk.total
-      prev.hits += sk.hits
-      prev.crits += sk.crits
-      prev.misses += sk.misses
-      prev.resists += sk.resists
-      prev.lands += sk.lands
-      prev.max = Math.max(prev.max, sk.max)
-      prev.min = mergeMin(prev.min, sk.min)
-    } else {
-      into.set(key, { ...sk, name: key })
-    }
-  }
-}
-
-/** Fold a pet source into the synthetic "You +pets" row (combinePets). Mutates `you`, which
- *  is ALWAYS a row this module built or cloned — never a value out of `map`. */
-function mergePetInto(you: SourceStat, s: SourceStat): void {
-  you.total += s.total
-  you.hits += s.hits
-  you.crits += s.crits
-  you.ambiguousHits += s.ambiguousHits
-  you.ambiguousTotal += s.ambiguousTotal
-  you.misses += s.misses
-  you.resists += s.resists
-  for (const k of MISS_KEYS) you.miss[k] += s.miss[k]
-  mergeSkills(you.bySkill, s.bySkill, s.name)
-  // Merge category rollups too (namespacing the per-category skill by the pet name,
-  // matching the top-level bySkill merge above) so drill-down still works combined.
-  for (const [cat, cstat] of s.byCategory) {
-    const yc = you.byCategory.get(cat) ?? newCategory(cat)
-    yc.total += cstat.total
-    yc.hits += cstat.hits
-    yc.crits += cstat.crits
-    yc.resists += cstat.resists
-    yc.max = Math.max(yc.max, cstat.max)
-    mergeSkills(yc.bySkill, cstat.bySkill, s.name)
-    you.byCategory.set(cat, yc)
-  }
-  // Merge rounds buckets (union of both sources' second-buckets — keeps the
-  // per-second hit clustering coherent when pets fold into You).
-  for (const [bk, cnt] of s.rounds.bucket) {
-    you.rounds.bucket.set(bk, (you.rounds.bucket.get(bk) ?? 0) + cnt)
-  }
-}
-
 export function sourceViews(
   map: Map<string, SourceStat>,
   durationSec: number,
-  combinePets: boolean,
   /** Effect landings to graft onto the `you` row. Outgoing views only — an INCOMING view has no
    *  proc ledger behind it, and a mob's slow landing on you is not a lane of yours. */
   lands?: EffectLandings
 ): SourceView[] {
-  const merged = new Map<string, SourceStat>()
-  const pets: SourceStat[] = []
-  for (const [id, raw] of map) {
-    const s: SourceStat = id === 'you' && lands !== undefined && lands.size > 0 ? withLandings(raw, lands) : raw
-    if (combinePets && s.kind === 'pet') pets.push(s)
-    else merged.set(id, s)
-  }
-  if (pets.length > 0) {
-    // The fold target is a COPY of your row — or a fresh empty one for a segment where the
-    // pet swung and you did not. Collected in a second pass rather than folded inline so the
-    // result cannot depend on WHO SWUNG FIRST: `map` is in insertion order, and a pet seen
-    // before you used to have its accumulated row overwritten by your bare one.
-    const you = merged.get('you')
-    const target = you ? cloneSource(you) : newSource('You +pets', 'you')
-    target.name = 'You +pets'
-    for (const p of pets) mergePetInto(target, p)
-    merged.set('you', target)
-  }
-  const list = [...merged.entries()]
+  const list = [...map.entries()].map(
+    ([id, raw]): [string, SourceStat] => [
+      id,
+      id === 'you' && lands !== undefined && lands.size > 0 ? withLandings(raw, lands) : raw
+    ]
+  )
   const maxTotal = Math.max(1, ...list.map(([, s]) => s.total))
   return list
     .map(([id, s]) => {

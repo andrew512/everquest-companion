@@ -203,7 +203,6 @@ export class CombatEngine {
     this.st.sweepCharm(now)
     evalClosure(this.st, now)
     const st = this.st
-    const combinePets = opts.combinePets ?? false
     const maxSegments = opts.maxSegments ?? 100
     const inCombat = !!st.current && now - st.current.lastTs < ACTIVE_MS
 
@@ -211,7 +210,7 @@ export class CombatEngine {
     segments.push(zoneSummary(st))
 
     const selectedId = resolveSelectedId(st, opts)
-    const selected = buildSelected(st, selectedId, now, combinePets)
+    const selected = buildSelected(st, selectedId, now)
 
     const recent = (opts.showUnparsed ? st.recent : st.recent.filter((r) => r.cat !== 'unparsed')).slice(-150)
     const timeline = opts.timeline ? buildTimeline(st, selectedId, now) : undefined

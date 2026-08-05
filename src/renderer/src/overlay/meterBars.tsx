@@ -1,16 +1,27 @@
 // meterBars — the damage overlay's BAR BODY: the ranked entity list and, one click down, the
-// flat per-skill list for one entity. Split out of OverlayMeter so that file is the window
-// chrome (header, selector, footer) and this one is the meter itself.
+// breakdown for one entity. Split out of OverlayMeter so that file is the window chrome (header,
+// selector, footer) and this one is the meter itself.
+//
+// IT RENDERS THE SAME METER THE COMBAT TAB DOES (owner ruling, 2026-08-04: "they should be using
+// the same underlying api and abstraction — if not, collapse"). It used to build its rows from a
+// DIFFERENT fold: the overlay asked the engine for `combinePets`, which returns a synthetic
+// "You +pets" source whose lanes are namespaced strings ("Vebarn: Slash") and which has no pet
+// LINE at all, while the Combat tab built its rows in petRows.ts over the un-folded sources. Two
+// folds, two answers to "what is my damage". The engine fold is deleted; every row on this
+// surface now comes out of `petRows.meterPanel`, the same call `SegmentPanel` makes, over the
+// same snapshot and honouring the same 'Combine pet into your damage' preference.
 //
 // MUI-FREE ON PURPOSE: the overlay is its own renderer entry (overlay.html) with no theme and
 // no component library — every pixel here is plain React + inline styles. Do not import
-// @mui/* into this bundle.
+// @mui/* into this bundle. petRows/dashboardData/landEvidence are pure TS and import legally.
 
 import { type JSX, useMemo } from 'react'
 import type { OverlayDrill } from '@shared/types'
-import { CATEGORY_LABEL, type DamageCategory, type SegmentView } from '@shared/combat'
+import { CATEGORY_LABEL, type DamageCategory, type SegmentView, type SourceView } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../lib/formatRate'
-import { flattenSkills, type FlatSkill, type SkillRow } from '../features/combat/dashboardData'
+import { type FlatSkill, type SkillRow } from '../features/combat/dashboardData'
+import { defaultEntityId, meterPanel, selfSource, type OwnRow, type PetRow } from '../features/combat/petRows'
+import { useCombinePetRow } from '../features/combat/useCombatPrefs'
 import { landEvidence } from '../features/combat/landEvidence'
 
 const KIND_COLOR: Record<string, string> = { you: '#d9b25f', pet: '#6fb3d2', enemy: '#cf6679' }
@@ -90,20 +101,25 @@ function Bar({
   )
 }
 
-// Mini drill-down (Task #54): null = level 1 (entities); {entityId} = level 2, ONE flat ranked
-// skill/spell list across every category (color = category, no legend — the overlay is too dense
-// for one). Same data + flattening as the main view.
+// Mini drill-down (Task #54): {entityId} = level 2, ONE ranked list for that source — its
+// skill/spell lanes (color = category, no legend — the overlay is too dense for one) plus, when
+// the subject is YOU and the preference is on, one line item per pet ranked among them.
 //
 // The drill lives in the PERSISTED config (`overlays.<kind>.drill`), not component state, so it
 // survives a restart exactly like window position does — the user plays pinned with a "damage by
 // type" breakdown up and expects to find it there again. Locked mode RENDERS it (read-only,
 // static crumb, zero affordances, still fully click-through); only interactive mode can change it.
+//
+// `null` (or absent) is not "level 1", it is "no drill of your own" — and the DEFAULT ZOOM then
+// decides, from the same preference, exactly as the Combat tab's does (petRows.defaultEntityId):
+// preference on ⇒ your breakdown with the pets nested in, off ⇒ the source bars. That is what
+// makes "picking a different fight undrills" mean the same thing on both surfaces: the meter
+// returns to what the preference says it opens on, not to a level the preference rejected.
 export type Drill = OverlayDrill
 
-// Flattening + the Slay Undead grouping come from the app's dashboardData — it is pure TS (no
-// React, no MUI), which is the only reason the overlay duplicates anything at all — the copies
-// here (colors, bar chrome) exist to stay MUI-free, not to fork the DATA shaping. One flatten
-// means the overlay's drill can never rank or group rows differently from the main view.
+// The row shaping — the flatten, the Slay Undead grouping, the pet nesting, the ranking and the
+// re-based bar widths — is all `petRows.meterPanel`. What is duplicated here is only the CHROME
+// (colors, bar geometry, the crumb), because this bundle has no MUI theme to read them from.
 
 /**
  * The overlay's per-skill stat run, embedded INSIDE the bar after the name — identical form to
@@ -168,81 +184,94 @@ function skillTitle(s: SkillRow, catLabel: string): string {
   return `${head}\nBy skill:\n${lines.join('\n')}`
 }
 
-/** The bar body: entities → flat skill list, driven by the drill state.
- *  `setDrill` is null in locked mode: the same levels render, minus every affordance. */
-export function MeterBars({
-  seg,
+/** ONE skill/spell lane of the drilled source — category-colored, stats inside the bar. */
+function SkillLine({ s }: { s: SkillRow }): JSX.Element {
+  return (
+    <Bar
+      color={CAT_COLOR[s.category]}
+      accent={CAT_COLOR[s.category]}
+      pct={s.pct}
+      label={
+        <>
+          {s.name}
+          {/* A lone Slay Undead proc flattens into a row named after its weapon skill, so
+              without this tag it is a duplicate of the plain melee row. The category has
+              to be readable from the ROW; the overlay has no legend to fall back on.
+              A GROUP row is already named "Slay Undead" — tagging it would stutter — and
+              instead says how many weapon skills it merges; the split is in its title. */}
+          {s.category === 'slay' && !s.children && (
+            <span style={{ color: CAT_COLOR.slay, fontWeight: 600 }}> · Slay Undead</span>
+          )}
+          {s.children && s.children.length > 0 && (
+            <span style={{ color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}> · {s.children.length} skills</span>
+          )}
+          {/* Labeled stats ride inside the bar, dimmed against the name; the right end
+              of every row stays the total alone so the list scans as a ranking. */}
+          <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>{skillStat(s)}</span>
+        </>
+      }
+      right={fmt(s.total)}
+      title={skillTitle(s, CATEGORY_LABEL[s.category])}
+    />
+  )
+}
+
+/**
+ * ONE PET, nested inside your breakdown as a single line item ranked among your lanes — the row
+ * the overlay simply did not have while it was rendering the engine's merged fold.
+ *
+ * It wears the PET colour, not a category colour, because it is not a lane of yours (world-model
+ * law 4: "pet" is presentation, and the engine's attribution has to survive the layout), and it
+ * is labelled with the pet's own display name off its source row, never a coined "Pet" (law 2).
+ * Its right-hand text is a rate + total, exactly like a level-1 source bar, because that is what
+ * it stands for — a whole source, folded to one line.
+ */
+function PetLine({ pet, pct, onDrill }: { pet: PetRow; pct: number; onDrill?: () => void }): JSX.Element {
+  const swings = pet.hits + pet.misses
+  const facts = [`total ${fmt(pet.total)}`, `${pet.hits} hits`]
+  if (pet.crits > 0) facts.push(`${pet.crits} crits`)
+  if (pet.misses > 0) facts.push(`${Math.round((pet.misses / swings) * 100)}% miss (${pet.misses} of ${swings} swings)`)
+  if (pet.resists > 0) facts.push(`${pet.resists} resisted`)
+  return (
+    <Bar
+      color={KIND_COLOR.pet}
+      accent={KIND_COLOR.pet}
+      pct={pct}
+      label={
+        <>
+          {pet.name}
+          <span style={{ color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}> ·pet</span>
+        </>
+      }
+      right={`${formatRate(pet.dps)} · ${fmt(pet.total)}`}
+      onClick={onDrill}
+      title={`${pet.name} (your pet) — ${facts.join(' · ')}`}
+    />
+  )
+}
+
+/** Nothing to show yet — quiet, and honest about which kind of nothing it is. */
+function MeterEmpty({ live }: { live: boolean }): JSX.Element {
+  return (
+    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', padding: '8px 2px' }}>
+      {live ? 'Engaging…' : 'Waiting for combat…'}
+    </div>
+  )
+}
+
+/** The level-1 ranked source list: one bar per entity, capped at the user's row budget. */
+function SourceLines({
+  sources,
   topN,
-  drill,
-  setDrill,
-  live
+  setDrill
 }: {
-  seg: SegmentView | undefined
+  sources: SourceView[]
   topN: number
-  drill: Drill | null
   setDrill: ((d: Drill | null) => void) | null
-  live: boolean
 }): JSX.Element {
-  const rows = useMemo(() => (seg?.entities ?? []).slice(0, topN), [seg, topN])
-  // A stale drill falls back to level 1 for THIS render only — the persisted value is untouched,
-  // so a restored `pet:<instanceId>` from a past session, a fight that moved on, or a 'you' that
-  // blinks out between fights all re-drill silently the moment the entity is back in the segment.
-  const drilled = drill && seg ? seg.entities.find((e) => e.id === drill.entityId) : undefined
-
-  if (!seg || (!drilled && rows.length === 0)) {
-    return (
-      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', padding: '8px 2px' }}>
-        {live ? 'Engaging…' : 'Waiting for combat…'}
-      </div>
-    )
-  }
-
-  // Level 2: one flat, category-colored skill/spell list for the entity.
-  if (drilled) {
-    return (
-      <MeterCrumb name={drilled.name} onBack={setDrill ? () => setDrill(null) : null}>
-        {flattenSkills(drilled).map((s) => (
-          <Bar
-            key={`${s.category}|${s.name}`}
-            color={CAT_COLOR[s.category]}
-            accent={CAT_COLOR[s.category]}
-            pct={s.pct}
-            label={
-              <>
-                {s.name}
-                {/* A lone Slay Undead proc flattens into a row named after its weapon skill, so
-                    without this tag it is a duplicate of the plain melee row. The category has
-                    to be readable from the ROW; the overlay has no legend to fall back on.
-                    A GROUP row is already named "Slay Undead" — tagging it would stutter — and
-                    instead says how many weapon skills it merges; the split is in its title. */}
-                {s.category === 'slay' && !s.children && (
-                  <span style={{ color: CAT_COLOR.slay, fontWeight: 600 }}> · Slay Undead</span>
-                )}
-                {s.children && s.children.length > 0 && (
-                  <span style={{ color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>
-                    {' '}
-                    · {s.children.length} skills
-                  </span>
-                )}
-                {/* Labeled stats ride inside the bar, dimmed against the name; the right end
-                    of every row stays the total alone so the list scans as a ranking. */}
-                <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>
-                  {skillStat(s)}
-                </span>
-              </>
-            }
-            right={fmt(s.total)}
-            title={skillTitle(s, CATEGORY_LABEL[s.category])}
-          />
-        ))}
-      </MeterCrumb>
-    )
-  }
-
-  // Level 1: entities.
   return (
     <>
-      {rows.map((e, i) => (
+      {sources.slice(0, topN).map((e, i) => (
         <Bar
           key={e.id}
           color={KIND_COLOR[e.kind] ?? '#888'}
@@ -262,8 +291,75 @@ export function MeterBars({
   )
 }
 
-/** A crumb header for the drill-down level: a back chevron when interactive, and the SAME row as
- *  static text when `onBack` is null (locked mode — the drill still shows, nothing is clickable). */
+/** One row of a level-2 list: a lane of the subject's, or a whole pet folded into one line. */
+function ownLine(r: OwnRow, setDrill: ((d: Drill | null) => void) | null): JSX.Element {
+  return r.kind === 'pet' ? (
+    <PetLine
+      key={r.pet.id}
+      pet={r.pet}
+      pct={r.pct}
+      onDrill={setDrill ? () => setDrill({ entityId: r.pet.id }) : undefined}
+    />
+  ) : (
+    <SkillLine key={`${r.skill.category}|${r.skill.name}`} s={r.skill} />
+  )
+}
+
+/**
+ * The bar body: the source list, or ONE source's breakdown — whichever `petRows.meterPanel` says,
+ * from the persisted drill and the shared preference. `setDrill` is null in locked mode: the same
+ * levels render, minus every affordance.
+ */
+export function MeterBars({
+  seg,
+  topN,
+  drill,
+  setDrill,
+  live
+}: {
+  seg: SegmentView | undefined
+  topN: number
+  drill: Drill | null
+  setDrill: ((d: Drill | null) => void) | null
+  live: boolean
+}): JSX.Element {
+  // The SAME preference the Combat tab reads, out of the same localStorage key — one origin, one
+  // store, and a 'storage' event when the other window's Preferences tab writes it.
+  const [combine] = useCombinePetRow()
+  const entities = useMemo(() => seg?.entities ?? [], [seg])
+  // No drill of our own ⇒ the preference decides the level (the default zoom), exactly as it does
+  // on the Combat tab. A drill that resolves to nothing renders level 1 for THIS render only —
+  // `meterPanel` never touches the stored value, so a restored `pet:<instanceId>` from a past
+  // session, a fight that moved on, or a 'you' that blinks out between fights all re-drill
+  // silently the moment the entity is back in the segment.
+  const home = defaultEntityId(selfSource(entities)?.id ?? null, combine)
+  const panel = useMemo(
+    () => meterPanel(entities, combine, drill?.entityId ?? home),
+    [entities, combine, drill, home]
+  )
+
+  if (!seg || (panel.level === 1 && panel.sources.length === 0)) return <MeterEmpty live={live} />
+
+  if (panel.level === 2) {
+    // Back goes to the row this one was opened FROM — a nested pet's owner (your breakdown),
+    // else all the way out. It is NOT offered when this level already IS the default zoom: with
+    // the preference on, your breakdown is where the meter lives, and a back chevron that
+    // re-resolved straight back to the same view would be an affordance that does nothing.
+    const canLeave = panel.parent !== null || panel.subject.id !== home
+    const out: Drill | null = panel.parent ? { entityId: panel.parent.id } : null
+    return (
+      <MeterCrumb name={panel.subject.name} onBack={setDrill && canLeave ? () => setDrill(out) : null}>
+        {panel.rows.map((r) => ownLine(r, setDrill))}
+      </MeterCrumb>
+    )
+  }
+
+  return <SourceLines sources={panel.sources} topN={topN} setDrill={setDrill} />
+}
+
+/** A crumb header for the drill-down level: a back chevron when there is somewhere to go back TO,
+ *  and the SAME row as static text otherwise — locked mode (the drill still shows, nothing is
+ *  clickable), and the level the preference says this meter opens on (nowhere to leave to). */
 function MeterCrumb({
   name,
   onBack,

@@ -139,7 +139,7 @@ export default function OverlayMeter(): JSX.Element {
   // between pulls was the same bug the Combat tab had.
   const [selection, setSelection] = useState<string>(defaultSelection(isFight ? 'fight' : 'overall'))
 
-  const snap = useOverlayCombat(selection === LIVE ? undefined : selection, isFight)
+  const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
   const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
     useOverlayChrome()
 

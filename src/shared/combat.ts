@@ -816,7 +816,13 @@ export interface CombatSnapshot {
 }
 
 export interface SnapshotOpts {
-  combinePets?: boolean
+  // NOTE: there is deliberately NO `combinePets` here any more (owner ruling, 2026-08-04). The
+  // engine used to offer a fold that merged pet damage into a synthetic "You +pets" source with
+  // namespaced lanes; the floating overlay asked for it and the Combat tab didn't, so the two
+  // surfaces showed different answers for the same fight. Pet LAYOUT is a presentation choice
+  // (world-model law 4) and now lives in exactly one place, the renderer's
+  // `features/combat/petRows.ts`, which every meter calls. The engine states its attribution —
+  // you and each pet as their own authoritative row — and offers no second opinion.
   selectedId?: string
   /** include lines the engine couldn't classify (damage-shaped but unmatched) */
   showUnparsed?: boolean

@@ -47,14 +47,14 @@ interface ViewSpec {
   enc?: Encounter
 }
 
-export function buildSelected(st: EngineState, id: string, now: number, combinePets: boolean): SegmentView | null {
+export function buildSelected(st: EngineState, id: string, now: number): SegmentView | null {
   if (id === 'zone') {
     const zDur = zoneDurationSec(st)
     return buildView({
       id: 'zone', kind: 'zone', name: `${st.zone ?? 'Session'} — overall`, zone: st.zone,
       agg: st.zoneAgg, durationSec: zDur, activeSec: Math.min(zDur, zoneActiveSec(st)), active: false,
       st, startTs: st.zoneStartTs, endTs: st.zoneLastTs
-    }, combinePets)
+    })
   }
   // A finalized zone SESSION (Task #54): rebuild its full breakdown from the frozen aggregate.
   const zs = st.zoneHistory.find((z) => z.id === id)
@@ -65,7 +65,7 @@ export function buildSelected(st: EngineState, id: string, now: number, combineP
       id: zs.id, kind: 'zone', name: `${zs.zone} — overall`, zone: zs.zone,
       agg: zs.agg, durationSec: zDur, activeSec: zActive, active: false,
       st, startTs: zs.startTs, endTs: zs.lastTs
-    }, combinePets)
+    })
   }
   const e = st.current?.id === id ? st.current : st.history.find((h) => h.id === id)
   if (!e) return null
@@ -77,17 +77,17 @@ export function buildSelected(st: EngineState, id: string, now: number, combineP
     id: e.id, kind: 'fight', name: encounterName(e, isCurrent), zone: e.zone,
     agg: e.agg, durationSec: dur, activeSec, active, enc: e,
     st, startTs: e.startTs, endTs: e.lastTs
-  }, combinePets)
+  })
 }
 
-function buildView(spec: ViewSpec, combinePets: boolean): SegmentView {
+function buildView(spec: ViewSpec): SegmentView {
   const { agg, durationSec, activeSec } = spec
   // THE EFFECT-LANDING GRAFT (2026-08-04). `effectLandings` is the proc ledger's own count of
   // landings that no damage row represents; handing it to the OUTGOING view is what lets a
   // Weakening Strike row say `0 dmg · 562 landed · 34 resisted` instead of `0 landed`. The
   // INCOMING view gets nothing: a mob slowing you is not a lane of yours.
-  const entities = sourceViews(agg.out, durationSec, combinePets, effectLandings(agg))
-  const incoming = sourceViews(agg.inc, durationSec, false)
+  const entities = sourceViews(agg.out, durationSec, effectLandings(agg))
+  const incoming = sourceViews(agg.inc, durationSec)
   const outTotal = entities.reduce((s, e) => s + e.total, 0)
   const inTotal = incoming.reduce((s, e) => s + e.total, 0)
   const incomingHealers: HealerView[] = [...agg.incHeal.values()]
