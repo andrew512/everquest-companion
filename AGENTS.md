@@ -21,7 +21,10 @@ docs/plans/exaltation-planner.md; era = zone provenance ∪ page dropsfrom,
 page-top era banner resolves unknowns, shared/planner/*), and celebration
 toasts (docs/plans/celebration-toasts.md). Committed knowledge DBs: mobs
 (7.9k), items (11.2k incl. dropsfrom + eraTag), spells (1.9k), classes,
-zones (era-annotated). First stable release v0.2.0 (2026-08-03). Layout: `src/main` (Node), `src/preload`, `src/renderer`,
+zones (era-annotated). First stable release v0.2.0 (2026-08-03); latest
+release v0.4.0 (2026-08-05: planner, toasts, level-up unlocks, panel/overlay
+parity + global fight selection, credited-kill celebrations, per-mob alert
+cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/preload`, `src/renderer`,
 `src/shared`, `tests/`, `scripts/`.
 
 - Repo: `C:\Users\jmoye\everquest-companion` (public: github.com/jmoyers/everquest-companion).
@@ -923,6 +926,18 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   query_timeout only; db.ts fixed). REMAINING: 429/503/403/expired-
   presign negatives + a real log-upload round trip + the owner clicking
   the SNS confirmation email. Telemetry A2 rides the next apply.
+- **ANALYTICS COHORT SPLIT — PENDING OWNER APPLY (2026-08-05, wave R /
+  commit 20452fb).** The owner's own usage (dev channel auto; the installed
+  copy by analyticsId) splits out of every analytics read path by default
+  ('owner' vs 'user' cohort, IN the counter tables' primary keys). The
+  v0.4.0 smoke test PROVED the live cluster carries the OLD-shape telemetry
+  tables (`column "cohort" does not exist` — so A2 WAS applied at some
+  point despite the stale "unapplied" note below), which means the pending
+  owner-run sequence is the DROP+re-migrate RECOVERY path in
+  infra/README.md (loses only days of owner test counters), then
+  `terraform apply` (new telemetry Lambda) + `analytics owner-add
+  <prod analyticsId>` (id from Preferences → Usage analytics). Until then
+  the CLI/tab degrade to named errors by design.
 - **Local dev story**: `scripts/dev-feedback-server.mts` (wave in flight
   at write time) — same contract, same shared validator, failure knobs;
   the app reaches it via `EQ_FEEDBACK_URL`, honored ONLY behind
