@@ -366,8 +366,13 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    double-counts respec refunds. Durations: DB authoritative, else
    recency-weighted MAX (median biases low via censored samples).
 6. **Say what the log cannot say** (documented non-distinguishables — never
-   invent): main/off-hand; double/triple attack (same-second rounds
-   heuristic only); ground pickups (NO line exists — the loot family is the
+   invent): main/off-hand; double/triple attack (SILENT extra swings —
+   zero annotations in 1.35M lines; the rounds model (combat/rounds.ts,
+   wave X 118f0c2) infers by (source, verb, TARGET, second) with
+   cross-target fan-out collapse, per-event ONLY on reuse-timer verbs,
+   aggregate-rate-with-inferred-chip on dual-wieldable weapon verbs, and
+   the player's own Rampage swings are unannotated = outgoing rampage
+   unknowable); ground pickups (NO line exists — the loot family is the
    only item-acquisition line); self-buff fades (only wears-off emotes);
    mob HP. Fight NAMING (Task #54): a LIVE fight is named after the CURRENT
    target (most recent outgoing target — the mob in front of you); on FINALIZE
