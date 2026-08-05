@@ -48,7 +48,7 @@ export function getMainWindow(): BrowserWindow | null {
   // `mainWindow`: between `close` and `closed` (and on any teardown path that destroys
   // the window directly) the reference still points at a destroyed native window, and
   // every method on it throws "Object has been destroyed". Callers get null instead.
-  if (mainWindow && mainWindow.isDestroyed()) return null
+  if (mainWindow?.isDestroyed()) return null
   return mainWindow
 }
 
