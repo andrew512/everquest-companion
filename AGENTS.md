@@ -124,6 +124,39 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
 - **Mid-flight course changes go BY MESSAGE to the owning agent** (owner
   amendments, hazards discovered by a sibling wave) — never by dispatching a
   second agent into owned files, and never by the integrator editing them.
+  An agent that stops "to wait" for its own e2e run is STOPPED — a message
+  resumes it; don't ping-pong twice, finish its integration yourself from
+  `git status` + its interim report (wave T precedent, 2026-08-05).
+- **Wave choreography, distilled 2026-08-05 (25-wave session):**
+  - A file carrying TWO waves' hunks lands with the LATER wave's commit +
+    a "completes <sha>" note (App.tsx with toasts+deep-links;
+    windowControls with fightSelection+levelUp). Never `git add -p` a
+    shared hot file into halves.
+  - `git status --porcelain | grep '^[MADR] '` BEFORE every commit — the
+    index is shared and a sibling's staged deletion WILL ride your commit
+    (6db8790 swept one; its wave's later commit completed it).
+  - **e2e is SINGLE-FLIGHT per checkout** (USER_DATA hashes ROOT):
+    concurrent runs EPERM-destroy each other and every tally from a
+    contended window is NOISE — 5/13 and 6/13 runs passed 13/13 clean
+    minutes later with zero code change. Serialize; the integrator's final
+    run is the one that counts. (Lockfile chip pending.)
+  - **The awaiting-sample law generalizes**: no file format, log
+    annotation, or era claim ships from imagination — outputs kinds refuse
+    typed until a real fixture graduates them; Double Bow Shot waits for a
+    bow log; era waited for zones. "Structurally covered" ≠ verified —
+    say which.
+- **Feedback triage loop (proven 2026-08-05, three same-day turnarounds):**
+  report → integrator diagnoses against the REAL log/slice FIRST (the
+  Dragon Punch "feature" was a labeling gap; the onboarding "docs issue"
+  was two real defects; the brief's diagnosis was WRONG twice and the
+  executor's evidence overruled it) → wave → stamp `triaged` with an
+  honest note via `triage-feedback set`. Reports with slices: the slice
+  may prove more than the prose (the /log-on first line WAS the bug).
+- **Product lens (owner, 2026-08-05): deepen existing surfaces by
+  default; net-new surface area gets the suspicion test — fits the
+  real-time companion vision? achievable live from the log? or
+  performative? (Faction tracking parked by exactly this test; the
+  outputs ENGINE shipped surface-free instead.)
 - **During parallel waves, red is ambient; final reports are the truth.**
   Executors report other agents' failures SEPARATELY from their own (whose
   file, what error). eslint's cache lies after cross-agent deletes — errors
@@ -967,28 +1000,41 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   query_timeout only; db.ts fixed). REMAINING: 429/503/403/expired-
   presign negatives + a real log-upload round trip + the owner clicking
   the SNS confirmation email. Telemetry A2 rides the next apply.
-- **ANALYTICS COHORT SPLIT — PENDING OWNER APPLY (2026-08-05, wave R /
-  commit 20452fb).** The owner's own usage (dev channel auto; the installed
-  copy by analyticsId) splits out of every analytics read path by default
-  ('owner' vs 'user' cohort, IN the counter tables' primary keys). The
-  v0.4.0 smoke test PROVED the live cluster carries the OLD-shape telemetry
-  tables (`column "cohort" does not exist` — so A2 WAS applied at some
-  point despite the stale "unapplied" note below). **The pending owner-run
-  sequence is COPY-FIRST and drops nothing** (owner, 2026-08-05: those
-  counters have been live since Aug 4 and may hold REAL users, not just
-  owner testing): `analytics close` → `migrate --refresh` (additive only) →
-  `analytics backfill-cohort` (copies every row into cohort-keyed STAGING
-  tables; cohort derived per DAY from what analytics_install STATES — owner
-  only where no user install's span covers that day, else 'user') →
-  `backfill-verify` (row count AND sum(n), old vs new, per table) →
-  `backfill-swap` (re-verifies, REFUSES on mismatch, then DROP the
-  copied-from original + `ALTER TABLE … RENAME TO`; DSQL DOES support
-  RENAME — documented — so no table name, reader or Lambda constant
-  changes) → `terraform apply` (new telemetry Lambda) → `analytics open` →
-  `analytics owner-add <prod analyticsId>` (id from Preferences → Usage
-  analytics). Exact ordered commands: infra/README.md, "THE COHORT
-  MIGRATION". Every step is safe to stop at. Until then the CLI/tab degrade
-  to named errors by design.
+- **ANALYTICS COHORT SPLIT — LIVE (2026-08-05, waves R+S, executed by the
+  agent under the standing authorization).** The owner's usage (dev channel
+  auto; the installed copy by hand-marked analyticsId) splits out of every
+  read path by default ('owner' vs 'user' cohort, IN the counter tables'
+  primary keys). The migration ran COPY-FIRST per owner ruling — staging
+  tables, per-day derived cohort, row-count AND sum(n) verification, swap
+  via DSQL's documented `RENAME TO` (verified live: 102+4 rows, both
+  numbers matched exactly; nothing dropped until its verified copy
+  existed). Runbook preserved in infra/README.md "THE COHORT MIGRATION"
+  for any future re-shape. Owner installs marked: prod 388834cf… + dev ids
+  auto-tag; **a ROTATED analyticsId arrives unmarked — re-run
+  `analytics owner-add`**.
+- **ANALYTICS OPERATIONS (how usage questions get answered — distilled
+  2026-08-05):**
+  - Daily/adoption truth: `triage-feedback analytics digest --days N
+    --profile eqc` (user cohort by default; `--cohort all` prints both,
+    NEVER summed). `--json` for the per-day `pulse.activeSeries` /
+    `sessionSeries`. Series history STARTS 2026-08-04 (telemetry lit) —
+    there is no earlier data and never will be.
+  - Live concurrency: CloudWatch `EQCompanion/Telemetry` metric
+    `Heartbeats`, dimension `Channel=prod`, Sum over 300s periods — ONE
+    heartbeat per open session per 5 min, so a bucket's Sum ≈ concurrent
+    sessions. Deliberately channel-split, not cohort-split (EMF dimension
+    identity would orphan every dashboard widget).
+  - Install count truth is `analytics_install` (the digest's "installs
+    all-time"). GitHub release `download_count` is NOT installs — the
+    auto-updater's fetches dominate it (v0.5.0: 61 downloads in hours ≈
+    the fleet updating itself). DAU can slightly exceed installs across
+    UTC day boundaries — artifact, not phantom users.
+  - The telemetry kill switch is cached in warm Lambdas for 60s
+    (`CONFIG_CACHE_MS`) — a 503 right after `analytics open` is the cache,
+    not a failure; wait a minute before diagnosing.
+  - Pre-marking counter rows carry no id and stay in the user cohort
+    forever (e.g. historical `triage` dwell is the owner) — read old
+    days with that in mind.
 - **Local dev story**: `scripts/dev-feedback-server.mts` (wave in flight
   at write time) — same contract, same shared validator, failure knobs;
   the app reaches it via `EQ_FEEDBACK_URL`, honored ONLY behind
@@ -998,25 +1044,22 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   opt-in recommendation) but NOTHING transmits before the first-run
   notice renders; allowlist schema; separate rotatable analyticsId;
   payload viewer + TELEMETRY.md. Plan: docs/plans/usage-analytics.md.
-  A1 (client) SHIPS DARK. A2 (infra + CLI) and A3 (the readout) are
-  BUILT AND UNAPPLIED: a second Lambda (`eqcompanion-telemetry-ingest`,
-  its own IAM + database role `telemetry_ingest`) behind
-  `POST /v1/telemetry`, aggregating on arrival into `usage_daily` /
-  `usage_funnel_daily` / `analytics_install` — NO raw-event store (T6) —
-  plus EMF metrics, a CloudWatch dashboard, `triage-feedback analytics
-  digest|wipe|open|close`, and the Triage → Analytics tab reading all
-  three tables. Rides the owner's next `terraform apply` +
-  `migrate --refresh` (exact ordered commands: infra/README.md, "THE COHORT
-  MIGRATION" — copy-first, nothing dropped).
+  A1/A2/A3 are ALL LIVE (applied 2026-08-04/05): a second Lambda
+  (`eqcompanion-telemetry-ingest`, its own IAM + database role
+  `telemetry_ingest`) behind `POST /v1/telemetry`, aggregating on arrival
+  into `usage_daily` / `usage_funnel_daily` / `analytics_install` — NO
+  raw-event store (T6) — plus EMF metrics, a CloudWatch dashboard,
+  `triage-feedback analytics digest|wipe|open|close`, and the Triage →
+  Analytics tab reading all three tables.
   **The endpoint is LIT (2026-08-04)**: `TELEMETRY_API_URL` names the live
   `/v1/telemetry` route as a compiled-in constant; tests/telemetryNet.test.mts
   pins the exact URL, the single fetch site, and the consent gates (nothing
   before the notice; opt-out destroys buffer + id). The same commit rewrote
   SECURITY.md / README / TELEMETRY.md — the forcing function worked as built.
-  **USER/OWNER SPLIT (2026-08-05, owner-directed, RIDES THE SAME UNAPPLIED
-  WAVE).** Every counter row carries a `cohort` ('user'|'owner'); it is IN the
-  PRIMARY KEY of `usage_daily`/`usage_funnel_daily` (DSQL cannot alter a PK, so
-  the CREATE TABLEs changed — legal precisely because A2 was never applied) and
+  **USER/OWNER SPLIT (2026-08-05, owner-directed, LIVE).** Every counter
+  row carries a `cohort` ('user'|'owner'); it is IN the
+  PRIMARY KEY of `usage_daily`/`usage_funnel_daily` (DSQL cannot alter a PK —
+  the live tables were rebuilt via the copy-first staging migration) and
   a nullable ALTER-able column on `analytics_install`. Dev builds tag themselves
   SERVER-SIDE from `env.channel` (already in the envelope — **no client change,
   no TELEMETRY.md change**); the installed copy is marked by hand with
@@ -1061,3 +1104,19 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   yet attempted. The `hydrating` flag makes today's replay honest meanwhile.
 - Not yet parsed: Dragon Hoard / tradeskill depot / combine loot lines.
   Group-member combat tracking: future scope.
+- **Open chips (2026-08-05, each with a full brief in its chip):** the
+  combo swap-back blind spot (capped-class swaps invisible; the model's
+  CURRENT answer is wrong and tail evidence rewrote a settled span — the
+  hardest inference fix in the repo, do not rush it; overDetermined test
+  guard + time-keyed corrections are the mitigations); the e2e per-checkout
+  lockfile; copyText still serializing the melee-rounds footer the Rounds
+  panel replaced.
+- **Awaiting real samples** (the outputs registry refuses them typed until
+  a committed fixture graduates each): /outputfile guild, raid, spellbook,
+  factions, achievements, alternateadv — one in-game `/outputfile <kind>`
+  from anyone provides it. Same law for bow combat lines (Double Bow Shot
+  annotation unobserved — no archery in any log seen).
+- Releases this arc: v0.4.0 (planner + toasts + parity + credited kills),
+  v0.5.0 (monk lanes, outputs engine, AA ladder), v0.6.0 (Rounds panel,
+  log-attach fix, Wine installer) — all sandbox-gated + smoke-verified;
+  ~55 installs / ~58 peak concurrent as of v0.6.0 day.
