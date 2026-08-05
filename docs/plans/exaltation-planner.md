@@ -49,9 +49,18 @@ all of this; the planner REUSES those exports and never re-declares a number.
 - R5 — Sockets persist across loadout swaps; no documented failure chance;
   extract/insert cost undocumented (assumed free). Ornamentation tokens are
   not yet in game — the planner ignores the cosmetic slot entirely.
-- R6 — Era scoping is **by construction**: the item/mob DBs are scraped from
-  eqlwiki, which documents only EQL (classic era, level 50, Fear/Hate/Sky).
-  No era field is added anywhere; Kunark arrives by rescrape, not by flag.
+- R6 — ~~Era scoping is by construction~~ **OVERTURNED (owner observation +
+  integrator measurement, 2026-08-04): the wiki documents Kunark AND Velious
+  wholesale** (Kael Drakkel is the largest zone in the mob catalog, 343 mobs;
+  Avatar rides 10 Primal Velium weapons out of Sleeper's Tomb). No item field
+  carries era, so era is derived from ZONE PROVENANCE: `shared/zones.ts` gains
+  a hand-authored `era` field (law 12 — knowledge, never fuzzy) and
+  `shared/planner/era.ts` folds a donor's source zones into a verdict —
+  `in-era` (any source zone ≤ CURRENT_ERA) / `out-of-era` (sources resolve,
+  none current) / `unknown` (nothing resolves — quest/crafted-only and the
+  124 orphan pages stay visible, chipped `era?`, never silently dropped).
+  The browser and farm list default to a "Current era" toggle ON. Kunark
+  arrives by flipping `CURRENT_ERA`, plus a rescrape. (Wave 3E.)
 
 ## 2. Decisions
 
