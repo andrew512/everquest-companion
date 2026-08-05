@@ -4,9 +4,10 @@
 // are invisible until they are wrong, every one of them a thing the user experiences as "the
 // app said the wrong thing / said nothing / would not stop talking":
 //
-//   1. `speechPlan` — sound vs speech vs both, and the two ways a firing goes quiet (the alerts
-//      master mute) versus the one way it must NOT (voice switched off ⇒ degrade to the sound,
-//      never to silence).
+//   1. `speechPlan` — sound vs speech vs both, the ONE way a firing goes quiet (the alerts master
+//      mute), and the fact that the def's own `audio` is the entire switch: there is no global
+//      voice enable any more, so nothing outside the def can turn a spoken alert back into its
+//      sound except having nothing truthful to say.
 //   2. `coalesceAudio` — "three buffs fading at once is ONE audio alert" (owner direction), plus
 //      the per-alert opt-out's exact contract: it bypasses the window AND does not occupy it.
 //   3. `pickVoice` — a stored voice id resolved against a per-machine voice list, bounded: exact
@@ -19,13 +20,10 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { AlertDef, VoicePrefs } from '../src/shared/types'
+import type { AlertDef } from '../src/shared/types'
 import { DEFAULT_VOICE_PREFS } from '../src/shared/speechText'
 import { pickVoice, speechPlan, voiceIdOf } from '../src/renderer/src/lib/speech'
 import { AUDIO_COALESCE_MS, coalesceAudio } from '../src/renderer/src/features/alerts/audioThrottle'
-
-const ON: VoicePrefs = { ...DEFAULT_VOICE_PREFS, enabled: true }
-const OFF: VoicePrefs = { ...DEFAULT_VOICE_PREFS, enabled: false }
 
 function def(over: Partial<AlertDef> = {}): AlertDef {
   return {
@@ -41,60 +39,66 @@ function def(over: Partial<AlertDef> = {}): AlertDef {
 // ------------------------------------------------------------------ speechPlan
 
 test('a def with no audio field plays its sound, exactly as it always did', () => {
-  assert.deepEqual(speechPlan(def(), null, ON, false), { sound: true, speak: null, after: false })
+  assert.deepEqual(speechPlan(def(), null, false), { sound: true, speak: null, after: false })
 })
 
 test("audio:'speech' speaks INSTEAD of the sound", () => {
-  const plan = speechPlan(def({ audio: 'speech' }), null, ON, false)
+  const plan = speechPlan(def({ audio: 'speech' }), null, false)
   assert.equal(plan.sound, false)
   assert.equal(plan.speak, 'Charm break', 'no speech block ⇒ the alert name (W1 fallback)')
   assert.equal(plan.after, false)
 })
 
 test("audio:'both' plays the sound AND queues the speech behind it", () => {
-  const plan = speechPlan(def({ audio: 'both' }), null, ON, false)
+  const plan = speechPlan(def({ audio: 'both' }), null, false)
   assert.deepEqual(plan, { sound: true, speak: 'Charm break', after: true })
 })
 
 test('the alerts master MUTE silences speech too — mute is a promise about noise', () => {
   for (const audio of ['sound', 'speech', 'both'] as const) {
     assert.deepEqual(
-      speechPlan(def({ audio }), null, ON, true),
+      speechPlan(def({ audio }), null, true),
       { sound: false, speak: null, after: false },
       `audio:'${audio}' must be silent while muted`
     )
   }
 })
 
-test('voice switched OFF degrades a speaking alert to its sound — never to silence', () => {
-  assert.deepEqual(speechPlan(def({ audio: 'speech' }), null, OFF, false), {
-    sound: true,
-    speak: null,
-    after: false
-  })
-  assert.deepEqual(speechPlan(def({ audio: 'both' }), null, OFF, false), {
-    sound: true,
-    speak: null,
-    after: false
-  })
+test('THE DEF IS THE WHOLE SWITCH — no global preference can mute a spoken alert', () => {
+  // The regression this file exists to prevent from coming back: a global `VoicePrefs.enabled`
+  // used to sit inside `speechPlan` and turn every 'speech'/'both' def back into its pack sound
+  // while it was off — which it was by default. `speechPlan` now takes no prefs AT ALL, so the
+  // only way to re-introduce that gate is to change its signature, in front of this test.
+  assert.equal(speechPlan.length, 3, 'speechPlan(def, firing, muted) — prefs are not an input')
+  assert.equal(speechPlan(def({ audio: 'speech' }), null, false).speak, 'Charm break')
+  assert.equal(speechPlan(def({ audio: 'both' }), null, false).speak, 'Charm break')
+  // …and the prefs blob no longer even carries the flag.
+  assert.equal('enabled' in DEFAULT_VOICE_PREFS, false)
+})
+
+test('the ONE remaining sound-fallback: nothing truthful to say', () => {
+  // A nameless def on an empty custom phrase resolves to no text. It plays its SOUND rather than
+  // uttering an empty string — degrading to noise, never to silence (world-model law 1).
+  const d = def({ name: '  ', audio: 'speech', speech: { mode: 'custom', phrase: '' } })
+  assert.deepEqual(speechPlan(d, null, false), { sound: true, speak: null, after: false })
 })
 
 test('the spell modes read the firing’s RANK-INTACT spell and strip the rank aloud', () => {
   const d = def({ audio: 'speech', speech: { mode: 'spellName' } })
-  assert.equal(speechPlan(d, { spell: 'Mesmerization III' }, ON, false).speak, 'Mesmerization')
+  assert.equal(speechPlan(d, { spell: 'Mesmerization III' }, false).speak, 'Mesmerization')
   const first = def({ audio: 'speech', speech: { mode: 'spellFirstWord' } })
-  assert.equal(speechPlan(first, { spell: 'Swift Like the Wind II' }, ON, false).speak, 'Swift')
+  assert.equal(speechPlan(first, { spell: 'Swift Like the Wind II' }, false).speak, 'Swift')
 })
 
 test('a spell mode on a firing with NO spell falls back to the alert name, never silence', () => {
   const d = def({ name: 'Mez broke', audio: 'speech', speech: { mode: 'spellName' } })
-  assert.equal(speechPlan(d, { spell: undefined }, ON, false).speak, 'Mez broke')
-  assert.equal(speechPlan(d, null, ON, false).speak, 'Mez broke')
+  assert.equal(speechPlan(d, { spell: undefined }, false).speak, 'Mez broke')
+  assert.equal(speechPlan(d, null, false).speak, 'Mez broke')
 })
 
 test('a custom phrase is spoken verbatim', () => {
   const d = def({ audio: 'speech', speech: { mode: 'custom', phrase: 'run away' } })
-  assert.equal(speechPlan(d, null, ON, false).speak, 'run away')
+  assert.equal(speechPlan(d, null, false).speak, 'run away')
 })
 
 // ------------------------------------------------------------------ coalesceAudio

@@ -61,11 +61,21 @@ test('a v5 store gains the telemetry blob at its defaults, and nothing else move
 
   // Everything the user already had is byte-identical: this step ADDS, it never edits.
   const untouched = ['byCharacter', 'activeLogPath', 'eqInstallDir', 'windowBounds', 'alerts',
-    'alertPrefs', 'alertSoundMigration', 'voice', 'overlays', 'updateChannel', 'updateLastCheckedAt',
+    'alertPrefs', 'alertSoundMigration', 'overlays', 'updateChannel', 'updateLastCheckedAt',
     'cursorRing', 'overlayAutoHide']
   for (const key of untouched) {
     assert.deepEqual(data[key], before[key], `${key} must come through untouched`)
   }
+  // `voice` is the one key a full-chain run legitimately rewrites, and it is step 8's doing (the
+  // retired master switch leaves the blob) rather than this step's. The CONFIGURATION survives;
+  // what v8 does with the flag it removed is owned by tests/storeMigrationsVoice.test.mts.
+  const was = before['voice'] as Record<string, unknown>
+  assert.deepEqual(data['voice'], {
+    engine: was['engine'],
+    voiceId: was['voiceId'],
+    rate: was['rate'],
+    volume: was['volume']
+  })
 })
 
 test('AN UPGRADING USER IS STILL OWED THE NOTICE — noticeShown is never pre-set to true', () => {

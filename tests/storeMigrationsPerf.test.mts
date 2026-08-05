@@ -52,7 +52,11 @@ test('a v6 store gains the perfHud blob at its default, and nothing else moves',
   assert.equal(status, 'migrated')
   assert.equal(from, 6)
   assert.equal(to, CURRENT_SCHEMA_VERSION)
-  assert.deepEqual(applied, [7], 'a v6 store runs exactly one step')
+  // Append-proof, like the sibling files: step 7 is this file's, and the chain continues
+  // contiguously from there. Pinning the whole list would make every future migration edit a
+  // test about a different feature.
+  assert.equal(applied[0], 7, 'a v6 store enters the chain at the perf-HUD step')
+  assert.deepEqual(applied, Array.from({ length: applied.length }, (_, i) => i + 7))
 
   assert.deepEqual(data['perfHud'], DEFAULT_PERF_HUD_PREFS)
   assert.deepEqual(data['perfHud'], { enabled: false })
@@ -60,11 +64,21 @@ test('a v6 store gains the perfHud blob at its default, and nothing else moves',
   // Everything the user already had is byte-identical: this step ADDS, it never edits. The
   // analytics answer especially — an upgrade must never quietly re-enable something declined.
   const untouched = ['byCharacter', 'activeLogPath', 'eqInstallDir', 'windowBounds', 'alerts',
-    'alertPrefs', 'alertSoundMigration', 'voice', 'overlays', 'updateChannel', 'updateLastCheckedAt',
+    'alertPrefs', 'alertSoundMigration', 'overlays', 'updateChannel', 'updateLastCheckedAt',
     'cursorRing', 'overlayAutoHide', 'telemetry']
   for (const key of untouched) {
     assert.deepEqual(data[key], before[key], `${key} must come through untouched`)
   }
+  // `voice` is the one key a full-chain run legitimately rewrites, and it is step 8's doing (the
+  // retired master switch leaves the blob) rather than this step's. The CONFIGURATION survives;
+  // what v8 does with the flag it removed is owned by tests/storeMigrationsVoice.test.mts.
+  const was = before['voice'] as Record<string, unknown>
+  assert.deepEqual(data['voice'], {
+    engine: was['engine'],
+    voiceId: was['voiceId'],
+    rate: was['rate'],
+    volume: was['volume']
+  })
 })
 
 test('AN UPGRADING USER DOES NOT GET THE HUD SWITCHED ON FOR THEM', () => {

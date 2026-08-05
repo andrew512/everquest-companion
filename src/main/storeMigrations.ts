@@ -77,7 +77,7 @@ export const SCHEMA_VERSION_KEY = 'schemaVersion'
  * The schema the code running right now expects. Bump by exactly one whenever a persisted
  * shape changes, and add the matching MIGRATIONS entry in the same commit.
  */
-export const CURRENT_SCHEMA_VERSION = 7
+export const CURRENT_SCHEMA_VERSION = 8
 
 export interface Migration {
   /** Version this step produces. Steps run in ascending `to` order, contiguously. */
@@ -264,11 +264,27 @@ function normalizeAlertVoiceFields(alert: unknown): unknown {
   return next
 }
 
+/**
+ * The v4-era voice blob: today's normalized fields PLUS the `enabled` master switch that existed
+ * back then.
+ *
+ * WHY THIS IS NOT "EDITING A SHIPPED STEP". `normalizeVoicePrefs` stopped emitting `enabled` when
+ * the master switch was retired (schema v8), and this step calls it — so without this wrapper the
+ * step's OUTPUT would have silently changed under it, dropping the flag on the floor. The v8 step
+ * is the one that reads that flag to decide whether the user's spoken alerts stay spoken, and for
+ * a store entering the chain at v3 both steps run in the same pass. So this exists to keep v4's
+ * result byte-identical to what it always produced; the value it preserves is consumed and
+ * removed exactly one step later.
+ */
+function normalizeLegacyVoicePrefs(value: unknown): StoreData {
+  return { ...normalizeVoicePrefs(value), enabled: isPlainObject(value) && value.enabled === true }
+}
+
 const migrateToV4: Migration = {
   to: 4,
   describe: 'add the voice prefs blob; normalize AlertDef.audio/.speech',
   migrate(data) {
-    data.voice = normalizeVoicePrefs(data.voice)
+    data.voice = normalizeLegacyVoicePrefs(data.voice)
     if (Array.isArray(data.alerts)) {
       data.alerts = (data.alerts as unknown[]).map(normalizeAlertVoiceFields)
     }
@@ -366,6 +382,60 @@ const migrateToV7: Migration = {
   }
 }
 
+// ------------------------------------------------ 7 → 8: the voice master switch is retired
+//
+// Owner, 2026-08-04: "duplicative settings; you should not have to enable voice in Preferences."
+// `VoicePrefs.enabled` is gone from the model, the UI and every runtime gate — an alert whose
+// `audio` says 'speech'/'both' now speaks, full stop. Which voice, how fast, how loud all stay:
+// they are the voice's CONFIGURATION, never its permission.
+//
+// THIS STEP EXISTS SO THAT SIMPLIFYING A SETTING CANNOT CHANGE WHAT A USER HEARS. That is the
+// whole of it, and it cuts one way only:
+//
+//   * The switch was ON  → nothing happens to the alerts. They spoke yesterday; they speak today.
+//   * The switch was OFF → every alert def with `audio:'speech'` or `audio:'both'` is rewritten to
+//     'sound'. Those alerts were ALREADY playing their pack sound (the retired gate degraded them
+//     to it — never to silence), so this preserves exactly what the user was hearing. Leaving them
+//     alone would have been the loud failure mode: a user who muted voice globally chose quiet,
+//     and an update that made every one of their alerts start talking would be the app overruling
+//     a decision it had just deleted the control for.
+//
+// ABSENT / MALFORMED COUNTS AS OFF, and that is not a guess: `enabled` was written by
+// `normalizeVoicePrefs`, whose rule was `raw.enabled === true` — anything else already behaved as
+// off, for years, in the only code that ever read it. So the test here is the same test.
+//
+// 'speech'/'both' → 'sound' is expressed by DELETING the key: absent `audio` means 'sound' by
+// construction (shared/alertTypes.ts), it is the shape every pre-voice def has, and it is what
+// keeps the share-string fingerprint of a rewritten def identical to a never-spoke one.
+//
+// THE `speech` BLOCK IS KEPT. It is inert on a sound-only def (no reader consults it unless the
+// def speaks), and it is the user's own configuration — the phrase they typed, the voice they
+// chose. Deleting it would turn a behavior-preserving migration into data loss, and re-picking
+// "Voice (spoken)" in the row should find their words where they left them.
+
+/** One stored alert, with a spoken `audio` folded back to the sound it was actually playing. */
+function silenceSpokenAlert(alert: unknown): unknown {
+  if (!isPlainObject(alert)) return alert
+  if (alert.audio !== 'speech' && alert.audio !== 'both') return alert
+  const next = { ...alert }
+  delete next.audio
+  return next
+}
+
+const migrateToV8: Migration = {
+  to: 8,
+  describe: 'retire voice.enabled; a store that had it off keeps its alerts on their sounds',
+  migrate(data) {
+    const wasEnabled = isPlainObject(data.voice) && data.voice.enabled === true
+    // Drops the key: today's normalizer has no `enabled` field to emit.
+    data.voice = normalizeVoicePrefs(data.voice)
+    if (!wasEnabled && Array.isArray(data.alerts)) {
+      data.alerts = (data.alerts as unknown[]).map(silenceSpokenAlert)
+    }
+    return data
+  }
+}
+
 /**
  * The chain, ascending. APPEND ONLY — never renumber, never edit a shipped step (a store
  * out there was migrated by the old text and will never run it again), never delete one:
@@ -377,7 +447,8 @@ export const MIGRATIONS: readonly Migration[] = [
   migrateToV4,
   migrateToV5,
   migrateToV6,
-  migrateToV7
+  migrateToV7,
+  migrateToV8
 ]
 
 /** Version recorded in `data`; anything absent, non-integer or < 1 means "pre-framework" ⇒ 1. */

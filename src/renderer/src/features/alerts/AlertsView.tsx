@@ -32,7 +32,7 @@ import Snackbar from '@mui/material/Snackbar'
 import MuiAlert from '@mui/material/Alert'
 import type { AlertDef } from '@shared/types'
 import type { ShareApplyResult } from '@shared/profiles'
-import { playAlertNow, refreshAlertStore } from './player'
+import { previewAlertNow, refreshAlertStore } from './player'
 import SoundPacksDialog from './SoundPacksDialog'
 import SuggestAlertsDialog from './SuggestAlertsDialog'
 import AlertDialog from './AlertDialog'
@@ -41,26 +41,14 @@ import AlertsToolbar from './AlertsToolbar'
 import UpgradeOffers from './UpgradeOffers'
 import { useUpgradeOffers } from './lineIntel'
 import { useAlertsStore, type AlertsStore } from './useAlertsStore'
+import type { VoiceSetupNotice } from './VoiceSetupLink'
 import ShareImportDialog from '../profiles/ShareImportDialog'
 import { copyText } from '../../lib/clipboard'
+import { useSpeechSetup } from '../../lib/useVoices'
 
 interface Toast {
   severity: 'success' | 'warning'
   text: string
-}
-
-/**
- * Play an alert directly at the current global × per-alert volume, as if it had just fired —
- * including its speech, so Test is what the user is actually configuring.
- *
- * `enabled` is forced so a disabled alert can still be auditioned, and `alwaysPlay` so the
- * cross-alert audio throttle (audioThrottle.ts) can never swallow a button the user just
- * pressed — a Test that does nothing because an unrelated alert fired 1s ago reads as a broken
- * sound file. MUTE is still honored: the master mute means the app makes no noise, and a Test
- * is not an exception to that (the toolbar's mute toggle is right there).
- */
-function testAlert(def: AlertDef): void {
-  playAlertNow({ ...def, enabled: true, alwaysPlay: true })
 }
 
 /** Toast for a share-string copy of one alert (`ids:[id]`) or every alert. */
@@ -194,9 +182,33 @@ function OfferStrips({ store }: { store: AlertsStore }): JSX.Element {
   )
 }
 
-export default function AlertsView(): JSX.Element {
+/**
+ * "Is there a voice to speak with, and how do I go fix it" — resolved ONCE for the whole view.
+ *
+ * Once, not per row: the answer is global (it is a property of the machine and the chosen tier),
+ * and asking the kokoro tier costs an IPC round trip per ask. The list and the editor read the
+ * same object, so a row and the dialog opened from it can never disagree.
+ */
+function useVoiceSetupNotice(onOpen?: () => void): VoiceSetupNotice {
+  const gap = useSpeechSetup()
+  return { gap, ...(onOpen ? { onOpen } : {}) }
+}
+
+/**
+ * `onOpenVoicePrefs` is the ONE App-facing prop of this view, and it is optional by agreement:
+ * App.tsx hands it `prefsRouting.openSection('voice')` so a row that offers voice output while
+ * the chosen tier has nothing to speak with can LINK to the place that fixes it instead of naming
+ * it in prose. Optional because a caller that has no router (and every test that mounts this view
+ * bare) must still compile — the link simply does not render.
+ */
+export default function AlertsView({
+  onOpenVoicePrefs
+}: {
+  onOpenVoicePrefs?: () => void
+} = {}): JSX.Element {
   const store = useAlertsStore()
   const { alerts, prefs, sortedPacks, history, persistAlerts, removeAlert } = store
+  const voiceSetup = useVoiceSetupNotice(onOpenVoicePrefs)
 
   const edit = useEditDialog()
   const [confirmReset, setConfirmReset] = useState(false)
@@ -234,11 +246,12 @@ export default function AlertsView(): JSX.Element {
         alerts={alerts}
         history={history}
         packs={sortedPacks}
+        voiceSetup={voiceSetup}
         onAddSuggestion={() => setSuggestOpen(true)}
         handlers={{
           onPersist: (def) => void persistAlerts(def),
           onVolumeDrag: store.setAlertVolume,
-          onTest: testAlert,
+          onTest: previewAlertNow,
           onCopyShare: (ids) => void copyShare(ids),
           onEdit: edit.openEdit,
           onRemove: (id) => void removeAlert(id)
@@ -249,6 +262,7 @@ export default function AlertsView(): JSX.Element {
         open={edit.open}
         initial={edit.target}
         packs={sortedPacks}
+        voiceSetup={voiceSetup}
         onClose={edit.close}
         onSave={(def) => {
           void persistAlerts(def)

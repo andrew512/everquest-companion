@@ -108,7 +108,21 @@ export const TELEMETRY_FEATURES = [
 ] as const
 export type TelemetryFeature = (typeof TELEMETRY_FEATURES)[number]
 
-/** Which TTS tier is selected (voice-alerts §2). */
+/**
+ * Which TTS tier a session would speak with (voice-alerts §2).
+ *
+ * 'off' HAD TO BE REDEFINED and this is the honest replacement. It used to mean "the Preferences
+ * master switch is off" — the switch that decided whether any alert could speak. That switch was
+ * retired (2026-08-04, schema v8): an alert speaks because ITS OWN `audio` says so, and the tier
+ * is now pure configuration that is always set to something. So 'off' now means the only thing
+ * "this install does not use speech" can still mean: NO ENABLED ALERT IS SET TO SPEAK. 'system' /
+ * 'kokoro' therefore say "at least one alert speaks, through this tier", which is what the
+ * question was always after.
+ *
+ * The producer is unbuilt (usage-analytics A1 ships `setupSnapshot` deliberately dark), so this
+ * is a contract note, not a description of running code — the mapping is stated here so whoever
+ * builds the emitter cannot re-derive the old meaning from the old name.
+ */
 export const TELEMETRY_VOICE_ENGINES = ['system', 'kokoro', 'off'] as const
 export type TelemetryVoiceEngine = (typeof TELEMETRY_VOICE_ENGINES)[number]
 

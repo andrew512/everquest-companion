@@ -12,7 +12,34 @@
 
 import { useEffect, useState } from 'react'
 import type { SpeechEngine, SpeechVoice } from '@shared/types'
-import { listVoices } from './speech'
+import { currentVoicePrefs, listVoices, speechSetupGap, type SpeechSetupGap } from './speech'
+
+/** A tier's voices plus the one fact `[]` alone cannot state: has the answer ARRIVED yet. */
+interface VoiceInventory {
+  voices: SpeechVoice[]
+  loaded: boolean
+}
+
+/**
+ * The subscription both public hooks are built on. `loaded` exists because an empty list means
+ * two different things one frame apart — "still doing the `voiceschanged` dance" and "this
+ * machine genuinely has none" — and a UI that renders a setup warning must only ever react to
+ * the second (see `useSpeechSetup`).
+ */
+function useVoiceInventory(engine: SpeechEngine, refreshKey: number): VoiceInventory {
+  const [inventory, setInventory] = useState<VoiceInventory>({ voices: [], loaded: false })
+  useEffect(() => {
+    let alive = true
+    setInventory({ voices: [], loaded: false })
+    void listVoices(engine).then((list) => {
+      if (alive) setInventory({ voices: list, loaded: true })
+    })
+    return () => {
+      alive = false
+    }
+  }, [engine, refreshKey])
+  return inventory
+}
 
 /**
  * The voices of one engine tier, or `[]` while they load — and `[]` for a tier that is not
@@ -25,15 +52,20 @@ import { listVoices } from './speech'
  * changing value works; the preferences panel counts completed installs.
  */
 export function useVoiceOptions(engine: SpeechEngine, refreshKey = 0): SpeechVoice[] {
-  const [voices, setVoices] = useState<SpeechVoice[]>([])
-  useEffect(() => {
-    let alive = true
-    void listVoices(engine).then((list) => {
-      if (alive) setVoices(list)
-    })
-    return () => {
-      alive = false
-    }
-  }, [engine, refreshKey])
-  return voices
+  return useVoiceInventory(engine, refreshKey).voices
+}
+
+/**
+ * The SETUP gap for the tier the app is currently configured to speak with, or null while the
+ * inventory is still loading and null when there is nothing to say.
+ *
+ * This is what the alert row and the editor render their "set up in Preferences" link from, now
+ * that speech has no master switch: the only remaining reason a spoken alert does not sound the
+ * way it says it will is that the chosen tier has nothing to speak with. The engine comes from
+ * `lib/speech`'s hydrated prefs cache (the same copy every firing reads), so the annotation and
+ * the utterance can never disagree about which tier is selected.
+ */
+export function useSpeechSetup(engine: SpeechEngine = currentVoicePrefs().engine): SpeechSetupGap | null {
+  const { voices, loaded } = useVoiceInventory(engine, 0)
+  return loaded ? speechSetupGap(engine, voices) : null
 }

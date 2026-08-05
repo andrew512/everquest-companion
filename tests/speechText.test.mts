@@ -169,8 +169,10 @@ test('normalizeVoicePrefs repairs anything into a legal blob, defaulting rather 
   assert.deepEqual(normalizeVoicePrefs(null), DEFAULT_VOICE_PREFS)
   assert.deepEqual(normalizeVoicePrefs('nonsense'), DEFAULT_VOICE_PREFS)
   assert.deepEqual(normalizeVoicePrefs([]), DEFAULT_VOICE_PREFS)
-  // Speech is OFF until asked for (D4: an off-by-default feature spends nobody's bandwidth).
-  assert.equal(DEFAULT_VOICE_PREFS.enabled, false)
+  // The blob is CONFIGURATION, not permission: there is no master switch in it (schema v8), so
+  // "does this alert speak" is answerable only from the alert. The free tier is the default, and
+  // it downloads nothing — which is what D4's "spends nobody's bandwidth" actually rested on.
+  assert.equal('enabled' in DEFAULT_VOICE_PREFS, false)
   assert.equal(DEFAULT_VOICE_PREFS.engine, 'system')
   assert.equal(DEFAULT_VOICE_PREFS.voiceId, null)
 
@@ -190,6 +192,12 @@ test('normalizeVoicePrefs repairs anything into a legal blob, defaulting rather 
   assert.equal(normalizeVoicePrefs({ voiceId: '   ' }).voiceId, null)
   assert.equal(normalizeVoicePrefs({ voiceId: 42 }).voiceId, null)
   assert.equal(normalizeVoicePrefs({ voiceId: 'sapi:David' }).voiceId, 'sapi:David')
+
+  // A legacy `enabled` key is DROPPED, never read: only the v8 migration may consult the retired
+  // switch (to decide whether a user's spoken alerts stay spoken), and a reader that honored it
+  // here would be exactly the second, invisible switch that was just removed.
+  assert.equal('enabled' in normalizeVoicePrefs({ enabled: true }), false)
+  assert.equal('enabled' in normalizeVoicePrefs({ enabled: false }), false)
 
   // Idempotent: normalizing a normalized blob changes nothing (the store read and the store
   // write both run it, so a round-trip must be a fixed point).

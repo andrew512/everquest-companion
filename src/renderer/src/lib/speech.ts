@@ -72,26 +72,31 @@ const SILENT: SpeechPlan = { sound: false, speak: null, after: false }
 const SOUND_ONLY: SpeechPlan = { sound: true, speak: null, after: false }
 
 /**
- * Resolve a def + firing + prefs into what to play.
+ * Resolve a def + firing into what to play.
  *
  * MUTE IS ABSOLUTE. The alerts module's master mute is a promise that the app makes no noise;
  * speech is noise. A muted module speaks nothing, whatever the voice prefs say (§2).
  *
- * VOICE-OFF DEGRADES TO SOUND, IT DOES NOT MUTE. Voice is off by default (D4), so a def that
- * asks for `audio:'speech'` can perfectly well be read by a build/profile where speech is
- * disabled — an imported alert set is exactly that case. Degrading to the def's SOUND keeps the
- * alert alerting; silently dropping it would mute an alert the user can still see is enabled.
+ * THE DEF'S OWN `audio` IS THE WHOLE SWITCH (owner, 2026-08-04). This function used to take the
+ * voice prefs and degrade 'speech'/'both' to the pack sound whenever a global `VoicePrefs.enabled`
+ * was off — which is why a row switched to "Voice (spoken)" played its old sound instead of
+ * talking, in the preview AND in a real firing, with nothing on screen saying why. That switch is
+ * gone (schema v8): an alert with `audio:'speech'` speaks, full stop. Prefs still decide WHICH
+ * voice says it — that is `speak()`'s job, one layer down, and it is a configuration rather than
+ * a permission.
+ *
+ * There is still exactly one way a speaking alert falls back to its sound: nothing truthful to
+ * say (`speechTextFor` resolved to null — a nameless def with an empty phrase). Silence is never
+ * the answer for an alert the user can see is enabled.
  */
 export function speechPlan(
   def: Pick<AlertDef, 'name' | 'audio' | 'speech'>,
   firing: Pick<FiredAlert, 'spell'> | null,
-  prefs: VoicePrefs,
   muted: boolean
 ): SpeechPlan {
   if (muted) return SILENT
   const action: AlertAudio = def.audio ?? 'sound'
   if (action === 'sound') return SOUND_ONLY
-  if (!prefs.enabled) return SOUND_ONLY
   const text = speechTextFor(def, firing)
   if (!text) return SOUND_ONLY
   return action === 'both' ? { sound: true, speak: text, after: true } : { sound: false, speak: text, after: false }
@@ -239,6 +244,41 @@ export async function listVoices(engine: SpeechEngine): Promise<SpeechVoice[]> {
     engine: 'system' as const,
     ...(v.lang ? { lang: v.lang } : {})
   }))
+}
+
+// ------------------------------------------------------- is there a voice to speak with?
+
+/**
+ * The ONE thing that can still stand between "this alert says it speaks" and "you hear words",
+ * now that the master switch is gone. Both members are SETUP states, not errors:
+ *
+ *  - 'engine-not-installed' → the natural (Kokoro) tier is selected but its ~115 MB pack is not
+ *    downloaded. Speech still happens — `speak()` falls back to the system voice and warns once —
+ *    so this is "not the voice you asked for", not silence.
+ *  - 'no-voices' → the system tier has no voices at all (a stripped Windows image, a platform
+ *    with no `speechSynthesis`). This one IS silence, and it is the only one that is.
+ *
+ * Null means there is nothing to say about setup.
+ */
+export type SpeechSetupGap = 'engine-not-installed' | 'no-voices'
+
+/**
+ * Resolve a tier + its actual voice inventory into the gap, if any. Pure, so the annotation the
+ * alert row and the editor render is one decision rather than two lookalike conditionals.
+ *
+ * The caller must only pass a LOADED inventory: `[]` from a system tier that is still doing the
+ * `voiceschanged` dance means "not yet", not "none", and flashing "no voices" for 200 ms on every
+ * row would be a lie with a UI attached (see `useSpeechSetup`).
+ */
+export function speechSetupGap(engine: SpeechEngine, voices: readonly unknown[]): SpeechSetupGap | null {
+  if (voices.length > 0) return null
+  return engine === 'kokoro' ? 'engine-not-installed' : 'no-voices'
+}
+
+/** What each gap MEANS, in the user's terms. The link that follows it is the fix. */
+export const SPEECH_SETUP_NOTES: Record<SpeechSetupGap, string> = {
+  'engine-not-installed': 'The natural voice isn’t downloaded — a Windows voice speaks until it is.',
+  'no-voices': 'This machine has no speech voices installed.'
 }
 
 // ------------------------------------------------------------------ the e2e / test hook

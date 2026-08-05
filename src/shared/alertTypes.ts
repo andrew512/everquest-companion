@@ -154,10 +154,18 @@ export interface AlertSpeech {
  */
 export type SpeechEngine = 'system' | 'kokoro'
 
-/** Global voice preferences (main-owned, persisted under the store's `voice` key). */
+/**
+ * Global voice preferences (main-owned, persisted under the store's `voice` key).
+ *
+ * THERE IS NO MASTER SWITCH, and that is the model, not an omission (owner, 2026-08-04:
+ * "duplicative settings; you should not have to enable voice in Preferences"). A def's
+ * `audio: 'speech' | 'both'` IS the permission — choosing it in the alert row is the whole act
+ * of turning speech on for that alert. What survives here is the voice's CONFIGURATION: which
+ * tier speaks, in whose voice, how fast, how loud. A global `enabled` on top of a per-alert
+ * channel meant two switches for one intent, and the one the user actually pressed was the one
+ * that silently lost (schema v8 retires it — see storeMigrations.ts).
+ */
 export interface VoicePrefs {
-  /** Master switch. Off by default — an unasked-for feature never speaks. */
-  enabled: boolean
   engine: SpeechEngine
   /** Default voice id within the chosen engine; null = "whatever the engine defaults to". */
   voiceId: string | null
@@ -183,13 +191,14 @@ export interface SpeechVoice {
  * what is missing instead of failing silently:
  *  - 'engine-not-installed' → the selected tier has no model/voices on disk yet.
  *  - 'not-implemented'      → this build ships the channel but not the engine behind it.
- *  - 'disabled'             → voice is switched off in preferences.
  *  - 'invalid-request'      → the handler rejected the payload (see ipc/speech.ts).
+ *
+ * There is no 'disabled' member any more: it meant "voice is switched off in preferences", and
+ * that switch no longer exists (see VoicePrefs). Nothing ever returned it.
  */
 export type SpeechUnavailableReason =
   | 'engine-not-installed'
   | 'not-implemented'
-  | 'disabled'
   | 'invalid-request'
 
 /** Args of `speech:say` — re-validated at the handler, never trusted. */

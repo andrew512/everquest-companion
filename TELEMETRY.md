@@ -122,7 +122,7 @@ Once per session: what a typical install looks like.
 | `overlaysEnabled` | list of `fight` · `overall` · `heal-fight` · `heal-overall` · `events` | Which floating meters are open. |
 | `cursorRing` | true / false | Is the cursor ring on. |
 | `autoHide` | true / false | Is overlay auto-hide on. |
-| `voiceEngine` | `system` · `kokoro` · `off` | Which speech tier. |
+| `voiceEngine` | `system` · `kokoro` · `off` | Which speech tier your spoken alerts use — off when no alert is set to speak. |
 | `soundPackCount` | whole number | How many sound packs are installed. |
 | `updateChannel` | `main` · `stable` | Update channel. |
 

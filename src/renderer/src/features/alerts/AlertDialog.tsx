@@ -44,6 +44,7 @@ import {
 import ConditionEditor from './ConditionEditor'
 import SoundPicker, { fallbackPack, firstSoundId } from './SoundPicker'
 import SpeechBlock, { type SpeechForm, speechFieldsFor, useSpeechForm } from './SpeechBlock'
+import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { DEFAULT_PACK_ID } from './suggestions'
 
 const DEFAULT_COOLDOWN_MS = 2000
@@ -327,12 +328,15 @@ export default function AlertDialog({
   open,
   initial,
   packs,
+  voiceSetup,
   onClose,
   onSave
 }: {
   open: boolean
   initial: AlertDef | null
   packs: SoundPack[]
+  /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
+  voiceSetup: VoiceSetupNotice
   onClose: () => void
   onSave: (def: AlertDef) => void
 }): JSX.Element {
@@ -380,7 +384,7 @@ export default function AlertDialog({
           />
 
           <Divider />
-          <SpeechBlock name={f.name} form={f.speech} />
+          <SpeechBlock name={f.name} form={f.speech} voiceSetup={voiceSetup} />
         </Stack>
       </DialogContent>
       <DialogActions>

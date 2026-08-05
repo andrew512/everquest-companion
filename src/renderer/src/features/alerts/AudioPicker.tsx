@@ -26,10 +26,15 @@
 // without ever authoring (audioChoice.ts) — two selects cannot show three dimensions, and
 // silently dropping a voice the user chose would be the worst way to admit it.
 //
-// PREVIEW IS NOT REBUILT HERE. The row's ▶ already routes through `playAlertNow`, whose
-// `speechPlan` decides sound vs speech from the very fields these selects write — so a def
+// PREVIEW IS NOT REBUILT HERE. The row's ▶ routes through `previewAlertNow` → `playAlertNow`,
+// whose `speechPlan` decides sound vs speech from the very fields these selects write — so a def
 // switched to "Voice (spoken)" SPEAKS when previewed, through the same seam that fires it for
 // real. There is no second preview path and there must not be one.
+//   That claim was written here before it was TRUE: a global voice switch (retired 2026-08-04)
+//   sat inside `speechPlan` and degraded 'speech'/'both' back to the pack sound whenever it was
+//   off — which it was by default — so pressing ▶ on a row you had just switched to voice played
+//   the old sound and looked like this picker had not saved. One seam, one path, and now one
+//   pinned equality: features/alerts/preview.ts + tests/alertPreview.test.mts.
 //
 // LAYOUT CONTRACT (inherited from SoundPicker, unchanged): in the alert list the two Selects
 // must be columns of the ROW's shared grid template (see the grid comment in AlertList), so the
@@ -50,7 +55,7 @@ import {
 } from '@mui/material'
 import type { AlertDef, SoundPack, SpeechMode } from '@shared/types'
 import { MAX_SPEECH_CHARS, SPEECH_MODES } from '@shared/speechText'
-import { currentVoicePrefs } from '../../lib/speech'
+import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
 import {
   OUTPUT_BOTH,
   OUTPUT_SPEECH,
@@ -67,15 +72,15 @@ import {
 import { fallbackPack } from './SoundPicker'
 
 /**
- * The annotation the voice entries carry while the master switch is off.
+ * The suffix the two voice entries carry when the chosen tier has nothing to speak with.
  *
- * They stay SELECTABLE: a def outlives the setting (an imported alert set, a profile switch, a
- * user who turns voice off for an evening), and `speechPlan` degrades a spoken alert to its
- * sound rather than to silence — so choosing one is a legitimate thing to do. What it must not
- * do is pretend. This is the same shape of honesty, and the same in-item wording style, that
- * VoiceSetting's engine picker uses for a tier that is not downloaded.
+ * SHORT ON PURPOSE — it is a flag inside a menu item, not the explanation. The explanation (and
+ * the link that fixes it) is `VoiceSetupLink`, rendered under the selects for a row that actually
+ * speaks: a dropdown the user has to open is the wrong place for the fix, and the wrong place for
+ * a sentence. The entries stay SELECTABLE either way — a def outlives a machine's voice
+ * inventory (an imported alert set, a profile switch), and choosing one is legitimate.
  */
-const VOICE_OFF_NOTE = ' (voice is off — Preferences → Voice)'
+const VOICE_GAP_SUFFIX = ' — not set up'
 
 /** The speak-what entries, as sentences rather than the def's field names. */
 const SAY_LABELS: Record<SpeechMode, string> = {
@@ -144,10 +149,13 @@ function PhrasePopover({
 export default function AudioPicker({
   packs,
   def,
+  voiceSetup,
   onChange
 }: {
   packs: SoundPack[]
   def: AlertDef
+  /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
+  voiceSetup: VoiceSetupNotice
   /** persist the whole def (the row's own upsert) — this writes four of its fields. */
   onChange: (next: AlertDef) => void
 }): JSX.Element {
@@ -166,28 +174,36 @@ export default function AudioPicker({
   const view = displayedChoice(choice, pack)
   const base = writeBase(choice, pack)
   const speaksOnly = choice.audio === 'speech'
-  const voiceNote = currentVoicePrefs().enabled ? '' : VOICE_OFF_NOTE
+  const voiceNote = voiceSetup.gap ? VOICE_GAP_SUFFIX : ''
+  // The link is for a def that ACTUALLY speaks. Annotating every row in the list with a voice
+  // problem none of them have would be chrome, not information.
+  const speaks = choice.audio !== 'sound'
   const commit = (next: typeof choice): void => onChange(applyAudioChoice(def, next))
 
   return (
     <Box sx={{ display: 'contents' }}>
-      <Select
-        size="small"
-        data-testid="alert-output"
-        value={outputValueOf(view)}
-        onChange={(e) => commit(withOutput(base, e.target.value, packs))}
-        sx={{ gridArea: 'voice', ...GRID_SX }}
-      >
-        {packs.map((p) => (
-          <MenuItem key={p.id} value={p.id}>
-            {p.name}
-            {p.source === 'user' ? ' (user)' : ''}
-          </MenuItem>
-        ))}
-        <Divider />
-        <MenuItem value={OUTPUT_SPEECH}>Voice (spoken){voiceNote}</MenuItem>
-        <MenuItem value={OUTPUT_BOTH}>Sound + voice{voiceNote}</MenuItem>
-      </Select>
+      {/* The output select owns the 'voice' column; the setup note sits UNDER it (same column,
+          same left edge) so a row that speaks says what is missing where the choice was made. */}
+      <Box sx={{ gridArea: 'voice', minWidth: 0 }}>
+        <Select
+          size="small"
+          data-testid="alert-output"
+          value={outputValueOf(view)}
+          onChange={(e) => commit(withOutput(base, e.target.value, packs))}
+          sx={GRID_SX}
+        >
+          {packs.map((p) => (
+            <MenuItem key={p.id} value={p.id}>
+              {p.name}
+              {p.source === 'user' ? ' (user)' : ''}
+            </MenuItem>
+          ))}
+          <Divider />
+          <MenuItem value={OUTPUT_SPEECH}>Voice (spoken){voiceNote}</MenuItem>
+          <MenuItem value={OUTPUT_BOTH}>Sound + voice{voiceNote}</MenuItem>
+        </Select>
+        {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-row-voice-setup" />}
+      </Box>
 
       {speaksOnly ? (
         <Select

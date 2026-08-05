@@ -1,14 +1,19 @@
 // VoiceSetting — Preferences → Voice (docs/plans/voice-alerts.md §2).
 //
-// The GLOBAL half of voice alerts: the master switch, which engine tier speaks, the default
-// voice, and how fast/loud. Per-alert choices (what an alert says, and a voice override for that
-// one alert) live in the alert editor's Speech block — this panel is what those defer to.
+// The GLOBAL half of voice alerts: which engine tier speaks, the default voice, and how fast/loud.
+// Per-alert choices (what an alert says, and a voice override for that one alert) live in the
+// alert row and the editor's Speech block — this panel is what those defer to.
 //
-// OFF BY DEFAULT AND IT STAYS THAT WAY (decision D4). The toggle is the only thing that makes the
-// app start talking, and the ONE download this panel can start (~115 MB of Kokoro model) happens
-// only when the user clicks the button that says so. Every control below the switch
-// stays mounted and enabled while it is off — they configure a thing that is switched off, which
-// is a normal state, and disabling them would make the panel read as broken rather than as idle.
+// IT IS CONFIGURATION, NOT PERMISSION (owner, 2026-08-04). The master "Speak alerts out loud"
+// toggle that used to head this section is RETIRED (schema v8): it was a second switch for an
+// intent the user had already expressed by setting an alert's output to Voice, and — being off by
+// default — it was the one that silently won. What remains here never decides WHETHER the app
+// talks, only how it sounds when an alert says it should.
+//
+// THE ONE EXPENSIVE ACTION IS STILL EXPLICIT. The ~115 MB Kokoro download happens only when the
+// user clicks the button that states its size (decision D4's real content); picking the tier
+// without downloading it is legal and falls back to a Windows voice, with `lib/speech.ts` warning
+// once and the alert surfaces linking back here.
 //
 // ONE BORDER: PreferencesView already wraps each item in an outlined Paper, so this renders bare
 // Stacks — a Paper here would draw a second frame inside the first (the repo's one-border law).
@@ -27,13 +32,11 @@ import { type JSX, useCallback, useEffect, useState } from 'react'
 import {
   Box,
   Button,
-  FormControlLabel,
   LinearProgress,
   MenuItem,
   Select,
   Slider,
   Stack,
-  Switch,
   Typography
 } from '@mui/material'
 import DownloadIcon from '@mui/icons-material/Download'
@@ -168,27 +171,22 @@ function useKokoroInstall(): KokoroInstallState {
   return { totalBytes, progress, busy, installs, start }
 }
 
-/** Master switch. Everything else configures what happens once this is on. */
-function EnableRow({ prefs, onChange }: { prefs: VoicePrefs; onChange: (p: VoicePrefs) => void }): JSX.Element {
+/**
+ * What this panel IS, now that it is not a switch.
+ *
+ * The master toggle that used to head this section is gone (owner, 2026-08-04: "duplicative
+ * settings; you should not have to enable voice in Preferences"). It said "Speak alerts out loud"
+ * and, being off by default, quietly overruled every alert row that said "Voice (spoken)" — you
+ * set an alert to speak, pressed ▶, and heard the old sound. An alert's own output IS the switch;
+ * what is left here is the voice's configuration, and this line says so rather than leaving the
+ * user hunting for the toggle they remember.
+ */
+function VoiceIntro(): JSX.Element {
   return (
-    <Stack spacing={0.5}>
-      <FormControlLabel
-        control={
-          <Switch
-            size="small"
-            data-testid="pref-voice-enabled"
-            checked={prefs.enabled}
-            onChange={(e) => onChange({ ...prefs, enabled: e.target.checked })}
-          />
-        }
-        label={<Typography variant="body2">Speak alerts out loud</Typography>}
-      />
-      <Typography variant="caption" color="text.secondary">
-        {prefs.enabled
-          ? 'Alerts set to speak will say their phrase. Muting alerts silences speech too.'
-          : 'Off. Alerts set to speak fall back to their sound until you turn this on.'}
-      </Typography>
-    </Stack>
+    <Typography variant="caption" color="text.secondary" data-testid="pref-voice-intro">
+      Alerts speak when you set their output to Voice, in the Alerts tab — there is no switch here.
+      This is the voice they use. Muting alerts silences speech too.
+    </Typography>
   )
 }
 
@@ -407,7 +405,7 @@ export function VoiceSetting(): JSX.Element {
   useEffect(() => forgetSystemVoices, [])
   return (
     <Stack spacing={2} data-testid="pref-voice">
-      <EnableRow prefs={prefs} onChange={update} />
+      <VoiceIntro />
       <EngineRow
         prefs={prefs}
         installed={prefs.engine === 'kokoro' ? voices.length > 0 : true}

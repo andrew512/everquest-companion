@@ -68,9 +68,16 @@ void _modesExhaustive
 void _actionsExhaustive
 void _enginesExhaustive
 
-/** Speech is OFF until asked for, and the free tier is the default (decisions D1 + D4). */
+/**
+ * The voice's CONFIGURATION at its defaults — the free, zero-download tier, the engine's own
+ * choice of voice, ordinary speed and full volume (decision D1).
+ *
+ * There is no `enabled` here because there is no master switch: an alert speaks because ITS
+ * `audio` says 'speech'/'both', full stop (see VoicePrefs in shared/alertTypes.ts). "Off until
+ * asked for" is still true, and is still what a fresh install does — it is just enforced where
+ * the ask happens (no alert asks to speak by default) instead of by a second global toggle.
+ */
 export const DEFAULT_VOICE_PREFS: VoicePrefs = {
-  enabled: false,
   engine: 'system',
   voiceId: null,
   rate: 1,
@@ -98,8 +105,11 @@ export function normalizeVoicePrefs(value: unknown): VoicePrefs {
       : {}
   const engine = SPEECH_ENGINES.find((e) => e === raw.engine)
   const voiceId = raw.voiceId
+  // A legacy `enabled` key is DROPPED, not read: schema v8 retired the master switch, and the
+  // migration that retired it is the only code that may still look at the old value (it decides
+  // whether the user's spoken alerts stay spoken). Anything reading it here would be a second,
+  // undocumented switch.
   return {
-    enabled: raw.enabled === true,
     engine: engine ?? DEFAULT_VOICE_PREFS.engine,
     // null (never undefined) is the stated "use whatever voice the engine defaults to".
     voiceId: typeof voiceId === 'string' && voiceId.trim() ? voiceId : null,

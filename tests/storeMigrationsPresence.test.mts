@@ -57,11 +57,29 @@ test('a v4 store gains both presence blobs at their defaults, and nothing else m
 
   // Everything the user already had is byte-identical: this step ADDS, it never edits.
   const untouched = ['byCharacter', 'activeLogPath', 'eqInstallDir', 'windowBounds', 'alerts',
-    'alertPrefs', 'alertSoundMigration', 'voice', 'overlays', 'updateChannel', 'updateLastCheckedAt']
+    'alertPrefs', 'alertSoundMigration', 'overlays', 'updateChannel', 'updateLastCheckedAt']
   for (const key of untouched) {
     assert.deepEqual(data[key], before[key], `${key} must come through untouched`)
   }
+  assertVoiceConfigSurvives(before, data)
 })
+
+/**
+ * `voice` is the one key a full-chain run legitimately rewrites, and it is step 8's doing rather
+ * than this file's: the retired master switch is dropped from the blob. Its CONFIGURATION —
+ * engine, voice, rate, volume — must still come through untouched. What v8 does with the flag it
+ * removed is owned by tests/storeMigrationsVoice.test.mts.
+ */
+function assertVoiceConfigSurvives(before: StoreData, data: StoreData): void {
+  const was = before['voice'] as Record<string, unknown>
+  assert.deepEqual(data['voice'], {
+    engine: was['engine'],
+    voiceId: was['voiceId'],
+    rate: was['rate'],
+    volume: was['volume']
+  })
+  assert.equal('enabled' in (data['voice'] as StoreData), false)
+}
 
 test('an EXISTING cursor-ring blob is repaired field by field, never replaced wholesale', () => {
   // The downgrade contract means ANY value can be in this key (a hand edit, a future build, a

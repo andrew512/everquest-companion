@@ -1,16 +1,28 @@
 /**
  * Headless Electron integration test for VOICE ALERTS (docs/plans/voice-alerts.md, wave 2).
  *
+ * THERE IS NO MASTER SWITCH ANY MORE, and this spec is where that is proven end to end. It used
+ * to drive one: turn on "Speak alerts out loud", check it reached main's store, and only then
+ * exercise the rest — which is exactly why the row's ▶ bug survived (owner, 2026-08-04). A user
+ * who never found that toggle set a row's output to "Voice (spoken)", pressed play, and heard the
+ * old pack sound, because the retired switch degraded every spoken alert to its sound while it was
+ * off. The test agreed with the app and both were wrong about the product. So the first thing
+ * asserted here now is the ABSENCE of that control, in the panel AND in the stored prefs.
+ *
  * WHY IT IS AN E2E SPEC AND NOT A UNIT TEST: every claim this wave makes is a SEAM, and the
  * pure halves are already pinned elsewhere (tests/voiceAlerts.test.mts for the plan/throttle/
- * voice-matching decisions, tests/speechText.test.mts for the text).  What only the real app
- * can show is that the pieces are actually WIRED:
- *   - the Preferences → Voice section mounts, states its OFF default, and its writes reach
- *     main's store (electron-store is main-owned; the panel's only proof is the round trip);
+ * voice-matching decisions, tests/alertPreview.test.mts for preview == firing,
+ * tests/speechText.test.mts for the text). What only the real app can show is that the pieces are
+ * actually WIRED:
+ *   - the Preferences → Voice section mounts as pure configuration, with no enable switch in it
+ *     and none in main's stored blob (electron-store is main-owned; the only honest proof is the
+ *     round trip);
  *   - the editor's live preview resolves through `speechTextFor` with NO firing at all — the
  *     whole reason that function takes an optional firing;
  *   - a def saved with `audio:'speech'` makes the firing path reach the ENGINE SEAM, which
- *     crosses the dialog, the store, main, the player and lib/speech.
+ *     crosses the dialog, the store, main, the player and lib/speech;
+ *   - a tier with nothing to speak with SAYS SO on the alert row itself, rather than leaving the
+ *     user to discover it by pressing play.
  *
  * IT ASSERTS THE SEAM, NEVER THE AUDIO. `lib/speech.ts` records every utterance on
  * `window.__eqSpeech` with an `uttered` flag and returns BEFORE touching any engine whenever
@@ -43,7 +55,8 @@ import {
 } from './appHarness.mjs'
 
 const VOICE_PANEL = '[data-testid="pref-voice"]'
-const ENABLE = '[data-testid="pref-voice-enabled"] input'
+/** The RETIRED master switch. Asserted to be absent — see the header. */
+const ENABLE = '[data-testid="pref-voice-enabled"]'
 
 /** One utterance as `lib/speech.ts` recorded it. `uttered` is what proves the channel is mute. */
 interface Spoken {
@@ -60,10 +73,10 @@ function spoken(page: Page): Promise<Spoken[]> {
   ) as Promise<Spoken[]>
 }
 
-/** The voice prefs as MAIN has them — the only honest read of "did that persist". */
-function storedPrefs(page: Page): Promise<{ enabled: boolean; engine: string }> {
+/** The voice prefs as MAIN has them — the only honest read of what is actually stored. */
+function storedPrefs(page: Page): Promise<Record<string, unknown>> {
   return page.evaluate(() =>
-    (window as unknown as { eq: { getVoicePrefs: () => Promise<{ enabled: boolean; engine: string }> } }).eq.getVoicePrefs()
+    (window as unknown as { eq: { getVoicePrefs: () => Promise<Record<string, unknown>> } }).eq.getVoicePrefs()
   )
 }
 
@@ -87,7 +100,7 @@ function selectValue(page: Page, testid: string, value: string): Promise<void> {
   return selectIn(page, `[data-testid="${testid}"]`, value)
 }
 
-/** §2: the section exists, and it is OFF until asked for (decision D4). */
+/** §2: the section exists and is pure CONFIGURATION — no master switch, in the UI or the store. */
 async function stepPanel(page: Page): Promise<boolean> {
   await page.click('[data-testid="nav-preferences"]', { timeout: 60_000 })
   await page.waitForSelector('[data-testid="prefs-rail-voice"]', { timeout: 20_000 })
@@ -96,33 +109,29 @@ async function stepPanel(page: Page): Promise<boolean> {
   if (!check('Preferences has a Voice section, reachable from the rail', (await countOf(page, VOICE_PANEL)) === 1)) {
     return false
   }
-  const checked = await page.evaluate(
-    (sel) => (document.querySelector(sel) as HTMLInputElement | null)?.checked ?? null,
-    ENABLE
+
+  check(
+    'there is NO master switch — an alert’s own output is the whole of "does this speak"',
+    (await countOf(page, ENABLE)) === 0
   )
-  check('spoken alerts are OFF by default — an unasked-for feature never speaks', checked === false, String(checked))
+  check(
+    '…and the section says so, rather than leaving the user hunting for the toggle they remember',
+    (await countOf(page, '[data-testid="pref-voice-intro"]')) === 1
+  )
 
-  const before = await storedPrefs(page)
-  check('…and main agrees: the stored prefs say disabled', before.enabled === false, JSON.stringify(before))
+  const stored = await storedPrefs(page)
+  check(
+    'main agrees: the stored voice blob carries configuration and no permission',
+    !('enabled' in stored),
+    JSON.stringify(stored)
+  )
+  check('…and the engine tier defaults to the free, zero-download one', stored.engine === 'system', String(stored.engine))
 
-  // The controls that configure the tier are all present, off or not.
+  // The controls that configure the tier are all present.
   for (const id of ['pref-voice-engine', 'pref-voice-picker', 'pref-voice-preview', 'pref-voice-rate', 'pref-voice-volume']) {
     check(`the Voice section offers ${id.replace('pref-voice-', '')}`, (await countOf(page, `[data-testid="${id}"]`)) === 1)
   }
   return true
-}
-
-/** Turning it on has to reach MAIN — the store is the source of truth, not this component. */
-async function stepEnable(page: Page): Promise<void> {
-  await page.click(ENABLE)
-  await sleep(600)
-  const after = await storedPrefs(page)
-  check(
-    'enabling spoken alerts persists through main’s store (not just local component state)',
-    after.enabled === true,
-    JSON.stringify(after)
-  )
-  check('…and the engine tier defaults to the free, zero-download one', after.engine === 'system', after.engine)
 }
 
 /** The ▶ preview speaks through the REAL seam — and, in this channel, silently. */
@@ -187,10 +196,24 @@ async function stepKokoroInstall(page: Page): Promise<void> {
  * value, that the SECOND select swaps from sounds to speak-what modes, and that the row's ▶ then
  * SPEAKS — through `playAlertNow`'s existing plan, with no second preview path.
  *
+ * THE ▶ ASSERTION IS THE BUG'S TRIPWIRE, and it asserts the RESOLVED ACTION, never audible sound
+ * (this channel is mute by construction): the seam's ring must gain exactly one utterance carrying
+ * the def's resolved text. Before the master switch was retired this row previewed the PACK SOUND
+ * — no utterance at all — so a regression shows up here as `0 utterance(s)`, which is precisely
+ * what the user experienced.
+ *
  * It runs BEFORE the editor step, while the seeded alert is still sound-only, so the write it
  * makes is a real change rather than a no-op.
  */
 const FIRST_ROW = '[data-testid="alert-row"]:first-of-type'
+
+/** The first alert's name, as the row renders it — what a preview of it must say. */
+function firstRowName(page: Page): Promise<string> {
+  return page.evaluate(
+    (sel) => (document.querySelector(sel) as HTMLElement | null)?.innerText.trim() ?? '',
+    `${FIRST_ROW} .MuiTypography-body2`
+  )
+}
 
 async function stepRowPicker(page: Page): Promise<void> {
   await page.click('[data-testid="nav-alerts"]', { timeout: 60_000 })
@@ -224,12 +247,87 @@ async function stepRowPicker(page: Page): Promise<void> {
     JSON.stringify(stored[0]?.audio)
   )
 
+  // Nothing is wrong with the system tier's voices, so the row wears no setup annotation.
+  check(
+    'a row whose voice is fine carries no chrome about voices',
+    (await countOf(page, `${FIRST_ROW} [data-testid="alert-row-voice-setup"]`)) === 0
+  )
+
+  const name = await firstRowName(page)
   const before = (await spoken(page)).length
   await page.click(`${FIRST_ROW} [data-testid="alert-test"]`)
   await sleep(800)
+  const all = await spoken(page)
+  if (
+    !check(
+      'and the row’s ▶ SPEAKS it — the same firing path, no new preview seam',
+      all.length === before + 1,
+      `${String(all.length - before)} utterance(s) — 0 means it played the pack sound again`
+    )
+  ) {
+    return
+  }
+  const last = all[all.length - 1]
   check(
-    'and the row’s ▶ SPEAKS it — the same firing path, no new preview seam',
-    (await spoken(page)).length === before + 1
+    '…saying the text the def resolves to, not a sound: the RESOLVED ACTION, never audible noise',
+    last.text === name,
+    `spoke "${last.text}", expected "${name}"`
+  )
+  check('…and this channel stayed mute while proving it', last.uttered === false, `uttered=${String(last.uttered)}`)
+}
+
+/**
+ * A TIER WITH NOTHING TO SPEAK WITH SAYS SO, ON THE ROW.
+ *
+ * The retired master switch used to be annotated in the output dropdown ("voice is off —
+ * Preferences → Voice"): a sentence naming a place, about a switch that overruled the row. What is
+ * left is a real, checkable condition — the natural voice is not downloaded — and the row states
+ * it where the choice was made. In the app proper it carries a "Set up in Preferences" LINK
+ * (AlertsView's optional `onOpenVoicePrefs`, wired by App.tsx); the NOTE is this file's to assert,
+ * since it renders with or without a router.
+ *
+ * The e2e channel never downloads the Kokoro pack, so selecting that tier is a genuine
+ * not-installed state rather than a simulated one. The tier is put back afterwards.
+ */
+async function stepRowSetupNote(page: Page): Promise<void> {
+  const gotoVoicePrefs = async (): Promise<void> => {
+    await page.click('[data-testid="nav-preferences"]', { timeout: 60_000 })
+    await page.waitForSelector('[data-testid="prefs-rail-voice"]', { timeout: 20_000 })
+    await page.click('[data-testid="prefs-rail-voice"]')
+    await page.waitForSelector(VOICE_PANEL, { timeout: 15_000 })
+  }
+  const gotoAlerts = async (): Promise<void> => {
+    await page.click('[data-testid="nav-alerts"]', { timeout: 60_000 })
+    await page.waitForSelector('[data-testid="alert-row"]', { timeout: 30_000 })
+    await sleep(500)
+  }
+
+  await gotoVoicePrefs()
+  await selectValue(page, 'pref-voice-engine', 'kokoro')
+  await gotoAlerts()
+  check(
+    'a speaking row whose tier is not installed says so, on the row itself',
+    (await countOf(page, `${FIRST_ROW} [data-testid="alert-row-voice-setup"]`)) === 1
+  )
+  const note = (await textOf(page, `${FIRST_ROW} [data-testid="alert-row-voice-setup"]`)).replace(/\s+/g, ' ')
+  check('…naming what is missing, not naming a switch that no longer exists', /downloaded/i.test(note), note)
+  noteLink(await countOf(page, `${FIRST_ROW} [data-testid="voice-setup-link"]`))
+
+  await gotoVoicePrefs()
+  await selectValue(page, 'pref-voice-engine', 'system')
+  await gotoAlerts()
+  check(
+    '…and the annotation disappears the moment the tier can speak again',
+    (await countOf(page, `${FIRST_ROW} [data-testid="alert-row-voice-setup"]`)) === 0
+  )
+}
+
+/** The link half needs App.tsx's `onOpenVoicePrefs`; report what was found without gating on it. */
+function noteLink(count: number): void {
+  note(
+    count === 1
+      ? 'the annotation carries the "Set up in Preferences" link (App passes onOpenVoicePrefs)'
+      : 'the annotation renders without its link — App is not passing onOpenVoicePrefs yet'
   )
 }
 
@@ -317,10 +415,10 @@ async function main(): Promise<void> {
 
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
     if (await stepPanel(page)) {
-      await stepEnable(page)
       await stepPreview(page)
       await stepKokoroInstall(page)
       await stepRowPicker(page)
+      await stepRowSetupNote(page)
       const name = await stepEditor(page)
       if (name) await stepFire(page, name)
       else note('no seeded alert to edit this run — the firing path is not asserted')

@@ -25,6 +25,7 @@ import IosShareIcon from '@mui/icons-material/IosShare'
 import type { AlertDef, AlertFireRecord, SoundPack } from '@shared/types'
 import { formatTime } from '../../lib/formatDate'
 import AudioPicker from './AudioPicker'
+import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { triggerBadge } from './conditionDraft'
 
 /** The expandable "recent fires" panel for one alert. */
@@ -245,6 +246,7 @@ function AlertRow({
   fires,
   isOpen,
   packs,
+  voiceSetup,
   onToggle,
   handlers
 }: {
@@ -252,6 +254,7 @@ function AlertRow({
   fires: AlertFireRecord[]
   isOpen: boolean
   packs: SoundPack[]
+  voiceSetup: VoiceSetupNotice
   onToggle: (id: string) => void
   handlers: AlertRowHandlers
 }): JSX.Element {
@@ -271,7 +274,12 @@ function AlertRow({
         {/* The two audio Selects — output (pack | voice | both) and, contextually, the sound or
             the speak-what mode. `display: contents` puts them in the 'voice' / 'line' columns
             above; the column NAMES predate the picker and now describe it exactly. */}
-        <AudioPicker packs={packs} def={def} onChange={handlers.onPersist} />
+        <AudioPicker
+          packs={packs}
+          def={def}
+          voiceSetup={voiceSetup}
+          onChange={handlers.onPersist}
+        />
 
         <AlertRowVolume
           volume={def.volume ?? 1}
@@ -305,12 +313,15 @@ export default function AlertList({
   alerts,
   history,
   packs,
+  voiceSetup,
   onAddSuggestion,
   handlers
 }: {
   alerts: AlertDef[]
   history: Record<string, AlertFireRecord[]>
   packs: SoundPack[]
+  /** One answer for the whole list: is there a voice to speak with, and how to go fix it. */
+  voiceSetup: VoiceSetupNotice
   onAddSuggestion: () => void
   handlers: AlertRowHandlers
 }): JSX.Element {
@@ -340,6 +351,7 @@ export default function AlertList({
             fires={history[def.id] ?? []}
             isOpen={expanded.has(def.id)}
             packs={packs}
+            voiceSetup={voiceSetup}
             onToggle={toggleExpanded}
             handlers={handlers}
           />

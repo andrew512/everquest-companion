@@ -473,8 +473,9 @@ export function setAlertPrefs(prefs: AlertPrefs): AlertPrefs {
 // ----- Voice alerts / TTS preferences (docs/plans/voice-alerts.md §2) -----
 //
 // Speech obeys the alert master switches ABOVE, not instead of them: a muted alerts module
-// speaks nothing, whatever `voice.enabled` says. This blob only answers "with what voice, how
-// fast, how loud" — and, with `enabled:false` by default, "not at all until you ask".
+// speaks nothing. This blob answers ONLY "with what voice, how fast, how loud" — it holds no
+// switch of its own. WHETHER an alert speaks is the def's `audio` field and nothing else
+// (owner, 2026-08-04; the retired `voice.enabled` is dropped by schema migration v8).
 
 /**
  * The stored voice prefs, defaulted + clamped field by field. `normalizeVoicePrefs` takes

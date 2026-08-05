@@ -10,6 +10,12 @@
 // content area the scroll barely moved and `active` never followed, so the rail read
 // as dead and the tab as one endless column. That machinery is gone.)
 //
+// A DEEP LINK LANDS VISIBLY. `section` switches the rail silently, which is the wrong
+// ending for a sentence the user clicked somewhere else ("Set up in Preferences", the
+// telemetry notice's details link): the page arrives and nothing says which of these cards
+// was the answer. The landed section's cards PULSE on arrival and settle — that lives in
+// ./PrefSectionBlock.tsx, together with the card it decorates.
+//
 // SEARCH IS AN EXPLICIT MODE, not the default rendering. The field sits at the top of
 // the content column so it lines up with the cards it filters; it echoes instantly from
 // local state and filters a DEFERRED copy (AGENTS.md search pattern). While the query is
@@ -28,8 +34,9 @@
 //             Lives in ./OverlayAutoHideSetting.tsx.
 //   Cursor ring — the opt-in white halo that follows the mouse over the EQ window (off by
 //             default; size + thickness). Lives in ./CursorRingSetting.tsx.
-//   Voice    — spoken alerts (docs/plans/voice-alerts.md §2): the master switch, engine tier,
-//             default voice + preview, speed and volume. Lives in ./VoiceSetting.tsx.
+//   Voice    — spoken alerts (docs/plans/voice-alerts.md §2): engine tier, default voice +
+//             preview, speed and volume. There is no master switch — an alert's own output is
+//             what makes it speak (schema v8). Lives in ./VoiceSetting.tsx.
 //   Profiles — export your GLOBAL settings as a paste-safe share string / file, and import
 //             someone else's ADDITIVELY (see src/shared/profiles.ts for the data model).
 //   Updates — app version, last-checked time, a manual check, background download
@@ -50,7 +57,6 @@ import {
   List,
   ListItemButton,
   ListItemText,
-  Paper,
   Stack,
   Switch,
   TextField,
@@ -81,6 +87,9 @@ import { TelemetrySetting } from './TelemetrySetting'
 // file sits at the 400-code-line factoring ceiling, and the section's own file is the honest
 // place for the label, icon and search keywords that name it. See ./PerfSetting.tsx.
 import { perfSection } from './PerfSetting'
+// The section CARD and the arrival pulse live together in their own file — same ceiling, same
+// answer as PerfSetting's descriptor: split, don't widen the threshold.
+import PrefSectionBlock, { useLandedSection } from './PrefSectionBlock'
 import { normalizeQuery } from '../../lib/search'
 
 // -------------------------------------------------------------- Combat section
@@ -393,31 +402,6 @@ function SectionRail({
   )
 }
 
-/** One section header plus its settings cards. */
-function PrefSectionBlock({ section }: { section: PrefSection }): JSX.Element {
-  return (
-    <Box>
-      <Typography
-        variant="overline"
-        color="text.secondary"
-        sx={{ display: 'block', letterSpacing: 1, mb: 0.5 }}
-      >
-        {section.label}
-      </Typography>
-      <Stack spacing={1.5}>
-        {section.items.map((i) => (
-          <Paper key={i.id} variant="outlined" sx={{ p: 1.5 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              {i.label}
-            </Typography>
-            {i.content}
-          </Paper>
-        ))}
-      </Stack>
-    </Box>
-  )
-}
-
 /** The search field, sized to the content column so it aligns with the cards it filters. */
 function PrefSearch({
   query,
@@ -455,6 +439,7 @@ export default function PreferencesView({
   const [query, setQuery] = useState('')
   const deferred = useDeferredValue(query)
   const [active, setActive] = useState(section ?? 'game')
+  const landed = useLandedSection(section)
   const [version, setVersion] = useState('')
   const status = useUpdateStatus()
 
@@ -515,7 +500,7 @@ export default function PreferencesView({
             </Typography>
           )}
           {shown.map((s) => (
-            <PrefSectionBlock key={s.id} section={s} />
+            <PrefSectionBlock key={s.id} section={s} landed={s.id === landed} />
           ))}
         </Box>
       </Box>

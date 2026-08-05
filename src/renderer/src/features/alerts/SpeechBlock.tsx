@@ -41,6 +41,7 @@ import {
 } from '@shared/speechText'
 import { currentVoicePrefs, speak } from '../../lib/speech'
 import { useVoiceOptions } from '../../lib/useVoices'
+import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
 
 /** Human labels for the audio-action selector. Keyed off the closed union, never free text. */
 const AUDIO_LABELS: Record<AlertAudio, string> = {
@@ -274,9 +275,17 @@ function VoiceRow({ name, form }: { name: string; form: SpeechForm }): JSX.Eleme
  * the audio-action row and the throttle opt-out are always there, because both are true of every
  * alert.
  */
-export default function SpeechBlock({ name, form }: { name: string; form: SpeechForm }): JSX.Element {
+export default function SpeechBlock({
+  name,
+  form,
+  voiceSetup
+}: {
+  name: string
+  form: SpeechForm
+  /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
+  voiceSetup: VoiceSetupNotice
+}): JSX.Element {
   const speaks = form.audio !== 'sound'
-  const enabled = currentVoicePrefs().enabled
   return (
     <Box data-testid="alert-speech-block">
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5 }}>
@@ -287,12 +296,10 @@ export default function SpeechBlock({ name, form }: { name: string; form: Speech
       </Stack>
       <Stack spacing={1.5}>
         <AudioActionRow form={form} />
-        {speaks && !enabled && (
-          <Typography variant="caption" color="warning.main" data-testid="alert-speech-off">
-            Spoken alerts are switched off in Preferences → Voice — this alert plays its sound
-            until you turn them on.
-          </Typography>
-        )}
+        {/* No master switch to warn about any more (this used to say "spoken alerts are switched
+            off in Preferences"): choosing 'Speak it' above IS the switch. The only thing left to
+            say is that the chosen tier has nothing to speak with — and it says it with a LINK. */}
+        {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />}
         {speaks && <SaysRow name={name} form={form} />}
         {speaks && <VoiceRow name={name} form={form} />}
       </Stack>

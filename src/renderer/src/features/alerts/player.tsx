@@ -38,6 +38,7 @@ import type {
 import { playSound } from './soundCache'
 import { currentVoicePrefs, loadVoicePrefs, speak, speechPlan } from '../../lib/speech'
 import { coalesceAudio } from './audioThrottle'
+import { previewDef } from './preview'
 
 // ---- shared, module-level alert state (so fireAppSignal works outside React) ----
 
@@ -103,7 +104,7 @@ function effectiveVolume(def: AlertDef): number {
  */
 export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>): void {
   const voice = currentVoicePrefs()
-  const plan = speechPlan(def, firing ?? null, voice, prefs.muted)
+  const plan = speechPlan(def, firing ?? null, prefs.muted)
   if (!plan.sound && !plan.speak) return
   const gate = coalesceAudio(def, Date.now(), lastAudioMs)
   lastAudioMs = gate.lastAudioMs
@@ -118,6 +119,18 @@ export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>):
   }
   // 'both': the utterance is the sound's continuation, so nothing talks over the airhorn.
   void playSound(def.sound.packId, def.sound.soundId, gain, plan.after ? say : undefined)
+}
+
+/**
+ * The row's ▶ — audition ONE alert exactly as a real firing of it would sound.
+ *
+ * It lives here, in the firing path's own file, rather than in the view that renders the button:
+ * "preview == firing" is a property of this module, and a view that rebuilt the def itself is how
+ * the two drift apart. `previewDef` (preview.ts) is the pure half — the two forced fields and
+ * nothing else — so what this does is pinned by tests/alertPreview.test.mts rather than by prose.
+ */
+export function previewAlertNow(def: AlertDef): void {
+  playAlertNow(previewDef(def))
 }
 
 /**

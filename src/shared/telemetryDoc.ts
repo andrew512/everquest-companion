@@ -139,7 +139,11 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
       },
       { name: 'cursorRing', type: 'true / false', note: 'Is the cursor ring on.' },
       { name: 'autoHide', type: 'true / false', note: 'Is overlay auto-hide on.' },
-      { name: 'voiceEngine', type: values(TELEMETRY_VOICE_ENGINES), note: 'Which speech tier.' },
+      {
+        name: 'voiceEngine',
+        type: values(TELEMETRY_VOICE_ENGINES),
+        note: 'Which speech tier your spoken alerts use — off when no alert is set to speak.'
+      },
       { name: 'soundPackCount', type: COUNT, note: 'How many sound packs are installed.' },
       { name: 'updateChannel', type: values(TELEMETRY_UPDATE_CHANNELS), note: 'Update channel.' }
     ]
