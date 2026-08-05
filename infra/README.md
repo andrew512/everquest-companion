@@ -147,51 +147,191 @@ After a successful apply:
 3. The endpoint is seeded **closed**, on purpose. Open it once you have smoke
    tested: `npx tsx scripts/triage-feedback.mts closed off --profile <profile>`.
 
-## Wave A2 — usage analytics: EXACTLY WHAT TO RUN, IN ORDER
+## THE COHORT MIGRATION — EXACTLY WHAT TO RUN, IN ORDER
 
-Everything below is idempotent and safe to re-run. `<profile>` is the deploy profile;
-`<acct>` is the account id (never committed).
+**This is the live cluster's current pending work, and it is a COPY, not a drop.** The telemetry
+stack itself is deployed and the client is lit; what the cluster does not have is the `cohort`
+key on the two counter tables (the v0.4.0 smoke answered `column "cohort" does not exist`, which
+is the tell). Those counters have been accumulating behind a lit client since **2026-08-04**, so
+they may hold **real users' rows and not only the owner's testing** — the earlier version of this
+runbook said `DROP TABLE usage_daily` and re-migrate, and that was written when these tables were
+believed never to have been created. It is wrong now. **We don't drop anything.**
+
+**Every step below is safe to stop at.** Nothing is destructive until step 5, step 5 refuses
+unless step 4 passed, and every command is idempotent and re-runnable.
+
+`<profile>` is the deploy profile (`eqc`); `<acct>` is the account id (never committed). Run
+everything from the repo root unless it says `cd infra`.
 
 ```bash
 export AWS_PROFILE=<profile>
+```
+
+### 0. Look before you touch
+
+```bash
+npx tsx scripts/triage-feedback.mts closed --profile <profile>
+npx tsx scripts/triage-feedback.mts analytics backfill-verify --profile <profile>
+```
+
+`closed` prints both kill switches. `backfill-verify` names the cluster's state in one line per
+table — on a cluster that still has the pre-cohort shape it says `no staging table — run
+backfill-cohort`, and on one that is already migrated it says `already swapped`. If it says the
+latter for both tables, the migration is already done; skip to step 6.
+
+### 1. Freeze the writers (no deploy, one statement)
+
+```bash
+npx tsx scripts/triage-feedback.mts analytics close --profile <profile>
+```
+
+The copy in step 3 is a **snapshot**: a batch landing between the page that read past it and the
+swap would be missed. `backfill-cohort` **refuses to run** while the switch is open, so this is
+not optional.
+
+Nothing is lost by closing. The client treats `503` as *"not now"* and keeps its buffer
+(`src/main/telemetry/net.ts`), so a close measured in minutes costs nothing. The buffer is a
+500-event ring (`TELEMETRY_BUFFER_CAP`) that drops its oldest, so a close measured in **days**
+would start costing a busy install its oldest events. Do the whole sequence in one sitting.
+
+### 2. Additive schema only
+
+```bash
+npx tsx scripts/triage-feedback.mts migrate --refresh --profile <profile>
+```
+
+`--refresh` because `.triage/stack.json` may predate `telemetry_lambda_role_arn`; `migrate`
+stops and says so rather than sending an unsubstituted `${...}` to the cluster.
+
+This adds `analytics_install.cohort` (the one cohort column an `ALTER` can add — it is not in a
+key) and creates the `telemetry_ingest` role and its grants if they are not there. **The two
+counter tables will report `exists`** — that is `CREATE TABLE IF NOT EXISTS` meeting the old
+shape, and it is exactly why the next step exists. Nothing here drops or rewrites anything.
+
+### 3. Copy every row into the new shape
+
+```bash
+npx tsx scripts/triage-feedback.mts analytics backfill-cohort --profile <profile>
+```
+
+One command, and it prints what it did per table. What it actually does:
+
+* Creates `usage_daily_v2` and `usage_funnel_daily_v2` — **the cohort-keyed shape, with the
+  `CREATE TABLE` text taken out of `infra/schema.sql` itself** so the staging table cannot drift
+  from the table the app reads. (A schema whose PRIMARY KEY no longer carries `cohort` is refused
+  outright.)
+* `GRANT SELECT, INSERT, UPDATE` on both to `telemetry_ingest`. Privileges attach to the object
+  rather than to the name, so these survive the rename in step 6 — which is what stops the new
+  Lambda's first batch from being a permission denied.
+* Fills `analytics_install.cohort` from what each row already **states** (`channel = 'dev'`, or a
+  hand mark from `owner-add`).
+* Copies **every** counter row, in pages of 500 (DSQL caps a transaction at 3,000 modified rows),
+  through the store's bounded, jittered `40001` retry, with `ON CONFLICT … DO UPDATE SET n =
+  EXCLUDED.n` — **assignment, not addition**, so re-running it converges instead of doubling.
+
+**How the cohort is derived, and its one honest limit.** A counter row carries no id (that is the
+entire point of aggregating on arrival), so the only truthful source is `analytics_install`:
+
+* a day whose span is covered **only** by owner installs (dev-channel, or hand-marked) is
+  `owner` — nobody else can have produced those rows, which is a derivation, not a guess;
+* a day that **any user-cohort install could have contributed to** is `user`. There is nothing in
+  the row to split on, so the alternative would be inventing a number;
+* a day no surviving install row covers is `user` — the same fail-safe every reader of a NULL
+  cohort takes.
+
+So on days where the owner and a real user were both present, the owner's own use stays folded
+into the user cohort **forever**. That is the honest limit of pre-split aggregates, and it is
+precisely why the split had to become part of the KEY going forward. Everything from the swap
+onward is exact.
+
+### 4. Read the proof
+
+```bash
+npx tsx scripts/triage-feedback.mts analytics backfill-verify --profile <profile>
+```
+
+Prints, per table, the **row count and the sum of `n`** on both sides. The old → new mapping is
+one-to-one (the new key adds `cohort`, which is a function of `day`, to a key that was already
+unique), so a correct copy matches **exactly** on both numbers. A row count alone cannot see a
+mangled counter, which is why it prints both.
+
+If anything says `MISMATCH`: nothing has been dropped. Re-run step 3 (it is idempotent) and
+verify again.
+
+### 5. Swap — the only destructive step, and it re-checks first
+
+```bash
+npx tsx scripts/triage-feedback.mts analytics backfill-swap --profile <profile>
+```
+
+It **re-runs the verification itself** (a swap that trusted a check somebody ran an hour ago is a
+swap that trusts a stale fact) and **refuses on any mismatch, having touched nothing**. On
+success, per table and one DDL per transaction:
+
+```sql
+DROP TABLE usage_daily;                        -- now redundant: its rows are in the copy
+ALTER TABLE usage_daily_v2 RENAME TO usage_daily;
+```
+
+`ALTER TABLE … RENAME TO` is **documented supported syntax in Aurora DSQL** ("There is no effect
+on the stored data" — the same page this file already cites for the absence of `DROP COLUMN`:
+<https://docs.aws.amazon.com/aurora-dsql/latest/userguide/alter-table-syntax-support.html>). That
+is why the final table names never change and no reader, constant or Lambda statement has to be
+re-pointed anywhere.
+
+**If it dies between the two statements**, the data is intact under `usage_daily_v2` and every
+reader answers `42P01` — which the CLI and the Analytics tab both render as the named "this
+cluster is not migrated" state, not as a crash. Re-run the same command; it finishes the rename.
+
+### 6. Put the cohort-aware Lambda live
+
+```bash
 cd infra
-
-# 1. BOTH bundles, before the plan. The telemetry zip is new; without it the plan
-#    would create the function with no code and the apply would fail.
-node build.mjs
-
-# 2. Plan and apply. New resources: the telemetry Lambda + its role/policy/log group,
-#    the /v1/telemetry route + integration + permission, two alarms, one dashboard.
+node build.mjs                     # BOTH zips FIRST — the plan hashes them
 terraform plan  -var triage_principal_arn=arn:aws:iam::<acct>:user/<you>
 terraform apply -var triage_principal_arn=arn:aws:iam::<acct>:user/<you>
-
-# 3. THE STACK CACHE IS STALE. `terraform output` gained telemetry_lambda_role_arn,
-#    and .triage/stack.json was written before it existed. Refresh it, or `migrate`
-#    stops and tells you to (it refuses to send an unsubstituted ${...} to the cluster).
 cd ..
-npx tsx scripts/triage-feedback.mts migrate --profile <profile> --refresh
+npx tsx scripts/triage-feedback.mts migrate --refresh --profile <profile>
+```
 
-# 4. Smoke test with the switch still CLOSED — a 503 is the correct answer here and
-#    proves the route, the function, the DSQL connection and the config read all work.
+The apply is what replaces the telemetry bundle with the one whose `INSERT` names `cohort`. The
+`migrate` after it is confirmatory — it re-asserts the grants (idempotent) and will report
+everything as `exists`.
+
+**Order matters, and it is the same rule this file states for removing a column, in the other
+direction: schema first, then the bundle that writes it.** Deploying the new bundle before the
+swap would have every batch fail `42703`; doing it after is why the switch stays closed until
+step 7.
+
+### 7. Re-open, and prove it end to end
+
+```bash
+npx tsx scripts/triage-feedback.mts analytics open --profile <profile>
+
 curl -si -X POST "$(cd infra && terraform output -raw telemetry_api_url)" \
   -H 'content-type: application/json' \
-  -d '{"v":1,"env":{"analyticsId":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","appVersion":"0.2.0","channel":"dev","platform":"win32","tzOffsetBucket":0},"events":[{"ts":1,"ev":{"t":"sessionHeartbeat","uptimeMs":1000}}]}'
-# expect: HTTP/2 503  {"ok":false,"error":"closed",...}
+  -d '{"v":1,"env":{"analyticsId":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","appVersion":"0.4.0","channel":"dev","platform":"win32","tzOffsetBucket":0},"events":[{"ts":1,"ev":{"t":"sessionHeartbeat","uptimeMs":1000}}]}'
+# expect: HTTP/2 202  {"ok":true,"accepted":1}
 
-# 5. Open it, re-run step 4 (expect 202 {"ok":true,"accepted":1}), then read it back.
-npx tsx scripts/triage-feedback.mts analytics open   --profile <profile>
-npx tsx scripts/triage-feedback.mts analytics digest --profile <profile> --days 7
+npx tsx scripts/triage-feedback.mts analytics digest --cohort all --profile <profile>
+```
 
-# 6. MARK YOUR OWN INSTALLED COPY (the user/owner split — see below). Your DEV builds tag
-#    themselves from env.channel and need nothing. The installed copy has no server-side
-#    signal at all, by design, so read its analyticsId out of the app itself —
-#    Preferences -> Usage analytics -> "Anonymous id" — and mark it once:
+The `202` proves the route, the function, the DSQL connection, the config read and a cohort-keyed
+UPSERT all work. `--cohort all` prints the two digests side by side — the legacy rows are in
+there, under the cohort the backfill derived, and nothing sums them.
+
+### 8. Mark your own installed copy
+
+```bash
 npx tsx scripts/triage-feedback.mts analytics owner-add <analyticsId> --profile <profile>
 npx tsx scripts/triage-feedback.mts analytics owner-ls --profile <profile>
 ```
 
-Step 4 is worth doing **before** step 5: it separates "the plumbing is wrong" from "the switch
-is off", which are the two failures that look identical from the client.
+Your DEV builds tag themselves from `env.channel` and need nothing. The installed copy has no
+server-side signal at all, by design — a prod payload from the author is deliberately
+indistinguishable from anyone else's — so read its id out of the app itself, **Preferences →
+Usage analytics → "Anonymous id"**, and mark it once. A rotated id is a NEW id and arrives
+unmarked: run `owner-ls` after a rotation and re-add.
 
 **The client is LIT (2026-08-04).** `TELEMETRY_API_URL` in `src/main/telemetry/net.ts` names
 the live `/v1/telemetry` route, and `tests/telemetryNet.test.mts` pins the exact URL, the one
@@ -199,6 +339,14 @@ fetch site, and the consent gates. The owner-approved lighting commit rewrote `S
 added the README paragraph, and regenerated `TELEMETRY.md`, exactly as the dark-build pins were
 designed to force. Data flows once `analytics open` flips `telemetry_accepting` AND clients run
 a build carrying the constant (v0.3.2+).
+
+### First time on a FRESH cluster (no counter tables at all)
+
+There is nothing to copy, so the migration above does not apply: `migrate` creates the two
+tables in their cohort-keyed shape, `terraform apply` puts both bundles live, and `analytics
+open` starts collection. `backfill-verify` says `neither table exists — this cluster needs
+migrate, not a backfill`, which is the check that tells the two situations apart.
+
 
 ### Day-2 for the telemetry route
 
@@ -242,14 +390,24 @@ aggregated under `user` cannot be re-attributed when you mark an install, and ar
 The digest states this in its header on every render. **A rotated `analyticsId` is a new id and
 arrives unmarked** — run `owner-ls` after a rotation and re-add.
 
-**If a cluster already has the pre-cohort counter tables.** `cohort` is part of the PRIMARY KEY
-of `usage_daily` and `usage_funnel_daily` (the `ON CONFLICT` target needs it to be), and DSQL's
-`ALTER TABLE` cannot change a primary key — so unlike `analytics_install.cohort`, there is no
-migration for those two and `CREATE TABLE IF NOT EXISTS` will silently report `exists` against
-the old shape. Wave A2 was never applied, so this should never arise; if it does, the recovery
-is a one-off `DROP TABLE usage_daily; DROP TABLE usage_funnel_daily;` as `admin` followed by
-`migrate`. That discards the aggregates, and there is no way around it: the rows carry no id, so
-no cohort could be derived for them retroactively anyway.
+**If a cluster already has the pre-cohort counter tables — and the live one does.** `cohort` is
+part of the PRIMARY KEY of `usage_daily` and `usage_funnel_daily` (the `ON CONFLICT` target needs
+it to be), and DSQL's `ALTER TABLE` cannot change a primary key — so unlike
+`analytics_install.cohort`, there is no in-place migration for those two, and
+`CREATE TABLE IF NOT EXISTS` silently reports `exists` against the old shape.
+
+**The recovery is a COPY. Nothing is dropped until a verified copy exists** — the ordered
+commands are the runbook at the top of this file (`analytics backfill-cohort` →
+`backfill-verify` → `backfill-swap`). An earlier version of this paragraph said to
+`DROP TABLE usage_daily` and re-migrate; that was written when these tables were believed never
+to have been created, and it is wrong: they have been counting behind a lit client since
+2026-08-04 and may hold real users' rows.
+
+What the copy can and cannot recover: a row carries no id, so a **day** is labelled from what
+`analytics_install` states about who could have reported it — owner only if no user-cohort
+install's span covers that day, `user` otherwise. Days the owner shared with a real user stay
+folded into `user`. That is the honest limit, and it is the reason the split is a KEY from the
+swap onward rather than a filter applied at read time.
 
 ## Removing a column: the ordering, and what DSQL will not do
 

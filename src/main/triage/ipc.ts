@@ -32,6 +32,7 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import type { TriageResult } from '../../shared/triage'
 import { awsBackend, type TriageBackend } from './backend'
+import { unreachable } from './store'
 import {
   isInstallId,
   isReportId,
@@ -47,6 +48,13 @@ function message(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   if (/AccessDenied|not authorized|UnrecognizedClient|ExpiredToken|could not be refreshed|CredentialsProviderError/i.test(raw)) {
     return `${raw}\n\nThis surface authenticates with your shell's AWS profile (AWS_PROFILE, default 'eqc'). Nothing else grants access.`
+  }
+  // The FEEDBACK panels' half of the analytics tab's `unreachable` state. They have no
+  // structured unavailable state — every failure is prose here — so the naming happens in the
+  // prose: a dropped socket is a transient fact about the connection, not a bug in the panel,
+  // and `Connection terminated unexpectedly` alone reads like one.
+  if (unreachable(err)) {
+    return `${raw}\n\nThe DSQL cluster stopped answering (the connection dropped). Nothing needs migrating — retrying opens a fresh connection.`
   }
   return raw
 }

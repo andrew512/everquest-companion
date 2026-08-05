@@ -355,8 +355,20 @@ export const TRIAGE_ANALYTICS_DAYS = [7, 30, 90, 365] as const
 export const TRIAGE_ANALYTICS_DEFAULT_DAYS = 30
 
 export type TriageAnalytics =
-  /** `missing` names the table or column this cluster has not been migrated to. */
-  | { available: false; reason: string; missing: string }
+  /**
+   * NOT AVAILABLE, AND WHICH KIND — `state` names it, the same way `TriageLogState` names the
+   * four things a slice can be. Two genuinely different facts, and the panel says different
+   * words for each:
+   *   * `missing` — the cluster answered, and does not have a table or column this code reads.
+   *     `missing` names it. One `migrate` fixes it.
+   *   * `unreachable` — the cluster did not answer at all: the socket dropped mid-read
+   *     (`store.ts unreachable()`). Nothing is wrong with the schema and nothing needs
+   *     migrating; the next attempt opens a fresh connection. Before this state existed the
+   *     panel printed node-postgres's raw `Connection terminated unexpectedly` at the owner —
+   *     and the async half of the same failure was an uncaughtException in the main process.
+   */
+  | { available: false; state: 'missing'; reason: string; missing: string }
+  | { available: false; state: 'unreachable'; reason: string }
   | {
       available: true
       /** The USER cohort — the owner's own use is not in here. Always present. */

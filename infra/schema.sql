@@ -185,14 +185,25 @@ CREATE TABLE IF NOT EXISTS dedupe_probe (
 --
 -- WHICH MEANS THERE IS NO `ALTER` FOR THESE TWO TABLES, AND CANNOT BE. Aurora
 -- DSQL's ALTER TABLE grammar can add a column; it cannot change a PRIMARY KEY
--- (the key is the table's distribution, not an index you can rebuild). These
--- tables have never been created on any cluster — wave A2 is unapplied — so the
--- CREATE TABLE above is the migration, and there is nothing to migrate. If a
--- cluster somewhere DID get the pre-cohort shape, `IF NOT EXISTS` reports `exists`
--- and silently keeps the old columns: `migrate` output is the check, and the
--- one-off recovery (DROP the two counter tables, re-run migrate, lose the
--- aggregates — there is no id in them to re-derive a cohort from anyway) is
--- written out in infra/README.md.
+-- (the key is the table's distribution, not an index you can rebuild).
+--
+-- ON A FRESH CLUSTER the CREATE TABLE below IS the whole migration. ON A CLUSTER
+-- THAT ALREADY HAS THE PRE-COHORT SHAPE — which the live one does; the v0.4.0
+-- smoke test answered `column "cohort" does not exist` — `IF NOT EXISTS` reports
+-- `exists` and silently keeps the old columns. `migrate` output is the check.
+--
+-- THE RECOVERY IS A COPY, NOT A DROP (owner, 2026-08-05: "we shouldn't drop
+-- anything"). Those counters have been accumulating behind a lit client since
+-- 2026-08-04 and may hold REAL USERS' rows, not just the owner's testing. So the
+-- path is: create cohort-keyed STAGING tables (whose CREATE text is taken from
+-- THIS file, so the shapes cannot drift), copy every row into them with the
+-- cohort derived from what `analytics_install` states, verify old-vs-new counts
+-- and sums, and only then drop the copied-from original and
+-- `ALTER TABLE … RENAME TO` the staging table into its place — a form Aurora DSQL
+-- documents as supported, which is why no table name outside that transition ever
+-- changes. `triage-feedback analytics backfill-cohort|backfill-verify|
+-- backfill-swap` (scripts/analyticsBackfill.mts); the ordered commands are the
+-- runbook at the top of infra/README.md. NOTHING in this file drops anything.
 
 CREATE TABLE IF NOT EXISTS usage_daily (
   day    text   NOT NULL,

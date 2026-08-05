@@ -900,10 +900,13 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Hashicorp.Terraform_*`).
 - **Terraform**: root `infra/`, state in s3 bucket
   `eqcompanion-tf-state-dae027bf` (versioned, BPA) + lock table
-  `eqcompanion-tf-lock`. Deploys are MANUAL from this machine with
-  `AWS_PROFILE=eqc`; CI only fmt/validate/bundle. `terraform apply` of the
-  30-resource stack was launched 2026-08-04 (owner-approved) — VERIFY it
-  completed before assuming resources exist.
+  `eqcompanion-tf-lock`. Deploys run from this machine with
+  `AWS_PROFILE=eqc`; CI only fmt/validate/bundle. **Standing authorization
+  (owner, 2026-08-05): NON-DESTRUCTIVE applies and migrations — additive
+  DDL, copy-first backfills with count verification, Lambda updates — may
+  be run by the agent directly. Anything that drops, overwrites, or loses
+  data (including "empty" shells until counts are VERIFIED) still gets
+  explicit owner approval first.** The 30-resource stack applied 2026-08-04.
 - **Store is Aurora DSQL** (owner: "I hate dynamodb"), not DynamoDB:
   schema in `infra/schema.sql`, applied by `triage-feedback migrate`
   (never yet run against a live cluster — it stops on and prints a bad
@@ -932,12 +935,22 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   ('owner' vs 'user' cohort, IN the counter tables' primary keys). The
   v0.4.0 smoke test PROVED the live cluster carries the OLD-shape telemetry
   tables (`column "cohort" does not exist` — so A2 WAS applied at some
-  point despite the stale "unapplied" note below), which means the pending
-  owner-run sequence is the DROP+re-migrate RECOVERY path in
-  infra/README.md (loses only days of owner test counters), then
-  `terraform apply` (new telemetry Lambda) + `analytics owner-add
-  <prod analyticsId>` (id from Preferences → Usage analytics). Until then
-  the CLI/tab degrade to named errors by design.
+  point despite the stale "unapplied" note below). **The pending owner-run
+  sequence is COPY-FIRST and drops nothing** (owner, 2026-08-05: those
+  counters have been live since Aug 4 and may hold REAL users, not just
+  owner testing): `analytics close` → `migrate --refresh` (additive only) →
+  `analytics backfill-cohort` (copies every row into cohort-keyed STAGING
+  tables; cohort derived per DAY from what analytics_install STATES — owner
+  only where no user install's span covers that day, else 'user') →
+  `backfill-verify` (row count AND sum(n), old vs new, per table) →
+  `backfill-swap` (re-verifies, REFUSES on mismatch, then DROP the
+  copied-from original + `ALTER TABLE … RENAME TO`; DSQL DOES support
+  RENAME — documented — so no table name, reader or Lambda constant
+  changes) → `terraform apply` (new telemetry Lambda) → `analytics open` →
+  `analytics owner-add <prod analyticsId>` (id from Preferences → Usage
+  analytics). Exact ordered commands: infra/README.md, "THE COHORT
+  MIGRATION". Every step is safe to stop at. Until then the CLI/tab degrade
+  to named errors by design.
 - **Local dev story**: `scripts/dev-feedback-server.mts` (wave in flight
   at write time) — same contract, same shared validator, failure knobs;
   the app reaches it via `EQ_FEEDBACK_URL`, honored ONLY behind
@@ -955,7 +968,8 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   plus EMF metrics, a CloudWatch dashboard, `triage-feedback analytics
   digest|wipe|open|close`, and the Triage → Analytics tab reading all
   three tables. Rides the owner's next `terraform apply` +
-  `migrate --refresh` (exact ordered commands: infra/README.md, "Wave A2").
+  `migrate --refresh` (exact ordered commands: infra/README.md, "THE COHORT
+  MIGRATION" — copy-first, nothing dropped).
   **The endpoint is LIT (2026-08-04)**: `TELEMETRY_API_URL` names the live
   `/v1/telemetry` route as a compiled-in constant; tests/telemetryNet.test.mts
   pins the exact URL, the single fetch site, and the consent gates (nothing

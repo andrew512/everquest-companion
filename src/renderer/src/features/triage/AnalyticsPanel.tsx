@@ -244,6 +244,26 @@ function OwnerReadout({ data }: { data: TriageAnalyticsData }): JSX.Element {
   )
 }
 
+/**
+ * The NOT-AVAILABLE arm, and there are two of them. A cluster that is missing a table asks the
+ * operator for one command; a cluster that stopped answering asks for nothing at all — so
+ * labelling a dropped connection "not migrated" would send them off to run a migration that was
+ * never the problem. `main` decides which state it is (`src/main/triage/backend.ts`); this picks
+ * the words.
+ */
+function Unavailable({ data }: { data: Extract<TriageAnalytics, { available: false }> }): JSX.Element {
+  return (
+    <Alert severity="warning" data-testid="analytics-unavailable">
+      <AlertTitle>
+        {data.state === 'missing'
+          ? 'This cluster is not migrated to what the readout reads'
+          : 'The cluster did not answer'}
+      </AlertTitle>
+      {data.reason}
+    </Alert>
+  )
+}
+
 export default function AnalyticsPanel(): JSX.Element {
   const [days, setDays] = useState<number>(TRIAGE_ANALYTICS_DEFAULT_DAYS)
   const [includeOwner, setIncludeOwner] = useState(false)
@@ -285,12 +305,7 @@ export default function AnalyticsPanel(): JSX.Element {
       {header}
       {analytics.loading && <CircularProgress size={20} />}
       {analytics.error !== null && <Alert severity="error">{analytics.error}</Alert>}
-      {analytics.data?.available === false && (
-        <Alert severity="warning" data-testid="analytics-unavailable">
-          <AlertTitle>This cluster is not migrated to what the readout reads</AlertTitle>
-          {analytics.data.reason}
-        </Alert>
-      )}
+      {analytics.data?.available === false && <Unavailable data={analytics.data} />}
       {ready !== null && <Readout data={ready.data} />}
       {ready?.owner != null && <OwnerReadout data={ready.owner} />}
     </Stack>

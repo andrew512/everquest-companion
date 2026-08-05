@@ -59,8 +59,6 @@ import {
   logKeyOf,
   logObjectExists,
   makeClients,
-  missingColumn,
-  missingTable,
   reportsForInstall,
   SCHEMA_FILE,
   setAccepting,
@@ -73,7 +71,12 @@ import {
   type Row,
 } from '../src/main/triage/store'
 import { rescrubNotes } from '../src/main/triage/rows'
-import { analyticsSubcommand, ANALYTICS_SUBCOMMANDS, ANALYTICS_USAGE } from './triageAnalytics.mjs'
+import {
+  analyticsFailure,
+  analyticsSubcommand,
+  ANALYTICS_SUBCOMMANDS,
+  ANALYTICS_USAGE,
+} from './triageAnalytics.mjs'
 import {
   REPORT_STATUSES,
   SEVERITIES,
@@ -426,10 +429,10 @@ async function cmdWipe(ctx: Ctx): Promise<void> {
 /**
  * `analytics <digest|wipe|open|close>` — usage analytics (docs/plans/usage-analytics.md A2).
  *
- * The subcommands live in ./triageAnalytics.mts; this is the dispatch, plus the ONE error
- * translation worth doing here: a cluster that has not run the A2 migration answers `42P01
- * undefined_table`, and that is not a useful thing to print at somebody who can fix it in one
- * command.
+ * The subcommands live in ./triageAnalytics.mts; this is the dispatch. The error translation
+ * lives there too (`analyticsFailure`), beside the reads it describes: an un-migrated cluster and
+ * an unreachable one are facts about the CLUSTER, and neither is a useful thing to print at
+ * somebody as a postgres string.
  */
 async function cmdAnalytics(ctx: Ctx): Promise<void> {
   const run = analyticsSubcommand(ctx.rest[0])
@@ -439,12 +442,7 @@ async function cmdAnalytics(ctx: Ctx): Promise<void> {
   try {
     await run({ args: ctx.args, rest: ctx.rest, clients: ctx.clients, nowMs: NOW })
   } catch (err) {
-    const missing = missingTable(err) ?? missingColumn(err)
-    if (missing === null) throw err
-    throw new Error(
-      `'${missing}' does not exist on this cluster. The usage-analytics tables AND the ` +
-        'user/owner `cohort` column both ship in infra/schema.sql — run `triage-feedback ' +
-        'migrate --refresh` after the apply that carries them.')
+    throw analyticsFailure(err)
   }
 }
 

@@ -113,6 +113,16 @@ export interface Stack {
 export interface AccessOptions {
   profile?: string
   roleArn?: string
+  /**
+   * THE TEST SEAM, and the only one this module has. Everything below it — the IAM token, the
+   * TLS handshake, the postgres wire — needs real credentials and a real cluster, so the
+   * connection LIFECYCLE (retire a dead socket, never open two, classify a drop) could only be
+   * exercised against production until this existed. `tests/triageConnection.test.mts` passes a
+   * fake client and drives exactly the sequence that crashed the app.
+   *
+   * It is an override, never a default: absent, the real connector below runs.
+   */
+  open?: () => Promise<PgClient>
 }
 
 const STACK_KEYS = [
@@ -209,26 +219,63 @@ export function makeClients(stack: Stack, options: AccessOptions): Clients {
     ...(credentials ? { credentials } : {}),
   }
 
+  const openConnection =
+    options.open ??
+    (async (): Promise<PgClient> => {
+      const signer = new DsqlSigner({
+        hostname: stack.cluster_endpoint,
+        region: stack.region,
+        ...(credentials ? { credentials } : {}),
+      })
+      const fresh = new Client({
+        host: stack.cluster_endpoint,
+        port: 5432,
+        database: 'postgres',
+        user: 'admin',
+        password: await signer.getDbConnectAdminAuthToken(),
+        ssl: { rejectUnauthorized: true },
+        application_name: 'eq-companion-triage',
+      })
+      await fresh.connect()
+      return fresh
+    })
+
   let client: PgClient | null = null
+  /** The connect IN FLIGHT. See `connect` — this is what makes three parallel reads one socket. */
+  let opening: Promise<PgClient> | null = null
+  /**
+   * ONE socket, opened once, RETIRED WHEN IT DIES. Two properties, both learned the hard way:
+   *
+   *   * THE ASYNC 'error' EVENT HAS A LISTENER. A dropped connection surfaces on the client as
+   *     an `error` EVENT, not as a rejected query — and node's EventEmitter THROWS an unhandled
+   *     'error', which in the main process is an uncaughtException. That is precisely the
+   *     `[main:uncaughtException] Error: Connection terminated unexpectedly` this app wrote to
+   *     errors.log four times in three seconds (2026-08-05). The Lambda's `infra/lambda/db.ts`
+   *     has had this listener since it was written; this side did not. It swallows: the drop is
+   *     reported to the OWNER through the next statement's named degrade (`unreachable`, which
+   *     the Analytics tab renders as an unavailable state), not through a crash. Retiring the
+   *     handle here is what makes that next statement reconnect instead of inheriting a corpse.
+   *   * ONE CONNECT AT A TIME. The cached handle was only assigned AFTER the await, so the
+   *     Analytics tab's `Promise.all` of three reads opened THREE sockets and orphaned two —
+   *     which is also why one drop produced four crashes rather than one.
+   */
   const connect = async (): Promise<PgClient> => {
     if (client) return client
-    const signer = new DsqlSigner({
-      hostname: stack.cluster_endpoint,
-      region: stack.region,
-      ...(credentials ? { credentials } : {}),
-    })
-    const fresh = new Client({
-      host: stack.cluster_endpoint,
-      port: 5432,
-      database: 'postgres',
-      user: 'admin',
-      password: await signer.getDbConnectAdminAuthToken(),
-      ssl: { rejectUnauthorized: true },
-      application_name: 'eq-companion-triage',
-    })
-    await fresh.connect()
-    client = fresh
-    return fresh
+    opening ??= openConnection().then(
+      (fresh) => {
+        fresh.on('error', () => {
+          if (client === fresh) client = null
+        })
+        client = fresh
+        opening = null
+        return fresh
+      },
+      (err: unknown) => {
+        opening = null
+        throw err
+      },
+    )
+    return opening
   }
 
   return {
@@ -439,6 +486,7 @@ export function listInstallProfiles(c: Clients, limit = 200): Promise<Row[]> {
 export {
   missingTable,
   missingColumn,
+  unreachable,
   USAGE_ROW_LIMIT,
   INSTALL_ROW_LIMIT,
   OWNER_ROW_LIMIT,

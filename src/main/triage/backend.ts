@@ -59,6 +59,7 @@ import {
   setTriage,
   stampRedacted,
   toTriageReport,
+  unreachable,
   type Clients,
   type ListFilter
 } from './store'
@@ -154,10 +155,100 @@ async function readSlice(c: Clients, reportId: string): Promise<TriageSlice | nu
   }
 }
 
-export function awsBackend(): TriageBackend {
+/**
+ * THE THREE OUTCOMES THIS DISTINGUISHES, because the panel renders them completely differently
+ * and conflating them would be the tab’s worst lie:
+ *
+ *   * `42P01 undefined_table` (the A2 migration has not run here) or `42703 undefined_column`
+ *     (it ran, but before the user/owner split added `cohort`). Both are "this cluster is not
+ *     migrated to what this code reads": `state: 'missing'`, naming the missing thing, which
+ *     is a fact an operator can act on in one command.
+ *   * THE CLUSTER STOPPED ANSWERING mid-read — `state: 'unreachable'`. It used to be neither
+ *     of these: the panel printed node-postgres’s own `Connection terminated unexpectedly`,
+ *     and the ASYNC half of the same failure was an uncaughtException in the main process
+ *     (store.ts `connect` now listens for it). It is a separate named state because it asks a
+ *     different thing of the operator than a missing table does: nothing. Retry.
+ *   * EVERY OTHER OUTCOME, including three empty result sets — the tables exist and are empty
+ *     (the state of a lit client whose server-side `telemetry_accepting` is still closed, or
+ *     simply a quiet day). That is honest zeros plus "no data yet", not a "not built" banner.
+ *
+ * Anything unclassified (an IAM denial, a permission error) is still THROWN and reaches the
+ * panel as prose through `attempt()`. A degrade that swallowed everything would hide the next
+ * real failure behind a reassuring banner.
+ *
+ * ONE READ, TWO READOUTS. The statements fetch every cohort; the split is the three `ofCohort`
+ * calls below. `buildAnalytics` runs once per cohort over its own rows, so the owner’s sessions
+ * are never a denominator for a user-cohort rate.
+ */
+async function readAnalytics(
+  c: Clients,
+  days: number,
+  includeOwner: boolean
+): Promise<TriageAnalytics> {
+  const nowMs = Date.now()
+  const since = addDays(dayOf(nowMs), -(days - 1))
+  try {
+    const [rawUsage, rawFunnels, rawInstalls] = await Promise.all([
+      readUsageDaily(c, since),
+      readUsageFunnelDaily(c, since),
+      readAnalyticsInstalls(c)
+    ])
+    const usage = toUsageRows(rawUsage)
+    const funnels = toFunnelRows(rawFunnels)
+    const installs = toInstallRows(rawInstalls)
+    const build = (cohort: UsageCohort): TriageAnalyticsData =>
+      buildAnalytics({
+        usage: ofCohort(usage, cohort),
+        funnels: ofCohort(funnels, cohort),
+        installs: ofCohort(installs, cohort),
+        windowDays: days,
+        nowMs
+      })
+    return {
+      available: true,
+      data: build('user'),
+      owner: includeOwner ? build('owner') : null,
+      ownerPresent: anyOwner(usage) || anyOwner(funnels) || anyOwner(installs)
+    }
+  } catch (err) {
+    const missing = missingTable(err) ?? missingColumn(err)
+    if (missing !== null) {
+      return {
+        available: false,
+        state: 'missing',
+        missing,
+        reason:
+          `This cluster does not have '${missing}', which the usage-analytics readout selects. ` +
+          'The tables and the user/owner `cohort` column both ship in infra/schema.sql — run ' +
+          '`npx tsx scripts/triage-feedback.mts migrate --refresh` after the apply that ' +
+          'carries them.'
+      }
+    }
+    if (!unreachable(err)) throw err
+    return {
+      available: false,
+      state: 'unreachable',
+      reason:
+        'The DSQL cluster stopped answering while the readout was reading it (the connection ' +
+        'dropped). Nothing is wrong with the schema and nothing needs migrating — the next ' +
+        'attempt opens a fresh connection. If it keeps happening, check that this shell still ' +
+        'holds valid credentials for the triage role.'
+    }
+  }
+}
+
+/**
+ * `open` is the TEST SEAM, and the default is the real thing — the same shape `registerTriageIpc`
+ * uses for `backend`. It exists so the two DEGRADE paths below (a cluster missing a table or a
+ * column; a cluster that stopped answering) can be pinned by a test with authored failures,
+ * instead of only ever being observed in production the way the second one was.
+ */
+export function awsBackend(
+  open: () => Clients = () => makeClients(loadStack(), { profile: TRIAGE_PROFILE })
+): TriageBackend {
   let held: Clients | null = null
   const clients = (): Clients => {
-    held ??= makeClients(loadStack(), { profile: TRIAGE_PROFILE })
+    held ??= open()
     return held
   }
 
@@ -213,67 +304,8 @@ export function awsBackend(): TriageBackend {
       return { markdown, clusters, reportCount: reports.length }
     },
 
-    /**
-     * THE TWO FAILURES THIS DISTINGUISHES, because the panel renders them completely
-     * differently and conflating them would be the tab's worst lie:
-     *
-     *   * `42P01 undefined_table` (the A2 migration has not run here) or `42703
-     *     undefined_column` (it ran, but before the user/owner split added `cohort`). Both are
-     *     "this cluster is not migrated to what this code reads": `available:false`, naming the
-     *     missing thing, which is a fact an operator can act on in one command.
-     *   * EVERY OTHER OUTCOME, including three empty result sets — the tables exist and are
-     *     empty (the state of a lit client whose server-side `telemetry_accepting` is still
-     *     closed, or simply a quiet day). That is honest zeros plus "no data yet", not a "not
-     *     built" banner.
-     *
-     * Anything else (an IAM denial, a dropped socket) is thrown and reaches the panel as prose
-     * through `attempt()`, the same as every other triage call.
-     *
-     * ONE READ, TWO READOUTS. The statements fetch every cohort; the split is the three
-     * `ofCohort` calls below. `buildAnalytics` is run once per cohort over its own rows, so the
-     * owner's sessions are never a denominator for a user-cohort rate.
-     */
-    analytics: async (days, includeOwner) => {
-      const c = clients()
-      const nowMs = Date.now()
-      const since = addDays(dayOf(nowMs), -(days - 1))
-      try {
-        const [rawUsage, rawFunnels, rawInstalls] = await Promise.all([
-          readUsageDaily(c, since),
-          readUsageFunnelDaily(c, since),
-          readAnalyticsInstalls(c)
-        ])
-        const usage = toUsageRows(rawUsage)
-        const funnels = toFunnelRows(rawFunnels)
-        const installs = toInstallRows(rawInstalls)
-        const build = (cohort: UsageCohort): TriageAnalyticsData =>
-          buildAnalytics({
-            usage: ofCohort(usage, cohort),
-            funnels: ofCohort(funnels, cohort),
-            installs: ofCohort(installs, cohort),
-            windowDays: days,
-            nowMs
-          })
-        return {
-          available: true,
-          data: build('user'),
-          owner: includeOwner ? build('owner') : null,
-          ownerPresent: anyOwner(usage) || anyOwner(funnels) || anyOwner(installs)
-        }
-      } catch (err) {
-        const missing = missingTable(err) ?? missingColumn(err)
-        if (missing === null) throw err
-        return {
-          available: false,
-          missing,
-          reason:
-            `This cluster does not have '${missing}', which the usage-analytics readout selects. ` +
-            'The tables and the user/owner `cohort` column both ship in infra/schema.sql — run ' +
-            '`npx tsx scripts/triage-feedback.mts migrate --refresh` after the apply that ' +
-            'carries them.'
-        }
-      }
-    },
+    /** The usage-analytics readout — body in `readAnalytics` above (this is a dispatch table). */
+    analytics: (days, includeOwner) => readAnalytics(clients(), days, includeOwner),
 
     close: async () => {
       const open = held

@@ -12,16 +12,22 @@
  * `store.ts`. The CLI and the panel cannot print different numbers for the same window.
  */
 
+import { readFileSync } from 'node:fs'
 import {
   deleteAnalyticsInstall,
+  missingColumn,
+  missingTable,
   readAnalyticsInstalls,
   readOwnerInstalls,
   readUsageDaily,
   readUsageFunnelDaily,
+  SCHEMA_FILE,
   setInstallCohort,
   setTelemetryAccepting,
+  unreachable,
   type Clients,
 } from '../src/main/triage/store'
+import { runBackfill, runSwap, verifyTables } from './analyticsBackfill.mjs'
 import { buildAnalytics } from '../src/main/triage/analytics'
 import {
   addDays,
@@ -63,6 +69,14 @@ export const ANALYTICS_USAGE = `
                                             and arrives UNMARKED — re-run owner-add after one.
                                             Marking is FROM-MARKING-ONWARD: counters already
                                             summed carry no id and are never re-attributed.
+
+  THE ONE-OFF COHORT MIGRATION (a cluster with the PRE-COHORT counter tables). COPY FIRST —
+  nothing is dropped until a verified copy exists. Ordered commands: infra/README.md.
+  analytics backfill-cohort                 copy every counter row into cohort-keyed staging
+                                            tables. Requires the switch CLOSED. Re-runnable.
+  analytics backfill-verify                 old vs new, per table: row count AND sum(n)
+  analytics backfill-swap                   drop the copied-from original and rename staging
+                                            into its place. REFUSES on any mismatch.
 `
 
 /** The CLI's parsed flags, as `parseArgs` hands them over. */
@@ -270,6 +284,69 @@ async function cmdOwnerLs(ctx: AnalyticsCtx): Promise<void> {
   )
 }
 
+// ---- the one-off cohort migration (scripts/analyticsBackfill.mts) ---------------------------
+//
+// THREE COMMANDS BECAUSE THERE ARE THREE MOMENTS TO BE ABLE TO STOP AT: after the copy, after
+// reading the proof, and after the swap. Folding them into one would mean a single command that
+// drops a live table somewhere in its middle, which is the shape of every migration anybody has
+// ever regretted. The reasoning, the DSQL RENAME finding and the cohort derivation are all
+// written out in the header of ./analyticsBackfill.mts; the ordered runbook is infra/README.md.
+
+async function cmdBackfill(ctx: AnalyticsCtx): Promise<void> {
+  const { installs, tables } = await runBackfill(ctx.clients(), readFileSync(SCHEMA_FILE, 'utf8'))
+  for (const t of tables) {
+    console.log(`${t.table.padEnd(20)} ${t.created ? 'staging created' : 'staging existed'} · ${String(t.copied)} row(s) copied`)
+  }
+  console.log(`analytics_install: ${String(installs)} row(s) given an explicit cohort.`)
+  console.log('\nNOTHING HAS BEEN DROPPED. Next: `analytics backfill-verify`, then `analytics backfill-swap`.')
+}
+
+async function cmdBackfillVerify(ctx: AnalyticsCtx): Promise<void> {
+  const rows = await verifyTables(ctx.clients())
+  const cell = (t: { rows: number; total: number } | null): string =>
+    t === null ? '(absent)' : `${String(t.rows)} row(s) / n=${String(t.total)}`
+  for (const r of rows) {
+    console.log(`${r.table.padEnd(20)} from ${cell(r.from).padEnd(26)} to ${cell(r.to).padEnd(26)} ${r.ok ? 'OK  ' : 'FAIL'} ${r.note}`)
+  }
+  console.log(
+    rows.every((r) => r.ok)
+      ? '\nEvery table matched on BOTH numbers. `analytics backfill-swap` will re-check this before it touches anything.'
+      : '\nDO NOT SWAP. Re-run `analytics backfill-cohort` (it is idempotent) and verify again.',
+  )
+}
+
+async function cmdBackfillSwap(ctx: AnalyticsCtx): Promise<void> {
+  for (const step of await runSwap(ctx.clients())) console.log(`${step.done ? 'ran     ' : 'skipped '} ${step.sql}`)
+  console.log(
+    '\nThe cohort-keyed tables now carry the real names, with every legacy row in them.\n' +
+      'Next: `terraform apply` (the cohort-aware Lambda), then `analytics open`.',
+  )
+}
+
+/**
+ * The ONE error translation this layer owns, shared with `triage-feedback.mts`'s `analytics`
+ * dispatch: a cluster that has not been migrated, and a cluster that stopped answering, are both
+ * facts about the CLUSTER rather than bugs, and printing node-postgres's own words at the
+ * operator is how the app came to show them a raw `Connection terminated unexpectedly`.
+ */
+export function analyticsFailure(err: unknown): Error {
+  const missing = missingTable(err) ?? missingColumn(err)
+  if (missing !== null) {
+    return new Error(
+      `'${missing}' does not exist on this cluster. The usage-analytics tables AND the ` +
+        'user/owner `cohort` column both ship in infra/schema.sql — run `triage-feedback ' +
+        'migrate --refresh` after the apply that carries them.',
+    )
+  }
+  if (unreachable(err)) {
+    return new Error(
+      'the DSQL cluster stopped answering (the connection dropped). Nothing needs migrating — ' +
+        'run the command again and it opens a fresh connection.',
+    )
+  }
+  return err instanceof Error ? err : new Error(String(err))
+}
+
 export const ANALYTICS_SUBCOMMANDS: Record<string, (ctx: AnalyticsCtx) => Promise<void>> = {
   digest: cmdAnalyticsDigest,
   wipe: cmdAnalyticsWipe,
@@ -278,6 +355,9 @@ export const ANALYTICS_SUBCOMMANDS: Record<string, (ctx: AnalyticsCtx) => Promis
   'owner-add': (ctx) => markCohort(ctx, 'owner'),
   'owner-rm': (ctx) => markCohort(ctx, 'user'),
   'owner-ls': cmdOwnerLs,
+  'backfill-cohort': cmdBackfill,
+  'backfill-verify': cmdBackfillVerify,
+  'backfill-swap': cmdBackfillSwap,
 }
 
 export function analyticsSubcommand(name: string | undefined): ((ctx: AnalyticsCtx) => Promise<void>) | null {

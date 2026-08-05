@@ -45,6 +45,29 @@ export function missingTable(err: unknown): string | null {
 /** postgres `42703`: the relation is there, the column is not. */
 const UNDEFINED_COLUMN = '42703'
 
+/**
+ * NEITHER MAY THE CONNECTION SURVIVE. The third classifier, and it lives beside the other two
+ * because they answer the same question for the caller — "is this a fact about the CLUSTER, or a
+ * bug?" — and a reader should find all three in one place. This one is not analytics-specific:
+ * a dropped socket ends any read, feedback or usage.
+ *
+ * IT IS MESSAGE-SHAPED, NOT SQLSTATE-SHAPED, because a connection failure never reaches a
+ * SQLSTATE: node-postgres fails every in-flight query with a plain `Error: Connection terminated
+ * unexpectedly` when the socket ends, and the OS-level failures arrive as node system errors
+ * whose `code` is `ECONNRESET`/`ETIMEDOUT`/… rather than five characters of postgres. Both are
+ * matched; a real SQLSTATE (`42703`, `40001`) matches neither and is left to its own path.
+ */
+const CONNECTION_LOST =
+  /Connection terminated|connection is closed|Client (has been closed|was closed)|socket hang up|timeout expired|ECONNRESET|EPIPE|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EHOSTUNREACH|EAI_AGAIN/i
+
+/** True when the cluster stopped answering — a NAMED degrade, never a stack trace in a panel. */
+export function unreachable(err: unknown): boolean {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (CONNECTION_LOST.test(raw)) return true
+  const code: unknown = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined
+  return typeof code === 'string' && CONNECTION_LOST.test(code)
+}
+
 /** The column named by a `42703 undefined_column`, or null for any other failure. */
 export function missingColumn(err: unknown): string | null {
   if (sqlState(err) !== UNDEFINED_COLUMN) return null
