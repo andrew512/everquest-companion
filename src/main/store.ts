@@ -13,6 +13,7 @@ import type {
   UpdateChannel,
   VoicePrefs
 } from '../shared/types'
+import { clampTextScale } from '../shared/types'
 import { normalizeVoicePrefs } from '../shared/speechText'
 import {
   normalizeCursorRing,
@@ -364,6 +365,11 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   // hand) replaces the defaults wholesale. Normalizing it here means every reader — including
   // the one that decides what sound to play — sees a complete, clamped blob.
   if (kind === 'toast') cfg.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...cfg.toast })
+  // Text scale postdates every other field, so it is ABSENT in most stores and out of range in a
+  // hand-edited one — both answered here rather than repeated six times above, because the
+  // default (1) does not differ per kind. Clamped on the way out as well as in: see
+  // `clampTextScale`.
+  cfg.textScale = clampTextScale(cfg.textScale)
   return cfg
 }
 
@@ -373,6 +379,7 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // Clamp the numeric fields defensively (the slider / topN come from the renderer).
   next.bgAlpha = Math.max(0, Math.min(1, next.bgAlpha))
   next.topN = next.topN >= 10 ? 10 : 5
+  next.textScale = clampTextScale(next.textScale)
   // The drill is remembered UI state from the overlay renderer — normalize anything malformed
   // (and `undefined`) down to level 1 so the stored shape stays exactly `{entityId} | null`.
   next.drill = next.drill && typeof next.drill.entityId === 'string' ? { entityId: next.drill.entityId } : null

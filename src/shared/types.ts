@@ -84,6 +84,43 @@ export interface OverlayConfig {
    * landed round-trips untouched and `getOverlayConfig` fills it from the defaults.
    */
   toast?: ToastOverlayConfig
+  /**
+   * TEXT SIZE for this overlay, as a CSS `zoom` factor on the window's root (1 = as shipped;
+   * owner feedback, 2026-08-05: "text size scaling for overlays. we are old folks now."). It
+   * scales the whole window — bars, header, footer — because a meter whose numbers grew while
+   * its chrome did not is a different, worse layout, and zoom reflows rather than magnifies.
+   *
+   * Per KIND, like every other knob here: the damage meter you read mid-pull and the event log
+   * parked on a second monitor are not the same reading distance.
+   *
+   * Optional so a store written before this landed round-trips untouched; `getOverlayConfig`
+   * fills (and clamps) it on the way out, exactly as it does the toast blob above.
+   */
+  textScale?: number
+}
+
+// ---- overlay text scale (owner feedback 2026-08-05) ------------------------------------
+
+/** Below this the bars stop being legible at all — a smaller number is not a smaller meter,
+ *  it is an unreadable one. */
+export const TEXT_SCALE_MIN = 0.8
+/** Above this a default 380x320 overlay holds barely a row; make the WINDOW bigger instead. */
+export const TEXT_SCALE_MAX = 2
+/** One press of the stepper. Coarse on purpose: this is a reading-distance control, not a slider. */
+export const TEXT_SCALE_STEP = 0.1
+export const TEXT_SCALE_DEFAULT = 1
+
+/**
+ * Coerce a stored/patched text scale into range. Absent, malformed or non-finite ⇒ the default:
+ * the field is renderer-writable and optional in the store, so it is clamped on the way IN and
+ * on the way OUT (store.ts), like bgAlpha and the toast blob.
+ *
+ * The 2-decimal round is not cosmetic: the stepper walks in 0.1 from a float, and without it a
+ * few presses persist 1.2000000000000002 and print it back as the tooltip's percentage.
+ */
+export function clampTextScale(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return TEXT_SCALE_DEFAULT
+  return Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, Math.round(v * 100) / 100))
 }
 
 /** One EverQuest character whose log we watch. */

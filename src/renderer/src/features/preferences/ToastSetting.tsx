@@ -1,7 +1,9 @@
 // ToastSetting — Preferences → Overlays → "Celebration toasts"
 // (docs/plans/celebration-toasts.md §3).
 //
-// TWO controls over one window: is it on, and where does it sit.
+// TWO controls over one window: is it on, and where does it sit. (The third knob — text size —
+// is on the toast's own frame, because that frame is the only chrome this kind ever shows and a
+// size control that lived here would be sizing something you cannot see.)
 //
 // ON/OFF IS THE WINDOW'S OPEN-STATE. There is no second `enabled` flag: the toast overlay is a
 // sixth overlay kind, so "on" means its window is open, persisted and restored exactly like
@@ -106,7 +108,7 @@ export function ToastSetting(): JSX.Element {
         <Typography variant="caption" color="text.secondary">
           {state.locked
             ? 'The strip sits where you left it and clicks pass straight through to the game.'
-            : 'The strip is showing its outline — drag it anywhere, then turn this off (or press Done on the frame).'}
+            : 'The strip is showing its outline — drag it anywhere, and size its text with A− / A+ on the frame. Turn this off (or press Done) when it sits where you want it.'}
         </Typography>
       </Stack>
     </Stack>

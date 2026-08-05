@@ -10,6 +10,7 @@ import { OverlayHeader } from './OverlayHeader'
 import { HealBars } from './healBars'
 import { healTotalTitle } from '../features/combat/healRows'
 import { ICON_ACCENT_GREEN } from './IconButton'
+import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 
@@ -148,7 +149,7 @@ export default function HealMeter(): JSX.Element {
   const selection = isFight ? fightId : zoneSelection
 
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
-  const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
+  const { locked, bgAlpha, topN, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
   const now = Date.now()
 
@@ -175,8 +176,9 @@ export default function HealMeter(): JSX.Element {
     // header row, so the bars stay click-through.
     <div
       style={{
-        width: '100vw',
-        height: '100vh',
+        // 100%, NOT 100vw/100vh — the text scale is a CSS zoom on the root (useOverlayChrome).
+        width: '100%',
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'Inter, "Segoe UI", Roboto, system-ui, sans-serif',
@@ -210,20 +212,24 @@ export default function HealMeter(): JSX.Element {
         <HealBars seg={seg} topN={topN} drill={drill} setDrill={locked ? null : setDrill} live={live} />
       </div>
 
-      {!locked && <HealFooter bgAlpha={bgAlpha} topN={topN} patch={patch} noDrag={noDrag} />}
+      {!locked && (
+        <HealFooter bgAlpha={bgAlpha} topN={topN} textScale={textScale} patch={patch} noDrag={noDrag} />
+      )}
     </div>
   )
 }
 
-/** Footer controls — interactive mode only: bg-alpha slider + top-N toggle. */
+/** Footer controls — interactive mode only: bg-alpha slider + text size + top-N toggle. */
 function HealFooter({
   bgAlpha,
   topN,
+  textScale,
   patch,
   noDrag
 }: {
   bgAlpha: number
   topN: number
+  textScale: number
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
 }): JSX.Element {
@@ -251,6 +257,7 @@ function HealFooter({
         onChange={(e) => patch({ bgAlpha: Number(e.target.value) })}
         style={{ flexGrow: 1, accentColor: HEAL_GOLD, height: 4 }}
       />
+      <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
       <button
         type="button"
         onClick={() => patch({ topN: topN >= 10 ? 5 : 10 })}

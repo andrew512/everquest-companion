@@ -8,6 +8,7 @@ import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { MeterBars } from './meterBars'
+import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 
@@ -142,7 +143,7 @@ export default function OverlayMeter(): JSX.Element {
   const selection = isFight ? fightId : zoneSelection
 
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
-  const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
+  const { locked, bgAlpha, topN, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
 
   const { seg, live, headerName, durationSec, totalDps, rows, headIsLast } = meterView(
@@ -174,8 +175,10 @@ export default function OverlayMeter(): JSX.Element {
     // genuinely click-through — which is what "locked" was always supposed to mean.
     <div
       style={{
-        width: '100vw',
-        height: '100vh',
+        // 100%, NOT 100vw/100vh: the text scale is a CSS zoom on #overlay-root, and a viewport
+        // unit under it resolves against the window and is then scaled (useOverlayChrome).
+        width: '100%',
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'Inter, "Segoe UI", Roboto, system-ui, sans-serif',
@@ -212,20 +215,24 @@ export default function OverlayMeter(): JSX.Element {
         <MeterBars seg={seg} topN={topN} drill={drill} setDrill={locked ? null : setDrill} live={live} />
       </div>
 
-      {!locked && <MeterFooter bgAlpha={bgAlpha} topN={topN} patch={patch} noDrag={noDrag} />}
+      {!locked && (
+        <MeterFooter bgAlpha={bgAlpha} topN={topN} textScale={textScale} patch={patch} noDrag={noDrag} />
+      )}
     </div>
   )
 }
 
-/** Footer controls — interactive mode only: bg-alpha slider + top-N toggle. */
+/** Footer controls — interactive mode only: bg-alpha slider + text size + top-N toggle. */
 function MeterFooter({
   bgAlpha,
   topN,
+  textScale,
   patch,
   noDrag
 }: {
   bgAlpha: number
   topN: number
+  textScale: number
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
 }): JSX.Element {
@@ -253,6 +260,7 @@ function MeterFooter({
         onChange={(e) => patch({ bgAlpha: Number(e.target.value) })}
         style={{ flexGrow: 1, accentColor: GOLD, height: 4 }}
       />
+      <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
       <button
         type="button"
         onClick={() => patch({ topN: topN >= 10 ? 5 : 10 })}

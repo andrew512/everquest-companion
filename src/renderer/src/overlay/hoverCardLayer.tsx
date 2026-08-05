@@ -2,9 +2,18 @@
 // window. Plain React + inline styles; the overlay bundle stays MUI-free.
 
 import { type JSX, useLayoutEffect, useRef, useState } from 'react'
+import { overlayCssZoom } from './useOverlayChrome'
 
 /** Gap the hover card keeps from its anchor AND from every window edge. */
 const CARD_MARGIN = 4
+
+/** Where the card sits and how big it may get — all four in the card's OWN (zoomed) space. */
+interface Placement {
+  left: number
+  top: number
+  maxW: number
+  maxH: number
+}
 
 /**
  * Places a hover card near its anchor and CLAMPS it inside the window.
@@ -27,7 +36,7 @@ const CARD_MARGIN = 4
  */
 export function HoverCardLayer({ anchor, children }: { anchor: HTMLElement; children: React.ReactNode }): JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  const [pos, setPos] = useState<Placement | null>(null)
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -45,7 +54,23 @@ export function HoverCardLayer({ anchor, children }: { anchor: HTMLElement; chil
       let left = a.left
       if (left + c.width > vw - m) left = vw - m - c.width
       if (left < m) left = m
-      setPos((p) => (p && Math.abs(p.left - left) < 0.5 && Math.abs(p.top - top) < 0.5 ? p : { left, top }))
+      // Everything above is in VISUAL pixels — rects and innerWidth/Height all carry the
+      // overlay's text scale. The numbers below are written back INSIDE the zoomed subtree,
+      // where they get multiplied by that scale again, so each one is divided once here. Same
+      // rule (and the same reason) as the selector popup; it is also why the max sizes are set
+      // from these numbers rather than from `calc(100vw - …)`, which a zoom would inflate past
+      // the window edge.
+      const z = overlayCssZoom(el)
+      const next: Placement = { left: left / z, top: top / z, maxW: (vw - 2 * m) / z, maxH: (vh - 2 * m) / z }
+      setPos((p) =>
+        p &&
+        Math.abs(p.left - next.left) < 0.5 &&
+        Math.abs(p.top - next.top) < 0.5 &&
+        p.maxW === next.maxW &&
+        p.maxH === next.maxH
+          ? p
+          : next
+      )
     }
     place()
     const ro = new ResizeObserver(() => {
@@ -72,8 +97,8 @@ export function HoverCardLayer({ anchor, children }: { anchor: HTMLElement; chil
         visibility: pos ? 'visible' : 'hidden',
         zIndex: 20,
         pointerEvents: 'none',
-        maxWidth: `calc(100vw - ${CARD_MARGIN * 2}px)`,
-        maxHeight: `calc(100vh - ${CARD_MARGIN * 2}px)`,
+        maxWidth: pos?.maxW,
+        maxHeight: pos?.maxH,
         overflow: 'hidden'
       }}
     >

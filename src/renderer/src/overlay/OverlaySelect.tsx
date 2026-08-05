@@ -1,4 +1,5 @@
 import { type JSX, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { overlayCssZoom } from './useOverlayChrome'
 
 /**
  * The overlay's segment/session selector — the OPEN half of it.
@@ -146,8 +147,14 @@ function usePopupBox(anchorRef: ElementRef): PopupBox | null {
   const [box, setBox] = useState<PopupBox | null>(null)
   useLayoutEffect(() => {
     const measure = (): void => {
-      const top = Math.round((anchorRef.current?.getBoundingClientRect().bottom ?? 0) + 2)
-      const room = window.innerHeight - top - SIDE_INSET
+      // TWO COORDINATE SPACES, one division. The rect and `innerHeight` are VISUAL pixels (the
+      // overlay's text scale is already multiplied into them); `top`/`maxHeight` below are
+      // written back inside the zoomed subtree and get multiplied again on the way to the
+      // screen. Divide by the scale in force and the list hangs off the header at 0.8 and at 2
+      // alike (useOverlayChrome — `overlayCssZoom`).
+      const z = overlayCssZoom(anchorRef.current)
+      const top = Math.round((anchorRef.current?.getBoundingClientRect().bottom ?? 0) / z) + 2
+      const room = window.innerHeight / z - top - SIDE_INSET
       setBox({ top, maxHeight: Math.max(0, Math.min(MAX_POPUP_H, room)) })
     }
     measure()

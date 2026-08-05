@@ -24,7 +24,8 @@ import { type JSX, useEffect, useReducer } from 'react'
 import type { ToastPayload } from '@shared/toast'
 import { ToastCard } from './ToastCard'
 import { toastReduce, type ToastCardState } from './toastQueue'
-import { useOverlayChrome } from './useOverlayChrome'
+import { TextScaleStepper } from './TextScaleStepper'
+import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 
 /** How often the queue's clocks advance. 100 ms is imperceptible against a 6 s hold and costs
  *  nothing: the reducer returns the SAME array when no card moved, so React re-renders only
@@ -33,8 +34,25 @@ const TICK_MS = 100
 
 const GOLD = '#d9b25f'
 
-/** The positioning frame, shown only while the overlay is unlocked. */
-function DragFrame({ onDone, noDrag }: { onDone: () => void; noDrag: React.CSSProperties }): JSX.Element {
+/**
+ * The positioning frame, shown only while the overlay is unlocked.
+ *
+ * It is also where the TEXT SIZE lives for this kind, for the same reason the drag handle does:
+ * the toast has no header and no footer to hang a control off — it renders nothing at all most of
+ * the time — so this frame is the only chrome it ever shows. Preferences → Overlays → "Move it"
+ * is therefore the whole route to both knobs: move it, size it, Done.
+ */
+function DragFrame({
+  onDone,
+  textScale,
+  patch,
+  noDrag
+}: {
+  onDone: () => void
+  textScale: number
+  patch: OverlayChrome['patch']
+  noDrag: React.CSSProperties
+}): JSX.Element {
   return (
     <div
       data-testid="toast-drag-frame"
@@ -53,6 +71,7 @@ function DragFrame({ onDone, noDrag }: { onDone: () => void; noDrag: React.CSSPr
       }}
     >
       <span>Drag me where celebrations should appear</span>
+      <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
       <button
         type="button"
         onClick={onDone}
@@ -109,9 +128,17 @@ export default function ToastOverlay(): JSX.Element {
   return (
     <div
       data-testid="toast-overlay"
-      style={{ width: '100vw', height: '100vh', padding: 6, boxSizing: 'border-box', ...chrome.dragRegion }}
+      /* 100%, NOT 100vw/100vh — the text scale is a CSS zoom on the root (useOverlayChrome). */
+      style={{ width: '100%', height: '100%', padding: 6, boxSizing: 'border-box', ...chrome.dragRegion }}
     >
-      {chrome.ready && !chrome.locked && <DragFrame onDone={chrome.toggleLock} noDrag={chrome.noDrag} />}
+      {chrome.ready && !chrome.locked && (
+        <DragFrame
+          onDone={chrome.toggleLock}
+          textScale={chrome.textScale}
+          patch={chrome.patch}
+          noDrag={chrome.noDrag}
+        />
+      )}
       {cards.map((c) => (
         <ToastCard
           key={c.payload.id}

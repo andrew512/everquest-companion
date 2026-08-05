@@ -44,6 +44,7 @@ import { formatTime } from '../lib/formatDate'
 import { isTradeskillOnly } from '../lib/itemKnowledgeView'
 import { ItemHoverCard, MobHoverCard, lookupItemCached } from './feedHoverCards'
 import { HoverCardLayer } from './hoverCardLayer'
+import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { OverlayHeader } from './OverlayHeader'
 
@@ -340,13 +341,15 @@ function useEventFeed(): FeedSnap {
   return rows
 }
 
-/** Footer — interactive mode only: the bg-alpha slider, matching the meters. */
+/** Footer — interactive mode only: the bg-alpha slider + text size, matching the meters. */
 function FeedFooter({
   bgAlpha,
+  textScale,
   patch,
   noDrag
 }: {
   bgAlpha: number
+  textScale: number
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
 }): JSX.Element {
@@ -374,13 +377,14 @@ function FeedFooter({
         onChange={(e) => patch({ bgAlpha: Number(e.target.value) })}
         style={{ flexGrow: 1, accentColor: GOLD, height: 4 }}
       />
+      <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
     </div>
   )
 }
 
 export default function EventLogOverlay(): JSX.Element {
   const rows = useEventFeed()
-  const { locked, bgAlpha, hovering, patch, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
+  const { locked, bgAlpha, textScale, hovering, patch, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
     useOverlayChrome()
   const feed = useTradeskillFilter(newestFirst(rows))
 
@@ -389,8 +393,9 @@ export default function EventLogOverlay(): JSX.Element {
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       style={{
-        width: '100vw',
-        height: '100vh',
+        // 100%, NOT 100vw/100vh — the text scale is a CSS zoom on the root (useOverlayChrome).
+        width: '100%',
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'Inter, "Segoe UI", Roboto, system-ui, sans-serif',
@@ -426,7 +431,7 @@ export default function EventLogOverlay(): JSX.Element {
         )}
       </div>
 
-      {!locked && <FeedFooter bgAlpha={bgAlpha} patch={patch} noDrag={noDrag} />}
+      {!locked && <FeedFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
     </div>
   )
 }
