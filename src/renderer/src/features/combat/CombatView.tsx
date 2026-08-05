@@ -7,7 +7,7 @@ import { ProcessingLog } from './ProcessingLog'
 import { SegmentBody } from './SegmentPanel'
 import { DpsChartCard, MobDamageCard, type Ringless } from './CombatDashboard'
 import { BreakdownPreviewCard } from './BreakdownCard'
-import { scopeOptions, type CombatScope, type Drill, type ScopeOptions } from './dashboardData'
+import { scopeOptions, type CombatScope, type Drill, type MeterMode, type ScopeOptions } from './dashboardData'
 import { defaultDrill, selfSource } from './petRows'
 import { useCombinePetRow } from './useCombatPrefs'
 import type { CombatFocus } from './combatFocus'
@@ -87,7 +87,7 @@ function DashboardGrid({
 }: {
   seg: SegmentView
   tl: TimelineView | null
-  mode: 'out' | 'in'
+  mode: MeterMode
   drill: Drill | null
   setDrill: (d: Drill | null) => void
   live: boolean
@@ -122,7 +122,17 @@ function DashboardGrid({
         slow={snap?.poison?.slow}
         onOpen={() => previewSource && setDrill({ kind: 'entity', entityId: previewSource.id })}
       />
-      <MobDamageCard seg={seg} tl={tl} ringless={ringless} drill={drill} setDrill={setDrill} />
+      {/* The mob card is DAMAGE by mob, and its level-2 body renders inside the meter panel — so
+          in the Healing dimension (where that panel is listing healers) its rows are read-only
+          rather than a click that opens nothing. It still shows its numbers: "what did I kill"
+          is worth reading beside a heal meter, it just cannot take the panel over. */}
+      <MobDamageCard
+        seg={seg}
+        tl={tl}
+        ringless={ringless}
+        drill={drill}
+        setDrill={mode === 'heal' ? null : setDrill}
+      />
     </Box>
   )
 }
@@ -154,15 +164,17 @@ function useDashboardDrill({
   view
 }: {
   seg: SegmentView | null
-  mode: 'out' | 'in'
+  mode: MeterMode
   selection: string
   view: 'dash' | 'timeline'
 }): { drill: Drill | null; setDrill: (d: Drill | null) => void } {
   const [combinePetRow] = useCombinePetRow()
   const [chosen, setChosen] = useState<Drill | null | undefined>(undefined)
 
-  // Incoming is a list of ENEMIES — there is no "your breakdown" to default into, so the
-  // default only ever applies to Outgoing.
+  // Incoming is a list of ENEMIES and Healing is a list of HEALERS — neither has a "your
+  // breakdown" to default into, so the pet-nesting default only ever applies to Outgoing. (The
+  // Healing dimension reuses the same `{kind:'entity'}` drill token, which is why one state
+  // machine, one Esc handler and one per-selection reset cover all three.)
   const rows = mode === 'out' ? seg?.entities ?? [] : []
   const selfId = selfSource(rows)?.id ?? null
   // Memoized on the two values the answer depends on, so a live fight's per-second snapshot
@@ -251,7 +263,7 @@ export default function CombatView({
     maxSegments,
     loadMore
   } = useCombat()
-  const [mode, setMode] = useState<'out' | 'in'>('out')
+  const [mode, setMode] = useState<MeterMode>('out')
   const [view, setView] = useState<'dash' | 'timeline'>('dash')
 
   // An inbound focus (deep link) picks the scope + selection, then is consumed. Keyed on the
@@ -377,7 +389,11 @@ function isLiveSelection(opts: ScopeOptions, selection: string): boolean {
 }
 
 /** The breakdown preview follows the drill when a source is drilled, else the meter's top row. */
-function previewSourceOf(seg: SegmentView | null, mode: 'out' | 'in', drill: Drill | null): SourceView | null {
+function previewSourceOf(seg: SegmentView | null, mode: MeterMode, drill: Drill | null): SourceView | null {
+  // The breakdown preview is a DAMAGE card (category composition, proc rates). In the Healing
+  // dimension it has no subject at all, and borrowing the top damage source would park a number
+  // beside the heal meter that has nothing to do with what the panel is listing.
+  if (mode === 'heal') return null
   const rows = mode === 'out' ? seg?.entities ?? [] : seg?.incoming ?? []
   const drilled = drill?.kind === 'entity' ? rows.find((r) => r.id === drill.entityId) : undefined
   return drilled ?? rows[0] ?? null
@@ -396,7 +412,7 @@ function CombatBody({
   view: 'dash' | 'timeline'
   seg: SegmentView | null
   tl: TimelineView | null
-  mode: 'out' | 'in'
+  mode: MeterMode
   drill: Drill | null
   setDrill: (d: Drill | null) => void
   live: boolean

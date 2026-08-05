@@ -16,6 +16,30 @@
 import { useEffect, useRef, useState } from 'react'
 import type { OverlayConfig, OverlayDrill } from '@shared/types'
 
+/**
+ * WHY A LOCKED OVERLAY EVER CAPTURES THE MOUSE, and why the reason has a NAME.
+ *
+ * Locked means `setIgnoreMouseEvents(true, {forward:true})`: clicks go to the game, and the
+ * renderer still receives mouse MOVES — that forwarding is the hover sensor, and it is already
+ * on for every meter kind (windows.ts spells out why the toast is the one kind that does not
+ * pay for it). When something under the cursor genuinely needs a click, the renderer asks main
+ * to stop ignoring; when it stops needing one, it asks again. No new WH_MOUSE_LL hook is
+ * involved in any of this — nothing here changes what forwards.
+ *
+ * The reasons are NAMED because more than one can be true at once and they end at different
+ * moments. The selector popup is the case that forced it (P3): the popup is `position: fixed`
+ * and therefore NOT inside the header row, so moving the pointer from the header down into the
+ * open list fires the header's `mouseleave` — and a single boolean would drop capture out from
+ * under the very list the user is reaching for. Two reasons, released independently, cannot.
+ *
+ *   'window'   — the pointer is anywhere over the overlay. The whole-window sensor the event log
+ *                and the pre-P3 meters use: everything is capturable while hovered.
+ *   'selector' — the pointer is over the SELECTOR ROW specifically (P3). The meters use this
+ *                instead of 'window', so a locked meter's BODY stays genuinely click-through.
+ *   'popup'    — the selector's list is open. Outlives 'selector' by construction (above).
+ */
+export type CaptureReason = 'window' | 'selector' | 'popup'
+
 export interface OverlayChrome {
   /**
    * Has the persisted config actually arrived? Every field below has a sensible default, so
@@ -35,6 +59,13 @@ export interface OverlayChrome {
   patch: (p: Partial<OverlayConfig>) => void
   setDrill: (d: OverlayDrill | null) => void
   toggleLock: () => void
+  /**
+   * Declare that ONE named reason does (or no longer does) need real mouse events over a LOCKED
+   * overlay. Capture is on while any reason holds; a no-op while interactive, where the window
+   * already owns the mouse. See CaptureReason for the three and why they are named.
+   */
+  capture: (reason: CaptureReason, active: boolean) => void
+  /** `capture('window', …)` — the whole-window sensor, spelled as the two DOM handler names. */
   onEnter: () => void
   onLeave: () => void
   /** spread onto the header: the whole bar drags the window when interactive */
@@ -46,7 +77,10 @@ export interface OverlayChrome {
 export function useOverlayChrome(): OverlayChrome {
   const [cfg, setCfg] = useState<OverlayConfig | null>(null)
   const [hovering, setHovering] = useState(false)
-  const hoveringRef = useRef(false)
+  /** What is asking for the mouse right now. Capture is on exactly while this is non-empty. */
+  const reasonsRef = useRef<Set<CaptureReason>>(new Set())
+  /** The state main is actually in, so a redundant IPC send can never happen. */
+  const capturedRef = useRef(false)
 
   // Hydrate from the persisted config and stay subscribed to main's echo. The first snapshot
   // renders against whatever this resolves to.
@@ -69,25 +103,34 @@ export function useOverlayChrome(): OverlayChrome {
   // it's a rare, deliberate click. `patch` applies it locally first so the bars swap this frame.
   const setDrill = (d: OverlayDrill | null): void => patch({ drill: d })
 
-  const setHoverCapture = (capture: boolean): void => {
-    if (hoveringRef.current === capture) return
-    hoveringRef.current = capture
-    setHovering(capture)
-    window.eqOverlay.setIgnoreMouse(!capture)
+  /** Push the union of the live reasons to main, once, and only when it actually changed. */
+  const applyCapture = (): void => {
+    const want = reasonsRef.current.size > 0
+    if (capturedRef.current === want) return
+    capturedRef.current = want
+    setHovering(want)
+    window.eqOverlay.setIgnoreMouse(!want)
+  }
+
+  const capture = (reason: CaptureReason, active: boolean): void => {
+    // Interactive windows already own the mouse — a sensor firing there must not send anything,
+    // or the first hover would "capture" a window that was never ignoring events.
+    if (!locked) return
+    if (active) reasonsRef.current.add(reason)
+    else reasonsRef.current.delete(reason)
+    applyCapture()
   }
 
   const toggleLock = (): void => {
     const next = !locked
     window.eqOverlay.setLocked(next)
     patch({ locked: next })
-    if (next) setHoverCapture(false)
-  }
-
-  const onEnter = (): void => {
-    if (locked) setHoverCapture(true)
-  }
-  const onLeave = (): void => {
-    if (locked) setHoverCapture(false)
+    // Main applies the new click-through state itself (applyOverlayLocked), so this side just
+    // forgets every reason and records where that leaves us — otherwise a stale reason would
+    // survive the mode change and the next `capture(x, false)` would send a spurious flip.
+    reasonsRef.current.clear()
+    capturedRef.current = !next
+    setHovering(false)
   }
 
   return {
@@ -100,8 +143,9 @@ export function useOverlayChrome(): OverlayChrome {
     patch,
     setDrill,
     toggleLock,
-    onEnter,
-    onLeave,
+    capture,
+    onEnter: () => capture('window', true),
+    onLeave: () => capture('window', false),
     dragRegion: !locked ? ({ WebkitAppRegion: 'drag' } as React.CSSProperties) : {},
     noDrag: { WebkitAppRegion: 'no-drag' } as React.CSSProperties
   }

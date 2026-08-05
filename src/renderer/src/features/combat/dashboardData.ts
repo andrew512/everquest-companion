@@ -20,6 +20,9 @@
 //     null). Callers degrade to a quiet note; these functions are simply not called.
 // The authoritative totals always remain the engine's SourceView bars.
 
+// RELATIVE value import, like procRows.ts and mobSearch.ts: this module is imported by node
+// tests (tests/combatPerMobGhosts.test.mts), which resolve no `@shared/*` alias for values.
+import { LIVE_FIGHT } from '../../../../shared/fightSelection'
 import type {
   DamageCategory,
   SegmentSummary,
@@ -543,12 +546,28 @@ export interface CompositionSlice {
 export type CombatScope = 'fight' | 'overall'
 
 /**
+ * WHICH DIMENSION the meter panel lists. `heal` joined the pair with P2
+ * (docs/plans/combat-overlay-parity.md) — the panel had no healing at all while the floating
+ * overlays had all of it, which is the parity the owner asked for.
+ *
+ * It is a DIMENSION, not a scope: it decides what one panel ranks, never which segment is
+ * selected and never whether that segment is a fight or a zone session. Fight/Overall keeps
+ * meaning exactly what it meant, in all three.
+ */
+export type MeterMode = 'out' | 'in' | 'heal'
+
+/**
  * Sentinel selection meaning "whatever the fight scope's head row currently is". It is sent to
  * the engine as *no* `selectedId`, so the engine re-resolves it every tick (open fight → that
  * fight; none open → the most recent finalized fight). Pinning the last fight's real id instead
  * would freeze the meter on it when the next pull started.
+ *
+ * IT IS THE SAME SENTINEL THE GLOBAL SELECTION USES (P4) — `shared/fightSelection.ts` owns the
+ * value now, because main validates against it too and two spellings of '__live__' would be a
+ * silent cross-process disagreement. Re-exported under this name so every existing caller (the
+ * overlays, useCombat, the picker) keeps the import it already had.
  */
-export const LIVE_SELECTION = '__live__'
+export const LIVE_SELECTION = LIVE_FIGHT
 
 /** One row of a scope-filtered selector. */
 export interface ScopeOption {

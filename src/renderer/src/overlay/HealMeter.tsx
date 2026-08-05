@@ -1,12 +1,14 @@
 import { type JSX, useMemo, useState } from 'react'
 import type { OverlayKind } from '@shared/types'
 import type { CombatSnapshot, SegmentView } from '@shared/combat'
-import { formatNum as fmt, formatHealRate } from '../lib/formatRate'
+import { formatHealRate } from '../lib/formatRate'
 import { formatTime } from '../lib/formatDate'
 import { scopeOptions } from '../features/combat/dashboardData'
+import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
-import { HealBars, ABSORB_NOTE } from './healBars'
+import { HealBars } from './healBars'
+import { healTotalTitle } from '../features/combat/healRows'
 import { ICON_ACCENT_GREEN } from './IconButton'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
@@ -96,9 +98,8 @@ function healView(snap: CombatSnapshot | null, isFight: boolean): HealView {
   const { hydrating, seg } = selectedSeg(snap)
   const healing = seg?.healing
   const totalHps = healing?.hps ?? 0
-  const totalTitle = healing
-    ? absorbTitle(healing.total, healing.restoredTotal, healing.absorbedTotal)
-    : ''
+  // The restored/absorbed split, phrased once (healRows) and printed by both healing surfaces.
+  const totalTitle = healTotalTitle(healing)
   const live = !hydrating && !!snap?.inCombat
   const durationSec = seg?.durationSec ?? 0
   return { seg, live, headerName: headerNameFor(hydrating, seg, isFight), durationSec, totalHps, totalTitle }
@@ -108,13 +109,6 @@ function healView(snap: CombatSnapshot | null, isFight: boolean): HealView {
 function headerNameFor(hydrating: boolean, seg: SegmentView | undefined, isFight: boolean): string {
   if (hydrating) return 'Reading log…'
   return seg?.name ?? (isFight ? 'No fight' : 'No zone')
-}
-
-/** The hover title on the header's rate: the restored/absorbed split when there is one. */
-function absorbTitle(total: number, restored: number, absorbed: number): string {
-  return absorbed > 0
-    ? `${fmt(total)} total · ${fmt(restored)} restored + ${fmt(absorbed)} absorbed. ${ABSORB_NOTE}`
-    : `${fmt(total)} healing restored`
 }
 
 /**
@@ -146,11 +140,15 @@ export default function HealMeter(): JSX.Element {
   // 'heal-fight' if the bridge is momentarily absent (e.g. an HMR reload before preload re-runs).
   const kind: OverlayKind = window.eqOverlay?.kind ?? 'heal-fight'
   const isFight = kind !== 'heal-overall'
-  // Selection mirrors the damage pair exactly: LIVE / a finalized fight id, or 'zone' / a zs<n>.
-  const [selection, setSelection] = useState<string>(isFight ? LIVE : 'zone')
+  // Selection mirrors the damage pair exactly, including P4: the FIGHT half is the app-wide
+  // global (shared with the Combat tab and the 'fight' overlay), the ZONE half stays local to
+  // this window — the ruling's carve-out.
+  const { fightId, selectFight } = useGlobalFight(window.eqOverlay)
+  const [zoneSelection, setZoneSelection] = useState<string>('zone')
+  const selection = isFight ? fightId : zoneSelection
 
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
-  const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
+  const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
   const now = Date.now()
 
@@ -164,16 +162,18 @@ export default function HealMeter(): JSX.Element {
 
   /** A drill is per-segment: picking a different fight / zone session undrills. On the change
    *  handler, NOT an effect — an effect fires on mount (twice under StrictMode) and would clear
-   *  the drill we just hydrated. */
+   *  the drill we just hydrated. A fight picked in another window is a remote change and leaves
+   *  the drill alone (see OverlayMeter's twin for the full reasoning). */
   const selectSegment = (id: string): void => {
-    setSelection(id)
+    if (isFight) selectFight(id)
+    else setZoneSelection(id)
     setDrill(null)
   }
 
   return (
+    // No whole-window hover sensor (P3) — a locked heal meter captures the mouse only over its
+    // header row, so the bars stay click-through.
     <div
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
       style={{
         width: '100vw',
         height: '100vh',
@@ -199,12 +199,14 @@ export default function HealMeter(): JSX.Element {
         tailTitle={totalTitle}
         iconAccentBg={ICON_ACCENT_GREEN}
         select={{ rows: selectRows, value: selection, onChange: selectSegment, accent: HEAL_GOLD }}
-        chrome={{ locked, hovering, dragRegion, noDrag, toggleLock }}
+        chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
 
       {/* Bars + mini drill-down. Locked mode RENDERS the remembered drill read-only (no setter ⇒
           no click targets, no cursors, no back chevron) so the window stays click-through. */}
-      <div style={{ flexGrow: 1, overflow: 'auto', padding: '4px 6px' }}>
+      {/* Same testid as the damage meter's body — the click-through half of the locked contract
+          (P3) is measured on exactly this box. */}
+      <div data-testid="overlay-bars" style={{ flexGrow: 1, overflow: 'auto', padding: '4px 6px' }}>
         <HealBars seg={seg} topN={topN} drill={drill} setDrill={locked ? null : setDrill} live={live} />
       </div>
 

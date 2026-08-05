@@ -8,17 +8,18 @@
 import { useMemo, useState } from 'react'
 import { Box, Breadcrumbs, Button, Link, Paper, Stack, Typography } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
-import CircleIcon from '@mui/icons-material/Circle'
 import { TargetSkillBars } from './CombatDashboard'
 import { EntityRow } from './EntityRow'
 import { PetBar } from './PetBar'
-import { CAT_COLOR, CopyButton, KIND_COLOR, QuietNote, RESIST_COLOR, SkillBar, fmtDur } from './combatShared'
-import { skillsForTarget, type Drill, type TargetDetail } from './dashboardData'
+import { CAT_COLOR, QuietNote, RESIST_COLOR, SkillBar } from './combatShared'
+import { skillsForTarget, type Drill, type MeterMode, type TargetDetail } from './dashboardData'
+import { HealBody } from './HealPanel'
+import { SegmentHeader } from './SegmentHeader'
 import { procAnnotationFor, procTagIndex } from './procRows'
 import { meterPanel, type MeterPanel, type OwnRow } from './petRows'
 import { useCombinePetRow } from './useCombatPrefs'
-import { fmtElapsed, formatEntityText, formatSegmentText, formatTargetText } from './copyText'
-import { formatNum as fmt, formatRate } from '../../lib/formatRate'
+import { formatEntityText, formatSegmentText, formatTargetText } from './copyText'
+import { formatNum as fmt } from '../../lib/formatRate'
 import type { DamageCategory, SegmentView, SourceView, TimelineView } from '@shared/combat'
 import type { ProcSkillTag } from '@shared/procAnalytics'
 import { CATEGORY_LABEL } from '@shared/combat'
@@ -177,106 +178,6 @@ function EntitySkillBars({
   )
 }
 
-// ── the panel header's stat run ────────────────────────────────────────────────────────
-
-/** Active-time DPS: only worth printing when the fight actually had idle gaps. */
-function ActiveDpsNote({ seg, mode }: { seg: SegmentView; mode: 'out' | 'in' }): React.JSX.Element | null {
-  if (mode !== 'out' || seg.activeSec <= 0 || seg.activeSec >= seg.durationSec) return null
-  return (
-    <Tooltip
-      title={`Active-time DPS: damage ÷ ${fmtDur(
-        seg.activeSec
-      )} of actual combat time (gaps between hits capped at 3s each). Wall-clock DPS (${formatRate(
-        seg.outDps
-      )}) divides by the full ${fmtDur(seg.durationSec)} fight length.`}
-    >
-      <Typography component="span" variant="caption" sx={{ color: 'text.secondary', mr: 0.25 }}>
-        (act {formatRate(seg.activeDps)})
-      </Typography>
-    </Tooltip>
-  )
-}
-
-/** How much of your damage the enemies healed back — effective DPS is lower by exactly this. */
-function EnemyHealNote({ seg, mode }: { seg: SegmentView; mode: 'out' | 'in' }): React.JSX.Element | null {
-  if (mode !== 'out' || seg.enemyHealTotal <= 0) return null
-  return (
-    <Tooltip
-      title={`Enemies healed for ${fmt(
-        seg.enemyHealTotal
-      )} during this fight — that much of your damage was undone (effective DPS is lower).`}
-    >
-      <Typography component="span" variant="caption" sx={{ color: '#5fbf7f', ml: 0.5 }}>
-        · +{fmt(seg.enemyHealTotal)} enemy heal
-      </Typography>
-    </Tooltip>
-  )
-}
-
-/**
- * SLOW CHIP (Task #64). Shown ONLY when a slow-capable coat was actually on at engage — that is
- * what makes "not landed" a fact about the poison rather than about the loadout, and it keeps the
- * chip off the header of every fight the user wasn't running slow poison for.
- */
-function SlowChip({ seg, mode }: { seg: SegmentView; mode: 'out' | 'in' }): React.JSX.Element | null {
-  if (mode !== 'out' || !seg.procs.slowExpected) return null
-  const landed = seg.procs.slowLandMs !== undefined
-  return (
-    <Tooltip
-      title={
-        seg.procs.slowLandMs !== undefined
-          ? `${seg.procs.coatAtEngage?.poison} was coated at engage; its Weakening Strike proc landed ${fmtElapsed(
-              seg.procs.slowLandMs
-            )} in (${seg.procs.slowLands} landing${seg.procs.slowLands === 1 ? '' : 's'} this fight).`
-          : `${seg.procs.coatAtEngage?.poison} was coated at engage, but its slow proc has not landed in this fight.`
-      }
-    >
-      <Typography component="span" variant="caption" sx={{ color: landed ? '#57e0a0' : 'text.disabled', ml: 0.5 }}>
-        · {seg.procs.slowLandMs !== undefined ? `slow @ ${fmtElapsed(seg.procs.slowLandMs)}` : 'slow: not landed'}
-      </Typography>
-    </Tooltip>
-  )
-}
-
-/**
- * The panel's title + stat run, and hard right of it the copy affordance — it belongs to THIS
- * panel (not to the tab's top bar), because what it copies is whatever level this panel is
- * currently showing.
- */
-function SegmentHeader({
-  seg,
-  mode,
-  total,
-  dps,
-  copyView
-}: {
-  seg: SegmentView
-  mode: 'out' | 'in'
-  total: number
-  dps: number
-  copyView: () => string
-}): React.JSX.Element {
-  return (
-    <Stack direction="row" justifyContent="space-between" alignItems="baseline" sx={{ mb: 1, flexShrink: 0 }}>
-      <Typography variant="subtitle1" noWrap>
-        {seg.name}
-        {seg.active && <CircleIcon sx={{ fontSize: 10, color: 'success.main', ml: 1, verticalAlign: 'middle' }} />}
-      </Typography>
-      <Stack direction="row" spacing={0.5} alignItems="baseline" sx={{ minWidth: 0 }}>
-        <Typography variant="body2" sx={{ color: mode === 'out' ? 'primary.main' : KIND_COLOR.enemy }}>
-          {formatRate(dps)} <ActiveDpsNote seg={seg} mode={mode} />
-          <Typography component="span" variant="caption" color="text.secondary">
-            · {fmt(total)} · {fmtDur(seg.durationSec)}
-            <EnemyHealNote seg={seg} mode={mode} />
-            <SlowChip seg={seg} mode={mode} />
-          </Typography>
-        </Typography>
-        <CopyButton getText={copyView} />
-      </Stack>
-    </Stack>
-  )
-}
-
 /**
  * Drill-down breadcrumb + Back. Two levels, plus ONE nested case: a pet that was opened from
  * inside your breakdown (petRows.ts) is a level below it, and the crumb says so —
@@ -371,16 +272,30 @@ function SegmentContent({
   rows,
   ownRows,
   d,
+  drill,
   setDrill
 }: {
   seg: SegmentView
-  mode: 'out' | 'in'
+  mode: MeterMode
   rows: SourceView[]
   /** the drilled source's rows (skill lanes + nested pets) — `MeterPanel.rows`, empty at level 1. */
   ownRows: OwnRow[]
   d: DrillState
+  /** the raw token — the Healing dimension resolves it against healers, not damage sources. */
+  drill: Drill | null
   setDrill: (drill: Drill | null) => void
 }): React.JSX.Element {
+  // THE HEALING DIMENSION IS ITS OWN LIST, top to bottom (P2). It shares this scroll box, the
+  // drill token and the segment header — and nothing else: healers are not damage sources, so
+  // there is no ranked-source level to reuse and no category legend to filter by.
+  if (mode === 'heal') {
+    return (
+      <Box data-testid="meter-body" sx={{ overflow: 'auto', flexGrow: 1, minHeight: 0 }}>
+        <HealBody healing={seg.healing} drill={drill} setDrill={setDrill} />
+      </Box>
+    )
+  }
+
   return (
     <Box data-testid="meter-body" sx={{ overflow: 'auto', flexGrow: 1, minHeight: 0 }}>
       {!d.crumb &&
@@ -420,6 +335,24 @@ function SegmentContent({
   )
 }
 
+/**
+ * WHAT THE SELECTED DIMENSION IS MADE OF: the rows it ranks and the two headline figures.
+ *
+ * The header total/DPS stay the SEGMENT's (you + every pet) at every drill level — the same
+ * aggregate the Overview card headlines, so the two surfaces can never disagree on a number.
+ * The healing pair is `HealingView`'s own total/hps: restored hit points + granted absorption,
+ * exactly the figures the heal overlays headline (shared/combat.ts states what each includes).
+ *
+ * Healing ranks HEALERS, not damage sources, so `rows` is empty there rather than borrowed —
+ * `meterPanel` over an empty list yields level 1 with nothing in it, the right no-op while
+ * another dimension is on screen.
+ */
+function dimension(seg: SegmentView, mode: MeterMode): { rows: SourceView[]; total: number; dps: number } {
+  if (mode === 'heal') return { rows: [], total: seg.healing.total, dps: seg.healing.hps }
+  if (mode === 'in') return { rows: seg.incoming, total: seg.inTotal, dps: seg.inDps }
+  return { rows: seg.entities, total: seg.outTotal, dps: seg.outDps }
+}
+
 export function SegmentBody({
   seg,
   tl,
@@ -429,15 +362,12 @@ export function SegmentBody({
 }: {
   seg: SegmentView
   tl: TimelineView | null
-  mode: 'out' | 'in'
+  mode: MeterMode
   drill: Drill | null
   setDrill: (d: Drill | null) => void
 }): React.JSX.Element {
-  const rows = mode === 'out' ? seg.entities : seg.incoming
-  // The header total/DPS stay the SEGMENT's (you + every pet) at every drill level — the same
-  // aggregate the Overview card headlines, so the two surfaces can never disagree on a number.
-  const total = mode === 'out' ? seg.outTotal : seg.inTotal
-  const dps = mode === 'out' ? seg.outDps : seg.inDps
+  const heal = mode === 'heal'
+  const { rows, total, dps } = dimension(seg, mode)
   const [combinePetRow] = useCombinePetRow()
   // THE one row builder — the same call the floating overlay makes (petRows.meterPanel). Nesting
   // is an OUTGOING idea: the Incoming direction lists enemies, and none of them owns a pet of
@@ -459,7 +389,7 @@ export function SegmentBody({
         formatEntityText(seg, d.entity, pets)
       : d.targetDetail && d.targetName
         ? formatTargetText(seg, d.targetName, d.targetDetail)
-        : formatSegmentText(seg, mode)
+        : formatSegmentText(seg, mode === 'in' ? 'in' : 'out')
 
   return (
     // Grid-cell sizing, exactly like DashCard's `fill`: 100% of the cell, zero intrinsic
@@ -478,9 +408,13 @@ export function SegmentBody({
         flexDirection: 'column'
       }}
     >
-      <SegmentHeader seg={seg} mode={mode} total={total} dps={dps} copyView={copyView} />
-      {d.crumb && <DrillCrumb crumb={d.crumb} isTarget={!!d.targetDetail} parent={nestedIn} setDrill={setDrill} />}
-      <SegmentContent seg={seg} mode={mode} rows={rows} ownRows={ownRows} d={d} setDrill={setDrill} />
+      <SegmentHeader seg={seg} mode={mode} total={total} dps={dps} copyView={heal ? null : copyView} />
+      {/* The damage crumb; the Healing dimension draws its own inside HealBody, because its one
+          drill level has no nested-pet case and therefore no parent link to render. */}
+      {!heal && d.crumb && (
+        <DrillCrumb crumb={d.crumb} isTarget={!!d.targetDetail} parent={nestedIn} setDrill={setDrill} />
+      )}
+      <SegmentContent seg={seg} mode={mode} rows={rows} ownRows={ownRows} d={d} drill={drill} setDrill={setDrill} />
     </Paper>
   )
 }

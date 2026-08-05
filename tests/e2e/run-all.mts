@@ -32,6 +32,9 @@ const SPECS = [
   // Celebration toasts: the only spec that drives a SECOND window (the toast overlay), so it
   // opens one and reads its DOM — sequential like every other spec here.
   'toast.e2e.mts',
+  // Overlay ⇄ panel sync: opens the FIGHT overlay and drives both bridges, so it too runs a
+  // second window (docs/plans/combat-overlay-parity.md P3 + P4/P5/P6).
+  'overlay-sync.e2e.mts',
   // Telemetry launches the app TWICE against one userData dir (the restart is the assertion),
   // so it must stay in this sequential list and must never be run beside another spec.
   'telemetry.e2e.mts',

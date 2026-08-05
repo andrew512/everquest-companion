@@ -88,7 +88,9 @@ function MobRows({
   mobs: MobBreakdown
   rows: MobBreakdown['rows']
   selected: string | null
-  setDrill: (d: Drill | null) => void
+  /** Null ⇒ the rows are READ-ONLY: the meter panel is showing another dimension (Healing), so
+   *  there is no level-2 mob body for a click to open and an affordance would be a dead end. */
+  setDrill: ((d: Drill | null) => void) | null
 }): React.JSX.Element {
   const a = mobs.estimated ? '~' : ''
   return (
@@ -100,7 +102,11 @@ function MobRows({
           pct={m.pct}
           rank={i + 1}
           selected={selected === m.target}
-          onClick={() => setDrill(selected === m.target ? null : { kind: 'target', target: m.target })}
+          onClick={
+            setDrill
+              ? () => setDrill(selected === m.target ? null : { kind: 'target', target: m.target })
+              : undefined
+          }
           name={
             <>
               {m.target}
@@ -141,7 +147,8 @@ export function MobDamageCard({
   tl: TimelineView | null
   ringless: Ringless
   drill: Drill | null
-  setDrill: (d: Drill | null) => void
+  /** Null in the Healing dimension — see MobRows. */
+  setDrill: ((d: Drill | null) => void) | null
 }): React.JSX.Element {
   const mobs = useMemo(() => (tl ? groupByTarget(tl) : null), [tl])
   const rows = mobs ? mobs.rows.slice(0, MOB_ROWS) : []

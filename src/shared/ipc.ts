@@ -148,6 +148,28 @@ export const IPC = {
   // ignores pushes that aren't its own kind.
   onOverlayConfig: 'overlay:config',
 
+  // ---- GLOBAL FIGHT SELECTION (docs/plans/combat-overlay-parity.md P4/P5/P6) ----
+  // ONE fight is selected app-wide: picking one in the Combat tab's picker or in ANY
+  // fight-scoped overlay selector writes it, and every fight-scoped surface follows. Main holds
+  // it EPHEMERALLY (src/main/fightSelection.ts — resets to '__live__' at startup, never stored)
+  // and is the only process that can reach every window, which is why this is IPC and not a
+  // renderer-side broadcast.
+  //
+  // ZONE SESSIONS ARE NOT HERE, on purpose: an 'overall' / 'heal-overall' selector keeps its own
+  // per-overlay selection and neither reads nor writes these channels (the ruling's carve-out).
+  // Neither does selection ever change a surface's Fight-vs-Overall SCOPE (P5, the standing law).
+  //
+  // renderer(any window) -> main: read the current selection, for hydrating a surface that
+  // mounted after the last change. Returns the id string.
+  fightSelectionGet: 'fightSelection:get',
+  // renderer(any window) -> main, FIRE-AND-FORGET: "the user picked this fight". The payload is
+  // VALIDATED AT THE HANDLER against the shared model (`normalizeFightSelection`) — a non-string,
+  // a zone-session id or anything hand-crafted is dropped rather than fanned out.
+  fightSelectionSet: 'fightSelection:set',
+  // main -> EVERY window: the selection changed. Payload {fightId}. Sent to the main window and
+  // all overlay kinds; a window with no fight-scoped surface simply has no listener.
+  onFightSelection: 'fightSelection:changed',
+
   // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
   // Both blobs are main-owned (electron-store), so Preferences has no other door. The setters
   // are MERGE-PATCHES and every field is re-validated + clamped AT THE HANDLER through
@@ -199,11 +221,9 @@ export const IPC = {
   // main -> renderer(toast overlay): one resolved ToastPayload to render. The overlay times,
   // stacks and dismisses it locally and fetches NOTHING (T3/T5) — everything it draws is here.
   onToast: 'toast:card',
-  // main -> renderer(main app): play this toast's sound (T7). The overlay bundle has no audio
-  // stack, so the MAIN window's existing alert player does it — one more caller of `playSound`,
-  // not a second audio path. Payload {packId, soundId, volume}; nothing is sent when the
-  // toast's configured sound is null (mute).
-  onToastSound: 'toast:sound',
+  // (`toast:sound` lived here until 2026-08-05. A toast has no voice of its own: the seeded
+  // "Raid target defeated" / "Quest complete" ALERTS speak on the same events, and a second
+  // channel could only ever say it twice. Removed with the sound controls it served.)
 
   // ---- cross-window deep link (Task #64) ----
   // renderer(overlay) -> main: "focus the app on this" (AppFocus). Main shows/restores/focuses

@@ -93,6 +93,26 @@ const overlayApi = {
     return () => ipcRenderer.removeListener(IPC.onOverlayConfig, listener)
   },
 
+  // ---- global fight selection (docs/plans/combat-overlay-parity.md P4) ----
+  // THE SAME THREE MEMBERS, UNDER THE SAME NAMES, as the main app's bridge (preload/windows.ts).
+  // That is not a coincidence to be tidied away later: it is what lets ONE renderer hook
+  // (`useGlobalFight`) drive the Combat tab's picker and both fight overlays' selectors from one
+  // implementation, the way `petRows.meterPanel` is one row builder for both meters. The identity
+  // is pinned by tests/fightSelection.test.mts.
+  //
+  // NOT for a zone-session selector: the 'overall' / 'heal-overall' kinds keep their own
+  // per-overlay selection and must never call these (the ruling's explicit carve-out).
+  /** The currently selected fight ('__live__' or an 'e<n>' encounter id). */
+  getFightSelection: (): Promise<string> => ipcRenderer.invoke(IPC.fightSelectionGet),
+  /** "The user picked this fight." Fire-and-forget; main validates and fans out. */
+  setFightSelection: (id: string): void => ipcRenderer.send(IPC.fightSelectionSet, id),
+  /** Subscribe to selection changes made anywhere in the app. Payload {fightId}. */
+  onFightSelection: (cb: (s: { fightId: string }) => void): (() => void) => {
+    const listener = (_e: unknown, s: { fightId: string }): void => cb(s)
+    ipcRenderer.on(IPC.onFightSelection, listener)
+    return () => ipcRenderer.removeListener(IPC.onFightSelection, listener)
+  },
+
   /** Set locked (click-through) vs interactive for this kind. Persisted + applied to the window. */
   setLocked: (locked: boolean): void => ipcRenderer.send(IPC.overlaySetLocked, KIND, locked),
   /**

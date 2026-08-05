@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { CombatSnapshot } from '@shared/combat'
-import { LIVE_SELECTION, defaultSelection, type CombatScope } from './dashboardData'
+import { LIVE_SELECTION, type CombatScope } from './dashboardData'
+import { useGlobalFight } from './useGlobalFight'
 import type { CombatFocus } from './combatFocus'
 
 /** Re-export: the sentinel lives with the scope helpers (dashboardData) so the overlay entry —
@@ -35,9 +36,10 @@ export interface UseCombat {
   setScope: (s: CombatScope) => void
   /**
    * Jump to an explicit scope + selection (a deep link from another tab). Distinct from
-   * `setScope`, which deliberately resets the selection to that scope's head row: here the
-   * caller has already decided what it wants selected. The scope is persisted, exactly as a
-   * manual scope change is — arriving via "see this fight in Combat" is a real scope choice.
+   * `setScope`, which lands on that scope's own current row: here the caller has already decided
+   * what it wants selected. The scope is persisted, exactly as a manual scope change is —
+   * arriving via "see this fight in Combat" is a real scope choice. A FIGHT focus writes the
+   * GLOBAL selection (P4), so following a deep link moves the open fight overlays too.
    */
   focusFight: (f: CombatFocus) => void
   /** current finalized-fight cap in the fetched snapshot */
@@ -68,10 +70,30 @@ export interface UseCombat {
 export function useCombat(): UseCombat {
   const [showUnparsed, setShowUnparsed] = useState(false)
   const [scope, setScopeState] = useState<CombatScope>(loadScope)
-  const [selection, setSelection] = useState<string>(() => defaultSelection(loadScope()))
+  /**
+   * TWO SELECTIONS, ONE PER SCOPE — and only the FIGHT one is global (P4 and its carve-out).
+   *
+   * The fight selection is not state of this hook at all: it lives in main and is shared with
+   * every fight overlay, so picking a fight here moves them and picking one there moves this.
+   * The zone-session selection stays exactly what it was, local to this surface.
+   *
+   * Keeping them SEPARATE (rather than one `selection` that the scope reinterprets) is what
+   * makes P5 true here: flipping the scope shows the other list's own current row and cannot
+   * write anything, so an Overall session can never be mistaken for a global fight pick.
+   */
+  const { fightId, selectFight } = useGlobalFight(window.eq)
+  const [zoneSelection, setZoneSelection] = useState<string>('zone')
   const [maxSegments, setMaxSegments] = useState(DEFAULT_MAX_SEGMENTS)
   const [wantTimeline, setWantTimeline] = useState(true)
   const [snap, setSnap] = useState<CombatSnapshot | null>(null)
+
+  /** What this surface is showing — the scope picks which of the two selections is in force. */
+  const selection = scope === 'fight' ? fightId : zoneSelection
+  /** …and which one a pick writes. The scope is never changed by either (P5). */
+  const setSelection = (id: string): void => {
+    if (scope === 'fight') selectFight(id)
+    else setZoneSelection(id)
+  }
 
   useEffect(() => {
     let alive = true
@@ -99,19 +121,26 @@ export function useCombat(): UseCombat {
 
   const loadMore = (): void => setMaxSegments((n) => n + DEFAULT_MAX_SEGMENTS)
 
-  /** Switching scope always lands on that scope's head row — the previous scope's selection is
-   *  not even listable in the new one, so carrying it over would leave the selector blank. */
+  /**
+   * Switching scope shows the OTHER scope's own current row — it writes nothing.
+   *
+   * It used to reset the incoming scope to its head row, which was right when a selection was
+   * one piece of local state that had to be made listable again. Now each scope keeps its own
+   * (the fight one globally), so resetting would be an automatic write to a selection three
+   * other surfaces are also looking at — the exact "the ground moved under me" failure the
+   * scope law exists to prevent.
+   */
   const setScope = (s: CombatScope): void => {
     setScopeState(s)
     localStorage.setItem(SCOPE_KEY, s)
-    setSelection(defaultSelection(s))
   }
 
   /** See UseCombat.focusFight — a deep link decides BOTH halves, so the selection survives. */
   const focusFight = (f: CombatFocus): void => {
     setScopeState(f.scope)
     localStorage.setItem(SCOPE_KEY, f.scope)
-    setSelection(f.selection)
+    if (f.scope === 'fight') selectFight(f.selection)
+    else setZoneSelection(f.selection)
   }
 
   return {

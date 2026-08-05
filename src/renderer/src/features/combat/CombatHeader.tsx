@@ -14,7 +14,7 @@ import {
 } from '@mui/material'
 import CircleIcon from '@mui/icons-material/Circle'
 import { FightPicker } from './FightPicker'
-import type { CombatScope, ScopeOptions } from './dashboardData'
+import type { CombatScope, MeterMode, ScopeOptions } from './dashboardData'
 import { fmtDur } from './combatShared'
 import { formatDateTime } from '../../lib/formatDate'
 import { formatNum as fmt, formatRate } from '../../lib/formatRate'
@@ -365,28 +365,38 @@ function ViewSwitch({
   )
 }
 
-/** The direction filter — dash only. It filters what one panel lists; it is not a mode. */
+/**
+ * The DIMENSION filter — dash only. It filters what one panel lists; it is not a mode, and it is
+ * emphatically not a scope: Fight/Overall keeps meaning exactly what it meant in all three.
+ *
+ * Healing joined the pair with P2 (docs/plans/combat-overlay-parity.md, owner ruling: "the combat
+ * panel lacks the overlay's HEAL functionality — parity"). It sits third because it is the least
+ * often wanted of the three, not because it is a lesser citizen — it renders from the same
+ * builder the floating heal overlays do. The testid keeps its old name: the headless harness
+ * asserts on it, and this control's JOB did not change.
+ */
 function DirectionFilter({
   mode,
   setMode
 }: {
-  mode: 'out' | 'in'
-  setMode: (m: 'out' | 'in') => void
+  mode: MeterMode
+  setMode: (m: MeterMode) => void
 }): React.JSX.Element {
   return (
     <>
       <Divider orientation="vertical" flexItem sx={{ my: 0.25 }} />
-      <Tooltip title="Which direction of damage the meter lists">
+      <Tooltip title="Which dimension the meter lists — damage out, damage in, or healing">
         <ToggleButtonGroup
           size="small"
           exclusive
           data-testid="direction-toggle"
           value={mode}
-          onChange={(_e: unknown, v: 'out' | 'in' | null) => v && setMode(v)}
+          onChange={(_e: unknown, v: MeterMode | null) => v && setMode(v)}
           sx={segmented('text')}
         >
           <ToggleButton value="out">Outgoing</ToggleButton>
           <ToggleButton value="in">Incoming</ToggleButton>
+          <ToggleButton value="heal">Healing</ToggleButton>
         </ToggleButtonGroup>
       </Tooltip>
     </>
@@ -457,8 +467,8 @@ export interface CombatHeaderProps {
   view: 'dash' | 'timeline'
   setView: (v: 'dash' | 'timeline') => void
   noTimeline: boolean
-  mode: 'out' | 'in'
-  setMode: (m: 'out' | 'in') => void
+  mode: MeterMode
+  setMode: (m: MeterMode) => void
 }
 
 /**

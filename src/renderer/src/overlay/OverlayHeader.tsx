@@ -6,7 +6,7 @@ import {
   type OverlaySelectRow
 } from './OverlaySelect'
 import { IconButton, ICON_ACCENT_GOLD } from './IconButton'
-import type { OverlayChrome } from './useOverlayChrome'
+import type { CaptureReason, OverlayChrome } from './useOverlayChrome'
 
 /**
  * OverlayHeader — the ONE header row every overlay kind renders, and (in interactive mode) the
@@ -27,9 +27,16 @@ import type { OverlayChrome } from './useOverlayChrome'
  * MODES:
  *   interactive — title + tail are a no-drag click target with a chevron; the popup anchors to
  *                 this row's bottom edge and spans the window width.
- *   locked      — byte-identical to the plain header it always was: no chevron, no click target,
- *                 no listeners, fully click-through (the lock/close buttons still appear during
- *                 the hover-capture dance, exactly as before).
+ *   locked      — the SAME row, and (owner ruling P3, docs/plans/combat-overlay-parity.md) the
+ *                 SAME working selector. A locked meter is click-through everywhere else; this
+ *                 row is the exception, because "which fight am I watching" is the one question
+ *                 a pinned meter still has to be able to answer. The mechanism is the hover
+ *                 sensor the meters already run (`useOverlayChrome.capture`): the pointer
+ *                 entering this row asks main to stop ignoring mouse events, leaving it (with
+ *                 the list closed) asks it to resume. Nothing new hooks the mouse.
+ *                 A caller that supplies no `capture` keeps the old plain-header behaviour —
+ *                 without the sensor there is no way for the click to land, and a chevron that
+ *                 did nothing would be worse than no chevron.
  *
  * DRAG: this row is the window's ONLY drag handle, and a `-webkit-app-region: drag` element
  * swallows clicks entirely — so the trigger carries `no-drag` and the LEFT cluster (live dot +
@@ -48,6 +55,13 @@ export interface OverlayHeaderSelect {
 }
 
 const TAIL_COLOR = 'rgba(255,255,255,0.7)'
+
+/**
+ * The P3 sensor, as this file needs it. Optional at the prop boundary (the event log has no
+ * selector and never opted in), defaulted to a no-op inside so nothing below has to branch.
+ */
+type HeaderCapture = (reason: CaptureReason, active: boolean) => void
+const NO_CAPTURE: HeaderCapture = () => undefined
 
 /** Lock/close, shown when interactive or while a locked overlay has captured the mouse. */
 function HeaderControls({
@@ -176,20 +190,37 @@ function HeaderTrigger({
   select,
   rowRef,
   noDrag,
+  capture,
   children
 }: {
   select: OverlayHeaderSelect
   rowRef: ElementRef
   noDrag: React.CSSProperties
+  /** P3: hold the mouse for as long as the list is open (see CaptureReason). No-op unlocked. */
+  capture: HeaderCapture
   /** the header body, which needs `open` for its chevron. */
   children: (open: boolean) => JSX.Element
 }): JSX.Element {
   const triggerRef = useRef<HTMLDivElement>(null)
-  // Open state lives HERE, not in the header, so locking the overlay (which unmounts this) can
-  // never leave a popup half-open waiting to reappear when the user unlocks again.
+  // Open state lives HERE, not in the header, so a mode change that unmounts this can never
+  // leave a popup half-open waiting to reappear later.
   const [open, setOpen] = useState(false)
   const [hot, setHot] = useState(false)
   const current = select.rows.find((r) => r.value === select.value) ?? select.rows[0] ?? null
+
+  /**
+   * Open/close is also a CAPTURE boundary while locked. The popup is `position: fixed` and so is
+   * not a child of the header row — moving the pointer into the open list fires the row's
+   * `mouseleave`, and without this second, independently-released reason the list would go
+   * click-through the instant the user reached for it.
+   *
+   * Every close path goes through here (chevron, pick, Esc, outside mousedown), so there is no
+   * route that leaves 'popup' held after the list is gone.
+   */
+  const setOpenCaptured = (next: boolean): void => {
+    setOpen(next)
+    capture('popup', next)
+  }
 
   return (
     <>
@@ -198,7 +229,7 @@ function HeaderTrigger({
         role="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpenCaptured(!open)}
         onMouseEnter={() => setHot(true)}
         onMouseLeave={() => setHot(false)}
         // The disambiguation timing the popup rows carry, on the closed state too — the header
@@ -231,9 +262,9 @@ function HeaderTrigger({
           noDragStyle={noDrag}
           onPick={(v) => {
             select.onChange(v)
-            setOpen(false)
+            setOpenCaptured(false)
           }}
-          onClose={() => setOpen(false)}
+          onClose={() => setOpenCaptured(false)}
         />
       )}
     </>
@@ -265,14 +296,19 @@ export function OverlayHeader({
   tailColor?: string
   iconAccentBg?: string
   select?: OverlayHeaderSelect
-  chrome: Pick<OverlayChrome, 'locked' | 'hovering' | 'dragRegion' | 'noDrag' | 'toggleLock'>
+  chrome: Pick<OverlayChrome, 'locked' | 'hovering' | 'dragRegion' | 'noDrag' | 'toggleLock'> & {
+    /** P3: opt in to a WORKING selector while locked. Absent ⇒ the old plain locked header. */
+    capture?: HeaderCapture
+  }
 }): JSX.Element {
   const { locked, dragRegion, noDrag } = chrome
+  const capture = chrome.capture ?? NO_CAPTURE
   const rowRef = useRef<HTMLDivElement>(null)
 
-  // A locked overlay is click-through, and an empty list has nothing to pick: both fall back to
-  // the plain header, so no hit-test target and no listeners can leak into those states.
-  const selectable = select && !locked && select.rows.length > 0 ? select : null
+  // An empty list has nothing to pick, and a locked overlay with no hover sensor has no way to
+  // deliver the click: both fall back to the plain header, so a dead hit-test target can never
+  // leak into either state. A locked overlay WITH the sensor keeps its selector (P3).
+  const selectable = select && select.rows.length > 0 && (!locked || chrome.capture) ? select : null
   const body = (open: boolean | null): JSX.Element => (
     <HeaderBody
       title={title}
@@ -287,6 +323,12 @@ export function OverlayHeader({
   return (
     <div
       ref={rowRef}
+      // THE P3 SENSOR, and the whole of it: while locked, the pointer being over THIS ROW is what
+      // makes the window stop ignoring mouse events — so the selector (and the lock/close pair
+      // that reveals with it) is clickable and the meter body below is not. Unlocked, `capture`
+      // is a no-op and these are two dead handlers.
+      onMouseEnter={() => capture('selector', true)}
+      onMouseLeave={() => capture('selector', false)}
       style={{
         ...dragRegion,
         display: 'flex',
@@ -302,7 +344,7 @@ export function OverlayHeader({
       <HeaderTag tag={tag} last={last} />
 
       {selectable ? (
-        <HeaderTrigger select={selectable} rowRef={rowRef} noDrag={noDrag}>
+        <HeaderTrigger select={selectable} rowRef={rowRef} noDrag={noDrag} capture={capture}>
           {body}
         </HeaderTrigger>
       ) : (

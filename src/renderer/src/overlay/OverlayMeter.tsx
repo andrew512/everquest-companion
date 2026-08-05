@@ -3,12 +3,8 @@ import type { OverlayKind } from '@shared/types'
 import type { CombatSnapshot, SegmentView } from '@shared/combat'
 import { formatRate } from '../lib/formatRate'
 import { formatTime } from '../lib/formatDate'
-import {
-  LIVE_SELECTION,
-  defaultSelection,
-  scopeOptions,
-  type ScopeOption
-} from '../features/combat/dashboardData'
+import { LIVE_SELECTION, scopeOptions, type ScopeOption } from '../features/combat/dashboardData'
+import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { MeterBars } from './meterBars'
@@ -137,10 +133,16 @@ export default function OverlayMeter(): JSX.Element {
   // (and shows) only fights — the current one while a pull is open, else the LAST one — and a
   // 'overall' overlay lists only zone sessions. A fight meter silently becoming a zone meter
   // between pulls was the same bug the Combat tab had.
-  const [selection, setSelection] = useState<string>(defaultSelection(isFight ? 'fight' : 'overall'))
+  //
+  // …and the FIGHT half of that is now GLOBAL (P4): this window shares one selection with the
+  // Combat tab and the heal-fight overlay, so picking a fight in any of them moves all of them.
+  // The ZONE half is untouched and deliberately LOCAL — the ruling's explicit carve-out.
+  const { fightId, selectFight } = useGlobalFight(window.eqOverlay)
+  const [zoneSelection, setZoneSelection] = useState<string>('zone')
+  const selection = isFight ? fightId : zoneSelection
 
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
-  const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
+  const { locked, bgAlpha, topN, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
 
   const { seg, live, headerName, durationSec, totalDps, rows, headIsLast } = meterView(
@@ -153,16 +155,24 @@ export default function OverlayMeter(): JSX.Element {
   /** A drill is per-segment: picking a different fight / zone session undrills. This lives on the
    *  selector's change handler, NOT in an effect keyed on `selection` — an effect fires on mount
    *  (twice, under StrictMode) and would clear the drill we just hydrated. Only genuine user
-   *  actions — this and the back chevron — ever clear the stored value. */
+   *  actions — this and the back chevron — ever clear the stored value.
+   *
+   *  A fight picked in ANOTHER window therefore does NOT undrill this one, on purpose: that is a
+   *  remote change, not a click here, and a persisted drill that no longer resolves already
+   *  degrades correctly (it renders level 1 for this render and re-applies when the entity is
+   *  back — the same stale-id rule the whole overlay uses). Writing the store from someone
+   *  else's click would be the surprise. */
   const selectSegment = (id: string): void => {
-    setSelection(id)
+    if (isFight) selectFight(id)
+    else setZoneSelection(id)
     setDrill(null)
   }
 
   return (
+    // NO whole-window hover sensor any more (P3): a LOCKED meter captures the mouse only while
+    // the pointer is over its header row (OverlayHeader's `capture`), so the bars themselves stay
+    // genuinely click-through — which is what "locked" was always supposed to mean.
     <div
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
       style={{
         width: '100vw',
         height: '100vh',
@@ -177,9 +187,10 @@ export default function OverlayMeter(): JSX.Element {
         overflow: 'hidden'
       }}
     >
-      {/* Header AND selector, one row: the title is the selected segment's own name, and in
-          interactive mode the row is the trigger — clicking it drops the fight/zone list under
-          the header. A locked overlay gets the same row minus every affordance. */}
+      {/* Header AND selector, one row: the title is the selected segment's own name, and the row
+          is the trigger — clicking it drops the fight/zone list under the header. Since P3 that
+          is true LOCKED as well: `capture` is what makes the click land on a click-through
+          window, and it is scoped to this row alone. */}
       <OverlayHeader
         live={live}
         tag={isFight ? 'FIGHT' : 'ZONE'}
@@ -188,13 +199,16 @@ export default function OverlayMeter(): JSX.Element {
         titleColor={GOLD}
         tail={`${fmtDur(durationSec)} · ${formatRate(totalDps)}`}
         select={{ rows, value: selection, onChange: selectSegment, accent: GOLD }}
-        chrome={{ locked, hovering, dragRegion, noDrag, toggleLock }}
+        chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
 
       {/* Bars + mini drill-down. Locked mode RENDERS the remembered drill (the pinned "damage by
           type" breakdown the user plays with) but hands MeterBars no setter, so there are no
           click targets, no pointer cursors and no back chevron — the window stays click-through. */}
-      <div style={{ flexGrow: 1, overflow: 'auto', padding: '4px 6px' }}>
+      {/* The testid names the CLICK-THROUGH half of the locked contract (P3): everything below
+          the selector row must offer no hit target at all, and the e2e harness measures exactly
+          this box to say so. */}
+      <div data-testid="overlay-bars" style={{ flexGrow: 1, overflow: 'auto', padding: '4px 6px' }}>
         <MeterBars seg={seg} topN={topN} drill={drill} setDrill={locked ? null : setDrill} live={live} />
       </div>
 

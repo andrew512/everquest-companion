@@ -24,9 +24,11 @@ import { type JSX, useEffect, useLayoutEffect, useRef, useState } from 'react'
  * component library — every pixel here is plain React + inline styles, exactly like Bar/IconButton
  * in OverlayMeter. Do not import @mui/* into this bundle.
  *
- * INTERACTIVE MODE ONLY: a locked overlay is fully click-through, so callers simply do not render
- * this. It owns no click-through state itself — there is nothing here that could leak a hit-test
- * target into locked mode.
+ * IT OWNS NO CLICK-THROUGH STATE. It is rendered only while its owner says it should be, and it
+ * asks main for nothing. Since P3 (docs/plans/combat-overlay-parity.md) a LOCKED meter renders it
+ * too — the selector row is the one part of a pinned overlay that stays interactive — but that
+ * decision, and the hover capture that makes the click land, belong entirely to OverlayHeader.
+ * Nothing here changed to allow it, which is the point.
  */
 
 export interface OverlaySelectRow {
