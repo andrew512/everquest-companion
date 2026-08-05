@@ -21,6 +21,7 @@ import {
   type FeedbackDraft,
   type FeedbackType
 } from '@shared/feedback'
+import type { TelemetryEvent } from '@shared/telemetry'
 import { CRASH_REPORT_KEY } from '../../lib/ErrorBoundary'
 import { track, trackFeature } from '../../lib/telemetry'
 
@@ -168,6 +169,31 @@ export function toOutcome(res: SubmitResult): FeedbackOutcome {
 }
 
 /**
+ * Step 3 of the feedback funnel (usage-analytics §3), or `null` for an ending that filed
+ * nothing. `sent` and `queued` both close it: a queued report EXISTS on disk and goes out on the
+ * next connection, so "did the press end in a filed report" is yes for both.
+ *
+ * A FAILED send emits nothing, deliberately, and both halves of that are constraints:
+ *   * the readout SUMS a step's count across outcomes (`countSteps`, main/triage/analytics.ts),
+ *     so a `sendFinished` carrying `outcome:'failed'` would count itself into the very bar the
+ *     gap from `sendPressed` is supposed to measure;
+ *   * `failureClass` cannot pay for it either. The schema's enum is network/checksum/disk/
+ *     timeout/other and it is CLOSED (widening it is a wire change the server validates); a
+ *     network failure already resolves as `queued`, so every remaining feedback failure — a
+ *     rejection, a full queue, a dark build — would land on 'other'. A constant says nothing
+ *     `outcome` does not.
+ */
+export function sendFinishedStep(outcome: FeedbackOutcome): TelemetryEvent | null {
+  if (outcome.kind !== 'sent' && outcome.kind !== 'queued') return null
+  return {
+    t: 'funnelStep',
+    funnel: 'feedback',
+    step: 'sendFinished',
+    outcome: outcome.kind === 'sent' ? 'ok' : 'queued'
+  }
+}
+
+/**
  * The crash the ErrorBoundary parked before reloading, as a bug prefill — read ONCE and
  * cleared, so a later reload never re-opens a report for a crash that is already filed.
  * Everything is defensive: the value is JSON we wrote, but it survived a process the whole
@@ -302,12 +328,18 @@ export function useFeedback(open: boolean, prefill?: FeedbackPrefill): FeedbackS
 
   const send = useCallback((): void => {
     setPhase('sending')
+    // usage-analytics §3, step 2: recorded on the PRESS, never on the reply, so a send that
+    // never comes back is a drop-off in the funnel instead of an event nobody emitted.
+    track({ t: 'funnelStep', funnel: 'feedback', step: 'sendPressed' })
     const attach = fields.type === 'bug' && attachLog
     void window.eq
       .submitFeedback(toDraft(fields), { attachLog: attach, windowMinutes })
       .then((res) => {
-        setOutcome(toOutcome(res))
+        const ending = toOutcome(res)
+        setOutcome(ending)
         setPhase('done')
+        const step = sendFinishedStep(ending)
+        if (step) track(step)
       })
       .catch((err: unknown) => {
         // submitFeedback is contractually non-rejecting; if the IPC itself dies we still owe
