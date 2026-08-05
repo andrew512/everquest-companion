@@ -270,11 +270,14 @@ function CelebrationToasts({
  *
  * Boss kills: useBossKills gates out the historical baseline. This is the SINGLE
  * always-mounted detector, so it's the one place we fire the 'bossDefeat' app signal for
- * the alerts extension. Task #24 splits the two:
- *   - onKill      → snackbar on ANY roster kill, incl. repeats (matches confetti).
- *   - onNewDefeat → the bossDefeat sound ONLY on a first defeat at a new tier.
- * fireAppSignal also applies the alert's cooldown, so even if the Boss tab's own detector
- * fires in the same instant it can't double-play.
+ * the alerts extension. ONE callback carries both halves — the snackbar and the sound fire
+ * on ANY roster kill, repeats included, matching the confetti the Boss tab bursts.
+ *
+ * It used to be two (Task #24): the sound rode a narrower `onNewDefeat` — first kill at a new
+ * instance tier — so the app cheered a repeat kill on screen and said nothing. Retired by the
+ * owner 2026-08-04: "every time is worth celebrating." The alert's own cooldown is the rate
+ * limit now, and fireAppSignal applies it, so even if the Boss tab's own detector fires in
+ * the same instant it can't double-play.
  *
  * Sky turn-ins: useProgress seeds a silent baseline on the first hydrated snapshot, so
  * historical completions on load never fire — only a live turn-in transition does
@@ -293,8 +296,10 @@ function useAppCelebrations(
   onQuestComplete: (name: string) => void
 ): void {
   useBossKills(bossData.targets, {
-    onKill: onDefeat,
-    onNewDefeat: (s) => fireAppSignal('bossDefeat', s.target.name)
+    onKill: (s) => {
+      onDefeat(s)
+      fireAppSignal('bossDefeat', s.target.name)
+    }
   })
 
   useProgress({

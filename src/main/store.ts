@@ -448,17 +448,21 @@ function migrateStoredAlertSounds(alerts: AlertDef[]): AlertDef[] {
 }
 
 /**
- * One-time migration of SHIPPED alert def TRIGGERS (2026-08-04): the rogue-slow def now covers
- * both slow Strikes and rate-limits per mob instead of once for the whole alert. Rationale +
- * the incident it comes from: src/main/data/alertDefMigrations.ts.
+ * One-time migration of SHIPPED alert def TRIGGERS (2026-08-04): the rogue-slow def rate-limits
+ * per mob instead of once for the whole alert. Rationale, the incident it comes from, and the
+ * step that widened the trigger before the owner sent it back: src/main/data/alertDefMigrations.ts.
  *
  * Same contract as migrateStoredAlertSounds above and for the same reason — it rewrites only a
- * def still identical to the one the app authored, so a user who re-shaped it keeps their
- * version, and the stamp means the rewrite can never undo that choice later.
+ * def still identical to one the app authored, so a user who re-shaped it keeps their version,
+ * and the stamp means the rewrite can never undo that choice later.
+ *
+ * The STAMP IS AN INPUT, not just a gate: the chain is append-only, so a store runs the steps
+ * newer than its own stamp and no others. A store at 1 must not re-run step 1.
  */
 function migrateStoredAlertTriggers(alerts: AlertDef[]): AlertDef[] {
-  if ((store.get('alertTriggerMigration') ?? 0) >= ALERT_TRIGGER_MIGRATION_VERSION) return alerts
-  const { alerts: next, changed } = migrateAlertTriggers(alerts)
+  const from = store.get('alertTriggerMigration') ?? 0
+  if (from >= ALERT_TRIGGER_MIGRATION_VERSION) return alerts
+  const { alerts: next, changed } = migrateAlertTriggers(alerts, from)
   if (changed > 0) store.set('alerts', next)
   store.set('alertTriggerMigration', ALERT_TRIGGER_MIGRATION_VERSION)
   return next

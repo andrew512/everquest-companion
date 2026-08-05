@@ -80,11 +80,20 @@ export function allStatuses(targets: RaidTarget[], kills: KillMap): TargetStatus
 }
 
 /**
- * ANY roster-boss kill (Task #24): a target whose total kill `count` increased
- * since the previous snapshot — including a REPEAT kill at the same-or-lower tier
- * (which `newDefeats` deliberately ignores). Drives confetti + card flash +
- * snackbar for every kill. Compares a previous status snapshot (keyed by target
- * name) to the current one; returns the targets that were just killed again.
+ * ANY roster-boss kill (Task #24): a target whose total kill `count` increased since the
+ * previous snapshot — including a REPEAT kill at the same-or-lower tier. Compares a previous
+ * status snapshot (keyed by target name) to the current one; returns the targets just killed.
+ *
+ * THE ONLY DEFEAT PREDICATE THERE IS, since 2026-08-04. It drives confetti, the card flash,
+ * the snackbar AND the bossDefeat alert sound. There used to be a second, narrower one —
+ * `newDefeats`, "first kill at a new instance tier" — which gated the SOUND alone, so killing
+ * Lord Nagafen a second time was silent. The owner's call: "every time is worth celebrating."
+ * A boss is not a checklist item, so a second kill is not a lesser event; the alert's own
+ * cooldown is where "don't repeat yourself" belongs, not a first-time-only predicate.
+ *
+ * WHAT DID NOT CHANGE: the baseline. `useBossKills` seeds silently on the first snapshot, so
+ * this only ever sees LIVE transitions — history loaded on character switch celebrates
+ * nothing (AGENTS.md: celebrations fire on live transitions; hydration seeds a baseline).
  */
 export function bossKills(
   prev: Map<string, TargetStatus>,
@@ -96,28 +105,6 @@ export function bossKills(
     const before = prev.get(s.target.name)
     const prevCount = before?.count ?? 0
     if (s.count > prevCount) out.push(s)
-  }
-  return out
-}
-
-/**
- * A NEW defeat = a boss that just went from unkilled → killed (prev count 0), or
- * whose best instance tier increased. Compares a previous status snapshot (keyed
- * by target name) to the current one; returns the targets that newly qualify.
- * This is the subset of `bossKills` that additionally earns the bossDefeat sound —
- * a first defeat at a new tier only, so repeat kills stay silent (Task #24).
- */
-export function newDefeats(
-  prev: Map<string, TargetStatus>,
-  next: TargetStatus[]
-): TargetStatus[] {
-  const out: TargetStatus[] = []
-  for (const s of next) {
-    if (!s.killed) continue
-    const before = prev.get(s.target.name)
-    const wasKilled = before?.killed ?? false
-    const prevTier = before?.bestTier ?? 0
-    if (!wasKilled || s.bestTier > prevTier) out.push(s)
   }
   return out
 }

@@ -3,7 +3,7 @@
 // React/data-bundle imports so tests can exercise it directly (the useProgress module
 // pulls in @shared value imports the bare test runner can't alias-resolve).
 //
-// The celebration mirrors the boss-defeat baseline contract (bossStatus.newDefeats):
+// The celebration mirrors the boss-defeat baseline contract (bossStatus.bossKills):
 // the FIRST observation seeds a silent baseline, and only quest keys that appear in the
 // matched set AFTER the baseline count as live transitions. This keeps historical
 // completions (already persisted, or found in the initial log scan) from firing

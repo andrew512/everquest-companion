@@ -92,9 +92,14 @@ export interface AlertGroupDefSpec {
   /** how many times that shape occurs in the reference log (provenance, not a threshold). */
   observed: number
   /**
-   * A SECOND verified line the same def fires on, for a trigger that covers two shapes (the
-   * rogue-slow def matches both slow Strikes). Same law as `line`: quoted verbatim from the
-   * real log with its own measured count, or absent. Never a paraphrase of `line`.
+   * A SECOND verified line the same def fires on, for a trigger that covers two shapes. Same
+   * law as `line`: quoted verbatim from the real log with its own measured count, or absent.
+   * Never a paraphrase of `line`.
+   *
+   * NO GROUP USES IT TODAY. The rogue-slow def did for one afternoon (2026-08-04), while its
+   * trigger covered both slow Strikes; the owner narrowed it back to one emote, so the second
+   * quote went with the second effect. The field stays because the shape it describes — one
+   * def, two verified sentences — is still the honest way to write such a def if one lands.
    */
   line2?: string
   /** occurrences of `line2` in the reference log — required whenever `line2` is present. */
@@ -366,28 +371,34 @@ export const ALERT_GROUPS: AlertGroup[] = [
     verified: true,
     defs: [
       {
-        // THE ROGUE SLOWS — BOTH OF THEM. Two Strikes slow, and one utility coat can grant
-        // both at once (Paralytic Poison → Weakening Strike + Clumsiness Strike; see the
-        // roster in shared/poisons.ts):
-        //   Weakening Strike  → `<mob>'s limbs move slower!`  effect 'slow'      (attack slow)
-        //   Clumsiness Strike → `<mob>'s fingers slow down.`  effect 'spellSlow' (casting slow)
-        // Those two are the WHOLE slow family in POISON_PROCS — the other eight effects are
-        // dispel / root / manaDrain / stun / interrupt / snare / dot / damage — so the
-        // alternation below is exhaustive by measurement, not by hope. `observed`/`observed2`
-        // are a FRESH read-only sweep of eqlog_Primitive_freeport.txt at 1,330,626 lines
-        // (2026-08-04): 800 `limbs move slower!` and 461 `fingers slow down.` The 482 the first
-        // count used to state was the same shape against the younger 1,144,036-line log — the
-        // live log grows, so a count is a provenance stamp, never a threshold.
+        // ONE PROC, ONE FAMILY. This def fires on WEAKENING STRIKE and on nothing else:
+        //   Weakening Strike  → `<mob>'s limbs move slower!`  effect 'slow'  (attack slow)
+        // "Poisons", plural, in the group's title is the family of COATS behind that single
+        // emote, not a second emote: four utility poisons grant Weakening Strike — Weakening,
+        // Binding, Neurotoxic and Paralytic (the roster in shared/poisons.ts) — so a landing
+        // proves "a rogue slow proc", never which coat threw it.
         //
-        // The def used to match `effect:'slow'` alone, which meant every Clumsiness landing
-        // was silent while the group's own title said "poisons", plural. Verified in the
-        // owner's log 2026-08-04: on Magus Rokyl (22:03–22:04) four of five slow-family
-        // landings printed nothing at all.
+        // CLUMSINESS STRIKE IS DELIBERATELY OUT, and that is a decision rather than an
+        // oversight. It prints `<mob>'s fingers slow down.` and carries effect 'spellSlow' —
+        // a CASTING slow, a different fact about the fight than "the thing hitting me now
+        // swings slower". Between 2026-08-04 and this commit the trigger was widened to
+        // `/^(slow|spellSlow)$/` so it covered both; the owner rejected the widening the same
+        // day — "i dont want the spell cast time slow to count. one proc, one family" — so the
+        // shipped trigger is `effect:'slow'` again, and a user who took the widened def is
+        // carried back by step 2 of src/main/data/alertDefMigrations.ts. Nothing about the
+        // PARSE changed: both Strikes are still first-class `poisonProc` events and both are
+        // still counted on the Procs tab. This is a choice about which landing is worth
+        // interrupting you for, never about what the log can say.
         //
-        // Neither Strike prints a cast line, so the parser's first-class `poisonProc` event is
-        // the only honest handle on either; matching on `effect` (not on the Strike name)
-        // keeps the def right for the two emotes that are shared by a PAIR of Strikes and
-        // survives a Strike being renamed.
+        // `observed` is a read-only sweep of eqlog_Primitive_freeport.txt at 1,330,626 lines
+        // (2026-08-04): 800 `limbs move slower!`. The 482 the first count stated was the same
+        // shape against the younger 1,144,036-line log — the live log grows, so a count is a
+        // provenance stamp, never a threshold.
+        //
+        // The Strike prints no cast line, so the parser's first-class `poisonProc` event is
+        // the only honest handle on it; matching on `effect` (not on the Strike name) keeps
+        // the def right for an emote that a PAIR of Strikes could come to share, and survives
+        // a Strike being renamed.
         //
         // NO PERCENTAGE APPEARS ANYWHERE IN THIS COPY, deliberately: the wiki states both
         // 35% and 15% for this line on different pages and the contradiction is unresolved.
@@ -406,19 +417,17 @@ export const ALERT_GROUPS: AlertGroup[] = [
         // unconditional and quiets only the re-lands on that same mob.
         id: POISON_SLOW_ALERT_ID,
         name: 'Mob slowed (rogue poison)',
-        trigger: { type: 'event', kind: 'poisonProc', where: { effect: '/^(slow|spellSlow)$/' } },
+        trigger: { type: 'event', kind: 'poisonProc', where: { effect: 'slow' } },
         soundId: SOUND.debuffLanded,
         cooldownMs: 30000,
         cooldownScope: 'target',
         line: "Stonesoul the Unmoving's limbs move slower!",
         observed: 800,
-        // The second emote, measured on the same sweep — the def fires on both.
-        line2: "King Tranix's fingers slow down.",
-        observed2: 461,
         note:
-          'Weakening Strike (attack slow, 3:30) and Clumsiness Strike (casting slow) — the two ' +
-          'rogue utility-poison slows. Each mob gets its own 30-second quiet period: the first ' +
-          'slow on a mob always speaks, and only re-lands on that same mob are held back.'
+          'Weakening Strike — the attack slow (3:30) granted by Weakening, Binding, Neurotoxic ' +
+          'and Paralytic poison. Clumsiness Strike, the casting slow, is deliberately not ' +
+          'included. Each mob gets its own 30-second quiet period: the first slow on a mob ' +
+          'always speaks, and only re-lands on that same mob are held back.'
       }
     ]
   },

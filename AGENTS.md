@@ -583,8 +583,12 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   and a locked overlay (no selector) tags its header `· LAST`. The head row's
   VALUE stays the `__live__` sentinel so it re-resolves each tick. No fights at
   all ⇒ quiet empty state, never borrowed zone data. `liveFallback` is GONE.
-- Celebrations (confetti/sound) fire EXACTLY ONCE on live transitions;
-  hydration seeds a silent baseline; manual actions never celebrate.
+- Celebrations (confetti/sound) fire EXACTLY ONCE PER LIVE TRANSITION;
+  hydration seeds a silent baseline; manual actions never celebrate. "Once per
+  transition", never "once ever": a REPEAT boss kill is a transition, so the
+  bossDefeat sound fires on every kill (owner, 2026-08-04 — "every time is worth
+  celebrating"; the first-kill-only `newDefeats` predicate was retired for it).
+  Rate limiting belongs to the alert's own cooldown, not to the detector.
 
 ## Shipping
 

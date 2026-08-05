@@ -121,8 +121,9 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
   // ANY live roster-boss kill (incl. a repeat at the same/lower tier, Task #24):
   // fire confetti over the view and flash the boss card for ~3s. The kills module
   // (via useBossKills) already gates out the historical baseline, so this only
-  // fires for kills that happen while the app is open. The bossDefeat *sound* is
-  // handled separately in App (new-tier defeats only).
+  // fires for kills that happen while the app is open. The bossDefeat *sound* rides
+  // the same predicate from App's always-mounted detector, so the two agree on every
+  // kill and the alert's cooldown stops the pair double-playing.
   const onKill = useCallback((s: TargetStatus) => {
     setBurst((n) => (n ?? 0) + 1)
     setFlashing((prev) => new Set(prev).add(s.target.name))

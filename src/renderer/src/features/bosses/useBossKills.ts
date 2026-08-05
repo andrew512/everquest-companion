@@ -1,14 +1,16 @@
-// useBossKills — kills module → roster boss statuses, plus two callbacks fired
+// useBossKills — kills module → roster boss statuses, plus the kill callback fired
 // live (never for the historical baseline loaded on character load). Used by both
 // BossView (cards + confetti + card flash) and App (the app-wide snackbar + the
-// bossDefeat alert sound) so they share one definition of "kill" vs "new defeat".
+// bossDefeat alert sound) so they share ONE definition of "a boss just died".
 //
-// Two-tier detection (Task #24):
-//   - onKill      — ANY roster-boss kill, including a repeat at the same/lower
-//                   tier. Drives confetti + card flash + snackbar on every kill.
-//   - onNewDefeat — the subset that's a FIRST defeat at a new tier for that boss.
-//                   Drives the bossDefeat app-signal sound ONLY, so repeat kills
-//                   stay silent.
+// ONE TIER OF DETECTION, since 2026-08-04:
+//   - onKill — ANY roster-boss kill, including a repeat at the same/lower tier.
+//              Confetti, card flash, snackbar AND the bossDefeat sound.
+// It used to be two: a narrower `onNewDefeat` (first kill at a new instance tier)
+// carried the sound, so a repeat kill was celebrated on screen and silent in the
+// ears. The owner retired that split — "every time is worth celebrating" — and
+// rate-limiting now belongs to the alert's own cooldown, which fireAppSignal
+// applies. See bossStatus.bossKills.
 //
 // The baseline problem: the first snapshot already contains every boss killed in
 // the past. If we compared that against an empty `prev`, every historical kill
@@ -19,13 +21,11 @@ import { useEffect, useRef, useState } from 'react'
 import type { KillMap, KillsDelta, KillsSnap, RaidTarget } from '@shared/types'
 import { killsBaselineStale, mergeKillsDelta } from '@shared/kills'
 import { useModule } from '../../lib/useModule'
-import { allStatuses, bossKills, newDefeats, type TargetStatus } from './bossStatus'
+import { allStatuses, bossKills, type TargetStatus } from './bossStatus'
 
 export interface BossKillCallbacks {
-  /** Fired for ANY roster-boss kill seen live (incl. repeats) — confetti/snackbar. */
+  /** Fired for ANY roster-boss kill seen live (incl. repeats) — confetti/snackbar/sound. */
   onKill?: (s: TargetStatus) => void
-  /** Fired only for a first defeat at a new tier — the bossDefeat sound. */
-  onNewDefeat?: (s: TargetStatus) => void
 }
 
 export function useBossKills(
@@ -59,9 +59,9 @@ export function useBossKills(
     setStatuses(next)
     const prev = prevRef.current
     if (prev != null) {
-      // Any kill (incl. repeats) → confetti/snackbar; new-tier subset → sound.
+      // Any kill, repeats included → confetti/snackbar/sound. `prev != null` is the baseline
+      // guard: the first snapshot after a character switch celebrates nothing.
       for (const s of bossKills(prev, next)) cbsRef.current?.onKill?.(s)
-      for (const s of newDefeats(prev, next)) cbsRef.current?.onNewDefeat?.(s)
     }
     prevRef.current = new Map(next.map((s) => [s.target.name, s]))
   }, [kills, targets])
