@@ -44,11 +44,17 @@ import {
   Tabs,
   Typography
 } from '@mui/material'
-import type { TriageAnalytics, TriageAnalyticsData, TriageFunnelView } from '@shared/triage'
+import type {
+  TriageAnalytics,
+  TriageAnalyticsData,
+  TriageDownloads,
+  TriageFunnelView
+} from '@shared/triage'
 import { TRIAGE_ANALYTICS_DAYS, TRIAGE_ANALYTICS_DEFAULT_DAYS } from '@shared/triage'
 import { formatNum } from '../../lib/formatRate'
 import { useTriageCall } from './useTriage'
 import {
+  DownloadsSection,
   HealthSection,
   MixList,
   RetentionSection,
@@ -191,7 +197,18 @@ function FunnelCard({ view }: { view: TriageFunnelView }): JSX.Element {
   )
 }
 
-function Readout({ data }: { data: TriageAnalyticsData }): JSX.Element {
+/**
+ * `downloads` is deliberately a SEPARATE prop rather than a field of `data`: it is fetched from
+ * GitHub at the IPC edge, not computed from the counter tables, and it is global — so only the
+ * user-cohort readout is given it, and the owner readout below renders without it.
+ */
+function Readout({
+  data,
+  downloads
+}: {
+  data: TriageAnalyticsData
+  downloads?: TriageDownloads
+}): JSX.Element {
   return (
     <Stack spacing={2}>
       {windowIsEmpty(data) && (
@@ -213,6 +230,7 @@ function Readout({ data }: { data: TriageAnalyticsData }): JSX.Element {
       </Section>
       <HealthSection data={data} />
       <VersionsSection data={data} />
+      <DownloadsSection downloads={downloads} />
       <RetentionSection data={data} />
       <Typography variant="caption" color="text.secondary">
         Window {data.days[0] ?? '?'} → {data.days.at(-1) ?? '?'} · median session length is a
@@ -306,7 +324,7 @@ export default function AnalyticsPanel(): JSX.Element {
       {analytics.loading && <CircularProgress size={20} />}
       {analytics.error !== null && <Alert severity="error">{analytics.error}</Alert>}
       {analytics.data?.available === false && <Unavailable data={analytics.data} />}
-      {ready !== null && <Readout data={ready.data} />}
+      {ready !== null && <Readout data={ready.data} downloads={ready.downloads} />}
       {ready?.owner != null && <OwnerReadout data={ready.owner} />}
     </Stack>
   )

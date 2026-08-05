@@ -41,6 +41,7 @@ import {
   type UsageRow,
 } from '../src/main/triage/usageRows'
 import { USAGE_COHORTS, type UsageCohort } from '../src/shared/telemetryRollup'
+import { fetchGhDownloads } from '../src/main/triage/ghDownloads'
 import { renderAnalyticsDigest } from './analyticsDigest.mjs'
 import { sanitizeOneLine } from '../src/shared/sanitizeText'
 
@@ -57,6 +58,10 @@ export const ANALYTICS_USAGE = `
                                             DEFAULTS TO --cohort user: your own dev builds and
                                             any install you marked below are split OUT. 'all'
                                             prints BOTH digests; nothing ever sums them.
+                                            The text digest also fetches GitHub release download
+                                            counts — UPDATER-INFLATED, NOT installs, and global
+                                            rather than per-cohort. Unreachable GitHub prints
+                                            '(unavailable: …)' and changes nothing else.
   analytics wipe   --id <analyticsId>       delete that id's analytics_install row
   analytics open | close                    the TELEMETRY kill switch (instant, no deploy)
 
@@ -132,10 +137,15 @@ export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
   const choice = cohortChoice(ctx.args.cohort)
   const c = ctx.clients()
   const since = addDays(dayOf(ctx.nowMs), -(days - 1))
-  const [usage, funnels, installs] = await Promise.all([
+  // The GitHub release fetch rides ALONGSIDE the three reads rather than after them, and only
+  // for the text digest — `--json` is the machine shape, whose consumers read the counter tables
+  // this command owns and not a number from a third-party API. A GitHub failure cannot fail the
+  // digest: `fetchGhDownloads` resolves to an `available: false` reason and the section says so.
+  const [usage, funnels, installs, downloads] = await Promise.all([
     readUsageDaily(c, since),
     readUsageFunnelDaily(c, since),
     readAnalyticsInstalls(c),
+    ctx.args.json ? undefined : fetchGhDownloads(ctx.nowMs),
   ])
   const rows: CohortRows = {
     usage: toUsageRows(usage),
@@ -161,7 +171,14 @@ export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
     console.log(JSON.stringify(out, null, 2))
     return
   }
-  console.log(wanted.map((k) => renderAnalyticsDigest(build(k), k)).join('\n'))
+  // Downloads go to the FIRST digest only. `--cohort all` prints two, and a release download
+  // belongs to neither cohort — printing the same table under both headings would imply a split
+  // that does not exist and invite somebody to add the two up.
+  console.log(
+    wanted
+      .map((k, i) => renderAnalyticsDigest(build(k), k, i === 0 ? downloads : undefined))
+      .join('\n'),
+  )
 }
 
 /**

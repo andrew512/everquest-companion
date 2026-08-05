@@ -19,7 +19,12 @@
 
 import type { JSX, ReactNode } from 'react'
 import { Box, Divider, Stack, Typography } from '@mui/material'
-import type { TriageAnalyticsData, TriageMixRow, UsageDayPoint } from '@shared/triage'
+import type {
+  TriageAnalyticsData,
+  TriageDownloads,
+  TriageMixRow,
+  UsageDayPoint
+} from '@shared/triage'
 import { sparklinePoints } from '@shared/perf'
 import { formatNum } from '../../lib/formatRate'
 import { cohortCell, pctLabel, rateLabel, seriesValues } from './analyticsRows'
@@ -164,6 +169,70 @@ export function VersionsSection({ data }: { data: TriageAnalyticsData }): JSX.El
           ))}
         </Box>
       )}
+    </Section>
+  )
+}
+
+/** The rows, once there are any — split out so the section itself stays a flat three-way choice. */
+function DownloadRows({ rows }: { rows: TriageDownloads }): JSX.Element {
+  if (!rows.available) {
+    return (
+      <Typography variant="caption" color="text.secondary" data-testid="analytics-downloads-off">
+        Unavailable: {rows.reason}. Nothing else on this page comes from GitHub.
+      </Typography>
+    )
+  }
+  if (rows.releases.length === 0) {
+    return (
+      <Typography variant="caption" color="text.secondary">
+        No published releases.
+      </Typography>
+    )
+  }
+  return (
+    <Box sx={{ display: 'grid', gridTemplateColumns: 'max-content max-content max-content 1fr', columnGap: 2, rowGap: 0.25 }}>
+      {rows.releases.map((r) => (
+        <Box key={r.tag} sx={{ display: 'contents' }}>
+          <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+            {r.tag}
+          </Typography>
+          <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+            {formatNum(r.exeDownloads)} installer
+          </Typography>
+          <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+            {formatNum(r.totalDownloads)} all assets
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            published {r.publishedAt?.slice(0, 10) ?? '—'}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+/**
+ * The GitHub release counts, BESIDE the versions table and never inside it. Two reasons the
+ * separation is load-bearing: these numbers do not come from the cluster at all (they are fetched
+ * at the IPC edge — `src/main/triage/ghDownloads.ts`), and they are NOT INSTALLS. The updater
+ * re-fetches the installer for every install it updates, so the count is dominated by the fleet
+ * updating itself; the heading and the note say so, because a column of big numbers next to an
+ * install table is exactly the thing somebody will screenshot.
+ *
+ * Absent (no fetch happened) renders nothing; a FAILED fetch renders the reason, because a
+ * silently missing section would look identical to a release nobody downloaded.
+ */
+export function DownloadsSection({ downloads }: { downloads?: TriageDownloads }): JSX.Element | null {
+  if (downloads === undefined) return null
+  return (
+    <Section title="GitHub downloads — updater-inflated, NOT installs">
+      <Typography variant="caption" color="text.secondary">
+        Release asset fetches, per tag, from the public GitHub API. The auto-updater downloads the
+        installer again on every install it updates — v0.5.0 took 61 downloads within hours of
+        publication — so read this as fetches, not as new users. The install answer is the
+        Versions table above, off <code>analytics_install</code>. Global: never split by cohort.
+      </Typography>
+      <DownloadRows rows={downloads} />
     </Section>
   )
 }

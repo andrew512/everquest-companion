@@ -327,6 +327,35 @@ export interface TriageVersionRow {
   daysToAdopt: number | null
 }
 
+/**
+ * ONE PUBLISHED RELEASE'S DOWNLOAD COUNTS, read off the public GitHub releases API.
+ *
+ * IT IS NOT AN INSTALL COUNT, and every label that renders it says so. The auto-updater fetches
+ * the installer asset again on every install it updates, so `download_count` is dominated by the
+ * fleet updating ITSELF — v0.5.0 took 61 downloads within hours of publication, from a fleet
+ * nowhere near that size. `analytics_install` (the readout's "installs all-time") is the install
+ * truth; this is a fetch count that happens to be public.
+ */
+export interface TriageDownloadRow {
+  /** The release tag, e.g. `v0.5.0`. */
+  tag: string
+  /** The `.exe` installer asset(s) only — latest.yml and .blockmap fetches are excluded. */
+  exeDownloads: number
+  /** Every asset on the release, installer and update metadata alike. */
+  totalDownloads: number
+  /** ISO timestamp, or null for a release GitHub reported without one. */
+  publishedAt: string | null
+}
+
+/**
+ * GitHub's answer, or why there is not one. UNAVAILABLE IS A QUIET STATE, NEVER AN ERROR: the
+ * readout is a view over the cluster, and an unreachable github.com or a spent rate limit must
+ * not take it down with it — the section says the reason and everything else renders as usual.
+ */
+export type TriageDownloads =
+  | { available: true; releases: TriageDownloadRow[]; fetchedAtMs: number }
+  | { available: false; reason: string }
+
 export interface TriageCohortRow {
   cohortDay: string
   installs: number
@@ -377,6 +406,17 @@ export type TriageAnalytics =
       owner: TriageAnalyticsData | null
       /** Is there any owner data at all in the window? Decides whether the toggle is offered. */
       ownerPresent: boolean
+      /**
+       * GITHUB RELEASE DOWNLOADS, MERGED IN AT THE IPC EDGE (`src/main/triage/ipc.ts`) and
+       * nowhere else. `buildAnalytics` is pure over the three counter tables and NEVER populates
+       * this; the field is optional precisely so that stays true — an answer built without ever
+       * touching the network is a legal `TriageAnalytics`.
+       *
+       * It sits beside `data`/`owner` rather than inside `TriageAnalyticsData` because a
+       * releases page knows nothing about who downloaded: downloads are GLOBAL and are rendered
+       * once, never split or summed per cohort.
+       */
+      downloads?: TriageDownloads
     }
 
 // ---- the reply envelope ----------------------------------------------------------------

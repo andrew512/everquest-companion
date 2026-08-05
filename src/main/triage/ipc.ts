@@ -32,6 +32,7 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import type { TriageResult } from '../../shared/triage'
 import { awsBackend, type TriageBackend } from './backend'
+import { fetchGhDownloads } from './ghDownloads'
 import { unreachable } from './store'
 import {
   isInstallId,
@@ -129,11 +130,21 @@ export function registerTriageIpc(backend: TriageBackend = awsBackend()): () => 
   // two server-decided cohorts and never reaches SQL as a value. Anything that is not literally
   // `true` means "user cohort only", which is the safe default in both directions — a renderer
   // sending junk gets the population readout, not the owner's.
+  //
+  // THE GITHUB DOWNLOAD COUNTS ARE MERGED HERE, and only here. The backend answers from the
+  // cluster and `buildAnalytics` is pure over its rows; neither knows this fetch exists, which
+  // is what keeps the whole readout assertable without a socket. The two run in PARALLEL — the
+  // release list must not add its latency to the database read — and a GitHub failure is a
+  // quiet `available: false` inside the value, never a failure of this channel.
   ipcMain.handle(IPC.triageAnalytics, async (_e, rawDays: unknown, rawIncludeOwner: unknown) => {
     const days = validateAnalyticsDays(rawDays)
-    return days === null
-      ? REJECT
-      : await attempt(() => backend.analytics(days, rawIncludeOwner === true))
+    if (days === null) return REJECT
+    const [result, downloads] = await Promise.all([
+      attempt(() => backend.analytics(days, rawIncludeOwner === true)),
+      fetchGhDownloads()
+    ])
+    if (!result.ok || !result.value.available) return result
+    return { ok: true as const, value: { ...result.value, downloads } }
   })
 
   return () => backend.close()

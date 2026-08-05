@@ -16,6 +16,7 @@
 
 import type {
   TriageAnalyticsData,
+  TriageDownloads,
   TriageFunnelStepRow,
   TriageMixRow
 } from '../src/shared/triage'
@@ -135,6 +136,34 @@ function versionLines(d: TriageAnalyticsData): string[] {
   ]
 }
 
+/**
+ * GITHUB DOWNLOADS, printed under the versions they belong to and LABELLED SO NOBODY READS THEM
+ * AS INSTALLS. The auto-updater fetches the installer again on every install it updates, so this
+ * column counts the fleet updating itself far more than it counts new users — the install answer
+ * is `analytics_install`, three sections up as "installs all-time".
+ *
+ * Absent (no fetch was made, e.g. `--json`) prints nothing at all; a FAILED fetch prints the
+ * heading and the reason, because "GitHub did not answer" and "nobody downloaded" are opposite
+ * facts and a silently missing section would let them share a rendering.
+ */
+export function downloadsLines(gh: TriageDownloads | undefined): string[] {
+  if (gh === undefined) return []
+  const head = ['', 'GH DOWNLOADS (updater-inflated — NOT installs; global, never cohort-split)']
+  if (!gh.available) return [...head, `  (unavailable: ${gh.reason})`]
+  if (gh.releases.length === 0) return [...head, '  (no published releases)']
+  return [
+    ...head,
+    ...gh.releases
+      .slice(0, 10)
+      .map(
+        (r) =>
+          `  ${r.tag.padEnd(14)} ${String(r.exeDownloads).padStart(6)} installer` +
+          ` · ${String(r.totalDownloads).padStart(6)} all assets` +
+          ` · published ${r.publishedAt?.slice(0, 10) ?? '—'}`
+      ),
+  ]
+}
+
 function retentionLines(d: TriageAnalyticsData): string[] {
   if (d.retention.length === 0) return ['', 'RETENTION', '  (no cohorts yet)']
   const cell = (v: number | null, of: number): string =>
@@ -181,8 +210,16 @@ function cohortLines(cohort: string): string[] {
  * The whole digest, for ONE cohort. The header states the cohort and the window and, when the
  * tables are empty, SAYS SO in one line before printing the zeros — the numbers below it are
  * then read as "nothing has arrived", which is what they mean, rather than as "everybody left".
+ *
+ * `downloads` is OPTIONAL and comes from outside `TriageAnalyticsData` (the GitHub releases API,
+ * fetched separately — `src/main/triage/ghDownloads.ts`). It is passed to ONE digest even when
+ * both cohorts print, because a release download belongs to no cohort.
  */
-export function renderAnalyticsDigest(d: TriageAnalyticsData, cohort = 'user'): string {
+export function renderAnalyticsDigest(
+  d: TriageAnalyticsData,
+  cohort = 'user',
+  downloads?: TriageDownloads
+): string {
   const head = [
     `usage analytics — last ${String(d.windowDays)} days (${d.days[0] ?? '?'} → ${d.days.at(-1) ?? '?'})`,
     ...cohortLines(cohort),
@@ -198,6 +235,7 @@ export function renderAnalyticsDigest(d: TriageAnalyticsData, cohort = 'user'): 
     ...funnelLines(d),
     ...healthLines(d),
     ...versionLines(d),
+    ...downloadsLines(downloads),
     ...retentionLines(d),
     '',
   ].join('\n')
