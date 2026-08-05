@@ -6,9 +6,13 @@
 // raw long name, off the `You have entered X.` line) → `zoneShortName()` → the map-file stem.
 // That table is HAND-AUTHORED because there is no algorithm — measured, naive normalization
 // resolves 7 of the 51 zone names the real log has printed ("The Plane of Sky" → `airplane`).
-// When it returns null the viewer opens the PICKER and says so. It never guesses a stem: a
-// confidently wrong map is worse than an honest question (world-model law 1). The EQL Tutorial
-// is the known unmapped zone and is exactly what that state exists for.
+// When it returns null the viewer draws no map and SAYS WHICH NAME it could not place. It never
+// guesses a stem: a confidently wrong map is worse than an honest question (world-model law 1).
+// The EQL Tutorial is the known unmapped zone and is exactly what that state exists for.
+//
+// AND THE WAY OUT IS ALWAYS ON SCREEN. The toolbar's Zone selector (MapZoneSelect.tsx) renders
+// in every state — map or no map — so browsing to a zone you are not standing in, and leaving
+// the map you are on, are the same one control rather than a state you have to fall back into.
 //
 // WHAT THIS VIEW CANNOT DO, STATED ON SCREEN: there is no "you are here" marker, and there
 // cannot be — `Your Location` appears ZERO times in 86.6 MB of log. A user hunting for a dot
@@ -44,7 +48,8 @@ import { DEFAULT_LAYERS, type LayerMask } from './mapGeometry'
 import { bandRange, floorBands, type FloorBand } from './floorSlice'
 import { useMapViewport, type MapViewport } from './useMapViewport'
 import MapSearch from './MapSearch'
-import MapToolbar, { ZonePicker, zoneLabel } from './MapToolbar'
+import MapToolbar from './MapToolbar'
+import { zoneLabel } from './zoneOptions'
 import { loadLastZone, loadPackPrefs, savePackPrefs, saveLastZone, useMapData, useMapPacks } from './useMapData'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -107,7 +112,8 @@ interface Marker {
  * AN UNMAPPED ZONE CLEARS THE MAP RATHER THAN LEAVING THE OLD ONE UP. Leaving the previous zone
  * drawn while you stand somewhere else is the same lie as guessing a stem — the user reads the
  * pane, not the header. So a stated-but-unresolvable zone (the EQL Tutorial is the known case)
- * shows the picker and says which name it could not place (law 1).
+ * clears the map and says which name it could not place (law 1); the toolbar's selector is still
+ * right there, so it is a question, not a dead end.
  */
 function useZoneSelection(raw: string | undefined): {
   zone: ZoneShort | null
@@ -173,21 +179,27 @@ function MapsHeader({
   )
 }
 
-/** Everything that is NOT a drawn map: no packs, no mapping for this zone, or nothing picked. */
+/**
+ * Everything that is NOT a drawn map: no packs, no mapping for this zone, or nothing picked.
+ *
+ * IT NO LONGER CARRIES ITS OWN PICKER. The toolbar's Zone selector renders in every state,
+ * directly above this panel, so a second list here would be the same control twice — and the
+ * older arrangement, where selection existed ONLY here, is exactly what made a drawn map a dead
+ * end (feedback: no visible way back to map selection). This states WHY there is no map; the
+ * selector above is how you get one.
+ */
 function MapsEmpty({
   raw,
   auto,
   zones,
   zone,
-  error,
-  onPick
+  error
 }: {
   raw: string | undefined
   auto: ZoneShort | null
   zones: ZoneShort[]
   zone: ZoneShort | null
   error: string | null
-  onPick: (zone: ZoneShort) => void
 }): JSX.Element {
   const unmapped = raw != null && raw !== '' && auto == null
   return (
@@ -201,15 +213,14 @@ function MapsEmpty({
           {zones.length === 0
             ? 'No map files were found in your EverQuest folder. The game ships them under maps\\ — set your install folder in Preferences if this looks wrong.'
             : unmapped
-              ? `We don’t have a map name for “${raw}” yet — pick one.`
-              : 'Pick a zone to open its map.'}
+              ? `We don’t have a map name for “${raw}” yet — pick one above.`
+              : 'Pick a zone above to open its map.'}
         </Typography>
         {zone != null && error != null && (
           <Typography variant="body2" color="text.secondary" data-testid="maps-error">
             {error}
           </Typography>
         )}
-        {zones.length > 0 && <ZonePicker zones={zones} zone={zone} onPick={onPick} autoFocus />}
       </Stack>
     </Paper>
   )
@@ -512,26 +523,30 @@ export default function MapsView(): JSX.Element {
   return (
     <Stack spacing={1.5} sx={{ height: '100%' }}>
       <MapsHeader title={headerTitle(zone, raw)} zone={zone} data={data} />
-      {data != null && (
-        <MapToolbar
-          layers={layers}
-          onLayers={setLayers}
-          bands={bands}
-          floor={floor}
-          onFloor={setFloor}
-          packs={packs}
-          prefs={prefs}
-          onPrefs={(p) => {
-            setPrefs(p)
-            savePackPrefs(p)
-          }}
-          zoomedIn={vp.zoomedIn}
-          onZoom={vp.zoomBy}
-          onFit={vp.fit}
-          paneOpen={pane.open}
-          onPaneOpen={pane.setOpen}
-        />
-      )}
+      {/* ALWAYS RENDERED, because the Zone selector inside it is how you leave the map you are
+          on. Everything else in the bar is gated on `hasMap`. */}
+      <MapToolbar
+        zones={zones}
+        zone={zone}
+        onPick={pick}
+        hasMap={data != null}
+        layers={layers}
+        onLayers={setLayers}
+        bands={bands}
+        floor={floor}
+        onFloor={setFloor}
+        packs={packs}
+        prefs={prefs}
+        onPrefs={(p) => {
+          setPrefs(p)
+          savePackPrefs(p)
+        }}
+        zoomedIn={vp.zoomedIn}
+        onZoom={vp.zoomBy}
+        onFit={vp.fit}
+        paneOpen={pane.open}
+        onPaneOpen={pane.setOpen}
+      />
       <MapSearch zone={zone} prefs={prefs} onJump={onJump} />
 
       {data != null ? (
@@ -548,11 +563,8 @@ export default function MapsView(): JSX.Element {
         />
       ) : (
         // Nothing is claimed before the pack listing and the first fetch have answered — a
-        // picker that flashes up and vanishes reads as a bug, not as a load.
-        ready &&
-        !loading && (
-          <MapsEmpty raw={raw} auto={auto} zones={zones} zone={zone} error={error} onPick={pick} />
-        )
+        // panel that flashes up and vanishes reads as a bug, not as a load.
+        ready && !loading && <MapsEmpty raw={raw} auto={auto} zones={zones} zone={zone} error={error} />
       )}
       <MapCredits data={data} />
     </Stack>

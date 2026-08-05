@@ -1,6 +1,11 @@
-// The map viewer's CONTROLS: zoom / fit, the layer toggles, the per-layer pack choice — and the
-// manual zone picker, which lives here because it is the same control in two places (the toolbar
-// and the "we have no map name for that zone" empty state).
+// The map viewer's CONTROLS: the zone selector, zoom / fit, the layer toggles, the per-layer
+// pack choice.
+//
+// THE ZONE SELECTOR IS THE ONLY CONTROL THAT RENDERS WITH NO MAP ON SCREEN, and it renders
+// FIRST. Everything else here describes the drawing — which layers, which floor, which pack —
+// and a control that states a fact about nothing is worse than an absent one. The selector is
+// the opposite case: it is how you get a map at all, and how you leave the one you have
+// (MapZoneSelect.tsx carries why that has to be permanent).
 //
 // STATE, NEVER PROCESS (AGENTS.md UI conventions). Every control here states a fact — which
 // layers are drawn, which pack each half came from, which zone is open. Nothing narrates.
@@ -16,21 +21,16 @@
 // of y ∈ [-1668, 1737]). It is excluded from the bounds by the parser, so switching it on shows
 // it sitting outside the zone rather than shrinking the zone to a speck.
 
-import { useDeferredValue, useMemo, useState, type JSX, type KeyboardEvent } from 'react'
+import type { JSX, KeyboardEvent } from 'react'
 import {
   Box,
   Chip,
   IconButton,
-  List,
-  ListItemButton,
-  ListItemText,
   MenuItem,
-  Paper,
   Stack,
   TextField,
   ToggleButton,
-  ToggleButtonGroup,
-  Typography
+  ToggleButtonGroup
 } from '@mui/material'
 import ViewSidebarIcon from '@mui/icons-material/ViewSidebar'
 import ZoomInIcon from '@mui/icons-material/ZoomIn'
@@ -39,9 +39,9 @@ import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong'
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp'
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown'
 import type { MapLayer, MapPackInfo, MapPackPrefs, ZoneShort } from '@shared/maps'
-import { ZONES } from '@shared/zones'
 import { bandLabel, type FloorBand } from './floorSlice'
 import type { LayerMask } from './mapGeometry'
+import ZoneSelect from './MapZoneSelect'
 import { Tooltip } from '../../lib/Tooltip'
 
 /** The three optional layers, in file order. Layer 0 (the zone's geometry) is always drawn. */
@@ -50,92 +50,6 @@ const TOGGLEABLE: { layer: MapLayer; label: string }[] = [
   { layer: 2, label: 'Legend' },
   { layer: 3, label: 'Extra' }
 ]
-
-/** Cap on rendered picker rows. The corpus is ~600 stems; a filtered list never needs more. */
-const PICKER_ROWS = 200
-/** The picker's list is a bounded scroller, like every other growing list in the app. */
-const PICKER_MAX_H = 260
-
-/** Stem -> the long name the zone table knows it by. Built once; the table is ~130 rows. */
-const NAMES = new Map<ZoneShort, string>(ZONES.map((z) => [z.short, z.name]))
-
-/**
- * What to call a map stem in the UI.
- *
- * The stem is the truth on disk (`airplane`) and the long name is what the player calls it
- * (`The Plane of Sky`), so both are shown wherever there is room. A stem the hand-authored table
- * does not carry is shown RAW — never a guessed prettification (world-model law 1).
- */
-export function zoneLabel(short: ZoneShort): string {
-  return NAMES.get(short) ?? short
-}
-
-/** Either spelling matches: the stem on disk or the long name the table gives it. */
-function matches(short: ZoneShort, q: string): boolean {
-  return short.includes(q) || zoneLabel(short).toLowerCase().includes(q)
-}
-
-export interface ZonePickerProps {
-  /** Every stem any installed pack provides, ascending. */
-  zones: readonly ZoneShort[]
-  /** The stem on screen, highlighted in the list. */
-  zone: ZoneShort | null
-  onPick: (zone: ZoneShort) => void
-  autoFocus?: boolean
-}
-
-/** Manual zone selection: filter by either spelling, click a row. Used by the toolbar AND the
- *  empty state, so an unresolved zone name is one click from a map rather than a dead end. */
-export function ZonePicker({ zones, zone, onPick, autoFocus }: ZonePickerProps): JSX.Element {
-  const [query, setQuery] = useState('')
-  const q = useDeferredValue(query).trim().toLowerCase()
-  const rows = useMemo(() => {
-    const hits = q.length === 0 ? zones : zones.filter((z) => matches(z, q))
-    return hits.slice(0, PICKER_ROWS)
-  }, [zones, q])
-
-  return (
-    <Stack spacing={1} sx={{ minWidth: 260 }}>
-      <TextField
-        size="small"
-        autoFocus={autoFocus}
-        placeholder="Find a zone…"
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value)
-        }}
-        slotProps={{ htmlInput: { 'data-testid': 'maps-zone-filter' } }}
-      />
-      <Paper variant="outlined" data-testid="maps-zone-list" sx={{ maxHeight: PICKER_MAX_H, overflow: 'auto' }}>
-        {rows.length > 0 ? (
-          <List dense disablePadding>
-            {rows.map((z) => (
-              <ListItemButton
-                key={z}
-                dense
-                selected={z === zone}
-                data-testid="maps-zone-row"
-                onClick={() => {
-                  onPick(z)
-                }}
-              >
-                <ListItemText
-                  primary={zoneLabel(z)}
-                  secondary={z}
-                  slotProps={{ primary: { variant: 'body2' }, secondary: { variant: 'caption' } }}
-                />
-              </ListItemButton>
-            ))}
-          </List>
-        ) : (
-          <Typography variant="body2" color="text.secondary" sx={{ p: 1.25 }}>
-            {zones.length === 0 ? 'No map files were found.' : 'No zone matches.'}
-          </Typography>
-        )}
-      </Paper>
-    </Stack>
-  )
-}
 
 /**
  * The FLOOR STEPPER — a discrete walk up and down the zone's clustered elevations (§8).
@@ -216,6 +130,14 @@ function FloorStepper({
 }
 
 export interface MapToolbarProps {
+  /** Every stem any installed pack provides, ascending — the selector's corpus. */
+  zones: readonly ZoneShort[]
+  /** The stem the viewer is pointed at, drawn or not. */
+  zone: ZoneShort | null
+  onPick: (zone: ZoneShort) => void
+  /** Is a map actually DRAWN? Everything but the selector describes the drawing, so nothing
+   *  else renders without one — a floor stepper over no floors states nothing. */
+  hasMap: boolean
   layers: LayerMask
   onLayers: (layers: LayerMask) => void
   /** The zone's clustered floors, ascending. Fewer than two ⇒ the stepper does not render. */
@@ -280,20 +202,19 @@ function PackSelect({
   )
 }
 
-export default function MapToolbar(props: MapToolbarProps): JSX.Element {
+/**
+ * The controls that describe the DRAWING — absent when there is nothing drawn.
+ *
+ * A Fragment, not a Box: `Stack useFlexGap` spaces its DOM children, and a wrapper here would
+ * collapse eight controls into one gap-spaced unit and re-open the layout question the toolbar
+ * already answered.
+ */
+function DrawnControls(props: MapToolbarProps): JSX.Element {
   const { layers, onLayers, bands, floor, onFloor, packs, prefs, onPrefs } = props
   const { zoomedIn, onZoom, onFit, paneOpen, onPaneOpen } = props
   const on = TOGGLEABLE.filter((t) => layers[t.layer]).map((t) => String(t.layer))
   return (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="center"
-      flexWrap="wrap"
-      useFlexGap
-      data-testid="maps-toolbar"
-      sx={{ flexShrink: 0 }}
-    >
+    <>
       <Box>
         <Tooltip title="Zoom in">
           <IconButton size="small" data-testid="maps-zoom-in" onClick={() => { onZoom(1.35) }}>
@@ -366,6 +287,24 @@ export default function MapToolbar(props: MapToolbarProps): JSX.Element {
           Zone
         </ToggleButton>
       </Tooltip>
+    </>
+  )
+}
+
+export default function MapToolbar(props: MapToolbarProps): JSX.Element {
+  const { zones, zone, onPick, hasMap } = props
+  return (
+    <Stack
+      direction="row"
+      spacing={1}
+      alignItems="center"
+      flexWrap="wrap"
+      useFlexGap
+      data-testid="maps-toolbar"
+      sx={{ flexShrink: 0 }}
+    >
+      <ZoneSelect zones={zones} zone={zone} onPick={onPick} />
+      {hasMap && <DrawnControls {...props} />}
     </Stack>
   )
 }
