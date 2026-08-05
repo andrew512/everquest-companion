@@ -215,10 +215,20 @@ try {
   }
   Log "PASS  telemetry-store-found ($store)"
   try {
-    $settings = Get-Content $store -Raw | ConvertFrom-Json
-    $settings.telemetry.noticeShown = $true
-    ($settings | ConvertTo-Json -Depth 20) | Set-Content -Path $store -Encoding utf8
-    Log 'PASS  telemetry-notice-answered (noticeShown=true, as a dismissal would have written it)'
+    # Patch by TARGETED REPLACEMENT, never a JSON round-trip, and write BOM-FREE. PS 5.1's
+    # Set-Content -Encoding utf8 stamps a BOM; electron-store then treats the file as corrupt
+    # on the next launch and regenerates defaults - a FRESH analyticsId and noticeShown=false,
+    # so the relaunch collects and honorably never sends. Measured on this leg's first real
+    # run: the guest echoed one id, the app minted another, the host found neither.
+    $raw = [System.IO.File]::ReadAllText($store)
+    $before = ($raw | ConvertFrom-Json)
+    $id = $before.telemetry.analyticsId
+    $patched = $raw -replace '"noticeShown"\s*:\s*false', '"noticeShown": true'
+    [System.IO.File]::WriteAllText($store, $patched, (New-Object System.Text.UTF8Encoding($false)))
+    $check = ([System.IO.File]::ReadAllText($store) | ConvertFrom-Json)
+    if (-not $check.telemetry.noticeShown) { throw 'noticeShown did not patch' }
+    if ($check.telemetry.analyticsId -ne $id) { throw 'analyticsId changed during the patch' }
+    Log 'PASS  telemetry-notice-answered (noticeShown=true, id preserved, BOM-free)'
   } catch {
     Log "FAIL  telemetry-notice-answered ($($_.Exception.Message))"
     return
