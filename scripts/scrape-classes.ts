@@ -13,8 +13,17 @@
  *                "You have become better at <Skill>!" → classes that train it
  *   abilities    castable things that are NOT Template:Spellpage pages
  *                (Lay on Hands, Holy Steed, …) → classes
+ *   skillUnlocks class abbr → [{name, level, kind}] for the SKILLS (and the
+ *                page-footnoted innate abilities) that class gains, and when
+ *   discUnlocks  class abbr → [{name, level, kind:'disc'}] for disciplines
+ *                (Rogue poisons included — the wiki's own name for them)
  *   disputed     every place the wiki contradicts ITSELF, carried through so the
  *                UI can say so. NOTHING is silently picked.
+ *
+ * skillUnlocks/discUnlocks are what docs/plans/levelup-whats-new.md § 1 called the
+ * half that "does not exist" — it does, on the class pages, in tables with a stated
+ * Level column. See scripts/sources/classUnlocks.ts for the measured page shapes and
+ * for why kind is derived from the page's own headings and footnotes, never guessed.
  *
  * Spell→class is NOT here: spells.json already carries a `classes` field and is
  * parsed at runtime by src/main/data/spellClasses.ts. No spell re-crawl.
@@ -50,6 +59,12 @@ import {
   parseProseTable,
   sliceSection
 } from './sources/classWiki'
+import {
+  disciplineDisputes,
+  parseClassUnlocks,
+  unlockSections,
+  type ClassUnlock
+} from './sources/classUnlocks'
 
 const API = 'https://eqlwiki.com/api.php'
 const UA = 'everquest-companion/0.1 (personal class-table scraper)'
@@ -159,6 +174,8 @@ interface ClassTableFile {
   invocations: Record<string, string[]>
   skills: Record<string, string[]>
   abilities: Record<string, string[]>
+  skillUnlocks: Record<string, ClassUnlock[]>
+  discUnlocks: Record<string, ClassUnlock[]>
   disputed: string[]
 }
 
@@ -198,12 +215,23 @@ function readStanceInvocation(
   }
 }
 
-/** Fetch every class page once; invert its Skills tables and ability footnotes. */
-async function readClassPages(
-  names: Map<string, string>
-): Promise<{ skills: Map<string, Set<string>>; footnotes: Map<string, Set<string>> }> {
-  const skills = new Map<string, Set<string>>()
-  const footnotes = new Map<string, Set<string>>()
+interface ClassPages {
+  skills: Map<string, Set<string>>
+  footnotes: Map<string, Set<string>>
+  /** per class, the level-stated unlocks its page carries (skills + innates + discs) */
+  unlocks: Map<string, ClassUnlock[]>
+  /** every table/row a page did not state enough for, prefixed by class */
+  gaps: string[]
+}
+
+/** Fetch every class page once; invert its Skills tables, footnotes and unlock levels. */
+async function readClassPages(names: Map<string, string>): Promise<ClassPages> {
+  const out: ClassPages = {
+    skills: new Map<string, Set<string>>(),
+    footnotes: new Map<string, Set<string>>(),
+    unlocks: new Map<string, ClassUnlock[]>(),
+    gaps: []
+  }
   const add = (m: Map<string, Set<string>>, key: string, abbr: string): void => {
     const set = m.get(key) ?? new Set<string>()
     set.add(abbr)
@@ -214,14 +242,19 @@ async function readClassPages(
     const wt = await fetchWikitext(title)
     if (wt == null) {
       console.warn(`  ! ${title}: skipped (no wikitext)`)
+      out.gaps.push(`${abbr}: the class page could not be fetched — it states no unlock levels here`)
       continue
     }
     const found = parseClassSkills(wt)
-    for (const s of found) add(skills, s, abbr)
-    for (const a of parseAbilityFootnotes(wt)) add(footnotes, a, abbr)
-    console.log(`  ✓ ${abbr} ${title}: ${found.length} skills`)
+    for (const s of found) add(out.skills, s, abbr)
+    for (const a of parseAbilityFootnotes(wt)) add(out.footnotes, a, abbr)
+    const scan = parseClassUnlocks(wt)
+    out.unlocks.set(abbr, scan.unlocks)
+    for (const g of scan.skipped) out.gaps.push(`${abbr}: ${g}`)
+    const discs = scan.unlocks.filter((u) => u.kind === 'disc').length
+    console.log(`  ✓ ${abbr} ${title}: ${found.length} skills · ${scan.unlocks.length} unlocks (${discs} disc)`)
   }
-  return { skills, footnotes }
+  return out
 }
 
 /** Merge the AA + footnote abilities and drop anything spells.json already covers. */
@@ -296,6 +329,9 @@ async function main(): Promise<void> {
   disputed.push(
     "invocation 'overchannel': the wiki writes \"Over Channel\" (\"Overchannel\" in the Magician table); keyed on the client string"
   )
+  const { skillUnlocks, discUnlocks } = unlockSections(pages.unlocks)
+  disputed.push(...disciplineDisputes(discWt, discUnlocks))
+  disputed.push(...pages.gaps.map((g) => `unlocks ${g}`))
   disputed.push(...nameCollisions(pages.skills))
   if (![...pages.skills.keys()].some((k) => k.startsWith('Specialize '))) {
     disputed.push(
@@ -311,14 +347,19 @@ async function main(): Promise<void> {
     invocations: sortedRecord(si.invocations),
     skills: sortedRecord(new Map([...pages.skills].map(([k, v]) => [k, [...v].sort()]))),
     abilities: sortedRecord(buildAbilities(aa, pages.footnotes)),
+    skillUnlocks: sortedRecord(skillUnlocks),
+    discUnlocks: sortedRecord(discUnlocks),
     disputed: disputed.slice().sort()
   }
   writeIfChanged(out)
 
+  const rows = (r: Record<string, ClassUnlock[]>): number =>
+    Object.values(r).reduce((n, v) => n + v.length, 0)
   console.log(
     `\nWrote ${Object.keys(out.names).length} classes · ${Object.keys(out.stances).length} stances · ` +
       `${Object.keys(out.invocations).length} invocations · ${Object.keys(out.skills).length} skills · ` +
-      `${Object.keys(out.abilities).length} abilities · ${out.disputed.length} disputed → ${OUT_PATH}`
+      `${Object.keys(out.abilities).length} abilities · ${rows(out.skillUnlocks)} skill unlocks · ` +
+      `${rows(out.discUnlocks)} disc unlocks · ${out.disputed.length} disputed → ${OUT_PATH}`
   )
   for (const d of out.disputed) console.log(`  ~ ${d}`)
 }

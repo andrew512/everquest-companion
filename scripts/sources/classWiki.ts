@@ -114,7 +114,8 @@ const SKILL_ALIAS = new Map<string, string>([
   ['track', 'Tracking']
 ])
 
-function normalizeSkill(label: string): string {
+/** Exported for classUnlocks.ts, which spells unlocked SKILL names the same way. */
+export function normalizeSkill(label: string): string {
   const s = plain(label).replace(/\s*\*+$/, '').trim()
   const aliased = SKILL_ALIAS.get(s.toLowerCase())
   if (aliased !== undefined) return aliased
@@ -232,10 +233,16 @@ function splitSkillCell(cell: string): string[] {
     .filter((n) => n.length > 0 && n.length < 40)
 }
 
-/** A class page's footnoted abilities ("* Lay on Hands is an Ability, not a Skill"). */
+/**
+ * A class page's footnoted abilities ("* Lay on Hands is an Ability, not a Skill").
+ *
+ * `is NOW an Ability` is the same statement in a different tense — the Shadow Knight page
+ * writes "Harm Touch is now an Ability, not a Skill", and reading only the present tense
+ * silently lost the one ability SHD footnotes (measured 2026-08-05, wave O1).
+ */
 export function parseAbilityFootnotes(wt: string): string[] {
   const out: string[] = []
-  for (const m of wt.matchAll(/^:\s*\*+\s*(.+?)\s+is\s+an?\s+[^.\n]*?\bability\b/gim)) {
+  for (const m of wt.matchAll(/^:\s*\*+\s*(.+?)\s+is\s+(?:now\s+)?an?\s+[^.\n]*?\bability\b/gim)) {
     const name = plain(m[1])
     if (name.length > 0 && name.length < 40) out.push(name)
   }

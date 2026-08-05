@@ -1,5 +1,5 @@
 {
-  "scrapedAt": "2026-08-03T22:05:19.738Z",
+  "scrapedAt": "2026-08-05T07:52:20.850Z",
   "names": {
     "BER": "Berserker",
     "BRD": "Bard",
@@ -973,7 +973,2469 @@
       "RNG"
     ]
   },
+  "skillUnlocks": {
+    "BER": [
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Frenzy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Parry",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Block",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Double Attack",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 25,
+        "kind": "skill"
+      },
+      {
+        "name": "Triple Attack",
+        "level": 46,
+        "kind": "skill"
+      }
+    ],
+    "BRD": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Brass Instruments",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dual Wield",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Percussion Instruments",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Singing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Stringed Instruments",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Wind Instruments",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Pick Lock",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Forage",
+        "level": 12,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Traps",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Tracking",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Intimidation",
+        "level": 16,
+        "kind": "skill"
+      },
+      {
+        "name": "Sneak",
+        "level": 17,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm Traps",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Safe Fall",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Hide",
+        "level": 25,
+        "kind": "skill"
+      },
+      {
+        "name": "Parry",
+        "level": 25,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 30,
+        "kind": "skill"
+      }
+    ],
+    "BST": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dual Wield",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Kick",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 5,
+        "kind": "skill"
+      },
+      {
+        "name": "Block",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 30,
+        "kind": "skill"
+      }
+    ],
+    "CLR": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 30,
+        "kind": "skill"
+      }
+    ],
+    "DRU": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Forage",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Tracking",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 30,
+        "kind": "skill"
+      }
+    ],
+    "ENC": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 20,
+        "kind": "skill"
+      }
+    ],
+    "MAG": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 20,
+        "kind": "skill"
+      }
+    ],
+    "MNK": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dual Wield",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Forage",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Kick",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Mend",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Safe Fall",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sneak",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Round Kick",
+        "level": 5,
+        "kind": "skill"
+      },
+      {
+        "name": "Intimidation",
+        "level": 6,
+        "kind": "skill"
+      },
+      {
+        "name": "Block",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Tiger Claw",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Double Attack",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Feign Death",
+        "level": 17,
+        "kind": "skill"
+      },
+      {
+        "name": "Eagle Strike",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Dragon Punch",
+        "level": 25,
+        "kind": "skill"
+      },
+      {
+        "name": "Tail Rake",
+        "level": 25,
+        "kind": "skill"
+      },
+      {
+        "name": "Flying Kick",
+        "level": 30,
+        "kind": "skill"
+      },
+      {
+        "name": "Triple Attack",
+        "level": 46,
+        "kind": "skill"
+      }
+    ],
+    "NEC": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 20,
+        "kind": "skill"
+      }
+    ],
+    "PAL": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Archery",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bash",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Lay on Hands",
+        "level": 1,
+        "kind": "innate"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Taunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Smite",
+        "level": 9,
+        "kind": "innate"
+      },
+      {
+        "name": "Disarm",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Parry",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Double Attack",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 20,
+        "kind": "skill"
+      }
+    ],
+    "RNG": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Archery",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dual Wield",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Kick",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sneak",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Taunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Tracking",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Forage",
+        "level": 3,
+        "kind": "skill"
+      },
+      {
+        "name": "Hide",
+        "level": 3,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Parry",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Block",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Double Attack",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Triple Attack",
+        "level": 46,
+        "kind": "skill"
+      }
+    ],
+    "ROG": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Archery",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Backstab",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dual Wield",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sneak",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hide",
+        "level": 3,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 5,
+        "kind": "skill"
+      },
+      {
+        "name": "Pick Lock",
+        "level": 5,
+        "kind": "skill"
+      },
+      {
+        "name": "Pick Pockets",
+        "level": 7,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Parry",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Safe Fall",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Traps",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Intimidation",
+        "level": 11,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm Traps",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Double Attack",
+        "level": 16,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 25,
+        "kind": "skill"
+      }
+    ],
+    "SHD": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Archery",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bash",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Harm Touch",
+        "level": 1,
+        "kind": "innate"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Taunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Parry",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Double Attack",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Hide",
+        "level": 35,
+        "kind": "skill"
+      }
+    ],
+    "SHM": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alchemy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Forage",
+        "level": 16,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 30,
+        "kind": "skill"
+      }
+    ],
+    "WAR": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Slashing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Archery",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bash",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Dual Wield",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Kick",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Slam",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Taunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Cleave",
+        "level": 5,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 5,
+        "kind": "skill"
+      },
+      {
+        "name": "Parry",
+        "level": 5,
+        "kind": "skill"
+      },
+      {
+        "name": "Disarm",
+        "level": 10,
+        "kind": "skill"
+      },
+      {
+        "name": "Block",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Double Attack",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Riposte",
+        "level": 15,
+        "kind": "skill"
+      },
+      {
+        "name": "Triple Attack",
+        "level": 46,
+        "kind": "skill"
+      }
+    ],
+    "WIZ": [
+      {
+        "name": "1H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "1H Piercing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "2H Blunt",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Abjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alcohol Tolerance",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Alteration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Athletics",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Begging",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Bind Wound",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Channeling",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Conjuration",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Defense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Divination",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Evocation",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Fishing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Hand to Hand",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Offense",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Sense Heading",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Strategy",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Swimming",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Throwing",
+        "level": 1,
+        "kind": "skill"
+      },
+      {
+        "name": "Meditate",
+        "level": 4,
+        "kind": "skill"
+      },
+      {
+        "name": "Dodge",
+        "level": 20,
+        "kind": "skill"
+      },
+      {
+        "name": "Specialization",
+        "level": 20,
+        "kind": "skill"
+      }
+    ]
+  },
+  "discUnlocks": {
+    "BER": [
+      {
+        "name": "Tendon Slice",
+        "level": 14,
+        "kind": "disc"
+      },
+      {
+        "name": "Skull Bash",
+        "level": 20,
+        "kind": "disc"
+      }
+    ],
+    "MNK": [
+      {
+        "name": "Resistant Discipline",
+        "level": 30,
+        "kind": "disc"
+      },
+      {
+        "name": "Fearless Discipline",
+        "level": 40,
+        "kind": "disc"
+      },
+      {
+        "name": "Stonestance Discipline",
+        "level": 51,
+        "kind": "disc"
+      },
+      {
+        "name": "Thunderkick Discipline",
+        "level": 52,
+        "kind": "disc"
+      },
+      {
+        "name": "Whirlwind Discipline",
+        "level": 53,
+        "kind": "disc"
+      },
+      {
+        "name": "Voiddance Discipline",
+        "level": 54,
+        "kind": "disc"
+      },
+      {
+        "name": "Innerflame Discipline",
+        "level": 56,
+        "kind": "disc"
+      },
+      {
+        "name": "Hundred Fists Discipline",
+        "level": 57,
+        "kind": "disc"
+      },
+      {
+        "name": "Silentfist Discipline",
+        "level": 59,
+        "kind": "disc"
+      },
+      {
+        "name": "Ashenhand Discipline",
+        "level": 60,
+        "kind": "disc"
+      }
+    ],
+    "RNG": [
+      {
+        "name": "Disrupting Shot",
+        "level": 20,
+        "kind": "disc"
+      }
+    ],
+    "ROG": [
+      {
+        "name": "Blood Siphon Venom",
+        "level": 1,
+        "kind": "disc"
+      },
+      {
+        "name": "Asp Venom",
+        "level": 2,
+        "kind": "disc"
+      },
+      {
+        "name": "Weakening Poison",
+        "level": 4,
+        "kind": "disc"
+      },
+      {
+        "name": "Hobbling Posion",
+        "level": 5,
+        "kind": "disc"
+      },
+      {
+        "name": "Concussive Poison",
+        "level": 7,
+        "kind": "disc"
+      },
+      {
+        "name": "Befuddling Poison",
+        "level": 9,
+        "kind": "disc"
+      },
+      {
+        "name": "Grounding Poison",
+        "level": 11,
+        "kind": "disc"
+      },
+      {
+        "name": "Stunning Venom",
+        "level": 15,
+        "kind": "disc"
+      },
+      {
+        "name": "Clumsiness Poison",
+        "level": 18,
+        "kind": "disc"
+      },
+      {
+        "name": "Banishing Poison",
+        "level": 20,
+        "kind": "disc"
+      },
+      {
+        "name": "Fettering Poison",
+        "level": 23,
+        "kind": "disc"
+      },
+      {
+        "name": "Binding Poison",
+        "level": 25,
+        "kind": "disc"
+      },
+      {
+        "name": "Neurotoxic Poison",
+        "level": 28,
+        "kind": "disc"
+      },
+      {
+        "name": "Mind Break Poison",
+        "level": 30,
+        "kind": "disc"
+      },
+      {
+        "name": "Thought Drain Poison",
+        "level": 33,
+        "kind": "disc"
+      },
+      {
+        "name": "Antimagic Poison",
+        "level": 36,
+        "kind": "disc"
+      },
+      {
+        "name": "Mage Bane Poison",
+        "level": 39,
+        "kind": "disc"
+      },
+      {
+        "name": "Paralytic Poison",
+        "level": 42,
+        "kind": "disc"
+      },
+      {
+        "name": "Blood Draw Venom",
+        "level": 46,
+        "kind": "disc"
+      },
+      {
+        "name": "Cobra Venom",
+        "level": 46,
+        "kind": "disc"
+      }
+    ]
+  },
   "disputed": [
+    "discUnlocks 'BER': the class page states 2 discipline(s) with levels, but the Disciplines page strikes its whole BER table through and states \"only Rogue poison disciplines are on Legends.\" — kept, labeled disputed",
+    "discUnlocks 'MNK': the class page states 10 discipline(s) with levels, but the Disciplines page strikes its whole MNK table through and states \"only Rogue poison disciplines are on Legends.\" — kept, labeled disputed",
+    "discUnlocks 'RNG': the class page states 1 discipline(s) with levels, but the Disciplines page strikes its whole RNG table through and states \"only Rogue poison disciplines are on Legends.\" — kept, labeled disputed",
     "invocation 'divine': prose BST CLR DRU PAL RNG SHM vs the per-class sections CLR DRU PAL RNG SHM — prose wins",
     "invocation 'empowering': the prose row is headed \"Empower\"; keyed on the client string",
     "invocation 'overchannel': the wiki writes \"Over Channel\" (\"Overchannel\" in the Magician table); keyed on the client string",
@@ -981,6 +3443,10 @@
     "skill 'Feign Death': also a Template:Spellpage spell name with a DIFFERENT class set — resolve skill-ups against skills[] and casts against spells.json; never union them",
     "skill 'Frenzy': also a Template:Spellpage spell name with a DIFFERENT class set — resolve skill-ups against skills[] and casts against spells.json; never union them",
     "skill 'Smite': also a Template:Spellpage spell name with a DIFFERENT class set — resolve skill-ups against skills[] and casts against spells.json; never union them",
-    "skill 'Specialize <school>': the class pages list one row, \"Specialization\", and transclude the five per-school skills the client actually prints — so 1,251 Specialize skill-ups in the real log resolve to no class"
+    "skill 'Specialize <school>': the class pages list one row, \"Specialization\", and transclude the five per-school skills the client actually prints — so 1,251 Specialize skill-ups in the real log resolve to no class",
+    "unlocks ROG: Invocations: a 3-row table names no level+name columns — skipped",
+    "unlocks ROG: Stances: a 6-row table names no level+name columns — skipped",
+    "unlocks WIZ: Other Quests: a 4-row table names no level+name columns — skipped",
+    "unlocks WIZ: Velious Quests: a 3-row table names no level+name columns — skipped"
   ]
 }
