@@ -22,6 +22,123 @@
 !macroend
 
 # ---------------------------------------------------------------------------------------
+# customCheckAppRunning - skip the "app is running" gate under Wine / CrossOver.
+#
+# THE BUG: on macOS + CrossOver the installer dies at "EQ Legends Companion is running.
+# Click OK to close it..." with the app NOT running. The stock check enumerates processes
+# (PowerShell Get-CimInstance, else tasklist) and both are unreliable inside a Wine bottle -
+# zombie/stale bottle processes, a wineserver that still lists an exited image, and a
+# tasklist stub whose output is not the real process table. The user cannot get past it:
+# KILL_PROCESS then cannot kill the thing FIND_PROCESS claims to see, so the retry loop
+# escalates to appCannotBeClosed and Quit. Under Wine the check has no value anyway - the
+# files we are about to overwrite are not actually locked by a phantom.
+#
+# THE HOOK, VERIFIED AGAINST THE INSTALLED app-builder-lib (26.15.7),
+# templates/nsis/include/allowOnlyOneInstallerInstance.nsh:
+#
+#   !macro CHECK_APP_RUNNING
+#     Var /GLOBAL CmdPath / PowerShellPath ... (set here, OUTSIDE the branch)
+#     !ifmacrodef customCheckAppRunning
+#       !insertmacro customCheckAppRunning        <- our body, and NOTHING else
+#     !else
+#       !insertmacro IS_POWERSHELL_AVAILABLE
+#       !insertmacro _CHECK_APP_RUNNING
+#     !endif
+#   !macroend
+#
+# So the hook REPLACES, it does not wrap: defining it drops the entire default body. That
+# is why the ${Else} branch below re-inserts EXACTLY the two macros the !else branch would
+# have, rather than a copied-out body that could drift from the template on an upgrade. On
+# real Windows the emitted code is therefore identical to today's.
+#
+# THE TRAP THAT COMES WITH THE HOOK (same file, lines 5-8):
+#
+#   !ifmacrondef customCheckAppRunning
+#     !include "getProcessInfo.nsh"
+#     Var pid
+#   !endif
+#
+# ...i.e. app-builder-lib assumes a custom check does NOT want the default machinery and
+# stops providing it. But we DO want it on Windows: _CHECK_APP_RUNNING calls
+# ${GetProcessInfo} and KILL_PROCESS reads $pid. Since this file is included in the shared
+# header ABOVE installer.nsi's `!include "allowOnlyOneInstallerInstance.nsh"`, that
+# !ifmacrondef is already false by the time it is evaluated, and without the two lines below
+# the build fails to compile (undefined ${GetProcessInfo} / unknown variable $pid). Both are
+# safe here: getProcessInfo.nsh is self-guarded (GETPROCESSINFO_INCLUDED), resolves through
+# the !addincludedir that NsisTarget emits before our !include, and its own
+# `!ifdef BUILD_UNINSTALLER` picks un._GetProcessInfo in the uninstaller pass - BUILD_UNINSTALLER
+# is a -D define, so it is correct from line 1. It needs nothing from multiUser.nsh/LogicLib,
+# which is the AGENTS.md gotcha this file exists to remember: only TOP-LEVEL code here runs
+# before those are defined. Everything inside a !macro body is expanded at the INSERTION
+# point (inside the install section / un.checkAppRunning), where LogicLib, ${isUpdated},
+# ${APP_EXECUTABLE_FILENAME} and friends all exist.
+!include "getProcessInfo.nsh"
+Var pid
+
+# Probe one registry key for existence WITHOUT reading a value: Wine creates Software\Wine
+# but there is no value under it we can count on, so ReadRegStr would false-negative and
+# EnumRegKey cannot tell "no such key" from "key with no subkeys" (both set the error flag).
+# RegOpenKeyExW answers exactly the question. $R9 is the sticky "is Wine" flag; each probe
+# short-circuits if an earlier one already said yes.
+!macro eqProbeWineRegKey ROOT SAM
+  ${If} $R9 == 0
+    System::Call 'advapi32::RegOpenKeyExW(i ${ROOT}, w "Software\Wine", i 0, i ${SAM}, *i .R8) i .R7'
+    ${If} $R7 == 0
+      System::Call 'advapi32::RegCloseKey(i R8)'
+      StrCpy $R9 1
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+# Belt and braces for a bottle whose registry has been scrubbed: ntdll!wine_get_version is
+# Wine's own advertised "am I Wine" export and exists in every bottle, CrossOver included.
+# GetProcAddress rather than System::Call on the function itself, because a missing export
+# through System::Call has a fuzzier failure mode than a NULL pointer.
+!macro eqProbeWineNtdll
+  ${If} $R9 == 0
+    System::Call 'kernel32::GetModuleHandleW(w "ntdll.dll") i .R8'
+    ${If} $R8 != 0
+      System::Call 'kernel32::GetProcAddress(i R8, m "wine_get_version") i .R7'
+      ${If} $R7 != 0
+        StrCpy $R9 1
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro customCheckAppRunning
+  # Build-time proof the hook fired, same trick as customUnInstall below. Prints once per
+  # makensis pass (installer + uninstaller) with DEBUG=electron-builder. !verbose 4 is
+  # required for !echo to print and is NOT a warning, so -WX stays happy.
+  !verbose push
+  !verbose 4
+  !echo "everquest-companion: customCheckAppRunning inserted (Wine skip + default fallthrough)"
+  !verbose pop
+
+  # $R7/$R8/$R9 only. $R0/$R1 are the default check's scratch and $R9 is re-used by
+  # ${isUpdated} inside it - all of that happens after the branch is decided.
+  StrCpy $R9 0
+  !insertmacro eqProbeWineRegKey 0x80000001 0x00020019  # HKCU, KEY_READ
+  !insertmacro eqProbeWineRegKey 0x80000002 0x00020019  # HKLM, KEY_READ
+  # HKLM\Software is WOW64-redirected for this 32-bit installer; ask for the 64-bit view too
+  # (KEY_WOW64_64KEY, ignored on a 32-bit prefix).
+  !insertmacro eqProbeWineRegKey 0x80000002 0x00020119
+  !insertmacro eqProbeWineNtdll
+
+  ${If} $R9 == 1
+    # No Quit, no MessageBox, no kill: just fall through to the install/uninstall.
+    # DetailPrint is the only trace mechanism the stock check uses too (see $(appClosing)).
+    # oneClick hides the details pane, so this is visible in install.log only when the build
+    # sets ENABLE_LOGGING_ELECTRON_BUILDER (electron-builder.yml
+    # `nsis.customNsisBinary.debugLogging: true`) - i.e. exactly the debug-log case.
+    DetailPrint "Wine/CrossOver detected - skipping the running-app check (process enumeration is not reliable in a bottle). Close EQ Legends Companion yourself if it is open."
+  ${Else}
+    !insertmacro IS_POWERSHELL_AVAILABLE
+    !insertmacro _CHECK_APP_RUNNING
+  ${EndIf}
+!macroend
+
+# ---------------------------------------------------------------------------------------
 # customUnInstall - "keep your settings?" prompt on INTERACTIVE uninstall only.
 #
 # electron-builder.yml keeps `deleteAppDataOnUninstall: false`, so the stock template

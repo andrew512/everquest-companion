@@ -725,6 +725,24 @@
               </p>
             </li>
           </ol>
+          <!-- Mac note: the app is Windows-only, but plenty of people run EQ Legends under
+               CrossOver. Two things bite them — installing into a different bottle than the
+               game (the Companion then cannot see the Logs folder), and the installer's
+               running-app check, which false-positives on Wine's unreliable process list. -->
+          <ul class="steps">
+            <li>
+              <h3 class="section-title">Mac (CrossOver)</h3>
+              <p>
+                The Companion is a Windows app, and it runs under CrossOver alongside the game.
+                Install it into the <strong>same bottle</strong> as EverQuest Legends — that is
+                what lets it find <code>…\EverQuest Legends\Logs\</code> on its own. If the
+                installer claims the app is already running when it is not, force-quit the bottle
+                (CrossOver &rarr; the bottle's <strong>Force Quit</strong>, or
+                <code>wineserver -k</code>) and run it again. From the next release the installer
+                detects Wine and skips that check automatically, so this should stop happening.
+              </p>
+            </li>
+          </ul>
           <p class="cta cta--inline">
             <a
               class="btn btn--ghost"
