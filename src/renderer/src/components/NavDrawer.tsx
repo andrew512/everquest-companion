@@ -54,7 +54,7 @@ const ROWS: NavRow[] = [
   { view: 'loot', label: 'Loot', icon: <ReceiptLongIcon /> },
   // Planner follows Loot for the same reason Loot follows Mobs: it is the third face of one
   // question — what drops it, what did I get, and what am I still farming for.
-  { view: 'planner', label: 'Planner', icon: <AutoAwesomeIcon /> },
+  { view: 'planner', label: 'Planner', icon: <AutoAwesomeIcon />, badge: IN_DEV },
   { view: 'maps', label: 'Maps', icon: <MapIcon /> },
   { view: 'bosses', label: 'Raid Targets', icon: <EmojiEventsIcon /> },
   { view: 'posky', label: 'Plane of Sky', icon: <ShieldMoonIcon /> },
