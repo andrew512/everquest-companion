@@ -68,10 +68,34 @@
 //
 //  zone             Retire ALL instances and clear charm (charm cannot survive a
 //                   zone; matches the engine's existing zone reset).
+//
+//  staleness        A live HOSTILE instance unseen for INSTANCE_STALE_MS is retired the
+//                   next time its name is resolved, so the sighting after the gap spawns a
+//                   FRESH generation. Without it a slot could be pinned live forever:
+//                   death() is the only other retirement, and a same-named mob killed
+//                   off-screen (or despawned, or fled) logs NO death line — so every later
+//                   pull of that name resolved into the corpse's slot and inherited its
+//                   identity, its gen label and its engagement history. PETS ARE EXEMPT: a
+//                   charmed/summoned pet is bound by explicit evidence and may legitimately
+//                   stand quiet for minutes; only death/uncharm/zone retire one.
+//                   `lastSeenTs` is refreshed by EVERY presence observation, not only by
+//                   damage (see noteSeen + EngineState.notePresence), so the world model
+//                   ages an instance out on exactly the evidence evalClosure() calls
+//                   presence.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { idKey } from '../log/parser'
+import { PRESENCE_GONE_MS } from './encounter'
 import { isLeftBehindOnZone, type PetKind } from './entityRules'
+
+/**
+ * How long a LIVE hostile instance may go completely unobserved before its slot is eligible
+ * for retirement. Deliberately the SAME number as the encounter layer's PRESENCE_GONE_MS: an
+ * instance the closure logic has already written off as "gone" is precisely the one whose
+ * identity a later sighting must not inherit, so the two horizons agree by construction
+ * rather than by coincidence.
+ */
+export const INSTANCE_STALE_MS = PRESENCE_GONE_MS
 
 /**
  * How an instance became your pet:
@@ -220,6 +244,7 @@ export class WorldModel {
       }
     }
     const key = idKey(name)
+    this.retireStale(key, ts)
     const act = this.active(key)
     if (act.length === 0) {
       return this.spawn(key, name, ts)
@@ -237,6 +262,37 @@ export class WorldModel {
     return inst
   }
 
+  /**
+   * PER-INSTANCE STALENESS (see the header). Retire every live HOSTILE instance of `nameKey`
+   * that has gone INSTANCE_STALE_MS without a single observation, so the caller's sighting
+   * spawns a fresh generation instead of reviving a mob nobody has seen.
+   *
+   * Twin-safe: it walks the whole active list, so a pull where one twin died off-screen and
+   * the other is still swinging retires only the silent one — the survivor keeps being
+   * refreshed by resolve()/noteSeen() and stays exactly where it was. And because pets are
+   * skipped, noteTwinEvidence()'s pet-plus-hostile pairing is untouched: the hostile half it
+   * spawns is refreshed by the very damage that proved it exists.
+   */
+  private retireStale(nameKey: string, ts: number): void {
+    for (const inst of this.byName.get(nameKey) ?? []) {
+      if (inst.retired || inst.charmed) continue
+      if (ts - inst.lastSeenTs >= INSTANCE_STALE_MS) this.retire(inst, ts)
+    }
+  }
+
+  /**
+   * Record that `name` was observed at `ts` WITHOUT resolving or spawning anything — the
+   * world-model half of the encounter's presence axis (misses, resists, CC, heals). It only
+   * refreshes instances that already exist, so a whiff at a mob we have never damaged still
+   * has zero world-model side effects (AGENTS.md law 8, the same guarantee notePresence and
+   * defenderLabel make).
+   */
+  noteSeen(name: string, ts: number): void {
+    for (const inst of this.byName.get(idKey(name)) ?? []) {
+      if (!inst.retired && ts > inst.lastSeenTs) inst.lastSeenTs = ts
+    }
+  }
+
   /** Look up the charmed pet instance for a name (attribution helper). */
   petInstance(name: string): Instance | undefined {
     return this.charmedActive(idKey(name))
@@ -248,6 +304,8 @@ export class WorldModel {
    */
   charm(name: string, ts: number): Instance {
     const key = idKey(name)
+    // A slot nobody has seen for INSTANCE_STALE_MS is not the mob we just charmed.
+    this.retireStale(key, ts)
     // Bind an existing lone hostile instance only if there's exactly one active
     // instance and it isn't already charmed — no evidence of a second twin yet.
     const act = this.active(key)
@@ -277,6 +335,7 @@ export class WorldModel {
    */
   claim(name: string, ts: number): Instance {
     const key = idKey(name)
+    this.retireStale(key, ts)
     const existing = this.active(key).find((i) => i.charmed)
     if (existing) {
       existing.lastSeenTs = ts

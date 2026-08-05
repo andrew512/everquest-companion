@@ -21,6 +21,7 @@ import {
 } from './encounter'
 import { idKey } from '../log/parser'
 import { StateTimeline } from './stateTimeline'
+import { CharmModel } from './charmModel'
 import type { RecentCasts } from './procDetect'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 
@@ -33,6 +34,34 @@ export class EngineState {
    *  distinction lives on WorldModel Instance.petKind — see world.charmedInstances(). */
   petNames = new Set<string>()
   world = new WorldModel()
+  /**
+   * OWNERSHIP for the two caster-less broadcasts (`<mob> has been charmed.` /
+   * `<mob> has been mesmerized.`) — see charmModel.ts for the state table and the
+   * measurements. Nothing enters `petNames` from a charm line, and no CC hold opens, unless
+   * this model says the broadcast resolved one of the OWNER's own casts.
+   */
+  charm = new CharmModel()
+  /**
+   * Canonical name keys of entities known to be PLAYERS — never hostiles, never a pet's
+   * target, never enemy healers. TWO sources, both narrow on purpose:
+   *   - the tailed character (injected by setPlayerName, or learned by learnPlayerKey);
+   *   - anyone who HEALED the owner (`<H> healed Primitive for N`) — a mob cannot.
+   *
+   * HONEST LIMIT, stated rather than pretended away: a stranger who never heals you is NOT
+   * identifiable as a player from this log's grammar. The lines that would say so —
+   * `<Name> tells <chan>, '…'`, `/who` rows, group join/leave — are exactly the ones
+   * tests/fixture-scrub.mjs drops, and mobs share every remaining shape: they melee, they
+   * cast, and they self-heal with the same `healed itself/himself/herself` wording (211
+   * distinct `itself` healers in the real log, players and `a shadowknight pet` alike). The
+   * obvious extra inference — "`You healed <X>` ⇒ X is a player" — was tried and MEASURED
+   * WRONG; see routeHeal for what it cost. So this set is the belt beside the braces: what
+   * actually keeps a stranger out of your fight is the charm gate plus the engage/presence
+   * discipline in routing.ts.
+   */
+  knownPlayers = new Set<string>()
+  /** Every name key that has EVER been one of your pets this session. Small, never pruned,
+   *  and the reason `notePlayer` can never mistake a pet for a player (see notePet). */
+  everPet = new Set<string>()
   /** The player's own proper name key (e.g. "primitive"). Normally INJECTED by
    *  index.ts via setPlayerName() (it knows the character from the tail ref). As a
    *  cheap fallback (guards a mis-parsed injected name) it can also be LEARNED from
@@ -136,11 +165,15 @@ export class EngineState {
   setPlayerName(name: string): void {
     this.playerKey = idKey(name)
     this.playerKeyInjected = true
+    this.knownPlayers.add(this.playerKey)
   }
 
   reset(): void {
     this.petNames.clear()
+    this.everPet.clear()
     this.world.reset()
+    this.charm.reset()
+    this.knownPlayers.clear()
     this.playerKey = undefined
     this.playerKeyInjected = false
     this.zone = undefined
@@ -220,17 +253,76 @@ export class EngineState {
     const enc = this.current
     if (!enc) return
     const key = idKey(name)
+    if (this.isKnownPlayer(key)) return
+    // Keep the WORLD's per-instance clock in lockstep with the encounter's presence axis, so
+    // the staleness retirement in WorldModel.resolve() ages an instance out on exactly the
+    // same evidence evalClosure() uses to call it gone (see world.ts INSTANCE_STALE_MS).
+    this.world.noteSeen(key, ts)
     for (const id of enc.engaged) {
       const hash = id.lastIndexOf('#')
       if (hash > 0 && id.slice(0, hash) === key) this.notePresenceId(enc, id, ts)
     }
   }
 
-  /** Presence refresh for an already-resolved engaged instanceId (see notePresence). */
+  /**
+   * Presence refresh for an already-resolved engaged instanceId (see notePresence).
+   *
+   * PRESENCE DISCIPLINE (Task #65): a refresh may only ever describe a HOSTILE we are
+   * fighting. Two entities can never be refreshed here, because keeping the fight alive on
+   * their account is what let a stranger's 214-second brawl swallow three of the owner's
+   * pulls: a KNOWN PLAYER (never a hostile) and a LIVE PET of ours (never something we are
+   * killing — hostilePresence() already skips it, and refreshing it is meaningless).
+   */
   notePresenceId(enc: Encounter, instanceId: string, ts: number): void {
     if (!enc.engaged.has(instanceId)) return
+    if (this.world.isLivePet(instanceId)) return
+    const hash = instanceId.lastIndexOf('#')
+    if (hash > 0 && this.isKnownPlayer(instanceId.slice(0, hash))) return
     const prev = enc.engagedSeen.get(instanceId)
     if (prev === undefined || ts > prev) enc.engagedSeen.set(instanceId, ts)
+  }
+
+  /** True when `nameKey` is a player (the owner, or someone the heal stream tied to them). */
+  isKnownPlayer(nameKey: string): boolean {
+    return nameKey === 'you' || this.knownPlayers.has(nameKey)
+  }
+
+  /**
+   * Record player-shaped evidence for a name (see knownPlayers for what counts and why).
+   *
+   * A PET IS NEVER A PLAYER, and the guard is absolute in both directions: a name that is or
+   * has ever been one of your pets — or that any charm broadcast has ever named — can never be
+   * filed here, and `notePet` below evicts a name the moment it becomes a pet. Getting this
+   * wrong is expensive and silent: a "player" is excluded from `engaged`, from enemy healing,
+   * and from a pet's target set, so one bad entry deletes real damage with no error anywhere.
+   */
+  notePlayer(nameKey: string | null | undefined): void {
+    if (!nameKey || nameKey === 'you') return
+    if (this.everPet.has(nameKey) || this.charm.everCharmed(nameKey)) return
+    this.knownPlayers.add(nameKey)
+  }
+
+  /** Bind `nameKey` into the attribution set. THE one door, so "was this ever a pet?" has a
+   *  single answer and a player can never shadow one. */
+  notePet(nameKey: string): void {
+    this.petNames.add(nameKey)
+    this.everPet.add(nameKey)
+    this.knownPlayers.delete(nameKey)
+  }
+
+  /**
+   * DEMOTE the charm binds whose corroboration window has closed (charmModel's PROVISIONAL_MS).
+   * Driven by the log clock — called once per ingested event and once per snapshot(now) — so a
+   * replay and a live tail demote at exactly the same instants. Cheap: the guard is a
+   * `Map.size === 0` read, and the map holds at most a handful of names.
+   */
+  sweepCharm(now: number): void {
+    if (this.charm.idle) return
+    for (const d of this.charm.sweep(now)) {
+      this.world.uncharm(d.display, now)
+      this.petNames.delete(d.nameKey)
+      this.log(now, 'charm', 'dropped', `✕ ${d.display}: charm bind never corroborated — unbound`)
+    }
   }
 
   /**
@@ -250,6 +342,7 @@ export class EngineState {
     ) {
       this.playerKey = tKey
     }
+    if (this.playerKey !== undefined) this.knownPlayers.add(this.playerKey)
   }
 
   /** True if `nameKey` currently resolves to an engaged hostile instance. */

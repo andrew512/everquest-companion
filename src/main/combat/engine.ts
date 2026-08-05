@@ -12,11 +12,16 @@
 //
 // Transitions (one per ingested line — see ingest.ts):
 //   zone     → finalize current, reset zoneAgg
-//   charm    → petNames.add(mob)  (`<mob> has been charmed.` — only the charmer sees it)
+//   charm    → petNames.add(mob) ONLY when charmModel.ts says the broadcast resolved one of
+//              YOUR OWN casts. `<mob> has been charmed.` is a caster-less BROADCAST the whole
+//              zone sees (it is the spell DB's msg_cast_on_other), so an unarmed one is
+//              another player's pet and is dropped.
 //   petClaim → petNames.add(name) (`<Name> told you, '… Master.'` — the ONLY binding
-//              signal for a random-named SUMMONED class pet; charmed mobs send it too)
+//              signal for a random-named SUMMONED class pet; charmed mobs send it too, and
+//              it PROMOTES a name we saw charmed but declined to bind)
 //   uncharm/death(charm spell/mob death) → petNames.delete(mob)
-//   cc     → mark the mob's instance engaged + CC-held (mez/root keep-alive)
+//   cc     → mark the mob's instance engaged + CC-held (mez/root keep-alive) — same ownership
+//            gate: a foreign mez broadcast is inert.
 //   damage → route to current encounter + zoneAgg (see routing.ts route())
 //
 // Attribution rule (damage `A → B` for N) — routing.ts classify():
@@ -194,6 +199,8 @@ export class CombatEngine {
     // Encounters can close purely from elapsed time (death-linger / fallback). A
     // snapshot may be the first observation after that threshold, so evaluate the
     // deferred closure here (stamped at the encounter's own lastTs, not `now`).
+    // An uncorroborated charm bind expires on the same wall clock (Task #65).
+    this.st.sweepCharm(now)
     evalClosure(this.st, now)
     const st = this.st
     const combinePets = opts.combinePets ?? false

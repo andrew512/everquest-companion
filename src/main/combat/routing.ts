@@ -36,8 +36,19 @@ export type Attribution =
  *      pet) — attribute to the pet and flag it.
  *   pet-name → other : pet outgoing (existing rule).
  *   You → other : outgoing.  other → You : incoming.  else ignore.
+ *   pet-name → a KNOWN PLAYER : IGNORE (Task #65) — see below.
+ *
+ * `knownPlayers` (optional; empty by default so every existing caller is unchanged) is the
+ * set of name keys proven to be players. A pet swinging at a PLAYER is not our fight: either
+ * the "pet" was never ours, or this is a duel. Booking it would credit us the damage AND — via
+ * routeOutgoingDamage — enter that player into `engaged` as a hostile, which is exactly how a
+ * stranger became the owner's enemy and kept three of his pulls from ever closing.
  */
-export function classify(ev: DamageEvent, petNames: ReadonlySet<string>): Attribution {
+export function classify(
+  ev: DamageEvent,
+  petNames: ReadonlySet<string>,
+  knownPlayers: ReadonlySet<string> = new Set()
+): Attribution {
   const aKey = idKey(ev.attacker)
   const bKey = idKey(ev.target)
   const aYou = aKey === 'you'
@@ -52,6 +63,7 @@ export function classify(ev: DamageEvent, petNames: ReadonlySet<string>): Attrib
   if (aPet) {
     // Your pet is the attacker.
     if (bYou) return { kind: 'incoming' } // pet-name → You is always incoming
+    if (knownPlayers.has(bKey)) return { kind: 'ignore' } // …but never AT a player
     const ambiguous = aKey === bKey // same-name twin: can't tell pet from twin
     return { kind: 'out-pet', petKey: aKey, petName: ev.attacker, ambiguous }
   }
@@ -74,6 +86,22 @@ function outSource(st: EngineState, attacker: string, isYou: boolean, ts: number
   return { id: `pet:${petInst.instanceId}`, name: st.world.label(petInst), kind }
 }
 
+/**
+ * Engage an instance as a HOSTILE of this encounter — the one door into `enc.engaged`, and
+ * therefore the one thing that can veto closure (see lifecycle.hostilePresence).
+ *
+ * A KNOWN PLAYER never walks through it (Task #65). `engaged` membership is what
+ * `hostilePresence` polls for "is anything still alive in this fight", so a player — who does
+ * not die on our schedule and whose every heal used to refresh his own presence — could hold a
+ * pull open indefinitely. Measured: one such entry merged three of the owner's pulls into a
+ * single 214-second segment.
+ */
+function engageHostile(st: EngineState, enc: Encounter, inst: { instanceId: string; nameKey: string }, ts: number): void {
+  if (st.isKnownPlayer(inst.nameKey)) return
+  enc.engaged.add(inst.instanceId)
+  enc.engagedSeen.set(inst.instanceId, ts)
+}
+
 /** A hostile (or the pet) hit YOU. Resolve the attacker to an instance so twins are
  *  distinct in the incoming list, and lane the instant under the attacker's skill. */
 function routeIncomingDamage(st: EngineState, enc: Encounter, ev: DamageEvent): void {
@@ -82,8 +110,7 @@ function routeIncomingDamage(st: EngineState, enc: Encounter, ev: DamageEvent): 
   const name = st.world.label(attInst)
   enc.agg.addInc(id, name, ev)
   st.zoneAgg.addInc(id, name, ev)
-  enc.engaged.add(id)
-  enc.engagedSeen.set(id, ev.ts)
+  engageHostile(st, enc, attInst, ev.ts)
   // Timeline: an incoming instant lanes under the attacker's skill (its own row).
   st.pushTimeline(enc, {
     ts: ev.ts, lane: ev.skill, category: ev.category, amount: ev.amount,
@@ -100,6 +127,8 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
     // The pet is trading blows with its target — record that engagement for the
     // death-disambiguation rule (case 2b).
     st.world.notePetEngagement(ev.attacker, idKey(ev.target))
+    // A pet LANDING a hit is pet-shaped evidence (see the routeMiss/routeResist twins).
+    if (at.kind === 'out-pet') st.charm.notePetEvidence(at.petKey)
   }
   const ambiguous = at.kind === 'out-pet' && at.ambiguous
   // POISON-TYPED DAMAGE (Task #64): the game states the damage TYPE on every typed spell
@@ -120,8 +149,7 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
   enc.agg.bumpTarget(tgtId, tgtName, ev.amount)
   st.zoneAgg.addOut(src, ev, ambiguous)
   st.zoneAgg.bumpTarget(tgtId, tgtName, ev.amount)
-  enc.engaged.add(tgtId)
-  enc.engagedSeen.set(tgtId, ev.ts)
+  engageHostile(st, enc, tgtInst, ev.ts)
   // LIVE-name tracking (Task #54): the current fight is named after whatever you're
   // presently swinging at (most recent outgoing target). Finalize switches to the
   // largest target (encounterName()); until then this drives the live label.
@@ -142,7 +170,7 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
 
 export function route(st: EngineState, ev: DamageEvent): void {
   if (ev.amount <= 0) return
-  const at = classify(ev, st.petNames)
+  const at = classify(ev, st.petNames, st.knownPlayers)
   if (at.kind === 'ignore') return
 
   // Twin evidence: You→pet-name or same-name→same-name proves a hostile twin
@@ -185,6 +213,9 @@ function routeOutgoingMiss(
   isYou: boolean
 ): void {
   const src = outSource(st, probe.attacker, isYou, probe.ts)
+  // A pet WHIFFING is every bit as much proof it is fighting for us as a landed hit
+  // (charmModel.ts corroboration — see routeOutgoingDamage's twin).
+  if (!isYou) st.charm.notePetEvidence(idKey(probe.attacker))
   enc?.agg.addOutMiss(src, probe.mtype, 'Melee')
   st.zoneAgg.addOutMiss(src, probe.mtype, 'Melee')
   // Timeline: a miss tick lanes under "Melee" (hollow/red mark in the renderer). The
@@ -209,7 +240,7 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     ts, attacker, target, amount: 0, dtype: 'melee', skill: 'Melee', crit: false,
     category: 'melee', modifiers: []
   }
-  const at = classify(probe, st.petNames)
+  const at = classify(probe, st.petNames, st.knownPlayers)
   if (at.kind === 'ignore') return
   // A miss doesn't open or extend an encounter (closure is death/CC/fallback driven),
   // but it attaches to the in-progress fight if one is fresh (so hit% is per-fight).
@@ -250,6 +281,9 @@ function routeOutgoingResist(
   isYou: boolean
 ): void {
   const src = outSource(st, cast.caster, isYou, cast.ts)
+  // Same corroboration as the damage/miss twins: a pet whose spell got resisted was casting
+  // for us.
+  if (!isYou) st.charm.notePetEvidence(idKey(cast.caster))
   enc?.agg.addOutResist(src, cast.spell, cast.category)
   st.zoneAgg.addOutResist(src, cast.spell, cast.category)
   // Same instance resolution as the miss/damage paths (see defenderLabel) — a resisted
@@ -348,6 +382,11 @@ function addFriendlyHeal(st: EngineState, r: HealRouting): void {
 
 /** Heal on a hostile instance we're currently engaged with → enemy healing. */
 function addHostileHeal(st: EngineState, r: HealRouting): void {
+  // A KNOWN PLAYER is never a hostile, so their heals are never "enemy healing" (Task #65).
+  // engageHostile() already keeps them out of `engaged`, which makes this unreachable for a
+  // player the heal stream identified; it is stated anyway because the two rules answer the
+  // same question and must not be able to disagree.
+  if (st.isKnownPlayer(idKey(r.target))) return
   const inst = st.world.resolve(r.target, r.ts)
   const enc = st.current
   if (enc?.engaged.has(inst.instanceId)) {
@@ -369,6 +408,33 @@ function addHostileHeal(st: EngineState, r: HealRouting): void {
     st.notePresenceId(enc, inst.instanceId, r.ts)
     if (r.healerName) st.notePresence(r.healerName, r.ts)
   }
+}
+
+/**
+ * WHAT ONE HEAL LINE PROVES ABOUT WHO IS WHO (Task #65) — read off the same line the meter is
+ * about to aggregate, before any of the routing decisions consume it.
+ *
+ * KNOWN-PLAYER evidence, ONE direction only: a heal LANDING ON THE OWNER names its healer as a
+ * friendly player. `<H> healed Primitive for N` cannot come from a mob.
+ *
+ * THE OTHER DIRECTION WAS TRIED AND MEASURED WRONG. "`You healed <X>` ⇒ X is a player" reads as
+ * obvious and is false in this log: the owner keeps his PETS alive by name, so a full replay
+ * filed 33 entities as players — `a sprited harpie`, `a fire giant warrior`, `an ice giant
+ * priest`, and every summoned pet he had ever healed before its first `… Master.` tell (Garer,
+ * Vebarn, Xeneker, …). Because a "player" is never a hostile and never a pet's target, that
+ * silently deleted 50k+ points of real pet damage, 14,464 of it from one pet hitting another.
+ * EngineState.notePlayer keeps the belt (it refuses anything that is or ever was a pet), but
+ * the honest fix is not to make the claim at all.
+ *
+ * PET evidence, the other way round: the owner healing something he is already treating as a
+ * pet corroborates a charm bind that is still provisional (charmModel.ts).
+ */
+function noteHealEvidence(
+  st: EngineState,
+  f: { healerKey: string | null; tKey: string; isYouTgt: boolean; isPetTgt: boolean; isPlayerTgt: boolean }
+): void {
+  if ((f.isYouTgt || f.isPlayerTgt) && f.healerKey !== null) st.notePlayer(f.healerKey)
+  if (f.healerKey === 'you' && f.isPetTgt) st.charm.notePetEvidence(f.tKey)
 }
 
 /**
@@ -398,6 +464,8 @@ export function routeHeal(st: EngineState, ev: HealEvent): void {
 
   st.learnPlayerKey(healerKey, tKey, isYouTgt, isPetTgt)
   const isPlayerTgt = st.playerKey !== undefined && tKey === st.playerKey
+
+  noteHealEvidence(st, { healerKey, tKey, isYouTgt, isPetTgt, isPlayerTgt })
 
   const r: HealRouting = { ts, target, healerKey, healerName, heal }
   if (isYouTgt || isPetTgt || isPlayerTgt) {

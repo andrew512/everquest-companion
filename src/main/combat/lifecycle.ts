@@ -87,35 +87,47 @@ function hostilePresence(st: EngineState, enc: Encounter, now: number): { hostil
  * `now`, so startTs/lastTs/duration reflect the real fight, not the eval moment.
  *
  * Rules:
- *  - CC-hold: if any engaged instance is still CC-held (ccActiveUntil > now), keep
- *    OPEN regardless of gaps (the mez-and-wait case).
+ *  - CC-hold: if any engaged instance is still CC-held (ccActiveUntil > now), veto the
+ *    DEATH-CLOSE (a mez'd mob is alive, and the mez-and-wait gap is not the end of a pull).
  *  - Death-close: once every engaged hostile instance is GONE — retired (dead/zoned),
  *    or alive but unseen for PRESENCE_GONE_MS — and LINGER_MS has passed since the last
  *    attributed DAMAGE, finalize.
  *  - Fallback: if no attributed damage AND no CC for FALLBACK_IDLE_MS (fled/deagro,
- *    no death logged), finalize.
+ *    no death logged), finalize — and this path is NOT vetoed by a hold (see below).
+ *
+ * THE HOLD IS A VETO ON ONE PATH, NOT ON CLOSURE (Task #65). CC_HOLD_MS (120s) deliberately
+ * exceeds FALLBACK_IDLE_MS (60s), and the hold used to short-circuit this whole function — so
+ * ONE stale hold defeated EVERY closure path and pinned the fight open for two full minutes of
+ * silence. The semantics shipped instead: a hold vetoes only the death-close, because that is
+ * the judgement it actually informs ("is this engaged instance still alive?"). The fallback is
+ * a different question — "has anything at all happened?" — and a CC application or refresh
+ * stamps `lastActivityTs`, so an ACTIVELY refreshed mez still holds the fight open exactly as
+ * before (its own refreshes keep `sinceActivity` small). What can no longer happen is a single
+ * unrefreshed hold outliving a minute of total silence.
  */
 export function evalClosure(st: EngineState, now: number): void {
   const enc = st.current
   if (!enc) return
 
-  // CC-hold: any engaged instance still under an unexpired CC hold keeps it open.
+  const sinceDamage = now - enc.lastTs
+  const sinceActivity = now - st.lastActivityTs
+
+  // Fallback: no damage and no CC for the idle window (mob fled / deaggroed). Evaluated
+  // FIRST, so it is reachable regardless of any outstanding hold.
+  if (sinceActivity >= FALLBACK_IDLE_MS) {
+    finalizeCurrent(st)
+    return
+  }
+
+  // CC-hold: any engaged instance still under an unexpired CC hold vetoes the death-close.
   for (const until of enc.ccActiveUntil.values()) {
     if (until > now) return
   }
 
   const { hostiles, allGone } = hostilePresence(st, enc, now)
 
-  const sinceDamage = now - enc.lastTs
-  const sinceActivity = now - st.lastActivityTs
-
   // Death-close: every engaged hostile is dead/gone and the linger has elapsed.
   if (allGone && hostiles > 0 && sinceDamage >= LINGER_MS) {
-    finalizeCurrent(st)
-    return
-  }
-  // Fallback: no damage and no CC for the idle window (mob fled / deaggroed).
-  if (sinceActivity >= FALLBACK_IDLE_MS) {
     finalizeCurrent(st)
   }
 }

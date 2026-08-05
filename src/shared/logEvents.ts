@@ -263,7 +263,21 @@ export interface ResistEvent extends LogEventBase {
   incoming: boolean
 }
 
-/** `<mob> has been charmed.` — pet on (only the charmer sees this). */
+/**
+ * `<mob> has been charmed.` — a charm LANDED on that mob.
+ *
+ * IT IS A BROADCAST AND IT NAMES NO CASTER. (The old comment here claimed "only the charmer
+ * sees this"; that was measured FALSE in 2026-08-04. The text is the spell DB's own
+ * `msg_cast_on_other` — the wiki records it verbatim as `Someone has been charmed.` for Charm,
+ * Beguile, Allure, Cajoling Whispers, Dictate and Boltran's Agacerie — so every player in
+ * earshot gets the line when ANY of them charms anything. Whole-log counts: 381 of these, of
+ * which 15 were cast by ten other players, and one stranger's charm block put 91 hits /
+ * 10,016 points of his pet's damage onto the owner's meter.)
+ *
+ * So this event means "a charm landed on <mob>", NOT "you charmed <mob>". Ownership is decided
+ * downstream by correlating it with the owner's own `castBegin` — see
+ * src/main/combat/charmModel.ts, which owns that judgement and its measurements.
+ */
 export interface CharmEvent extends LogEventBase {
   kind: 'charm'
   mob: string

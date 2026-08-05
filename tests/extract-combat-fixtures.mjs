@@ -196,6 +196,60 @@ slice(1100627, 1100792, 'w35-poison-coats.log')
 // is exactly the LIVE case the meter's "slow: not landed" chip has to render honestly.
 slice(1100793, 1102500, 'w36-poison-slow-timing.log')
 
+// ---------------------------------------------------------------------------
+// CHARM OWNERSHIP (Task #65) — the two windows behind the charm world model.
+//
+// `<mob> has been charmed.` is a BROADCAST: the whole zone sees it and it names NO caster
+// (it is the msgCastOnOther of Charm/Beguile/Allure/Cajoling Whispers/Dictate/Boltran's
+// Agacerie, and the wiki records it as "Someone has been charmed."). The engine used to bind
+// every one of them into `petNames`, so ANOTHER enchanter's pet became the owner's. These two
+// windows are the negative and the positive case, cut from the same real log.
+// ---------------------------------------------------------------------------
+
+// W44 A FOREIGN CHARM MUST NOT BIND, AND A PLAYER IS NEVER A HOSTILE (Tue Aug 04 16:58:32 →
+// 17:05:30, raw 1256800..1259685). The user's reported segment: "Champion of Innoruuk (12) +3"
+// swallowing three separate pulls. Hand-read beats:
+//   16:59:26  `Scooba begins casting Allure VII.` (unparsed — third-party casts have no event)
+//   16:59:27  `a Knight of Innoruuk has been charmed.` — ANOTHER PLAYER's charm. The owner is
+//             idle (his last swing was 16:48:45) and has cast no charm spell in this window at
+//             all, so nothing here may bind.
+//   16:59:34→ `Scooba begins casting Mesmerization VI.` then TWO foreign mez broadcasts at
+//             16:59:35 — the CC half of the same defect (each set a 120s ccActiveUntil hold).
+//   16:59:43  `an elite dragoon has been charmed.` — a second foreign charm.
+//   16:59:51→ Scooba and his charmed Knight trade blows with the rest of the camp for ~90s.
+//             Pre-fix, EVERY `A Knight of Innoruuk <verb> Scooba` line was booked as the
+//             owner's pet damage (measured 153 hits / 13,866 points) and entered the PLAYER
+//             Scooba into `enc.engaged` as a hostile.
+//   17:00:10, :23, :25, :33  `Scooba healed itself …` — booked as ENEMY healing, and each one
+//             refreshed Scooba's presence so the pull could never close.
+//   17:00:55  `Auto attack is on.` — the OWNER's first pull opens (a Disciple of Innoruuk),
+//             slain 17:01:39.
+//   17:01:43  second pull (a Champion of Innoruuk), slain 17:03:09 — 14s after the Disciple.
+//   17:03:23  third pull (a Champion of Innoruuk), slain 17:05:08 — 23s after the second.
+//   Both gaps are far under FALLBACK_IDLE_MS (60s), so the ONLY thing that can separate these
+//   three pulls is the death-close — which needs every engaged hostile gone. Scooba (alive,
+//   self-healing, never dying) vetoed it forever.
+// The window ends on the loot line of the last kill (17:05:08); the next owner swing is over
+// three minutes later, so the final pull's closure is entirely the test's to observe.
+slice(1256800, 1259658, 'w44-foreign-charm-player-hostile.log')
+
+// W45 AN OWNER-CAST CHARM STILL BINDS (Tue Jul 28 16:47:14 → 16:49:12, raw 213988..214240) —
+// the positive case, from the owner's enchanter epoch. Everything the model needs to say YES
+// is here, and the timings are the ones the arm window was measured against:
+//   16:47:33  `You begin casting Charm.` (Charm's DB cast time is 2400 ms)
+//   16:47:35  `a kodiak has been charmed.`            → +2s: inside the arm, BIND
+//   16:47:41  `Your Charm spell has worn off of a kodiak.` → unbind, 6s later, with no pet
+//             damage and no Master tell in between. This is the 8%-of-binds case that proves
+//             a bind may NOT require corroboration to have been real.
+//   16:48:00  `You begin casting Charm.`
+//   16:48:03  `a kodiak has been charmed.`            → +3s: still inside the arm, BIND
+//   16:48:05  `A kodiak told you, 'Attacking a Dervish Cutthroat Master.'` — the corroboration
+//             that promotes the bind to CONFIRMED.
+//   16:48:03→ the pet kills a Dervish Cutthroat (16:48:23) and a black bear (16:48:55), then
+//             tanks an orc legionnaire to its death at 16:49:10 — all of it attributed to the
+//             owner as PET damage, which is exactly what must survive the gating.
+slice(213988, 214240, 'w45-owner-charm-bind.log')
+
 // W37 DISPEL VARIANTS ARE NOT A ROGUE PROC (Mon Aug 03 00:38:18 → 00:40:02, raw
 // 1095620..1096030) — the Efreeti Lord Djarn kill, cut because it is the densest dispel
 // window in the log and because it sits BEFORE the poison session (the first coat is at

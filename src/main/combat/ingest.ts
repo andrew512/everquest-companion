@@ -5,6 +5,8 @@
 //   ingestWorld    — epoch / zone / charm / petClaim / uncharm / cc / death: the entity and
 //                    segmentation lifecycle.
 //   ingestCombat   — damage / heal / mitigation / miss / resist: the meter itself.
+//   ingestCast     — castBegin / fizzle / interrupt: the own-cast lifecycle both ownership
+//                    inferences (cast-less procs, charm/CC binding) run off.
 //   ingestModifier — stance / invocation / coats / procs / dispel landings: annotations.
 //
 // The families are disjoint on `ev.kind`, so the chain is exactly the old switch: each tries
@@ -30,12 +32,14 @@ import type { WindowFold } from './procWindows'
 import type { EngineState } from './state'
 import type {
   CcEvent,
+  CharmEvent,
   DamageEventE,
   DeathEvent,
   HealEvent,
   LogEvent,
   MissEvent,
-  MitigationEvent
+  MitigationEvent,
+  PetClaimEvent
 } from '../../shared/logEvents'
 
 /**
@@ -43,8 +47,20 @@ import type {
  * ts first (a CC on a fresh pull shouldn't attach to a stale fight), then
  * mark the CC'd instance engaged + CC-held so the encounter stays OPEN across
  * the mez-and-wait gap. A CC'd instance counts as "alive" for closure.
+ *
+ * OWNERSHIP GATE (Task #65). `<mob> has been mesmerized.` is a BROADCAST with no caster
+ * (charmModel.ts has the measurements), so an APPLICATION only counts when it resolved one of
+ * the owner's own CC casts. A foreign mez is fully INERT here — it does not engage the mob, it
+ * does not open a hold, and it does not touch `lastActivityTs`; a stranger's crowd control is
+ * an observation about the room, not an event in our fight. The REFRESH shape is exempt by
+ * construction: it is derived from `Your <spell> spell has worn off of <mob>`, which only the
+ * caster sees and which names us as that caster.
  */
 function ingestCc(st: EngineState, ev: CcEvent): void {
+  if (!ev.refresh && !st.charm.ccBroadcast(ev.ts)) {
+    st.log(ev.ts, 'cc', 'dropped', `✜ CC on ${ev.mob} — not ours (no own cast to resolve)`)
+    return
+  }
   evalClosure(st, ev.ts)
   const inst = st.world.resolve(ev.mob, ev.ts)
   if (inst.instanceId === 'you') return
@@ -57,13 +73,57 @@ function ingestCc(st: EngineState, ev: CcEvent): void {
   st.log(ev.ts, 'cc', 'info', `✜ CC ${tag}: ${st.world.label(inst)}${ev.spell ? ` (${ev.spell})` : ''}`)
 }
 
+/**
+ * `<mob> has been charmed.` — THE OWNERSHIP GATE (Task #65). The line is a BROADCAST and names
+ * no caster, so it binds ONLY when it resolved one of the owner's own charm casts
+ * (charmModel.ts holds the state table and the whole-log measurement). A foreign charm is
+ * remembered as an observation — nothing else — so it stays available to the petClaim PROMOTE
+ * path and never enters the attribution set.
+ */
+function ingestCharm(st: EngineState, ev: CharmEvent): void {
+  const key = idKey(ev.mob)
+  if (st.charm.charmBroadcast(key, ev.mob, ev.ts) === 'foreign') {
+    st.log(ev.ts, 'charm', 'dropped', `⚡ ${ev.mob} charmed by someone else — not your pet`)
+    return
+  }
+  const inst = st.world.charm(ev.mob, ev.ts)
+  st.notePet(key)
+  st.log(ev.ts, 'charm', 'info', `⚡ charmed ${st.world.label(inst)} [${inst.instanceId}]`)
+}
+
+/**
+ * `<Name> told you, '… Master.'` — a pet addressed you as master, so the named entity is your
+ * pet. Ownership-DEFINITIVE and pet-only (no player has ever produced the line), which is why
+ * it also PROMOTES: a name we saw charmed but declined to bind (no own cast behind the
+ * broadcast) is bound HERE, and bound as CHARMED rather than summoned — AGENTS.md's rule that
+ * a claim tell from a name ever seen charmed re-arms the charmed set, never the permanent one.
+ *
+ * Otherwise it binds a SUMMONED pet (idempotent; a charmed mob sends this tell too — the real
+ * log shows both — and world.claim() leaves an already-charmed instance's petKind alone, so a
+ * charmed pet is never reclassified as summoned). This is the ONLY binding signal for
+ * random-named class pets. It adds the name to the ATTRIBUTION set only.
+ */
+function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
+  const key = idKey(ev.name)
+  const promote = !st.world.petInstance(ev.name) && st.charm.claimIsCharmed(key, ev.ts)
+  const inst = promote ? st.world.charm(ev.name, ev.ts) : st.world.claim(ev.name, ev.ts)
+  st.notePet(key)
+  // The tell is also the corroboration a provisional charm bind was waiting for.
+  st.charm.notePetEvidence(key)
+  const what = promote ? 'charm claim' : 'pet claim'
+  st.log(ev.ts, promote ? 'charm' : 'pet', 'info', `⚡ ${what} ${st.world.label(inst)} [${inst.instanceId}]`)
+}
+
 function ingestDeath(st: EngineState, ev: DeathEvent): void {
   const key = idKey(ev.name)
   const killerKey = ev.bySelf ? 'you' : ev.killer ? idKey(ev.killer) : undefined
   const res = st.world.death(ev.name, ev.ts, killerKey)
   // Keep the fast pet-name set in lockstep: only drop the name from the
   // set when NO pet instance of it remains live.
-  if (!st.world.petInstance(ev.name)) st.petNames.delete(key)
+  if (!st.world.petInstance(ev.name)) {
+    st.petNames.delete(key)
+    st.charm.release(key)
+  }
   // The retired instance stays in `engaged` (so an in-fight heal on the corpse
   // still counts) — closure consults world.isRetired(), not set membership.
   // Clear any CC hold on the dead instance so it can't keep the fight open.
@@ -87,6 +147,7 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       finalizeCurrent(st)
       st.petNames = new Set()
       st.world.reset()
+      st.charm.reset()
       // An epoch severs every active-state span: the beta character's stances, coats and buffs
       // are not this character's. CENSORED, never 'observed' (proc-analytics §3.1 boundaries).
       st.stateTimeline.censorAll(ev.ts)
@@ -111,30 +172,25 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       // attributable after zoning while dropping stale charmed/hostile names.
       const survivors = st.world.zone(ev.ts)
       st.petNames = new Set(survivors.map((i) => i.nameKey))
+      st.charm.zone(survivors.map((i) => i.nameKey))
       st.log(ev.ts, 'zone', 'info', `▸ entered ${ev.zone}`)
       return true
     }
-    case 'charm': {
-      const inst = st.world.charm(ev.mob, ev.ts)
-      st.petNames.add(idKey(ev.mob))
-      st.log(ev.ts, 'charm', 'info', `⚡ charmed ${st.world.label(inst)} [${inst.instanceId}]`)
+    case 'charm':
+      ingestCharm(st, ev)
       return true
-    }
-    case 'petClaim': {
-      // A pet addressed you as master → the named entity is your pet. Bind it as
-      // a SUMMONED pet (idempotent; a charmed mob sends this tell too — the real log
-      // shows both — and world.claim() leaves an already-charmed instance's petKind
-      // alone, so a charmed pet is never reclassified as summoned). This is the ONLY
-      // binding signal for random-named class pets. It adds the name to the
-      // ATTRIBUTION set only — a summoned pet is NEVER a charmed pet.
-      const inst = st.world.claim(ev.name, ev.ts)
-      st.petNames.add(idKey(ev.name))
-      st.log(ev.ts, 'pet', 'info', `⚡ pet claim ${st.world.label(inst)} [${inst.instanceId}]`)
+    case 'petClaim':
+      ingestPetClaim(st, ev)
       return true
-    }
     case 'uncharm': {
+      // `Your <charm spell> spell has worn off of <mob>` — only the CASTER sees this, so it is
+      // also retroactive proof the bind was ours. Corroborate first (a bind that ends this way
+      // was real even if the pet never spoke or swung), then release.
+      const key = idKey(ev.mob)
+      st.charm.notePetEvidence(key)
       st.world.uncharm(ev.mob, ev.ts)
-      st.petNames.delete(idKey(ev.mob))
+      st.petNames.delete(key)
+      st.charm.release(key)
       st.log(ev.ts, 'uncharm', 'info', `✕ charm broke: ${ev.mob}`)
       return true
     }
@@ -203,7 +259,7 @@ interface DamageAnalytics {
  *  "the meter ignored this line", in which case the ledgers must ignore it too. */
 function damageAnalytics(st: EngineState, ev: DamageEvent): DamageAnalytics | null {
   if (ev.amount <= 0) return null
-  const at = classify(ev, st.petNames)
+  const at = classify(ev, st.petNames, st.knownPlayers)
   if (at.kind === 'ignore') return null
   if (at.kind !== 'out-you') return { mine: false, swing: 0, proc: false }
   const swing = ev.category === 'melee' || ev.category === 'slay' ? 1 : 0
@@ -310,7 +366,39 @@ function ingestCombat(st: EngineState, ev: LogEvent): boolean {
       foldMissAnalytics(st, ev)
       return true
     case 'resist':
+      // `<mob> resisted your <Charm>!` is the third way an armed cast fails to land (Task #65).
+      // Only OUR OWN outgoing resist counts; an incoming one (we shrugged off a mob's spell)
+      // says nothing about what we were casting.
+      if (!ev.incoming && idKey(ev.caster) === 'you') st.charm.noteCastFailed(ev.spell, ev.ts)
       routeResist(st, ev)
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * THE OWN-CAST LIFECYCLE — begin / fizzle / interrupt. Its own family because BOTH of the
+ * engine's ownership inferences run off it, and they must see the same three lines:
+ *   - the cast-less PROC detector (proc-analytics §4.1): a spell effect with no cast behind it
+ *     is a proc, and only the PLAYER prints `You begin casting <Spell>.` — a mob's or another
+ *     player's cast is never in this map.
+ *   - the CHARM/CC ownership model (Task #65): that same exclusivity is the only honest owner
+ *     signal behind the caster-less `<mob> has been charmed./mesmerized.` broadcasts. A
+ *     charm/CC cast ARMS the model for that spell's own cast time; any other cast clears a
+ *     stale arm; a fizzle or interrupt of the armed spell disarms it, because a cast that
+ *     never resolved cannot be what a broadcast resolved.
+ * Returns true if consumed.
+ */
+function ingestCast(st: EngineState, ev: LogEvent): boolean {
+  switch (ev.kind) {
+    case 'castBegin':
+      noteCast(st.recentCasts, ev.spell, ev.ts)
+      st.charm.noteCastBegin(ev.spell, ev.ts)
+      return true
+    case 'castFizzle':
+    case 'castInterrupted':
+      st.charm.noteCastFailed(ev.spell, ev.ts)
       return true
     default:
       return false
@@ -362,12 +450,6 @@ function ingestModifier(st: EngineState, ev: LogEvent): void {
       // the activation is the whole fix: the burst is cast evidence in a different shape.
       if (idKey(ev.name) === QUICK_BUFF_AA) st.quickBuffTs = ev.ts
       return
-    case 'castBegin':
-      // The cast-attribution window's only input (§4.1). Only the PLAYER prints
-      // `You begin casting <Spell>.`, so this map can never be polluted by a mob's or another
-      // player's cast — which is what lets a cast-less effect line be read as a proc.
-      noteCast(st.recentCasts, ev.spell, ev.ts)
-      return
     case 'playerDeath':
       // A boundary that SEVERS every span. The end is unknowable, so it is 'censored' — never
       // 'observed', and never a fabricated expiry (law 1).
@@ -405,7 +487,12 @@ export function ingestEvent(st: EngineState, ev: LogEvent, live: boolean): void 
     st.recording = true
     st.hydrating = false
   }
+  // Charm binds age out on the LOG clock (charmModel PROVISIONAL_MS), so the demotion is
+  // driven from the event stream and from snapshot(now) — whichever observes the deadline
+  // first. Guarded on an empty-map read, so the ordinary line costs nothing.
+  st.sweepCharm(ev.ts)
   if (ingestWorld(st, ev)) return
   if (ingestCombat(st, ev)) return
+  if (ingestCast(st, ev)) return
   ingestModifier(st, ev)
 }
