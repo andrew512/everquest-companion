@@ -292,6 +292,20 @@ tests/{plannerNormalize,plannerRules,plannerEffectIndex,plannerStore}.test.mts
 - Never blocks on network: everything renders from committed DBs; the wiki
   fallback only enriches ItemWindow popups as it already does.
 
+### 1.1 Era, second revision (wave F findings, 2026-08-04)
+
+Wave F overturned two more assumptions. (a) `|dropsfrom` (now parsed; 25,494
+sources on 5,439 pages) era-resolves only ~a third of the orphan donors —
+notably, 8 of 9 Coldain Velium weapons are VENDOR items whose provenance
+lives in the unparsed `|soldby` ItemWhereTable (1,208 pages). (b) 7,350 item
+pages carry an explicit page-top era template (`{{Velious Era}}` …) OUTSIDE
+`{{Itempage}}` — which is why the first probe missed it — covering 94 of the
+126 orphan effect donors. The era model is therefore LAYERED EVIDENCE
+(wave G): zone provenance (mob catalog ∪ wikiSources) decides first and is
+final in both directions; the page era tag resolves only what zones leave
+unknown, through a hand-authored tag→era table. `|soldby` stays unparsed —
+recorded in §8.
+
 ## 8. Open questions (owner)
 
 1. Paired slots (two rings/ears/wrists): v1 plans one per slot type. Worth a
@@ -300,6 +314,10 @@ tests/{plannerNormalize,plannerRules,plannerEffectIndex,plannerStore}.test.mts
    `openMob`)? Cheap once the pane exists; not in v1 waves.
 3. Inventory Location column (equipped-vs-bag) — extend `parseInventory` in a
    later wave to power an "equipped now" board overlay?
+4. `|soldby` (ItemWhereTable, 1,208 pages, unparsed): would give vendor
+   provenance — "buy from Coldain Outcast, Icewell Keep" farm rows and a
+   zone-evidence layer for vendor items. Worth a wave if vendor-sourced
+   donors matter in practice; the era tag already settles their era.
 
 ## 9. Wave plan (Opus executors, disjoint ownership)
 
