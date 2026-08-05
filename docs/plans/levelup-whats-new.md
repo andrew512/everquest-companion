@@ -24,13 +24,16 @@ browsable by level so it answers "what do I get at 30?" without waiting.
   `parseSpellClasses(text): {cls: ClassAbbr, level: number}[]`) unlocks
   per-class per-level lists at runtime (1.9k strings, trivial). Node-tested
   against the real committed DB with floors; dirty variants measured first.
-- **Skills/discs/innates: the data does NOT exist.** classes.json holds
-  names/stances/skill-alias tables only. Wave O1 extends `scrape:classes`
-  to pull each class page's skill/discipline unlock tables from eqlwiki
-  (measure page structure FIRST; committed into classes.json as new
-  sections; cache + etiquette law). If the wiki does not state unlock
-  levels, the skills half ships as an honest absence (panel section says
-  the wiki doesn't state them) — never a hand-guessed table (law 1).
+- **Skills/discs/innates: OVERTURNED by wave O1 (measured) — the wiki DOES
+  state unlock levels.** classes.json now carries `skillUnlocks` (450 rows /
+  16 classes, incl. 3 structure-derived innates like SHD Harm Touch@1) and
+  `discUnlocks` (33 rows / BER MNK RNG ROG). The central Disciplines page's
+  "only Rogue poison disciplines are on Legends" statement is quoted into
+  `disputed[]` for the 13 non-Rogue rows — O2's panel renders those with an
+  honesty chip, never silently. Spell parser: shared/spellLevels.ts
+  (2,001 pairs; BER/MNK/WAR have zero Spellpage spells — skills-only
+  classes, the panel must not render an empty "new spells" section as an
+  error for them).
 
 ## 2. Behavior
 
