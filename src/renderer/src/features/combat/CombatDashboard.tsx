@@ -19,13 +19,14 @@
 // authoritative in every case — they are folded on ingest and never read the ring.
 
 import { useMemo } from 'react'
-import { Box, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import type { SegmentView, TimelineView } from '@shared/combat'
 import { formatNum as fmt } from '../../lib/formatRate'
 import { Bar, CopyButton, DashCard, KIND_COLOR, QuietNote, RESIST_COLOR, SkillBar } from './combatShared'
 import { formatMobsText } from './copyText'
 import { groupByTarget, skillsForTarget, type Drill, type MobBreakdown, type TargetDetail } from './dashboardData'
 import { DpsOverTime } from './DpsOverTime'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** Why the selection has no per-event ring — decides the wording of the quiet note. */
 export type Ringless = 'zone' | 'evicted' | null

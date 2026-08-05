@@ -35,7 +35,6 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
-  Tooltip,
   Typography
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
@@ -66,6 +65,7 @@ import {
   type ZoneSort,
   type ZoneStatRow
 } from './rangeStatsRows'
+import { Tooltip } from '../../lib/Tooltip'
 
 export interface RangeStatsPanelProps {
   stats: RangeStats

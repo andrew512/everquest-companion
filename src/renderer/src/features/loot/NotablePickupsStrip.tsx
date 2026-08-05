@@ -1,5 +1,5 @@
 import { type JSX, useMemo, useState } from 'react'
-import { Box, Chip, FormControlLabel, Stack, Switch, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import AutoStoriesIcon from '@mui/icons-material/AutoStories'
 import type { ItemKnowledge, LootEvent } from '@shared/types'
@@ -8,6 +8,7 @@ import { itemCountKey } from '../../lib/itemName'
 import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
 import { isTradeskillOnly } from '../../lib/itemKnowledgeView'
 import { useNotablePickups, type NotablePickup } from './useNotablePickups'
+import { Tooltip } from '../../lib/Tooltip'
 
 // Renderer-local view pref (same shape as App.tsx's saved view / `eq.combat.scope`): does the
 // notable-pickups strip surface pure tradeskill components? Default OFF — a grinding session

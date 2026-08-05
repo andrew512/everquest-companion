@@ -4,10 +4,28 @@
 // carry no `@shared/*` value import of their own, so this module stays loadable outside the
 // renderer bundle.
 //
-// Timeline sizing (Task #54): the chart FILLS its container. Width comes from a ResizeObserver on
-// the scroll box; lane height grows to use the available vertical space (min MIN_LANE_H for
-// readability, up to MAX_LANE_H) and only scrolls when lanes×min exceeds the container. Fonts/ticks
-// scale with lane height so the chart reads as the hero of the view at large sizes.
+// Timeline sizing (Task #54): the chart FILLS its container. Width comes from a ResizeObserver;
+// lane height grows to use the available vertical space (min MIN_LANE_H for readability, up to
+// MAX_LANE_H) and only scrolls when lanes×min exceeds the container. Fonts/ticks scale with lane
+// height so the chart reads as the hero of the view at large sizes.
+//
+// THE MEASURED BOX MUST NOT BE A SCROLLER (2026-08-04, the "timeline flickers when the surface is
+// smaller than the timeline" report). This function is a STEP FUNCTION OF HEIGHT THAT CHANGES THE
+// WIDTH: `laneH` comes from the available height, `labelGutter(laneH)` steps 132 → 148 → 168 at
+// laneH 26 / 32, and once `plotW` is clamped at MIN_PLOT_W the SVG's width is `labelW + 320 + PAD`
+// — i.e. 20px WIDER for a chart that is 6px taller per lane. Measure the scrolling box and that
+// closes a loop through Chromium's layout: the SVG overflows, a scrollbar appears, the measured
+// box loses SCROLLBAR_SIZE on the CROSS axis, laneH falls under a gutter threshold, the SVG gets
+// narrower, it fits, the scrollbar leaves, the box grows back. MEASURED on the real arithmetic
+// (tests/timelineGeometry.test.mts): 20,146 of 164,439 sampled container sizes have NO fixed
+// point at all — e.g. 2 lanes in a 476×140 box alternates forever between 464×128 (svg 496×148)
+// and 476×140 (svg 476×136), which is the flicker the user sees. The cure is topological, not a
+// debounce: CombatTimeline observes a NON-scrolling wrapper whose size no scrollbar can change,
+// and the scroller is an absolutely-positioned child inside it.
+//
+// `PAD` is part of the vertical budget below for the same reason: the SVG is drawn `totalH + PAD`
+// tall, so a chart that exactly filled `wrap.h` used to demand a scrollbar for its own bottom
+// padding.
 
 import type { StanceSpan, TimelineEvent, TimelineMarker, TimelineView } from '@shared/combat'
 import type { ChartTooltipModel, TooltipRow } from '../../lib/ChartTooltip'
@@ -77,6 +95,10 @@ export interface TimelineMetrics {
   plotW: number
   plotH: number
   totalH: number
+  /** the `<svg>`'s own width/height attributes — the CONTENT size the scroll box compares itself
+   *  against. Derived here so the component and the fixed-point test read one arithmetic. */
+  svgW: number
+  svgH: number
   labelFont: number
   axisFont: number
   /** max lane-label chars before ellipsis, scaled to the (wider) gutter at larger sizes. */
@@ -97,13 +119,15 @@ export function timelineMetrics(tl: TimelineView, wrap: WrapSize): TimelineMetri
   const railH = tl.markers.length > 0 ? MARKER_RAIL_H : 0
   const laneTop = markerTop + railH
   const laneCount = Math.max(1, tl.lanes.length)
-  // Grow lane height to fill the vertical space left after pins + axis; clamp to [MIN,MAX].
-  // Below MIN (many lanes) the chart exceeds the container and the wrapper scrolls.
-  const availLaneH = wrap.h - laneTop - AXIS_H
+  // Grow lane height to fill the vertical space left after pins + axis + the SVG's own bottom
+  // PAD; clamp to [MIN,MAX]. Below MIN (many lanes) the chart exceeds the container and the
+  // wrapper scrolls — legitimately, and now harmlessly (the observed box is not the scroller).
+  const availLaneH = wrap.h - laneTop - AXIS_H - PAD
   const laneH = Math.max(MIN_LANE_H, Math.min(MAX_LANE_H, Math.floor(availLaneH / laneCount)))
   const labelW = labelGutter(laneH)
   const plotW = Math.max(MIN_PLOT_W, wrap.w - labelW - PAD * 2)
   const plotH = laneCount * laneH
+  const totalH = laneTop + plotH + AXIS_H
   return {
     pinRows,
     pinBlockH,
@@ -114,7 +138,9 @@ export function timelineMetrics(tl: TimelineView, wrap: WrapSize): TimelineMetri
     labelW,
     plotW,
     plotH,
-    totalH: laneTop + plotH + AXIS_H,
+    totalH,
+    svgW: labelW + plotW + PAD,
+    svgH: totalH + PAD,
     // Font sizes scale with lane height so ticks + labels read well when the chart is the hero.
     labelFont: laneH >= 32 ? 13 : laneH >= 26 ? 12 : 10,
     axisFont: laneH >= 32 ? 12 : 10,

@@ -15,7 +15,7 @@
 // A dismissal is per OFFER (not per alert), so a later rank re-offers cleanly.
 
 import type { JSX } from 'react'
-import { Box, Button, IconButton, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Button, IconButton, Paper, Stack, Typography } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import type { AlertDef } from '@shared/types'
@@ -24,6 +24,7 @@ import {
   replaceRankInDef,
   type RankUpgradeOffer
 } from '@shared/spellLines'
+import { Tooltip } from '../../lib/Tooltip'
 
 export interface UpgradeOffersProps {
   offers: RankUpgradeOffer[]

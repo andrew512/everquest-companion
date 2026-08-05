@@ -13,13 +13,14 @@
 // forever rather than resolving to the likelier one.
 
 import { type JSX, useMemo, useState } from 'react'
-import { Box, Button, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material'
 import EditIcon from '@mui/icons-material/Edit'
 import type { ComboInterval } from '@shared/classCombo'
 import { useComboSnap } from './ClassComboData'
 import { ConfidenceChip, LockedChip, ProvenanceChip, SlotChips } from './ClassComboChips'
 import { levelRangeText, spanText, startFuzzText } from './ClassComboLabels'
 import ClassComboEditor from './ClassComboEditor'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** Explicit height + its own scroll, per the fixed-height law. Roughly four rows tall. */
 const LIST_HEIGHT = 268
@@ -30,7 +31,7 @@ function FuzzyMark({ interval }: { interval: ComboInterval }): JSX.Element | nul
   if (!text) return null
   return (
     <Tooltip title={text}>
-      <Typography component="span" variant="caption" color="warning.main" sx={{ cursor: 'help' }}>
+      <Typography component="span" variant="caption" color="warning.main">
         ~
       </Typography>
     </Tooltip>

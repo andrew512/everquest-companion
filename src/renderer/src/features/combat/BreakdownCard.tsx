@@ -7,7 +7,7 @@
 // breakdown describes — not a fifth independent subject.
 
 import { useMemo, useState } from 'react'
-import { Box, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import type { SegmentView, SlowRollup, SourceView } from '@shared/combat'
 import { CATEGORY_LABEL } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../../lib/formatRate'
@@ -16,6 +16,7 @@ import { formatProcsText } from './copyText'
 import { CardTabs, ProcsBody } from './ProcsPanel'
 import { PROC_STRIP_HINT, procSummary } from './procRows'
 import { composition, flattenSkills } from './dashboardData'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** How many skill rows the preview lists before deferring to the full drill. */
 const PREVIEW_SKILLS = 6

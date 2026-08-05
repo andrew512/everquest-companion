@@ -30,11 +30,12 @@
 // the tradeskill FILTER, not this card.
 
 import { type JSX, useEffect, useState, type ReactElement } from 'react'
-import { Box, CircularProgress, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, CircularProgress, Stack, Typography } from '@mui/material'
 import type { ItemKnowledge } from '@shared/types'
 import { EQ_ITEM_COLORS } from './ItemWindow'
 import { ObservedItemWindow } from './ObservedItemWindow'
 import { questUseOutcomes, questUseWhere } from './itemKnowledgeView'
+import { Tooltip } from './Tooltip'
 
 /** How many quest uses / recipes the card lists before collapsing to "+N more". */
 const MAX_LISTED = 4
@@ -101,7 +102,7 @@ function OutcomeName({ name, depth }: { name: string; depth: number }): JSX.Elem
       sx={{
         color: EQ_ITEM_COLORS.name,
         ...(depth <= MAX_HOVER_DEPTH
-          ? { cursor: 'help', textDecoration: 'underline dotted', textUnderlineOffset: 2 }
+          ? { textDecoration: 'underline dotted', textUnderlineOffset: 2 }
           : {})
       }}
     >

@@ -26,7 +26,6 @@ import {
   Slider,
   Stack,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
@@ -46,6 +45,7 @@ import SoundPicker, { fallbackPack, firstSoundId } from './SoundPicker'
 import SpeechBlock, { type SpeechForm, speechFieldsFor, useSpeechForm } from './SpeechBlock'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { DEFAULT_PACK_ID } from './suggestions'
+import { Tooltip } from '../../lib/Tooltip'
 
 const DEFAULT_COOLDOWN_MS = 2000
 

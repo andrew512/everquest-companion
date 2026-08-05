@@ -14,10 +14,11 @@
 // exactly the defs the group is missing, and never re-writes one the user already has.
 
 import type { JSX } from 'react'
-import { Chip, Stack, Tooltip } from '@mui/material'
+import { Chip, Stack } from '@mui/material'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import type { AlertDef } from '@shared/types'
 import { alertGroupDefs, type AlertGroup } from '@shared/alertGroups'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** How many of a group's alerts already exist. */
 function createdCount(group: AlertGroup, existingIds: ReadonlySet<string>): number {

@@ -1,8 +1,9 @@
 import type { JSX, ReactElement } from 'react'
-import { Box, Tooltip, Typography } from '@mui/material'
+import { Box, Typography } from '@mui/material'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { ObservedItemWindow } from '../../lib/ObservedItemWindow'
 import { dropperLabel, type DropperMob } from './poskyDroppers'
+import { Tooltip } from '../../lib/Tooltip'
 
 export interface ItemTooltipProps {
   name: string

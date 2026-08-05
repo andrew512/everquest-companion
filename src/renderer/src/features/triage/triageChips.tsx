@@ -3,9 +3,10 @@
 // and whether it landed — and none of them describe how anything was computed.
 
 import type { JSX } from 'react'
-import { Chip, Tooltip } from '@mui/material'
+import { Chip } from '@mui/material'
 import type { ReportStatus, Severity } from '@shared/feedback'
 import type { TriageLogState } from '@shared/triage'
+import { Tooltip } from '../../lib/Tooltip'
 
 type ChipColor = 'default' | 'primary' | 'success' | 'info' | 'warning' | 'error'
 

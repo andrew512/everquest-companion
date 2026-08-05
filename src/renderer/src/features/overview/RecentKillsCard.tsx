@@ -20,11 +20,12 @@
 //     there either, so the chip carries no name — one is not available to carry.
 
 import type { JSX } from 'react'
-import { Box, Chip, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Stack, Typography } from '@mui/material'
 import type { ProgressionKill } from '@shared/types'
 import { DashCard, QuietNote } from '../combat/combatShared'
 import { formatTime } from '../../lib/formatDate'
 import type { MobTarget } from '../mobs/mobTarget'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** The scroll box's height. Explicit, and the panel's whole size contract. */
 const FEED_HEIGHT = 258

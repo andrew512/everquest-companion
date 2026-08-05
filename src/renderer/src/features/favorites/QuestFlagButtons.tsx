@@ -1,9 +1,10 @@
 import type { JSX } from 'react'
-import { IconButton, Tooltip } from '@mui/material'
+import { IconButton } from '@mui/material'
 import StarIcon from '@mui/icons-material/Star'
 import StarBorderIcon from '@mui/icons-material/StarBorder'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
+import { Tooltip } from '../../lib/Tooltip'
 
 // Quest-row affordances. Both live ON the accordion header and are ALWAYS visible
 // (never hover-only) — discoverability is the whole point — and both stopPropagation so

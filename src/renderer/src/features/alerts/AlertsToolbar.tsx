@@ -11,7 +11,6 @@ import {
   Slider,
   Stack,
   Switch,
-  Tooltip,
   Typography
 } from '@mui/material'
 import RestartAltIcon from '@mui/icons-material/RestartAlt'
@@ -21,6 +20,7 @@ import LibraryMusicIcon from '@mui/icons-material/LibraryMusic'
 import IosShareIcon from '@mui/icons-material/IosShare'
 import FileUploadIcon from '@mui/icons-material/FileUpload'
 import type { AlertPrefs } from '@shared/types'
+import { Tooltip } from '../../lib/Tooltip'
 
 export default function AlertsToolbar({
   prefs,

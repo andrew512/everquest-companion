@@ -111,6 +111,46 @@ test('class-prefix labels only ambiguous (cross-class-repeated) quest names', ()
   )
 })
 
+// The contending-quest chip hovers ITS reward (2026-08-04): "who else wants this drop" is only
+// half the decision, "and what do they get for it" is the other half. The reward rides the
+// SharingQuest so the UI needs no second lookup — and stays ABSENT when the wiki listed none, so
+// the chip can render no tooltip rather than an empty card.
+test('a sharing quest carries its own reward, and carries nothing when it has none', () => {
+  const a: PoskyQuest = {
+    ...quest('Beastlord', 'Test of Claw', [item('Sphinx Claw')]),
+    reward: 'Savage Lord Bracer',
+    rewardStats: 'AC 12 STR +5'
+  }
+  const b = quest('Paladin', 'Test of Love', [item('Sphinx Claw')]) // no reward on the page
+  const map = computeSharedItems([a, b])
+
+  // B's view of A: A's reward is right there on the chip's data.
+  const fromB = map.get(questKey(b))![0].quests[0]
+  assert.equal(fromB.name, 'Test of Claw')
+  assert.equal(fromB.reward, 'Savage Lord Bracer')
+  assert.equal(fromB.rewardStats, 'AC 12 STR +5')
+
+  // A's view of B: no reward key at all (not '' — the UI's "render no tooltip" test is `!reward`).
+  const fromA = map.get(questKey(a))![0].quests[0]
+  assert.equal(fromA.name, 'Test of Love')
+  assert.equal('reward' in fromA, false)
+  assert.equal('rewardStats' in fromA, false)
+})
+
+test('real posky.json: contended quests mostly state a reward, and every stated one is non-empty', () => {
+  const sharers = [...computeSharedItems(quests).values()].flatMap((list) =>
+    list.flatMap((si) => si.quests)
+  )
+  const stated = sharers.filter((sq) => sq.reward !== undefined)
+  for (const sq of stated) assert.notEqual(sq.reward, '', `${sq.name} must not carry an empty reward`)
+  const total = sharers.length
+  const withReward = stated.length
+  // A floor, not today's count (the scrape grows): the feature is worth having only if the data
+  // actually carries rewards for the contended quests.
+  assert.ok(total > 0, 'the real data has contended quests')
+  assert.ok(withReward / total > 0.5, `only ${String(withReward)}/${String(total)} sharers state a reward`)
+})
+
 test('real posky.json: overlap stats are sane and Wind Runes never appear', () => {
   const map = computeSharedItems(quests)
   // Every listed shared item is required by ≥2 quests and is not currency.

@@ -10,7 +10,7 @@
 // looking at has to stay on screen while you scroll through it.
 
 import type { JSX, ReactNode } from 'react'
-import { Box, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, IconButton, Stack, Typography } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import CloseIcon from '@mui/icons-material/Close'
@@ -24,6 +24,7 @@ import SpellRow, {
   type RowContext
 } from './SpellSuggestionRow'
 import { SUGGEST_TEMPLATES, type Suggestion } from './suggestions'
+import { Tooltip } from '../../lib/Tooltip'
 
 /**
  * One collapsible section. `count` is the TRUE match count, so a collapsed or truncated

@@ -30,7 +30,6 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
-  Tooltip,
   Typography
 } from '@mui/material'
 import ViewSidebarIcon from '@mui/icons-material/ViewSidebar'
@@ -43,6 +42,7 @@ import type { MapLayer, MapPackInfo, MapPackPrefs, ZoneShort } from '@shared/map
 import { ZONES } from '@shared/zones'
 import { bandLabel, type FloorBand } from './floorSlice'
 import type { LayerMask } from './mapGeometry'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** The three optional layers, in file order. Layer 0 (the zone's geometry) is always drawn. */
 const TOGGLEABLE: { layer: MapLayer; label: string }[] = [

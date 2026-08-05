@@ -8,7 +8,6 @@ import {
   Stack,
   ToggleButton,
   ToggleButtonGroup,
-  Tooltip,
   Typography,
   type SxProps,
   type Theme
@@ -20,6 +19,7 @@ import { fmtDur } from './combatShared'
 import { formatDateTime } from '../../lib/formatDate'
 import { formatNum as fmt, formatRate } from '../../lib/formatRate'
 import type { BladeCoatState, CoatSlot, CombatSnapshot, SegmentView } from '@shared/combat'
+import { Tooltip } from '../../lib/Tooltip'
 
 type StanceState = NonNullable<CombatSnapshot['stance']>
 type PoisonState = CombatSnapshot['poison']

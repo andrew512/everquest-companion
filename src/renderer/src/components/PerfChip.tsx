@@ -19,7 +19,6 @@
 import { type JSX, useRef, useState } from 'react'
 import { Box, Divider, Popover, Stack, Typography } from '@mui/material'
 import SpeedIcon from '@mui/icons-material/Speed'
-import Tooltip from '@mui/material/Tooltip'
 import {
   formatChip,
   formatCpu,
@@ -31,6 +30,7 @@ import {
   type PerfSeverity
 } from '@shared/perf'
 import { usePerfHud } from '../lib/perfHud'
+import { Tooltip } from '../lib/Tooltip'
 
 /** Chip colour per severity. 'normal' stays the bar's own quiet grey — a HUD you can leave on
  *  must be ignorable while everything is fine. */

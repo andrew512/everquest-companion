@@ -29,7 +29,6 @@ import {
   Stack,
   Switch,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -45,6 +44,7 @@ import { ROW_HEIGHT } from './lootRows'
 import { LootTable } from './LootTables'
 import { NotablePickupsStrip, useNotableStrip } from './NotablePickupsStrip'
 import { useLootRows } from './useLootRows'
+import { Tooltip } from '../../lib/Tooltip'
 
 // The filter bar: search, the two view switches, the opt-in inventory-only chip, and the
 // count-source select that decides what "In inventory" is even counting.

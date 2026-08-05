@@ -24,7 +24,6 @@ import {
   TableHead,
   TableRow,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -41,6 +40,7 @@ import { formatDateTime } from '../../lib/formatDate'
 import { LogChip, SeverityChip, SpamChip, StatusChip } from './triageChips'
 import ReportDetail from './ReportDetail'
 import { useTriageCall } from './useTriage'
+import { Tooltip } from '../../lib/Tooltip'
 
 const ROW_HEIGHT = 34
 const TABLE_HEIGHT = 320

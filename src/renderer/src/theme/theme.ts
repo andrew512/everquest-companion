@@ -96,10 +96,33 @@ const scrollbars = {
   }
 }
 
+/**
+ * TOOLTIP ANCHORS (owner rule, 2026-08-04): anything wearing a tooltip shows the HAND.
+ *
+ * This is the whole app-wide mechanism, and it is three rules rather than ~130 `sx` props
+ * because `lib/Tooltip.tsx` clones one class onto every anchor. See that file for why the
+ * cursor cannot come from `MuiTooltip.styleOverrides` (those style the popper, which does not
+ * exist until after the hover) nor from an attribute selector (`aria-describedby` only appears
+ * once the tooltip is already open).
+ *
+ * The two exceptions are STRUCTURAL, so nobody has to remember them:
+ *   - a disabled control keeps `not-allowed`. MUI's disabled buttons set `pointer-events: none`,
+ *     which is why they must be wrapped in a `<span>` for a tooltip to fire at all — that span
+ *     is the element the cursor is read from, so `:has()` is what makes the rule work at the
+ *     level it is actually applied.
+ *   - selectable text keeps its I-beam by never getting the class (`cursor="inherit"`).
+ */
+const tooltipAnchors = {
+  '.eq-tip-anchor': { cursor: 'pointer' },
+  '.eq-tip-anchor.Mui-disabled, .eq-tip-anchor:has(.Mui-disabled), .eq-tip-anchor:has(:disabled)': {
+    cursor: 'not-allowed'
+  }
+}
+
 export const theme = createTheme(base, {
   components: {
     MuiCssBaseline: {
-      styleOverrides: scrollbars
+      styleOverrides: { ...scrollbars, ...tooltipAnchors }
     }
   }
 })

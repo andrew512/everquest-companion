@@ -24,7 +24,7 @@
 // exactly the card they rendered before.
 
 import { type JSX, useMemo, useState } from 'react'
-import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import CheckIcon from '@mui/icons-material/Check'
 import type { RaidTarget } from '@shared/types'
 import type { TargetStatus } from './bossStatus'
@@ -36,6 +36,7 @@ import { cachedImageUrl } from '../../lib/imageUrl'
 import { useComboIntervals } from '../profiles/ClassComboData'
 import { ProvenanceChip, SlotChips } from '../profiles/ClassComboChips'
 import { spanText } from '../profiles/ClassComboLabels'
+import { Tooltip } from '../../lib/Tooltip'
 
 function BossImage({
   target,

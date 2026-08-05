@@ -6,7 +6,7 @@
 // skill list, or a MOB's (everything you + pet landed on it).
 
 import { useMemo, useState } from 'react'
-import { Box, Breadcrumbs, Button, Link, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Breadcrumbs, Button, Link, Paper, Stack, Typography } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import CircleIcon from '@mui/icons-material/Circle'
 import { TargetSkillBars } from './CombatDashboard'
@@ -22,6 +22,7 @@ import { formatNum as fmt, formatRate } from '../../lib/formatRate'
 import type { DamageCategory, SegmentView, SourceView, TimelineView } from '@shared/combat'
 import type { ProcSkillTag } from '@shared/procAnalytics'
 import { CATEGORY_LABEL } from '@shared/combat'
+import { Tooltip } from '../../lib/Tooltip'
 
 function IncomingHeals({ seg }: { seg: SegmentView }): React.JSX.Element | null {
   if (seg.incomingHealTotal <= 0) return null

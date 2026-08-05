@@ -1,7 +1,8 @@
 import type { JSX } from 'react'
-import { Chip, Stack, Tooltip } from '@mui/material'
+import { Chip, Stack } from '@mui/material'
 import type { ItemKnowledge, ItemRecipeUse } from '@shared/types'
 import { recipeUseLabel } from '@shared/itemKnowledge'
+import { Tooltip } from '../../lib/Tooltip'
 
 interface BadgeFlags {
   recipes: ItemRecipeUse[]

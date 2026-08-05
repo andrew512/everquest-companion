@@ -3,11 +3,12 @@
 // list, so it lives in its own module with that gate.
 
 import { memo, useState } from 'react'
-import { Box, Chip, Collapse, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Collapse, Typography } from '@mui/material'
 import { Bar, KIND_COLOR, RESIST_COLOR, SkillBar } from './combatShared'
 import { flattenSkills } from './dashboardData'
 import { formatNum as fmt, formatRate } from '../../lib/formatRate'
 import type { SourceView } from '@shared/combat'
+import { Tooltip } from '../../lib/Tooltip'
 
 function missSummary(m: SourceView['missBreakdown']): string {
   const parts: string[] = []

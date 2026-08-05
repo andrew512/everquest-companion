@@ -25,12 +25,13 @@
 // MobResultRow — semibold body2 name, caption metadata, theme text colors only.
 
 import type { JSX } from 'react'
-import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import type { ConsiderDelta, ConsiderRow, ConsiderSnap, KillMap } from '@shared/types'
 import { CONSIDER_FACTION_LABEL } from '@shared/logEvents'
 import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
 import { formatAge, formatDateTime } from '../../lib/formatDate'
 import type { MobTarget } from './mobTarget'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** How many rows fit before the strip scrolls, and how many drops one row names. */
 const CONSIDER_STRIP_HEIGHT = 148
@@ -98,7 +99,7 @@ function DropsLine({ drops }: { drops: RowDrops }): JSX.Element | null {
             {i > 0 && ', '}
             {/* The SAME item card the loot table and the posky tooltip use — hover explains. */}
             <KnownItemTooltip name={item}>
-              <Box component="span" sx={{ color: 'text.primary', cursor: 'help' }}>
+              <Box component="span" sx={{ color: 'text.primary' }}>
                 {item}
               </Box>
             </KnownItemTooltip>

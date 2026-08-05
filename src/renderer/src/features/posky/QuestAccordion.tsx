@@ -22,7 +22,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Tooltip,
   Typography
 } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
@@ -30,13 +29,14 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked'
 import StarIcon from '@mui/icons-material/Star'
 import LinkIcon from '@mui/icons-material/Link'
+import { Tooltip } from '../../lib/Tooltip'
 import { skyQuestPage, wikiPageUrl } from '@shared/wiki'
 import type { QuestProgress } from './useProgress'
 import { ItemTooltip } from './ItemTooltip'
 import { DropperCell, KillTargetCaption } from './DropperCell'
 import { questKillTargets, type KillTarget } from './poskyDroppers'
 import type { MobTarget } from '../mobs/mobTarget'
-import { sharingQuestLabel, type SharedItem } from './sharedItems'
+import { sharingQuestLabel, type SharedItem, type SharingQuest } from './sharedItems'
 import { FavoriteStar } from '../favorites/FavoriteStar'
 import { QuestIgnoreButton, QuestStarButton } from '../favorites/QuestFlagButtons'
 
@@ -60,6 +60,47 @@ function ProgressBar({ q }: { q: QuestProgress }): JSX.Element {
       </Stack>
       <LinearProgress variant="determinate" value={Math.min(100, pct)} color={color} />
     </Box>
+  )
+}
+
+/**
+ * One contending quest, as a chip you can hover for ITS reward (2026-08-04).
+ *
+ * The section answers "who else wants this drop"; the hover answers "and what do they get for
+ * it" — the other half of deciding where a single looted claw should go. Same surface as every
+ * other item hover in this tab (ItemTooltip → the game's item-window language), so a reward and
+ * a turn-in item read identically.
+ *
+ * A quest the wiki lists no reward for gets NO tooltip — a bare chip, not an empty card. The
+ * `data-reward` attribute is that decision, readable: it states what the chip believes it pays,
+ * so "no reward ⇒ no tooltip" can be asserted from outside instead of inferred.
+ */
+function SharingQuestChip({
+  sq,
+  ambiguousNames,
+  onSelectQuest
+}: {
+  sq: SharingQuest
+  ambiguousNames: Set<string>
+  onSelectQuest: (name: string) => void
+}): JSX.Element {
+  const chip = (
+    <Chip
+      size="small"
+      variant="outlined"
+      color="info"
+      data-testid="posky-shared-quest"
+      data-reward={sq.reward ?? ''}
+      label={sharingQuestLabel(sq, ambiguousNames)}
+      onClick={() => onSelectQuest(sq.name)}
+      sx={{ height: 20, fontSize: 11 }}
+    />
+  )
+  if (!sq.reward) return chip
+  return (
+    <ItemTooltip name={sq.reward} stats={sq.rewardStats} where={`Reward for ${sq.className} · ${sq.name}`}>
+      {chip}
+    </ItemTooltip>
   )
 }
 
@@ -91,14 +132,11 @@ function SharedItemsSection({
               {si.name}
             </Typography>
             {si.quests.map((sq) => (
-              <Chip
+              <SharingQuestChip
                 key={sq.key}
-                size="small"
-                variant="outlined"
-                color="info"
-                label={sharingQuestLabel(sq, ambiguousNames)}
-                onClick={() => onSelectQuest(sq.name)}
-                sx={{ height: 20, fontSize: 11 }}
+                sq={sq}
+                ambiguousNames={ambiguousNames}
+                onSelectQuest={onSelectQuest}
               />
             ))}
           </Stack>
@@ -139,7 +177,7 @@ function QuestSummaryRow({
         <Typography variant="subtitle2">{q.name}</Typography>
         {q.reward && (
           <ItemTooltip name={q.reward} stats={q.rewardStats}>
-            <Typography variant="caption" color="primary.main" sx={{ cursor: 'help' }}>
+            <Typography variant="caption" color="primary.main">
               → {q.reward}
             </Typography>
           </ItemTooltip>
@@ -305,7 +343,7 @@ function QuestItemsTable({
                   where={it.where}
                   droppers={it.droppers}
                 >
-                  <span style={{ cursor: 'help' }}>{it.name}</span>
+                  <span>{it.name}</span>
                 </ItemTooltip>
               </TableCell>
               <TableCell>

@@ -21,13 +21,14 @@
 // in "From your fights", which mixes both — that section passes `showType`.
 
 import { memo, useMemo, type JSX } from 'react'
-import { Box, Chip, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Stack, Typography } from '@mui/material'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import type { SpellCatalogEntry } from '@shared/types'
 import type { ClassAbbr } from '@shared/classCombo'
 import { preferredRank, type SpellLine } from '@shared/spellLines'
 import { RANK_TEMPLATES, SUGGEST_TEMPLATES, suggestionsFor, type Suggestion } from './suggestions'
 import { classLevelChips, type ClassLevelChip } from './lineIntel'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** Everything a row needs beyond the catalog entry itself (line + loadout context). */
 export interface RowContext {

@@ -14,7 +14,7 @@
 // data, not the algorithm that produced it.
 
 import type { JSX } from 'react'
-import { Chip, Stack, Tooltip } from '@mui/material'
+import { Chip, Stack } from '@mui/material'
 import { intervalConfidence, type ComboInterval, type ComboSlot } from '@shared/classCombo'
 import {
   confidenceText,
@@ -23,6 +23,7 @@ import {
   slotKind,
   slotLabel
 } from './ClassComboLabels'
+import { Tooltip } from '../../lib/Tooltip'
 
 const CHIP_SX = { height: 20 } as const
 

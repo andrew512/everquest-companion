@@ -13,7 +13,6 @@ import {
   Tab,
   Tabs,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -28,6 +27,7 @@ import { QuestAccordion } from './QuestAccordion'
 import { useQuestList, type QuestListState, type SortKey, type TabKey } from './useQuestList'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
+import { Tooltip } from '../../lib/Tooltip'
 
 // The Ignored tab: every quest the user hid, in one flat compact list (no accordions —
 // there is nothing to work on here), each row carrying the same button that put it here,

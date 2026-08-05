@@ -37,7 +37,6 @@ import {
   Paper,
   Stack,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
 import PlaceIcon from '@mui/icons-material/Place'
@@ -49,6 +48,7 @@ import {
   type MobPaneRow,
   type PaneCounts
 } from './mobPins'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** The pane's width. Fixed and `flexShrink:0` so the map, not the list, absorbs a window resize. */
 export const PANE_WIDTH = 268

@@ -7,9 +7,10 @@
 // acyclic by construction and combatShared re-exports it so no caller's import path moved.
 
 import { useEffect, useState } from 'react'
-import { IconButton, Tooltip } from '@mui/material'
+import { IconButton } from '@mui/material'
 import CheckIcon from '@mui/icons-material/Check'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import { Tooltip } from '../../lib/Tooltip'
 
 /**
  * A panel header's copy affordance: it puts the CURRENT view — at whatever drill level it

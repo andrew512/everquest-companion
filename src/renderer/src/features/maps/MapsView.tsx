@@ -28,7 +28,7 @@
 // the marker and its label can never disagree.
 
 import { useCallback, useEffect, useMemo, useState, useRef, type JSX, type RefObject } from 'react'
-import { Box, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import MapIcon from '@mui/icons-material/Map'
 import type { CharacterDelta, CharacterSnap } from '@shared/types'
 import type { MapBounds, MapData, MapPackPrefs, MapSearchHit, ZoneShort } from '@shared/maps'
@@ -46,6 +46,7 @@ import { useMapViewport, type MapViewport } from './useMapViewport'
 import MapSearch from './MapSearch'
 import MapToolbar, { ZonePicker, zoneLabel } from './MapToolbar'
 import { loadLastZone, loadPackPrefs, savePackPrefs, saveLastZone, useMapData, useMapPacks } from './useMapData'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** How long the jump-to marker stays on screen. Long enough to find, short enough to forget. */
 const MARKER_MS = 2600

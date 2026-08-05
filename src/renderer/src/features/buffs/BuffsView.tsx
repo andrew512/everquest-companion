@@ -12,7 +12,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Tooltip,
   Typography
 } from '@mui/material'
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh'
@@ -29,6 +28,7 @@ import type {
 import { useModule } from '../../lib/useModule'
 import { ActiveRow } from './ActiveBuffRow'
 import { fmtDuration, classAccent, groupKey, groupLabel } from './format'
+import { Tooltip } from '../../lib/Tooltip'
 
 // Stats-table sections: buffs first, then debuffs (Task #35 — a spell property).
 const CLASS_ORDER: BuffClass[] = ['buff', 'debuff']

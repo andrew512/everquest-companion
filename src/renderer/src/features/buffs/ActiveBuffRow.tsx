@@ -5,9 +5,10 @@
 // drawing a fake bar.
 
 import type { JSX } from 'react'
-import { Box, Chip, LinearProgress, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, LinearProgress, Paper, Stack, Typography } from '@mui/material'
 import type { ActiveBuff } from '@shared/types'
 import { fmtDuration, remainingFraction, isOverdue, classAccent } from './format'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** Everything the countdown bar needs, resolved once so nothing downstream re-derives it. */
 interface EstimateState {

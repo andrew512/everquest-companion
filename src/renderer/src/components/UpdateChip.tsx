@@ -1,5 +1,5 @@
 import { type JSX, useEffect, useRef, useState } from 'react'
-import { Box, LinearProgress, Tooltip, Typography } from '@mui/material'
+import { Box, LinearProgress, Typography } from '@mui/material'
 import RestartAltIcon from '@mui/icons-material/RestartAlt'
 import type { UpdateStatus } from '@shared/types'
 import { updateChipState, type UpdateChipState } from '@shared/update'
@@ -19,6 +19,16 @@ import { formatAge } from '../lib/formatDate'
  *
  * Nothing here ever re-prompts: if the user ignores the chip, apply-on-quit
  * installs the update the next time they close the app, silently.
+ *
+ * NO MUI TOOLTIP LIVES IN THIS FILE, and that is a rule rather than an omission
+ * (owner report, 2026-08-04: "it interferes with clicking Preferences more often
+ * than not"). The chip is pinned DIRECTLY under the Preferences row, and a
+ * `placement="top"` popper opens exactly over it — a full-width overlay that eats
+ * the click the user was aiming at. The strings the tooltips carried are native
+ * `title` attributes now: an OS tooltip is not in the DOM, has no hit area, and
+ * cannot swallow a click. Everything with any detail to it (exact timestamp,
+ * version, manual check, the error text) already lives in Preferences > Updates,
+ * which is the surface this chip's own click leads to.
  *
  * The status/UI mapping (including the "we were already updated to that version"
  * demotion) is pure and tested — see src/shared/update.ts `updateChipState`.
@@ -129,15 +139,14 @@ function DownloadingChip({ percent }: { percent: number }): JSX.Element {
 function DisabledChip({ version }: { version: string }): JSX.Element {
   return (
     <Box sx={{ px: 2, pt: 0.75, pb: 1 }}>
-      <Tooltip title="Auto-update runs only in the installed app — the dev build never checks." placement="top">
-        <Typography
-          data-testid="update-chip-disabled"
-          variant="caption"
-          sx={{ display: 'block', color: 'text.disabled', lineHeight: 1.4, cursor: 'default' }}
-        >
-          {version ? `v${version} · ` : ''}updates off (dev)
-        </Typography>
-      </Tooltip>
+      <Typography
+        data-testid="update-chip-disabled"
+        variant="caption"
+        title="Auto-update runs only in the installed app — the dev build never checks."
+        sx={{ display: 'block', color: 'text.disabled', lineHeight: 1.4, cursor: 'default' }}
+      >
+        {version ? `v${version} · ` : ''}updates off (dev)
+      </Typography>
     </Box>
   )
 }
@@ -156,39 +165,38 @@ function QuietChip({
 }): JSX.Element {
   return (
     <Box sx={{ px: 2, pt: 0.75, pb: 1 }}>
-      <Tooltip title={tip} placement="top">
-        <Box
-          component="button"
-          type="button"
-          data-testid="update-chip-quiet"
-          disabled={disabled}
-          onClick={onCheck}
-          sx={{
-            display: 'block',
-            width: '100%',
-            textAlign: 'left',
-            border: 0,
-            p: 0,
-            bgcolor: 'transparent',
-            fontFamily: 'inherit',
-            fontSize: 11,
-            lineHeight: 1.4,
-            color: 'text.disabled',
-            cursor: 'pointer',
-            transition: 'color 140ms ease',
-            '&:hover': { color: 'text.secondary' },
-            '&:disabled': { cursor: 'default' }
-          }}
-        >
-          {label}
-        </Box>
-      </Tooltip>
+      <Box
+        component="button"
+        type="button"
+        data-testid="update-chip-quiet"
+        disabled={disabled}
+        onClick={onCheck}
+        title={tip}
+        sx={{
+          display: 'block',
+          width: '100%',
+          textAlign: 'left',
+          border: 0,
+          p: 0,
+          bgcolor: 'transparent',
+          fontFamily: 'inherit',
+          fontSize: 11,
+          lineHeight: 1.4,
+          color: 'text.disabled',
+          cursor: 'pointer',
+          transition: 'color 140ms ease',
+          '&:hover': { color: 'text.secondary' },
+          '&:disabled': { cursor: 'default' }
+        }}
+      >
+        {label}
+      </Box>
     </Box>
   )
 }
 
 /**
- * The muted line's text + tooltip.
+ * The muted line's text + its native `title` (never a MUI Tooltip — see the file header).
  *
  * The quiet line leads with the INSTALLED version — the chip is the bottom-left
  * "what am I running" spot, and "checked 2h ago" alone answered only half of it.
@@ -197,8 +205,8 @@ function QuietChip({
  * "up to date" instead of the ambiguous "checked just now" (which never answered the
  * question the click asked).
  *
- * Errors stay INVISIBLE here (same muted line) — only the tooltip admits it, and
- * Preferences > Updates carries the detail.
+ * Errors stay INVISIBLE here (same muted line) — only the hover title admits it,
+ * and Preferences > Updates carries the detail.
  */
 function quietLine(
   ui: UpdateChipState,

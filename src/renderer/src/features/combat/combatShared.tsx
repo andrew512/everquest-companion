@@ -3,7 +3,7 @@
 // colors and the SAME card chrome (one look, one source of truth).
 
 import { useState, type ReactNode } from 'react'
-import { Box, Collapse, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Collapse, Paper, Stack, Typography } from '@mui/material'
 import type { DamageCategory } from '@shared/combat'
 import { CATEGORY_LABEL } from '@shared/combat'
 import { formatNum as fmt } from '../../lib/formatRate'
@@ -11,6 +11,7 @@ import { MARKER_COLOR } from './markerStyle'
 import type { ProcAnnotation } from './procRows'
 import { landEvidence } from './landEvidence'
 import type { FlatSkill, SkillRow } from './dashboardData'
+import { Tooltip } from '../../lib/Tooltip'
 
 // `fmtDur` lives in the MUI-free copyText module (the plain-text serializer needs it and cannot
 // import this file), and is re-exported here so every JSX surface keeps its existing import.

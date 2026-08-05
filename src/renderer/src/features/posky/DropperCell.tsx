@@ -24,7 +24,7 @@
 // Names stay RAW (law 2) — no title-casing, no article stripping.
 
 import type { JSX } from 'react'
-import { Box, Tooltip, Typography } from '@mui/material'
+import { Box, Typography } from '@mui/material'
 import {
   dropperDisplay,
   dropperFacts,
@@ -35,6 +35,7 @@ import {
   type KillTarget
 } from './poskyDroppers'
 import type { MobTarget } from '../mobs/mobTarget'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** The hover roster both surfaces share: every fact the catalog states, one mob per line. */
 function DropperRoster({ droppers }: { droppers: readonly DropperMob[] }): JSX.Element {
@@ -160,7 +161,6 @@ export function KillTargetCaption({ targets }: { targets: readonly KillTarget[] 
         color="text.secondary"
         display="block"
         data-testid="posky-kill-target"
-        sx={{ cursor: 'help' }}
       >
         {label}
       </Typography>

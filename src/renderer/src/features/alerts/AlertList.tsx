@@ -13,7 +13,6 @@ import {
   Slider,
   Stack,
   Switch,
-  Tooltip,
   Typography
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
@@ -27,6 +26,7 @@ import { formatTime } from '../../lib/formatDate'
 import AudioPicker from './AudioPicker'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { triggerBadge } from './conditionDraft'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** The expandable "recent fires" panel for one alert. */
 function RecentFires({ fires }: { fires: AlertFireRecord[] }): JSX.Element {

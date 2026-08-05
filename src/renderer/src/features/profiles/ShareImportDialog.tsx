@@ -28,7 +28,6 @@ import {
   FormControlLabel,
   Stack,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
@@ -42,6 +41,7 @@ import type {
 import { describeTrigger } from '@shared/profiles'
 import { formatDateTime } from '../../lib/formatDate'
 import { readUiPrefs, writeUiPrefs } from '../../lib/uiPrefs'
+import { Tooltip } from '../../lib/Tooltip'
 
 export interface ShareImportDialogProps {
   open: boolean

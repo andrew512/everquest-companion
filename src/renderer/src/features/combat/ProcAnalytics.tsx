@@ -14,7 +14,7 @@
 // the sentence travels VERBATIM: those strings are the honesty of this feature, and a
 // paraphrase would keep the number and delete the caveat.
 
-import { Box, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import type { ProcsView } from '@shared/combat'
 import { formatNum as fmt } from '../../lib/formatRate'
 import { formatTime } from '../../lib/formatDate'
@@ -37,6 +37,7 @@ import {
 } from './procRows'
 import { CAT_COLOR, QuietNote, RESIST_COLOR } from './combatShared'
 import { MARKER_COLOR } from './markerStyle'
+import { Tooltip } from '../../lib/Tooltip'
 
 /** Lane hues, by origin — the same three the charts use, so a lane means one thing app-wide. */
 const ORIGIN_COLOR = { poison: MARKER_COLOR.coat, spell: CAT_COLOR.spell, slay: CAT_COLOR.slay }

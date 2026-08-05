@@ -16,7 +16,7 @@
 // Combat tab stabilises so a frozen finalized fight doesn't re-derive on every 1s snapshot tick.
 
 import { useCallback, useMemo, useRef, type ReactNode } from 'react'
-import { Box, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import type { TimelineView } from '@shared/combat'
 import { formatRate } from '../../lib/formatRate'
 import { ApproxChip, DashCard, QuietNote, fmtDur } from './combatShared'
@@ -24,6 +24,7 @@ import { approxNote, buildDpsSeries, type DpsSeries } from './dashboardData'
 import { CHART_H, CHART_W, PAD_B, PAD_T, buildDpsChart, placeMarkers, type DpsChart, type PlacedMarker } from './dpsChart'
 import { DpsCurveHoverLayer, type CurveHoverHandle } from './DpsCurveHoverLayer'
 import { MARKER_COLOR, MARKER_WORD } from './markerStyle'
+import { Tooltip } from '../../lib/Tooltip'
 
 const OUT_COLOR = '#d9b25f'
 const PET_COLOR = '#6fb3d2'

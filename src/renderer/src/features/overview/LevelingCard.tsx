@@ -53,13 +53,14 @@
 // past a day it stops pretending to minutes and says '>1 day'.
 
 import type { JSX } from 'react'
-import { Box, Button, Chip, Paper, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import { DashCard, QuietNote } from '../combat/combatShared'
 import { OFFLINE_TITLE } from '../leveling/rangeStatsRows'
 import { formatTime } from '../../lib/formatDate'
 import type { OverviewLevelingState } from './overviewLevelingData'
 import { SPARK_BUCKETS, sparkColor, type LevelingSpark, type LevelingTile } from './overviewLevelingTiles'
+import { Tooltip } from '../../lib/Tooltip'
 
 export interface LevelingCardProps {
   state: OverviewLevelingState

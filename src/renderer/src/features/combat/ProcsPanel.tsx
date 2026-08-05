@@ -9,7 +9,7 @@
 // shared across the Cancel Magic family), never a scaled number.
 
 import { type ReactNode } from 'react'
-import { Box, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import type { ProcLane, ProcsView, SlowRollup } from '@shared/combat'
 import { formatNum as fmt } from '../../lib/formatRate'
 import { formatDateTime, formatTime } from '../../lib/formatDate'
@@ -18,6 +18,7 @@ import { fmtElapsed, slowRollupText } from './copyText'
 import { MARKER_COLOR } from './markerStyle'
 import { coatRows, type CoatRow } from './procRows'
 import { NoProcs, ProcAnalytics, hasProcAnalytics } from './ProcAnalytics'
+import { Tooltip } from '../../lib/Tooltip'
 
 // The three hues below are the MARKER hues — this panel and the charts are talking about the
 // same events, so they read from the one map (markerStyle.ts) instead of keeping copies of the

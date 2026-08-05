@@ -30,6 +30,16 @@ export interface SharingQuest {
   key: string
   className: string
   name: string
+  /**
+   * What that quest PAYS for the contested drop, carried so the chip can hover its reward
+   * (2026-08-04). "Who else wants this claw" is only half the decision — "and what do they get
+   * for it" is the other half, and it was two clicks away (find the other quest, expand it).
+   * Both fields come straight off the quest the map was built from; absent when the wiki listed
+   * no reward, and the UI then renders no tooltip rather than an empty one.
+   */
+  reward?: string
+  /** the reward item's EQ-style stat blob, when the scrape captured one. */
+  rewardStats?: string
 }
 
 /** A single contested item within a quest: its display name + the OTHER quests that
@@ -78,7 +88,13 @@ function indexQuestsByItem(
 ): Map<string, { name: string; quests: SharingQuest[] }> {
   const byItem = new Map<string, { name: string; quests: SharingQuest[] }>()
   for (const q of quests) {
-    const sq: SharingQuest = { key: questKey(q), className: q.className, name: q.name }
+    const sq: SharingQuest = {
+      key: questKey(q),
+      className: q.className,
+      name: q.name,
+      ...(q.reward ? { reward: q.reward } : {}),
+      ...(q.rewardStats ? { rewardStats: q.rewardStats } : {})
+    }
     for (const ref of distinctItemRefs(q)) {
       let entry = byItem.get(ref.key)
       if (!entry) {

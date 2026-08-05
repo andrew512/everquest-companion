@@ -23,10 +23,11 @@
 // the drill-down as a dialog over a page they must not lose, so the two chromes wrap ONE body.
 
 import type { JSX } from 'react'
-import { Box, Breadcrumbs, Chip, IconButton, Link, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Breadcrumbs, Chip, IconButton, Link, Stack, Typography } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { ItemDetailContent, type ItemDetailProps } from './ItemDetailDialog'
+import { Tooltip } from '../../lib/Tooltip'
 
 export interface ItemDetailPaneProps extends ItemDetailProps {
   /** Back to the loot list, with its scroll position. Both affordances call it. */

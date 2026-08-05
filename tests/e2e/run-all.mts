@@ -17,6 +17,9 @@ import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const SPECS = [
   'combat-dashboard.e2e.mts',
+  // The timeline's SIZING (2026-08-04 flicker report) — resizes the window to cramped sizes,
+  // which is why it is its own launch rather than a step in the dashboard spec.
+  'timeline.e2e.mts',
   'overview.e2e.mts',
   'maps.e2e.mts',
   'leveling.e2e.mts',

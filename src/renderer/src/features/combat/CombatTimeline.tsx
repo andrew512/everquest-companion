@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Box, IconButton, Paper, Stack, Tooltip as MuiTooltip, Typography } from '@mui/material'
+import { Box, IconButton, Paper, Stack, Typography } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import RemoveIcon from '@mui/icons-material/Remove'
 import FitScreenIcon from '@mui/icons-material/FitScreen'
+import { Tooltip as MuiTooltip } from '../../lib/Tooltip'
 import type { TimelineView } from '@shared/combat'
 import { EventTicks, LaneRows, MarkerRail, PinLabels, PinSpans, TimeAxis } from './TimelineChart'
 import { TimelineHoverLayer, type HoverHandle } from './TimelineHoverLayer'
@@ -19,7 +20,38 @@ import { useTimelineViewport, type TimelineViewport } from './useTimelineViewpor
 // `TimelineChart.tsx` (the SVG parts) and `TimelineHoverLayer.tsx` (the crosshair + tooltip).
 // What is left here is the chart's frame.
 
-/** Measure the scroll container so the SVG fills it, responsively (Task #54). */
+/** ~6 evenly spaced axis ticks across the VISIBLE window. */
+function axisTicks(start: number, span: number): number[] {
+  const n = 6
+  return Array.from({ length: n + 1 }, (_, i) => start + (span * i) / n)
+}
+
+/**
+ * The measured frame. `minHeight` is NOT decoration: the scroller inside is absolutely
+ * positioned, so this box has no in-flow content and its flex basis is 0 — in a Paper with no
+ * free space left to hand out (a very short window) `flexGrow` would resolve it to a 0px box and
+ * the chart would vanish. MEASURED: at a 900×420 window the frame reported `clientHeight` 0
+ * before this floor existed. 120 is the same floor `useWrapSize` clamps to, so the size the
+ * chart is drawn for and the box it is drawn in cannot disagree.
+ */
+const FRAME_SX = { flexGrow: 1, minHeight: 120, position: 'relative' } as const
+
+/** The scroller fills its frame exactly — absolute, so its bars are invisible to the frame. */
+const SCROLL_SX = { position: 'absolute', inset: 0, overflow: 'auto' } as const
+
+/**
+ * Measure the chart's container so the SVG fills it, responsively (Task #54).
+ *
+ * The observed element MUST be the non-scrolling frame, never the scroll box — see the header of
+ * timelineGeometry.ts for the measured feedback loop that made the chart oscillate when the
+ * surface was smaller than it. The frame's size comes from the flex layout alone, so no amount of
+ * content can change what this reads.
+ *
+ * The identity guard is belt-and-braces on top of that: a ResizeObserver may legitimately re-fire
+ * with the same box (a reflow elsewhere, a device-pixel-ratio change), and re-rendering the whole
+ * chart for a size that did not move is pure waste. It is NOT the fix — a same-value guard cannot
+ * damp an oscillation whose values genuinely differ.
+ */
 function useWrapSize(ref: React.RefObject<HTMLDivElement>): WrapSize {
   const [wrap, setWrap] = useState<WrapSize>({ w: 900, h: 400 })
   useEffect(() => {
@@ -27,7 +59,10 @@ function useWrapSize(ref: React.RefObject<HTMLDivElement>): WrapSize {
     if (!el) return
     const ro = new ResizeObserver((entries) => {
       const cr = entries[0]?.contentRect
-      if (cr) setWrap({ w: Math.max(MIN_PLOT_W + 140, cr.width), h: Math.max(120, cr.height) })
+      if (!cr) return
+      const w = Math.max(MIN_PLOT_W + 140, cr.width)
+      const h = Math.max(120, cr.height)
+      setWrap((prev) => (prev.w === w && prev.h === h ? prev : { w, h }))
     })
     ro.observe(el)
     return () => ro.disconnect()
@@ -116,11 +151,7 @@ function CombatTimelineInner({ tl }: { tl: TimelineView }): React.JSX.Element {
     return map
   }, [tl.lanes])
 
-  // Axis ticks: ~6 evenly spaced across the VISIBLE window.
-  const ticks = useMemo(() => {
-    const n = 6
-    return Array.from({ length: n + 1 }, (_, i) => view.start + (span * i) / n)
-  }, [view.start, span])
+  const ticks = useMemo(() => axisTicks(view.start, span), [view.start, span])
 
   // Windowed rendering: only ticks whose time falls within the visible window (a small
   // margin so ticks at the edge still draw). At the 5k ring cap + downsample budget this
@@ -133,65 +164,74 @@ function CombatTimelineInner({ tl }: { tl: TimelineView }): React.JSX.Element {
   return (
     <Paper variant="outlined" sx={{ p: 1.5, flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <TimelineToolbar tl={tl} vp={vp} />
-      <Box
-        ref={wrapRef}
-        sx={{ overflow: 'auto', flexGrow: 1, minHeight: 0, position: 'relative' }}
-        onPointerMove={onHoverMove}
-        onPointerLeave={onHoverLeave}
-      >
-        <svg
-          ref={svgRef}
-          width={m.labelW + m.plotW + PAD}
-          height={m.totalH + PAD}
-          style={{ display: 'block', fontFamily: 'inherit', cursor: zoomedIn ? 'grab' : 'default', touchAction: 'none' }}
-          onPointerDown={vp.onPointerDown}
-          onPointerMove={vp.onPointerMove}
-          onPointerUp={vp.onPointerUp}
+      {/* TWO boxes, and the split is the flicker fix (2026-08-04). The OUTER one is what the
+          ResizeObserver watches: it never scrolls, and its size is decided entirely by this
+          Paper's flex column, so a scrollbar appearing inside can never change the number the
+          chart sizes itself from. The INNER one is the scroller, absolutely positioned to the
+          frame so it is exactly as big — its bars eat into ITS box, which nothing measures.
+          Collapsing these back into one element restores the oscillation; the arithmetic that
+          makes it oscillate is pinned in tests/timelineGeometry.test.mts. */}
+      <Box ref={wrapRef} data-testid="timeline-frame" sx={FRAME_SX}>
+        <Box
+          data-testid="timeline-scroll"
+          sx={SCROLL_SX}
+          onPointerMove={onHoverMove}
+          onPointerLeave={onHoverLeave}
         >
-          {/* clip the plot so ticks/spans don't draw over the label gutter when panning */}
-          <defs>
-            <clipPath id="tl-plot-clip">
-              <rect x={m.labelW} y={0} width={m.plotW + 1} height={m.totalH + PAD} />
-            </clipPath>
-          </defs>
-
-          {/* pinned stance / invocation spans, then the marker rail + its guides — BEFORE the
-              lanes, so a guide is a faint reference line behind the ticks, never over them */}
-          <g clipPath="url(#tl-plot-clip)">
-            <PinSpans tl={tl} m={m} xOf={xOf} />
-            <MarkerRail tl={tl} m={m} xOf={xOf} />
-          </g>
-          {/* pin-row labels (outside the clip, in the gutter) */}
-          <PinLabels pinRows={m.pinRows} />
-
-          {/* lane labels + gridlines */}
-          <g transform={`translate(0, ${m.laneTop})`}>
-            <LaneRows tl={tl} m={m} />
-
-            {/* event ticks (windowed to the visible time range) */}
-            <g clipPath="url(#tl-plot-clip)" transform={`translate(0, ${-m.laneTop})`}>
-              <g transform={`translate(0, ${m.laneTop})`}>
-                <EventTicks events={visibleEvents} laneIndex={laneIndex} m={m} xOf={xOf} />
+          <svg
+            ref={svgRef}
+            width={m.svgW}
+            height={m.svgH}
+            style={{ display: 'block', fontFamily: 'inherit', cursor: zoomedIn ? 'grab' : 'default', touchAction: 'none' }}
+            onPointerDown={vp.onPointerDown}
+            onPointerMove={vp.onPointerMove}
+            onPointerUp={vp.onPointerUp}
+          >
+            {/* clip the plot so ticks/spans don't draw over the label gutter when panning */}
+            <defs>
+              <clipPath id="tl-plot-clip">
+                <rect x={m.labelW} y={0} width={m.plotW + 1} height={m.totalH + PAD} />
+              </clipPath>
+            </defs>
+  
+            {/* pinned stance / invocation spans, then the marker rail + its guides — BEFORE the
+                lanes, so a guide is a faint reference line behind the ticks, never over them */}
+            <g clipPath="url(#tl-plot-clip)">
+              <PinSpans tl={tl} m={m} xOf={xOf} />
+              <MarkerRail tl={tl} m={m} xOf={xOf} />
+            </g>
+            {/* pin-row labels (outside the clip, in the gutter) */}
+            <PinLabels pinRows={m.pinRows} />
+  
+            {/* lane labels + gridlines */}
+            <g transform={`translate(0, ${m.laneTop})`}>
+              <LaneRows tl={tl} m={m} />
+  
+              {/* event ticks (windowed to the visible time range) */}
+              <g clipPath="url(#tl-plot-clip)" transform={`translate(0, ${-m.laneTop})`}>
+                <g transform={`translate(0, ${m.laneTop})`}>
+                  <EventTicks events={visibleEvents} laneIndex={laneIndex} m={m} xOf={xOf} />
+                </g>
               </g>
             </g>
-          </g>
+  
+            {/* time axis */}
+            <g transform={`translate(0, ${m.laneTop + m.plotH})`}>
+              <TimeAxis ticks={ticks} m={m} xOf={xOf} zoomedIn={zoomedIn} />
+            </g>
+          </svg>
 
-          {/* time axis */}
-          <g transform={`translate(0, ${m.laneTop + m.plotH})`}>
-            <TimeAxis ticks={ticks} m={m} xOf={xOf} zoomedIn={zoomedIn} />
-          </g>
-        </svg>
-
-        <TimelineHoverLayer
-          api={hoverRef}
-          tl={tl}
-          events={visibleEvents}
-          laneIndex={laneIndex}
-          m={m}
-          view={view}
-          span={span}
-          series={dpsSeries}
-        />
+          <TimelineHoverLayer
+            api={hoverRef}
+            tl={tl}
+            events={visibleEvents}
+            laneIndex={laneIndex}
+            m={m}
+            view={view}
+            span={span}
+            series={dpsSeries}
+          />
+        </Box>
       </Box>
       <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
         Scroll to zoom around the cursor · Shift+scroll or drag to pan · hollow red = miss/resist

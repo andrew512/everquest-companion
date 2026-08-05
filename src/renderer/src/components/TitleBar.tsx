@@ -8,11 +8,11 @@ import CloseIcon from '@mui/icons-material/Close'
 import PictureInPictureAltIcon from '@mui/icons-material/PictureInPictureAlt'
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
 import SettingsIcon from '@mui/icons-material/Settings'
-import Tooltip from '@mui/material/Tooltip'
 import type { CharacterRef, OverlayKind } from '@shared/types'
 import { OVERLAY_KINDS } from '@shared/types'
 import { track } from '../lib/telemetry'
 import PerfChip from './PerfChip'
+import { Tooltip } from '../lib/Tooltip'
 
 /**
  * Frameless window title bar (Task #23). Replaces BOTH the OS chrome and the old

@@ -1,5 +1,5 @@
 import { type JSX, memo } from 'react'
-import { Box, Chip, Stack, TableCell, TableRow, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Stack, TableCell, TableRow, Typography } from '@mui/material'
 import type { ItemKnowledge, LootDisposition, LootEvent } from '@shared/types'
 import { formatDateTime } from '../../lib/formatDate'
 import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
@@ -8,6 +8,7 @@ import type { InventoryRow } from '../inventory/reconcile'
 import { isQuestItem } from './lootItemData'
 import { KnowledgeBadge } from './KnowledgeBadge'
 import type { GroupRow } from './lootGrouping'
+import { Tooltip } from '../../lib/Tooltip'
 
 // Fixed dense-row height (px) for the windowed tables (MUI Table size="small").
 export const ROW_HEIGHT = 37
@@ -52,7 +53,7 @@ const InventoryEstimate = memo(function InventoryEstimate({ inv }: { inv?: Inven
         size="small"
         variant="outlined"
         label={`~${inv.net}`}
-        sx={{ height: 18, fontSize: 11, cursor: 'help', color: 'text.secondary' }}
+        sx={{ height: 18, fontSize: 11, color: 'text.secondary' }}
       />
     </Tooltip>
   )
@@ -89,7 +90,7 @@ export const GroupedRow = memo(function GroupedRow({
         <Stack direction="row" spacing={1} alignItems="center">
           {/* Hover = what it is + what it's for (fetched on open); click (the row) = deep dive. */}
           <KnownItemTooltip name={g.item} knowledge={knowledge}>
-            <Box component="span" sx={{ cursor: 'help' }}>
+            <Box component="span">
               {g.item}
             </Box>
           </KnownItemTooltip>
@@ -140,7 +141,7 @@ export const FlatRow = memo(function FlatRow({
       <TableCell>
         <Stack direction="row" spacing={1} alignItems="center">
           <KnownItemTooltip name={e.item} knowledge={knowledge}>
-            <Box component="span" sx={{ cursor: 'help' }}>
+            <Box component="span">
               {e.count && e.count > 1 ? `${e.count} × ${e.item}` : e.item}
             </Box>
           </KnownItemTooltip>

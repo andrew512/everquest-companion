@@ -401,6 +401,72 @@ async function stepNavOrder(page: Page): Promise<void> {
 }
 
 /**
+ * 12b. THE UPDATE INDICATOR DOES NOT EAT THE PREFERENCES ROW (owner report, 2026-08-04: "it
+ *      interferes with clicking Preferences more often than not").
+ *
+ * The indicator sits directly BELOW Preferences, and it used to wear a `placement="top"` MUI
+ * Tooltip. Since MUI v5 a tooltip is INTERACTIVE by default — its popper takes pointer events —
+ * so hovering the indicator laid a click-catching overlay across the row above it.
+ *
+ * Asserted the way the user experiences it: hover the indicator, wait past any enter delay, then
+ * ask the document what is actually under the Preferences row at eleven points along its width.
+ * Every one must resolve INSIDE `nav-preferences`. A popper anywhere in the DOM is a failure on
+ * its own — the indicator is the click target now, and what it opens carries the detail.
+ */
+async function stepUpdateChipClearsPreferences(page: Page): Promise<void> {
+  const chip = await page.evaluate(() =>
+    ['update-chip-quiet', 'update-chip-disabled', 'update-chip-ready', 'update-chip-downloading'].find(
+      (id) => document.querySelector(`[data-testid="${id}"]`) !== null
+    ) ?? ''
+  )
+  if (!check('the update indicator is mounted under Preferences', chip !== '', chip || 'none found')) return
+  const box = await page.evaluate((sel) => {
+    const r = document.querySelector(sel)?.getBoundingClientRect()
+    return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null
+  }, `[data-testid="${chip}"]`)
+  if (!check('…and it has a box to hover', box !== null)) return
+  await page.mouse.move(Math.round(box.x), Math.round(box.y))
+  // Past MUI's default 100ms enterDelay and its transition, with room to spare.
+  await sleep(1200)
+
+  const probe = await page.evaluate(() => {
+    const row = document.querySelector('[data-testid="nav-preferences"]')
+    if (!row) return null
+    const r = row.getBoundingClientRect()
+    const y = r.y + r.height / 2
+    const missed: string[] = []
+    for (let i = 0; i <= 10; i++) {
+      const x = r.x + 2 + ((r.width - 4) * i) / 10
+      const hit = document.elementFromPoint(x, y)
+      if (!hit?.closest('[data-testid="nav-preferences"]')) {
+        missed.push(`${String(Math.round(x))}:${hit?.className.toString().slice(0, 40) ?? 'null'}`)
+      }
+    }
+    return { missed, poppers: document.querySelectorAll('.MuiTooltip-popper').length }
+  })
+  if (!check('the Preferences row is in the DOM', probe !== null)) return
+  check(
+    'with the update indicator hovered, Preferences is clickable along its FULL row',
+    probe.missed.length === 0,
+    probe.missed.join(' · ') || '11/11 points hit the row'
+  )
+  check(
+    '…because hovering the indicator mounts no tooltip popper at all',
+    probe.poppers === 0,
+    `${String(probe.poppers)} popper(s)`
+  )
+  // A real click has to land, too — the measurement above is only a proxy for it.
+  await page.click('[data-testid="nav-preferences"]', { timeout: 15_000 })
+  await sleep(600)
+  check(
+    '…and clicking it opens Preferences',
+    (await countOf(page, '[data-testid="nav-preferences"].Mui-selected')) === 1
+  )
+  await page.click('[data-testid="nav-overview"]', { timeout: 15_000 })
+  await sleep(600)
+}
+
+/**
  * 13. THE LOOT DEEP LINK, AND THE PANE TAKEOVER IT LANDS ON — the wave's headline.
  *
  * Click a drop row and two things must be true at once: we are on the Loot tab, and it opened
@@ -475,6 +541,7 @@ async function main(): Promise<void> {
     await stepZoneAndMob(page, snap)
     await stepLevelingPanel(page)
     await stepNavOrder(page)
+    await stepUpdateChipClearsPreferences(page)
     await stepDropsFeed(page)
     await stepLinkDown(page)
     await stepRoundTrip(page)

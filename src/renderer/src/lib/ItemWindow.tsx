@@ -12,7 +12,7 @@
 // reports it), so the meter shows tier position, never a fabricated exp fill.
 
 import { type JSX, useMemo } from 'react'
-import { Box, Chip, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, Stack, Typography } from '@mui/material'
 import {
   EFFECT_LABEL,
   damageRatio,
@@ -25,6 +25,7 @@ import {
   ITEM_MAX_TIER,
   type ItemStatBlock
 } from '@shared/itemStats'
+import { Tooltip } from './Tooltip'
 
 /** Item-window palette. All foregrounds ≥ 7:1 on `bg` (AA at any size, AAA for body). */
 export const EQ_ITEM_COLORS = {
