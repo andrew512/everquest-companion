@@ -22,6 +22,7 @@ import {
   type SkillStat,
   type SourceStat
 } from './aggregate'
+import { roundStatsView } from './roundViews'
 import { spellCanonKey } from '../log/parseCommon'
 import { CATEGORY_ORDER } from '../../shared/combat'
 import type { CategoryView, DamageCategory, RoundsView, SkillView, SourceView } from '../../shared/combat'
@@ -78,7 +79,11 @@ export function sourceViews(
   durationSec: number,
   /** Effect landings to graft onto the `you` row. Outgoing views only — an INCOMING view has no
    *  proc ledger behind it, and a mob's slow landing on you is not a lane of yours. */
-  lands?: EffectLandings
+  lands?: EffectLandings,
+  /** The segment's INCOMING annotation totals (attack-round stats), grafted onto the `you` row's
+   *  Rounds payload — riposte/rampage TAKEN are booked on the mob that swung them, so they can
+   *  only be resolved where both maps are in scope (`segmentViews.buildView`). */
+  taken?: { riposte: number; rampage: number }
 ): SourceView[] {
   const list = [...map.entries()].map(
     ([id, raw]): [string, SourceStat] => [
@@ -117,7 +122,8 @@ export function sourceViews(
           .slice(0, 12)
           .map(skillView(skMax)),
         categories: categoryViews(s.byCategory),
-        rounds: roundsView(s.rounds)
+        rounds: roundsView(s.rounds),
+        roundStats: roundStatsView(s, id === 'you' ? taken : undefined)
       }
     })
     .sort((a, b) => b.total - a.total)

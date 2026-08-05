@@ -325,3 +325,55 @@ slice(327002, 327849, 'w47-special-dragon-punch.log')
 // The window also crosses THREE zone lines (West Commonlands → Befallen → Befallen 4), which is
 // how it proves the lane state survives zoning — a special is chosen once, not per zone.
 slice(969559, 970396, 'w48-special-lane-reset.log')
+
+// ---------------------------------------------------------------------------
+// ATTACK ROUNDS (docs/plans/attack-round-stats.md) — the three windows the round grouper is
+// pinned on. Each isolates one thing the grouper has to get right, and each is cut from a span
+// the design's mechanics sweep actually measured.
+// ---------------------------------------------------------------------------
+
+// W49 THE TRIPLE BACKSTAB (Tue Aug 04 17:54:49 → 17:55:30, raw 1265581..1266000) — the
+// measured second the whole per-event tier rests on. Hand-read beats:
+//   17:54:49  `Auto attack is on.`, 1s after the Knight's Harm Touch opens on YOU — a clean
+//             pull start, so the window's first outgoing damage provably opens its own fight.
+//   17:55:20  THREE `You backstab a Knight of Innoruuk` lines in one second (70, 145, 392), at
+//             ONE target. Backstab's ~10s reuse timer means this cannot be three attacks, so
+//             it is one round of three swings and the backstab lane must show exactly one
+//             3-swing round — with NOTHING in the 4+ bucket.
+//   17:55:20  FOUR `You frenzy on a Knight of Innoruuk` lines in the same second — frenzy is
+//             multi-hit by design and must be EXCLUDED wholesale, never counted as a 4x round.
+//   17:55:2x  `A Knight of Innoruuk … YOU … (Riposte)` counter-swings, landed and avoided —
+//             riposte TAKEN, whose only evidence is the counter itself (there is no
+//             `but <mob> ripostes!` line anywhere in this log).
+slice(1265581, 1266000, 'w49-round-triple-backstab.log')
+
+// W50 THE CROSS-TARGET FAN-OUT (Mon Aug 03 01:29:51 → 01:30:53, raw 1102931..1103533) — two of
+// the log's five 4x-backstab seconds, back to back, and both are the SAME shape:
+//   01:30:45  backstab a rock golem 60, an elemental capturer 60, a rock golem 51, an
+//             elemental capturer 51
+//   01:30:49  backstab a rock golem 92, an elemental capturer 92, a rock golem 32, an
+//             elemental capturer 32
+// Two targets, identical ordered damage sequences: ONE double-attack round fanned across two
+// defenders and printed twice. Grouping per-target alone would report two 2-swing rounds;
+// not grouping by target at all would report a 4x backstab the reuse timer forbids. The
+// collapse must turn each second into exactly one 2-swing round with `fanned` set.
+// The window opens on `Auto attack is on.` six seconds after the previous mob was slain and
+// ends on `You have slain an elemental capturer!`.
+slice(1102931, 1103533, 'w50-round-fanout.log')
+
+// W51 THE FLURRY ERA (Tue Aug 04 00:25:25 → 00:26:57, raw 1241090..1241650) — the two fights
+// that straddle the Burst of Power purchase, i.e. the provenance of flurry itself:
+//   00:25:26  `You have gained the ability "Burst of Power" at a cost of 3 ability points.`
+//             (+ its rank-2 improve line in the same second)
+//   00:25:35  the character's FIRST-EVER outgoing `(Flurry)` swings, NINE SECONDS later — two
+//             slashes on Master of Spite, who is slain at 00:25:52.
+//   00:26:24  `Auto attack is on.` — the next pull (Grandmaster R`tal).
+//   00:26:53  `You try to slash Grandmaster R`tal, but miss! (Flurry)` — a flurry on an
+//             AVOIDED swing. This is why the window reaches past the first fight: 123 of the
+//             log's 253 flurry annotations are on miss lines, so a model that only reads
+//             landed hits reports less than half the flurries there were.
+// Every flurry swing must also be EXCLUDED from round counting (it is an extra swing by
+// definition). The window carries incoming `(Riposte)` counters and a frenzy burst too, so the
+// exclusion ledger has all three reasons populated at once. It ends mid-grind — R`tal is still
+// alive — which is the live case the panel has to render honestly.
+slice(1241090, 1241650, 'w51-round-flurry-era.log')

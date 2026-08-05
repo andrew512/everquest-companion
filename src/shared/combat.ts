@@ -117,6 +117,93 @@ export interface RoundsView {
   histogram: number[]
 }
 
+// ---------------------------------------------------------------------------
+// ATTACK-ROUND STATS (docs/plans/attack-round-stats.md) — riposte, flurry and the
+// double/triple-attack question, orthogonal to damage.
+//
+// EVERY NUMBER BELOW IS A COUNT. Not one of them carries or derives from an amount, which is
+// what keeps the whole feature inside world-model law 8's tripwire: adding it moved no damage
+// total by a single point (proved by a full-log before/after diff, and by the byte-identity
+// test in tests/combatRoundStats.test.mts).
+// ---------------------------------------------------------------------------
+
+/** One base modifier's tally on a source. `avoided` is the share that landed on nothing. */
+export interface ModifierTallyView {
+  name: string
+  count: number
+  avoided: number
+}
+
+/**
+ * How confidently a lane's multi-swing rate may be read (docs/plans/attack-round-stats.md §2).
+ *   'perEvent'  — a REUSE-TIMER skill (backstab, bash, kick, the monk strike lane). One timer,
+ *                 one hand: a second swing in the same second cannot be an off-hand, so the
+ *                 2x/3x split is per-event meaningful. Still INFERRED — the log never says
+ *                 "double attack" — but with no competing explanation.
+ *   'aggregate' — a WEAPON verb. Dual wield puts two weapons on one verb, so a same-second 2x
+ *                 may be two hands rather than a double attack. The RATE is worth stating;
+ *                 a per-event "that was a double attack" label is not, and is never shown.
+ */
+export type RoundConfidenceView = 'perEvent' | 'aggregate'
+
+/** One verb's round-structure row. */
+export interface RoundLaneView {
+  /** the un-conjugated verb the lane is keyed on ('slash', 'backstab'). */
+  verb: string
+  /** display label — the special-attack lane name when the log named one, else the verb. */
+  label: string
+  rounds: number
+  /** buckets[i] = rounds with exactly i+1 swings; the LAST bucket is 4-or-more. */
+  buckets: number[]
+  /** rounds with 2+ swings. */
+  multiRounds: number
+  /** multiRounds ÷ rounds as a percentage. */
+  multiPct: number
+  /** rounds printed against more than one defender — ONE swing fanned, collapsed by the
+   *  grouper. Surfaced so the collapse is visible rather than a silent adjustment. */
+  fannedRounds: number
+  confidence: RoundConfidenceView
+}
+
+/**
+ * The Rounds panel's whole payload for ONE source. Present only when the source actually swung
+ * (or was annotated); absent otherwise, so a spell-only source shows nothing rather than zeroes.
+ */
+export interface SourceRoundsView {
+  /** per-verb rows, ranked by rounds desc. */
+  lanes: RoundLaneView[]
+  /** Σ lanes[].rounds — the DENOMINATOR every rate here is over, carried so it can be shown
+   *  (law 11's spirit: a rate without its exposure is a lie). Rounds, never swings. */
+  primaryRounds: number
+  /** swings deliberately kept OUT of round counting, by reason (see rounds.ts). */
+  excluded: { frenzy: number; riposte: number; flurry: number; rampage: number }
+  /** every base modifier this source's lines carried, ranked by count desc. */
+  modifiers: ModifierTallyView[]
+  /**
+   * `(Riposte)` counter-swings THIS SOURCE made — i.e. how often it riposted someone.
+   * Equals the source's own Riposte modifier tally.
+   */
+  ripostesGiven: number
+  /**
+   * `(Riposte)` counter-swings made AT you — the mobs' annotated counters, summed over the
+   * segment's incoming rows. Present on the 'you' row only, and 0 elsewhere: an incoming line's
+   * defender is You by construction of the engine's attribution.
+   *
+   * THE ASYMMETRY IS REAL AND THE UI MUST STATE IT. A mob riposting YOUR swing prints NO
+   * avoidance line — `You try to hit <mob>, but <mob> ripostes!` occurs ZERO times in 1.35M
+   * lines — so the mob's annotated counter-swing is the only evidence there is. And Double
+   * Riposte means counters need not be 1:1 with riposte EVENTS.
+   */
+  ripostesTaken: number
+  /** `(Rampage)` swings taken. Outgoing rampage is UNKNOWABLE, not omitted: the player's own
+   *  Rampage AA swings log unannotated (law 6), so there is deliberately no "given" twin. */
+  rampagesTaken: number
+  /** `(Flurry)` annotated swings by this source — landed AND avoided. */
+  flurries: number
+  /** flurries ÷ primaryRounds as a percentage; 0 when there were no rounds. */
+  flurryPct: number
+}
+
 export interface SourceView {
   id: string
   name: string
@@ -147,6 +234,13 @@ export interface SourceView {
   categories: CategoryView[]
   /** Melee-rounds heuristic (Task #51); undefined for sources with no melee/slay hits. */
   rounds?: RoundsView
+  /**
+   * ATTACK-ROUND STATS — the Rounds panel's payload (see SourceRoundsView). Absent for a
+   * source that never swung and was never annotated. Deliberately BESIDE `rounds` rather than
+   * replacing it: the old field is a same-second cluster over LANDED hits with no target
+   * grouping and no exclusions, it is on the wire, and other surfaces still read it.
+   */
+  roundStats?: SourceRoundsView
 }
 
 export interface SegmentView {

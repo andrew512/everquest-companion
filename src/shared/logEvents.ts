@@ -252,6 +252,22 @@ export interface MissEvent extends LogEventBase {
   attacker: string
   target: string
   mtype: MissType
+  /**
+   * The un-conjugated melee verb the line named ('slash', 'backstab', 'kick') — the same join
+   * key `DamageEventE.verb` carries, so an avoided swing can enter the ROUND grouper and the
+   * special-attack lane naming exactly as a landed one does
+   * (docs/plans/attack-round-stats.md). ADDITIVE: nothing that existed before this reads it,
+   * and the miss still lanes under 'Melee' in the accuracy stats.
+   */
+  verb?: string
+  /**
+   * The line's decomposed paren modifiers. A miss CAN be annotated — measured full-log
+   * 2026-08-05: 7,224 `(Riposte)`, 123 `(Flurry)`, 92 `(Rampage)` on miss lines, and those 123
+   * are very nearly half of every flurry annotation in the log (253). Counting only landed
+   * flurries would halve the stat. Only the three single-word forms above ever appear here;
+   * a compound tail on a miss line does not exist in this log family.
+   */
+  modifiers?: string[]
 }
 
 /**

@@ -68,12 +68,12 @@ function aggregate(order: 'you-first' | 'pet-first'): Agg {
     agg.addOut(YOU, dmg({ attacker: 'You', amount: 100, skill: 'Slash', category: 'melee', ts: 1000 }))
     agg.addOut(YOU, dmg({ attacker: 'You', amount: 100, skill: 'Slash', category: 'melee', ts: 2000 }))
     agg.addOut(YOU, dmg({ attacker: 'You', amount: 300, skill: 'Ancient Wrath', category: 'spell', ts: 3000 }))
-    agg.addOutMiss(YOU, 'dodge', 'Slash')
+    agg.addOutMiss(YOU, { mtype: 'dodge', skill: 'Slash' })
   }
   const pet = (): void => {
     agg.addOut(PET, dmg({ attacker: 'Vebarn', amount: 50, skill: 'Slash', category: 'melee', ts: 1000 }))
     agg.addOut(PET, dmg({ attacker: 'Vebarn', amount: 50, skill: 'Bash', category: 'melee', ts: 2000 }))
-    agg.addOutMiss(PET, 'miss', 'Slash')
+    agg.addOutMiss(PET, { mtype: 'miss', skill: 'Slash' })
   }
   if (order === 'you-first') { mine(); pet() } else { pet(); mine() }
   return agg
@@ -93,6 +93,19 @@ const LANDS: EffectLandings = new Map([
   ['weakening strike', { name: 'Weakening Strike', count: 562 }]
 ])
 
+/**
+ * A deep-comparable snapshot of the live aggregate.
+ *
+ * BOTH SIDES go through `structuredClone` on purpose. A `SourceStat` now carries a `RoundAccum`
+ * INSTANCE (attack-round stats), and structuredClone drops a class prototype — so cloning only
+ * the "before" side made every comparison fail on the prototype rather than on the contents.
+ * Cloning both keeps the compare exactly as deep as it was (every own property, the pending
+ * open second included) and prototype-neutral.
+ */
+function frozen(map: Map<string, SourceStat>): Map<string, unknown> {
+  return structuredClone(map) as Map<string, unknown>
+}
+
 function rowOf(views: SourceView[], id: string): SourceView {
   const v = views.find((s) => s.id === id)
   assert.ok(v, `expected a ${id} row`)
@@ -102,12 +115,12 @@ function rowOf(views: SourceView[], id: string): SourceView {
 test('A: a view build leaves the aggregate byte-identical (deep-compare), landings and all', () => {
   for (const order of ['you-first', 'pet-first'] as const) {
     const agg = aggregate(order)
-    const before = structuredClone(agg.out)
+    const before = frozen(agg.out)
     sourceViews(agg.out, 60, LANDS)
-    assert.deepEqual(agg.out, before, `${order}: the view build wrote into the live aggregate`)
+    assert.deepEqual(frozen(agg.out), before, `${order}: the view build wrote into the live aggregate`)
     // …and the un-grafted call is just as inert.
     sourceViews(agg.out, 60)
-    assert.deepEqual(agg.out, before, `${order}: a plain view build wrote into the live aggregate`)
+    assert.deepEqual(frozen(agg.out), before, `${order}: a plain view build wrote into the live aggregate`)
   }
 })
 
@@ -164,6 +177,44 @@ test('the graft adds landings without adding damage — and creates the damage-l
   assert.equal(slow.lands, 562)
   // The pet's row never sees the ledger — it is YOUR procs.
   assert.equal(rowOf(views, 'pet:7').skills.some((k) => k.lands), false)
+})
+
+/**
+ * THE ROUND ACCUMULATOR IS THE THIRD THING THAT RESHAPES A ROW ON THE WAY OUT
+ * (docs/plans/attack-round-stats.md). It holds ONE second open at a time and folds it into the
+ * counters only when a later second arrives — so a snapshot taken mid-second has to add the
+ * open second's rounds WITHOUT closing it, or the next swing in that same second would open a
+ * second round for it and every mid-fight poll would inflate the count.
+ *
+ * The window below is built to sit exactly there: every swing is in the SAME second, so the
+ * accumulator's pending map is non-empty at snapshot time and nothing has been flushed at all.
+ */
+test('A2: a view build leaves the ROUND accumulator untouched, mid-second and all', () => {
+  const agg = new Agg()
+  for (const amount of [70, 145, 392]) {
+    agg.addOut(YOU, {
+      ...dmg({ attacker: 'You', amount, skill: 'Backstab', category: 'melee', ts: 5000 }),
+      verb: 'backstab'
+    })
+  }
+  const before = frozen(agg.out)
+  const first = JSON.stringify(sourceViews(agg.out, 60))
+  for (let i = 0; i < 5; i++) {
+    assert.equal(JSON.stringify(sourceViews(agg.out, 60)), first, `round view build #${i + 2} drifted`)
+  }
+  assert.deepEqual(frozen(agg.out), before, 'the round view build wrote into the live accumulator')
+  // …and the still-open second IS reported: three backstabs in one second is one 3-swing round.
+  const bs = rowOf(sourceViews(agg.out, 60), 'you').roundStats?.lanes.find((l) => l.verb === 'backstab')
+  assert.deepEqual(bs?.buckets, [0, 0, 1, 0], 'the open second must be counted without being closed')
+
+  // Folding a FOURTH swing into that same second must still yield ONE round — proof the
+  // snapshots above did not secretly close it.
+  agg.addOut(YOU, {
+    ...dmg({ attacker: 'You', amount: 11, skill: 'Backstab', category: 'melee', ts: 5000 }),
+    verb: 'backstab'
+  })
+  const after = rowOf(sourceViews(agg.out, 60), 'you').roundStats?.lanes.find((l) => l.verb === 'backstab')
+  assert.deepEqual(after?.buckets, [0, 0, 0, 1], 'the open second was closed by a snapshot')
 })
 
 test('the returned view never aliases the aggregate’s own maps', () => {

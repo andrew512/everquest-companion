@@ -75,6 +75,45 @@ export async function stepHealingDimension(page: Page): Promise<void> {
   check('…and switching back to Outgoing restores the damage meter', /\bdps\b/.test(await meterPanelText(page)))
 }
 
+// ── THE ROUNDS PANEL (docs/plans/attack-round-stats.md) ────────────────────────────────
+//
+// The grouper, the tiers and every word of the tooltips are pinned in
+// tests/combatRoundStats.test.mts + tests/roundRows.test.mts against real log windows. What
+// only the real app can show is that the panel MOUNTS inside the drill and states something:
+// it lives one level down (the drilled source's breakdown), so a wiring mistake would leave it
+// invisible with every unit test still green.
+//
+// FLOORS ONLY (AGENTS.md: frozen numbers rot). The live log decides how many verbs the
+// selected fight used, so this asserts "at least one stated lane, with its denominator on
+// screen" and notes rather than fails when the selection has no swings at all.
+
+const ROUNDS = '[data-testid="rounds-panel"]'
+const ROUNDS_LANE = '[data-testid="rounds-lane"]'
+
+export async function stepRoundsPanel(page: Page): Promise<void> {
+  // The dashboard opens on your breakdown, but a run that arrives here un-drilled (no fight of
+  // yours in the selection) has to drill itself before the panel can exist at all.
+  if ((await inMeterPanel(page, ROUNDS)) === 0 && (await inMeterPanel(page, '[data-testid="drill-back"]')) === 0) {
+    await page.click('[data-testid="meter-row"]', { timeout: 15_000 }).catch(() => undefined)
+    await sleep(600)
+  }
+  const lanes = await inMeterPanel(page, ROUNDS_LANE)
+  if ((await inMeterPanel(page, ROUNDS)) === 0) {
+    note('the drilled source landed no swings in this selection — the Rounds panel correctly renders nothing')
+    return
+  }
+  check('the Rounds panel mounts inside the combat drill', true)
+  check('…with at least one stated round lane', lanes >= 1, `${lanes} lanes`)
+  const text = await page.evaluate((sel) => {
+    const el = document.querySelector(sel)
+    return (el as HTMLElement | null)?.innerText ?? ''
+  }, ROUNDS)
+  // The denominator is on screen, in rounds — law 11's spirit, and the one thing the design
+  // insists the panel can never omit.
+  check('…and its denominator is visible, in ROUNDS', /\brounds\b/i.test(text), text.slice(0, 120).replace(/\s+/g, ' '))
+  check('…and it states a multi-swing rate for its lanes', /%\s*multi/i.test(text), text.slice(0, 160).replace(/\s+/g, ' '))
+}
+
 // ── THE OPEN FIGHT LIST IS FROZEN (Task #61) ───────────────────────────────────────────
 
 export async function stepFrozenList(page: Page): Promise<void> {

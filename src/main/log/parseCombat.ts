@@ -170,7 +170,12 @@ export function meleeVerbBase(verb: string): string {
   return v
 }
 
-function meleeSkill(verb: string): string {
+/**
+ * The lane name a melee VERB damages under. Exported so an avoided swing can be laned the same
+ * way a landed one is (`routeMiss` → the round grouper's lane label): one derivation, so a miss
+ * can never disagree with the hit it accompanied about what skill was swung.
+ */
+export function meleeSkill(verb: string): string {
   const v = verb.toLowerCase()
   if (v.startsWith('backstab')) return 'Backstab'
   if (v.startsWith('bash')) return 'Bash'
@@ -216,6 +221,30 @@ function missOutcome(m: RegExpExecArray): { mtype: MissType; target: string } {
   return { mtype: 'absorb', target: norm(m[2]) }
 }
 
+/**
+ * The swing VERB and the trailing paren annotation of a miss line, read as two small
+ * side-extractions rather than as new capture groups (attack-round stats).
+ *
+ * MISS_RE's nine groups are positional and `missOutcome` indexes them by number, so widening
+ * that alternation to capture the verb would renumber every branch — a change with no upside
+ * over two anchored one-liners that only run on a line MISS_RE has already claimed. The verb
+ * is un-conjugated through the same `meleeVerbBase` the damage path uses, so `You try to
+ * slash` and `slashes` land on one lane. The tail is single-word by construction (MISS_RE
+ * itself only admits `\([A-Za-z]+\)`), which matches the log: (Riposte), (Flurry), (Rampage)
+ * are the only annotations a miss line has ever carried.
+ */
+const MISS_VERB_RE = / tr(?:y|ies) to (\w+)/
+const MISS_MOD_RE = / \(([A-Za-z]+)\)$/
+
+function missAnnotations(text: string): { verb?: string; modifiers?: string[] } {
+  const v = MISS_VERB_RE.exec(text)
+  const mod = MISS_MOD_RE.exec(text)
+  return {
+    ...(v ? { verb: meleeVerbBase(v[1]) } : {}),
+    ...(mod ? { modifiers: parseModifiers(mod[1]) } : {})
+  }
+}
+
 /** Misses / avoided swings (by far the most common combat line). */
 export function classifyMiss({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
   if (text.includes(', but ') && (text.startsWith('You try to ') || text.includes(' tries to '))) {
@@ -223,7 +252,7 @@ export function classifyMiss({ text, ts, seq, raw }: ClassifyCtx): LogEvent | nu
     if (m) {
       const attacker = norm(m[1])
       const { mtype, target } = missOutcome(m)
-      return { kind: 'miss', seq, ts, raw, attacker, target, mtype }
+      return { kind: 'miss', seq, ts, raw, attacker, target, mtype, ...missAnnotations(text) }
     }
     // MISS_RE declined the line. It now OWNS the self rune-absorb form ("… but YOUR magical skin
     // absorbs the blow!") — every shape in the real log parses as a miss with mtype 'absorb' — so

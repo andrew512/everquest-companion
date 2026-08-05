@@ -7,9 +7,10 @@
 // Nothing here decides when a fight OPENS or CLOSES — that is lifecycle.ts.
 
 import { idKey } from '../log/parser'
+import { meleeSkill } from '../log/parseCombat'
 import { ensureEncounter } from './lifecycle'
 import { ACTIVE_MS, type Encounter } from './encounter'
-import type { DamageEvent, SourceRef } from './aggregate'
+import type { DamageEvent, MissFold, SourceRef } from './aggregate'
 import type { HealAccum, HealInput } from './healing'
 import type { EngineState } from './state'
 import type { HealEvent, MissEvent, MissType, MitigationEvent, ResistEvent } from '../../shared/logEvents'
@@ -205,19 +206,43 @@ export function route(st: EngineState, ev: DamageEvent): void {
   routeOutgoingDamage(st, enc, ev, at)
 }
 
+/**
+ * THE AVOIDED SWING as the aggregates fold it. `skill` stays 'Melee' for every miss — that is
+ * the shipped accuracy lane and it does not move — while `verb`/`laneSkill`/`modifiers`/`target`
+ * are the additive, amount-free inputs to the round grouper and the modifier tallies
+ * (docs/plans/attack-round-stats.md). The lane label goes through the SAME two steps a landed
+ * swing does: the parser's `meleeSkill(verb)`, then the log's own statement of which special is
+ * live in that verb lane — gated on the attacker being You, because the state line is
+ * first-person-only (specialAttacks.ts).
+ */
+function missFold(st: EngineState, ev: MissEvent, isYou: boolean): MissFold {
+  const verb = ev.verb
+  const laneSkill =
+    verb === undefined ? undefined : (isYou ? st.specials.laneSkill(verb) : undefined) ?? meleeSkill(verb)
+  return {
+    mtype: ev.mtype,
+    skill: 'Melee',
+    ts: ev.ts,
+    target: ev.target,
+    ...(verb !== undefined ? { verb } : {}),
+    ...(laneSkill !== undefined ? { laneSkill } : {}),
+    modifiers: ev.modifiers ?? []
+  }
+}
+
 /** A miss YOU or your pet swung. */
 function routeOutgoingMiss(
   st: EngineState,
   enc: Encounter | null,
-  probe: { ts: number; attacker: string; target: string; mtype: MissType },
+  probe: { ts: number; attacker: string; target: string; mtype: MissType; fold: MissFold },
   isYou: boolean
 ): void {
   const src = outSource(st, probe.attacker, isYou, probe.ts)
   // A pet WHIFFING is every bit as much proof it is fighting for us as a landed hit
   // (charmModel.ts corroboration — see routeOutgoingDamage's twin).
   if (!isYou) st.charm.notePetEvidence(idKey(probe.attacker))
-  enc?.agg.addOutMiss(src, probe.mtype, 'Melee')
-  st.zoneAgg.addOutMiss(src, probe.mtype, 'Melee')
+  enc?.agg.addOutMiss(src, probe.fold)
+  st.zoneAgg.addOutMiss(src, probe.fold)
   // Timeline: a miss tick lanes under "Melee" (hollow/red mark in the renderer). The
   // defender goes through defenderLabel() so it matches the INSTANCE label the damage
   // path writes — a raw name made every whiff at a twin pile onto a phantom bare row.
@@ -242,6 +267,7 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
   }
   const at = classify(probe, st.petNames, st.knownPlayers)
   if (at.kind === 'ignore') return
+  const fold = missFold(st, ev, at.kind === 'out-you')
   // A miss doesn't open or extend an encounter (closure is death/CC/fallback driven),
   // but it attaches to the in-progress fight if one is fresh (so hit% is per-fight).
   // Otherwise it still counts toward the zone aggregate.
@@ -255,8 +281,8 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     const attInst = st.world.resolve(attacker, ts)
     const id = attInst.instanceId
     const name = st.world.label(attInst)
-    enc?.agg.addIncMiss(id, name, mtype, 'Melee')
-    st.zoneAgg.addIncMiss(id, name, mtype, 'Melee')
+    enc?.agg.addIncMiss(id, name, fold)
+    st.zoneAgg.addIncMiss(id, name, fold)
     // ABSORPTION (Task #59): an incoming swing absorbed by YOUR rune is also a mitigation
     // instant. `incoming` means the defender is YOU (a swing at your pet classifies as
     // 'ignore'), so this can't pick up a pet's or a mob's own rune. It is the SECOND source
@@ -270,7 +296,7 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     st.log(ts, 'miss', 'enemy', `${name} ✕ You (${mtype})`)
     return
   }
-  routeOutgoingMiss(st, enc, { ts, attacker, target, mtype }, at.kind === 'out-you')
+  routeOutgoingMiss(st, enc, { ts, attacker, target, mtype, fold }, at.kind === 'out-you')
 }
 
 /** YOUR (or your pet's) detrimental spell was resisted. */

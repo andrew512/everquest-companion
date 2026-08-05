@@ -14,6 +14,7 @@ import { PetBar } from './PetBar'
 import { CAT_COLOR, QuietNote, RESIST_COLOR, SkillBar } from './combatShared'
 import { skillsForTarget, type Drill, type MeterMode, type TargetDetail } from './dashboardData'
 import { HealBody } from './HealPanel'
+import { RoundsPanel } from './RoundsPanel'
 import { SegmentHeader } from './SegmentHeader'
 import { procAnnotationFor, procTagIndex } from './procRows'
 import { meterPanel, type MeterPanel, type OwnRow } from './petRows'
@@ -111,25 +112,6 @@ function CategoryLegend({
   )
 }
 
-/** The melee-rounds heuristic footer — a cluster proxy, and labeled as one (world-model law 6). */
-function MeleeRoundsNote({ rounds }: { rounds: SourceView['rounds'] }): React.JSX.Element | null {
-  if (!rounds || (rounds.multiHitRounds <= 0 && rounds.maxHitsInRound <= 1)) return null
-  return (
-    <Tooltip
-      title={`Heuristic: EQ never logs double/triple attack, so a "round" here is same-second, same-skill melee/slay hits — a cluster proxy, not a certainty. Main-hand vs off-hand is not distinguishable. Distribution (hits→rounds): ${rounds.histogram
-        .map((n, i) => `${i + 1}:${n}`)
-        .join('  ')}`}
-    >
-      <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-        <Typography variant="caption" color="text.secondary">
-          Melee rounds: {rounds.totalRounds} · avg {rounds.avgHitsPerRound.toFixed(2)} hits/round · {rounds.multiHitRounds} multi-hit · up to{' '}
-          {rounds.maxHitsInRound}/round
-        </Typography>
-      </Box>
-    </Tooltip>
-  )
-}
-
 /**
  * Level-2 (one of two level-2 subjects): the category legend + ONE flat ranked list of every
  * skill/spell this entity landed. The melee-rounds heuristic footer rides along.
@@ -173,7 +155,11 @@ function EntitySkillBars({
         )
       )}
       {rows.length === 0 && <QuietNote>No skill breakdown for this source.</QuietNote>}
-      <MeleeRoundsNote rounds={e.rounds} />
+      {/* ROUNDS (docs/plans/attack-round-stats.md): riposte, flurry, the per-verb round table
+          and the modifier tallies — the stats that are orthogonal to damage. Reads the SELECTED
+          segment's source row, so it is scope-aware (fight / overall) with no state of its own,
+          and it renders nothing for a source that never swung. */}
+      <RoundsPanel source={e} />
     </Box>
   )
 }

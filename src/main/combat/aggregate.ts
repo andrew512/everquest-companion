@@ -9,6 +9,7 @@
 import { HealAccum } from './healing'
 import { addSpellProc, type SpellProcFold, type SpellProcLane } from './procDetect'
 import { WindowAccum } from './procWindows'
+import { RoundAccum } from './rounds'
 import type { MissType } from '../../shared/logEvents'
 import type { DamageCategory, DamageType, MissBreakdown, SourceKind } from '../../shared/combat'
 
@@ -93,6 +94,51 @@ export interface RoundsAccum {
 function newMissBreakdown(): MissBreakdown {
   return { miss: 0, dodge: 0, parry: 0, riposte: 0, block: 0, absorb: 0 }
 }
+
+/**
+ * ONE BASE MODIFIER'S TALLY on a source (docs/plans/attack-round-stats.md §2 — a STATED stat).
+ * COUNTS ONLY, never amounts: this is the miss/resist precedent applied to the paren
+ * annotations, so it moves no damage total (law 8's tripwire).
+ *
+ * The 14 compound forms the log actually prints decompose over 8 BASES (measured, full-log
+ * 2026-08-05: Critical 31,653 · Riposte 16,841 · Slay Undead 1,980 · Finishing Blow 1,107 ·
+ * Flurry 241 · Rampage 208 · Crippling Blow 9 · Strikethrough 1, plus the compounds
+ * Riposte Critical 203, Riposte Slay Undead 12, Riposte Rampage 9, Critical Flurry 9,
+ * Riposte Flurry 3, Riposte Finishing Blow 2). `parseModifiers` does the decomposition; this
+ * tallies the COMPONENTS, and the raw compound stays on the event for the ring/timeline.
+ */
+export interface ModifierTally {
+  name: string
+  /** annotated swings/casts — landed AND avoided. */
+  count: number
+  /** of those, how many carried no amount (an avoided swing). */
+  avoided: number
+}
+
+/**
+ * ONE AVOIDED SWING as the aggregate folds it. `verb`/`modifiers` are additive
+ * (docs/plans/attack-round-stats.md): a miss line names its verb and can carry an annotation
+ * (`… but miss! (Flurry)`), and 123 of the log's 253 flurry annotations are on miss lines —
+ * counting only landed ones would halve the stat. They feed the round grouper and the modifier
+ * tallies ONLY; `skill` is unchanged and still lanes the miss exactly where it always did.
+ */
+export interface MissFold {
+  mtype: MissType
+  /** the lane the miss counts against — 'Melee' for every avoided swing, as shipped. */
+  skill: string
+  /** un-conjugated verb off the miss line, when it named one. */
+  verb?: string
+  /** the ROUND lane's display name for that verb (special-attack renamed) — never the
+   *  aggregation lane above, which stays 'Melee' for every avoided swing. */
+  laneSkill?: string
+  /** decomposed base modifiers on the miss line ([] when it carried none). */
+  modifiers?: readonly string[]
+  /** the defender — round identity (see rounds.ts's fan-out collapse). */
+  target?: string
+  /** epoch ms — round identity. */
+  ts?: number
+}
+
 export interface SourceStat {
   name: string
   kind: SourceKind
@@ -111,6 +157,14 @@ export interface SourceStat {
   byCategory: Map<DamageCategory, CategoryStat>
   /** Melee-rounds heuristic accumulator (Task #51). */
   rounds: RoundsAccum
+  /** Base-modifier tallies (attack-round stats). Counts only — see ModifierTally. */
+  mods: Map<string, ModifierTally>
+  /**
+   * ATTACK-ROUND STRUCTURE (attack-round stats §3) — per (verb, swings-per-round) counters,
+   * built by the pure grouper in rounds.ts. Additive and amount-free: it reads a swing's
+   * amount for the fan-out signature and stores none of it.
+   */
+  roundAcc: RoundAccum
 }
 
 export function newSkill(name: string): SkillStat {
@@ -176,8 +230,13 @@ function addToSource(src: SourceStat, ev: DamageEvent, ambiguous: boolean): void
   s.min = accrueMin(s.min, ev.amount)
   src.bySkill.set(ev.skill, s)
 
-  // Category rollup (drill-down level 2/3): same skill breakdown, but partitioned by
-  // taxonomy category so a source can be opened into melee/slay/spell/dot/ds.
+  addToCategory(src, ev)
+  addSwingCounters(src, ev)
+}
+
+/** Category rollup (drill-down level 2/3): the same skill breakdown, partitioned by taxonomy
+ *  category so a source can be opened into melee/slay/spell/dot/ds. */
+function addToCategory(src: SourceStat, ev: DamageEvent): void {
   const c = src.byCategory.get(ev.category) ?? newCategory(ev.category)
   c.total += ev.amount
   c.hits += 1
@@ -191,21 +250,58 @@ function addToSource(src: SourceStat, ev: DamageEvent, ambiguous: boolean): void
   cs.min = accrueMin(cs.min, ev.amount)
   c.bySkill.set(ev.skill, cs)
   src.byCategory.set(ev.category, c)
+}
 
-  // Melee-rounds heuristic: only melee/slay swings cluster into "rounds" (spells/dots
-  // are single applications). Bucket by (skill, whole-second).
-  if (ev.category === 'melee' || ev.category === 'slay') {
-    accrueRound(src.rounds, ev.skill, ev.ts)
+/**
+ * The COUNT-ONLY counters a landed swing feeds: the legacy melee-rounds heuristic, the base
+ * modifier tallies, and the attack-round grouper. Not one of them touches `src.total`, a
+ * category total or a lane total — which is exactly why adding the last two moved no damage
+ * number anywhere in the engine (law 8's tripwire).
+ */
+function addSwingCounters(src: SourceStat, ev: DamageEvent): void {
+  const isSwing = ev.category === 'melee' || ev.category === 'slay'
+  // Melee-rounds heuristic (Task #51): only melee/slay hits cluster into "rounds" (spells and
+  // DoTs are single applications). Bucket by (skill, whole-second).
+  if (isSwing) accrueRound(src.rounds, ev.skill, ev.ts)
+  tallyModifiers(src, ev.modifiers, false)
+  // A SWING is a melee/slay line that named its VERB — the join key the round grouper is keyed
+  // on. Spells, DoTs and damage shields name no verb and are not swings.
+  if (isSwing && ev.verb !== undefined) {
+    src.roundAcc.add({
+      ts: ev.ts, verb: ev.verb, skill: ev.skill, target: ev.target,
+      amount: ev.amount, avoided: false, modifiers: ev.modifiers
+    })
+  }
+}
+
+/** Fold the decomposed base modifiers of one line into a source's tallies. COUNTS ONLY. */
+function tallyModifiers(src: SourceStat, mods: readonly string[], avoided: boolean): void {
+  for (const name of mods) {
+    const t = src.mods.get(name) ?? { name, count: 0, avoided: 0 }
+    t.count += 1
+    if (avoided) t.avoided += 1
+    src.mods.set(name, t)
   }
 }
 
 /** Fold a miss (avoided swing) into a source's accuracy stats. */
-function addMissToSource(src: SourceStat, mtype: MissType, skill: string): void {
+function addMissToSource(src: SourceStat, m: MissFold): void {
   src.misses += 1
-  src.miss[mtype] += 1
-  const s = src.bySkill.get(skill) ?? newSkill(skill)
+  src.miss[m.mtype] += 1
+  const s = src.bySkill.get(m.skill) ?? newSkill(m.skill)
   s.misses += 1
-  src.bySkill.set(skill, s)
+  src.bySkill.set(m.skill, s)
+
+  // ── ADDITIVE, AMOUNT-FREE (attack-round stats). An avoided swing carries no amount, so
+  // none of this can move a total; it is the same first-class-but-damage-free treatment
+  // misses already get (law 8).
+  tallyModifiers(src, m.modifiers ?? [], true)
+  if (m.verb !== undefined && m.ts !== undefined) {
+    src.roundAcc.add({
+      ts: m.ts, verb: m.verb, skill: m.laneSkill ?? m.skill, target: m.target ?? '',
+      amount: 0, avoided: true, modifiers: m.modifiers ?? []
+    })
+  }
 }
 
 /**
@@ -232,7 +328,8 @@ function addResistToSource(src: SourceStat, spell: string, category: DamageCateg
 export function newSource(name: string, kind: SourceKind): SourceStat {
   return {
     name, kind, total: 0, hits: 0, crits: 0, ambiguousHits: 0, ambiguousTotal: 0,
-    misses: 0, miss: newMissBreakdown(), resists: 0, bySkill: new Map(), byCategory: new Map(), rounds: newRounds()
+    misses: 0, miss: newMissBreakdown(), resists: 0, bySkill: new Map(), byCategory: new Map(), rounds: newRounds(),
+    mods: new Map(), roundAcc: new RoundAccum()
   }
 }
 
@@ -382,15 +479,15 @@ export class Agg {
     addToSource(s, ev, false)
     this.inc.set(id, s)
   }
-  addOutMiss(ref: SourceRef, mtype: MissType, skill: string): void {
+  addOutMiss(ref: SourceRef, m: MissFold): void {
     const s = this.out.get(ref.id) ?? newSource(ref.name, ref.kind)
     if (s.name !== ref.name) s.name = ref.name
-    addMissToSource(s, mtype, skill)
+    addMissToSource(s, m)
     this.out.set(ref.id, s)
   }
-  addIncMiss(id: string, name: string, mtype: MissType, skill: string): void {
+  addIncMiss(id: string, name: string, m: MissFold): void {
     const s = this.inc.get(id) ?? newSource(name, 'enemy')
-    addMissToSource(s, mtype, skill)
+    addMissToSource(s, m)
     this.inc.set(id, s)
   }
   addOutResist(ref: SourceRef, spell: string, category: DamageCategory): void {

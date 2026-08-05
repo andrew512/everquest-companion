@@ -6,6 +6,7 @@
 // tests/combatRingTruncation.test.mts).
 
 import { sourceViews } from './sourceViews'
+import { takenAnnotations } from './roundViews'
 import { sumHeal } from './aggregate'
 import { buildHealingView } from './healing'
 import { buildProcsView, effectLandings } from './procViews'
@@ -86,7 +87,10 @@ function buildView(spec: ViewSpec): SegmentView {
   // landings that no damage row represents; handing it to the OUTGOING view is what lets a
   // Weakening Strike row say `0 dmg · 562 landed · 34 resisted` instead of `0 landed`. The
   // INCOMING view gets nothing: a mob slowing you is not a lane of yours.
-  const entities = sourceViews(agg.out, durationSec, effectLandings(agg))
+  // RIPOSTE/RAMPAGE TAKEN (attack-round stats): booked on the MOB that swung the annotated
+  // counter, read here from the other end and grafted onto your row. It can only be resolved
+  // where both maps are in scope, which is exactly here.
+  const entities = sourceViews(agg.out, durationSec, effectLandings(agg), takenAnnotations(agg.inc))
   const incoming = sourceViews(agg.inc, durationSec)
   const outTotal = entities.reduce((s, e) => s + e.total, 0)
   const inTotal = incoming.reduce((s, e) => s + e.total, 0)
