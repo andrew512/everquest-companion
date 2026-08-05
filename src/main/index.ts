@@ -311,31 +311,50 @@ if (!gotSingleInstanceLock) {
  * (The child also self-reaps when this pid disappears — see presence.ts — which is what covers
  * the kill -9 case that no in-process handler can.)
  */
-app.on('before-quit', () => stopPresenceEffects())
+app.on('before-quit', () => teardownStep('main:stopPresence', stopPresenceEffects))
+
+/**
+ * One teardown step, isolated. `window-all-closed` runs a LIST of these before `app.quit()`,
+ * and a synchronous throw in any of them used to skip everything after it — including the
+ * quit itself. That is not hypothetical: `stopPerf()` once threw "Object has been destroyed"
+ * (a send to the already-destroyed main window), the uncaughtException guard swallowed it,
+ * and the result was a windowless zombie process whose single-instance lock blocked every
+ * relaunch until the user killed it in Task Manager. Each step gets its own try/catch so a
+ * failing step can neither starve the steps after it nor veto the quit.
+ */
+function teardownStep(label: string, fn: () => void): void {
+  try {
+    fn()
+  } catch (err) {
+    logError(label, err)
+  }
+}
 
 app.on('window-all-closed', () => {
-  stopSession()
+  teardownStep('main:stopSession', stopSession)
   // Kill the presence watcher child + the cursor stream. Both already unref their timers, but a
   // child process is not a timer: nothing else would reap it.
-  stopPresenceEffects()
+  teardownStep('main:stopPresence', stopPresenceEffects)
   // Stop the feedback drain's timers. They are unref'd, so they cannot be the reason the
   // process lives on; this is about not starting an attempt into a process that is quitting.
-  stopQueueFlush()
+  teardownStep('main:stopQueueFlush', stopQueueFlush)
   // Close the analytics session: records `sessionEnd` into the LOCAL ring (duration + how many
   // tabs were visited) and stops the heartbeat. Nothing is transmitted — there is nowhere to
   // transmit to — and the timers were unref'd anyway, so this is about writing the last record
   // before the process goes, not about letting it go.
-  stopTelemetry()
+  teardownStep('main:stopTelemetry', stopTelemetry)
   // Stop the HUD's sampler and make sure this launch left a startup profile behind. The timers
   // are unref'd, so this is about not sampling a process that is quitting — and about the launch
   // that never reached `rendererHydrated` still writing what it DID reach, which is exactly the
   // launch whose profile is worth having.
-  stopPerf()
+  teardownStep('main:stopPerf', stopPerf)
   // Flush the learned message overlay one last time so the final session's observations
   // aren't lost between debounced saves (Task #36).
-  saveUserOverlay(buffsModule.overlaySnapshot())
+  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlaySnapshot()))
   // Dev only, and null in every other build: a live DSQL socket is not a timer and would hold
   // the process open long past the last window.
-  if (closeDevTriage) void closeDevTriage().catch((err: unknown) => logError('main:triage', err))
+  teardownStep('main:triage', () => {
+    if (closeDevTriage) void closeDevTriage().catch((err: unknown) => logError('main:triage', err))
+  })
   if (process.platform !== 'darwin') app.quit()
 })

@@ -44,16 +44,25 @@ const overlayWindows = Object.fromEntries(OVERLAY_KINDS.map((k) => [k, null])) a
 
 /** The main window while it exists (null before creation / after close). */
 export function getMainWindow(): BrowserWindow | null {
+  // The `isDestroyed` guard is not redundant with the 'closed' handler that nulls
+  // `mainWindow`: between `close` and `closed` (and on any teardown path that destroys
+  // the window directly) the reference still points at a destroyed native window, and
+  // every method on it throws "Object has been destroyed". Callers get null instead.
+  if (mainWindow && mainWindow.isDestroyed()) return null
   return mainWindow
 }
 
 /**
- * Push to the main window's renderer, or do nothing if there isn't one. Every
- * `onX` broadcast in the main process goes through here, so "the window may not exist yet"
- * is answered once instead of at ~20 call sites.
+ * Push to the main window's renderer, or do nothing if there isn't one — where "isn't one"
+ * includes a window that exists as a JS object but is already destroyed. Every `onX`
+ * broadcast in the main process goes through here, so "the window may not exist yet /
+ * anymore" is answered once instead of at ~20 call sites. The 'anymore' half is load-bearing:
+ * a send to a destroyed window THROWS, and one such throw inside `window-all-closed` used to
+ * abort teardown before `app.quit()`, leaving a windowless zombie process that also blocked
+ * relaunch via the single-instance lock.
  */
 export function sendToMain(channel: string, ...args: unknown[]): void {
-  mainWindow?.webContents.send(channel, ...args)
+  getMainWindow()?.webContents.send(channel, ...args)
 }
 
 /** A kind's overlay window while it is open (null when closed). */
@@ -334,6 +343,13 @@ export function createMainWindow(): void {
     // Same contract for the ring: an accessory window must never keep the app alive. Its
     // persisted `enabled` is untouched, so it comes back on the next launch.
     destroyCursorRingWindow()
+  })
+
+  // Null the module reference once the window is gone, like the overlays and the ring
+  // already do. Without this, everything downstream of `window-all-closed` still sees a
+  // (destroyed) window through `mainWindow` and any direct method call on it throws.
+  mainWindow.on('closed', () => {
+    mainWindow = null
   })
 
   // Navigation + window.open policy is installed for EVERY webContents by the
