@@ -33,6 +33,7 @@ import { levelDropBoundaries } from '../src/main/modules/comboIntervals'
 import { comboAt, groupByCombo } from '../src/shared/comboIndex'
 import {
   resolvedClasses,
+  type ClassAbbr,
   type ClassObservation,
   type ComboInterval,
   type ComboSnap
@@ -94,6 +95,28 @@ function observationsOf(lines: string[]): ClassObservation[] {
 
 /** An interval's slots as `PAL/MNK/ENC`, ambiguity and all (`CLR|PAL`). */
 const combo = (i: ComboInterval): string => i.slots.map((s) => s.candidates.join('|')).join('/')
+
+/** The observations lying inside one interval — the exact stream that interval was scored from. */
+const inside = (observations: readonly ClassObservation[], i: ComboInterval): ClassObservation[] =>
+  observations.filter((o) => o.ts >= i.startTs && (i.endTs === null || o.ts < i.endTs))
+
+/**
+ * Classes an observation stream names EXCLUSIVELY (candidate set of exactly one) in at least two
+ * distinct hourly buckets — the same bar `comboIntervals.exclusiveSpans` applies when it decides
+ * a window holds more classes than a loadout can. Restated here, from the observations, so the
+ * assertions below check the module against the LOG rather than against itself.
+ */
+function sustainedExclusive(observations: readonly ClassObservation[]): Set<ClassAbbr> {
+  const buckets = new Map<ClassAbbr, Set<number>>()
+  for (const o of observations) {
+    // `/who` states the loadout, it never scores (§ 4.4) — so it is not evidence here either.
+    if (o.source === 'who' || o.candidates.length !== 1) continue
+    const seen = buckets.get(o.candidates[0]) ?? new Set<number>()
+    seen.add(Math.floor(o.ts / 3_600_000))
+    buckets.set(o.candidates[0], seen)
+  }
+  return new Set([...buckets].filter(([, b]) => b.size >= 2).map(([cls]) => cls))
+}
 
 // ---------------------------------------------------------------------------
 // CW1 — four real /who anchors. GROUND TRUTH, not inference.
@@ -387,10 +410,48 @@ test('full-log replay: the interval model holds together', { skip: !existsSync(L
   const LAUNCH = new Date(2026, 6, 28, 0, 0, 0, 0).getTime()
   assert.ok(intervals[0].startTs >= LAUNCH, 'the pre-launch character is not in the model')
 
-  // The headline inference, as an invariant rather than a frozen combo: the CURRENT loadout
-  // includes the Berserker, whose evidence (berserker stance + Frenzy skill-ups) has been
-  // continuous since Aug 2 and is structurally invisible to cast evidence (BER has no spells).
-  assert.ok(resolvedClasses(intervals[intervals.length - 1]).includes('BER'), 'BER is current')
+  // The headline inference, as INVARIANTS rather than a frozen combo.
+  //
+  // What stood here was `resolvedClasses(last).includes('BER')` — "BER is current", true when it
+  // was written and rotted on 2026-08-04, when the owner capped ROG/BER at level 50 (20:57) and
+  // swapped back into an enchanter loadout around 22:40: the berserker stance stops dead at
+  // 22:32:41, `Tashani` and `Allure VI` start at 22:48, and MNK's `Feign Death`/`Mend` skill-ups
+  // return at 23:38. WHICH CLASSES THE OWNER IS RUNNING TONIGHT IS NOT A PROPERTY OF THE MODEL,
+  // and pinning it here was a snapshot of their play — exactly what the frozen-numbers rule
+  // forbids. The durable form of that pin is CW2's, on a closed fixture that can never age.
+  //
+  // What the live tail is asked instead are two contracts that hold for ANY log, derived from
+  // the replayed stream rather than from a constant:
+  //
+  //   1. NEVER RESOLVE WHAT THE EVIDENCE DID NOT NAME EXCLUSIVELY — CW3's rule ("CLR is never
+  //      exclusively evidenced, so it must not resolve") generalized off its window to every
+  //      interval in the log. `/who`-stated slots are exempt: the game said it, and a stated
+  //      loadout needs no evidence at all.
+  //   2. SAY SO WHEN THERE ARE MORE CLASSES THAN SLOTS. Where an interval's own evidence
+  //      sustains more classes than a loadout can hold, `overDetermined` is on the interval; the
+  //      surplus is never quietly dropped (§ 4.5's floor rule). This flag is the whole
+  //      difference between "the loadout is X" and "the loadout is probably X", and the OPEN
+  //      interval is where it carries the most weight, being the one nothing has ever stated.
+  const observations = observationsOf(lines).filter((o) => o.ts >= intervals[0].startTs)
+  for (const interval of intervals) {
+    const evidence = inside(observations, interval)
+    const exclusive = new Set(
+      evidence.filter((o) => o.source !== 'who' && o.candidates.length === 1).map((o) => o.candidates[0])
+    )
+    for (const slot of interval.slots) {
+      if (slot.provenance !== 'inferred' || slot.candidates.length !== 1) continue
+      assert.ok(
+        exclusive.has(slot.candidates[0]),
+        `${interval.id} resolved ${slot.candidates[0]} with nothing that names it exclusively`
+      )
+    }
+    if (sustainedExclusive(evidence).size > interval.expectedSlots) {
+      assert.ok(
+        interval.startAlso?.includes('overDetermined'),
+        `${interval.id} sustains more classes than it has slots and must declare it`
+      )
+    }
+  }
 
   // Losslessness: every interval's evidence adds up to the whole retained stream.
   // MEASURED FLOOR at 2026-08-03 (1.13M lines): 17,775 observations survive the epoch and the
