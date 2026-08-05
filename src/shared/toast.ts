@@ -24,7 +24,6 @@
 
 import type { ItemKnowledge, ItemStatBlock } from './types'
 import type { AppFocus, AppFocusView } from './types'
-import type { AlertSoundRef } from './alertTypes'
 
 // ---- the toast overlay's own config knobs (docs/plans/celebration-toasts.md §3) --------
 //
@@ -33,17 +32,19 @@ import type { AlertSoundRef } from './alertTypes'
 // per-kind config read. `open` IS the design's `enabled` — a toast overlay that is open is
 // the feature being on, and two switches for one state is how they drift.
 
-/** Sound + timing for the toast kind. Everything else it needs is standard OverlayConfig. */
+/**
+ * Timing for the toast kind. Everything else it needs is standard OverlayConfig.
+ *
+ * THE TOAST HAS NO SOUND OF ITS OWN (owner, 2026-08-05: "remove the sound controls from
+ * preferences, they are already covered by Alerts module"). It shipped with a `sound`/`volume`
+ * pair that defaulted to silent precisely because the seeded "Raid target defeated" and "Quest
+ * complete" ALERTS already speak on these exact events — which made the picker a way to opt into
+ * hearing the same kill twice, in a second place, with second volume rules. The alerts are the
+ * audio path; this is the card. A store written by that build may still carry the two keys: they
+ * are simply never read again, and dropping a read of optional keys needs no migration (the next
+ * write of this blob drops them on its own).
+ */
 export interface ToastOverlayConfig {
-  /**
-   * The line the MAIN WINDOW plays when a toast fires (T7 — the overlay bundle has no audio
-   * stack). `null` is MUTE, and it is the shipped default: both producers already have a
-   * seeded, enabled alert with its own voice line, so a default sound here would speak twice
-   * over every boss kill. The picker offers the packs; silence is a state, not an omission.
-   */
-  sound: AlertSoundRef | null
-  /** 0..1, applied on top of the sound. */
-  volume: number
   /** how long a card holds before it leaves, when the payload names no duration of its own */
   durationMs: number
 }
@@ -51,8 +52,6 @@ export interface ToastOverlayConfig {
 export const DEFAULT_TOAST_DURATION_MS = 6000
 
 export const DEFAULT_TOAST_CONFIG: ToastOverlayConfig = {
-  sound: null,
-  volume: 0.7,
   durationMs: DEFAULT_TOAST_DURATION_MS
 }
 
@@ -62,22 +61,15 @@ const asRecord = (v: unknown): Record<string, unknown> =>
 const asNumber = (v: unknown, fallback: number): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback
 
-/** A stored sound reference, or null. HALF a reference is no reference — a packId with no
- *  soundId cannot be played, and storing it would look like a choice the user made. */
-function asSoundRef(v: unknown): AlertSoundRef | null {
-  const o = asRecord(v)
-  const packId = typeof o.packId === 'string' ? o.packId : ''
-  const soundId = typeof o.soundId === 'string' ? o.soundId : ''
-  return packId && soundId ? { packId, soundId } : null
-}
-
-/** Coerce a stored/patched toast config into the valid shape (the store's clamp lives here). */
+/**
+ * Coerce a stored/patched toast config into the valid shape (the store's clamp lives here).
+ * The result carries ONLY the fields above, so a stored `sound`/`volume` left over from the
+ * first toast build is dropped the next time this blob is written — never read, never honoured.
+ */
 export function normalizeToastConfig(v: unknown): ToastOverlayConfig {
   const o = asRecord(v)
   const duration = Math.floor(asNumber(o.durationMs, DEFAULT_TOAST_CONFIG.durationMs))
   return {
-    sound: asSoundRef(o.sound),
-    volume: Math.max(0, Math.min(1, asNumber(o.volume, DEFAULT_TOAST_CONFIG.volume))),
     durationMs: Math.min(TOAST_MAX_DURATION_MS, Math.max(TOAST_MIN_DURATION_MS, duration))
   }
 }

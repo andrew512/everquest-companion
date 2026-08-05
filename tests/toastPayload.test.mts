@@ -158,19 +158,25 @@ test('an item we know nothing about still draws — as its NAME, with no invente
 
 // ---- the persisted config -------------------------------------------------------------
 
-test('the toast ships SILENT (both producers already have a speaking alert)', () => {
-  assert.equal(DEFAULT_TOAST_CONFIG.sound, null)
-  assert.equal(DEFAULT_TOAST_CONFIG.durationMs, 6000)
+test('the toast config is TIMING ONLY — a card has no voice of its own', () => {
+  // Owner, 2026-08-05: "remove the sound controls from preferences, they are already covered by
+  // Alerts module." The config shipped with {sound, volume, durationMs} and a Silent default,
+  // which made the picker a way to hear the same boss kill twice. One knob is left.
+  assert.deepEqual(DEFAULT_TOAST_CONFIG, { durationMs: 6000 })
 })
 
-test('a stored config is normalized: half a sound ref is no sound, and the knobs are clamped', () => {
-  assert.equal(normalizeToastConfig({ sound: { packId: 'alan-rickman' } }).sound, null)
-  assert.deepEqual(normalizeToastConfig({ sound: { packId: 'p', soundId: 's' } }).sound, {
-    packId: 'p',
-    soundId: 's'
-  })
-  assert.equal(normalizeToastConfig({ volume: 9 }).volume, 1)
-  assert.equal(normalizeToastConfig({ volume: -1 }).volume, 0)
+test('a stored config is normalized: the duration is clamped, retired keys are dropped', () => {
   assert.equal(normalizeToastConfig({ durationMs: 10 ** 9 }).durationMs, TOAST_MAX_DURATION_MS)
+  assert.equal(normalizeToastConfig({ durationMs: 1 }).durationMs, 1000)
   assert.deepEqual(normalizeToastConfig(undefined), DEFAULT_TOAST_CONFIG)
+
+  // A store written by the first toast build still carries `sound`/`volume`. Normalizing DROPS
+  // them rather than migrating them: nothing reads them, every reader defaults, and the next
+  // write of this blob is what removes them from disk.
+  const stored = normalizeToastConfig({
+    sound: { packId: 'alan-rickman', soundId: 'boss' },
+    volume: 0.4,
+    durationMs: 7000
+  })
+  assert.deepEqual(stored, { durationMs: 7000 })
 })

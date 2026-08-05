@@ -109,10 +109,12 @@ test('golden window: one mob, two instance tiers, two runs that keep their own t
   assert.ok(ire, 'the KillMap is keyed by the canonical lowercase name')
   assert.equal(ire.display, 'Lord of Ire')
 
-  // THE RECORD: two runs, each carrying the tier AND the timestamps of its own kills.
+  // THE RECORD: two runs, each carrying the tier AND the timestamps of its own kills — plus,
+  // since 2026-08-05, how many of them the log CREDITED to you. Both kills in this window print
+  // `You gain experience!` in the second before the slain line, so both are yours.
   assert.deepEqual(ire.tiers, {
-    0: { count: 1, firstTs: D0_KILL, lastTs: D0_KILL },
-    4: { count: 1, firstTs: D4_KILL, lastTs: D4_KILL }
+    0: { count: 1, firstTs: D0_KILL, lastTs: D0_KILL, credited: 1 },
+    4: { count: 1, firstTs: D4_KILL, lastTs: D4_KILL, credited: 1 }
   })
 
   // The scalars are DERIVED — and this is precisely the pair that used to lie together:
@@ -126,24 +128,28 @@ test('golden window: one mob, two instance tiers, two runs that keep their own t
     count: ire.count,
     bestTier: ire.bestTier,
     firstTs: ire.firstTs,
-    lastTs: ire.lastTs
+    lastTs: ire.lastTs,
+    credited: ire.credited
   })
+  assert.equal(ire.credited, 2, 'both kills paid experience — they are yours')
 })
 
 test('the fold writes only the tiers map; the scalars are re-derived from it', () => {
   const kills: KillMap = {}
   // Three kills at d2 and one at d1, deliberately out of tier order.
-  recordKill(kills, { key: 'a mob', display: 'A mob', tier: 2, ts: 1000 })
-  recordKill(kills, { key: 'a mob', display: 'a mob', tier: 1, ts: 2000 })
-  recordKill(kills, { key: 'a mob', display: 'a mob', tier: 2, ts: 3000 })
-  recordKill(kills, { key: 'a mob', display: 'a mob', tier: 2, ts: 500 })
+  recordKill(kills, { key: 'a mob', display: 'A mob', tier: 2, ts: 1000, credited: true })
+  recordKill(kills, { key: 'a mob', display: 'a mob', tier: 1, ts: 2000, credited: true })
+  // One of the four was somebody else's kill: it counts for the mob and credits nothing.
+  recordKill(kills, { key: 'a mob', display: 'a mob', tier: 2, ts: 3000, credited: false })
+  recordKill(kills, { key: 'a mob', display: 'a mob', tier: 2, ts: 500, credited: true })
 
   const k = kills['a mob']
   assert.deepEqual(k.tiers, {
-    1: { count: 1, firstTs: 2000, lastTs: 2000 },
-    2: { count: 3, firstTs: 500, lastTs: 3000 }
+    1: { count: 1, firstTs: 2000, lastTs: 2000, credited: 1 },
+    2: { count: 3, firstTs: 500, lastTs: 3000, credited: 2 }
   })
   assert.equal(k.count, 4, 'count is the sum over runs')
+  assert.equal(k.credited, 3, 'and credit is its own sum — three of the four were yours')
   assert.equal(k.bestTier, 2)
   assert.equal(k.firstTs, 500, 'earliest kill at any tier')
   assert.equal(k.lastTs, 3000, 'latest kill at any tier')
@@ -155,15 +161,16 @@ test('the fold writes only the tiers map; the scalars are re-derived from it', (
 
 test('a mob killed at ONE tier folds to one run — the common case is unchanged', () => {
   const kills: KillMap = {}
-  recordKill(kills, { key: 'a rat', display: 'a rat', tier: 0, ts: 10 })
-  recordKill(kills, { key: 'a rat', display: 'a rat', tier: 0, ts: 20 })
+  recordKill(kills, { key: 'a rat', display: 'a rat', tier: 0, ts: 10, credited: true })
+  recordKill(kills, { key: 'a rat', display: 'a rat', tier: 0, ts: 20, credited: true })
   assert.deepEqual(kills['a rat'], {
     count: 2,
     bestTier: 0,
     firstTs: 10,
     lastTs: 20,
+    credited: 2,
     display: 'a rat',
-    tiers: { 0: { count: 2, firstTs: 10, lastTs: 20 } }
+    tiers: { 0: { count: 2, firstTs: 10, lastTs: 20, credited: 2 } }
   })
 })
 
@@ -214,7 +221,7 @@ test('golden window: d4 files under the loadout that killed it at d4, d0 under t
 
 test('a single-tier target renders exactly as before: one card, status untouched', () => {
   const kills: KillMap = {}
-  recordKill(kills, { key: 'maestro of rancor', display: 'Maestro of Rancor', tier: 2, ts: D0_KILL })
+  recordKill(kills, { key: 'maestro of rancor', display: 'Maestro of Rancor', tier: 2, ts: D0_KILL, credited: true })
   const target: RaidTarget = {
     name: 'Maestro of Rancor',
     category: 'Plane of Hate',
@@ -235,8 +242,8 @@ test('two runs of one target inside ONE interval stay one card', () => {
   // Killed at d1 and d3 on the same night: the header’s claim is true of both, and a target
   // must not appear twice under one header.
   const kills: KillMap = {}
-  recordKill(kills, { key: 'a mob', display: 'A mob', tier: 1, ts: D0_KILL - 60_000 })
-  recordKill(kills, { key: 'a mob', display: 'A mob', tier: 3, ts: D0_KILL })
+  recordKill(kills, { key: 'a mob', display: 'A mob', tier: 1, ts: D0_KILL - 60_000, credited: true })
+  recordKill(kills, { key: 'a mob', display: 'A mob', tier: 3, ts: D0_KILL, credited: true })
   const target: RaidTarget = { name: 'A mob', category: 'Open World', match: ['A mob'] }
   const groups = loadoutGroups([interval('ci1', 0, null)], allStatuses([target], kills))
 
@@ -253,8 +260,8 @@ test('undefeated targets are not grouped — they carry no timestamp to join on'
 
 test('a target folds its tier runs across every one of its roster match names', () => {
   const kills: KillMap = {}
-  recordKill(kills, { key: 'lord of ire', display: 'Lord of Ire', tier: 4, ts: D4_KILL })
-  recordKill(kills, { key: 'the lord of ire', display: 'The Lord of Ire', tier: 0, ts: D0_KILL })
+  recordKill(kills, { key: 'lord of ire', display: 'Lord of Ire', tier: 4, ts: D4_KILL, credited: true })
+  recordKill(kills, { key: 'the lord of ire', display: 'The Lord of Ire', tier: 0, ts: D0_KILL, credited: true })
   // lowerKillMap strips the leading article, so both spellings land on one key; two DIFFERENT
   // match names would fold the same way.
   const status = statusFor(LORD_OF_IRE, lowerKillMap(kills))
@@ -276,16 +283,18 @@ test('a delta REPLACES a mob wholesale — entries are never merged field by fie
         bestTier: 4,
         firstTs: 10,
         lastTs: 10,
+        credited: 1,
         display: 'A mob',
-        tiers: { 4: { count: 1, firstTs: 10, lastTs: 10 } }
+        tiers: { 4: { count: 1, firstTs: 10, lastTs: 10, credited: 1 } }
       },
       'a rat': {
         count: 1,
         bestTier: 0,
         firstTs: 5,
         lastTs: 5,
+        credited: 1,
         display: 'a rat',
-        tiers: { 0: { count: 1, firstTs: 5, lastTs: 5 } }
+        tiers: { 0: { count: 1, firstTs: 5, lastTs: 5, credited: 1 } }
       }
     }
   }
@@ -299,12 +308,13 @@ test('a delta REPLACES a mob wholesale — entries are never merged field by fie
         bestTier: 0,
         firstTs: 99,
         lastTs: 99,
+        credited: 1,
         display: 'A mob',
-        tiers: { 0: { count: 1, firstTs: 99, lastTs: 99 } }
+        tiers: { 0: { count: 1, firstTs: 99, lastTs: 99, credited: 1 } }
       }
     }
   })
-  assert.deepEqual(next.mobs['a mob'].tiers, { 0: { count: 1, firstTs: 99, lastTs: 99 } })
+  assert.deepEqual(next.mobs['a mob'].tiers, { 0: { count: 1, firstTs: 99, lastTs: 99, credited: 1 } })
   assert.equal(next.mobs['a mob'].bestTier, 0, 'the replaced entry is exactly what main sent')
   assert.deepEqual(next.mobs['a rat'], baseline.mobs['a rat'], 'untouched mobs ride along unchanged')
   assert.notEqual(next.mobs, baseline.mobs, 'a new object, so React sees the change')
@@ -326,8 +336,9 @@ test('a baseline written under a different shape version is invalidated, never m
         bestTier: 2,
         firstTs: 9,
         lastTs: 9,
+        credited: 1,
         display: 'A mob',
-        tiers: { 2: { count: 1, firstTs: 9, lastTs: 9 } }
+        tiers: { 2: { count: 1, firstTs: 9, lastTs: 9, credited: 1 } }
       }
     }
   }

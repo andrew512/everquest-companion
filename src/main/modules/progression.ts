@@ -57,6 +57,7 @@
 
 import type { EqModule } from './types'
 import { idKey } from '../log/parser'
+import { KILL_EXP_JOIN_MS } from '../../shared/kills'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
   ProgressionDelta,
@@ -100,12 +101,12 @@ export const OFFLINE_CAP = 4_000
 export const RECENT_KILL_CAP = 50
 
 /**
- * How far BACK a kill may reach for its experience line. The measured gap is 0 s or 1 s (sweep
- * in the header), so 2.5 s is generous slack over the observed spread while staying far under
- * the time between kills — it exists to absorb the log's one-second timestamp resolution, not
- * to hunt for a plausible line.
+ * How far BACK a kill may reach for its experience line (measured: 0 s or 1 s — the sweep in
+ * the header). It MOVED to shared/kills.ts when the kills tracker started joining on it too, so
+ * "was this kill yours" has one number behind it; re-exported here because this module's own
+ * join is the one the sweep documents and its tests name it from this path.
  */
-export const KILL_EXP_JOIN_MS = 2500
+export { KILL_EXP_JOIN_MS }
 
 /** An experience line waiting to be claimed by the kill line that follows it. */
 interface PendingExp {

@@ -77,7 +77,7 @@ export const SCHEMA_VERSION_KEY = 'schemaVersion'
  * The schema the code running right now expects. Bump by exactly one whenever a persisted
  * shape changes, and add the matching MIGRATIONS entry in the same commit.
  */
-export const CURRENT_SCHEMA_VERSION = 8
+export const CURRENT_SCHEMA_VERSION = 9
 
 export interface Migration {
   /** Version this step produces. Steps run in ascending `to` order, contiguously. */
@@ -436,6 +436,44 @@ const migrateToV8: Migration = {
   }
 }
 
+// ------------------------------------------ 8 → 9: the celebration toast defaults ON
+//
+// Owner, 2026-08-05: "it should be on by default." The toast overlay shipped the day before with
+// `open: false` in DEFAULT_OVERLAY_CONFIG, like the five meters — and it is not like the five
+// meters. A meter is a window you open when you want numbers; the toast is invisible and
+// click-through except for the few seconds a card is on screen. Off by default meant a
+// celebration feature nobody would ever see. The default is now `true` (store.ts).
+//
+// WHY A STORED `false` IS FLIPPED, and why that is honest rather than presumptuous. A default is
+// only the value for an ABSENT key, so flipping it would leave every store written since
+// yesterday stuck at off — and `overlays.toast.open` is written on the FIRST launch of any build
+// that touches the overlay config, not only when a user reaches for the switch. The feature is
+// hours old: no stored `false` in existence is a person's decision to decline it, they are all
+// yesterday's default written down. So this step rewrites exactly that value, once.
+//
+// WHAT IT WILL NEVER DO AGAIN. This is a one-time correction of a default, not a policy that the
+// app may re-enable things. It is pinned to this one version step: a user who turns the toast off
+// tomorrow writes `false` into a v9 store, this step never runs against it, and the switch stays
+// where they put it. (`open` is also the toast's ONLY enable — the design's `enabled` IS the
+// window's open-state, so there is nothing else here to correct.)
+//
+// The same commit stops READING `overlays.toast.sound` / `.volume` (the sound picker is gone —
+// the seeded alerts own that audio). Those keys are deliberately NOT deleted here: dropping a
+// read of optional keys needs no migration, every reader defaults, and `normalizeToastConfig`
+// simply stops emitting them the next time the blob is written.
+const migrateToV9: Migration = {
+  to: 9,
+  describe: 'celebration toast defaults ON; a stored pre-default false is corrected once',
+  migrate(data) {
+    if (!isPlainObject(data.overlays)) return data
+    const overlays: StoreData = { ...data.overlays }
+    const toast = overlays.toast
+    if (isPlainObject(toast) && toast.open === false) overlays.toast = { ...toast, open: true }
+    data.overlays = overlays
+    return data
+  }
+}
+
 /**
  * The chain, ascending. APPEND ONLY — never renumber, never edit a shipped step (a store
  * out there was migrated by the old text and will never run it again), never delete one:
@@ -448,7 +486,8 @@ export const MIGRATIONS: readonly Migration[] = [
   migrateToV5,
   migrateToV6,
   migrateToV7,
-  migrateToV8
+  migrateToV8,
+  migrateToV9
 ]
 
 /** Version recorded in `data`; anything absent, non-integer or < 1 means "pre-framework" ⇒ 1. */

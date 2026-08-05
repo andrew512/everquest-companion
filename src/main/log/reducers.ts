@@ -27,6 +27,13 @@ export interface KillRecord {
   display: string
   tier: number
   ts: number
+  /**
+   * Did this kill pay YOU experience — i.e. did an exp line land in the join window before it
+   * (shared/kills.ts KILL_EXP_JOIN_MS)? Counted separately from `count` on the tier run, never
+   * instead of it: an open-world kill by a stranger is still a kill of that mob, it is simply
+   * not one of yours. See KillTierRun.credited.
+   */
+  credited: boolean
 }
 
 /**
@@ -41,11 +48,20 @@ export interface KillRecord {
  * the misattribution this shape replaced (see shared/kills.ts).
  */
 export function recordKill(kills: KillMap, kill: KillRecord): void {
-  const { key, display, tier, ts } = kill
-  const k = (kills[key] ??= { count: 0, bestTier: 0, firstTs: 0, lastTs: 0, display, tiers: {} })
-  const run = (k.tiers[tier] ??= { count: 0, firstTs: ts, lastTs: ts })
+  const { key, display, tier, ts, credited } = kill
+  const k = (kills[key] ??= {
+    count: 0,
+    bestTier: 0,
+    firstTs: 0,
+    lastTs: 0,
+    credited: 0,
+    display,
+    tiers: {}
+  })
+  const run = (k.tiers[tier] ??= { count: 0, firstTs: ts, lastTs: ts, credited: 0 })
   run.count += 1
   run.firstTs = Math.min(run.firstTs, ts)
   run.lastTs = Math.max(run.lastTs, ts)
+  if (credited) run.credited += 1
   Object.assign(k, killTotals(k.tiers))
 }

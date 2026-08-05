@@ -275,8 +275,11 @@ function CelebrationToasts({
  *
  * Boss kills: useBossKills gates out the historical baseline. This is the SINGLE
  * always-mounted detector, so it's the one place we fire the 'bossDefeat' app signal for
- * the alerts extension. ONE callback carries both halves — the snackbar and the sound fire
- * on ANY roster kill, repeats included, matching the confetti the Boss tab bursts.
+ * the alerts extension. ONE callback carries all three surfaces — snackbar, sound and toast
+ * fire on any roster kill CREDITED to you, repeats included, matching the confetti the Boss
+ * tab bursts. A boss killed by a stranger in open world is tracked and celebrated by nobody
+ * (owner, 2026-08-05); the credit test is the log's own experience line, which is also why a
+ * GROUP kill still celebrates — party experience is experience.
  *
  * It used to be two (Task #24): the sound rode a narrower `onNewDefeat` — first kill at a new
  * instance tier — so the app cheered a repeat kill on screen and said nothing. Retired by the

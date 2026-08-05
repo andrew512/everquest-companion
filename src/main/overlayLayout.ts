@@ -37,11 +37,16 @@ const DEFAULT_SIZE: Size = { width: 380, height: 320 }
  * THE TOAST IS NOT A METER, and its geometry says so (docs/plans/celebration-toasts.md §3).
  * It is a transparent strip at the TOP CENTRE of the screen that normally renders nothing: it
  * has no selector, no drill and no bars, so the uniform meter size and the bottom-right stack
- * are both wrong for it. Width 440 (the card's own width), and tall enough to hold the capped
+ * are both wrong for it. Width 560 (the card's own width), and tall enough to hold the capped
  * queue of three cards — the window is transparent, so unused height costs nothing visually
  * and the empty window is fully click-through.
+ *
+ * 440 → 560 and 300 → 360 on 2026-08-05: "look and feel is good, but it needs to be a bit
+ * bigger/more prominent" (owner). The card's type scaled with it (overlay/ToastCard.tsx), so the
+ * lane and its contents still fit exactly. PERSISTED BOUNDS STILL WIN — a user who has already
+ * dragged or resized the strip keeps their geometry, and only sees the larger type.
  */
-const TOAST_SIZE: Size = { width: 440, height: 300 }
+const TOAST_SIZE: Size = { width: 560, height: 360 }
 /** Gap from the top of the work area to the first card. */
 const TOAST_TOP = 12
 

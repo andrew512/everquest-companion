@@ -12,6 +12,11 @@
 // is gone rather than left unused, because a second defeat predicate sitting in the file is how
 // the split grows back. Rate limiting is the alert's own `cooldownMs`, applied by `fireAppSignal`.
 //
+// WHAT CHANGED UNDER IT (2026-08-05): that predicate now compares the CREDITED kill count rather
+// than the raw one, so a boss killed by a stranger in open world is tracked and celebrated by
+// nobody. Every kill in this file is yours, which is why every assertion below reads the same as
+// it always did; the credit rule itself is pinned in tests/bossCreditedKills.test.mts.
+//
 // WHAT DID NOT CHANGE, and must not: the BASELINE. The celebrations law (AGENTS.md) is about
 // replay vs live, not first vs every — a character switch re-hydrates every historical kill and
 // must celebrate none of them. `useBossKills` seeds `prevRef` silently on the first snapshot and
@@ -31,15 +36,21 @@ const NAGAFEN: RaidTarget = {
   match: ['Lord Nagafen']
 } as RaidTarget
 
-/** A kill map holding ONE mob, at one tier, killed `count` times. */
+/**
+ * A kill map holding ONE mob, at one tier, killed `count` times — all of them CREDITED to you
+ * (an experience line joined each slain line). That is what these tests are about: this file
+ * pins "a repeat kill of YOUR boss still celebrates", and whether a kill is yours at all is the
+ * separate predicate pinned in tests/bossCreditedKills.test.mts.
+ */
 function killed(count: number, tier: number, lastTs: number): KillMap {
-  const run: KillTierRun = { count, firstTs: 1_785_000_000_000, lastTs }
+  const run: KillTierRun = { count, firstTs: 1_785_000_000_000, lastTs, credited: count }
   return {
     'lord nagafen': {
       count,
       bestTier: tier,
       firstTs: run.firstTs,
       lastTs,
+      credited: count,
       display: 'Lord Nagafen',
       tiers: { [tier]: run }
     }
@@ -67,7 +78,7 @@ test('B1 a REPEAT kill at the SAME tier is a kill — the case the sound used to
   assert.equal(bossKills(prevOf(killed(2, 0, 1_785_000_600_000)), third).length, 1)
 })
 
-test('B2 no kill, no signal — the count must actually move', () => {
+test('B2 no kill, no signal — the credited count must actually move', () => {
   const same = killed(2, 0, 1_785_000_600_000)
   assert.equal(bossKills(prevOf(same), allStatuses([NAGAFEN], same)).length, 0, 'a re-render is not a kill')
 

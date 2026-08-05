@@ -118,10 +118,12 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
   const [flashing, setFlashing] = useState<Set<string>>(new Set())
   const [burst, setBurst] = useState<number | null>(null)
 
-  // ANY live roster-boss kill (incl. a repeat at the same/lower tier, Task #24):
-  // fire confetti over the view and flash the boss card for ~3s. The kills module
-  // (via useBossKills) already gates out the historical baseline, so this only
-  // fires for kills that happen while the app is open. The bossDefeat *sound* rides
+  // Any live roster-boss kill CREDITED to you (incl. a repeat at the same/lower tier,
+  // Task #24): fire confetti over the view and flash the boss card for ~3s. The kills
+  // module (via useBossKills) already gates out the historical baseline, so this only
+  // fires for kills that happen while the app is open — and only for kills the log paid
+  // you for, so a stranger's open-world kill still fills in the card without a party.
+  // The bossDefeat *sound* rides
   // the same predicate from App's always-mounted detector, so the two agree on every
   // kill and the alert's cooldown stops the pair double-playing.
   const onKill = useCallback((s: TargetStatus) => {

@@ -16,6 +16,12 @@ export interface TargetStatus {
   firstTs: number
   lastTs: number
   /**
+   * How many of `count` were CREDITED to you — an experience line joined the slain line
+   * (shared/kills.ts). The CELEBRATION predicate below is the only reader; every tracking
+   * surface (killed, count, tiers, dates, badges) reads the plain count and is unaffected.
+   */
+  credited: number
+  /**
    * The per-instance-tier breakdown of this target's kills, folded across every one of its
    * roster `match` names. A card grouped by class loadout is built from ONE of these runs, so
    * the tier it badges and the timestamp it joins on come from the same kills (shared/kills.ts).
@@ -80,16 +86,25 @@ export function allStatuses(targets: RaidTarget[], kills: KillMap): TargetStatus
 }
 
 /**
- * ANY roster-boss kill (Task #24): a target whose total kill `count` increased since the
+ * ANY roster-boss kill CREDITED TO YOU: a target whose credited-kill count increased since the
  * previous snapshot — including a REPEAT kill at the same-or-lower tier. Compares a previous
  * status snapshot (keyed by target name) to the current one; returns the targets just killed.
  *
  * THE ONLY DEFEAT PREDICATE THERE IS, since 2026-08-04. It drives confetti, the card flash,
- * the snackbar AND the bossDefeat alert sound. There used to be a second, narrower one —
- * `newDefeats`, "first kill at a new instance tier" — which gated the SOUND alone, so killing
- * Lord Nagafen a second time was silent. The owner's call: "every time is worth celebrating."
- * A boss is not a checklist item, so a second kill is not a lesser event; the alert's own
- * cooldown is where "don't repeat yourself" belongs, not a first-time-only predicate.
+ * the snackbar, the celebration toast AND the bossDefeat alert sound. There used to be a second,
+ * narrower one — `newDefeats`, "first kill at a new instance tier" — which gated the SOUND alone,
+ * so killing Lord Nagafen a second time was silent. The owner's call: "every time is worth
+ * celebrating." A boss is not a checklist item, so a second kill is not a lesser event; the
+ * alert's own cooldown is where "don't repeat yourself" belongs, not a first-time-only predicate.
+ *
+ * CREDITED, NOT MERELY OBSERVED (owner, 2026-08-05: "it looks like it's celebrating even when I'm
+ * not the killer of the boss — I'm in open world and somebody killed. If I'm not in a group with
+ * them, it should not count."). The kills module counts every boss that DIES anywhere in your
+ * log, which is right for the roster — a thunder spirit princess that died at 00:33:45 on Wed Aug
+ * 05 to a passing stranger is a defeated mob, and the tracker records it. It is not a thing to
+ * cheer. The distinction the log actually makes is the experience line: yours and your group's
+ * kills print one immediately before the slain line, a stranger's prints nothing. So celebration
+ * reads `credited` and tracking still reads `count` — one predicate moved, no state moved.
  *
  * WHAT DID NOT CHANGE: the baseline. `useBossKills` seeds silently on the first snapshot, so
  * this only ever sees LIVE transitions — history loaded on character switch celebrates
@@ -103,8 +118,8 @@ export function bossKills(
   for (const s of next) {
     if (!s.killed) continue
     const before = prev.get(s.target.name)
-    const prevCount = before?.count ?? 0
-    if (s.count > prevCount) out.push(s)
+    const prevCredited = before?.credited ?? 0
+    if (s.credited > prevCredited) out.push(s)
   }
   return out
 }

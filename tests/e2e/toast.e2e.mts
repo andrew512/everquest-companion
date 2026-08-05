@@ -4,8 +4,9 @@
  * WHAT ONLY THE REAL APP CAN SHOW. The pure halves are pinned elsewhere — the payload validator
  * and the item card's formatting in tests/toastPayload.test.mts, the queue/hover timing in
  * tests/toastQueue.test.mts, the top-centre geometry in tests/overlayLayout.test.mts. What no
- * unit test can claim is that the PIECES ARE WIRED: that turning the switch on in Preferences
- * actually spawns a sixth overlay window, that a payload sent over the REAL `toast:show` channel
+ * unit test can claim is that the PIECES ARE WIRED: that a fresh install spawns the sixth overlay
+ * window on its own (the toast defaults ON since 2026-08-05), that Preferences shows that state
+ * rather than a second opinion of it, that a payload sent over the REAL `toast:show` channel
  * crosses main (validation, item resolution, fan-out) and lands in that window's DOM as a card,
  * and that a refused payload lands nowhere.
  *
@@ -21,7 +22,6 @@
  * Run: `npm run test:e2e` (or `node --import tsx tests/e2e/toast.e2e.mts`).
  */
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
-import { rmSync } from 'node:fs'
 import {
   MAIN_ENTRY,
   ROOT,
@@ -36,6 +36,7 @@ import {
   reportRun,
   sleep
 } from './appHarness.mjs'
+import { freshUserData, mainWindow } from './appWindow.mjs'
 
 /** A Sky reward that exists in the committed item DB, so the card resolves with NO network. */
 const REWARD = 'Shining Metallic Robes'
@@ -77,19 +78,31 @@ function cardTexts(page: Page): Promise<string[]> {
   )
 }
 
-/** The switch lives in Preferences → Overlays; turning it on is what opens the window. */
-async function stepEnable(page: Page): Promise<boolean> {
+/**
+ * The switch lives in Preferences → Overlays. It is ON out of the box now (owner, 2026-08-05),
+ * so this step asserts the panel AGREES with the window rather than turning anything on — and
+ * that the sound controls, which the Alerts module already owns, are gone from it.
+ */
+async function stepPreferences(page: Page): Promise<void> {
   await page.click('[data-testid="nav-preferences"]', { timeout: 60_000 })
   await page.waitForSelector('[data-testid="prefs-rail-overlays"]', { timeout: 20_000 })
   await page.click('[data-testid="prefs-rail-overlays"]')
   await page.waitForSelector('[data-testid="pref-toast"]', { timeout: 15_000 })
   if (!check('Preferences → Overlays offers the celebration toast', (await countOf(page, '[data-testid="pref-toast"]')) === 1)) {
-    return false
+    return
   }
-  check('…with a sound picker beside its switch', (await countOf(page, '[data-testid="pref-toast-sound"]')) === 1)
-  await page.click('[data-testid="pref-toast-enabled"]')
-  await sleep(1200)
-  return true
+  // The switch's testid sits on the MUI root, so the checkbox is the input inside it (the
+  // telemetry pane's precedent).
+  const on = await page.evaluate(
+    (sel) => (document.querySelector(sel) as HTMLInputElement | null)?.checked,
+    '[data-testid="pref-toast-enabled"] input'
+  )
+  check('…with its switch already ON, matching the window that opened itself', on === true, String(on))
+  check(
+    '…and NO sound controls (the boss/quest alerts own that audio)',
+    (await countOf(page, '[data-testid="pref-toast-sound"]')) === 0 &&
+      (await countOf(page, '[data-testid="pref-toast-pack"]')) === 0
+  )
 }
 
 /** A boss kill: a gold title line and nothing else — no reward, no click target. */
@@ -155,7 +168,7 @@ async function stepQuestToast(main: Page, toast: Page): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  rmSync(USER_DATA, { recursive: true, force: true })
+  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1) — celebration toasts spec…')
   const app: ElectronApplication = await electron.launch({
@@ -168,7 +181,7 @@ async function main(): Promise<void> {
 
   let page: Page | null = null
   try {
-    page = await app.firstWindow({ timeout: 60_000 })
+    page = await mainWindow(app)
     const consoleErrors: string[] = []
     page.on('console', (m) => {
       if (m.type() === 'error') consoleErrors.push(m.text())
@@ -176,17 +189,18 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
-    check('the toast overlay is OFF on a fresh install', (await findToastWindow(app)) === null)
 
-    if (await stepEnable(page)) {
-      const toast = await waitForToastWindow(app)
-      if (check('turning it on spawns the toast overlay window (hidden, under EQ_E2E)', toast !== null)) {
-        const t = toast as Page
-        check('…which renders nothing at rest', (await countOf(t, '[data-testid="toast-card"]')) === 0)
-        await stepBossToast(page, t)
-        await stepRefusal(page, t)
-        await stepQuestToast(page, t)
-      }
+    // ON OUT OF THE BOX (owner, 2026-08-05: "it should be on by default"). A fresh install has
+    // no stored `overlays.toast`, so the DEFAULT decides — and the window is the feature, so the
+    // proof is that it exists before anybody has touched a setting.
+    const toast = await waitForToastWindow(app)
+    if (check('the toast overlay is ON for a fresh install (hidden, under EQ_E2E)', toast !== null)) {
+      const t = toast as Page
+      check('…which renders nothing at rest', (await countOf(t, '[data-testid="toast-card"]')) === 0)
+      await stepPreferences(page)
+      await stepBossToast(page, t)
+      await stepRefusal(page, t)
+      await stepQuestToast(page, t)
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

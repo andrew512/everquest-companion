@@ -25,7 +25,7 @@
  * Never run it beside another spec — they share the userData singleton.
  */
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   MAIN_ENTRY,
@@ -41,6 +41,7 @@ import {
   reportRun,
   sleep
 } from './appHarness.mjs'
+import { freshUserData, mainWindow } from './appWindow.mjs'
 
 const NOTICE = '[data-testid="telemetry-notice"]'
 const TEXT = '[data-testid="telemetry-notice-text"]'
@@ -393,11 +394,11 @@ async function firstRun(
   errors: string[],
   step: (p: Page) => Promise<void>
 ): Promise<void> {
-  rmSync(USER_DATA, { recursive: true, force: true })
+  await freshUserData()
   console.log(label)
   const app = await launch()
   try {
-    const page = await app.firstWindow({ timeout: 60_000 })
+    const page = await mainWindow(app)
     watch(page, errors)
     if (await stepNoticeShown(page)) await step(page)
     if (failures.length) await dumpArtifacts(page, `telemetry-FAIL-${label.split(':')[0].replace(/\s+/g, '-')}`)
@@ -426,7 +427,7 @@ async function main(): Promise<void> {
   console.log('launch 4: same userData as launch 3 — does the answer survive a restart…')
   const app = await launch()
   try {
-    const page = await app.firstWindow({ timeout: 60_000 })
+    const page = await mainWindow(app)
     watch(page, consoleErrors)
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
     await sleep(1_000)

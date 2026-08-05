@@ -64,7 +64,9 @@ import {
   waitForCombatText,
   type Snap
 } from './appHarness.mjs'
+import { freshUserData, mainWindow } from './appWindow.mjs'
 import { meterRows } from './drill.mjs'
+import { stepFrozenList, stepHealingDimension } from './combatSteps.mjs'
 
 // ── the run, one step per numbered section ─────────────────────────────────────────────
 //
@@ -338,6 +340,19 @@ async function stepCombatLogAndRegression(page: Page, snapIn: Snap): Promise<Sna
   return snap
 }
 
+/**
+ * THE HEALING DIMENSION (P2 of docs/plans/combat-overlay-parity.md — owner ruling: "the combat
+ * panel lacks the overlay's HEAL functionality — parity").
+ *
+ * The builder and its words are pinned purely in tests/healRows.test.mts. What only the real app
+ * can show is that the third position of the direction filter is WIRED: the panel swaps to a
+ * healing list, its headline switches units to `hps` (a heal rate can never be read as dps), and
+ * the copy affordance — which serializes damage tables only — stands down rather than putting the
+ * wrong view on the clipboard.
+ *
+ * The CONTENT is log-dependent (a session with no heals legitimately renders the quiet empty
+ * state), so nothing here asserts rows — only that the dimension exists and behaves.
+ */
 async function stepPickAFight(page: Page, snap: Snap): Promise<void> {
   // 10. Drive the SELECTOR for real and land on a finalized fight. History always carries
   //     damage (the engine drops 0-damage encounters), so this is the unconditional "the
@@ -379,46 +394,6 @@ async function stepPickAFight(page: Page, snap: Snap): Promise<void> {
       `listed: ${listed.join(', ') || 'none'}`
     )
   }
-}
-
-async function stepFrozenList(page: Page): Promise<void> {
-  // 10b. FROZEN WHILE OPEN (Task #61, the churn fix). The snapshot ticks ~4x/sec while the
-  //      user is fighting, and every tick rebuilds the option rows: a fight finalizes, the head
-  //      row relabels itself from "Current fight (live)" to "Last fight — …", the old head drops
-  //      into the history under its own id, and every row below shifts down one. That is what
-  //      "it gets all confused as it's switching" was. The contract now is that the OPEN list is
-  //      a snapshot taken at open time — no reorder, no insert, no removal — so what is under
-  //      your pointer stays under your pointer.
-  //
-  //      This can only PROVE anything while the log is actually moving (a quiet log churns
-  //      nothing, so an unchanged list is vacuous), hence: assert when busy, note when quiet —
-  //      the same convention step 8 uses for the live tail.
-  await openPicker(page)
-  const frozenBefore = await listedValues(page)
-  const churnA = await snapshot(page)
-  await sleep(3000)
-  const frozenAfter = await listedValues(page)
-  const churnB = await snapshot(page)
-  // "Busy" = the engine's own view of the world moved underneath the open list: a fight is
-  // open, the fight count changed, or the selected segment's damage grew.
-  const busy =
-    !!churnB.segments.find((s) => s.kind === 'current') ||
-    churnA.segments.length !== churnB.segments.length ||
-    (churnA.selected?.outTotal ?? 0) !== (churnB.selected?.outTotal ?? 0)
-  const sameList =
-    frozenBefore.length === frozenAfter.length && frozenBefore.every((v, i) => v === frozenAfter[i])
-  if (busy) {
-    check(
-      'the OPEN fight list is frozen — 3s of live ticks change neither its rows nor their order',
-      sameList,
-      `${frozenBefore.length} rows → ${frozenAfter.length} rows${sameList ? '' : ` (was ${frozenBefore.slice(0, 4).join(',')} · now ${frozenAfter.slice(0, 4).join(',')})`}`
-    )
-  } else {
-    note(
-      `the log was quiet across the 3s freeze window (${frozenBefore.length} rows, unchanged) — nothing could have churned, so the freeze is not asserted this run`
-    )
-  }
-  await closePicker(page)
 }
 
 async function stepSearch(page: Page, snap: Snap): Promise<void> {
@@ -531,7 +506,7 @@ async function stepResponsive(app: ElectronApplication, page: Page): Promise<voi
 async function main(): Promise<void> {
   buildIfStale()
   rmSync(ARTIFACTS, { recursive: true, force: true })
-  rmSync(USER_DATA, { recursive: true, force: true })
+  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log…')
   const app: ElectronApplication = await electron.launch({
@@ -544,7 +519,7 @@ async function main(): Promise<void> {
 
   let page: Page | null = null
   try {
-    page = await app.firstWindow({ timeout: 60_000 })
+    page = await mainWindow(app)
     const consoleErrors: string[] = []
     page.on('console', (m) => {
       if (m.type() === 'error') consoleErrors.push(m.text())
@@ -561,6 +536,7 @@ async function main(): Promise<void> {
     const shape = await stepDashboardShape(page, snap)
     snap = await stepScopeAndSelector(page, snap, shape)
     snap = await stepCombatLogAndRegression(page, snap)
+    await stepHealingDimension(page)
     await stepPickAFight(page, snap)
     await stepFrozenList(page)
     await stepSearch(page, snap)

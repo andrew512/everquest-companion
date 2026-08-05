@@ -92,3 +92,35 @@ gets a pointer cursor + hairline highlight on hover — the only affordance.
   posky AppFocus anchor + tests (payload validation, layout default, queue
   timing pure-function tests) + e2e smoke (toast window spawns hidden in
   EQ_E2E, receives a payload, renders the card).
+
+## 7. As shipped — owner amendments, 2026-08-05
+
+Four corrections after living with wave L for a night. They supersede the
+decisions above where they disagree; the rows are left intact because the
+reasoning that produced them is still worth reading.
+
+- **T7 IS RETIRED. A toast has no sound of its own.** "Remove the sound
+  controls from preferences, they are already covered by Alerts module."
+  The picker, `overlays.toast.sound`/`.volume` and the `toast:sound`
+  channel are gone. The seeded "Raid target defeated" / "Quest complete"
+  ALERTS speak on these exact events, from the same callbacks — T7 could
+  only ever add a second voice over one kill. (Stray persisted keys are
+  left where they lie: nothing reads them, and the blob drops them on its
+  next write.)
+- **T9 GAINS ITS MISSING WORD: every kill CREDITED TO YOU.** "It looks
+  like its celebrating even when im not the killer of the boss — im in
+  open world and somebody killed. if im not in a group with them, it
+  should not count." The kills module now joins each slain line to the
+  experience line that precedes it (`KillTierRun.credited`), and
+  `bossStatus.bossKills` compares that instead of the raw count. Group
+  kills still celebrate — party experience is experience. Tracking is
+  untouched: the roster still records every boss that dies.
+- **ON BY DEFAULT.** "It should be on by default." `overlays.toast.open`
+  defaults true — the one overlay kind that does, because it is invisible
+  and click-through except for the seconds a card is up. Schema v9
+  corrects stores written at the old default (storeMigrations.ts).
+- **BIGGER.** "Look and feel is good, but it needs to be a bit
+  bigger/more prominent." Lane 440 → 560 px, title 14 → 18, subtitle
+  11 → 13, item name 12 → 14, item lines 10.5 → 12, icon 40 → 52, padding
+  10/12 → 14/18. §4's ANIMATION is untouched — it was already right.
+  Persisted bounds still win, so a user who moved the strip keeps it.

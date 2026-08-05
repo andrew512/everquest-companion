@@ -51,7 +51,14 @@ function runRows(list: readonly TargetStatus[]): RunRow[] {
     if (!status.killed) continue
     for (const run of tierRuns(status.tiers)) {
       if (run.lastTs <= 0) continue
-      rows.push({ ts: run.lastTs, status, tier: run.tier, run: { count: run.count, firstTs: run.firstTs, lastTs: run.lastTs } })
+      // `credited` rides along verbatim: a projected card must describe the same kills as the
+      // run it came from, celebration flag included, even though only bossStatus reads it.
+      rows.push({
+        ts: run.lastTs,
+        status,
+        tier: run.tier,
+        run: { count: run.count, firstTs: run.firstTs, lastTs: run.lastTs, credited: run.credited }
+      })
     }
   }
   return rows

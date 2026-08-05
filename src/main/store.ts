@@ -334,11 +334,16 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // The CELEBRATION TOAST (docs/plans/celebration-toasts.md). `locked: true` is the resting
   // state that makes it a notifier rather than a window: locked = click-through, and the
   // overlay flips capture on only while a card is actually on screen. Unlocking is how you
-  // reposition it (Preferences → Overlays), exactly as with the meters. Its sound defaults to
-  // SILENT: both producers already have a seeded, enabled alert with its own voice line, so a
-  // default toast sound would speak twice over every boss kill.
+  // reposition it (Preferences → Overlays), exactly as with the meters.
+  //
+  // THE ONE KIND THAT DEFAULTS ON (owner, 2026-08-05: "it should be on by default"). Every
+  // meter is a window you go and get when you want numbers; this one is a card that appears for
+  // a few seconds when something worth cheering happens and is INVISIBLE and click-through the
+  // rest of the time — so an install that never mentions it is better with it than without.
+  // Stores written by the first toast build carry `open: false` from that default and are
+  // corrected once, by migration 8→9 (storeMigrations.ts).
   toast: {
-    open: false,
+    open: true,
     locked: true,
     bgAlpha: 0.72,
     topN: 5,

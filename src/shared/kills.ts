@@ -18,6 +18,19 @@
 // the combo interval, which is revisable, is still joined at read time and never stamped.
 
 /**
+ * How far BACK a kill line may reach for the experience line that credits it. The measured gap
+ * is 0 s or 1 s (the full-log sweep quoted in main/modules/progression.ts: the exp line PRECEDES
+ * its kill line, same second, 4,887 of 4,909), so 2.5 s is generous slack over the observed
+ * spread while staying far under the time between kills — it absorbs the log's one-second
+ * timestamp resolution, it does not hunt for a plausible line.
+ *
+ * It lives HERE, with the kill record, because two modules now join on it (the progression
+ * series and the kills tracker's credit flag) and a second copy of the number is a second
+ * answer to "was this kill yours".
+ */
+export const KILL_EXP_JOIN_MS = 2500
+
+/**
  * One mob's kills at ONE instance difficulty tier. `firstTs`/`lastTs` bracket that tier's
  * kills only — which is what makes an honest per-tier time join possible.
  */
@@ -27,6 +40,20 @@ export interface KillTierRun {
   firstTs: number
   /** most recent kill of this mob AT THIS TIER (ms) */
   lastTs: number
+  /**
+   * How many of this run's `count` kills were CREDITED to you — i.e. an experience line landed
+   * within KILL_EXP_JOIN_MS before the slain line (main/modules/kills.ts owns the join).
+   *
+   * WHY IT LIVES ON THE RUN. Credit is a fact ABOUT a kill, exactly as the tier is (world-model
+   * law 10), so it belongs with the kill rather than in a parallel structure that could drift
+   * from the record it describes. `credited <= count` always: your own kills, your pet's, and a
+   * group-mate's killing blow (party experience credits you) are credited; a stranger's
+   * open-world kill you merely WITNESSED is counted for tracking and credited to nobody.
+   *
+   * ONLY CELEBRATION reads it (bossStatus.bossKills). Tracking — the roster's defeated state,
+   * the tier badges, the counts, the dates — reads `count` and is unchanged by it.
+   */
+  credited: number
 }
 
 /** Aggregated kill info for a mob (for loot sourcing + boss instance tiers). */
@@ -39,6 +66,8 @@ export interface KillInfo {
   firstTs: number
   /** DERIVED from `tiers`: most recent kill at ANY tier (ms). */
   lastTs: number
+  /** DERIVED from `tiers`: how many kills at ANY tier were credited to you (see KillTierRun). */
+  credited: number
   /**
    * Human-readable display name (original casing/article of the first-seen slain
    * line). The KillMap is KEYED by the canonical lowercase name so that
@@ -59,7 +88,8 @@ export type KillMap = Record<string, KillInfo>
 /**
  * Shape version of a KillInfo entry, stamped onto every kills snapshot and delta.
  *
- * 1 = the five-scalar record (no `tiers`); 2 = the per-tier record above. It exists for ONE
+ * 1 = the five-scalar record (no `tiers`); 2 = the per-tier record; 3 = the same with each run
+ * carrying how many of its kills were exp-CREDITED. It exists for ONE
  * hazard, which is real in dev and at every app update: the delta is a PER-MOB merge, so a
  * renderer holding a v1 baseline that starts receiving v2 deltas would keep every untouched
  * mob's narrow entry forever — a stale record surviving the fix that replaced it. The
@@ -67,7 +97,7 @@ export type KillMap = Record<string, KillInfo>
  * throws the baseline away and re-hydrates rather than merging across shapes. Bump this
  * whenever a KillInfo field changes meaning.
  */
-export const KILLS_SHAPE_VERSION = 2
+export const KILLS_SHAPE_VERSION = 3
 
 /** kills module snapshot: the map plus the shape version its entries were written at. */
 export interface KillsSnap {
@@ -85,25 +115,28 @@ export interface KillsDelta {
   changed: KillMap
 }
 
-/** The four derived scalars of a KillInfo, folded from its per-tier runs. */
+/** The five derived scalars of a KillInfo, folded from its per-tier runs. */
 export function killTotals(tiers: Record<number, KillTierRun>): {
   count: number
   bestTier: number
   firstTs: number
   lastTs: number
+  credited: number
 } {
   let count = 0
   let bestTier = 0
   let firstTs = 0
   let lastTs = 0
+  let credited = 0
   for (const [key, run] of Object.entries(tiers)) {
     if (run.count <= 0) continue
     count += run.count
     bestTier = Math.max(bestTier, Number(key))
     firstTs = firstTs ? Math.min(firstTs, run.firstTs) : run.firstTs
     lastTs = Math.max(lastTs, run.lastTs)
+    credited += run.credited
   }
-  return { count, bestTier, firstTs, lastTs }
+  return { count, bestTier, firstTs, lastTs, credited }
 }
 
 /** One tier run with its tier number attached, oldest LAST kill first. */
@@ -128,12 +161,18 @@ export function tierRuns(tiers: Record<number, KillTierRun>): TierRun[] {
 export function addTierRun(into: Record<number, KillTierRun>, tier: number, run: KillTierRun): void {
   const prev = into[tier]
   if (!prev) {
-    into[tier] = { count: run.count, firstTs: run.firstTs, lastTs: run.lastTs }
+    into[tier] = {
+      count: run.count,
+      firstTs: run.firstTs,
+      lastTs: run.lastTs,
+      credited: run.credited
+    }
     return
   }
   prev.count += run.count
   prev.firstTs = prev.firstTs ? Math.min(prev.firstTs, run.firstTs) : run.firstTs
   prev.lastTs = Math.max(prev.lastTs, run.lastTs)
+  prev.credited += run.credited
 }
 
 /**

@@ -6,9 +6,15 @@
 // (docs/plans/celebration-toasts.md T5 — the overlay fetches nothing), and pulling MUI into the
 // window that is supposed to be the cheapest thing on screen would defeat the point.
 //
-// LOOK (§4): dark glass, a gold title, a muted subtitle, an 8px radius and a hairline. Enter is
+// LOOK (§4): dark glass, a gold title, a muted subtitle, a 10px radius and a hairline. Enter is
 // a 250 ms slide-down + fade; exit is the same in reverse over 300 ms. Both are CSS transitions
 // on transform/opacity — compositor-only properties, so the animation costs the game nothing.
+//
+// SCALE (owner, 2026-08-05: "look and feel is good, but it needs to be a bit bigger/more
+// prominent"). Every number below went up by roughly a quarter — 18px title, 13px subtitle,
+// 52px icon, more padding — against a 560px lane (main/overlayLayout.ts). The MOTION is
+// deliberately untouched: it was already right, and a celebration that arrives faster or
+// further would read as an alarm.
 //
 // THE ITEM CARD IS THE CLICK TARGET (T6) and the only affordance: it takes the pointer cursor
 // and a hairline highlight on hover. The card as a whole pins on hover; only the reward block
@@ -44,10 +50,10 @@ function RewardBlock({ item, onClick }: { item: ToastItemCard; onClick?: () => v
       onMouseLeave={() => setHot(false)}
       style={{
         display: 'flex',
-        gap: 8,
-        marginTop: 8,
-        padding: 6,
-        borderRadius: 6,
+        gap: 10,
+        marginTop: 10,
+        padding: 8,
+        borderRadius: 8,
         border: `1px solid ${hot && clickable ? GOLD : 'rgba(255,255,255,0.10)'}`,
         background: 'rgba(255,255,255,0.04)',
         cursor: clickable ? 'pointer' : 'default'
@@ -57,9 +63,9 @@ function RewardBlock({ item, onClick }: { item: ToastItemCard; onClick?: () => v
         <img
           src={iconUrl(item.iconId)}
           alt=""
-          width={40}
-          height={40}
-          style={{ width: 40, height: 40, imageRendering: 'pixelated', flex: '0 0 auto' }}
+          width={52}
+          height={52}
+          style={{ width: 52, height: 52, imageRendering: 'pixelated', flex: '0 0 auto' }}
           onError={(e) => {
             // A miss is never cached, so hiding the <img> is the whole failure path: the next
             // toast retries the fetch and the icon simply appears when the wiki is reachable.
@@ -68,11 +74,11 @@ function RewardBlock({ item, onClick }: { item: ToastItemCard; onClick?: () => v
         />
       )}
       <div style={{ minWidth: 0 }}>
-        <div style={{ color: nameColor(item.colorFlag), fontSize: 12, fontFamily: MONO, fontWeight: 700 }}>
+        <div style={{ color: nameColor(item.colorFlag), fontSize: 14, fontFamily: MONO, fontWeight: 700 }}>
           {item.name}
         </div>
         {item.lines.map((l) => (
-          <div key={l} style={{ color: MUTED, fontSize: 10.5, fontFamily: MONO, lineHeight: 1.45 }}>
+          <div key={l} style={{ color: MUTED, fontSize: 12, fontFamily: MONO, lineHeight: 1.45 }}>
             {l}
           </div>
         ))}
@@ -123,21 +129,21 @@ export function ToastCard({
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       style={{
-        marginBottom: 8,
-        padding: '10px 12px',
-        borderRadius: 8,
+        marginBottom: 10,
+        padding: '14px 18px',
+        borderRadius: 10,
         border: '1px solid rgba(217,178,95,0.35)',
         background: `rgba(15,17,21,${String(bgAlpha)})`,
         backdropFilter: 'blur(6px)',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.45)',
+        boxShadow: '0 8px 22px rgba(0,0,0,0.45)',
         ...motionStyle(entering, exiting)
       }}
     >
-      <div data-testid="toast-title" style={{ color: GOLD, fontSize: 14, fontWeight: 700, lineHeight: 1.3 }}>
+      <div data-testid="toast-title" style={{ color: GOLD, fontSize: 18, fontWeight: 700, lineHeight: 1.3 }}>
         {payload.title}
       </div>
       {payload.subtitle && (
-        <div data-testid="toast-subtitle" style={{ color: MUTED, fontSize: 11, marginTop: 2 }}>
+        <div data-testid="toast-subtitle" style={{ color: MUTED, fontSize: 13, marginTop: 3 }}>
           {payload.subtitle}
         </div>
       )}

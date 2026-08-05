@@ -92,7 +92,9 @@ test('a full column wraps LEFT rather than off the top of the screen', () => {
 test('the toast opens TOP-CENTRED on the work area, at its own width', () => {
   for (const [name, wa] of Object.entries(WORK_AREAS)) {
     const b = defaultOverlayBounds('toast', wa)
-    assert.equal(b.width, 440, `${name}: the card lane's own width, not the meter size`)
+    // 560 since 2026-08-05 ("it needs to be a bit bigger/more prominent" — owner); the card's
+    // type scaled with the lane, so the two numbers move together or not at all.
+    assert.equal(b.width, 560, `${name}: the card lane's own width, not the meter size`)
     assert.equal(b.y, wa.y + 12, `${name}: 12px below the top of the work area`)
     // Centred: the gap to the left edge equals the gap to the right, within a rounding pixel.
     const left = b.x - wa.x

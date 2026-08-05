@@ -1,16 +1,18 @@
 // toast.ts — main's half of the CELEBRATION TOAST (docs/plans/celebration-toasts.md).
 //
-// ONE HOP IN, TWO HOPS OUT. The main window's always-mounted celebration detectors say what
-// happened (`toast:show`, a ToastRequest); this module answers the two questions only main can:
+// ONE HOP IN, ONE HOP OUT. The main window's always-mounted celebration detectors say what
+// happened (`toast:show`, a ToastRequest); this module answers the one question only main can:
+// WHAT DOES THE REWARD LOOK LIKE — `lookupItem` (cache-first, local posky before wiki) plus the
+// pure `toastItemCard` formatter, so the overlay receives a finished card. The overlay bundle is
+// MUI-free and fetches NOTHING (T5): if the item's knowledge is not in the payload, it is not on
+// screen.
 //
-//   1. WHAT DOES THE REWARD LOOK LIKE — `lookupItem` (cache-first, local posky before wiki) plus
-//      the pure `toastItemCard` formatter, so the overlay receives a finished card. The overlay
-//      bundle is MUI-free and fetches NOTHING (T5): if the item's knowledge is not in the
-//      payload, it is not on screen.
-//   2. WHAT DOES IT SOUND LIKE — the toast's own `{packId, soundId}` + volume live in
-//      `overlays.toast` (main-owned electron-store), and the audio stack lives in the MAIN
-//      window (T7). So main reads the config and asks that window to play it: one more caller
-//      of the existing alert player, not a second audio path, and never the overlay.
+// A TOAST MAKES NO SOUND (owner, 2026-08-05: "remove the sound controls from preferences, they
+// are already covered by Alerts module"). There used to be a second hop out — main read the
+// toast's own `{packId, soundId}` + volume and asked the main window to play it. Both producers
+// already fire a seeded ALERT with its own voice on the same event, so that path could only ever
+// add a second voice over one kill. It is deleted rather than defaulted off: the toast's config
+// no longer has a sound to read, and `toast:sound` is gone with it.
 //
 // LIVE-ONLY DISCIPLINE IS THE DETECTORS' (T4/celebrations law). There is deliberately NO gate
 // here: `useBossKills` and `useProgress` already own "a LIVE transition, never hydration", and a
@@ -25,7 +27,7 @@ import { IPC } from '../shared/ipc'
 import { logError } from './errorLog'
 import { lookupItem } from './itemLookup'
 import { getOverlayConfig } from './store'
-import { getOverlayWindow, sendToMain } from './windows'
+import { getOverlayWindow } from './windows'
 import {
   DEFAULT_TOAST_CONFIG,
   toastItemCard,
@@ -34,13 +36,6 @@ import {
   type ToastPayload,
   type ToastRequest
 } from '../shared/toast'
-
-/** What `toast:sound` carries to the main window's alert player. */
-export interface ToastSound {
-  packId: string
-  soundId: string
-  volume: number
-}
 
 /**
  * Resolve the embedded reward card, or undefined when there is nothing honest to draw.
@@ -74,12 +69,6 @@ function sendToToastOverlay(payload: ToastPayload): void {
   else wc.send(IPC.onToast, payload)
 }
 
-/** Ask the MAIN window to play this toast's line, when one is configured (null = mute). */
-function playToastSound(volume: number, sound: { packId: string; soundId: string } | null): void {
-  if (!sound) return
-  sendToMain(IPC.onToastSound, { ...sound, volume } satisfies ToastSound)
-}
-
 /** Build the wire payload for a validated request (item card already resolved). */
 function buildPayload(req: ToastRequest, item: ToastItemCard | undefined, durationMs: number): ToastPayload {
   const payload: ToastPayload = {
@@ -106,7 +95,6 @@ export async function showToast(input: unknown): Promise<boolean> {
   const toastCfg = cfg.toast ?? DEFAULT_TOAST_CONFIG
   const item = await resolveItemCard(req.itemName)
   sendToToastOverlay(buildPayload(req, item, toastCfg.durationMs))
-  playToastSound(toastCfg.volume, toastCfg.sound)
   return true
 }
 

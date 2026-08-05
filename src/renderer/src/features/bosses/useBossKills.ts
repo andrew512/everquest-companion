@@ -4,8 +4,16 @@
 // bossDefeat alert sound) so they share ONE definition of "a boss just died".
 //
 // ONE TIER OF DETECTION, since 2026-08-04:
-//   - onKill — ANY roster-boss kill, including a repeat at the same/lower tier.
-//              Confetti, card flash, snackbar AND the bossDefeat sound.
+//   - onKill — ANY roster-boss kill CREDITED TO YOU, including a repeat at the
+//              same/lower tier. Confetti, card flash, snackbar, toast AND the
+//              bossDefeat sound.
+//
+// CREDITED, not merely observed (owner, 2026-08-05). A boss that dies to a stranger
+// across an open-world zone is still recorded by the kills module — the roster is a
+// record of what has died, and that is a world fact. It is not YOUR kill, and the log
+// says which is which: an experience line lands just before the kills you (or your
+// group) are paid for. `bossStatus.bossKills` compares the CREDITED count for exactly
+// that reason; every status this hook returns is unchanged.
 // It used to be two: a narrower `onNewDefeat` (first kill at a new instance tier)
 // carried the sound, so a repeat kill was celebrated on screen and silent in the
 // ears. The owner retired that split — "every time is worth celebrating" — and
@@ -24,7 +32,7 @@ import { useModule } from '../../lib/useModule'
 import { allStatuses, bossKills, type TargetStatus } from './bossStatus'
 
 export interface BossKillCallbacks {
-  /** Fired for ANY roster-boss kill seen live (incl. repeats) — confetti/snackbar/sound. */
+  /** Fired for any roster-boss kill CREDITED to you, seen live (incl. repeats). */
   onKill?: (s: TargetStatus) => void
 }
 
@@ -59,8 +67,8 @@ export function useBossKills(
     setStatuses(next)
     const prev = prevRef.current
     if (prev != null) {
-      // Any kill, repeats included → confetti/snackbar/sound. `prev != null` is the baseline
-      // guard: the first snapshot after a character switch celebrates nothing.
+      // Any CREDITED kill, repeats included → confetti/snackbar/toast/sound. `prev != null` is
+      // the baseline guard: the first snapshot after a character switch celebrates nothing.
       for (const s of bossKills(prev, next)) cbsRef.current?.onKill?.(s)
     }
     prevRef.current = new Map(next.map((s) => [s.target.name, s]))

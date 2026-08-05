@@ -35,7 +35,6 @@
  * Run: `npm run test:e2e` (this spec runs last).
  */
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
-import { rmSync } from 'node:fs'
 import {
   HYDRATE_TIMEOUT_MS,
   MAIN_ENTRY,
@@ -54,6 +53,7 @@ import {
   sleep,
   snapshot
 } from './appHarness.mjs'
+import { freshUserData, mainWindow } from './appWindow.mjs'
 
 const NAV = '[data-testid="nav-maps"]'
 const HEADER = '[data-testid="maps-header"]'
@@ -406,7 +406,7 @@ async function stepPane(page: Page): Promise<void> {
 async function main(): Promise<void> {
   buildIfStale()
   // See the header: a remembered `eq.maps.zone` would make the auto-open assertion vacuous.
-  rmSync(USER_DATA, { recursive: true, force: true })
+  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Maps spec…')
   const app: ElectronApplication = await electron.launch({
@@ -419,7 +419,7 @@ async function main(): Promise<void> {
 
   let page: Page | null = null
   try {
-    page = await app.firstWindow({ timeout: 60_000 })
+    page = await mainWindow(app)
     const consoleErrors: string[] = []
     page.on('console', (m) => {
       if (m.type() === 'error') consoleErrors.push(m.text())

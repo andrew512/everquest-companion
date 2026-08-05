@@ -172,20 +172,13 @@ export default function AlertPlayer(): null {
         if (def) playAlertNow(def, fire)
       }
     })
-    // CELEBRATION TOASTS (docs/plans/celebration-toasts.md T7). The overlay bundle has no audio
-    // stack, so the toast's line is played HERE — by the window that already owns pack playback.
-    // Main decides whether there is anything to play (a null sound is mute) and at what volume,
-    // because the toast's config is main-owned; this is the speaker, not the policy. It is
-    // NOT routed through `playAlertNow`: a toast is not an alert, has no def, no cooldown and
-    // no speech plan, and must not consume the cross-alert coalescing window.
-    const offToastSound = window.eq.onToastSound(({ packId, soundId, volume }) => {
-      if (prefs.muted) return
-      void playSound(packId, soundId, Math.max(0, Math.min(1, volume * prefs.globalVolume)))
-    })
+    // CELEBRATION TOASTS make no sound (owner, 2026-08-05). This player briefly owned a second
+    // subscription — `toast:sound` — because the overlay bundle has no audio stack. It is gone:
+    // the boss-kill and quest-complete ALERTS already speak on those exact events, from this
+    // same player, with their own cooldowns. A card is a thing you see.
     return () => {
       window.removeEventListener('focus', onFocus)
       offDelta()
-      offToastSound()
     }
   }, [])
 

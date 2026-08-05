@@ -20,7 +20,7 @@
  * Never run it beside another spec — they share the userData singleton.
  */
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   MAIN_ENTRY,
@@ -36,6 +36,7 @@ import {
   reportRun,
   sleep
 } from './appHarness.mjs'
+import { freshUserData, mainWindow } from './appWindow.mjs'
 
 const CHIP = '[data-testid="perf-chip"]'
 const POPOVER = '[data-testid="perf-popover"]'
@@ -316,14 +317,14 @@ function stepBlockProbe(block: BlockStats | undefined): void {
 async function main(): Promise<void> {
   buildIfStale()
   // A genuinely fresh install: "absent by default" is only meaningful on one.
-  rmSync(USER_DATA, { recursive: true, force: true })
+  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1), fresh userData — Performance spec…')
   const app: ElectronApplication = await launch()
   let page: Page | null = null
   const consoleErrors: string[] = []
   try {
-    page = await app.firstWindow({ timeout: 60_000 })
+    page = await mainWindow(app)
     page.on('console', (m) => {
       if (m.type() === 'error') consoleErrors.push(m.text())
     })
