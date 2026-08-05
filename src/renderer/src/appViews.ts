@@ -14,6 +14,7 @@ export type View =
   | 'alerts'
   | 'leveling'
   | 'loot'
+  | 'planner'
   | 'buffs'
   | 'preferences'
   // DEV-ONLY view (src/renderer/src/features/triage/**). It stays in the union
@@ -39,6 +40,7 @@ const KNOWN_VIEWS: View[] = [
   'alerts',
   'leveling',
   'loot',
+  'planner',
   'buffs',
   'preferences',
   // Compile-time: `false ? [...] : []` folds away, taking the literal with it.

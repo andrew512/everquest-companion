@@ -11,6 +11,7 @@ import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh'
 import PetsIcon from '@mui/icons-material/Pets'
 import MapIcon from '@mui/icons-material/Map'
 import SpaceDashboardIcon from '@mui/icons-material/SpaceDashboard'
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 import FeedbackIcon from '@mui/icons-material/Feedback'
 // Dev-only, and its import goes with it: MUI's icon packages declare `sideEffects: false`, so
 // an icon whose only use sits inside a `false &&` branch is tree-shaken out with the branch.
@@ -51,6 +52,9 @@ const ROWS: NavRow[] = [
   { view: 'combat', label: 'Combat', icon: <BarChartIcon /> },
   { view: 'mobs', label: 'Mobs', icon: <PetsIcon /> },
   { view: 'loot', label: 'Loot', icon: <ReceiptLongIcon /> },
+  // Planner follows Loot for the same reason Loot follows Mobs: it is the third face of one
+  // question — what drops it, what did I get, and what am I still farming for.
+  { view: 'planner', label: 'Planner', icon: <AutoAwesomeIcon /> },
   { view: 'maps', label: 'Maps', icon: <MapIcon /> },
   { view: 'bosses', label: 'Raid Targets', icon: <EmojiEventsIcon /> },
   { view: 'posky', label: 'Plane of Sky', icon: <ShieldMoonIcon /> },

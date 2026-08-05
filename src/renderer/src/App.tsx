@@ -13,6 +13,7 @@ import { useAppRouting, usePrefsRouting, type AppRouting, type PrefsRouting } fr
 import PoskyView from './features/posky/PoskyView'
 import LootView from './features/loot/LootView'
 import LevelingView from './features/leveling/LevelingView'
+import PlannerView from './features/planner/PlannerView'
 import BossView from './features/bosses/BossView'
 import MobsView from './features/mobs/MobsView'
 import MapsView from './features/maps/MapsView'
@@ -122,6 +123,10 @@ function PlainView({
           the character module, which re-hydrates under the new character anyway. */}
       {view === 'maps' && <MapsView key={viewKey} />}
       {view === 'leveling' && <LevelingView key={viewKey} />}
+      {/* Planner takes no props at all: the sets it edits are character-scoped in the store, so
+          the remount `key` is the whole character contract — a rebuild reloads the new
+          character's sets, exactly like every other view here. */}
+      {view === 'planner' && <PlannerView key={viewKey} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
       {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
     </>

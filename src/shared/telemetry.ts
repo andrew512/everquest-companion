@@ -70,6 +70,7 @@ export const TELEMETRY_VIEWS = [
   'alerts',
   'leveling',
   'loot',
+  'planner',
   'buffs',
   'preferences',
   'triage'
