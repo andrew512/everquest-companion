@@ -351,6 +351,10 @@ export function sanitizeAlertDef(v: unknown): AlertDef | null {
   if (typeof r.cooldownMs === 'number' && Number.isFinite(r.cooldownMs)) {
     def.cooldownMs = Math.max(0, Math.min(600000, Math.round(r.cooldownMs)))
   }
+  // TRUE-ONLY, like the voice keys: 'target' is the only value worth carrying (absent means
+  // 'alert'), so a shared alert that rate-limits per mob keeps doing so on the other machine
+  // instead of quietly reverting to one clock — and an ordinary alert sanitizes byte-identically.
+  if (r.cooldownScope === 'target') def.cooldownScope = 'target'
   const note = clampStr(r.note, SHARE_LIMITS.maxNoteChars).trim()
   if (note) def.note = note
   applyVoiceFields(def, r)

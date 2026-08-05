@@ -81,10 +81,24 @@ export interface AlertGroupDefSpec {
   trigger: AlertTrigger
   soundId: string
   cooldownMs: number
+  /**
+   * What the cooldown is measured PER (AlertDef.cooldownScope). Omitted ⇒ 'alert', the one
+   * clock every group had before per-target scope existed. Only the rogue-slow group asks for
+   * 'target' today, and its comment says why.
+   */
+  cooldownScope?: 'alert' | 'target'
   /** the verified log line this def fires on — quoted into the def's `note`. */
   line: string
   /** how many times that shape occurs in the reference log (provenance, not a threshold). */
   observed: number
+  /**
+   * A SECOND verified line the same def fires on, for a trigger that covers two shapes (the
+   * rogue-slow def matches both slow Strikes). Same law as `line`: quoted verbatim from the
+   * real log with its own measured count, or absent. Never a paraphrase of `line`.
+   */
+  line2?: string
+  /** occurrences of `line2` in the reference log — required whenever `line2` is present. */
+  observed2?: number
   /**
    * Extra provenance appended to the created def's `note` — what the alert MEANS in the
    * fight (a duration, a re-landing habit), never how the matcher works. Optional; most
@@ -352,35 +366,59 @@ export const ALERT_GROUPS: AlertGroup[] = [
     verified: true,
     defs: [
       {
-        // THE ROGUE SLOW. Weakening Strike — the proc granted by the four utility poisons
-        // (Weakening, Binding, Neurotoxic, Paralytic) — prints ONE line and no cast line at
-        // all, so the parser's first-class `poisonProc` event is the only honest handle on
-        // it. `where:{effect:'slow'}` is what picks this proc out of the other nine: the
-        // effect class is unambiguous even for the two emotes shared by a pair of Strikes
-        // (shared/poisons.ts), and it survives a Strike being renamed.
+        // THE ROGUE SLOWS — BOTH OF THEM. Two Strikes slow, and one utility coat can grant
+        // both at once (Paralytic Poison → Weakening Strike + Clumsiness Strike; see the
+        // roster in shared/poisons.ts):
+        //   Weakening Strike  → `<mob>'s limbs move slower!`  effect 'slow'      (attack slow)
+        //   Clumsiness Strike → `<mob>'s fingers slow down.`  effect 'spellSlow' (casting slow)
+        // Those two are the WHOLE slow family in POISON_PROCS — the other eight effects are
+        // dispel / root / manaDrain / stun / interrupt / snare / dot / damage — so the
+        // alternation below is exhaustive by measurement, not by hope. `observed`/`observed2`
+        // are a FRESH read-only sweep of eqlog_Primitive_freeport.txt at 1,330,626 lines
+        // (2026-08-04): 800 `limbs move slower!` and 461 `fingers slow down.` The 482 the first
+        // count used to state was the same shape against the younger 1,144,036-line log — the
+        // live log grows, so a count is a provenance stamp, never a threshold.
+        //
+        // The def used to match `effect:'slow'` alone, which meant every Clumsiness landing
+        // was silent while the group's own title said "poisons", plural. Verified in the
+        // owner's log 2026-08-04: on Magus Rokyl (22:03–22:04) four of five slow-family
+        // landings printed nothing at all.
+        //
+        // Neither Strike prints a cast line, so the parser's first-class `poisonProc` event is
+        // the only honest handle on either; matching on `effect` (not on the Strike name)
+        // keeps the def right for the two emotes that are shared by a PAIR of Strikes and
+        // survives a Strike being renamed.
         //
         // NO PERCENTAGE APPEARS ANYWHERE IN THIS COPY, deliberately: the wiki states both
         // 35% and 15% for this line on different pages and the contradiction is unresolved.
         // The DURATION is safe — spells.json has 210000 ms for Weakening Strike — so that is
         // what the note says.
         //
-        // COOLDOWN 30s: the proc RE-LANDS on a mob that is already slowed, several times a
-        // pull — the reference window (tests/fixtures/w41-poison-asp-venom.log) lands four
-        // on Stonesoul the Unmoving inside 44 s. 30 s is roughly one user-visible episode
-        // per pull without muting the NEXT pull. Fight-scoped dedupe is not expressible in
-        // the alert engine and is not worth building for this; the honest consequence is
-        // that a long pull can nudge you twice, which the tests pin exactly.
+        // COOLDOWN 30s PER MOB (`cooldownScope: 'target'`). The proc RE-LANDS on a mob that is
+        // already slowed several times a pull — the reference window
+        // (tests/fixtures/w41-poison-asp-venom.log) lands four on Stonesoul the Unmoving
+        // inside 44 s — so a rate limit is required. But under ONE clock for the whole alert
+        // a re-land on the mob you are already fighting silences the first slow on the mob you
+        // pull NEXT, which is the only landing that carries information. Measured in the
+        // owner's log 2026-08-04 (tests/fixtures/w44-poison-slow-per-mob.log): a slow on King
+        // Tranix at 22:31:16 muted the fire giant warrior's first slow 27 s later, and the
+        // player died at 22:33:40. Per-mob scope makes the first slow on a fresh mob
+        // unconditional and quiets only the re-lands on that same mob.
         id: POISON_SLOW_ALERT_ID,
         name: 'Mob slowed (rogue poison)',
-        trigger: { type: 'event', kind: 'poisonProc', where: { effect: 'slow' } },
+        trigger: { type: 'event', kind: 'poisonProc', where: { effect: '/^(slow|spellSlow)$/' } },
         soundId: SOUND.debuffLanded,
         cooldownMs: 30000,
+        cooldownScope: 'target',
         line: "Stonesoul the Unmoving's limbs move slower!",
-        observed: 482,
+        observed: 800,
+        // The second emote, measured on the same sweep — the def fires on both.
+        line2: "King Tranix's fingers slow down.",
+        observed2: 461,
         note:
-          'Weakening Strike, the rogue utility-poison slow — 3:30 duration. It re-lands on a ' +
-          'mob that is already slowed several times a pull, so this alert is rate-limited to ' +
-          'about one nudge per pull rather than one per landing.'
+          'Weakening Strike (attack slow, 3:30) and Clumsiness Strike (casting slow) — the two ' +
+          'rogue utility-poison slows. Each mob gets its own 30-second quiet period: the first ' +
+          'slow on a mob always speaks, and only re-lands on that same mob are held back.'
       }
     ]
   },
@@ -420,17 +458,25 @@ export const VERIFIED_ALERT_GROUPS: AlertGroup[] = ALERT_GROUPS.filter((g) => g.
 
 /** Build the concrete AlertDefs a group authors, pointed at `packId`. */
 export function alertGroupDefs(group: AlertGroup, packId: string = GROUP_PACK_ID): AlertDef[] {
-  return group.defs.map((spec) => ({
-    id: spec.id,
-    name: spec.name,
-    enabled: true,
-    trigger: spec.trigger,
-    sound: { packId, soundId: spec.soundId },
-    cooldownMs: spec.cooldownMs,
-    note:
-      `Suggested group "${group.title}" — fires on: ${spec.line}` +
-      (spec.note ? ` ${spec.note}` : '')
-  }))
+  return group.defs.map((spec) => {
+    const def: AlertDef = {
+      id: spec.id,
+      name: spec.name,
+      enabled: true,
+      trigger: spec.trigger,
+      sound: { packId, soundId: spec.soundId },
+      cooldownMs: spec.cooldownMs,
+      note:
+        `Suggested group "${group.title}" — fires on: ${spec.line}` +
+        (spec.line2 ? ` and: ${spec.line2}` : '') +
+        (spec.note ? ` ${spec.note}` : '')
+    }
+    // Written ONLY when it is not the default, so a group def that never asked for per-target
+    // scope serializes byte-identically to how it always did (the same rule the voice fields
+    // follow in shareSchema.ts, and what keeps import dedupe stable).
+    if (spec.cooldownScope === 'target') def.cooldownScope = 'target'
+    return def
+  })
 }
 
 /**

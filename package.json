@@ -31,6 +31,7 @@
     "fixtures:item-tiers": "node --import tsx tests/extract-item-tier-fixtures.mjs",
     "fixtures:leveling": "node --import tsx tests/extract-leveling-fixtures.mjs",
     "fixtures:loot": "node --import tsx tests/extract-loot-fixtures.mjs",
+    "fixtures:poison-slow": "node --import tsx tests/extract-poison-slow-fixtures.mjs",
     "fixtures:procs": "node --import tsx tests/extract-proc-fixtures.mjs",
     "fixtures:progression": "node --import tsx tests/extract-progression-fixtures.mjs",
     "fixtures:session": "node --import tsx tests/extract-session-fixtures.mjs",

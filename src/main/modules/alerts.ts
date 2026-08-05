@@ -14,7 +14,9 @@
 // COMPOSITE triggers (Task #47): a trigger may be `{type:'any'|'all', conditions:[…]}` over
 // the primitive event/raw/app shapes. 'any' fires when ANY condition matches a single event
 // (OR); 'all' fires only when EVERY condition matches THE SAME event (AND — same-event only,
-// no cross-event windows). Cooldown stays alert-level. It also matches the DERIVED
+// no cross-event windows). Cooldown is per ALERT, not per condition — and, since the owner's
+// 2026-08-04 slow incident, per alert-and-TARGET when the def asks for it (`cooldownScope`,
+// see `cooldownKey` below). It also matches the DERIVED
 // `buffExpired` event the buffs module synthesizes (a resolved, unambiguous "wears off you /
 // your pet" signal) — see shared/logEvents.ts BuffExpiredEvent + log/bus.ts emitDerived.
 //
@@ -22,6 +24,7 @@
 // in sync (setDefs) whenever the user saves/deletes an alert.
 
 import type { EqModule } from './types'
+import { idKey } from '../log/parseCommon'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
   AlertDef,
@@ -43,6 +46,20 @@ const HISTORY_CAP = 20
  * it evicts the least-recently-cast name so the map always describes what you use NOW.
  */
 const SPELL_CAST_CAP = 400
+/**
+ * Max distinct cooldown clocks kept at once, across every alert (Task: per-target cooldowns).
+ *
+ * An alert-level clock is ONE entry per alert, so this cap exists entirely for the
+ * `cooldownScope:'target'` alerts, which mint an entry per mob: a marathon session slays
+ * thousands, and an unbounded map would keep a row for every corpse of the day.
+ *
+ * Eviction is least-recently-FIRED (the map is re-inserted on write, so its iteration order is
+ * oldest-first — the same trick `spellLastCast` uses). That ordering is what makes the bound
+ * safe rather than merely small: the entry discarded is the one whose cooldown is the closest
+ * to having expired anyway, so the worst case of an eviction is one extra alert on a mob
+ * nobody has hit in hundreds of fires — never a suppressed one.
+ */
+const COOLDOWN_KEY_CAP = 500
 
 /**
  * Compile a matcher value into a predicate. A value wrapped in slashes (`/.../`)
@@ -195,6 +212,31 @@ function firingSpell(ev: LogEvent): string | undefined {
   return name && name !== 'unknown' ? name : undefined
 }
 
+/**
+ * The cooldown clock this firing belongs to (AlertDef.cooldownScope).
+ *
+ * 'alert' (and absent, which means the same thing) → the alert's own id: one clock, exactly as
+ * every alert behaved before per-target scope existed.
+ *
+ * 'target' → `<id>\0<idKey(target)>`, so the first match on a mob always fires and only re-lands
+ * on THAT mob are rate-limited. `target` is read dynamically because it is a field of some
+ * LogEvent shapes and not others — the same arbitrary-field access `where` matchers have always
+ * done. A family that names no target (or names an empty one) has nothing to scope by and
+ * DEGRADES to the alert-level clock rather than minting a bogus one: that is a quieter alert,
+ * never a missing cooldown, and it never throws in the hot path.
+ *
+ * `idKey` is the repo-wide canonicalization (world-model law 2: names are dirty — damage lines
+ * capitalize the article, lifecycle lines lowercase it), so "King Tranix" and "king tranix" are
+ * one mob and cannot hold two clocks between them.
+ */
+function cooldownKey(def: AlertDef, ev: LogEvent): string {
+  if (def.cooldownScope !== 'target') return def.id
+  const target = (ev as unknown as Record<string, unknown>).target
+  if (typeof target !== 'string') return def.id
+  const key = idKey(target)
+  return key ? `${def.id}\u0000${key}` : def.id
+}
+
 function compileAlert(def: AlertDef): CompiledAlert {
   const t: AlertTrigger = def.trigger
   if ('conditions' in t) {
@@ -207,7 +249,15 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
   readonly id = 'alerts'
   private compiled: CompiledAlert[] = []
   private seq = 0
-  /** alertId → last fire timestamp (ms), for cooldown gating. */
+  /**
+   * COOLDOWN CLOCK → last fire timestamp (ms).
+   *
+   * The key is `def.id` for an ordinary (alert-scoped) alert and `def.id\0<targetKey>` for a
+   * `cooldownScope:'target'` one — see `cooldownKey`. One map holds both because the two are
+   * never confusable: a NUL can appear in no alert id and in no mob name, so an alert-level
+   * row can never collide with one of its own per-target rows. Bounded by COOLDOWN_KEY_CAP,
+   * least-recently-fired first.
+   */
   private lastFire = new Map<string, number>()
   /** fires accumulated since the last flush. */
   private pending: FiredAlert[] = []
@@ -323,8 +373,9 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
       if (!c.def.enabled) continue
       const matchedText = this.matches(c, ev)
       if (matchedText == null) continue
-      if (this.onCooldown(c.def, ev.ts)) continue
-      this.lastFire.set(c.def.id, ev.ts)
+      const key = cooldownKey(c.def, ev)
+      if (this.onCooldown(key, c.def, ev.ts)) continue
+      this.noteFire(key, ev.ts)
       if (!spellResolved) {
         spell = firingSpell(ev)
         spellResolved = true
@@ -373,11 +424,24 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
     return out
   }
 
-  /** Whether alert `def` is still within its cooldown window at `ts`. */
-  private onCooldown(def: AlertDef, ts: number): boolean {
+  /** Whether the clock `key` is still within alert `def`'s cooldown window at `ts`. */
+  private onCooldown(key: string, def: AlertDef, ts: number): boolean {
     const cd = def.cooldownMs ?? DEFAULT_COOLDOWN_MS
-    const last = this.lastFire.get(def.id)
+    const last = this.lastFire.get(key)
     return last !== undefined && ts - last < cd
+  }
+
+  /**
+   * Stamp a fire on clock `key`, keeping the map bounded and its iteration order
+   * least-recently-fired first (delete-then-set re-inserts at the tail).
+   */
+  private noteFire(key: string, ts: number): void {
+    this.lastFire.delete(key)
+    this.lastFire.set(key, ts)
+    if (this.lastFire.size > COOLDOWN_KEY_CAP) {
+      const oldest = this.lastFire.keys().next()
+      if (!oldest.done) this.lastFire.delete(oldest.value)
+    }
   }
 
   /**

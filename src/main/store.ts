@@ -33,6 +33,7 @@ import {
   DEFAULT_ALERT_SOUNDS,
   migrateAlertSounds
 } from './data/defaultPacks'
+import { ALERT_TRIGGER_MIGRATION_VERSION, migrateAlertTriggers } from './data/alertDefMigrations'
 
 const emptyProgress: ProgressState = {
   inventory: {},
@@ -75,6 +76,12 @@ interface StoreShape {
    * (Task #57). Absent ⇒ never migrated; see migrateStoredAlertSounds().
    */
   alertSoundMigration?: number
+  /**
+   * Version stamp of the shipped-alert-def TRIGGER migration (src/main/data/
+   * alertDefMigrations.ts) — today, the rogue-slow def gaining the second slow effect and a
+   * per-mob cooldown. Absent ⇒ never migrated; see migrateStoredAlertTriggers().
+   */
+  alertTriggerMigration?: number
   /** auto-update release channel (Task #27): 'main' (bleeding edge) | 'stable' */
   updateChannel?: UpdateChannel
   /**
@@ -441,19 +448,39 @@ function migrateStoredAlertSounds(alerts: AlertDef[]): AlertDef[] {
 }
 
 /**
+ * One-time migration of SHIPPED alert def TRIGGERS (2026-08-04): the rogue-slow def now covers
+ * both slow Strikes and rate-limits per mob instead of once for the whole alert. Rationale +
+ * the incident it comes from: src/main/data/alertDefMigrations.ts.
+ *
+ * Same contract as migrateStoredAlertSounds above and for the same reason — it rewrites only a
+ * def still identical to the one the app authored, so a user who re-shaped it keeps their
+ * version, and the stamp means the rewrite can never undo that choice later.
+ */
+function migrateStoredAlertTriggers(alerts: AlertDef[]): AlertDef[] {
+  if ((store.get('alertTriggerMigration') ?? 0) >= ALERT_TRIGGER_MIGRATION_VERSION) return alerts
+  const { alerts: next, changed } = migrateAlertTriggers(alerts)
+  if (changed > 0) store.set('alerts', next)
+  store.set('alertTriggerMigration', ALERT_TRIGGER_MIGRATION_VERSION)
+  return next
+}
+
+/**
  * Return the stored alert list, seeding the defaults exactly once (when the key is
  * absent — an empty [] the user emptied intentionally is respected). Existing lists
- * pass through the retired-pack sound migration on their first read after an upgrade.
+ * pass through the retired-pack sound migration and the shipped-def trigger migration on
+ * their first read after an upgrade.
  */
 export function getAlerts(): AlertDef[] {
   const existing = store.get('alerts')
   if (existing === undefined) {
     store.set('alerts', SEED_ALERTS)
-    // Seeds already reference the shipped pack; stamp so the migration never re-runs.
+    // Seeds already reference the shipped pack and carry no group def; stamp both so neither
+    // migration ever re-runs against a store that was born current.
     store.set('alertSoundMigration', ALERT_SOUND_MIGRATION_VERSION)
+    store.set('alertTriggerMigration', ALERT_TRIGGER_MIGRATION_VERSION)
     return SEED_ALERTS
   }
-  return migrateStoredAlertSounds(existing)
+  return migrateStoredAlertTriggers(migrateStoredAlertSounds(existing))
 }
 
 /**

@@ -69,9 +69,15 @@ interface AlertForm {
   setVolume: (v: number) => void
   cooldownMs: number
   setCooldownMs: (v: number) => void
+  /** What the cooldown is measured per — one clock for the alert, or one per mob. */
+  cooldownScope: CooldownScope
+  setCooldownScope: (v: CooldownScope) => void
   /** The Speech block's own sub-form (voice-alerts §4) — see SpeechBlock.tsx. */
   speech: SpeechForm
 }
+
+/** Local alias for the def field, so the form and the def can never drift apart. */
+type CooldownScope = NonNullable<AlertDef['cooldownScope']>
 
 function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[]): AlertForm {
   const [name, setName] = useState('')
@@ -81,6 +87,7 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
   const [soundId, setSoundId] = useState(firstSoundId(fallbackPack(packs)))
   const [volume, setVolume] = useState(1)
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_COOLDOWN_MS)
+  const [cooldownScope, setCooldownScope] = useState<CooldownScope>('alert')
   // The Speech block hydrates itself from the same `open`/`initial` pair.
   const speech = useSpeechForm(open, initial)
 
@@ -101,6 +108,7 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
       setSoundId(initial.sound.soundId)
       setVolume(initial.volume ?? 1)
       setCooldownMs(initial.cooldownMs ?? DEFAULT_COOLDOWN_MS)
+      setCooldownScope(initial.cooldownScope ?? 'alert')
     } else {
       setName('')
       setMode('single')
@@ -110,6 +118,7 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
       setSoundId(firstSoundId(preset))
       setVolume(1)
       setCooldownMs(DEFAULT_COOLDOWN_MS)
+      setCooldownScope('alert')
     }
   }, [open, initial, packs])
 
@@ -140,6 +149,8 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
     setVolume,
     cooldownMs,
     setCooldownMs,
+    cooldownScope,
+    setCooldownScope,
     speech
   }
 }
@@ -172,6 +183,9 @@ function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
     sound: { packId: f.packId, soundId: f.soundId },
     volume: f.volume,
     cooldownMs: f.cooldownMs,
+    // Omitted at its default, like the speech fields below: a def that never asked for per-mob
+    // scope saves byte-identically to how it always did, so import dedupe keeps matching it.
+    ...(f.cooldownScope === 'target' ? { cooldownScope: 'target' as const } : {}),
     note: initial?.note,
     // audio / speech / alwaysPlay, each omitted at its default so a sound-only alert saves
     // byte-identically to how it always did (SpeechBlock.speechFieldsFor).
@@ -284,31 +298,21 @@ function ConditionsSection({
   )
 }
 
-/** The per-alert volume slider + cooldown field. */
-function VolumeCooldownSection({
-  volume,
-  setVolume,
-  cooldownMs,
-  setCooldownMs
-}: {
-  volume: number
-  setVolume: (v: number) => void
-  cooldownMs: number
-  setCooldownMs: (v: number) => void
-}): JSX.Element {
+/** The per-alert volume slider + cooldown field + what that cooldown is counted per. */
+function VolumeCooldownSection({ f }: { f: AlertForm }): JSX.Element {
   return (
     <Stack direction="row" spacing={3} alignItems="center" flexWrap="wrap" useFlexGap>
       <Stack sx={{ minWidth: 180 }}>
         <Typography variant="caption" color="text.secondary">
-          Volume ({Math.round(volume * 100)}%)
+          Volume ({Math.round(f.volume * 100)}%)
         </Typography>
         <Slider
           size="small"
           min={0}
           max={1}
           step={0.05}
-          value={volume}
-          onChange={(_e, v) => setVolume(v as number)}
+          value={f.volume}
+          onChange={(_e, v) => f.setVolume(v as number)}
           sx={{ width: 160 }}
         />
       </Stack>
@@ -316,10 +320,32 @@ function VolumeCooldownSection({
         size="small"
         type="number"
         label="Cooldown (ms)"
-        value={cooldownMs}
-        onChange={(e) => setCooldownMs(Math.max(0, Number(e.target.value) || 0))}
+        value={f.cooldownMs}
+        onChange={(e) => f.setCooldownMs(Math.max(0, Number(e.target.value) || 0))}
         sx={{ width: 140 }}
       />
+      {/* Sits against the cooldown field because it only qualifies THAT number. "Per mob" is
+          a state ("this alert is quiet per mob"), not a description of how the engine keys a
+          map — and the caption below says what changes, never how. */}
+      <Stack sx={{ minWidth: 150 }}>
+        <Typography variant="caption" color="text.secondary">
+          Counted
+        </Typography>
+        <Select
+          size="small"
+          value={f.cooldownScope}
+          onChange={(e) => f.setCooldownScope(e.target.value as CooldownScope)}
+        >
+          <MenuItem value="alert">per alert</MenuItem>
+          <MenuItem value="target">per mob</MenuItem>
+        </Select>
+      </Stack>
+      {f.cooldownScope === 'target' && (
+        <Typography variant="caption" color="text.secondary" sx={{ flexBasis: '100%' }}>
+          The first match on each mob always plays; only repeats on that same mob wait out the
+          cooldown.
+        </Typography>
+      )}
     </Stack>
   )
 }
@@ -376,12 +402,7 @@ export default function AlertDialog({
             />
           </Box>
 
-          <VolumeCooldownSection
-            volume={f.volume}
-            setVolume={f.setVolume}
-            cooldownMs={f.cooldownMs}
-            setCooldownMs={f.setCooldownMs}
-          />
+          <VolumeCooldownSection f={f} />
 
           <Divider />
           <SpeechBlock name={f.name} form={f.speech} voiceSetup={voiceSetup} />

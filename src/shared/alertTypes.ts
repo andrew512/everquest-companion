@@ -88,8 +88,9 @@ export type AlertTriggerPrimitive =
  * every condition must match the ONE incoming event. Cross-event correlation windows
  * (e.g. "buff X faded AND boss Y is up") are OUT OF SCOPE. Conditions are the primitive
  * shapes above; nesting is not supported (depth 1), which keeps evaluation O(conditions)
- * per event and the storage flat & JSON-serializable. Cooldown applies at the ALERT
- * level as today (a composite fires at most once per cooldown, not per matching condition).
+ * per event and the storage flat & JSON-serializable. Cooldown applies per ALERT, not per
+ * condition (a composite fires at most once per cooldown, however many conditions matched) —
+ * and per alert-and-target when the def sets `cooldownScope:'target'`.
  *
  * 'app' conditions inside a composite are ignored by the main-side matcher (they depend on
  * renderer-derived boss state); compose event/raw conditions for main-side alerts.
@@ -263,6 +264,29 @@ export interface AlertDef {
   volume?: number
   /** Minimum ms between two fires of this alert. Defaults to 2000. */
   cooldownMs?: number
+  /**
+   * WHAT THE COOLDOWN IS MEASURED PER (owner incident, 2026-08-04).
+   *
+   *  - 'alert'  → one clock for the whole alert: a fire silences it everywhere for `cooldownMs`.
+   *  - 'target' → one clock PER TARGET: the first matching event on a mob always fires, and
+   *               only re-lands on THAT mob are quiet for `cooldownMs`.
+   *
+   * The distinction is not cosmetic. A rogue's slow re-lands on a mob that is already slowed
+   * several times a pull, so the alert needs a rate limit — but under one global clock a
+   * re-land on the mob you are already fighting SILENCES the first slow on the next mob you
+   * pull, which is the only landing that actually tells you something. Measured in the owner's
+   * log 2026-08-04: a slow on King Tranix at 22:31:16 muted the fire giant warrior's first
+   * slow 27 s later, and the player died at 22:33:40.
+   *
+   * The key is the event's `target` field, case-folded. A family that carries no target (a
+   * zone line, a level-up) has nothing to scope by and falls back to the alert-level clock —
+   * 'target' on such an alert is a no-op, never an error.
+   *
+   * Absent ⇒ 'alert', which is what every def written before this existed already meant, so
+   * this is additive and needs no store migration of its own (readers default; electron-store
+   * round-trips the key untouched).
+   */
+  cooldownScope?: 'alert' | 'target'
   /** Freeform provenance note (e.g. "authored by agent from: alert me on charm breaks"). */
   note?: string
   /**

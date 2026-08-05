@@ -15,10 +15,25 @@ import {
 } from '../store'
 import type { AlertDef, AlertPrefs, FeedReport } from '../../shared/types'
 
+/**
+ * Re-validate the ONE renderer-supplied enum on a saved def. `cooldownScope` reaches the
+ * evaluator's Map-key logic, so main states the legal values itself rather than trusting them
+ * because today's only caller is the app's own dialog (the same rule `sounds:getData`'s packId
+ * follows). Anything else is DROPPED, not rejected: absent means 'alert', which is the safe
+ * reading, and the rest of the def still saves.
+ */
+function sanitizeCooldownScope(def: AlertDef): AlertDef {
+  if (def.cooldownScope === undefined) return def
+  if (def.cooldownScope === 'alert' || def.cooldownScope === 'target') return def
+  const clean = { ...def }
+  delete clean.cooldownScope
+  return clean
+}
+
 export function registerAlertsIpc(): void {
   ipcMain.handle(IPC.listAlerts, () => getAlerts())
   ipcMain.handle(IPC.saveAlert, (_e, def: AlertDef) => {
-    const list = saveAlert(def)
+    const list = saveAlert(sanitizeCooldownScope(def))
     alertsModule.setDefs(list) // keep the live evaluator in sync
     return list
   })
