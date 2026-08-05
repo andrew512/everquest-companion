@@ -17,13 +17,17 @@ function HeroCard({
   value,
   label,
   sub,
-  accent
+  accent,
+  /** Only the cards an assertion needs to READ carry one (the AA ledger's footer must equal
+   *  the AA-points-spent figure, and e2e proves that across the two components). */
+  testId
 }: {
   icon: JSX.Element
   value: string
   label: string
   sub?: string
   accent: string
+  testId?: string
 }): JSX.Element {
   return (
     <Paper
@@ -32,7 +36,7 @@ function HeroCard({
     >
       <Box sx={{ color: accent, display: 'flex', alignItems: 'center' }}>{icon}</Box>
       <Box>
-        <Typography variant="h4" sx={{ lineHeight: 1, color: accent }}>
+        <Typography variant="h4" sx={{ lineHeight: 1, color: accent }} data-testid={testId}>
           {value}
         </Typography>
         <Typography variant="body2">{label}</Typography>
@@ -88,11 +92,15 @@ export function LevelingHeroes({
         sub="spent + unspent"
         accent="#6fb3d2"
       />
+      {/* `boughtCount` counts paid (ability, RANK) steps, not abilities — 91 of them across 50
+          abilities on the real log. The caption read "abilities allocated" until the AA ledger
+          grouped the ranks into ladders and made the two visibly different numbers. */}
       <HeroCard
         icon={<AutoAwesomeIcon fontSize="large" />}
         value={aaSpent ? aaSpent.toLocaleString() : '—'}
         label="AA points spent"
-        sub={`${boughtCount} abilities allocated`}
+        sub={`${boughtCount} ranks allocated`}
+        testId="leveling-hero-aa-spent"
         accent="#b07fd0"
       />
       <HeroCard

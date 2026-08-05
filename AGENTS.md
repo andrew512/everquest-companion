@@ -437,6 +437,23 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 - Melee verbs CONJUGATE — match first person ("You slash") AND third
   ("slashes"); missing `smite`/`cleave` once hid 22% of all damage. Paren
   modifiers are COMPOUND: `(Riposte Slay Undead)`.
+- **SPECIAL ATTACKS PRINT NO VERB OF THEIR OWN.** A Dragon Punch, an Eagle
+  Strike and a Tiger Claw ALL land as `You strike …`; Round Kick and Flying
+  Kick land as `You kick …`. The game names the live one exactly once, in
+  two first-person-only shapes (21 lines whole-log, no third person exists):
+  `You will now use <X> while auto attacking.` (a GRANT — also how a lane
+  RESETS, e.g. the Aug 02 loadout burst putting the kick lane back to Kick)
+  and `You will now use <X> instead of <Y> while attacking.` (an in-lane
+  upgrade). So the lane label is STATE, not parsing: `combat/specialAttacks.ts`
+  tracks the live special per VERB lane and ingest renames the skill. Two
+  lanes are verified (`strike` → Tiger Claw/Eagle Strike/Dragon Punch — the
+  player's first-ever strike is 3s after the Tiger Claw grant; `kick` →
+  Kick/Round Kick/Flying Kick — skill-ups partition perfectly by era).
+  **`Slam instead of Bash` is REFUSED**: Slam never prints `slam` (0 lines)
+  but 185 `better at Bash!` ticks fire during Slam eras and `better at Slam!`
+  does not exist — a documented non-distinguishable (law 6), not a guess.
+  SKILL-UPS ARE NOT AN INPUT anywhere here: Tiger Claw keeps ticking 111
+  times after it was replaced, on a drip with no swing beside it.
 - Zone: `You have entered X.` — REJECT pseudo-zones ("an area where
   levitation…"); instance tier suffix `(Awakened|Adaptive|Fused|Refined)`
   = d1–d4, `- Solo/Group N` noise stripped.
@@ -447,6 +464,22 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 - AA: gains `…gained N ability point(s)! You now have M` (M = UNSPENT);
   spends in TWO formats (quoted rank-1 / `improved X <rank>`); cost-0 =
   auto-grants; respecs re-log purchases; no refund line exists.
+  The quoted form is ALWAYS rank 1 and the improved form NEVER logs below
+  rank 2, so a spend line states one rung of a per-ability LADDER —
+  `shared/aaLedger.ts` regroups them (post-epoch: 125 lines ⇒ 50 abilities,
+  27 multi-rung, deepest 10). Sweep, 2026-08-05, of the two families that
+  look like AA and are NOT parsed, both deliberately:
+  `You have completed achievement: 5 Alternate Advancement Points` is the
+  log's ONLY self AA achievement line in 1.35M lines and restates a
+  milestone the 208 gain lines already carry point-by-point (redundant, and
+  a double-count risk). `You activate X.` (233×) is NOT an AA family: it is
+  Quick Buff 111 + Skull Bash 86 + 36 poison applications, and only Quick
+  Buff names a purchased AA — the line cannot distinguish an AA from a disc
+  or a poison, so it stays a buffs/combat signal, never an AA-usage stat.
+- Class SKILL grants share the AA verb: `You have gained the ability to use
+  <Skill>.` (44×, Double Attack / Sneak / Riposte…) has NO cost clause and
+  is not an AA purchase. `AA_ABILITY_RE` requires ` at a cost of`, which is
+  the whole reason those lines never mint a spend.
 - Resists (`resist` event, Task #51 v2): THREE shapes — `<target> resisted
   your <Spell>!` (caster=you), `<target> resisted <caster>'s <Spell>!`
   (caster=name; test YOUR form FIRST — 712 spell names contain `'s`, e.g.

@@ -1,8 +1,6 @@
 import { type JSX, useMemo } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 import type {
-  AASpendEvent,
   LevelingDelta,
   LevelingSnap,
   ProgressionDelta,
@@ -36,6 +34,8 @@ import { EMPTY_LEVELING, applyLevelingDelta } from './levelingModule'
 // The four hero cards — split into their own file the day this one reached the measured ceiling.
 import { LevelingHeroes } from './LevelingHeroes'
 import { NewAtLevelPanel } from './NewAtLevelPanel'
+// The per-ability AA ladder — the flat purchases list's replacement in the same slot.
+import { AaLedgerPanel } from './AaLedgerPanel'
 
 interface FeedItem {
   ts: number
@@ -116,64 +116,6 @@ function LevelOverTimePanel({
       </Typography>
       <LevelStepChart segments={segments} color="#d9b25f" aaPoints={aaPoints} chrome={chrome} />
       <ZoneLegendStrip legend={legend} fmtDuration={fmtDelta} />
-    </Paper>
-  )
-}
-
-/**
- * Purchases list: newest first, respec re-buys deduped by the caller and tagged with a
- * ×N count. Auto-grants (cost 0) are shown but badged rather than priced — they were
- * never bought, so counting them as purchases would inflate the spend.
- */
-function AaPurchasesPanel({
-  purchases,
-  boughtCount
-}: {
-  purchases: { ev: AASpendEvent; count: number }[]
-  boughtCount: number
-}): JSX.Element | null {
-  if (purchases.length === 0) return null
-  return (
-    <Paper variant="outlined" sx={{ p: 2, display: 'flex', flexDirection: 'column', maxHeight: '45%' }}>
-      <Typography variant="subtitle2" gutterBottom>
-        AAs purchased{' '}
-        <Typography component="span" variant="caption" color="text.secondary">
-          ({boughtCount})
-        </Typography>
-      </Typography>
-      <Box sx={{ overflow: 'auto', pr: 0.75 }}>
-        {purchases.map(({ ev: p, count }, i) => {
-          const auto = p.cost === 0
-          return (
-            <Stack key={`${p.ts}-${i}`} direction="row" spacing={1} alignItems="center" sx={{ py: 0.3 }}>
-              <AutoAwesomeIcon sx={{ fontSize: 12, color: auto ? '#7a7a7a' : '#b07fd0' }} />
-              <Typography
-                variant="caption"
-                sx={{ flexGrow: 1, color: auto ? 'text.secondary' : 'text.primary' }}
-                noWrap
-                title={p.ability}
-              >
-                {p.ability}
-                {count > 1 && (
-                  <Typography component="span" variant="caption" color="text.disabled">
-                    {' '}
-                    ×{count}
-                  </Typography>
-                )}
-              </Typography>
-              {auto ? (
-                <Typography variant="caption" color="text.disabled" sx={{ fontStyle: 'italic' }}>
-                  auto-granted
-                </Typography>
-              ) : (
-                <Typography variant="caption" color="text.secondary">
-                  {p.cost} pt{p.cost === 1 ? '' : 's'}
-                </Typography>
-              )}
-            </Stack>
-          )
-        })}
-      </Box>
     </Paper>
   )
 }
@@ -308,20 +250,9 @@ export default function LevelingView({
   const aaUnspent = aas.length ? acct.unspent : null
   const boughtCount = acct.boughtCount
 
-  // Purchases list: newest first, with respec re-buys deduped. The same
-  // ability+rank bought more than once (a respec then re-buy) collapses to its
-  // most-recent purchase, tagged with a ×N count. Auto-grants (cost 0) are kept
-  // but badged rather than counted as purchases.
-  const purchases = useMemo(() => {
-    const byKey = new Map<string, { ev: AASpendEvent; count: number }>()
-    for (const s of spends) {
-      const key = s.ability
-      const prev = byKey.get(key)
-      if (!prev) byKey.set(key, { ev: s, count: 1 })
-      else byKey.set(key, { ev: s.ts >= prev.ev.ts ? s : prev.ev, count: prev.count + 1 })
-    }
-    return [...byKey.values()].sort((a, b) => b.ev.ts - a.ev.ts)
-  }, [spends])
+  // The purchases list itself moved into AaLedgerPanel, which regroups the same deduped
+  // (ability, rank) purchases into per-ability LADDERS (src/shared/aaLedger.ts) — the model
+  // always knew the rungs; only this view was flat.
 
   // `nowHave` rides along so the hover readout can state the unspent balance the gain line
   // itself reported, instead of re-deriving a balance the log already gave us.
@@ -398,7 +329,7 @@ export default function LevelingView({
           </Stack>
 
           <Stack spacing={2} sx={{ flex: 1, minWidth: 260, minHeight: 0 }}>
-            <AaPurchasesPanel purchases={purchases} boughtCount={boughtCount} />
+            <AaLedgerPanel spends={spends} allocated={aaSpent} />
             <ProgressFeedPanel feed={feed} />
           </Stack>
         </Stack>

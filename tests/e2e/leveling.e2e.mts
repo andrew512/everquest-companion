@@ -76,10 +76,21 @@ const COMBO_CHIP = '[data-testid="new-at-level-combo-chip"]'
 const UNKNOWN_COMBO = '[data-testid="new-at-level-unknown"]'
 const HERO = '[data-testid="leveling-range-hero"]'
 const ZONE_ROW = '[data-testid="leveling-range-zone-row"]'
+const LEDGER = '[data-testid="aa-ledger"]'
+const LEDGER_ROW = '[data-testid="aa-ledger-row"]'
+const LEDGER_RUNG = '[data-testid="aa-ledger-rung"]'
+const LEDGER_TOTAL = '[data-testid="aa-ledger-total"]'
+const HERO_AA_SPENT = '[data-testid="leveling-hero-aa-spent"]'
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
   return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
+}
+
+/** The FIRST integer in a rendered string, thousands separators removed; null when there is none. */
+function numIn(text: string): number | null {
+  const m = /\d[\d,]*/.exec(text)
+  return m ? Number(m[0].replace(/,/g, '')) : null
 }
 
 /** Poll a predicate until it holds or the deadline passes. Everything here lands asynchronously. */
@@ -281,6 +292,53 @@ async function stepNewAtLevel(page: Page): Promise<void> {
   check('…and at least one unlock row across the first ten levels', rows > 0, `${String(rows)} rows at ${await textOf(page, LEVEL_VALUE)}`)
 }
 
+/**
+ * 6b. THE AA LEDGER — and the one assertion no unit test can make: the panel's reconciliation
+ * footer and the AA-points-spent HERO CARD are two components rendering the same identity
+ * (Σ per-ability invested == `computeAAAccounting().allocated`), so the app is only honest if the
+ * two numbers on screen are equal. tests/aaLedger.test.mts pins the maths; this pins the SCREEN.
+ *
+ * Also exercises the disclosure: a row's rungs do not exist until the row is clicked.
+ * Floors and identities only — the real log's ability count grows with play.
+ */
+async function stepAaLedger(page: Page): Promise<void> {
+  const mounted = await page.waitForSelector(LEDGER, { timeout: 20_000 }).then(
+    () => true,
+    () => false
+  )
+  // A character who has bought no AA at all renders no ledger, which is the correct surface.
+  if (!mounted) {
+    note('this character has no AA purchases in the log — the ledger panel is correctly absent')
+    return
+  }
+  const rows = await countOf(page, LEDGER_ROW)
+  if (!check('the AA ledger lists per-ability ladders', rows > 0, `${String(rows)} abilities`)) return
+
+  // The two numbers, read from the two components that computed them independently.
+  const spentHero = numIn(await textOf(page, HERO_AA_SPENT))
+  const footer = await textOf(page, LEDGER_TOTAL)
+  const ledgerTotal = numIn(footer)
+  check(
+    'the ledger footer totals EXACTLY the AA-points-spent hero card (one identity, two components)',
+    spentHero !== null && ledgerTotal === spentHero,
+    `ledger ${String(ledgerTotal)} vs hero ${String(spentHero)} — "${footer.replace(/\s+/g, ' ')}"`
+  )
+
+  // Progressive disclosure: the rungs are not in the DOM until the ability is opened.
+  check('a ladder keeps its rungs collapsed until it is asked for them', (await countOf(page, LEDGER_RUNG)) === 0)
+  // A click that cannot land is a FAILED CHECK, never a thrown spec: `main` has no catch around
+  // its steps, so an escaping TimeoutError kills the whole run — including the assertions after
+  // this one and the artifact dump that would explain it.
+  const clicked = await page.click(`${LEDGER_ROW} >> nth=0`, { timeout: 10_000 }).then(
+    () => true,
+    () => false
+  )
+  if (!check('the top ability row is clickable', clicked)) return
+  await sleep(150)
+  const rungs = await countOf(page, LEDGER_RUNG)
+  check('…and clicking it opens its rungs', rungs > 0, `${String(rungs)} rungs`)
+}
+
 /** 7. THE LAYOUT CONTRACT: the app's content area owns the scroll; a view never grows the page. */
 async function stepOverflow(page: Page): Promise<void> {
   const over = await pageOverflow(page)
@@ -320,6 +378,9 @@ async function main(): Promise<void> {
       const chart = await stepChart(page)
       if (chart) {
         await stepBands(page)
+        // BEFORE the selection step: that one leaves a range-stats panel mounted in the charts
+        // column, and the ledger assertions want the tab in the state a user first sees.
+        await stepAaLedger(page)
         await stepSelection(page, chart)
       } else {
         // The empty-state half of the headline assertion still holds, and is the honest thing
