@@ -342,7 +342,10 @@ test('the composition root STARTS the drain and stops it on shutdown', () => {
   const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   assert.match(src, /import \{ startQueueFlush, stopQueueFlush \} from '\.\/feedback'/)
   assert.match(src, /^\s*startQueueFlush\(\)$/m)
-  assert.match(src, /^\s*stopQueueFlush\(\)$/m)
+  // The stop call rides inside teardownStep() since the zombie-process fix: a throw in any
+  // earlier teardown must not be able to skip this one (or app.quit()). The pin follows it
+  // there — what matters is that the composition root still names the stop on shutdown.
+  assert.match(src, /teardownStep\('main:stopQueueFlush', stopQueueFlush\)/)
 })
 
 test('both queue entry points route through the ONE guard', () => {
