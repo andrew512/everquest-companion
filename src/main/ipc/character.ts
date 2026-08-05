@@ -62,7 +62,8 @@ export function registerCharacterIpc(): void {
   })
   ipcMain.handle(IPC.getProgress, () => getProgress(activeCharId()))
   ipcMain.handle(IPC.reloadInventory, () => {
-    const res = loadInventory(getActiveCharacter()?.name)
+    const active = getActiveCharacter()
+    const res = loadInventory(active?.name, active?.server)
     if (!res) return { ok: false as const, error: 'No *-Inventory.txt found in the EQ folder.' }
     setInventory(activeCharId(), res.counts, { path: res.path, loadedAt: res.loadedAt })
     const progress = getProgress(activeCharId())

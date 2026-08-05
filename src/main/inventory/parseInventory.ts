@@ -1,31 +1,37 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { join } from 'path'
-import { effectiveEqRoot } from '../log/config'
+// ============================================================================
+// inventory/parseInventory.ts — the FLAT held-counts view, now a facade over the engine.
+// ============================================================================
+//
+// This module used to be the whole inventory story: a line-at-a-time reader that threw
+// away everything except "name → how many". The general `/outputfile` engine
+// (`src/main/outputs/`) now parses the dump into the deep model, and this file derives the
+// same flat map from it.
+//
+// COMPATIBILITY IS THE CONTRACT. `parseInventoryText` returns the byte-identical
+// `HeldCounts` the old reader returned — the derivation rule is written out on
+// `heldCountsFromDump` (shared/outputs/inventory.ts) and pinned against the real 295-line
+// dump in tests/outputsInventory.test.mts, which replays the OLD algorithm and asserts
+// key-for-key, value-for-value equality. The downstream consumers (reconcile.ts,
+// posky/heldCounts.ts, `countSource`) therefore see nothing at all.
+//
+// A caller that wants the deep model (sockets, bags, bank, keyring, tiers) imports
+// `loadInventoryDump` from `../outputs` instead. This flat view is not the substrate; it is
+// one derived projection of it.
+
+import { readFileSync, statSync } from 'fs'
+import { findOutputFile, inventoryHeldCounts } from '../outputs'
 import type { HeldCounts } from '../../shared/types'
 
 /**
- * EQ's `/outputfile inventory` writes a tab-separated file named
- * "<Character>-Inventory.txt" with a header row:
- *   Location \t Name \t ID \t Count \t Slots
- * Rows include equipped, general inventory, and bank contents.
+ * EQ's `/outputfile inventory` writes a tab-separated `<Character>_<server>-Inventory.txt`
+ * whose first table is `Location \t Name \t ID \t Count \t Slots` (equipped, bag contents,
+ * bank, depot, and every item's slots), followed by a `KeyRing` table.
+ *
+ * Held counts fold the ITEM table only, keyed by the raw lowercased name; `+N` variants are
+ * folded onto the counting key downstream by `reconcile`.
  */
 export function parseInventoryText(text: string): HeldCounts {
-  const counts: HeldCounts = {}
-  const lines = text.split(/\r?\n/)
-  for (const line of lines) {
-    if (!line.trim()) continue
-    const cols = line.split('\t')
-    if (cols.length < 4) continue
-    const location = cols[0].trim()
-    const name = cols[1].trim()
-    if (location === 'Location' || name === 'Name') continue // header
-    if (!name || name === 'Empty') continue
-    const count = Number.parseInt(cols[3], 10)
-    const n = Number.isFinite(count) && count > 0 ? count : 1
-    const key = name.toLowerCase()
-    counts[key] = (counts[key] ?? 0) + n
-  }
-  return counts
+  return inventoryHeldCounts(text)
 }
 
 export interface InventoryLoadResult {
@@ -34,27 +40,13 @@ export interface InventoryLoadResult {
   loadedAt: string
 }
 
-/** Find the newest "*-Inventory.txt" for the given character (or any). */
-export function findInventoryFile(characterName?: string): string | null {
-  const eqRoot = effectiveEqRoot()
-  if (!existsSync(eqRoot)) return null
-  const preferred = characterName ? `${characterName}-Inventory.txt`.toLowerCase() : null
-
-  const files = readdirSync(eqRoot)
-    .filter((f) => /-Inventory\.txt$/i.test(f))
-    .map((f) => ({ f, full: join(eqRoot, f), mtime: statSync(join(eqRoot, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime)
-
-  if (files.length === 0) return null
-  if (preferred) {
-    const match = files.find((x) => x.f.toLowerCase() === preferred)
-    if (match) return match.full
-  }
-  return files[0].full
+/** Find the newest `*-Inventory.txt` for the given character (or any). */
+export function findInventoryFile(characterName?: string, server?: string): string | null {
+  return findOutputFile('inventory', characterName, server)
 }
 
-export function loadInventory(characterName?: string): InventoryLoadResult | null {
-  const path = findInventoryFile(characterName)
+export function loadInventory(characterName?: string, server?: string): InventoryLoadResult | null {
+  const path = findInventoryFile(characterName, server)
   if (!path) return null
   const counts = parseInventoryText(readFileSync(path, 'utf8'))
   return { path, counts, loadedAt: new Date(statSync(path).mtimeMs).toISOString() }

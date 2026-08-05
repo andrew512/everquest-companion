@@ -9,7 +9,7 @@
 //
 // pipeline.ts owns the world this feeds (bus, modules, combat engine); this module drives it.
 
-import { watch, type FSWatcher } from 'chokidar'
+import { type FSWatcher } from 'chokidar'
 import { existsSync } from 'fs'
 import { IPC } from '../shared/ipc'
 import { logConsoleError, logInfo, logWarn } from './errorLog'
@@ -27,6 +27,7 @@ import { installCharacterName } from './log/rulesets'
 import { scanLog } from './log/scanHistory'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { findInventoryFile, loadInventory } from './inventory/parseInventory'
+import { watchOutputFile } from './outputs'
 import {
   bus,
   buffsModule,
@@ -294,32 +295,29 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
 
 /**
  * Auto-reload the active character's `*-Inventory.txt` when it changes on disk.
- * EQ rewrites this file on `/outputfile inventory`; chokidar's change event
- * (debounced by awaitWriteFinish) triggers a reload + a push so InventoryView and
- * the Plane-of-Sky progress refresh without a manual click.
+ * EQ rewrites this file on `/outputfile inventory`; the settle-debounced change event
+ * (`outputs/watch.ts`, the shared `/outputfile` watcher layer — same chokidar settings this
+ * watcher has always used) triggers a reload + a push so InventoryView and the
+ * Plane-of-Sky progress refresh without a manual click.
  */
 function startInventoryWatch(ref: CharacterRef): void {
   void inventoryWatcher?.close()
   inventoryWatcher = null
-  const invPath = findInventoryFile(ref.name)
+  const invPath = findInventoryFile(ref.name, ref.server)
   if (!invPath) return
-  inventoryWatcher = watch(invPath, {
-    ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 400, pollInterval: 100 }
+  inventoryWatcher = watchOutputFile(invPath, {
+    onChange: () => {
+      // Guard against a stale watcher firing after a character switch.
+      if (character?.logPath !== ref.logPath) return
+      const res = loadInventory(character.name, character.server)
+      if (!res) return
+      setInventory(activeCharId(), res.counts, { path: res.path, loadedAt: res.loadedAt })
+      logInfo(`[everquest-companion] Inventory auto-reloaded: ${res.path}`)
+      sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
+      sendToMain(IPC.onProgress, getProgress(activeCharId()))
+    },
+    onError: (err) => logConsoleError('[everquest-companion] inventory watch error', err)
   })
-  inventoryWatcher.on('change', () => {
-    // Guard against a stale watcher firing after a character switch.
-    if (character?.logPath !== ref.logPath) return
-    const res = loadInventory(character.name)
-    if (!res) return
-    setInventory(activeCharId(), res.counts, { path: res.path, loadedAt: res.loadedAt })
-    logInfo(`[everquest-companion] Inventory auto-reloaded: ${res.path}`)
-    sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
-    sendToMain(IPC.onProgress, getProgress(activeCharId()))
-  })
-  inventoryWatcher.on('error', (err) =>
-    logConsoleError('[everquest-companion] inventory watch error', err)
-  )
 }
 
 /** Startup entry point: resolve a character and tail it, or idle quietly if there is none.
