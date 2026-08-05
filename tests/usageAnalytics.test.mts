@@ -55,11 +55,20 @@ const NOW = Date.UTC(2026, 7, 10, 12, 0, 0)
 const TODAY = '2026-08-10'
 const day = (back: number): string => addDays(TODAY, -back)
 
-const u = (d: string, metric: string, dim: string, n: number): UsageRow => ({ day: d, metric, dim, n })
+// Every fixture below is the USER cohort unless a test says otherwise — that is the readout the
+// panel and the digest show by default, so it is the one the arithmetic is asserted against.
+const u = (d: string, metric: string, dim: string, n: number): UsageRow => ({
+  day: d,
+  cohort: 'user',
+  metric,
+  dim,
+  n
+})
 /** A funnel row. Named fields rather than five positionals — the repo's max-params is 4. */
 function funnelRow(r: Partial<FunnelRow> & { funnel: string; step: string; n: number }): FunnelRow {
   return {
     day: r.day ?? TODAY,
+    cohort: r.cohort ?? 'user',
     funnel: r.funnel,
     step: r.step,
     outcome: r.outcome ?? '-',
@@ -75,7 +84,8 @@ const install = (first: string, last: string, appVersion = '0.2.0'): InstallRow 
   lastSeenDay: last,
   daysSeen: 1,
   appVersion,
-  channel: 'prod'
+  channel: 'prod',
+  cohort: 'user'
 })
 
 const build = (
@@ -90,14 +100,20 @@ const build = (
 test('column mapping is TOTAL: a missing or wrong-typed column becomes a default, never a throw', () => {
   assert.deepEqual(toUsageRows([{ day: '2026-08-01', metric: 'sessions', dim: null, n: '12' }]), [
     // `n` arrives as a number (store.ts sets the int8 parser); a string is not trusted into one.
-    { day: '2026-08-01', metric: 'sessions', dim: '-', n: 0 }
+    // An ABSENT `cohort` (a cluster mid-migration, or the nullable install column) is 'user' —
+    // the fail-safe direction: an install nobody marked is a user.
+    { day: '2026-08-01', cohort: 'user', metric: 'sessions', dim: '-', n: 0 }
   ])
   assert.deepEqual(toFunnelRows([{}]), [
-    { day: '', funnel: '', step: '', outcome: '-', appVersion: '?', n: 0 }
+    { day: '', cohort: 'user', funnel: '', step: '', outcome: '-', appVersion: '?', n: 0 }
   ])
   assert.deepEqual(toInstallRows([{ days_seen: 3 }]), [
-    { firstSeenDay: '', lastSeenDay: '', daysSeen: 3, appVersion: '?', channel: '?' }
+    { firstSeenDay: '', lastSeenDay: '', daysSeen: 3, appVersion: '?', channel: '?', cohort: 'user' }
   ])
+  // Only the exact string 'owner' is the owner. A junk value is a user row, not a crash.
+  assert.equal(toUsageRows([{ cohort: 'owner' }])[0].cohort, 'owner')
+  assert.equal(toUsageRows([{ cohort: 'OWNER' }])[0].cohort, 'user')
+  assert.equal(toInstallRows([{ cohort: 42 }])[0].cohort, 'user')
 })
 
 test('THE ID IS NEVER MAPPED: an install row carries population facts and nothing else', () => {
@@ -408,6 +424,9 @@ test('funnel bars are relative to STEP ONE, so the curve reads as a shape', () =
 })
 
 // ---- the CLI digest -----------------------------------------------------------------------------------
+//
+// The USER/OWNER SPLIT of the same numbers lives in tests/usageCohorts.test.mts — this file owns
+// the arithmetic of one readout, that one owns the partition.
 
 test('the digest prints the SAME numbers, and says so when the tables are empty', () => {
   const text = renderAnalyticsDigest(build())

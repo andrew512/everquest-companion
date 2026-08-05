@@ -168,23 +168,50 @@ CREATE TABLE IF NOT EXISTS dedupe_probe (
 --
 -- All four `n`/count columns are bigint: they are sums of client-reported counts
 -- and durations, and a busy day of `viewDwellMs` is comfortably past 2^31.
+--
+-- ---------------------------------------------------------------------------
+-- `cohort` — 'user' or 'owner', AND IT IS PART OF THE KEY
+-- ---------------------------------------------------------------------------
+-- The author runs this app too (a dev build all day, the installed copy in the
+-- evening), and their own use is signal about the BUILD but noise in every number
+-- about the USER BASE. So the counters are keyed per cohort and every read path
+-- defaults to 'user'. The rationale in full — including why nothing ever SUMS the
+-- two — is in src/shared/telemetryRollup.ts, which both writers import.
+--
+-- IT IS IN THE PRIMARY KEY, NOT BESIDE IT, and that is not a preference: the
+-- ingest path's `ON CONFLICT (day, cohort, metric, dim) DO UPDATE` needs those four
+-- columns to BE the uniqueness rule, and a non-key column would let one day's
+-- user and owner rows collide into one counter.
+--
+-- WHICH MEANS THERE IS NO `ALTER` FOR THESE TWO TABLES, AND CANNOT BE. Aurora
+-- DSQL's ALTER TABLE grammar can add a column; it cannot change a PRIMARY KEY
+-- (the key is the table's distribution, not an index you can rebuild). These
+-- tables have never been created on any cluster — wave A2 is unapplied — so the
+-- CREATE TABLE above is the migration, and there is nothing to migrate. If a
+-- cluster somewhere DID get the pre-cohort shape, `IF NOT EXISTS` reports `exists`
+-- and silently keeps the old columns: `migrate` output is the check, and the
+-- one-off recovery (DROP the two counter tables, re-run migrate, lose the
+-- aggregates — there is no id in them to re-derive a cohort from anyway) is
+-- written out in infra/README.md.
 
 CREATE TABLE IF NOT EXISTS usage_daily (
   day    text   NOT NULL,
+  cohort text   NOT NULL,
   metric text   NOT NULL,
   dim    text   NOT NULL,
   n      bigint NOT NULL,
-  PRIMARY KEY (day, metric, dim)
+  PRIMARY KEY (day, cohort, metric, dim)
 );
 
 CREATE TABLE IF NOT EXISTS usage_funnel_daily (
   day         text   NOT NULL,
+  cohort      text   NOT NULL,
   funnel      text   NOT NULL,
   step        text   NOT NULL,
   outcome     text   NOT NULL,
   app_version text   NOT NULL,
   n           bigint NOT NULL,
-  PRIMARY KEY (day, funnel, step, outcome, app_version)
+  PRIMARY KEY (day, cohort, funnel, step, outcome, app_version)
 );
 
 -- ONE ROW PER analyticsId, and that is the entire per-id footprint of this
@@ -192,6 +219,13 @@ CREATE TABLE IF NOT EXISTS usage_funnel_daily (
 -- this row so the guarded UPSERT that maintains the row IS the cap check, in one
 -- statement with no read-modify-write window (the same argument install_quota
 -- makes for feedback, written out in infra/lambda/telemetry.ts).
+--
+-- `cohort` IS NULLABLE HERE, unlike in the two counter tables, for the same reason
+-- the `telemetry_*` config columns are: it is the one cohort column that CAN be
+-- added to a pre-existing table (it is not in the key), so the `ALTER` further
+-- down is real and a row written before it ran has NULL. Every reader normalizes
+-- NULL to 'user' (`cohortOf` in src/shared/telemetryRollup.ts), which is the
+-- fail-safe direction — an install nobody has marked is a user.
 CREATE TABLE IF NOT EXISTS analytics_install (
   analytics_id   text   NOT NULL,
   first_seen_day text   NOT NULL,
@@ -199,6 +233,7 @@ CREATE TABLE IF NOT EXISTS analytics_install (
   days_seen      integer NOT NULL,
   app_version    text   NOT NULL,
   channel        text   NOT NULL,
+  cohort         text,
   quota_day      text   NOT NULL,
   quota_n        bigint NOT NULL,
   PRIMARY KEY (analytics_id)
@@ -218,6 +253,15 @@ CREATE TABLE IF NOT EXISTS analytics_install (
 ALTER TABLE feedback_config ADD COLUMN telemetry_accepting boolean;
 
 ALTER TABLE feedback_config ADD COLUMN max_events_per_id_per_day integer;
+
+-- The install row's cohort, added the same way and for the same reasons: nullable,
+-- never dropped, and a NULL reads as 'user' at every reader. It is the ONE cohort
+-- column that an ALTER can add, because it is not part of a primary key — the two
+-- counter tables carry theirs IN the key and therefore had to be born with it (the
+-- long note above `usage_daily` says what to do if a cluster already has the old
+-- shape). On a cluster created from today's file the CREATE TABLE already has the
+-- column and this reports `exists` (42701 duplicate_column).
+ALTER TABLE analytics_install ADD COLUMN cohort text;
 
 -- ---- indexes ----------------------------------------------------------------
 --

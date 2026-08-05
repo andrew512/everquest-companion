@@ -31,7 +31,13 @@ import {
 } from '../src/shared/telemetry'
 import { validateTelemetryBatch } from '../src/shared/telemetryValidate'
 import { hasNulByte } from '../src/shared/sanitizeText'
-import { rollupBatch, utcDay } from '../src/shared/telemetryRollup'
+import {
+  cohortForChannel,
+  cohortOf,
+  rollupBatch,
+  utcDay,
+  type UsageCohort
+} from '../src/shared/telemetryRollup'
 
 /** One in-memory `analytics_install` row. Exactly the columns the real table has. */
 interface Install {
@@ -40,6 +46,8 @@ interface Install {
   daysSeen: number
   appVersion: string
   channel: string
+  /** 'owner' for a dev build or a hand-marked install; the counter keys carry it too. */
+  cohort: UsageCohort
   quotaDay: string
   quotaN: number
 }
@@ -52,9 +60,9 @@ export interface TelemetryMode {
 
 export interface TelemetryState {
   mode: TelemetryMode
-  /** `day|metric|dim` → n, i.e. `usage_daily` keyed by its own primary key. */
+  /** `day|cohort|metric|dim` → n, i.e. `usage_daily` keyed by its own primary key. */
   usage: Map<string, number>
-  /** `day|funnel|step|outcome|version` → n. */
+  /** `day|cohort|funnel|step|outcome|version` → n. */
   funnels: Map<string, number>
   installs: Map<string, Install>
 }
@@ -81,12 +89,24 @@ const fail = (status: number, error: string, message: string, extra: Record<stri
   note: error
 })
 
+/** What the install UPSERT reports back, cohort included — the twin of the Lambda's own. */
+interface InstallFacts {
+  firstOfDay: boolean
+  newInstall: boolean
+  cohort: UsageCohort
+}
+
 /**
- * The install row, the day facts and the cap — the local twin of the Lambda's one guarded
- * UPSERT. Returns null when the cap is spent, mirroring "zero rows returned".
+ * The install row, the day facts, the cohort and the cap — the local twin of the Lambda's one
+ * guarded UPSERT. Returns null when the cap is spent, mirroring "zero rows returned".
+ *
+ * THE COHORT RESOLUTION IS THE SQL `CASE`, in JS: the channel forces 'owner' for a dev build,
+ * and otherwise whatever is already on the row wins, which is what makes a hand-placed
+ * `owner-add` mark survive every later batch.
  */
-function touchInstall(state: TelemetryState, batch: TelemetryBatch, day: string): { firstOfDay: boolean; newInstall: boolean } | null {
+function touchInstall(state: TelemetryState, batch: TelemetryBatch, day: string): InstallFacts | null {
   const events = batch.events.length
+  const byChannel = cohortForChannel(batch.env.channel)
   const held = state.installs.get(batch.env.analyticsId)
   if (held === undefined) {
     state.installs.set(batch.env.analyticsId, {
@@ -95,10 +115,11 @@ function touchInstall(state: TelemetryState, batch: TelemetryBatch, day: string)
       daysSeen: 1,
       appVersion: batch.env.appVersion,
       channel: batch.env.channel,
+      cohort: byChannel,
       quotaDay: day,
       quotaN: events
     })
-    return { firstOfDay: true, newInstall: true }
+    return { firstOfDay: true, newInstall: true, cohort: byChannel }
   }
   // The GUARD, read before the increment — exactly what the SQL `WHERE` evaluates.
   if (held.quotaDay === day && held.quotaN >= state.mode.maxEventsPerDay) return null
@@ -107,9 +128,10 @@ function touchInstall(state: TelemetryState, batch: TelemetryBatch, day: string)
   held.lastSeenDay = held.lastSeenDay > day ? held.lastSeenDay : day
   held.appVersion = batch.env.appVersion
   held.channel = batch.env.channel
+  held.cohort = byChannel === 'owner' ? 'owner' : cohortOf(held.cohort)
   held.quotaN = held.quotaDay === day ? held.quotaN + events : events
   held.quotaDay = day
-  return { firstOfDay: held.quotaN === events, newInstall: false }
+  return { firstOfDay: held.quotaN === events, newInstall: false, cohort: held.cohort }
 }
 
 function bump(table: Map<string, number>, key: string, n: number): void {
@@ -143,9 +165,10 @@ export function telemetryRoute(state: TelemetryState, body: Buffer, now = Date.n
     return fail(429, 'quota_exceeded', 'Daily event limit reached for this analytics id.')
   }
   const roll = rollupBatch(v.value, facts)
-  for (const c of roll.counters) bump(state.usage, `${day}|${c.metric}|${c.dim}`, c.n)
+  const co = facts.cohort
+  for (const c of roll.counters) bump(state.usage, `${day}|${co}|${c.metric}|${c.dim}`, c.n)
   for (const f of roll.funnels) {
-    bump(state.funnels, `${day}|${f.funnel}|${f.step}|${f.outcome}|${f.appVersion}`, f.n)
+    bump(state.funnels, `${day}|${co}|${f.funnel}|${f.step}|${f.outcome}|${f.appVersion}`, f.n)
   }
   return {
     status: 202,
@@ -162,12 +185,12 @@ export function telemetryTables(state: TelemetryState): TelemetryRes {
     json: {
       ok: true,
       usageDaily: [...state.usage.entries()].map(([key, n]) => {
-        const [day, metric, dim] = split(key)
-        return { day, metric, dim, n }
+        const [day, cohort, metric, dim] = split(key)
+        return { day, cohort, metric, dim, n }
       }),
       usageFunnelDaily: [...state.funnels.entries()].map(([key, n]) => {
-        const [day, funnel, step, outcome, appVersion] = split(key)
-        return { day, funnel, step, outcome, app_version: appVersion, n }
+        const [day, cohort, funnel, step, outcome, appVersion] = split(key)
+        return { day, cohort, funnel, step, outcome, app_version: appVersion, n }
       }),
       analyticsInstall: [...state.installs.entries()].map(([analyticsId, i]) => ({
         analytics_id: analyticsId,
@@ -175,7 +198,8 @@ export function telemetryTables(state: TelemetryState): TelemetryRes {
         last_seen_day: i.lastSeenDay,
         days_seen: i.daysSeen,
         app_version: i.appVersion,
-        channel: i.channel
+        channel: i.channel,
+        cohort: i.cohort
       }))
     },
     note: `${String(state.usage.size)} counters`

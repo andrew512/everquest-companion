@@ -15,8 +15,10 @@
 import {
   deleteAnalyticsInstall,
   readAnalyticsInstalls,
+  readOwnerInstalls,
   readUsageDaily,
   readUsageFunnelDaily,
+  setInstallCohort,
   setTelemetryAccepting,
   type Clients,
 } from '../src/main/triage/store'
@@ -24,17 +26,52 @@ import { buildAnalytics } from '../src/main/triage/analytics'
 import {
   addDays,
   dayOf,
+  ofCohort,
   toFunnelRows,
   toInstallRows,
   toUsageRows,
+  type FunnelRow,
+  type InstallRow,
+  type UsageRow,
 } from '../src/main/triage/usageRows'
+import { USAGE_COHORTS, type UsageCohort } from '../src/shared/telemetryRollup'
 import { renderAnalyticsDigest } from './analyticsDigest.mjs'
+import { sanitizeOneLine } from '../src/shared/sanitizeText'
+
+/**
+ * The `analytics …` block of `triage-feedback`'s usage text, spelled beside the commands it
+ * describes rather than in the parent's USAGE string — the parent was at the 400-code-line
+ * ceiling, and help that lives next to its implementation is the half of that trade worth
+ * having anyway.
+ */
+export const ANALYTICS_USAGE = `
+  analytics digest [--days 30] [--json] [--cohort user|owner|all]
+                                            usage analytics as text (same numbers as the
+                                            Triage -> Analytics tab, one computation).
+                                            DEFAULTS TO --cohort user: your own dev builds and
+                                            any install you marked below are split OUT. 'all'
+                                            prints BOTH digests; nothing ever sums them.
+  analytics wipe   --id <analyticsId>       delete that id's analytics_install row
+  analytics open | close                    the TELEMETRY kill switch (instant, no deploy)
+
+  analytics owner-add <analyticsId>         mark an install as YOURS (the installed copy — dev
+                                            builds tag themselves from env.channel). Read the
+                                            id in the app: Preferences -> Usage analytics ->
+                                            "Anonymous id".
+  analytics owner-rm  <analyticsId>         put it back in the user cohort
+  analytics owner-ls                        what is marked. A ROTATED analyticsId is a NEW id
+                                            and arrives UNMARKED — re-run owner-add after one.
+                                            Marking is FROM-MARKING-ONWARD: counters already
+                                            summed carry no id and are never re-attributed.
+`
 
 /** The CLI's parsed flags, as `parseArgs` hands them over. */
 export type Args = Record<string, string | boolean | undefined>
 
 export interface AnalyticsCtx {
   args: Args
+  /** The positionals AFTER `analytics`, subcommand first — `['owner-add', '<analyticsId>']`. */
+  rest: string[]
   /** Lazily opens the DSQL connection — `analytics` with a bad flag must cost no round trip. */
   clients: () => Clients
   nowMs: number
@@ -42,17 +79,43 @@ export interface AnalyticsCtx {
 
 const MAX_WINDOW_DAYS = 3650
 
+/** `--cohort user|owner|all`, defaulting to the population question. */
+type CohortChoice = UsageCohort | 'all'
+
+function cohortChoice(raw: unknown): CohortChoice {
+  if (raw === undefined) return 'user'
+  const allowed: readonly string[] = [...USAGE_COHORTS, 'all']
+  if (typeof raw !== 'string' || !allowed.includes(raw)) {
+    throw new Error(`--cohort: expected one of ${allowed.join(', ')}`)
+  }
+  return raw as CohortChoice
+}
+
+/** The three row arrays, already typed and cohort-normalized — one read serves every choice. */
+interface CohortRows {
+  usage: UsageRow[]
+  funnels: FunnelRow[]
+  installs: InstallRow[]
+}
+
 /**
- * `analytics digest [--days N] [--json]` — the terminal view of the SAME numbers the Analytics
- * tab renders. Not a second computation: it reads the three tables and hands them to
- * `buildAnalytics`. A CLI that recomputed would eventually disagree with the panel, and the
- * disagreement would be invisible until somebody compared them side by side.
+ * `analytics digest [--days N] [--cohort user|owner|all] [--json]` — the terminal view of the
+ * SAME numbers the Analytics tab renders. Not a second computation: it reads the three tables
+ * and hands them to `buildAnalytics`. A CLI that recomputed would eventually disagree with the
+ * panel, and the disagreement would be invisible until somebody compared them side by side.
+ *
+ * THE DEFAULT IS `user`, AND `all` PRINTS TWO DIGESTS, NOT ONE COMBINED ONE. The owner's own
+ * dev-build and installed use is real data worth keeping and worth reading — but summed into
+ * the population it is the loudest install in a tiny fleet, so nothing here ever adds the two
+ * together. Each digest is built from its own rows, so each cohort's rates use its own
+ * denominators too.
  */
 export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
   const days = Number(ctx.args.days ?? 30)
   if (!Number.isInteger(days) || days < 1 || days > MAX_WINDOW_DAYS) {
     throw new Error(`analytics digest: --days must be a whole number of days (1..${String(MAX_WINDOW_DAYS)})`)
   }
+  const choice = cohortChoice(ctx.args.cohort)
   const c = ctx.clients()
   const since = addDays(dayOf(ctx.nowMs), -(days - 1))
   const [usage, funnels, installs] = await Promise.all([
@@ -60,14 +123,31 @@ export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
     readUsageFunnelDaily(c, since),
     readAnalyticsInstalls(c),
   ])
-  const data = buildAnalytics({
+  const rows: CohortRows = {
     usage: toUsageRows(usage),
     funnels: toFunnelRows(funnels),
     installs: toInstallRows(installs),
-    windowDays: days,
-    nowMs: ctx.nowMs,
-  })
-  console.log(ctx.args.json ? JSON.stringify(data, null, 2) : renderAnalyticsDigest(data))
+  }
+  const build = (cohort: UsageCohort): ReturnType<typeof buildAnalytics> =>
+    buildAnalytics({
+      usage: ofCohort(rows.usage, cohort),
+      funnels: ofCohort(rows.funnels, cohort),
+      installs: ofCohort(rows.installs, cohort),
+      windowDays: days,
+      nowMs: ctx.nowMs,
+    })
+  const wanted: UsageCohort[] = choice === 'all' ? [...USAGE_COHORTS] : [choice]
+  if (ctx.args.json) {
+    // One cohort keeps the historical shape (the bare data object); `all` has to name which is
+    // which, and a keyed object is the only shape that cannot be mistaken for a sum.
+    const out =
+      choice === 'all'
+        ? Object.fromEntries(wanted.map((k) => [k, build(k)]))
+        : build(wanted[0])
+    console.log(JSON.stringify(out, null, 2))
+    return
+  }
+  console.log(wanted.map((k) => renderAnalyticsDigest(build(k), k)).join('\n'))
 }
 
 /**
@@ -104,11 +184,100 @@ async function setSwitch(ctx: AnalyticsCtx, accepting: boolean): Promise<void> {
   )
 }
 
+// ---- the owner mark -----------------------------------------------------------------------
+//
+// WHY THIS IS A COMMAND AND NOT A HEURISTIC. The dev channel tags itself: `env.channel` is in
+// every payload, so the ingest path already knows a dev build is the author's and needs nothing
+// from anyone. The INSTALLED copy is the case with no signal at all — a prod payload from the
+// author is byte-identical in shape to a prod payload from a stranger, deliberately, and any
+// server-side guess ("the install with the most sessions") would be a heuristic that quietly
+// mislabels a real enthusiast. So it is a mark, placed by hand, once, against an id the owner
+// reads out of the app's own payload viewer (Preferences → usage analytics).
+//
+// ROTATION IS THE FOOT-GUN, and it is the reason the help below says so twice: rotating the
+// analyticsId mints a NEW id, the old row keeps its mark, and the new one arrives unmarked. Run
+// `owner-ls` after a rotation and re-add.
+
+/**
+ * The id, positionally (`owner-add <analyticsId>`) or as `--id`, which is the spelling `wipe`
+ * already uses. It is deliberately NOT `--install`: an analyticsId is not an installId and the
+ * two must never be interchangeable at the command line either (plan T3).
+ */
+function requireId(ctx: AnalyticsCtx, command: string): string {
+  const positional = ctx.rest[1] ?? ''
+  const id = positional.length > 0 ? positional : typeof ctx.args.id === 'string' ? ctx.args.id : ''
+  if (!id) throw new Error(`analytics ${command}: <analyticsId> (or --id <analyticsId>) is required`)
+  return id
+}
+
+async function markCohort(ctx: AnalyticsCtx, cohort: UsageCohort): Promise<void> {
+  const command = cohort === 'owner' ? 'owner-add' : 'owner-rm'
+  const id = requireId(ctx, command)
+  const rows = await setInstallCohort(ctx.clients(), id, cohort)
+  if (rows === 0) {
+    console.log(
+      `no analytics_install row for ${id} — nothing marked.\n` +
+        'The row is created by that install\'s FIRST accepted batch, so mark it after the app ' +
+        'has reported at least once (and check the id in Preferences → usage analytics).',
+    )
+    return
+  }
+  console.log(
+    cohort === 'owner'
+      ? `${id} is now the OWNER cohort. From the next batch onward its counters land in ` +
+          'owner-keyed rows and drop out of `analytics digest` by default.\n' +
+          'Counters this id already contributed to stay where they are: they are anonymous ' +
+          'sums with no id in them, so there is nothing to move. The split is ' +
+          'from-marking-onward, and the digest header says so.\n' +
+          'IF YOU ROTATE THE analyticsId, the new id arrives UNMARKED — re-run this command.'
+      : `${id} is back in the USER cohort from the next batch onward. Owner-keyed rows it ` +
+          'already produced stay owner-keyed, for the same reason: a counter has no id in it.\n' +
+          'NOTE: a DEV-channel install re-tags itself as owner on its next batch regardless — ' +
+          'the channel is derived server-side and this mark cannot outvote it.',
+  )
+}
+
+/**
+ * `owner-ls` — what is marked, and therefore what a rotation has orphaned.
+ *
+ * IT PRINTS analyticsIds, which no other read path does. That is safe here in the exact way it
+ * is not elsewhere: the query matches ONLY rows whose cohort is already 'owner', i.e. rows the
+ * operator marked themselves or that a dev build self-tagged. It cannot enumerate a user.
+ */
+async function cmdOwnerLs(ctx: AnalyticsCtx): Promise<void> {
+  const rows = await readOwnerInstalls(ctx.clients())
+  if (rows.length === 0) {
+    console.log(
+      'no installs are marked as the owner cohort.\n' +
+        'Dev builds tag themselves on their first batch (nothing to do). For the INSTALLED ' +
+        'copy: read its analyticsId from Preferences → Usage analytics → "Anonymous id", ' +
+        'then `analytics owner-add --id <analyticsId>`.',
+    )
+    return
+  }
+  const cell = (v: unknown): string => (typeof v === 'string' ? sanitizeOneLine(v) : '?')
+  for (const r of rows) {
+    console.log(
+      `${cell(r.analytics_id)}  ${cell(r.channel).padEnd(5)} ${cell(r.app_version).padEnd(10)}` +
+        ` first ${cell(r.first_seen_day)} · last ${cell(r.last_seen_day)}` +
+        ` · ${String(typeof r.days_seen === 'number' ? r.days_seen : 0)} day(s)`,
+    )
+  }
+  console.log(
+    `\n${String(rows.length)} owner install(s). A ROTATED analyticsId is a NEW id: the old row ` +
+      'above keeps its mark and the new one arrives unmarked, so re-run `owner-add` after any ' +
+      'rotation.',
+  )
+}
+
 export const ANALYTICS_SUBCOMMANDS: Record<string, (ctx: AnalyticsCtx) => Promise<void>> = {
   digest: cmdAnalyticsDigest,
   wipe: cmdAnalyticsWipe,
   open: (ctx) => setSwitch(ctx, true),
   close: (ctx) => setSwitch(ctx, false),
+  'owner-add': (ctx) => markCohort(ctx, 'owner'),
+  'owner-rm': (ctx) => markCohort(ctx, 'user'),
+  'owner-ls': cmdOwnerLs,
 }
 
 export function analyticsSubcommand(name: string | undefined): ((ctx: AnalyticsCtx) => Promise<void>) | null {

@@ -247,7 +247,28 @@ test('A NEW DAY resets the cap and advances days_seen — the row is the whole p
   assert.equal(row?.firstSeenDay, '2026-08-03')
   assert.equal(row?.lastSeenDay, '2026-08-04')
   assert.equal(row?.daysSeen, 2)
-  // The envelope facts were counted once PER DAY, not once per batch.
-  assert.equal(state.usage.get(`2026-08-03|${USAGE_METRICS.activeInstalls}|${DIM_NONE}`), 1)
-  assert.equal(state.usage.get(`2026-08-04|${USAGE_METRICS.activeInstalls}|${DIM_NONE}`), 1)
+  // The envelope facts were counted once PER DAY, not once per batch. The key carries the
+  // cohort: this fixture's channel is 'dev', so every row it writes is owner-keyed.
+  assert.equal(state.usage.get(`2026-08-03|owner|${USAGE_METRICS.activeInstalls}|${DIM_NONE}`), 1)
+  assert.equal(state.usage.get(`2026-08-04|owner|${USAGE_METRICS.activeInstalls}|${DIM_NONE}`), 1)
+})
+
+/**
+ * THE DEV CHANNEL TAGS ITSELF, AND PROD DOES NOT — the whole reason no client change was needed
+ * for the owner split. Same batch, same events, two channels, two disjoint sets of counter keys.
+ */
+test('the cohort comes from env.channel: a dev batch is owner-keyed, a prod batch is not', () => {
+  const state = emptyTelemetryState()
+  const ev: TelemetryEvent[] = [{ t: 'sessionStart', coldStartMsBucket: 1 }]
+  const devBatch = batch(ev)
+  const prodBatch = { ...batch(ev), env: { ...batch(ev).env, channel: 'prod' as const } }
+  const at = Date.UTC(2026, 7, 3, 10)
+  assert.equal(telemetryRoute(state, Buffer.from(JSON.stringify(devBatch)), at).status, 202)
+  assert.equal(telemetryRoute(state, Buffer.from(JSON.stringify(prodBatch)), at).status, 202)
+
+  assert.equal(state.usage.get(`2026-08-03|owner|${USAGE_METRICS.sessions}|${DIM_NONE}`), 1)
+  assert.equal(state.usage.get(`2026-08-03|user|${USAGE_METRICS.sessions}|${DIM_NONE}`), 1)
+  // NEVER SUMMED, and the storage is what enforces that: they are two rows, not one of two.
+  assert.equal(state.installs.get(devBatch.env.analyticsId)?.cohort, 'owner')
+  assert.equal(state.installs.get(prodBatch.env.analyticsId)?.cohort, 'user')
 })

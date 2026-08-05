@@ -42,11 +42,14 @@ import type { TelemetryBatch } from '../../src/shared/telemetry'
 import { validateTelemetryBatch } from '../../src/shared/telemetryValidate'
 import { hasNulByte } from '../../src/shared/sanitizeText'
 import {
+  cohortForChannel,
+  cohortOf,
   rollupBatch,
   utcDay,
   USAGE_METRICS,
   type FunnelCounter,
   type RollupResult,
+  type UsageCohort,
   type UsageCounter
 } from '../../src/shared/telemetryRollup'
 
@@ -165,30 +168,49 @@ async function loadConfig(now: number): Promise<TelemetryConfig> {
  * The cap is a FLOOR, not a ceiling: the guard reads the count BEFORE this batch, so an id at
  * 19,999 events may still land one full batch. Bounding it exactly would mean rejecting a
  * partially-counted batch, which is a worse answer than an overshoot of at most MAX_BATCH_EVENTS.
+ *
+ * IT ALSO RESOLVES THE COHORT, and that is why this one statement grew a fifth job rather than a
+ * SELECT beside it: the cohort has to come from the SAME row-read the guard already performs, or
+ * two concurrent batches could disagree about which side of the split they belong on.
+ *
+ *   * `$7` is the cohort the CHANNEL implies — 'owner' for a dev build, 'user' otherwise. It is
+ *     derived server-side from a field the envelope has always carried; the client sends nothing
+ *     new for this feature (src/shared/telemetryRollup.ts says why that is the whole point).
+ *   * ON INSERT it is simply stored. ON UPDATE the stored value WINS unless the channel forces
+ *     'owner': that is what makes a hand-placed `owner-add` mark STICK across every later batch
+ *     from a prod install, while a dev build re-asserts itself even if somebody `owner-rm`'d it.
+ *   * `RETURNING cohort` hands back the RESOLVED value (postgres returns the post-update row),
+ *     so the counter UPSERTs below key on the same answer this statement committed.
  */
 const INSTALL_SQL = `INSERT INTO analytics_install (
-  analytics_id, first_seen_day, last_seen_day, days_seen, app_version, channel, quota_day, quota_n)
-VALUES ($1, $2, $2, 1, $3, $4, $2, $5)
+  analytics_id, first_seen_day, last_seen_day, days_seen, app_version, channel, cohort,
+  quota_day, quota_n)
+VALUES ($1, $2, $2, 1, $3, $4, $7, $2, $5)
 ON CONFLICT (analytics_id) DO UPDATE
    SET last_seen_day = GREATEST(analytics_install.last_seen_day, $2),
        days_seen     = analytics_install.days_seen
                      + (CASE WHEN analytics_install.last_seen_day < $2 THEN 1 ELSE 0 END),
        app_version   = EXCLUDED.app_version,
        channel       = EXCLUDED.channel,
+       cohort        = (CASE WHEN EXCLUDED.cohort = 'owner' THEN 'owner'
+                             ELSE COALESCE(analytics_install.cohort, 'user') END),
        quota_day     = $2,
        quota_n       = (CASE WHEN analytics_install.quota_day = $2
                              THEN analytics_install.quota_n ELSE 0 END) + $5
  WHERE analytics_install.quota_day <> $2 OR analytics_install.quota_n < $6
-RETURNING first_seen_day, quota_n`
+RETURNING first_seen_day, quota_n, cohort`
 
 interface InstallRow {
   first_seen_day: string
   quota_n: number
+  cohort: string | null
 }
 
 export interface InstallFacts {
   firstOfDay: boolean
   newInstall: boolean
+  /** Which side of the split every counter this batch produces is keyed on. */
+  cohort: UsageCohort
 }
 
 /**
@@ -212,27 +234,40 @@ async function touchInstall(
       batch.env.appVersion,
       batch.env.channel,
       events,
-      config.maxEventsPerIdPerDay
+      config.maxEventsPerIdPerDay,
+      cohortForChannel(batch.env.channel)
     ])
   )
   const row = rows[0]
   if (row === undefined) return null
   const firstOfDay = row.quota_n === events
-  return { firstOfDay, newInstall: firstOfDay && row.first_seen_day === day }
+  return {
+    firstOfDay,
+    newInstall: firstOfDay && row.first_seen_day === day,
+    cohort: cohortOf(row.cohort)
+  }
 }
 
 // ---- step 7: the aggregate UPSERTs ---------------------------------------------------
 
-/** `($1,$2,$3,$4),($1,$5,$6,$7)…` — the day is parameter 1 and is shared by every tuple. */
-function tuples(rows: number, columns: number): string {
+/**
+ * `($1,$2,$3,$4,$5),($1,$2,$6,$7,$8)…` — the first `shared` parameters (the day and the cohort)
+ * are the same for every tuple in the statement, because a batch belongs to exactly one day and
+ * exactly one install. Repeating them per row would be `MAX_BATCH_EVENTS` copies of two strings.
+ */
+function tuples(rows: number, columns: number, shared: number): string {
+  const head = Array.from({ length: shared }, (_, i) => `$${String(i + 1)}`)
   const out: string[] = []
   for (let r = 0; r < rows; r++) {
-    const cells = ['$1']
-    for (let c = 0; c < columns; c++) cells.push(`$${String(2 + r * columns + c)}`)
+    const cells = [...head]
+    for (let c = 0; c < columns; c++) cells.push(`$${String(shared + 1 + r * columns + c)}`)
     out.push(`(${cells.join(',')})`)
   }
   return out.join(',')
 }
+
+/** The day and the cohort, in that order — `tuples`'s `shared` count and these must agree. */
+const SHARED_PARAMS = 2
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = []
@@ -240,13 +275,14 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
   return out
 }
 
-const COUNTER_HEAD = 'INSERT INTO usage_daily (day, metric, dim, n) VALUES '
-const COUNTER_TAIL = ' ON CONFLICT (day, metric, dim) DO UPDATE SET n = usage_daily.n + EXCLUDED.n'
+const COUNTER_HEAD = 'INSERT INTO usage_daily (day, cohort, metric, dim, n) VALUES '
+const COUNTER_TAIL =
+  ' ON CONFLICT (day, cohort, metric, dim) DO UPDATE SET n = usage_daily.n + EXCLUDED.n'
 
 const FUNNEL_HEAD =
-  'INSERT INTO usage_funnel_daily (day, funnel, step, outcome, app_version, n) VALUES '
+  'INSERT INTO usage_funnel_daily (day, cohort, funnel, step, outcome, app_version, n) VALUES '
 const FUNNEL_TAIL =
-  ' ON CONFLICT (day, funnel, step, outcome, app_version) DO UPDATE' +
+  ' ON CONFLICT (day, cohort, funnel, step, outcome, app_version) DO UPDATE' +
   ' SET n = usage_funnel_daily.n + EXCLUDED.n'
 
 /**
@@ -258,21 +294,27 @@ const FUNNEL_TAIL =
  * commit-time abort re-adds nothing: the aborted attempt never committed. That is the only
  * at-most-once property this path needs, and it is the database's, not a flag's.
  */
-async function writeCounters(day: string, roll: RollupResult): Promise<void> {
+async function writeCounters(day: string, cohort: UsageCohort, roll: RollupResult): Promise<void> {
   const counterChunks = chunk<UsageCounter>(roll.counters, UPSERT_CHUNK)
   const funnelChunks = chunk<FunnelCounter>(roll.funnels, UPSERT_CHUNK)
   if (counterChunks.length === 0 && funnelChunks.length === 0) return
   await withRetry('counters', () =>
     transaction(async (c) => {
       for (const rows of counterChunks) {
-        const params: unknown[] = [day]
+        const params: unknown[] = [day, cohort]
         for (const r of rows) params.push(r.metric, r.dim, r.n)
-        await c.query(`${COUNTER_HEAD}${tuples(rows.length, 3)}${COUNTER_TAIL}`, params)
+        await c.query(
+          `${COUNTER_HEAD}${tuples(rows.length, 3, SHARED_PARAMS)}${COUNTER_TAIL}`,
+          params
+        )
       }
       for (const rows of funnelChunks) {
-        const params: unknown[] = [day]
+        const params: unknown[] = [day, cohort]
         for (const r of rows) params.push(r.funnel, r.step, r.outcome, r.appVersion, r.n)
-        await c.query(`${FUNNEL_HEAD}${tuples(rows.length, 5)}${FUNNEL_TAIL}`, params)
+        await c.query(
+          `${FUNNEL_HEAD}${tuples(rows.length, 5, SHARED_PARAMS)}${FUNNEL_TAIL}`,
+          params
+        )
       }
     })
   )
@@ -288,6 +330,12 @@ const counterOf = (roll: RollupResult, metric: string): number =>
  * are per-channel, the funnel counters are per (funnel, step). CloudWatch aggregates a metric
  * across a dimension set it is not given, so this is exactly what makes the dashboard able to
  * show "events/min" overall and "conversion at step N" separately.
+ *
+ * DELIBERATELY NOT COHORT-SPLIT. A CloudWatch metric's identity IS its full dimension set, so
+ * adding `Cohort` here would orphan every widget in `dashboard.tf` and bill a new dimension
+ * value on every metric — to re-answer a question `Channel` already half answers (a dev build
+ * is always the owner). The near-real-time view is "is anyone in the app right now"; the SPLIT
+ * lives in the stored counters, where the digest and the tab read it.
  */
 function emitMetrics(batch: TelemetryBatch, roll: RollupResult, now: number): void {
   emit(
@@ -328,12 +376,15 @@ async function accept(batch: TelemetryBatch, now: number): Promise<HttpResult> {
     return fail(429, 'quota_exceeded', 'Daily event limit reached for this analytics id.')
   }
   const roll = rollupBatch(batch, facts)
-  await writeCounters(day, roll)
+  await writeCounters(day, facts.cohort, roll)
   emitMetrics(batch, roll, now)
   // COUNTS ONLY. No analyticsId, no dims, nothing that could reconstruct a batch from the log.
+  // `cohort` is a two-valued population label, not an identifier: 'owner' says "one of at most a
+  // handful of rows the operator marked themselves", which is a fact the operator already holds.
   log({
     msg: 'telemetry.accepted',
     channel: batch.env.channel,
+    cohort: facts.cohort,
     events: batch.events.length,
     counters: roll.counters.length,
     funnels: roll.funnels.length,

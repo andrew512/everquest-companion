@@ -8,21 +8,28 @@
 // nothing that `./analyticsRows.ts` cannot decide as a pure function and a test cannot pin.
 //
 // THREE STATES, AND THEY ARE DIFFERENT ON PURPOSE:
-//   * TABLES MISSING (`available:false`) — a cluster that predates the A2 migration. Says so,
-//     names the table, and says what to run. This is the ONLY arm that hides the dashboard.
+//   * NOT MIGRATED (`available:false`) — a cluster missing a table or the `cohort` column. Says
+//     so, names the missing thing, and says what to run. The ONLY arm that hides the dashboard.
 //   * TABLES EMPTY — honest zeros plus one "no data yet" line. That is what a lit client whose
 //     server-side `telemetry_accepting` is still closed looks like, and it is a REAL,
 //     informative answer: the pipe exists and is quiet.
 //   * DATA — the six sections.
 //
+// WHAT IS ON SCREEN BY DEFAULT IS THE USER COHORT. The owner runs this app more than anybody,
+// so leaving their own dev-build and installed-copy use in the numbers would make a three-install
+// population read as a product. "Include mine (split)" adds a SECOND, complete readout below the
+// first, under its own heading; there is deliberately no control anywhere that merges them, and
+// the two never share a denominator (each cohort's rates are built from its own rows).
+//
 // The earlier version of this panel listed a `SHAPE` table of promised fields as a stand-in
 // for the dashboard. It is gone, and so is its field list, which had gone stale against the
 // expanded design (it still said `byPlatform`/`opens`) — the panel IS the shape now.
 //
-// Sparklines are tiny inline SVG through `sparklinePoints`, the PerfChip precedent: sixty
-// numbers do not need a chart library, and a pure points function is testable.
+// The drawing primitives (`Sparkline`, `Section`, `MixList`) and the three leaf sections that
+// only read one slice each (Health, Versions, Retention) live in `./AnalyticsBits.tsx` — this
+// file keeps the parts that DECIDE: which window, which cohorts, which of the three states.
 
-import type { JSX, ReactNode } from 'react'
+import type { JSX } from 'react'
 import { useCallback, useState } from 'react'
 import {
   Alert,
@@ -30,100 +37,32 @@ import {
   Box,
   CircularProgress,
   Divider,
+  FormControlLabel,
   Stack,
+  Switch,
   Tab,
   Tabs,
   Typography
 } from '@mui/material'
-import type {
-  TriageAnalytics,
-  TriageAnalyticsData,
-  TriageFunnelView,
-  TriageMixRow,
-  UsageDayPoint
-} from '@shared/triage'
+import type { TriageAnalytics, TriageAnalyticsData, TriageFunnelView } from '@shared/triage'
 import { TRIAGE_ANALYTICS_DAYS, TRIAGE_ANALYTICS_DEFAULT_DAYS } from '@shared/triage'
-import { sparklinePoints } from '@shared/perf'
 import { formatNum } from '../../lib/formatRate'
 import { useTriageCall } from './useTriage'
 import {
-  cohortCell,
+  HealthSection,
+  MixList,
+  RetentionSection,
+  Section,
+  Sparkline,
+  VersionsSection
+} from './AnalyticsBits'
+import {
   durationLabel,
   funnelBars,
   pctLabel,
   pulseTiles,
-  rateLabel,
-  seriesValues,
   windowIsEmpty
 } from './analyticsRows'
-
-const SPARK_W = 220
-const SPARK_H = 28
-
-function Sparkline({ points }: { points: readonly UsageDayPoint[] }): JSX.Element {
-  return (
-    <Box
-      component="svg"
-      data-testid="analytics-sparkline"
-      viewBox={`0 0 ${String(SPARK_W)} ${String(SPARK_H)}`}
-      preserveAspectRatio="none"
-      sx={{ width: '100%', height: SPARK_H, display: 'block' }}
-    >
-      <polyline
-        points={sparklinePoints(seriesValues(points), SPARK_W, SPARK_H)}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        vectorEffect="non-scaling-stroke"
-        opacity={0.75}
-      />
-    </Box>
-  )
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }): JSX.Element {
-  return (
-    <Stack spacing={1}>
-      <Typography variant="subtitle2">{title}</Typography>
-      {children}
-      <Divider />
-    </Stack>
-  )
-}
-
-/** `label  value  ▁▁▃▅` — the one row shape every mix list in this panel uses. */
-function MixList({ rows, empty }: { rows: readonly TriageMixRow[]; empty: string }): JSX.Element {
-  if (rows.length === 0) {
-    return (
-      <Typography variant="caption" color="text.secondary">
-        {empty}
-      </Typography>
-    )
-  }
-  const max = Math.max(...rows.map((r) => r.n))
-  return (
-    <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr max-content', columnGap: 1.5, rowGap: 0.25 }}>
-      {rows.map((r) => (
-        <Box key={r.id} sx={{ display: 'contents' }}>
-          <Typography variant="caption">{r.id}</Typography>
-          <Box sx={{ alignSelf: 'center', height: 6, bgcolor: 'action.hover', borderRadius: 1 }}>
-            <Box
-              sx={{
-                width: `${String(max > 0 ? (r.n / max) * 100 : 0)}%`,
-                height: '100%',
-                bgcolor: 'primary.main',
-                borderRadius: 1
-              }}
-            />
-          </Box>
-          <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-            {formatNum(r.n)}
-          </Typography>
-        </Box>
-      ))}
-    </Box>
-  )
-}
 
 function PulseSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
   return (
@@ -252,110 +191,6 @@ function FunnelCard({ view }: { view: TriageFunnelView }): JSX.Element {
   )
 }
 
-function HealthSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
-  const h = data.health
-  return (
-    <Section title="Health">
-      <Typography variant="caption" color="text.secondary">
-        {formatNum(h.reports)} per-session health rollups received.
-      </Typography>
-      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 2 }}>
-        <Stack spacing={0.5}>
-          <Typography variant="caption" color="text.secondary">
-            Error classes
-          </Typography>
-          <MixList rows={h.errors} empty="No errors reported." />
-        </Stack>
-        <Stack spacing={0.5}>
-          <Typography variant="caption" color="text.secondary">
-            Update success
-          </Typography>
-          {h.update.map((u) => (
-            <Typography key={u.step} variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-              {u.step}: {rateLabel(u.rate)} ({formatNum(u.ok)} ok · {formatNum(u.failed)} failed)
-            </Typography>
-          ))}
-          {h.updateFailures.length > 0 && (
-            <Typography variant="caption" color="warning.main">
-              {h.updateFailures.map((f) => `${f.id} ${String(f.n)}`).join(' · ')}
-            </Typography>
-          )}
-        </Stack>
-      </Box>
-    </Section>
-  )
-}
-
-function VersionsSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
-  return (
-    <Section title="Versions">
-      {data.versions.length === 0 ? (
-        <Typography variant="caption" color="text.secondary">
-          No version has reported yet.
-        </Typography>
-      ) : (
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'max-content max-content max-content 1fr', columnGap: 2, rowGap: 0.25 }}>
-          {data.versions.map((v) => (
-            <Box key={v.version} sx={{ display: 'contents' }}>
-              <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
-                {v.version}
-              </Typography>
-              <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                {formatNum(v.installs)} installs
-              </Typography>
-              <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                peak {pctLabel(v.peakShare)}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                first seen {v.firstSeenDay ?? '—'} ·{' '}
-                {v.daysToAdopt === null
-                  ? 'never reached a majority'
-                  : `${String(v.daysToAdopt)} days to majority (${v.majorityDay ?? '—'})`}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
-      )}
-    </Section>
-  )
-}
-
-function RetentionSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
-  return (
-    <Section title="Retention">
-      <Typography variant="caption" color="text.secondary">
-        Survival, computed at read time from `analytics_install`: of the installs first seen on
-        a day, how many were still being seen on or after +1 / +7 / +30. A dash means the
-        cohort has not reached that horizon yet.
-      </Typography>
-      {data.retention.length === 0 ? (
-        <Typography variant="caption" color="text.secondary">
-          No cohorts yet.
-        </Typography>
-      ) : (
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(5, max-content)', columnGap: 3, rowGap: 0.25 }}>
-          {['Cohort', 'Installs', 'D1', 'D7', 'D30'].map((h) => (
-            <Typography key={h} variant="caption" color="text.secondary">
-              {h}
-            </Typography>
-          ))}
-          {data.retention.map((c) => (
-            <Box key={c.cohortDay} sx={{ display: 'contents' }}>
-              <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
-                {c.cohortDay}
-              </Typography>
-              <Typography variant="caption">{formatNum(c.installs)}</Typography>
-              <Typography variant="caption">{cohortCell(c.d1, c.installs)}</Typography>
-              <Typography variant="caption">{cohortCell(c.d7, c.installs)}</Typography>
-              <Typography variant="caption">{cohortCell(c.d30, c.installs)}</Typography>
-            </Box>
-          ))}
-        </Box>
-      )}
-    </Section>
-  )
-}
-
 function Readout({ data }: { data: TriageAnalyticsData }): JSX.Element {
   return (
     <Stack spacing={2}>
@@ -387,17 +222,62 @@ function Readout({ data }: { data: TriageAnalyticsData }): JSX.Element {
   )
 }
 
+/**
+ * The owner's own readout, under its own heading and visually set apart. A heading rather than a
+ * tab because the point is that both are on screen AT THE SAME TIME: the owner is looking for
+ * "does my dev build behave like the fleet does", and a tab would make that a memory exercise.
+ */
+function OwnerReadout({ data }: { data: TriageAnalyticsData }): JSX.Element {
+  return (
+    <Stack spacing={2} data-testid="analytics-owner" sx={{ pt: 2 }}>
+      <Divider />
+      <Alert severity="info" icon={false}>
+        <AlertTitle>Mine — the owner cohort, shown separately</AlertTitle>
+        Your dev builds (tagged automatically from <code>env.channel</code>) and any install
+        marked with <code>triage-feedback analytics owner-add &lt;analyticsId&gt;</code> — the id
+        is in Preferences → Usage analytics → &ldquo;Anonymous id&rdquo;. These numbers are NOT
+        included in the readout above and are never added to it. Counters aggregated before an
+        install was marked stay in the user cohort — the split is from-marking-onward.
+      </Alert>
+      <Readout data={data} />
+    </Stack>
+  )
+}
+
 export default function AnalyticsPanel(): JSX.Element {
   const [days, setDays] = useState<number>(TRIAGE_ANALYTICS_DEFAULT_DAYS)
-  const run = useCallback(() => window.eq.triageAnalytics(days), [days])
+  const [includeOwner, setIncludeOwner] = useState(false)
+  const run = useCallback(
+    () => window.eq.triageAnalytics(days, includeOwner),
+    [days, includeOwner]
+  )
   const analytics = useTriageCall<TriageAnalytics>(run)
+  const ready = analytics.data?.available === true ? analytics.data : null
 
   const header = (
-    <Tabs value={days} onChange={(_e, v: number) => setDays(v)} variant="scrollable">
-      {TRIAGE_ANALYTICS_DAYS.map((d) => (
-        <Tab key={d} value={d} label={`${String(d)}d`} data-testid={`analytics-days-${String(d)}`} />
-      ))}
-    </Tabs>
+    <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <Tabs value={days} onChange={(_e, v: number) => setDays(v)} variant="scrollable">
+        {TRIAGE_ANALYTICS_DAYS.map((d) => (
+          <Tab key={d} value={d} label={`${String(d)}d`} data-testid={`analytics-days-${String(d)}`} />
+        ))}
+      </Tabs>
+      <FormControlLabel
+        control={
+          <Switch
+            size="small"
+            checked={includeOwner}
+            onChange={(e) => setIncludeOwner(e.target.checked)}
+            data-testid="analytics-include-owner"
+          />
+        }
+        label={
+          <Typography variant="caption">
+            Include mine (split)
+            {ready !== null && !ready.ownerPresent && ' — nothing marked yet'}
+          </Typography>
+        }
+      />
+    </Stack>
   )
 
   return (
@@ -407,11 +287,12 @@ export default function AnalyticsPanel(): JSX.Element {
       {analytics.error !== null && <Alert severity="error">{analytics.error}</Alert>}
       {analytics.data?.available === false && (
         <Alert severity="warning" data-testid="analytics-unavailable">
-          <AlertTitle>No usage-analytics tables on this cluster</AlertTitle>
+          <AlertTitle>This cluster is not migrated to what the readout reads</AlertTitle>
           {analytics.data.reason}
         </Alert>
       )}
-      {analytics.data?.available === true && <Readout data={analytics.data.data} />}
+      {ready !== null && <Readout data={ready.data} />}
+      {ready?.owner != null && <OwnerReadout data={ready.owner} />}
     </Stack>
   )
 }

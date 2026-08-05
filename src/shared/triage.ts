@@ -211,10 +211,17 @@ export interface TriageDigest {
 //   * RETENTION is survival: "first seen on day D and still seen on or after D+N", read off
 //     `analytics_install`. It is not "came back ON day D+N" — no per-day-per-id row exists.
 //
-// `available: false` now means exactly ONE thing: the tables are not there (a stack that
-// predates the A2 migration). Tables that exist and are EMPTY render as honest zeros with a
-// "no data yet" note — an empty stack is a real, informative state and hiding it behind the
-// same arm as "not deployed" would make the two indistinguishable.
+// `available: false` means exactly ONE class of thing: this cluster does not have what this
+// code reads — a table the A2 migration creates, or the `cohort` column the user/owner split
+// added. Tables that exist and are EMPTY render as honest zeros with a "no data yet" note — an
+// empty stack is a real, informative state and hiding it behind the same arm as "not deployed"
+// would make the two indistinguishable.
+//
+// THE USER/OWNER SPLIT IS AT THIS LEVEL, not inside `TriageAnalyticsData`. `data` is ALWAYS the
+// user cohort — the population question, which is what the panel and the digest are for — and
+// `owner` is a SECOND, COMPLETE readout rendered beside it when asked for. Two values rather
+// than a cohort field on every row, because that shape makes summing them require writing code
+// that adds two `TriageAnalyticsData`s together, which nobody will ever accidentally do.
 
 /** One point of a daily series. `day` is the UTC `yyyy-mm-dd` key the counters are stored on. */
 export interface UsageDayPoint {
@@ -348,8 +355,17 @@ export const TRIAGE_ANALYTICS_DAYS = [7, 30, 90, 365] as const
 export const TRIAGE_ANALYTICS_DEFAULT_DAYS = 30
 
 export type TriageAnalytics =
-  | { available: false; reason: string; table: string }
-  | { available: true; data: TriageAnalyticsData }
+  /** `missing` names the table or column this cluster has not been migrated to. */
+  | { available: false; reason: string; missing: string }
+  | {
+      available: true
+      /** The USER cohort — the owner's own use is not in here. Always present. */
+      data: TriageAnalyticsData
+      /** The OWNER cohort, as its own complete readout. Null unless it was asked for. */
+      owner: TriageAnalyticsData | null
+      /** Is there any owner data at all in the window? Decides whether the toggle is offered. */
+      ownerPresent: boolean
+    }
 
 // ---- the reply envelope ----------------------------------------------------------------
 

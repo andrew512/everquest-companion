@@ -116,9 +116,16 @@ export function registerTriageIpc(backend: TriageBackend = awsBackend()): () => 
 
   // The window is an ENUM (validate.ts says why), and an omitted one is the default rather
   // than a rejection — the panel's first render has not chosen a window yet.
-  ipcMain.handle(IPC.triageAnalytics, async (_e, rawDays: unknown) => {
+  //
+  // `includeOwner` needs no validator beyond `=== true`: it is a boolean that selects between
+  // two server-decided cohorts and never reaches SQL as a value. Anything that is not literally
+  // `true` means "user cohort only", which is the safe default in both directions — a renderer
+  // sending junk gets the population readout, not the owner's.
+  ipcMain.handle(IPC.triageAnalytics, async (_e, rawDays: unknown, rawIncludeOwner: unknown) => {
     const days = validateAnalyticsDays(rawDays)
-    return days === null ? REJECT : await attempt(() => backend.analytics(days))
+    return days === null
+      ? REJECT
+      : await attempt(() => backend.analytics(days, rawIncludeOwner === true))
   })
 
   return () => backend.close()

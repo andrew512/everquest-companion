@@ -593,6 +593,12 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   bossDefeat sound fires on every kill (owner, 2026-08-04 — "every time is worth
   celebrating"; the first-kill-only `newDefeats` predicate was retired for it).
   Rate limiting belongs to the alert's own cooldown, not to the detector.
+  And EVERY kill means every kill CREDITED TO YOU (owner, 2026-08-05 — a boss
+  killed by a stranger in open world was celebrating): the credit test is the
+  log's own exp line joined to the slain line (`KillTierRun.credited`, joined in
+  main/modules/kills.ts on shared/kills.ts `KILL_EXP_JOIN_MS`), which includes a
+  group-mate's blow (party exp is exp) and excludes a passer-by. TRACKING still
+  counts every defeat — `bossKills` gates celebration alone.
 
 ## Shipping
 
@@ -865,9 +871,13 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   state — no renderer mirror; stale ids render level 1 without clearing).
   SIX kinds now: fight/overall (damage), heal-fight/heal-overall, events,
   and toast (celebration cards — docs/plans/celebration-toasts.md: transient
-  top-center, hover pins, queue reducer in overlay/toastQueue.ts, ships
-  SILENT because the seeded boss/quest audio alerts speak from the same
-  callbacks; producers in App.tsx, payloads resolved in main/toast.ts).
+  top-center, hover pins, queue reducer in overlay/toastQueue.ts; producers in
+  App.tsx, payloads resolved in main/toast.ts). The toast is the ONE kind that
+  defaults OPEN (owner, 2026-08-05 — it is invisible and click-through except
+  for the seconds a card shows; schema v9 corrects stores written at the old
+  default) and it has NO SOUND of its own: the seeded boss/quest ALERTS speak
+  on the same events, so the picker, `overlays.toast.sound|volume` and the
+  `toast:sound` channel are all gone.
   Each kind's selector is SCOPE-FILTERED (`scopeOptions`) and never crosses
   over. Selectors are the custom `OverlaySelect` (no native `<select>`: its
   OS popup ignores the theme) — the overlay bundle stays MUI-free by law.
@@ -936,6 +946,17 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   pins the exact URL, the single fetch site, and the consent gates (nothing
   before the notice; opt-out destroys buffer + id). The same commit rewrote
   SECURITY.md / README / TELEMETRY.md — the forcing function worked as built.
+  **USER/OWNER SPLIT (2026-08-05, owner-directed, RIDES THE SAME UNAPPLIED
+  WAVE).** Every counter row carries a `cohort` ('user'|'owner'); it is IN the
+  PRIMARY KEY of `usage_daily`/`usage_funnel_daily` (DSQL cannot alter a PK, so
+  the CREATE TABLEs changed — legal precisely because A2 was never applied) and
+  a nullable ALTER-able column on `analytics_install`. Dev builds tag themselves
+  SERVER-SIDE from `env.channel` (already in the envelope — **no client change,
+  no TELEMETRY.md change**); the installed copy is marked by hand with
+  `analytics owner-add <analyticsId>`. Every read defaults to the user cohort;
+  `--cohort all` and the tab's "Include mine (split)" render both SIDE BY SIDE
+  and nothing ever sums them. From-marking-onward: counters carry no id, so rows
+  aggregated before a marking keep their cohort and the digest says so.
 
 ## Known open items
 

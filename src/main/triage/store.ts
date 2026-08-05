@@ -438,12 +438,16 @@ export function listInstallProfiles(c: Clients, limit = 200): Promise<Row[]> {
 // from the one store module; the split moved code, not import paths.
 export {
   missingTable,
+  missingColumn,
   USAGE_ROW_LIMIT,
   INSTALL_ROW_LIMIT,
+  OWNER_ROW_LIMIT,
   readUsageDaily,
   readUsageFunnelDaily,
   readAnalyticsInstalls,
   readAnalyticsInstall,
+  readOwnerInstalls,
+  setInstallCohort,
   deleteAnalyticsInstall,
   setTelemetryAccepting,
 } from './usageStore'

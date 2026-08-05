@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { PREVIEW_MAX_LINES } from '../../shared/feedback'
 import type {
   TriageAnalytics,
+  TriageAnalyticsData,
   TriageDetail,
   TriageDigest,
   TriageListQuery,
@@ -48,6 +49,7 @@ import {
   logKeyOf,
   logObjectExists,
   makeClients,
+  missingColumn,
   missingTable,
   readAnalyticsInstalls,
   readUsageDaily,
@@ -62,7 +64,16 @@ import {
 } from './store'
 import { toDetail, toOps, toRow } from './rows'
 import { buildAnalytics } from './analytics'
-import { addDays, dayOf, toFunnelRows, toInstallRows, toUsageRows } from './usageRows'
+import {
+  addDays,
+  anyOwner,
+  dayOf,
+  ofCohort,
+  toFunnelRows,
+  toInstallRows,
+  toUsageRows
+} from './usageRows'
+import type { UsageCohort } from '../../shared/telemetryRollup'
 
 /** The whole surface `ipc.ts` is allowed to reach. Nothing here knows about Electron. */
 export interface TriageBackend {
@@ -76,8 +87,12 @@ export interface TriageBackend {
   setAccepting: (accepting: boolean, message?: string) => Promise<void>
   setBlocked: (installId: string, blocked: boolean, reason: string) => Promise<void>
   digest: (q: TriageListQuery) => Promise<TriageDigest>
-  /** Usage analytics over the last `days`. Answers `available:false` ONLY for missing tables. */
-  analytics: (days: number) => Promise<TriageAnalytics>
+  /**
+   * Usage analytics over the last `days`, USER COHORT by default. `includeOwner` adds the
+   * owner's own use as a SECOND readout beside it — never folded into the first.
+   * `available:false` only ever means "this cluster lacks a table or column we read".
+   */
+  analytics: (days: number, includeOwner: boolean) => Promise<TriageAnalytics>
   close: () => Promise<void>
 }
 
@@ -202,9 +217,10 @@ export function awsBackend(): TriageBackend {
      * THE TWO FAILURES THIS DISTINGUISHES, because the panel renders them completely
      * differently and conflating them would be the tab's worst lie:
      *
-     *   * `42P01 undefined_table` — the A2 migration has not been applied to this cluster.
-     *     There is no data because there is nowhere to put it: `available:false`, naming the
-     *     table, which is a fact an operator can act on.
+     *   * `42P01 undefined_table` (the A2 migration has not run here) or `42703
+     *     undefined_column` (it ran, but before the user/owner split added `cohort`). Both are
+     *     "this cluster is not migrated to what this code reads": `available:false`, naming the
+     *     missing thing, which is a fact an operator can act on in one command.
      *   * EVERY OTHER OUTCOME, including three empty result sets — the tables exist and are
      *     empty (the state of a lit client whose server-side `telemetry_accepting` is still
      *     closed, or simply a quiet day). That is honest zeros plus "no data yet", not a "not
@@ -212,36 +228,49 @@ export function awsBackend(): TriageBackend {
      *
      * Anything else (an IAM denial, a dropped socket) is thrown and reaches the panel as prose
      * through `attempt()`, the same as every other triage call.
+     *
+     * ONE READ, TWO READOUTS. The statements fetch every cohort; the split is the three
+     * `ofCohort` calls below. `buildAnalytics` is run once per cohort over its own rows, so the
+     * owner's sessions are never a denominator for a user-cohort rate.
      */
-    analytics: async (days) => {
+    analytics: async (days, includeOwner) => {
       const c = clients()
-      const since = addDays(dayOf(Date.now()), -(days - 1))
+      const nowMs = Date.now()
+      const since = addDays(dayOf(nowMs), -(days - 1))
       try {
-        const [usage, funnels, installs] = await Promise.all([
+        const [rawUsage, rawFunnels, rawInstalls] = await Promise.all([
           readUsageDaily(c, since),
           readUsageFunnelDaily(c, since),
           readAnalyticsInstalls(c)
         ])
+        const usage = toUsageRows(rawUsage)
+        const funnels = toFunnelRows(rawFunnels)
+        const installs = toInstallRows(rawInstalls)
+        const build = (cohort: UsageCohort): TriageAnalyticsData =>
+          buildAnalytics({
+            usage: ofCohort(usage, cohort),
+            funnels: ofCohort(funnels, cohort),
+            installs: ofCohort(installs, cohort),
+            windowDays: days,
+            nowMs
+          })
         return {
           available: true,
-          data: buildAnalytics({
-            usage: toUsageRows(usage),
-            funnels: toFunnelRows(funnels),
-            installs: toInstallRows(installs),
-            windowDays: days,
-            nowMs: Date.now()
-          })
+          data: build('user'),
+          owner: includeOwner ? build('owner') : null,
+          ownerPresent: anyOwner(usage) || anyOwner(funnels) || anyOwner(installs)
         }
       } catch (err) {
-        const table = missingTable(err)
-        if (table === null) throw err
+        const missing = missingTable(err) ?? missingColumn(err)
+        if (missing === null) throw err
         return {
           available: false,
-          table,
+          missing,
           reason:
-            `The usage-analytics tables are not on this cluster (${table} does not exist). ` +
-            'They are created by `npx tsx scripts/triage-feedback.mts migrate`, which applies ' +
-            'infra/schema.sql — run it after the apply that ships wave A2.'
+            `This cluster does not have '${missing}', which the usage-analytics readout selects. ` +
+            'The tables and the user/owner `cohort` column both ship in infra/schema.sql — run ' +
+            '`npx tsx scripts/triage-feedback.mts migrate --refresh` after the apply that ' +
+            'carries them.'
         }
       }
     },

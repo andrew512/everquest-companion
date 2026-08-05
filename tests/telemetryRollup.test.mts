@@ -317,11 +317,32 @@ test('the ingest handler runs the SHARED validator and the SHARED rollup', () =>
 
 test('every counter UPSERT is ADDITIVE, so a retried transaction cannot double-count', () => {
   const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
-  assert.match(src, /ON CONFLICT \(day, metric, dim\) DO UPDATE SET n = usage_daily\.n \+ EXCLUDED\.n/)
-  assert.match(src, /ON CONFLICT \(day, funnel, step, outcome, app_version\) DO UPDATE/)
+  assert.match(src, /ON CONFLICT \(day, cohort, metric, dim\) DO UPDATE SET n = usage_daily\.n \+ EXCLUDED\.n/)
+  assert.match(src, /ON CONFLICT \(day, cohort, funnel, step, outcome, app_version\) DO UPDATE/)
   assert.match(src, /SET n = usage_funnel_daily\.n \+ EXCLUDED\.n/)
   // The install UPSERT's guard IS the daily cap; without the WHERE it would never refuse.
   assert.match(src, /WHERE analytics_install\.quota_day <> \$2 OR analytics_install\.quota_n < \$6/)
+})
+
+/**
+ * THE COHORT IS IN THE CONFLICT TARGET, and the schema's PRIMARY KEY has to agree with it or the
+ * UPSERT resolves against nothing. `ON CONFLICT` needs a unique constraint over EXACTLY those
+ * columns, so this pins the two files against each other — the failure it prevents is silent
+ * (postgres 42P10 at runtime, on a cluster, weeks after the change).
+ */
+test('the cohort is part of the counter KEY, in the handler and in schema.sql alike', () => {
+  const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
+  const sql = readFileSync(join(ROOT, 'infra', 'schema.sql'), 'utf8')
+  assert.match(sql, /PRIMARY KEY \(day, cohort, metric, dim\)/)
+  assert.match(sql, /PRIMARY KEY \(day, cohort, funnel, step, outcome, app_version\)/)
+  // The dev channel tags itself SERVER-SIDE — no client field was added for this.
+  assert.match(src, /cohortForChannel\(batch\.env\.channel\)/)
+  // A hand-placed `owner-add` mark survives every later batch unless the channel overrides it.
+  assert.match(src, /CASE WHEN EXCLUDED\.cohort = 'owner' THEN 'owner'/)
+  assert.match(src, /COALESCE\(analytics_install\.cohort, 'user'\)/)
+  // And the resolved value is what the counters are keyed on, not a second guess.
+  assert.match(src, /RETURNING first_seen_day, quota_n, cohort/)
+  assert.match(src, /writeCounters\(day, facts\.cohort, roll\)/)
 })
 
 test('THE THREE TABLES, AND NO FOURTH: the handler writes exactly the plan’s storage shape', () => {

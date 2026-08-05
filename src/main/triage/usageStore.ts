@@ -19,7 +19,19 @@
 // undefined_table`, which is a genuinely different fact from "the tables are empty" and the
 // panel renders it differently (available:false vs honest zeros). `missingTable` is how the
 // caller tells them apart without matching on message text.
+//
+// NEITHER MAY THE `cohort` COLUMN. A stack migrated from a schema.sql that predates the
+// user/owner split answers `42703 undefined_column` instead, which is the SAME class of fact —
+// "this cluster has not been migrated to what this code reads" — and gets the same treatment
+// rather than a stack trace in a panel. `missingColumn` is its `missingTable`.
+//
+// EVERY COHORT IS READ, ALWAYS, AND THE SPLIT HAPPENS IN JS. There is no `WHERE cohort = …`
+// here on purpose: the default readout is the user cohort, but the caller ALSO has to know
+// whether any owner rows exist at all (that is what makes the tab's toggle honest instead of a
+// mystery switch), and `--cohort all` needs both anyway. One statement answers all three
+// questions; a cohort predicate would have made it two or three.
 
+import type { UsageCohort } from '../../shared/telemetryRollup'
 import { sqlState, UNDEFINED_TABLE, type Clients, type Row } from './store'
 
 /** The table named by a `42P01 undefined_table`, or null for any other failure. */
@@ -30,21 +42,33 @@ export function missingTable(err: unknown): string | null {
   return /relation "([^"]+)"/.exec(raw)?.[1] ?? 'usage_daily'
 }
 
-/** Rows are capped hard: 90 days of counters is a few thousand rows, and a runaway `dim`
- *  cardinality (which the closed enums make impossible, but this is a boundary) stays bounded. */
+/** postgres `42703`: the relation is there, the column is not. */
+const UNDEFINED_COLUMN = '42703'
+
+/** The column named by a `42703 undefined_column`, or null for any other failure. */
+export function missingColumn(err: unknown): string | null {
+  if (sqlState(err) !== UNDEFINED_COLUMN) return null
+  const raw = err instanceof Error ? err.message : String(err)
+  // postgres: `column "cohort" does not exist`.
+  return /column "([^"]+)"/.exec(raw)?.[1] ?? 'cohort'
+}
+
+/** Rows are capped hard: 90 days of counters is a few thousand rows even with the cohort key
+ *  splitting them (there is exactly one owner), and a runaway `dim` cardinality (which the
+ *  closed enums make impossible, but this is a boundary) stays bounded. */
 export const USAGE_ROW_LIMIT = 20_000
 export const INSTALL_ROW_LIMIT = 50_000
 
 export function readUsageDaily(c: Clients, sinceDay: string): Promise<Row[]> {
   return c.query(
-    'SELECT day, metric, dim, n FROM usage_daily WHERE day >= $1 ORDER BY day LIMIT $2',
+    'SELECT day, cohort, metric, dim, n FROM usage_daily WHERE day >= $1 ORDER BY day LIMIT $2',
     [sinceDay, USAGE_ROW_LIMIT],
   )
 }
 
 export function readUsageFunnelDaily(c: Clients, sinceDay: string): Promise<Row[]> {
   return c.query(
-    'SELECT day, funnel, step, outcome, app_version, n FROM usage_funnel_daily' +
+    'SELECT day, cohort, funnel, step, outcome, app_version, n FROM usage_funnel_daily' +
       ' WHERE day >= $1 ORDER BY day LIMIT $2',
     [sinceDay, USAGE_ROW_LIMIT],
   )
@@ -58,7 +82,7 @@ export function readUsageFunnelDaily(c: Clients, sinceDay: string): Promise<Row[
  */
 export function readAnalyticsInstalls(c: Clients): Promise<Row[]> {
   return c.query(
-    'SELECT first_seen_day, last_seen_day, days_seen, app_version, channel' +
+    'SELECT first_seen_day, last_seen_day, days_seen, app_version, channel, cohort' +
       ' FROM analytics_install ORDER BY last_seen_day DESC LIMIT $1',
     [INSTALL_ROW_LIMIT],
   )
@@ -78,11 +102,52 @@ export function readAnalyticsInstalls(c: Clients): Promise<Row[]> {
  */
 export async function readAnalyticsInstall(c: Clients, analyticsId: string): Promise<Row | null> {
   const rows = await c.query(
-    'SELECT first_seen_day, last_seen_day, days_seen, app_version, channel' +
+    'SELECT first_seen_day, last_seen_day, days_seen, app_version, channel, cohort' +
       ' FROM analytics_install WHERE analytics_id = $1',
     [analyticsId],
   )
   return rows[0] ?? null
+}
+
+// ---- the cohort mark (`analytics owner-add` / `owner-rm` / `owner-ls`) ---------------------
+//
+// THE ONE PLACE AN analyticsId IS WRITTEN BY HAND. A dev build tags itself server-side from
+// `env.channel`, but nothing in a PROD payload can distinguish the author's install from any
+// other — deliberately, that is what the id is for — so the installed copy is marked once, by
+// id, from the owner's own terminal. The owner reads the id out of the app's payload viewer.
+//
+// FROM-MARKING-ONWARD: this touches the install row and nothing else. Counters already summed
+// under 'user' stay there; they are anonymous sums with no id in them and there is nothing to
+// re-attribute. The CLI and the digest both say so.
+
+/** Set (or clear) one install's cohort. Returns rows updated — 0 means "no such id". */
+export function setInstallCohort(
+  c: Clients,
+  analyticsId: string,
+  cohort: UsageCohort,
+): Promise<number> {
+  return c.execute('UPDATE analytics_install SET cohort = $2 WHERE analytics_id = $1', [
+    analyticsId,
+    cohort,
+  ])
+}
+
+/** More owner rows than this and something has gone wrong with the marking, not with the cap. */
+export const OWNER_ROW_LIMIT = 200
+
+/**
+ * The marked rows, ID INCLUDED — the one read in this module that returns an analyticsId in a
+ * list, and it is narrow by construction: the `WHERE` matches only rows the operator marked
+ * themselves or that a dev build self-tagged, so it can never enumerate a user. It exists
+ * because "which ids did I mark, and is my current one still among them after a rotation?" has
+ * no other answer.
+ */
+export function readOwnerInstalls(c: Clients): Promise<Row[]> {
+  return c.query(
+    'SELECT analytics_id, first_seen_day, last_seen_day, days_seen, app_version, channel, cohort' +
+      " FROM analytics_install WHERE cohort = 'owner' ORDER BY last_seen_day DESC LIMIT $1",
+    [OWNER_ROW_LIMIT],
+  )
 }
 
 /**

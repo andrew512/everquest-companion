@@ -152,20 +152,47 @@ function retentionLines(d: TriageAnalyticsData): string[] {
 }
 
 /**
- * The whole digest. The header states the window and, when the tables are empty, SAYS SO in
- * one line before printing the zeros — the numbers below it are then read as "nothing has
- * arrived", which is what they mean, rather than as "everybody left".
+ * WHICH COHORT THIS IS, said out loud at the top of every digest — including the default one.
+ *
+ * A digest that silently excluded the owner would be a worse lie than one that silently included
+ * them, because the reader cannot see the filter. So the header names the cohort every time, and
+ * for the user cohort it also states the two things a reader would otherwise have to guess:
+ * where the owner's numbers went (a separate digest, never a subtraction from these), and that
+ * the split is FROM-MARKING-ONWARD — counters are anonymous sums with no id in them, so rows
+ * aggregated before an install was marked stay exactly where they were aggregated.
  */
-export function renderAnalyticsDigest(d: TriageAnalyticsData): string {
+function cohortLines(cohort: string): string[] {
+  if (cohort === 'owner') {
+    return [
+      'COHORT: owner — YOUR OWN USE (dev builds, tagged from env.channel, plus any install',
+      '  marked with `analytics owner-add`). Not included in the user digest, and never added',
+      '  to it. Rows aggregated before an install was marked are in the USER cohort and stay',
+      '  there — the split is from-marking-onward.',
+    ]
+  }
+  return [
+    'COHORT: user — your own use is EXCLUDED (`--cohort owner` for it, `all` for both, split).',
+    '  From-marking-onward: counters carry no id, so rows aggregated before an install was',
+    '  marked as yours are still counted here and cannot be moved.',
+  ]
+}
+
+/**
+ * The whole digest, for ONE cohort. The header states the cohort and the window and, when the
+ * tables are empty, SAYS SO in one line before printing the zeros — the numbers below it are
+ * then read as "nothing has arrived", which is what they mean, rather than as "everybody left".
+ */
+export function renderAnalyticsDigest(d: TriageAnalyticsData, cohort = 'user'): string {
   const head = [
     `usage analytics — last ${String(d.windowDays)} days (${d.days[0] ?? '?'} → ${d.days.at(-1) ?? '?'})`,
+    ...cohortLines(cohort),
     d.empty
       ? 'NO DATA YET: the tables exist and are empty. Every number below is a true zero.'
       : '',
-    '',
-  ].filter((line, i) => i !== 1 || line.length > 0)
+  ].filter((line) => line.length > 0)
   return [
     ...head,
+    '',
     ...pulseLines(d),
     ...adoptionLines(d),
     ...funnelLines(d),

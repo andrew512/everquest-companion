@@ -51,6 +51,59 @@ import {
 /** `dim` is NOT NULL in the schema; this is what "this metric has no dimension" looks like. */
 export const DIM_NONE = '-'
 
+// ---------------------------------------------------------------- the cohort dimension
+//
+// WHOSE USE IS THIS? The owner runs this app too — a dev build all day, and the installed copy
+// in the evening — and their own use is a real signal about the BUILD but pure noise in every
+// number about the USER BASE. A three-install "population" of which one is the author is not a
+// population. So every counter row carries a cohort and the read paths default to 'user'.
+//
+// SPLIT, NEVER SUMMED, NEVER DROPPED (the owner's words: "just split it out, but keep it").
+// `--cohort all` and the tab's toggle render two readouts SIDE BY SIDE; nothing anywhere adds
+// them together, because a merged total is precisely the number the split exists to stop
+// reporting. And nothing deletes an owner row: it is the only usage data about a build the
+// author actually drives hard, which makes it the best signal there is about the build itself.
+//
+// TWO WAYS A ROW BECOMES 'owner', and they are deliberately different mechanisms:
+//
+//   * THE DEV CHANNEL TAGS ITSELF, SERVER-SIDE, WITH NO CLIENT CHANGE. `env.channel` has been in
+//     the envelope since the contract was written (TELEMETRY.md documents it; `foldEnvelope`
+//     below already counts it), so the ingest path derives the cohort from a field it is
+//     already handed. A dev build cannot belong to anyone but the author, so there is nothing to
+//     mark and nothing to get wrong.
+//   * THE INSTALLED COPY IS MARKED BY HAND, ONCE, BY analyticsId
+//     (`triage-feedback analytics owner-add <id>`). NOTHING in a prod payload distinguishes the
+//     author's install from anybody else's — that is the entire point of the id — so the mark
+//     has to be server-side state on `analytics_install`, and the owner reads their id out of
+//     the app's own payload viewer. A rotated id is a NEW id and needs re-marking; the CLI help
+//     says so, because a silently unmarked owner is exactly the failure this feature exists to
+//     prevent.
+//
+// FROM-MARKING-ONWARD IS THE HONEST SEMANTIC. A counter is an anonymous SUM with no id in it, so
+// rows already aggregated under 'user' cannot be re-attributed after a marking and are left
+// exactly alone. The digest states that in its header rather than letting the reader assume the
+// split is retroactive.
+
+export const USAGE_COHORTS = ['user', 'owner'] as const
+export type UsageCohort = (typeof USAGE_COHORTS)[number]
+
+/** What an unmarked install is, what a NULL column reads as, and what the digest defaults to. */
+export const DEFAULT_COHORT: UsageCohort = 'user'
+
+/**
+ * TOTAL, and it fails toward 'user' on purpose: a NULL column (the `ALTER` adds it nullable), a
+ * value from a future schema, or junk all read as an ordinary user row. The alternative — a
+ * strict parse that throws — would turn one bad row into an empty panel.
+ */
+export function cohortOf(value: unknown): UsageCohort {
+  return value === 'owner' ? 'owner' : DEFAULT_COHORT
+}
+
+/** The channel that can only ever be the author's own machine. Everything else is a user. */
+export function cohortForChannel(channel: string): UsageCohort {
+  return channel === 'dev' ? 'owner' : DEFAULT_COHORT
+}
+
 /**
  * Every metric name the ingest path may write. A closed table for the same reason the event
  * union is closed: `usage_daily.metric` is free-form TEXT as far as postgres knows, and the

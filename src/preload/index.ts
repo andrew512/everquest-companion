@@ -658,10 +658,12 @@ const api = {
   triageDigest: (query: TriageListQuery): Promise<TriageResult<TriageDigest>> =>
     ipcRenderer.invoke(IPC.triageDigest, query),
   /** Usage analytics over the last `days` (one of TRIAGE_ANALYTICS_DAYS; omitted = the
-   *  default window). `available:false` now means one thing only: the tables are not on the
-   *  cluster. Tables that exist and are empty come back as honest zeros. */
-  triageAnalytics: (days?: number): Promise<TriageResult<TriageAnalytics>> =>
-    ipcRenderer.invoke(IPC.triageAnalytics, days),
+   *  default window), USER COHORT — the owner's own dev + installed use is filtered out.
+   *  `includeOwner` returns it as a second, complete readout in `owner`; the two are rendered
+   *  side by side and never summed. `available:false` means one thing only: this cluster lacks
+   *  a table or column the readout reads. Tables that exist and are empty are honest zeros. */
+  triageAnalytics: (days?: number, includeOwner?: boolean): Promise<TriageResult<TriageAnalytics>> =>
+    ipcRenderer.invoke(IPC.triageAnalytics, days, includeOwner === true),
 
   // ---- frameless window controls (Task #23) ----
   minimizeWindow: (): void => ipcRenderer.send(IPC.windowMinimize),

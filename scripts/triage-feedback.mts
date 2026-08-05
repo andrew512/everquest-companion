@@ -59,6 +59,7 @@ import {
   logKeyOf,
   logObjectExists,
   makeClients,
+  missingColumn,
   missingTable,
   reportsForInstall,
   SCHEMA_FILE,
@@ -72,7 +73,7 @@ import {
   type Row,
 } from '../src/main/triage/store'
 import { rescrubNotes } from '../src/main/triage/rows'
-import { analyticsSubcommand, ANALYTICS_SUBCOMMANDS } from './triageAnalytics.mjs'
+import { analyticsSubcommand, ANALYTICS_SUBCOMMANDS, ANALYTICS_USAGE } from './triageAnalytics.mjs'
 import {
   REPORT_STATUSES,
   SEVERITIES,
@@ -118,11 +119,7 @@ const USAGE = `triage-feedback <command> [options]
   block   <installId> --reason "..."  |  unblock <installId>
   closed  [on|off] [--message "..."]  the kill switch (instant, no deploy); bare = read state
 
-  analytics digest [--days 30] [--json]     usage analytics as text (same numbers as
-                                            the Triage -> Analytics tab, one computation)
-  analytics wipe   --id <analyticsId>       delete that id's analytics_install row
-  analytics open | close                    the TELEMETRY kill switch (instant, no deploy)
-
+${ANALYTICS_USAGE}
   Global: --profile <aws-profile> --role-arn <arn> --refresh (re-read tf outputs)`
 
 const OPTIONS = {
@@ -144,6 +141,9 @@ const OPTIONS = {
   // command line either (plan T3 — they are deliberately non-correlatable).
   id: { type: 'string' },
   days: { type: 'string' },
+  // `analytics digest --cohort user|owner|all`. The default is `user` — the population
+  // question — and `all` prints the two digests separately, never added together.
+  cohort: { type: 'string' },
   profile: { type: 'string' },
   'role-arn': { type: 'string' },
   json: { type: 'boolean' },
@@ -437,14 +437,14 @@ async function cmdAnalytics(ctx: Ctx): Promise<void> {
     throw new Error(`analytics: expected one of ${Object.keys(ANALYTICS_SUBCOMMANDS).join(', ')}`)
   }
   try {
-    await run({ args: ctx.args, clients: ctx.clients, nowMs: NOW })
+    await run({ args: ctx.args, rest: ctx.rest, clients: ctx.clients, nowMs: NOW })
   } catch (err) {
-    const table = missingTable(err)
-    if (table === null) throw err
+    const missing = missingTable(err) ?? missingColumn(err)
+    if (missing === null) throw err
     throw new Error(
-      `${table} does not exist on this cluster. The usage-analytics tables ship in ` +
-        'infra/schema.sql — run `triage-feedback migrate` after the apply that created them.',
-    )
+      `'${missing}' does not exist on this cluster. The usage-analytics tables AND the ` +
+        'user/owner `cohort` column both ship in infra/schema.sql — run `triage-feedback ' +
+        'migrate --refresh` after the apply that carries them.')
   }
 }
 

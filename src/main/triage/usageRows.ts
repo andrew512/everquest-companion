@@ -10,7 +10,7 @@
 // column, key a Map, walk a date. It is separate because the two together are past the repo's
 // 400-code-line ceiling and a split is the answer to that, not a widened threshold.
 
-import { DIM_NONE } from '../../shared/telemetryRollup'
+import { cohortOf, DIM_NONE, type UsageCohort } from '../../shared/telemetryRollup'
 import type { UsageDayPoint } from '../../shared/triage'
 
 /** A DSQL row as node-postgres hands it over: every column is `unknown` until proven. */
@@ -20,8 +20,15 @@ const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : 
 /** `bigint` comes back as a number (store.ts sets the int8 parser); anything else is 0. */
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
+/**
+ * Every row carries its cohort ('user' or 'owner'), normalized through `cohortOf` so a NULL
+ * column on a partly-migrated cluster reads as 'user' rather than blowing up a panel. The rows
+ * are then PARTITIONED (`ofCohort`) and each side is built into its own readout — the two are
+ * never merged, and `src/shared/telemetryRollup.ts` says why at length.
+ */
 export interface UsageRow {
   day: string
+  cohort: UsageCohort
   metric: string
   dim: string
   n: number
@@ -29,6 +36,7 @@ export interface UsageRow {
 
 export interface FunnelRow {
   day: string
+  cohort: UsageCohort
   funnel: string
   step: string
   outcome: string
@@ -37,9 +45,10 @@ export interface FunnelRow {
 }
 
 /**
- * One `analytics_install` row — WITHOUT the id, which the reader never selects (store.ts says
+ * One `analytics_install` row — WITHOUT the id, which the readout never selects (store.ts says
  * why). What is left is population shape: when this install first appeared, when it was last
- * seen, how many distinct days it has been seen on, and what it is running now.
+ * seen, how many distinct days it has been seen on, what it is running now, and which side of
+ * the user/owner split it is on.
  */
 export interface InstallRow {
   firstSeenDay: string
@@ -47,11 +56,13 @@ export interface InstallRow {
   daysSeen: number
   appVersion: string
   channel: string
+  cohort: UsageCohort
 }
 
 export function toUsageRows(rows: readonly Row[]): UsageRow[] {
   return rows.map((r) => ({
     day: str(r.day),
+    cohort: cohortOf(r.cohort),
     metric: str(r.metric),
     dim: str(r.dim, DIM_NONE),
     n: num(r.n)
@@ -61,6 +72,7 @@ export function toUsageRows(rows: readonly Row[]): UsageRow[] {
 export function toFunnelRows(rows: readonly Row[]): FunnelRow[] {
   return rows.map((r) => ({
     day: str(r.day),
+    cohort: cohortOf(r.cohort),
     funnel: str(r.funnel),
     step: str(r.step),
     outcome: str(r.outcome, DIM_NONE),
@@ -75,8 +87,29 @@ export function toInstallRows(rows: readonly Row[]): InstallRow[] {
     lastSeenDay: str(r.last_seen_day),
     daysSeen: num(r.days_seen),
     appVersion: str(r.app_version, '?'),
-    channel: str(r.channel, '?')
+    channel: str(r.channel, '?'),
+    cohort: cohortOf(r.cohort)
   }))
+}
+
+// ---- the cohort split ----------------------------------------------------------------
+//
+// TWO FILTERS, NOT ONE SUM. Both helpers are deliberately trivial and deliberately here rather
+// than inlined at three call sites: the CLI, the IPC backend and the tests must all mean the
+// same thing by "the user cohort", and a `.filter` copy-pasted three times is how they would
+// eventually stop meaning it.
+
+/** One cohort's rows. The other cohort is not summed in — it is rendered beside, or not shown. */
+export function ofCohort<T extends { cohort: UsageCohort }>(
+  rows: readonly T[],
+  cohort: UsageCohort
+): T[] {
+  return rows.filter((r) => r.cohort === cohort)
+}
+
+/** Is there anything on the owner side at all? Drives whether the tab offers its toggle. */
+export function anyOwner(rows: readonly { cohort: UsageCohort }[]): boolean {
+  return rows.some((r) => r.cohort === 'owner')
 }
 
 // ---- days ---------------------------------------------------------------------------

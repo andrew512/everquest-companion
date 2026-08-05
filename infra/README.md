@@ -181,6 +181,13 @@ curl -si -X POST "$(cd infra && terraform output -raw telemetry_api_url)" \
 # 5. Open it, re-run step 4 (expect 202 {"ok":true,"accepted":1}), then read it back.
 npx tsx scripts/triage-feedback.mts analytics open   --profile <profile>
 npx tsx scripts/triage-feedback.mts analytics digest --profile <profile> --days 7
+
+# 6. MARK YOUR OWN INSTALLED COPY (the user/owner split — see below). Your DEV builds tag
+#    themselves from env.channel and need nothing. The installed copy has no server-side
+#    signal at all, by design, so read its analyticsId out of the app itself —
+#    Preferences -> Usage analytics -> "Anonymous id" — and mark it once:
+npx tsx scripts/triage-feedback.mts analytics owner-add <analyticsId> --profile <profile>
+npx tsx scripts/triage-feedback.mts analytics owner-ls --profile <profile>
 ```
 
 Step 4 is worth doing **before** step 5: it separates "the plumbing is wrong" from "the switch
@@ -201,8 +208,10 @@ a build carrying the constant (v0.3.2+).
 | Start collecting | `triage-feedback analytics open` |
 | Tighten the per-id daily event cap | `UPDATE feedback_config SET max_events_per_id_per_day = N` — deploy-free |
 | A deletion request for an analyticsId | `triage-feedback analytics wipe --id <analyticsId>` |
-| The numbers, as text | `triage-feedback analytics digest [--days N] [--json]` |
-| The numbers, in the app | Triage → Analytics (dev builds only) |
+| The numbers, as text | `triage-feedback analytics digest [--days N] [--json]` — **user cohort by default** |
+| …including your own use | `triage-feedback analytics digest --cohort all` (two digests, never summed) |
+| The numbers, in the app | Triage → Analytics (dev builds only); "Include mine (split)" adds the owner readout |
+| Mark / unmark your installed copy | `analytics owner-add <analyticsId>` / `owner-rm <analyticsId>` / `owner-ls` |
 | "Is anyone using it right now" | the `eqcompanion-telemetry` CloudWatch dashboard |
 | Read the handler's logs | `aws logs tail "$(terraform output -raw telemetry_log_group)" --follow` |
 
@@ -210,6 +219,37 @@ a build carrying the constant (v0.3.2+).
 The counters it contributed to are anonymous sums — `usage_daily` holds "37 map opens on
 2026-08-04" with no id in the table — so there is nothing in them to attribute, and subtracting
 a guess would corrupt a true number to satisfy a request the data does not contain.
+
+### The user/owner split — whose use is in the numbers
+
+The owner runs this app more than anyone, so their own use is signal about the *build* and
+noise in every number about the *user base*. Every counter row therefore carries a
+`cohort` ('user' or 'owner'), and **every read path defaults to `user`**. Nothing anywhere sums
+the two: `--cohort all` prints two digests, and the tab renders two readouts.
+
+Two mechanisms, because the two cases are genuinely different:
+
+* **Dev builds tag themselves, server-side, with no client change.** `env.channel` has been in
+  the telemetry envelope since the contract was written (`TELEMETRY.md` documents it), so the
+  ingest handler derives the cohort from a field it already receives. Nothing new is
+  transmitted for this feature.
+* **The installed copy is marked by hand, once, by `analyticsId`.** A prod payload from the
+  author is deliberately indistinguishable from anyone else's — that is what the id is for — so
+  there is nothing to infer and any guess would mislabel a real user. `analytics owner-add`.
+
+**FROM-MARKING-ONWARD.** Counters are anonymous sums with no id in them, so rows already
+aggregated under `user` cannot be re-attributed when you mark an install, and are left alone.
+The digest states this in its header on every render. **A rotated `analyticsId` is a new id and
+arrives unmarked** — run `owner-ls` after a rotation and re-add.
+
+**If a cluster already has the pre-cohort counter tables.** `cohort` is part of the PRIMARY KEY
+of `usage_daily` and `usage_funnel_daily` (the `ON CONFLICT` target needs it to be), and DSQL's
+`ALTER TABLE` cannot change a primary key — so unlike `analytics_install.cohort`, there is no
+migration for those two and `CREATE TABLE IF NOT EXISTS` will silently report `exists` against
+the old shape. Wave A2 was never applied, so this should never arise; if it does, the recovery
+is a one-off `DROP TABLE usage_daily; DROP TABLE usage_funnel_daily;` as `admin` followed by
+`migrate`. That discards the aggregates, and there is no way around it: the rows carry no id, so
+no cohort could be derived for them retroactively anyway.
 
 ## Removing a column: the ordering, and what DSQL will not do
 
