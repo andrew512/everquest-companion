@@ -222,6 +222,25 @@ export const IPC = {
   // consider rows ask the same question of the same cache-first door.
   mobsLookup: 'mobs:lookup',
 
+  // ---- exaltation planner (docs/plans/exaltation-planner.md §4.1, D1) ----
+  // items.json is 7.14 MB and already inlined in MAIN's bundle, so the effect index is built
+  // there and served over these channels rather than shipping the corpus to the renderer twice.
+  // The index is built LAZILY on the first call and memoized for the process's lifetime.
+  // renderer -> main: every effect the corpus states, one row per (item, effect). Returns
+  // PlannerDonor[] (~1.5k rows, a few hundred KB) — fetched once and cached by the renderer.
+  plannerDonors: 'planner:donors',
+  // renderer -> main: substring search over item NAMES for the Board's host picker. Arg: query
+  // (VALIDATED AT THE HANDLER — a non-string answers with no hits). Returns PlannerItemHit[],
+  // capped at PLANNER_SEARCH_LIMIT.
+  plannerSearchItems: 'planner:searchItems',
+  // renderer -> main: the active character's saved exaltation sets. Returns ExaltPlan[] ([] when
+  // the character has none — the key is optional and readers default, D4).
+  plannerGetPlans: 'planner:getPlans',
+  // renderer -> main: replace the active character's whole set list (plans are small). The
+  // payload is re-validated AT THE HANDLER against the closed slot/socket/class allowlists
+  // (src/main/planner/validate.ts) — renderer input is never trusted, here as everywhere.
+  plannerSetPlans: 'planner:setPlans',
+
   // ---- map viewer (docs/plans/map-viewer.md §4.2) ----
   // Main owns `fs` and owns effectiveEqRoot(), so main reads and parses `<eqRoot>\maps` and
   // the renderer receives columnar typed arrays (~690 KB worst case, once per zone change).

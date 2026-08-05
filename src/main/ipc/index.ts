@@ -21,6 +21,7 @@ import { registerFeedbackIpc } from './feedback'
 import { registerKnowledgeIpc } from './knowledge'
 import { registerMapsIpc } from './maps'
 import { registerPerfIpc } from './perf'
+import { registerPlannerIpc } from './planner'
 import { registerPresenceIpc } from './presence'
 import { registerShareIpc } from './share'
 import { registerSoundsIpc } from './sounds'
@@ -38,6 +39,7 @@ export function registerIpc(): void {
   registerSoundsIpc()
   registerSpeechIpc()
   registerKnowledgeIpc()
+  registerPlannerIpc()
   registerMapsIpc()
   registerPresenceIpc()
   registerWindowIpc()

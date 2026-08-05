@@ -4,6 +4,9 @@ import type { ConsiderFaction, LootDisposition } from './logEvents'
 import type { ItemStatBlock } from './itemStats'
 import type { ComboProgress } from './classCombo'
 import type { MobKnowledge } from './mobTypes'
+// The exaltation planner's model lives in ./planner/ beside its pure normalizer and rules; only
+// the persisted array is named here, on ProgressState.
+import type { ExaltPlan } from './planner/types'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -607,6 +610,16 @@ export interface ProgressState {
    * could disagree with the log. Optional so a store written before this key round-trips.
    */
   combo?: ComboProgress
+  /**
+   * Saved exaltation sets (docs/plans/exaltation-planner.md D4). Character-scoped, like every
+   * other key here: a plan is built for one character's loadout.
+   *
+   * ADDITIVE and OPTIONAL — deliberately no schema bump and no migration. Every reader defaults
+   * on a missing key and electron-store rewrites the whole parsed object, so a store written by
+   * any older build loads unchanged and a store written here still opens in one that predates
+   * the planner (`tests/plannerStore.test.mts` pins both halves).
+   */
+  exaltPlans?: ExaltPlan[]
 }
 
 // ----- Cross-window deep link ("take me to this in the app", Task #64) -----

@@ -32,6 +32,9 @@ import type {
 } from '../shared/types'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../shared/combat'
 import type { ClassAbbr, ComboDelta, ComboSnap } from '../shared/classCombo'
+// The exaltation planner's model (docs/plans/exaltation-planner.md §3.1) — one definition for
+// main (which builds the donor rows), this bridge, and the renderer that edits the plans.
+import type { ExaltPlan, PlannerDonor, PlannerItemHit } from '../shared/planner/types'
 import type {
   MapGetResult,
   MapPackListResult,
@@ -343,6 +346,22 @@ const api = {
   /** Mob knowledge (Task #63): "what does this thing drop" — your own loot history + the local
    *  quest catalog first, then a cached, politely-throttled wiki lookup. Never rejects. */
   lookupMob: (name: string): Promise<MobKnowledge> => ipcRenderer.invoke(IPC.mobsLookup, name),
+
+  // ---- exaltation planner (docs/plans/exaltation-planner.md §4.1, §6) ----
+  /** Every effect the committed item corpus states, one row per (item, effect) — ~1.5k rows,
+   *  built lazily in main and memoized there. Fetch ONCE and cache: it is derived from bytes
+   *  compiled into the bundle, so it cannot change while the app runs. */
+  plannerDonors: (): Promise<PlannerDonor[]> => ipcRenderer.invoke(IPC.plannerDonors),
+  /** Substring search over item NAMES for the Board's host picker (prefix hits first, then the
+   *  shortest name; capped at 50). An empty query resolves to no hits. */
+  plannerSearchItems: (query: string): Promise<PlannerItemHit[]> =>
+    ipcRenderer.invoke(IPC.plannerSearchItems, query),
+  /** The active character's saved exaltation sets — `[]` when it has none. */
+  getExaltPlans: (): Promise<ExaltPlan[]> => ipcRenderer.invoke(IPC.plannerGetPlans),
+  /** Replace the whole set list for the active character. Main re-validates every field against
+   *  the closed slot/socket/class allowlists and silently drops what does not fit. */
+  setExaltPlans: (plans: ExaltPlan[]): Promise<void> =>
+    ipcRenderer.invoke(IPC.plannerSetPlans, plans),
 
   /** Report a renderer-detected event into the live event feed (Task #59) — today only quest
    *  completions, which only the renderer's posky/turn-in detector can see. Fire-and-forget;

@@ -72,6 +72,13 @@ export const EQUIP_SLOTS: readonly EquipSlot[] = [
  */
 export type SocketType = 'focus' | 'click' | 'worn' | 'proc'
 
+/**
+ * The four socket types as VALUES, in unlock order — the filter toggle's row, and the closed
+ * allowlist main re-validates a renderer-supplied plan against (a union alone cannot do that at
+ * runtime). Same arrangement as EQUIP_SLOTS above: one list, no second opinion.
+ */
+export const SOCKET_TYPES: readonly SocketType[] = ['focus', 'click', 'worn', 'proc']
+
 /** The item tier a donor must be merged to before that socket's effect can be EXTRACTED (R1). */
 export type ExtractTier = 1 | 2 | 3 | 4
 
@@ -101,6 +108,22 @@ export interface PlannerDonor {
   quest: boolean
   playerCrafted: boolean
   reqLevel?: number
+}
+
+/**
+ * One row of the HOST PICKER's item search (`window.eq.plannerSearchItems`). Deliberately not a
+ * `PlannerDonor`: a host is any equippable item, effect-bearing or not, and the picker only needs
+ * enough to draw a row and decide slot/class compatibility. Built by src/main/planner/effectIndex.ts.
+ */
+export interface PlannerItemHit {
+  /** `itemKey(name)` — the same key a PlannerDonor carries, so the two indices join */
+  key: string
+  name: string
+  iconId?: number
+  /** normalized equip slots; `[]` = the page stated none */
+  slots: EquipSlot[]
+  /** normalized classes; `[]` = UNKNOWN (never "nobody") */
+  classes: ClassAbbr[]
 }
 
 /** A planned socket inside a set: the effect the user wants, and the donor they chose to farm. */
