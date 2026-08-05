@@ -1,4 +1,4 @@
-import { type JSX, useCallback, useState } from 'react'
+import { type JSX, useCallback, useEffect, useState } from 'react'
 import {
   Alert,
   Autocomplete,
@@ -219,11 +219,18 @@ function CountsLine({
   )
 }
 
+/** The quest a deep link asked us to open, and the nonce that re-delivers the same ask twice. */
+interface QuestAnchor {
+  key: string
+  nonce: number
+}
+
 // The scrolling body: one accordion per quest up to the page cap, then the "show more" button.
 function QuestList({
   list,
   sharedItems,
   ambiguousNames,
+  anchor,
   setQuestComplete,
   onOpenMob,
   onOpenLoot
@@ -231,6 +238,8 @@ function QuestList({
   list: QuestListState
   sharedItems: SharedItemsMap
   ambiguousNames: Set<string>
+  /** the anchored quest, or null. Its accordion mounts EXPANDED and scrolls itself into view. */
+  anchor: QuestAnchor | null
   setQuestComplete: (key: string, complete: boolean) => Promise<void>
   onOpenMob: (t: MobTarget) => void
   onOpenLoot?: (item: string) => void
@@ -239,7 +248,12 @@ function QuestList({
     <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
       {list.filtered.slice(0, list.visibleCount).map((q) => (
         <QuestAccordion
-          key={q.key}
+          // The NONCE rides the key for the anchored quest alone: the accordion is uncontrolled
+          // (each one opens and closes independently, and lifting that into one "which is open"
+          // state would silently make the list single-open), so a remount is what lets a SECOND
+          // link to the same quest re-open and re-scroll it.
+          key={anchor?.key === q.key ? `${q.key}#${String(anchor.nonce)}` : q.key}
+          anchored={anchor?.key === q.key}
           q={q}
           shared={sharedItems.get(q.key) ?? []}
           ambiguousNames={ambiguousNames}
@@ -265,13 +279,63 @@ function QuestList({
   )
 }
 
+/**
+ * Resolve a deep link's quest KEY against the loaded quests and reveal it.
+ *
+ * TWO STEPS, because the ask can land before the data does: the toast fires the instant a turn-in
+ * is observed, and this tab's dataset + progress arrive asynchronously. So the request is HELD
+ * (`pending`) until a quest with that key exists, then the filters are reset around it and the
+ * anchor is published for the list to expand + scroll. A key that never resolves simply never
+ * anchors — the tab still opened, which is the honest partial answer.
+ */
+function useQuestAnchor(
+  quests: QuestProgress[],
+  list: QuestListState,
+  focus: { quest: string | null; nonce: number; onConsumed?: () => void }
+): QuestAnchor | null {
+  const [pending, setPending] = useState<QuestAnchor | null>(null)
+  const [anchor, setAnchor] = useState<QuestAnchor | null>(null)
+  const { quest, nonce, onConsumed } = focus
+
+  useEffect(() => {
+    if (!quest) return
+    setPending({ key: quest, nonce })
+    onConsumed?.()
+    // The NONCE is the trigger, by the standing contract: the same quest asked for twice must
+    // arrive twice, and the payload is read fresh each time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nonce])
+
+  useEffect(() => {
+    if (!pending) return
+    const match = quests.find((q) => q.key.toLowerCase() === pending.key.toLowerCase())
+    if (!match) return
+    list.revealQuest(match.name)
+    setAnchor({ key: match.key, nonce: pending.nonce })
+    setPending(null)
+    // `list` is rebuilt every render (it is a hook result, not a value); depending on it would
+    // re-run this on every keystroke. The quests and the pending ask are the real inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, quests])
+
+  return anchor
+}
+
 export default function PoskyView({
   onOpenMob,
-  onOpenLoot
+  onOpenLoot,
+  focusQuest = null,
+  focusNonce = 0,
+  onFocusConsumed
 }: {
   onOpenMob: (t: MobTarget) => void
   /** an item name → the Loot tab's drill-down (App's `openLoot`); optional so the pane stands alone */
   onOpenLoot?: (item: string) => void
+  /** a celebration toast's per-quest anchor: the canonical `Class::Name` key, or null for the tab */
+  focusQuest?: string | null
+  /** bumps per link (appRouting's nonce contract) so the same quest can be asked for twice */
+  focusNonce?: number
+  onFocusConsumed?: () => void
 }): JSX.Element {
   // A quest completing via a LIVE turn-in bursts confetti over this view (mirrors
   // BossView's onKill confetti, Task #46). useProgress gates out the historical
@@ -293,6 +357,11 @@ export default function PoskyView({
     ambiguousQuestNames
   } = useProgress({ onQuestComplete })
   const list = useQuestList(quests)
+  const anchor = useQuestAnchor(quests, list, {
+    quest: focusQuest,
+    nonce: focusNonce,
+    onConsumed: onFocusConsumed
+  })
   const [toast, setToast] = useState<string | null>(null)
 
   const onReload = async (): Promise<void> => setToast(await reloadInventory())
@@ -333,6 +402,7 @@ export default function PoskyView({
             list={list}
             sharedItems={sharedItems}
             ambiguousNames={ambiguousQuestNames}
+            anchor={anchor}
             setQuestComplete={setQuestComplete}
             onOpenMob={onOpenMob}
             onOpenLoot={onOpenLoot}

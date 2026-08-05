@@ -33,6 +33,9 @@ import type {
 } from '../shared/types'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../shared/combat'
 import type { ClassAbbr, ComboDelta, ComboSnap } from '../shared/classCombo'
+// "What's new at this level" (docs/plans/levelup-whats-new.md) — the unlock dataset rides the
+// spell-catalog channel with a flag; see the handler in src/main/ipc/knowledge.ts.
+import type { LevelUnlockData } from '../shared/levelUnlocks'
 // The exaltation planner's model (docs/plans/exaltation-planner.md §3.1) — one definition for
 // main (which builds the donor rows), this bridge, and the renderer that edits the plans.
 import type { ExaltPlan, PlannerDonor, PlannerItemHit } from '../shared/planner/types'
@@ -302,6 +305,15 @@ const api = {
   },
   /** Suggested-alerts wizard (Task #38): the searchable spell catalog + live usage. */
   getSpellCatalog: (): Promise<SpellCatalog> => ipcRenderer.invoke(IPC.spellsCatalog),
+  /**
+   * "What's new at this level" (docs/plans/levelup-whats-new.md): every (class, level) unlock the
+   * committed DBs state — spells from spells.json, skills/discs/innates from classes.json.
+   *
+   * The SAME channel as the catalog above, with a flag, because shared/ipc.ts belonged to a
+   * concurrent wave the day this landed. Two questions of one door, both about the spell DB; the
+   * flag is re-validated in main. A dedicated channel is the right shape and is three lines away.
+   */
+  getLevelUnlocks: (): Promise<LevelUnlockData> => ipcRenderer.invoke(IPC.spellsCatalog, { unlocks: true }),
 
   // ---- voice alerts / TTS (docs/plans/voice-alerts.md §3) ----
   // The 'system' tier needs NOTHING here: Chromium's `speechSynthesis` is already in the

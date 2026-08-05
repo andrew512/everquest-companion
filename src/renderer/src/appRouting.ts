@@ -43,6 +43,28 @@ export interface AppRouting {
    */
   openLoot: (item?: string) => void
   clearLootFocus: () => void
+  /** The Sky quest the PoS tab should expand + scroll to, as a `Class::Name` key, or null. */
+  questKey: string | null
+  questNonce: number
+  /**
+   * Bare ⇒ the Plane of Sky tab. With a key ⇒ the DEEP link: the tab reveals that quest (its
+   * filters are reset around it), expands its accordion and scrolls it into view. The celebration
+   * toast's reward card is the caller (docs/plans/celebration-toasts.md T6, completed here — wave
+   * L shipped the tab-level half and flagged the per-quest anchor as the follow-up).
+   */
+  openQuest: (quest?: string) => void
+  clearQuestFocus: () => void
+  /** The level the "New at this level" panel should open on, or null for the character's own. */
+  levelFocus: number | null
+  levelNonce: number
+  /**
+   * Bare ⇒ the Leveling tab as it stands (Overview's leveling card). With a level ⇒ the level-up
+   * toast's deep link: the same tab, with the panel anchored at the level that just dinged
+   * (docs/plans/levelup-whats-new.md §2). ONE opener, like `openLoot`: one destination differing
+   * only in whether a payload rode along.
+   */
+  openLeveling: (level?: number) => void
+  clearLevelFocus: () => void
 }
 
 export function useAppRouting(setView: (v: View) => void): AppRouting {
@@ -52,6 +74,10 @@ export function useAppRouting(setView: (v: View) => void): AppRouting {
   const [combatNonce, setCombatNonce] = useState(0)
   const [lootItem, setLootItem] = useState<string | null>(null)
   const [lootNonce, setLootNonce] = useState(0)
+  const [questKey, setQuestKey] = useState<string | null>(null)
+  const [questNonce, setQuestNonce] = useState(0)
+  const [levelFocus, setLevelFocus] = useState<number | null>(null)
+  const [levelNonce, setLevelNonce] = useState(0)
   // The openers are memoized because one of them is a DEPENDENCY of the mount-only effect that
   // installs the cross-window `app:focusView` listener — a fresh identity each render would
   // tear down and re-register that subscription on every render.
@@ -79,11 +105,37 @@ export function useAppRouting(setView: (v: View) => void): AppRouting {
     },
     [setView]
   )
+  // Both cross-window deep links (a toast card's click) memoize for the same reason `openMob`
+  // does: `applyDeepLink` runs inside the mount-only `app:focusView` subscription effect.
+  const openQuest = useCallback(
+    (quest?: string) => {
+      setQuestKey(quest ?? null)
+      setQuestNonce((n) => n + 1)
+      setView('posky')
+    },
+    [setView]
+  )
+  const openLeveling = useCallback(
+    (level?: number) => {
+      setLevelFocus(level ?? null)
+      setLevelNonce((n) => n + 1)
+      setView('leveling')
+    },
+    [setView]
+  )
   return {
     mobTarget,
     mobNonce,
     openMob,
     clearMob: () => setMobTarget(null),
+    questKey,
+    questNonce,
+    openQuest,
+    clearQuestFocus: () => setQuestKey(null),
+    levelFocus,
+    levelNonce,
+    openLeveling,
+    clearLevelFocus: () => setLevelFocus(null),
     combatFocus,
     combatNonce,
     openCombat,

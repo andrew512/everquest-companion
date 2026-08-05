@@ -680,17 +680,26 @@ export interface ProgressState {
 // asking window happened to send.
 
 /**
- * Destinations a deep link may name. Two today; the union is the extension point.
- * 'posky' is the celebration toast's click target (docs/plans/celebration-toasts.md T6): a Sky
- * quest completed, its reward card is on screen, and clicking it opens the Plane of Sky tab.
+ * Destinations a deep link may name. Three today; the union is the extension point.
+ * 'posky' is the Sky celebration toast's click target (docs/plans/celebration-toasts.md T6);
+ * 'leveling' is the level-up toast's (docs/plans/levelup-whats-new.md §2) — a ding fired, and
+ * clicking the card opens the Leveling tab's "New at this level" panel AT THAT LEVEL.
  */
-export type AppFocusView = 'mobs' | 'posky'
+export type AppFocusView = 'mobs' | 'posky' | 'leveling'
 
-/** "Focus the app on this." `mob` is the RAW display name, as the log printed it. */
+/**
+ * "Focus the app on this." Every payload field is OPTIONAL and view-scoped: the view is the
+ * destination, the field is the anchor inside it. A field the destination does not understand is
+ * simply unused — the union stays closed, and each anchor is validated at the IPC handler.
+ */
 export interface AppFocus {
   view: AppFocusView
-  /** the mob to drill into, when the request targets a specific one */
+  /** the mob to drill into, when the request targets a specific one ('mobs'). RAW display name. */
   mob?: string
+  /** the Sky quest to expand + scroll to ('posky'), as the canonical `Class::Name` quest key. */
+  quest?: string
+  /** the character level the "New at this level" panel opens on ('leveling'). */
+  level?: number
 }
 
 // ----- Auto-update (Task #27) -----

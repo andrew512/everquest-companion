@@ -58,3 +58,34 @@ browsable by level so it answers "what do I get at 30?" without waiting.
   extension + regenerated classes.json + tests (structure measured first).
 - **O2 (UI):** panel + toast producer + deep link + tests + e2e check.
   O2 dispatches after wave N (shares App.tsx/toast producer files).
+
+## 4. As shipped (wave O2, 2026-08-05)
+
+Everything in §2 landed. Five things the design did not say, all measured:
+
+- **The unlock dataset rides `spells:catalog` with a flag**, not a channel of
+  its own: `shared/ipc.ts` belonged to the concurrent parity wave the day this
+  shipped, so `getLevelUnlocks()` invokes the existing door with
+  `{unlocks:true}` and main branches on a VALIDATED flag
+  (`src/main/data/levelUnlocks.ts` `isUnlocksRequest`). The wizard's bare
+  invoke is untouched and no larger. A dedicated `spells:unlocks` channel is
+  the right shape and is three lines away — the seam is commented at both ends.
+- **Rows fold by NAME, not per DB row.** The committed wiki DB carries genuine
+  duplicate pages (`Imbue Emerald` twice at CLR 29); counting a name twice
+  would inflate the toast's headline over a bookkeeping artefact.
+- **The panel sits LAST on the tab, outside the chart branch.** Above the
+  charts it pushed the level plot under the first-run analytics bar at an
+  860px window (measured: content area +141px, the chart's own click point
+  landing on the notice). Below them it costs the plots nothing, works on a
+  log with no dings at all, and a toast's deep link scrolls it into view on
+  arrival. The charts column gained its own `overflow:auto` in the same pass —
+  it had been growing the app's content area, which a view may never do.
+- **`ToastCard` gained ONE affordance**: a payload with no reward block makes
+  the CARD the click target. A level is not a reward you can hold, so T6's
+  "the item card is the only affordance" needed the level-up case spelled out.
+- **`AppFocus` anchors are per-view optional fields** (`mob`, `quest`,
+  `level`), each validated at the IPC handler and rebuilt field by field, so
+  the closed union stays closed. The Sky per-quest anchor wave L flagged is
+  finished here: `PoskyView` resets its filters around the quest and remounts
+  that ONE accordion expanded (the nonce rides its React key), leaving every
+  other accordion independently open as before.

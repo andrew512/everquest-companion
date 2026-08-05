@@ -41,6 +41,12 @@ import { freshUserData, mainWindow } from './appWindow.mjs'
 /** A Sky reward that exists in the committed item DB, so the card resolves with NO network. */
 const REWARD = 'Shining Metallic Robes'
 
+/** The level a synthetic ding celebrates, and the level its click must anchor the panel at. */
+const DING_LEVEL = 24
+
+/** A quest key that exists in the committed Plane of Sky dataset (`Class::Name`, the app's own). */
+const QUEST_KEY = 'Paladin::Paladin Test of Spirit'
+
 /** The toast overlay's page, identified by the `?kind=` query its window was opened with. */
 async function findToastWindow(app: ElectronApplication): Promise<Page | null> {
   for (const w of app.windows()) {
@@ -166,6 +172,107 @@ async function stepQuestToast(main: Page, toast: Page): Promise<void> {
   check('…stacked under the boss card rather than replacing it', stacked === 2, `${stacked} card(s)`)
 }
 
+/**
+ * A LEVEL-UP: the third kind (docs/plans/levelup-whats-new.md §2), and the first with no reward
+ * block — so the CARD itself is the click target, which the next step exercises.
+ */
+async function stepLevelUpToast(mainPage: Page, toast: Page): Promise<void> {
+  await send(mainPage, {
+    id: `e2e-level-${String(DING_LEVEL)}`,
+    kind: 'levelUp',
+    title: `Level ${String(DING_LEVEL)}!`,
+    subtitle: '3 new spells · 2 new skills',
+    focus: { view: 'leveling', level: DING_LEVEL },
+    durationMs: 25_000
+  })
+  await sleep(1000)
+  const cards = await cardTexts(toast)
+  const card = cards.find((c) => c.includes(`Level ${String(DING_LEVEL)}!`))
+  if (!check('a level-up sent over `toast:show` renders its own card', !!card, cards.join(' | ') || 'no cards')) {
+    return
+  }
+  check('…subtitled with what the ding unlocked', (card ?? '').includes('new spells'), card ?? '')
+}
+
+/** Does the app have character logs at all? Without them no feature view mounts (App's gate). */
+async function hasFeatureViews(page: Page): Promise<boolean> {
+  const text = await page.evaluate(() => (document.querySelector('main') as HTMLElement | null)?.innerText ?? '')
+  return !text.includes('No EverQuest logs found')
+}
+
+/**
+ * THE DEEP-LINK ROUNDTRIP, end to end and through the REAL plumbing: a click on the toast card in
+ * the overlay window → `eqOverlay.focusApp` → main's `focusView` handler (which re-validates the
+ * view AND the anchor) → the app renderer's `applyDeepLink` → the Leveling tab, with the "New at
+ * this level" panel opened ON THE LEVEL THAT DINGED.
+ *
+ * The click is dispatched inside the page rather than with the mouse because the overlay is
+ * always-on-top and NEVER SHOWN under EQ_E2E — it has no pointer to move. `el.click()` is a real
+ * DOM click event and React's delegated listener handles it exactly as it handles the user's.
+ */
+async function stepDeepLinkRoundtrip(mainPage: Page, toast: Page): Promise<void> {
+  const clicked = await toast.evaluate((needle) => {
+    const el = [...document.querySelectorAll('[data-testid="toast-card"]')].find((e) =>
+      (e as HTMLElement).innerText.includes(needle)
+    )
+    if (!el) return false
+    ;(el as HTMLElement).click()
+    return true
+  }, `Level ${String(DING_LEVEL)}!`)
+  if (!check('the level-up card is a click target (no reward block ⇒ the card itself)', clicked)) return
+
+  const landed = await mainPage
+    .waitForSelector('[data-testid="new-at-level"]', { timeout: 20_000 })
+    .then(
+      () => true,
+      () => false
+    )
+  if (!check('…and the click lands the app on the Leveling tab’s "New at this level" panel', landed)) return
+  const value = await mainPage.evaluate(
+    () => (document.querySelector('[data-testid="new-at-level-value"]') as HTMLElement | null)?.innerText ?? ''
+  )
+  check('…anchored at the level that dinged, not at the character’s own', value.includes(String(DING_LEVEL)), value)
+  check(
+    '…with the level stepper mounted (the panel is browsable, not just historical)',
+    (await countOf(mainPage, '[data-testid="new-at-level-next"]')) === 1
+  )
+}
+
+/**
+ * THE PER-QUEST ANCHOR (docs/plans/celebration-toasts.md T6, finished in wave O2). Wave L shipped
+ * the tab-level half and flagged this as the follow-up: the payload now names a quest, and the
+ * Plane of Sky tab must EXPAND and reveal exactly that one.
+ *
+ * Driven through the same `focusApp` door the reward card's click uses (the click plumbing itself
+ * is already proven by the step above), so what this asserts is the receiving half: main's
+ * validation forwards the anchor, and PoskyView resets its filters around the quest and mounts
+ * its accordion expanded.
+ */
+async function stepQuestAnchor(mainPage: Page, toast: Page): Promise<void> {
+  await toast.evaluate((quest) => {
+    ;(window as unknown as { eqOverlay: { focusApp: (f: unknown) => void } }).eqOverlay.focusApp({
+      view: 'posky',
+      quest
+    })
+  }, QUEST_KEY)
+  const anchored = await mainPage
+    .waitForSelector('[data-anchored="true"]', { timeout: 20_000 })
+    .then(
+      () => true,
+      () => false
+    )
+  if (!check('a toast focus naming a quest anchors the Plane of Sky tab on it', anchored)) return
+  const state = await mainPage.evaluate(() => {
+    const el = document.querySelector('[data-anchored="true"]')
+    return {
+      expanded: !!el?.classList.contains('Mui-expanded'),
+      text: (el as HTMLElement | null)?.innerText.replace(/\s+/g, ' ').slice(0, 80) ?? ''
+    }
+  })
+  check('…mounting that quest EXPANDED, not merely scrolled to', state.expanded, state.text)
+  check('…and it is the quest the payload named', state.text.includes('Test of Spirit'), state.text)
+}
+
 async function main(): Promise<void> {
   buildIfStale()
   await freshUserData()
@@ -201,6 +308,16 @@ async function main(): Promise<void> {
       await stepBossToast(page, t)
       await stepRefusal(page, t)
       await stepQuestToast(page, t)
+      await stepLevelUpToast(page, t)
+      // The two deep links need a mounted feature view to land in; a machine with no character
+      // logs shows App's fresh-machine empty state in front of every one of them, which is the
+      // CORRECT behaviour and not something these steps can assert through.
+      if (await hasFeatureViews(page)) {
+        await stepDeepLinkRoundtrip(page, t)
+        await stepQuestAnchor(page, t)
+      } else {
+        note('no character logs on this machine — the deep-link roundtrips need a mounted feature view, so they are skipped')
+      }
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

@@ -22,7 +22,9 @@
  *      committed range always covers at least one zone row, even if it is the `unknown` one);
  *   5. a CLICK (under `DRAG_THRESHOLD_PX`) dismisses it again — the panel is selection-scoped,
  *      not sticky;
- *   6. the tab never scrolls the page, and there are no renderer console errors.
+ *   6. the "New at this level" panel is mounted with its stepper — and, once the combo module
+ *      has resolved a loadout, draws real unlock rows for it (floors, never today's counts);
+ *   7. the tab never scrolls the page, and there are no renderer console errors.
  *
  * FRESH-MACHINE HONESTY. A machine with no EQ logs mounts no feature view at all, and a
  * character whose log carries fewer than two dings and fewer than two AA gains draws no chart —
@@ -66,6 +68,12 @@ const BANDS = '[data-testid="leveling-zone-bands"]'
 const BAND = '[data-testid="leveling-zone-band"]'
 const LEGEND_ROW = '[data-testid="leveling-zone-legend-row"]'
 const PANEL = '[data-testid="leveling-range-stats"]'
+const NEW_AT_LEVEL = '[data-testid="new-at-level"]'
+const LEVEL_VALUE = '[data-testid="new-at-level-value"]'
+const LEVEL_NEXT = '[data-testid="new-at-level-next"]'
+const UNLOCK_ROW = '[data-testid="unlock-row"]'
+const COMBO_CHIP = '[data-testid="new-at-level-combo-chip"]'
+const UNKNOWN_COMBO = '[data-testid="new-at-level-unknown"]'
 const HERO = '[data-testid="leveling-range-hero"]'
 const ZONE_ROW = '[data-testid="leveling-range-zone-row"]'
 
@@ -236,7 +244,44 @@ async function stepSelection(page: Page, chart: string): Promise<void> {
   )
 }
 
-/** 6. THE LAYOUT CONTRACT: the app's content area owns the scroll; a view never grows the page. */
+/**
+ * 6. "NEW AT THIS LEVEL" (docs/plans/levelup-whats-new.md) — the panel the level-up toast links
+ * to, and the one surface here that does NOT depend on the log having any dings in it: it is
+ * computed from the committed spells.json + classes.json against the inferred loadout.
+ *
+ * FLOORS, and the honest branch. With a resolved loadout the panel must draw class chips and
+ * find SOME level with an unlock (stepping up to 10 always crosses one — every class in the game
+ * gains skills at 1 and again by 10). With no loadout inferred yet it must say so in words
+ * instead of drawing empty lists, which is the same claim from the other side.
+ */
+async function stepNewAtLevel(page: Page): Promise<void> {
+  const mounted = await page.waitForSelector(NEW_AT_LEVEL, { timeout: 20_000 }).then(
+    () => true,
+    () => false
+  )
+  if (!check('the "New at this level" panel is mounted on the Leveling tab', mounted)) return
+  const label = await textOf(page, LEVEL_VALUE)
+  check('…with a level stepper that states the level it is showing', /Level \d+/.test(label), label)
+
+  if ((await countOf(page, UNKNOWN_COMBO)) > 0) {
+    note('the combo module has resolved no classes for this character yet — the panel states that instead of drawing empty lists, which is the honest surface')
+    return
+  }
+  check('…and chips naming the loadout it computed against', (await countOf(page, COMBO_CHIP)) > 0)
+
+  // Walk up to level 10 and take the best reading: SOME level in 1..10 unlocks something for
+  // every class in the game, so a walk that finds nothing means the join is broken — not that
+  // this character is unusual. The exact level and count are deliberately not asserted.
+  let rows = await countOf(page, UNLOCK_ROW)
+  for (let i = 0; i < 10 && rows === 0; i++) {
+    await page.click(LEVEL_NEXT, { timeout: 10_000 })
+    await sleep(150)
+    rows = await countOf(page, UNLOCK_ROW)
+  }
+  check('…and at least one unlock row across the first ten levels', rows > 0, `${String(rows)} rows at ${await textOf(page, LEVEL_VALUE)}`)
+}
+
+/** 7. THE LAYOUT CONTRACT: the app's content area owns the scroll; a view never grows the page. */
 async function stepOverflow(page: Page): Promise<void> {
   const over = await pageOverflow(page)
   check(
@@ -281,6 +326,9 @@ async function main(): Promise<void> {
         // to assert on a log with no chart: no selection can exist, so no panel may.
         check('…and with no chart there is no range-stats panel either', (await countOf(page, PANEL)) === 0)
       }
+      // Deliberately OUTSIDE the chart branch: the unlock panel is computed from the committed
+      // DBs, so it must be there whether or not this log has enough dings to draw a chart.
+      await stepNewAtLevel(page)
       await stepOverflow(page)
     }
 

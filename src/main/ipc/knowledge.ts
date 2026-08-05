@@ -4,6 +4,7 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
+import { buildLevelUnlocks, isUnlocksRequest } from '../data/levelUnlocks'
 import { buildSpellCatalog } from '../data/spellDb'
 import { lookupItem } from '../itemLookup'
 import { lookupMob } from '../mobLookup'
@@ -16,7 +17,17 @@ export function registerKnowledgeIpc(): void {
   // corrections applied at startup) joined with live per-spell usage read straight off the
   // buffs module's snapshot stats (`n` = observed land→fade samples). Read-only w.r.t. the
   // buffs module — we never mutate it.
-  ipcMain.handle(IPC.spellsCatalog, () => {
+  //
+  // ---- and the LEVEL-UNLOCK dataset (docs/plans/levelup-whats-new.md, wave O2) ----
+  // Same door, one flag: "what does the spell DB say" is this channel's question, and
+  // `{unlocks:true}` asks the other half of it — the (class, level) unlock rows the Leveling
+  // tab's "New at this level" panel draws, joined with classes.json's skill/disc/innate tables.
+  // It rides the catalog channel because shared/ipc.ts was owned by a concurrent wave the day
+  // this shipped (src/main/data/levelUnlocks.ts says so at the seam); the flag is VALIDATED, not
+  // trusted, like every other renderer-supplied argument at a handler. A bare invoke — the
+  // wizard's — still gets the wizard's catalog, unchanged and no larger than it was.
+  ipcMain.handle(IPC.spellsCatalog, (_e, req: unknown) => {
+    if (isUnlocksRequest(req)) return buildLevelUnlocks()
     const usage = new Map<string, number>()
     const lastSeen = new Map<string, number>()
     const snap = registry.get('buffs')?.snapshot()?.state as BuffsSnap | undefined

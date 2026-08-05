@@ -74,10 +74,17 @@ export function normalizeToastConfig(v: unknown): ToastOverlayConfig {
   }
 }
 
-/** What kind of celebration this is. Closed union — the overlay styles per member. */
-export type ToastKind = 'bossKill' | 'skyQuestComplete'
+/**
+ * What kind of celebration this is. Closed union — the overlay styles per member.
+ *
+ * 'levelUp' (docs/plans/levelup-whats-new.md §2) joined in wave O2: a ding, titled "Level 24!"
+ * and subtitled with what it unlocked for the loadout you were running AT THE DING'S TIMESTAMP.
+ * It carries no item card — a level is not a reward you can hold — so it is the first kind whose
+ * click target is the card itself rather than an embedded reward block.
+ */
+export type ToastKind = 'bossKill' | 'skyQuestComplete' | 'levelUp'
 
-export const TOAST_KINDS: ToastKind[] = ['bossKill', 'skyQuestComplete']
+export const TOAST_KINDS: ToastKind[] = ['bossKill', 'skyQuestComplete', 'levelUp']
 
 /**
  * The reward item, as the toast draws it. Everything is RESOLVED IN MAIN and pre-formatted:
@@ -130,7 +137,10 @@ export const TOAST_MAX_DURATION_MS = 30_000
 export const TOAST_MIN_DURATION_MS = 1_000
 
 /** The deep-link destinations a toast may name. Mirrors the AppFocusView union (closed set). */
-const FOCUS_VIEWS: AppFocusView[] = ['mobs', 'posky']
+const FOCUS_VIEWS: AppFocusView[] = ['mobs', 'posky', 'leveling']
+
+/** Levels the game can state. A focus asking for level 0 or 900 is a bug, not a destination. */
+const MAX_FOCUS_LEVEL = 200
 
 function cappedText(v: unknown, max = TOAST_MAX_TEXT): string | undefined {
   if (typeof v !== 'string') return undefined
@@ -142,14 +152,27 @@ function positiveInt(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
 }
 
-/** Validate a focus target against the closed view union; anything else is dropped. */
+/**
+ * Validate a focus target against the closed view union; anything else is dropped.
+ *
+ * Each anchor is capped or bounded on its own terms — `mob` and `quest` are display/lookup text
+ * (capped, never a path), `level` is a small integer. An unknown property never survives: the
+ * result is rebuilt field by field, so what crosses to the app's renderer is exactly this
+ * vocabulary and nothing the asking window invented.
+ */
 function validFocus(v: unknown): AppFocus | undefined {
   if (typeof v !== 'object' || v === null) return undefined
   const o = v as Record<string, unknown>
   const view = typeof o.view === 'string' ? o.view : ''
   if (!(FOCUS_VIEWS as string[]).includes(view)) return undefined
+  const out: AppFocus = { view: view as AppFocusView }
   const mob = cappedText(o.mob)
-  return mob ? { view: view as AppFocusView, mob } : { view: view as AppFocusView }
+  if (mob) out.mob = mob
+  const quest = cappedText(o.quest)
+  if (quest) out.quest = quest
+  const level = positiveInt(o.level)
+  if (level !== undefined && level <= MAX_FOCUS_LEVEL) out.level = level
+  return out
 }
 
 /**

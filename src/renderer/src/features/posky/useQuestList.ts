@@ -117,6 +117,18 @@ export interface QuestListState {
   toggleFavorite: (name: string) => void
   questFavorites: QuestFlagSet
   questIgnored: QuestFlagSet
+  /**
+   * "Show me THIS quest" — the deep link's half of the per-quest anchor
+   * (docs/plans/celebration-toasts.md T6): switch to the Quests tab and clear every filter that
+   * could be hiding it, then let PoskyView expand and scroll to it.
+   *
+   * It has to reset the filters, not merely search: a Sky quest completes by TURN-IN, so the
+   * quest a celebration toast links to is by definition a completed one — and "hide completed",
+   * a class filter or "favorites only" would each leave the user staring at a list the link
+   * promised something in. The search box is set to the quest's name so the reset is visible and
+   * undoable rather than mysterious.
+   */
+  revealQuest: (name: string) => void
 }
 
 export function useQuestList(quests: QuestProgress[]): QuestListState {
@@ -213,6 +225,15 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     isFavorite,
     toggleFavorite,
     questFavorites,
-    questIgnored
+    questIgnored,
+    revealQuest: (name: string) => {
+      setTab('quests')
+      setQuery(name)
+      setSelectedClasses([])
+      setHideCompleted(false)
+      setHideNoItems(false)
+      setFavoritesOnly(false)
+      setVisibleCount(PAGE)
+    }
   }
 }

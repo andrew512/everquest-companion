@@ -122,13 +122,20 @@ export function ToastCard({
 
   const focus = payload.focus
   const onOpen = focus ? (): void => window.eqOverlay.focusApp(focus) : undefined
+  // A card with NO reward block has no inner click target, so the card itself becomes one — the
+  // level-up toast (docs/plans/levelup-whats-new.md §2) is the first of those: a level is not a
+  // reward you can hold, but it still has somewhere to take you (the Leveling tab, at that
+  // level). Where a reward block exists it stays the only affordance, exactly as T6 wrote it.
+  const onCardClick = payload.item ? undefined : onOpen
 
   return (
     <div
       data-testid="toast-card"
+      onClick={onCardClick}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       style={{
+        cursor: onCardClick ? 'pointer' : 'default',
         marginBottom: 10,
         padding: '14px 18px',
         borderRadius: 10,

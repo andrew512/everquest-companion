@@ -78,6 +78,53 @@ test('focus is a CLOSED union — an unlisted view is dropped, not forwarded', (
   })
 })
 
+// ---- the level-up kind + its anchors (docs/plans/levelup-whats-new.md §2) --------------
+
+const ding = {
+  id: 'level:24:1754300000000',
+  kind: 'levelUp',
+  title: 'Level 24!',
+  subtitle: '3 new spells · 2 new skills'
+}
+
+test('a level-up request is a first-class kind, carried verbatim', () => {
+  assert.deepEqual(validateToastRequest(ding), ding)
+})
+
+test('a level-up carries NO item — a level is not a reward you can hold', () => {
+  const out = validateToastRequest({ ...ding, itemName: 'Sword of Nothing' })
+  // itemName is a legal field on any request; what matters is that the level-up producer never
+  // sends one, and that a card built from one is main's decision either way. The validator's
+  // promise here is only that the kind itself survives beside it.
+  assert.equal(out?.kind, 'levelUp')
+})
+
+test('the leveling anchor is a small positive integer, or it is dropped', () => {
+  assert.deepEqual(validateToastRequest({ ...ding, focus: { view: 'leveling', level: 24 } })?.focus, {
+    view: 'leveling',
+    level: 24
+  })
+  // No level ⇒ the tab itself, which is a legitimate destination.
+  assert.deepEqual(validateToastRequest({ ...ding, focus: { view: 'leveling' } })?.focus, { view: 'leveling' })
+  for (const level of [0, -3, 9999, '24', null]) {
+    const focus = validateToastRequest({ ...ding, focus: { view: 'leveling', level } })?.focus
+    assert.deepEqual(focus, { view: 'leveling' }, `level ${String(level)} must not survive`)
+  }
+  // A fractional level FLOORS rather than being dropped — the same coercion `durationMs` gets
+  // from the same helper. There is no level 24.5, and 24 is the honest reading of one.
+  assert.equal(validateToastRequest({ ...ding, focus: { view: 'leveling', level: 24.5 } })?.focus?.level, 24)
+})
+
+test('the per-quest anchor rides the posky focus as capped text', () => {
+  assert.deepEqual(
+    validateToastRequest({ ...boss, focus: { view: 'posky', quest: 'Paladin::Test of Sacrifice' } })?.focus,
+    { view: 'posky', quest: 'Paladin::Test of Sacrifice' }
+  )
+  const long = validateToastRequest({ ...boss, focus: { view: 'posky', quest: 'q'.repeat(5000) } })?.focus
+  assert.equal(long?.quest?.length, TOAST_MAX_TEXT)
+  assert.equal(validateToastRequest({ ...boss, focus: { view: 'posky', quest: 42 } })?.focus?.quest, undefined)
+})
+
 test('duration is clamped into a sane window (and a bad one falls back to the config’s)', () => {
   assert.equal(validateToastRequest({ ...boss, durationMs: 9_000_000 })?.durationMs, TOAST_MAX_DURATION_MS)
   assert.equal(validateToastRequest({ ...boss, durationMs: 1 })?.durationMs, 1000)

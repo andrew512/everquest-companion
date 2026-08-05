@@ -17,7 +17,7 @@
 // one lost feature. A summary-row link stops propagation, because the row it sits in is the
 // accordion's own expand control.
 
-import { type JSX } from 'react'
+import { type JSX, useEffect, useRef } from 'react'
 import {
   Accordion,
   AccordionDetails,
@@ -325,7 +325,8 @@ export function QuestAccordion({
   onSetComplete,
   onSelectQuest,
   onOpenMob,
-  onOpenLoot
+  onOpenLoot,
+  anchored = false
 }: {
   q: QuestProgress
   shared: SharedItem[]
@@ -341,12 +342,27 @@ export function QuestAccordion({
   onOpenMob: (t: MobTarget) => void
   /** an item name → the Loot tab's drill-down for it (App-level routing, `openLoot`) */
   onOpenLoot?: (item: string) => void
+  /**
+   * A deep link landed on THIS quest (a celebration toast's reward card,
+   * docs/plans/celebration-toasts.md T6): mount expanded and scroll into view.
+   *
+   * Mount-time, not a controlled `expanded` prop, because PoskyView remounts exactly this one
+   * accordion per link (its key carries the nonce) — which keeps every other accordion in the
+   * list uncontrolled and independently open, the way it has always been.
+   */
+  anchored?: boolean
 }): JSX.Element {
   const wikiHref = wikiClassPage(q.className)
   // A turned-in quest has nothing left to kill for, whatever its item counts say.
   const killTargets = q.completed ? [] : questKillTargets(q.items)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    // `block: 'nearest'` scrolls the enclosing list only as far as it must, so a quest already on
+    // screen does not jump under the user.
+    if (anchored) ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [anchored])
   return (
-    <Accordion disableGutters>
+    <Accordion disableGutters ref={ref} defaultExpanded={anchored} data-anchored={anchored || undefined}>
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Stack spacing={0.75} sx={{ width: '100%', pr: 2 }}>
           <QuestSummaryRow

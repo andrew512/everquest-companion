@@ -40,6 +40,12 @@ import { getBossData } from './data'
 import { useBossKills } from './features/bosses/useBossKills'
 import type { TargetStatus } from './features/bosses/bossStatus'
 import { useProgress } from './features/posky/useProgress'
+// The canonical `Class::Name` quest key — the same one the tracker keys its rows on, so the
+// toast's anchor and the accordion it opens are the same string by construction.
+import { questKey } from './features/posky/keys'
+// The third always-mounted celebration watch (docs/plans/levelup-whats-new.md §2): a LIVE ding
+// fires the level-up toast, counting what it unlocked against the loadout AT THE DING'S ts.
+import { useLevelUpToast } from './features/leveling/useLevelUpToast'
 import { skyQuestPage } from '@shared/wiki'
 import { tierStyle } from './lib/tierChip'
 
@@ -123,7 +129,16 @@ function PlainView({
       {/* Maps remounts per character rebuild like the rest: the zone it auto-opens comes from
           the character module, which re-hydrates under the new character anyway. */}
       {view === 'maps' && <MapsView key={viewKey} />}
-      {view === 'leveling' && <LevelingView key={viewKey} />}
+      {/* Leveling stays MOUNTED across a deep link like Loot and Mobs: the level a toast asked
+          for arrives through the nonce, not through a remount. */}
+      {view === 'leveling' && (
+        <LevelingView
+          key={viewKey}
+          focusLevel={routing.levelFocus}
+          focusNonce={routing.levelNonce}
+          onFocusConsumed={routing.clearLevelFocus}
+        />
+      )}
       {/* The Planner's SETS need no props: they are character-scoped in the store, so the
           remount `key` is the whole character contract. The one prop it takes is the app's own
           router — every donor name in the pane links OUT to that item's Loot drill-down. */}
@@ -153,9 +168,9 @@ function ViewContent({
   onOpenPreferences: () => void
   /** Preferences' Feedback section opens the app-level dialog, preselecting a type. */
   onSendFeedback: (prefill?: FeedbackPrefill) => void
-  /** Overview's leveling card → the Leveling tab. A PLAIN tab switch, so it rides here rather
-   *  than in `AppRouting`: that hook is for DEEP links, and its nonce machinery exists to
-   *  re-deliver a PAYLOAD. This destination carries none. */
+  /** Overview's leveling card → the Leveling tab, carrying no level (`openLoot`'s idiom: ONE
+   *  opener, with or without a payload). It went through `AppRouting` the day the tab gained a
+   *  deep link of its own — two openers for one destination is how they drift apart. */
   onOpenLeveling: () => void
   /** Which Preferences section a deep link asked for, and the way to retire that request. */
   prefs: PrefsRouting
@@ -192,9 +207,18 @@ function ViewContent({
           tab exactly the way the boss roster does — and, since 2026-08-04, out to the LOOT
           drill-down for the item itself (owner: clicking a Sky item you are hovering should
           take you to its item page). It keeps its remount `key`: both deep links run the other
-          way (out of posky), so there is no payload to preserve across one. */}
+          way (out of posky). Its own INBOUND link — a celebration toast anchored at the quest
+          that just completed — rides the nonce props instead, so the remount key stays what it
+          always was: one per character rebuild. */}
       {view === 'posky' && (
-        <PoskyView key={viewKey} onOpenMob={routing.openMob} onOpenLoot={routing.openLoot} />
+        <PoskyView
+          key={viewKey}
+          onOpenMob={routing.openMob}
+          onOpenLoot={routing.openLoot}
+          focusQuest={routing.questKey}
+          focusNonce={routing.questNonce}
+          onFocusConsumed={routing.clearQuestFocus}
+        />
       )}
       {view === 'overview' && (
         <OverviewView
@@ -303,6 +327,11 @@ function useAppCelebrations(
   onDefeat: (s: TargetStatus) => void,
   onQuestComplete: (name: string) => void
 ): void {
+  // Level-ups: the third watch, and the only one with no on-screen surface of its own — the
+  // overlay card IS the celebration. It seeds its own silent baseline (the startup replay holds
+  // every level the character ever gained) and joins its counts to the combo at the ding's ts.
+  useLevelUpToast()
+
   useBossKills(bossData.targets, {
     onKill: (s) => {
       onDefeat(s)
@@ -329,7 +358,9 @@ function useAppCelebrations(
         title: `Quest complete: ${q.name}`,
         subtitle: q.giver ? `${q.className} · turned in to ${q.giver}` : q.className,
         itemName: q.reward,
-        focus: { view: 'posky' }
+        // ANCHORED AT THE QUEST since wave O2 (wave L shipped the tab and flagged this as the
+        // follow-up): the canonical `Class::Name` key, which is what PoskyView reveals on.
+        focus: { view: 'posky', quest: questKey(q) }
       })
       window.eq.reportFeedEvent({
         kind: 'quest',
@@ -344,26 +375,40 @@ function useAppCelebrations(
 }
 
 /**
+ * The memoized openers a deep link can reach. Passed as ONE object so the router stays inside the
+ * parameter ceiling; every member is a `useCallback` from appRouting, which is what lets the
+ * `app:focusView` subscription stay a mount-only effect.
+ */
+interface DeepLinkOpeners {
+  openMob: (t: { mob: string }) => void
+  openQuest: (quest?: string) => void
+  openLeveling: (level?: number) => void
+}
+
+/**
  * A DEEP LINK from another window landed (Task #64) — main has already raised + focused us.
- * Two destinations today: the Mobs tab, optionally drilled into a specific mob (a click on the
- * events overlay's con rows), and the Plane of Sky tab (a click on a celebration toast's reward
- * card, docs/plans/celebration-toasts.md T6). The per-quest ANCHOR inside PoS is not wired yet:
- * the tab is the destination, and the payload names no quest.
+ * Three destinations: the Mobs tab, optionally drilled into a specific mob (a click on the events
+ * overlay's con rows); the Plane of Sky tab, optionally ANCHORED at the quest that just completed
+ * (docs/plans/celebration-toasts.md T6, finished in wave O2); and the Leveling tab, optionally
+ * anchored at the level that just dinged (docs/plans/levelup-whats-new.md §2).
+ *
+ * Every payload field is optional on purpose: a bare view is a tab switch, a view with its anchor
+ * is a drill. The nonce lives in the opener, so the same anchor twice arrives twice.
  *
  * A module-level function rather than an inline closure because App is at its factoring ceiling
  * and this is the branchy part of that effect, not the subscription bookkeeping around it.
  */
-function applyDeepLink(
-  focus: AppFocus | null,
-  setView: (v: View) => void,
-  openMob: (t: { mob: string }) => void
-): void {
+function applyDeepLink(focus: AppFocus | null, setView: (v: View) => void, open: DeepLinkOpeners): void {
   if (focus?.view === 'posky') {
-    setView('posky')
+    open.openQuest(focus.quest)
+    return
+  }
+  if (focus?.view === 'leveling') {
+    open.openLeveling(focus.level)
     return
   }
   if (focus?.view !== 'mobs') return
-  if (focus.mob) openMob({ mob: focus.mob })
+  if (focus.mob) open.openMob({ mob: focus.mob })
   else setView('mobs')
 }
 
@@ -385,7 +430,7 @@ export default function App(): JSX.Element {
 
   const routing = useAppRouting(setView)
   const prefsRouting = usePrefsRouting(view, setView)
-  const { openMob } = routing
+  const { openMob, openQuest, openLeveling } = routing
 
   useAppCelebrations(setDefeatToast, setQuestToast)
 
@@ -418,14 +463,16 @@ export default function App(): JSX.Element {
     const offEqConfig = window.eq.onEqConfigChanged(() => {
       void window.eq.listCharacters().then(setCharacters)
     })
-    const offFocus = window.eq.onFocusView((focus) => applyDeepLink(focus, setView, openMob))
+    const offFocus = window.eq.onFocusView((focus) =>
+      applyDeepLink(focus, setView, { openMob, openQuest, openLeveling })
+    )
     return () => {
       offDelta()
       offChar()
       offEqConfig()
       offFocus()
     }
-  }, [openMob])
+  }, [openMob, openQuest, openLeveling])
 
   const onSelectCharacter = async (logPath: string): Promise<void> => {
     const res = await window.eq.setCharacter(logPath)
@@ -467,7 +514,7 @@ export default function App(): JSX.Element {
               routing={routing}
               prefs={prefsRouting}
               onOpenPreferences={() => setView('preferences')}
-              onOpenLeveling={() => setView('leveling')}
+              onOpenLeveling={() => openLeveling()}
               onSendFeedback={feedback.openFeedback}
             />
           </Box>

@@ -1,8 +1,6 @@
 import { type JSX, useMemo } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
-import MilitaryTechIcon from '@mui/icons-material/MilitaryTech'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
-import BoltIcon from '@mui/icons-material/Bolt'
 import type {
   AASpendEvent,
   LevelingDelta,
@@ -32,48 +30,12 @@ import { EMPTY_PROGRESSION, applyProgressionDelta } from './progressionDelta'
 import { RangeStatsPanel } from './RangeStatsPanel'
 import { comboSource } from './comboAdapter'
 import { useComboIntervals } from '../profiles/ClassComboData'
-
-const EMPTY_LEVELING: LevelingSnap = { levels: [], aaGains: [], aaSpends: [] }
-
-const applyLevelingDelta = (s: LevelingSnap, d: LevelingDelta): LevelingSnap => ({
-  levels: [...s.levels, ...d.levels],
-  aaGains: [...s.aaGains, ...d.aaGains],
-  aaSpends: [...s.aaSpends, ...d.aaSpends]
-})
-
-function HeroCard({
-  icon,
-  value,
-  label,
-  sub,
-  accent
-}: {
-  icon: JSX.Element
-  value: string
-  label: string
-  sub?: string
-  accent: string
-}): JSX.Element {
-  return (
-    <Paper
-      variant="outlined"
-      sx={{ p: 2, flex: 1, minWidth: 160, borderLeft: `3px solid ${accent}`, display: 'flex', gap: 1.5 }}
-    >
-      <Box sx={{ color: accent, display: 'flex', alignItems: 'center' }}>{icon}</Box>
-      <Box>
-        <Typography variant="h4" sx={{ lineHeight: 1, color: accent }}>
-          {value}
-        </Typography>
-        <Typography variant="body2">{label}</Typography>
-        {sub && (
-          <Typography variant="caption" color="text.secondary">
-            {sub}
-          </Typography>
-        )}
-      </Box>
-    </Paper>
-  )
-}
+// The module fold moved beside the view (levelingModule.ts) the day a SECOND reader appeared:
+// the always-mounted ding detector behind the level-up toast watches the same append-only series.
+import { EMPTY_LEVELING, applyLevelingDelta } from './levelingModule'
+// The four hero cards — split into their own file the day this one reached the measured ceiling.
+import { LevelingHeroes } from './LevelingHeroes'
+import { NewAtLevelPanel } from './NewAtLevelPanel'
 
 interface FeedItem {
   ts: number
@@ -86,69 +48,6 @@ const FEED_COLOR: Record<FeedItem['kind'], string> = {
   level: '#d9b25f',
   aa: '#6fb3d2',
   swap: SWAP_COLOR
-}
-
-/**
- * The four headline numbers. CURRENT level is the LATEST reported one, never max() —
- * see LevelingView for why — so the peak and the class-swap count ride along in the
- * caption whenever a swap has actually happened.
- */
-function LevelingHeroes({
-  currentLevel,
-  levelCount,
-  peak,
-  swaps,
-  aaEarned,
-  aaSpent,
-  aaUnspent,
-  boughtCount
-}: {
-  currentLevel: number | null
-  levelCount: number
-  peak: number | null
-  swaps: number
-  aaEarned: number
-  aaSpent: number
-  aaUnspent: number | null
-  boughtCount: number
-}): JSX.Element {
-  return (
-    <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
-      <HeroCard
-        icon={<MilitaryTechIcon fontSize="large" />}
-        value={currentLevel != null ? String(currentLevel) : '—'}
-        label="Character level"
-        sub={
-          levelCount
-            ? `${levelCount} level-ups logged` +
-              (swaps > 0 ? ` · peak ${peak} · ${swaps} class swap${swaps === 1 ? '' : 's'}` : '')
-            : 'no level-ups in log'
-        }
-        accent="#d9b25f"
-      />
-      <HeroCard
-        icon={<AutoAwesomeIcon fontSize="large" />}
-        value={aaEarned ? aaEarned.toLocaleString() : '—'}
-        label="AA points earned"
-        sub="spent + unspent"
-        accent="#6fb3d2"
-      />
-      <HeroCard
-        icon={<AutoAwesomeIcon fontSize="large" />}
-        value={aaSpent ? aaSpent.toLocaleString() : '—'}
-        label="AA points spent"
-        sub={`${boughtCount} abilities allocated`}
-        accent="#b07fd0"
-      />
-      <HeroCard
-        icon={<BoltIcon fontSize="large" />}
-        value={aaUnspent != null ? aaUnspent.toLocaleString() : '—'}
-        label="AA unspent"
-        sub="last reported balance"
-        accent="#5fbf72"
-      />
-    </Stack>
-  )
 }
 
 /**
@@ -361,7 +260,23 @@ function useLevelingCharts(prog: ProgressionSnap, levels: readonly LevelPoint[],
   return { chrome, legend, stats, clear }
 }
 
-export default function LevelingView(): JSX.Element {
+/**
+ * The tab's deep-link payload: the level a level-up toast asked us to open on
+ * (docs/plans/levelup-whats-new.md §2). Absent ⇒ a plain tab switch, and the panel follows the
+ * character's own level. The nonce is the standing contract (appRouting.ts): the tab stays
+ * MOUNTED across a link, so the same level asked for twice must arrive twice.
+ */
+export interface LevelingViewProps {
+  focusLevel?: number | null
+  focusNonce?: number
+  onFocusConsumed?: () => void
+}
+
+export default function LevelingView({
+  focusLevel = null,
+  focusNonce = 0,
+  onFocusConsumed
+}: LevelingViewProps): JSX.Element {
   const state = useModule<LevelingSnap, LevelingDelta>('leveling', applyLevelingDelta) ?? EMPTY_LEVELING
   const { levels, aaGains: aas, aaSpends: spends } = state
   // The SECOND module this view reads: the capped, range-queryable analytics series behind
@@ -437,6 +352,14 @@ export default function LevelingView(): JSX.Element {
   const { chrome, legend, stats, clear } = useLevelingCharts(prog, sortedLevels, aaCumulative)
 
   const nothing = sortedLevels.length === 0 && sortedAAs.length === 0
+  // One props object, two placements (see both call sites): the panel is the same surface in the
+  // charted and the chart-less state, and spelling its four props twice is how they drift.
+  const unlockPanel = {
+    currentLevel,
+    focusLevel,
+    focusNonce,
+    onFocusConsumed: onFocusConsumed ?? ((): void => undefined)
+  }
 
   return (
     <Stack spacing={2} sx={{ height: '100%' }} data-testid="leveling-view">
@@ -457,7 +380,11 @@ export default function LevelingView(): JSX.Element {
         </Typography>
       ) : (
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flexGrow: 1, minHeight: 0 }}>
-          <Stack spacing={2} sx={{ flex: 2, minWidth: 320 }}>
+          {/* The charts column OWNS ITS SCROLL (the standing list law): its papers are
+              intrinsically tall — two plots plus a range panel that mounts on a drag — and
+              without this the column grew the app's content area instead, which is the one
+              thing a view may never do. */}
+          <Stack spacing={2} sx={{ flex: 2, minWidth: 320, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
             <AaOverTimePanel points={aaCumulative} aaEarned={aaEarned} chrome={chrome} />
             <LevelOverTimePanel
               segments={levelSegments}
@@ -476,6 +403,14 @@ export default function LevelingView(): JSX.Element {
           </Stack>
         </Stack>
       )}
+
+      {/* OUTSIDE the branch, and LAST. Outside because it is the one surface here that needs no
+          log at all — "what do I get at 30" is answered by the committed DBs, so a character with
+          too few dings to draw a chart still gets it, and rendering it in both arms would remount
+          it (and drop a deep link's level) every time the charts appeared. Last because the two
+          plots are what this tab is for at a glance; pushing them down a screen for a browsable
+          reference panel would cost the primary surface its position. */}
+      <NewAtLevelPanel {...unlockPanel} />
     </Stack>
   )
 }

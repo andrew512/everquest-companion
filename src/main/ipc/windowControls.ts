@@ -6,6 +6,7 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import { E2E } from '../e2e'
 import { logError } from '../errorLog'
+import { getFightSelection, setFightSelection } from '../fightSelection'
 import { getOverlayConfig, setOverlayConfig } from '../store'
 import {
   applyOverlayLocked,
@@ -18,6 +19,25 @@ import {
 } from '../windows'
 import type { AppFocus, AppFocusView, OverlayConfig, OverlayKind } from '../../shared/types'
 
+/** A non-empty display string, or undefined. Trimmed only for the emptiness test — the receiving
+ *  view looks the value up verbatim, exactly as the sending window read it. */
+function focusText(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v : undefined
+}
+
+/** The deep link, rebuilt from the fields this boundary names. See the comment at its caller. */
+function sanitizeFocus(focus: AppFocus): AppFocus {
+  const out: AppFocus = { view: focus.view }
+  const mob = focusText(focus.mob)
+  if (mob) out.mob = mob
+  const quest = focusText(focus.quest)
+  if (quest) out.quest = quest
+  if (typeof focus.level === 'number' && Number.isInteger(focus.level) && focus.level > 0) {
+    out.level = focus.level
+  }
+  return out
+}
+
 export function registerWindowIpc(): void {
   // ---- cross-window deep link (Task #64) ----
   // An overlay row says a thing happened; clicking it asks the APP to answer it properly. Main
@@ -26,15 +46,18 @@ export function registerWindowIpc(): void {
   // The `view` is re-validated against the closed AppFocusView union rather than trusted
   // because today's only caller is the app's own overlay (the same rule `sounds:getData`'s
   // packId follows): a renderer telling another renderer where to navigate is a capability, and
-  // its vocabulary is fixed here. `mob` is forwarded only when it is a non-empty string — it is
-  // pure display/lookup text in the receiving view and never touches a path.
+  // its vocabulary is fixed here. The ANCHORS are forwarded on the same terms: `mob` and `quest`
+  // only when non-empty strings (pure display/lookup text in the receiving view, never a path),
+  // `level` only as a small positive integer. The forwarded object is REBUILT from those fields,
+  // so nothing else the asking window attached ever reaches the app's renderer.
   //
   // E2E never shows a window (src/main/e2e.ts is the whole test mode), so the raise is skipped
   // there; the forward still happens, which is the half a test could observe.
   ipcMain.on(IPC.focusView, (_e, focus: AppFocus) => {
     // The closed vocabulary, restated here on purpose (see above): 'mobs' from the events
-    // overlay's con rows, 'posky' from a celebration toast's reward card.
-    const views: AppFocusView[] = ['mobs', 'posky']
+    // overlay's con rows, 'posky' from a celebration toast's reward card (optionally anchored at
+    // ONE quest), 'leveling' from a level-up toast (anchored at the level that just dinged).
+    const views: AppFocusView[] = ['mobs', 'posky', 'leveling']
     if (!focus || !(views as string[]).includes(focus.view)) return
     const w = getMainWindow()
     if (!w || w.isDestroyed()) return
@@ -43,8 +66,7 @@ export function registerWindowIpc(): void {
       w.show()
       w.focus()
     }
-    const mob = typeof focus.mob === 'string' && focus.mob.trim() ? focus.mob : undefined
-    w.webContents.send(IPC.onFocusView, { view: focus.view, mob } satisfies AppFocus)
+    w.webContents.send(IPC.onFocusView, sanitizeFocus(focus))
   })
 
   // ---- frameless window controls (Task #23) ----
@@ -92,6 +114,16 @@ export function registerWindowIpc(): void {
     setOverlayIgnoreMouse(kind, ignore)
   })
   ipcMain.on(IPC.overlayClose, (_e, kind: OverlayKind) => setOverlayOpen(kind, false))
+
+  // ---- global fight selection (docs/plans/combat-overlay-parity.md P4) ----
+  // A read for a surface that mounted after the last change, and a fire-and-forget write that
+  // fans out to every window. The write's argument is renderer input and is shape-checked inside
+  // `setFightSelection` (shared/fightSelection.ts) — a zone-session id or a hand-crafted string
+  // is dropped there, never broadcast. Nothing here can move a surface's Fight/Overall SCOPE.
+  ipcMain.handle(IPC.fightSelectionGet, () => getFightSelection())
+  ipcMain.on(IPC.fightSelectionSet, (_e, id: unknown) => {
+    setFightSelection(id)
+  })
 
   // Fire-and-forget renderer error reports (window.onerror / unhandledrejection /
   // React ErrorBoundary). `ipcMain.on` (not handle) matches the preload's `send`.
