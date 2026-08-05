@@ -34,9 +34,35 @@
 // `Neriak`, `Qeynos` — each of which is 2-3 different map files. Resolving them would be a
 // guess, so they resolve to `null` and the viewer shows its zone picker (world-model law 1).
 //
+// SINCE 2026-08-04 the table carries a THIRD kind of knowledge: `era`, the expansion each zone
+// shipped in. It is here rather than on an item because no item in the scraped corpus states an
+// era, while the wiki documents Kunark and Velious wholesale — so the only way to know that a
+// Primal Velium Warsword is unreachable in EQ Legends today is to know that Sleeper's Tomb is a
+// Velious zone. Same rules as every other column: hand-authored, per row, `undefined` when there
+// is no honest claim to make. `src/shared/planner/era.ts` is the only consumer.
+//
 // This module is PURE: no Node, no Electron, no renderer. Both main and the renderer import it.
 
 import type { ZoneShort } from './maps'
+
+/**
+ * Which EverQuest expansion a zone came from. THE ONLY PLACE ERA IS KNOWN.
+ *
+ * WHY IT LIVES HERE and not on an item: nothing in the scraped item corpus carries an era. The
+ * wiki documents Kunark and Velious content wholesale (Kael Drakkel alone is 343 catalog mobs),
+ * so a planner that ranked effects by the item DB alone happily proposed ten Primal Velium
+ * weapons out of Sleeper's Tomb — content EQ Legends has not opened. Era is therefore derived
+ * from ZONE PROVENANCE: where the donor drops is the only evidence there is.
+ *
+ * Hand-authored per row, like everything else in this table (world-model law 12): the expansion
+ * a zone SHIPPED in is a fact about EverQuest's history, not a string rule. `undefined` means
+ * "no era claim" — either the zone postdates the three eras (Luclin's Bazaar/Nexus, PoP's
+ * Knowledge/Guild Lobby) or it is EQL-new content (New Sebilis Expedition) with no historic
+ * expansion to point at. An unannotated zone reads as UNKNOWN downstream, never as out-of-era.
+ *
+ * Consumed by `src/shared/planner/era.ts`; nothing else in the app reads it yet.
+ */
+export type ZoneEra = 'classic' | 'kunark' | 'velious'
 
 /** One zone: what the log calls it, what its map file is called, and who else spells it how. */
 export interface ZoneEntry {
@@ -56,6 +82,11 @@ export interface ZoneEntry {
    * `catalogZonesFor`. Present only where the mapping was verified against real data.
    */
   mobCatalogNames?: string[]
+  /**
+   * The expansion this zone shipped in. Absent = deliberately no claim (see `ZoneEra`); it is
+   * NEVER a shorthand for "classic".
+   */
+  era?: ZoneEra
 }
 
 // ---- the fold ------------------------------------------------------------------------------
@@ -112,30 +143,36 @@ export function zoneKey(zone: string | undefined | null): string {
  */
 export const ZONES: readonly ZoneEntry[] = [
   // --- 1. OBSERVED IN THE LIVE LOG (50 of the 51 canonical names resolve) ---
-  { short: 'befallen', name: 'Befallen' },
-  { short: 'blackburrow', name: 'Blackburrow' }, // brewall only
-  { short: 'butcher', name: 'Butcherblock Mountains', mobCatalogNames: ['BBM'] },
-  { short: 'ecommons', name: 'East Commonlands', mobCatalogNames: ['EC'] },
-  { short: 'freporte', name: 'East Freeport', mobCatalogNames: ['EFP'] },
-  { short: 'erudsxing', name: "Erud's Crossing" },
-  { short: 'erudnext', name: 'Erudin' },
-  { short: 'erudnint', name: 'Erudin Palace' },
-  { short: 'everfrost', name: 'Everfrost Peaks' },
-  { short: 'grobb', name: 'Grobb' },
-  { short: 'highpass', name: 'Highpass Hold' },
-  { short: 'innothule', name: 'Innothule Swamp' },
-  { short: 'kithicor', name: 'Kithicor Forest' },
-  { short: 'soldungb', name: "Nagafen's Lair" }, // brewall only
-  { short: 'najena', name: 'Najena' },
-  { short: 'nektulos', name: 'Nektulos Forest' },
-  { short: 'neriakb', name: 'Neriak - Commons' },
-  { short: 'neriaka', name: 'Neriak - Foreign Quarter' },
-  { short: 'newsebexp', name: 'New Sebilis Expedition' }, // EQL-new; DEFAULT SET ONLY
-  { short: 'freportn', name: 'North Freeport' },
-  { short: 'kaladima', name: 'North Kaladim' },
-  { short: 'qeynos2', name: 'North Qeynos' },
-  { short: 'oggok', name: 'Oggok' },
-  { short: 'paineel', name: 'Paineel' },
+  // Every zone here is `era: 'classic'` except the EQL-new expedition, which claims no era: these
+  // are the launch-1999 world (Antonica / Faydwer / Odus) plus the three original planes. Paineel,
+  // The Hole, The Warrens and Stonebrunt Mountains arrived in the Erudite-heretic patch late in
+  // 1999, still months before The Ruins of Kunark, so they are classic too.
+  { short: 'befallen', name: 'Befallen', era: 'classic' },
+  { short: 'blackburrow', name: 'Blackburrow', era: 'classic' }, // brewall only
+  { short: 'butcher', name: 'Butcherblock Mountains', mobCatalogNames: ['BBM'], era: 'classic' },
+  { short: 'ecommons', name: 'East Commonlands', mobCatalogNames: ['EC'], era: 'classic' },
+  { short: 'freporte', name: 'East Freeport', mobCatalogNames: ['EFP'], era: 'classic' },
+  { short: 'erudsxing', name: "Erud's Crossing", era: 'classic' },
+  { short: 'erudnext', name: 'Erudin', era: 'classic' },
+  { short: 'erudnint', name: 'Erudin Palace', era: 'classic' },
+  { short: 'everfrost', name: 'Everfrost Peaks', era: 'classic' },
+  { short: 'grobb', name: 'Grobb', era: 'classic' },
+  { short: 'highpass', name: 'Highpass Hold', era: 'classic' },
+  { short: 'innothule', name: 'Innothule Swamp', era: 'classic' },
+  { short: 'kithicor', name: 'Kithicor Forest', era: 'classic' },
+  { short: 'soldungb', name: "Nagafen's Lair", era: 'classic' }, // brewall only
+  { short: 'najena', name: 'Najena', era: 'classic' },
+  { short: 'nektulos', name: 'Nektulos Forest', era: 'classic' },
+  { short: 'neriakb', name: 'Neriak - Commons', era: 'classic' },
+  { short: 'neriaka', name: 'Neriak - Foreign Quarter', era: 'classic' },
+  // EQL-new; DEFAULT SET ONLY. No era: it is not a 1999-2000 expansion zone, it is content EQ
+  // Legends invented — and the player has walked it, so calling it out-of-era would be a lie.
+  { short: 'newsebexp', name: 'New Sebilis Expedition' },
+  { short: 'freportn', name: 'North Freeport', era: 'classic' },
+  { short: 'kaladima', name: 'North Kaladim', era: 'classic' },
+  { short: 'qeynos2', name: 'North Qeynos', era: 'classic' },
+  { short: 'oggok', name: 'Oggok', era: 'classic' },
+  { short: 'paineel', name: 'Paineel', era: 'classic' },
   // Two log names, ONE place: `Permafrost Keep` is the open zone (ice goblins, King Thex`Ka IV),
   // `The Permafrost Caverns - Solo N` its instance (ice giants, Lady Vox) — and entering the Keep
   // logs the achievement "The Permafrost Caverns Traveler". eqlwiki's table says
@@ -145,154 +182,218 @@ export const ZONES: readonly ZoneEntry[] = [
     short: 'permafrost',
     name: 'Permafrost Keep',
     aliases: ['The Permafrost Caverns'],
-    mobCatalogNames: ['Permafrost']
+    mobCatalogNames: ['Permafrost'],
+    era: 'classic'
   },
-  { short: 'qeytoqrg', name: 'Qeynos Hills' },
-  { short: 'kaladimb', name: 'South Kaladim' },
-  { short: 'qeynos', name: 'South Qeynos' },
+  { short: 'qeytoqrg', name: 'Qeynos Hills', era: 'classic' },
+  { short: 'kaladimb', name: 'South Kaladim', era: 'classic' },
+  { short: 'qeynos', name: 'South Qeynos', era: 'classic' },
   // Guk is TWO zones and the log names them separately (see the header note under DEVIATIONS in
   // tests). Upper: the log's `The City of Guk` killed froglok ton/gaz knights + froglok sentries;
   // catalog `Upper Guk` (51 rows) carries exactly those names, and brewall's guktop_1 labels are
   // froglok. Lower: `The Ruins of Old Guk` killed zol/wan/dar ghoul knights + a frenzied ghoul;
   // catalog `Lower Guk` (63 rows) and gukbottom_1's labels match.
-  { short: 'guktop', name: 'The City of Guk', aliases: ['Upper Guk'], mobCatalogNames: ['Upper Guk'] },
+  {
+    short: 'guktop',
+    name: 'The City of Guk',
+    aliases: ['Upper Guk'],
+    mobCatalogNames: ['Upper Guk'],
+    era: 'classic'
+  },
   {
     short: 'eastkarana',
     name: 'The Eastern Plains of Karana',
     aliases: ['East Karana', 'Eastern Karana'],
     // Catalog uses all three; only `Eastern Plains of Karana` (79 rows) folds onto the log name.
-    mobCatalogNames: ['East Karana', 'Eastern Karana', 'Eastern Karana (37)']
+    mobCatalogNames: ['East Karana', 'Eastern Karana', 'Eastern Karana (37)'],
+    era: 'classic'
   },
-  { short: 'feerrott', name: 'The Feerrott' },
+  { short: 'feerrott', name: 'The Feerrott', era: 'classic' },
   // eqlwiki's zone table: `Infected Paw | paw`. The log's Splitpaw kills (a Tesch Mas / Rosch Mas /
   // Lteth Mal Gnoll) are catalog `Splitpaw Lair` rows verbatim; brewall paw_1 labels `Splitpaw_Jail`.
   {
     short: 'paw',
     name: 'The Lair of the Splitpaw',
     aliases: ['Splitpaw Lair', 'Infected Paw'],
-    mobCatalogNames: ['Splitpaw Lair', 'Infected Paw']
+    mobCatalogNames: ['Splitpaw Lair', 'Infected Paw'],
+    era: 'classic'
   },
-  { short: 'lavastorm', name: 'The Lavastorm Mountains' },
-  { short: 'nro', name: 'The Northern Desert of Ro', aliases: ['North Ro'], mobCatalogNames: ['North Ro'] },
+  { short: 'lavastorm', name: 'The Lavastorm Mountains', era: 'classic' },
+  {
+    short: 'nro',
+    name: 'The Northern Desert of Ro',
+    aliases: ['North Ro'],
+    mobCatalogNames: ['North Ro'],
+    era: 'classic'
+  },
   {
     short: 'northkarana',
     name: 'The Northern Plains of Karana',
     aliases: ['North Karana', 'Northern Karana'],
     // `Northern Plains of Karana` is 4 rows; `Northern Karana` alone is 54 more of the same zone.
-    mobCatalogNames: ['North Karana', 'Northern Karana', 'Northern Karana (35)']
+    mobCatalogNames: ['North Karana', 'Northern Karana', 'Northern Karana (35)'],
+    era: 'classic'
   },
-  { short: 'oasis', name: 'The Oasis of Marr' },
-  { short: 'oot', name: 'The Ocean of Tears' },
-  { short: 'fearplane', name: 'The Plane of Fear' },
-  { short: 'hateplane', name: 'The Plane of Hate' }, // brewall only (hateplaneb is the revamp)
-  { short: 'airplane', name: 'The Plane of Sky' },
-  { short: 'rathemtn', name: 'The Rathe Mountains', aliases: ['Mountains of Rathe'] },
-  { short: 'gukbottom', name: 'The Ruins of Old Guk', aliases: ['Lower Guk'], mobCatalogNames: ['Lower Guk'] },
+  { short: 'oasis', name: 'The Oasis of Marr', era: 'classic' },
+  { short: 'oot', name: 'The Ocean of Tears', era: 'classic' },
+  { short: 'fearplane', name: 'The Plane of Fear', era: 'classic' },
+  { short: 'hateplane', name: 'The Plane of Hate', era: 'classic' }, // brewall only (hateplaneb is the revamp)
+  { short: 'airplane', name: 'The Plane of Sky', era: 'classic' },
+  { short: 'rathemtn', name: 'The Rathe Mountains', aliases: ['Mountains of Rathe'], era: 'classic' },
+  {
+    short: 'gukbottom',
+    name: 'The Ruins of Old Guk',
+    aliases: ['Lower Guk'],
+    mobCatalogNames: ['Lower Guk'],
+    era: 'classic'
+  },
   // The log's Old Paineel kills (a rock golem, an elemental warrior, a ratman warrior, Slizik the
   // Mighty) are catalog `The Hole` rows verbatim; brewall hole_1 labels Elemental_Striker + a
   // ratman_inhabitant. eqlwiki: `The Ruins of Old Paineel | hole`.
-  { short: 'hole', name: 'The Ruins of Old Paineel', aliases: ['The Hole'], mobCatalogNames: ['The Hole'] }, // brewall only
+  {
+    short: 'hole',
+    name: 'The Ruins of Old Paineel',
+    aliases: ['The Hole'],
+    mobCatalogNames: ['The Hole'],
+    era: 'classic'
+  }, // brewall only
   {
     short: 'sro',
     name: 'The Southern Desert of Ro',
     aliases: ['South Ro'],
-    mobCatalogNames: ['South Ro', 'Southern Ro']
+    mobCatalogNames: ['South Ro', 'Southern Ro'],
+    era: 'classic'
   },
   {
     short: 'southkarana',
     name: 'The Southern Plains of Karana',
     aliases: ['South Karana', 'Southern Karana'],
     // `Southern Plains of Karana` is ONE row; `Southern Karana` is 53 more of the same zone.
-    mobCatalogNames: ['South Karana', 'Southern Karana']
+    mobCatalogNames: ['South Karana', 'Southern Karana'],
+    era: 'classic'
   },
-  { short: 'soltemple', name: 'The Temple of Solusek Ro' },
-  { short: 'tox', name: 'Toxxulia Forest' }, // classic stem; `toxxulia` is the Live revamp
-  { short: 'commons', name: 'West Commonlands', mobCatalogNames: ['WC'] },
-  { short: 'freportw', name: 'West Freeport', mobCatalogNames: ['WFP'] },
+  { short: 'soltemple', name: 'The Temple of Solusek Ro', era: 'classic' },
+  { short: 'tox', name: 'Toxxulia Forest', era: 'classic' }, // classic stem; `toxxulia` is the Live revamp
+  { short: 'commons', name: 'West Commonlands', mobCatalogNames: ['WC'], era: 'classic' },
+  { short: 'freportw', name: 'West Freeport', mobCatalogNames: ['WFP'], era: 'classic' },
 
   // --- 2. CLASSIC, not yet observed. Names from eqlwiki's table, corroborated by the catalog. ---
-  { short: 'akanon', name: "Ak'Anon" },
-  { short: 'arena', name: 'The Arena' },
+  // Four rows in this section carry NO era on purpose — they are not classic zones at all, they
+  // are Live-EQ hub zones that came with Luclin (Bazaar, Nexus) and Planes of Power (Guild Lobby,
+  // and the Barter Hall which is later still). They sit in the table because the map corpus has
+  // their stems, not because EQL can reach them; claiming an era for them would invent history.
+  { short: 'akanon', name: "Ak'Anon", era: 'classic' },
+  { short: 'arena', name: 'The Arena', era: 'classic' },
   { short: 'barter', name: 'The Barter Hall' },
   { short: 'bazaar', name: 'The Bazaar' },
-  { short: 'cauldron', name: "Dagnor's Cauldron" },
-  { short: 'cazicthule', name: 'Cazic-Thule' },
-  { short: 'crushbone', name: 'Clan Crushbone', aliases: ['Crushbone'] },
-  { short: 'felwithea', name: 'North Felwithe', aliases: ['Northern Felwithe'] },
-  { short: 'felwitheb', name: 'South Felwithe', aliases: ['Southern Felwithe'] },
-  { short: 'gfaydark', name: 'The Greater Faydark' },
+  { short: 'cauldron', name: "Dagnor's Cauldron", era: 'classic' },
+  { short: 'cazicthule', name: 'Cazic-Thule', era: 'classic' },
+  { short: 'crushbone', name: 'Clan Crushbone', aliases: ['Crushbone'], era: 'classic' },
+  { short: 'felwithea', name: 'North Felwithe', aliases: ['Northern Felwithe'], era: 'classic' },
+  { short: 'felwitheb', name: 'South Felwithe', aliases: ['Southern Felwithe'], era: 'classic' },
+  { short: 'gfaydark', name: 'The Greater Faydark', era: 'classic' },
   { short: 'guildlobby', name: 'The Guild Lobby' },
-  { short: 'halas', name: 'Halas' },
-  { short: 'highkeep', name: 'High Keep', aliases: ['HighKeep'] },
-  { short: 'kedge', name: 'Kedge Keep' },
-  { short: 'kerraridge', name: 'Kerra Isle', aliases: ['Kerra Island'] },
-  { short: 'lakerathe', name: 'Lake Rathetear', aliases: ['Lake Rathe'] },
-  { short: 'lfaydark', name: 'The Lesser Faydark' },
-  { short: 'beholder', name: 'Gorge of King Xorbb', aliases: ["Beholder's Maze"] },
-  { short: 'misty', name: 'Misty Thicket' }, // classic stem; `mistythicket` is the Live revamp
-  { short: 'mistmoore', name: 'Castle Mistmoore', aliases: ['Mistmoore Castle'] },
-  { short: 'neriakc', name: 'Neriak - Third Gate' },
-  { short: 'neriakd', name: 'Neriak Palace' }, // brewall only
+  { short: 'halas', name: 'Halas', era: 'classic' },
+  { short: 'highkeep', name: 'High Keep', aliases: ['HighKeep'], era: 'classic' },
+  { short: 'kedge', name: 'Kedge Keep', era: 'classic' },
+  { short: 'kerraridge', name: 'Kerra Isle', aliases: ['Kerra Island'], era: 'classic' },
+  { short: 'lakerathe', name: 'Lake Rathetear', aliases: ['Lake Rathe'], era: 'classic' },
+  { short: 'lfaydark', name: 'The Lesser Faydark', era: 'classic' },
+  { short: 'beholder', name: 'Gorge of King Xorbb', aliases: ["Beholder's Maze"], era: 'classic' },
+  { short: 'misty', name: 'Misty Thicket', era: 'classic' }, // classic stem; `mistythicket` is the Live revamp
+  { short: 'mistmoore', name: 'Castle Mistmoore', aliases: ['Mistmoore Castle'], era: 'classic' },
+  { short: 'neriakc', name: 'Neriak - Third Gate', era: 'classic' },
+  { short: 'neriakd', name: 'Neriak Palace', era: 'classic' }, // brewall only
   { short: 'nexus', name: 'The Nexus' },
   { short: 'poknowledge', name: 'Plane of Knowledge' },
-  { short: 'qcat', name: 'Qeynos Catacombs', aliases: ['Qeynos Aqueducts'] },
-  { short: 'qrg', name: 'Surefall Glade' },
-  { short: 'rivervale', name: 'Rivervale' },
-  { short: 'runnyeye', name: 'Clan RunnyEye', aliases: ['Runnyeye Citadel'] }, // brewall only
-  { short: 'soldunga', name: "Solusek's Eye" }, // brewall only
-  { short: 'steamfont', name: 'Steamfont Mountains' }, // classic stem; `steamfontmts` is the revamp
-  { short: 'stonebrunt', name: 'Stonebrunt Mountains' },
-  { short: 'unrest', name: 'The Estate of Unrest', aliases: ['Unrest'] }, // brewall only
-  { short: 'warrens', name: 'The Warrens' }, // brewall only
-  { short: 'qey2hh1', name: 'The Western Plains of Karana', aliases: ['West Karana', 'Western Karana'] },
+  { short: 'qcat', name: 'Qeynos Catacombs', aliases: ['Qeynos Aqueducts'], era: 'classic' },
+  { short: 'qrg', name: 'Surefall Glade', era: 'classic' },
+  { short: 'rivervale', name: 'Rivervale', era: 'classic' },
+  // Catalog spells this place three ways: `RunnyEye Citadel` (36 rows) and `Runnyeye Citadel` (4)
+  // both fold onto the alias; a bare `Runnyeye` (6 rows, incl. the goblin warlord line) reaches
+  // neither the name nor the alias, so it is stated as knowledge rather than left to a matcher.
+  {
+    short: 'runnyeye',
+    name: 'Clan RunnyEye',
+    aliases: ['Runnyeye Citadel'],
+    mobCatalogNames: ['Runnyeye'],
+    era: 'classic'
+  }, // brewall only
+  { short: 'soldunga', name: "Solusek's Eye", era: 'classic' }, // brewall only
+  { short: 'steamfont', name: 'Steamfont Mountains', era: 'classic' }, // classic stem; `steamfontmts` is the revamp
+  { short: 'stonebrunt', name: 'Stonebrunt Mountains', era: 'classic' },
+  { short: 'unrest', name: 'The Estate of Unrest', aliases: ['Unrest'], era: 'classic' }, // brewall only
+  { short: 'warrens', name: 'The Warrens', era: 'classic' }, // brewall only
+  {
+    short: 'qey2hh1',
+    name: 'The Western Plains of Karana',
+    aliases: ['West Karana', 'Western Karana'],
+    era: 'classic'
+  },
 
   // --- 3. KUNARK. Stems are brewall-only except where marked; names corroborated by the catalog. ---
-  { short: 'burningwood', name: 'The Burning Wood', aliases: ['Burning Woods'] }, // in default set
-  { short: 'cabeast', name: 'Cabilis East', aliases: ['East Cabilis'] }, // in default set
-  { short: 'cabwest', name: 'Cabilis West', aliases: ['West Cabilis'] }, // in default set
-  { short: 'chardok', name: 'Chardok' },
-  { short: 'charasis', name: 'Howling Stones' },
-  { short: 'citymist', name: 'City of Mist' },
-  { short: 'dalnir', name: 'Crypt of Dalnir' },
-  { short: 'dreadlands', name: 'The Dreadlands' }, // in default set
-  { short: 'droga', name: 'Temple of Droga' },
-  { short: 'emeraldjungle', name: 'The Emerald Jungle' }, // in default set
-  { short: 'fieldofbone', name: 'The Field of Bone' }, // in default set
-  { short: 'firiona', name: 'Firiona Vie' }, // in default set
-  { short: 'frontiermtns', name: 'Frontier Mountains' },
-  { short: 'kaesora', name: 'Kaesora' },
-  { short: 'karnor', name: "Karnor's Castle" },
-  { short: 'kurn', name: "Kurn's Tower" },
-  { short: 'nurga', name: 'Mines of Nurga' },
-  { short: 'overthere', name: 'The Overthere' }, // in default set
-  { short: 'sebilis', name: 'Old Sebilis' },
-  { short: 'skyfire', name: 'Skyfire Mountains' },
-  { short: 'swampofnohope', name: 'The Swamp of No Hope' }, // in default set
-  { short: 'timorous', name: 'Timorous Deep' }, // in default set
-  { short: 'trakanon', name: "Trakanon's Teeth" },
-  { short: 'veeshan', name: "Veeshan's Peak" },
-  { short: 'warslikswood', name: "Warslik's Woods", aliases: ['Warsliks Woods'] },
+  // The whole section is `era: 'kunark'` — this IS the Kunark landmass (plus its two Iksar
+  // outposts), one expansion, April 2000. The catalog documents it wholesale (1,464 mob-zone
+  // links across these rows) even though EQ Legends has not opened it: exactly why the field
+  // exists.
+  { short: 'burningwood', name: 'The Burning Wood', aliases: ['Burning Woods'], era: 'kunark' }, // in default set
+  { short: 'cabeast', name: 'Cabilis East', aliases: ['East Cabilis'], era: 'kunark' }, // in default set
+  { short: 'cabwest', name: 'Cabilis West', aliases: ['West Cabilis'], era: 'kunark' }, // in default set
+  { short: 'chardok', name: 'Chardok', era: 'kunark' },
+  { short: 'charasis', name: 'Howling Stones', era: 'kunark' },
+  { short: 'citymist', name: 'City of Mist', era: 'kunark' },
+  // Catalog says `Crypt of Dalnir` (26 rows) and a bare `Dalnir` (3 rows, the Diseased Wolf line);
+  // the short form reaches the zone's own name through no fold, so it is stated here.
+  { short: 'dalnir', name: 'Crypt of Dalnir', mobCatalogNames: ['Dalnir'], era: 'kunark' },
+  { short: 'dreadlands', name: 'The Dreadlands', era: 'kunark' }, // in default set
+  { short: 'droga', name: 'Temple of Droga', era: 'kunark' },
+  { short: 'emeraldjungle', name: 'The Emerald Jungle', era: 'kunark' }, // in default set
+  { short: 'fieldofbone', name: 'The Field of Bone', era: 'kunark' }, // in default set
+  { short: 'firiona', name: 'Firiona Vie', era: 'kunark' }, // in default set
+  { short: 'frontiermtns', name: 'Frontier Mountains', era: 'kunark' },
+  { short: 'kaesora', name: 'Kaesora', era: 'kunark' },
+  { short: 'karnor', name: "Karnor's Castle", era: 'kunark' },
+  { short: 'kurn', name: "Kurn's Tower", era: 'kunark' },
+  // ADDED with the era layer (wave 3E): the one Kunark zone the table had missed, and the single
+  // largest catalog gap at 82 mobs — the Goblins/Sarnak lake between Field of Bone and Cabilis.
+  // Its stem is eqlwiki's Zone_short_names spelling, seeded like the rest of this section; unlike
+  // the 2026-08-03 rows it could NOT be checked against a real maps folder (the authoring machine
+  // has no EQ install), so if it is ever wrong the cost is a missing map, never a wrong one.
+  { short: 'lakeofillomen', name: 'Lake of Ill Omen', era: 'kunark' },
+  { short: 'nurga', name: 'Mines of Nurga', era: 'kunark' },
+  { short: 'overthere', name: 'The Overthere', era: 'kunark' }, // in default set
+  { short: 'sebilis', name: 'Old Sebilis', era: 'kunark' },
+  { short: 'skyfire', name: 'Skyfire Mountains', era: 'kunark' },
+  { short: 'swampofnohope', name: 'The Swamp of No Hope', era: 'kunark' }, // in default set
+  { short: 'timorous', name: 'Timorous Deep', era: 'kunark' }, // in default set
+  { short: 'trakanon', name: "Trakanon's Teeth", era: 'kunark' },
+  { short: 'veeshan', name: "Veeshan's Peak", era: 'kunark' },
+  { short: 'warslikswood', name: "Warslik's Woods", aliases: ['Warsliks Woods'], era: 'kunark' },
 
   // --- 4. VELIOUS. Stems are brewall-only except where marked. ---
-  { short: 'cobaltscar', name: 'Cobalt Scar' }, // in default set
-  { short: 'crystal', name: 'Crystal Caverns' },
-  { short: 'eastwastes', name: 'Eastern Wastes' },
-  { short: 'frozenshadow', name: 'Tower of Frozen Shadow' },
-  { short: 'greatdivide', name: 'The Great Divide' }, // in default set
-  { short: 'growthplane', name: 'Plane of Growth' },
-  { short: 'iceclad', name: 'Iceclad Ocean' },
-  { short: 'kael', name: 'Kael Drakkel' }, // in default set
-  { short: 'mischiefplane', name: 'Plane of Mischief' },
-  { short: 'necropolis', name: 'Dragon Necropolis' },
-  { short: 'sirens', name: "Siren's Grotto" },
-  { short: 'skyshrine', name: 'Skyshrine' },
-  { short: 'sleeper', name: "Sleeper's Tomb" },
-  { short: 'templeveeshan', name: 'Temple of Veeshan' },
-  { short: 'thurgadina', name: 'Thurgadin' }, // in default set
-  { short: 'thurgadinb', name: 'Icewell Keep' }, // in default set
-  { short: 'velketor', name: "Velketor's Labyrinth" },
-  { short: 'wakening', name: 'The Wakening Land', aliases: ['Wakening Lands'] },
-  { short: 'westwastes', name: 'Western Wastes' }
+  // All `era: 'velious'` (December 2000; 1,679 mob-zone links). Sleeper's Tomb is the row that
+  // started this: its warders drop the eight Primal Velium weapons the planner was recommending
+  // to a level-50 classic character. Plane of Growth and Plane of Mischief are Velious planes,
+  // NOT classic ones — only Fear, Hate and Sky are classic.
+  { short: 'cobaltscar', name: 'Cobalt Scar', era: 'velious' }, // in default set
+  { short: 'crystal', name: 'Crystal Caverns', era: 'velious' },
+  { short: 'eastwastes', name: 'Eastern Wastes', era: 'velious' },
+  { short: 'frozenshadow', name: 'Tower of Frozen Shadow', era: 'velious' },
+  { short: 'greatdivide', name: 'The Great Divide', era: 'velious' }, // in default set
+  { short: 'growthplane', name: 'Plane of Growth', era: 'velious' },
+  { short: 'iceclad', name: 'Iceclad Ocean', era: 'velious' },
+  { short: 'kael', name: 'Kael Drakkel', era: 'velious' }, // in default set
+  { short: 'mischiefplane', name: 'Plane of Mischief', era: 'velious' },
+  { short: 'necropolis', name: 'Dragon Necropolis', era: 'velious' },
+  { short: 'sirens', name: "Siren's Grotto", era: 'velious' },
+  { short: 'skyshrine', name: 'Skyshrine', era: 'velious' },
+  { short: 'sleeper', name: "Sleeper's Tomb", era: 'velious' },
+  { short: 'templeveeshan', name: 'Temple of Veeshan', era: 'velious' },
+  { short: 'thurgadina', name: 'Thurgadin', era: 'velious' }, // in default set
+  { short: 'thurgadinb', name: 'Icewell Keep', era: 'velious' }, // in default set
+  { short: 'velketor', name: "Velketor's Labyrinth", era: 'velious' },
+  { short: 'wakening', name: 'The Wakening Land', aliases: ['Wakening Lands'], era: 'velious' },
+  { short: 'westwastes', name: 'Western Wastes', era: 'velious' }
 ]
 
 // TODO(zone table) — candidates deliberately LEFT OUT because they could not be verified:
@@ -316,6 +417,17 @@ export const ZONES: readonly ZoneEntry[] = [
 //   - Catalog spellings that are AMBIGUOUS, so no `mobCatalogNames` row claims them: `Freeport`,
 //     `Kaladim`, `Neriak`, `Qeynos`, `Felwithe`, `Various`, `Various Zones`,
 //     `Most starting zones`, `West Freeport OR East Freeport`.
+//   - Catalog spellings that are DIRT, not names, so nothing claims them either (re-measured
+//     2026-08-04 across all 192 distinct catalog zone strings; 33 stay unresolved, carrying 86 of
+//     the 8,214 mob-zone links between them): wiki table cells whose links ran together
+//     (`Everfrost PeaksLake Rathetear`, `DreadlandsEmerald JungleCity of Mist`,
+//     `Western Plains of KaranaNorthern Plains of Karana`, `Burning WoodsEmerald Jungle`),
+//     multi-zone prose (`Kithicor Forest Misty Thicket`, `Greater Faydark. Lesser Faydark`,
+//     `Neriak Commons. Neriak Third Gate`, `various (Qeynos Hills)`, `Various Starter Zones`),
+//     hedges (`also in Chardok?`, `West Cabilis?`, `Warsliks?`, `Field of Bone?`), a stray
+//     full stop (`Lake of Ill Omen.`) and a city inside a zone (`Kelethin (Greater Faydark)`).
+//     Splitting a concatenation on capital letters, or stripping a `?`, would be a matcher
+//     inventing a fact the wiki never stated — law 12. They resolve to null and stay unknown.
 
 // ---- lookup --------------------------------------------------------------------------------
 
