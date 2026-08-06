@@ -29,8 +29,14 @@
 //   2. /who OUTPUT — the header, the dashed rules, `[ANONYMOUS] Name`,
 //      `[<lvl> CLS/CLS] Name (Race) <Guild> ZONE: ...` rows (incl. the ` AFK ` and `* RIP *`
 //      corpse variants) and the `There are N players...` footer. Every row names a stranger.
-//   3. GROUP SOCIAL naming a third party — `X has joined/left the group.`,
-//      `X invites you to join a group.`, `X is now the leader of your group.`
+//   3. (REMOVED, owner decision 2026-08-05) GROUP MEMBERSHIP EVENTS — `X has joined/left
+//      the group.`, `X invites you to join a group.`, `X is now the leader of your group.`
+//      — are KEPT now: they are structural facts about the fight, not communications, and
+//      they were the exact context a real combat report (group member missing from meters)
+//      needed and did not have. The privacy delta of keeping them is nil — the same names
+//      appear uncensored in every combat line of the same slice. What privacy protects is
+//      CONTENT, and content stays covered: `X tells the group, '…'` carries the
+//      quoted-speech comma-quote and falls to family 1 like every other chat channel.
 //   4. PLAYER EMOTES — social emotes with a proper-name subject (`Rykkerr waves at
 //      Primitive.`). Mob emotes (`a Teir`Dal ranger yawns.`, `... sighs in tranquility.`) are
 //      NOT social emotes and stay.
@@ -85,10 +91,8 @@ const DROP: readonly RegExp[] = [
   /^-{5,}\s*$/,
   /^\s*(?:\* RIP \*\s*)?(?:AFK\s+)?\[(?:ANONYMOUS|\d+ [A-Z]{3}(?:\/[A-Z]{3})*)\]/,
   /^There (?:are|is) (?:no|\d+) players? in EverQuest Legends/,
-  // 3. group social naming a third party
-  /^\S.* has (?:joined|left) the group\.$/,
-  /^\S.* invites you to join a group\.$/,
-  /^\S.* is now the leader of your group\.$/,
+  // 3. group MEMBERSHIP events — deliberately absent since 2026-08-05 (see the header):
+  //    joined/left/invite/leader lines are kept; group chat CONTENT still falls to rule 1.
   // 4. player social emotes (proper-name or first-person subject)
   new RegExp(`^[A-Z][a-z'\`]+ (?:${SOCIAL_EMOTE_VERBS})\\b`),
   new RegExp(`^You (?:${SELF_EMOTE_VERBS}) at \\b`),

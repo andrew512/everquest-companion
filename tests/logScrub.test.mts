@@ -69,12 +69,6 @@ const DROPPED: Record<string, string[]> = {
     '[Tue Jul 28 14:11:26 2026] AFK [3 CLR/DRU] Ehle (Dark Elf)  ZONE: West Commonlands (commons)  ',
     '[Tue Jul 28 14:11:26 2026] * RIP * [3 CLR/DRU] Ehle (Dark Elf)  ZONE: West Commonlands (commons)  '
   ],
-  'group social': [
-    '[Tue Jul 28 21:09:31 2026] Dranix has joined the group.',
-    '[Tue Jul 28 21:09:31 2026] Dranix has left the group.',
-    '[Tue Jul 28 21:09:31 2026] Dranix invites you to join a group.',
-    '[Tue Jul 28 21:09:31 2026] Dranix is now the leader of your group.'
-  ],
   'player emotes': [
     '[Wed Jul 29 01:20:33 2026] Rykkerr waves at Primitive.',
     '[Wed Jul 29 01:20:33 2026] Rykkerr bows before Primitive.',
@@ -110,6 +104,16 @@ const KEPT: Record<string, string[]> = {
     '[Sun Aug 02 15:32:05 2026] You gain party experience! (1.42%)',
     '[Sun Aug 02 15:32:05 2026] You have gained 1 ability point(s)! You now have 3 ability point(s).',
     '[Sun Aug 02 15:32:05 2026] You have become better at 1H Slashing! (122)'
+  ],
+  // Group MEMBERSHIP events are structural facts, not communications (owner decision
+  // 2026-08-05): the same names appear in every combat line of the same slice, and these
+  // lines are the context a combat triage needs. Chat CONTENT (`tells the group, '…'`)
+  // still falls to the quoted-speech family — see the DROPPED block above.
+  'group membership events': [
+    '[Tue Jul 28 21:09:31 2026] Dranix has joined the group.',
+    '[Tue Jul 28 21:09:31 2026] Dranix has left the group.',
+    '[Tue Jul 28 21:09:31 2026] Dranix invites you to join a group.',
+    '[Tue Jul 28 21:09:31 2026] Dranix is now the leader of your group.'
   ],
   // Mob emotes are not SOCIAL emotes: no proper-name subject, nobody's words.
   'mob emotes': [
