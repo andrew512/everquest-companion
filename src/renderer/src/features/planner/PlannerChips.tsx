@@ -99,6 +99,23 @@ export function EraChip({ subject }: { subject: EraSubject }): JSX.Element | nul
 }
 
 /**
+ * THE CROWN (V5) — this row carries the highest tier of its focus family that the current filters
+ * left visible.
+ *
+ * Worded as "of the ones on screen" on purpose: turn the era filter off and a Velious donor may
+ * take the crown, which is honest rather than surprising. Every row at the top tier wears it — if
+ * three items carry Improved Healing III, all three ARE the best, and picking one to crown would
+ * be the planner inventing a preference between them.
+ */
+export function BestChip(): JSX.Element {
+  return (
+    <Tooltip title="The highest tier of this focus family among the donors these filters leave visible. The corpus states no focus percentages anywhere — the rank in the effect's name is the only magnitude signal there is.">
+      <Chip size="small" label="best" data-testid="planner-best-chip" color="primary" sx={CHIP_SX} />
+    </Tooltip>
+  )
+}
+
+/**
  * NO EQUIP SLOT — the R2 disqualifier, stated rather than assumed.
  *
  * An exaltation can only be socketed into an item sharing the donor's equipment slot, so a donor

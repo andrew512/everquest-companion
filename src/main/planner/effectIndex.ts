@@ -62,6 +62,7 @@ import {
   isHasteEffect,
   normalizeClasses,
   normalizeSlotTokens,
+  parseFocusEffect,
   socketTypeOf
 } from '../../shared/planner/normalize'
 import { extractionTier } from '../../shared/planner/rules'
@@ -225,6 +226,10 @@ function pageContext(
 }
 
 function donorRow(ctx: PageCtx, effect: ItemEffect, socket: SocketType): PlannerDonor {
+  // V5 — split once, here, and only for focus: the browser groups the focus tab by family and
+  // sorts tier-desc inside it, and re-parsing the name per render per row would be the same answer
+  // computed a thousand times. A non-focus row carries neither field (law 1: no family stated).
+  const rank = socket === 'focus' ? parseFocusEffect(effect.name) : null
   return {
     key: ctx.key,
     name: ctx.name,
@@ -233,6 +238,8 @@ function donorRow(ctx: PageCtx, effect: ItemEffect, socket: SocketType): Planner
     classes: [...ctx.classes],
     effect: effect.name,
     detail: effect.detail,
+    family: rank?.family,
+    familyTier: rank?.tier,
     socket,
     tierRequired: extractionTier(socket),
     hasteLocked: isHasteEffect(effect.name, effect.detail),

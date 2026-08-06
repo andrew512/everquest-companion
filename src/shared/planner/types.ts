@@ -99,6 +99,19 @@ export interface PlannerDonor {
   effect: string
   /** the parenthetical as written ("Combat, Casting Time: Instant") */
   detail?: string
+  /**
+   * V5 — the FOCUS family this effect belongs to, parsed off its own name at index build
+   * ("Improved Healing III" → "Improved Healing"). Present on focus rows ONLY: a rank in the name
+   * is the corpus's only magnitude signal and "which is best" is a focus question, so a proc's
+   * Roman numeral is deliberately left unparsed (see normalize.ts `parseFocusEffect`).
+   */
+  family?: string
+  /**
+   * The rank within `family` — 3 for "Improved Healing III", 14 for "Percussion Resonance 14",
+   * 1 for a focus name that states no rank at all. Comparable only INSIDE one family, and named
+   * apart from `tierRequired` above, which is the unrelated merge tier the effect extracts at.
+   */
+  familyTier?: number
   /** which socket this effect occupies; `combat` folded to `proc` (D2) */
   socket: SocketType
   /** merge tier required to extract it (R1: focus +1, click +2, worn +3, proc +4) */

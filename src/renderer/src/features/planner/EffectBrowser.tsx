@@ -1,11 +1,16 @@
 // planner/EffectBrowser.tsx — Effects mode: "which effect do I want, and who drops it?" (§5.2).
 //
-// THE LIST IS FLAT AND UNIFORM, and that is what lets it be windowed. Effect groups expand into
-// their donors, so the natural shape is a tree — but `useWindowedRows` is a FIXED-row-height
-// hook, and a growing list must live in a fixed-height scroll box (AGENTS.md UI conventions).
-// So the tree is flattened into one row array of one height: an effect row, followed by its donor
-// rows while it is open. Expanding is then just a longer array, and the DOM node count stays
-// bounded whether the filter matches 3 effects or 300.
+// THE LIST IS FLAT AND UNIFORM, and that is what lets it be windowed. Groups expand into their
+// donors, so the natural shape is a tree — but `useWindowedRows` is a FIXED-row-height hook, and a
+// growing list must live in a fixed-height scroll box (AGENTS.md UI conventions). So the tree is
+// flattened into one row array of one height: a HEADER row, followed by its donor rows while it is
+// open. Expanding is then just a longer array, and the DOM node count stays bounded whether the
+// filter matches 3 groups or 300.
+//
+// WHAT THE HEADERS ARE IS A CHOICE NOW, NOT A CONSTANT (V4): `plannerGroups.ts` owns the axes —
+// effect, focus family, slot, era — and this file owns none of that logic; it draws whatever
+// groups it is handed and remembers which of them are open BY GROUP ID. Switching the axis
+// therefore collapses everything, which is correct: the old ids named groups that no longer exist.
 //
 // EVERY DONOR ROW STATES ITS SOURCE, or says it has none. `sourceIndex` answers from the
 // committed mob catalog; `quest` / `playerCrafted` ride on the donor row itself; an item with
@@ -44,21 +49,28 @@ import { extractionTier } from '@shared/planner/rules'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemIconUrl } from '../../lib/ItemWindow'
 import { Tooltip } from '../../lib/Tooltip'
-import EffectFilterBar, { SOCKET_LABEL } from './EffectFilterBar'
+import EffectFilterBar from './EffectFilterBar'
 import {
   DEFAULT_FILTERS,
   classFit,
+  donorEraOf,
   filterDonors,
-  groupByEffect,
   isNonEquippable,
   useDonors,
   useEraOnly,
+  useGroupBy,
   useNonEquip,
   type DonorFilters,
-  type DonorRow,
-  type EffectGroup
+  type DonorRow
 } from './plannerData'
-import { DonorName, EraChip, NoSlotChip } from './PlannerChips'
+import {
+  SOCKET_LABEL,
+  browserRows,
+  groupDonors,
+  type BrowserRow,
+  type DonorGroup
+} from './plannerGroups'
+import { BestChip, DonorName, EraChip, NoSlotChip } from './PlannerChips'
 import { sourceIndex, sourcesFor } from './sourceIndex'
 
 const ROW_HEIGHT = 44
@@ -124,12 +136,16 @@ interface DonorLineProps {
   donor: DonorRow
   planClasses: readonly ClassAbbr[]
   planned: boolean
+  /** V5 — this row holds the top tier of its focus family among the rows that survived the filters */
+  best: boolean
+  /** the header above does not name this row's effect (any axis but `effect`), so the row does */
+  namesEffect: boolean
   onAdd: (donor: DonorRow, anchor: HTMLElement) => void
   /** deep-link this donor into the Loot drill-down; absent when the app wired no router */
   onOpenLoot?: (item: string) => void
 }
 
-function DonorLine({ donor, planClasses, planned, onAdd, onOpenLoot }: DonorLineProps): JSX.Element {
+function DonorLine({ donor, planClasses, planned, best, namesEffect, onAdd, onOpenLoot }: DonorLineProps): JSX.Element {
   const src = sourceText(donor)
   return (
     <Stack
@@ -153,6 +169,12 @@ function DonorLine({ donor, planClasses, planned, onAdd, onOpenLoot }: DonorLine
       <Typography variant="body2" component="div" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
         <DonorName name={donor.name} bold onOpen={onOpenLoot} />
       </Typography>
+      {namesEffect && (
+        <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
+          {donor.effect}
+        </Typography>
+      )}
+      {best && <BestChip />}
       <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
         {donor.slots.map((s) => (
           <Chip key={s} size="small" variant="outlined" label={s} sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.5 } }} />
@@ -188,16 +210,16 @@ function DonorLine({ donor, planClasses, planned, onAdd, onOpenLoot }: DonorLine
   )
 }
 
-// ---- one effect row ------------------------------------------------------------------
+// ---- one group header row --------------------------------------------------------------
 
-function EffectLine({
+function GroupLine({
   group,
   expanded,
   onToggle
 }: {
-  group: EffectGroup
+  group: DonorGroup
   expanded: boolean
-  onToggle: (effect: string) => void
+  onToggle: (id: string) => void
 }): JSX.Element {
   return (
     <Stack
@@ -205,7 +227,8 @@ function EffectLine({
       spacing={1}
       alignItems="center"
       data-testid="planner-effect-row"
-      onClick={() => onToggle(group.effect)}
+      data-axis={group.axis}
+      onClick={() => onToggle(group.id)}
       sx={{
         height: ROW_HEIGHT,
         px: 1,
@@ -220,8 +243,13 @@ function EffectLine({
         {expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
       </IconButton>
       <Typography variant="body2" noWrap sx={{ minWidth: 0, flexShrink: 1, fontWeight: 600 }}>
-        {group.effect}
+        {group.label}
       </Typography>
+      {group.note !== '' && (
+        <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
+          best: {group.note}
+        </Typography>
+      )}
       <Chip size="small" variant="outlined" label={SOCKET_LABEL[group.socket]} sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />
       <Chip
         size="small"
@@ -237,22 +265,6 @@ function EffectLine({
       </Typography>
     </Stack>
   )
-}
-
-// ---- the flat row model --------------------------------------------------------------
-
-type BrowserRow =
-  | { kind: 'effect'; group: EffectGroup; expanded: boolean }
-  | { kind: 'donor'; donor: DonorRow }
-
-function flatten(groups: readonly EffectGroup[], open: ReadonlySet<string>): BrowserRow[] {
-  const rows: BrowserRow[] = []
-  for (const group of groups) {
-    const expanded = open.has(group.effect)
-    rows.push({ kind: 'effect', group, expanded })
-    if (expanded) for (const donor of group.donors) rows.push({ kind: 'donor', donor })
-  }
-  return rows
 }
 
 /** Which (donor, effect) pairs the selected set already plans — the "in set" chip. */
@@ -286,6 +298,7 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
   const era = useEraOnly()
   const nonEquip = useNonEquip()
   const [filters, setFilters] = useState<DonorFilters>(DEFAULT_FILTERS)
+  const groupBy = useGroupBy(filters.socket)
   const [text, setText] = useState('')
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [pending, setPending] = useState<PendingAdd | null>(null)
@@ -303,21 +316,23 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
   // each tuple is a fresh identity nothing here depends on.
   const eraOnly = era[0]
   const showNonEquip = nonEquip[0]
-  const groups = useMemo(
-    () =>
-      groupByEffect(
-        filterDonors(donors, { ...filters, text: deferredText }, plan.classes, { eraOnly, nonEquip: showNonEquip })
-      ),
+  const axis = groupBy[0]
+  // TWO MEMOS, NOT ONE: the FILTER is what a keystroke changes, and the GROUPING then keys off the
+  // filtered array's identity — so switching the group-by axis never re-filters 1.6k rows, and a
+  // keystroke never pays for a fold it is about to redo.
+  const filtered = useMemo(
+    () => filterDonors(donors, { ...filters, text: deferredText }, plan.classes, { eraOnly, nonEquip: showNonEquip }),
     [donors, filters, deferredText, plan.classes, eraOnly, showNonEquip]
   )
-  const rows = useMemo(() => flatten(groups, open), [groups, open])
+  const groups = useMemo(() => groupDonors(filtered, axis, donorEraOf), [filtered, axis])
+  const rows = useMemo(() => browserRows(groups, open), [groups, open])
   const planned = useMemo(() => plannedPairs(plan), [plan])
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT, scrollRef })
 
-  const toggle = (effect: string): void => {
+  const toggle = (id: string): void => {
     setOpen((prev) => {
       const next = new Set(prev)
-      if (!next.delete(effect)) next.add(effect)
+      if (!next.delete(id)) next.add(id)
       return next
     })
   }
@@ -343,6 +358,7 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
         setText={setText}
         era={era}
         nonEquip={nonEquip}
+        groupBy={groupBy}
       />
 
       <Box
@@ -351,15 +367,17 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
         sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1 }}
       >
         <Box sx={{ height: win.topPad }} />
-        {rows.slice(win.start, win.end).map((row) =>
-          row.kind === 'effect' ? (
-            <EffectLine key={`e:${row.group.effect}`} group={row.group} expanded={row.expanded} onToggle={toggle} />
+        {rows.slice(win.start, win.end).map((row: BrowserRow) =>
+          row.kind === 'header' ? (
+            <GroupLine key={row.group.id} group={row.group} expanded={row.expanded} onToggle={toggle} />
           ) : (
             <DonorLine
-              key={`d:${row.donor.key}:${row.donor.effect}`}
+              key={`${row.groupId}:${row.donor.key}:${row.donor.effect}`}
               donor={row.donor}
               planClasses={plan.classes}
               planned={planned.has(`${row.donor.key}::${row.donor.effect}`)}
+              best={row.best}
+              namesEffect={row.namesEffect}
               onAdd={add}
               onOpenLoot={onOpenLoot}
             />
