@@ -24,8 +24,9 @@
  * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one; the
  * Inventory tab either fills its hosts from a real `/outputfile inventory` dump or teaches the
  * command, never both (V7 — whether this machine has a dump is not something a spec may assume);
- * and clicking one of a host's sockets lands in the effect browser filtered to that socket, that
- * slot and that host, with a chip that can be cleared (V8).
+ * clicking one of a host's sockets lands in the effect browser filtered to that socket, that slot
+ * and that host, with a chip that can be cleared (V8); and the exaltation rules card is up on a
+ * first visit, closes for good when dismissed, and comes back from the toolbar's `?` (V10).
  *
  * The one thing it deliberately does NOT assert is which effects or donors are on screen: a
  * rescrape may re-word an effect, and a spec that pins today's proc names would rot (AGENTS.md:
@@ -67,6 +68,8 @@ const HOST_WORN = '[data-testid="planner-host-worn"]'
 const INVENTORY_HELP = '[data-testid="planner-inventory-help"]'
 const SOCKET_BROWSE = '[data-testid="planner-socket-browse"]'
 const PRESET_CHIP = '[data-testid="planner-preset-chip"]'
+const EXPLAINER = '[data-testid="planner-explainer"]'
+const EXPLAINER_OPEN = '[data-testid="planner-explainer-open"]'
 const STATE_CHIP = '[data-testid="planner-state-chip"]'
 const FARM_LIST = '[data-testid="planner-farm-list"]'
 const FARM_ROW = '[data-testid="planner-farm-row"]'
@@ -152,6 +155,30 @@ async function stepCreateSet(page: Page): Promise<boolean> {
   const made = await until(async () => (await countOf(page, SET_CHIP)) > 0, 15_000)
   check('creating a set from the empty state produces a set chip and the toolbar', made)
   return made
+}
+
+/**
+ * 2b. THE RULES CARD IS UP ON A FIRST VISIT, AND DISMISSING IT STICKS (V10).
+ *
+ * The one collaborative explainer this app allows: a planner is a set of rules you plan against,
+ * and a player who does not know them cannot tell a good plan from a bad one. So it opens by
+ * default, closes for good when dismissed, and the permanent `?` brings it back — which is what
+ * makes dismissing it safe. It is dismissed on the way out so every measurement below sees the
+ * pane at the height a returning player sees.
+ */
+async function stepExplainer(page: Page): Promise<void> {
+  if (!check('the planner opens with the exaltation rules card', (await countOf(page, EXPLAINER)) > 0)) return
+  // The numbers are read from the rules, never written here — so the unlock tiers must be on it.
+  const text = (await textOf(page, EXPLAINER)).replace(/\s+/g, ' ')
+  check('…and it states the unlock tiers it reads out of the rules', /Focus at \+\d/.test(text), text.slice(0, 90))
+
+  await page.click(`${EXPLAINER} .MuiAlert-action button`, { timeout: 15_000 })
+  check('dismissing the card puts it away', await until(async () => (await countOf(page, EXPLAINER)) === 0, 8000))
+
+  await page.click(EXPLAINER_OPEN, { timeout: 15_000 })
+  check('the ? in the toolbar brings it back', await until(async () => (await countOf(page, EXPLAINER)) > 0, 8000))
+  await page.click(`${EXPLAINER} .MuiAlert-action button`, { timeout: 15_000 })
+  await until(async () => (await countOf(page, EXPLAINER)) === 0, 8000)
 }
 
 /** 3. THE EFFECT BROWSER LISTS THE COMMITTED CORPUS, in a bounded box. */
@@ -478,6 +505,7 @@ async function stepDeepLink(page: Page): Promise<void> {
 
 /** Everything downstream of "there is a set to plan into", in order. */
 async function steps(page: Page): Promise<void> {
+  await stepExplainer(page)
   if (await stepEffects(page)) {
     await stepEra(page)
     await stepNonEquip(page)

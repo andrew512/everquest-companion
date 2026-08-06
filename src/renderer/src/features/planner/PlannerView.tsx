@@ -39,6 +39,7 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
 import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses, type ClassAbbr } from '@shared/classCombo'
 import type { ExaltPlan } from '@shared/planner/types'
 import { useComboSnap } from '../profiles/ClassComboData'
@@ -49,6 +50,7 @@ import FarmList from './FarmList'
 import PlanBoard from './PlanBoard'
 import { boundClasses, detectedOffer } from './plannerClasses'
 import type { BrowsePreset } from './plannerPreset'
+import RulesExplainer, { useExplainer } from './RulesExplainer'
 import { usePlannerProgress, type PlannerProgressApi } from './plannerProgress'
 import { usePlans, type PlannerMode, type PlansApi } from './usePlans'
 
@@ -191,6 +193,56 @@ function DetectedChip({ offer, onApply }: { offer: ClassAbbr[]; onApply: () => v
   )
 }
 
+/**
+ * THE ONE NOWRAP ROW. Which set, for which classes, in which mode — plus the permanent `?` that
+ * brings the explainer back (V10), so dismissing it is never a one-way door.
+ */
+function Toolbar({
+  plans,
+  plan,
+  offer,
+  onNew,
+  onMenu,
+  onExplain
+}: {
+  plans: PlansApi
+  plan: ExaltPlan
+  /** the detected trio this pinned set disagrees with, or null (V2) */
+  offer: ClassAbbr[] | null
+  onNew: () => void
+  onMenu: (anchor: HTMLElement) => void
+  onExplain: () => void
+}): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1.5 }}>
+      <SetSwitcher plans={plans} onNew={onNew} onMenu={onMenu} />
+      <Box sx={{ flexGrow: 1, minWidth: 8 }} />
+      <ClassFilter plan={plan} plans={plans} />
+      {offer !== null && <DetectedChip offer={offer} onApply={() => plans.adoptClasses(plan.id, offer)} />}
+      <ToggleButtonGroup
+        exclusive
+        size="small"
+        value={plans.mode}
+        onChange={(_e, v: PlannerMode | null) => {
+          if (v !== null) plans.setMode(v)
+        }}
+        sx={{ flexShrink: 0 }}
+      >
+        {MODES.map((m) => (
+          <ToggleButton key={m.value} value={m.value} data-testid={`planner-mode-${m.value}`} sx={{ px: 1.5 }}>
+            {m.label}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+      <Tooltip title="How exaltation works">
+        <IconButton size="small" data-testid="planner-explainer-open" onClick={onExplain} sx={{ flexShrink: 0 }}>
+          <HelpOutlineIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </Stack>
+  )
+}
+
 // ---- empty + not-yet states ----------------------------------------------------------
 
 function NoSets({ onNew }: { onNew: () => void }): JSX.Element {
@@ -274,6 +326,7 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
   // V8 — which socket of which host the browser is filtered to, held HERE because the trip
   // crosses two modes: it is set on the Inventory tab and consumed on the Effects tab.
   const [browsing, setBrowsing] = useState<BrowsePreset | null>(null)
+  const explainer = useExplainer()
   const selected = plans.selected
 
   // What the app currently believes this character is running. An unresolved slot contributes
@@ -305,29 +358,16 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} data-testid="planner-view">
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1.5 }}>
-        <SetSwitcher plans={plans} onNew={newSet} onMenu={(menu) => setEditing({ ...NO_EDIT, menu })} />
-        <Box sx={{ flexGrow: 1, minWidth: 8 }} />
-        <ClassFilter plan={selected} plans={plans} />
-        {offer !== null && (
-          <DetectedChip offer={offer} onApply={() => plans.adoptClasses(selected.id, offer)} />
-        )}
-        <ToggleButtonGroup
-          exclusive
-          size="small"
-          value={plans.mode}
-          onChange={(_e, v: PlannerMode | null) => {
-            if (v !== null) plans.setMode(v)
-          }}
-          sx={{ flexShrink: 0 }}
-        >
-          {MODES.map((m) => (
-            <ToggleButton key={m.value} value={m.value} data-testid={`planner-mode-${m.value}`} sx={{ px: 1.5 }}>
-              {m.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </Stack>
+      <Toolbar
+        plans={plans}
+        plan={selected}
+        offer={offer}
+        onNew={newSet}
+        onMenu={(menu) => setEditing({ ...NO_EDIT, menu })}
+        onExplain={explainer.show}
+      />
+
+      {explainer.open && <RulesExplainer onDismiss={explainer.dismiss} />}
 
       <ModePane
         plan={selected}
