@@ -1,10 +1,20 @@
 // LevelingCard — "how fast am I actually progressing, right now", and the way down to the
 // Leveling tab.
 //
-// It shows DELIBERATELY LESS than that tab: no charts, no drag-selected range, no AA accounting,
-// no per-zone table. A ROW OF TILES (level, the last hour's pace, AA, next level), one sparkline
-// of that hour, and the two lines that qualify them. If you want any of the rest, that is what
-// the link is for.
+// It shows DELIBERATELY LESS than that tab: no charts, no drag-selected range, no AA ledger, no
+// per-zone table. A ROW OF TILES (level, the last hour's pace, AA, next level), one sparkline of
+// that hour, and the lines that qualify them. If you want any of the rest, that is what the link
+// is for.
+//
+// THE AA LINE IS THE ONE THING THAT KEEPS WORKING AT THE CAP. Every other number here is built
+// on stated level-bar percentages, and the game stops stating them at max level — the headline
+// becomes an em-dash and the card goes quiet exactly when AA becomes the whole game. So the same
+// window carries an AA read (completions/hr · points/hr · the inferred wait for the next one),
+// shaped by the Leveling tab's own `aaPaceLine` so the two surfaces cannot word one hour two
+// ways. It is a LINE and not a tile because the wait is a model and a tile row is where this
+// card puts facts. The wait says so in ONE WORD ('est.'): the tab's tile carries the chip and
+// the full account of what the log did and did not state, and repeating that here would be a
+// footnote where a caption belongs. No AA in the hour ⇒ no line at all, never em-dashes.
 //
 // WHY TILES AND NOT A SENTENCE (owner request, 2026-08-04). The card used to be four stacked
 // lines of prose with one big number in the middle, and the reader had to parse a sentence to
@@ -230,13 +240,28 @@ function Spark({ spark }: { spark: LevelingSpark }): JSX.Element {
 }
 
 /**
- * The two qualifying lines under the sparkline: the camp you are in now and — only when the
- * hour spans two rated zones — which of them paid better. The next-level REFUSAL rides here too,
- * because a reason is a sentence and the tile row holds only answers.
+ * The qualifying lines under the sparkline: the AA pace, the camp you are in now and — only when
+ * the hour spans two rated zones — which of them paid better. The next-level REFUSAL rides here
+ * too, because a reason is a sentence and the tile row holds only answers.
  */
 function LevelingLines({ state }: { state: OverviewLevelingState }): JSX.Element {
   return (
     <>
+      {/* No tooltip, by convention: the estimate's one-word 'est.' is the whole caveat this
+          line is allowed, and the tile that owns the number explains itself on the Leveling
+          tab. Absent entirely when the hour holds no completion. */}
+      {state.aa && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          data-testid="overview-leveling-aa"
+          title={state.aa}
+          noWrap
+          sx={{ mt: 0.5, minWidth: 0 }}
+        >
+          {state.aa}
+        </Typography>
+      )}
       {!state.eta && (
         <Tooltip title={state.etaTitle}>
           <Typography

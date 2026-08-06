@@ -34,6 +34,10 @@
 //      always did — pinned byte-for-byte, because silence the log has not explained is still
 //      idle and must never be quietly promoted to "offline".
 //
+// The card's AA LINE — the read that survives the level cap — is the same fold's other half and
+// is pinned by `overviewAaLine.test.mts`, the way the panel's shapes are by
+// `overviewLevelingTiles.test.mts`. This file is at the factoring ceiling; that is why.
+//
 // Imported RELATIVELY: node tests run through tsx with no `@shared` / `@renderer` aliases.
 
 import { test } from 'node:test'
