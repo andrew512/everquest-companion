@@ -459,6 +459,29 @@ export class EngineState {
   }
 
   /**
+   * RE-INDEX `petNames` off the world model's live pets, and report the name keys that fell out.
+   *
+   * `petNames` is not a second opinion about who your pets are — it is a fast NAME index of the
+   * world model's pet INSTANCES, which is why every path that can retire one has to put the two
+   * back in step (death does it by hand, zone rebuilds from the survivors). JOS-54 added a
+   * third: `world.claim()` retires the prior summoned pet, and a name left behind in this set
+   * would go on being admitted as yours by routing's `classify()` — the retirement would then
+   * be invisible exactly where it matters.
+   *
+   * Deliberately DERIVED rather than surgical: whatever the world model says is live is the
+   * answer, so the two can never drift. `everPet` is untouched by design — it records that a
+   * name was EVER yours (the absolute refusal `notePlayer` runs on) and a retired pet is still
+   * a pet, never a candidate player.
+   */
+  syncPetNames(): string[] {
+    const live = new Set(this.world.petInstances().map((i) => i.nameKey))
+    const dropped: string[] = []
+    for (const key of this.petNames) if (!live.has(key)) dropped.push(key)
+    for (const key of dropped) this.petNames.delete(key)
+    return dropped
+  }
+
+  /**
    * DEMOTE the charm binds whose corroboration window has closed (charmModel's PROVISIONAL_MS).
    * Driven by the log clock — called once per ingested event and once per snapshot(now) — so a
    * replay and a live tail demote at exactly the same instants. Cheap: the guard is a
