@@ -366,11 +366,14 @@ test('the two rate tiles are measurements; the estimate and the charge count are
     tiles.map((t) => [t.id, t.inferred]),
     [['rate', false], ['points', false], ['eta', true], ['potion', true]]
   )
-  // Every tile explains itself — a number with no sentence behind it is the thing this panel
-  // exists to prevent.
+  // Every tile names what it measures.
   for (const t of tiles) assert.ok(t.title.length > 0, `${t.id} has a hover sentence`)
-  // The inferred ones SAY so in their own words, not only via the chip.
-  for (const t of tiles) if (t.inferred) assert.match(t.title, /INFERRED/)
+  // …in ONE CLAUSE. The `inferred` chip is the whole stated-vs-inferred disclosure — the tooltip
+  // diet (AGENTS.md UI conventions) bans the paragraph that used to ride here.
+  for (const t of tiles) {
+    assert.ok(t.title.split(/\s+/).length <= 16, `${t.id} tooltip is a caveat again: ${t.title}`)
+    assert.ok(!/INFERRED/.test(t.title), `${t.id} footnotes its own provenance: ${t.title}`)
+  }
 })
 
 test('the potion tile is absent for a character who has never quaffed one', () => {
@@ -402,10 +405,10 @@ test('the COMPACT line says the same thing in one line, and labels the model in 
   // Both rates first and ADJACENT — they diverge only while a bottle runs, and that comparison
   // is the reading. The doubled points say a bottle is running here.
   assert.equal(line, `3.00 AA/hr · 6.00 pts/hr · next in ~5m ${AA_EST}`)
-  // The tiles carry the chip and the INFERRED sentence; the line carries neither.
+  // The tile carries the chip and the two numbers behind the estimate; the line carries one word.
   const tiles = aaPaceTiles({ events: w.aaGainEvents, points: w.aaGained, perHourActive: w.aaPerHourActive, pointsPerHourActive: w.aaPointsPerHourActive, eta: aaEta(w, gains[2].ts, prog, t1), potion: aaPotionState(gains, []) })
-  assert.match(tiles.find((t) => t.id === 'eta')?.title ?? '', /INFERRED/)
-  assert.ok(!/INFERRED/.test(line ?? ''), 'a caption cannot carry the account the tile does')
+  assert.match(tiles.find((t) => t.id === 'eta')?.title ?? '', /Mean gap over/)
+  assert.ok(!/Mean gap/.test(line ?? ''), 'a caption states the estimate, never its method')
 
   // No completion in the window ⇒ no line at all, the same rule `aaRateText` already obeys.
   const bare = rangeStats({ snap: progWithGains([], T0, t1), range: { t0: T0, t1 } })
@@ -416,5 +419,5 @@ test('a refused estimate still prints a reason, and an em-dash rather than a num
   // Observed a day later: the hour before that instant holds no completion at all.
   const tile = aaPaceTiles(paceAt(wl2, T('Jul 29 2026 19:36:00'))).find((t) => t.id === 'eta')
   assert.equal(tile?.value, NONE)
-  assert.match(tile?.title ?? '', /INFERRED/)
+  assert.match(tile?.title ?? '', /far older than this window/)
 })

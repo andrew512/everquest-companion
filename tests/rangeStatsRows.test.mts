@@ -322,7 +322,10 @@ test('witnessed kills and AA are context, and vanish when there are none', () =>
   assert.equal(witnessedText(stats({ killsWitnessed: 1204 })), '1,204 kills by others seen')
   assert.equal(aaText(stats({ aaGained: 0, aaGainEvents: 0 })), null)
   assert.equal(aaText(stats({ aaGained: 7, aaGainEvents: 5 })), '+7 AA')
-  assert.match(AA_RESPEC_CAPTION, /respec/, 'law 5: Σ gain lines is not the AA identity')
+  // The caption names the source in one phrase; the respec reservation lives in the doc
+  // comment, not on screen (AGENTS.md tooltip and caveat diet).
+  assert.match(AA_RESPEC_CAPTION, /gain lines/)
+  assert.ok(AA_RESPEC_CAPTION.split(/\s+/).length <= 6, AA_RESPEC_CAPTION)
 })
 
 // ---------------------------------------------------------------- offline (rule 4)
@@ -341,14 +344,13 @@ test('offline is SAID only where the log said it, and stays out of the idle word
   assert.ok(!/offline/i.test(activeIdleText(camped)), 'the active/idle chip never grows an offline clause')
 })
 
-test('the offline caption names its evidence, and the tooltip states the limit', () => {
-  assert.match(OFFLINE_CAPTION, /logged out/)
-  assert.match(OFFLINE_CAPTION, /camp\/login lines/, 'it says WHERE the number came from')
-  // The honesty rule this whole feature turns on: an absence in progress has no login line
-  // yet, so it cannot be seen — and the tooltip must say so rather than let the user assume
-  // that "no offline" means "online".
-  assert.match(OFFLINE_TITLE, /only known once you log back in/)
-  assert.match(OFFLINE_TITLE, /still counted as idle/)
+test('the offline caption and tooltip name the state, not the method', () => {
+  assert.equal(OFFLINE_CAPTION, 'logged out')
+  // The tooltip diet (AGENTS.md UI conventions): one clause, no account of where the number
+  // came from or how it might be wrong. The evidence rule itself lives in the doc comments.
+  assert.match(OFFLINE_TITLE, /logged out/)
+  assert.ok(OFFLINE_TITLE.split(/\s+/).length <= 10, OFFLINE_TITLE)
+  assert.ok(!/camp\/login|only known|counted as idle/.test(OFFLINE_TITLE), OFFLINE_TITLE)
   // …and the idle caption stays exactly what it was: it covers every silence the app cannot
   // attribute, which is precisely the set that must not be called offline.
   assert.equal(idleRuleCaption(IDLE_GAP_MS), 'idle = no experience, kill, or loot event for over 5 minutes')

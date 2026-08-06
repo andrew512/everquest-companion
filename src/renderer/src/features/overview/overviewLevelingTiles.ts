@@ -136,13 +136,13 @@ export function splitRate(s: string): { value: string; unit: string } {
   return i < 0 ? { value: s, unit: '' } : { value: s.slice(0, i), unit: s.slice(i + 1) }
 }
 
-/** The AA tile's caption — law 5, stated where the number is rather than in a doc. */
-const AA_TITLE =
-  'Ability points from the gain lines in this hour. A respec re-logs its purchases and the log has no refund line, so this counts what was ANNOUNCED — it is not the earned/spent identity the Leveling tab reconciles.'
+/** The AA tile's caption. Σ of the gain lines, not the earned/spent identity — that reservation
+ *  is the Leveling tab's to reconcile, and it stays out of a hover (AGENTS.md tooltip diet). */
+const AA_TITLE = 'Ability points from the gain lines in this hour.'
 
 /** The ETA tile's caption when there IS one; the blocked reasons are `etaTitle`'s job. */
 function etaTileTitle(toLevel: number, progress: number): string {
-  return `${String(Math.round(progress * 100))}% of the current level stated since your last level-up, projected forward at the last hour's pace. An estimate, never a countdown — the tile above it says what that pace is.`
+  return `${String(Math.round(progress * 100))}% of the current level since your last level-up, projected at the last hour's pace.`
 }
 
 /** Everything `levelingTiles` needs, already measured. One object so the argument list cannot

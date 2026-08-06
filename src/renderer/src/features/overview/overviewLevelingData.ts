@@ -269,38 +269,30 @@ function etaText(eta: LevelEta): string | null {
   return `~${fmtDuration(eta.ms)} to level ${eta.toLevel}`
 }
 
-/** The reason there is no estimate, in the log's own terms — one per `EtaBlocked`. */
+/** The reason there is no estimate — one clause per `EtaBlocked` (AGENTS.md tooltip diet). */
 const ETA_BLOCKED_TITLE: Record<EtaBlocked, string> = {
-  'no-ding':
-    'No level-up has been recorded yet, so how far into this level you are is unknown — the game states a percentage per gain and never your position in the bar.',
-  unstated:
-    'Experience lines since your last level-up stated no percentage, so progress into this level cannot be added up — unknown, not zero.',
-  clipped:
-    'The retained record no longer reaches back to your last level-up, so progress into this level cannot be added up.',
-  overfull:
-    'The percentages stated since your last level-up already exceed a full level, so your position in the bar is unknown.',
-  offline:
-    'Most of the last hour of the log is time you were logged out, so there is not enough play left in it to project an hour of pace from.',
-  'no-pace': 'The last hour states no levels of progress, so there is no pace to project forward.'
+  'no-ding': 'No level-up has been recorded yet, so your place in the bar is unknown.',
+  unstated: 'Experience lines since your last level-up stated no percentage — unknown, not zero.',
+  clipped: 'The retained record no longer reaches back to your last level-up.',
+  overfull: 'The percentages since your last level-up already exceed a full level.',
+  offline: 'Most of the last hour is time you were logged out.',
+  'no-pace': 'The last hour states no levels of progress.'
 }
 
 /**
- * The logged-out assumption, stated ONLY when the window actually contained a derived logout.
- * Empty otherwise, so a card that has never seen one reads exactly as it always did.
+ * The logged-out exclusion, stated ONLY when the window actually contained a derived logout —
+ * five words, because it changes what the number MEANS rather than qualifying it.
  */
 function etaOfflineClause(offlineMs: number): string {
-  return offlineMs > 0
-    ? ' The time the log says you were logged out is excluded from both the pace and the estimate, which therefore assumes you keep playing.'
-    : ''
+  return offlineMs > 0 ? ' Time logged out is excluded.' : ''
 }
 
-/** ALWAYS a sentence: the assumptions when there is an estimate, the reason when there is not. */
+/** One clause: what the estimate was measured from, or the reason there is none. */
 function etaTitleText(eta: LevelEta): string {
   if (eta.blocked !== null) return ETA_BLOCKED_TITLE[eta.blocked]
   return (
     `${Math.round(eta.progress * 100)}% of level ${eta.toLevel - 1} stated since your last level-up, ` +
-    `projected forward at the last hour's pace — same mobs, same activity, and the same share of idle ` +
-    'time that hour already contained. An estimate from stated percentages, never a countdown.' +
+    `projected at the last hour's pace.` +
     etaOfflineClause(eta.offlineMs)
   )
 }
@@ -396,19 +388,15 @@ function historyText(spans: readonly LevelSpan[]): string | null {
   return `lvl ${spans.map((s) => `${s.fromLevel}→${s.toLevel} ${fmtDelta(s.ms)}`).join(' · ')}`
 }
 
-/** The history line's tooltip: what the verdict was measured against, and the swap rule. */
+/** The history line's tooltip: what the verdict was measured against. */
 function historyTitleText(spans: readonly LevelSpan[], levelsPerHourWall: number | null): string {
   if (spans.length === 0) return ''
   const med = fmtDuration(median(spans.map((s) => s.ms)))
   const n = spans.length
   // "wall time" only while it IS wall time. Once a logout has been subtracted out of one of
   // these levels the number is online time and says so — the word follows the evidence.
-  const basis = spans.some((s) => s.offlineMs > 0)
-    ? 'online time, with the hours the log says you were logged out taken out of each level'
-    : 'wall time'
-  const base =
-    `Median ${med} per level over your last ${n} level${n === 1 ? '' : 's'}, ${basis}. ` +
-    'Never across a class swap — a swap re-reports your level with no log line, so the time either side of one is not comparable.'
+  const basis = spans.some((s) => s.offlineMs > 0) ? 'online time' : 'wall time'
+  const base = `Median ${med} per level over your last ${n} level${n === 1 ? '' : 's'}, ${basis}.`
   const now = msPerLevel(levelsPerHourWall)
   return now == null ? base : `${base} The last hour projects ${fmtDuration(now)} per level.`
 }

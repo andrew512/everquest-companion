@@ -5,8 +5,9 @@
 //
 // THE RULE THIS FILE EXISTS TO ENFORCE: which numbers are MEASURED and which are MODELLED is
 // visible on the panel, not buried in a doc. Two of the four tiles are counts the game printed;
-// two are a model over them. So every shaped value carries an `inferred` flag, and every
-// inferred one carries a sentence saying what the model is and what the log actually said.
+// two are a model over them. So every shaped value carries an `inferred` flag — and the CHIP the
+// panel draws from it is the whole disclosure (AGENTS.md tooltip diet: one word beats a
+// paragraph). The hover sentences here name what a tile measures, never how it might be wrong.
 
 import type { AaEta, AaEtaBlocked, AaPace, AaPotionState } from '@shared/aaPace'
 import type { RangeStats } from '@shared/progressionStats'
@@ -25,7 +26,7 @@ export interface AaPaceTile {
   label: string
   /** true ⇒ the panel chips it `inferred`. The two rate tiles are never inferred. */
   inferred: boolean
-  /** ALWAYS a sentence: what it measures, or what the model is and why. */
+  /** One clause: what this tile measures. Never a caveat — the `inferred` chip carries that. */
   title: string
 }
 
@@ -40,35 +41,20 @@ function rate(n: number | null, fmt: (v: number) => string): string {
   return n == null ? NONE : fmt(n)
 }
 
-const RATE_TITLE =
-  'AA completions per hour of ACTIVE time in this window, counted off the gain lines. ' +
-  'The item-shop potion cannot move this number — it doubles the points a completion pays, ' +
-  'never the experience a completion costs.'
+const RATE_TITLE = 'AA completions per hour of active time.'
 
-const POINTS_TITLE =
-  'Ability points per hour of ACTIVE time — the sum of the amounts the gain lines stated, so a ' +
-  'potion doubling is already inside it (the doubled line reads "You have gained 2 ability ' +
-  'point(s)!"). Gain lines only: a respec re-logs its purchases and refunds nothing, so points ' +
-  're-earned after one are counted again.'
+const POINTS_TITLE = 'Ability points per hour of active time.'
 
-/** The reason there is no estimate, in the log's own terms — one per `AaEtaBlocked`. */
+/** The reason there is no estimate — one clause per `AaEtaBlocked`. */
 const ETA_BLOCKED_TITLE: Record<AaEtaBlocked, string> = {
-  'no-pace':
-    'This window holds fewer than two AA completions, so it states no gap between them to project forward — and the log carries no AA-experience percentage anywhere, so there is nothing else to estimate from. INFERRED numbers need evidence; this window has none.',
-  stale:
-    'The last AA completion is far older than this window’s rhythm between them, so that rhythm no longer describes what is happening. An INFERRED estimate here would read "due now" indefinitely.'
+  'no-pace': 'Fewer than two AA completions here, so there is no gap to project forward.',
+  stale: 'The last completion is far older than this window’s rhythm between them.'
 }
 
-/** The estimate's tooltip: the method, its inputs, and the fact that the log states none of it. */
+/** The estimate's tooltip: the two numbers it is made of, nothing else. */
 function etaTitle(meanIntervalMs: number, samples: number, sinceLastMs: number, overdue: boolean): string {
-  const base =
-    'INFERRED. The game never states how far into an AA you are — there is no AA-experience line ' +
-    `at all — so this is the mean gap between the ${samples} completions in this window ` +
-    `(${fmtDuration(meanIntervalMs)} of online wall time each) minus the ${fmtDuration(sinceLastMs)} ` +
-    'already waited. It assumes the same mobs and the same pace, and it counts the same share of ' +
-    'medding and looting the window already contained. Hours the log says you were logged out are ' +
-    'excluded from both.'
-  return overdue ? `${base} You are already past that mean gap, so the next one is due.` : base
+  const base = `Mean gap over ${samples} completions (${fmtDuration(meanIntervalMs)}), minus the ${fmtDuration(sinceLastMs)} already waited.`
+  return overdue ? `${base} Already past that gap.` : base
 }
 
 function etaTile(eta: AaPace['eta']): AaPaceTile {
@@ -92,22 +78,10 @@ function etaTile(eta: AaPace['eta']): AaPaceTile {
   }
 }
 
-/**
- * The potion tile's tooltip: the line the log DID print, the rule that is a model, and the
- * evidence the stated points give it on this very bottle.
- */
+/** The potion tile's tooltip: the rule, and what this bottle has paid so far. */
 export function potionTitle(potion: AaPotionState): string {
-  const evidence =
-    potion.burnedPoints.length > 0
-      ? ` So far this bottle's completions paid ${potion.burnedPoints.join(', ')} — the doubling, as the game printed it.`
-      : ' This bottle has paid for nothing yet.'
-  return (
-    'INFERRED count. The log states the quaff ("You are filled with the spirit of alternate ' +
-    `adventure.") and nothing else — never the charges, never a countdown, and nothing when the ` +
-    `last one burns. ${String(AA_POTION_CHARGES)} completions per bottle is measured, not assumed: over the whole log ` +
-    'every quaff is followed by exactly five doubled gain lines, with no exception. Each ' +
-    `completion since the quaff burns one.${evidence}`
-  )
+  const paid = potion.burnedPoints.length > 0 ? ` Paid so far: ${potion.burnedPoints.join(', ')}.` : ''
+  return `Each completion since the quaff burns a charge.${paid}`
 }
 
 /** The potion tile, or none at all — a character who has never quaffed one is told nothing. */
@@ -165,11 +139,9 @@ export function aaPaceCaption(pace: AaPace): string {
 /**
  * The one word an INFERRED number wears on a caption line.
  *
- * The tiles above can afford a chip AND a sentence; a line under a glance card can afford
- * neither without becoming a footnote, and the UI conventions are explicit that when
- * stated-vs-inferred genuinely matters, one word beats a caveat. This is that word. The full
- * account — what the model is, what the log actually stated — stays on the tile that owns the
- * number, one click away on the Leveling tab.
+ * The tiles above can afford a chip; a line under a glance card cannot, and the UI conventions
+ * are explicit that when stated-vs-inferred genuinely matters, one word beats a caveat. This is
+ * that word.
  */
 export const AA_EST = 'est.'
 

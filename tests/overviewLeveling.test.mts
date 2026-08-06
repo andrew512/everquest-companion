@@ -257,8 +257,10 @@ test('next level: the estimate, and every assumption it rests on', () => {
   const state = overviewLeveling(snap)
   assert.equal(state.eta, '~1h 12m to level 44')
   assert.ok(state.etaTitle.includes('29% of level 43'), state.etaTitle)
-  assert.ok(state.etaTitle.includes('idle'), 'the tooltip must admit the idle time it assumed')
-  assert.ok(state.etaTitle.includes('never a countdown'), state.etaTitle)
+  assert.ok(state.etaTitle.includes("last hour's pace"), state.etaTitle)
+  // One clause, no assumption inventory: the `~` on the value is the estimate marker
+  // (AGENTS.md tooltip and caveat diet).
+  assert.ok(state.etaTitle.split(/\s+/).length <= 16, state.etaTitle)
 })
 
 test('next level: no ding observed ⇒ no estimate, because the bar position is unknowable', () => {
@@ -413,7 +415,9 @@ test('the card wires the estimate, the history and the verdict together', () => 
   // median 4h per level; the last hour projects 1/0.59 ≈ 1.7h per level — comfortably ahead.
   assert.equal(state.verdict, 'ahead of your recent pace')
   assert.ok(state.historyTitle.includes('Median 4h 0m per level'), state.historyTitle)
-  assert.ok(state.historyTitle.includes('class swap'), state.historyTitle)
+  // The class-swap rule is enforced by `recentLevelSpans` and documented there; the tooltip
+  // states the median and the comparison, nothing else (AGENTS.md tooltip and caveat diet).
+  assert.ok(!state.historyTitle.includes('class swap'), state.historyTitle)
   assert.equal(state.eta, '~41m to level 41')
 })
 
@@ -471,7 +475,6 @@ test('a logout inside the hour is offline, not idle — and the rates divide by 
   assert.equal(state.offline, '30m offline')
   assert.equal(state.eta, '~1h 41m to level 44')
   assert.ok(state.etaTitle.includes('logged out is excluded'), state.etaTitle)
-  assert.ok(state.etaTitle.includes('assumes you keep playing'), state.etaTitle)
 })
 
 test('an hour that is mostly an empty chair states no ETA, and says which hole caused it', () => {
@@ -521,7 +524,7 @@ test('the per-level history subtracts logouts from BOTH sides of the comparison'
   assert.equal(state.verdict, 'about your recent pace')
   assert.ok(state.historyTitle.includes('Median 2h 0m per level'), state.historyTitle)
   assert.ok(state.historyTitle.includes('online time'), state.historyTitle)
-  assert.ok(!state.historyTitle.includes(', wall time'), state.historyTitle)
+  assert.ok(!state.historyTitle.includes('wall time'), state.historyTitle)
 })
 
 test('REGRESSION: a logout outside the hour changes nothing the card says', () => {
