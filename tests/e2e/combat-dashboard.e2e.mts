@@ -29,15 +29,10 @@
  *
  * Run: `npm run test:e2e`
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
-import { rmSync } from 'node:fs'
+import type { ElectronApplication, Page } from 'playwright-core'
 import {
-  ARTIFACTS,
   HYDRATE_TIMEOUT_MS,
   LIVE_LINE_WAIT_MS,
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   checkChartHover,
@@ -47,7 +42,6 @@ import {
   combatText,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   listedValues,
   narrowPanelCheck,
@@ -64,7 +58,7 @@ import {
   waitForCombatText,
   type Snap
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 import { meterRows } from './drill.mjs'
 import { stepFrozenList, stepHealingDimension, stepRoundsPanel } from './combatSteps.mjs'
 
@@ -505,17 +499,9 @@ async function stepResponsive(app: ElectronApplication, page: Page): Promise<voi
 
 async function main(): Promise<void> {
   buildIfStale()
-  rmSync(ARTIFACTS, { recursive: true, force: true })
-  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -551,7 +537,7 @@ async function main(): Promise<void> {
     if (failures.length) await dumpArtifacts(page, 'combat-dashboard-FAIL')
     else await dumpArtifacts(page, 'combat-dashboard-pass')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()

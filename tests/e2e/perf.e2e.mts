@@ -17,26 +17,21 @@
  * ordered, never to equal a figure that depends on the machine this ran on.
  *
  * Run: `node --import tsx tests/e2e/perf.e2e.mts` (it is also in tests/e2e/run-all.mts).
- * Never run it beside another spec — they share the userData singleton.
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   reportRun,
   sleep
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 
 const CHIP = '[data-testid="perf-chip"]'
 const POPOVER = '[data-testid="perf-popover"]'
@@ -90,16 +85,6 @@ function textOf(page: Page, selector: string): Promise<string> {
     (sel) => (document.querySelector(sel) as HTMLElement | null)?.innerText ?? '',
     selector
   )
-}
-
-function launch(): Promise<ElectronApplication> {
-  return electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
 }
 
 /**
@@ -247,8 +232,8 @@ async function stepStartupPane(page: Page): Promise<void> {
 
 /** THE FILE. Written on every launch, HUD or no HUD — this is the "the launch you wish you had
  *  profiled is the one that already happened" promise, asserted against real bytes. */
-function stepProfileFile(): void {
-  const path = join(USER_DATA, 'perf-startup.json')
+function stepProfileFile(userData: string): void {
+  const path = join(userData, 'perf-startup.json')
   let profile: Profile | null = null
   try {
     profile = JSON.parse(readFileSync(path, 'utf8')) as Profile
@@ -316,11 +301,14 @@ function stepBlockProbe(block: BlockStats | undefined): void {
 
 async function main(): Promise<void> {
   buildIfStale()
-  // A genuinely fresh install: "absent by default" is only meaningful on one.
-  await freshUserData()
+  // A dir this spec OWNS, because the last assertion reads a file out of it AFTER the app that
+  // wrote it has exited — `launchApp()`'s own dir is deleted on close, which is exactly right for
+  // every spec that has no such reading to do. (Brand-new either way: "absent by default" is only
+  // meaningful on a genuinely fresh install.)
+  const userData = makeUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1), fresh userData — Performance spec…')
-  const app: ElectronApplication = await launch()
+  const { app, close } = await launchApp({ userData })
   let page: Page | null = null
   const consoleErrors: string[] = []
   try {
@@ -339,12 +327,13 @@ async function main(): Promise<void> {
     await stepStartupPane(page)
     if (failures.length) await dumpArtifacts(page, 'perf-FAIL')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   // Read the file AFTER the app has quit: the profile is written when the last phase lands, and
   // a quit-time flush covers a launch that never got there.
-  stepProfileFile()
+  stepProfileFile(userData)
+  await removeUserData(userData)
 
   // A missing IPC handler shows up here first (`invoke` rejects into an unhandled rejection).
   check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

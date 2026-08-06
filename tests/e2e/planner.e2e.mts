@@ -28,16 +28,12 @@
  *
  * Run: `npm run test:e2e`.
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import {
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   pageOverflow,
@@ -45,7 +41,7 @@ import {
   reportRun,
   sleep
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 
 const NAV = '[data-testid="nav-planner"]'
 const VIEW = '[data-testid="planner-view"]'
@@ -385,18 +381,11 @@ async function steps(page: Page): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  // See the header: a stored set (or a remembered mode) would make the empty-state assertion
-  // vacuous. ARTIFACTS is deliberately not wiped.
-  await freshUserData()
 
+  // See the header: a stored set (or a remembered mode) would make the empty-state assertion
+  // vacuous — this launch's userData dir has never held either.
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Planner spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -414,7 +403,7 @@ async function main(): Promise<void> {
     if (failures.length) await dumpArtifacts(page, 'planner-FAIL')
     else await dumpArtifacts(page, 'planner-pass')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()

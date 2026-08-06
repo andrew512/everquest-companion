@@ -37,22 +37,18 @@
  *
  * Run: `npm run test:e2e` (or `node --import tsx tests/e2e/voice-alerts.e2e.mts`).
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import {
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   reportRun,
   sleep
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 
 const VOICE_PANEL = '[data-testid="pref-voice"]'
 /** The RETIRED master switch. Asserted to be absent — see the header. */
@@ -393,16 +389,9 @@ async function stepFire(page: Page, name: string): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Voice alerts spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -427,7 +416,7 @@ async function main(): Promise<void> {
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'voice-alerts-FAIL')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()

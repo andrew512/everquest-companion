@@ -21,22 +21,18 @@
  *
  * Run: `npm run test:e2e` (or `node --import tsx tests/e2e/toast.e2e.mts`).
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import {
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   reportRun,
   sleep
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 
 /** A Sky reward that exists in the committed item DB, so the card resolves with NO network. */
 const REWARD = 'Shining Metallic Robes'
@@ -275,16 +271,9 @@ async function stepQuestAnchor(mainPage: Page, toast: Page): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1) — celebration toasts spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -323,7 +312,7 @@ async function main(): Promise<void> {
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'toast-FAIL')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()

@@ -135,11 +135,21 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   - `git status --porcelain | grep '^[MADR] '` BEFORE every commit — the
     index is shared and a sibling's staged deletion WILL ride your commit
     (6db8790 swept one; its wave's later commit completed it).
-  - **e2e is SINGLE-FLIGHT per checkout** (USER_DATA hashes ROOT):
-    concurrent runs EPERM-destroy each other and every tally from a
-    contended window is NOISE — 5/13 and 6/13 runs passed 13/13 clean
-    minutes later with zero code change. Serialize; the integrator's final
-    run is the one that counts. (Lockfile chip pending.)
+  - **e2e runs PARALLEL and from a worktree** (wave E1,
+    docs/plans/e2e-parallel.md). The isolation unit is ONE LAUNCH — a
+    `mkdtempSync` userData dir per `launchApp()`, artifacts under
+    `artifacts/<runId>/<spec>/` — so the old single-flight law is retired:
+    concurrent runs no longer EPERM-destroy each other (that is what made
+    5/13 and 6/13 tallies pure noise). The runner discovers `*.e2e.mts`,
+    takes a name filter (`npm run test:e2e -- leveling`), caps each spec at
+    5 min, prints per-spec times and writes `artifacts/<runId>/summary.json`;
+    `--serial` remains for debugging. `node_modules` is resolved, not
+    joined, so a worktree with no install runs the suite. MEASURED
+    2026-08-05: two full suites racing from one worktree, 12/13 each at
+    179.6 s and 179.4 s wall (solo 171.4 s; serial was ~28 min), zero EPERM,
+    identical single red. That red — leveling's chart-drag range panel —
+    reproduces on the pre-E1 harness too; remaining reds are E2/E3's
+    business (the live log is still the input).
   - **The awaiting-sample law generalizes**: no file format, log
     annotation, or era claim ships from imagination — outputs kinds refuse
     typed until a real fixture graduates them; Double Bow Shot waits for a

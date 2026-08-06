@@ -28,24 +28,32 @@
  *
  * Run: `npm run test:e2e` (or `node --import tsx tests/e2e/overlay-sync.e2e.mts`).
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import {
   HYDRATE_TIMEOUT_MS,
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   reportRun,
   sleep,
   snapshot
 } from './appHarness.mjs'
-import { mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+
+/** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
+interface OverlayBridge {
+  getOverlayState: () => Promise<Record<string, boolean>>
+  toggleOverlay: (k: string) => Promise<boolean>
+}
+
+function overlayState(page: Page): Promise<Record<string, boolean>> {
+  return page.evaluate(() =>
+    (window as unknown as { eq: OverlayBridge }).eq.getOverlayState()
+  )
+}
 
 /** The sentinel every fight-scoped surface starts on (shared/fightSelection.ts). */
 const LIVE = '__live__'
@@ -242,20 +250,41 @@ async function stepLockedSelector(overlay: Page): Promise<void> {
   await sleep(500)
 }
 
+/**
+ * LAUNCH 1 EXISTS TO LEAVE STATE BEHIND. This spec is written against an install that already
+ * has an overlay open — its ask-first toggle below is exactly that assumption — and it used to
+ * get one by inheriting whatever the previous spec left in the shared userData dir. That is not
+ * inheritance, it is luck. So the spec now MAKES its own history: open the fight overlay through
+ * the app's own door, quit, and hand launch 2 the same dir.
+ */
+async function seedOverlayOpen(userData: string): Promise<void> {
+  console.log('launch 1: opening the fight overlay, so launch 2 starts from an install that has one…')
+  const { app, close } = await launchApp({ userData })
+  try {
+    const page = await mainWindow(app)
+    await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
+    await page.evaluate(async () => {
+      const eq = (window as unknown as { eq: OverlayBridge }).eq
+      const state = await eq.getOverlayState()
+      if (!state.fight) await eq.toggleOverlay('fight')
+    })
+    // The open-state is written by main when the window is created; give that write its beat.
+    await sleep(1_000)
+  } finally {
+    await close()
+  }
+}
+
 async function main(): Promise<void> {
   buildIfStale()
-  // NO userData WIPE, deliberately. Nothing this spec asserts is a fresh-install fact: the global
-  // fight selection is EPHEMERAL by design (it resets to the sentinel every launch whatever is on
-  // disk), and the overlay's lock is set explicitly below. Wiping would only make this spec
-  // hostile to whatever else is holding the shared e2e dir.
-  console.log('launch: hidden Electron (EQ_E2E=1) — overlay/panel sync spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  // A dir shared by this spec's TWO launches and nothing else: the overlay's open-state is
+  // PERSISTED, and running against an install that already carries one is the point (see
+  // seedOverlayOpen). The fight SELECTION is ephemeral by design and needs nothing from disk.
+  const userData = makeUserData()
+  await seedOverlayOpen(userData)
+
+  console.log('launch 2: hidden Electron (EQ_E2E=1) — overlay/panel sync spec…')
+  const { app, close } = await launchApp({ userData })
 
   let page: Page | null = null
   try {
@@ -271,14 +300,14 @@ async function main(): Promise<void> {
       throw new Error('still hydrating — nothing below can be asserted')
     }
 
-    // Open the fight overlay through the app's own menu door, exactly as the TitleBar does — but
-    // ASK FIRST. `overlay:toggle` is a toggle, and an overlay's open-state is PERSISTED, so a
-    // previous run that left it open would have this spec close the window it is about to drive.
-    // (This spec deliberately does not wipe userData; see the note in main().)
+    // ASK, NEVER TOGGLE BLIND. `overlay:toggle` is a toggle and the open-state is PERSISTED, so a
+    // spec that toggled unconditionally would close the very window launch 1 opened for it.
+    check(
+      'the overlay launch 1 opened is still open in launch 2 — the open-state persists',
+      (await overlayState(page)).fight === true
+    )
     await page.evaluate(async () => {
-      const eq = (window as unknown as {
-        eq: { getOverlayState: () => Promise<Record<string, boolean>>; toggleOverlay: (k: string) => Promise<boolean> }
-      }).eq
+      const eq = (window as unknown as { eq: OverlayBridge }).eq
       const state = await eq.getOverlayState()
       if (!state.fight) await eq.toggleOverlay('fight')
     })
@@ -304,7 +333,8 @@ async function main(): Promise<void> {
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'overlay-sync-FAIL')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
+    await removeUserData(userData)
   }
 
   reportRun()

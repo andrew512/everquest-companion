@@ -68,6 +68,7 @@ import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 // Console passthroughs (no prefix, no reformatting) — the ONE module in src/main that owns
 // the console. The default sinks below stay byte-identical to the console.* calls they were.
+import { E2E } from './e2e'
 import { logConsoleError, logInfo } from './errorLog'
 
 /** The scheme the renderer asks for. */
@@ -378,6 +379,22 @@ export interface ImageCacheOptions {
 const NOT_FOUND = (): GlobalResponse => new Response(null, { status: 404, statusText: 'Not Found' })
 
 /**
+ * A 1×1 transparent PNG — the ONLY thing a cache miss produces under `EQ_E2E`.
+ *
+ * Network-off is half the reason (an integration test must not depend on a volunteer wiki being
+ * reachable, and must not send it traffic either); the other half is that a 404 is not silent.
+ * Chromium logs "Failed to load resource: 404" to the renderer console for every `<img>` that
+ * gets one, and `no renderer console errors` is an assertion 8 specs make. Serving a real 200
+ * with zero bytes of meaning keeps that assertion about the APP — which is what it claims to be
+ * — instead of about which icons some wiki happens to host today. Icon PIXELS are not the system
+ * under test in any e2e spec; that they are requested at all is what these specs care about.
+ */
+const E2E_BLANK_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64'
+)
+
+/**
  * The rejection handler both `unlink` cleanups use. Deliberately silent: each one is
  * BEST-EFFORT tidying (a leftover `.tmp`, a corrupt entry we are re-fetching anyway), the
  * outcome that actually matters has already been decided, and a failed cleanup gives the
@@ -482,7 +499,12 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
       }
     }
 
-    // 2. Miss — fetch once, dedupe concurrent askers.
+    // 2. Miss. Under EQ_E2E a miss ENDS here, as a blank 200 — no fetch, no console error.
+    //    Negatives are deliberately uncached (see the header), so a cold e2e userData dir means
+    //    EVERY icon is a live fetch, which is what made `no renderer console errors` a network
+    //    assertion in disguise. Same gate feedback and telemetry already obey (src/main/e2e.ts);
+    //    see E2E_BLANK_PNG for why the answer is 200-and-empty rather than 404.
+    if (E2E) return imageResponse(E2E_BLANK_PNG, 'image/png')
     const key = cacheStem(req)
     let pending = inFlight.get(key)
     if (!pending) {

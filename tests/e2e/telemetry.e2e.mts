@@ -22,26 +22,21 @@
  * schema-legal events, never to hold N of them.
  *
  * Run: `node --import tsx tests/e2e/telemetry.e2e.mts` (it is also in tests/e2e/run-all.mts).
- * Never run it beside another spec — they share the userData singleton.
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   reportRun,
   sleep
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 
 const NOTICE = '[data-testid="telemetry-notice"]'
 const TEXT = '[data-testid="telemetry-notice-text"]'
@@ -53,7 +48,7 @@ const SWITCH = '[data-testid="pref-telemetry-enabled"] input'
 /** `useViewDwell` ignores anything under a second — a pass-through is not a visit. */
 const DWELL_MS = 1_400
 /**
- * The settings file inside `USER_DATA`, spelled out rather than imported: `STORE_NAME` lives in
+ * The settings file inside the launch's userData, spelled out rather than imported: `STORE_NAME` lives in
  * src/main/channel.ts, which imports `electron` at module scope and therefore cannot be loaded by
  * a plain node process. tests/storeMigrations.test.mts hardcodes the same name for the same reason.
  */
@@ -83,16 +78,6 @@ function textOf(page: Page, selector: string): Promise<string> {
     (sel) => (document.querySelector(sel) as HTMLElement | null)?.innerText ?? '',
     selector
   )
-}
-
-function launch(): Promise<ElectronApplication> {
-  return electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
 }
 
 // ---- launch 1: the first run --------------------------------------------------------------
@@ -255,12 +240,13 @@ async function stepOptOut(page: Page): Promise<void> {
  * It exists to SPLIT the failure that `stepPersisted` reports. "Still off after relaunch" is one
  * assertion over two very different mechanisms — did the app write the answer, and did the answer
  * survive until the next process read it — and when it failed, it could not say which. (It was
- * the second: a neighbouring checkout's spec, sharing the machine-wide temp userData dir this
- * harness used to hardcode, wiped the file in between. See USER_DATA in appHarness.mts.) With
- * this step, a write bug fails here and an environment eating the file fails only below.
+ * the second: a neighbouring spec, sharing the one userData dir this harness used to hand every
+ * launch, wiped the file in between. The dir below is minted by THIS spec and shared only with
+ * its own launch 4.) With this step, a write bug fails here and an environment eating the file
+ * fails only below.
  */
-function stepOnDisk(): void {
-  const path = join(USER_DATA, `${STORE_NAME}.json`)
+function stepOnDisk(userData: string): void {
+  const path = join(userData, `${STORE_NAME}.json`)
   let telemetry: unknown
   try {
     telemetry = (JSON.parse(readFileSync(path, 'utf8')) as { telemetry?: unknown }).telemetry
@@ -392,18 +378,18 @@ function watch(page: Page, consoleErrors: string[]): void {
 async function firstRun(
   label: string,
   errors: string[],
-  step: (p: Page) => Promise<void>
+  step: (p: Page) => Promise<void>,
+  userData?: string
 ): Promise<void> {
-  await freshUserData()
   console.log(label)
-  const app = await launch()
+  const { app, close } = await launchApp({ userData })
   try {
     const page = await mainWindow(app)
     watch(page, errors)
     if (await stepNoticeShown(page)) await step(page)
     if (failures.length) await dumpArtifacts(page, `telemetry-FAIL-${label.split(':')[0].replace(/\s+/g, '-')}`)
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 }
 
@@ -415,17 +401,22 @@ async function main(): Promise<void> {
   buildIfStale()
   const consoleErrors: string[] = []
 
+  // Launches 1 and 2 each take a dir of their own (that IS the fresh install). Launches 3 and 4
+  // share one that this spec owns and names explicitly, because the assertion between them is
+  // that the dir OUTLIVES the process — the one thing a per-launch dir must not do by itself.
+  const restartData = makeUserData()
+
   await firstRun('launch 1: hidden Electron (EQ_E2E=1), fresh userData — the bar, and dismissing it…', consoleErrors, async (page) => {
     await stepBarShape(page)
     await stepDismissKeepsOn(page)
   })
   await firstRun('launch 2: fresh userData — the Details link…', consoleErrors, stepDetailsOpensPane)
-  await firstRun('launch 3: fresh userData — opting out…', consoleErrors, stepOptOut)
+  await firstRun('launch 3: fresh userData — opting out…', consoleErrors, stepOptOut, restartData)
 
-  stepOnDisk()
+  stepOnDisk(restartData)
 
   console.log('launch 4: same userData as launch 3 — does the answer survive a restart…')
-  const app = await launch()
+  const { app, close } = await launchApp({ userData: restartData })
   try {
     const page = await mainWindow(app)
     watch(page, consoleErrors)
@@ -436,7 +427,8 @@ async function main(): Promise<void> {
     await stepCollects(page)
     if (failures.length) await dumpArtifacts(page, 'telemetry-FAIL-restart')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
+    await removeUserData(restartData)
   }
 
   // A missing IPC handler shows up here first (`invoke` rejects into an unhandled rejection).
