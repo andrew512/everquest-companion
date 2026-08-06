@@ -94,6 +94,9 @@ export interface Snap {
   segments: { kind: string; id: string; name: string; total: number }[]
   zoneSessions: { id: string; total: number }[]
   recent: unknown[]
+  /** "IS THIS THING YOURS?" (JOS-47/49) — what MAIN believes there is to ask about, which the
+   *  surface gate then decides whether to render. Both halves are asserted separately. */
+  petClaims: { candidates: { key: string; name: string; why: string }[]; claimed: string[] }
 }
 
 export function snapshot(page: Page): Promise<Snap> {

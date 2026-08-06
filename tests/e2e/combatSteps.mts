@@ -24,6 +24,7 @@ import {
   listedValues,
   note,
   openPicker,
+  openSelectorValues,
   settle,
   settleCount,
   settleGone,
@@ -31,7 +32,15 @@ import {
   type Snap
 } from './appHarness.mjs'
 import { drilled, meterRows } from './drill.mjs'
-import { PULL_DAMAGE, PULL_LINES, PULL_TARGET, playPull } from './gameplay.mjs'
+import {
+  PET_NAME,
+  PET_PULL_LINES,
+  PULL_DAMAGE,
+  PULL_LINES,
+  PULL_TARGET,
+  playPetPull,
+  playPull
+} from './gameplay.mjs'
 import type { FixtureLog } from './logFixture.mjs'
 
 const TOGGLE = '[data-testid="direction-toggle"]'
@@ -398,4 +407,72 @@ export async function stepMeterScope(page: Page): Promise<void> {
     await settle(label, (t) => t !== was, { timeoutMs: 8_000 })
   }
   check('the meter is left on its Group default', (await label()).startsWith('Group'), await label())
+}
+
+/**
+ * THE PET QUESTION, AND WHERE IT MAY BE ASKED (JOS-49) — the last step of the run, deliberately,
+ * because it opens a fight and leaves it open.
+ *
+ * The owner's report was a meter walled with "your pet?" rows: the offer was fed by the FULL
+ * historical replay and rendered on any selection at all, so questions about pets from days ago
+ * stood over a fight from this afternoon. Main's currency gate and the surface gate are separate
+ * fixes, and this step separates them on purpose — it drives the app to a state where MAIN still
+ * holds a live question and the SURFACE, showing a finalized fight, refuses to ask it. That
+ * distinction is invisible to a unit test and is the whole shape of the bug.
+ *
+ * The pet is written by the harness (gameplay.playPetPull): a proper-named entity that fights the
+ * two mobs you fight, never swings at you, and speaks one of the six pet-voiced sentences. Its
+ * damage is exactly what `classify()` drops on the floor, which is the honest definition of what
+ * the user is missing.
+ */
+export async function stepPetClaimOffer(page: Page, log: FixtureLog): Promise<void> {
+  const OFFER = '[data-testid="pet-claim-offer"]'
+  // Earlier steps leave a FINALIZED fight selected (the picker and the search both land on one).
+  // Return to the head row first: everything below is about which selection is showing.
+  await openPicker(page)
+  await page.click('li[data-value="__live__"]', { timeout: 15_000 })
+  await closePicker(page)
+
+  const written = playPetPull(log)
+  check('the harness wrote the unbound pet into the tailed log', written === PET_PULL_LINES, `${String(written)} lines`)
+
+  // MAIN's half: the detector saw it, cleared the say tier's bar, and is asking.
+  const asked = await settle(
+    () => snapshot(page),
+    (s) => s.petClaims.candidates.some((c) => c.name === PET_NAME),
+    { timeoutMs: 20_000 }
+  )
+  const cand = asked.petClaims.candidates.find((c) => c.name === PET_NAME)
+  const names = (s: Snap): string => s.petClaims.candidates.map((c) => c.name).join(', ') || 'none'
+  if (!check('the engine asks about the unbound pet fighting beside you', !!cand, names(asked))) return
+  check('…on the strength of the pet-voiced line it spoke', cand?.why === 'say', cand?.why ?? '—')
+
+  // THE SURFACE's half, part one: the live fight is showing, so the question is on screen.
+  const shown = await settleCount(page, OFFER, { timeoutMs: 15_000 })
+  check('the question renders above the meter while the LIVE fight is selected', shown === 1, `${String(shown)} offer(s)`)
+
+  // …part two, and the regression: select a FINALIZED fight and the question must go, even
+  // though main still holds it. Before JOS-49 this rendered on every selection there was.
+  const listed = await openSelectorValues(page)
+  const past = listed.find((v) => v !== '__live__')
+  if (!past) {
+    check('the Fight-scope dropdown offers a finalized fight to select', false, listed.join(', ') || 'none')
+    return
+  }
+  await openPicker(page)
+  await page.click(`li[data-value="${past}"]`, { timeout: 15_000 })
+  await closePicker(page)
+  check(
+    'picking a finalized fight takes the question off the screen',
+    await settleGone(page, OFFER, { timeoutMs: 15_000 }),
+    `selection=${past}`
+  )
+  // The two gates, told apart: nothing was answered, denied or forgotten — the engine is still
+  // asking, and only the surface declined to put the question over a fight that is over.
+  const still = await snapshot(page)
+  check(
+    '…and it is the SURFACE that declined — main is still asking',
+    still.petClaims.candidates.some((c) => c.name === PET_NAME),
+    names(still)
+  )
 }

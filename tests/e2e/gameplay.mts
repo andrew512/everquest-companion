@@ -98,6 +98,48 @@ export async function playPull(
 }
 
 /**
+ * THE UNBOUND PET, SCRIPTED (JOS-49) — an entity the log never says is yours, fighting what you
+ * are fighting, so the meter has to ASK.
+ *
+ * WHY IT NEEDS ITS OWN PULL: the candidate detector's anti-coincidence rule is TWO shared
+ * targets (petCandidates.ts MIN_SHARED_TARGETS — sharing one mob is what everybody in a
+ * contested camp does; following you to a second one is what a pet does), so the ordinary
+ * single-mob `playPull` cannot produce one however long it runs. This writes two mobs.
+ *
+ * EVERY SHAPE IS REAL. The pet's melee lines are Jaber's, verbatim in form
+ * (`Jaber slashes a greater kobold for 21 points of damage.` — tests/fixtures/p2-pet-arc-bound.log),
+ * and `Following you, Master.` is one of the six pet-voiced sentences the whole-log sweep
+ * enumerated (shared/logScrub.ts PET_SAY_LINES). Both mobs are ones the owner's log has him
+ * fighting in Nagafen's Lair, which is the fixture's own zone.
+ *
+ * THE SAY IS WHAT KEEPS THIS SHORT: with a pet-voiced say in hand the volume bar drops from 20
+ * landed hits to 3, so the offer stands after six lines instead of forty. It deliberately does
+ * NOT write a killing blow — the fight must still be OPEN, because "the live selection" is the
+ * thing under test.
+ */
+export const PET_NAME = 'Vebarn'
+
+/** The second mob, so the pet has TWO shared targets. Nagafen's Lair, like `PULL_TARGET`. */
+export const PET_SECOND_TARGET = 'a greater kobold'
+
+/** Every line `playPetPull` writes — stated so the caller asserts a number, not a hope. */
+export const PET_PULL_LINES = 6
+
+/** Play an unbound pet fighting beside you, and leave the fight open. Returns lines written. */
+export function playPetPull(log: FixtureLog): number {
+  const now = Date.now()
+  const petHit = (verb: string, target: string, amount: number): string =>
+    `${PET_NAME} ${verb} ${target} for ${String(amount)} points of damage.`
+  let written = 0
+  written += log.appendAt(new Date(now - 3000), `You crush ${PET_SECOND_TARGET} for 37 points of damage.`)
+  written += log.appendAt(new Date(now - 2000), petHit('slashes', PET_SECOND_TARGET, 21))
+  written += log.appendAt(new Date(now - 1000), petHit('cleaves', PET_SECOND_TARGET, 52))
+  written += log.appendAt(new Date(now - 1000), `You crush ${PULL_TARGET} for 41 points of damage.`)
+  written += log.appendAt(new Date(now), petHit('slashes', PULL_TARGET, 46), `${PET_NAME} says, 'Following you, Master.'`)
+  return written
+}
+
+/**
  * The self `/who` row — the ONE line the log ever prints that states the class loadout
  * (AGENTS.md: keyed on the tailed character's name, never a constant; the scrub exempts the
  * user's own row for exactly this reason).

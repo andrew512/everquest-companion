@@ -81,6 +81,7 @@ import {
   stepMeterDrill,
   stepMeterScope,
   stepMultiAttackPanel,
+  stepPetClaimOffer,
   stepScriptedPull
 } from './combatSteps.mjs'
 
@@ -557,6 +558,10 @@ async function main(): Promise<void> {
     // 13. HOVER on the real charts (crosshair + shared tooltip + the drag seam) — see the
     //     harness, which owns the steps: this file is at its factoring ceiling.
     await checkChartHover(page)
+    // 14. THE PET QUESTION and where it may be asked (JOS-49). LAST, because it scripts a pull
+    //     and leaves it OPEN — "the live selection" is the thing under test, so the fight must
+    //     still be one. Nothing below it may assume a quiet log.
+    await stepPetClaimOffer(page, log)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 
