@@ -31,7 +31,7 @@
 //      identical to what it was before offline existed.
 
 import type { ComboInterval, RangeStats, ZoneRangeRow } from '@shared/progressionStats'
-import { formatKillRate, formatLevelRate } from '../../lib/formatRate'
+import { formatAaRate, formatKillRate, formatLevelRate, formatPointRate } from '../../lib/formatRate'
 import { fmtDuration } from './levelChartGeometry'
 import { zoneColor } from './zoneBands'
 
@@ -305,6 +305,27 @@ export function aaText(stats: RangeStats): string | null {
  * re-earned after one are counted again. It is not the AA identity.
  */
 export const AA_RESPEC_CAPTION = 'gain lines — includes points re-gained after a respec'
+
+/**
+ * The AA pace in the selection: completions per hour and points per hour, both over ACTIVE
+ * time — the same denominator `levelsPerHour` uses, so the three read against each other.
+ * Null when the range holds no AA at all (rule 1: no chip beats a chip full of em-dashes).
+ *
+ * The two rates are shown TOGETHER on purpose. They are equal until an item-shop bottle is
+ * running and diverge while one is, which is the only way a surface can show what the potion
+ * did without claiming the potion made AA arrive faster. It does not — it doubles what a
+ * completion pays, never what a completion costs.
+ */
+export function aaRateText(stats: RangeStats): string | null {
+  if (stats.aaGainEvents === 0) return null
+  return `${rate(stats.aaPerHourActive, formatAaRate)} · ${rate(stats.aaPointsPerHourActive, formatPointRate)}`
+}
+
+/** The AA-rate chip's tooltip — what each half measures, and why they can differ. */
+export const AA_RATE_TITLE =
+  'AA completions and ability points per hour of ACTIVE time. The two differ only when the ' +
+  'item-shop potion is running: it doubles the points a completion pays and cannot change how ' +
+  'fast completions arrive, so the first number is the farming rate and the second is the payout.'
 
 /**
  * The footnote for rows whose experience lines stated no percentage. Null when every sample

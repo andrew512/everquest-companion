@@ -7,10 +7,11 @@
 
 import type { LevelingDelta, LevelingSnap } from '@shared/types'
 
-export const EMPTY_LEVELING: LevelingSnap = { levels: [], aaGains: [], aaSpends: [] }
+export const EMPTY_LEVELING: LevelingSnap = { levels: [], aaGains: [], aaSpends: [], aaPotions: [] }
 
 export const applyLevelingDelta = (s: LevelingSnap, d: LevelingDelta): LevelingSnap => ({
   levels: [...s.levels, ...d.levels],
   aaGains: [...s.aaGains, ...d.aaGains],
-  aaSpends: [...s.aaSpends, ...d.aaSpends]
+  aaSpends: [...s.aaSpends, ...d.aaSpends],
+  aaPotions: [...s.aaPotions, ...d.aaPotions]
 })

@@ -197,6 +197,25 @@ export interface RangeStats {
    *  exactly like the existing "AA gained over time" caption. (law 5) */
   aaGained: number
   aaGainEvents: number
+  /**
+   * AA COMPLETIONS per hour of ACTIVE time — the sibling of `levelsPerHourActive`, over the
+   * same denominator, and the number that still measures something once the level bar stops
+   * moving. It counts gain LINES, so it is the rate at which the AA bar filled, and it is
+   * unaffected by the item-shop potion (which multiplies POINTS, never experience).
+   *
+   * Null when the range has no active time. Never 0.0 for "unknown": unlike the levels rate
+   * this one has no unstated-sample failure mode — a gain line always states its amount — so a
+   * measured 0 over real active time is a fact and prints as one.
+   */
+  aaPerHourActive: number | null
+  /**
+   * ABILITY POINTS per hour of ACTIVE time. Σ of the amounts the gain lines STATED, so the AA
+   * potion's doubling is already inside this number — measured, not modelled: the doubled line
+   * reads `You have gained 2 ability point(s)!` and this adds the 2 the log printed.
+   *
+   * It carries the same respec reservation as `aaGained` (see that field).
+   */
+  aaPointsPerHourActive: number | null
 
   zones: ZoneRangeRow[]
   combos: ComboInterval[]
@@ -596,6 +615,8 @@ export function rangeStats(args: RangeStatsArgs): RangeStats {
     ...levelSeriesIn(snap, t0, t1),
     aaGained,
     aaGainEvents: aaHi - aaLo,
+    aaPerHourActive: perHour(aaHi - aaLo, activeMs),
+    aaPointsPerHourActive: perHour(aaGained, activeMs),
     zones: rows,
     combos: combo ? combo.intervalsIn(t0, t1) : [],
     clipped: snap.windowStart > 0 && t0 < snap.windowStart

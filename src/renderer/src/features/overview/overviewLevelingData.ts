@@ -97,6 +97,10 @@ import { levelingSpark, levelingTiles, type LevelingSpark, type LevelingTile } f
 /** Window A's length: the last hour of LOG time. */
 export const HEADLINE_WINDOW_MS = 60 * 60_000
 
+/** How window A is WORDED wherever it is shown. One spelling, so two surfaces measuring the
+ *  same hour cannot describe it differently. */
+export const HEADLINE_WINDOW_LABEL = 'last hour of the log'
+
 /** A half-open range over the snapshot's own clock. */
 export interface LevelingWindow {
   t0: number

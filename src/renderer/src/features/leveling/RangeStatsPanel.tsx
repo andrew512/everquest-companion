@@ -46,9 +46,11 @@ import type { RangeStats } from '@shared/progressionStats'
 import { formatDateTime } from '../../lib/formatDate'
 import { fmtDuration } from './levelChartGeometry'
 import {
+  AA_RATE_TITLE,
   AA_RESPEC_CAPTION,
   OFFLINE_CAPTION,
   OFFLINE_TITLE,
+  aaRateText,
   aaText,
   activeIdleText,
   comboInferred,
@@ -126,6 +128,9 @@ function ChipRow({ stats }: { stats: RangeStats }): JSX.Element {
   const gaps = idleGapsText(stats)
   const witnessed = witnessedText(stats)
   const aa = aaText(stats)
+  // The AA pace, beside the AA total it explains. Null together with `aa` — both are gated on
+  // the range holding at least one gain line.
+  const aaRate = aaRateText(stats)
   // Null unless a login line actually closed a logout inside the range — the offline chip and
   // its caption exist only when the log said so.
   const offline = offlineText(stats)
@@ -149,6 +154,11 @@ function ChipRow({ stats }: { stats: RangeStats }): JSX.Element {
         {aa && (
           <Tooltip title={AA_RESPEC_CAPTION}>
             <Chip size="small" variant="outlined" label={aa} sx={CHIP_SX} />
+          </Tooltip>
+        )}
+        {aaRate && (
+          <Tooltip title={AA_RATE_TITLE}>
+            <Chip size="small" variant="outlined" label={aaRate} sx={CHIP_SX} />
           </Tooltip>
         )}
       </Stack>

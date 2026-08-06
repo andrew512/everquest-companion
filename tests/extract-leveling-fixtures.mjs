@@ -18,9 +18,15 @@ const lines = readFileSync(LOG, 'utf8').split(/\r?\n/)
 
 const KEEP = [
   /You have gained a level! Welcome to level \d+!$/,
-  /gained \d+ ability point/,
+  // BOTH gain shapes. `gained \d+` alone misses the singular "You have gained an ability
+  // point!", which is exactly the line that proves a potion ran out — every gain outside a
+  // bottle's five is singular on this character, so dropping it would hide the reversion the
+  // AA-potion window exists to pin.
+  /You have gained (?:an|\d+) ability point/,
   /You have gained the ability "/,
   /You have improved .+ \d+ at a cost of/,
+  // The item-shop AA potion quaff. The only line the log ever prints about the bottle.
+  /You are filled with the spirit of alternate adventure\.$/,
   // self /who — documentary evidence of the one-level / three-class loadout
   /^\[[^\]]+\] \[\d+ [A-Z]{3}(?:\/[A-Z]{3})*\] Primitive /
 ]
@@ -44,3 +50,17 @@ function slice(fromLine, toLine, out) {
 // also carries the Jul 31 23:48 self /who at `[50 PAL/MNK/ENC]` — pre-swap loadout, one
 // level for three classes.
 slice(669590, 975780, 'wl1-loadout-swap.log')
+
+// WL2 AA POTION. Real span 178200 (Tue Jul 28 13:55, the last SINGLE-point gain before the
+// character's first Bottle of Alternate Adventure) .. 237000 (Tue Jul 28 19:35). It carries
+// two full bottles end to end and the reversion between them, which is the whole model in one
+// window:
+//   13:55:42  gained an ability point        ← no bottle: 1 point
+//   13:56:10  filled with the spirit …       ← quaff #1
+//   14:22 … 15:41  five gains, 2 points each ← the five charges, as the game printed them
+//   16:28:03  filled with the spirit …       ← quaff #2 (the first bottle paid nothing more)
+//   16:32 … 19:06  five gains, 2 points each
+//   19:34:48  gained an ability point        ← spent: back to 1 point, with no line saying so
+// The whole-log sweep behind AA_POTION_CHARGES generalises this: 32 quaffs, 32 runs of exactly
+// five doubled gains, zero exceptions.
+slice(178200, 237000, 'wl2-aa-potion.log')

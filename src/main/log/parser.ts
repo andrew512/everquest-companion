@@ -54,6 +54,7 @@ import {
   classifyItemMerge,
   classifyLevel,
   classifyLoot,
+  classifyAaPotion,
   classifyTurnIn,
   classifyZone
 } from './parseWorld'
@@ -125,6 +126,10 @@ const CLASSIFIERS: readonly Classifier[] = [
   // second; neither can shadow the other, and this keeps the progression families adjacent.
   classifyExp,
   classifyAa,
+  // The AA potion quaff, beside the AA economy it modifies. An EXACT string match on a line
+  // that was MEASURED to be `{kind:'unknown'}` before it existed (all 32), so like its
+  // session/skill-up neighbours the position is for legibility, not disambiguation.
+  classifyAaPotion,
   classifyAaActivate,
   classifyStance,
   // CLASS EVIDENCE (class-combo inference Wave 1). Both are gated on a substring probe and

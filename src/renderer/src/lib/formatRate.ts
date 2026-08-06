@@ -56,6 +56,19 @@ export function formatKillRate(n: number): string {
   return `${formatSmall(n)} kills/hr`
 }
 
+/** AA COMPLETIONS per hour: '2.40 AA/hr'. Gain lines — what the AA bar did, which the
+ *  item-shop potion cannot change (it multiplies points, never experience). */
+export function formatAaRate(n: number): string {
+  return `${formatSmall(n)} AA/hr`
+}
+
+/** ABILITY POINTS per hour: '4.80 pts/hr'. Σ of the amounts the gain lines stated, so a
+ *  potion's doubling is already inside the number. Deliberately a DIFFERENT word from the
+ *  rate above — the two diverge exactly when a bottle is running, and that is the point. */
+export function formatPointRate(n: number): string {
+  return `${formatSmall(n)} pts/hr`
+}
+
 /**
  * A PROCS-PER-MINUTE rate (proc analytics): '4.12 ppm', '0.35 ppm', '210 ppm'. The word after
  * the number, exactly like `dps` and `hps`, and deliberately NOT '/min' — the Task #54 sweep

@@ -112,6 +112,17 @@ const EXP_RE = /^You gain (party )?experience!(?: \(([\d.]+)%\))?$/
 // "You have gained 2 ability point(s)!  You now have 3 ability point(s)."
 const AA_RE = /^You have gained (an|\d+) ability point(?:\(s\))?!\s+You now have (\d+) ability point/
 
+// The item-shop AA potion (Bottle of Alternate Adventure) landing on YOU. An EXACT-string
+// family: a full-log sweep (1.36M lines) finds 32 of these against 34 `You begin casting
+// Bottle of Alternate Adventure.` and 2 interrupts, and none of the 32 followed another
+// player's cast of it — the line is self-only, which is why no name is extracted.
+//
+// It was `{kind:'unknown'}` before this rule existed, so it can neither shadow nor be shadowed
+// by another family. It is NOT in spells.json, so `classifyDbBuff` never had it either; the
+// learned message overlay does carry it as a verified landing, and buffs.ts keeps feeding the
+// miner from the new kind so that stays byte-identical.
+const AA_POTION_LANDING = 'You are filled with the spirit of alternate adventure.'
+
 // Spending AA (two forms — see AGENTS.md).
 const AA_SPEND_RE = / at a cost of (\d+) ability points?\.$/
 const AA_ABILITY_RE = /gained the ability (?:"([^"]+)"|to use (.+?)) at a cost of/
@@ -406,4 +417,12 @@ export function classifyAa({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null
     }
   }
   return null
+}
+
+/**
+ * The AA potion quaff. One fact, no numbers: the bottle landed. How many completions it pays
+ * double for is nowhere in the log — see `shared/aaPace.ts`, which models it and says so.
+ */
+export function classifyAaPotion({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  return text === AA_POTION_LANDING ? { kind: 'aaPotion', seq, ts, raw } : null
 }

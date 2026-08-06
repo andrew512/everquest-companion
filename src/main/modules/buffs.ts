@@ -228,6 +228,12 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
         this.miner.observeMessage(this.messageTextOf(ev.raw), ev.ts, 'wearsOff')
         this.overlayCacheDirty = true
         break
+      // The AA potion quaff is a LANDING message that the leveling analytics now claim as
+      // their own kind. It fell through here as `unknown` before that rule existed and the
+      // overlay learned it as a verified Bottle of Alternate Adventure landing (it is absent
+      // from spells.json, so the DB table never had it) — so it keeps the same miner path,
+      // and the learned overlay is byte-identical to what it was.
+      case 'aaPotion':
       case 'unknown': {
         // A line the parser classified as NOTHING but that could be an un-catalogued
         // landing message (e.g. Symbol of Pinzarn's real "The symbol of Pinzarn flashes

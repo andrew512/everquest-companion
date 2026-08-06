@@ -7,6 +7,7 @@ import type {
   ProgressionSnap
 } from '@shared/types'
 import { computeAAAccounting } from '@shared/aa'
+import { aaPace } from '@shared/aaPace'
 import { rangeStats, type RangeStats } from '@shared/progressionStats'
 import { useModule } from '../../lib/useModule'
 import { formatDate } from '../../lib/formatDate'
@@ -36,6 +37,13 @@ import { LevelingHeroes } from './LevelingHeroes'
 import { NewAtLevelPanel } from './NewAtLevelPanel'
 // The per-ability AA ladder — the flat purchases list's replacement in the same slot.
 import { AaLedgerPanel } from './AaLedgerPanel'
+// AA pace (AA/hr, points/hr, next-AA estimate, potion charges) — the tab's answer once the
+// level bar caps out. `levelingWindows` is borrowed from the Overview card rather than
+// re-derived: "the last hour of LOG time, anchored on the data's clock" is one rule, and two
+// copies of it would drift the day one of them learns something. The dependency runs one way
+// (that module already imports this feature's formatters; nothing there imports this view).
+import { HEADLINE_WINDOW_LABEL, levelingWindows } from '../overview/overviewLevelingData'
+import { AaPacePanel } from './AaPacePanel'
 
 interface FeedItem {
   ts: number
@@ -282,6 +290,16 @@ export default function LevelingView({
 
   const { chrome, legend, stats, clear } = useLevelingCharts(prog, sortedLevels, aaCumulative)
 
+  // AA pace over the last hour of LOG time. A THIRD `rangeStats` call on this tab and
+  // deliberately its own: the drag selection answers "how was that stretch", this answers "how
+  // is it going right now", and folding the two would make the panel change meaning the moment
+  // a user dragged. Null before the snapshot has folded anything at all.
+  const pace = useMemo(() => {
+    const hour = levelingWindows(prog).hour
+    if (!hour || state.aaGains.length === 0) return null
+    return aaPace({ leveling: state, prog, window: rangeStats({ snap: prog, range: hour }) })
+  }, [prog, state])
+
   const nothing = sortedLevels.length === 0 && sortedAAs.length === 0
   // One props object, two placements (see both call sites): the panel is the same surface in the
   // charted and the chart-less state, and spelling its four props twice is how they drift.
@@ -316,6 +334,7 @@ export default function LevelingView({
               without this the column grew the app's content area instead, which is the one
               thing a view may never do. */}
           <Stack spacing={2} sx={{ flex: 2, minWidth: 320, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
+            {pace && <AaPacePanel pace={pace} windowLabel={HEADLINE_WINDOW_LABEL} />}
             <AaOverTimePanel points={aaCumulative} aaEarned={aaEarned} chrome={chrome} />
             <LevelOverTimePanel
               segments={levelSegments}

@@ -211,6 +211,17 @@ export interface AAEvent {
   nowHave: number
 }
 
+/**
+ * An AA-potion quaff ("You are filled with the spirit of alternate adventure.").
+ *
+ * A timestamp and nothing else, because the line says nothing else — not the charges, not the
+ * multiplier. `shared/aaPace.ts` is where those are modelled, cross-checked against the points
+ * the gain lines actually stated, and labeled.
+ */
+export interface AAPotionEvent {
+  ts: number
+}
+
 /** An AA purchase ("You have gained the ability X at a cost of N ability points"). */
 export interface AASpendEvent {
   ts: number
@@ -550,11 +561,15 @@ export interface LevelingSnap {
   levels: LevelEvent[]
   aaGains: AAEvent[]
   aaSpends: AASpendEvent[]
+  /** AA-potion quaffs in log order. Uncapped like its siblings — the charge count is read off
+   *  the LAST one, and a bottle never expires, so an old activation is still load-bearing. */
+  aaPotions: AAPotionEvent[]
 }
 export interface LevelingDelta {
   levels: LevelEvent[]
   aaGains: AAEvent[]
   aaSpends: AASpendEvent[]
+  aaPotions: AAPotionEvent[]
 }
 
 /** character module: current character + zone. */

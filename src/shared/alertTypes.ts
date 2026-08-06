@@ -23,6 +23,9 @@ export type LogEventKind =
   | 'level'
   | 'aaGain'
   | 'aaSpend'
+  // The item-shop AA potion quaff ("You are filled with the spirit of alternate adventure.").
+  // Payload-free, so it is a bare `kind` trigger — an alert on it fires once per bottle.
+  | 'aaPotion'
   | 'death'
   | 'damage'
   | 'heal'

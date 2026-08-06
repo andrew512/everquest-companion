@@ -20,6 +20,7 @@ export const ALL_LOG_EVENT_KINDS = [
   'level',
   'aaGain',
   'aaSpend',
+  'aaPotion',
   'aaActivate',
   'death',
   'playerDeath',

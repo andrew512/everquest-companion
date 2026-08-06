@@ -120,6 +120,16 @@ export interface AaSpendEvent extends LogEventBase {
 }
 
 /**
+ * The item-shop AA potion landing: `You are filled with the spirit of alternate adventure.`
+ * (Bottle of Alternate Adventure). The line carries NO number — not the charges it grants and
+ * not the multiplier — so this event states one fact only: a bottle was quaffed at `ts`.
+ * Everything else about it is `shared/aaPace.ts`'s modelling, and is labeled there.
+ */
+export interface AaPotionEvent extends LogEventBase {
+  kind: 'aaPotion'
+}
+
+/**
  * Unifies the two slain shapes:
  *   `You have slain X!`            → bySelf:true
  *   `X has been slain by Y!`       → bySelf:false, killer:Y
@@ -1088,6 +1098,7 @@ export type LogEvent =
   | ExpGainEvent
   | AaGainEvent
   | AaSpendEvent
+  | AaPotionEvent
   | DeathEvent
   | DamageEventE
   | HealEvent
