@@ -21,7 +21,9 @@
  * BOUNDED scroll boxes (the Task-#56 law); the era filter is ON by default and actually
  * removes rows when it is switched off (the corpus is majority Kunark/Velious, so "off shows
  * more" is an identity, not a number); the Focus tab opens on FAMILIES with the best tier of
- * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one; the
+ * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one; a
+ * majority of the donor rows on screen state what their effect DOES, in one line joined from the
+ * committed spell DB (V6 — a count, never today's wording); the
  * Inventory tab either fills its hosts from a real `/outputfile inventory` dump or teaches the
  * command, never both (V7 — whether this machine has a dump is not something a spec may assume);
  * clicking one of a host's sockets lands in the effect browser filtered to that socket, that slot
@@ -95,6 +97,8 @@ const GROUPBY = '[data-testid="planner-groupby"]'
 const SOCKET_FOCUS = '[data-testid="planner-socket-focus"]'
 const SOCKET_PROC = '[data-testid="planner-socket-proc"]'
 const BEST_CHIP = '[data-testid="planner-best-chip"]'
+const DONOR_ROW = '[data-testid="planner-donor-row"]'
+const EFFECT_SAYS = '[data-testid="planner-effect-says"]'
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
@@ -323,6 +327,25 @@ async function ensureDonorRow(page: Page): Promise<boolean> {
 }
 
 /**
+ * 4b. EVERY DONOR ROW SAYS WHAT ITS EFFECT DOES (V6).
+ *
+ * The index-build join is pinned in `tests/plannerEffectIndex.test.mts`; what only a launched app
+ * can show is that the row DRAWS it. A count rather than a text match: the wording is the spell
+ * DB's, and a spec that pinned "Beneficial · Single Friendly · 27 minutes" would rot on the next
+ * rescrape. A MAJORITY is the assertion, because a miss is deliberately silent (law 1) and the
+ * measured hit rate is 94% — a collapse to nothing means the join broke, not that the wiki moved.
+ */
+async function stepEffectSays(page: Page): Promise<void> {
+  const rows = await countOf(page, DONOR_ROW)
+  const says = await countOf(page, EFFECT_SAYS)
+  check(
+    'a donor row states what its effect DOES, in one line from the spell DB',
+    says * 2 > rows && rows > 0,
+    `${String(says)} of ${String(rows)} visible rows — e.g. ${await textOf(page, EFFECT_SAYS)}`
+  )
+}
+
+/**
  * 5. ADDING A DONOR WRITES A SOCKET THE INVENTORY TAB DRAWS.
  *
  * The tab is called Inventory since V7 — it fills its cells from the character's own
@@ -335,6 +358,7 @@ async function stepAddAndInventory(page: Page): Promise<boolean> {
   if (!check('an effect row expands into at least one donor', await ensureDonorRow(page), `${String(await countOf(page, ADD_BUTTON))} donors`)) {
     return false
   }
+  await stepEffectSays(page)
   await page.click(ADD_BUTTON, { timeout: 15_000 })
   await sleep(400)
   // A donor that occupies more than one slot opens a slot menu instead of writing directly.
