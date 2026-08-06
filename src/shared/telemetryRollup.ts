@@ -114,12 +114,34 @@ export const USAGE_METRICS = {
   activeInstalls: 'activeInstalls',
   /** Installs whose `analytics_install` row was created that day. */
   newInstalls: 'newInstalls',
+  /**
+   * Installs that reported a DIFFERENT `appVersion` than the one their install row was holding.
+   *
+   * DERIVED SERVER-SIDE, and it has to be: the client has no idea what it used to be (a fresh
+   * build reads its own version and nothing else), and asking it to remember would be a new
+   * event, a schema change and a value we would then have to trust. The install UPSERT is
+   * already reading the stored version in order to overwrite it, so the comparison is free and
+   * lands in the same transaction as the counters it belongs beside.
+   *
+   * EXACTLY ONCE PER UPGRADE. The same statement writes the new version, so the very next batch
+   * from that install sees no difference. A DOWNGRADE counts too, and deliberately so — the
+   * fact worth knowing is "this install changed build", and a rollback is the version of that
+   * fact most worth seeing.
+   */
+  upgrades: 'upgrades',
   sessions: 'sessions',
   sessionEnds: 'sessionEnds',
   sessionMsTotal: 'sessionMsTotal',
   /** dim = index into SESSION_MS_EDGES. The median's only honest source. */
   sessionLenBucket: 'sessionLenBucket',
   heartbeats: 'heartbeats',
+  /**
+   * Log lines this fleet PARSED — work done, not distinct lines. The startup replay re-reads a
+   * character's whole history, so a line the app has seen before counts again on the next
+   * launch; TELEMETRY.md says so in the field's own note. Summed from the optional `linesParsed`
+   * on `sessionHeartbeat` / `sessionEnd`.
+   */
+  linesParsed: 'linesParsed',
   /** dim = index into COLD_START_MS_EDGES. */
   coldStartBucket: 'coldStartBucket',
   /** dim = view id. */
@@ -299,11 +321,13 @@ function foldSession(bag: Bag, ev: TelemetryEvent): boolean {
       return true
     case 'sessionHeartbeat':
       add(bag, USAGE_METRICS.heartbeats, DIM_NONE, 1)
+      add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       return true
     case 'sessionEnd':
       add(bag, USAGE_METRICS.sessionEnds, DIM_NONE, 1)
       add(bag, USAGE_METRICS.sessionMsTotal, DIM_NONE, ev.durationMs)
       add(bag, USAGE_METRICS.sessionLenBucket, String(bucketOf(ev.durationMs, SESSION_MS_EDGES)), 1)
+      add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       return true
     default:
       return false

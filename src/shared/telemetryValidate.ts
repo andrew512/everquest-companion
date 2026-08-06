@@ -53,6 +53,8 @@ import {
   TELEMETRY_VOICE_ENGINES,
   UUID_V4_RE,
   type EvFunnelStep,
+  type EvSessionEnd,
+  type EvSessionHeartbeat,
   type EvUpdateOutcome,
   type TelemetryBatch,
   type TelemetryEnvelope,
@@ -131,9 +133,24 @@ function vSessionStart(o: Record<string, unknown>): Validated<TelemetryEvent> {
   return b.ok ? { ok: true, value: { t: 'sessionStart', coldStartMsBucket: b.value } } : b
 }
 
+/**
+ * `linesParsed`, which both session-report events carry OPTIONALLY (the additive-field rule in
+ * `./telemetry.ts`). Absent and null both mean "nothing to add", exactly as they do for
+ * `failureClass` — an older client, or one whose parser never ran, simply does not send it.
+ */
+function optionalLines(o: Record<string, unknown>): Validated<number | undefined> {
+  if (o.linesParsed === undefined || o.linesParsed === null) return { ok: true, value: undefined }
+  return whole(o.linesParsed, 'linesParsed', MAX_COUNT)
+}
+
 function vSessionHeartbeat(o: Record<string, unknown>): Validated<TelemetryEvent> {
   const ms = whole(o.uptimeMs, 'uptimeMs', MAX_DURATION_MS)
-  return ms.ok ? { ok: true, value: { t: 'sessionHeartbeat', uptimeMs: ms.value } } : ms
+  if (!ms.ok) return ms
+  const lines = optionalLines(o)
+  if (!lines.ok) return lines
+  const value: EvSessionHeartbeat = { t: 'sessionHeartbeat', uptimeMs: ms.value }
+  if (lines.value !== undefined) value.linesParsed = lines.value
+  return { ok: true, value }
 }
 
 function vSessionEnd(o: Record<string, unknown>): Validated<TelemetryEvent> {
@@ -141,7 +158,15 @@ function vSessionEnd(o: Record<string, unknown>): Validated<TelemetryEvent> {
   if (!ms.ok) return ms
   const views = whole(o.viewsVisited, 'viewsVisited', TELEMETRY_VIEWS.length)
   if (!views.ok) return views
-  return { ok: true, value: { t: 'sessionEnd', durationMs: ms.value, viewsVisited: views.value } }
+  const lines = optionalLines(o)
+  if (!lines.ok) return lines
+  const value: EvSessionEnd = {
+    t: 'sessionEnd',
+    durationMs: ms.value,
+    viewsVisited: views.value
+  }
+  if (lines.value !== undefined) value.linesParsed = lines.value
+  return { ok: true, value }
 }
 
 function vViewDwell(o: Record<string, unknown>): Validated<TelemetryEvent> {

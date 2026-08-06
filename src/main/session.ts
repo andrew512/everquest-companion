@@ -51,6 +51,7 @@ import {
   setActiveLogPath,
   setInventory
 } from './store'
+import { markFunnelStep, noteLinesParsed } from './telemetry'
 import { sendToMain } from './windows'
 import type { CharacterRef, EqConfig } from '../shared/types'
 
@@ -258,6 +259,29 @@ function resetWorldFor(ref: CharacterRef): void {
 }
 
 /**
+ * THE PARSE COUNTER + the first-run funnel's `firstParse` step (JOS-39).
+ *
+ * Both feeders come through here so there is ONE definition of "a line this app parsed": the
+ * startup replay hands over its whole event count in one call, the live tail hands over one at a
+ * time. Nothing about the line itself goes anywhere — `noteLinesParsed` takes a number and the
+ * telemetry schema has no field that could hold text (src/shared/telemetry.ts).
+ *
+ * `parseMarkAttempted` bounds the store read to ONE per launch. `markFunnelStep` reads the prefs
+ * file to check the once-ever mark, and this function runs on the app's hottest path; a latch
+ * that only costs a delayed step (until the next launch) for a user who enables analytics
+ * mid-session is the right trade against reading a JSON file per parsed line.
+ */
+let parseMarkAttempted = false
+
+function noteParsed(count: number): void {
+  if (count <= 0) return
+  noteLinesParsed(count)
+  if (parseMarkAttempted) return
+  parseMarkAttempted = true
+  markFunnelStep('first-run', 'firstParse')
+}
+
+/**
  * FIX 1: gapless handoff — start the tailer exactly where the scan stopped, so
  * lines the game appended during the (multi-second) scan are read, not dropped,
  * and none are re-read. The tailer is byte-level; we parse each raw line here
@@ -271,6 +295,7 @@ function startTailer(logPath: string, startOffset: number): void {
     const ev = parseEvent(raw, seq)
     if (ev) {
       seq++
+      noteParsed(1)
       bus.emit(ev, true)
     }
     notifyCombatActivity() // FIX 4: throttled push so the meter refreshes sub-second
@@ -321,6 +346,10 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   character = ref
   setActiveLogPath(ref.logPath)
   logInfo(`[everquest-companion] Tailing ${ref.name}@${ref.server}: ${ref.logPath}`)
+  // THE FIRST-RUN FUNNEL'S `logDetected`, at the one moment that is unambiguously "we found a
+  // log and are about to read it" — after resolution succeeded and before the replay. The
+  // once-ever mark (telemetry/funnels.ts) is what keeps a character switch from re-firing it.
+  markFunnelStep('first-run', 'logDetected')
 
   resetWorldFor(ref)
 
@@ -338,6 +367,10 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // the fold now yields to the event loop every REPLAY_SLICE_MS instead of every 1 MB read chunk,
   // and a longer wall clock simply leaves more bytes waiting for the tailer.
   const scan = await scanLog(ref.logPath, bus, seq)
+  // The replay's whole cost, in one call: `seq` was reset to 0 by `resetWorldFor`, so `scan.seq`
+  // IS the number of lines this scan parsed. Counted here rather than per line inside the fold so
+  // the replay's inner loop is untouched.
+  noteParsed(scan.seq)
   seq = scan.seq
   combat.setLive()
   const lootState = lootModule.snapshot().state

@@ -43,8 +43,10 @@ import {
   recordEvent,
   sessionUptimeMs,
   setTelemetryEnabled,
+  takeLinesParsed,
   viewsVisited
 } from './collector'
+import { markFunnelStep } from './funnels'
 import { readRing, writeRing } from './ring'
 import { getTelemetryPrefs } from '../store'
 
@@ -113,13 +115,25 @@ export function startTelemetry(coldStartMs: number): void {
   ensureAnalyticsId()
   beginSession()
   recordEvent({ t: 'sessionStart', coldStartMsBucket: bucketOf(coldStartMs, COLD_START_MS_EDGES) })
+  // THE FIRST-RUN FUNNEL'S STEP 1, and it is a launch rather than the id-minting call that
+  // produces it: `ensureAnalyticsId` mints again after a rotation or an off/on, and each of those
+  // would otherwise look like a fresh installation. The once-ever mark (funnels.ts) is what makes
+  // this the FIRST launch of this install, and it survives both of those events.
+  markFunnelStep('first-run', 'installed')
   startTimers(prefs)
 }
 
 /** Both timers, once the decision to run them has been made. */
 function startTimers(prefs: TelemetryPrefs): void {
   heartbeat = setInterval(() => {
-    recordEvent({ t: 'sessionHeartbeat', uptimeMs: sessionUptimeMs() })
+    // The heartbeat is also what DRAINS the parsed-line delta (collector.ts): the counter is
+    // reported by the same event that proves the session was still alive to do the parsing, so a
+    // killed process loses at most the last five minutes of it.
+    recordEvent({
+      t: 'sessionHeartbeat',
+      uptimeMs: sessionUptimeMs(),
+      linesParsed: takeLinesParsed()
+    })
   }, HEARTBEAT_INTERVAL_MS)
   heartbeat.unref()
   ensureFlushTimer(prefs)
@@ -205,7 +219,14 @@ export function answerNotice(keepEnabled: boolean): TelemetryPrefs {
 export function stopTelemetry(): void {
   const uptime = sessionUptimeMs()
   if (uptime > 0) {
-    recordEvent({ t: 'sessionEnd', durationMs: uptime, viewsVisited: viewsVisited() })
+    recordEvent({
+      t: 'sessionEnd',
+      durationMs: uptime,
+      viewsVisited: viewsVisited(),
+      // The tail of the line delta: everything parsed since the last heartbeat. Without it every
+      // session under five minutes would report zero lines, and short sessions are common.
+      linesParsed: takeLinesParsed()
+    })
   }
   clearTimers()
   endSession()
