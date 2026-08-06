@@ -18,6 +18,7 @@
 //     whose page did not state a usable class list — the UI says so, it does not assume ALL.
 
 import type { ClassAbbr } from '../classCombo'
+import type { EffectFacts } from './effectText'
 
 /**
  * Canonical equipment slots, normalized from the dirty wiki tokens (normalize.ts owns the
@@ -86,7 +87,7 @@ export type ExtractTier = 1 | 2 | 3 | 4
  * One effect as it exists on one donor item — the denormalized row main serves over IPC. An
  * item with three effects contributes three donors; the (key, effect) pair is the row identity.
  */
-export interface PlannerDonor {
+export interface PlannerDonor extends EffectFacts {
   /** `itemKey(name)` — the corpus's canonical, `+N`-stripped, case-folded key. */
   key: string
   name: string
@@ -99,6 +100,9 @@ export interface PlannerDonor {
   effect: string
   /** the parenthetical as written ("Combat, Casting Time: Instant") */
   detail?: string
+  // V6 — `spellType` / `spellTarget` / `spellDuration` arrive from `EffectFacts` above: the
+  // committed spell DB joined by case-folded effect name at index build. All three are absent
+  // when the join missed (5.8% of rows), and the row then simply says less (law 1, never a guess).
   /**
    * V5 — the FOCUS family this effect belongs to, parsed off its own name at index build
    * ("Improved Healing III" → "Improved Healing"). Present on focus rows ONLY: a rank in the name

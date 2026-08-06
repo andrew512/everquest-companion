@@ -9,8 +9,11 @@
 //
 // PURE and ELECTRON-FREE on purpose (the mobSearch precedent, now repo-wide): value imports are
 // RELATIVE, nothing here reads a file, and `tests/plannerEffectIndex.test.mts` runs the shipped
-// builder over the REAL committed bytes. The JSON import lives in the IPC handler, not here, so
-// a test pays for the 7 MB only when it wants it.
+// builder over the REAL committed bytes. The ITEM corpus is imported by the IPC handler rather
+// than here, so a test pays for its 8.6 MB only when it wants it; the SPELL corpus (0.8 MB, V6's
+// one-liners) is imported here, because unlike the items it has no other caller to pass it in and
+// a builder that only describes its rows when someone remembers to hand it the DB would ship a
+// silent, untestable regression.
 //
 // D1 — why MAIN: items.json is already inlined into main's bundle for itemLookup. Importing it
 // into the renderer as well would double it; the effect-bearing subset is ~1.5k rows, which is a
@@ -46,12 +49,25 @@
 // like `wikiSources` it is carried VERBATIM: `shared/planner/era.ts` is the only file that decides
 // what a token means, and the renderer is the only place the two witnesses are folded together.
 //
+// EVERY DONOR ROW ALSO STATES WHAT ITS EFFECT DOES (V6): the committed spell DB joined by
+// case-folded effect name, three fields (`spellType` / `spellTarget` / `spellDuration`) carried
+// VERBATIM and composed into one line by the renderer. Measured 2026-08-05 over the shipped
+// corpus: 94.2% of effect rows match. The rest carry nothing — no placeholder and no fuzzy second
+// pass (law 12), because the misses are mostly the client's own annotated spellings
+// (`Healing  as Level 30`) and a matcher that stripped those would eventually state the wrong
+// spell's duration as fact. `buildSpellFacts` below is the whole join.
+//
 // TWO KINDS OF ITEM ARE DROPPED FROM THE DONOR INDEX AND ONLY FROM IT (V9, docs/plans/planner-v2
 // .md): the mage-conjured `Summoned:` family and whatever the curated layer flags `summoned` or
 // `gmEvent`. They stay in the ITEM index — a summoned item is a perfectly real thing to look up,
 // and "you cannot pull an effect off this" is not "this does not exist". See `excludedDonor`.
 
 import { itemKey, type ItemDbEntry, type ItemDbFile } from '../itemsDb'
+// The committed spell DB, for V6's one-liners. Imported here rather than injected from the
+// handler for the same reason the curated research layer is (below): it is committed data with
+// one right answer, and a builder that only gets its facts when a caller remembers to pass them
+// would ship a browser whose rows say nothing and no test that could tell.
+import spellsJson from '../data/spells.json'
 import {
   ITEMS_RESEARCH,
   knowledgeWithResearch,
@@ -66,9 +82,10 @@ import {
   socketTypeOf
 } from '../../shared/planner/normalize'
 import { extractionTier } from '../../shared/planner/rules'
+import type { EffectFacts } from '../../shared/planner/effectText'
 import type { ClassAbbr } from '../../shared/classCombo'
 import type { ItemEffect } from '../../shared/itemStats'
-import type { ItemDropSource } from '../../shared/types'
+import type { ItemDropSource, SpellDbFile, SpellEntry } from '../../shared/types'
 import type {
   EquipSlot,
   PlannerDonor,
@@ -102,6 +119,8 @@ export interface PlannerBuildStats {
   duplicateRows: number
   /** effect-bearing pages whose effects were not emitted at all (V9 — see `excludedDonor`) */
   excludedPages: number
+  /** V6 — emitted donor rows whose effect name matched a spell page (the one-liner join) */
+  spellJoined: number
   /** slot tokens `normalizeSlotTokens` did not recognize, verbatim */
   unknownSlotTokens: string[]
 }
@@ -157,10 +176,41 @@ function newAcc(): Acc {
       effectRows: 0,
       socketless: 0,
       duplicateRows: 0,
-      excludedPages: 0
+      excludedPages: 0,
+      spellJoined: 0
     }
   }
 }
+
+// ---- V6: the effect one-liner join ---------------------------------------------------
+
+/** The spell-DB facts an effect row can borrow, keyed by CASE-FOLDED spell name. */
+export type SpellFactsIndex = ReadonlyMap<string, EffectFacts>
+
+/**
+ * `spells.json` → the one-liner lookup. Case-folded exact names, FIRST entry wins.
+ *
+ * First-wins matters because rank siblings ("Rune II"…"Rune V") are separate spell pages with
+ * separate names — they do not collide — but a handful of pages genuinely repeat a name, and the
+ * corpus order is the scrape order, which is the wiki's. Picking by anything else would be
+ * inventing a preference between two pages that state the same thing.
+ *
+ * Rank suffixes are NOT stripped, unlike the parser's `canonKey`: an item's `Effect:` line names
+ * the exact spell it carries, so "Improved Healing III" must join "Improved Healing III" or miss.
+ * Folding ranks together here would let a I row claim a III row's duration.
+ */
+export function buildSpellFacts(spells: readonly SpellEntry[]): SpellFactsIndex {
+  const out = new Map<string, EffectFacts>()
+  for (const s of spells) {
+    const key = s.name.trim().toLowerCase()
+    if (key === '' || out.has(key)) continue
+    out.set(key, { spellType: s.spellType, spellTarget: s.targetType, spellDuration: s.durationText })
+  }
+  return out
+}
+
+/** The committed join, built once for this process (the corpus cannot change while it runs). */
+const SPELL_FACTS: SpellFactsIndex = buildSpellFacts((spellsJson as SpellDbFile).spells)
 
 /**
  * The `Summoned:` NAME PREFIX — the one automatic exclusion rule (V9), and it is not an inference:
@@ -225,12 +275,21 @@ function pageContext(
   }
 }
 
-function donorRow(ctx: PageCtx, effect: ItemEffect, socket: SocketType): PlannerDonor {
+function donorRow(
+  ctx: PageCtx,
+  effect: ItemEffect,
+  socket: SocketType,
+  spells: SpellFactsIndex
+): PlannerDonor {
   // V5 — split once, here, and only for focus: the browser groups the focus tab by family and
   // sorts tier-desc inside it, and re-parsing the name per render per row would be the same answer
   // computed a thousand times. A non-focus row carries neither field (law 1: no family stated).
   const rank = socket === 'focus' ? parseFocusEffect(effect.name) : null
+  // V6 — spread wholesale: a miss contributes NOTHING (the three keys stay absent), which is what
+  // makes "the row simply says less" the shape of the failure rather than a placeholder.
+  const facts = spells.get(effect.name.trim().toLowerCase()) ?? {}
   return {
+    ...facts,
     key: ctx.key,
     name: ctx.name,
     iconId: ctx.iconId,
@@ -283,7 +342,12 @@ function rememberItem(acc: Acc, ctx: PageCtx): void {
   if (ctx.canonical) acc.itemFromCanonical.add(ctx.key)
 }
 
-function addPage(acc: Acc, entry: ItemDbEntry, research: ItemResearchFile): void {
+function addPage(
+  acc: Acc,
+  entry: ItemDbEntry,
+  research: ItemResearchFile,
+  spells: SpellFactsIndex
+): void {
   if (acc.seenPages.has(entry.page)) {
     acc.stats.aliasKeys++
     return
@@ -309,7 +373,7 @@ function addPage(acc: Acc, entry: ItemDbEntry, research: ItemResearchFile): void
     // A bare `Effect:` whose parenthetical named no socket: the wiki did not say where it goes,
     // and guessing would put an unextractable effect on a farm list. Counted, never emitted.
     if (socket === null) acc.stats.socketless++
-    else rememberDonor(acc, ctx, donorRow(ctx, effect, socket))
+    else rememberDonor(acc, ctx, donorRow(ctx, effect, socket, spells))
   }
 }
 
@@ -319,14 +383,22 @@ function addPage(acc: Acc, entry: ItemDbEntry, research: ItemResearchFile): void
  */
 export function buildPlannerIndex(
   file: ItemDbFile,
-  research: ItemResearchFile = ITEMS_RESEARCH
+  research: ItemResearchFile = ITEMS_RESEARCH,
+  spells: SpellFactsIndex = SPELL_FACTS
 ): PlannerIndex {
   const acc = newAcc()
-  for (const entry of Object.values(file.items ?? {})) addPage(acc, entry, research)
+  for (const entry of Object.values(file.items ?? {})) addPage(acc, entry, research, spells)
+  const donors = [...acc.donors.values()]
   return {
-    donors: [...acc.donors.values()],
+    donors,
     items: [...acc.items.values()],
-    stats: { ...acc.stats, unknownSlotTokens: [...acc.unknownSlots] }
+    stats: {
+      ...acc.stats,
+      // Counted on the EMITTED rows, after both dedupes: the join's usefulness is how many rows
+      // the browser can actually describe, not how many times the lookup was consulted.
+      spellJoined: donors.filter((d) => d.spellType !== undefined || d.spellDuration !== undefined).length,
+      unknownSlotTokens: [...acc.unknownSlots]
+    }
   }
 }
 

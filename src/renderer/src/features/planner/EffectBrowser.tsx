@@ -45,6 +45,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { EquipSlot, ExaltPlan, SocketType } from '@shared/planner/types'
+import { effectOneLiner } from '@shared/planner/effectText'
 import { extractionTier } from '@shared/planner/rules'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemIconUrl } from '../../lib/ItemWindow'
@@ -147,6 +148,10 @@ interface DonorLineProps {
 
 function DonorLine({ donor, planClasses, planned, best, namesEffect, onAdd, onOpenLoot }: DonorLineProps): JSX.Element {
   const src = sourceText(donor)
+  // V6 — "Beneficial · Single Friendly · 27 minutes", or '' when the spell DB never named this
+  // effect. Same 44px row (the windowing law): muted inline text, ellipsized, with the full line
+  // in `title` for the ones that do not fit.
+  const says = effectOneLiner(donor)
   return (
     <Stack
       direction="row"
@@ -172,6 +177,18 @@ function DonorLine({ donor, planClasses, planned, best, namesEffect, onAdd, onOp
       {namesEffect && (
         <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
           {donor.effect}
+        </Typography>
+      )}
+      {says !== '' && (
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          noWrap
+          title={says}
+          data-testid="planner-effect-says"
+          sx={{ minWidth: 0, flexShrink: 1 }}
+        >
+          {says}
         </Typography>
       )}
       {best && <BestChip />}
