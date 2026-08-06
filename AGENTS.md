@@ -124,8 +124,20 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   shared target (law below). The carve-out STAYS: every combat fixture in
   the tree is already cut through it, re-cutting them to drop six sentences
   buys nothing, the six still parse into `petSay` (the alerts editor lists
-  the kind), and JOS-52 needs the family present to add the one say that
+  the kind), and JOS-52 needed the family present to add the one say that
   does name an owner.
+  **CARVE-OUT: the `/pet who leader` answer** (JOS-52) — `<Name> says, 'My
+  leader is <You>.'`, EXACT shape, and the only pet carve-out that is
+  SELF-GATED (`ScrubOpts.selfName`). The other two rest on "an NPC's words
+  under an NPC's name, so nobody's privacy is at stake"; this is the first
+  pet-voiced line to carry a PLAYER's name inside the quote, so it borrows
+  the self-`/who` row's argument instead — your own name is yours to publish,
+  a stranger's pet naming a stranger falls to the quoted-speech drop rule,
+  and no `selfName` means no carve-out at all. `selfName` reaches an equality
+  test and never a regex, so no crafted name can widen it.
+  `p2-pet-arc-bound.log` was RE-CUT through it (measured: +1 line — the log's
+  ONLY occurrence; p1 byte-identical; every golden number unchanged, because
+  the line lands 68 s after that pet's own tell and `claim()` is idempotent).
   The user's OWN `/who` row (Primitive)
   is likewise exempt: it is the only line stating the class loadout and
   `extract-leveling-fixtures.mjs` needs it. Bystanders' NAMES survive in
@@ -718,13 +730,38 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   ordered at the moment it was summoned shows all 51 / 2,615. The deleted
   user CLAIM was the one retroactive path (known before the replay started,
   so `route()` applied it to the pet's first line) — losing that is the real
-  cost of the cut, and the user-facing rule is **order it when you summon
-  it**. JOS-52 adds a second explicit bind for the players who don't:
-  `<Name> says, 'My leader is <You>.'` — the `/pet who leader` answer, which
-  unlike the six says NAMES ITS OWNER OUT LOUD. It needs its own scrub
-  carve-out first (it is quoted speech outside the six, so `scrubKeep` drops
-  it today; `tests/extract-pet-claim-fixtures.mjs` asserts that absence so a
-  golden cannot start depending on it early).
+  cost of the cut.
+  **AND THE PET WILL TELL YOU WHOSE IT IS IF YOU ASK** (JOS-52):
+  `<Name> says, 'My leader is <You>.'` — the `/pet who leader` answer, the
+  ONE pet-voiced line that names its owner out loud, and therefore the
+  second binding signal a summoned pet has. It parses to the SAME canonical
+  event as the tell (`petClaim`, tagged `via: 'tell' | 'leader'`), so
+  idempotence, the single-pet succession, the `everCharmed` PROMOTE path,
+  the buff-entity succession and the progression ledger are shared code, not
+  a second implementation — a separate kind would be a third retirement path
+  for one of those models to forget (law 4 is a scar from exactly that). So
+  the user-facing rule widens from "order it when you summon it" to **say
+  ANYTHING to it, once, when you summon it** — either sentence at the moment
+  of the cast recovers all 51 / 2,615 above.
+  MEASURED (whole log, 1,404,458 lines, 2026-08-06): thirteen lines contain
+  "leader" — seven `<Name> is now the leader of your group.`, five players
+  chatting, and **exactly ONE** leader say (`Jaber says, 'My leader is
+  Primitive.'`, Thu Aug 06 12:44:20, now carried verbatim in
+  `tests/fixtures/p2-pet-arc-bound.log`). No follower / no-leader / charmed
+  variant exists; a second shape ships only when a real line prints one.
+  Hence an EXACT sentence, never a `/leader/` pattern (the six-says rule).
+  **THE LEADER'S NAME IS THE WHOLE GUARD**, because the say is BROADCAST:
+  the rule compares it to `ParserConfig.characterName` (session-injected,
+  never a constant) and every other line parses to `unknown` — the
+  self-`/who` rule's exact design, permissive regex and all, for the exact
+  same reason. Stated rather than pretended away: a `says` is FORGEABLE
+  (`/say My leader is <You>.` from someone in earshot), which the private
+  tell is not and this cannot be, since the game gives the command no other
+  answer; the cost is one bogus row in your own meter. Its scrub carve-out
+  is the only pet one that is SELF-GATED (`ScrubOpts.selfName`) — the other
+  two are an NPC's words under an NPC's name, while this one carries a
+  PLAYER's name inside the quote, so it borrows the self-`/who` row's
+  argument instead and a stranger's pet naming a stranger still drops.
 - Exp: `You gain (party )?experience!( (N.NN%))?` — the percent is an
   INCREMENT of the current level bar (sums to ~100 between dings);
   unstated ⇒ at the cap, modeled `pct: undefined` never 0. The exp line

@@ -13,6 +13,12 @@
 // an entity is somebody's pet. They are an NPC's words and an NPC's name, so the carve-out costs
 // no one their privacy; see src/shared/logScrub.ts for the enumeration that made it exact.
 //
+// …and it is the FOURTH reason too (JOS-52): `<Name> says, 'My leader is <You>.'` is the one
+// pet-voiced line that names its OWNER, so it is the one that binds — and the one that carries a
+// player's name inside the quote, so its carve-out is gated on `selfName` rather than on the
+// speaker being an NPC. `keep()` below passes 'Primitive', which is what lets this extractor cut
+// the owner's own answer while a stranger's pet naming a stranger still falls to the drop list.
+//
 // WHAT IS KEPT INSIDE A WINDOW: everything the scrub allows, verbatim and contiguous. The
 // candidate detector reasons about SHARED TARGETS over time, so a window filtered down to "just
 // the pet lines" would prove nothing at all.
@@ -115,11 +121,17 @@ console.log(`p1-unbound-pet.log: 4 pet says, ${koberHits} unbound pet hits, ${gu
 // detector that treated casting or self-healing as player-shaped evidence would disqualify the
 // one entity the feature exists for, silently, on the owner's own current pet.
 //
-// ONE LINE IN THIS SPAN IS DELIBERATELY LOST TO THE SCRUB: `Jaber says, 'My leader is
-// Primitive.'` (12:44:20), the `/pet who leader` answer. It is quoted speech that is not one of
-// the six pet-voiced sentences, so `scrubKeep` drops it — correctly, today. JOS-52 is the ticket
-// that adds the carve-out and the bind; until then this fixture must NOT contain it, and the
-// assertion below pins that so the golden cannot silently start depending on it.
+// ONE LINE IN THIS SPAN WAS DELIBERATELY LOST TO THE SCRUB UNTIL JOS-52: `Jaber says, 'My leader
+// is Primitive.'` (12:44:20), the `/pet who leader` answer. It is quoted speech outside the six
+// pet-voiced sentences, so `scrubKeep` dropped it and the assertion below pinned its ABSENCE, so
+// that the golden could not start depending on it before the carve-out existed. JOS-52 added the
+// carve-out (gated on `selfName`, since this is the one pet-voiced line that names a PLAYER) and
+// the bind, so the fixture was RE-CUT through the new scrub and the assertion is now a positive
+// one. Re-cutting was measured before it was chosen: this line is the ONLY byte that moved in
+// either fixture (p1 is byte-identical — the whole 1.4M-line log holds exactly one leader say),
+// it arrives at 12:44:20 when Jaber has been bound by its own tell since 12:43:12, and
+// `world.claim()` is idempotent — so every number in petClaimWindows.test.mts is unchanged, which
+// that file's tests re-assert line by line.
 const p2 = slice(1399620, 1400300, 'p2-pet-arc-bound.log')
 
 const p2has = (re) => p2.filter((l) => re.test(l)).length
@@ -127,7 +139,7 @@ for (const [re, n, what] of [
   [/^\[.*\] You begin casting Kintaz's Animation\.$/, 2, 'both animation casts'],
   [/^\[.*\] Jaber told you, 'Attacking a greater kobold Master\.'$/, 1, "Jaber's binding tell"],
   [/^\[.*\] Gonekn told you, 'Attacking a greater kobold Master\.'$/, 1, "Gonekn's binding tell"],
-  [/^\[.*\] Jaber says, 'My leader is Primitive\.'$/, 0, 'the /pet who leader line (JOS-52, not yet kept)']
+  [/^\[.*\] Jaber says, 'My leader is Primitive\.'$/, 1, 'the /pet who leader answer (JOS-52)']
 ]) {
   const got = p2has(re)
   if (got !== n) throw new Error(`p2-pet-arc-bound.log: expected ${n} × ${what}, got ${got}`)

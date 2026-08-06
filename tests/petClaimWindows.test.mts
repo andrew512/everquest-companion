@@ -37,10 +37,18 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parseEvent } from '../src/main/log/parser'
+import { installCharacterName } from '../src/main/log/rulesets'
 import { CombatEngine } from '../src/main/combat/engine'
 import { scopeSources } from '../src/renderer/src/features/combat/meterScope'
 import type { MeterScope } from '../src/shared/roster'
 import type { CombatSnapshot, SegmentView } from '../src/shared/combat'
+
+// THE TAILED CHARACTER, injected the way session.ts injects it before a replay. Only ONE rule in
+// the parser reads it — the `/pet who leader` answer (JOS-52), whose whole guard is "the leader
+// it names is you"; the self-`/who` rule reads it too but neither fixture contains a `/who` row
+// (measured: zero `ZONE: ` lines in either), so every assertion in sections 1–4 below is
+// unaffected by this line and stayed byte-identical when it was added.
+installCharacterName('Primitive')
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FIXTURES = join(HERE, 'fixtures')
@@ -254,11 +262,13 @@ test('P2: the fixture carries the arc it says it does', { skip: skipArc }, () =>
   assert.ok(P2.some((l) => /\] Jaber begins casting Wrath\.$/.test(l)), 'the animation casts')
   assert.ok(P2.some((l) => /\] Jaber hit .* points of magic damage by Wrath\.$/.test(l)), 'its spell lands')
   assert.ok(P2.some((l) => /\] Jaber healed himself for \d+ hit points by Daring\.$/.test(l)), 'it self-heals')
-  // ONE LINE IS DELIBERATELY ABSENT: `Jaber says, 'My leader is Primitive.'` (12:44:20), the
-  // /pet who leader answer. It is quoted speech outside the six pet-voiced sentences, so the
-  // shared scrub drops it — correctly, today. JOS-52 is the ticket that carves it out and binds
-  // on it, and this pins that the golden below cannot silently start depending on it first.
-  assert.equal(P2.filter((l) => /\] Jaber says, 'My leader is Primitive\.'$/.test(l)).length, 0)
+  // ONE LINE WAS DELIBERATELY ABSENT UNTIL JOS-52: `Jaber says, 'My leader is Primitive.'`
+  // (12:44:20), the /pet who leader answer. It is quoted speech outside the six pet-voiced
+  // sentences, so the shared scrub dropped it and this assertion pinned the absence so the
+  // golden could not start depending on it before the carve-out existed. It exists now (gated on
+  // selfName — this is the one pet-voiced line that names a PLAYER), the fixture was re-cut, and
+  // the assertion is a positive one. Section 5 below is what it earns.
+  assert.equal(P2.filter((l) => /\] Jaber says, 'My leader is Primitive\.'$/.test(l)).length, 1)
 })
 
 test('P2: an animation that casts and self-heals is still nobody, until it is ordered', { skip: skipArc }, () => {
@@ -333,4 +343,108 @@ test('P2: A TELL BINDS FORWARD, NOT BACKWARD — ordering late costs you the res
   // is the whole user-facing instruction, as arithmetic: order it when you cast it.
   const early = replay([P2], [`[Thu Aug 06 12:35:45 2026] Jaber told you, 'Attacking a greater kobold Master.'`])
   assert.deepEqual(petRowsByName(early.eng, early.lastTs).get('Jaber'), { hits: 51, total: 2615 })
+})
+
+// ── 5. THE OTHER WAY IN: `/pet who leader` (JOS-52) ────────────────────────────────────────
+//
+// The tell only fires when the pet is ORDERED, and section 3 is the honest cost of that: order
+// it late and the meter keeps only what came after. `/pet who leader` is the answer for a player
+// who would rather ASK than order — the pet says whose it is out loud, and that line is the only
+// one in this log in which a pet names its owner.
+//
+// MEASURED before any of it was written (whole-log sweep, 1,404,458 lines, 2026-08-06): the
+// family has exactly ONE member and exactly ONE occurrence — `Jaber says, 'My leader is
+// Primitive.'`, Thu Aug 06 12:44:20, now carried verbatim in P2. There is no follower variant, no
+// no-leader variant and no charmed variant, and none ships until a real line prints one
+// (AGENTS.md's awaiting-sample law).
+//
+// The one occurrence is on a pet ALREADY bound by its own tell 68 seconds earlier, so the real
+// bytes can prove the line is inert-when-redundant but cannot show it BINDING. For that, the line
+// is INJECTED into P1 — the fixture whose whole subject is a pet nothing ever binds — quoted
+// verbatim from the owner's log with the pet's name swapped, which is the petClaimWindows /
+// mobLifetapPlayer precedent for a shape the owner's log has printed in the wrong place.
+
+/** The Aug 06 line, verbatim, with Jaber's name swapped for P1's never-ordered Kober. */
+const KOBER_LEADER = `[Thu Jul 30 16:10:11 2026] Kober says, 'My leader is Primitive.'`
+
+test('P1: `/pet who leader` binds the never-ordered pet — the same 1,966 the tell recovers', { skip }, () => {
+  // THE TICKET, in one line of log. The say parses to the SAME canonical event the private tell
+  // does (`petClaim`), tagged with which line said so, so everything downstream — attribution,
+  // succession, the zone walk — is shared code rather than a second implementation.
+  const ev = parseEvent(KOBER_LEADER, 0)
+  assert.equal(ev?.kind, 'petClaim')
+  assert.equal(ev?.kind === 'petClaim' ? ev.via : undefined, 'leader')
+
+  const asked = replay([P1], [KOBER_LEADER])
+  const totals = petTotals(allSessions(asked.eng, asked.lastTs))
+  assert.deepEqual([...totals.names], ['Kober'])
+  assert.equal(totals.hits, 105)
+  assert.equal(totals.total, 1966)
+  assert.deepEqual(asked.eng.petDisplayNames(), ['Kober'])
+
+  // …and it is the same bind, not a similar one: asking and ordering produce identical meters.
+  const ordered = replay([P1], [KOBER_TELL])
+  const o = petTotals(allSessions(ordered.eng, ordered.lastTs))
+  assert.deepEqual({ ...totals, names: [...totals.names] }, { ...o, names: [...o.names] })
+})
+
+test('P1: a leader say binds SUMMONED, so it walks the five zone lines like the tell', { skip }, () => {
+  // The pet the /pet who leader answer names is a class pet, and class pets follow you. If the
+  // say had bound as CHARMED it would be left behind at the first zone line and the later
+  // sessions would hold no pet row at all.
+  const { eng, lastTs } = replay([P1], [KOBER_LEADER])
+  assert.deepEqual(eng.petDisplayNames(), ['Kober'])
+  assert.deepEqual(eng.charmedPetNames(), [], 'a summoned bind, not a charm one')
+  const withPet = allSessions(eng, lastTs).filter((v) => v.entities.some((e) => e.kind === 'pet'))
+  assert.ok(withPet.length >= 2, 'the pet followed you')
+})
+
+test("P1: a STRANGER's pet naming ITS OWN owner is not an event at all", { skip }, () => {
+  // `says` is BROADCAST — every pet in earshot prints this exact shape naming its own owner, and
+  // the log's one real occurrence would look identical coming from the player beside you. The
+  // leader's name is the entire guard, and a line that fails it parses to `unknown`: not an event
+  // consumers filter out, not an inert event they must remember to ignore — nothing, exactly like
+  // the mob growl beside it.
+  const strangers = `[Thu Jul 30 16:10:11 2026] Kober says, 'My leader is Gonekn.'`
+  assert.equal(parseEvent(strangers, 0)?.kind, 'unknown')
+  const { eng, lastTs } = replay([P1], [strangers])
+  assert.deepEqual(eng.petDisplayNames(), [], "somebody else's pet is still nobody of ours")
+  assert.equal(petTotals(allSessions(eng, lastTs)).total, 0)
+})
+
+test("P1: with no character installed the rule declines the OWNER's own line", { skip }, () => {
+  // The name comes from the session (rulesets.ts installCharacterName), never from a constant —
+  // the self-`/who` rule's precedent, and the same safe default: with nothing installed we cannot
+  // know whose pet a broadcast names, so we decline rather than guess.
+  installCharacterName(undefined)
+  try {
+    assert.equal(parseEvent(KOBER_LEADER, 0)?.kind, 'unknown')
+    const { eng } = replay([P1], [KOBER_LEADER])
+    assert.deepEqual(eng.petDisplayNames(), [])
+  } finally {
+    installCharacterName('Primitive')
+  }
+})
+
+test('P2: the real line is carried verbatim, and it moves NOT ONE NUMBER', { skip: skipArc }, () => {
+  // WHY RE-CUTTING P2 WAS SAFE, as arithmetic rather than as a claim. The owner's one real leader
+  // say lands at 12:44:20, 68 seconds after Jaber's own tell has already bound it. `world.claim()`
+  // is idempotent (petSuccession.test.mts pins that directly), so the second claim is a refresh of
+  // the same instance: no succession fires, no row moves, nothing retires. These are the exact
+  // figures the tests above assert on the pre-JOS-52 cut of this fixture.
+  assert.equal(P2.filter((l) => /\] Jaber says, 'My leader is Primitive\.'$/.test(l)).length, 1)
+  const { eng, lastTs } = replay([P2])
+  const rows = petRowsByName(eng, lastTs)
+  assert.deepEqual([...rows.keys()].sort(), ['Gonekn', 'Jaber'])
+  assert.deepEqual(rows.get('Jaber'), { hits: 8, total: 599 })
+  assert.deepEqual(rows.get('Gonekn'), { hits: 41, total: 1700 })
+  assert.deepEqual(eng.petDisplayNames(), ['Gonekn'])
+})
+
+test('P2: ASKING at 12:35 is worth as much as ORDERING at 12:35 — all 51 hits', { skip: skipArc }, () => {
+  // The mirror of section 3's honest limit. A leader say binds FORWARD exactly like a tell, so the
+  // instruction it buys is not "order it" but "say something to it, once, when you summon it" —
+  // and either sentence at 12:35:45 recovers the 2,016 points that ordering at 12:43:12 loses.
+  const asked = replay([P2], [`[Thu Aug 06 12:35:45 2026] Jaber says, 'My leader is Primitive.'`])
+  assert.deepEqual(petRowsByName(asked.eng, asked.lastTs).get('Jaber'), { hits: 51, total: 2615 })
 })

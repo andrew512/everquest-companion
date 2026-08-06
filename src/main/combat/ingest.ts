@@ -96,26 +96,36 @@ function ingestCharm(st: EngineState, ev: CharmEvent): void {
 }
 
 /**
- * `<Name> told you, '… Master.'` — a pet addressed you as master, so the named entity is your
- * pet. Ownership-DEFINITIVE and pet-only (no player has ever produced the line), which is why
- * it also PROMOTES: a name we saw charmed but declined to bind (no own cast behind the
- * broadcast) is bound HERE, and bound as CHARMED rather than summoned — AGENTS.md's rule that
- * a claim tell from a name ever seen charmed re-arms the charmed set, never the permanent one.
+ * A pet identified you as its owner, so the named entity is your pet. TWO lines produce this
+ * one event (shared/logEvents.ts PetClaimEvent), and this function deliberately does not care
+ * which — `ev.via` reaches the debug line and nothing else:
  *
- * Otherwise it binds a SUMMONED pet (idempotent; a charmed mob sends this tell too — the real
- * log shows both — and world.claim() leaves an already-charmed instance's petKind alone, so a
- * charmed pet is never reclassified as summoned). This is the ONLY binding signal for
- * random-named class pets. It adds the name to the ATTRIBUTION set only.
+ *   via 'tell'   `<Name> told you, '… Master.'` — private, unforgeable, but only ever sent by a
+ *                pet you have ORDERED.
+ *   via 'leader' `<Name> says, 'My leader is <You>.'` — the `/pet who leader` answer (JOS-52),
+ *                the on-demand way out of that blind spot. Broadcast, so the parser has already
+ *                refused every one of these that named anyone but the tailed character; by the
+ *                time it arrives here it is the same fact the tell states.
+ *
+ * Ownership-DEFINITIVE and pet-only, which is why it also PROMOTES: a name we saw charmed but
+ * declined to bind (no own cast behind the broadcast) is bound HERE, and bound as CHARMED rather
+ * than summoned — AGENTS.md's rule that a claim from a name ever seen charmed re-arms the
+ * charmed set, never the permanent one.
+ *
+ * Otherwise it binds a SUMMONED pet (idempotent; a charmed mob sends the tell too — the real log
+ * shows both — and world.claim() leaves an already-charmed instance's petKind alone, so a
+ * charmed pet is never reclassified as summoned). It adds the name to the ATTRIBUTION set only.
  */
 function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
   const key = idKey(ev.name)
   const promote = !st.world.petInstance(ev.name) && st.charm.claimIsCharmed(key, ev.ts)
   const inst = promote ? st.world.charm(ev.name, ev.ts) : st.world.claim(ev.name, ev.ts)
   st.notePet(key)
-  // The tell is also the corroboration a provisional charm bind was waiting for.
+  // The claim is also the corroboration a provisional charm bind was waiting for.
   st.charm.notePetEvidence(key)
+  const how = ev.via === 'leader' ? ' (it named you its leader)' : ''
   const what = promote ? 'charm claim' : 'pet claim'
-  st.log(ev.ts, promote ? 'charm' : 'pet', 'info', `⚡ ${what} ${st.world.label(inst)} [${inst.instanceId}]`)
+  st.log(ev.ts, promote ? 'charm' : 'pet', 'info', `⚡ ${what} ${st.world.label(inst)} [${inst.instanceId}]${how}`)
   // SINGLE-PET SUCCESSION (JOS-54): claiming a NEW summoned pet retires the previous one inside
   // the world model, and the name index has to follow it out or routing would go on admitting
   // the retired pet's swings as yours. Same two-line follow-through death already does — the
@@ -135,9 +145,12 @@ function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
 //
 // The event still PARSES and still reaches the alerts module (shared/logEventKinds.ts lists it in
 // the trigger vocabulary, so a user can alert on their pet answering), and shared/logScrub.ts
-// keeps its carve-out so fixtures go on carrying the lines verbatim. JOS-52 is the ticket that
-// gives one of them — `<Name> says, 'My leader is <You>.'`, the /pet who leader answer — a real
-// binding job. That one names its owner out loud, which is exactly what these six do not.
+// keeps its carve-out so fixtures go on carrying the lines verbatim.
+//
+// ONE say line does have a binding job, and it is NOT a `petSay` (JOS-52): `<Name> says, 'My
+// leader is <You>.'`, the /pet who leader answer, names its owner out loud, which is exactly what
+// these six do not. It parses straight to `petClaim` with `via: 'leader'` and lands in
+// ingestPetClaim above — the same path the private tell takes, on purpose.
 
 function ingestDeath(st: EngineState, ev: DeathEvent): void {
   const key = idKey(ev.name)

@@ -78,6 +78,21 @@
 //     "<Name> — your pet?" offer, and a fixture that cannot carry them cannot test the offer.
 //     An exact-sentence match rather than a `Master` pattern is the whole safety of it.
 //
+//   * THE PET LEADER SAY (JOS-52) — `<Name> says, 'My leader is <You>.'`, the `/pet who leader`
+//     answer, and the ONLY line in this log in which a pet names its owner out loud.
+//     MEASURED (whole-log sweep, 1,404,458 lines, 2026-08-06): the family has exactly ONE member
+//     and exactly ONE occurrence — `Jaber says, 'My leader is Primitive.'` (Thu Aug 06 12:44:20).
+//     There is no follower variant, no no-leader variant and no charmed variant; the log's only
+//     other 12 lines containing "leader" are seven group-leader lines and five players' chat.
+//
+//     IT IS GATED ON `opts.selfName`, and that is the difference between this carve-out and the
+//     two above it. The tell's argument was "a pet's name is not the user's" and the six says'
+//     was "no player's words and no player's name can ride this out" — but a LEADER say carries a
+//     player's name INSIDE the quote, which is exactly what family 1 exists to drop. So this one
+//     borrows the SELF `/who` ROW's argument instead: the owner's own name is theirs to publish,
+//     and a stranger's pet naming a stranger falls straight through to the drop list. Absent
+//     selfName ⇒ no carve-out at all, the same safe default the `/who` row takes.
+//
 //   * THE SELF `/who` ROW — `opts.selfName`. The owner's own identity is theirs to publish,
 //     and their row is the ONLY line in the log that states the class loadout
 //     (`extract-leveling-fixtures.mjs` and the class-combo model's single Tier-A observation
@@ -125,6 +140,28 @@ function reEscape(s: string): string {
 export const PET_SAY_RE = new RegExp(
   `^(.+?) says, '(${PET_SAY_LINES.map(([, s]) => reEscape(s)).join('|')})'$`
 )
+
+/**
+ * `<Name> says, 'My leader is <Someone>.'` — the `/pet who leader` answer (JOS-52). Capture 1
+ * is the SPEAKER (the pet), capture 2 is the LEADER it named.
+ *
+ * EXACT SHAPE, never a `/leader/` pattern: the sweep that found this line also found seven
+ * `<Name> is now the leader of your group.` lines and five players discussing leadership in
+ * chat, and the six-says precedent (a loose `/Master/` would have leaked six kinds of mob
+ * flavor) is the standing rule here.
+ *
+ * The two captures are deliberately PERMISSIVE — a charmed pet answers with a mob's name
+ * (`a large heart spider`), and the leader is whatever the game printed. Nothing rides on the
+ * captures being tight, because in BOTH readers the whole guard is an equality test against a
+ * name supplied from outside: the owner's `selfName` here, `ParserConfig.characterName` in
+ * src/main/log/parseCasts.ts. That is precisely how the self-`/who` rule is built (a permissive
+ * row regex, the name is the guard), and for the same reason — a `/who` row and a leader say are
+ * both a common grammar in which only the name distinguishes you from a stranger.
+ *
+ * One vocabulary, two readers: the scrub decides whether the line may leave the machine, the
+ * parser decides whether it binds a pet. Neither owns a second copy of the shape.
+ */
+export const PET_LEADER_RE = /^(.+?) says, 'My leader is (.+?)\.'$/
 
 export interface ScrubOpts {
   /** The character whose own `/who` row survives. Fixtures: 'Primitive'. A user's report:
@@ -195,7 +232,7 @@ function cachedSelfWhoRe(selfName: string): RegExp {
 
 /**
  * True when the line is third-party chat/social and must be DROPPED from a public artifact.
- * The two pet carve-outs and the owner's own `/who` row are checked FIRST.
+ * The three pet carve-outs and the owner's own `/who` row are checked FIRST.
  */
 export function isThirdPartyChat(line: string, opts?: ScrubOpts): boolean {
   if (PET_CLAIM_RE.test(line)) return false
@@ -204,9 +241,14 @@ export function isThirdPartyChat(line: string, opts?: ScrubOpts): boolean {
   // and needs no strip), and on the exact sentence — see PET_SAY_RE.
   if (PET_SAY_RE.test(b)) return false
   const selfName = opts?.selfName
-  // the owner's own /who row (`[50 PAL/MNK/ENC] Primitive (Dark Elf) ...`) is their identity
-  if (selfName !== undefined && selfName !== '' && cachedSelfWhoRe(selfName).test(b))
-    return false
+  if (selfName !== undefined && selfName !== '') {
+    // The `/pet who leader` answer, but ONLY when the leader it names is the owner. A stranger's
+    // pet naming a stranger is a third party's name inside quoted speech and falls to rule 1.
+    const lead = PET_LEADER_RE.exec(b)
+    if (lead?.[2].toLowerCase() === selfName.trim().toLowerCase()) return false
+    // the owner's own /who row (`[50 PAL/MNK/ENC] Primitive (Dark Elf) ...`) is their identity
+    if (cachedSelfWhoRe(selfName).test(b)) return false
+  }
   return DROP.some((re) => re.test(b))
 }
 

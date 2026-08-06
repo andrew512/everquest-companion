@@ -5,7 +5,7 @@
 // Every regex, table and comment here is verbatim from the single-pass parser.
 
 import type { LogEvent, PetSayKind } from '../../shared/logEvents'
-import { PET_SAY_LINES, PET_SAY_RE } from '../../shared/logScrub'
+import { PET_LEADER_RE, PET_SAY_LINES, PET_SAY_RE } from '../../shared/logScrub'
 import type { PoisonProcDef } from '../../shared/poisons'
 import { POISON_BY_COAT_MSG, POISON_DRY_MSG, POISON_PROCS } from '../../shared/poisons'
 import type { ParserConfig } from './rulesets'
@@ -227,9 +227,56 @@ export function classifyCcApply({ text, ts, seq, raw }: ClassifyCtx): LogEvent |
 export function classifyPetClaim({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
   if (text.includes(" told you, '")) {
     const m = PET_CLAIM_RE.exec(text)
-    if (m) return { kind: 'petClaim', seq, ts, raw, name: norm(m[1]) }
+    if (m) return { kind: 'petClaim', seq, ts, raw, name: norm(m[1]), via: 'tell' }
   }
   return null
+}
+
+/**
+ * THE `/pet who leader` ANSWER (JOS-52) — `<Name> says, 'My leader is <You>.'`
+ *
+ * The second binding signal a summoned pet has, and the ON-DEMAND one: the tell only fires when
+ * the pet is ORDERED, so a player who never types a pet command has a pet the app cannot see
+ * (AGENTS.md, JOS-47/JOS-49). One `/pet who leader` makes the pet answer out loud, and unlike
+ * the six sentences in `classifyPetSay` below it names the owner — so it BINDS. It emits
+ * `petClaim`, the same canonical event the tell emits, so the whole downstream (world.claim's
+ * idempotence, the JOS-54 single-pet succession, the everCharmed PROMOTE path, the buff-entity
+ * succession in modules/buffs.ts, the progression ledger) is shared rather than re-derived.
+ *
+ * MEASURED (whole-log sweep, 1,404,458 lines, 2026-08-06): the family has exactly ONE member and
+ * ONE occurrence — `Jaber says, 'My leader is Primitive.'`, Thu Aug 06 12:44:20. No follower
+ * variant, no no-leader variant, no charmed variant; a second shape would need a real line first
+ * (the awaiting-sample law). Hence the EXACT shape and not a `/leader/` pattern: the same sweep
+ * turned up seven `<Name> is now the leader of your group.` lines and five players talking about
+ * leadership in chat, and the six-says precedent is standing law here.
+ *
+ * THE LEADER'S NAME IS THE WHOLE GUARD, and it comes from `ParserConfig.characterName` — the
+ * session injects the tailed character (rulesets.ts installCharacterName), never a constant.
+ * `says` is BROADCAST: another player's pet in earshot prints this exact line naming ITS owner,
+ * so a rule that read the shape without the name would hand you a stranger's pet. With no
+ * character installed the rule declines every line, which is the same safe default the
+ * self-`/who` rule takes for the same reason (parseWho.ts classifySelfWho) — that rule is this
+ * one's direct precedent, down to the permissive regex whose only real test is the name.
+ *
+ * THE ONE THING IT CANNOT RULE OUT, stated rather than pretended away: a `says` line is
+ * forgeable. A player standing next to you can type `/say My leader is <You>.` and be admitted
+ * as your pet. The private tell cannot be forged; this cannot be defended, because the game
+ * gives `/pet who leader` no other answer. The cost is bounded and local — a bogus row in your
+ * own meter, in your own session, from someone who has to be in earshot and do it on purpose —
+ * and the owner asked for the command's text supported knowing what the command is.
+ *
+ * Declines (returns null) for every other leader, which is the codebase's idiom for a line that
+ * parses to nothing: it becomes no event at all, exactly like the mob growl beside it. A
+ * stranger's pet naming a stranger is not information about our world model.
+ */
+export function classifyPetLeader({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEvent | null {
+  const self = cfg.characterName
+  if (self === undefined || self === '' || !text.includes(" says, 'My leader is ")) return null
+  const m = PET_LEADER_RE.exec(text)
+  if (!m) return null
+  // Case-insensitive like every other name comparison in this parser (world-model law 2).
+  if (m[2].toLowerCase() !== self.trim().toLowerCase()) return null
+  return { kind: 'petClaim', seq, ts, raw, name: norm(m[1]), via: 'leader' }
 }
 
 /**

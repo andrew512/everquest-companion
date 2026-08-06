@@ -353,25 +353,45 @@ export interface CcEvent extends LogEventBase {
 }
 
 /**
- * A pet-ownership claim: a line where a pet addresses YOU as its master, proving
- * the named entity is your pet. Emitted for the DIRECT-TELL family only —
+ * A pet-ownership claim: a line in which a pet identifies YOU as its owner, proving the named
+ * entity is your pet. ONE canonical event, TWO log lines that state the same fact — the same
+ * shape-to-kind canonicalization `damage` and `resist` already are.
+ *
+ * `via: 'tell'` — THE DIRECT-TELL FAMILY:
  *   `<Name> told you, 'Attacking <target> Master.'`
  *   `<Name> told you, 'I am unable to wake <mob>, Master.'`
- * — which in the real log is emitted ONLY by pets (no player false positives; see
- * parser.ts). This is how random proper-named SUMMONED pets (Vebarn, Garer, …),
- * which never appear in a charm line, get bound to you. Charmed pets also emit it
- * (harmlessly — they're already bound via the charm line).
+ * which in the real log is emitted ONLY by pets (no player false positives; see parser.ts).
+ * This is how random proper-named SUMMONED pets (Vebarn, Garer, …), which never appear in a
+ * charm line, get bound to you. Charmed pets also emit it (harmlessly — they're already bound
+ * via the charm line).
  *
  * ITS ONE BLIND SPOT, and JOS-47 is what measured it: the tell fires only when the pet is
  * ORDERED. `/pet attack` produces "Attacking X Master."; `/pet back off` on a mezzed mob
  * produces the wake-failure variant. A pet that engages on its OWN aggro emits nothing
  * private at all — so a player who never types a pet command has a pet this signal can never
- * bind, and 13,555 points of it went unrecorded in the reporter's 30-minute slice. That is
- * what `PetSayEvent` exists for, and why it nominates rather than binds.
+ * bind, and 13,555 points of it went unrecorded in the reporter's 30-minute slice.
+ *
+ * `via: 'leader'` — THE `/pet who leader` ANSWER (JOS-52), which is the ON-DEMAND way out of
+ * that blind spot:
+ *   `<Name> says, 'My leader is <You>.'`
+ * A player who has never ordered their pet can type one command and have it say whose it is.
+ * Unlike the six pet-voiced sentences in `PetSayEvent`, this one NAMES ITS OWNER, so it is a
+ * bind and not a nomination — but unlike the tell it is BROADCAST, so the leader's name is the
+ * entire guard and the parser refuses every line naming anyone but the tailed character (see
+ * classifyPetLeader for the guard, its measurement, and the one forgery it cannot rule out).
+ *
+ * The two are the SAME fact and therefore the same kind: every consumer (combat ingest's
+ * world.claim + JOS-54 succession, modules/buffs.ts's buff-entity succession,
+ * modules/progression.ts's pet ledger, the alerts vocabulary) binds identically, which is the
+ * point — a second kind would be a second retirement path for one of those three models to
+ * forget, and world-model law 4 is a scar from exactly that.
  */
 export interface PetClaimEvent extends LogEventBase {
   kind: 'petClaim'
   name: string
+  /** WHICH line said so. Never a behavioural switch — it is what the engine's debug line, an
+   *  alert author and a test read to tell an ordered pet from an interrogated one. */
+  via: 'tell' | 'leader'
 }
 
 /** Which of the six pet responses was spoken (shared/logScrub.ts `PET_SAY_LINES`). */
