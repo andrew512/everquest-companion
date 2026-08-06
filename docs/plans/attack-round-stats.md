@@ -1,5 +1,14 @@
 # Attack-round stats — riposte, flurry, double/triple attack, orthogonal to damage
 
+> **§3 (the Rounds panel) is SUPERSEDED by JOS-37, 2026-08-06.** The owner found the readout
+> hard to understand, so the panel became MULTI-ATTACK: one row per attack type,
+> `<rounds> rounds · 24% doubled · 3% tripled`, flurry stated once for the source, and a single
+> `est.` on the dual-wieldable verbs in place of the `inferred` chip and its four hover
+> paragraphs (TOOLTIP AND CAVEAT DIET). Riposte, rampage, the exclusion tally and the modifier
+> list are not multi-attack and left the view; they remain on `SourceRoundsView`. **§1, §2 and
+> the ENGINE (combat/rounds.ts, roundViews.ts) are unchanged** — same grouping, same fan-out
+> collapse, same per-event vs aggregate tiers. Only the reading changed.
+
 Status: DESIGN. Author: planning session (Fable), 2026-08-05. Owner-requested
 ("track double/triple attack percentages — stats orthogonal to damage").
 Research: the 2026-08-05 mechanics sweep (full report in the session; key

@@ -4,7 +4,7 @@
 // (`<mob>'s limbs move slower!`) and never a damage line, while its resists print the spell name
 // like every other spell (`A wanderer resisted your Weakening Strike!`). So the combat drill
 // built the lane entirely out of resists and rendered `0 landed · 34 resisted` — a 100% resist
-// rate for a proc that landed 562 times in the same log, three inches from a Procs tab counting
+// rate for a proc that landed 562 times in the same log, three inches from a Procs panel counting
 // every one of those emotes.
 //
 // `SkillView.lands` now carries those landings (joined in at view-build from the proc ledger's

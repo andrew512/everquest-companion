@@ -50,8 +50,14 @@ import { parseEvent } from '../src/main/log/parser'
 import { installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { CombatEngine } from '../src/main/combat/engine'
-import { COMBAT_POISON_LINES, MAX_COMBAT_COATS, POISONS, coatLineKey } from '../src/shared/poisons'
-import { coatRows } from '../src/renderer/src/features/combat/procRows'
+import {
+  COMBAT_POISON_LINES,
+  MAX_COMBAT_COATS,
+  POISONS,
+  POISON_BY_NAME,
+  SLOW_STRIKE,
+  coatLineKey
+} from '../src/shared/poisons'
 import type { LogEvent } from '../src/shared/logEvents'
 import type { CombatSnapshot, ProcsView, SegmentView, TimelineView } from '../src/shared/combat'
 
@@ -513,14 +519,14 @@ test('a pull after a death is honestly slow-INCAPABLE — the stale coat used to
   assert.equal(after.slowExpected, false)
 })
 
-
-// ── what the UI draws from the four slots ───────────────────────────────────────────
+// ── the four slots reach the payload ────────────────────────────────────────────────
 //
-// `coatRows` (renderer, pure) is the shaping the Procs tab renders and the reason this engine
-// file reaches across into the renderer: the model above is only worth having if every slot
-// reaches the screen. The Procs tab used to render all four coats as a single dim line of
-// joined names, and the header pill named ONLY the utility slot — which is what the owner
-// reported: "the combat tab is only showing one of them that's applied."
+// The model above is only worth having if every slot reaches the UI, and the owner's report was
+// exactly that it did not: "the combat tab is only showing one of them that's applied." The
+// renderer used to prove this through `coatRows`, a per-coat shaping the Procs tab drew; JOS-37
+// cut that tab back to name · PPM · count and the shaping went with it. What has to stay pinned
+// is the PAYLOAD — all four coats, utility slot apart from the venom stack, each with the time
+// it went on and its roster classification — because that is what any surface reads.
 
 const COATED: ProcsView = {
   coatAtEngage: { poison: 'Neurotoxic Poison', sinceTs: 1_000 },
@@ -531,14 +537,8 @@ const COATED: ProcsView = {
   ],
   slowExpected: true,
   coats: [],
-  // The ledger's own lane spelling, INCLUDING the shared-emote join (law 3): one emote,
-  // two candidate Strikes.
-  strikes: [
-    { name: 'Weakening Strike', count: 3 },
-    { name: 'Asp Venom Strike / Cobra Venom Strike', count: 5, ambiguous: true },
-    { name: 'Blood Siphon Strike / Blood Draw Strike', count: 2, ambiguous: true }
-  ],
-  strikeCount: 10,
+  strikes: [],
+  strikeCount: 0,
   slowLands: 3,
   poisonDamage: [],
   poisonDamageTotal: 0,
@@ -548,62 +548,31 @@ const COATED: ProcsView = {
   invocationSwitches: 0
 }
 
-test('every coat gets its OWN row — all four, utility first, never just the one', () => {
-  const rows = coatRows(COATED)
+test('all four coats are in the payload, utility slot apart from the venom stack', () => {
+  const slots = [...(COATED.coatAtEngage ? [COATED.coatAtEngage] : []), ...COATED.combatAtEngage]
   assert.deepEqual(
-    rows.map((r) => `${r.poison}|${r.group}`),
-    [
-      'Neurotoxic Poison|utility',
-      'Asp Venom|combat',
-      'Blood Siphon Venom|combat',
-      'Stunning Venom|combat'
-    ]
+    slots.map((c) => `${c.poison}|${POISON_BY_NAME.get(c.poison)?.group ?? 'unknown'}`),
+    ['Neurotoxic Poison|utility', 'Asp Venom|combat', 'Blood Siphon Venom|combat', 'Stunning Venom|combat']
   )
   // The applied time rides through untouched: a coat routinely predates the segment it is
   // reported in (the w41 window's venoms went on eighteen minutes before its first swing).
-  assert.deepEqual(rows.map((r) => r.sinceTs), [1_000, 2_000, 3_000, 4_000])
+  assert.deepEqual(
+    slots.map((c) => c.sinceTs),
+    [1_000, 2_000, 3_000, 4_000]
+  )
 })
 
-test('a row carries its own Strikes, and the SLOW carrier is the utility poison', () => {
-  const rows = coatRows(COATED)
-  const by = new Map(rows.map((r) => [r.poison, r]))
-
-  // Neurotoxic grants Befuddling + Weakening. Befuddling never landed here and the row SAYS so
-  // with a zero rather than dropping the Strike: "it was coated and it never fired" is an
-  // answer, and hiding it makes an unlucky coat look like one that was never applied.
-  assert.deepEqual(by.get('Neurotoxic Poison')?.strikes, [
-    { name: 'Befuddling Strike', count: 0 },
-    { name: 'Weakening Strike', count: 3 }
-  ])
-
-  // THE AMBIGUOUS LANES RESOLVE HERE, and only because of the line model: `Asp Venom Strike /
-  // Cobra Venom Strike` is one emote shared by two Strikes (law 3), but those two venoms sit on
-  // ONE line and cannot both be coated — so with Asp up, the lane is Asp's.
-  assert.deepEqual(by.get('Asp Venom')?.strikes, [{ name: 'Asp Venom Strike', count: 5 }])
-  assert.deepEqual(by.get('Blood Siphon Venom')?.strikes, [{ name: 'Blood Siphon Strike', count: 2 }])
-  assert.deepEqual(by.get('Stunning Venom')?.strikes, [{ name: 'Stunning Strike', count: 0 }])
-
-  // ONLY the utility poison can carry the slow — every Weakening-Strike granter in the roster
-  // is a utility poison, which is exactly why `slowExpected` keys off the utility slot alone.
-  assert.deepEqual(rows.filter((r) => r.slowCarrier).map((r) => r.poison), ['Neurotoxic Poison'])
+test('only the utility poison can carry the slow — which is why slowExpected keys off it', () => {
+  // Every Weakening-Strike granter in the roster is a utility poison.
+  const carriers = POISONS.filter((p) => p.strikes.includes(SLOW_STRIKE))
+  assert.ok(carriers.length > 0)
+  assert.ok(
+    carriers.every((p) => p.group === 'utility'),
+    carriers.map((p) => `${p.name}|${p.group}`).join(', ')
+  )
+  // …and none of this fight's venoms grants it.
+  for (const c of COATED.combatAtEngage) {
+    assert.ok(!(POISON_BY_NAME.get(c.poison)?.strikes ?? []).includes(SLOW_STRIKE), c.poison)
+  }
 })
 
-test('coats with no utility poison still produce rows — the case that rendered as NOTHING', () => {
-  // The owner's own loadout after a death or a fresh log-in: three venoms, no utility poison.
-  // The header pill returned null for exactly this shape.
-  const rows = coatRows({ ...COATED, coatAtEngage: undefined, slowExpected: false })
-  assert.equal(rows.length, 3)
-  assert.ok(rows.every((r) => r.group === 'combat'))
-  assert.ok(!rows.some((r) => r.slowCarrier), 'no venom can proc a slow')
-  // And a selection with nothing coated is genuinely empty — never a placeholder row.
-  assert.deepEqual(coatRows({ ...COATED, coatAtEngage: undefined, combatAtEngage: [] }), [])
-})
-
-test('an UNKNOWN coat is listed without being classified or given Strikes', () => {
-  // The coat line demonstrably fired but refused to name the poison. The blades are coated —
-  // that is true and shown — but nothing may be claimed about what is on them.
-  const rows = coatRows({ ...COATED, coatAtEngage: { poison: 'unknown', sinceTs: 9 }, combatAtEngage: [] })
-  assert.deepEqual(rows, [
-    { key: 'unknown|9|0', poison: 'unknown', group: 'unknown', sinceTs: 9, strikes: [], slowCarrier: false }
-  ])
-})

@@ -14,7 +14,7 @@ import { PetBar } from './PetBar'
 import { CAT_COLOR, QuietNote, RESIST_COLOR, SkillBar } from './combatShared'
 import { skillsForTarget, type Drill, type MeterMode, type TargetDetail } from './dashboardData'
 import { HealBody } from './HealPanel'
-import { RoundsPanel } from './RoundsPanel'
+import { MultiAttackPanel } from './MultiAttackPanel'
 import { SegmentHeader } from './SegmentHeader'
 import { procAnnotationFor, procTagIndex } from './procRows'
 import { meterPanel, type MeterPanel, type OwnRow } from './petRows'
@@ -116,7 +116,7 @@ function CategoryLegend({
 
 /**
  * Level-2 (one of two level-2 subjects): the category legend + ONE flat ranked list of every
- * skill/spell this entity landed. The melee-rounds heuristic footer rides along.
+ * skill/spell this entity landed. The multi-attack panel rides along below it.
  *
  * `rows` are `MeterPanel.rows` — built by `petRows.meterPanel`, the ONE row builder the floating
  * overlay uses too. They are this entity's skill lanes with any nested pets ranked among them
@@ -161,11 +161,12 @@ function EntitySkillBars({
         )
       )}
       {rows.length === 0 && <QuietNote>No skill breakdown for this source.</QuietNote>}
-      {/* ROUNDS (docs/plans/attack-round-stats.md): riposte, flurry, the per-verb round table
-          and the modifier tallies — the stats that are orthogonal to damage. Reads the SELECTED
-          segment's source row, so it is scope-aware (fight / overall) with no state of its own,
-          and it renders nothing for a source that never swung. */}
-      <RoundsPanel source={e} />
+      {/* MULTI-ATTACK (JOS-37): per attack type, how often it doubled, tripled, flurried — the
+          stats that are orthogonal to damage. Reads the SELECTED segment's source row, so it is
+          scope-aware (fight / overall) with no state of its own, and it renders nothing for a
+          source that never swung. It stays HERE, one level down, because it is a statement about
+          ONE source's swings and the drill is where a source is the subject. */}
+      <MultiAttackPanel source={e} />
     </Box>
   )
 }

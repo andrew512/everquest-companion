@@ -45,7 +45,7 @@ import { QUICK_BUFF_AA, QUICK_BUFF_BURST_MS, isCastlessHeal, noteCast, type Rece
 import { QUICK_BUFF, QUICK_BUFF_WINDOW_MS } from '../src/main/modules/buffsShapes'
 import { flattenSkills } from '../src/renderer/src/features/combat/dashboardData'
 import { landEvidence } from '../src/renderer/src/features/combat/landEvidence'
-import { laneRows, ppmCell, procAnnotationFor, procTagIndex } from '../src/renderer/src/features/combat/procRows'
+import { ppmCell, procAnnotationFor, procListRows, procTagIndex } from '../src/renderer/src/features/combat/procRows'
 import { formatEntityText } from '../src/renderer/src/features/combat/copyText'
 import type { ProcLaneView } from '../src/shared/procAnalytics'
 import type { ProcsView, SegmentView, SkillView } from '../src/shared/combat'
@@ -140,11 +140,10 @@ test('W42: the ledger row and the drill row are the SAME two counters', { skip: 
     assert.equal(lane.resisted, row.resists, `${name}: and the resists likewise`)
     assert.equal(Math.round(lane.resistPct ?? -1), Math.round(landEvidence(row).resistPct ?? -2))
   }
-  // The rendered ledger row says it too, in the spelling the panel and the clipboard share.
-  const rows = laneRows(seg.procs.lanes ?? [], seg.activeSec)
-  assert.equal(rows.find((r) => r.name === 'Weakening Strike')?.resisted, '4 resists · 57% resist')
-  // A lane nothing resisted carries no resist text at all — never a `0`.
-  assert.equal(rows.find((r) => r.name === 'Smiting Strike')?.resisted, undefined)
+  // The rendered proc list is where the count is READ (the resist half now lives on the drill
+  // row alone — JOS-37 cut the ledger back to name · PPM · count).
+  const rows = procListRows(seg.procs)
+  assert.equal(rows.find((r) => r.name === 'Weakening Strike')?.count, laneNamed(seg.procs, 'Weakening Strike').count)
 })
 
 test('W42: the pasted block carries the same two counters, not a 100% resist rate', { skip: missing(W42) }, () => {

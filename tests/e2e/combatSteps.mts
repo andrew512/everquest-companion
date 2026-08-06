@@ -113,43 +113,52 @@ export async function stepMeterDrill(page: Page): Promise<void> {
   check('…and Back returns to the same source list it came from', after === rows, `${rows} → ${after} rows`)
 }
 
-// ── THE ROUNDS PANEL (docs/plans/attack-round-stats.md) ────────────────────────────────
+// ── THE MULTI-ATTACK PANEL (JOS-37; the engine half is docs/plans/attack-round-stats.md) ──
 //
-// The grouper, the tiers and every word of the tooltips are pinned in
-// tests/combatRoundStats.test.mts + tests/roundRows.test.mts against real log windows. What
-// only the real app can show is that the panel MOUNTS inside the drill and states something:
-// it lives one level down (the drilled source's breakdown), so a wiring mistake would leave it
-// invisible with every unit test still green.
+// The grouper and the tiers are pinned in tests/combatRoundStats.test.mts, and the words in
+// tests/multiAttackRows.test.mts, against real log windows. What only the real app can show is
+// that the panel MOUNTS inside the drill and states something: it lives one level down (the
+// drilled source's breakdown), so a wiring mistake would leave it invisible with every unit
+// test still green. It stays in the drill on purpose — the JOS-37 arrangement note in
+// CombatView.tsx says why — so this step is also what proves it did not drift up into a cell.
 //
 // FLOORS ONLY (AGENTS.md: frozen numbers rot). The live log decides how many verbs the
 // selected fight used, so this asserts "at least one stated lane, with its denominator on
 // screen" and notes rather than fails when the selection has no swings at all.
 
-const ROUNDS = '[data-testid="rounds-panel"]'
-const ROUNDS_LANE = '[data-testid="rounds-lane"]'
+const MULTI = '[data-testid="multi-attack-panel"]'
+const MULTI_LANE = '[data-testid="multi-attack-lane"]'
 
-export async function stepRoundsPanel(page: Page): Promise<void> {
+export async function stepMultiAttackPanel(page: Page): Promise<void> {
   // The dashboard opens on LEVEL 1 (JOS-35), so this step drills itself — `stepMeterDrill` above
-  // left it un-drilled on purpose, and the Rounds panel lives one level down.
-  if ((await inMeterPanel(page, ROUNDS)) === 0 && !(await drilled(page))) {
+  // left it un-drilled on purpose, and the multi-attack panel lives one level down.
+  if ((await inMeterPanel(page, MULTI)) === 0 && !(await drilled(page))) {
     await page.click('[data-testid="meter-row"]', { timeout: 15_000 }).catch(() => undefined)
     await sleep(600)
   }
-  const lanes = await inMeterPanel(page, ROUNDS_LANE)
-  if ((await inMeterPanel(page, ROUNDS)) === 0) {
-    note('the drilled source landed no swings in this selection — the Rounds panel correctly renders nothing')
+  const lanes = await inMeterPanel(page, MULTI_LANE)
+  if ((await inMeterPanel(page, MULTI)) === 0) {
+    note('the drilled source landed no swings in this selection — the multi-attack panel correctly renders nothing')
     return
   }
-  check('the Rounds panel mounts inside the combat drill', true)
-  check('…with at least one stated round lane', lanes >= 1, `${lanes} lanes`)
+  check('the multi-attack panel mounts inside the combat drill', true)
+  check('…with at least one attack-type lane', lanes >= 1, `${lanes} lanes`)
   const text = await page.evaluate((sel) => {
     const el = document.querySelector(sel)
     return (el as HTMLElement | null)?.innerText ?? ''
-  }, ROUNDS)
+  }, MULTI)
   // The denominator is on screen, in rounds — law 11's spirit, and the one thing the design
   // insists the panel can never omit.
   check('…and its denominator is visible, in ROUNDS', /\brounds\b/i.test(text), text.slice(0, 120).replace(/\s+/g, ' '))
-  check('…and it states a multi-swing rate for its lanes', /%\s*multi/i.test(text), text.slice(0, 160).replace(/\s+/g, ' '))
+  // Every lane states its multi-attack reading — a rate, or the honest "it never did".
+  check(
+    '…and every lane states how often it multi-attacked',
+    /%\s*doubled|never multi-attacked/i.test(text),
+    text.slice(0, 160).replace(/\s+/g, ' ')
+  )
+  // The whole stated-vs-inferred tier is ONE word now (TOOLTIP AND CAVEAT DIET) — the old
+  // panel's four hover paragraphs are gone, and so is the `inferred` chip they explained.
+  check('…and the old Rounds block’s chips are gone', !/inferred|riposte|rampage|excluded/i.test(text), text.slice(0, 160).replace(/\s+/g, ' '))
 }
 
 // ── THE OPEN FIGHT LIST IS FROZEN (Task #61) ───────────────────────────────────────────
