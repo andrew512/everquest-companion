@@ -8,8 +8,9 @@
 // yet it starts EMPTY rather than guessing a trio (law 1), and an empty trio simply means "no
 // class filter" everywhere downstream.
 //
-// ONE NOWRAP TOOLBAR ROW (the flexWrap law): controls never shrink, and the one thing carrying
-// world-supplied text — the set names — is the group allowed to scroll.
+// ONE NOWRAP TOOLBAR ROW (the flexWrap law): controls never shrink below their own floor — the
+// class filter's is 240px, the mode toggle's is its buttons — and the one thing carrying
+// world-supplied text, the set names, is the group allowed to scroll.
 //
 // THREE MODES, ONE SET: Effects picks what you want, Board shows where it all goes, Farm turns
 // what is missing into a route. All three read the SAME selected plan, and the progress join is
@@ -37,9 +38,10 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
-import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses, type ClassAbbr } from '@shared/classCombo'
+import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses } from '@shared/classCombo'
 import type { ExaltPlan } from '@shared/planner/types'
 import { useComboSnap } from '../profiles/ClassComboData'
+import ChipMultiSelect from '../../components/ChipMultiSelect'
 import { Tooltip } from '../../lib/Tooltip'
 import EffectBrowser from './EffectBrowser'
 import FarmList from './FarmList'
@@ -52,68 +54,6 @@ const MODES: { value: PlannerMode; label: string }[] = [
   { value: 'board', label: 'Board' },
   { value: 'farm', label: 'Farm' }
 ]
-
-// ---- the class trio editor -----------------------------------------------------------
-
-/**
- * The 16 codes as toggles, capped at three — the same picker shape the class-combo correction
- * dialog uses (features/profiles/ClassComboEditor). It is local rather than imported because that
- * one is a private component of a dialog that WRITES A CORRECTION; this one edits a plan.
- */
-function ClassPickerDialog({
-  plan,
-  onClose,
-  onSave
-}: {
-  plan: ExaltPlan | null
-  onClose: () => void
-  onSave: (classes: ClassAbbr[]) => void
-}): JSX.Element {
-  const [picked, setPicked] = useState<ClassAbbr[]>(plan?.classes ?? [])
-  const full = picked.length >= MAX_COMBO_SLOTS
-  const toggle = (c: ClassAbbr): void => {
-    setPicked((prev) =>
-      prev.includes(c) ? prev.filter((x) => x !== c) : prev.length < MAX_COMBO_SLOTS ? [...prev, c] : prev
-    )
-  }
-  return (
-    <Dialog open={plan !== null} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ pb: 1 }}>Which classes is this set for?</DialogTitle>
-      <DialogContent>
-        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ pt: 0.5 }}>
-          {CLASS_ABBRS.map((abbr) => {
-            const on = picked.includes(abbr)
-            return (
-              <Chip
-                key={abbr}
-                size="small"
-                label={abbr}
-                color={on ? 'primary' : 'default'}
-                variant={on ? 'filled' : 'outlined'}
-                onClick={() => toggle(abbr)}
-                disabled={!on && full}
-                sx={{ height: 24, fontWeight: on ? 700 : 400 }}
-              />
-            )
-          })}
-        </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-          {picked.length === 0
-            ? `No classes picked — nothing is filtered out.`
-            : `${picked.join(' / ')} — ${String(picked.length)} of ${String(MAX_COMBO_SLOTS)} slots.`}
-        </Typography>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button size="small" color="inherit" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button size="small" variant="contained" data-testid="planner-classes-save" onClick={() => onSave(picked)}>
-          Save
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
 
 function RenameDialog({
   plan,
@@ -193,19 +133,37 @@ function SetSwitcher({
   )
 }
 
-/** The set's target classes, as chips that open the picker. Empty = "any class". */
-function TrioChips({ plan, onEdit }: { plan: ExaltPlan; onEdit: () => void }): JSX.Element {
+/**
+ * The set's target classes — the SAME closed-list multi-select the Sky tracker filters with
+ * (planner-v2 V3), inline in the toolbar rather than behind a dialog, because a filter has to
+ * LOOK mutable to read as a filter. Capped at MAX_COMBO_SLOTS; empty stays legal and means
+ * "no class filter" (law 1), which is what the placeholder says while it is empty.
+ *
+ * `minWidth` is the control's FLOOR, not its width: it gives space back to the row until it hits
+ * that floor, and past that the set-switcher chip strip is the group that scrolls. 240 rather
+ * than the Sky bar's 280 because this row also carries the mode toggle: at the 900px minimum
+ * window width the content area is 648px, and New set + the overflow menu + the toggle + the
+ * gaps already claim ~373 of it. Three three-letter chips and a caret fit in 240 with room over.
+ */
+function ClassFilter({ plan, plans }: { plan: ExaltPlan; plans: PlansApi }): JSX.Element {
   return (
-    <Tooltip title="The classes this set is planned for. A donor must share one of them to be socketable (and socketing narrows the host to the overlap).">
-      <Stack direction="row" spacing={0.5} onClick={onEdit} sx={{ cursor: 'pointer', flexShrink: 0 }}>
-        {plan.classes.length === 0 ? (
-          <Chip size="small" variant="outlined" label="any class" data-testid="planner-trio" />
-        ) : (
-          plan.classes.map((c) => (
-            <Chip key={c} size="small" color="primary" variant="filled" label={c} data-testid="planner-trio" />
-          ))
-        )}
-      </Stack>
+    <Tooltip
+      cursor="inherit"
+      placement="top"
+      title="The classes this set is planned for. A donor must share one of them to be socketable (and socketing narrows the host to the overlap)."
+    >
+      <Box sx={{ display: 'flex' }}>
+        <ChipMultiSelect
+          options={CLASS_ABBRS}
+          value={plan.classes}
+          onChange={(classes) => plans.setClasses(plan.id, classes)}
+          label="Classes"
+          placeholder="All classes"
+          max={MAX_COMBO_SLOTS}
+          minWidth={240}
+          testId="planner-classes"
+        />
+      </Box>
     </Tooltip>
   )
 }
@@ -255,11 +213,10 @@ function ModePane({
 
 interface Editing {
   rename: ExaltPlan | null
-  classes: ExaltPlan | null
   menu: HTMLElement | null
 }
 
-const NO_EDIT: Editing = { rename: null, classes: null, menu: null }
+const NO_EDIT: Editing = { rename: null, menu: null }
 
 export interface PlannerViewProps {
   /**
@@ -291,7 +248,7 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
       <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1.5 }}>
         <SetSwitcher plans={plans} onNew={newSet} onMenu={(menu) => setEditing({ ...NO_EDIT, menu })} />
         <Box sx={{ flexGrow: 1, minWidth: 8 }} />
-        <TrioChips plan={selected} onEdit={() => setEditing({ ...NO_EDIT, classes: selected })} />
+        <ClassFilter plan={selected} plans={plans} />
         <ToggleButtonGroup
           exclusive
           size="small"
@@ -338,15 +295,6 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
         onClose={() => setEditing(NO_EDIT)}
         onSave={(name) => {
           if (editing.rename) plans.rename(editing.rename.id, name)
-          setEditing(NO_EDIT)
-        }}
-      />
-      <ClassPickerDialog
-        key={`classes:${editing.classes?.id ?? 'none'}:${editing.classes?.classes.join('') ?? ''}`}
-        plan={editing.classes}
-        onClose={() => setEditing(NO_EDIT)}
-        onSave={(classes) => {
-          if (editing.classes) plans.setClasses(editing.classes.id, classes)
           setEditing(NO_EDIT)
         }}
       />
