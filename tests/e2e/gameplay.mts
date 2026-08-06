@@ -98,6 +98,20 @@ export async function playPull(
 }
 
 /**
+ * The self `/who` row — the ONE line the log ever prints that states the class loadout
+ * (AGENTS.md: keyed on the tailed character's name, never a constant; the scrub exempts the
+ * user's own row for exactly this reason).
+ *
+ * Played live rather than baked into a fixture because it is EVIDENCE the combo module folds
+ * with a timestamp: a row from five days ago competes with everything since, and what the
+ * "New at this level" panel needs is a loadout resolved for NOW. The shape is copied verbatim
+ * from the real log's own row (`[50 PAL/MNK/ENC] Primitive (Dark Elf)  ZONE: …`).
+ */
+export function playWho(log: FixtureLog): number {
+  return log.append('[50 PAL/MNK/ENC] Primitive (Dark Elf)  ZONE: East Freeport (freportn)')
+}
+
+/**
  * A credited kill and nothing else — the smallest thing that fills a progression window.
  *
  * The Overview's leveling tiles read the LAST HOUR of log time, and a fixture cut from last

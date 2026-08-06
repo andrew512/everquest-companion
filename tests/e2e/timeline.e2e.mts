@@ -40,18 +40,22 @@
  */
 import type { ElectronApplication, Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
   buildIfStale,
   check,
   dumpArtifacts,
   failures,
   note,
   reportRun,
-  sleep,
+  settle,
+  settleCount,
+  settleStable,
   snapshot,
-  timelineDisabled
+  sleep,
+  timelineDisabled,
+  waitHydrated
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 
 /** The window sizes to measure at. 520x320 is well under the app's own 900x600 minimum. */
 const SIZES = [
@@ -107,12 +111,22 @@ function revisited(keys: string[]): string {
   return ''
 }
 
+/**
+ * THE ONE PLACE IN THIS SUITE WHERE A TIMER IS THE INSTRUMENT, not a bet (wave E3 keeps it).
+ *
+ * Everywhere else a sleep is a guess at how long a change takes; here the SUBJECT is change over
+ * time. An oscillation is a value that comes back, and the only way to see one is to sample the
+ * geometry repeatedly with the clock running. A condition wait would be the wrong tool: there is
+ * no state to wait for — the whole claim is that the state stops moving and stays stopped.
+ */
+const SAMPLE_GAP_MS = 160
+
 async function checkAtSize(page: Page, tag: string): Promise<void> {
   const samples: TlGeom[] = []
   for (let i = 0; i < 6; i++) {
     const g = await timelineGeom(page)
     if (g) samples.push(g)
-    await sleep(160)
+    await sleep(SAMPLE_GAP_MS)
   }
   if (!check(`[${tag}] the timeline chart is mounted`, samples.length === 6, `${String(samples.length)}/6 samples`)) {
     return
@@ -142,44 +156,74 @@ async function run(app: ElectronApplication, page: Page): Promise<void> {
   await page.click('[data-testid="nav-combat"]', { timeout: 60_000 })
   await page.waitForSelector('[data-testid="segment-select"]', { timeout: 60_000 })
 
-  const t0 = Date.now()
-  let snap = await snapshot(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    await sleep(500)
-    snap = await snapshot(page)
-  }
+  const { snap } = await waitHydrated(page)
   if (!check('hydration completes (replay hands off to the live tail)', !snap.hydrating)) return
-  await sleep(1500)
 
-  if (await timelineDisabled(page)) {
-    note('no selection with an event ring in this log right now — the Timeline view is disabled, so its sizing cannot be measured')
+  // THE WORLD MUST HOLD STILL BEFORE THE FLICKER MEASUREMENT BEGINS. A fixture replays in
+  // milliseconds, so the engine's idle-close of the slice's last encounter now lands AFTER
+  // hydration rather than long before it — and a fight finalizing mid-sample relabels the chart,
+  // which steps the label gutter and reads exactly like the oscillation this spec hunts
+  // (MEASURED 2026-08-06 at 760x640: a single 602→462 step, ~1.5s in, surviving a 0.9s quiet
+  // gate). So wait for the last fight to close: after that, nothing but the window size can
+  // change the geometry, which is precisely the claim.
+  const settledWorld = await settle(
+    () => snapshot(page),
+    (s) => !s.segments.some((seg) => seg.kind === 'current'),
+    { timeoutMs: 90_000, pollMs: 500 }
+  )
+  check(
+    'the fixture’s last fight has closed — nothing but the window can move the chart now',
+    !settledWorld.segments.some((s) => s.kind === 'current'),
+    settledWorld.segments.find((s) => s.kind === 'current')?.name ?? 'none open'
+  )
+
+  // The Timeline is only offered once a selection HAS an event ring; that resolution is a couple
+  // of IPC hops after the handoff, so wait for the answer instead of sleeping past it.
+  if (await settle(() => timelineDisabled(page), (d) => !d, { timeoutMs: 15_000 })) {
+    note('no selection with an event ring in this fixture — the Timeline view is disabled, so its sizing cannot be measured')
     return
   }
   await page.click('[data-testid="view-toggle"] button:nth-child(2)')
-  await sleep(1200)
+  await settleCount(page, '[data-testid="timeline-frame"]', 1, { timeoutMs: 15_000 })
 
   const win = await app.browserWindow(page)
   const wide = await win.evaluate((w) => w.getBounds())
   await win.evaluate((w) => { w.setMinimumSize(400, 300) })
   for (const size of SIZES) {
+    // The resize, the ResizeObserver callback and React's render all have to land BEFORE the
+    // samples start, or the first sample legitimately differs from the rest and reads as a
+    // flicker. "Settled" ALONE is not that signal — the pre-resize geometry is perfectly stable
+    // and would satisfy it three times over, and then the real layout would arrive mid-sample
+    // (MEASURED 2026-08-06: a 602→462 step inside the sample window, reported as a moving width).
+    // So: wait for the frame to actually BE the new size, and only then for it to hold still.
+    const was = (await timelineGeom(page))?.fw ?? -1
     await win.evaluate((w, b) => { w.setBounds(b) }, { ...wide, ...size })
-    // Generous: the resize, the ResizeObserver callback and React's render all have to land
-    // before the samples start, or the first sample would legitimately differ from the rest.
-    await sleep(1500)
+    await settle(() => timelineGeom(page), (g) => g !== null && g.fw !== was, { timeoutMs: 15_000 })
+    // …and then HOLD STILL, which is the part that has to be generous here.
+    //
+    // The frame takes the window's new size SYNCHRONOUSLY; the SVG is redrawn by React off the
+    // ResizeObserver, and MEASURED 2026-08-06 that redraw can be a full second behind on a
+    // hidden, non-compositing window (a 602→462 step, deterministic, at 760x640 coming down from
+    // 900x420 — while a fresh window at the same size converges inside 100 ms and then holds for
+    // eight seconds). So the STALE geometry is itself stable for about a second, and a short
+    // agreement window would settle on it and then report the catch-up as a flicker. 12 readings
+    // 150 ms apart is ~1.8 s of genuine quiet — a real measurement rather than the flat 1500 ms
+    // sleep it replaces, and one that a real oscillation could never satisfy.
+    await settleStable(() => timelineGeom(page), { timeoutMs: 20_000, stable: 12, pollMs: 150 })
     await checkAtSize(page, `${String(size.width)}x${String(size.height)}`)
   }
   await win.evaluate((w, b) => {
     w.setMinimumSize(900, 600)
     w.setBounds(b)
   }, wide)
-  await sleep(1200)
+  await settleStable(() => timelineGeom(page), { timeoutMs: 15_000 })
 }
 
 async function main(): Promise<void> {
   buildIfStale()
 
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Timeline sizing spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-timeline.log…')
+  const { app, close } = await launchOnFixture('e2e-timeline.log')
 
   let page: Page | null = null
   try {

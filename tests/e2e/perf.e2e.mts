@@ -29,9 +29,13 @@ import {
   failures,
   note,
   reportRun,
-  sleep
+  settle,
+  settleGone,
+  settleStable
 } from './appHarness.mjs'
-import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
+import { PERF_LAG_PROBE_INTERVAL_MS } from '../../src/shared/perf'
 
 const CHIP = '[data-testid="perf-chip"]'
 const POPOVER = '[data-testid="perf-popover"]'
@@ -98,19 +102,18 @@ async function dismissFirstRunNotice(page: Page): Promise<void> {
   await page.waitForSelector(notice, { timeout: 30_000 }).catch(() => undefined)
   if ((await countOf(page, notice)) === 0) return
   await page.click('[data-testid="telemetry-notice-off"]')
-  await sleep(600)
-  check('the analytics first-run notice can be answered out of the way', (await countOf(page, notice)) === 0)
+  check('the analytics first-run notice can be answered out of the way', await settleGone(page, notice, { timeoutMs: 8_000 }))
 }
 
 /** THE DEFAULT-OFF ASSERTION. The HUD costs a metrics poll and a 500 ms probe; a user who never
  *  asked for one must not be paying for it, and must not see it either. */
 async function stepAbsentByDefault(page: Page): Promise<void> {
   await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
-  await sleep(1_500)
-  check(
-    'the performance chip is absent on a fresh install — the HUD is opt-in',
-    (await countOf(page, CHIP)) === 0
-  )
+  // AN ABSENCE ASSERTION NEEDS A POSITIVE SIGNAL FIRST. The chip is pushed by a sampler that
+  // starts on a store read, so "it is not there" only means something once the title bar has
+  // stopped changing — a settled count of 0 says that, where a flat 1500ms only hoped it.
+  const chips = await settleStable(() => countOf(page, CHIP), { timeoutMs: 8_000, stable: 6, pollMs: 150 })
+  check('the performance chip is absent on a fresh install — the HUD is opt-in', chips === 0, `${String(chips)} chip(s)`)
   const prefs = await page.evaluate(() =>
     (window as unknown as { eq: { getPerfPrefs: () => Promise<{ enabled: boolean }> } }).eq.getPerfPrefs()
   )
@@ -178,7 +181,7 @@ async function stepPopover(page: Page): Promise<void> {
     )) > 0
   )
   await page.keyboard.press('Escape')
-  await sleep(400)
+  await settleGone(page, POPOVER, { timeoutMs: 8_000 })
 }
 
 /**
@@ -187,19 +190,16 @@ async function stepPopover(page: Page): Promise<void> {
  * the scan returns), so this asks the app rather than sleeping at it.
  */
 async function waitForReplay(page: Page): Promise<boolean> {
-  const deadline = Date.now() + REPLAY_WAIT_MS
-  while (Date.now() < deadline) {
-    const snap = await page
+  const read = (): Promise<{ hydrating: boolean } | null> =>
+    page
       .evaluate(() =>
         (
           window as unknown as { eq: { getCombatSnapshot: (o: unknown) => Promise<{ hydrating: boolean }> } }
         ).eq.getCombatSnapshot({})
       )
       .catch(() => null)
-    if (snap && !snap.hydrating) return true
-    await sleep(500)
-  }
-  return false
+  const snap = await settle(read, (s) => s !== null && !s.hydrating, { timeoutMs: REPLAY_WAIT_MS })
+  return snap !== null && !snap.hydrating
 }
 
 /** The startup breakdown in Preferences — the half that is recorded whether the HUD is on or not. */
@@ -213,7 +213,9 @@ async function stepStartupPane(page: Page): Promise<void> {
   // it out (measured: the pane showed 7 of 8 phases, twice in a row).
   check('the historical replay finishes within the spec’s patience', await waitForReplay(page))
   await page.click('[data-testid="nav-overview"]', { timeout: 30_000 })
-  await sleep(400)
+  // The REMOUNT is the point of the round trip, so the condition is the Performance pane actually
+  // leaving before we come back to it.
+  await settleGone(page, PANE, { timeoutMs: 15_000 })
   await page.click('[data-testid="nav-preferences"]', { timeout: 30_000 })
   await page.click('[data-testid="prefs-rail-performance"]', { timeout: 15_000 })
   await page.waitForSelector(BREAKDOWN, { timeout: 15_000 })
@@ -273,7 +275,7 @@ function stepProfileFile(userData: string): void {
     typeof profile.eventsReplayed === 'number' && profile.eventsReplayed >= 0,
     `${String(profile.eventsReplayed)} events`
   )
-  stepBlockProbe(profile.block)
+  stepBlockProbe(profile.block, profile.phases.find((p) => p.phase === 'replayDone')?.durationMs ?? 0)
 }
 
 /**
@@ -283,7 +285,22 @@ function stepProfileFile(userData: string): void {
  * particular machine got is not something a spec can assert — the bench (`npm run bench:replay`)
  * owns that budget, against a known log, on one machine.
  */
-function stepBlockProbe(block: BlockStats | undefined): void {
+function stepBlockProbe(block: BlockStats | undefined, replayMs: number): void {
+  // THE PROBE'S WINDOW IS THE REPLAY, and it ticks on a 500 ms interval. A per-spec fixture folds
+  // in single-digit milliseconds (wave E2), so a launch against one legitimately produces ZERO
+  // samples — and a profile that then stated `maxBlockMs: 0` would be inventing a measurement
+  // nobody took (world-model law 1). So the presence of the stats is asserted only when the
+  // replay actually outlived a tick; below that, their absence is the correct answer and the run
+  // says so. The BUDGET on those numbers was never this spec's anyway: `npm run bench:replay`
+  // owns it, against a ~100 MB log, on one machine.
+  if (replayMs < PERF_LAG_PROBE_INTERVAL_MS) {
+    check(
+      'a replay shorter than one probe tick states NO block figures rather than inventing zeroes',
+      block === undefined || block.samples === 0,
+      `replay ${String(Math.round(replayMs))}ms < ${String(PERF_LAG_PROBE_INTERVAL_MS)}ms tick · ${block ? `${String(block.samples)} samples` : 'absent'}`
+    )
+    return
+  }
   const ok = check(
     'the launch also states how blocked the main loop got — the always-on startup probe',
     block !== undefined && block.samples > 0,
@@ -308,7 +325,7 @@ async function main(): Promise<void> {
   const userData = makeUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1), fresh userData — Performance spec…')
-  const { app, close } = await launchApp({ userData })
+  const { app, close } = await launchOnFixture('e2e-perf.log', { userData })
   let page: Page | null = null
   const consoleErrors: string[] = []
   try {

@@ -34,7 +34,6 @@
  */
 import type { ElectronApplication, Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
   buildIfStale,
   check,
   countOf,
@@ -42,10 +41,14 @@ import {
   failures,
   note,
   reportRun,
-  sleep,
-  snapshot
+  settle,
+  settleCount,
+  settleStable,
+  snapshot,
+  waitHydrated
 } from './appHarness.mjs'
-import { launchApp, mainWindow, makeUserData, overlayWindow, removeUserData } from './appWindow.mjs'
+import { mainWindow, makeUserData, overlayWindow, removeUserData } from './appWindow.mjs'
+import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
 
 /** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
 interface OverlayBridge {
@@ -89,15 +92,21 @@ function writeSelection(page: Page, bridge: 'eq' | 'eqOverlay', id: string): Pro
  *  because "which window is the one I mean" is one question and it is answered there. */
 const waitForOverlay = overlayWindow
 
-/** Hydration has to finish before any fight id exists to select. */
-async function waitHydrated(page: Page): Promise<boolean> {
-  const t0 = Date.now()
-  let snap = await snapshot(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    await sleep(1500)
-    snap = await snapshot(page)
-  }
-  return !snap.hydrating
+/**
+ * Write the global selection through a window's own bridge and WAIT for the other window to have
+ * it — which is the whole claim this spec exists to make.
+ *
+ * Every one of the cross-window steps used to `sleep(600)` here and then read. That is a bet on
+ * how long a renderer→main→renderer round trip takes on a machine already running four Electron
+ * apps; this is the round trip's own completion.
+ */
+async function writeAndSync(
+  from: readonly [Page, 'eq' | 'eqOverlay'],
+  to: readonly [Page, 'eq' | 'eqOverlay'],
+  id: string
+): Promise<string> {
+  await writeSelection(from[0], from[1], id)
+  return settle(() => readSelection(to[0], to[1]), (v) => v === id, { timeoutMs: 10_000 })
 }
 
 /** A real finalized fight id from the live log, or null when the log holds none. */
@@ -116,28 +125,21 @@ async function stepBothStartLive(app: Page, overlay: Page): Promise<void> {
 }
 
 async function stepPanelMovesOverlay(app: Page, overlay: Page, fightId: string): Promise<void> {
-  await writeSelection(app, 'eq', fightId)
-  await sleep(600)
-  check(
-    'picking a fight in the COMBAT PANEL moves the fight overlay (ruling 4)',
-    (await readSelection(overlay, 'eqOverlay')) === fightId,
-    await readSelection(overlay, 'eqOverlay')
-  )
+  const landed = await writeAndSync([app, 'eq'], [overlay, 'eqOverlay'], fightId)
+  check('picking a fight in the COMBAT PANEL moves the fight overlay (ruling 4)', landed === fightId, landed)
   // …and the overlay actually RENDERS that fight, not just knows about it: its header title is
   // the selected segment's own name, so a stuck header would mean the selection never reached
-  // the meter. The name itself is log-dependent, so the claim is "not the empty state".
-  const title = await overlay.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').trim())
+  // the meter. The name itself is fixture-dependent, so the claim is "not the empty state".
+  const title = await settleStable(
+    () => overlay.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').trim()),
+    { timeoutMs: 8_000 }
+  )
   check('…and the overlay renders a fight rather than its empty state', !title.includes('No fight'), title.slice(0, 120))
 }
 
 async function stepOverlayMovesPanel(app: Page, overlay: Page): Promise<void> {
-  await writeSelection(overlay, 'eqOverlay', LIVE)
-  await sleep(600)
-  check(
-    'and the reverse: picking in the OVERLAY moves the combat panel',
-    (await readSelection(app, 'eq')) === LIVE,
-    await readSelection(app, 'eq')
-  )
+  const landed = await writeAndSync([overlay, 'eqOverlay'], [app, 'eq'], LIVE)
+  check('and the reverse: picking in the OVERLAY moves the combat panel', landed === LIVE, landed)
 }
 
 /**
@@ -146,26 +148,31 @@ async function stepOverlayMovesPanel(app: Page, overlay: Page): Promise<void> {
  * renderer, so offering one here must change nothing at all.
  */
 async function stepZoneIdRefused(app: Page, overlay: Page, fightId: string): Promise<void> {
-  await writeSelection(app, 'eq', fightId)
-  await sleep(400)
+  await writeAndSync([app, 'eq'], [overlay, 'eqOverlay'], fightId)
   for (const bogus of ['zone', 'zs1', '', 'not-a-fight']) {
     await writeSelection(overlay, 'eqOverlay', bogus)
   }
-  await sleep(600)
+  // NOTHING is supposed to move, so the positive signal is the pair of readings holding still —
+  // which is also proof the four refusals have been round-tripped and dropped.
+  const pair = await settleStable(
+    async () => `${await readSelection(app, 'eq')} / ${await readSelection(overlay, 'eqOverlay')}`,
+    { timeoutMs: 8_000, stable: 5, pollMs: 150 }
+  )
   check(
     'a ZONE-SESSION id offered to the global selection is refused — the fight stays put',
-    (await readSelection(app, 'eq')) === fightId && (await readSelection(overlay, 'eqOverlay')) === fightId,
-    `${await readSelection(app, 'eq')} / ${await readSelection(overlay, 'eqOverlay')}`
+    pair === `${fightId} / ${fightId}`,
+    pair
   )
 }
 
 /** P6: a well-formed id the engine has never heard of must degrade, not blank the surface. */
 async function stepStaleId(app: Page, overlay: Page): Promise<void> {
-  await writeSelection(app, 'eq', 'e999999')
-  await sleep(800)
-  check('a STALE fight id is kept (P6 — the global is never cleared by a surface)',
-    (await readSelection(overlay, 'eqOverlay')) === 'e999999')
-  const title = await overlay.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').trim())
+  const landed = await writeAndSync([app, 'eq'], [overlay, 'eqOverlay'], 'e999999')
+  check('a STALE fight id is kept (P6 — the global is never cleared by a surface)', landed === 'e999999', landed)
+  const title = await settleStable(
+    () => overlay.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').trim()),
+    { timeoutMs: 8_000 }
+  )
   check(
     '…and the overlay degrades to the engine’s default rather than going blank',
     title.length > 0 && !title.includes('No fight'),
@@ -178,19 +185,25 @@ async function stepStaleId(app: Page, overlay: Page): Promise<void> {
 /** The selector trigger, by the ARIA contract OverlayHeader renders. */
 const TRIGGER = '[aria-haspopup="listbox"]'
 
+/** Set the lock and wait for the overlay's own chrome to reflect it — the observable of the flip. */
+async function setLocked(overlay: Page, locked: boolean): Promise<void> {
+  await overlay.evaluate((v) => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(v)
+  }, locked)
+  // The scope chip is the one piece of chrome that is present iff the overlay is INTERACTIVE, so
+  // its presence is exactly "the lock has taken effect in this renderer".
+  await settle(() => countOf(overlay, '[data-testid="overlay-scope-chip"]'), (n) => (locked ? n === 0 : n === 1), {
+    timeoutMs: 10_000
+  })
+}
+
 async function stepLockedSelector(overlay: Page): Promise<void> {
   // The lock is PERSISTED per kind, so start from a known mode rather than from whatever the
   // last run (or the user's own dev app) left behind.
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
-  })
-  await sleep(500)
+  await setLocked(overlay, false)
   check('an INTERACTIVE overlay offers its selector', (await countOf(overlay, TRIGGER)) === 1)
 
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(true)
-  })
-  await sleep(700)
+  await setLocked(overlay, true)
 
   // THE RULING: locked, and the top selector row is still there. Before P3 this was 0.
   check('a LOCKED overlay STILL offers its selector (ruling 3)', (await countOf(overlay, TRIGGER)) === 1)
@@ -214,23 +227,22 @@ async function stepLockedSelector(overlay: Page): Promise<void> {
   // It is dispatched as a BUBBLING `mouseover` from outside, not as `mouseenter`: React 17+
   // synthesises enter/leave at the root from mouseover/mouseout, so a directly-dispatched
   // non-bubbling `mouseenter` reaches no handler at all (it silently did nothing here first).
-  const before = await overlay.evaluate(() => document.querySelectorAll('button').length)
+  const countButtons = (): Promise<number> => overlay.evaluate(() => document.querySelectorAll('button').length)
+  const before = await countButtons()
   await overlay.evaluate(() => {
     const row = document.querySelector('[aria-haspopup="listbox"]')?.parentElement
     row?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: document.body }))
   })
-  await sleep(400)
-  const after = await overlay.evaluate(() => document.querySelectorAll('button').length)
+  // The reveal is what the hover is FOR — the controls appearing is the condition, and it crosses
+  // into main (setIgnoreMouseEvents) and back before it can happen.
+  const after = await settle(countButtons, (n) => n > 0, { timeoutMs: 8_000 })
   check(
     '…and hovering the selector ROW captures the mouse (its controls reveal)',
     before === 0 && after > 0,
     `${before} → ${after} control(s)`
   )
 
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
-  })
-  await sleep(500)
+  await setLocked(overlay, false)
 }
 
 /**
@@ -244,10 +256,7 @@ async function stepLockedSelector(overlay: Page): Promise<void> {
  */
 async function stepOverlayScope(overlay: Page): Promise<void> {
   const CHIP = '[data-testid="overlay-scope-chip"]'
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
-  })
-  await sleep(500)
+  await setLocked(overlay, false)
 
   check('an INTERACTIVE overlay header carries the scope chip', (await countOf(overlay, CHIP)) === 1)
   const label = async (): Promise<string> => (await overlay.textContent(CHIP))?.trim() ?? ''
@@ -262,21 +271,15 @@ async function stepOverlayScope(overlay: Page): Promise<void> {
   )
 
   await overlay.click(CHIP)
-  await sleep(400)
-  check('one click cycles it — the overlay control is the cycle, with no popover', (await label()) === 'Everyone', await label())
+  const cycled = await settle(label, (t) => t === 'Everyone', { timeoutMs: 8_000 })
+  check('one click cycles it — the overlay control is the cycle, with no popover', cycled === 'Everyone', cycled)
   // …and no roster editor came with it: that is the Combat tab's job.
   check('the overlay offers no roster popover', (await countOf(overlay, '[data-testid="roster-open"]')) === 0)
 
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(true)
-  })
-  await sleep(700)
+  await setLocked(overlay, true)
   check('a LOCKED overlay hides the chip — no affordance it cannot deliver', (await countOf(overlay, CHIP)) === 0)
 
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
-  })
-  await sleep(500)
+  await setLocked(overlay, false)
   // PERSISTED PER SURFACE: the cycle above survived the lock round trip, because it is a stored
   // preference rather than component state — and it is the overlay's OWN key, so the Combat tab
   // is still on whatever the user left it on.
@@ -301,20 +304,18 @@ async function crumbText(overlay: Page): Promise<string> {
 }
 
 async function stepOverlayDrill(overlay: Page): Promise<void> {
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
-  })
-  await sleep(500)
+  await setLocked(overlay, false)
   // Start from level 1 however the persisted drill left this window — the drill outlives a run,
   // by design (it is remembered state, like window position). Backing out with the chevron is
   // also the only way to reach level 1, so this loop is the affordance proving itself: bounded at
   // two, because a nested pet is the deepest the model goes.
   for (let i = 0; i < 2 && (await crumbText(overlay)).includes('‹'); i++) {
+    const was = await crumbText(overlay)
     await overlay.click(CRUMB)
-    await sleep(500)
+    await settle(() => crumbText(overlay), (t) => t !== was, { timeoutMs: 8_000 })
   }
 
-  const bars = await countOf(overlay, BAR)
+  const bars = await settleCount(overlay, BAR, 1, { timeoutMs: 10_000 })
   if (bars === 0) {
     note('the overlay’s selected fight has no bars right now — the drill steps need one')
     return
@@ -326,17 +327,16 @@ async function stepOverlayDrill(overlay: Page): Promise<void> {
   check('…and the fight timer lives on that row, not in the header', /\d+:\d\d/.test(level1), level1 || 'empty')
   check('…with no back chevron, because there is nowhere further out', !level1.includes('‹'), level1)
 
-  // Clicking a bar drills it — including the top one, which on this log is yours.
+  // Clicking a bar drills it — including the top one, which on this fixture is yours.
   await overlay.click(BAR)
-  await sleep(600)
-  const level2 = await crumbText(overlay)
+  const level2 = await settle(() => crumbText(overlay), (t) => t !== level1, { timeoutMs: 8_000 })
   check('clicking a bar opens that entity’s breakdown', (await countOf(overlay, BAR)) > 0 && level2 !== level1, level2)
   check('…and the zoom-out chevron is offered on it (it was not, before JOS-35)', level2.includes('‹'), level2)
   check('…and the fight timer is still on the row', /\d+:\d\d/.test(level2), level2)
 
   await overlay.click(CRUMB)
-  await sleep(600)
-  check('…and the chevron really goes back out to the source list', (await crumbText(overlay)) === level1, await crumbText(overlay))
+  const back = await settle(() => crumbText(overlay), (t) => t !== level2, { timeoutMs: 8_000 })
+  check('…and the chevron really goes back out to the source list', back === level1, back)
 }
 
 // ── JOS-40: the opaque-overlay compatibility mode ───────────────────────────────────────
@@ -508,9 +508,9 @@ async function checkSafeModeLaunch(): Promise<void> {
  * inheritance, it is luck. So the spec now MAKES its own history: open the fight overlay through
  * the app's own door, quit, and hand launch 2 the same dir.
  */
-async function seedOverlayOpen(userData: string): Promise<void> {
+async function seedOverlayOpen(log: FixtureLog, userData: string): Promise<void> {
   console.log('launch 1: opening the fight overlay, so launch 2 starts from an install that has one…')
-  const { app, close } = await launchApp({ userData })
+  const { app, close } = await launchOnFixture(log, { userData })
   try {
     const page = await mainWindow(app)
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
@@ -519,8 +519,10 @@ async function seedOverlayOpen(userData: string): Promise<void> {
       const state = await eq.getOverlayState()
       if (!state.fight) await eq.toggleOverlay('fight')
     })
-    // The open-state is written by main when the window is created; give that write its beat.
-    await sleep(1_000)
+    // The open-state is written by MAIN when the window is created, so the condition is main
+    // reporting it back — asked of the app rather than waited out.
+    const opened = await settle(() => overlayState(page), (s) => s.fight === true, { timeoutMs: 15_000 })
+    check('launch 1 leaves the fight overlay open in the store', opened.fight === true, JSON.stringify(opened))
   } finally {
     await close()
   }
@@ -532,10 +534,12 @@ async function main(): Promise<void> {
   // PERSISTED, and running against an install that already carries one is the point (see
   // seedOverlayOpen). The fight SELECTION is ephemeral by design and needs nothing from disk.
   const userData = makeUserData()
-  await seedOverlayOpen(userData)
+  // ONE staged log for both launches, so launch 2 replays exactly what launch 1 did.
+  const log = stageFixture('e2e-overlay.log')
+  await seedOverlayOpen(log, userData)
 
-  console.log('launch 2: hidden Electron (EQ_E2E=1) — overlay/panel sync spec…')
-  const { app, close } = await launchApp({ userData })
+  console.log('launch 2: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-overlay.log…')
+  const { app, close } = await launchOnFixture(log, { userData })
 
   let page: Page | null = null
   try {
@@ -547,7 +551,7 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
-    if (!check('hydration completes (replay hands off to the live tail)', await waitHydrated(page))) {
+    if (!check('hydration completes (replay hands off to the live tail)', !(await waitHydrated(page)).snap.hydrating)) {
       throw new Error('still hydrating — nothing below can be asserted')
     }
 
@@ -576,7 +580,7 @@ async function main(): Promise<void> {
       await stepOverlayMovesPanel(page, ov)
       await stepZoneIdRefused(page, ov, fightId)
     } else {
-      note('the live log holds no finalized fight right now — the cross-window selection steps were skipped')
+      note('the fixture holds no finalized fight — the cross-window selection steps were skipped')
     }
     await stepStaleId(page, ov)
     await stepOverlayDrill(ov)
@@ -590,6 +594,7 @@ async function main(): Promise<void> {
   } finally {
     await close()
     await removeUserData(userData)
+    await log.dispose()
   }
 
   // Its own launch, on its own throwaway dir: safe mode is decided before Electron is ready, so

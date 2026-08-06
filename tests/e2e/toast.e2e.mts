@@ -30,9 +30,11 @@ import {
   failures,
   note,
   reportRun,
-  sleep
+  settle,
+  settleStable
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 
 /** A Sky reward that exists in the committed item DB, so the card resolves with NO network. */
 const REWARD = 'Shining Metallic Robes'
@@ -53,14 +55,22 @@ async function findToastWindow(app: ElectronApplication): Promise<Page | null> {
 }
 
 /** Poll until the toast window exists (window creation + page load is asynchronous). */
-async function waitForToastWindow(app: ElectronApplication, timeoutMs = 30_000): Promise<Page | null> {
-  const t0 = Date.now()
-  while (Date.now() - t0 < timeoutMs) {
-    const w = await findToastWindow(app)
-    if (w) return w
-    await sleep(400)
-  }
-  return null
+function waitForToastWindow(app: ElectronApplication, timeoutMs = 30_000): Promise<Page | null> {
+  return settle(() => findToastWindow(app), (w) => w !== null, { timeoutMs })
+}
+
+/**
+ * Send a toast and wait for the STACK to be what the send should have made it — the card count is
+ * the condition, and it is the thing every assertion below reads.
+ *
+ * A REFUSAL is the one case with no positive signal: main is expected to drop the payload, so
+ * nothing will ever change. That one waits for the count to hold still instead (`expect` equal to
+ * what was already there), which is the same discipline the other absence assertions use.
+ */
+async function sendAndSettle(main: Page, toast: Page, req: Record<string, unknown>, expect: number): Promise<string[]> {
+  await send(main, req)
+  await settle(() => cardTexts(toast), (cards) => cards.length >= expect, { timeoutMs: 15_000 })
+  return cardTexts(toast)
 }
 
 /** Send one toast request over the REAL renderer→main channel, exactly as a detector would. */
@@ -94,10 +104,17 @@ async function stepPreferences(page: Page): Promise<void> {
     return
   }
   // The switch's testid sits on the MUI root, so the checkbox is the input inside it (the
-  // telemetry pane's precedent).
-  const on = await page.evaluate(
-    (sel) => (document.querySelector(sel) as HTMLInputElement | null)?.checked,
-    '[data-testid="pref-toast-enabled"] input'
+  // telemetry pane's precedent). Its state arrives from MAIN's store over IPC, a beat after the
+  // pane mounts — so it is read until it settles, and a switch that never turns on fails here
+  // with whatever it last said rather than with whatever it happened to say first.
+  const on = await settle(
+    () =>
+      page.evaluate(
+        (sel) => (document.querySelector(sel) as HTMLInputElement | null)?.checked,
+        '[data-testid="pref-toast-enabled"] input'
+      ),
+    (v) => v === true,
+    { timeoutMs: 10_000 }
   )
   check('…with its switch already ON, matching the window that opened itself', on === true, String(on))
   check(
@@ -109,18 +126,21 @@ async function stepPreferences(page: Page): Promise<void> {
 
 /** A boss kill: a gold title line and nothing else — no reward, no click target. */
 async function stepBossToast(main: Page, toast: Page): Promise<void> {
-  await send(main, {
-    id: 'e2e-boss-1',
-    kind: 'bossKill',
-    title: 'Lord Nagafen defeated',
-    subtitle: 'D2 · Adaptive · Nagafen’s Lair',
-    // A long hold on purpose: the later steps assert that a second card STACKS under this one,
-    // and a 6 s default would make that a race against the machine rather than a claim about
-    // the queue. The payload's own duration is honoured (and capped) by the validator.
-    durationMs: 25_000
-  })
-  await sleep(1000)
-  const cards = await cardTexts(toast)
+  const cards = await sendAndSettle(
+    main,
+    toast,
+    {
+      id: 'e2e-boss-1',
+      kind: 'bossKill',
+      title: 'Lord Nagafen defeated',
+      subtitle: 'D2 · Adaptive · Nagafen’s Lair',
+      // A long hold on purpose: the later steps assert that a second card STACKS under this one,
+      // and a 6 s default would make that a race against the machine rather than a claim about
+      // the queue. The payload's own duration is honoured (and capped) by the validator.
+      durationMs: 25_000
+    },
+    1
+  )
   if (!check('a boss kill sent over `toast:show` renders a card in the toast window', cards.length === 1, `${cards.length} card(s)`)) {
     return
   }
@@ -133,8 +153,9 @@ async function stepRefusal(main: Page, toast: Page): Promise<void> {
   const before = (await cardTexts(toast)).length
   await send(main, { id: 'e2e-bogus', kind: 'somethingElse', title: 'should never render' })
   await send(main, { kind: 'bossKill', title: 'no id either' })
-  await sleep(800)
-  const after = await cardTexts(toast)
+  // Nothing is supposed to happen, so the positive signal is the stack HOLDING STILL — a settled
+  // count says "the send round trip has been and gone", which a flat 800ms only assumed.
+  const after = await settleStable(() => cardTexts(toast), { timeoutMs: 8_000, stable: 5, pollMs: 150 })
   check(
     'a payload with an unknown kind (or no id) renders NOTHING — main refuses it',
     after.length === before,
@@ -144,18 +165,22 @@ async function stepRefusal(main: Page, toast: Page): Promise<void> {
 
 /** A Sky completion: the title, plus the reward item card MAIN resolved and embedded. */
 async function stepQuestToast(main: Page, toast: Page): Promise<void> {
-  await send(main, {
-    id: 'e2e-quest-1',
-    kind: 'skyQuestComplete',
-    title: 'Quest complete: Test of Sacrifice',
-    subtitle: 'Paladin',
-    itemName: REWARD,
-    focus: { view: 'posky' },
-    durationMs: 25_000
-  })
-  // Item resolution is local-first (the committed items DB), but give main a beat regardless.
-  await sleep(1500)
-  const cards = await cardTexts(toast)
+  // Item resolution is local-first (the committed items DB) but still a round trip through main;
+  // the second card ARRIVING is the condition, so there is nothing left to guess at.
+  const cards = await sendAndSettle(
+    main,
+    toast,
+    {
+      id: 'e2e-quest-1',
+      kind: 'skyQuestComplete',
+      title: 'Quest complete: Test of Sacrifice',
+      subtitle: 'Paladin',
+      itemName: REWARD,
+      focus: { view: 'posky' },
+      durationMs: 25_000
+    },
+    2
+  )
   const quest = cards.find((c) => c.includes('Quest complete'))
   if (!check('a Sky completion renders its own card', !!quest, cards.join(' | ') || 'no cards')) return
   check('…titled with the quest', (quest ?? '').includes('Test of Sacrifice'), quest ?? '')
@@ -173,16 +198,19 @@ async function stepQuestToast(main: Page, toast: Page): Promise<void> {
  * block — so the CARD itself is the click target, which the next step exercises.
  */
 async function stepLevelUpToast(mainPage: Page, toast: Page): Promise<void> {
-  await send(mainPage, {
-    id: `e2e-level-${String(DING_LEVEL)}`,
-    kind: 'levelUp',
-    title: `Level ${String(DING_LEVEL)}!`,
-    subtitle: '3 new spells · 2 new skills',
-    focus: { view: 'leveling', level: DING_LEVEL },
-    durationMs: 25_000
-  })
-  await sleep(1000)
-  const cards = await cardTexts(toast)
+  const cards = await sendAndSettle(
+    mainPage,
+    toast,
+    {
+      id: `e2e-level-${String(DING_LEVEL)}`,
+      kind: 'levelUp',
+      title: `Level ${String(DING_LEVEL)}!`,
+      subtitle: '3 new spells · 2 new skills',
+      focus: { view: 'leveling', level: DING_LEVEL },
+      durationMs: 25_000
+    },
+    3
+  )
   const card = cards.find((c) => c.includes(`Level ${String(DING_LEVEL)}!`))
   if (!check('a level-up sent over `toast:show` renders its own card', !!card, cards.join(' | ') || 'no cards')) {
     return
@@ -272,8 +300,8 @@ async function stepQuestAnchor(mainPage: Page, toast: Page): Promise<void> {
 async function main(): Promise<void> {
   buildIfStale()
 
-  console.log('launch: hidden Electron (EQ_E2E=1) — celebration toasts spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-toast.log…')
+  const { app, close } = await launchOnFixture('e2e-toast.log')
 
   let page: Page | null = null
   try {

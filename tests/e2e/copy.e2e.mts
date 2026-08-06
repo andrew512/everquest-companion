@@ -34,18 +34,18 @@
  */
 import type { ElectronApplication, Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
   buildIfStale,
   check,
-  countOf,
   dumpArtifacts,
   failures,
   note,
   reportRun,
+  settleCount,
   sleep,
-  snapshot
+  waitHydrated
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 
 /** The copy affordance in a combat panel header (combatShared.tsx `CopyButton`). */
 const BTN = '[data-testid="copy-view"]'
@@ -78,30 +78,18 @@ async function mainClipboard(app: ElectronApplication, write?: string): Promise<
 }
 
 /** Wait out the startup replay; false when it never finished (nothing below can be asserted). */
-async function waitHydrated(page: Page): Promise<boolean> {
-  const t0 = Date.now()
-  let snap = await snapshot(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    await sleep(500)
-    snap = await snapshot(page)
-  }
-  return check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${Date.now() - t0}ms`)
+async function waitReplayed(page: Page): Promise<boolean> {
+  const { snap, ms } = await waitHydrated(page)
+  return check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${String(ms)}ms`)
 }
 
 /**
  * Wait for a panel that HAS something to copy. A copy button is rendered only where there are
- * rows to serialize, so a freshly-zoned/quiet selection legitimately has none — that is a note,
+ * rows to serialize, so a selection with nothing in it legitimately has none — that is a note,
  * not a failure (the same convention the live-tail steps use).
  */
-async function waitForCopyButton(page: Page): Promise<number> {
-  const t0 = Date.now()
-  let n = 0
-  while (Date.now() - t0 < COPYABLE_WAIT_MS) {
-    n = await countOf(page, BTN)
-    if (n > 0) return n
-    await sleep(500)
-  }
-  return n
+function waitForCopyButton(page: Page): Promise<number> {
+  return settleCount(page, BTN, 1, { timeoutMs: COPYABLE_WAIT_MS })
 }
 
 async function stepCopy(app: ElectronApplication, page: Page): Promise<void> {
@@ -117,10 +105,10 @@ async function stepCopy(app: ElectronApplication, page: Page): Promise<void> {
   await mainClipboard(app, sentinel)
 
   await page.click(BTN)
-  await sleep(500)
   // Read the icon FIRST: the copied state is deliberately transient (~1.5s), and the clipboard
-  // round-trip below can outlive it.
-  const checks = await countOf(page, `${BTN} [data-testid="CheckIcon"]`)
+  // round-trip below can outlive it. Its APPEARANCE is main's reply arriving — a condition, and
+  // the very thing the assertion is about, so it is waited for rather than slept past.
+  const checks = await settleCount(page, `${BTN} [data-testid="CheckIcon"]`, 1, { timeoutMs: 5_000 })
   const after = await mainClipboard(app)
   if (userText) await mainClipboard(app, userText)
 
@@ -151,8 +139,8 @@ async function stepCopy(app: ElectronApplication, page: Page): Promise<void> {
 async function main(): Promise<void> {
   buildIfStale()
 
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Copy spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-copy.log…')
+  const { app, close } = await launchOnFixture('e2e-copy.log')
 
   let page: Page | null = null
   try {
@@ -166,10 +154,9 @@ async function main(): Promise<void> {
     // A fresh userData opens on Overview; the copy affordances live in Combat.
     await page.click('[data-testid="nav-combat"]', { timeout: 60_000 })
     await page.waitForSelector('[data-testid="segment-select"]', { timeout: 60_000 })
-    if (await waitHydrated(page)) {
-      await sleep(1500)
-      await stepCopy(app, page)
-    }
+    // No post-hydration sleep: `waitForCopyButton` already waits for the affordance itself, which
+    // is the state this spec needs and the only thing the old 1500ms was standing in for.
+    if (await waitReplayed(page)) await stepCopy(app, page)
 
     // The old failure mode logged '[everquest-companion:error] copy failed' from the renderer —
     // so a clean console is part of what "the copy works" means here.

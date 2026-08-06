@@ -119,8 +119,8 @@ const FIXTURES_SPEC = [
   },
   {
     out: 'e2e-feedback.log',
-    why: 'feedback: a few hundred lines spanning ~35 minutes, so main’s slice builder has a real window to anchor on, window, scrub and gzip.',
-    spans: [[1398900, 1399300]]
+    why: 'feedback: a DENSE tail. main’s slice anchors on the last timestamped line and windows BACKWARDS from it (never Date.now()), so what this fixture has to guarantee is that the minutes before its final line are full — a slice window that lands in a quiet stretch produces the honest "nothing to send" state and asserts nothing.',
+    spans: [[1398500, 1399240]]
   },
   {
     out: 'e2e-perf.log',

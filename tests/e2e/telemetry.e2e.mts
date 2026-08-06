@@ -34,9 +34,12 @@ import {
   failures,
   note,
   reportRun,
+  settle,
+  settleGone,
   sleep
 } from './appHarness.mjs'
-import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
 
 const NOTICE = '[data-testid="telemetry-notice"]'
 const TEXT = '[data-testid="telemetry-notice-text"]'
@@ -173,9 +176,10 @@ async function stepBarShape(page: Page): Promise<void> {
  */
 async function stepDismissKeepsOn(page: Page): Promise<void> {
   await page.click(DISMISS)
-  await sleep(600)
-  check('dismissing closes the bar', (await countOf(page, NOTICE)) === 0)
-  const p = await payload(page)
+  check('dismissing closes the bar', await settleGone(page, NOTICE, { timeoutMs: 8_000 }))
+  // The bar's exit is a renderer animation; the ANSWER it recorded is a main-process store write,
+  // so the payload is read until it carries one rather than on whatever tick the DOM finished on.
+  const p = await settle(() => payload(page), (x) => x.prefs.noticeShown, { timeoutMs: 8_000 })
   check('dismissal KEEPS collection on — it is not a silent opt-out', p.prefs.enabled === true, JSON.stringify(p.prefs))
   check(
     '…and still marks the notice shown, so it is a once-ever question',
@@ -249,9 +253,8 @@ async function stepDetailsOpensPane(page: Page): Promise<void> {
 /** Opting out must take effect NOW: the pref flips and the local buffer is dropped. */
 async function stepOptOut(page: Page): Promise<void> {
   await page.click(OFF)
-  await sleep(600)
-  check('answering closes the bar', (await countOf(page, NOTICE)) === 0)
-  const p = await payload(page)
+  check('answering closes the bar', await settleGone(page, NOTICE, { timeoutMs: 8_000 }))
+  const p = await settle(() => payload(page), (x) => x.prefs.noticeShown, { timeoutMs: 8_000 })
   check('“Opt out” switches collection off', p.prefs.enabled === false, JSON.stringify(p.prefs))
   check(
     '…and marks the notice shown either way, so it is a once-ever question',
@@ -340,8 +343,11 @@ async function stepPane(page: Page): Promise<void> {
 /** Turn it back on and prove the machinery is real: an id is minted, and the ring fills. */
 async function stepCollects(page: Page): Promise<void> {
   await page.click(SWITCH)
-  await sleep(800)
-  const after = await payload(page)
+  // The MINTING is the condition: the switch write crosses into main, which generates the id and
+  // hands it back. Waiting for the id to exist is waiting for exactly what is asserted next.
+  const after = await settle(() => payload(page), (p) => p.prefs.enabled && p.prefs.analyticsId !== null, {
+    timeoutMs: 10_000
+  })
   check('turning it back on mints an anonymous id', /^[0-9a-f-]{36}$/i.test(after.prefs.analyticsId ?? ''), String(after.prefs.analyticsId))
   check(
     'the id is NOT the feedback install id — the two data sets cannot be joined',
@@ -349,12 +355,17 @@ async function stepCollects(page: Page): Promise<void> {
   )
 
   // Fill the ring the way a user would: switch tabs. `useViewDwell` reports on the switch.
+  // THE ONE DELIBERATE TIMER LEFT HERE, and it is the feature's own rule rather than a guess at
+  // latency: `useViewDwell` reports nothing for a visit under a second, so a tab has to be LOOKED
+  // AT for longer than that before there is an event to record at all.
   for (const view of ['combat', 'loot', 'overview']) {
     await page.click(`[data-testid="nav-${view}"]`, { timeout: 15_000 })
     await sleep(DWELL_MS)
   }
-  await sleep(600)
-  const p = await payload(page)
+  // …and the ring filling is a condition, so it is one.
+  const p = await settle(() => payload(page), (x) => x.buffered.some((r) => r.ev.t === 'viewDwell'), {
+    timeoutMs: 10_000
+  })
   check(
     'switching tabs records viewDwell events into the LOCAL ring',
     p.buffered.some((r) => r.ev.t === 'viewDwell'),
@@ -435,14 +446,18 @@ function watch(page: Page, consoleErrors: string[]): void {
  * three exits therefore needs an install of its own rather than a second click on a bar that
  * is already gone.
  */
-async function firstRun(
-  label: string,
-  errors: string[],
-  step: (p: Page) => Promise<void>,
+interface FirstRun {
+  label: string
+  errors: string[]
+  step: (p: Page) => Promise<void>
+  log: FixtureLog
+  /** Only launch 3 names one: it is the dir the RESTART assertion reads afterwards. */
   userData?: string
-): Promise<void> {
+}
+
+async function firstRun({ label, errors, step, log, userData }: FirstRun): Promise<void> {
   console.log(label)
-  const { app, close } = await launchApp({ userData })
+  const { app, close } = await launchOnFixture(log, userData === undefined ? {} : { userData })
   try {
     const page = await mainWindow(app)
     watch(page, errors)
@@ -465,24 +480,36 @@ async function main(): Promise<void> {
   // share one that this spec owns and names explicitly, because the assertion between them is
   // that the dir OUTLIVES the process — the one thing a per-launch dir must not do by itself.
   const restartData = makeUserData()
+  // ONE staged log for all four launches: none of them reads it for anything but "this machine
+  // has a character", and staging it once keeps the four boots comparable.
+  const log = stageFixture('e2e-telemetry.log')
 
-  await firstRun('launch 1: hidden Electron (EQ_E2E=1), fresh userData — the bar, and dismissing it…', consoleErrors, async (page) => {
-    await stepBarShape(page)
-    await stepDismissKeepsOn(page)
-    await stepFirstRunFunnel(page)
+  await firstRun({
+    label: 'launch 1: hidden Electron (EQ_E2E=1), fresh userData — the bar, and dismissing it…',
+    errors: consoleErrors,
+    log,
+    step: async (page) => {
+      await stepBarShape(page)
+      await stepDismissKeepsOn(page)
+      await stepFirstRunFunnel(page)
+    }
   })
-  await firstRun('launch 2: fresh userData — the Details link…', consoleErrors, stepDetailsOpensPane)
-  await firstRun('launch 3: fresh userData — opting out…', consoleErrors, stepOptOut, restartData)
+  await firstRun({ label: 'launch 2: fresh userData — the Details link…', errors: consoleErrors, log, step: stepDetailsOpensPane })
+  await firstRun({ label: 'launch 3: fresh userData — opting out…', errors: consoleErrors, log, step: stepOptOut, userData: restartData })
 
   stepOnDisk(restartData)
 
   console.log('launch 4: same userData as launch 3 — does the answer survive a restart…')
-  const { app, close } = await launchApp({ userData: restartData })
+  const { app, close } = await launchOnFixture(log, { userData: restartData })
   try {
     const page = await mainWindow(app)
     watch(page, consoleErrors)
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
-    await sleep(1_000)
+    // The stored answer arrives over IPC after the window mounts; the CONDITION is the payload
+    // being readable at all, which is also the first thing `stepPersisted` asserts about.
+    await settle(() => payload(page).then((p) => p.prefs.noticeShown).catch(() => false), (ok) => ok, {
+      timeoutMs: 15_000
+    })
     await stepPersisted(page)
     await stepPane(page)
     await stepCollects(page)
@@ -490,6 +517,7 @@ async function main(): Promise<void> {
   } finally {
     await close()
     await removeUserData(restartData)
+    await log.dispose()
   }
 
   // A missing IPC handler shows up here first (`invoke` rejects into an unhandled rejection).

@@ -36,9 +36,10 @@ import {
   failures,
   note,
   reportRun,
-  sleep
+  settle
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 
 const DIALOG = '[data-testid="feedback-dialog"]'
 const DESCRIPTION = '[data-testid="feedback-description"]'
@@ -69,10 +70,12 @@ function disabledState(page: Page, selector: string): Promise<boolean | null> {
 
 /** Type into the description field, replacing whatever is there. */
 async function setDescription(page: Page, text: string): Promise<void> {
+  const before = await textOf(page, DESCRIPTION)
   await page.fill(DESCRIPTION_INPUT, text)
-  // The gate is derived state, not an effect, but MUI's helper text re-renders on the next
-  // frame — read it after, never on the same tick as the keystroke.
-  await sleep(250)
+  // The gate is derived state, not an effect, but MUI's helper text re-renders on the next frame.
+  // The CONDITION is that the field's own rendering has caught up with what was typed — its text
+  // carries the live `n / max` counter, so any real keystroke changes it.
+  await settle(() => textOf(page, DESCRIPTION), (t) => t !== before, { timeoutMs: 8_000 })
 }
 
 /**
@@ -167,16 +170,30 @@ async function stepValidatorGate(page: Page): Promise<void> {
   )
 }
 
-/** Wait for main to hand back a slice for the live log; '' when it never did. */
+/**
+ * Wait for main to hand back a slice for the tailed log; '' when it never did.
+ *
+ * THE EMPTY STATE IS ALSO THE LOADING STATE, which is why this is not a plain two-way race: the
+ * dialog renders "no slice" while main is still tailing, windowing, scrubbing and gzipping the
+ * log, so a reader that accepts the first empty it sees concludes there is nothing to send and
+ * silently skips every count below (it did — the assertions went to a note the moment a faster
+ * gate stopped incidentally waiting out the round trip). A slice ENDS the wait immediately;
+ * "nothing to slice" has to hold still for a while before it is believed.
+ */
 async function waitForPreviewMeta(page: Page): Promise<string> {
-  const t0 = Date.now()
-  while (Date.now() - t0 < SLICE_WAIT_MS) {
-    const shown = await countOf(page, PREVIEW_META)
-    if (shown > 0) return (await textOf(page, PREVIEW_META)).replace(/\s+/g, ' ')
-    if ((await countOf(page, '[data-testid="feedback-preview-empty"]')) > 0) return ''
-    await sleep(500)
-  }
-  return ''
+  let emptyRun = 0
+  const state = await settle(
+    async () => {
+      const meta = await countOf(page, PREVIEW_META)
+      const empty = await countOf(page, '[data-testid="feedback-preview-empty"]')
+      emptyRun = meta === 0 && empty > 0 ? emptyRun + 1 : 0
+      return { meta, emptyRun }
+    },
+    (s) => s.meta > 0 || s.emptyRun >= 10,
+    { timeoutMs: SLICE_WAIT_MS, pollMs: 200 }
+  )
+  if (state.meta === 0) return ''
+  return (await textOf(page, PREVIEW_META)).replace(/\s+/g, ' ')
 }
 
 /**
@@ -185,13 +202,14 @@ async function waitForPreviewMeta(page: Page): Promise<string> {
  */
 async function stepAttachAndPreview(page: Page): Promise<void> {
   await page.click('[data-testid="feedback-type-bug"]')
-  await sleep(400)
-
-  const checked = await page.evaluate(
-    () =>
-      (document.querySelector('[data-testid="feedback-attach-log"] input') as HTMLInputElement | null)
-        ?.checked ?? null
-  )
+  // The tick is what the click is FOR, so waiting for it is waiting for the assertion's subject.
+  const readCheck = (): Promise<boolean | null> =>
+    page.evaluate(
+      () =>
+        (document.querySelector('[data-testid="feedback-attach-log"] input') as HTMLInputElement | null)
+          ?.checked ?? null
+    )
+  const checked = await settle(readCheck, (c) => c === true, { timeoutMs: 8_000 })
   check('choosing Bug report ticks "attach my log" by default', checked === true, String(checked))
 
   const disclosure = (await textOf(page, DIALOG)).replace(/\s+/g, ' ')
@@ -249,8 +267,8 @@ async function stepAttachAndPreview(page: Page): Promise<void> {
 async function main(): Promise<void> {
   buildIfStale()
 
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Feedback spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-feedback.log…')
+  const { app, close } = await launchOnFixture('e2e-feedback.log')
 
   let page: Page | null = null
   try {

@@ -38,7 +38,6 @@
  */
 import type { Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
   buildIfStale,
   check,
   countOf,
@@ -49,11 +48,16 @@ import {
   rectOf,
   reportRun,
   selectorText,
-  sleep,
+  settle,
+  settleCount,
+  settleStable,
   snapshot,
+  waitHydrated,
   type Snap
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { PULL_DAMAGE, playPull } from './gameplay.mjs'
+import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 
 const GRID = '[data-testid="overview-grid"]'
 const SEGMENT_SELECT = '[data-testid="segment-select"]'
@@ -100,14 +104,8 @@ function boxOf(page: Page, sel: string): Promise<{ h: number; scrollH: number; c
  * Everything on this surface is asynchronous end to end (IPC → snapshot → render), so "did it
  * land" is a wait, not a read — the same discipline `waitForCombatText` uses.
  */
-async function pollText(read: () => Promise<string>, needle: string, ms = 8000): Promise<string> {
-  const t0 = Date.now()
-  let text = await read()
-  while (needle && !text.includes(needle) && Date.now() - t0 < ms) {
-    await sleep(300)
-    text = await read()
-  }
-  return text
+function pollText(read: () => Promise<string>, needle: string, ms = 8000): Promise<string> {
+  return settle(read, (text) => !needle || text.includes(needle), { timeoutMs: ms })
 }
 
 // ── the run, one step per numbered section of §8 ───────────────────────────────────────
@@ -132,28 +130,39 @@ async function stepLanding(page: Page): Promise<void> {
 async function stepHydration(page: Page): Promise<OverviewSnap> {
   // 2. HYDRATION IS A STATE. During the startup replay every snapshot describes the PAST, so
   //    the NOW row must show the quiet placeholder rather than a churning fake-live meter.
-  //    Observed-or-too-fast is the convention `stepHydration` uses in the combat spec: on a
-  //    warm out-e2e build the replay can finish before the first poll.
-  const t0 = Date.now()
-  let sawUi = false
-  let snap = await osnap(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    if (!sawUi) sawUi = (await countOf(page, '[data-testid="overview-hydrating"]')) > 0
-    await sleep(500)
-    snap = await osnap(page)
-  }
-  const ms = Date.now() - t0
-  if (!check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${ms}ms`)) {
+  //    Against a per-spec fixture the replay is normally over before the spec's first look —
+  //    `wasHydrating` is what separates "the placeholder never rendered" (a defect) from "it
+  //    never had a moment to" (the fixture doing its job).
+  const { snap, ms, sawUi, wasHydrating } = await waitHydrated(page, '[data-testid="overview-hydrating"]')
+  if (!check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${String(ms)}ms`)) {
     throw new Error('still hydrating — nothing below can be asserted')
   }
   check(
     'while hydrating the NOW row shows the quiet loading state, not a fake-live meter',
-    sawUi || ms < 1500,
-    sawUi ? 'saw [overview-hydrating]' : `replay finished in ${ms}ms (too fast to observe)`
+    sawUi || !wasHydrating,
+    sawUi
+      ? 'saw [overview-hydrating]'
+      : `the fixture replayed in ${String(ms)}ms — the placeholder had no moment to exist`
   )
-  // Let the post-hydration render + one activity nudge land.
-  await sleep(1500)
   return osnap(page)
+}
+
+/**
+ * PLAY A FIGHT, so the glance has something to glance at.
+ *
+ * The Overview is a NOW surface: its DPS card, its head-row label and its leveling tiles all
+ * describe recent play, and a committed fixture is by definition not recent. So the harness plays
+ * the scripted pull (gameplay.mts — ten hits, 442 points, ending in a credited kill) into the
+ * tailed log, and every card below reads a fight this suite WROTE rather than whatever the slice
+ * happened to end on. Returns the settled snapshot the steps assert against.
+ */
+async function stepPlayAFight(page: Page, log: FixtureLog): Promise<OverviewSnap> {
+  const before = (await osnap(page)).recent.length
+  await playPull(log, () => settle(() => osnap(page), (s) => s.recent.length > before, { timeoutMs: 8_000 }))
+  const snap = await settle(() => osnap(page), (s) => (s.selected?.outTotal ?? 0) === PULL_DAMAGE, { timeoutMs: 20_000 })
+  const total = Math.round(snap.selected?.outTotal ?? -1)
+  check('a fight played into the tailed log reaches the glance, with its exact total', total === PULL_DAMAGE, `${String(total)} of ${String(PULL_DAMAGE)} points · ${snap.selected?.name ?? 'no selection'}`)
+  return snap
 }
 
 async function stepGridAndDps(page: Page, snap: OverviewSnap): Promise<void> {
@@ -260,7 +269,9 @@ async function stepDropsFeed(page: Page): Promise<void> {
     b.scrollH >= b.clientH,
     `scrollHeight ${b.scrollH} vs clientHeight ${b.clientH}`
   )
-  const rows = await countOf(page, '[data-testid="overview-drop-row"]')
+  // The feed is delta-pushed, so a read taken the instant the tab remounts is a read of the
+  // pre-hydrated list. Wait for the positive signal — a row — before deciding there are none.
+  const rows = await settleCount(page, '[data-testid="overview-drop-row"]', 1, { timeoutMs: 8_000 })
   const hot = await countOf(page, '[data-testid="overview-drop-highlight"]')
   if (rows > 0) {
     check(
@@ -286,7 +297,11 @@ async function stepDropsFeed(page: Page): Promise<void> {
  * moving, not a defect, so the flip is detected from the engine and NOTED rather than failed.
  */
 async function stepLinkDown(page: Page): Promise<void> {
-  const label = (await textOf(page, '[data-testid="overview-dps-label"]')).trim()
+  // Read a SETTLED label: the card is delta-driven and this step runs right after a tab round
+  // trip, so an immediate read can catch the pre-hydration blank and make the identity below
+  // vacuous ("no head-row label ⇒ not asserted") when there is in fact a fight on screen.
+  const labelSel = '[data-testid="overview-dps-label"]'
+  const label = (await settle(() => textOf(page, labelSel), (t) => t.trim().length > 0, { timeoutMs: 8_000 })).trim()
   const before = await osnap(page)
   const liveBefore = before.segments.some((s) => s.kind === 'current')
   // "Last fight — <name>" ⇒ the subject is the name; "Current fight (live)" ⇒ the whole label is.
@@ -337,8 +352,9 @@ async function stepRoundTrip(page: Page): Promise<void> {
     () => false
   )
   check('clicking Overview in the nav comes back to the grid', back)
-  await sleep(800)
-  const over = await pageOverflow(page)
+  // The layout has to have STOPPED MOVING before "it does not scroll the page" means anything;
+  // a settled overflow reading is that positive signal, where 800ms was a guess at it.
+  const over = await settleStable(() => pageOverflow(page), { timeoutMs: 10_000 })
   check(
     '…and the Overview never scrolls the page (the grid scrolls inside itself)',
     over.doc === 0 && over.content === 0,
@@ -356,7 +372,12 @@ async function stepRoundTrip(page: Page): Promise<void> {
  *     which is the OTHER honest answer and is asserted as such).
  */
 async function stepLevelingPanel(page: Page): Promise<void> {
-  const tiles = await countOf(page, '[data-testid="overview-leveling-tiles"] [data-testid^="overview-leveling-tile-"]')
+  const tiles = await settleCount(
+    page,
+    '[data-testid="overview-leveling-tiles"] [data-testid^="overview-leveling-tile-"]',
+    2,
+    { timeoutMs: 15_000 }
+  )
   if (tiles === 0) {
     note('the log holds no progression in the last hour — the leveling card shows its quiet empty state')
     return
@@ -445,8 +466,12 @@ async function stepUpdateChipClearsPreferences(page: Page): Promise<void> {
   }, `[data-testid="${chip}"]`)
   if (!check('…and it has a box to hover', box !== null)) return
   await page.mouse.move(Math.round(box.x), Math.round(box.y))
-  // Past MUI's default 100ms enterDelay and its transition, with room to spare.
-  await sleep(1200)
+  // THE ABSENCE ASSERTION'S POSITIVE SIGNAL. What follows claims no tooltip popper exists — a
+  // claim that is only worth making after any popper WOULD have appeared. MUI's enterDelay is
+  // 100ms plus a transition, so the honest wait is for the popper count to stop changing rather
+  // than for a flat 1200ms: it settles at 0 immediately when there is none, and at 1 (a failure,
+  // reported as such) when there is.
+  await settleStable(() => countOf(page, '.MuiTooltip-popper'), { timeoutMs: 5_000, stable: 5, pollMs: 150 })
 
   const probe = await page.evaluate(() => {
     const row = document.querySelector('[data-testid="nav-preferences"]')
@@ -476,13 +501,12 @@ async function stepUpdateChipClearsPreferences(page: Page): Promise<void> {
   )
   // A real click has to land, too — the measurement above is only a proxy for it.
   await page.click('[data-testid="nav-preferences"]', { timeout: 15_000 })
-  await sleep(600)
   check(
     '…and clicking it opens Preferences',
-    (await countOf(page, '[data-testid="nav-preferences"].Mui-selected')) === 1
+    (await settleCount(page, '[data-testid="nav-preferences"].Mui-selected')) === 1
   )
   await page.click('[data-testid="nav-overview"]', { timeout: 15_000 })
-  await sleep(600)
+  await settleCount(page, GRID)
 }
 
 /**
@@ -534,8 +558,8 @@ async function main(): Promise<void> {
 
   // Fresh userData is load-bearing for assertion 1 — see the file header. It is what a launch
   // now IS: `launchApp()` mints a dir of its own and deletes it on close.
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Overview spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-overview.log…')
+  const { app, close, log } = await launchOnFixture('e2e-overview.log')
 
   let page: Page | null = null
   try {
@@ -547,7 +571,8 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     await stepLanding(page)
-    const snap = await stepHydration(page)
+    let snap = await stepHydration(page)
+    snap = await stepPlayAFight(page, log)
     await stepGridAndDps(page, snap)
     await stepHeadLabel(page, snap)
     await stepZoneAndMob(page, snap)
