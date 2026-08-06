@@ -171,27 +171,40 @@ export interface LaunchedApp {
  * restart, overlay-sync's persisted overlay state. Such a caller owns the dir's lifetime
  * (`makeUserData()` / `removeUserData()`); `close()` here will not delete what it did not create.
  *
+ * Pass `installDir` to point the app at a STAGED EQ install instead of the machine's own — the
+ * per-spec fixture logs (tests/e2e/logFixture.mts, wave E2). It is set as `EQ_INSTALL_DIR`, which
+ * `src/main/log/config.ts` consults FIRST, ahead of the registry and the drive sweep; when it is
+ * absent the variable is DELETED from the child's environment rather than inherited, so a shell
+ * that happens to export one can never silently redirect a spec that did not ask for it.
+ *
  * Pass `env` only when the assertion is ABOUT a launch-time environment the app reads before it
  * can be driven — `EQ_DISABLE_GPU`, whose whole point is that it is decided before Electron is
  * ready and therefore cannot be flipped through any bridge (JOS-40). It is merged LAST, so a
  * spec can override the harness's own variables deliberately rather than by accident.
  */
 export async function launchApp(
-  opts: { userData?: string; env?: Record<string, string> } = {}
+  opts: { userData?: string; installDir?: string; env?: Record<string, string> } = {}
 ): Promise<LaunchedApp> {
   const owned = opts.userData === undefined
   const userData = opts.userData ?? makeUserData()
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    EQ_E2E: '1',
+    EQ_E2E_USER_DATA: userData,
+    NODE_ENV: 'production'
+  }
+  if (opts.installDir !== undefined) env.EQ_INSTALL_DIR = opts.installDir
+  else delete env.EQ_INSTALL_DIR
+  // The other override `config.ts` honours: a bare log PATH. A staged install must not be
+  // second-guessed by one left in the ambient environment.
+  delete env.EQ_LOG_PATH
+  // LAST, deliberately: a spec that names a variable outranks the harness's own defaults.
+  Object.assign(env, opts.env ?? {})
   const app = await electron.launch({
     executablePath: electronBinary(),
     args: [MAIN_ENTRY],
     cwd: ROOT,
-    env: {
-      ...process.env,
-      EQ_E2E: '1',
-      EQ_E2E_USER_DATA: userData,
-      NODE_ENV: 'production',
-      ...(opts.env ?? {})
-    },
+    env,
     timeout: 60_000
   })
   return {

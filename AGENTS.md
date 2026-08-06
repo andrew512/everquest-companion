@@ -117,7 +117,7 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   emotes) — those are load-bearing (own-cast gating, buff classification,
   entity retirement) and carry no one's words.
 - **Headless app test** (`npm run test:e2e`, playwright-core `_electron`): drives
-  the REAL app end-to-end against the live log and asserts what the user SEES
+  the REAL app end-to-end and asserts what the user SEES
   (`tests/e2e/combat-dashboard.e2e.mts`). Use it for anything a fixture replay
   can't see — layout, mount/empty states, hydration. `EQ_E2E=1` (src/main/e2e.ts)
   is the whole test mode: NO window is ever shown (main window is already
@@ -127,9 +127,39 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   so it's invisible while the user plays. Builds
   into `out-e2e/` (ABSOLUTE `--outDir`: a relative one resolves against each
   section's root and buries the renderer in `src/renderer/`) so it never races
-  the dev watcher's `out/`. Assertions are floors/identities; DOM + screenshot
+  the dev watcher's `out/`. DOM + screenshot
   land in `tests/e2e/artifacts/` on failure (hidden-window screenshots are
   best-effort — an idle window may not composite).
+- **THE E2E INPUT IS A COMMITTED FIXTURE, AND THE HARNESS PLAYS THE LIVE HALF**
+  (JOS-29, wave E2 — docs/plans/e2e-parallel.md). It is no longer the owner's
+  live log: `tests/e2e/logFixture.mts` stages a throwaway EQ install per launch
+  (`<tmp>/Logs/eqlog_Primitive_freeport.txt`, a COPY of `tests/fixtures/e2e-*.log`)
+  and hands it over with `EQ_INSTALL_DIR`, which `src/main/log/config.ts` already
+  consults ahead of the registry and the drive sweep — the product knows nothing
+  about it. Cut the fixtures with `npm run fixtures:e2e` (through the shared
+  scrub, like every other extractor); each entry in
+  `tests/extract-e2e-fixtures.mjs` states its span and what that span contains.
+  Because the harness OWNS the copy, it can also PLAY: `appendAt()` writes whole
+  EQ-stamped lines into the tailed file and they travel the real path
+  (chokidar → Tailer → parser → engine → IPC → render). `tests/e2e/gameplay.mts`
+  scripts a pull whose damage this repo STATES — ten hits, 442 points, four
+  seconds — so the assertions are EXACT (`outTotal === 442`) where they used to
+  be floors waiting up to 45 s for the owner to happen to be fighting. Map PACKS
+  stay a game install: the maps spec junctions the real `maps/` dir in beside its
+  fixture. Frozen numbers still rot for anything the fixture does not fix.
+- **WAIT FOR THE CONDITION, NEVER FOR THE CLOCK** (wave E3). `tests/e2e/settle.mts`
+  is the vocabulary: `settle(read, ok)`, `settleCount`, `settleGone`, and
+  `settleStable` — which is how an ABSENCE is asserted (wait for the reading to
+  stop changing, THEN assert nothing is there). Two raw sleeps survive in the
+  whole suite and both are instruments rather than bets: the timeline samples
+  geometry on a clock because change over time is its subject, and telemetry
+  dwells past a second because `useViewDwell` ignores anything shorter. Two
+  measured traps to remember: `requestAnimationFrame` can be throttled to
+  nothing in a window that is never composited (a bare two-frame wait took two
+  seconds — `nextFrames` races a timer), and `hoverAt` must clip an element's
+  box against every CLIPPING ANCESTOR and verify with `elementFromPoint`, or a
+  chart inside a scrolling column gets a drag delivered to whatever is really
+  under that screen point (that was the leveling red, for weeks).
 - **Frozen numbers rot**: the live log grows, so full-log assertions must be
   identities (`earned == allocated + unspent`), monotonic floors, or
   anchor-independent invariants — never `== <today's count>`.
@@ -175,9 +205,11 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
     joined, so a worktree with no install runs the suite. MEASURED
     2026-08-05: two full suites racing from one worktree, 12/13 each at
     179.6 s and 179.4 s wall (solo 171.4 s; serial was ~28 min), zero EPERM,
-    identical single red. That red — leveling's chart-drag range panel —
-    reproduces on the pre-E1 harness too; remaining reds are E2/E3's
-    business (the live log is still the input).
+    identical single red. E2/E3 then took the input off the live log and the
+    sleeps out of the specs (JOS-29, above): MEASURED 2026-08-06, 13/13 twice
+    consecutively from a worktree at 150.4 s and 148.2 s. The one long-standing
+    red — leveling's chart-drag range panel — was the harness's own `hoverAt`
+    and is fixed.
   - **The awaiting-sample law generalizes**: no file format, log
     annotation, or era claim ships from imagination — outputs kinds refuse
     typed until a real fixture graduates them; Double Bow Shot waits for a

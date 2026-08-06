@@ -185,7 +185,16 @@ export function ScopeChip({
           data-testid="meter-scope-chip"
           label={chipLabel(scope, roster)}
           onClick={() => setScope(nextScope(scope))}
-          sx={{ height: 20, fontSize: 11, fontWeight: 600, borderRadius: 1 }}
+          // `minWidth: 0` is what lets this chip ELLIPSIZE instead of pushing the lens line past
+          // its box. The label is world-state text of unbounded length — "Group" is 50px, but the
+          // law-1 fallback spells itself out ("Group (no roster yet)") and measures 121px — and a
+          // flex item's default `min-width: auto` refuses to shrink below its content, so the
+          // extra 70px came straight off the end of a bar whose whole contract is that nothing in
+          // it is cut off. MEASURED 2026-08-06 against the committed e2e fixture (which carries no
+          // group lines, so the fallback label is what it always renders): the header overflowed
+          // by 30px at a 720px window. The Chip's own label already ellipsizes; it only ever
+          // needed permission to be narrower than its text.
+          sx={{ height: 20, fontSize: 11, fontWeight: 600, borderRadius: 1, minWidth: 0 }}
         />
       </Tooltip>
       <Tooltip title="Who the app thinks is in your group, and why">

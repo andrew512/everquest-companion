@@ -48,9 +48,12 @@ import {
   pageOverflow,
   rectOf,
   reportRun,
-  sleep
+  settleCount,
+  settleGone
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 // Every `planner-*` selector, the DOM measurements, and the four steps that measure the EFFECT
 // LIST live next door — this spec sits at the repo's max-lines budget and the rule is to split,
 // never ratchet (drill.mts, combatSteps.mts). The ORDER is still owned here.
@@ -109,6 +112,7 @@ const LOOT_BACK = '[data-testid="loot-back"]'
  * is the only place the rename is visible, and a spec that only clicked the testid would have let
  * it silently revert.
  */
+
 async function stepMount(page: Page): Promise<boolean> {
   const hasRow = await page.waitForSelector(NAV, { timeout: 60_000 }).then(
     () => true,
@@ -232,11 +236,13 @@ async function stepAddAndInventory(page: Page): Promise<boolean> {
   }
   await stepEffectSays(page)
   await page.click(ADD_BUTTON, { timeout: 15_000 })
-  await sleep(400)
-  // A donor that occupies more than one slot opens a slot menu instead of writing directly.
-  if ((await countOf(page, '.MuiMenu-root .MuiMenuItem-root')) > 0) {
-    await page.click('.MuiMenu-root .MuiMenuItem-root', { timeout: 15_000 })
-    await sleep(400)
+  // A donor that occupies more than one slot opens a slot menu instead of writing directly. Which
+  // of the two happened is the CONDITION: wait briefly for a menu, and if one came, choose from
+  // it and wait for it to go. Neither branch is a failure; guessing at 400ms twice was.
+  const menu = '.MuiMenu-root .MuiMenuItem-root'
+  if ((await settleCount(page, menu, 1, { timeoutMs: 3_000 })) > 0) {
+    await page.click(menu, { timeout: 15_000 })
+    await settleGone(page, menu, { timeoutMs: 8_000 })
   }
 
   await page.click(MODE_BOARD, { timeout: 15_000 })
@@ -549,8 +555,9 @@ async function main(): Promise<void> {
 
   // See the header: a stored set (or a remembered mode) would make the empty-state assertion
   // vacuous — this launch's userData dir has never held either.
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Exaltations spec…')
-  const { app, close } = await launchApp()
+
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-planner.log…')
+  const { app, close } = await launchOnFixture('e2e-planner.log')
 
   let page: Page | null = null
   try {

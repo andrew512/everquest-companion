@@ -15,7 +15,7 @@
 // navigate between modes and the ordering between them IS the test.
 
 import type { Page } from 'playwright-core'
-import { check, countOf, note, sleep } from './appHarness.mjs'
+import { check, countOf, note, settle } from './appHarness.mjs'
 
 export const NAV = '[data-testid="nav-planner"]'
 export const VIEW = '[data-testid="planner-view"]'
@@ -111,13 +111,8 @@ export function truncated(page: Page, sel: string): Promise<{ total: number; cli
 }
 
 /** Poll a predicate until it holds or the deadline passes. */
-export async function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
-  const t0 = Date.now()
-  for (;;) {
-    if (await fn()) return true
-    if (Date.now() - t0 >= ms) return false
-    await sleep(300)
-  }
+export function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
+  return settle(fn, (ok) => ok, { timeoutMs: ms })
 }
 
 /**

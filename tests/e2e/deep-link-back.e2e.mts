@@ -13,14 +13,17 @@
  * which is the same reason that spec was split out of `combat-dashboard.e2e.mts`.
  *
  * WHY THE OVERVIEW IS THE SENDER HERE: it is the only tab that deep-links to BOTH receivers with
- * rows the live log fills on its own — a recent drop opens the Loot drill, a recent kill opens the
+ * rows the log fills on its own — a recent drop opens the Loot drill, a recent kill opens the
  * Mob page. The planner→loot round trip is asserted where that link lives (`planner.e2e.mts`), and
  * the stack RULES themselves (what pushes, what clears, chaining, the bound) are pinned without a
  * browser in `tests/navOriginStack.test.mts`.
  *
- * EVERY STEP IS CONDITIONAL ON THE LIVE LOG having produced the row it needs, and says so with a
- * `note` rather than a red when it has not (AGENTS.md: the log is the input; frozen expectations
- * rot). What is never conditional is the DIRECTION of the assertion — where Back went.
+ * WHAT IT READS (JOS-29): `tests/fixtures/e2e-deep-link.log` — 339 committed lines carrying two
+ * loot lines off a credited Lord Nagafen kill, which is exactly the drop row and the kill row this
+ * spec clicks. The steps keep their `note`-rather-than-red guards (the row is still a thing the
+ * log has to have produced), but with a fixture the same branch is taken on every machine, every
+ * run: the guards are honesty, not a lottery. What was never conditional is the DIRECTION of the
+ * assertion — where Back went.
  *
  * WHY IT NEVER TAKES THE SCREEN: `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
  * single-instance lock, and points `userData` at a throwaway temp dir minted per launch.
@@ -29,7 +32,6 @@
  */
 import type { Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
   buildIfStale,
   check,
   countOf,
@@ -37,10 +39,12 @@ import {
   failures,
   note,
   reportRun,
-  sleep,
-  snapshot
+  settleCount,
+  settleGone,
+  waitHydrated
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 
 const GRID = '[data-testid="overview-grid"]'
 const DROP_ROW = '[data-testid="overview-drop-row"]'
@@ -81,12 +85,7 @@ function textOf(page: Page, sel: string): Promise<string> {
  * way a live-data spec turns a timing gap into a false skip.
  */
 async function haveRow(page: Page, sel: string, ms = 8000): Promise<boolean> {
-  const t0 = Date.now()
-  while (Date.now() - t0 < ms) {
-    if ((await countOf(page, sel)) > 0) return true
-    await sleep(300)
-  }
-  return false
+  return (await settleCount(page, sel, 1, { timeoutMs: ms })) > 0
 }
 
 /**
@@ -97,16 +96,12 @@ async function stepReady(page: Page): Promise<void> {
   if (!check('the app lands on the Overview', await appears(page, GRID, 60_000))) {
     throw new Error('never landed on Overview — nothing below can be asserted')
   }
-  const t0 = Date.now()
-  let snap = await snapshot(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    await sleep(500)
-    snap = await snapshot(page)
-  }
+  const { snap } = await waitHydrated(page)
   if (!check('hydration completes (the replay has filled the recent feeds)', !snap.hydrating)) {
     throw new Error('still hydrating — nothing below can be asserted')
   }
-  await sleep(1500)
+  // No post-hydration sleep: every step below opens with `haveRow`, which waits for the feed it
+  // is about to click. That IS the state the old 1500ms was standing in for (wave E3).
 }
 
 /**
@@ -212,7 +207,9 @@ async function stepManualNavClears(page: Page): Promise<void> {
   await page.click(DROP_ROW, { timeout: 15_000 })
   if (!(await appears(page, LOOT_DETAIL, 30_000))) return
   await page.click('[data-testid="nav-mobs"]', { timeout: 15_000 })
-  await sleep(500)
+  // LEAVING is the act under test — the drill has to actually unmount before coming back can
+  // prove that nothing of the parked origin survived it.
+  await settleGone(page, LOOT_DETAIL, { timeoutMs: 15_000 })
   await page.click('[data-testid="nav-loot"]', { timeout: 15_000 })
   check('a hand-picked tab ends the journey: Loot re-opens on its ledger', await appears(page, LOOT_LIST))
   check('…with no drill left over', (await countOf(page, LOOT_DETAIL)) === 0)
@@ -221,8 +218,8 @@ async function stepManualNavClears(page: Page): Promise<void> {
 async function main(): Promise<void> {
   buildIfStale()
 
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — deep-link Back spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-deep-link.log…')
+  const { app, close } = await launchOnFixture('e2e-deep-link.log')
 
   let page: Page | null = null
   try {

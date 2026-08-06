@@ -38,7 +38,6 @@
  */
 import type { Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
   buildIfStale,
   check,
   countOf,
@@ -48,10 +47,12 @@ import {
   pageOverflow,
   rectOf,
   reportRun,
-  sleep,
-  snapshot
+  settle,
+  settleStable,
+  waitHydrated
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 
 const NAV = '[data-testid="nav-maps"]'
 const HEADER = '[data-testid="maps-header"]'
@@ -90,13 +91,8 @@ function boxOf(page: Page, sel: string): Promise<{ h: number; scrollH: number; c
 }
 
 /** Poll a predicate until it holds or the deadline passes. Everything here lands asynchronously. */
-async function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
-  const t0 = Date.now()
-  for (;;) {
-    if (await fn()) return true
-    if (Date.now() - t0 >= ms) return false
-    await sleep(300)
-  }
+function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
+  return settle(fn, (ok) => ok, { timeoutMs: ms })
 }
 
 /**
@@ -157,13 +153,7 @@ async function stepMount(page: Page): Promise<boolean> {
 
 /** Wait out the startup replay so the character module has had a chance to state the zone. */
 async function waitZone(page: Page): Promise<string | undefined> {
-  const t0 = Date.now()
-  let snap = await snapshot(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    await sleep(500)
-    snap = await snapshot(page)
-  }
-  return snap.zone
+  return (await waitHydrated(page)).snap.zone
 }
 
 /**
@@ -388,8 +378,9 @@ async function stepPaneClose(page: Page): Promise<void> {
 
   await page.click(PANE_CLOSE, { timeout: 15_000 })
   const closed = await until(async () => (await countOf(page, PANE)) === 0, 8000)
-  await sleep(600) // let the ResizeObserver deliver the new surface size
-  const widthClosed = (await viewOf(page))?.w ?? 0
+  // The surface's new width arrives through a ResizeObserver, a beat after the pane unmounts —
+  // so the condition is the WIDTH settling, not the pane going.
+  const widthClosed = (await settleStable(() => viewOf(page), { timeoutMs: 8_000 }))?.w ?? 0
   check(
     'closing the sidebar gives its width back to the MAP (no fixed-size arithmetic, no ghost column)',
     closed && widthClosed > widthOpen,
@@ -399,8 +390,7 @@ async function stepPaneClose(page: Page): Promise<void> {
 
   await page.click(PANE_OPEN, { timeout: 15_000 })
   const reopened = await until(async () => (await countOf(page, PANE)) > 0, 8000)
-  await sleep(600)
-  const widthAgain = (await viewOf(page))?.w ?? 0
+  const widthAgain = (await settleStable(() => viewOf(page), { timeoutMs: 8_000 }))?.w ?? 0
   check(
     'and reopening it takes exactly that width back',
     reopened && Math.abs(widthAgain - widthOpen) <= 2,
@@ -433,8 +423,13 @@ async function main(): Promise<void> {
 
   // See the header: a remembered `eq.maps.zone` would make the auto-open assertion vacuous, and
   // this launch's userData dir is one nothing has ever written to.
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Maps spec…')
-  const { app, close } = await launchApp()
+  // THE LOG is a committed fixture whose last zone line is The Southern Desert of Ro — so the
+  // auto-open assertion has a stated zone to be about. The map PACKS are not: they are a 200 MB
+  // game install, so the staged install junctions the real one's `maps\` dir in beside the
+  // fixture (`maps: true`). A machine with no EQ install gets no junction and this spec takes its
+  // stated no-packs branch, exactly as it always has.
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-maps.log…')
+  const { app, close } = await launchOnFixture('e2e-maps.log', { maps: true })
 
   let page: Page | null = null
   try {
@@ -448,8 +443,9 @@ async function main(): Promise<void> {
     if (await stepMount(page)) {
       const zone = await waitZone(page)
       if (await stepMapOrEmpty(page, zone)) {
-        // Let the ResizeObserver + first paint land before measuring anything.
-        await sleep(1200)
+        // Let the ResizeObserver + first paint land before measuring anything — the CONDITION
+        // being that the canvas has stopped resizing, which is exactly what stepCanvas measures.
+        await settleStable(() => canvasMetrics(page), { timeoutMs: 15_000 })
         await stepCanvas(page)
         await stepHeader(page, zone)
         await stepPane(page)

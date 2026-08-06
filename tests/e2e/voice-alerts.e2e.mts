@@ -46,9 +46,11 @@ import {
   failures,
   note,
   reportRun,
-  sleep
+  settle,
+  settleGone
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
 
 const VOICE_PANEL = '[data-testid="pref-voice"]'
 /** The RETIRED master switch. Asserted to be absent — see the header. */
@@ -88,8 +90,22 @@ async function selectIn(page: Page, selector: string, value: string): Promise<vo
   await page.click(selector)
   await page.waitForSelector(`li[data-value="${value}"]`, { timeout: 10_000 })
   await page.click(`li[data-value="${value}"]`)
-  // MUI's menu animates out; clicking through it while it fades hits the backdrop.
-  await sleep(400)
+  // MUI's menu animates out; clicking through it while it fades hits the backdrop. Its LEAVING is
+  // the condition — waiting for the DOM to lose the listbox, not for 400ms to pass.
+  await settleGone(page, '.MuiMenu-root', { timeoutMs: 8_000 })
+}
+
+/**
+ * Fire something that should SPEAK, and wait for the seam's own ring to record it.
+ *
+ * `lib/speech.ts` pushes onto `window.__eqSpeech` before it would touch an engine, so a new entry
+ * IS the observable this spec exists to assert — which makes it the right thing to wait for, and
+ * the 500–800ms sleeps that used to stand in for it pure guesswork about IPC latency.
+ */
+async function spokeOnce(page: Page, act: () => Promise<void>): Promise<Spoken[]> {
+  const before = (await spoken(page)).length
+  await act()
+  return settle(() => spoken(page), (all) => all.length > before, { timeoutMs: 10_000 })
 }
 
 function selectValue(page: Page, testid: string, value: string): Promise<void> {
@@ -133,9 +149,7 @@ async function stepPanel(page: Page): Promise<boolean> {
 /** The ▶ preview speaks through the REAL seam — and, in this channel, silently. */
 async function stepPreview(page: Page): Promise<void> {
   const before = (await spoken(page)).length
-  await page.click('[data-testid="pref-voice-preview"]')
-  await sleep(500)
-  const all = await spoken(page)
+  const all = await spokeOnce(page, () => page.click('[data-testid="pref-voice-preview"]'))
   if (!check('the ▶ preview reaches the speech engine seam', all.length === before + 1, `${String(all.length - before)} utterance(s)`)) {
     return
   }
@@ -251,9 +265,7 @@ async function stepRowPicker(page: Page): Promise<void> {
 
   const name = await firstRowName(page)
   const before = (await spoken(page)).length
-  await page.click(`${FIRST_ROW} [data-testid="alert-test"]`)
-  await sleep(800)
-  const all = await spoken(page)
+  const all = await spokeOnce(page, () => page.click(`${FIRST_ROW} [data-testid="alert-test"]`))
   if (
     !check(
       'and the row’s ▶ SPEAKS it — the same firing path, no new preview seam',
@@ -295,7 +307,11 @@ async function stepRowSetupNote(page: Page): Promise<void> {
   const gotoAlerts = async (): Promise<void> => {
     await page.click('[data-testid="nav-alerts"]', { timeout: 60_000 })
     await page.waitForSelector('[data-testid="alert-row"]', { timeout: 30_000 })
-    await sleep(500)
+    // The annotation this step is about is derived from the stored voice tier, which the row
+    // reads over IPC — so the settled ROW is what has to be waited for, not a fixed beat.
+    await settle(() => countOf(page, `${FIRST_ROW} [data-testid="alert-output"]`), (n) => n === 1, {
+      timeoutMs: 10_000
+    })
   }
 
   await gotoVoicePrefs()
@@ -362,7 +378,9 @@ async function stepEditor(page: Page): Promise<string> {
 
   await page.click('[data-testid="alert-save"]')
   await page.waitForSelector('[data-testid="alert-dialog"]', { state: 'detached', timeout: 15_000 })
-  await sleep(600)
+  // The save writes through main; the row that will be test-fired next has to be back on screen
+  // before it can be clicked, which is a condition the list itself answers.
+  await settle(() => countOf(page, '[data-testid="alert-row"]'), (n) => n > 0, { timeoutMs: 10_000 })
   return name
 }
 
@@ -372,9 +390,9 @@ async function stepEditor(page: Page): Promise<string> {
  */
 async function stepFire(page: Page, name: string): Promise<void> {
   const before = (await spoken(page)).length
-  await page.click('[data-testid="alert-row"]:first-of-type [data-testid="alert-test"]')
-  await sleep(800)
-  const all = await spoken(page)
+  const all = await spokeOnce(page, () =>
+    page.click('[data-testid="alert-row"]:first-of-type [data-testid="alert-test"]')
+  )
   if (!check('test-firing a speech alert invokes the engine seam', all.length === before + 1, `${String(all.length - before)} utterance(s)`)) {
     return
   }
@@ -390,8 +408,8 @@ async function stepFire(page: Page, name: string): Promise<void> {
 async function main(): Promise<void> {
   buildIfStale()
 
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Voice alerts spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-voice.log…')
+  const { app, close } = await launchOnFixture('e2e-voice.log')
 
   let page: Page | null = null
   try {

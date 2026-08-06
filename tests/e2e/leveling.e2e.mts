@@ -39,7 +39,6 @@
  */
 import type { Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
   buildIfStale,
   check,
   countOf,
@@ -50,10 +49,14 @@ import {
   pageOverflow,
   rectOf,
   reportRun,
-  sleep,
-  snapshot
+  settle,
+  settleCount,
+  settleGone,
+  waitHydrated
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { playWho } from './gameplay.mjs'
+import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -90,13 +93,8 @@ function numIn(text: string): number | null {
 }
 
 /** Poll a predicate until it holds or the deadline passes. Everything here lands asynchronously. */
-async function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
-  const t0 = Date.now()
-  for (;;) {
-    if (await fn()) return true
-    if (Date.now() - t0 >= ms) return false
-    await sleep(250)
-  }
+function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
+  return settle(fn, (ok) => ok, { timeoutMs: ms })
 }
 
 /**
@@ -110,8 +108,18 @@ async function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
  * the draft band tracks every one after it, so a single teleporting move would exercise only
  * half the hook.
  *
- * Fractions are wide on purpose (10% → 90%): the domain spans the whole log, so any sizeable
+ * Fractions are wide on purpose (10% → 90%): the domain spans the whole fixture, so any sizeable
  * fraction of it is far past the 60-second minimum selection.
+ *
+ * THE RED THIS SPEC WAS FILED AGAINST LIVED IN `hoverAt`, not here (JOS-29). The level chart is
+ * the SECOND panel in a column that owns its own scroll, so its box routinely sits partly below
+ * that column's visible bottom — and the old helper clamped only to the WINDOW. MEASURED
+ * 2026-08-06: box at y 838..994 in an 860-tall window, drag point computed at y=848, which
+ * `elementFromPoint` resolves to the app's content area. The pointer handlers never saw a single
+ * event; the harness had been dragging a different element for as long as this spec existed.
+ * `hoverAt` now scrolls the element into view, intersects with every clipping ancestor, and
+ * verifies the point actually lands inside — so this function is unchanged in intent and finally
+ * true in fact.
  */
 async function dragRange(page: Page, sel: string): Promise<boolean> {
   if (!(await hoverAt(page, sel, 0.1, 0.5))) return false
@@ -119,7 +127,6 @@ async function dragRange(page: Page, sel: string): Promise<boolean> {
   await hoverAt(page, sel, 0.5, 0.5)
   await hoverAt(page, sel, 0.9, 0.5)
   await page.mouse.up()
-  await sleep(500)
   return true
 }
 
@@ -128,7 +135,9 @@ async function clickChart(page: Page, sel: string): Promise<void> {
   await hoverAt(page, sel, 0.5, 0.5)
   await page.mouse.down()
   await page.mouse.up()
-  await sleep(500)
+  // The dismissal's own condition: the panel leaves. A committed selection unmounting IS the
+  // gesture's whole observable effect, so waiting for it is waiting for the thing under test.
+  await settleGone(page, PANEL, { timeoutMs: 8_000 })
 }
 
 // ── the run ───────────────────────────────────────────────────────────────────────────
@@ -157,17 +166,16 @@ async function stepMount(page: Page): Promise<boolean> {
   return true
 }
 
-/** Wait out the startup replay: until it hands off, every module is still filling. */
-async function waitHydrated(page: Page): Promise<void> {
-  const t0 = Date.now()
-  let snap = await snapshot(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    await sleep(500)
-    snap = await snapshot(page)
-  }
-  check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${String(Date.now() - t0)}ms`)
-  // Let the post-hydration render land — both modules push their snapshot on their own clock.
-  await sleep(1500)
+/**
+ * Wait out the startup replay: until it hands off, every module is still filling.
+ *
+ * The old copy of this loop ended with a flat `sleep(1500)` "to let the post-hydration render
+ * land". What actually has to land is the CHART, and `stepChart` already waits for it — so the
+ * guess is simply gone.
+ */
+async function waitReplayed(page: Page): Promise<void> {
+  const { snap, ms } = await waitHydrated(page)
+  check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${String(ms)}ms`)
 }
 
 /**
@@ -261,7 +269,7 @@ async function stepSelection(page: Page, chart: string): Promise<void> {
  * gains skills at 1 and again by 10). With no loadout inferred yet it must say so in words
  * instead of drawing empty lists, which is the same claim from the other side.
  */
-async function stepNewAtLevel(page: Page): Promise<void> {
+async function stepNewAtLevel(page: Page, log: FixtureLog): Promise<void> {
   const mounted = await page.waitForSelector(NEW_AT_LEVEL, { timeout: 20_000 }).then(
     () => true,
     () => false
@@ -270,8 +278,14 @@ async function stepNewAtLevel(page: Page): Promise<void> {
   const label = await textOf(page, LEVEL_VALUE)
   check('…with a level stepper that states the level it is showing', /Level \d+/.test(label), label)
 
+  // The loadout comes from a `/who`, and a fixture cut for the CHART carries one from five days
+  // before its last event. So the harness types `/who` — the append driver plays the row live and
+  // the combo module folds it like any other evidence. This is the difference between asserting
+  // the unlock join and noting that it could not be asserted.
+  playWho(log)
+  await settleGone(page, UNKNOWN_COMBO, { timeoutMs: 15_000 })
   if ((await countOf(page, UNKNOWN_COMBO)) > 0) {
-    note('the combo module has resolved no classes for this character yet — the panel states that instead of drawing empty lists, which is the honest surface')
+    note('the combo module resolved no classes even after a live /who — the panel states that instead of drawing empty lists, which is the honest surface')
     return
   }
   check('…and chips naming the loadout it computed against', (await countOf(page, COMBO_CHIP)) > 0)
@@ -281,8 +295,11 @@ async function stepNewAtLevel(page: Page): Promise<void> {
   // this character is unusual. The exact level and count are deliberately not asserted.
   let rows = await countOf(page, UNLOCK_ROW)
   for (let i = 0; i < 10 && rows === 0; i++) {
+    const label = await textOf(page, LEVEL_VALUE)
     await page.click(LEVEL_NEXT, { timeout: 10_000 })
-    await sleep(150)
+    // The step's own condition: the stepper is showing a DIFFERENT level. Reading the unlock
+    // rows before that lands would be reading the level we just left.
+    await settle(() => textOf(page, LEVEL_VALUE), (t) => t !== label, { timeoutMs: 8_000 })
     rows = await countOf(page, UNLOCK_ROW)
   }
   check('…and at least one unlock row across the first ten levels', rows > 0, `${String(rows)} rows at ${await textOf(page, LEVEL_VALUE)}`)
@@ -330,8 +347,7 @@ async function stepAaLedger(page: Page): Promise<void> {
     () => false
   )
   if (!check('the top ability row is clickable', clicked)) return
-  await sleep(150)
-  const rungs = await countOf(page, LEDGER_RUNG)
+  const rungs = await settleCount(page, LEDGER_RUNG, 1, { timeoutMs: 8_000 })
   check('…and clicking it opens its rungs', rungs > 0, `${String(rungs)} rungs`)
 }
 
@@ -350,8 +366,8 @@ async function main(): Promise<void> {
 
   // See the header: a fresh dir is what makes "before any selection" mean the same thing on
   // every machine, and every launch gets one.
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Leveling spec…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-leveling.log…')
+  const { app, close, log } = await launchOnFixture('e2e-leveling.log')
 
   let page: Page | null = null
   try {
@@ -363,7 +379,7 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     if (await stepMount(page)) {
-      await waitHydrated(page)
+      await waitReplayed(page)
       const chart = await stepChart(page)
       if (chart) {
         await stepBands(page)
@@ -378,7 +394,7 @@ async function main(): Promise<void> {
       }
       // Deliberately OUTSIDE the chart branch: the unlock panel is computed from the committed
       // DBs, so it must be there whether or not this log has enough dings to draw a chart.
-      await stepNewAtLevel(page)
+      await stepNewAtLevel(page, log)
       await stepOverflow(page)
     }
 
