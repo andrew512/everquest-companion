@@ -1,6 +1,6 @@
 // SHARED FIXTURE SCRUB — the single gate every fixture extractor routes through.
 //
-// THIS FILE IS A SHIM, NOT A SECOND OPINION. The drop list, the families, the two carve-outs
+// THIS FILE IS A SHIM, NOT A SECOND OPINION. The drop list, the families, the four carve-outs
 // and the drop-never-rewrite law all live in `src/shared/logScrub.ts` now, because the SAME
 // definition of "third-party chat/social" has to govern two artifacts:
 //
@@ -8,9 +8,16 @@
 //   2. the log slice a user attaches to an in-app feedback report (src/main/feedback/slice.ts).
 //
 // Read `src/shared/logScrub.ts` for the full rationale: the five enumerated DROP families,
-// what is KEPT and why, the pet-claim carve-out, and the self-`/who` carve-out. Nothing about
-// what a fixture keeps or drops changed in the promotion — this file's job is now only to bind
-// the `selfName` parameter to the character whose log the fixtures are cut from.
+// what is KEPT and why, the two pet-claim carve-outs, the `/pet who leader` one, and the
+// self-`/who` carve-out. Nothing about what a fixture keeps or drops changed in the promotion —
+// this file's job is now only to bind the `selfName` parameter to the character whose log the
+// fixtures are cut from.
+//
+// THAT PARAMETER IS WHAT GATES THE JOS-52 CARVE-OUT for every extractor at once: `<Name> says,
+// 'My leader is Primitive.'` survives, a leader say naming anyone else does not. Only ONE such
+// line exists in the whole 1.4M-line log (Thu Aug 06 12:44:20) and only `extract-pet-claim`'s p2
+// window spans it, so no OTHER committed fixture changes if it is re-cut — verified rather than
+// assumed when the carve-out landed.
 //
 // CONSEQUENCE FOR EXTRACTORS: because the shared module is TypeScript, the extractors must run
 // under the tsx loader —
