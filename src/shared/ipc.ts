@@ -17,6 +17,14 @@ export const IPC = {
   // main -> renderer: the active character's *-Inventory.txt was auto-reloaded.
   onInventoryReload: 'inventory:autoReloaded',
 
+  // ---- `/outputfile` exports (JOS-44: one treatment for every export command) ----
+  // renderer -> main: every `/outputfile` kind the app knows, joined to the active character's
+  // file on disk. Returns OutputFileStatus[] (shared/outputs/kinds.ts): the command to type, one
+  // clause of why, and the FILE's own mtime — null when the command has never been run here.
+  // Read on demand (a readdir + a stat); the renderer re-asks on `inventory:autoReloaded` so a
+  // dump written in game ages back to "just now" without a click.
+  outputsStatus: 'outputs:status',
+
   // ---- character selection ----
   getCharacter: 'character:get',
   listCharacters: 'character:list',

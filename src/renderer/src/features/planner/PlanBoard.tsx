@@ -19,6 +19,9 @@
 import { type JSX, useMemo, useState } from 'react'
 import { Box, Paper, Stack, Typography } from '@mui/material'
 import { EQUIP_SLOTS, type EquipSlot, type ExaltPlan, type PlannerItemHit, type SocketType } from '@shared/planner/types'
+// The `/outputfile` registry (JOS-44) — the command string and the why-clause come from there, so
+// this tab and the Sky tracker cannot end up teaching two different commands for one dump.
+import { outputKind } from '@shared/outputs/kinds'
 import OutputFileLine from '../../components/OutputFileLine'
 import HostPicker from './HostPicker'
 import PlanCell from './PlanCell'
@@ -26,6 +29,9 @@ import { indexDonors, useDonors } from './plannerData'
 import { hostsBySlot, usePlannerInventory } from './plannerInventory'
 import type { BrowsePreset } from './plannerPreset'
 import type { PlannerProgressApi } from './plannerProgress'
+
+/** The dump this tab is fed by, as the registry states it (command + why-clause). */
+const INVENTORY = outputKind('inventory')
 
 /**
  * The one card that teaches the dump, shown only while there is no dump to read.
@@ -40,7 +46,7 @@ function InstructionsCard(): JSX.Element {
       <Stack spacing={0.5}>
         <Typography variant="subtitle2">Fill this in from the game</Typography>
         <Typography variant="body2" color="text.secondary">
-          Type <b>/outputfile inventory</b> in EverQuest. Every slot below fills with what you are
+          Type <b>{INVENTORY.command}</b> in EverQuest. Every slot below fills with what you are
           wearing, straight away — leave this tab open and watch it happen.
         </Typography>
         <Typography variant="caption" color="text.disabled">
@@ -96,10 +102,13 @@ export default function PlanBoard({
           hosts below render with total confidence whether the dump is a minute or a month old,
           and "updated 3d ago" is the difference between reading your gear and reading a memory of
           it. Exactly one of the two is ever on screen. */}
+      {/* The mtime comes from the SAME read that gates the card above it (main resolves both from
+          the registry's one status), so the two can never disagree about whether a dump exists —
+          the command and the clause come from the registry itself. */}
       {inventory !== null && (
         <OutputFileLine
-          command="/outputfile inventory"
-          why="Re-type it in game whenever your gear changes — these slots follow the dump."
+          command={INVENTORY.command}
+          why={INVENTORY.why}
           updatedAt={inventory.loadedAt}
           testId="planner-inventory-fresh"
         />

@@ -22,6 +22,7 @@ import { registerFeedbackIpc } from './feedback'
 import { registerGraphicsIpc } from './graphics'
 import { registerKnowledgeIpc } from './knowledge'
 import { registerMapsIpc } from './maps'
+import { registerOutputsIpc } from './outputs'
 import { registerPerfIpc } from './perf'
 import { registerPlannerIpc } from './planner'
 import { registerPresenceIpc } from './presence'
@@ -43,6 +44,7 @@ export function registerIpc(): void {
   // exists only in a dev build (or under an explicit EQ_UNRELEASED=1). The renderer surface is
   // stripped from production bytes independently; this is the second lock. See ../unreleased.ts.
   if (UNRELEASED) registerCharacterSheetIpc()
+  registerOutputsIpc()
   registerWorldIpc()
   registerComboIpc()
   registerRosterIpc()

@@ -9,13 +9,11 @@
 //
 // pipeline.ts owns the world this feeds (bus, modules, combat engine); this module drives it.
 
-import { type FSWatcher } from 'chokidar'
 import { existsSync } from 'fs'
 import { IPC } from '../shared/ipc'
 import { logConsoleError, logInfo, logWarn } from './errorLog'
 import {
   characterId,
-  effectiveEqRoot,
   invalidateEqDiscovery,
   listCharacters,
   parseLogName,
@@ -29,8 +27,8 @@ import { parseEvent, parseLine } from './log/parser'
 import { installCharacterName } from './log/rulesets'
 import { scanLog } from './log/scanHistory'
 import { saveUserOverlay } from './data/overlayPersistence'
-import { findInventoryFile, loadInventory } from './inventory/parseInventory'
-import { watchForOutputFile, watchOutputFile } from './outputs'
+import { loadInventory } from './inventory/parseInventory'
+import { watchOutputKind, type OutputKindWatch } from './outputs'
 import {
   bus,
   buffsModule,
@@ -57,7 +55,7 @@ import type { CharacterRef, EqConfig } from '../shared/types'
 
 let tailer: Tailer | null = null
 let character: CharacterRef | null = null
-let inventoryWatcher: FSWatcher | null = null
+let inventoryWatch: OutputKindWatch | null = null
 // Wall-clock heartbeat (Task #30): drives module onTick so real-time deadlines (the
 // buffs 15s cast-landing timeout) fire even when the log is idle. Started once the
 // live tail is running (never during replay), cleared on quit / character switch.
@@ -158,8 +156,8 @@ export async function applyEqDirChange(): Promise<EqConfig> {
     tailer = null
     if (tickTimer) clearInterval(tickTimer)
     tickTimer = null
-    void inventoryWatcher?.close()
-    inventoryWatcher = null
+    inventoryWatch?.close()
+    inventoryWatch = null
     character = null
     // No character ⇒ no self-`/who` row is identifiable. Clear the name rather than let a
     // stale one attribute the next log's rows to the character we just stopped tailing.
@@ -398,39 +396,31 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
 
 /**
  * Auto-reload the active character's `*-Inventory.txt` when it changes on disk.
- * EQ rewrites this file on `/outputfile inventory`; the settle-debounced change event
- * (`outputs/watch.ts`, the shared `/outputfile` watcher layer — same chokidar settings this
- * watcher has always used) triggers a reload + a push so InventoryView, the Plane-of-Sky
- * progress and the Planner's Inventory tab refresh without a manual click.
+ * EQ rewrites this file on `/outputfile inventory`; the settle-debounced change event triggers a
+ * reload + a push so InventoryView, the Plane-of-Sky progress and the Planner's Inventory tab
+ * refresh without a manual click.
  *
- * TWO WATCHERS, ONE SLOT, because the interesting case used to be uncovered (owner, 2026-08-05:
- * "type the command, watch it fill"). A character with a dump gets the FILE watched. A character
- * with NO dump has nothing to point a file watcher at, so the install ROOT is watched for one to
- * appear — and that is exactly the player the Planner's instructions card is talking to. The
- * appearance re-arms this function, which then finds the file and switches to watching it.
+ * THE WATCH ITSELF IS THE REGISTRY'S (JOS-44, `outputs/registry.ts watchOutputKind`) — including
+ * the two-watchers-one-slot rule that covers a character's very FIRST dump, which used to live
+ * here and therefore belonged to `inventory` alone. `active` is this session's own staleness
+ * guard, handed to the registry so a watcher that outlives a character switch goes quiet without
+ * the registry needing to know what a character is.
  */
 function startInventoryWatch(ref: CharacterRef): void {
-  void inventoryWatcher?.close()
-  inventoryWatcher = null
-  const invPath = findInventoryFile(ref.name, ref.server)
-  const onError = (err: unknown): void =>
-    logConsoleError('[everquest-companion] inventory watch error', err)
-
-  if (!invPath) {
-    inventoryWatcher = watchForOutputFile(effectiveEqRoot(), 'Inventory', {
+  inventoryWatch?.close()
+  inventoryWatch = watchOutputKind(
+    'inventory',
+    { name: ref.name, server: ref.server },
+    {
       onChange: () => {
-        if (character?.logPath !== ref.logPath) return
-        startInventoryWatch(ref)
         reloadInventoryNow(ref)
       },
-      onError
-    })
-    return
-  }
-  inventoryWatcher = watchOutputFile(invPath, {
-    onChange: () => reloadInventoryNow(ref),
-    onError
-  })
+      onError: (err) => {
+        logConsoleError('[everquest-companion] inventory watch error', err)
+      },
+      active: () => character?.logPath === ref.logPath
+    }
+  )
 }
 
 /** Re-read the dump and push it, guarded against a stale watcher firing after a switch. */
@@ -461,7 +451,7 @@ export async function startTailing(): Promise<TailResult | null> {
 /** Release the session's OS resources (tail, watcher, heartbeat, rescan) on the way out. */
 export function stopSession(): void {
   void tailer?.stop()
-  void inventoryWatcher?.close()
+  inventoryWatch?.close()
   stopWatchingForFirstLog()
   if (tickTimer) clearInterval(tickTimer)
   tickTimer = null
