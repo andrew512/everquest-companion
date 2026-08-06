@@ -14,10 +14,23 @@ import type { Page } from 'playwright-core'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { ROOT } from './build.mjs'
+import { countIn, hoverAt, nextFrames, settle, settleCount, settleGone, sleep } from './settle.mjs'
 
 // The out-e2e/ build gate and the binaries it needs live in build.mts — re-exported here so
 // every spec keeps its single `./appHarness.mjs` import.
 export { MAIN_ENTRY, ROOT, buildIfStale, electronBinary } from './build.mjs'
+// …and so do the condition waits (wave E3) and the pointer helper that measures a VISIBLE box.
+export {
+  countIn,
+  hoverAt,
+  nextFrames,
+  settle,
+  settleCount,
+  settleGone,
+  settleStable,
+  sleep,
+  type SettleOpts
+} from './settle.mjs'
 
 /**
  * Failure evidence for ONE spec of ONE run: `artifacts/<runId>/<spec>/`.
@@ -32,10 +45,12 @@ const SPEC_ID =
   process.env.EQ_E2E_SPEC ?? basename(process.argv[1] ?? 'spec').replace(/\.e2e\.mts$/, '')
 export const ARTIFACTS = join(ROOT, 'tests', 'e2e', 'artifacts', RUN_ID, SPEC_ID)
 
-/** A full-log scan of a months-old live log takes a while; be generous, fail loudly. */
-export const HYDRATE_TIMEOUT_MS = 300_000
-/** How long to wait for the LIVE tail to classify a combat line before shrugging. */
-export const LIVE_LINE_WAIT_MS = 45_000
+/**
+ * How long to wait for the historical replay. A per-spec fixture folds in milliseconds now
+ * (wave E2), but the budget stays generous on purpose: it is a FAILURE deadline, not a schedule,
+ * and four Electron apps share this machine.
+ */
+export const HYDRATE_TIMEOUT_MS = 60_000
 
 // ── tiny assertion harness (node:test's runner buys us nothing here — one long session) ──
 
@@ -69,8 +84,6 @@ export function reportRun(): void {
   }
 }
 
-export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-
 // ── page helpers ───────────────────────────────────────────────────────────────────────
 
 export interface Snap {
@@ -101,7 +114,45 @@ export function rectOf(page: Page, selector: string): Promise<{ w: number; h: nu
 }
 
 export function countOf(page: Page, selector: string): Promise<number> {
-  return page.evaluate((sel) => document.querySelectorAll(sel).length, selector)
+  return countIn(page, selector)
+}
+
+/**
+ * THE HYDRATION WAIT, once, for every spec that has one.
+ *
+ * `hydrating` is the combat engine's own answer to "is the historical replay still folding" (it
+ * stays true until `setLive()`, the statement immediately after the scan returns), so this asks
+ * the app rather than sleeping at it. Every spec used to carry its own copy of this loop followed
+ * by a flat `sleep(1500)` "to let the post-hydration render land"; the wait for the render is now
+ * a condition too — the FIRST snapshot the renderer serves after the handoff.
+ *
+ * Returns the settled snapshot. `false`-ish outcomes are the caller's to report: a spec that
+ * cannot hydrate has nothing left to assert, and it should say so with `check`, not throw.
+ */
+export async function waitHydrated(
+  page: Page,
+  /** The surface's own "Reading log…" placeholder, when the caller asserts it was shown. */
+  hydratingSel?: string
+): Promise<{ snap: Snap; ms: number; sawUi: boolean; wasHydrating: boolean }> {
+  const t0 = Date.now()
+  let sawUi = false
+  let snap = await snapshot(page)
+  // `wasHydrating` is what makes the placeholder assertion FAIR against a fixture: with a slice
+  // this small the replay can be over before the spec has even navigated to the surface, and a
+  // placeholder that never had a moment to exist is not a missing placeholder. Recorded from the
+  // FIRST reading, so the caller can tell "never shown" from "never observable".
+  const wasHydrating = snap.hydrating
+  for (;;) {
+    if (hydratingSel && !sawUi) sawUi = (await countOf(page, hydratingSel)) > 0
+    if (!snap.hydrating || Date.now() - t0 >= HYDRATE_TIMEOUT_MS) break
+    await sleep(60)
+    snap = await snapshot(page)
+  }
+  // The handoff is a main-process event; the renderer's own re-render lands after it. When the
+  // caller named the placeholder, its DISAPPEARANCE is that render — a condition, not a guess.
+  if (hydratingSel) await settleGone(page, hydratingSel, { timeoutMs: 15_000 })
+  else await nextFrames(page)
+  return { snap: await snapshot(page), ms: Date.now() - t0, sawUi, wasHydrating }
 }
 
 /** The selector's closed-state text — the head row's label ("Current fight (live)" / "Last fight — …"). */
@@ -124,7 +175,8 @@ export async function openPicker(page: Page): Promise<void> {
 
 export async function closePicker(page: Page): Promise<void> {
   await page.keyboard.press('Escape')
-  await sleep(400)
+  // MUI's popover animates out; the CONDITION is that it has left the DOM, not that 400ms passed.
+  await settleGone(page, '[data-testid="fight-picker"]', { timeoutMs: 8_000 })
 }
 
 /**
@@ -404,47 +456,15 @@ const TIMELINE_PLOT = 'svg:has(#tl-plot-clip)'
 /** The DPS-over-time curve: the one STRETCHED (`preserveAspectRatio="none"`) svg in a panel. */
 const DPS_CURVE = '[data-testid="dash-panel"] svg[preserveAspectRatio="none"]'
 
-/**
- * Move the REAL pointer to a fractional offset inside `sel`'s box. Real, not synthetic, on
- * purpose: the renderer then sees a genuine `pointermove` carrying `ev.buttons === 0`, which is
- * the exact condition the hover/drag seam bails on — a hand-dispatched event would have to
- * assert `buttons` itself and would prove nothing about the seam.
- *
- * Fractions are taken over the element's VISIBLE box: these plots are drawn inside scroll boxes
- * and can extend past the window, and `page.mouse` speaks VIEWPORT coordinates — a point outside
- * the viewport hovers nothing at all.
- *
- * Returns false when the element is absent (or entirely offscreen). A missing chart is the
- * caller's decision — note it or fail it — never a thrown harness error, which would skip every
- * remaining check in the session.
- */
-export async function hoverAt(page: Page, sel: string, fx: number, fy: number): Promise<boolean> {
-  const pt = await page.evaluate((a) => {
-    const r = document.querySelector(a.sel)?.getBoundingClientRect()
-    if (!r) return null
-    const x0 = Math.max(0, r.left)
-    const y0 = Math.max(0, r.top)
-    const w = Math.min(window.innerWidth - 1, r.right) - x0
-    const h = Math.min(window.innerHeight - 1, r.bottom) - y0
-    return w > 0 && h > 0 ? { x: x0 + w * a.fx, y: y0 + h * a.fy } : null
-  }, { sel, fx, fy })
-  if (!pt) return false
-  await page.mouse.move(Math.round(pt.x), Math.round(pt.y))
-  // The hover layer is rAF-coalesced and change-gated by design, so the DOM lands a frame or
-  // two later — read it after, never on the same tick as the move.
-  await sleep(150)
-  return true
-}
-
 /** The shared cursor-following card's text (`lib/ChartTooltip.tsx`); '' when nothing is hovered. */
 export function tooltipText(page: Page): Promise<string> {
   return page.evaluate(() => (document.querySelector('[data-testid="chart-tooltip"]') as HTMLElement | null)?.innerText ?? '')
 }
 
-/** Park the pointer somewhere no chart is, and let the leave handler land. */
+/** Park the pointer somewhere no chart is, and wait for the leave handler to take the card away. */
 async function pointerAway(page: Page): Promise<void> {
   await page.mouse.move(2, 2)
-  await sleep(250)
+  await settleGone(page, TOOLTIP, { timeoutMs: 5_000 })
 }
 
 /**
@@ -499,7 +519,8 @@ async function checkDpsCardHover(page: Page): Promise<void> {
  */
 export async function checkChartHover(page: Page): Promise<void> {
   await page.click('[data-testid="view-toggle"] button:nth-child(2)')
-  await sleep(900)
+  // The condition is the timeline being MOUNTED, not 900ms of hoping it is.
+  await settleCount(page, TIMELINE_PLOT, 1, { timeoutMs: 15_000 })
   const plot = await rectOf(page, TIMELINE_PLOT)
   if (!check('the timeline plot is mounted (hover needs a drawn chart)', plot !== null, plot ? `${plot.w}×${plot.h}px` : 'absent')) return
   await hoverAt(page, TIMELINE_PLOT, 0.6, 0.5)
@@ -518,7 +539,7 @@ export async function checkChartHover(page: Page): Promise<void> {
   check('…and moving off the plot removes it', (await countOf(page, TOOLTIP)) === 0)
   await checkDragSeam(page)
   await page.click('[data-testid="view-toggle"] button:nth-child(1)')
-  await sleep(900)
+  await settleCount(page, '[data-testid="combat-dashboard"]', 1, { timeoutMs: 15_000 })
   await checkDpsCardHover(page)
 }
 
@@ -532,15 +553,8 @@ export function combatText(page: Page): Promise<string> {
  * said last. Selecting a fight is asynchronous all the way through (click → IPC → snapshot →
  * render), so "did the pick land" is a wait, not a read.
  */
-export async function waitForCombatText(page: Page, needle: string, timeoutMs = 10_000): Promise<string> {
-  const t0 = Date.now()
-  let shown = ''
-  while (Date.now() - t0 < timeoutMs) {
-    shown = await combatText(page)
-    if (needle && shown.includes(needle)) break
-    await sleep(300)
-  }
-  return shown
+export function waitForCombatText(page: Page, needle: string, timeoutMs = 10_000): Promise<string> {
+  return settle(() => combatText(page), (shown) => !needle || shown.includes(needle), { timeoutMs })
 }
 
 export async function dumpArtifacts(page: Page, tag: string): Promise<void> {

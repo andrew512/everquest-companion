@@ -4,8 +4,16 @@
  * WHY IT EXISTS: unit tests replay fixtures through the engine, but the bug that motivated
  * this harness ("the Combat tab is JUST a scrolling combat log") was invisible to them — it
  * lived in the RENDERED LAYOUT, downstream of a perfectly correct snapshot. This drives the
- * REAL app end to end (real main process, real full-log scan of the user's live log, real
- * renderer bundle) and asserts what the user actually sees.
+ * REAL app end to end (real main process, real historical scan, real renderer bundle) and
+ * asserts what the user actually sees.
+ *
+ * WHAT IT READS (wave E2): `tests/fixtures/e2e-combat.log`, a committed slice — two credited
+ * kills, three zone changes, three loot lines — staged into a throwaway EQ install and handed to
+ * the app through `EQ_INSTALL_DIR`. Not the owner's live log: the same bytes on every machine,
+ * so "the dashboard has no rows" can only ever mean the dashboard has no rows. The LIVE half is
+ * scripted too — the harness appends a ten-hit, 442-point pull to the tailed copy and asserts
+ * that exact total (tests/e2e/gameplay.mts), where this spec used to wait 45 s for the owner to
+ * be fighting and then assert a floor.
  *
  * WHY IT NEVER TAKES THE SCREEN: the app is launched with `EQ_E2E=1` (see src/main/e2e.ts),
  * which (a) never calls show()/showInactive() on ANY window — the main window is already
@@ -32,8 +40,6 @@
  */
 import type { ElectronApplication, Page } from 'playwright-core'
 import {
-  HYDRATE_TIMEOUT_MS,
-  LIVE_LINE_WAIT_MS,
   buildIfStale,
   check,
   checkChartHover,
@@ -53,20 +59,29 @@ import {
   rectOf,
   reportRun,
   selectorText,
-  sleep,
+  settle,
+  settleCount,
+  settleGone,
+  settleStable,
   snapshot,
   timelineDisabled,
   waitForCombatText,
+  waitHydrated,
   type Snap
 } from './appHarness.mjs'
-import { launchApp, mainWindow } from './appWindow.mjs'
+import { mainWindow } from './appWindow.mjs'
+import { launchOnFixture } from './logFixture.mjs'
+import type { FixtureLog } from './logFixture.mjs'
 import { meterRows } from './drill.mjs'
 import {
+  clickScope,
+  clickView,
   stepFrozenList,
   stepHealingDimension,
   stepMeterDrill,
   stepMeterScope,
-  stepMultiAttackPanel
+  stepMultiAttackPanel,
+  stepScriptedPull
 } from './combatSteps.mjs'
 
 // ── the run, one step per numbered section ─────────────────────────────────────────────
@@ -84,26 +99,20 @@ interface DashboardShape {
 
 async function stepHydration(page: Page): Promise<Snap> {
   // 1. Hydration: replay → live tail. The UI must be in its quiet loading state until then.
-  const t0 = Date.now()
-  let sawHydratingUi = false
-  let snap = await snapshot(page)
-  while (snap.hydrating && Date.now() - t0 < HYDRATE_TIMEOUT_MS) {
-    if (!sawHydratingUi) sawHydratingUi = (await countOf(page, '[data-testid="combat-hydrating"]')) > 0
-    await sleep(500)
-    snap = await snapshot(page)
-  }
-  const hydrateMs = Date.now() - t0
-  if (!check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${hydrateMs}ms`)) {
+  //    A per-spec fixture folds in milliseconds now (wave E2), so the "too fast to observe"
+  //    branch is the normal one — which is exactly why it was written as a branch and not as an
+  //    assertion that the placeholder was seen.
+  const { snap, ms, sawUi, wasHydrating } = await waitHydrated(page, '[data-testid="combat-hydrating"]')
+  if (!check('hydration completes (replay hands off to the live tail)', !snap.hydrating, `${String(ms)}ms`)) {
     throw new Error('still hydrating — nothing below can be asserted')
   }
   check(
     'while hydrating the dashboard shows the quiet loading state, not a fake-live meter',
-    sawHydratingUi || hydrateMs < 1500,
-    sawHydratingUi ? 'saw [combat-hydrating]' : `replay finished in ${hydrateMs}ms (too fast to observe)`
+    sawUi || !wasHydrating,
+    sawUi
+      ? 'saw [combat-hydrating]'
+      : `the fixture replayed before the Combat tab was open (${String(ms)}ms) — the placeholder had no moment to exist`
   )
-  // Let the post-hydration render + one activity nudge land.
-  await sleep(1500)
-  snap = await snapshot(page)
   return snap
 }
 
@@ -236,8 +245,7 @@ async function stepScopeAndSelector(page: Page, snapIn: Snap, shape: DashboardSh
     `${fightMenu.length} rows: ${fightMenu.slice(0, 4).join(', ')}`
   )
   // …and Overall lists zone sessions ONLY (no fight ids).
-  await page.click('[data-testid="scope-toggle"] button:nth-child(2)')
-  await sleep(800)
+  check('the Overall scope can be selected', await clickScope(page, 2))
   const overallMenu = await openSelectorValues(page)
   check(
     'the Overall-scope dropdown lists only zone sessions',
@@ -253,20 +261,18 @@ async function stepScopeAndSelector(page: Page, snapIn: Snap, shape: DashboardSh
   //     covers old fights whose rings have been evicted (≤60 retained).
   check(
     'in Overall scope the Timeline view is disabled (a zone aggregate keeps no event ring)',
-    await timelineDisabled(page)
+    await settle(() => timelineDisabled(page), (d) => d, { timeoutMs: 10_000 })
   )
-  await page.click('[data-testid="scope-toggle"] button:nth-child(1)')
-  await sleep(800)
+  check('the Fight scope can be selected again', await clickScope(page, 1))
   check(
     '…and back in Fight scope the Timeline view is selectable again (the live/last fight has its ring)',
-    !(await timelineDisabled(page))
+    !(await settle(() => timelineDisabled(page), (d) => !d, { timeoutMs: 10_000 }))
   )
   snap = await snapshot(page)
   return snap
 }
 
-async function stepCombatLogAndRegression(page: Page, snapIn: Snap): Promise<Snap> {
-  let snap = snapIn
+async function stepCombatLogAndRegression(page: Page, fixtureLog: FixtureLog): Promise<Snap> {
   // 7. The combat log is a BOUNDED scrolling box (this is what ate the dashboard).
   const log = await rectOf(page, '[data-testid="combat-log"]')
   check('the combat log is rendered', log !== null)
@@ -276,22 +282,10 @@ async function stepCombatLogAndRegression(page: Page, snapIn: Snap): Promise<Sna
     log ? `${log.h}px tall` : 'absent'
   )
 
-  // 8. The live tail is feeding the classification ring. The user is PLAYING while this runs,
-  //    so combat lines normally appear within seconds; a quiet stretch (zoning, AFK, sitting
-  //    in a bank) is not a product defect, so it is reported as a note, not a failure.
-  //    We wait for a BATCH of lines because the original defect only bit once the ring had
-  //    grown — the whole point is to re-measure the layout with a busy log.
-  const tLines = Date.now()
-  while (snap.recent.length < 25 && Date.now() - tLines < LIVE_LINE_WAIT_MS) {
-    await sleep(1000)
-    snap = await snapshot(page)
-  }
-  if (snap.recent.length > 0) {
-    const lines = await countOf(page, '[data-testid="combat-log"] > div')
-    check('the combat log has lines from the live tail', lines >= 1, `${snap.recent.length} in ring / ${lines} rendered`)
-  } else {
-    note(`no combat lines in ${Math.round(LIVE_LINE_WAIT_MS / 1000)}s of live tailing — log is quiet right now`)
-  }
+  // 8. THE LIVE TAIL, SCRIPTED (wave E2). This used to wait up to 45 s for the owner to be
+  //    fighting something and then assert a floor. The harness plays the fight now — see
+  //    combatSteps.stepScriptedPull — so the numbers below are the ones this suite WROTE.
+  const snap = await stepScriptedPull(page, fixtureLog)
 
   // 9. THE REGRESSION, re-measured with a busy log: a growing combat log must never squeeze
   //    the dashboard out of existence. This is the exact failure the user reported.
@@ -309,16 +303,15 @@ async function stepCombatLogAndRegression(page: Page, snapIn: Snap): Promise<Sna
 
   // 9b. The VIEW switch drives Dashboard ↔ Timeline, and the direction filter (which only
   //     filters the dashboard's meter) goes with it.
-  await page.click('[data-testid="view-toggle"] button:nth-child(2)')
-  await sleep(800)
+  await clickView(page, 2)
+  const goneOnce = await settleGone(page, '[data-testid="combat-dashboard"]')
   await checkHeader(page, 'timeline view', false)
+  check('switching to Timeline unmounts the dashboard grid', goneOnce)
+  await clickView(page, 1)
   check(
-    'switching to Timeline unmounts the dashboard grid',
-    (await countOf(page, '[data-testid="combat-dashboard"]')) === 0
+    '…and switching back restores the dashboard',
+    (await settleCount(page, '[data-testid="combat-dashboard"]')) === 1
   )
-  await page.click('[data-testid="view-toggle"] button:nth-child(1)')
-  await sleep(800)
-  check('…and switching back restores the dashboard', (await countOf(page, '[data-testid="combat-dashboard"]')) === 1)
 
   // 9c. AUTO-FALLBACK. The view is a LENS over the selection, and the selection can lose its
   //     timeline underneath you — switching scope to Overall is the everyday way to do it
@@ -327,17 +320,12 @@ async function stepCombatLogAndRegression(page: Page, snapIn: Snap): Promise<Sna
   //     is that the view falls back to Dashboard on its own, so that empty pane is
   //     UNREACHABLE — assert both halves: the dashboard comes back, and that copy appears
   //     nowhere on the page.
-  await page.click('[data-testid="view-toggle"] button:nth-child(2)')
-  await sleep(800)
-  check(
-    'the Timeline view is entered from the Fight scope',
-    (await countOf(page, '[data-testid="combat-dashboard"]')) === 0
-  )
-  await page.click('[data-testid="scope-toggle"] button:nth-child(2)')
-  await sleep(800)
+  await clickView(page, 2)
+  check('the Timeline view is entered from the Fight scope', await settleGone(page, '[data-testid="combat-dashboard"]'))
+  await clickScope(page, 2)
   check(
     'losing the timeline mid-view falls back to the Dashboard automatically',
-    (await countOf(page, '[data-testid="combat-dashboard"]')) === 1
+    (await settleCount(page, '[data-testid="combat-dashboard"]')) === 1
   )
   check(
     '…so the empty "No timeline for this selection" pane is never reachable',
@@ -345,11 +333,10 @@ async function stepCombatLogAndRegression(page: Page, snapIn: Snap): Promise<Sna
   )
   // Restore the state the remaining steps document as their starting point: Fight scope,
   // Dashboard view. (The fallback already put the view back; the scope is ours to undo.)
-  await page.click('[data-testid="scope-toggle"] button:nth-child(1)')
-  await sleep(800)
+  await clickScope(page, 1)
   check(
     '…and returning to the Fight scope leaves the Dashboard mounted',
-    (await countOf(page, '[data-testid="combat-dashboard"]')) === 1
+    (await settleCount(page, '[data-testid="combat-dashboard"]')) === 1
   )
   return snap
 }
@@ -423,9 +410,10 @@ async function stepSearch(page: Page, snap: Snap): Promise<void> {
     const q = searchable.name.replace(/\s*\+\s*\d+(\s+others?)?\s*$/i, '').trim()
     await openPicker(page)
     await page.fill('[data-testid="fight-search"]', q)
-    // debounce (120ms) + one IPC round-trip over the whole corpus (~0.3ms of scoring).
-    await sleep(1200)
-    const hits = await listedValues(page)
+    // debounce (120ms) + one IPC round trip over the whole corpus. The condition is that the
+    // list has STOPPED CHANGING — a query's answer arrives once and then holds, so a settled
+    // reading is the honest "the search has answered", where a sleep was a guess at its latency.
+    const hits = await settleStable(() => listedValues(page), { timeoutMs: 10_000 })
     check(`searching the fight history for "${q}" returns hits`, hits.length >= 1, `${hits.length} rows`)
     if (hits.length >= 1) {
       // Ranking is score desc then RECENCY desc, and this fight is one of the newest in the
@@ -462,14 +450,30 @@ async function stepSearch(page: Page, snap: Snap): Promise<void> {
     // A query that matches nothing is a quiet empty state, never an error or a full list.
     await openPicker(page)
     await page.fill('[data-testid="fight-search"]', 'zzzzqqq no such mob zzzz')
-    await sleep(1200)
-    const misses = await listedValues(page)
+    const misses = await settleStable(() => listedValues(page), { timeoutMs: 10_000 })
     check('a query that matches nothing lists nothing (it never falls back to the full list)', misses.length === 0, `${misses.length} rows`)
     await closePicker(page)
     await checkGrid(page, 'after search')
   } else {
     note('no finalized fight with damage in the snapshot — the search assertions need one')
   }
+}
+
+/**
+ * THE LAYOUT HAS STOPPED MOVING. A resize crosses Electron → the OS → Chromium's layout → a
+ * ResizeObserver → React, and every one of those hops has its own clock; the suite used to give
+ * the whole chain a flat 1200 ms and measure whatever it found. The positive signal is that the
+ * panels' own boxes have settled — read them until three consecutive readings agree, then assert.
+ */
+function panelBoxes(page: Page): Promise<string> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="dash-panel"]')]
+      .map((el) => {
+        const r = el.getBoundingClientRect()
+        return `${String(Math.round(r.x))}:${String(Math.round(r.y))}:${String(Math.round(r.width))}:${String(Math.round(r.height))}`
+      })
+      .join('|')
+  )
 }
 
 async function stepResponsive(app: ElectronApplication, page: Page): Promise<void> {
@@ -480,7 +484,7 @@ async function stepResponsive(app: ElectronApplication, page: Page): Promise<voi
   const win = await app.browserWindow(page)
   const wide = await win.evaluate((w) => w.getBounds())
   await win.evaluate((w, b) => w.setBounds({ ...b, width: 900 }), wide)
-  await sleep(1200)
+  await settleStable(() => panelBoxes(page), { timeoutMs: 15_000 })
   await checkGrid(page, 'min window width (900)')
   await checkHeader(page, 'min window width (900)', true)
 
@@ -492,7 +496,7 @@ async function stepResponsive(app: ElectronApplication, page: Page): Promise<voi
     w.setMinimumSize(400, 400)
     w.setBounds({ ...b, width: 720 })
   }, wide)
-  await sleep(1200)
+  await settleStable(() => panelBoxes(page), { timeoutMs: 15_000 })
   const narrow = await narrowPanelCheck(page)
   check('narrow: the grid collapses to a single column', narrow.cols === 1, `${narrow.cols} column(s)`)
   check('narrow: each stacked panel keeps a usable height', narrow.minH >= 250, `shortest ${narrow.minH}px`)
@@ -512,7 +516,7 @@ async function stepResponsive(app: ElectronApplication, page: Page): Promise<voi
     w.setMinimumSize(900, 600)
     w.setBounds(b)
   }, wide)
-  await sleep(1200)
+  await settleStable(() => panelBoxes(page), { timeoutMs: 15_000 })
   await checkGrid(page, 'restored wide')
   await checkHeader(page, 'restored wide', true)
 }
@@ -520,8 +524,8 @@ async function stepResponsive(app: ElectronApplication, page: Page): Promise<voi
 async function main(): Promise<void> {
   buildIfStale()
 
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log…')
-  const { app, close } = await launchApp()
+  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-combat.log…')
+  const { app, close, log } = await launchOnFixture('e2e-combat.log')
 
   let page: Page | null = null
   try {
@@ -542,12 +546,12 @@ async function main(): Promise<void> {
     const shape = await stepDashboardShape(page, snap)
     snap = await stepScopeAndSelector(page, snap, shape)
     await stepMeterScope(page)
-    snap = await stepCombatLogAndRegression(page, snap)
+    snap = await stepCombatLogAndRegression(page, log)
     await stepHealingDimension(page)
     await stepMeterDrill(page)
     await stepMultiAttackPanel(page)
     await stepPickAFight(page, snap)
-    await stepFrozenList(page)
+    await stepFrozenList(page, log)
     await stepSearch(page, snap)
     await stepResponsive(app, page)
     // 13. HOVER on the real charts (crosshair + shared tooltip + the drag seam) — see the
