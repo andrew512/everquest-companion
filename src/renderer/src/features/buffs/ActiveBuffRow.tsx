@@ -105,11 +105,7 @@ function EstimateBar({
         <Stack direction="row" spacing={0.5} alignItems="center">
           {source && (
             <Tooltip
-              title={
-                source === 'db'
-                  ? 'Duration from the spell database (authoritative wiki value).'
-                  : 'Duration estimated from observed casts (recency-weighted max of samples).'
-              }
+              title={source === 'db' ? 'From the spell database' : 'From your observed casts'}
             >
               <Chip
                 size="small"
@@ -163,16 +159,16 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
           {buff.spell}
         </Typography>
+        {/* The chip's own word IS the disclosure — a tooltip re-explaining `inferred` is the
+            defensive footnoting the UI conventions ban (AGENTS.md tooltip and caveat diet). */}
         {inferred ? (
-          <Tooltip title="Target inferred from the pet's current fight target — castBegin carries no target, so this is a best guess, not a confirmed target.">
-            <Chip
-              size="small"
-              label={buff.target ? `target: ${buff.target} (inferred)` : 'target: inferred'}
-              variant="outlined"
-              color="warning"
-              sx={{ height: 18, fontSize: 11, maxWidth: 180, '& .MuiChip-label': { px: 0.75 } }}
-            />
-          </Tooltip>
+          <Chip
+            size="small"
+            label={buff.target ? `target: ${buff.target} (inferred)` : 'target: inferred'}
+            variant="outlined"
+            color="warning"
+            sx={{ height: 18, fontSize: 11, maxWidth: 180, '& .MuiChip-label': { px: 0.75 } }}
+          />
         ) : null}
         {provisional && (
           <Chip
@@ -184,7 +180,7 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
           />
         )}
         {buff.messageDriven && !provisional && (
-          <Tooltip title="Confirmed by an exact chat message (its landing/heal line), not inferred from cast timing.">
+          <Tooltip title="Confirmed by a chat message">
             <Chip
               size="small"
               label="message"

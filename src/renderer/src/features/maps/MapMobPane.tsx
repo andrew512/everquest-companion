@@ -294,7 +294,7 @@ export default function MapMobPane(props: MapMobPaneProps): JSX.Element {
         </Stack>
         <Stack direction="row" spacing={0.5} sx={{ mt: 0.75 }} flexWrap="wrap" useFlexGap>
           <Tooltip
-            title={`${String(counts.located)} of ${String(counts.mobs)} named mobs here state a position on their wiki page — the rest are listed without a pin`}
+            title={`${String(counts.located)} of ${String(counts.mobs)} named mobs here state a position`}
           >
             <Chip
               size="small"
@@ -305,7 +305,7 @@ export default function MapMobPane(props: MapMobPaneProps): JSX.Element {
           </Tooltip>
           <Chip size="small" variant="outlined" label={`${String(counts.labels)} labels`} />
           {pinsCapped && (
-            <Tooltip title="Narrow the search to see the rest — the map draws a bounded number of pins at once">
+            <Tooltip title="Narrow the search to see the rest">
               <Chip
                 size="small"
                 color="warning"

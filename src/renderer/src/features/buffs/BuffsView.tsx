@@ -95,11 +95,7 @@ function EstimateCell({ ms, src }: { ms?: number | null; src?: string }): JSX.El
   if (ms == null) return <>—</>
   return (
     <Tooltip
-      title={
-        src === 'db'
-          ? 'Authoritative duration from the spell database.'
-          : 'Recency-weighted max of observed casts.'
-      }
+      title={src === 'db' ? 'From the spell database' : 'From your observed casts'}
     >
       <span>
         {fmtDuration(ms)}
@@ -127,7 +123,7 @@ function StatsRow({ s }: { s: BuffStat }): JSX.Element {
       </TableCell>
       <TableCell align="right">
         {s.n === 0 ? (
-          <Tooltip title="Seen fading but no clean cast→fade pair yet">
+          <Tooltip title="No cast→fade pair yet">
             <span style={{ opacity: 0.5 }}>0</span>
           </Tooltip>
         ) : (

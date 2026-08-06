@@ -104,9 +104,7 @@ function FloorStepper({
       </Tooltip>
       <Tooltip
         title={
-          band
-            ? `Elevation ${bandLabel(band)} · grouped from the map's own heights, not your character's — the log never states where you are`
-            : 'Every elevation. Floors are grouped from the map file itself; the game’s own filter follows your character, which the log never states.'
+          band ? `Elevation ${bandLabel(band)}` : 'Every elevation'
         }
       >
         <Chip
