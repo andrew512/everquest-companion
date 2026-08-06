@@ -74,7 +74,25 @@ segmented; scope only filters SOURCES, never targets.
   everything else; telemetry carries no names, slices already scrub group
   social lines).
 
-## 4. Waves
+## 3.5 Root cause of the triggering report (verified by slice replay, 2026-08-05)
+
+The reporter's slice replayed through the real parser and engine settles it:
+every damage-shaped line parses (0 unmatched shapes; `reaves`, `Reaving
+Strike`, damage-shield credits all covered), and the group member still appears
+in ZERO fights — because `classify()` (src/main/combat/routing.ts:48) is the
+single admission gate and its last rule is `attacker not you/pet, target not
+you → ignore`. 2,224 parsed events fell through that line. Deliberate solo
+scoping (Task #65's protections against strangers entering the model), not a
+regression.
+
+So G2's exact surface is: `classify()` grows a roster parameter and an
+`out-member` attribution; `outSource()` grows a `member` SourceKind (per-member
+rows, same instance discipline as pets); `engageHostile()` already refuses
+known players and MUST also refuse roster members (a member's TARGET engages,
+the member never does — the 214-second-merged-pull failure is the cautionary
+tale); lifecycle liveness must never read member presence as hostile presence.
+Incoming-on-members (mobs hitting your group) stays OUT of scope for G2 —
+sources first, one wave at a time.
 
 - **G1 — the module**: shapes swept from corpus, roster module + deltas +
   tests (join/leave/confirm/instance/stale/epoch), no UI. Ships dark.
