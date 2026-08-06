@@ -29,8 +29,8 @@
 // expand into nothing would be worse than not listing it.
 //
 // THE NON-EQUIPPABLE FILTER IS OFF BY DEFAULT, and it is R2 rather than taste: a donor with no
-// equipment slot shares a slot with nothing, so its effect can never be socketed anywhere. 287 of
-// the 1,508 donor rows are slotless — 220 of them in the Click tab, which is the potion mass, and
+// equipment slot shares a slot with nothing, so its effect can never be socketed anywhere. 284 of
+// the 1,468 donor rows are slotless — 217 of them in the Click tab, which is the potion mass, and
 // 67 procs, which are poisons and coatings. Turning it on shows them chipped `no slot`, because an
 // empty slot list is "the page stated none" (law 1) and just occasionally that is a wiki gap.
 

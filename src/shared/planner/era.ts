@@ -170,11 +170,14 @@ export function eraVerdict(zoneNames: readonly string[]): EraVerdict {
 //   Sky / Fear / Hate / Temple / Paineel → CLASSIC. These are 1999-2000 classic zones the EQL
 //     server ships today; the wiki banners them separately because they are raid/patch content,
 //     not because they are a later expansion. `zones.ts` already calls all five classic.
-//   Epics / EpicQuests → CLASSIC. The 1.0 epic chain is classic-era content; its pieces drop all
-//     over the map (measured: 20 of 113 `Epics` pages and 38 of 76 `EpicQuests` pages have a
-//     catalog source, spread across Najena, Kithicor, North Qeynos and half of Kunark). This tag
-//     is layer 2 ONLY — any of those pieces that a Kunark zone actually gates is caught by layer 1
-//     before the tag is ever consulted.
+//   Epics / EpicQuests → KUNARK. The epic 1.0 chain is a KUNARK system: it shipped with Kunark
+//     (April 2000) and every chain ends at a Kunark turn-in, so a classic-era server has no epic
+//     in it whatever zones the intermediate pieces come from. This row READ `classic` until
+//     2026-08-05 and the justification for it — "any piece a Kunark zone gates is caught by
+//     layer 1" — is FALSE for the thing that matters: the epic WEAPON is a quest reward, it drops
+//     off nobody, so layer 1 resolves nothing and layer 2 is the only witness there is.
+//     Ragebringer and Spear of Fate rendered as farmable classic loot for exactly that reason
+//     (owner, 2026-08-05). 188 pages carry the two tags.
 //   Chardok Revamp / Chardok → KUNARK. Chardok is a Kunark zone whatever the revamp did to it.
 //   FearHateRevamp → CLASSIC, and this one was MEASURED rather than reasoned. 53 pages carry it;
 //     26 of them are named in the EQL mob catalog's loot lists, and every single one of those 26
@@ -194,8 +197,8 @@ const TAG_ERA: Readonly<Record<string, Era | null>> = {
   fearhaterevamp: 'classic',
   temple: 'classic',
   paineel: 'classic',
-  epics: 'classic',
-  epicquests: 'classic',
+  epics: 'kunark',
+  epicquests: 'kunark',
   kunark: 'kunark',
   chardok: 'kunark',
   'chardok revamp': 'kunark',

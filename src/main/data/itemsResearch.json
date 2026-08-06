@@ -1,0 +1,8 @@
+{
+  "howling werewolf claws": {
+    "gmEvent": true,
+    "note": "the item's own wiki page states \"GM Event Item.\" in prose; no category page carries it",
+    "source": "eqlwiki.com/Howling Werewolf Claws (page notes), hand-read from src/main/data/items.json",
+    "checkedAt": "2026-08-05"
+  }
+}

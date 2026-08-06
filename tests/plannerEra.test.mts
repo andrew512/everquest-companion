@@ -212,8 +212,8 @@ test('eraFromTag is the hand-authored table, token for token (law 12)', () => {
     ['Hate', 'classic'],
     ['Temple', 'classic'], // Temple of Solusek Ro
     ['Paineel', 'classic'], // the late-1999 heretic patch
-    ['Epics', 'classic'],
-    ['EpicQuests', 'classic'],
+    ['Epics', 'kunark'], // the 1.0 chain is a Kunark system — see the Ragebringer pin below
+    ['EpicQuests', 'kunark'],
     ['Kunark', 'kunark'],
     ['Chardok Revamp', 'kunark'], // Chardok is a Kunark zone whatever the revamp did to it
     ['Chardok', 'kunark'],
@@ -243,6 +243,39 @@ test('eraFromTag is the hand-authored table, token for token (law 12)', () => {
   for (const junk of ['', 'Planes of Power', 'Hole', 'P99 Era Header', 'xyzzy']) {
     assert.equal(eraFromTag(junk), null, junk)
   }
+})
+
+test('THE RAGEBRINGER PIN: an epic weapon nobody drops must read out-of-era on a classic server', () => {
+  // THE BUG (owner, 2026-08-05): Ragebringer and Spear of Fate rendered CLEAN — no era chip —
+  // with the era filter ON, on a server whose epic chains do not exist yet. The tag row said
+  // `Epics → classic`, and its stated defence was that layer 1 catches any piece a Kunark zone
+  // gates. That defence never applies to the reward itself: the epic WEAPON is a quest turn-in
+  // that drops off nobody, so there is no zone to catch it with and the tag is the only witness.
+  //
+  // Asserted from the mob catalog rather than by hand: no mob in the catalog drops Ragebringer,
+  // so its zone list really is empty and layer 2 really is the whole verdict.
+  const droppers = catalog.mobs.filter((m) =>
+    (m.drops ?? []).some((d) => d.trim().toLowerCase() === 'ragebringer')
+  )
+  assert.deepEqual(
+    droppers.map((m) => m.name),
+    [],
+    'the catalog now names a Ragebringer dropper — the pin needs a dropperless epic'
+  )
+
+  // Its page's own banner (`{{Epics Era}}`, pinned against the corpus in
+  // tests/plannerEffectIndex.test.mts) is therefore the entire evidence, and it says Kunark.
+  assert.equal(eraFromTag('Epics'), 'kunark')
+  assert.equal(eraFromTag('EpicQuests'), 'kunark')
+  assert.equal(layeredVerdict([], 'Epics'), 'out-of-era')
+  assert.equal(layeredVerdict([], 'EpicQuests'), 'out-of-era')
+
+  // …and it is the ordinary rank comparison, not a special case: the day Kunark ships, the epics
+  // become farmable by flipping CURRENT_ERA, and a piece a classic zone DOES gate is still
+  // in-era today, because layer 1 outranks the banner in both directions.
+  assert.equal(layeredVerdictAt([], 'Epics', 'kunark'), 'in-era')
+  assert.equal(layeredVerdict(['Najena'], 'Epics'), 'in-era')
+  assert.equal(layeredVerdict(["Sleeper's Tomb"], 'Epics'), 'out-of-era')
 })
 
 test('layeredVerdict: the ZONE wins in both directions, the tag speaks only into silence', () => {

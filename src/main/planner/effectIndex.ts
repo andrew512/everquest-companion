@@ -45,8 +45,19 @@
 // the last-resort witness for the donors neither source places — 94 of those 126 carry one — and
 // like `wikiSources` it is carried VERBATIM: `shared/planner/era.ts` is the only file that decides
 // what a token means, and the renderer is the only place the two witnesses are folded together.
+//
+// TWO KINDS OF ITEM ARE DROPPED FROM THE DONOR INDEX AND ONLY FROM IT (V9, docs/plans/planner-v2
+// .md): the mage-conjured `Summoned:` family and whatever the curated layer flags `summoned` or
+// `gmEvent`. They stay in the ITEM index — a summoned item is a perfectly real thing to look up,
+// and "you cannot pull an effect off this" is not "this does not exist". See `excludedDonor`.
 
-import { itemKey, knowledgeFromDb, type ItemDbEntry, type ItemDbFile } from '../itemsDb'
+import { itemKey, type ItemDbEntry, type ItemDbFile } from '../itemsDb'
+import {
+  ITEMS_RESEARCH,
+  knowledgeWithResearch,
+  type ItemResearchFile,
+  type ResearchedKnowledge
+} from '../itemsResearch'
 import {
   isHasteEffect,
   normalizeClasses,
@@ -88,6 +99,8 @@ export interface PlannerBuildStats {
   socketless: number
   /** rows dropped because another page already stated the same (key, effect, socket) */
   duplicateRows: number
+  /** effect-bearing pages whose effects were not emitted at all (V9 — see `excludedDonor`) */
+  excludedPages: number
   /** slot tokens `normalizeSlotTokens` did not recognize, verbatim */
   unknownSlotTokens: string[]
 }
@@ -113,6 +126,8 @@ interface PageCtx {
   eraTag?: string
   /** the page TITLE keys to the item name — this is the item's own page, not a variant of it */
   canonical: boolean
+  /** nothing on this item can be donated (V9) — its effects are counted and never emitted */
+  excluded: boolean
 }
 
 interface Acc {
@@ -140,22 +155,52 @@ function newAcc(): Acc {
       effectPages: 0,
       effectRows: 0,
       socketless: 0,
-      duplicateRows: 0
+      duplicateRows: 0,
+      excludedPages: 0
     }
   }
 }
 
 /**
- * One stored record → the page context. `knowledgeFromDb` restores the fields the compact record
- * omits, so the name (and therefore the key) is the in-game `|itemname` when the page states one
- * — which is what a loot line spells, and what the rest of the app already keys items by.
+ * The `Summoned:` NAME PREFIX — the one automatic exclusion rule (V9), and it is not an inference:
+ * it is the item's own name, the same string the wiki titles the page with and the game prints in
+ * a loot line. 90 pages in the committed corpus carry it, 39 of them effect-bearing.
  */
-function pageContext(entry: ItemDbEntry): {
+const SUMMONED_PREFIX = /^summoned:/i
+
+/**
+ * Can anything on this item be donated at all?
+ *
+ * TWO WITNESSES, no heuristics between them: the name prefix above, and the curated layer's
+ * `summoned` / `gmEvent` flags (`itemsResearch.ts`). Neither is a guess about an item's stats.
+ *
+ * R7 — summoned items cannot donate — is OWNER-OBSERVED and unverified in any published source:
+ * integrator research 2026-08-05 found the eqlwiki Exaltations page, the 7/14 patch notes and the
+ * eqlegends.wiki guide all silent on it, in both directions. Excluding them anyway is the
+ * conservative error: wrongly hiding a handful of donors is recoverable the moment R7 is settled,
+ * wrongly listing them puts unfarmable rows in a farm plan and costs the browser its trust. The
+ * decisive test is in-game and takes 30 seconds (attempt a merge of two identical summoned items).
+ */
+function excludedDonor(name: string, research: ResearchedKnowledge['research']): boolean {
+  if (SUMMONED_PREFIX.test(name)) return true
+  return research?.summoned === true || research?.gmEvent === true
+}
+
+/**
+ * One stored record → the page context. `knowledgeWithResearch` restores the fields the compact
+ * record omits and lays the curated layer over the result, so the name (and therefore the key) is
+ * the in-game `|itemname` when the page states one — which is what a loot line spells, and what
+ * the rest of the app already keys items by.
+ */
+function pageContext(
+  entry: ItemDbEntry,
+  research: ItemResearchFile
+): {
   ctx: PageCtx
   effects: ItemEffect[]
   unknown: string[]
 } {
-  const k = knowledgeFromDb(entry)
+  const k = knowledgeWithResearch(entry, research)
   const slot = normalizeSlotTokens(k.stats?.slot)
   const key = itemKey(k.name)
   return {
@@ -171,7 +216,8 @@ function pageContext(entry: ItemDbEntry): {
       // independent witnesses and the join belongs where both are in hand (design §4.2).
       wikiSources: k.dropsFrom,
       eraTag: k.eraTag,
-      canonical: itemKey(entry.page) === key
+      canonical: itemKey(entry.page) === key,
+      excluded: excludedDonor(k.name, k.research)
     },
     effects: k.stats?.effects ?? [],
     unknown: slot.unknown
@@ -230,7 +276,7 @@ function rememberItem(acc: Acc, ctx: PageCtx): void {
   if (ctx.canonical) acc.itemFromCanonical.add(ctx.key)
 }
 
-function addPage(acc: Acc, entry: ItemDbEntry): void {
+function addPage(acc: Acc, entry: ItemDbEntry, research: ItemResearchFile): void {
   if (acc.seenPages.has(entry.page)) {
     acc.stats.aliasKeys++
     return
@@ -238,10 +284,16 @@ function addPage(acc: Acc, entry: ItemDbEntry): void {
   acc.seenPages.add(entry.page)
   acc.stats.pages++
 
-  const { ctx, effects, unknown } = pageContext(entry)
+  const { ctx, effects, unknown } = pageContext(entry, research)
   for (const token of unknown) acc.unknownSlots.add(token)
+  // The ITEM index takes every page, excluded or not: the host picker and the lookup are asking a
+  // different question than the donor list is.
   rememberItem(acc, ctx)
   if (effects.length === 0) return
+  if (ctx.excluded) {
+    acc.stats.excludedPages++
+    return
+  }
 
   acc.stats.effectPages++
   for (const effect of effects) {
@@ -254,10 +306,16 @@ function addPage(acc: Acc, entry: ItemDbEntry): void {
   }
 }
 
-/** The committed file → both indices in ONE pass. */
-export function buildPlannerIndex(file: ItemDbFile): PlannerIndex {
+/**
+ * The committed file → both indices in ONE pass. The curated layer defaults to the committed one
+ * and is injectable so a test can drive the exclusion path from a fixture.
+ */
+export function buildPlannerIndex(
+  file: ItemDbFile,
+  research: ItemResearchFile = ITEMS_RESEARCH
+): PlannerIndex {
   const acc = newAcc()
-  for (const entry of Object.values(file.items ?? {})) addPage(acc, entry)
+  for (const entry of Object.values(file.items ?? {})) addPage(acc, entry, research)
   return {
     donors: [...acc.donors.values()],
     items: [...acc.items.values()],

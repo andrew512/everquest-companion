@@ -61,6 +61,22 @@ all of this; the planner REUSES those exports and never re-declares a number.
   124 orphan pages stay visible, chipped `era?`, never silently dropped).
   The browser and farm list default to a "Current era" toggle ON. Kunark
   arrives by flipping `CURRENT_ERA`, plus a rescrape. (Wave 3E.)
+- R7 — **Summoned (mage-conjured) items cannot donate an exaltation.**
+  OWNER-OBSERVED 2026-08-05, and **unverified**: integrator research the same
+  day found the eqlwiki Exaltations page, the official 7/14 patch notes, the
+  eqlegends.wiki exaltation guide and eqlegendstools' donor lists all silent on
+  summoned/temporary items, in BOTH directions. The design motive is obvious
+  (conjured items are unlimited free merge copies) but motive is not a rule, so
+  this sits below the R1–R6 bar until it is tested. THE DECISIVE TEST is
+  in-game and takes 30 seconds: attempt to merge two identical summoned items —
+  a refusal makes extraction structurally impossible and graduates R7 to
+  verified. MEANWHILE they are excluded from the donor index anyway (wave W-A,
+  `planner/effectIndex.ts`), because that is the recoverable error: wrongly
+  hiding 39 donors is undone by deleting a line the day R7 falls, wrongly
+  listing them puts unfarmable rows in a farm plan. GM-event items are excluded
+  on the same path for a different reason — they are real and unfarmable — and
+  both flags live in the curated layer (`src/main/itemsResearch.ts`), with the
+  `Summoned:` name prefix as the one automatic rule (planner-v2 V9).
 
 ## 2. Decisions
 

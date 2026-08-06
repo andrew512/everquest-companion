@@ -9,11 +9,15 @@
 //
 // Assertions are FLOORS and IDENTITIES, never today's counts (AGENTS.md "frozen numbers rot" —
 // the wiki gains item pages and a rescrape must be able to grow this file without turning the
-// suite red). The floors sit under what the 2026-08-04 build measured:
+// suite red). The floors sit under what the 2026-08-05 build measured:
 //
-//     click 816 · proc 448 · focus 143 · worn 104   = 1,511 donor rows
-//     from 1,550 effect-bearing pages of 11,155 (196 alias keys skipped, 49 socketless
-//     `Effect:` rows excluded, 3 duplicate-page rows collapsed)
+//     click 803 · proc 446 · focus 119 · worn 100   = 1,468 donor rows
+//     from 1,510 effect-bearing pages of 11,161 (190 alias keys skipped, 49 socketless
+//     `Effect:` rows excluded, 3 duplicate-page rows collapsed, 40 pages excluded by V9)
+//
+// The V9 exclusion (`Summoned:` + the curated layer) is what re-based those from the 2026-08-04
+// build's 1,508: it took 39 summoned rows and one GM-event row off the donor list permanently, so
+// the floors below moved down with it rather than sitting a hair above the measurement.
 //
 // The identities are the interesting half: one row per (key, effect, socket) with NO duplicates,
 // and every slot token canonical. Both are properties the UI depends on and neither is a count.
@@ -31,13 +35,18 @@ import {
 import { EQUIP_SLOTS, SOCKET_TYPES } from '../src/shared/planner/types'
 import { eraFromTag, layeredVerdict, zoneEra } from '../src/shared/planner/era'
 import { isClassAbbr } from '../src/shared/classCombo'
+import {
+  ITEMS_RESEARCH,
+  knowledgeWithResearch,
+  type ItemResearchFile
+} from '../src/main/itemsResearch'
 
 const file = itemsJson as unknown as ItemDbFile
 const index = buildPlannerIndex(file)
 const donors = index.donors
 
 /** Per-socket floors — under the measured build, so a growing corpus stays green. */
-const FLOORS = { proc: 400, click: 800, focus: 100, worn: 90 } as const
+const FLOORS = { proc: 400, click: 760, focus: 100, worn: 90 } as const
 
 const bySocket = (socket: string): number => donors.filter((d) => d.socket === socket).length
 
@@ -97,7 +106,7 @@ test('R2 has real work to do: a large slotless minority can never legally donate
   // really does carry a mass of slotless rows (it is the potion aisle) AND they really are a
   // minority (a filter that hid most of the planner would be a bug, not a rule).
   //
-  // MEASURED 2026-08-04: 287 of 1,508 rows — click 220/813, proc 67/448, focus 0/143, worn 0/104.
+  // MEASURED 2026-08-05: 284 of 1,468 rows — click 217/803, proc 67/446, focus 0/119, worn 0/100.
   // Floors and identities only; a rescrape may move every one of those numbers.
   const slotless = donors.filter((d) => d.slots.length === 0)
   const per = Object.fromEntries(
@@ -234,6 +243,93 @@ test('the Coldain anchor, layer 2: no zone anywhere, but the page says Velious',
   // WITHOUT a zone the layered verdict is the banner's; with one, the zone still wins.
   assert.equal(layeredVerdict([], sword.eraTag), 'out-of-era')
   assert.equal(layeredVerdict(['Lower Guk'], sword.eraTag), 'in-era')
+})
+
+test('THE EPIC PIN: a dropperless epic reward is out-of-era on a classic server (V1)', () => {
+  // The row the era fix exists for. Ragebringer is a quest turn-in: no `|dropsfrom`, no catalog
+  // dropper (pinned in tests/plannerEra.test.mts against the mob catalog), so the page's own
+  // `{{Epics Era}}` banner is the ONLY witness the planner has. While `Epics` mapped to classic it
+  // rendered CLEAN with the era filter ON — a level-46 rogue epic offered as farmable loot on a
+  // server whose epic chains do not exist (owner, 2026-08-05).
+  for (const key of ['ragebringer', 'spear of fate']) {
+    const row = donors.find((d) => d.key === key)
+    assert.ok(row, `${key} is no longer a donor`)
+    assert.equal(row.quest, true, `${key} must still read as a quest reward`)
+    assert.equal(row.eraTag, 'Epics', `${key} must still carry the epic banner`)
+    assert.equal(row.wikiSources, undefined, `${key} states no drop source — the pin needs that`)
+    assert.equal(layeredVerdict([], row.eraTag), 'out-of-era', key)
+  }
+  // The tag is the whole family's evidence, not two lucky pages: every epic-bannered donor that
+  // names no zone anywhere reads out-of-era today.
+  const epics = donors.filter((d) => /^epic/i.test(d.eraTag ?? ''))
+  assert.ok(epics.length >= 20, `only ${epics.length} epic-bannered donors`)
+  assert.equal(eraFromTag('Epics'), 'kunark')
+})
+
+test('V9: summoned and GM-event items are dropped from the DONOR index, and only from it', () => {
+  // R7 (owner-observed, unverified — docs/plans/exaltation-planner.md §1) plus the curated layer.
+  // MEASURED 2026-08-05: 40 effect-bearing pages excluded — 39 `Summoned:` rows (focus 24, click
+  // 10, worn 4, proc 1) and the one GM-event entry the layer seeds.
+  console.log('planner exclusions', { excludedPages: index.stats.excludedPages })
+  assert.ok(index.stats.excludedPages >= 30, `only ${index.stats.excludedPages} pages excluded`)
+
+  const summonedDonors = donors.filter((d) => /^summoned:/i.test(d.name))
+  assert.deepEqual(summonedDonors.map((d) => d.name), [], 'a summoned item is offering an effect')
+
+  // …and they are STILL items: a summoned item is a real thing to look up and a legal host to
+  // search for. Excluding it from the donor list is a statement about donation, nothing else.
+  const summonedItems = index.items.filter((i) => /^summoned:/i.test(i.name))
+  assert.ok(summonedItems.length >= 50, `only ${summonedItems.length} summoned rows in the item index`)
+  assert.ok(searchPlannerItems(index.items, 'summoned:').length > 0, 'summoned items stopped being searchable')
+
+  // The committed layer's own entries, whatever they are today: each must be excluded from donors,
+  // present as an item, and carry its provenance (an entry with no source reads like scraped fact).
+  const flagged = Object.entries(ITEMS_RESEARCH).filter(([, r]) => r.summoned === true || r.gmEvent === true)
+  assert.ok(flagged.length > 0, 'the curated layer seeds no exclusions at all')
+  for (const [key, entry] of flagged) {
+    assert.ok(entry.source.length > 0, `${key}: a curated entry with no source`)
+    assert.match(entry.checkedAt, /^\d{4}-\d{2}-\d{2}/, `${key}: no checkedAt date`)
+    assert.equal(donors.find((d) => d.key === key), undefined, `${key} is still a donor`)
+    assert.ok(index.items.some((i) => i.key === key), `${key} fell out of the item index entirely`)
+  }
+})
+
+test('the additive layer merges OVER the wiki record, and drives the exclusion from a fixture', () => {
+  // Driven by a fixture rather than by the committed layer: the exclusion path has to hold for
+  // whatever gets curated next, not just for today's seed.
+  const fixture = {
+    scrapedAt: '2026-08-05T00:00:00.000Z',
+    source: 'fixture',
+    count: 3,
+    items: {
+      ghoulbane: { page: 'Ghoulbane', stats: { effects: [{ kind: 'click', name: 'Nullify Undead', detail: 'Must Equip' }], slot: 'PRIMARY' } },
+      'summoned: waterstone': { page: 'Summoned: Waterstone', stats: { effects: [{ kind: 'click', name: 'Enduring Breath', detail: 'Any Slot' }], slot: 'PRIMARY' } },
+      'gm sword': { page: 'GM Sword', stats: { effects: [{ kind: 'worn', name: 'Regeneration', detail: 'Worn' }], slot: 'PRIMARY' } }
+    }
+  } as unknown as ItemDbFile
+  const research: ItemResearchFile = {
+    'gm sword': { gmEvent: true, source: 'fixture', checkedAt: '2026-08-05' }
+  }
+
+  const built = buildPlannerIndex(fixture, research)
+  assert.deepEqual(built.donors.map((d) => d.key), ['ghoulbane'], 'exactly the un-excluded item donates')
+  assert.equal(built.stats.excludedPages, 2, 'both exclusions must be COUNTED, never silently dropped')
+  // All three stay searchable — the item index is not the donor index.
+  assert.deepEqual(built.items.map((i) => i.key).sort(), ['ghoulbane', 'gm sword', 'summoned: waterstone'])
+
+  // With no layer at all the name prefix still fires and the curated one no longer does: the two
+  // witnesses are independent.
+  const bare = buildPlannerIndex(fixture, {})
+  assert.deepEqual(bare.donors.map((d) => d.key).sort(), ['ghoulbane', 'gm sword'])
+
+  // The merge itself: the scrape's own defaults are restored FIRST (law 1 — `quest` is false
+  // because the record omits it, not because the layer said so), the curated entry rides beside
+  // them, and an unresearched item carries no `research` field rather than an empty one.
+  const merged = knowledgeWithResearch(fixture.items['gm sword'], research)
+  assert.equal(merged.name, 'GM Sword')
+  assert.equal(merged.quest, false)
+  assert.deepEqual(merged.research, research['gm sword'])
+  assert.equal(knowledgeWithResearch(fixture.items.ghoulbane, research).research, undefined)
 })
 
 test('host search: substring, prefix-first, shortest-first, capped', () => {

@@ -208,7 +208,7 @@ async function stepEra(page: Page): Promise<void> {
  * 4b. THE NON-EQUIPPABLE FILTER IS OFF BY DEFAULT, AND TURNING IT ON REVEALS MORE.
  *
  * The mirror image of the era check, and an identity for the same reason: R2 only lets an
- * exaltation move between items sharing an equipment slot, so the 287 slotless donor rows in the
+ * exaltation move between items sharing an equipment slot, so the 284 slotless donor rows in the
  * committed corpus (the potion aisle, plus poisons on the Proc tab) can never legally donate and
  * are hidden by default. Switching the escape hatch on can therefore only ADD rows — and each one
  * it adds must carry the `no slot` chip that says why it was hidden.
