@@ -46,7 +46,12 @@ export const VIEW_LABELS: Record<View, string> = {
   alerts: 'Alerts',
   leveling: 'Leveling',
   loot: 'Loot',
-  planner: 'Planner',
+  // THE TAB IS CALLED EXALTATIONS (owner, 2026-08-06, JOS-42). "Planner" described what the
+  // surface does for us; "Exaltations" names the game system the player came here about. The
+  // `planner` view id, its route, its `eq.planner.*` keys and every `planner-*` testid are
+  // unchanged — this is a label, not a refactor — and since JOS-43 this table is the ONE place a
+  // tab is named, so the nav row and a drill's Back button rename together by construction.
+  planner: 'Exaltations',
   buffs: 'Buffs',
   preferences: 'Preferences',
   triage: 'Triage'

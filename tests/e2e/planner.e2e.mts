@@ -1,6 +1,7 @@
 /**
- * Headless Electron integration test for the PLANNER tab (docs/plans/exaltation-planner.md §9,
- * wave 3).
+ * Headless Electron integration test for the EXALTATIONS tab (docs/plans/exaltation-planner.md §9,
+ * wave 3). The tab is LABELLED Exaltations since JOS-42; every id, route, store key and testid in
+ * here still says `planner`, because the rename was a label and not a refactor.
  *
  * WHY ITS OWN FILE: one spec per surface, all of them sharing `appHarness.mts` and running back
  * to back from `npm run test:e2e`. `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
@@ -126,13 +127,22 @@ async function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
   }
 }
 
-/** 1. THE NAV ROW MOUNTS THE PANE. False on the no-logs machine, where no feature view mounts. */
+/**
+ * 1. THE NAV ROW MOUNTS THE PANE. False on the no-logs machine, where no feature view mounts.
+ *
+ * The row's testid is `nav-planner` and always will be — the view id, the route and the store keys
+ * are internal (JOS-42 renamed the LABEL, not the feature). So the label is asserted as TEXT: that
+ * is the only place the rename is visible, and a spec that only clicked the testid would have let
+ * it silently revert.
+ */
 async function stepMount(page: Page): Promise<boolean> {
   const hasRow = await page.waitForSelector(NAV, { timeout: 60_000 }).then(
     () => true,
     () => false
   )
-  if (!check('the nav drawer has a Planner row', hasRow)) return false
+  if (!check('the nav drawer has an Exaltations row', hasRow)) return false
+  const label = (await textOf(page, NAV)).replace(/\s+/g, ' ').trim()
+  check('…and it is called Exaltations, the name the game uses', label.includes('Exaltations'), `reads "${label}"`)
   await page.click(NAV, { timeout: 15_000 })
 
   // A character with no sets gets the invitation; one with sets gets the toolbar. Either is a
@@ -143,12 +153,12 @@ async function stepMount(page: Page): Promise<boolean> {
   )
   if (!mounted) {
     const noLogs = (await textOf(page, 'main')).includes('No EverQuest logs found')
-    check('clicking Planner mounts the pane (or the no-logs empty state explains why not)', noLogs)
+    check('clicking Exaltations mounts the pane (or the no-logs empty state explains why not)', noLogs)
     if (noLogs) note('no character logs on this machine — the app shows its fresh-machine empty state')
     return false
   }
   check(
-    'clicking the Planner nav row mounts the pane on its create-a-set empty state',
+    'clicking the Exaltations nav row mounts the pane on its create-a-set empty state',
     (await countOf(page, NEW_SET_EMPTY)) > 0,
     `${String(await countOf(page, SET_CHIP))} sets already stored`
   )
@@ -574,7 +584,7 @@ async function steps(page: Page): Promise<void> {
   }
   const over = await pageOverflow(page)
   check(
-    'the Planner never scrolls the page (its lists clip inside their own boxes)',
+    'Exaltations never scrolls the page (its lists clip inside their own boxes)',
     over.doc === 0 && over.content === 0,
     `document +${String(over.doc)}px · content area +${String(over.content)}px`
   )
@@ -586,7 +596,7 @@ async function main(): Promise<void> {
 
   // See the header: a stored set (or a remembered mode) would make the empty-state assertion
   // vacuous — this launch's userData dir has never held either.
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Planner spec…')
+  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Exaltations spec…')
   const { app, close } = await launchApp()
 
   let page: Page | null = null

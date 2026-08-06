@@ -15,8 +15,10 @@ search, label declutter, floor slicing), class-combo inference with user
 corrections, proc analytics (PPM + state attribution), raid targets, buffs
 simulation, alerts with sounds + rank-upgrade intelligence, a Details-style
 DPS meter with drill-down/timeline (drilled by default, pet nested), and
-floating overlay meters, an Exaltation/BiS Planner (multi-set socket
-planning over a class-filtered effect browser with layered era filtering —
+floating overlay meters, an EXALTATIONS tab (the Exaltation/BiS planner —
+labelled Exaltations since JOS-42; the `planner` view id, route, store keys
+and `planner-*` testids are unchanged, it was a label not a refactor —
+multi-set socket planning over a class-filtered effect browser with layered era filtering —
 docs/plans/exaltation-planner.md; era = zone provenance ∪ page dropsfrom,
 page-top era banner resolves unknowns, shared/planner/*), and celebration
 toasts (docs/plans/celebration-toasts.md). Committed knowledge DBs: mobs
