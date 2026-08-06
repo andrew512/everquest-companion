@@ -92,3 +92,52 @@ if (koberHits < 90) throw new Error(`p1-unbound-pet.log: expected the pet's comb
 const guardHits = p1.filter((l) => /\] Guard Effel /.test(l)).length
 if (guardHits < 10) throw new Error(`p1-unbound-pet.log: the negative control (Guard Effel) must be present`)
 console.log(`p1-unbound-pet.log: 4 pet says, ${koberHits} unbound pet hits, ${guardHits} negative-control lines`)
+
+// P2 — THE WHOLE ARC OF A PET, IN ELEVEN MINUTES (Thu Aug 06 12:34–12:46, a Nagafen's Lair
+// instance). Located by the owner, JOS-49.
+//
+// P1 is a pet that is NEVER bound; this is the other half of the story, and the half the
+// currency gate exists for — the same window carries the UNBOUND period, the tell that ends it,
+// the second pet that replaces the first, and that one's tell:
+//
+//   12:35:28  you zone into your own instance
+//   12:35:43  `You begin casting Kintaz's Animation.` → Jaber
+//   12:35:47→ Jaber fights the greater kobolds you are fighting. It is UNBOUND for seven and a
+//             half minutes: nothing tells you it is yours, so every point of it is dropped.
+//   12:43:12  `Jaber told you, 'Attacking a greater kobold Master.'` — the tell BINDS. The
+//             question retires (it is an unbound-state offer).
+//   12:44:45  a second Kintaz cast → Gonekn; the single-pet invariant retires Jaber.
+//   12:44:51  Gonekn's own tell binds it, three seconds after its first swing.
+//
+// AND THE ANIMATION CASTS SPELLS, which is the fact this window exists to nail down. Jaber opens
+// with `Jaber begins casting Wrath.`, lands 168-point magic hits by it, casts Stun, Daring and
+// Symbol of Ryltan, and HEALS ITSELF (`Jaber healed himself for 104 hit points by Daring.`). A
+// detector that treated casting or self-healing as player-shaped evidence would disqualify the
+// one entity the feature exists for, silently, on the owner's own current pet.
+//
+// ONE LINE IN THIS SPAN IS DELIBERATELY LOST TO THE SCRUB: `Jaber says, 'My leader is
+// Primitive.'` (12:44:20), the `/pet who leader` answer. It is quoted speech that is not one of
+// the six pet-voiced sentences, so `scrubKeep` drops it — correctly, today. JOS-52 is the ticket
+// that adds the carve-out and the bind; until then this fixture must NOT contain it, and the
+// assertion below pins that so the golden cannot silently start depending on it.
+const p2 = slice(1399620, 1400300, 'p2-pet-arc-bound.log')
+
+const p2has = (re) => p2.filter((l) => re.test(l)).length
+for (const [re, n, what] of [
+  [/^\[.*\] You begin casting Kintaz's Animation\.$/, 2, 'both animation casts'],
+  [/^\[.*\] Jaber told you, 'Attacking a greater kobold Master\.'$/, 1, "Jaber's binding tell"],
+  [/^\[.*\] Gonekn told you, 'Attacking a greater kobold Master\.'$/, 1, "Gonekn's binding tell"],
+  [/^\[.*\] Jaber says, 'My leader is Primitive\.'$/, 0, 'the /pet who leader line (JOS-52, not yet kept)']
+]) {
+  const got = p2has(re)
+  if (got !== n) throw new Error(`p2-pet-arc-bound.log: expected ${n} × ${what}, got ${got}`)
+}
+for (const [re, what] of [
+  [/^\[.*\] Jaber (begins casting|hit .* by |healed himself)/, "Jaber's spellcasting and self-heal"],
+  [/^\[.*\] Gonekn says, 'Sorry, Master\.\.\. calming down\.'$/, "Gonekn's pet-voiced says"]
+]) {
+  if (p2has(re) === 0) throw new Error(`p2-pet-arc-bound.log: ${what} must survive the scrub`)
+}
+const jaberHits = p2.filter((l) => /\] Jaber .* for \d+ points? of (magic )?damage/.test(l)).length
+const gonekHits = p2.filter((l) => /\] Gonekn .* for \d+ points? of (magic )?damage/.test(l)).length
+console.log(`p2-pet-arc-bound.log: Jaber ${jaberHits} hits, Gonekn ${gonekHits} hits, 2 binding tells`)

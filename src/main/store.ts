@@ -9,7 +9,6 @@ import type {
   HeldCounts,
   OverlayConfig,
   OverlayKind,
-  PetClaimEdit,
   ProgressState,
   RosterEdit,
   UpdateChannel,
@@ -349,47 +348,16 @@ export function clearRosterEdit(charId: string, key: string): RosterEdit[] {
   return next
 }
 
-// ----- Pet claims (JOS-47, shared/petClaims.ts) -----
+// PET CLAIMS ARE NO LONGER READ OR WRITTEN (JOS-49). The three accessors that used to live here
+// are gone with the question they answered — the owner cut the feature: "if you just have to pet
+// attack once, this is a lot of work we can get wrong."
 //
-// The same three functions as the roster edits above and for the same reason: attribution is
-// re-derived from the log on every replay, and a claim is the one part of it the log cannot
-// state. ONE STATEMENT PER NAME — "claim Vararab" then "deny Vararab" is one answer to one
-// question, the later one.
-//
-// Deliberately NOT time-keyed (see ProgressState.petClaims): a group ends, a class ability does
-// not, and an expiring claim would only ever lose the user their answer.
-
-function sanitizePetClaims(raw: unknown): PetClaimEdit[] {
-  if (!Array.isArray(raw)) return []
-  const out: PetClaimEdit[] = []
-  for (const e of raw as Partial<PetClaimEdit>[]) {
-    if (typeof e?.key !== 'string' || e.key === '') continue
-    if (typeof e.name !== 'string' || e.name === '') continue
-    if (e.action !== 'claim' && e.action !== 'deny') continue
-    if (typeof e.setAt !== 'number' || !Number.isFinite(e.setAt)) continue
-    out.push({ key: e.key, name: e.name, action: e.action, setAt: e.setAt })
-  }
-  return out
-}
-
-/** This character's pet claims ([] when it has none, or when the stored value is unusable). */
-export function getPetClaims(charId: string): PetClaimEdit[] {
-  return sanitizePetClaims(getProgress(charId).petClaims)
-}
-
-/** Record one claim/deny, REPLACING any existing statement about the same name. */
-export function setPetClaim(charId: string, edit: PetClaimEdit): PetClaimEdit[] {
-  const next = sanitizePetClaims([...getPetClaims(charId).filter((e) => e.key !== edit.key), edit])
-  setProgress(charId, { ...getProgress(charId), petClaims: next })
-  return next
-}
-
-/** Forget the hand-made statement about one name — "ask me again". */
-export function clearPetClaim(charId: string, key: string): PetClaimEdit[] {
-  const next = getPetClaims(charId).filter((e) => e.key !== key)
-  setProgress(charId, { ...getProgress(charId), petClaims: next })
-  return next
-}
+// THE STORED DATA IS DELIBERATELY LEFT ALONE. `ProgressState.petClaims` still exists on the type
+// and any answers a user gave in v0.4.x are still in their store file, untouched, unread and
+// unmigrated. Deleting them would be destroying a user's own statements to tidy up our types, and
+// a migration that dropped the key would make going back to a build that reads them lossy —
+// neither is worth anything to anybody. electron-store rewrites the whole parsed object, so the
+// key round-trips for free.
 
 export function getActiveLogPath(): string | undefined {
   return store.get('activeLogPath')

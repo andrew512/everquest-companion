@@ -242,68 +242,30 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
 }
 
 /**
- * FEED THE "IS THIS YOURS?" DETECTOR with the verdict `classify()` just reached (JOS-47).
+ * "YOU HIT IT", FILED ONCE, off the verdict `classify()` just reached (JOS-48).
  *
  * Here rather than inside `classify()` because classify is PURE and must stay so — it is called
- * by the miss and resist probes as well, and a pure decision that also mutates a watcher would
- * count one swing three times. This is the composition step: one call per attributed line, at
- * the single admission point, reading the same verdict the meter acts on.
+ * by the miss and resist probes as well, and a pure decision that also mutated state would count
+ * one swing three times. This is the composition step: one call per attributed line, at the
+ * single admission point, reading the same verdict the meter acts on.
  *
- * Every branch is either evidence or a DISQUALIFIER, and the disqualifiers are what make the
- * offer safe (petCandidates.ts lists them):
- *   out-you    → the target is one of YOUR targets (so anything fighting it fights with you)
- *                AND is permanently out (you do not attack your own pet).
- *   incoming   → it hit you. Out.
- *   out-pet /  → already yours, or a person. Out.
- *   out-member
- *   ignore     → the interesting case: an unattributed attacker landing on something. This is
- *                exactly the damage the meter is throwing away, so it is exactly the damage
- *                worth asking about.
+ * You do not attack the things that are on your side, so an entity YOU have damaged can never be
+ * minted a player by a later heal line. `EngineState.everStruck` is that refusal; see notePlayer
+ * for the mob lifetap that made it necessary and for the charmed raid ally that kept it narrow.
  *
- * The `out-you` branch files the SAME fact twice on purpose (JOS-48). "You hit it" disqualifies
- * a pet candidate and it disqualifies a heal-minted PLAYER claim, because it is one statement —
- * you do not attack the things that are on your side — and the two readers happen to be asking
- * about different halves of that. `EngineState.everStruck` is the second one; see notePlayer for
- * the mob lifetap that made it necessary and for the charmed raid ally that kept it this narrow.
+ * IT USED TO DO MORE. Until JOS-49 this function also fed the "<Name> — your pet?" candidate
+ * detector — every branch of the switch was either evidence for a question or a disqualifier
+ * against one. The owner cut the question ("if you just have to pet attack once, this is a lot
+ * of work we can get wrong"), and the only branch that was ever about something else is this one.
  */
-function noteCandidateEvidence(st: EngineState, ev: DamageEvent, at: Attribution): void {
-  const aKey = idKey(ev.attacker)
-  const bKey = idKey(ev.target)
-  switch (at.kind) {
-    case 'out-you':
-      st.candidates.noteYourTarget(bKey, ev.ts)
-      st.noteStruck(bKey)
-      return
-    case 'incoming':
-      st.candidates.disqualify(aKey)
-      return
-    case 'out-pet':
-    case 'out-member':
-      st.candidates.disqualify(aKey)
-      return
-    case 'ignore': {
-      if (bKey === 'you' || aKey === 'you') return
-      // A person, a group-mate, or any name a charm broadcast has ever named, is not a
-      // candidate — the same three guards `notePlayer` and `isAdmittedMember` already run.
-      if (st.isKnownPlayer(aKey) || st.isMember(aKey) || st.charm.everCharmed(aKey)) {
-        st.candidates.disqualify(aKey)
-        return
-      }
-      st.candidates.noteHit({ key: aKey, name: ev.attacker, targetKey: bKey, amount: ev.amount, ts: ev.ts })
-    }
-  }
+function noteStruckEvidence(st: EngineState, ev: DamageEvent, at: Attribution): void {
+  if (at.kind === 'out-you') st.noteStruck(idKey(ev.target))
 }
 
 export function route(st: EngineState, ev: DamageEvent): void {
   if (ev.amount <= 0) return
-  // THE USER'S CLAIM, applied before attribution so a claimed pet's very first line is already
-  // its own — that is what makes the persisted claim retroactive across a replay rather than
-  // only forward from the click (state.ts applyPetClaim).
-  if (st.applyPetClaim(ev.attacker, idKey(ev.attacker), ev.ts)) {
-    st.log(ev.ts, 'pet', 'info', `⚡ your claim: ${ev.attacker} is your pet`)
-  }
   const at = classify(ev, st.petNames, st.knownPlayers, st.roster().admitted)
-  noteCandidateEvidence(st, ev, at)
+  noteStruckEvidence(st, ev, at)
   if (at.kind === 'ignore') return
 
   // Twin evidence: You→pet-name or same-name→same-name proves a hostile twin
@@ -398,9 +360,6 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     ts, attacker, target, amount: 0, dtype: 'melee', skill: 'Melee', crit: false,
     category: 'melee', modifiers: []
   }
-  // A claimed pet's WHIFFS are its whiffs (hit% is a per-source rate, so a pet whose misses
-  // went to nobody would headline an impossible accuracy). Same one door as the damage path.
-  st.applyPetClaim(attacker, idKey(attacker), ts)
   const at = classify(probe, st.petNames, st.knownPlayers, st.roster().admitted)
   if (at.kind === 'ignore') return
   const fold = missFold(st, ev, at.kind === 'out-you')

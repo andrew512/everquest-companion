@@ -119,8 +119,13 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   enumerated them also found six kinds of mob flavor a loose pattern would
   leak: "None shall defile the realm of our master!" and friends). Same
   argument as the tell: an NPC's words under an NPC's name. They are the
-  only public evidence an entity is somebody's pet, and a fixture that
-  cannot carry them cannot test the meter's "your pet?" offer.
+  only public evidence an entity is somebody's pet — which is NOT evidence
+  it is YOURS, and JOS-49 deleted the offer that used to pair them with a
+  shared target (law below). The carve-out STAYS: every combat fixture in
+  the tree is already cut through it, re-cutting them to drop six sentences
+  buys nothing, the six still parse into `petSay` (the alerts editor lists
+  the kind), and JOS-52 needs the family present to add the one say that
+  does name an owner.
   The user's OWN `/who` row (Primitive)
   is likewise exempt: it is the only line stating the class loadout and
   `extract-leveling-fixtures.mjs` needs it. Bystanders' NAMES survive in
@@ -666,17 +671,42 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   player who never types a pet command has a pet the log cannot bind (a
   user's 30-min slice: three successive pets, 476 hits, 13,555 points,
   ZERO tells; the owner's own log does it too — the enchanter animation pet
-  Kober, 105 hits, never once ordered). Three rungs now, strongest first:
-  the private TELL binds; a pet-voiced PUBLIC say (the six exact sentences
-  in `shared/logScrub.ts PET_SAY_LINES`) plus that entity fighting YOUR
-  target NOMINATES and never binds — `says` is broadcast, so it proves the
-  speaker is somebody's pet and nothing about whose (113 in the whole log:
-  85 from names an earlier tell had already bound, 6 from names no tell ever
-  bound); and the USER'S CLAIM binds, outranks everything, and persists per
-  character (`combat/petCandidates.ts`, `ipc/petClaims.ts`). The offer is an
-  UNBOUND-STATE offer: `notePet` releases the candidate, so anything that
-  binds retires the question. A claim and a later tell converge on one pet —
-  both walk `world.claim()`, which is idempotent on a live pet instance.
+  Kober, 105 hits, never once ordered).
+  **THE TELL IS THE WHOLE STORY, AND THE BLIND SPOT IS ACCEPTED** (owner,
+  JOS-49): *"just cut out the 'is this my pet question' — if you just have
+  to pet attack once, this is a lot of work we can get wrong."* JOS-47 had
+  built two more rungs on top of the tell — a pet-voiced PUBLIC say paired
+  with a shared target NOMINATED a candidate, and the meter asked
+  "<Name> — your pet?" with Yes/No above the bars, the answer persisted per
+  character and outranking everything. All of it is DELETED: the detector,
+  the offer on both meter surfaces, the claim/deny IPC and its
+  claim-triggered replay. **The answer to "the meter doesn't show my pet" is
+  to order it once.** So an unordered pet is now a documented, accepted
+  non-distinguishable (law 6) rather than a question: the app says nothing
+  instead of guessing, and nothing instead of asking.
+  The measurements that justified the rungs still stand and still say why
+  they are gone. The SAY is broadcast — 113 in the whole log, 85 from names
+  an earlier tell had already bound and 6 from names no tell ever bound — so
+  it proves the speaker is somebody's pet and nothing whatever about whose;
+  that is exactly the "work we can get wrong". The six sentences still parse
+  (`shared/logScrub.ts PET_SAY_LINES`, kept in the scrub, listed in the
+  alert-trigger vocabulary) and the engine now does nothing with them.
+  **A TELL BINDS FORWARD, NOT BACKWARD** (measured, JOS-49, on
+  `tests/fixtures/p2-pet-arc-bound.log`): `ingestPetClaim` binds from the
+  line's own timestamp, and nothing reaches back over damage already filed
+  as nobody's. The owner's Aug 06 animation Jaber landed 51 hits for 2,615
+  points and was ordered after 43 of them, so its meter row is 8 hits / 599
+  points and 2,016 points stay invisible; the same window with the pet
+  ordered at the moment it was summoned shows all 51 / 2,615. The deleted
+  user CLAIM was the one retroactive path (known before the replay started,
+  so `route()` applied it to the pet's first line) — losing that is the real
+  cost of the cut, and the user-facing rule is **order it when you summon
+  it**. JOS-52 adds a second explicit bind for the players who don't:
+  `<Name> says, 'My leader is <You>.'` — the `/pet who leader` answer, which
+  unlike the six says NAMES ITS OWNER OUT LOUD. It needs its own scrub
+  carve-out first (it is quoted speech outside the six, so `scrubKeep` drops
+  it today; `tests/extract-pet-claim-fixtures.mjs` asserts that absence so a
+  golden cannot start depending on it early).
 - Exp: `You gain (party )?experience!( (N.NN%))?` — the percent is an
   INCREMENT of the current level bar (sums to ~100 between dings);
   unstated ⇒ at the cap, modeled `pct: undefined` never 0. The exp line

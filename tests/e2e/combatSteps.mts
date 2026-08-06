@@ -27,11 +27,25 @@ import {
   settle,
   settleCount,
   settleGone,
+  settleStable,
   snapshot,
-  type Snap
+  type Snap,
+  type SnapEntity
 } from './appHarness.mjs'
 import { drilled, meterRows } from './drill.mjs'
-import { PULL_DAMAGE, PULL_LINES, PULL_TARGET, playPull } from './gameplay.mjs'
+import {
+  PET_BOUND_DAMAGE,
+  PET_NAME,
+  PET_ORDER_LINES,
+  PET_PULL_LINES,
+  PET_UNBOUND_DAMAGE,
+  PULL_DAMAGE,
+  PULL_LINES,
+  PULL_TARGET,
+  playPetOrder,
+  playPetPull,
+  playPull
+} from './gameplay.mjs'
 import type { FixtureLog } from './logFixture.mjs'
 
 const TOGGLE = '[data-testid="direction-toggle"]'
@@ -398,4 +412,75 @@ export async function stepMeterScope(page: Page): Promise<void> {
     await settle(label, (t) => t !== was, { timeoutMs: 8_000 })
   }
   check('the meter is left on its Group default', (await label()).startsWith('Group'), await label())
+}
+
+/**
+ * THE PET NOBODY ASKS ABOUT (JOS-49) — the last step of the run, deliberately, because it opens
+ * a fight and leaves it open.
+ *
+ * JOS-47 shipped a QUESTION here: an unbound pet-shaped entity fighting beside you put
+ * "<Name> — your pet?" above the bars, with Yes and No. The owner cut it —
+ *
+ *     "just cut out the 'is this my pet question' - if you just have to pet attack once,
+ *      this is a lot of work we can get wrong."
+ *
+ * — so this step asserts an ABSENCE and then a CURE, which is the pair that says the deletion
+ * was clean rather than merely quiet. An absence is asserted with the settle vocabulary
+ * (`settleStable`: wait for the reading to stop changing, THEN assert nothing is there), never
+ * by looking once and finding nothing yet.
+ *
+ * The pet is written by the harness (gameplay.playPetPull): a proper-named entity that fights the
+ * two mobs you fight, never swings at you, and speaks one of the six pet-voiced sentences — the
+ * strongest evidence the old detector had, and now inert. Then `playPetOrder` orders it, and the
+ * private tell it answers with is the one line in this log that binds a summoned pet.
+ */
+export async function stepPetNeverAsked(page: Page, log: FixtureLog): Promise<void> {
+  const OFFER = '[data-testid="pet-claim-offer"]'
+  // Earlier steps leave a FINALIZED fight selected (the picker and the search both land on one).
+  // Return to the head row: the live fight is where a question would have been asked.
+  await openPicker(page)
+  await page.click('li[data-value="__live__"]', { timeout: 15_000 })
+  await closePicker(page)
+
+  const written = playPetPull(log)
+  check('the harness wrote the unbound pet into the tailed log', written === PET_PULL_LINES, `${String(written)} lines`)
+
+  // The lines ARRIVED — otherwise every absence below is vacuous. Your own two swings are the
+  // proof, because they are the half of the same bursts the meter is allowed to show.
+  const petOf = (s: Snap): SnapEntity | undefined =>
+    s.selected?.entities.find((e) => e.kind === 'pet' && e.name.replace(/\s+\(\d+\)$/, '') === PET_NAME)
+  const landed = await settle(() => snapshot(page), (s) => (s.selected?.outTotal ?? 0) >= 78, { timeoutMs: 20_000 })
+  if (!check('the scripted pull reached the meter', (landed.selected?.outTotal ?? 0) >= 78, `${String(Math.round(landed.selected?.outTotal ?? 0))} points`)) {
+    return
+  }
+
+  // THE ABSENCE. Let the reading settle, then assert the three things that are gone.
+  const settled = await settleStable(() => snapshot(page).then((s) => JSON.stringify(petOf(s) ?? null)), {
+    timeoutMs: 10_000
+  })
+  check('the unbound pet gets NO row — the blind spot is accepted, not papered over', settled === 'null', settled)
+  check(
+    '…and the meter asks no question about it, on any surface',
+    (await settleCount(page, OFFER, { timeoutMs: 5_000 })) === 0
+  )
+  check(
+    '…nor is there a question in the snapshot for a surface to render',
+    !('petClaims' in (await snapshot(page))),
+    'CombatSnapshot carries no petClaims'
+  )
+
+  // THE CURE, and the whole of the owner's answer: order it once.
+  const ordered = playPetOrder(log)
+  check('the harness ordered the pet', ordered === PET_ORDER_LINES, `${String(ordered)} lines`)
+  const bound = await settle(() => snapshot(page), (s) => petOf(s) !== undefined, { timeoutMs: 20_000 })
+  const row = petOf(bound)
+  if (!check('one pet command puts the pet on the meter', !!row, row ? row.name : 'still no pet row')) return
+  // A TELL BINDS FORWARD, NOT BACKWARD (measured, JOS-49): the row is the ONE hit that landed
+  // after the tell, and the three that came before it stay unattributed. That is the honest cost
+  // of ordering late, and it is why the instruction is "order it when you summon it".
+  check(
+    '…and the row is what it did AFTER the order — a tell does not reach backwards',
+    row?.total === PET_BOUND_DAMAGE,
+    `${String(row?.total ?? 0)} of ${String(PET_BOUND_DAMAGE)} (unbound ${String(PET_UNBOUND_DAMAGE)} stays invisible)`
+  )
 }

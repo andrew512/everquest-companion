@@ -47,7 +47,6 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parseEvent } from '../src/main/log/parser'
 import { CombatEngine } from '../src/main/combat/engine'
-import type { PetClaimsView } from '../src/shared/petClaims'
 import type { SegmentView } from '../src/shared/combat'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
@@ -58,12 +57,17 @@ const read = (name: string): string[] => {
 const P1 = read('p1-unbound-pet.log')
 const skip = P1.length === 0 ? 'fixture not present' : false
 
-/** The pet-claim view for a character who has said yes to Kober (JOS-47's shipped answer). */
-const KOBER: PetClaimsView = {
-  claimed: new Set(['kober']),
-  denied: new Set(),
-  nameOf: (k) => (k === 'kober' ? 'Kober' : undefined)
-}
+/**
+ * BINDING KOBER, so this window has a pet whose damage a bad player-claim could delete.
+ *
+ * A real private TELL, injected ahead of the window. It used to be a user CLAIM (JOS-47's
+ * shipped answer, `setPetClaims`), which JOS-49 deleted along with the rest of the question —
+ * the owner cut it: "if you just have to pet attack once, this is a lot of work we can get
+ * wrong." The tell is what ordering a pet once produces, so this is now both the only binding
+ * path and the realistic one. It binds the same entity to the same 105 hits / 1,966 points, and
+ * the numbers below are unchanged from the claim's.
+ */
+const KOBER_TELL = `[Thu Jul 30 16:10:11 2026] Kober told you, 'Attacking a sonic bat Master.'`
 
 /**
  * The reporter's sentence, with the mob's name swapped for one in this window. `Leech Touch I`
@@ -81,8 +85,8 @@ function replay(inject?: string): { eng: CombatEngine; lastTs: number } {
   let pending = extra
   const eng = new CombatEngine()
   eng.setPlayerName('Primitive')
-  eng.setPetClaims(() => KOBER)
   let seq = 1
+  eng.ingestEvent(parseEvent(KOBER_TELL, seq++)!, false)
   let lastTs = 0
   for (const raw of P1) {
     const ev = parseEvent(raw, seq++)
@@ -199,32 +203,37 @@ test('LT: the heal itself is still counted, in full, under the mob that printed 
 // ── 3. THE NEGATIVE CONTROL: THE INFERENCE IS NARROWED, NOT DELETED ────────────────────────
 
 test('LT: the same sentence from a name you never struck STILL files a player', { skip }, () => {
-  // Kober is the owner's own unbound pet: he fights beside it for twenty minutes and never once
-  // swings at it, which is precisely the evidence the new refusal reads. So a heal from Kober is
-  // still player-shaped evidence, and the visible consequence is that the meter stops asking
-  // "Kober — your pet?" (petCandidates disqualifies a known player).
-  const asked = new CombatEngine()
-  asked.setPlayerName('Primitive')
-  let seq = 0
-  for (const raw of P1) {
-    const ev = parseEvent(raw, seq++)
-    if (ev) asked.ingestEvent(ev, false)
-  }
-  const offered = asked.snapshot(Date.parse('2026-07-30T23:59:00Z'), {}).petClaims.candidates
-  assert.deepEqual(offered.map((c) => c.name), ['Kober'], 'the question JOS-47 shipped')
+  // Kober is the owner's own UNBOUND pet here (no tell injected): he fights beside it for twenty
+  // minutes and never once swings at it, which is precisely the evidence the new refusal reads.
+  // So a heal from Kober is still player-shaped, and the inference JOS-48 narrowed is not gone.
+  //
+  // THE OBSERVABLE CHANGED WITH JOS-49, not the claim being made. It used to be that the meter
+  // stopped asking "Kober — your pet?"; the question is deleted, so this reads the other thing
+  // `knownPlayers` decides — `engageHostile` (routing.ts) refuses a person, and enemy healing is
+  // only counted on an ENGAGED HOSTILE. So the same two lines, swing then self-heal, produce 50
+  // points of enemy healing against a mob and nothing at all against a person. The difference
+  // between the two replays IS the player claim, and it is a number on the meter either way.
+  const swing = `[Thu Jul 30 16:29:58 2026] You crush Kober for 100 points of damage.`
+  const selfHeal = `[Thu Jul 30 16:29:59 2026] Kober healed himself for 50 hit points by Center.`
 
-  const filed = new CombatEngine()
-  filed.setPlayerName('Primitive')
-  let s2 = 0
-  const heal = parseEvent(lifetap('16:10:11', 'Kober'), s2++)!
-  filed.ingestEvent(heal, false)
-  for (const raw of P1) {
-    const ev = parseEvent(raw, s2++)
-    if (ev) filed.ingestEvent(ev, false)
+  /** Replay the window with `pre` folded in FIRST, then swing at Kober and let it heal itself. */
+  const enemyHealAfter = (...pre: string[]): number => {
+    const eng = new CombatEngine()
+    eng.setPlayerName('Primitive')
+    let seq = 0
+    for (const raw of pre) eng.ingestEvent(parseEvent(raw, seq++)!, false)
+    let lastTs = 0
+    for (const raw of [...P1, swing, selfHeal]) {
+      const ev = parseEvent(raw, seq++)
+      if (!ev) continue
+      eng.ingestEvent(ev, false)
+      lastTs = ev.ts
+    }
+    return allSessions(eng, lastTs).reduce((n, v) => n + v.enemyHealTotal, 0)
   }
-  assert.deepEqual(
-    filed.snapshot(Date.parse('2026-07-30T23:59:00Z'), {}).petClaims.candidates,
-    [],
-    'a healer of yours you have never struck is a person, and people are not offered as pets'
-  )
+
+  const asMob = enemyHealAfter()
+  const asPerson = enemyHealAfter(lifetap('16:10:11', 'Kober'))
+  assert.equal(asMob - asPerson, 50, 'the heal counts against a mob you engaged, and not against a person')
+  assert.equal(asPerson, 0, 'a healer of yours you have never struck is a person, and people are not hostiles')
 })

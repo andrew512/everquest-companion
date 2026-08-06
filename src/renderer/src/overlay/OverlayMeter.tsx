@@ -14,7 +14,6 @@ import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
 import { EMPTY_ROSTER, SCOPE_HINT, SCOPE_LABEL, chipLabel, nextScope } from '@shared/roster'
-import { EMPTY_PET_CLAIMS, type PetClaimsSnap } from '@shared/petClaims'
 
 // Palette (matches the app's combat colors; the overlay has no MUI theme).
 const GOLD = '#d9b25f'
@@ -89,12 +88,6 @@ function headerFor(
   }
 }
 
-/** The pet questions this meter should be asking (JOS-47) — off the SAME snapshot as the rows
- *  they sit above, so the offer and the bars can never describe two different fights. */
-function petClaimsOf(snap: CombatSnapshot | null): PetClaimsSnap {
-  return snap?.petClaims ?? EMPTY_PET_CLAIMS
-}
-
 /** Selector options — ONE scope's rows, filtered by the shared helper the main view uses. */
 function scopeRows(
   snap: CombatSnapshot | null,
@@ -159,7 +152,6 @@ export default function OverlayMeter(): JSX.Element {
   // and the tab always filter by the same five names.
   const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
   const roster = snap?.roster ?? EMPTY_ROSTER
-  const petClaims = petClaimsOf(snap)
 
   const { seg, live, headerName, totalDps, rows, headIsLast } = meterView(
     snap,
@@ -242,7 +234,6 @@ export default function OverlayMeter(): JSX.Element {
           seg={seg}
           scope={meterScope}
           roster={roster}
-          petClaims={petClaims}
           drill={drill}
           setDrill={locked ? null : setDrill}
           live={live}
