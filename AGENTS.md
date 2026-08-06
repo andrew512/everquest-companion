@@ -411,6 +411,11 @@ scan (live:false) + Tailer (live:true, byte-offset handoff — LOSSLESS seam)
         │    onTick?(now), snapshot()→{seq,state}, flushDelta()→delta|null }
         │  Live deltas push `module:delta` (throttled); replay is silent.
         │  A 1s wall-clock tick drives time-based logic while the log idles.
+        │  A REPLAY IS A BRACKETED STATE (JOS-60), not just a per-event flag:
+        │  `registry.beginReplay()/endReplay()` around the scan, every push
+        │  path gated by it, and endReplay DISCARDS what the fold accumulated
+        │  (modules append to `pending` whatever `live` says — the push is the
+        │  registry's call). The heartbeat stops for the duration too.
         │  Modules incl. `progression` (columnar exp/kill/zone analytics,
         │  capped w/ windowStart honesty, recent-kills ring) and `combo`
         │  (registered FIRST; evidence → candidate-set slots → fuzzy
@@ -907,7 +912,15 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   VALUE stays the `__live__` sentinel so it re-resolves each tick. No fights at
   all ⇒ quiet empty state, never borrowed zone data. `liveFallback` is GONE.
 - Celebrations (confetti/sound) fire EXACTLY ONCE PER LIVE TRANSITION;
-  hydration seeds a silent baseline; manual actions never celebrate. "Once per
+  hydration seeds a silent baseline; manual actions never celebrate.
+  **THE SILENT BASELINE ONLY HOLDS IF A SWITCH DELIVERS A SNAPSHOT AND NEVER A
+  DELTA** (JOS-60). Every detector's guard is "reset the baseline on
+  `log:character`, then compare" — so ONE delta arriving before that message,
+  carrying the incoming character's history, is read as news and celebrates all
+  of it. That is exactly what the mid-replay heartbeat flush did, and it is why
+  the registry now discards a replay's accumulation instead of flushing it.
+  Never fix this class of bug with a wall-clock suppression window: the cause is
+  a delta that should not exist, and the cure is not sending it. "Once per
   transition", never "once ever": a REPEAT boss kill is a transition, so the
   bossDefeat sound fires on every kill (owner, 2026-08-04 — "every time is worth
   celebrating"; the first-kill-only `newDefeats` predicate was retired for it).
