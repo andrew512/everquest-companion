@@ -55,6 +55,12 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   partitioned into disjoint waves with per-wave regression gates and run
   until done. The user gets a short "In flight / Settled" readout whenever
   a turn ends with agents still running.
+- **THE BOARD IS IN LINEAR (owner, 2026-08-05).** Canonical project management
+  is the kanban in the owner's PERSONAL Linear workspace (Josh's Maker Space,
+  team JOS — never the work workspace). `scripts/linear.mts` is the CLI
+  (auth: `.triage/linear.env`, gitignored). The integrator moves an issue to
+  In Progress (with a comment naming the wave/agent) at dispatch and to Done
+  (with the commit hash) at merge; owner requests become issues as accepted.
 - **BRANCH INTEGRATION RULES (owner, 2026-08-05 — one merge behavior, not a
   juggle).** Every worker commits on its OWN worktree branch, never on main.
   Before reporting done, the worker makes the branch MERGE-READY: full checks
