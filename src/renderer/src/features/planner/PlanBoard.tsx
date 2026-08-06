@@ -19,6 +19,7 @@
 import { type JSX, useMemo, useState } from 'react'
 import { Box, Paper, Stack, Typography } from '@mui/material'
 import { EQUIP_SLOTS, type EquipSlot, type ExaltPlan, type PlannerItemHit, type SocketType } from '@shared/planner/types'
+import OutputFileLine from '../../components/OutputFileLine'
 import HostPicker from './HostPicker'
 import PlanCell from './PlanCell'
 import { indexDonors, useDonors } from './plannerData'
@@ -90,6 +91,19 @@ export default function PlanBoard({
       {/* Only once the read has settled: a card that flashes before the dump loads would teach a
           command to someone who already ran it. */}
       {ready && inventory === null && <InstructionsCard />}
+      {/* …and once a dump EXISTS, the same three facts compressed into one line, with the file's
+          own mtime on the end (JOS-42 refinement 5). This is the case the card cannot cover: the
+          hosts below render with total confidence whether the dump is a minute or a month old,
+          and "updated 3d ago" is the difference between reading your gear and reading a memory of
+          it. Exactly one of the two is ever on screen. */}
+      {inventory !== null && (
+        <OutputFileLine
+          command="/outputfile inventory"
+          why="Re-type it in game whenever your gear changes — these slots follow the dump."
+          updatedAt={inventory.loadedAt}
+          testId="planner-inventory-fresh"
+        />
+      )}
       <Box
         data-testid="planner-board"
         sx={{

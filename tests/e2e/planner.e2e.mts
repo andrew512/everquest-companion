@@ -73,6 +73,7 @@ import {
   HOST_NAME,
   HOST_SEARCH,
   HOST_WORN,
+  INVENTORY_FRESH,
   INVENTORY_HELP,
   MODE_BOARD,
   MODE_EFFECTS,
@@ -301,6 +302,25 @@ async function stepInventoryFill(page: Page): Promise<void> {
     (help > 0) !== (worn > 0),
     help > 0 ? 'no dump on this machine — the instructions card is up' : `${String(worn)} hosts filled from the dump`
   )
+
+  // JOS-42 refinement 5 — and when a dump DOES exist, the freshness line is up instead: the same
+  // command, one clause of why, and how old the file is. Exactly one of the two, always: the card
+  // teaches a command to someone who has never run it, the line tells someone who has when they
+  // last did. A tab rendering gear with no age on it is the failure this closes.
+  const fresh = await countOf(page, INVENTORY_FRESH)
+  check(
+    'a filled Inventory tab states the command and how old the dump is; an empty one teaches it',
+    (help > 0) !== (fresh > 0),
+    `${String(help)} instruction cards · ${String(fresh)} freshness lines`
+  )
+  if (fresh > 0) {
+    const line = (await textOf(page, INVENTORY_FRESH)).replace(/\s+/g, ' ').trim()
+    check(
+      '…and that line names the command and dates the FILE, not the read',
+      line.includes('/outputfile inventory') && /updated (just now|\d+[mhd] ago)/.test(line),
+      line.slice(0, 120)
+    )
+  }
 }
 
 /**
