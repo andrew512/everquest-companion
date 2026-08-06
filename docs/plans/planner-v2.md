@@ -96,6 +96,35 @@ reaching for this yet"). W-A creates the file and the merge point with curated
 hand entries only — which is exactly the schema the loop would later fill, so
 commissioning it becomes a data decision, not a code change.
 
+**JOS-25 filled the two tables that need no loop** (2026-08-06), through the
+same file and the same merge — no second path:
+
+- **GM-event × 10.** Swept from the corpus's own `|notes` prose (`summary`)
+  plus the `|gmitem` template param. The bar is UNHEDGED prose *and* no drop
+  source / quest / recipe anywhere on the page; six of the ten carry an
+  effect, so the V9 exclusion moved 40 → 45 pages. **Five mentions are
+  refused and named in `tests/itemsResearchLayer.test.mts`**, the loudest
+  being `Dabner's Staff of Recall`, which states `|gmitem` and a live
+  `|dropsfrom` mob in one template — flagging it would have hidden a
+  farmable donor. The others: `Shield of Hatred` ("Possibly … ?"),
+  `Da Oogly Stick` / `Gnome Sandwich` (GM *item*, never GM *event*),
+  `Stone of Gnoming` ("GM Only item" — and SOLD in Sunset Home).
+- **Bard instruments × 47.** Fully derivable from the committed corpus, so no
+  new scrape happened: 42 pages state the family in the stats block
+  (`Wind Resonance: 12`, older `Stringed Instrument`) and 5 state it in
+  `|focus_effect` (`Brass Resonance 14`, already folded in as a focus effect —
+  see normalize.ts's focus-rank note). Normalized to five families
+  (wind 15 · string 12 · brass 11 · percussion 8 · all 1). A raw-wikitext
+  sweep of the gitignored scrape cache found the SAME 47 and nothing more, so
+  this is the wiki's whole answer, not the scrape's. No consumer reads
+  `instrument` yet — V11's grouping axis is what will.
+
+Both tables restate something the pages say, which is the one real hazard of a
+layer that overlays the scrape: a stale entry looks like fact. So
+`tests/itemsResearchLayer.test.mts` re-derives BOTH from `items.json` and fails
+on any disagreement in either direction — the zone table's anti-fuzzy tripwire,
+applied to curation.
+
 ## 5. Open questions — ANSWERED (owner, 2026-08-05)
 
 - Q1 → **the combo is a filter, not a rule.** V2 rewritten above: loose
