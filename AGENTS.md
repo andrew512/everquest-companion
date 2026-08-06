@@ -664,6 +664,15 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 - **State, never process**: no methodology captions, no script references,
   no how-it-works panels. Chips convey state (db/observed, permanent,
   inferred, casting…, ~ambiguous).
+- **TOOLTIP AND CAVEAT DIET (owner, 2026-08-05).** The UI does the talking;
+  player experience fills the rest. Tooltips are for enabling an action or
+  naming a control — one clause, no caveats, never on an input the user types
+  into. Do not footnote where a number came from or how it might be wrong;
+  when stated-vs-inferred genuinely matters, one word ('est.', the existing
+  chips) beats a sentence. TEACHING is welcome when it is collaborative —
+  a dismissible explainer that helps someone use a feature successfully (the
+  planner's exaltation card is the model) — never defensive source-caveating.
+  When in doubt: delete the tooltip and let the label earn its keep.
 - Search: input echoes instantly; filter on `useDeferredValue`; lowercase
   `searchKey` computed once per data change; long fixed-height lists
   windowed via `lib/useWindowedRows`, variable-height cap+paginate. These

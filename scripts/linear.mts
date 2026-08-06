@@ -88,9 +88,15 @@ if (cmd === 'list') {
   console.log(`# ${issue.identifier}: ${d.issue.title}\nState: ${d.issue.state.name} · priority ${String(d.issue.priority)}\n\n${d.issue.description}\n`)
   for (const c of d.issue.comments.nodes) console.log(`--- comment (${c.createdAt}):\n${c.body}\n`)
 } else if (cmd === 'create' && a) {
+  // --priority: 1 urgent, 2 high, 3 medium, 4 low (Linear's own scale; 0/absent = none)
+  const prio = flag('priority')
+  const input: Record<string, unknown> = {
+    teamId: team.id, title: a, description: flag('desc') ?? '', stateId: stateId(flag('state') ?? 'Todo')
+  }
+  if (prio !== undefined) input.priority = Number(prio)
   const d = await gql<{ issueCreate: { issue: { identifier: string } } }>(
     'mutation($input: IssueCreateInput!) { issueCreate(input: $input) { issue { identifier } } }',
-    { input: { teamId: team.id, title: a, description: flag('desc') ?? '', stateId: stateId(flag('state') ?? 'Backlog') } }
+    { input }
   )
   console.log(`created ${d.issueCreate.issue.identifier}`)
 } else if (cmd === 'move' && a && b) {
