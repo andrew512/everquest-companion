@@ -8,8 +8,15 @@ import type {
   ProcSkillTag,
   StateSpan
 } from './procAnalytics'
+import type { RosterSnap } from './roster'
 
-export type SourceKind = 'you' | 'pet' | 'enemy'
+/**
+ * WHOSE ROW THIS IS. `'member'` (docs/plans/group-model.md) is a player currently or formerly on
+ * your group roster — the widening the reported "my group-mate is missing from the meter" bug
+ * needed. It is a SOURCE kind only: a mob hitting a group member stays out of the model
+ * entirely, so the incoming meter is still exactly "what is hitting You".
+ */
+export type SourceKind = 'you' | 'pet' | 'member' | 'enemy'
 export type DamageType = 'melee' | 'spell' | 'dot' | 'ds'
 
 /**
@@ -664,8 +671,9 @@ export interface ClassifiedLine {
    *  ('charm' = a `<mob> has been charmed.` line; 'pet' = a SUMMONED pet's
    *  owner-only "… Master." claim tell — the two are never conflated). */
   cat: string
-  /** who it was attributed to */
-  role: 'you' | 'pet' | 'enemy' | 'info' | 'dropped'
+  /** Who it was attributed to. The four SOURCE kinds plus the two commentary roles: 'info' for
+   *  a state transition the engine narrates and 'dropped' for a line it deliberately refused. */
+  role: SourceKind | 'info' | 'dropped'
   text: string
 }
 
@@ -902,6 +910,17 @@ export interface CombatSnapshot {
    * churning fake-live meter; this is the only honest signal for it.
    */
   hydrating: boolean
+  /**
+   * WHO YOU ARE GROUPED WITH right now (docs/plans/group-model.md). Carried on the combat
+   * snapshot rather than reached through the module transport because BOTH meter surfaces need
+   * it — the Combat tab and every overlay — and the overlay windows already poll this. One
+   * roster, read in one call, so the scope chip and the rows it filters can never disagree.
+   *
+   * `roster.seen: false` means NO GROUP SIGNAL HAS BEEN OBSERVED, which is not the same as
+   * "you are solo": it is the state in which the Group scope falls back to Everyone rather than
+   * silently hiding people (law 1 — unknown must not hide).
+   */
+  roster: RosterSnap
   // NOTE: there is deliberately NO `liveFallback` here any more. Fight vs Overall is an explicit
   // user-chosen SCOPE (renderer-side), not an automatic switch: the default selection resolves to
   // the open fight, else the most recent finalized fight, and NEVER to the zone aggregate. The

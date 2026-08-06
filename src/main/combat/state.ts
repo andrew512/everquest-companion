@@ -24,6 +24,7 @@ import { StateTimeline } from './stateTimeline'
 import { CharmModel } from './charmModel'
 import { SpecialAttacks } from './specialAttacks'
 import type { RecentCasts } from './procDetect'
+import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } from '../../shared/roster'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 
 export class EngineState {
@@ -60,6 +61,21 @@ export class EngineState {
    * discipline in routing.ts.
    */
   knownPlayers = new Set<string>()
+  /**
+   * THE GROUP ROSTER, pulled live (docs/plans/group-model.md §3.5). Installed by pipeline.ts as
+   * `() => rosterModule.view()`; the default returns an empty view, so every test, every replay
+   * without a group and every pre-existing caller behaves exactly as it did before.
+   *
+   * A pull rather than a stored copy for two reasons: the roster module has already folded the
+   * same bus event by the time the engine sees it, and a user edit made between two log lines
+   * must reach the very next one. Cheap by construction — the view is at most five names.
+   */
+  rosterProvider: () => RosterView = () => EMPTY_ROSTER_VIEW
+  /** The SERIALIZABLE roster the snapshot carries to both renderer bundles — provenance, names
+   *  and staleness, which the hot-path `RosterView` deliberately does not carry. Read once per
+   *  UI tick, never per line, and from the same module as `rosterProvider`, so the rows the
+   *  meter draws and the chip that filters them always describe one group. */
+  rosterSnapProvider: () => RosterSnap = () => EMPTY_ROSTER
   /** Every name key that has EVER been one of your pets this session. Small, never pruned,
    *  and the reason `notePlayer` can never mistake a pet for a player (see notePet). */
   everPet = new Set<string>()
@@ -264,6 +280,11 @@ export class EngineState {
     if (!enc) return
     const key = idKey(name)
     if (this.isKnownPlayer(key)) return
+    // …and a GROUP MEMBER is never a hostile either (docs/plans/group-model.md §3.5). Members
+    // never reach `engaged` (engageHostile refuses them), so the loop below would find nothing
+    // to refresh anyway; the early return states the rule where a reader looks for it and keeps
+    // it from depending on that other guard staying correct.
+    if (this.isMember(key)) return
     // Keep the WORLD's per-instance clock in lockstep with the encounter's presence axis, so
     // the staleness retirement in WorldModel.resolve() ages an instance out on exactly the
     // same evidence evalClosure() uses to call it gone (see world.ts INSTANCE_STALE_MS).
@@ -287,7 +308,8 @@ export class EngineState {
     if (!enc.engaged.has(instanceId)) return
     if (this.world.isLivePet(instanceId)) return
     const hash = instanceId.lastIndexOf('#')
-    if (hash > 0 && this.isKnownPlayer(instanceId.slice(0, hash))) return
+    const nameKey = hash > 0 ? instanceId.slice(0, hash) : ''
+    if (nameKey !== '' && (this.isKnownPlayer(nameKey) || this.isMember(nameKey))) return
     const prev = enc.engagedSeen.get(instanceId)
     if (prev === undefined || ts > prev) enc.engagedSeen.set(instanceId, ts)
   }
@@ -295,6 +317,46 @@ export class EngineState {
   /** True when `nameKey` is a player (the owner, or someone the heal stream tied to them). */
   isKnownPlayer(nameKey: string): boolean {
     return nameKey === 'you' || this.knownPlayers.has(nameKey)
+  }
+
+  /** The live roster view (see rosterProvider). One call per decision, never cached across
+   *  lines — the roster can change between any two of them. */
+  roster(): RosterView {
+    return this.rosterProvider()
+  }
+
+  /** The roster as the snapshot serializes it (see rosterSnapProvider). */
+  rosterSnap(): RosterSnap {
+    return this.rosterSnapProvider()
+  }
+
+  /**
+   * True when `nameKey` is someone the engine may book OUTGOING damage for as a group member.
+   * This is the ADMISSION test — deliberately the wider `admitted` set, not the live roster, so
+   * that a member who left mid-pull keeps being recorded (their damage is real and the Everyone
+   * scope shows it) and so that a user REMOVING someone in the popover only ever hides a row.
+   */
+  isAdmittedMember(nameKey: string): boolean {
+    if (nameKey === 'you') return false
+    // A pet is never a member. The guard is the same absolute one notePlayer uses and it
+    // matters for the same reason: a "member" is excluded from `engaged` and from presence, so
+    // one bad entry would silently delete a real pet's damage with no error anywhere.
+    if (this.petNames.has(nameKey) || this.everPet.has(nameKey)) return false
+    return this.roster().admitted.has(nameKey)
+  }
+
+  /**
+   * True when `nameKey` is on the roster RIGHT NOW. This is the "never a hostile" test —
+   * engageHostile and the presence axis both consult it, because a group member's TARGET is what
+   * we are fighting and the member never is (docs/plans/group-model.md §3.5: the 214-second
+   * merged pull is what happens when a friendly enters `engaged`).
+   *
+   * The live roster rather than `admitted`: someone who genuinely left your group and is now
+   * duelling you is not protected by having once been a member. The admission set is about
+   * damage already earned; this one is about who is on your side now.
+   */
+  isMember(nameKey: string): boolean {
+    return this.roster().members.has(nameKey)
   }
 
   /**

@@ -267,8 +267,12 @@ interface DamageAnalytics {
  *  "the meter ignored this line", in which case the ledgers must ignore it too. */
 function damageAnalytics(st: EngineState, ev: DamageEvent): DamageAnalytics | null {
   if (ev.amount <= 0) return null
-  const at = classify(ev, st.petNames, st.knownPlayers)
+  const at = classify(ev, st.petNames, st.knownPlayers, st.roster().admitted)
   if (at.kind === 'ignore') return null
+  // A GROUP MEMBER's hit is not yours, exactly like a pet's: it is not your swing, not your
+  // proc, and not your active time. Proc analytics stay strictly first-person (the cast-less
+  // proc inference reads `You begin casting`, which only you print), so the member falls into
+  // the same `mine: false` branch the pet does and moves no proc counter.
   if (at.kind !== 'out-you') return { mine: false, swing: 0, proc: false }
   const swing = ev.category === 'melee' || ev.category === 'slay' ? 1 : 0
   const proc = procEligibleDamage(ev.dtype) && isCastless(st.recentCasts, ev.skill, ev.ts)

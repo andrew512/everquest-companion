@@ -20,14 +20,21 @@ import type { DamageCategory, HealSourceKind, SourceKind } from '../../shared/co
 export type Attribution =
   | { kind: 'out-you' }
   | { kind: 'out-pet'; petKey: string; petName: string; ambiguous: boolean }
+  | { kind: 'out-member'; memberKey: string; memberName: string }
   | { kind: 'incoming' }
   | { kind: 'ignore' }
 
 /**
- * Pure attribution decision — the whole point is same-name twin handling.
- * `petNames` is a Set of canonical (lowercased) keys for ALL of your live pets,
- * charmed AND summoned: both attribute identically (as "your pet"), so this
- * function never needs to know which kind it is.
+ * THE ADMISSION GATE. Everything the combat model books passes through here, which is why the
+ * reported "my group-mate is missing from the meter" bug was a one-line decision rather than a
+ * parse failure: a slice replay proved every damage-shaped line parses (0 unmatched shapes) and
+ * the group member still appeared in ZERO fights, because the last rule below used to be
+ * "attacker not you/pet, target not you → ignore" and 2,224 parsed events fell through it
+ * (docs/plans/group-model.md §3.5).
+ *
+ * `petNames` is a Set of canonical (lowercased) keys for ALL of your live pets, charmed AND
+ * summoned: both attribute identically (as "your pet"), so this function never needs to know
+ * which kind it is.
  *
  * Rules (decided with the user):
  *   You → pet-name : ALWAYS outgoing to a hostile twin (never dropped as FF).
@@ -38,53 +45,109 @@ export type Attribution =
  *   pet-name → other : pet outgoing (existing rule).
  *   You → other : outgoing.  other → You : incoming.  else ignore.
  *   pet-name → a KNOWN PLAYER : IGNORE (Task #65) — see below.
+ *   member → other : OUTGOING, as that member's own row (the group model).
  *
  * `knownPlayers` (optional; empty by default so every existing caller is unchanged) is the
  * set of name keys proven to be players. A pet swinging at a PLAYER is not our fight: either
  * the "pet" was never ours, or this is a duel. Booking it would credit us the damage AND — via
  * routeOutgoingDamage — enter that player into `engaged` as a hostile, which is exactly how a
  * stranger became the owner's enemy and kept three of his pulls from ever closing.
+ *
+ * `members` (likewise empty by default) is the roster's ADMISSION set — every name that has
+ * been in your group since the last epoch or self-leave. It widens the gate and NOTHING ELSE:
+ * a member is still not a hostile (engageHostile refuses them), still not a presence signal,
+ * and still not a target we track. Two things it deliberately does not do:
+ *
+ *   MEMBER → You is IGNORED, not incoming. The incoming meter answers "what is hitting me",
+ *   which in this game means hostiles; a group-mate's stray damage-shield tick or duel swing is
+ *   not that, and filing it as incoming would put an ally in the enemy list.
+ *
+ *   ANY mob → member is IGNORED, unchanged. Incoming-on-members ("what is hitting my group") is
+ *   a real feature and is explicitly out of scope here — sources first, one wave at a time.
  */
 export function classify(
   ev: DamageEvent,
   petNames: ReadonlySet<string>,
-  knownPlayers: ReadonlySet<string> = new Set()
+  knownPlayers: ReadonlySet<string> = new Set(),
+  members: ReadonlySet<string> = new Set()
 ): Attribution {
   const aKey = idKey(ev.attacker)
   const bKey = idKey(ev.target)
-  const aYou = aKey === 'you'
-  const bYou = bKey === 'you'
-  const aPet = !aYou && petNames.has(aKey)
-  const bPet = !bYou && petNames.has(bKey)
-
-  if (aYou) {
+  if (aKey === 'you') {
     // You → anything (including a pet name = a hostile twin) is outgoing.
-    return bYou ? { kind: 'ignore' } : { kind: 'out-you' }
+    return bKey === 'you' ? { kind: 'ignore' } : { kind: 'out-you' }
   }
-  if (aPet) {
-    // Your pet is the attacker.
-    if (bYou) return { kind: 'incoming' } // pet-name → You is always incoming
-    if (knownPlayers.has(bKey)) return { kind: 'ignore' } // …but never AT a player
-    const ambiguous = aKey === bKey // same-name twin: can't tell pet from twin
-    return { kind: 'out-pet', petKey: aKey, petName: ev.attacker, ambiguous }
-  }
-  if (bYou) return { kind: 'incoming' }
-  // Attacker not friendly, target not you. If target is a pet, this is a mob
-  // hitting your pet — not tracked as our incoming (existing behavior: ignore).
-  void bPet
+  const sides = { aKey, bKey, bYou: bKey === 'you', petNames, knownPlayers, members }
+  if (petNames.has(aKey)) return petAttacker(ev, sides)
+  // A GROUP MEMBER is the attacker. Checked before the incoming rule so a member's hit ON you
+  // is dropped rather than filed as an enemy's; checked after the pet rules so a charmed mob
+  // that shares a member's name (it cannot, but the ordering states the precedence) still
+  // attributes as your pet.
+  if (members.has(aKey)) return memberAttacker(ev, sides)
+  if (sides.bYou) return { kind: 'incoming' }
+  // Attacker not friendly, target not you. If the target is a pet or a group member, this is a
+  // mob hitting one of ours — deliberately NOT tracked as our incoming (existing behavior for
+  // pets; docs/plans/group-model.md §3.5 defers "what is hitting my group" to a later wave).
   return { kind: 'ignore' }
 }
 
+/** The two name keys plus the three membership sets — the shared argument of the two branches
+ *  above, so neither has to re-derive what the other already knows. */
+interface Sides {
+  aKey: string
+  bKey: string
+  bYou: boolean
+  petNames: ReadonlySet<string>
+  knownPlayers: ReadonlySet<string>
+  members: ReadonlySet<string>
+}
+
+/** YOUR PET is the attacker. */
+function petAttacker(ev: DamageEvent, s: Sides): Attribution {
+  if (s.bYou) return { kind: 'incoming' } // pet-name → You is always incoming
+  if (s.knownPlayers.has(s.bKey)) return { kind: 'ignore' } // …but never AT a player
+  if (s.members.has(s.bKey)) return { kind: 'ignore' } // …nor at a group-mate
+  const ambiguous = s.aKey === s.bKey // same-name twin: can't tell pet from twin
+  return { kind: 'out-pet', petKey: s.aKey, petName: ev.attacker, ambiguous }
+}
+
+/** A GROUP MEMBER is the attacker. Every friendly target is dropped rather than booked: a
+ *  member's damage on you, on your pet or on another member is not a fight we model. */
+function memberAttacker(ev: DamageEvent, s: Sides): Attribution {
+  if (s.bYou || s.petNames.has(s.bKey)) return { kind: 'ignore' }
+  if (s.knownPlayers.has(s.bKey) || s.members.has(s.bKey)) return { kind: 'ignore' }
+  return { kind: 'out-member', memberKey: s.aKey, memberName: ev.attacker }
+}
+
+/** The three outgoing row kinds, as the damage / miss / resist paths name them. */
+type OutKind = 'you' | 'pet' | 'member'
+
+/** Which outgoing row an attribution writes to. */
+function outKind(at: Attribution): OutKind {
+  return at.kind === 'out-you' ? 'you' : at.kind === 'out-member' ? 'member' : 'pet'
+}
+
 /**
- * The outgoing meter ROW for an attributed you/pet action — the (aggregate id, display
+ * The outgoing meter ROW for an attributed you/pet/member action — the (aggregate id, display
  * name, kind) triple the damage, miss and resist paths all need and all resolved
  * identically. A pet is resolved to its pet INSTANCE so twin pets stay distinct.
+ *
+ * A GROUP MEMBER IS KEYED BY NAME, NOT BY INSTANCE, and that is a deliberate departure from the
+ * pet rule. Instance discipline exists to tell same-named entities apart in a world of spawning
+ * mobs; a group member is a player with a unique account name and no spawn generation. More to
+ * the point, `world.resolve()` MINTS a world instance, and minting one for a friendly is
+ * precisely what Task #65's hard-won discipline forbids — a player-shaped instance can be
+ * engaged, retired, aged out and counted as a hostile presence. Keying on the canonical name
+ * gives one stable row per member and touches the world model not at all.
  */
-function outSource(st: EngineState, attacker: string, isYou: boolean, ts: number): SourceRef {
-  const kind: SourceKind = isYou ? 'you' : 'pet'
-  if (isYou) return { id: 'you', name: 'You', kind }
+function outSource(st: EngineState, attacker: string, kind: OutKind, ts: number): SourceRef {
+  if (kind === 'you') return { id: 'you', name: 'You', kind: 'you' satisfies SourceKind }
+  if (kind === 'member') {
+    const key = idKey(attacker)
+    return { id: `member:${key}`, name: st.roster().nameOf(key) ?? attacker, kind: 'member' }
+  }
   const petInst = st.world.petInstance(attacker) ?? st.world.resolve(attacker, ts, true)
-  return { id: `pet:${petInst.instanceId}`, name: st.world.label(petInst), kind }
+  return { id: `pet:${petInst.instanceId}`, name: st.world.label(petInst), kind: 'pet' }
 }
 
 /**
@@ -96,9 +159,15 @@ function outSource(st: EngineState, attacker: string, isYou: boolean, ts: number
  * not die on our schedule and whose every heal used to refresh his own presence — could hold a
  * pull open indefinitely. Measured: one such entry merged three of the owner's pulls into a
  * single 214-second segment.
+ *
+ * A GROUP MEMBER IS REFUSED FOR EXACTLY THAT REASON (docs/plans/group-model.md §3.5), and the
+ * rule is load-bearing in a way the known-player one was not: admitting members means the
+ * engine now routes damage whose TARGET can be another friendly, and `You → <member>` reaches
+ * this function on the ordinary outgoing path. A member's target engages; the member never
+ * does. The 214-second merged pull is the cautionary tale, and this is the door it came through.
  */
 function engageHostile(st: EngineState, enc: Encounter, inst: { instanceId: string; nameKey: string }, ts: number): void {
-  if (st.isKnownPlayer(inst.nameKey)) return
+  if (st.isKnownPlayer(inst.nameKey) || st.isMember(inst.nameKey)) return
   enc.engaged.add(inst.instanceId)
   enc.engagedSeen.set(inst.instanceId, ts)
 }
@@ -120,17 +189,20 @@ function routeIncomingDamage(st: EngineState, enc: Encounter, ev: DamageEvent): 
   st.log(ev.ts, ev.dtype, 'enemy', `${name} → You  ${ev.amount}${ev.crit ? '*' : ''}  ${ev.skill}`)
 }
 
-/** You or your pet landed a hit. */
+/** You, your pet or a group member landed a hit. */
 function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, at: Attribution): void {
-  const isYou = at.kind === 'out-you'
-  const src = outSource(st, ev.attacker, isYou, ev.ts)
-  if (!isYou) {
+  const src = outSource(st, ev.attacker, outKind(at), ev.ts)
+  if (at.kind === 'out-pet') {
     // The pet is trading blows with its target — record that engagement for the
     // death-disambiguation rule (case 2b).
     st.world.notePetEngagement(ev.attacker, idKey(ev.target))
     // A pet LANDING a hit is pet-shaped evidence (see the routeMiss/routeResist twins).
-    if (at.kind === 'out-pet') st.charm.notePetEvidence(at.petKey)
+    st.charm.notePetEvidence(at.petKey)
   }
+  // NOTE what a MEMBER's hit deliberately does not do: it records no pet engagement (a member
+  // is not a pet and their kills are not ours to disambiguate) and no charm evidence. The one
+  // thing it does beyond its own row is engage its TARGET — which is the whole point, because
+  // the mob your group-mate is fighting is the mob you are fighting.
   const ambiguous = at.kind === 'out-pet' && at.ambiguous
   // POISON-TYPED DAMAGE (Task #64): the game states the damage TYPE on every typed spell
   // line ("… for 53 points of POISON damage by Asp Venom Strike."), so a poison lane is a
@@ -171,7 +243,7 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
 
 export function route(st: EngineState, ev: DamageEvent): void {
   if (ev.amount <= 0) return
-  const at = classify(ev, st.petNames, st.knownPlayers)
+  const at = classify(ev, st.petNames, st.knownPlayers, st.roster().admitted)
   if (at.kind === 'ignore') return
 
   // Twin evidence: You→pet-name or same-name→same-name proves a hostile twin
@@ -230,17 +302,18 @@ function missFold(st: EngineState, ev: MissEvent, isYou: boolean): MissFold {
   }
 }
 
-/** A miss YOU or your pet swung. */
+/** A miss YOU, your pet or a group member swung. */
 function routeOutgoingMiss(
   st: EngineState,
   enc: Encounter | null,
   probe: { ts: number; attacker: string; target: string; mtype: MissType; fold: MissFold },
-  isYou: boolean
+  kind: OutKind
 ): void {
-  const src = outSource(st, probe.attacker, isYou, probe.ts)
+  const src = outSource(st, probe.attacker, kind, probe.ts)
   // A pet WHIFFING is every bit as much proof it is fighting for us as a landed hit
-  // (charmModel.ts corroboration — see routeOutgoingDamage's twin).
-  if (!isYou) st.charm.notePetEvidence(idKey(probe.attacker))
+  // (charmModel.ts corroboration — see routeOutgoingDamage's twin). A MEMBER's whiff proves
+  // nothing about charm — they are a player, bound by a group line, not by evidence.
+  if (kind === 'pet') st.charm.notePetEvidence(idKey(probe.attacker))
   enc?.agg.addOutMiss(src, probe.fold)
   st.zoneAgg.addOutMiss(src, probe.fold)
   // Timeline: a miss tick lanes under "Melee" (hollow/red mark in the renderer). The
@@ -265,7 +338,7 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     ts, attacker, target, amount: 0, dtype: 'melee', skill: 'Melee', crit: false,
     category: 'melee', modifiers: []
   }
-  const at = classify(probe, st.petNames, st.knownPlayers)
+  const at = classify(probe, st.petNames, st.knownPlayers, st.roster().admitted)
   if (at.kind === 'ignore') return
   const fold = missFold(st, ev, at.kind === 'out-you')
   // A miss doesn't open or extend an encounter (closure is death/CC/fallback driven),
@@ -296,20 +369,20 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     st.log(ts, 'miss', 'enemy', `${name} ✕ You (${mtype})`)
     return
   }
-  routeOutgoingMiss(st, enc, { ts, attacker, target, mtype, fold }, at.kind === 'out-you')
+  routeOutgoingMiss(st, enc, { ts, attacker, target, mtype, fold }, outKind(at))
 }
 
-/** YOUR (or your pet's) detrimental spell was resisted. */
+/** YOUR (or your pet's, or a group member's) detrimental spell was resisted. */
 function routeOutgoingResist(
   st: EngineState,
   enc: Encounter | null,
   cast: { ts: number; caster: string; target: string; spell: string; category: DamageCategory },
-  isYou: boolean
+  kind: OutKind
 ): void {
-  const src = outSource(st, cast.caster, isYou, cast.ts)
+  const src = outSource(st, cast.caster, kind, cast.ts)
   // Same corroboration as the damage/miss twins: a pet whose spell got resisted was casting
-  // for us.
-  if (!isYou) st.charm.notePetEvidence(idKey(cast.caster))
+  // for us. A member's resisted cast is not charm evidence (see routeOutgoingMiss).
+  if (kind === 'pet') st.charm.notePetEvidence(idKey(cast.caster))
   enc?.agg.addOutResist(src, cast.spell, cast.category)
   st.zoneAgg.addOutResist(src, cast.spell, cast.category)
   // Same instance resolution as the miss/damage paths (see defenderLabel) — a resisted
@@ -368,15 +441,24 @@ export function routeResist(st: EngineState, ev: ResistEvent): void {
     return
   }
 
-  const casterKey = idKey(caster)
-  const isYou = casterKey === 'you'
-  const isPet = !isYou && st.petNames.has(casterKey)
-  if (!isYou && !isPet) {
+  const kind = resistCaster(st, idKey(caster))
+  if (kind === null) {
     // A hostile mob's spell resisted by another mob — out of scope for the meter.
     st.log(ts, 'resist', 'dropped', `${caster}'s ${spell} resisted by ${target}`)
     return
   }
-  routeOutgoingResist(st, enc, { ts, caster, target, spell, category }, isYou)
+  routeOutgoingResist(st, enc, { ts, caster, target, spell, category }, kind)
+}
+
+/**
+ * Whose resisted cast this was, or null when it is nobody's business of ours. Separated out
+ * because this path never calls classify() — a resist names a CASTER and a TARGET, not an
+ * attacker and a defender — so the same three-way widening has to be stated by hand.
+ */
+function resistCaster(st: EngineState, casterKey: string): OutKind | null {
+  if (casterKey === 'you') return 'you'
+  if (st.petNames.has(casterKey)) return 'pet'
+  return st.isAdmittedMember(casterKey) ? 'member' : null
 }
 
 /** One heal line, already keyed and attributed — the shared argument of both heal folds. */
@@ -412,7 +494,13 @@ function addHostileHeal(st: EngineState, r: HealRouting): void {
   // engageHostile() already keeps them out of `engaged`, which makes this unreachable for a
   // player the heal stream identified; it is stated anyway because the two rules answer the
   // same question and must not be able to disagree.
-  if (st.isKnownPlayer(idKey(r.target))) return
+  const tKey = idKey(r.target)
+  if (st.isKnownPlayer(tKey)) return
+  // …and neither is a GROUP MEMBER. Stated here rather than left to engageHostile's refusal
+  // (which already makes the `engaged` test below fail) because the very next line RESOLVES the
+  // target, and resolving mints a world instance — a friendly must not acquire one just because
+  // somebody healed them.
+  if (st.isMember(tKey)) return
   const inst = st.world.resolve(r.target, r.ts)
   const enc = st.current
   if (enc?.engaged.has(inst.instanceId)) {
