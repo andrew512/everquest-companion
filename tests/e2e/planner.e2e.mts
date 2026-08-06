@@ -460,6 +460,16 @@ async function stepSocketView(page: Page): Promise<void> {
     `preset "${label}" for socket ${socket}`
   )
 
+  // Under a preset, haste-locked donors are OUT, not chipped (owner verdict 2026-08-05): the
+  // preset promises only-legal-fits and R3 says haste never moves. The chip only exists in the
+  // free browser, where it teaches the rule.
+  const hasteChips = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.MuiChip-label')).filter((el) =>
+      (el.textContent ?? '').includes('haste — can')
+    ).length
+  )
+  check('…and no haste-locked donor is offered under the preset', hasteChips === 0, `${String(hasteChips)} haste chips`)
+
   // Clearing hands the browser back — the preset is a filter, never a mode you get stuck in.
   await page.click(`${PRESET_CHIP} .MuiChip-deleteIcon`, { timeout: 15_000 })
   check('clearing the preset gives the browser back', await until(async () => (await countOf(page, PRESET_CHIP)) === 0, 10_000))

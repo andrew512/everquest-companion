@@ -309,6 +309,9 @@ interface RowsInput {
   view: { eraOnly: boolean; nonEquip: boolean }
   /** V8 — the host's own class list; `[]` is unknown and filters nothing (law 1) */
   hostClasses: readonly ClassAbbr[]
+  /** V8 — a socket preset is active. Haste-locked donors are ILLEGAL there, not merely chipped:
+   *  R3 says haste never moves, and a preset promises only-legal-fits (owner verdict, 2026-08-05). */
+  presetActive: boolean
   axis: GroupAxis
   open: ReadonlySet<string>
 }
@@ -321,13 +324,17 @@ interface RowsInput {
  * is about to redo; the row flattening keys off the groups and the expanded set.
  */
 function useVisibleRows(input: RowsInput): BrowserRow[] {
-  const { donors, filters, text, planClasses, view, hostClasses, axis, open } = input
+  const { donors, filters, text, planClasses, view, hostClasses, presetActive, axis, open } = input
   const filtered = useMemo(() => {
-    const rows = filterDonors(donors, { ...filters, text }, planClasses, view)
+    let rows = filterDonors(donors, { ...filters, text }, planClasses, view)
+    // Under a preset, haste-locked donors are not shown-and-chipped — they are OUT: the preset
+    // is "what can legally fill this socket", and R3's answer for haste is never. In the free
+    // browser they stay visible (the chip is how the rule gets taught).
+    if (presetActive) rows = rows.filter((d) => !d.hasteLocked)
     // R2's class half against the HOST, not the set: an effect can only move into an item that
     // shares a class with it.
     return hostClasses.length === 0 ? rows : rows.filter((d) => !classesMismatch(d.classes, hostClasses))
-  }, [donors, filters, text, planClasses, view, hostClasses])
+  }, [donors, filters, text, planClasses, view, hostClasses, presetActive])
   const groups = useMemo(() => groupDonors(filtered, axis, donorEraOf), [filtered, axis])
   return useMemo(() => browserRows(groups, open), [groups, open])
 }
@@ -443,6 +450,7 @@ export default function EffectBrowser({
     planClasses: plan.classes,
     view,
     hostClasses,
+    presetActive: preset !== null,
     axis: groupBy[0],
     open
   })
