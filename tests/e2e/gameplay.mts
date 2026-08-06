@@ -163,6 +163,61 @@ export function playPetOrder(log: FixtureLog): number {
 }
 
 /**
+ * THE SUCCESSOR, BOUND BY ASKING (JOS-52) — `/pet who leader`, played through the real app.
+ *
+ * This is the one fact no unit test can reach. The rule's whole guard is that the leader the pet
+ * names is the TAILED CHARACTER, and that name arrives from the session
+ * (session.ts `resetWorldFor` → rulesets.ts `installCharacterName`), not from a constant. A unit
+ * test installs it by hand; only a real launch proves the product installs it — and the harness
+ * tails `eqlog_Primitive_freeport.txt`, so the answer this pet gives has to name Primitive to
+ * work at all.
+ *
+ * It plays THREE facts at once, in the order the game would print them:
+ *   1. a NEW pet swings while nothing has bound it            — must stay invisible
+ *   2. it answers `/pet who leader`                            — binds, forward only
+ *   3. it swings again                                         — the whole of its row
+ *   4. the PREVIOUS pet swings once more                       — must not move, ever: the
+ *      single-pet succession (JOS-54) retired it when this one bound, and retirement ends a
+ *      future without touching a past.
+ *
+ * The sentence is verbatim from the owner's log (`Jaber says, 'My leader is Primitive.'`,
+ * Thu Aug 06 12:44:20, the corpus's only occurrence) with the pet's name swapped; `Gonekn` is
+ * the owner's own next animation from that same window.
+ */
+export const PET_LEADER_NAME = 'Gonekn'
+
+/** Every line `playPetLeaderAnswer` writes. */
+export const PET_LEADER_LINES = 4
+
+/** The successor's hit BEFORE it answers. A say binds forward, so nothing may ever show this. */
+export const PET_LEADER_UNBOUND_DAMAGE = 55
+
+/** The successor's hit AFTER it answers — and therefore the whole of its meter row. */
+export const PET_LEADER_BOUND_DAMAGE = 88
+
+/** What the RETIRED pet swings for afterwards. Its row must stay on PET_BOUND_DAMAGE. */
+export const PET_RETIRED_DAMAGE = 999
+
+/**
+ * Ask the new pet who its leader is, and let the old one swing once more afterwards.
+ *
+ * Timestamps start 2 s past `Date.now()` so the block is strictly after whatever `playPetOrder`
+ * wrote, however fast the meter settled in between — a line stamped before one already folded
+ * would be testing the ordering of the harness rather than the rule.
+ */
+export function playPetLeaderAnswer(log: FixtureLog): number {
+  const t0 = Date.now() + 2000
+  const hit = (name: string, amount: number): string =>
+    `${name} slashes ${PULL_TARGET} for ${String(amount)} points of damage.`
+  let written = 0
+  written += log.appendAt(new Date(t0), hit(PET_LEADER_NAME, PET_LEADER_UNBOUND_DAMAGE))
+  written += log.appendAt(new Date(t0 + 1000), `${PET_LEADER_NAME} says, 'My leader is Primitive.'`)
+  written += log.appendAt(new Date(t0 + 2000), hit(PET_LEADER_NAME, PET_LEADER_BOUND_DAMAGE))
+  written += log.appendAt(new Date(t0 + 3000), hit(PET_NAME, PET_RETIRED_DAMAGE))
+  return written
+}
+
+/**
  * The self `/who` row — the ONE line the log ever prints that states the class loadout
  * (AGENTS.md: keyed on the tailed character's name, never a constant; the scrub exempts the
  * user's own row for exactly this reason).

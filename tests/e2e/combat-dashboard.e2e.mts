@@ -81,6 +81,7 @@ import {
   stepMeterDrill,
   stepMeterScope,
   stepMultiAttackPanel,
+  stepPetAnswersWhoLeads,
   stepPetNeverAsked,
   stepScriptedPull
 } from './combatSteps.mjs'
@@ -562,6 +563,10 @@ async function main(): Promise<void> {
     //     `/pet attack` puts it on the meter. LAST, because it scripts a pull and leaves it OPEN
     //     so the assertions read a live meter. Nothing below it may assume a quiet log.
     await stepPetNeverAsked(page, log)
+    // 15. …AND THE PET YOU ASK INSTEAD (JOS-52) — `/pet who leader` binds a successor that was
+    //     never ordered, forward only, and retires the pet it replaced. Straight after 14 because
+    //     it inherits that step's bound pet: the succession is half of what it proves.
+    await stepPetAnswersWhoLeads(page, log)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 

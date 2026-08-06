@@ -35,13 +35,19 @@ import {
 import { drilled, meterRows } from './drill.mjs'
 import {
   PET_BOUND_DAMAGE,
+  PET_LEADER_BOUND_DAMAGE,
+  PET_LEADER_LINES,
+  PET_LEADER_NAME,
+  PET_LEADER_UNBOUND_DAMAGE,
   PET_NAME,
   PET_ORDER_LINES,
   PET_PULL_LINES,
+  PET_RETIRED_DAMAGE,
   PET_UNBOUND_DAMAGE,
   PULL_DAMAGE,
   PULL_LINES,
   PULL_TARGET,
+  playPetLeaderAnswer,
   playPetOrder,
   playPetPull,
   playPull
@@ -482,5 +488,48 @@ export async function stepPetNeverAsked(page: Page, log: FixtureLog): Promise<vo
     '…and the row is what it did AFTER the order — a tell does not reach backwards',
     row?.total === PET_BOUND_DAMAGE,
     `${String(row?.total ?? 0)} of ${String(PET_BOUND_DAMAGE)} (unbound ${String(PET_UNBOUND_DAMAGE)} stays invisible)`
+  )
+}
+
+/** The pet rows are matched on the display name with the spawn-generation ` (N)` suffix off —
+ *  `WorldModel.label()` appends one and it appears in no log line (world-model law 2). */
+const petRowFor = (s: Snap, name: string): SnapEntity | undefined =>
+  s.selected?.entities.find((e) => e.kind === 'pet' && e.name.replace(/\s+\(\d+\)$/, '') === name)
+
+/**
+ * THE OTHER CURE: `/pet who leader` (JOS-52) — runs straight after `stepPetNeverAsked` and
+ * inherits its bound pet, because the point is the SUCCESSION as much as the bind.
+ *
+ * This is the only place the rule can be proved end to end. Its whole guard is that the leader
+ * the pet names is the TAILED CHARACTER, and that name arrives from the session
+ * (session.ts `resetWorldFor` → rulesets.ts `installCharacterName`), never from a constant. A
+ * unit test installs it by hand; only a real launch proves the product does — and the harness
+ * tails `eqlog_Primitive_freeport.txt`, so the answer has to name Primitive to work at all.
+ */
+export async function stepPetAnswersWhoLeads(page: Page, log: FixtureLog): Promise<void> {
+  const asked = playPetLeaderAnswer(log)
+  check('the harness asked the new pet who its leader is', asked === PET_LEADER_LINES, `${String(asked)} lines`)
+  const after = await settle(() => snapshot(page), (s) => petRowFor(s, PET_LEADER_NAME) !== undefined, {
+    timeoutMs: 20_000
+  })
+  const heir = petRowFor(after, PET_LEADER_NAME)
+  if (!check('a pet that NAMES YOU ITS LEADER lands on the meter', !!heir, heir ? heir.name : 'no row')) return
+  check(
+    '…forward only, exactly like the tell — the hit before the answer stays invisible',
+    heir?.total === PET_LEADER_BOUND_DAMAGE,
+    `${String(heir?.total ?? 0)} of ${String(PET_LEADER_BOUND_DAMAGE)} (unbound ${String(PET_LEADER_UNBOUND_DAMAGE)} dropped)`
+  )
+  // ONE PET AT A TIME (JOS-54), through the whole product: binding the successor retired the
+  // predecessor, so its LATER swing is nobody's — while everything it earned while it was yours
+  // stays exactly where it was. Settle first: an unchanged number is an absence, and an absence
+  // is asserted by waiting for the reading to stop moving.
+  const held = await settleStable(
+    () => snapshot(page).then((s) => String(petRowFor(s, PET_NAME)?.total ?? -1)),
+    { timeoutMs: 10_000 }
+  )
+  check(
+    `the retired pet keeps its ${String(PET_BOUND_DAMAGE)} and earns nothing more — one pet at a time`,
+    held === String(PET_BOUND_DAMAGE),
+    `${held} (the ${String(PET_RETIRED_DAMAGE)} it swung after the succession is not yours)`
   )
 }
