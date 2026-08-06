@@ -55,6 +55,16 @@ const skip = P1.length === 0 ? 'fixture not present' : false
 const W46 = read('w46-special-eagle-strike.log')
 const skipWall = P1.length === 0 || W46.length === 0 ? 'fixture not present' : false
 
+/**
+ * P2 — THE WHOLE ARC OF A PET, IN ELEVEN MINUTES (Thu Aug 06 12:34–12:46, a Nagafen's Lair
+ * instance the owner made for himself). P1 is a pet that is never bound; this is the other half.
+ * One span carries the unbound period, the tell that ends it, the pet that replaces it, and that
+ * one's tell — and it is the owner's OWN last two encounters, located after he watched the
+ * feature get the current pet wrong.
+ */
+const P2 = read('p2-pet-arc-bound.log')
+const skipArc = P2.length === 0 ? 'fixture not present' : false
+
 /** The pet-claim view a character with these statements has. */
 function claims(claimed: string[] = [], denied: string[] = []): PetClaimsView {
   const names = new Map(claimed.map((n) => [n.toLowerCase(), n]))
@@ -364,6 +374,99 @@ test('JOS-49: an ANSWERED question is untouched by any of it — a claim still r
   }
   assert.equal(hits, 105)
   assert.equal(total, 1966)
+})
+
+// ── 7. THE OWNER'S OWN LAST TWO PETS (JOS-49, P2) ──────────────────────────────────────────
+//
+// The measurement that made this ticket urgent, and the one that says the fix works. Replaying
+// the whole real log through the PRE-FIX engine, at the exact minutes the owner's live pet Jaber
+// was swinging beside him (Aug 06 12:35:40–12:43:20, 301 events), the meter offered:
+//
+//     Kober (1,966) | President (38,903) | Shiva (34,957)
+//
+// — a pet from Jul 30, one from Jul 31 and one from Jul 28. Jaber appeared in that offer ZERO
+// times out of 301. The wall did not merely clutter the meter: ranked by evidence and capped at
+// three, it CROWDED OUT the one pet the user could actually have answered about. With the gate,
+// the same replay over the same window offers Jaber and nothing else, on 78 of those 301 events
+// — every event from the moment it cleared the bar until the log itself fell silent for five
+// minutes after the kill.
+//
+// AND THE ANIMATION CASTS SPELLS. Jaber opens with `Jaber begins casting Wrath.`, lands
+// 168-point magic hits by it, casts Stun / Daring / Symbol of Ryltan, and heals itself. Anything
+// that read casting or self-healing as player-shaped evidence would silently disqualify the one
+// entity this whole feature exists for — so the fixture carries those lines and the first test
+// below is that they change nothing.
+
+/** Every distinct non-empty offer seen while `spans` are replayed, plus how often it stood. */
+function offersDuring(spans: string[][]): { seen: Map<string, number>; endedEmpty: boolean; pets: string[] } {
+  const eng = new CombatEngine()
+  eng.setPlayerName('Primitive')
+  const seen = new Map<string, number>()
+  let seq = 0
+  let lastTs = 0
+  for (const span of spans) {
+    for (const raw of span) {
+      const ev = parseEvent(raw, seq++)
+      if (!ev) continue
+      eng.ingestEvent(ev, false)
+      lastTs = ev.ts
+      const names = eng.snapshot(ev.ts, {}).petClaims.candidates.map((c) => c.name).join(' | ')
+      if (names) seen.set(names, (seen.get(names) ?? 0) + 1)
+    }
+  }
+  return {
+    seen,
+    endedEmpty: eng.snapshot(lastTs + 120_000, {}).petClaims.candidates.length === 0,
+    pets: eng.petDisplayNames()
+  }
+}
+
+test('P2: the animation CASTS SPELLS and HEALS ITSELF — and is still the question', { skip: skipArc }, () => {
+  // The fixture must actually contain the evidence, or the test below is vacuous.
+  assert.ok(P2.some((l) => /\] Jaber begins casting Wrath\.$/.test(l)), 'it casts')
+  assert.ok(P2.some((l) => /\] Jaber hit .* points of magic damage by Wrath\.$/.test(l)), 'its spell lands')
+  assert.ok(P2.some((l) => /\] Jaber healed himself for \d+ hit points by Daring\.$/.test(l)), 'it self-heals')
+  // A self-heal is NOT player evidence in this log (routing.ts noteHealEvidence takes the healer
+  // only when the heal LANDS ON the owner or a known player), and a cast is evidence of nothing
+  // at all here. So the animation qualifies on exactly the behaviour the bars describe.
+  const { seen } = offersDuring([P2])
+  assert.deepEqual([...seen.keys()], ['Jaber'], 'one question, and it names the right entity')
+  assert.ok((seen.get('Jaber') ?? 0) >= 50, `${seen.get('Jaber') ?? 0} events with the offer standing`)
+})
+
+test('P2: the tell RETIRES the question, and the second pet never becomes one', { skip: skipArc }, () => {
+  // 12:43:12 `Jaber told you, 'Attacking a greater kobold Master.'` binds it; 12:44:45 a second
+  // Kintaz cast makes Gonekn, whose own tell arrives six seconds later — too fast to ever clear
+  // a bar. The offer is an unbound-state offer, so both are gone from it by construction.
+  assert.equal(P2.filter((l) => /told you, 'Attacking a greater kobold Master\.'$/.test(l)).length, 2)
+  const { seen, endedEmpty, pets } = offersDuring([P2])
+  assert.equal(seen.has('Gonekn'), false, 'a pet bound three seconds after its first swing is never asked about')
+  assert.equal(endedEmpty, true, 'and nothing is still being asked at the end of the arc')
+  assert.ok(pets.includes('Gonekn'), 'the replacement is bound, by its own tell')
+  // OBSERVED AND DELIBERATELY NOT FROZEN (JOS-49 measurement, reported for a follow-up): the
+  // single-pet invariant does NOT fire between two SUMMONED pets. `world.claim()` retires
+  // nothing — only `world.charm()` does — and no line in this span says Jaber went away, so both
+  // animations stand as live pets after 12:44:51. It costs this feature nothing (an offer is an
+  // unbound-state offer and both are bound), and correcting it means changing pet ATTRIBUTION in
+  // world.ts, which is a different ticket. Asserting `pets` exactly here would freeze the gap.
+})
+
+test('P2: nothing from earlier in the log survives into this window — the whole point', { skip: skipArc || skipWall }, () => {
+  // THE REGRESSION, stated as the owner experienced it. Prepending two earlier sessions is a
+  // miniature of the startup replay: before the currency gate their candidates carried forward
+  // and, ranked by evidence, took all three offer slots away from the pet actually on screen.
+  const alone = offersDuring([P2])
+  const withHistory = offersDuring([W46, P1, P2])
+  assert.deepEqual(
+    [...withHistory.seen.keys()].filter((k) => !/^(Kober|Dranix|Jaber)$/.test(k)),
+    [],
+    'no offer combining sessions ever appears'
+  )
+  // Each session asks about its OWN pet while that pet is current, and about nothing else. The
+  // count for Jaber is identical with and without two days of history in front of it — which is
+  // the arithmetic form of "the historical wall cannot crowd out the live question".
+  assert.equal(withHistory.seen.get('Jaber'), alone.seen.get('Jaber'))
+  assert.equal(withHistory.endedEmpty, true)
 })
 
 test('P1: the tell alone would ALSO have worked — the claim is a backstop, not a replacement', { skip }, () => {
