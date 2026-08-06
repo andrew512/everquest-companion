@@ -7,6 +7,10 @@
 // is the ONLY consumer that needs the store. This module stays free of the store
 // (and thus of electron) so the discovery logic is unit-testable under plain node.
 //
+// What a manual override MEANS is decided here too, by `normalizeEqDirOverride`
+// (JOS-53): the install root, the `Logs` folder or a log file all resolve to the
+// same `{ root, logsDir }` pair. See the block comment above that function.
+//
 // Discovery order (first hit wins, see `discoverEqRoot`):
 //   1. `extraCandidates()` — env escape hatch, then registry InstallLocations.
 //   2. `<drive>\<Daybreak subpath>` across every fixed drive.
@@ -14,7 +18,7 @@
 // game lives at the public path — so discovery resolves via the drive sweep.
 
 import { execFileSync } from 'child_process'
-import { existsSync, readdirSync } from 'fs'
+import { existsSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 
 /** The canonical Daybreak install root on a default EQ Legends install. */
@@ -64,6 +68,128 @@ export function countCharacterLogs(logsDir: string): number {
     return readdirSync(logsDir).filter((f) => /^eqlog_.+\.txt$/i.test(f)).length
   } catch {
     return 0
+  }
+}
+
+/** Does this directory hold an `eqlog_*.txt` DIRECTLY (i.e. is it itself a Logs dir)? */
+export function dirHasCharacterLogs(dir: string): boolean {
+  return countCharacterLogs(dir) > 0
+}
+
+// ---------------------------------------------------------------------------
+// MANUAL-OVERRIDE NORMALIZATION — "wherever the user points it" (JOS-53).
+//
+// The override used to be trusted VERBATIM as the install ROOT, with `Logs` joined onto it.
+// Two prod reports on 2026-08-06 (installs 23e958f4… and 88f3835a…) hit the other reading:
+// they pointed the picker at their `…\EverQuest Legends\Logs` folder — the folder that
+// literally contains the file the app is looking for — and got "no logs detected", because
+// we then looked in `…\Logs\Logs`. One of them filed a second report apologizing for
+// "total user error". That is the signature of a SILENT WRONG ANSWER: the app resolved a
+// path with source 'manual' and characterCount 0 and never said the folder it actually read.
+//
+// So the seam normalizes instead of trusting. Three shapes a reasonable person picks:
+//   * a log FILE (`eqlog_*.txt`)          → its folder is the Logs dir, its parent the root
+//   * the `Logs` folder itself            → it is the Logs dir, its parent the root
+//   * the install ROOT (a `Logs` subdir)  → unchanged, this is what already worked
+// Anything else keeps the old behavior (root as given), and `characterCount` tells the
+// Settings pane the truth as it always did.
+//
+// It is a pure function over injected probes so the whole table is unit-tested against temp
+// dirs, and — because it runs at RESOLUTION time, not at save time — an override that was
+// already persisted in a broken shape starts working on upgrade with no re-save.
+// ---------------------------------------------------------------------------
+
+/** The filesystem questions override normalization asks. Injected → testable. */
+export interface OverrideProbes {
+  /** Is this an existing directory? */
+  isDir: (p: string) => boolean
+  /** Is this an existing FILE (as opposed to a directory / nothing)? */
+  isFile: (p: string) => boolean
+  /** Does this directory hold an `eqlog_*.txt` directly? */
+  hasCharacterLogs: (dir: string) => boolean
+}
+
+/** The two paths every consumer needs, resolved from one user-supplied path. */
+export interface NormalizedEqDir {
+  /** The install root (`<root>\Logs` is the log directory). */
+  root: string
+  /** The directory the `eqlog_*.txt` files actually live in. */
+  logsDir: string
+}
+
+/**
+ * Drop trailing separators — but never turn a drive root (`D:\`) into a bare drive
+ * (`D:`), which Windows reads as "the current directory ON D:" and which `join`
+ * would happily concatenate into `D:Logs`.
+ */
+function stripTrailingSep(p: string): string {
+  const t = p.replace(/[\\/]+$/, '')
+  if (t === '') return p
+  return /^[A-Za-z]:$/.test(t) ? `${t}\\` : t
+}
+
+/** Index of the last separator of either flavour (paths reach us from store, picker and env). */
+function lastSep(p: string): number {
+  return Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'))
+}
+
+/** The last path segment, separator- and trailing-slash-tolerant. */
+function baseSegment(p: string): string {
+  const t = stripTrailingSep(p)
+  const cut = lastSep(t)
+  return cut < 0 ? t : t.slice(cut + 1)
+}
+
+/** The containing directory, separator- and trailing-slash-tolerant. */
+function parentDir(p: string): string {
+  const t = stripTrailingSep(p)
+  const cut = lastSep(t)
+  if (cut < 0) return t
+  const parent = t.slice(0, cut)
+  if (parent === '') return t.slice(0, cut + 1)
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent
+}
+
+/**
+ * Resolve one user-supplied path into `{ root, logsDir }`. See the block comment above for
+ * why. The order of the tests is deliberate:
+ *   1. a FILE is reasoned about through its containing folder (a picked `eqlog_*.txt`, or
+ *      anything else sitting in the install — the folder is the useful part either way);
+ *   2. a folder NAMED `Logs` is the log directory (case-insensitive; true even when logging
+ *      has never been turned on, which is exactly when it holds no `eqlog_*.txt` to detect);
+ *   3. a folder holding a `Logs` SUBDIR is the install root — this is the shape that already
+ *      worked and it is tested before the content sniff so the pathological folder that is
+ *      both stays interpreted the way it is today;
+ *   4. a folder holding `eqlog_*.txt` directly is the log directory whatever it is called;
+ *   5. anything else (a typo, an unplugged drive, a folder with neither) keeps the old
+ *      behavior — root as given, `<root>\Logs` beneath it.
+ */
+export function normalizeEqDirOverride(picked: string, probes: OverrideProbes): NormalizedEqDir {
+  const path = stripTrailingSep(picked.trim())
+  const asRoot = (root: string): NormalizedEqDir => ({ root, logsDir: join(root, 'Logs') })
+
+  const dir = probes.isFile(path) ? parentDir(path) : path
+  if (!probes.isDir(dir)) return asRoot(path)
+  if (baseSegment(dir).toLowerCase() === 'logs') return { root: parentDir(dir), logsDir: dir }
+  if (probes.isDir(join(dir, 'Logs'))) return asRoot(dir)
+  if (probes.hasCharacterLogs(dir)) return { root: parentDir(dir), logsDir: dir }
+  return asRoot(dir)
+}
+
+/** The real-filesystem probe set for `normalizeEqDirOverride`. */
+export function realOverrideProbes(): OverrideProbes {
+  const stat = (p: string): ReturnType<typeof statSync> | undefined => {
+    try {
+      return statSync(p, { throwIfNoEntry: false })
+    } catch {
+      // A path we cannot stat (permissions, a disconnected UNC share) is "not there".
+      return undefined
+    }
+  }
+  return {
+    isDir: (p) => stat(p)?.isDirectory() ?? false,
+    isFile: (p) => stat(p)?.isFile() ?? false,
+    hasCharacterLogs: dirHasCharacterLogs
   }
 }
 
