@@ -38,6 +38,7 @@ import {
   classifyDbBuff,
   classifyIllusionFade,
   classifyPetClaim,
+  classifyPetLeader,
   classifyPetSay,
   classifyPoisonCoat,
   classifyPoisonProc,
@@ -111,6 +112,12 @@ const CLASSIFIERS: readonly Classifier[] = [
   // is visible in the cascade itself (JOS-47). Cannot shadow anything: the six sentences it
   // matches were `{kind:'unknown'}` before it existed.
   classifyPetSay,
+  // THE `/pet who leader` ANSWER (JOS-52) — the one public pet line that names its owner, so
+  // the one that BINDS. Beneath classifyPetSay because it is the same broadcast channel and the
+  // exception to that rule's whole point; the two cannot shadow each other (the six sentences
+  // and "My leader is <X>." are disjoint), and this shape was `{kind:'unknown'}` before it
+  // existed — the whole log holds exactly one line of it.
+  classifyPetLeader,
   classifyDeath,
   classifyZone,
   // SESSION frame (login / camp-out / camp-abort). Beside the zone rule because they answer

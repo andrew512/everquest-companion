@@ -7,12 +7,15 @@
 // honest.
 //
 // Every sample below is copied from the live log or a committed fixture — never invented. The
-// families are the five enumerated in the module header, and ALL THREE carve-outs are pinned:
+// families are the five enumerated in the module header, and ALL FOUR carve-outs are pinned:
 //   * the pet-claim tell — an NPC pet's binding signal for a summoned pet, kept verbatim,
 //     with no dependence on who is reading the log;
 //   * the six pet-voiced PUBLIC says (JOS-47) — the same argument (an NPC's words, an NPC's
 //     name) for the only public evidence that an entity is somebody's pet. Pinned as an EXACT
 //     sentence set, because a loose `Master` pattern would have leaked six kinds of mob flavor;
+//   * the `/pet who leader` answer (JOS-52) — the one pet-voiced line that names its OWNER, so
+//     the one that binds AND the one that carries a player's name inside the quote. Kept only
+//     when that name is `selfName`, which is where its argument comes from;
 //   * the owner's own /who row — kept ONLY for the name passed in `selfName`, which is the
 //     whole reason the carve-out became a PARAMETER instead of a constant (a fixture's self is
 //     'Primitive'; a user's report's self is whoever they are playing).
@@ -26,6 +29,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   PET_CLAIM_RE,
+  PET_LEADER_RE,
   PET_SAY_RE,
   isThirdPartyChat,
   scrubKeep,
@@ -227,7 +231,64 @@ test('the vocabulary is EXACT — mob flavor that merely says "master" is still 
   }
 })
 
-// ---- CARVE-OUT 3: the owner's own /who row, PARAMETERIZED --------------------------------
+// ---- CARVE-OUT 3: the `/pet who leader` answer, SELF-GATED (JOS-52) -----------------------
+//
+// `<Name> says, 'My leader is <You>.'` is the only line in this log in which a pet names its
+// OWNER, which is what makes it a bind rather than a nomination — and what makes it the first
+// pet-voiced line to carry a PLAYER's name inside the quote. Carve-outs 1 and 2 both rest on
+// "an NPC's words under an NPC's name, so nobody's privacy is at stake"; that argument does not
+// reach this line, so it borrows carve-out 4's instead: your own name is yours to publish, and
+// a stranger's pet naming a stranger drops like any other quoted speech.
+//
+// MEASURED (whole-log sweep, 1,404,458 lines, 2026-08-06): one member, one occurrence.
+
+const LEADER_SELF = "[Thu Aug 06 12:44:20 2026] Jaber says, 'My leader is Primitive.'"
+
+test('CARVE-OUT: the /pet who leader answer survives — but only when it names YOU', () => {
+  // The real line, verbatim, from tests/fixtures/p2-pet-arc-bound.log.
+  assert.equal(scrubKeep(LEADER_SELF, { selfName: SELF }), true)
+  assert.ok(PET_LEADER_RE.test(LEADER_SELF.slice(LEADER_SELF.indexOf('] ') + 2)))
+  // Case-insensitive, like every other name comparison (world-model law 2).
+  assert.equal(scrubKeep(LEADER_SELF, { selfName: 'primitive' }), true)
+  // …and gated, unlike the two carve-outs above it: read by anyone else, this is a stranger's
+  // pet naming a stranger, and it goes.
+  assert.equal(scrubKeep(LEADER_SELF, { selfName: 'Vexxa' }), false)
+  assert.equal(scrubKeep(LEADER_SELF), false, 'no selfName ⇒ no carve-out, the safe default')
+  assert.equal(scrubKeep(LEADER_SELF, { selfName: '' }), false)
+})
+
+test('the leader shape is EXACT — the other lines containing "leader" are untouched', () => {
+  // The same sweep that found the one pet line found twelve others carrying "leader": seven
+  // group-leader lines and five players discussing leadership in chat. A `/leader/` pattern
+  // would have taken opinions about all of them; these keep behaving exactly as they did.
+  assert.equal(
+    scrubKeep('[Thu Aug 06 12:20:01 2026] Rykkerr is now the leader of your group.', { selfName: SELF }),
+    true,
+    'group membership events are KEPT (owner decision 2026-08-05), and not by this carve-out'
+  )
+  for (const line of [
+    "[Wed Jul 29 11:02:14 2026] Bloody tells General1:1, 'you the leader fire it up'",
+    "[Wed Jul 29 11:03:41 2026] Bloody tells General1:1, 'poor leader'",
+    // the shape on another channel is a person's words, exactly as in carve-out 2
+    "[Thu Aug 06 12:44:20 2026] Rykkerr tells you, 'My leader is Primitive.'",
+    "[Thu Aug 06 12:44:20 2026] Rykkerr shouts, 'My leader is Primitive.'",
+    // and a pet naming somebody else, which is the broadcast this whole gate exists for
+    "[Thu Aug 06 12:44:20 2026] Vebarn says, 'My leader is Rykkerr.'"
+  ]) {
+    assert.equal(scrubKeep(line, { selfName: SELF }), false, `must drop: ${line}`)
+  }
+})
+
+test('a name whose regex metacharacters could widen the gate cannot', () => {
+  // `selfName` reaches an EQUALITY test, never a regex — so no name can be crafted into a
+  // pattern that admits somebody else's line. (The /who carve-out escapes its name for the same
+  // reason; this one never builds a regex from it at all.)
+  assert.equal(scrubKeep(LEADER_SELF, { selfName: 'Prim.tive' }), false)
+  assert.equal(scrubKeep(LEADER_SELF, { selfName: 'Nobody|Primitive' }), false)
+  assert.equal(scrubKeep(LEADER_SELF, { selfName: '.*' }), false)
+})
+
+// ---- CARVE-OUT 4: the owner's own /who row, PARAMETERIZED --------------------------------
 
 /** The real self rows from the log, for two different owners. */
 const selfWho = (name: string): string[] => [
@@ -315,6 +376,9 @@ test('tests/fixture-scrub.mjs agrees with the shared module, line for line', () 
     ...Object.values(DROPPED).flat(),
     ...Object.values(KEPT).flat(),
     ...PET_CLAIMS,
+    ...PET_SAYS,
+    LEADER_SELF,
+    "[Thu Aug 06 12:44:20 2026] Vebarn says, 'My leader is Rykkerr.'",
     ...selfWho(SELF),
     ...selfWho('Vexxa'),
     // a couple of shapes with no timestamp prefix at all (an extractor's raw first line)
