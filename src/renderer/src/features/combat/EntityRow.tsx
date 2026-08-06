@@ -10,6 +10,30 @@ import { formatNum as fmt, formatRate } from '../../lib/formatRate'
 import type { SourceView } from '@shared/combat'
 import { Tooltip } from '../../lib/Tooltip'
 
+/**
+ * WHOSE ROW THIS IS, in one word beside the name. `you` and `enemy` get nothing: the direction
+ * filter already said which of the two you are looking at, and a row tagged 'you' in your own
+ * damage list is noise. The two that DO need a word are the ones a bare name cannot tell apart
+ * from you — your pet, and a group-mate (docs/plans/group-model.md).
+ *
+ * State, never process (AGENTS.md): the word names what the row IS, and it carries no tooltip,
+ * because a chip reading 'group' beside a player's name has nothing left to explain. "Why is
+ * this name here?" is answered where it can be answered properly — the roster popover, with
+ * provenance (ScopeChip.tsx).
+ *
+ * HERE rather than in combatShared.tsx because this is that file's only consumer and it sits at
+ * the measured line ceiling: the rule is to split rather than ratchet.
+ */
+const KIND_TAG: Partial<Record<string, string>> = { pet: 'pet', member: 'group' }
+
+function KindChip({ kind }: { kind: string }): React.JSX.Element | null {
+  const tag = KIND_TAG[kind]
+  if (tag === undefined) return null
+  return (
+    <Chip label={tag} size="small" sx={{ ml: 0.5, height: 14, fontSize: 9, bgcolor: `${KIND_COLOR[kind] ?? '#888'}33` }} />
+  )
+}
+
 function missSummary(m: SourceView['missBreakdown']): string {
   const parts: string[] = []
   if (m.miss) parts.push(`${m.miss} miss`)
@@ -64,7 +88,7 @@ export const EntityRow = memo(function EntityRow({
         name={
           <>
             {e.name}
-            {e.kind === 'pet' && <Chip label="pet" size="small" sx={{ ml: 0.5, height: 14, fontSize: 9 }} />}
+            <KindChip kind={e.kind} />
             {e.kind === 'pet' && e.ambiguousHits > 0 && (
               <Tooltip
                 title={`${e.ambiguousHits} hit${e.ambiguousHits === 1 ? '' : 's'} (${fmt(

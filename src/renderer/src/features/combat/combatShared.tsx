@@ -20,7 +20,14 @@ export { fmtDur } from './copyText'
 // Re-exported so every panel header keeps the import it already had.
 export { CopyButton } from './CopyButton'
 
-export const KIND_COLOR: Record<string, string> = { you: '#d9b25f', pet: '#6fb3d2', enemy: '#cf6679' }
+// `member` (a group-mate, docs/plans/group-model.md) is a green in the same muted family as the
+// pet's blue — a friendly, clearly not you, and clearly not the enemy's red.
+export const KIND_COLOR: Record<string, string> = {
+  you: '#d9b25f',
+  pet: '#6fb3d2',
+  member: '#7fbf8f',
+  enemy: '#cf6679'
+}
 
 /**
  * Category colors. Keep this map in sync with the overlay's copy (OverlayMeter.tsx) and the

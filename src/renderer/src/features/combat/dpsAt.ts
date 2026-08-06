@@ -7,11 +7,13 @@
 
 import type { DpsSeries } from './dashboardData'
 
-/** The four rates a hover readout prints. `out` is the outgoing total (you + pet) — the value
+/** The rates a hover readout prints. `out` is the outgoing total (you + pet + group) — the value
  *  the curve's gold line draws. */
 export interface DpsPoint {
   you: number
   pet: number
+  /** your group's contribution (docs/plans/group-model.md); 0 in a solo fight. */
+  group: number
   inc: number
   out: number
 }
@@ -25,7 +27,8 @@ export function dpsAt(series: DpsSeries, tMs: number): DpsPoint {
   const i = Math.min(series.n - 1, Math.max(0, Math.floor(tMs / series.bucketMs)))
   const you = series.you[i]
   const pet = series.pet[i]
-  return { you, pet, inc: series.inc[i], out: you + pet }
+  const group = series.group[i]
+  return { you, pet, group, inc: series.inc[i], out: you + pet + group }
 }
 
 /**

@@ -169,7 +169,9 @@ export interface TipPalette {
 }
 
 function whoWord(kind: TimelineEvent['kind']): string {
-  return kind === 'you' ? 'You' : kind === 'pet' ? 'Pet' : 'Enemy'
+  if (kind === 'you') return 'You'
+  if (kind === 'pet') return 'Pet'
+  return kind === 'member' ? 'Group' : 'Enemy'
 }
 
 /** A fully-resisted spell: the lane is the spell's own, and nothing landed. */

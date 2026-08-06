@@ -21,6 +21,10 @@
 // the SAME key by the SAME hook, and no copy of this preference is ever routed over IPC.
 
 import { useCallback, useSyncExternalStore } from 'react'
+// A VALUE import, so relative — see meterScope.ts and useGlobalFight.ts for the rule. The
+// overlay bundle reads this hook too.
+import { isMeterScope } from '../../../../shared/roster'
+import type { MeterScope } from '@shared/roster'
 
 /**
  * Nest the pet as ONE line item inside your damage breakdown (drillable to the pet's own
@@ -87,4 +91,40 @@ export function useBoolPref(key: string, dflt: boolean): [boolean, (v: boolean) 
  *  Preferences tab ever writes it. */
 export function useCombinePetRow(): [boolean, (v: boolean) => void] {
   return useBoolPref(COMBINE_PET_ROW_KEY, true)
+}
+
+/**
+ * THE METER SCOPE — You / Group / Everyone (docs/plans/group-model.md §2).
+ *
+ * PERSISTED PER SURFACE, which is why the key takes a suffix. The Combat tab and each floating
+ * overlay answer different questions: a docked meter you are reading is often the group's, while
+ * a two-inch overlay pinned over the game is often just yours. One shared key would make the two
+ * fight over one value every time either changed.
+ *
+ * DEFAULT 'group', not 'you'. That is the design doc's call and it is safe by construction: with
+ * no roster, Group renders as Everyone and the chip says `Group (no roster yet)`
+ * (shared/roster.ts effectiveScope), so a solo player sees exactly what they saw before and a
+ * grouped player sees their group without having to find a control first.
+ *
+ * A value that is not one of the three — a hand-edited localStorage, a key written by a future
+ * build — degrades to the default rather than rendering an empty meter.
+ */
+export function useMeterScope(surface: string): [MeterScope, (v: MeterScope) => void] {
+  const key = `eq.combat.meterScope.${surface}`
+  const value = useSyncExternalStore<MeterScope>(
+    subscribe,
+    () => {
+      const v = localStorage.getItem(key)
+      return isMeterScope(v) ? v : 'group'
+    },
+    () => 'group'
+  )
+  const set = useCallback(
+    (v: MeterScope) => {
+      localStorage.setItem(key, v)
+      notifyAll()
+    },
+    [key]
+  )
+  return [value, set]
 }

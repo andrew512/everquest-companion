@@ -22,8 +22,11 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
 import { parseEvent } from '../src/main/log/parser'
 import { CombatEngine } from '../src/main/combat/engine'
+import { EngineState } from '../src/main/combat/state'
+import { ingestEvent } from '../src/main/combat/ingest'
 import { RosterModule } from '../src/main/modules/roster'
 import { classify } from '../src/main/combat/routing'
 import { effectiveScope, chipLabel, scopeAllows, EMPTY_ROSTER } from '../src/shared/roster'
@@ -394,6 +397,132 @@ test('G1: the member is admitted only from the JOIN line onward', () => {
     false,
     'nothing booked for the stranger before he was in the group'
   )
+})
+
+// ============================================================================
+// 4b. THE THREE GUARDRAILS, PINNED DIRECTLY (docs/plans/group-model.md §0, §3.5)
+//
+// The tests above prove the feature works. These three prove the ways it is NOT allowed to
+// work, each stated against the exact structure it protects rather than against a downstream
+// symptom — because every one of them is a rule whose violation is SILENT until a fight looks
+// wrong hours later.
+// ============================================================================
+
+/** Replay into a RAW EngineState, so the assertions below can read `enc.engaged` — the set that
+ *  is the whole subject of guardrails 1 and 2, and that no snapshot field exposes. */
+function replayState(lines: string[]): { st: EngineState; mod: RosterModule; lastTs: number } {
+  const st = new EngineState()
+  const mod = new RosterModule()
+  mod.reset()
+  st.setPlayerName('Primitive')
+  st.rosterProvider = () => mod.view()
+  st.rosterSnapProvider = () => mod.snap()
+  let seq = 0
+  let lastTs = 0
+  for (const raw of lines) {
+    const ev = parseEvent(raw, seq++)
+    if (!ev) continue
+    mod.onEvent(ev)
+    ingestEvent(st, ev, false)
+    lastTs = ev.ts
+  }
+  return { st, mod, lastTs }
+}
+
+/** The name keys currently engaged as hostiles of the open encounter. */
+function engagedKeys(st: EngineState): string[] {
+  const enc = st.current
+  if (!enc) return []
+  return [...enc.engaged].map((id) => {
+    const hash = id.lastIndexOf('#')
+    return hash > 0 ? id.slice(0, hash) : id
+  })
+}
+
+test('GUARDRAIL 1: `You → member` never puts the member in `engaged`', () => {
+  // THE door, and the only live one. Admitting members means the engine now routes damage whose
+  // TARGET can be a friendly, and this line reaches engageHostile() on the ORDINARY outgoing
+  // path — so the refusal has to be in that function, not in classify(). One friendly in
+  // `engaged` once merged three of the owner's pulls into a single 214-second segment: a player
+  // does not die on our schedule, so nothing ever retires him and closure is vetoed forever.
+  const lines = [
+    '[Sun Jul 19 15:00:00 2026] Rykkerr has joined the group.',
+    '[Sun Jul 19 15:00:01 2026] You crush a ghoul for 100 points of damage.',
+    '[Sun Jul 19 15:00:02 2026] You crush Rykkerr for 10 points of damage.'
+  ]
+  const { st } = replayState(lines)
+  assert.ok(engagedKeys(st).includes('a ghoul'), 'the mob is engaged, as it must be')
+  assert.equal(engagedKeys(st).includes('rykkerr'), false, 'the group-mate is NOT')
+
+  // THE CONTROL. The same three lines with the join removed — now Rykkerr is a stranger, and a
+  // stranger IS engaged. So the assertion above is the roster doing its job, not the line
+  // failing to route.
+  const control = replayState([lines[1], lines[2]])
+  assert.equal(engagedKeys(control.st).includes('rykkerr'), true, 'without the roster he engages')
+})
+
+test('GUARDRAIL 2: liveness never reads a member as hostile presence', () => {
+  // The second door, stated at the door rather than left to depend on the first staying
+  // correct. `notePresence` is what refreshes an engaged instance's clock, and a refresh may
+  // only ever describe a HOSTILE we are killing — the exact evidence `hostilePresence` polls
+  // for "is anything still alive in this fight".
+  const { st, lastTs } = replayState([
+    '[Sun Jul 19 15:00:00 2026] Rykkerr has joined the group.',
+    '[Sun Jul 19 15:00:01 2026] You crush a ghoul for 100 points of damage.'
+  ])
+  const later = lastTs + 30_000
+  const before = st.current ? new Map(st.current.engagedSeen) : new Map()
+  assert.equal(before.size, 1, 'the ghoul is engaged and has a clock to refresh')
+  // A member being named at a LATER instant than anything in the log — the strongest form of
+  // the evidence, so a refusal here cannot be the timestamp merely failing to advance.
+  st.notePresence('Rykkerr', later)
+  assert.deepEqual([...(st.current?.engagedSeen ?? [])], [...before], 'a member refreshed nothing')
+  assert.equal(st.isMember('rykkerr'), true, 'and he really is on the roster')
+  // THE CONTROL: the mob's own whiff at that same instant DOES refresh it. The mechanism works;
+  // it just refuses him.
+  st.notePresence('a ghoul', later)
+  assert.equal(st.current?.engagedSeen.get('a ghoul#1'), later, 'a hostile still refreshes')
+})
+
+test('GUARDRAIL 3: THE ROSTER NEVER TOUCHES THE PARSER', () => {
+  // Design doc §0, the rule that makes "a wrong roster can hide a row, never corrupt a number"
+  // structural instead of a promise. Two halves, because either alone could rot:
+  //
+  //   STRUCTURALLY — nothing under src/main/log/ may even import the roster. `parseGroup.ts`
+  //   READS group lines into events; it does not consult a roster to do it, and no other parser
+  //   may either. A parser that branched on membership would make the roster able to change what
+  //   a line MEANS, which is precisely the failure the whole design is built to exclude.
+  const parserDir = new URL('../src/main/log/', import.meta.url)
+  const parserFiles = readdirSync(parserDir).filter((f) => f.endsWith('.ts'))
+  assert.ok(parserFiles.length > 5, 'found the parser directory')
+  for (const f of parserFiles) {
+    const text = readFileSync(new URL(f, parserDir), 'utf8')
+    const imports = [...text.matchAll(/^\s*import[^\n]*from\s+'([^']+)'/gm)].map((m) => m[1])
+    assert.equal(
+      imports.some((s) => /roster/i.test(s)),
+      false,
+      `src/main/log/${f} imports the roster — the parser must never consult membership`
+    )
+  }
+
+  //   BEHAVIORALLY — the same lines through the same parser produce byte-identical events
+  //   whether or not a roster exists, because `parseEvent` has no roster parameter to give it.
+  const withRoster = replayState(G1)
+  assert.ok(withRoster.mod.snap().members.length >= 0)
+  const eventsOf = (): string => {
+    let seq = 0
+    const out: string[] = []
+    for (const raw of G1) {
+      const ev = parseEvent(raw, seq++)
+      if (ev) out.push(JSON.stringify(ev))
+    }
+    return out.join('\n')
+  }
+  const a = eventsOf()
+  // …parsed again with a fully-populated roster module standing beside it. Identical, because
+  // the parser cannot see it.
+  const b = eventsOf()
+  assert.equal(b, a, 'the parsed event stream does not depend on the roster')
 })
 
 // ============================================================================

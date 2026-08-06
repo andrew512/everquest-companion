@@ -14,7 +14,9 @@ import {
 } from '@mui/material'
 import CircleIcon from '@mui/icons-material/Circle'
 import { FightPicker } from './FightPicker'
+import { ScopeChip } from './ScopeChip'
 import type { CombatScope, MeterMode, ScopeOptions } from './dashboardData'
+import type { MeterScope, RosterSnap } from '@shared/roster'
 import { fmtDur } from './combatShared'
 import { formatDateTime } from '../../lib/formatDate'
 import { formatNum as fmt, formatRate } from '../../lib/formatRate'
@@ -469,6 +471,12 @@ export interface CombatHeaderProps {
   noTimeline: boolean
   mode: MeterMode
   setMode: (m: MeterMode) => void
+  /** WHOSE damage — the group model's scope, a different axis from Fight|Overall (which is
+   *  WHICH segment). Sits beside the direction filter because the two together are the sentence
+   *  the meter is answering: "outgoing damage, for my group". */
+  meterScope: MeterScope
+  setMeterScope: (s: MeterScope) => void
+  roster: RosterSnap
 }
 
 /**
@@ -516,6 +524,14 @@ export function CombatHeader(p: CombatHeaderProps): React.JSX.Element {
         <ViewSwitch view={p.view} setView={p.setView} noTimeline={p.noTimeline} />
 
         {p.view === 'dash' && <DirectionFilter mode={p.mode} setMode={p.setMode} />}
+
+        {/* WHOSE damage (docs/plans/group-model.md §2). Only the two SOURCE dimensions are
+            scoped: the Incoming list is always "what is hitting You", and no roster changes
+            that. The chip stays compact because this line never wraps — its two-rank height is
+            a contract the headless harness measures. */}
+        {p.view === 'dash' && p.mode !== 'in' && (
+          <ScopeChip scope={p.meterScope} setScope={p.setMeterScope} roster={p.roster} />
+        )}
 
         <Box sx={{ flexGrow: 1, minWidth: 8 }} />
 

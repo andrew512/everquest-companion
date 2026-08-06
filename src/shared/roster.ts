@@ -159,6 +159,18 @@ export const SCOPE_LABEL: Record<MeterScope, string> = {
   everyone: 'Everyone'
 }
 
+/**
+ * The one sentence each scope means. HERE rather than in either renderer, for the reason
+ * healRows.ts states about its own strings: two surfaces phrasing the same rule differently is
+ * how one of them ends up saying something the model cannot support. One phrasing, three
+ * renderers (the Combat tab, the damage overlay, the heal overlay).
+ */
+export const SCOPE_HINT: Record<MeterScope, string> = {
+  you: 'You and your pets only',
+  group: 'You, your pets and everyone on your group roster',
+  everyone: 'Every source the meter recorded, including people who have since left your group'
+}
+
 /** The scope chip's text: the chosen scope, plus the fallback reason when Group has nothing to
  *  filter by. */
 export function chipLabel(scope: MeterScope, roster: Pick<RosterSnap, 'seen'>): string {

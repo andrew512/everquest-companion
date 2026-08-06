@@ -22,9 +22,19 @@ import { formatNum as fmt, formatRate } from '../lib/formatRate'
 import { type FlatSkill, type SkillRow } from '../features/combat/dashboardData'
 import { defaultEntityId, meterPanel, selfSource, type OwnRow, type PetRow } from '../features/combat/petRows'
 import { useCombinePetRow } from '../features/combat/useCombatPrefs'
+import { scopeSources } from '../features/combat/meterScope'
 import { landEvidence } from '../features/combat/landEvidence'
+import type { MeterScope, RosterSnap } from '@shared/roster'
 
-const KIND_COLOR: Record<string, string> = { you: '#d9b25f', pet: '#6fb3d2', enemy: '#cf6679' }
+// Kept in step with the Combat tab's KIND_COLOR (features/combat/combatShared.tsx) — the overlay
+// is MUI-free and cannot import the theme, so the two lists are written out and must move
+// together. `member` is a group-mate (docs/plans/group-model.md).
+const KIND_COLOR: Record<string, string> = {
+  you: '#d9b25f',
+  pet: '#6fb3d2',
+  member: '#7fbf8f',
+  enemy: '#cf6679'
+}
 // KEEP IN SYNC with the app's CAT_COLOR (features/combat/combatShared.tsx) — the overlay is a
 // separate renderer entry with no MUI theme, so it carries its own copy. 'slay' is a radiant
 // ivory, deliberately far from melee gold: a Slay Undead proc flattens into a row named after
@@ -280,7 +290,7 @@ function SourceLines({
           label={
             <>
               {e.name}
-              {e.kind === 'pet' ? ' ·pet' : ''}
+              {e.kind === 'pet' ? ' ·pet' : e.kind === 'member' ? ' ·group' : ''}
             </>
           }
           right={`${formatRate(e.dps)} · ${fmt(e.total)}`}
@@ -312,11 +322,15 @@ function ownLine(r: OwnRow, setDrill: ((d: Drill | null) => void) | null): JSX.E
  */
 export function MeterBars({
   seg,
+  scope,
+  roster,
   drill,
   setDrill,
   live
 }: {
   seg: SegmentView | undefined
+  scope: MeterScope
+  roster: RosterSnap
   drill: Drill | null
   setDrill: ((d: Drill | null) => void) | null
   live: boolean
@@ -324,7 +338,10 @@ export function MeterBars({
   // The SAME preference the Combat tab reads, out of the same localStorage key — one origin, one
   // store, and a 'storage' event when the other window's Preferences tab writes it.
   const [combine] = useCombinePetRow()
-  const entities = useMemo(() => seg?.entities ?? [], [seg])
+  // …and the SAME scope filter, out of the same shared module (features/combat/meterScope). It
+  // returns the identical array by reference when nothing is filtered out, so a solo session
+  // pays nothing and this memo does not churn.
+  const entities = useMemo(() => scopeSources(seg?.entities ?? [], scope, roster), [seg, scope, roster])
   // No drill of our own ⇒ the preference decides the level (the default zoom), exactly as it does
   // on the Combat tab. A drill that resolves to nothing renders level 1 for THIS render only —
   // `meterPanel` never touches the stored value, so a restored `pet:<instanceId>` from a past

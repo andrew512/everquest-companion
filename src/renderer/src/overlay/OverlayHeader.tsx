@@ -182,6 +182,72 @@ function HeaderTag({ tag, last }: { tag: string; last: boolean }): JSX.Element {
 }
 
 /**
+ * WHOSE DAMAGE — the overlay's whole scope control, and deliberately a CYCLE rather than a menu.
+ *
+ * The Combat tab gets the roster popover with its provenance list and its add/remove; the
+ * overlay gets one word you can click. That is a scoping decision, not an omission: an overlay
+ * is two inches of transparent, click-through chrome pinned over a running game, and a text
+ * entry box in it would be a place to lose keystrokes. Editing the roster is a considered act
+ * and it belongs on the surface with room to explain itself. Both surfaces read and filter by
+ * the SAME roster off the same snapshot, so what the chip says here is what the tab would say.
+ */
+export interface OverlayHeaderScope {
+  /** Already through `chipLabel`, so the "(no roster yet)" fallback reads the same in both
+   *  windows — one phrasing, two renderers (the healRows.ts rule). */
+  label: string
+  /** The tooltip: what this scope means, and what one click switches to. */
+  title: string
+  onCycle: () => void
+}
+
+/**
+ * Renders NOTHING for a meter with no source list to scope, and nothing while the overlay is
+ * LOCKED — a click-through window must not show an affordance it cannot deliver.
+ *
+ * Both refusals live here rather than at the call site because they are this control's own
+ * rules, and because OverlayHeader is at its measured complexity ceiling: a component that can
+ * decide not to exist keeps that decision out of its parent's branch count.
+ */
+function ScopeTag({
+  scope,
+  locked,
+  noDrag
+}: {
+  scope: OverlayHeaderScope | undefined
+  locked: boolean
+  noDrag: React.CSSProperties
+}): JSX.Element | null {
+  const [hot, setHot] = useState(false)
+  if (!scope || locked) return null
+  return (
+    <span
+      role="button"
+      data-testid="overlay-scope-chip"
+      title={scope.title}
+      onClick={scope.onCycle}
+      onMouseEnter={() => setHot(true)}
+      onMouseLeave={() => setHot(false)}
+      style={{
+        ...noDrag,
+        fontSize: 8,
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+        color: hot ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)',
+        background: hot ? HOVER : 'transparent',
+        borderRadius: 3,
+        padding: '1px 3px',
+        cursor: 'pointer',
+        userSelect: 'none',
+        flexShrink: 0,
+        whiteSpace: 'nowrap'
+      }}
+    >
+      {scope.label}
+    </span>
+  )
+}
+
+/**
  * The interactive half: the header's title/tail wrapped as a click target, plus the popup it
  * opens. Anchored to the ROW (not to itself) so the list hangs off the header's bottom edge and
  * spans the window, and marked `no-drag` so the click reaches React instead of moving the window.
@@ -282,6 +348,7 @@ export function OverlayHeader({
   tailColor = TAIL_COLOR,
   iconAccentBg = ICON_ACCENT_GOLD,
   select,
+  scope,
   chrome
 }: {
   /** omit entirely for a kind with no combat state (the event log draws no dot). */
@@ -296,6 +363,9 @@ export function OverlayHeader({
   tailColor?: string
   iconAccentBg?: string
   select?: OverlayHeaderSelect
+  /** WHOSE damage this meter is showing (docs/plans/group-model.md §3) — a one-click cycle,
+   *  You → Group → Everyone. Absent for the kinds that have no source list to scope. */
+  scope?: OverlayHeaderScope
   chrome: Pick<OverlayChrome, 'locked' | 'hovering' | 'dragRegion' | 'noDrag' | 'toggleLock'> & {
     /** P3: opt in to a WORKING selector while locked. Absent ⇒ the old plain locked header. */
     capture?: HeaderCapture
@@ -342,6 +412,10 @@ export function OverlayHeader({
     >
       {live !== undefined && <LiveDot live={live} />}
       <HeaderTag tag={tag} last={last} />
+      {/* Beside the FIGHT/ZONE tag because they answer the same shape of question — that one
+          says WHICH segment, this one says WHOSE damage in it. It draws itself only when there
+          is a source list to scope and the overlay is unlocked (see ScopeTag). */}
+      <ScopeTag scope={scope} locked={locked} noDrag={noDrag} />
 
       {selectable ? (
         <HeaderTrigger select={selectable} rowRef={rowRef} noDrag={noDrag} capture={capture}>

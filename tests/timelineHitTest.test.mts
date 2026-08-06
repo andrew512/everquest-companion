@@ -116,9 +116,11 @@ function series(over: Partial<DpsSeries> = {}): DpsSeries {
     n: 4,
     you: Float64Array.from([10, 20, 30, 40]),
     pet: Float64Array.from([1, 2, 3, 4]),
+    group: new Float64Array(4),
     inc: Float64Array.from([0, 5, 0, 5]),
     peakOut: 44,
     hasPet: true,
+    hasGroup: false,
     hasInc: true,
     hasAny: true,
     durationMs: 4000,
@@ -129,14 +131,23 @@ function series(over: Partial<DpsSeries> = {}): DpsSeries {
 
 test('dpsAt samples the bucket the cursor is in and CLAMPS at both ends', () => {
   const s = series()
-  assert.deepEqual(dpsAt(s, 0), { you: 10, pet: 1, inc: 0, out: 11 })
-  assert.deepEqual(dpsAt(s, 1500), { you: 20, pet: 2, inc: 5, out: 22 })
+  assert.deepEqual(dpsAt(s, 0), { you: 10, pet: 1, group: 0, inc: 0, out: 11 })
+  assert.deepEqual(dpsAt(s, 1500), { you: 20, pet: 2, group: 0, inc: 5, out: 22 })
   // No interpolation: the whole bucket reads the same, which is what "Ns rolling" promises.
   assert.deepEqual(dpsAt(s, 1001), dpsAt(s, 1999))
   // Before the fight and past its end clamp to the first/last bucket instead of reading off
   // the end of the Float64Array (which would silently produce NaN in a tooltip).
   assert.deepEqual(dpsAt(s, -5000), dpsAt(s, 0))
-  assert.deepEqual(dpsAt(s, 99_000), { you: 40, pet: 4, inc: 5, out: 44 })
+  assert.deepEqual(dpsAt(s, 99_000), { you: 40, pet: 4, group: 0, inc: 5, out: 44 })
+})
+
+test('the OUTGOING readout counts your group, so the curve and the tooltip agree', () => {
+  // The group band is the fourth source kind, and `out` is what the gold line draws. A group
+  // contribution missing from this sum would draw a curve the hover readout could not explain
+  // (docs/plans/group-model.md §2).
+  const s = series({ group: Float64Array.from([5, 6, 7, 8]), hasGroup: true })
+  assert.deepEqual(dpsAt(s, 0), { you: 10, pet: 1, group: 5, inc: 0, out: 16 })
+  assert.deepEqual(dpsAt(s, 99_000), { you: 40, pet: 4, group: 8, inc: 5, out: 52 })
 })
 
 test('rollingNote states the series own window, and marks an inexact ring', () => {

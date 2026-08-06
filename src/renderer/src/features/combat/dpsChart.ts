@@ -47,9 +47,14 @@ export const LIVE_WINDOW_MS = 120_000
 
 /** Everything the SVG needs, in chart coordinates. */
 export interface DpsChart {
+  /** The OUTGOING curve — you + your pets + your group. The headline line, and the one the
+   *  hover dot follows. */
   outLine: string
   outArea: string
   petLine: string | null
+  /** Your group's own contribution under the outgoing line, drawn only when there is one
+   *  (docs/plans/group-model.md) — the same treatment the pet line gets. */
+  groupLine: string | null
   incLine: string | null
   /** THE time base, both ends on the bucket grid: the start of the first drawn bucket and the end
    *  of the last. Every X mapping on this chart — curve, markers, axis, hover — is this span. */
@@ -120,7 +125,7 @@ export function buildDpsChart(series: DpsSeries | null, live: boolean): DpsChart
   let yMax = 1
   let peakVis = 0
   for (const i of idx) {
-    const out = series.you[i] + series.pet[i]
+    const out = outAt(series, i)
     peakVis = Math.max(peakVis, out)
     yMax = Math.max(yMax, out, series.inc[i])
   }
@@ -128,11 +133,12 @@ export function buildDpsChart(series: DpsSeries | null, live: boolean): DpsChart
   const y = (v: number): number => yAt(yMax, v)
   const pts = (pick: (i: number) => number): string =>
     idx.map((i, k) => `${x(k).toFixed(1)},${y(pick(i)).toFixed(1)}`).join(' ')
-  const outLine = pts((i) => series.you[i] + series.pet[i])
+  const outLine = pts((i) => outAt(series, i))
   return {
     outLine,
     outArea: `${x(0).toFixed(1)},${CHART_H - PAD_B} ${outLine} ${x(idx.length - 1).toFixed(1)},${CHART_H - PAD_B}`,
     petLine: series.hasPet ? pts((i) => series.pet[i]) : null,
+    groupLine: series.hasGroup ? pts((i) => series.group[i]) : null,
     incLine: series.hasInc ? pts((i) => series.inc[i]) : null,
     t0,
     t1,
@@ -177,10 +183,18 @@ export function userToPx(ux: number, rectW: number): number {
   return rectW > 0 ? (ux / CHART_W) * rectW : 0
 }
 
-/** The outgoing (you + pet) rate at drawn vertex `k`, clamped to the series. */
+/**
+ * THE OUTGOING RATE at one bucket — you + your pets + your group. ONE definition, because three
+ * places used to spell out `you[i] + pet[i]` independently (the y-scale, the drawn line and the
+ * hover's vertex lookup) and a fourth source kind would have had to be remembered in all three.
+ */
+function outAt(series: DpsSeries, i: number): number {
+  return series.you[i] + series.pet[i] + series.group[i]
+}
+
+/** The outgoing rate at drawn vertex `k`, clamped to the series. */
 function outAtVertex(chart: DpsChart, series: DpsSeries, k: number): number {
-  const i = Math.min(series.n - 1, chart.i0 + Math.max(0, k))
-  return series.you[i] + series.pet[i]
+  return outAt(series, Math.min(series.n - 1, chart.i0 + Math.max(0, k)))
 }
 
 /**
