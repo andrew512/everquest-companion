@@ -128,7 +128,18 @@ function StartupBreakdown({ profile }: { profile: StartupProfile }): JSX.Element
 }
 
 /**
- * DEV-ONLY: relaunch the app (JOS-61).
+ * How long a restart may take before the button admits nothing is happening.
+ *
+ * Under `npm run dev` the restart is the electron-vite WATCHER's to perform (main only asks —
+ * src/main/devRestart.ts), and the measured round trip is a ~2 s rebuild plus a fresh launch. Ten
+ * seconds is comfortably past that, and the timer only ever fires in the case it exists for: a
+ * dev server running WITHOUT `--watch`, where there is no watch hook and the ask goes nowhere.
+ * In every working case this process is dead long before it elapses.
+ */
+const RESTART_STALL_MS = 10_000
+
+/**
+ * DEV-ONLY: restart the app (JOS-61; the watcher-aware rewrite is JOS-63).
  *
  * IT LIVES HERE, under the startup breakdown, because that is the readout it exists to refresh:
  * hand-testing startup performance is restart → read the new phases → repeat, and the two halves
@@ -145,32 +156,64 @@ function StartupBreakdown({ profile }: { profile: StartupProfile }): JSX.Element
  * assumed: `Restart app`, `restartApp` and `dev:restart` are all absent from `out/renderer`,
  * which is the shape every packaged build and every e2e launch runs.
  *
+ * IT HAS A PENDING STATE NOW, and that is not decoration. JOS-61's click killed the process
+ * instantly, so there was nothing to show. The watcher route asks somebody else to rebuild and
+ * relaunch us, so for a couple of seconds the correct answer is "waiting" — and if the wait
+ * outlives `RESTART_STALL_MS`, the honest answer is that nothing restarted and why. The one
+ * thing main cannot detect is whether the dev server was started with `--watch` (the flag never
+ * reaches this process), so the button reports the silence rather than pretending to know.
+ *
  * The chip, not a tooltip, says what this is (the UI conventions' tooltip diet). Nothing
  * confirms: the whole point is that it is one click, and main's handler refuses outright in a
  * packaged build anyway (src/main/devRestart.ts).
  */
 function DevRestartRow(): JSX.Element {
+  const [phase, setPhase] = useState<'idle' | 'waiting' | 'stalled' | 'refused'>('idle')
+  const [detail, setDetail] = useState<string | undefined>(undefined)
+
+  const restart = useCallback(() => {
+    setPhase('waiting')
+    setDetail(undefined)
+    const stall = setTimeout(() => setPhase('stalled'), RESTART_STALL_MS)
+    void window.eq.restartApp().then((result) => {
+      // 'relaunched' and 'watcher' both end with this process gone — there is nothing to render
+      // for them beyond the waiting state already showing. Only a refusal has to be told.
+      if (result.action !== 'refused') return
+      clearTimeout(stall)
+      setPhase('refused')
+      setDetail(result.detail)
+    })
+  }, [])
+
   return (
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <Button
-        size="small"
-        variant="outlined"
-        startIcon={<RestartAltIcon fontSize="small" />}
-        data-testid="pref-dev-restart"
-        onClick={() => {
-          // Fire-and-forget: the process is gone before the reply could arrive.
-          void window.eq.restartApp()
-        }}
-      >
-        Restart app
-      </Button>
-      <Chip
-        size="small"
-        label="dev only"
-        variant="outlined"
-        color="warning"
-        sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.75 } }}
-      />
+    <Stack spacing={0.5}>
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={phase === 'waiting'}
+          startIcon={<RestartAltIcon fontSize="small" />}
+          data-testid="pref-dev-restart"
+          onClick={restart}
+        >
+          {phase === 'waiting' ? 'Restarting…' : 'Restart app'}
+        </Button>
+        <Chip
+          size="small"
+          label="dev only"
+          variant="outlined"
+          color="warning"
+          sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.75 } }}
+        />
+      </Stack>
+      {phase !== 'idle' && (
+        <Typography variant="caption" color="text.secondary" data-testid="pref-dev-restart-note">
+          {phase === 'waiting' && 'Rebuilding — the dev watcher relaunches the app.'}
+          {phase === 'stalled' &&
+            'Nothing restarted. This dev server is running without --watch, so restart it from the terminal.'}
+          {phase === 'refused' && `Restart refused${detail === undefined ? '' : ` — ${detail}`}.`}
+        </Typography>
+      )}
     </Stack>
   )
 }
