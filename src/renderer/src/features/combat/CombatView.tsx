@@ -7,7 +7,14 @@ import { ProcessingLog } from './ProcessingLog'
 import { SegmentBody } from './SegmentPanel'
 import { DpsChartCard, MobDamageCard, type Ringless } from './CombatDashboard'
 import { ProcsCard } from './ProcsPanel'
-import { scopeOptions, type CombatScope, type Drill, type MeterMode, type ScopeOptions } from './dashboardData'
+import {
+  isLiveSelection,
+  scopeOptions,
+  type CombatScope,
+  type Drill,
+  type MeterMode,
+  type ScopeOptions
+} from './dashboardData'
 import { useMeterScope } from './useCombatPrefs'
 import { EMPTY_ROSTER, type MeterScope, type RosterSnap } from '@shared/roster'
 import { EMPTY_PET_CLAIMS, type PetClaimsSnap } from '@shared/petClaims'
@@ -134,6 +141,9 @@ function DashboardGrid({
         scope={meterScope}
         roster={roster}
         petClaims={petClaims}
+        // The SAME liveness the DPS curve reads, for the same reason: the pet question is about
+        // the fight in front of you, so it belongs only above a meter that is showing one.
+        live={live}
         drill={drill}
         setDrill={setDrill}
       />
@@ -291,7 +301,7 @@ export default function CombatView({
   const seg = snap?.selected ?? null
   const tl = useStableTimeline(snap?.timeline)
   const ringless = ringlessOf(tl, seg)
-  const live = isLiveSelection(opts, selection)
+  const live = isLiveSelection(opts.head, selection)
   const { drill, setDrill } = useDashboardDrill({ mode, selection, view })
 
   // TIMELINE AVAILABILITY. The timeline is drawn from an encounter's event ring, and a ring only
@@ -384,15 +394,6 @@ function segmentOptions(
 function ringlessOf(tl: TimelineView | null, seg: SegmentView | null): Ringless {
   if (tl) return null
   return seg?.kind === 'zone' ? 'zone' : 'evicted'
-}
-
-/**
- * A GENUINELY live selection — the open fight, or the running zone session. The scrolling chart
- * window only follows `now` for these: the head row between pulls is a finished fight, so it
- * must not scroll as if time were still passing in it.
- */
-function isLiveSelection(opts: ScopeOptions, selection: string): boolean {
-  return !!opts.head && selection === opts.head.value && opts.head.live
 }
 
 /**

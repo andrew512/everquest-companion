@@ -654,6 +654,24 @@ export function overallScopeOptions(zoneSessions: ZoneSessionSummary[]): ScopeOp
   return { head: liveZone ? toRow(liveZone) : (rest.shift() ?? null), rest }
 }
 
+/**
+ * IS THE THING ON SCREEN THE LIVE ONE? — the head row of its scope, and that head row genuinely
+ * open (an in-progress fight, or the running zone session). Everything else the selector can
+ * reach is finished: a `zs<n>` zone session you have left, a fight id from history, or the head
+ * row between pulls, which is honestly labelled "Last fight — X" and is a finalized encounter.
+ *
+ * TWO SURFACES READ IT, which is why it lives here beside `scopeOptions` rather than in either
+ * one (panel/overlay parity is house law):
+ *   - the DPS curve's scrolling window only follows `now` for a live selection — a finished
+ *     fight must not scroll as if time were still passing in it;
+ *   - the pet-claim OFFER renders only for a live selection (JOS-49) — "is this thing yours?"
+ *     is a question about the fight in front of you, and asking it above a meter showing last
+ *     Tuesday's zone session is the surface half of the wall the currency gate closed in main.
+ */
+export function isLiveSelection(head: ScopeOption | null, selection: string): boolean {
+  return !!head && selection === head.value && head.live
+}
+
 /** The scope-filtered selector rows. The ONE place a scope decides what may be listed. */
 export function scopeOptions(
   scope: CombatScope,

@@ -3,7 +3,7 @@ import type { OverlayKind } from '@shared/types'
 import type { CombatSnapshot, SegmentView } from '@shared/combat'
 import { formatRate } from '../lib/formatRate'
 import { formatTime } from '../lib/formatDate'
-import { LIVE_SELECTION, scopeOptions, type ScopeOption } from '../features/combat/dashboardData'
+import { LIVE_SELECTION, isLiveSelection, scopeOptions, type ScopeOption } from '../features/combat/dashboardData'
 import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
@@ -73,6 +73,14 @@ interface MeterView {
   rows: OverlaySelectRow[]
   /** on the head row, but the head row is the LAST (finished) fight — never dress it up as live */
   headIsLast: boolean
+  /**
+   * Is the SELECTED segment the live one — an open fight, or the running zone session? A
+   * different question from `live` above, which is "are you in combat at all": you can be
+   * swinging at something while this window shows Tuesday's zone session. The pet question is
+   * gated on THIS one (JOS-49), through the same `isLiveSelection` the Combat tab uses, because
+   * panel/overlay parity is house law and two opinions about "live" is how it breaks.
+   */
+  liveSelection: boolean
 }
 
 /** Header title + live dot + rate/duration for the selected segment. */
@@ -129,7 +137,10 @@ function meterView(
     seg,
     ...headerFor(snap, seg, isFight, hydrating),
     rows,
-    headIsLast: selection === LIVE && !!head && !head.live
+    headIsLast: selection === LIVE && !!head && !head.live,
+    // While hydrating there is no honest selection at all (scopeRows was handed empty lists), so
+    // this resolves false and the offer stays down with the rest of the surface.
+    liveSelection: isLiveSelection(head, selection)
   }
 }
 
@@ -161,7 +172,7 @@ export default function OverlayMeter(): JSX.Element {
   const roster = snap?.roster ?? EMPTY_ROSTER
   const petClaims = petClaimsOf(snap)
 
-  const { seg, live, headerName, totalDps, rows, headIsLast } = meterView(
+  const { seg, live, headerName, totalDps, rows, headIsLast, liveSelection } = meterView(
     snap,
     isFight,
     selection,
@@ -246,6 +257,7 @@ export default function OverlayMeter(): JSX.Element {
           drill={drill}
           setDrill={locked ? null : setDrill}
           live={live}
+          liveSelection={liveSelection}
         />
       </OverlayContent>
 

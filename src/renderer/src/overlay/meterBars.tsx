@@ -406,7 +406,8 @@ export function MeterBars({
   petClaims,
   drill,
   setDrill,
-  live
+  live,
+  liveSelection
 }: {
   seg: SegmentView | undefined
   scope: MeterScope
@@ -415,6 +416,9 @@ export function MeterBars({
   drill: Drill | null
   setDrill: ((d: Drill | null) => void) | null
   live: boolean
+  /** The SELECTION is the live one (an open fight / the running zone session) — not merely "you
+   *  are in combat", which is what `live` above means. Gates the pet question only (JOS-49). */
+  liveSelection: boolean
 }): JSX.Element {
   // The SAME preference the Combat tab reads, out of the same localStorage key — one origin, one
   // store, and a 'storage' event when the other window's Preferences tab writes it.
@@ -454,8 +458,11 @@ export function MeterBars({
       {/* "IS THIS YOURS?" (JOS-47) — ABOVE the bars, at level 1 only. This window is where the
           report came from ("Dps overlay meter is not showing my pet dps"), so it is where the
           question has to be answerable; the drilled level is a breakdown of ONE source and a
-          question about a different entity has no business inside it. */}
-      <PetClaimOffer petClaims={petClaims} interactive={setDrill !== null} />
+          question about a different entity has no business inside it.
+          …and on the LIVE selection only (JOS-49): the same gate the Combat tab's SegmentBody
+          applies, off the same `isLiveSelection`, because a question hanging over last Tuesday's
+          zone session is the surface half of the wall this ticket closed. Parity is the law. */}
+      {liveSelection && <PetClaimOffer petClaims={petClaims} interactive={setDrill !== null} />}
       <SourceLines sources={panel.sources} setDrill={setDrill} />
     </MeterCrumb>
   )
