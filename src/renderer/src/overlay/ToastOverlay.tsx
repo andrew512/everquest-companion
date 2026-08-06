@@ -23,6 +23,7 @@
 import { type JSX, useEffect, useReducer } from 'react'
 import type { ToastPayload } from '@shared/toast'
 import { ToastCard } from './ToastCard'
+import { ScaledContent } from './overlayScale'
 import { toastReduce, type ToastCardState } from './toastQueue'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
@@ -70,13 +71,18 @@ function DragFrame({
         fontSize: 11
       }}
     >
-      <span>Drag me where celebrations should appear</span>
+      {/* The PROSE is the give on a narrow strip; the two controls beside it are the whole point
+          of the frame and stay whole at every width. */}
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        Drag me where celebrations should appear
+      </span>
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
       <button
         type="button"
         onClick={onDone}
         style={{
           ...noDrag,
+          flexShrink: 0,
           border: `1px solid ${GOLD}`,
           borderRadius: 4,
           background: 'transparent',
@@ -128,9 +134,12 @@ export default function ToastOverlay(): JSX.Element {
   return (
     <div
       data-testid="toast-overlay"
-      /* 100%, NOT 100vw/100vh — the text scale is a CSS zoom on the root (useOverlayChrome). */
+      /* 100%, NOT 100vw/100vh — a viewport unit inside the scaled cards is resolved against the
+         window and then zoomed (overlayScale). */
       style={{ width: '100%', height: '100%', padding: 6, boxSizing: 'border-box', ...chrome.dragRegion }}
     >
+      {/* The drag frame is CHROME: unscaled, so "Done" and A− / A+ stay inside the strip at 2.0
+          — the one route to both knobs must not be the thing the scale pushes off screen. */}
       {chrome.ready && !chrome.locked && (
         <DragFrame
           onDone={chrome.toggleLock}
@@ -139,15 +148,19 @@ export default function ToastOverlay(): JSX.Element {
           noDrag={chrome.noDrag}
         />
       )}
-      {cards.map((c) => (
-        <ToastCard
-          key={c.payload.id}
-          payload={c.payload}
-          exiting={c.exitingMs !== null}
-          bgAlpha={chrome.bgAlpha}
-          onHover={(over) => dispatch({ type: 'hover', id: c.payload.id, over })}
-        />
-      ))}
+      {/* The cards ARE the content — no scroll pane, because this kind renders nothing most of
+          the time and a strip that could scroll would be a window, which is what it is not. */}
+      <ScaledContent textScale={chrome.textScale}>
+        {cards.map((c) => (
+          <ToastCard
+            key={c.payload.id}
+            payload={c.payload}
+            exiting={c.exitingMs !== null}
+            bgAlpha={chrome.bgAlpha}
+            onHover={(over) => dispatch({ type: 'hover', id: c.payload.id, over })}
+          />
+        ))}
+      </ScaledContent>
     </div>
   )
 }

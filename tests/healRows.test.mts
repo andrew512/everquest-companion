@@ -146,11 +146,12 @@ test('level 1 ranks the healers and carries what rides under them', () => {
   assert.deepEqual(p.healers.map((h) => h.kind).includes('enemy'), false)
 })
 
-test('the top-N cap is the overlay’s alone — the panel asks for every row', () => {
+test('EVERY healer is ranked — no surface caps this list any more', () => {
+  // The overlay used to pass a 5-or-10 row budget and cap the level-1 list; owner feedback
+  // 2026-08-05 retired it (the overlay's content pane scrolls instead), so the builder has no
+  // limit to take and both healing surfaces see the same rows.
   const many = healing({ healers: [SELF, ALLY, healer('heal:c'), healer('heal:d')] })
-  const overlay = healPanel(many, null, 2)
   const panel = healPanel(many, null)
-  assert.equal(overlay.level === 1 && overlay.healers.length, 2)
   assert.equal(panel.level === 1 && panel.healers.length, 4)
 })
 

@@ -8,6 +8,7 @@ import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { MeterBars } from './meterBars'
+import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
@@ -143,7 +144,7 @@ export default function OverlayMeter(): JSX.Element {
   const selection = isFight ? fightId : zoneSelection
 
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
-  const { locked, bgAlpha, topN, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
+  const { locked, bgAlpha, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
 
   const { seg, live, headerName, durationSec, totalDps, rows, headIsLast } = meterView(
@@ -175,8 +176,8 @@ export default function OverlayMeter(): JSX.Element {
     // genuinely click-through — which is what "locked" was always supposed to mean.
     <div
       style={{
-        // 100%, NOT 100vw/100vh: the text scale is a CSS zoom on #overlay-root, and a viewport
-        // unit under it resolves against the window and is then scaled (useOverlayChrome).
+        // 100%, NOT 100vw/100vh: the shell fills the window, and a viewport unit inside the
+        // scaled content pane resolves against the window and is then zoomed (overlayScale).
         width: '100%',
         height: '100%',
         display: 'flex',
@@ -211,27 +212,33 @@ export default function OverlayMeter(): JSX.Element {
       {/* The testid names the CLICK-THROUGH half of the locked contract (P3): everything below
           the selector row must offer no hit target at all, and the e2e harness measures exactly
           this box to say so. */}
-      <div data-testid="overlay-bars" style={{ flexGrow: 1, overflow: 'auto', padding: '4px 6px' }}>
-        <MeterBars seg={seg} topN={topN} drill={drill} setDrill={locked ? null : setDrill} live={live} />
-      </div>
+      {/* EVERY source, not a top-5: the pane scrolls (owner feedback 2026-08-05), and it is also
+          the one place the text scale is applied — chrome above and below stays at 1. */}
+      <OverlayContent textScale={textScale} testId="overlay-bars">
+        <MeterBars seg={seg} drill={drill} setDrill={locked ? null : setDrill} live={live} />
+      </OverlayContent>
 
-      {!locked && (
-        <MeterFooter bgAlpha={bgAlpha} topN={topN} textScale={textScale} patch={patch} noDrag={noDrag} />
-      )}
+      {!locked && <MeterFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
     </div>
   )
 }
 
-/** Footer controls — interactive mode only: bg-alpha slider + text size + top-N toggle. */
+/**
+ * Footer controls — interactive mode only: bg-alpha slider + text size.
+ *
+ * CHROME, so it is UNSCALED and must fit whatever window it is in — ONE ROW, always (owner: the
+ * A+ was rendering cut off mid-glyph on a narrow meter). The BUTTONS are fixed-size and never
+ * shrink; the SLIDER is the give: `flexBasis: 0` + a floor small enough to still be draggable
+ * means it absorbs every pixel the row is short, instead of an `<input type=range>`'s intrinsic
+ * width pushing the controls that fix a too-small window off the edge of one.
+ */
 function MeterFooter({
   bgAlpha,
-  topN,
   textScale,
   patch,
   noDrag
 }: {
   bgAlpha: number
-  topN: number
   textScale: number
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
@@ -250,7 +257,9 @@ function MeterFooter({
         flexShrink: 0
       }}
     >
-      <span title="Background opacity">bg</span>
+      <span title="Background opacity" style={{ flexShrink: 0 }}>
+        bg
+      </span>
       <input
         type="range"
         min={0.1}
@@ -258,25 +267,9 @@ function MeterFooter({
         step={0.02}
         value={bgAlpha}
         onChange={(e) => patch({ bgAlpha: Number(e.target.value) })}
-        style={{ flexGrow: 1, accentColor: GOLD, height: 4 }}
+        style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 24, accentColor: GOLD, height: 4 }}
       />
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
-      <button
-        type="button"
-        onClick={() => patch({ topN: topN >= 10 ? 5 : 10 })}
-        title="Toggle number of rows"
-        style={{
-          background: 'rgba(255,255,255,0.06)',
-          color: 'inherit',
-          border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: 4,
-          padding: '1px 6px',
-          cursor: 'pointer',
-          fontSize: 10
-        }}
-      >
-        top {topN}
-      </button>
     </div>
   )
 }

@@ -344,6 +344,8 @@ test('WHITELIST: no machine path can appear in a settings export', () => {
     overlays: {
       fight: {
         bgAlpha: 0.8,
+        // The RETIRED row budget: still in every store written before 2026-08-05, and no longer
+        // a field anyone reads — so it must not travel either.
         topN: 10,
         // MACHINE state that must never travel:
         open: true,
@@ -371,7 +373,9 @@ test('WHITELIST: no machine path can appear in a settings export', () => {
   assert.ok(!text.includes('eq.view'), 'the last-open tab stays machine-local')
   assert.ok(!text.includes('eq.secretPath'), 'an unlisted UI key is dropped')
 
-  assert.deepEqual(body.overlays?.fight, { bgAlpha: 0.8, topN: 10 }, 'only the two pref fields survive')
+  assert.ok(!text.includes('topN'), 'the retired row budget is not a preference any more')
+
+  assert.deepEqual(body.overlays?.fight, { bgAlpha: 0.8 }, 'only the one pref field survives')
   assert.deepEqual(Object.keys(body.ui ?? {}).sort(), ['eq.combat.scope', 'eq.favorites'])
 })
 
@@ -402,16 +406,18 @@ test('WHITELIST holds through a full encode: the wire bytes carry no path', () =
 test('scalar changes are reported only when they actually differ', () => {
   const body: SettingsBundleBody = {
     alertPrefs: { globalVolume: 0.5, muted: true },
-    overlays: { fight: { bgAlpha: 0.72, topN: 10 } },
+    // `topN` rides along from a bundle written before the row budget was retired. It offers
+    // nothing to opt into now, so it must not become a row the user is asked about.
+    overlays: { fight: { bgAlpha: 0.9, topN: 10 } as never },
     ui: { 'eq.combat.scope': 'overall' }
   }
   const changes = planScalarChanges(body, {
     alertPrefs: { globalVolume: 0.5, muted: false },
-    overlays: { fight: { bgAlpha: 0.72, topN: 5 } },
+    overlays: { fight: { bgAlpha: 0.72 } },
     ui: { 'eq.combat.scope': 'overall' }
   })
   const ids = changes.map((c) => c.id).sort()
-  assert.deepEqual(ids, ['alertPrefs.muted', 'overlay.fight.topN'])
+  assert.deepEqual(ids, ['alertPrefs.muted', 'overlay.fight.bgAlpha'])
 })
 
 test('list-shaped UI prefs union additively; nothing you had is dropped', () => {

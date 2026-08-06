@@ -259,19 +259,19 @@ function MeterEmpty({ live }: { live: boolean }): JSX.Element {
   )
 }
 
-/** The level-1 ranked source list: one bar per entity, capped at the user's row budget. */
+/** The level-1 ranked source list: one bar per entity, EVERY entity. There is no row budget any
+ *  more (owner feedback 2026-08-05) — the content pane scrolls instead of the meter deciding for
+ *  you which of your group is worth seeing. */
 function SourceLines({
   sources,
-  topN,
   setDrill
 }: {
   sources: SourceView[]
-  topN: number
   setDrill: ((d: Drill | null) => void) | null
 }): JSX.Element {
   return (
     <>
-      {sources.slice(0, topN).map((e, i) => (
+      {sources.map((e, i) => (
         <Bar
           key={e.id}
           color={KIND_COLOR[e.kind] ?? '#888'}
@@ -312,13 +312,11 @@ function ownLine(r: OwnRow, setDrill: ((d: Drill | null) => void) | null): JSX.E
  */
 export function MeterBars({
   seg,
-  topN,
   drill,
   setDrill,
   live
 }: {
   seg: SegmentView | undefined
-  topN: number
   drill: Drill | null
   setDrill: ((d: Drill | null) => void) | null
   live: boolean
@@ -354,7 +352,7 @@ export function MeterBars({
     )
   }
 
-  return <SourceLines sources={panel.sources} topN={topN} setDrill={setDrill} />
+  return <SourceLines sources={panel.sources} setDrill={setDrill} />
 }
 
 /** A crumb header for the drill-down level: a back chevron when there is somewhere to go back TO,

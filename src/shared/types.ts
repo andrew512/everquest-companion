@@ -25,8 +25,8 @@ export type { LootDisposition, ItemStatBlock }
  *   - 'toast' (docs/plans/celebration-toasts.md): the CELEBRATION strip — normally renders
  *                 nothing; a boss kill or a Sky quest completion animates a card in, holds, and
  *                 leaves. Not a meter: it has no selector, no drill and no scope.
- * Each kind has its own independently-persisted OverlayConfig (bounds/alpha/lock/topN/drill) and
- * can be open simultaneously. IPC channels + the store are keyed by this.
+ * Each kind has its own independently-persisted OverlayConfig (bounds/alpha/lock/text size/drill)
+ * and can be open simultaneously. IPC channels + the store are keyed by this.
  */
 export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast'
 export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast']
@@ -52,6 +52,11 @@ export interface OverlayDrill {
 /**
  * Persisted config for one floating overlay DPS-meter window (Task #52; keyed by kind in
  * Task #54). Stored in electron-store under `overlays.<kind>`. Small + JSON-serializable.
+ *
+ * NO ROW BUDGET. A `topN` (5 or 10) used to cap the bars; owner feedback 2026-08-05 retired it —
+ * every row renders and the content pane scrolls, because a meter that silently hid the 6th
+ * healer was answering a question nobody asked. Stores written before that still carry the key
+ * and are tolerated, not migrated: `getOverlayConfig` drops it on read.
  */
 export interface OverlayConfig {
   /** Was the overlay open when the app last quit? Restored on launch. */
@@ -60,8 +65,6 @@ export interface OverlayConfig {
   locked: boolean
   /** Background translucency, 0..1 (alpha of the dark panel fill). */
   bgAlpha: number
-  /** How many source bars to show (5 or 10). */
-  topN: number
   /** Persisted window bounds so position + size survive a restart. */
   bounds?: { x: number; y: number; width: number; height: number }
   /**
@@ -85,10 +88,11 @@ export interface OverlayConfig {
    */
   toast?: ToastOverlayConfig
   /**
-   * TEXT SIZE for this overlay, as a CSS `zoom` factor on the window's root (1 = as shipped;
+   * TEXT SIZE for this overlay, as a CSS `zoom` factor on its CONTENT pane (1 = as shipped;
    * owner feedback, 2026-08-05: "text size scaling for overlays. we are old folks now."). It
-   * scales the whole window — bars, header, footer — because a meter whose numbers grew while
-   * its chrome did not is a different, worse layout, and zoom reflows rather than magnifies.
+   * scales the reading matter — bars, feed rows, toast cards — and NOT the control chrome, which
+   * lays out against the real window width so a scaled overlay can never push its own controls
+   * out of the window (renderer `overlay/overlayScale.tsx`).
    *
    * Per KIND, like every other knob here: the damage meter you read mid-pull and the event log
    * parked on a second monitor are not the same reading distance.

@@ -36,12 +36,13 @@
         overflow: hidden;
         user-select: none;
       }
-      /* The mount point every overlay KIND fills, and the one element the text
-         scale's CSS `zoom` is set on (useOverlayChrome.ts).
-         PERCENTAGES, NOT 100vw/100vh: a viewport unit is resolved against the
-         window and then multiplied by the zoom in force, so a scaled overlay
-         would size itself larger than the window it lives in. A percentage
-         resolves against the (unzoomed) parent and fills it at any scale —
+      /* The mount point every overlay KIND fills. It is NOT zoomed: the text
+         scale goes on the content pane inside each surface, so the chrome
+         always lays out against the real window (overlay/overlayScale.tsx).
+         PERCENTAGES, NOT 100vw/100vh: a viewport unit inside the scaled pane
+         is resolved against the window and then multiplied by the zoom in
+         force, so it would size itself larger than the pane it lives in. A
+         percentage resolves against the parent and fills it at any scale —
          which is why html/body carry an explicit size above. */
       #overlay-root {
         width: 100%;

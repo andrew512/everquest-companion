@@ -324,14 +324,12 @@ export function setEqInstallDir(dir: string | undefined): void {
 /** Per-kind defaults. Sizes/positions live in overlayLayout.ts; `bounds` stays undefined here so
  *  a first open is placed by that layout and every later open uses what the user left. */
 const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
-  fight: { open: false, locked: false, bgAlpha: 0.72, topN: 5, bounds: undefined, drill: null },
-  overall: { open: false, locked: false, bgAlpha: 0.72, topN: 5, bounds: undefined, drill: null },
-  // 'events' (Task #59): topN is the feed's visible-row budget rather than a bar count.
-  events: { open: false, locked: false, bgAlpha: 0.72, topN: 10, bounds: undefined, drill: null },
-  // The HEALING pair (Task #59). Same knobs as the damage meters — a solo player usually has a
-  // single healer row, so 5 is plenty and the interesting depth is one drill down.
-  'heal-fight': { open: false, locked: false, bgAlpha: 0.72, topN: 5, bounds: undefined, drill: null },
-  'heal-overall': { open: false, locked: false, bgAlpha: 0.72, topN: 5, bounds: undefined, drill: null },
+  fight: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  overall: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  events: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  // The HEALING pair (Task #59). Same knobs as the damage meters.
+  'heal-fight': { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  'heal-overall': { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
   // The CELEBRATION TOAST (docs/plans/celebration-toasts.md). `locked: true` is the resting
   // state that makes it a notifier rather than a window: locked = click-through, and the
   // overlay flips capture on only while a card is actually on screen. Unlocking is how you
@@ -347,7 +345,6 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
     open: true,
     locked: true,
     bgAlpha: 0.72,
-    topN: 5,
     bounds: undefined,
     drill: null,
     toast: { ...DEFAULT_TOAST_CONFIG }
@@ -370,21 +367,25 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   // default (1) does not differ per kind. Clamped on the way out as well as in: see
   // `clampTextScale`.
   cfg.textScale = clampTextScale(cfg.textScale)
+  // The retired row budget (`topN`, 5 or 10 — owner feedback 2026-08-05: every row renders and
+  // the pane scrolls). Every store written before that carries it; dropping it HERE means it
+  // never rides a merge-patch back out, which retires the key without a schema migration — one
+  // dead scalar is not worth a version bump, and a store that still has it is not broken.
+  delete (cfg as OverlayConfig & { topN?: number }).topN
   return cfg
 }
 
 /** Merge-patch a kind's overlay config (only the provided keys change). Returns the merged value. */
 export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig>): OverlayConfig {
   const next: OverlayConfig = { ...getOverlayConfig(kind), ...patch }
-  // Clamp the numeric fields defensively (the slider / topN come from the renderer).
+  // Clamp the numeric fields defensively (the slider / the text stepper come from the renderer).
   next.bgAlpha = Math.max(0, Math.min(1, next.bgAlpha))
-  next.topN = next.topN >= 10 ? 10 : 5
   next.textScale = clampTextScale(next.textScale)
   // The drill is remembered UI state from the overlay renderer — normalize anything malformed
   // (and `undefined`) down to level 1 so the stored shape stays exactly `{entityId} | null`.
   next.drill = next.drill && typeof next.drill.entityId === 'string' ? { entityId: next.drill.entityId } : null
   // The toast blob is renderer-writable too (the Preferences sound picker), so it is clamped
-  // by its own normalizer rather than trusted — same rule as bgAlpha/topN above. Only the
+  // by its own normalizer rather than trusted — same rule as bgAlpha/textScale above. Only the
   // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
   if (kind === 'toast') next.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...next.toast })
   else delete next.toast

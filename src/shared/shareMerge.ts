@@ -176,7 +176,7 @@ export function applyAlertMerge(
  * current value beside the incoming one, and is OFF by default. The user opts in per row.
  */
 export interface ScalarChange {
-  /** stable address, e.g. 'alertPrefs.globalVolume' | 'overlay.fight.topN' | 'ui.eq.favorites' */
+  /** stable address, e.g. 'alertPrefs.globalVolume' | 'overlay.fight.bgAlpha' | 'ui.eq.favorites' */
   id: string
   label: string
   current: string
@@ -188,7 +188,7 @@ export interface ScalarChange {
 /** Current values the preview compares against (main + renderer both contribute). */
 export interface ScalarContext {
   alertPrefs: AlertPrefs
-  overlays: Partial<Record<OverlayKind, { bgAlpha: number; topN: number }>>
+  overlays: Partial<Record<OverlayKind, { bgAlpha: number }>>
   ui: Record<string, string>
 }
 
@@ -198,7 +198,7 @@ const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
   'heal-fight': 'Healing (fight)',
   'heal-overall': 'Healing (overall)',
   events: 'Event feed',
-  // The toast strip has no bgAlpha/topN row to share today (src/main/share.ts's KINDS list
+  // The toast strip has no bgAlpha row to share today (src/main/share.ts's KINDS list
   // does not include it), but the label map is keyed by the whole union, so it is named here
   // rather than letting a future shared field render as a raw kind id.
   toast: 'Celebration toasts'
@@ -258,13 +258,8 @@ function pushOverlayRows(out: ScalarChange[], body: SettingsBundleBody, ctx: Sca
       incoming: inc.bgAlpha,
       merge: 'replace'
     })
-    pushScalar(out, {
-      id: `overlay.${kind}.topN`,
-      label: `${OVERLAY_KIND_LABEL[kind]} — rows shown`,
-      current: cur?.topN,
-      incoming: inc.topN,
-      merge: 'replace'
-    })
+    // The other overlay row used to be `topN`, the 5-or-10 bar budget. It was retired (every row
+    // renders, the pane scrolls), so a bundle that still carries it offers nothing to opt into.
   }
 }
 

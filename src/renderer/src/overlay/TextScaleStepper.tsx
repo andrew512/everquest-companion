@@ -40,6 +40,8 @@ function StepButton({
         border: '1px solid rgba(255,255,255,0.12)',
         borderRadius: 4,
         padding: '1px 5px',
+        flexShrink: 0,
+        whiteSpace: 'nowrap',
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.35 : 1,
         fontSize: 10,
@@ -69,7 +71,9 @@ export function TextScaleStepper({
   const pct = `${Math.round(textScale * 100)}%`
 
   return (
-    <span style={{ ...noDrag, display: 'flex', alignItems: 'center', gap: 2 }}>
+    // NEVER SHRINKS. It sits in a one-row footer beside a slider that does: a button clipped
+    // mid-glyph is the control you needed and could not press (owner, 2026-08-05).
+    <span style={{ ...noDrag, display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
       <StepButton
         label="A−"
         title={`Smaller text (${pct})`}

@@ -10,6 +10,7 @@ import { OverlayHeader } from './OverlayHeader'
 import { HealBars } from './healBars'
 import { healTotalTitle } from '../features/combat/healRows'
 import { ICON_ACCENT_GREEN } from './IconButton'
+import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
@@ -149,7 +150,7 @@ export default function HealMeter(): JSX.Element {
   const selection = isFight ? fightId : zoneSelection
 
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
-  const { locked, bgAlpha, topN, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
+  const { locked, bgAlpha, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
   const now = Date.now()
 
@@ -176,7 +177,8 @@ export default function HealMeter(): JSX.Element {
     // header row, so the bars stay click-through.
     <div
       style={{
-        // 100%, NOT 100vw/100vh — the text scale is a CSS zoom on the root (useOverlayChrome).
+        // 100%, NOT 100vw/100vh — a viewport unit inside the scaled content pane is resolved
+        // against the window and then zoomed (overlayScale).
         width: '100%',
         height: '100%',
         display: 'flex',
@@ -207,28 +209,27 @@ export default function HealMeter(): JSX.Element {
       {/* Bars + mini drill-down. Locked mode RENDERS the remembered drill read-only (no setter ⇒
           no click targets, no cursors, no back chevron) so the window stays click-through. */}
       {/* Same testid as the damage meter's body — the click-through half of the locked contract
-          (P3) is measured on exactly this box. */}
-      <div data-testid="overlay-bars" style={{ flexGrow: 1, overflow: 'auto', padding: '4px 6px' }}>
-        <HealBars seg={seg} topN={topN} drill={drill} setDrill={locked ? null : setDrill} live={live} />
-      </div>
+          (P3) is measured on exactly this box. Every healer renders and the pane scrolls, and the
+          pane is also where the text scale is applied; the chrome around it stays at 1. */}
+      <OverlayContent textScale={textScale} testId="overlay-bars">
+        <HealBars seg={seg} drill={drill} setDrill={locked ? null : setDrill} live={live} />
+      </OverlayContent>
 
-      {!locked && (
-        <HealFooter bgAlpha={bgAlpha} topN={topN} textScale={textScale} patch={patch} noDrag={noDrag} />
-      )}
+      {!locked && <HealFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
     </div>
   )
 }
 
-/** Footer controls — interactive mode only: bg-alpha slider + text size + top-N toggle. */
+/** Footer controls — interactive mode only: bg-alpha slider + text size. Chrome, so unscaled and
+ *  ONE ROW at any width: the buttons never shrink and the slider absorbs whatever the row is
+ *  short (see the damage meter's twin for the whole reasoning). */
 function HealFooter({
   bgAlpha,
-  topN,
   textScale,
   patch,
   noDrag
 }: {
   bgAlpha: number
-  topN: number
   textScale: number
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
@@ -247,7 +248,9 @@ function HealFooter({
         flexShrink: 0
       }}
     >
-      <span title="Background opacity">bg</span>
+      <span title="Background opacity" style={{ flexShrink: 0 }}>
+        bg
+      </span>
       <input
         type="range"
         min={0.1}
@@ -255,25 +258,9 @@ function HealFooter({
         step={0.02}
         value={bgAlpha}
         onChange={(e) => patch({ bgAlpha: Number(e.target.value) })}
-        style={{ flexGrow: 1, accentColor: HEAL_GOLD, height: 4 }}
+        style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 24, accentColor: HEAL_GOLD, height: 4 }}
       />
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
-      <button
-        type="button"
-        onClick={() => patch({ topN: topN >= 10 ? 5 : 10 })}
-        title="Toggle number of rows"
-        style={{
-          background: 'rgba(255,255,255,0.06)',
-          color: 'inherit',
-          border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: 4,
-          padding: '1px 6px',
-          cursor: 'pointer',
-          fontSize: 10
-        }}
-      >
-        top {topN}
-      </button>
     </div>
   )
 }

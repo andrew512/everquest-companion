@@ -7,10 +7,16 @@
 //      It is the whole contract for a field that is optional in the store (every install
 //      predates it), renderer-writable, and hand-editable.
 //   2. SOURCE PINS for the rendering rule, which cannot be observed without a real transparent
-//      always-on-top window: the scale is a CSS `zoom` applied in exactly ONE place, and the two
-//      things a zoomed subtree breaks — viewport units, and measure-then-place coordinates — are
-//      answered everywhere they occur. The same idiom (and reason) as
+//      always-on-top window: the scale is a CSS `zoom` applied in exactly ONE place — the CONTENT
+//      pane — and the two things a zoomed subtree breaks (viewport units, and measure-then-place
+//      coordinates) are answered everywhere they occur. The same idiom (and reason) as
 //      `overlayLockedSelector.test.mts`.
+//
+// WHY THE CONTENT PANE AND NOT THE WINDOW ROOT (owner feedback, second round: "currently it just
+// pushes the content out of the window which is undesirable"). The first cut zoomed
+// #overlay-root, so the header and footer grew with the bars and at 2.0 on a narrow overlay the
+// A− that would undo it was off the right edge. Chrome now lays out at scale 1 against the real
+// window and wraps; only the reading matter scales, and what does not fit scrolls.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -34,13 +40,16 @@ const code = (rel: string): string =>
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:])\/\/.*$/gm, '$1')
 
-/** Every surface that mounts into #overlay-root, i.e. everything the zoom is applied over. */
+/** Every surface that mounts into #overlay-root: chrome plus the content pane the zoom goes on. */
 const SURFACES = {
   'the damage meter': '../src/renderer/src/overlay/OverlayMeter.tsx',
   'the healing meter': '../src/renderer/src/overlay/HealMeter.tsx',
   'the event log': '../src/renderer/src/overlay/EventLogOverlay.tsx',
   'the celebration toast': '../src/renderer/src/overlay/ToastOverlay.tsx'
 }
+
+/** The one file that applies the scale. */
+const SCALE = '../src/renderer/src/overlay/overlayScale.tsx'
 
 // ---- the normalizer ---------------------------------------------------------------------
 
@@ -96,7 +105,7 @@ test('the store clamps the scale on the way OUT as well as in', () => {
   // Read side: `getOverlayConfig` fills the default for the stores (all of them) written before
   // this field existed.
   assert.match(store, /cfg\.textScale = clampTextScale\(cfg\.textScale\)/)
-  // Write side: the value comes from a renderer, like bgAlpha and topN beside it.
+  // Write side: the value comes from a renderer, like the bgAlpha beside it.
   assert.match(store, /next\.textScale = clampTextScale\(next\.textScale\)/)
 })
 
@@ -108,21 +117,62 @@ test('NO NEW CHANNEL: the scale rides the existing per-kind overlay config', () 
 
 // ---- the rendering rule -----------------------------------------------------------------
 
-test('the zoom is applied ONCE, on the window root, by the shared chrome hook', () => {
-  const chrome = src('../src/renderer/src/overlay/useOverlayChrome.ts')
-  assert.match(chrome, /getElementById\('overlay-root'\)\?\.style\.setProperty\('zoom'/)
-  // `zoom` participates in layout; `transform: scale()` would magnify a bitmap over the window's
+test('the zoom is applied in exactly ONE place: the content pane', () => {
+  const scale = code(SCALE)
+  assert.match(scale, /zoom: textScale/, 'overlayScale must be the file that applies it')
+  // `zoom` participates in layout; `transform: scale()` would magnify a bitmap over the pane's
   // own edges and leave the scroll box measuring the old size.
-  assert.doesNotMatch(code('../src/renderer/src/overlay/useOverlayChrome.ts'), /transform:\s*`?scale/)
+  assert.doesNotMatch(scale, /transform:\s*`?scale/)
+  // Nowhere else — including the hook, which used to set it imperatively on #overlay-root and is
+  // exactly the placement this round moved.
+  const chrome = code('../src/renderer/src/overlay/useOverlayChrome.ts')
+  assert.doesNotMatch(chrome, /zoom/, 'the chrome hook remembers the scale and applies none of it')
   for (const [name, path] of Object.entries(SURFACES)) {
     assert.doesNotMatch(code(path), /zoom:/, `${name} must not grow a second copy of the zoom`)
   }
 })
 
+test('THE CHROME IS NEVER SCALED, and cannot be pushed out of a narrow window', () => {
+  // The scale reaches the rows through the content component and nothing else, so the header and
+  // footer keep laying out against the real window width at every scale.
+  for (const [name, path] of Object.entries(SURFACES)) {
+    assert.match(code(path), /<(OverlayContent|ScaledContent) textScale=/, `${name} scales no content`)
+  }
+  // …and the footers themselves fit a genuinely narrow window, zoom or no zoom. ONE ROW: the
+  // range input is the give (`flexBasis: 0` + a small floor), the buttons never shrink — the
+  // owner's report was an A+ clipped mid-glyph, i.e. the control that fixes it, unpressable.
+  for (const path of [SURFACES['the damage meter'], SURFACES['the healing meter'], SURFACES['the event log']]) {
+    const text = code(path)
+    assert.match(
+      text,
+      /flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 24/,
+      `${path} has a slider that does not give up its width`
+    )
+    assert.doesNotMatch(text, /flexWrap/, `${path} folds its compact chrome onto a second row`)
+  }
+  const stepper = code('../src/renderer/src/overlay/TextScaleStepper.tsx')
+  assert.match(stepper, /flexShrink: 0/, 'A− / A+ must never be the thing that shrinks')
+})
+
+test('the content pane scrolls, and no surface hides rows to avoid it', () => {
+  // The retired top-5/top-10 budget (owner feedback 2026-08-05: "we should just allow as many as
+  // needed and scroll"). Every row renders; the pane is what deals with not fitting.
+  assert.match(code(SCALE), /overflowY: 'auto'/, 'the content pane must scroll')
+  for (const path of [
+    ...Object.values(SURFACES),
+    '../src/renderer/src/overlay/meterBars.tsx',
+    '../src/renderer/src/overlay/healBars.tsx'
+  ]) {
+    assert.doesNotMatch(code(path), /topN/, `${path} still carries a row budget`)
+  }
+  // The level-1 damage list is the one that used to be sliced.
+  assert.doesNotMatch(code('../src/renderer/src/overlay/meterBars.tsx'), /sources\.slice\(/)
+})
+
 test('nothing under the zoom sizes itself in viewport units', () => {
   // A viewport unit resolves against the window and is THEN scaled, so `100vw` at 1.5 is half a
-  // screen wider than the window it is supposed to fill. Percentages resolve against the
-  // (unzoomed) parent and fill it at any scale — which is why overlay.html sizes html/body too.
+  // screen wider than the pane it is supposed to fill. Percentages resolve against the parent and
+  // fill it at any scale — which is why overlay.html sizes html/body too.
   for (const [name, path] of Object.entries(SURFACES)) {
     assert.doesNotMatch(code(path), /100vw|100vh/, `${name} still sizes itself in viewport units`)
   }
@@ -131,17 +181,18 @@ test('nothing under the zoom sizes itself in viewport units', () => {
   assert.match(html, /#overlay-root \{\s*width: 100%;\s*height: 100%;/)
 })
 
-test('the two fixed layers convert between visual and zoomed pixels', () => {
+test('ONE fixed layer converts between visual and zoomed pixels — the one inside the pane', () => {
   // getBoundingClientRect reports visual pixels; a pixel written back into top/left inside the
-  // zoomed subtree is multiplied again. Both measure-then-place layers divide exactly once.
-  for (const path of [
-    '../src/renderer/src/overlay/OverlaySelect.tsx',
-    '../src/renderer/src/overlay/hoverCardLayer.tsx'
-  ]) {
-    const text = code(path)
-    assert.match(text, /overlayCssZoom\(/, `${path} must ask what scale it is being drawn at`)
-    assert.doesNotMatch(text, /calc\(100v[wh]/, `${path} must not clamp itself with viewport units`)
-  }
+  // zoomed pane is multiplied again. The feed's hover card is anchored to a CONTENT row, so it
+  // divides exactly once.
+  const card = code('../src/renderer/src/overlay/hoverCardLayer.tsx')
+  assert.match(card, /overlayCssZoom\(/, 'the hover card must ask what scale it is drawn at')
+  assert.doesNotMatch(card, /calc\(100v[wh]/, 'and must not clamp itself with viewport units')
+  // The selector popup hangs off the HEADER, which is unscaled chrome: one coordinate space, so
+  // a conversion there would now be the bug.
+  const popup = code('../src/renderer/src/overlay/OverlaySelect.tsx')
+  assert.doesNotMatch(popup, /overlayCssZoom|\/ z\b/, 'the popup measures and places in one space')
+  assert.doesNotMatch(popup, /calc\(100v[wh]/)
 })
 
 test('every overlay kind can reach the control', () => {

@@ -2,7 +2,7 @@
 // window. Plain React + inline styles; the overlay bundle stays MUI-free.
 
 import { type JSX, useLayoutEffect, useRef, useState } from 'react'
-import { overlayCssZoom } from './useOverlayChrome'
+import { overlayCssZoom } from './overlayScale'
 
 /** Gap the hover card keeps from its anchor AND from every window edge. */
 const CARD_MARGIN = 4
@@ -54,12 +54,14 @@ export function HoverCardLayer({ anchor, children }: { anchor: HTMLElement; chil
       let left = a.left
       if (left + c.width > vw - m) left = vw - m - c.width
       if (left < m) left = m
-      // Everything above is in VISUAL pixels — rects and innerWidth/Height all carry the
-      // overlay's text scale. The numbers below are written back INSIDE the zoomed subtree,
-      // where they get multiplied by that scale again, so each one is divided once here. Same
-      // rule (and the same reason) as the selector popup; it is also why the max sizes are set
-      // from these numbers rather than from `calc(100vw - …)`, which a zoom would inflate past
-      // the window edge.
+      // Everything above is in VISUAL pixels — rects and innerWidth/Height all carry the text
+      // scale of the content pane this card is rendered inside. The numbers below are written
+      // back INSIDE that zoomed pane, where they get multiplied by the same scale again, so each
+      // one is divided once here. It is also why the max sizes are set from these numbers rather
+      // than from `calc(100vw - …)`, which the zoom would inflate past the window edge.
+      //
+      // This is the ONLY layer that converts: the selector popup hangs off the header, which is
+      // unscaled chrome, so it measures and places in one space (overlayScale.tsx).
       const z = overlayCssZoom(el)
       const next: Placement = { left: left / z, top: top / z, maxW: (vw - 2 * m) / z, maxH: (vh - 2 * m) / z }
       setPos((p) =>

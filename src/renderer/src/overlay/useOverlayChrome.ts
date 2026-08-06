@@ -1,12 +1,13 @@
 // useOverlayChrome — the window plumbing every overlay KIND shares, in one place.
 //
 // All five overlays (damage fight/overall, healing fight/overall, event log) are the same
-// window with a different body: a persisted config (position, background alpha, row count,
-// TEXT SIZE, lock AND the drill-down), a lock toggle that flips click-through, and the hover
-// dance that briefly re-captures the mouse over a LOCKED overlay so its own controls stay
-// reachable. This hook is that plumbing; each overlay file keeps only its header, selector and
-// body — and, since the text size is a property of the WINDOW rather than of any one body, this
-// is also where it is applied.
+// window with a different body: a persisted config (position, background alpha, TEXT SIZE, lock
+// AND the drill-down), a lock toggle that flips click-through, and the hover dance that briefly
+// re-captures the mouse over a LOCKED overlay so its own controls stay reachable. This hook is
+// that plumbing; each overlay file keeps only its header, selector and body.
+//
+// It REMEMBERS the text size and applies none of it: the scale goes on the content pane and not
+// on the chrome, so the placement belongs to the surface (overlayScale.tsx).
 //
 // CONFIG IS THE STATE. `patch` writes locally first (so the UI moves this frame) and then
 // through to main, which echoes it back over onConfig — there is no second copy to drift, and
@@ -54,9 +55,8 @@ export interface OverlayChrome {
   /** click-through + no chrome; the persisted lock state */
   locked: boolean
   bgAlpha: number
-  topN: number
-  /** Text size, 0.8..2. Already APPLIED to the window (see the zoom effect below) — surfaces
-   *  need it only to draw the stepper's current value. */
+  /** Text size, 0.8..2. Remembered here, APPLIED by the surface: it goes on the content pane
+   *  (overlayScale.tsx) and never on the chrome, and the stepper prints it. */
   textScale: number
   /** Config IS the drill state — no local mirror to drift. */
   drill: OverlayDrill | null
@@ -97,28 +97,8 @@ export function useOverlayChrome(): OverlayChrome {
 
   const locked = cfg?.locked ?? false
   const bgAlpha = cfg?.bgAlpha ?? 0.72
-  const topN = cfg?.topN ?? 5
   const drill = cfg?.drill ?? null
   const textScale = clampTextScale(cfg?.textScale)
-
-  /**
-   * THE TEXT SCALE IS APPLIED HERE AND NOWHERE ELSE — one placement per window, on the root.
-   *
-   * CSS `zoom`, not `transform: scale()`: zoom participates in layout, so the bars reflow and the
-   * scroll box measures itself at the new size instead of a magnified bitmap hanging off the
-   * window's edges. Imperative because #overlay-root is OUTSIDE React's tree (main.tsx renders
-   * INTO it) — and it has to be the container every kind mounts into, or four surfaces would each
-   * grow their own copy of this.
-   *
-   * The two consequences, both paid where they land:
-   *   - nothing under this may size itself in 100vw/100vh (a viewport unit resolves against the
-   *     window and is THEN scaled) — overlay.html and the four surfaces use percentages;
-   *   - anything that MEASURES with getBoundingClientRect and writes the number back as a
-   *     coordinate divides by `overlayCssZoom` (see below).
-   */
-  useEffect(() => {
-    document.getElementById('overlay-root')?.style.setProperty('zoom', String(textScale))
-  }, [textScale])
 
   const patch = (p: Partial<OverlayConfig>): void => {
     setCfg((c) => (c ? { ...c, ...p } : c))
@@ -163,7 +143,6 @@ export function useOverlayChrome(): OverlayChrome {
     ready: cfg !== null,
     locked,
     bgAlpha,
-    topN,
     textScale,
     drill,
     hovering,
@@ -176,23 +155,4 @@ export function useOverlayChrome(): OverlayChrome {
     dragRegion: !locked ? ({ WebkitAppRegion: 'drag' } as React.CSSProperties) : {},
     noDrag: { WebkitAppRegion: 'no-drag' } as React.CSSProperties
   }
-}
-
-/**
- * The text scale in force at `el` — i.e. the CSS zoom the hook above set on the overlay root.
- *
- * WHY A MEASURE-THEN-PLACE LAYER NEEDS IT. `getBoundingClientRect()` reports VISUAL pixels (the
- * zoom is already in them), while a pixel written back into `top`/`left` inside the zoomed
- * subtree is multiplied by that same zoom on the way to the screen. Divide once, at the boundary
- * between the two spaces, and a popup anchored to the header lands under the header at every
- * scale; skip it and at 1.5 it lands half a window too low. Only the two `position: fixed` layers
- * (the selector popup, the feed's hover card) do this — everything else is plain flow layout,
- * which zoom handles by itself.
- *
- * Read from the ELEMENT rather than from the config: this is the value the engine actually
- * applied, so a layer that is somehow outside the zoomed subtree measures 1 and is left alone.
- */
-export function overlayCssZoom(el: Element | null | undefined): number {
-  const z = el?.currentCSSZoom ?? 1
-  return z > 0 ? z : 1
 }

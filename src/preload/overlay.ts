@@ -72,14 +72,14 @@ const overlayApi = {
   lookupMob: (name: string): Promise<MobKnowledge> => ipcRenderer.invoke(IPC.mobsLookup, name),
 
   /**
-   * Read this kind's persisted overlay config (locked / bgAlpha / topN / bounds / drill).
+   * Read this kind's persisted overlay config (locked / bgAlpha / text scale / bounds / drill).
    * The overlay hydrates from this on mount — including the mini drill-down, so a meter that
    * was left drilled into an entity comes back drilled after a restart.
    */
   getConfig: (): Promise<OverlayConfig> => ipcRenderer.invoke(IPC.overlayGetConfig, KIND),
   /**
    * Persist a partial config for this kind; returns the merged value. Same path for every
-   * remembered field: alpha/topN/lock from the footer controls, bounds from main, and the
+   * remembered field: alpha/text scale/lock from the footer controls, bounds from main, and the
    * drill-down (rare, so written immediately rather than debounced).
    */
   setConfig: (patch: Partial<OverlayConfig>): Promise<OverlayConfig> =>

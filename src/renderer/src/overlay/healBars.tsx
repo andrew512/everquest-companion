@@ -150,18 +150,17 @@ function NothingToRank({ live, mit }: { live: boolean; mit: MitigationView | nul
  */
 export function HealBars({
   seg,
-  topN,
   drill,
   setDrill,
   live
 }: {
   seg: SegmentView | undefined
-  topN: number
   drill: Drill | null
   setDrill: ((d: Drill | null) => void) | null
   live: boolean
 }): JSX.Element {
-  const panel = healPanel(seg?.healing, drill?.entityId ?? null, topN)
+  // EVERY healer, ranked — no row budget (owner feedback 2026-08-05); the content pane scrolls.
+  const panel = healPanel(seg?.healing, drill?.entityId ?? null)
 
   // Level 2: the healer's spells.
   if (panel.level === 2) {

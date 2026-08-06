@@ -67,7 +67,7 @@ export function getProfile(id: string): GameProfile | undefined {
 // PRIVATE BY DEFAULT and cannot leak by being added to the store.
 //
 //   GLOBAL     portable between users, carries no machine paths and no character identity.
-//              alerts[] · alertPrefs · overlays.<kind>.{bgAlpha,topN} · the whitelisted
+//              alerts[] · alertPrefs · overlays.<kind>.{bgAlpha} · the whitelisted
 //              renderer UI prefs (combat scope, boss density, posky class filter + count
 //              source, item favorites, game profile).
 //
@@ -192,7 +192,7 @@ export interface SettingsExportInput {
   alerts: AlertDef[]
   alertPrefs: AlertPrefs
   /** full stored configs; only OVERLAY_EXPORT_FIELDS are read out of them */
-  overlays: Partial<Record<OverlayKind, { bgAlpha: number; topN: number } & Record<string, unknown>>>
+  overlays: Partial<Record<OverlayKind, { bgAlpha: number } & Record<string, unknown>>>
   /** raw localStorage values the renderer collected; filtered against UI_PREF_SPECS here */
   ui?: Record<string, string>
 }
@@ -214,10 +214,9 @@ function exportableOverlays(
   for (const kind of EXPORTABLE_OVERLAY_KINDS) {
     const cfg = stored?.[kind]
     if (!cfg) continue
-    overlays[kind] = {
-      bgAlpha: clamp01(cfg.bgAlpha, 0.72),
-      topN: cfg.topN === 10 ? 10 : 5
-    }
+    // Projected field by field, never spread: a stored config carries geometry, a drill and (in
+    // stores written before the row budget was retired) a dead `topN`, and none of it travels.
+    overlays[kind] = { bgAlpha: clamp01(cfg.bgAlpha, 0.72) }
   }
   return overlays
 }

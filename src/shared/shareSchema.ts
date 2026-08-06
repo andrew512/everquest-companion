@@ -51,10 +51,11 @@ export interface AlertSetBody {
   alerts: AlertDef[]
 }
 
-/** The overlay fields that are actually PREFERENCES (the rest is window geometry). */
+/** The overlay fields that are actually PREFERENCES (the rest is window geometry).
+ *  A bundle written before 2026-08-05 also carries `topN`, the retired row budget; it is not read
+ *  on the way in, and an extra key on an incoming body is already ignored. */
 export interface ExportableOverlayConfig {
   bgAlpha: number
-  topN: number
 }
 
 /** Body of a `kind:'settings'` envelope. Every field is optional so a bundle can be partial. */
@@ -72,7 +73,7 @@ export interface SettingsBundleBody {
  * The ONLY overlay fields that leave this machine. `open`/`locked`/`bounds`/`drill` are
  * MACHINE state: bounds are monitor coordinates and drill holds live entity ids.
  */
-export const OVERLAY_EXPORT_FIELDS = ['bgAlpha', 'topN'] as const
+export const OVERLAY_EXPORT_FIELDS = ['bgAlpha'] as const
 
 /** Overlay kinds a bundle may carry (mirrors OverlayKind; explicit so a new kind is a choice). */
 export const EXPORTABLE_OVERLAY_KINDS: OverlayKind[] = [

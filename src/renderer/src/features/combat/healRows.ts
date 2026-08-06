@@ -157,7 +157,7 @@ export function healTotalTitle(healing: HealingView | undefined): string {
 export type HealPanel =
   | {
       level: 1
-      /** ranked healers, capped at `limit` (the overlay's top-N; the panel passes none). */
+      /** every healer in the segment, ranked — no caller caps this list. */
       healers: HealSourceView[]
       /** true when the segment has a healing model but nothing to rank in it. */
       empty: boolean
@@ -177,18 +177,18 @@ export type HealPanel =
  * Combat tab passes `drill.kind === 'entity' ? drill.entityId : null`, the overlays pass their
  * persisted `drill?.entityId ?? null`. Everything downstream — the levels, what rides under
  * level 1, the stale-id fallback — is decided here, once.
+ *
+ * EVERY healer comes back. The overlay used to pass a row budget (top 5 / top 10) and cap this
+ * list; that budget was retired on 2026-08-05 and its scroll pane replaced it, so there is no
+ * caller left that wants fewer rows than exist.
  */
-export function healPanel(
-  healing: HealingView | undefined,
-  entityId: string | null,
-  limit = Number.POSITIVE_INFINITY
-): HealPanel {
+export function healPanel(healing: HealingView | undefined, entityId: string | null): HealPanel {
   const healers = healing?.healers ?? []
   const subject = entityId === null ? undefined : healers.find((h) => h.id === entityId)
   if (subject) return { level: 2, subject, rows: subject.spells }
   return {
     level: 1,
-    healers: healers.slice(0, limit),
+    healers,
     empty: healers.length === 0,
     mitigation: healing?.mitigation ?? null,
     enemy: { total: healing?.enemyTotal ?? 0, healers: healing?.enemyHealers ?? [] }

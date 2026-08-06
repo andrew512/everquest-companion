@@ -54,7 +54,7 @@ function currentOverlays(): ScalarContext['overlays'] {
   const out: ScalarContext['overlays'] = {}
   for (const k of KINDS) {
     const c = getOverlayConfig(k)
-    out[k] = { bgAlpha: c.bgAlpha, topN: c.topN }
+    out[k] = { bgAlpha: c.bgAlpha }
   }
   return out
 }
@@ -153,8 +153,10 @@ export interface ShareSelection {
 function applyOverlayScalar(changeId: string, body: SettingsBundleBody): boolean {
   const [, kind, field] = changeId.split('.')
   const inc = body.overlays?.[kind as OverlayKind]
-  if (inc && (field === 'bgAlpha' || field === 'topN')) {
-    setOverlayConfig(kind as OverlayKind, { [field]: inc[field] })
+  // One field today. A `topN` id from a bundle written before that budget was retired falls
+  // through to false, which is the honest answer: nothing here can apply it any more.
+  if (inc && field === 'bgAlpha') {
+    setOverlayConfig(kind as OverlayKind, { bgAlpha: inc.bgAlpha })
     return true
   }
   return false

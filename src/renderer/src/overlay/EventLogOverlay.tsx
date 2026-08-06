@@ -44,6 +44,7 @@ import { formatTime } from '../lib/formatDate'
 import { isTradeskillOnly } from '../lib/itemKnowledgeView'
 import { ItemHoverCard, MobHoverCard, lookupItemCached } from './feedHoverCards'
 import { HoverCardLayer } from './hoverCardLayer'
+import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { OverlayHeader } from './OverlayHeader'
@@ -341,7 +342,9 @@ function useEventFeed(): FeedSnap {
   return rows
 }
 
-/** Footer — interactive mode only: the bg-alpha slider + text size, matching the meters. */
+/** Footer — interactive mode only: the bg-alpha slider + text size, matching the meters. Chrome,
+ *  so unscaled and ONE ROW at any width: the buttons never shrink and the slider absorbs whatever
+ *  the row is short (see OverlayMeter's footer for the whole reasoning). */
 function FeedFooter({
   bgAlpha,
   textScale,
@@ -367,7 +370,9 @@ function FeedFooter({
         flexShrink: 0
       }}
     >
-      <span title="Background opacity">bg</span>
+      <span title="Background opacity" style={{ flexShrink: 0 }}>
+        bg
+      </span>
       <input
         type="range"
         min={0.1}
@@ -375,7 +380,7 @@ function FeedFooter({
         step={0.02}
         value={bgAlpha}
         onChange={(e) => patch({ bgAlpha: Number(e.target.value) })}
-        style={{ flexGrow: 1, accentColor: GOLD, height: 4 }}
+        style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 24, accentColor: GOLD, height: 4 }}
       />
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
     </div>
@@ -393,7 +398,8 @@ export default function EventLogOverlay(): JSX.Element {
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       style={{
-        // 100%, NOT 100vw/100vh — the text scale is a CSS zoom on the root (useOverlayChrome).
+        // 100%, NOT 100vw/100vh — a viewport unit inside the scaled content pane is resolved
+        // against the window and then zoomed (overlayScale).
         width: '100%',
         height: '100%',
         display: 'flex',
@@ -420,8 +426,9 @@ export default function EventLogOverlay(): JSX.Element {
       />
 
       {/* The feed. Newest first; a fixed-height scroll box (AGENTS.md: a growing list never sizes
-          to its content). */}
-      <div style={{ flexGrow: 1, minHeight: 0, overflow: 'auto', padding: '4px 6px' }}>
+          to its content) that is also where the text scale is applied — the chrome above and
+          below it stays at 1 so it cannot be pushed out of a small window. */}
+      <OverlayContent textScale={textScale}>
         {feed.length === 0 ? (
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', padding: '8px 2px' }}>
             Watching for alerts, notable loot, considers and quest completions…
@@ -429,7 +436,7 @@ export default function EventLogOverlay(): JSX.Element {
         ) : (
           feed.map((e) => <Row key={e.id} e={e} interactive={!locked} />)
         )}
-      </div>
+      </OverlayContent>
 
       {!locked && <FeedFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
     </div>
