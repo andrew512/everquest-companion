@@ -230,7 +230,12 @@ if (!gotSingleInstanceLock) {
     // (with no count) rather than leaving the profile forever incomplete.
     void startTailing()
       .then((res) => {
-        markStartupPhase('replayDone', { eventsReplayed: res?.eventsReplayed ?? 0 })
+        markStartupPhase('replayDone', {
+          eventsReplayed: res?.eventsReplayed ?? 0,
+          // …and what the fold's duty cycle actually cost (JOS-50). Absent on a machine with no
+          // log to replay, where there was no fold to have a duty.
+          ...(res ? { replay: res.replay } : {})
+        })
       })
       .catch((err: unknown) => {
         markStartupPhase('replayDone')

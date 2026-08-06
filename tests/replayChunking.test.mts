@@ -20,6 +20,15 @@
 // starts the Tailer at exactly that offset. So the test appends to the log FROM INSIDE A YIELD
 // (the slicer's `yieldTo` seam makes that a deterministic mid-scan write rather than a race) and
 // proves the appended bytes are untouched by the scan and picked up whole from `endOffset`.
+//
+// AND SINCE JOS-50, THE DUTY CYCLE. The slicer now RESTS on a real timer between slices so the
+// fold cannot hold a core flat out for the whole replay. Two things follow, and both are tested
+// below. First, the rest length is not the number passed to `setTimeout` — Windows rounds a sleep
+// up to its 15.6 ms quantum — so the duty is held by a debt LEDGER that measures each rest and
+// skips the next one when the OS overshot; a fake coarse timer drives that here, because a duty
+// cycle tested by actually waiting is a test nobody runs. Second, a pause cannot change an answer:
+// the equivalence arm is folded in the RESTING mode too (with an instant fake timer), so the
+// oracle covers the yield mode production actually uses.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -28,7 +37,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LogBus } from '../src/main/log/bus'
 import { scanLog } from '../src/main/log/scanHistory'
-import { REPLAY_SLICE_MS, createSlicer, unchunkedSlicer } from '../src/main/log/replaySlicer'
+import {
+  REPLAY_DUTY,
+  REPLAY_MAX_REST_CREDIT_MS,
+  REPLAY_SLICE_MS,
+  createSlicer,
+  unchunkedSlicer,
+  type Slicer
+} from '../src/main/log/replaySlicer'
 import { BuffsModule } from '../src/main/modules/buffs'
 import { FIXTURES } from './harness.mjs'
 import type { LogEvent } from '../src/shared/logEvents'
@@ -40,6 +56,9 @@ test('the slice budget is honoured against a FAKE clock — a budget you can onl
   let yields = 0
   const slicer = createSlicer({
     budgetMs: 12,
+    // duty 1 — this test is about the BUDGET. The duty cycle is tested on its own below, and
+    // leaving it on here would send every yield down the resting path instead of `yieldTo`.
+    duty: 1,
     now: () => clock,
     yieldTo: async () => {
       yields += 1
@@ -75,6 +94,7 @@ test('a single MONSTER event still yields after it — the budget is never skipp
   let yields = 0
   const slicer = createSlicer({
     budgetMs: REPLAY_SLICE_MS,
+    duty: 1,
     now: () => clock,
     yieldTo: () => {
       yields += 1
@@ -104,6 +124,162 @@ test('the UNCHUNKED control never yields, however long the fold runs', () => {
   assert.equal(real.slices, 0)
 })
 
+// ---------------------------------------------------------------------------- the duty cycle
+
+/**
+ * Drive `slices` slices of `workMs` each through a slicer whose clock and timer are both fakes,
+ * and report what the ledger achieved. The timer is a FUNCTION of the requested rest, which is
+ * the whole point: on Windows the two are not the same number and the ledger exists to close
+ * that gap.
+ */
+async function driveDuty(opts: {
+  slices: number
+  workMs: number
+  duty?: number
+  /** Given the clock and the rest that was asked for, where does the clock land? */
+  deliver: (clock: number, askedMs: number) => number
+}): Promise<{ slicer: Slicer; rests: number; restAt: number[]; achieved: number }> {
+  let clock = 0
+  let rests = 0
+  let slice = 0
+  const restAt: number[] = []
+  const slicer = createSlicer({
+    budgetMs: opts.workMs,
+    ...(opts.duty === undefined ? {} : { duty: opts.duty }),
+    now: () => clock,
+    yieldTo: () => Promise.resolve(),
+    restFor: (askedMs: number) => {
+      rests += 1
+      restAt.push(slice)
+      clock = opts.deliver(clock, askedMs)
+      return Promise.resolve()
+    }
+  })
+  for (slice = 0; slice < opts.slices; slice++) {
+    clock += opts.workMs
+    assert.equal(slicer.expired(), true, `slice ${String(slice)} used its whole budget`)
+    await slicer.yield()
+  }
+  const total = slicer.workMs + slicer.restMs
+  return { slicer, rests, restAt, achieved: total > 0 ? slicer.workMs / total : 0 }
+}
+
+/** The longest run of consecutive slices that folded without resting. */
+function longestUnthrottledRun(restAt: readonly number[], slices: number): number {
+  let worst = 0
+  let previous = -1
+  for (const at of [...restAt, slices]) {
+    worst = Math.max(worst, at - previous - 1)
+    previous = at
+  }
+  return worst
+}
+
+/** Windows' timer quantum, MEASURED in the Electron main process (see replaySlicer.ts): a sleep
+ *  ends at the next 15.6 ms tick edge after the time you asked for, not at the time you asked. */
+const QUANTUM_MS = 15.6
+const onTheGrid = (clock: number, askedMs: number): number =>
+  Math.ceil((clock + askedMs) / QUANTUM_MS) * QUANTUM_MS
+
+test('THE DUTY LEDGER HOLDS 60% THROUGH A COARSE WINDOWS TIMER, which no fixed setTimeout can', async () => {
+  // The measurement this encodes: after a 12 ms burn, `setTimeout(8)` on this machine returns in
+  // ~19.2 ms, because 12 + 8 overshoots one 15.6 ms tick and the sleep waits out the second. A
+  // slicer that simply slept 8 ms would therefore run at 12/31.2 = 38% duty, not 60% — so the
+  // rest is bookkept: each overshoot leaves a credit, and the next slices spend it by not
+  // resting at all.
+  const { slicer, rests, achieved } = await driveDuty({
+    slices: 400,
+    workMs: REPLAY_SLICE_MS,
+    deliver: onTheGrid
+  })
+  assert.ok(
+    Math.abs(achieved - REPLAY_DUTY) < 0.02,
+    `achieved duty ${achieved.toFixed(3)} should converge on ${String(REPLAY_DUTY)} (rested ${String(slicer.restMs)}ms over ${String(slicer.workMs)}ms of work)`
+  )
+  // …and it gets there by resting SOME of the time, not by resting a little every slice: the
+  // grid gives ~19 ms when 8 is owed, so roughly two slices in three skip the rest entirely.
+  assert.ok(rests > 0 && rests < 400, `some slices rest and some do not (${String(rests)}/400)`)
+  assert.equal(slicer.slices, 400)
+})
+
+test('…and it holds the same 60% through a FINE timer, where the sleep is simply honoured', async () => {
+  // The other machine: something in the process has raised the timer resolution and a sleep lasts
+  // as long as it was told to. The ledger must not overcorrect for a timer that never overshoots.
+  const { slicer, rests, achieved } = await driveDuty({
+    slices: 200,
+    workMs: REPLAY_SLICE_MS,
+    deliver: (clock, askedMs) => clock + askedMs
+  })
+  assert.ok(
+    Math.abs(achieved - REPLAY_DUTY) < 0.005,
+    `achieved duty ${achieved.toFixed(3)} with an exact timer`
+  )
+  assert.equal(rests, 200, 'every slice rests when every rest is exactly the length it asked for')
+  assert.equal(Math.round(slicer.restMs), Math.round(slicer.workMs * ((1 - REPLAY_DUTY) / REPLAY_DUTY)))
+})
+
+test('a duty of 1 never rests at all — the pre-JOS-50 behaviour, still reachable for the oracle', async () => {
+  const { slicer, rests, achieved } = await driveDuty({
+    slices: 50,
+    workMs: REPLAY_SLICE_MS,
+    duty: 1,
+    deliver: onTheGrid
+  })
+  assert.equal(rests, 0)
+  assert.equal(slicer.restMs, 0)
+  assert.equal(achieved, 1)
+})
+
+test('a rest the OS overshot by half a second buys a BOUNDED credit, never a burst of free slices', async () => {
+  // The hazard the cap exists for: if the machine takes the process away mid-rest, the fold was
+  // genuinely idle for that whole time — but banking it as credit would let the next slices fold
+  // back to back at 100% for as long as the credit lasts, which is the exact spike this feature
+  // exists to prevent. Uncapped, one 5 s rest would pay for 625 slices at 8 ms of debt each.
+  let first = true
+  const slices = 40
+  const { restAt } = await driveDuty({
+    slices,
+    workMs: REPLAY_SLICE_MS,
+    deliver: (clock, askedMs) => {
+      if (!first) return onTheGrid(clock, askedMs)
+      first = false
+      return clock + 5_000
+    }
+  })
+  // Credit is capped at REPLAY_MAX_REST_CREDIT_MS and each slice adds 8 ms of debt, so no more
+  // than four slices in a row can be unthrottled — uncapped, that one rest would have paid for
+  // 625 of them, i.e. seven and a half seconds of the fold at full tilt.
+  const debtPerSlice = REPLAY_SLICE_MS * ((1 - REPLAY_DUTY) / REPLAY_DUTY)
+  const maxFreeSlices = Math.ceil(REPLAY_MAX_REST_CREDIT_MS / debtPerSlice)
+  const run = longestUnthrottledRun(restAt, slices)
+  assert.ok(
+    run <= maxFreeSlices,
+    `at most ${String(maxFreeSlices)} consecutive unthrottled slices; the worst run was ${String(run)}`
+  )
+  assert.ok(Math.ceil(5_000 / debtPerSlice) > 100, 'and uncapped that credit would have paid for hundreds')
+})
+
+test('an over-budget MONSTER slice buys ITSELF more rest — the debt is a function of work done', async () => {
+  let clock = 0
+  let asked = 0
+  const slicer = createSlicer({
+    budgetMs: REPLAY_SLICE_MS,
+    now: () => clock,
+    yieldTo: () => Promise.resolve(),
+    restFor: (ms: number) => {
+      asked = ms
+      clock += ms
+      return Promise.resolve()
+    }
+  })
+  clock += 120 // one pathological line, ten budgets long
+  await slicer.yield()
+  // 120 ms of folding at a 60% duty owes 80 ms of rest, not the 8 ms a fixed pause would give it.
+  assert.equal(Math.round(asked), 80)
+  assert.equal(Math.round(slicer.workMs), 120)
+  assert.equal(Math.round(slicer.restMs), 80)
+})
+
 // --------------------------------------------------------------------------- the fold, twice
 
 /** Every committed golden fixture, concatenated — the proc / combat / leveling windows and the
@@ -126,7 +302,31 @@ interface Folded {
   buffs: string
 }
 
-async function fold(logPath: string, budgetMs: number | 'unchunked'): Promise<Folded> {
+/**
+ * One arm of the comparison. `'unchunked'` is the control; a number is a slice budget with the
+ * duty cycle OFF (the pre-JOS-50 `setImmediate` path); `{ budgetMs, resting: true }` is the path
+ * production takes, with an INSTANT fake timer standing in for the OS.
+ *
+ * The fake timer is not a shortcut around the thing being tested — the duty ledger is tested on
+ * its own above, with a fake clock. Here the only question is whether a PAUSE changes an answer,
+ * and a pause of zero exercises exactly the same branch as a pause of 15.6 ms while leaving the
+ * suite runnable: the corpus yields after every event, so real rests would be hours.
+ */
+type Arm = 'unchunked' | number | { budgetMs: number; resting: true }
+
+function armSlicer(arm: Arm): Slicer {
+  if (arm === 'unchunked') return unchunkedSlicer()
+  if (typeof arm === 'number') return createSlicer({ budgetMs: arm, duty: 1 })
+  return createSlicer({ budgetMs: arm.budgetMs, restFor: () => Promise.resolve() })
+}
+
+function armName(arm: Arm): string {
+  if (arm === 'unchunked') return 'unchunked'
+  if (typeof arm === 'number') return `budget ${String(arm)}ms, no rest`
+  return `budget ${String(arm.budgetMs)}ms, RESTING`
+}
+
+async function fold(logPath: string, arm: Arm): Promise<Folded> {
   const bus = new LogBus()
   const events: string[] = []
   const live: boolean[] = []
@@ -137,8 +337,7 @@ async function fold(logPath: string, budgetMs: number | 'unchunked'): Promise<Fo
     live.push(isLive)
     mod.onEvent(ev, isLive)
   })
-  const slicer = budgetMs === 'unchunked' ? unchunkedSlicer() : createSlicer({ budgetMs })
-  const res = await scanLog(logPath, bus, 0, { slicer })
+  const res = await scanLog(logPath, bus, 0, { slicer: armSlicer(arm) })
   return {
     events,
     live,
@@ -165,19 +364,23 @@ test('CHUNKED AND UNCHUNKED FOLDS ARE BYTE-IDENTICAL over the golden fixtures', 
     assert.ok(control.events.length > 1_000, `the corpus should fold thousands of events (${String(control.events.length)})`)
 
     // budget 0 ⇒ a yield after EVERY event: the most interleaving this design can ever produce.
-    // REPLAY_SLICE_MS is what production actually runs, and is checked beside it.
-    for (const budget of [0, REPLAY_SLICE_MS]) {
-      const chunked = await fold(logPath, budget)
-      assert.equal(chunked.events.length, control.events.length, `budget ${String(budget)}ms: same event count`)
+    // REPLAY_SLICE_MS is what production actually runs, and is checked beside it — in BOTH yield
+    // modes, because since JOS-50 the production yield is a rest and the oracle has to cover the
+    // code path that ships, not the one that used to.
+    const arms: Arm[] = [0, REPLAY_SLICE_MS, { budgetMs: 0, resting: true }, { budgetMs: REPLAY_SLICE_MS, resting: true }]
+    for (const arm of arms) {
+      const name = armName(arm)
+      const chunked = await fold(logPath, arm)
+      assert.equal(chunked.events.length, control.events.length, `${name}: same event count`)
       assert.equal(
         chunked.events.join('\n'),
         control.events.join('\n'),
-        `budget ${String(budget)}ms: the event stream is identical, event for event and field for field`
+        `${name}: the event stream is identical, event for event and field for field`
       )
-      assert.deepEqual(chunked.live, control.live, `budget ${String(budget)}ms: every event is still live:false`)
-      assert.equal(chunked.endOffset, control.endOffset, `budget ${String(budget)}ms: same byte handoff point`)
-      assert.equal(chunked.seq, control.seq, `budget ${String(budget)}ms: same monotonic seq`)
-      assert.equal(chunked.buffs, control.buffs, `budget ${String(budget)}ms: the module folded to the same state`)
+      assert.deepEqual(chunked.live, control.live, `${name}: every event is still live:false`)
+      assert.equal(chunked.endOffset, control.endOffset, `${name}: same byte handoff point`)
+      assert.equal(chunked.seq, control.seq, `${name}: same monotonic seq`)
+      assert.equal(chunked.buffs, control.buffs, `${name}: the module folded to the same state`)
     }
     assert.equal(control.live.every((l) => l === false), true, 'the historical scan is live:false throughout')
   } finally {
@@ -214,7 +417,10 @@ test('the scan drains to a FROZEN EOF: a line appended mid-scan is neither folde
     const seen: string[] = []
     bus.subscribe((ev) => seen.push(ev.raw))
     const res = await scanLog(logPath, bus, 0, {
-      slicer: createSlicer({ budgetMs: 0, yieldTo: appendOnFirstYield })
+      // duty 1 so the yield goes through `yieldTo` — which is this test's instrument, not its
+      // subject: the append has to happen at a known point mid-scan, and the rest path would
+      // route around it.
+      slicer: createSlicer({ budgetMs: 0, duty: 1, yieldTo: appendOnFirstYield })
     })
 
     assert.equal(appended, true, 'the mid-scan append actually happened (the slicer yielded)')
@@ -250,7 +456,7 @@ test('an empty or missing log yields nothing and hands the tailer offset 0', asy
     const bus = new LogBus()
     let count = 0
     bus.subscribe(() => (count += 1))
-    assert.deepEqual(await scanLog(empty, bus, 0, { slicer: createSlicer({ budgetMs: 0 }) }), {
+    assert.deepEqual(await scanLog(empty, bus, 0, { slicer: createSlicer({ budgetMs: 0, duty: 1 }) }), {
       endOffset: 0,
       seq: 0
     })

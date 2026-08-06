@@ -26,6 +26,7 @@ import { Tailer } from './log/Tailer'
 import { parseEvent, parseLine } from './log/parser'
 import { installCharacterName } from './log/rulesets'
 import { scanLog } from './log/scanHistory'
+import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { loadInventory } from './inventory/parseInventory'
 import { watchOutputKind, type OutputKindWatch } from './outputs'
@@ -52,6 +53,7 @@ import {
 import { markFunnelStep, noteLinesParsed } from './telemetry'
 import { sendToMain } from './windows'
 import type { CharacterRef, EqConfig } from '../shared/types'
+import type { ReplayDutyStats } from '../shared/perf'
 
 let tailer: Tailer | null = null
 let character: CharacterRef | null = null
@@ -333,6 +335,12 @@ function startHeartbeat(): void {
 export interface TailResult {
   /** Events the historical scan folded. `seq` is reset per character, so this is the whole scan. */
   eventsReplayed: number
+  /**
+   * How the slicer split that time between folding and resting (JOS-50). Reported for the same
+   * reason the event count is: the fold is duty-cycled on purpose, so "43 s" and "72 s" are the
+   * same launch throttled differently, and only this says which.
+   */
+  replay: ReplayDutyStats
 }
 
 /** Point the tailer + loot history at a character (used at startup and on switch). */
@@ -364,7 +372,13 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // byte offsets, not about timing, which is what makes the replay safe to slice cooperatively:
   // the fold now yields to the event loop every REPLAY_SLICE_MS instead of every 1 MB read chunk,
   // and a longer wall clock simply leaves more bytes waiting for the tailer.
-  const scan = await scanLog(ref.logPath, bus, seq)
+  //
+  // THE SLICER IS BUILT HERE rather than left to scanLog's default (JOS-50) for one reason: it is
+  // the instrument as well as the throttle. It times every rest the OS actually delivered, and
+  // that measurement rides `TailResult` into the startup profile — a duty cycle nobody can read
+  // back is a claim, not a measurement.
+  const slicer = createSlicer()
+  const scan = await scanLog(ref.logPath, bus, seq, { slicer })
   // The replay's whole cost, in one call: `seq` was reset to 0 by `resetWorldFor`, so `scan.seq`
   // IS the number of lines this scan parsed. Counted here rather than per line inside the fold so
   // the replay's inner loop is untouched.
@@ -391,7 +405,10 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // renderer the character's state was fully rebuilt so views remount/re-hydrate.
   registry.flushNow()
   sendToMain(IPC.onCharacter, character)
-  return { eventsReplayed: scan.seq }
+  return {
+    eventsReplayed: scan.seq,
+    replay: { slices: slicer.slices, workMs: slicer.workMs, restMs: slicer.restMs }
+  }
 }
 
 /**

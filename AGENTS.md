@@ -331,6 +331,18 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
 - MediaWiki: anonymous `eilimit` caps at 500; >50 pageids per revisions
   batch returns HTTP 200 with ZERO pages and no warning — BATCH=50 is
   measured, not tunable.
+- **`setTimeout(n)` IN THE MAIN PROCESS DOES NOT LAST n ms** (MEASURED
+  2026-08-06, Electron 43.2.0 on Windows 11, 80 samples per row). Windows
+  runs a 15.6 ms timer quantum and nothing in this process raises it, so a
+  sleep ends at the next TICK EDGE after the time requested: idle,
+  `setTimeout(2..15)` all deliver ~15.6 ms and `setTimeout(16)` delivers
+  ~31; after a 12 ms burn, `setTimeout(4..16)` all deliver ~19.2 ms while
+  `setTimeout(0..1)` deliver ~3.6 (the rest of the current tick).
+  `setImmediate` returns in 0.01–0.06 ms and is not a pause at all. So a
+  work/rest cycle SNAPS TO THE GRID and no fixed argument buys an arbitrary
+  duty — anything pacing itself with a timer must MEASURE what it got and
+  bookkeep the difference (`replaySlicer.ts`'s debt ledger is the pattern),
+  never trust the nominal argument.
 
 ## Linting (ESLint 9 flat config + the ratchet)
 
