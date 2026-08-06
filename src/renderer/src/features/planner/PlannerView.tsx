@@ -12,12 +12,13 @@
 // class filter's is 240px, the mode toggle's is its buttons — and the one thing carrying
 // world-supplied text, the set names, is the group allowed to scroll.
 //
-// THREE MODES, ONE SET: Effects picks what you want, Board shows where it all goes, Farm turns
+// THREE MODES, ONE SET: Effects picks what you want, Inventory shows where it all goes over the
+// gear you are actually wearing (V7 — it was called Board while it started empty), Farm turns
 // what is missing into a route. All three read the SAME selected plan, and the progress join is
-// mounted ONCE here and handed to Board and Farm — two mounts would subscribe to the inventory,
+// mounted ONCE here and handed to Inventory and Farm — two mounts would subscribe to the inventory,
 // the loot module and the observed tiers twice over to compute the identical answer.
 
-import { type JSX, useState } from 'react'
+import { type JSX, useEffect, useMemo, useState } from 'react'
 import {
   Box,
   Button,
@@ -38,19 +39,24 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
-import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses } from '@shared/classCombo'
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
+import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses, type ClassAbbr } from '@shared/classCombo'
 import type { ExaltPlan } from '@shared/planner/types'
 import { useComboSnap } from '../profiles/ClassComboData'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
+import { Tooltip } from '../../lib/Tooltip'
 import EffectBrowser from './EffectBrowser'
 import FarmList from './FarmList'
 import PlanBoard from './PlanBoard'
+import { boundClasses, detectedOffer } from './plannerClasses'
+import type { BrowsePreset } from './plannerPreset'
+import RulesExplainer, { useExplainer } from './RulesExplainer'
 import { usePlannerProgress, type PlannerProgressApi } from './plannerProgress'
 import { usePlans, type PlannerMode, type PlansApi } from './usePlans'
 
 const MODES: { value: PlannerMode; label: string }[] = [
   { value: 'effects', label: 'Effects' },
-  { value: 'board', label: 'Board' },
+  { value: 'inventory', label: 'Inventory' },
   { value: 'farm', label: 'Farm' }
 ]
 
@@ -163,6 +169,80 @@ function ClassFilter({ plan, plans }: { plan: ExaltPlan; plans: PlansApi }): JSX
   )
 }
 
+/**
+ * THE DISAGREE CHIP (V2) — "detected: PAL ENC MNK — apply".
+ *
+ * Shown only on a set whose trio the user PINNED, and only while live inference has resolved a
+ * different one. It never changes anything on its own: the whole point of the chip idiom here is
+ * that the app states what it thinks and the click is the user's. Applying does NOT un-pin the
+ * set either — accepting one answer is not handing the filter back to inference.
+ */
+function DetectedChip({ offer, onApply }: { offer: ClassAbbr[]; onApply: () => void }): JSX.Element {
+  return (
+    <Tooltip title="Use the combo detected from your log">
+      <Chip
+        size="small"
+        color="warning"
+        variant="outlined"
+        data-testid="planner-detected-chip"
+        label={`detected: ${offer.join(' ')} — apply`}
+        onClick={onApply}
+        sx={{ flexShrink: 0 }}
+      />
+    </Tooltip>
+  )
+}
+
+/**
+ * THE ONE NOWRAP ROW. Which set, for which classes, in which mode — plus the permanent `?` that
+ * brings the explainer back (V10), so dismissing it is never a one-way door.
+ */
+function Toolbar({
+  plans,
+  plan,
+  offer,
+  onNew,
+  onMenu,
+  onExplain
+}: {
+  plans: PlansApi
+  plan: ExaltPlan
+  /** the detected trio this pinned set disagrees with, or null (V2) */
+  offer: ClassAbbr[] | null
+  onNew: () => void
+  onMenu: (anchor: HTMLElement) => void
+  onExplain: () => void
+}): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1.5 }}>
+      <SetSwitcher plans={plans} onNew={onNew} onMenu={onMenu} />
+      <Box sx={{ flexGrow: 1, minWidth: 8 }} />
+      <ClassFilter plan={plan} plans={plans} />
+      {offer !== null && <DetectedChip offer={offer} onApply={() => plans.adoptClasses(plan.id, offer)} />}
+      <ToggleButtonGroup
+        exclusive
+        size="small"
+        value={plans.mode}
+        onChange={(_e, v: PlannerMode | null) => {
+          if (v !== null) plans.setMode(v)
+        }}
+        sx={{ flexShrink: 0 }}
+      >
+        {MODES.map((m) => (
+          <ToggleButton key={m.value} value={m.value} data-testid={`planner-mode-${m.value}`} sx={{ px: 1.5 }}>
+            {m.label}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+      <Tooltip title="How exaltation works">
+        <IconButton size="small" data-testid="planner-explainer-open" onClick={onExplain} sx={{ flexShrink: 0 }}>
+          <HelpOutlineIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </Stack>
+  )
+}
+
 // ---- empty + not-yet states ----------------------------------------------------------
 
 function NoSets({ onNew }: { onNew: () => void }): JSX.Element {
@@ -182,26 +262,42 @@ function ModePane({
   plan,
   plans,
   progress,
+  preset,
   onOpenLoot
 }: {
   plan: ExaltPlan
   plans: PlansApi
   progress: PlannerProgressApi
+  /** V8 — the socket-of-a-host filter, and the two ends of the trip between the tabs */
+  preset: [BrowsePreset | null, (p: BrowsePreset | null) => void]
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
-  if (plans.mode === 'board') {
+  const [browsing, setBrowsing] = preset
+  if (plans.mode === 'inventory') {
     return (
       <PlanBoard
         plan={plan}
         progress={progress}
         onSocket={plans.setSocket}
         onHost={plans.setHost}
+        onBrowse={(p) => {
+          setBrowsing(p)
+          plans.setMode('effects')
+        }}
         onOpenLoot={onOpenLoot}
       />
     )
   }
   if (plans.mode === 'farm') return <FarmList plan={plan} progress={progress} onOpenLoot={onOpenLoot} />
-  return <EffectBrowser plan={plan} onSocket={plans.setSocket} onOpenLoot={onOpenLoot} />
+  return (
+    <EffectBrowser
+      plan={plan}
+      preset={browsing}
+      onClearPreset={() => setBrowsing(null)}
+      onSocket={plans.setSocket}
+      onOpenLoot={onOpenLoot}
+    />
+  )
 }
 
 // ---- the view ------------------------------------------------------------------------
@@ -227,41 +323,59 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
   const combo = useComboSnap()
   const progress = usePlannerProgress()
   const [editing, setEditing] = useState<Editing>(NO_EDIT)
+  // V8 — which socket of which host the browser is filtered to, held HERE because the trip
+  // crosses two modes: it is set on the Inventory tab and consumed on the Effects tab.
+  const [browsing, setBrowsing] = useState<BrowsePreset | null>(null)
+  const explainer = useExplainer()
   const selected = plans.selected
 
-  // A new set defaults to the CURRENTLY INFERRED combo (D5). An unresolved slot contributes
-  // nothing, so a half-known combo seeds the classes it does know and nothing it doesn't.
+  // What the app currently believes this character is running. An unresolved slot contributes
+  // nothing, so a half-known combo yields the classes it does know and nothing it doesn't (law 1).
+  const current = combo.current
+  const detected = useMemo(() => (current === null ? [] : resolvedClasses(current)), [current])
+
+  // A new set defaults to the CURRENTLY INFERRED combo (D5) — and, since V2, keeps FOLLOWING it.
   const newSet = (): void => {
-    plans.create(combo.current === null ? [] : resolvedClasses(combo.current))
+    plans.create(detected)
   }
+
+  // THE BINDING (V2): a set whose trio came from detection tracks detection. Scoped to the
+  // SELECTED set on purpose — it is the one whose filter is on screen and whose donor list is
+  // about to be read, and rewriting nine unopened sets on every loadout switch would be nine
+  // `updatedAt` stamps for edits nobody made. `boundClasses` returns null once they agree, so
+  // this settles after one write rather than looping.
+  const bound = selected === null ? null : boundClasses(selected, detected)
+  const selectedId = selected?.id ?? null
+  const { adoptClasses } = plans
+  useEffect(() => {
+    if (selectedId !== null && bound !== null) adoptClasses(selectedId, bound)
+  }, [selectedId, bound, adoptClasses])
+
+  const offer = selected === null ? null : detectedOffer(selected, detected)
 
   if (!plans.ready) return <Box />
   if (plans.plans.length === 0 || selected === null) return <NoSets onNew={newSet} />
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} data-testid="planner-view">
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1.5 }}>
-        <SetSwitcher plans={plans} onNew={newSet} onMenu={(menu) => setEditing({ ...NO_EDIT, menu })} />
-        <Box sx={{ flexGrow: 1, minWidth: 8 }} />
-        <ClassFilter plan={selected} plans={plans} />
-        <ToggleButtonGroup
-          exclusive
-          size="small"
-          value={plans.mode}
-          onChange={(_e, v: PlannerMode | null) => {
-            if (v !== null) plans.setMode(v)
-          }}
-          sx={{ flexShrink: 0 }}
-        >
-          {MODES.map((m) => (
-            <ToggleButton key={m.value} value={m.value} data-testid={`planner-mode-${m.value}`} sx={{ px: 1.5 }}>
-              {m.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </Stack>
+      <Toolbar
+        plans={plans}
+        plan={selected}
+        offer={offer}
+        onNew={newSet}
+        onMenu={(menu) => setEditing({ ...NO_EDIT, menu })}
+        onExplain={explainer.show}
+      />
 
-      <ModePane plan={selected} plans={plans} progress={progress} onOpenLoot={onOpenLoot} />
+      {explainer.open && <RulesExplainer onDismiss={explainer.dismiss} />}
+
+      <ModePane
+        plan={selected}
+        plans={plans}
+        progress={progress}
+        preset={[browsing, setBrowsing]}
+        onOpenLoot={onOpenLoot}
+      />
 
       <Menu anchorEl={editing.menu} open={editing.menu !== null} onClose={() => setEditing(NO_EDIT)}>
         <MenuItem onClick={() => setEditing({ ...NO_EDIT, rename: selected })}>Rename</MenuItem>

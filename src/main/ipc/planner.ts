@@ -15,11 +15,13 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
+import { equippedHosts, type PlannerInventory } from '../../shared/planner/inventorySlots'
 import { buildPlannerIndex, searchPlannerItems, type PlannerIndex } from '../planner/effectIndex'
 import { sanitizeExaltPlans } from '../planner/validate'
-import { activeCharId } from '../session'
+import { loadInventoryDump } from '../outputs'
+import { activeCharId, getActiveCharacter } from '../session'
 import { getExaltPlans, setExaltPlans } from '../store'
-import type { ItemDbFile } from '../itemsDb'
+import { itemKey, type ItemDbFile } from '../itemsDb'
 // The COMMITTED wiki item database — the same module itemLookup.ts imports, so the JSON is
 // inlined into the main bundle exactly once.
 import itemsJson from '../data/items.json'
@@ -42,6 +44,24 @@ export function registerPlannerIpc(): void {
   ipcMain.handle(IPC.plannerSearchItems, (_e, query: unknown) =>
     typeof query === 'string' ? searchPlannerItems(plannerIndex().items, query) : []
   )
+
+  // V7 — what the character is WEARING, from their newest `/outputfile inventory` dump. Read on
+  // demand (the dump is a file already on disk and parses in milliseconds; nothing is persisted —
+  // outputs/index.ts states why) and never cached here, because the renderer re-asks on the
+  // auto-reload push and a cache would hand it the answer from before the player typed the
+  // command. No dump ⇒ null, which is the Inventory tab's instructions card, not an error.
+  ipcMain.handle(IPC.plannerInventory, (): PlannerInventory | null => {
+    const character = getActiveCharacter()
+    const loaded = loadInventoryDump(character?.name, character?.server)
+    if (!loaded) return null
+    return {
+      path: loaded.path,
+      loadedAt: loaded.loadedAt,
+      // `itemKey` is applied HERE and not in the shared join: the key is main's definition
+      // (itemsDb.ts, law 2) and shared/planner/inventorySlots.ts must stay dependency-free.
+      hosts: equippedHosts(loaded.dump).map((h) => ({ ...h, key: itemKey(h.name) }))
+    }
+  })
 
   // The active character's sets. Both directions run through the same validator (see store.ts).
   ipcMain.handle(IPC.plannerGetPlans, () => getExaltPlans(activeCharId()))

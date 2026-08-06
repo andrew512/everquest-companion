@@ -30,8 +30,10 @@ import {
   PLANNER_SEARCH_LIMIT,
   buildPlannerDonors,
   buildPlannerIndex,
+  buildSpellFacts,
   searchPlannerItems
 } from '../src/main/planner/effectIndex'
+import { effectOneLiner } from '../src/shared/planner/effectText'
 import { EQUIP_SLOTS, SOCKET_TYPES } from '../src/shared/planner/types'
 import { eraFromTag, layeredVerdict, zoneEra } from '../src/shared/planner/era'
 import { isClassAbbr } from '../src/shared/classCombo'
@@ -97,6 +99,40 @@ test('every emitted token is canonical — slots, classes, sockets, tiers', () =
   }
   // Law 1's tripwire: an unrecognized slot spelling must turn this red, never be dropped quietly.
   assert.deepEqual(index.stats.unknownSlotTokens, [], 'unknown slot tokens in the corpus')
+})
+
+test('V6: most donor rows can say what their effect DOES, and a miss says nothing at all', () => {
+  // THE JOIN IS THE FEATURE. A browser row used to read "Nullify Undead" and stop, so every row
+  // was a wiki trip; the one-liner is the committed spell DB joined by case-folded effect name at
+  // index build. MEASURED 2026-08-05: 1,469 of 1,560 effect rows match (94.2%). A FLOOR, not the
+  // number — a rescrape of either corpus moves it, and the browser degrades gracefully if it
+  // falls, but a collapse means the join broke rather than that the wiki changed.
+  const said = donors.filter((d) => effectOneLiner(d) !== '')
+  console.log('planner effect one-liners', {
+    joined: index.stats.spellJoined,
+    of: donors.length,
+    pct: ((100 * said.length) / donors.length).toFixed(1)
+  })
+  assert.ok(said.length * 2 > donors.length, `only ${said.length} of ${donors.length} rows say anything`)
+  assert.equal(index.stats.spellJoined, said.length, 'the stat must count the rows the UI can describe')
+
+  // A MISS IS SILENT. No placeholder, no partial guess: a row the spell DB never named carries
+  // none of the three fields, so the renderer draws nothing rather than "unknown" (law 1).
+  for (const d of donors) {
+    if (effectOneLiner(d) !== '') continue
+    assert.equal(d.spellType, undefined)
+    assert.equal(d.spellTarget, undefined)
+    assert.equal(d.spellDuration, undefined)
+  }
+
+  // …and the join is EXACT, ranks included: an item's `Effect:` line names the spell it carries,
+  // so folding "Improved Healing I" onto "Improved Healing III" would state the wrong duration.
+  const facts = buildSpellFacts([
+    { name: 'Improved Healing III', durationMs: null, illusion: false, spellType: 'Beneficial' },
+    { name: 'Improved Healing III', durationMs: null, illusion: false, spellType: 'Detrimental' }
+  ])
+  assert.equal(facts.get('improved healing i'), undefined, 'ranks must not fold together')
+  assert.equal(facts.get('improved healing iii')?.spellType, 'Beneficial', 'first page wins')
 })
 
 test('R2 has real work to do: a large slotless minority can never legally donate', () => {

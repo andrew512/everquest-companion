@@ -20,20 +20,39 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { ClassAbbr } from '@shared/classCombo'
-import type { EquipSlot, ExaltPlan, PlanSlot, PlanSocket, SocketType } from '@shared/planner/types'
+import type {
+  ClassesProvenance,
+  EquipSlot,
+  ExaltPlan,
+  PlanSlot,
+  PlanSocket,
+  SocketType
+} from '@shared/planner/types'
 
 // ---- UI preferences (machine-class, raw localStorage) ------------------------------
 
-export type PlannerMode = 'effects' | 'board' | 'farm'
+/**
+ * The three modes. `board` was renamed to `inventory` in V7 — the tab fills itself from the
+ * character's `/outputfile inventory` dump now, so "Board" named the layout while "Inventory"
+ * names what is in it.
+ */
+export type PlannerMode = 'effects' | 'inventory' | 'farm'
 
 const SET_KEY = 'eq.planner.set'
 const MODE_KEY = 'eq.planner.mode'
-const MODES: PlannerMode[] = ['effects', 'board', 'farm']
+const MODES: PlannerMode[] = ['effects', 'inventory', 'farm']
+
+/** What a stored mode from an older build means. One entry, and it will never grow a second. */
+const RENAMED: Record<string, PlannerMode> = { board: 'inventory' }
 
 /** The persisted mode, bounced to Effects when the stored string is not one this build renders. */
 export function loadMode(): PlannerMode {
   const v = localStorage.getItem(MODE_KEY)
-  return v !== null && (MODES as string[]).includes(v) ? (v as PlannerMode) : 'effects'
+  if (v === null) return 'effects'
+  if ((MODES as string[]).includes(v)) return v as PlannerMode
+  // A user who left the pane on the Board finds it on the Inventory tab, not bounced to Effects:
+  // the rename is ours, and it must not cost them their place.
+  return RENAMED[v] ?? 'effects'
 }
 
 function loadSelectedId(): string | null {
@@ -55,9 +74,22 @@ function newId(): string {
   return crypto.randomUUID()
 }
 
+/**
+ * A new set FOLLOWS detection (V2). It is seeded from the inferred combo exactly as before, but
+ * the seed is no longer a one-time stamp: until the user edits the trio, a loadout switch moves
+ * the set's filter with it.
+ */
 function freshPlan(name: string, classes: readonly ClassAbbr[]): ExaltPlan {
   const now = Date.now()
-  return { id: newId(), name, classes: [...classes], createdAt: now, updatedAt: now, slots: {} }
+  return {
+    id: newId(),
+    name,
+    classes: [...classes],
+    classesProvenance: 'detected',
+    createdAt: now,
+    updatedAt: now,
+    slots: {}
+  }
 }
 
 /** Replace one plan, stamping `updatedAt`. Every mutation below funnels through this. */
@@ -78,6 +110,30 @@ function copyOf(plan: ExaltPlan, name: string): ExaltPlan {
     if (planSlot) slots[slot as EquipSlot] = { ...planSlot, sockets: { ...planSlot.sockets } }
   }
   return { ...plan, id: newId(), name, createdAt: now, updatedAt: now, slots }
+}
+
+/**
+ * Write one set's trio, optionally restamping where it came from (V2).
+ *
+ * `provenance` omitted = "keep whatever it was" — which is what the detection binding and the
+ * disagree chip both want. Passing `'user'` is what a hand edit does, and it is one-way: nothing
+ * in the UI hands a pinned set back to inference, because that would be the app deciding to stop
+ * respecting a decision the user made.
+ */
+export function withClasses(
+  plans: readonly ExaltPlan[],
+  id: string,
+  classes: readonly ClassAbbr[],
+  provenance?: ClassesProvenance
+): ExaltPlan[] {
+  return withPlan(plans, id, (p) => {
+    const next: ExaltPlan = { ...p, classes: [...classes] }
+    // Assigned rather than spread so a set that has never carried the field does not gain an
+    // explicit `undefined` — the absent key IS the `user` reading, and it must stay absent.
+    const from = provenance ?? p.classesProvenance
+    if (from !== undefined) next.classesProvenance = from
+    return next
+  })
 }
 
 /**
@@ -136,7 +192,17 @@ export interface PlansApi {
   rename: (id: string, name: string) => void
   duplicate: (id: string) => void
   remove: (id: string) => void
+  /**
+   * Edit the trio BY HAND — which pins it (`classesProvenance: 'user'`, V2). Detection stops
+   * overwriting the set from here on and starts offering itself as a chip instead.
+   */
   setClasses: (id: string, classes: readonly ClassAbbr[]) => void
+  /**
+   * Write the trio WITHOUT changing where it came from: the detection binding uses it to keep a
+   * following set current, and the disagree chip uses it to apply one detected answer to a pinned
+   * set without handing the filter back to inference forever.
+   */
+  adoptClasses: (id: string, classes: readonly ClassAbbr[]) => void
   /** write/clear one socket of the SELECTED set (the only set the browser can edit) */
   setSocket: (slot: EquipSlot, socket: SocketType, planned: PlanSocket | null) => void
   /** pick (or clear) the host item of one slot of the SELECTED set */
@@ -275,7 +341,9 @@ export function usePlans(): PlansApi {
         setPlans((prev) => withPlan(prev, id, (p) => ({ ...p, name }))),
       remove: (id: string) => setPlans((prev) => prev.filter((p) => p.id !== id)),
       setClasses: (id: string, classes: readonly ClassAbbr[]) =>
-        setPlans((prev) => withPlan(prev, id, (p) => ({ ...p, classes: [...classes] })))
+        setPlans((prev) => withClasses(prev, id, classes, 'user')),
+      adoptClasses: (id: string, classes: readonly ClassAbbr[]) =>
+        setPlans((prev) => withClasses(prev, id, classes))
     }),
     [setPlans]
   )

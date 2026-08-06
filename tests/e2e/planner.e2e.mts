@@ -20,8 +20,15 @@
  * with a state chip, and the Farm rollup lists it under some heading; the two growing lists are
  * BOUNDED scroll boxes (the Task-#56 law); the era filter is ON by default and actually
  * removes rows when it is switched off (the corpus is majority Kunark/Velious, so "off shows
- * more" is an identity, not a number); and the Focus tab opens on FAMILIES with the best tier of
- * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one.
+ * more" is an identity, not a number); the Focus tab opens on FAMILIES with the best tier of
+ * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one; a
+ * majority of the donor rows on screen state what their effect DOES, in one line joined from the
+ * committed spell DB (V6 — a count, never today's wording); the
+ * Inventory tab either fills its hosts from a real `/outputfile inventory` dump or teaches the
+ * command, never both (V7 — whether this machine has a dump is not something a spec may assume);
+ * clicking one of a host's sockets lands in the effect browser filtered to that socket, that slot
+ * and that host, with a chip that can be cleared (V8); and the exaltation rules card is up on a
+ * first visit, closes for good when dismissed, and comes back from the toolbar's `?` (V10).
  *
  * The one thing it deliberately does NOT assert is which effects or donors are on screen: a
  * rescrape may re-word an effect, and a spec that pins today's proc names would rot (AGENTS.md:
@@ -51,7 +58,7 @@ const SET_CHIP = '[data-testid="planner-set-chip"]'
 const EFFECT_LIST = '[data-testid="planner-effect-list"]'
 const ERA_TOGGLE = '[data-testid="planner-era-toggle"]'
 const ADD_BUTTON = '[data-testid="planner-add"]:not([disabled])'
-const MODE_BOARD = '[data-testid="planner-mode-board"]'
+const MODE_BOARD = '[data-testid="planner-mode-inventory"]'
 const MODE_FARM = '[data-testid="planner-mode-farm"]'
 const BOARD = '[data-testid="planner-board"]'
 const BOARD_CELL = '[data-testid="planner-board-cell"]'
@@ -59,6 +66,12 @@ const SOCKET_LINE = '[data-testid="planner-socket-line"]'
 const HOST_SEARCH = '[data-testid="planner-host-search"] input'
 const HOST_HIT = '[data-testid="planner-host-hit"]'
 const HOST_NAME = '[data-testid="planner-host-name"]'
+const HOST_WORN = '[data-testid="planner-host-worn"]'
+const INVENTORY_HELP = '[data-testid="planner-inventory-help"]'
+const SOCKET_BROWSE = '[data-testid="planner-socket-browse"]'
+const PRESET_CHIP = '[data-testid="planner-preset-chip"]'
+const EXPLAINER = '[data-testid="planner-explainer"]'
+const EXPLAINER_OPEN = '[data-testid="planner-explainer-open"]'
 const STATE_CHIP = '[data-testid="planner-state-chip"]'
 const FARM_LIST = '[data-testid="planner-farm-list"]'
 const FARM_ROW = '[data-testid="planner-farm-row"]'
@@ -84,6 +97,8 @@ const GROUPBY = '[data-testid="planner-groupby"]'
 const SOCKET_FOCUS = '[data-testid="planner-socket-focus"]'
 const SOCKET_PROC = '[data-testid="planner-socket-proc"]'
 const BEST_CHIP = '[data-testid="planner-best-chip"]'
+const DONOR_ROW = '[data-testid="planner-donor-row"]'
+const EFFECT_SAYS = '[data-testid="planner-effect-says"]'
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
@@ -144,6 +159,30 @@ async function stepCreateSet(page: Page): Promise<boolean> {
   const made = await until(async () => (await countOf(page, SET_CHIP)) > 0, 15_000)
   check('creating a set from the empty state produces a set chip and the toolbar', made)
   return made
+}
+
+/**
+ * 2b. THE RULES CARD IS UP ON A FIRST VISIT, AND DISMISSING IT STICKS (V10).
+ *
+ * The one collaborative explainer this app allows: a planner is a set of rules you plan against,
+ * and a player who does not know them cannot tell a good plan from a bad one. So it opens by
+ * default, closes for good when dismissed, and the permanent `?` brings it back — which is what
+ * makes dismissing it safe. It is dismissed on the way out so every measurement below sees the
+ * pane at the height a returning player sees.
+ */
+async function stepExplainer(page: Page): Promise<void> {
+  if (!check('the planner opens with the exaltation rules card', (await countOf(page, EXPLAINER)) > 0)) return
+  // The numbers are read from the rules, never written here — so the unlock tiers must be on it.
+  const text = (await textOf(page, EXPLAINER)).replace(/\s+/g, ' ')
+  check('…and it states the unlock tiers it reads out of the rules', /Focus at \+\d/.test(text), text.slice(0, 90))
+
+  await page.click(`${EXPLAINER} .MuiAlert-action button`, { timeout: 15_000 })
+  check('dismissing the card puts it away', await until(async () => (await countOf(page, EXPLAINER)) === 0, 8000))
+
+  await page.click(EXPLAINER_OPEN, { timeout: 15_000 })
+  check('the ? in the toolbar brings it back', await until(async () => (await countOf(page, EXPLAINER)) > 0, 8000))
+  await page.click(`${EXPLAINER} .MuiAlert-action button`, { timeout: 15_000 })
+  await until(async () => (await countOf(page, EXPLAINER)) === 0, 8000)
 }
 
 /** 3. THE EFFECT BROWSER LISTS THE COMMITTED CORPUS, in a bounded box. */
@@ -287,11 +326,39 @@ async function ensureDonorRow(page: Page): Promise<boolean> {
   return false
 }
 
-/** 5. ADDING A DONOR WRITES A SOCKET THE BOARD DRAWS. */
-async function stepAddAndBoard(page: Page): Promise<boolean> {
+/**
+ * 4b. EVERY DONOR ROW SAYS WHAT ITS EFFECT DOES (V6).
+ *
+ * The index-build join is pinned in `tests/plannerEffectIndex.test.mts`; what only a launched app
+ * can show is that the row DRAWS it. A count rather than a text match: the wording is the spell
+ * DB's, and a spec that pinned "Beneficial · Single Friendly · 27 minutes" would rot on the next
+ * rescrape. A MAJORITY is the assertion, because a miss is deliberately silent (law 1) and the
+ * measured hit rate is 94% — a collapse to nothing means the join broke, not that the wiki moved.
+ */
+async function stepEffectSays(page: Page): Promise<void> {
+  const rows = await countOf(page, DONOR_ROW)
+  const says = await countOf(page, EFFECT_SAYS)
+  check(
+    'a donor row states what its effect DOES, in one line from the spell DB',
+    says * 2 > rows && rows > 0,
+    `${String(says)} of ${String(rows)} visible rows — e.g. ${await textOf(page, EFFECT_SAYS)}`
+  )
+}
+
+/**
+ * 5. ADDING A DONOR WRITES A SOCKET THE INVENTORY TAB DRAWS.
+ *
+ * The tab is called Inventory since V7 — it fills its cells from the character's own
+ * `/outputfile inventory` dump — but what is asserted here is unchanged: eighteen cells whatever
+ * the dump says, and the socket the browser just wrote drawn in one of them. Nothing here can
+ * assume a dump exists (a fresh e2e userData has no gear knowledge at all), so the auto-fill is
+ * checked by `stepInventoryFill` as an identity: either it filled cells or it says how to.
+ */
+async function stepAddAndInventory(page: Page): Promise<boolean> {
   if (!check('an effect row expands into at least one donor', await ensureDonorRow(page), `${String(await countOf(page, ADD_BUTTON))} donors`)) {
     return false
   }
+  await stepEffectSays(page)
   await page.click(ADD_BUTTON, { timeout: 15_000 })
   await sleep(400)
   // A donor that occupies more than one slot opens a slot menu instead of writing directly.
@@ -303,8 +370,8 @@ async function stepAddAndBoard(page: Page): Promise<boolean> {
   await page.click(MODE_BOARD, { timeout: 15_000 })
   const drawn = await until(async () => (await countOf(page, SOCKET_LINE)) > 0, 15_000)
   const cells = await countOf(page, BOARD_CELL)
-  check('the Board draws every equipment slot, planned or not', cells >= 18, `${String(cells)} cells`)
-  check('adding a donor from the browser writes a socket the Board draws', drawn, `${String(await countOf(page, SOCKET_LINE))} socket lines`)
+  check('the Inventory tab draws every equipment slot, planned or not', cells >= 18, `${String(cells)} cells`)
+  check('adding a donor from the browser writes a socket the Inventory tab draws', drawn, `${String(await countOf(page, SOCKET_LINE))} socket lines`)
   check(
     'each planned socket carries exactly one state chip',
     (await countOf(page, STATE_CHIP)) === (await countOf(page, SOCKET_LINE)),
@@ -342,6 +409,60 @@ async function stepHostPicker(page: Page): Promise<void> {
   await page.click(HOST_HIT, { timeout: 15_000 })
   const named = await until(async () => (await countOf(page, HOST_NAME)) > 0, 8000)
   check('picking a hit sets that cell’s host item', named, `${String(hits)} compatible hits`)
+}
+
+/**
+ * 6b. THE INVENTORY TAB EITHER FILLS ITSELF OR TEACHES THE COMMAND (V7).
+ *
+ * An identity, because the machine running this may or may not have a dump: a character whose
+ * `/outputfile inventory` exists gets `worn` hosts in its cells, and one whose does not gets the
+ * instructions card. Exactly one of those must be on screen — neither is the failure, and BOTH
+ * would mean the card is lying to someone who already ran it.
+ */
+async function stepInventoryFill(page: Page): Promise<void> {
+  // POLLED, because the dump is read over IPC when the tab mounts: sampling the instant after the
+  // switch reads "neither", which is the pre-answer state and not a third outcome.
+  await until(async () => (await countOf(page, INVENTORY_HELP)) > 0 || (await countOf(page, HOST_WORN)) > 0, 20_000)
+  const help = await countOf(page, INVENTORY_HELP)
+  const worn = await countOf(page, HOST_WORN)
+  check(
+    'the Inventory tab either fills its hosts from the dump, or says how to make one',
+    (help > 0) !== (worn > 0),
+    help > 0 ? 'no dump on this machine — the instructions card is up' : `${String(worn)} hosts filled from the dump`
+  )
+}
+
+/**
+ * 6c. A HOST'S SOCKETS ARE BROWSABLE ONE AT A TIME (V8).
+ *
+ * The item-focused way in: a cell with a host draws all four of its sockets, and clicking one
+ * takes you to the effect browser already narrowed to that socket, that slot and that host. What
+ * is asserted is the trip and the narrowing — the preset chip is on screen, and the socket tab it
+ * forced is the socket that was clicked. Which effects come back is the corpus's business.
+ */
+async function stepSocketView(page: Page): Promise<void> {
+  if ((await countOf(page, SOCKET_BROWSE)) === 0) {
+    note('no cell has a host yet — the socket view step is skipped this run')
+    return
+  }
+  const socket = await page.evaluate(
+    (s) => document.querySelector(s)?.closest('[data-socket]')?.getAttribute('data-socket') ?? '',
+    SOCKET_BROWSE
+  )
+  await page.click(SOCKET_BROWSE, { timeout: 15_000 })
+
+  const filtered = await until(async () => (await countOf(page, PRESET_CHIP)) > 0, 15_000)
+  if (!check('clicking a socket on a host opens the effect browser filtered to it', filtered)) return
+  const label = (await textOf(page, PRESET_CHIP)).replace(/\s+/g, ' ').trim()
+  check(
+    '…and the browser is on that socket, for that slot and that host',
+    label.toLowerCase().includes(socket.toLowerCase()),
+    `preset "${label}" for socket ${socket}`
+  )
+
+  // Clearing hands the browser back — the preset is a filter, never a mode you get stuck in.
+  await page.click(`${PRESET_CHIP} .MuiChip-deleteIcon`, { timeout: 15_000 })
+  check('clearing the preset gives the browser back', await until(async () => (await countOf(page, PRESET_CHIP)) === 0, 10_000))
 }
 
 /** 7. THE FARM ROLLUP LISTS WHAT IS LEFT — or says, honestly, that nothing is. */
@@ -408,12 +529,15 @@ async function stepDeepLink(page: Page): Promise<void> {
 
 /** Everything downstream of "there is a set to plan into", in order. */
 async function steps(page: Page): Promise<void> {
+  await stepExplainer(page)
   if (await stepEffects(page)) {
     await stepEra(page)
     await stepNonEquip(page)
     await stepFocusFamilies(page)
-    if (await stepAddAndBoard(page)) {
+    if (await stepAddAndInventory(page)) {
+      await stepInventoryFill(page)
       await stepHostPicker(page)
+      await stepSocketView(page)
       await stepFarm(page)
     }
   }

@@ -21,6 +21,7 @@ import { isClassAbbr, MAX_COMBO_SLOTS, type ClassAbbr } from '../../shared/class
 import {
   EQUIP_SLOTS,
   SOCKET_TYPES,
+  type ClassesProvenance,
   type EquipSlot,
   type ExaltPlan,
   type PlanSlot,
@@ -59,6 +60,16 @@ function classes(v: unknown): ClassAbbr[] {
     if (isClassAbbr(c) && !out.includes(c) && out.length < MAX_COMBO_SLOTS) out.push(c)
   }
   return out
+}
+
+/**
+ * V2's provenance flag, and it is DROPPED rather than defaulted when it is absent or unknown.
+ * Absent already means `user` to every reader (types.ts), so writing one in would change a stored
+ * set's bytes for no change in meaning — and this function is the read path too, where that would
+ * rewrite files the planner never touched.
+ */
+function provenance(v: unknown): ClassesProvenance | undefined {
+  return v === 'detected' || v === 'user' ? v : undefined
 }
 
 function planSocket(v: unknown): PlanSocket | undefined {
@@ -105,7 +116,8 @@ function exaltPlan(v: unknown, now: number): ExaltPlan | undefined {
   const id = text(v.id, MAX_ID_CHARS)
   if (!id) return undefined
   const createdAt = stamp(v.createdAt, now)
-  return {
+  const from = provenance(v.classesProvenance)
+  const plan: ExaltPlan = {
     id,
     name: text(v.name, MAX_NAME_CHARS) ?? 'Untitled set',
     classes: classes(v.classes),
@@ -113,6 +125,8 @@ function exaltPlan(v: unknown, now: number): ExaltPlan | undefined {
     updatedAt: stamp(v.updatedAt, createdAt),
     slots: planSlots(v.slots)
   }
+  if (from !== undefined) plan.classesProvenance = from
+  return plan
 }
 
 /**

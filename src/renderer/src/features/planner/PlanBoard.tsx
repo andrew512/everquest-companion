@@ -1,292 +1,131 @@
-// planner/PlanBoard.tsx — Board mode: the whole set on one screen (design §5.3).
+// planner/PlanBoard.tsx — Inventory mode: the whole set on one screen, over what you are wearing.
 //
 // EIGHTEEN CELLS IN CHARACTER-SHEET ORDER, always all of them (`EQUIP_SLOTS`). A board that only
 // drew the slots you had already planned would answer "what have you done" when the question is
 // "what is left"; the empty cells are the point, and they are drawn QUIET — a slot label and one
 // muted invitation, never an error, never a warning about a decision you simply have not made.
 //
-// EACH CELL IS A HOST PLUS UP TO FOUR SOCKETS, which is exactly the game's rule (R1: one socket
-// of each type per item, unlocked at +1/+2/+3/+4). Sockets are added in Effects mode — that is
-// where you can see every donor of an effect — so the cell's own affordances are the two things
-// only the cell knows: which item is hosting, and dropping a socket you changed your mind about.
+// IT FILLS ITSELF (V7). The tab was called Board and started empty, which made it eighteen
+// invitations to retype gear the game already knows about. Now each cell's host comes from the
+// character's newest `/outputfile inventory` dump, joined by the hand-authored slot table
+// (shared/planner/inventorySlots.ts, law 12) — and LIVE: main pushes on every rewrite, so running
+// the command in game fills this tab while it is on screen (owner, 2026-08-05). Nothing is
+// written into the plan by the dump, so a hand-picked host always wins and an auto-filled one
+// follows your gear (`plannerInventory.effectiveHost`).
 //
-// THE NARROWED-CLASS LINE IS R2 MADE VISIBLE. Socketing narrows the host's class list to the
-// overlap with the donor's, so a six-class sword quietly becomes a four-class sword the moment
-// you plan a Ranger-only proc into it. The line states the result of every socket in the cell,
-// folded — and when the host's own page states no class list it says what the SOCKETS narrow to,
-// because an unknown host list is not an empty one (narrowedClasses' contract).
-//
-// THE STATE CHIP IS THE ONLY PROGRESS THIS SURFACE SHOWS, and it is decoration (D6): a character
-// with no dumps, no loot history and no observed merges renders eighteen cells of `planned` and
-// is a completely functional planner.
+// The cell itself is `PlanCell.tsx`; this file is the grid, the dump, the host picker and the
+// instructions card for a character who has never made a dump.
 
 import { type JSX, useMemo, useState } from 'react'
-import { Box, Chip, IconButton, Paper, Stack, Typography } from '@mui/material'
-import CloseIcon from '@mui/icons-material/Close'
-import type { ClassAbbr } from '@shared/classCombo'
-import {
-  EQUIP_SLOTS,
-  SOCKET_TYPES,
-  type EquipSlot,
-  type ExaltPlan,
-  type PlanSlot,
-  type PlannerItemHit,
-  type SocketType
-} from '@shared/planner/types'
-import { extractionTier, narrowedClasses } from '@shared/planner/rules'
-import { Tooltip } from '../../lib/Tooltip'
+import { Box, Paper, Stack, Typography } from '@mui/material'
+import { EQUIP_SLOTS, type EquipSlot, type ExaltPlan, type PlannerItemHit, type SocketType } from '@shared/planner/types'
 import HostPicker from './HostPicker'
-import { DonorName, EraChip, NoSlotChip, StateChip } from './PlannerChips'
-import { donorFor, indexDonors, isNonEquippable, useDonors, type DonorRow } from './plannerData'
+import PlanCell from './PlanCell'
+import { indexDonors, useDonors } from './plannerData'
+import { hostsBySlot, usePlannerInventory } from './plannerInventory'
+import type { BrowsePreset } from './plannerPreset'
 import type { PlannerProgressApi } from './plannerProgress'
 
-const SOCKET_LABEL: Record<SocketType, string> = {
-  focus: 'Focus',
-  click: 'Click',
-  worn: 'Worn',
-  proc: 'Proc'
-}
-
-type DonorIndex = ReadonlyMap<string, DonorRow[]>
-
-/** The classes the corpus states for an item key — `[]` when it carries no row for it (unknown). */
-function classesOf(index: DonorIndex, key: string | undefined): ClassAbbr[] {
-  if (key === undefined) return []
-  return index.get(key)?.[0]?.classes ?? []
-}
-
 /**
- * R2 folded over the cell: the host's classes narrowed by every planned donor in turn. Returns
- * `[]` when nothing in the cell states a class list — the line then renders nothing rather than
- * claiming "usable by nobody".
+ * The one card that teaches the dump, shown only while there is no dump to read.
+ *
+ * It is a collaborative explainer rather than a caveat (the tooltip-and-caveat diet): it names
+ * the command, says what happens next, and disappears the moment the file exists — because main
+ * watches the install root for the first dump to APPEAR, not just for later rewrites.
  */
-export function cellNarrowing(planSlot: PlanSlot, index: DonorIndex): ClassAbbr[] {
-  let classes = classesOf(index, planSlot.hostKey)
-  for (const planned of Object.values(planSlot.sockets)) {
-    if (!planned) continue
-    const donor = donorFor(index, planned.donorKey, planned.effect)
-    if (donor) classes = narrowedClasses(classes, donor.classes)
-  }
-  return classes
-}
-
-// ---- one socket line -----------------------------------------------------------------
-
-function SocketLine({
-  slot,
-  socket,
-  effect,
-  donorKey,
-  index,
-  progress,
-  onRemove,
-  onOpenLoot
-}: {
-  slot: EquipSlot
-  socket: SocketType
-  effect: string
-  donorKey: string
-  index: DonorIndex
-  progress: PlannerProgressApi
-  onRemove: (slot: EquipSlot, socket: SocketType) => void
-  onOpenLoot?: (item: string) => void
-}): JSX.Element {
-  const donor = donorFor(index, donorKey, effect)
-  // No corpus row (a donor the DB no longer carries) still has a KNOWN extraction tier: it is a
-  // property of the SOCKET, not of the item (R1).
-  const state = progress.of(donorKey, donor?.tierRequired ?? extractionTier(socket))
+function InstructionsCard(): JSX.Element {
   return (
-    <Stack
-      direction="row"
-      spacing={0.75}
-      alignItems="center"
-      data-testid="planner-socket-line"
-      sx={{ flexWrap: 'nowrap', minWidth: 0 }}
-    >
-      <Chip size="small" variant="outlined" label={SOCKET_LABEL[socket]} sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />
-      <Box sx={{ minWidth: 0, flexShrink: 1 }}>
-        <Typography variant="caption" noWrap sx={{ display: 'block', fontWeight: 600 }}>
-          {effect}
+    <Paper variant="outlined" data-testid="planner-inventory-help" sx={{ p: 1.5, mb: 1 }}>
+      <Stack spacing={0.5}>
+        <Typography variant="subtitle2">Fill this in from the game</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Type <b>/outputfile inventory</b> in EverQuest. Every slot below fills with what you are
+          wearing, straight away — leave this tab open and watch it happen.
         </Typography>
-        <Typography variant="caption" component="div" noWrap sx={{ color: 'text.secondary' }}>
-          {donor === null ? donorKey : <DonorName name={donor.name} onOpen={onOpenLoot} />}
+        <Typography variant="caption" color="text.disabled">
+          Anything you pick by hand stays picked.
         </Typography>
-      </Box>
-      <Box sx={{ flexGrow: 1, minWidth: 4 }} />
-      {donor !== null && isNonEquippable(donor) && <NoSlotChip />}
-      <EraChip subject={donor ?? { key: donorKey }} />
-      <StateChip progress={state} />
-      <Tooltip title="Remove this socket from the set">
-        <IconButton
-          size="small"
-          data-testid="planner-socket-remove"
-          onClick={() => onRemove(slot, socket)}
-          sx={{ flexShrink: 0, p: 0.25 }}
-        >
-          <CloseIcon sx={{ fontSize: 13 }} />
-        </IconButton>
-      </Tooltip>
-    </Stack>
+      </Stack>
+    </Paper>
   )
 }
-
-// ---- one cell ------------------------------------------------------------------------
 
 export interface PlanBoardProps {
   plan: ExaltPlan
   progress: PlannerProgressApi
   onSocket: (slot: EquipSlot, socket: SocketType, planned: null) => void
   onHost: (slot: EquipSlot, host: { key: string; name: string } | null) => void
+  /** V8 — hand the effect browser a preset for one socket of one host */
+  onBrowse: (preset: BrowsePreset) => void
   /** deep-link a donor (or the host item) into the Loot tab's drill-down — App's `openLoot` */
   onOpenLoot?: (item: string) => void
 }
-
-interface CellProps extends PlanBoardProps {
-  slot: EquipSlot
-  index: DonorIndex
-  onPickHost: (slot: EquipSlot, anchor: HTMLElement) => void
-}
-
-function HostLine({
-  slot,
-  planSlot,
-  onPickHost,
-  onHost,
-  onOpenLoot
-}: {
-  slot: EquipSlot
-  planSlot: PlanSlot
-  onPickHost: (slot: EquipSlot, anchor: HTMLElement) => void
-  onHost: (slot: EquipSlot, host: null) => void
-  onOpenLoot?: (item: string) => void
-}): JSX.Element {
-  const name = planSlot.hostName
-  return (
-    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0, flexWrap: 'nowrap' }}>
-      {name === undefined ? (
-        <Typography
-          variant="caption"
-          data-testid="planner-host-pick"
-          onClick={(e) => onPickHost(slot, e.currentTarget)}
-          sx={{ color: 'text.disabled', cursor: 'pointer', '&:hover': { color: 'text.secondary' } }}
-        >
-          pick host…
-        </Typography>
-      ) : (
-        <>
-          <Box sx={{ minWidth: 0, flexShrink: 1 }} data-testid="planner-host-name">
-            <DonorName name={name} bold onOpen={onOpenLoot} />
-          </Box>
-          <Tooltip title="Pick a different host item">
-            <Typography
-              variant="caption"
-              data-testid="planner-host-pick"
-              onClick={(e) => onPickHost(slot, e.currentTarget)}
-              sx={{ color: 'text.disabled', cursor: 'pointer', flexShrink: 0 }}
-            >
-              change
-            </Typography>
-          </Tooltip>
-          <Tooltip title="Clear the host item (the planned sockets stay)">
-            <IconButton size="small" onClick={() => onHost(slot, null)} sx={{ flexShrink: 0, p: 0.25 }}>
-              <CloseIcon sx={{ fontSize: 13 }} />
-            </IconButton>
-          </Tooltip>
-        </>
-      )}
-    </Stack>
-  )
-}
-
-function Cell({ slot, plan, index, progress, onSocket, onHost, onPickHost, onOpenLoot }: CellProps): JSX.Element {
-  const planSlot: PlanSlot = plan.slots[slot] ?? { sockets: {} }
-  const planned = SOCKET_TYPES.filter((s) => planSlot.sockets[s] !== undefined)
-  const empty = planned.length === 0 && planSlot.hostName === undefined
-  const narrowed = planned.length === 0 ? [] : cellNarrowing(planSlot, index)
-
-  return (
-    <Paper
-      variant="outlined"
-      data-testid="planner-board-cell"
-      data-slot={slot}
-      sx={{ p: 1, opacity: empty ? 0.65 : 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}
-    >
-      <Typography variant="caption" sx={{ color: 'text.secondary', letterSpacing: 0.6, fontWeight: 700 }}>
-        {slot}
-      </Typography>
-      <HostLine slot={slot} planSlot={planSlot} onPickHost={onPickHost} onHost={onHost} onOpenLoot={onOpenLoot} />
-      {narrowed.length > 0 && (
-        <Tooltip title="Socketing narrows the host item's class list to the overlap with every donor it carries.">
-          <Typography variant="caption" data-testid="planner-narrowed" sx={{ color: 'text.secondary' }}>
-            narrows to {narrowed.join('/')}
-          </Typography>
-        </Tooltip>
-      )}
-      {planned.map((socket) => {
-        const entry = planSlot.sockets[socket]
-        if (!entry) return null
-        return (
-          <SocketLine
-            key={socket}
-            slot={slot}
-            socket={socket}
-            effect={entry.effect}
-            donorKey={entry.donorKey}
-            index={index}
-            progress={progress}
-            onRemove={(s, k) => onSocket(s, k, null)}
-            onOpenLoot={onOpenLoot}
-          />
-        )
-      })}
-    </Paper>
-  )
-}
-
-// ---- the board -----------------------------------------------------------------------
 
 interface Picking {
   slot: EquipSlot
   anchor: HTMLElement
 }
 
-export default function PlanBoard(props: PlanBoardProps): JSX.Element {
+export default function PlanBoard({
+  plan,
+  progress,
+  onSocket,
+  onHost,
+  onBrowse,
+  onOpenLoot
+}: PlanBoardProps): JSX.Element {
   const { donors } = useDonors()
   const index = useMemo(() => indexDonors(donors), [donors])
+  const { inventory, ready } = usePlannerInventory()
+  const worn = useMemo(() => hostsBySlot(inventory), [inventory])
   const [picking, setPicking] = useState<Picking | null>(null)
 
   const pick = (hit: PlannerItemHit): void => {
-    if (picking) props.onHost(picking.slot, { key: hit.key, name: hit.name })
+    if (picking) onHost(picking.slot, { key: hit.key, name: hit.name })
     setPicking(null)
   }
 
   return (
-    <Box
-      data-testid="planner-board"
-      sx={{
-        flexGrow: 1,
-        minHeight: 0,
-        overflow: 'auto',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-        gap: 1,
-        alignContent: 'start',
-        pr: 0.5
-      }}
-    >
-      {EQUIP_SLOTS.map((slot) => (
-        <Cell
-          key={slot}
-          slot={slot}
-          index={index}
-          onPickHost={(s, anchor) => setPicking({ slot: s, anchor })}
-          {...props}
-        />
-      ))}
+    <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
+      {/* Only once the read has settled: a card that flashes before the dump loads would teach a
+          command to someone who already ran it. */}
+      {ready && inventory === null && <InstructionsCard />}
+      <Box
+        data-testid="planner-board"
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          overflow: 'auto',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+          gap: 1,
+          alignContent: 'start',
+          pr: 0.5
+        }}
+      >
+        {EQUIP_SLOTS.map((slot) => (
+          <PlanCell
+            key={slot}
+            slot={slot}
+            planSlot={plan.slots[slot] ?? { sockets: {} }}
+            planClasses={plan.classes}
+            equipped={worn.get(slot)}
+            index={index}
+            progress={progress}
+            onSocket={onSocket}
+            onHost={onHost}
+            onPickHost={(s, anchor) => setPicking({ slot: s, anchor })}
+            onBrowse={(s, socket, host) =>
+              onBrowse({ slot: s, socket, hostKey: host.key, hostName: host.name })
+            }
+            onOpenLoot={onOpenLoot}
+          />
+        ))}
+      </Box>
       {picking && (
         <HostPicker
           slot={picking.slot}
-          planClasses={props.plan.classes}
+          planClasses={plan.classes}
           anchor={picking.anchor}
           onClose={() => setPicking(null)}
           onPick={pick}

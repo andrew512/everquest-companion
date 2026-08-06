@@ -172,6 +172,22 @@ test('malformed input is STRIPPED field by field, never thrown and never wholesa
   }
 })
 
+test('classesProvenance survives when stated and stays ABSENT when it is not (V2)', () => {
+  // The field is additive in exactly the way `exaltPlans` itself is (D4): absent means `user` to
+  // every reader, so the validator must not write one in. If it did, every set stored before V2
+  // would gain a byte on the next save — a persisted-shape change with no migration behind it.
+  assert.equal('classesProvenance' in sanitizeExaltPlans([goodPlan])[0], false)
+
+  for (const value of ['detected', 'user'] as const) {
+    assert.equal(sanitizeExaltPlans([{ ...goodPlan, classesProvenance: value }])[0].classesProvenance, value)
+  }
+  // Anything else is not repaired into a guess about where the trio came from — it is dropped
+  // back to the documented default.
+  for (const bad of ['who', '', 42, null, {}]) {
+    assert.equal('classesProvenance' in sanitizeExaltPlans([{ ...goodPlan, classesProvenance: bad }])[0], false)
+  }
+})
+
 test('duplicate plan ids keep the first, and the batch is bounded', () => {
   const dupes = sanitizeExaltPlans([
     { ...goodPlan, name: 'first' },

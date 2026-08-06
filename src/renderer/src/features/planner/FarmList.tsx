@@ -25,9 +25,11 @@
 
 import { type JSX, useMemo } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
+import type { ClassAbbr } from '@shared/classCombo'
 import type { ExaltPlan } from '@shared/planner/types'
 import { Tooltip } from '../../lib/Tooltip'
-import { DonorName, EraChip, NoSlotChip, StateChip } from './PlannerChips'
+import { DonorName, EraChip, MismatchChip, NoSlotChip, StateChip } from './PlannerChips'
+import { classesMismatch } from './plannerClasses'
 import { CURRENT_ERA_LABEL, eraHides, indexDonors, isNonEquippable, useDonors, useEraOnly } from './plannerData'
 import { campText, collectNeeds, costText, groupNeeds, type FarmGroup, type FarmRow } from './plannerFarm'
 import type { PlannerProgressApi } from './plannerProgress'
@@ -40,7 +42,16 @@ const KIND_HINT: Record<FarmGroup['kind'], string> = {
   unknown: 'Nothing in the committed data says where these come from.'
 }
 
-function Row({ row, onOpenLoot }: { row: FarmRow; onOpenLoot?: (item: string) => void }): JSX.Element {
+function Row({
+  row,
+  planClasses,
+  onOpenLoot
+}: {
+  row: FarmRow
+  /** the set's class FILTER — a planned donor outside it is chipped, never dropped (V2) */
+  planClasses: readonly ClassAbbr[]
+  onOpenLoot?: (item: string) => void
+}): JSX.Element {
   const camp = campText(row)
   return (
     <Stack
@@ -74,6 +85,9 @@ function Row({ row, onOpenLoot }: { row: FarmRow; onOpenLoot?: (item: string) =>
         {costText(row.tierRequired)}
       </Typography>
       <Box sx={{ flexGrow: 1, minWidth: 4 }} />
+      {row.donor !== null && classesMismatch(row.donor.classes, planClasses) && (
+        <MismatchChip classes={row.donor.classes} />
+      )}
       {row.donor !== null && isNonEquippable(row.donor) && <NoSlotChip />}
       <EraChip subject={row.donor ?? { key: row.donorKey }} />
       <StateChip progress={row.progress} />
@@ -81,7 +95,15 @@ function Row({ row, onOpenLoot }: { row: FarmRow; onOpenLoot?: (item: string) =>
   )
 }
 
-function Group({ group, onOpenLoot }: { group: FarmGroup; onOpenLoot?: (item: string) => void }): JSX.Element {
+function Group({
+  group,
+  planClasses,
+  onOpenLoot
+}: {
+  group: FarmGroup
+  planClasses: readonly ClassAbbr[]
+  onOpenLoot?: (item: string) => void
+}): JSX.Element {
   return (
     <Paper variant="outlined" data-testid="planner-farm-group" sx={{ mb: 1 }}>
       <Stack
@@ -101,7 +123,12 @@ function Group({ group, onOpenLoot }: { group: FarmGroup; onOpenLoot?: (item: st
         </Typography>
       </Stack>
       {group.rows.map((row) => (
-        <Row key={`${row.slot}:${row.socket}:${row.donorKey}`} row={row} onOpenLoot={onOpenLoot} />
+        <Row
+          key={`${row.slot}:${row.socket}:${row.donorKey}`}
+          row={row}
+          planClasses={planClasses}
+          onOpenLoot={onOpenLoot}
+        />
       ))}
     </Paper>
   )
@@ -152,7 +179,12 @@ export default function FarmList({ plan, progress, onOpenLoot }: FarmListProps):
 
       <Box data-testid="planner-farm-list" sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
         {groups.map((group) => (
-          <Group key={`${group.kind}:${group.title}`} group={group} onOpenLoot={onOpenLoot} />
+          <Group
+            key={`${group.kind}:${group.title}`}
+            group={group}
+            planClasses={plan.classes}
+            onOpenLoot={onOpenLoot}
+          />
         ))}
         {groups.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
