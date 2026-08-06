@@ -26,15 +26,30 @@
  *   blocksOver50Ms   how many stalls crossed the same threshold the perf HUD calls "warn".
  *
  * AND SINCE JOS-55, A SECOND ARM: WHERE THE FOLD GOES.
- *   Everything above says how long the replay took; none of it says who spent it. Parsing this log
- *   alone runs at ~565k events/sec and the whole pipeline at ~32k, so ~94% of a startup replay is
- *   downstream of the parser — and nothing committed attributed it. `attribution.mts` folds the
- *   same log IN THIS PROCESS through the same modules in the same order (they are constructed by
- *   `src/main/modules/wiring.ts`, which pipeline.ts also calls, so the list cannot drift), with a
- *   per-consumer timer installed at the ModuleRegistry dispatch seam and a probe on the bus's
- *   derived drain. It prints a consumer × ms × us/event × % table, a parse-only comparator row,
- *   and the instrument's OWN measured cost. Read foldArm.mts's header for what that arm shares
- *   with an Electron boot and what it honestly does not.
+ *   Everything above says how long the replay took; none of it says who spent it. `attribution.mts`
+ *   folds the same log IN THIS PROCESS through the same modules in the same order (they are
+ *   constructed by `src/main/modules/wiring.ts`, which pipeline.ts also calls, so the list cannot
+ *   drift), with a per-consumer timer installed at the ModuleRegistry dispatch seam and a probe on
+ *   the bus's derived drain. It prints a consumer × ms × us/event × % table, two parse-only
+ *   comparator arms, and the instrument's OWN measured cost. Read foldArm.mts's header for what
+ *   that arm shares with an Electron boot and what it honestly does not.
+ *
+ *   ITS FIRST RESULT OVERTURNED THE PREMISE IT WAS BUILT ON, which is the reason it exists as a
+ *   committed arm rather than as a remembered number. The claim it inherited was "parsing alone
+ *   runs at 565k events/sec while the pipeline manages 32k, so ~94% of a startup replay is
+ *   downstream of the parser". MEASURED 2026-08-06 on this machine, 1,404,455 events:
+ *
+ *     parse only, BARE parser (no spell DB)   2,418 ms   1.72 us/event   580,900 events/sec
+ *     parse only, the parser THE APP INSTALLS 10,454 ms  7.44 us/event   134,352 events/sec
+ *     the whole fold, every consumer          18,228 ms  12.98 us/event   77,050 events/sec
+ *
+ *   The 565k figure is real and reproduces exactly — of a parser this app never runs. Installing
+ *   the effective spell DB (spells.json + the observed-message overlay, which is what turns on
+ *   message-driven buffApply/buffWearOff matching) costs 5.72 us per event, 8.0 s of that fold,
+ *   and it is charged inside `parseEvent` before any consumer sees anything. So parsing is ~57% of
+ *   the fold, not 6%, and the largest single line item in a startup replay is the spell DB's own
+ *   matching. The consumers below it are the combat engine (21%) and the buffs module (10%);
+ *   everything else in the tree together is under 4%.
  *
  * THE INPUT. A bench that reads a different log each run measures the log, not the code. So:
  *   1. `tests/bench/fixtures/Logs/eqlog_*.txt` — the STANDARD fixture, if you have put one there.
@@ -106,6 +121,18 @@ const MAX_BLOCK_MS_BUDGET = 50
  * cost throughput, but not half of it" rule applied to today's honest baseline. A human edits this
  * deliberately and states why, as here; nothing ratchets it automatically, because a budget that
  * moves itself has stopped saying anything.
+ *
+ * POSTSCRIPT, 2026-08-06 (JOS-55): THE 32k BASELINE DID NOT REPRODUCE, and the number above is
+ * left exactly where it is until somebody decides otherwise deliberately. Three consecutive
+ * launches on this machine and this log (ledger lines 1-3, same day, same 1,404,455 events) folded
+ * at 134,182 / 134,494 / 132,957 events per second OF FOLDING — within 1% of each other and 4.2×
+ * the 32k figure the floor was derived from, i.e. back level with the 143k measured on 2026-08-04
+ * before the "regression" was noticed. Nothing in this repo changed to explain that, and the two
+ * 32k lines were recorded on a day when several agents were running full e2e suites on the same
+ * box. The likeliest reading is that the regression was MACHINE LOAD, not code — which is exactly
+ * what a bench whose verdict depends on how busy the machine is will hand you if you let it.
+ * JOS-56 should confirm on a quiet machine before bisecting anything. Raising the floor to match
+ * today's rate is a budget decision, not a measurement, and is deliberately not taken here.
  */
 const EVENTS_PER_WORK_SEC_FLOOR = 16_000
 
