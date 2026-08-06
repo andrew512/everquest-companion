@@ -12,6 +12,14 @@
 // dupe rejection. During historical replay (live:false) modules fold silently —
 // the registry never flushes deltas until the live tail is running.
 //
+// A MODULE IS FREE TO ACCUMULATE WHILE REPLAYING, AND EVERY ONE DOES: `onEvent` appends to its
+// pending list whatever `live` says, because the PUSH is the registry's decision, not the
+// module's. What the module must NOT assume is that the accumulation is ever delivered — the
+// registry brackets a replay (`beginReplay`/`endReplay`) and DISCARDS what it produced, since
+// `snapshot()` already carries all of it and `log:character` re-hydrates every consumer from
+// there. That is JOS-60: before the bracket existed, a mid-replay heartbeat tick shipped one
+// character's history as an increment against another's, and every celebration detector fired.
+//
 // Built-ins (loot / turnins / kills / leveling / character) wrap the pure reducer
 // core in reducers.ts. Combat is a valid *transport variant* of this contract: it
 // keeps its existing `combat:snapshot` IPC + `combat:activity` nudge (a snapshot
