@@ -103,9 +103,10 @@ gameplay, progress, or settings ride along.
 **Bug reports can attach a slice of your EverQuest log**, and this is the one place log
 contents leave your machine. It's opt-in (ticked by default for bugs, and never offered
 for feature requests), covers the last 15, 30, or 60 minutes, and it is **scrubbed before
-you ever see it**: chat, tells, group lines, and `/who` output are dropped by the same
-filter that governs the log fixtures committed to this repo. Your own character name,
-zones, spells, and combat lines stay — that's what makes a bug reproducible.
+you ever see it**: chat, tells, group and guild messages, and `/who` output are dropped
+by the same filter that governs the log fixtures committed to this repo. Your own
+character name, zones, spells, combat lines, and structural events like group joins
+stay — that's what makes a bug reproducible.
 
 The dialog shows you the slice, expanded, before you send anything: how many lines it is,
 the exact time span, how many lines the scrub removed, and its compressed size. **Save a
