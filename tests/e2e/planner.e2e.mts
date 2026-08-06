@@ -20,8 +20,12 @@
  * with a state chip, and the Farm rollup lists it under some heading; the two growing lists are
  * BOUNDED scroll boxes (the Task-#56 law); the era filter is ON by default and actually
  * removes rows when it is switched off (the corpus is majority Kunark/Velious, so "off shows
- * more" is an identity, not a number); and the Focus tab opens on FAMILIES with the best tier of
- * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one.
+ * more" is an identity, not a number); the Focus tab opens on FAMILIES with the best tier of
+ * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one; the
+ * Inventory tab either fills its hosts from a real `/outputfile inventory` dump or teaches the
+ * command, never both (V7 — whether this machine has a dump is not something a spec may assume);
+ * and clicking one of a host's sockets lands in the effect browser filtered to that socket, that
+ * slot and that host, with a chip that can be cleared (V8).
  *
  * The one thing it deliberately does NOT assert is which effects or donors are on screen: a
  * rescrape may re-word an effect, and a spec that pins today's proc names would rot (AGENTS.md:
@@ -61,6 +65,8 @@ const HOST_HIT = '[data-testid="planner-host-hit"]'
 const HOST_NAME = '[data-testid="planner-host-name"]'
 const HOST_WORN = '[data-testid="planner-host-worn"]'
 const INVENTORY_HELP = '[data-testid="planner-inventory-help"]'
+const SOCKET_BROWSE = '[data-testid="planner-socket-browse"]'
+const PRESET_CHIP = '[data-testid="planner-preset-chip"]'
 const STATE_CHIP = '[data-testid="planner-state-chip"]'
 const FARM_LIST = '[data-testid="planner-farm-list"]'
 const FARM_ROW = '[data-testid="planner-farm-row"]'
@@ -363,6 +369,9 @@ async function stepHostPicker(page: Page): Promise<void> {
  * would mean the card is lying to someone who already ran it.
  */
 async function stepInventoryFill(page: Page): Promise<void> {
+  // POLLED, because the dump is read over IPC when the tab mounts: sampling the instant after the
+  // switch reads "neither", which is the pre-answer state and not a third outcome.
+  await until(async () => (await countOf(page, INVENTORY_HELP)) > 0 || (await countOf(page, HOST_WORN)) > 0, 20_000)
   const help = await countOf(page, INVENTORY_HELP)
   const worn = await countOf(page, HOST_WORN)
   check(
@@ -370,6 +379,39 @@ async function stepInventoryFill(page: Page): Promise<void> {
     (help > 0) !== (worn > 0),
     help > 0 ? 'no dump on this machine — the instructions card is up' : `${String(worn)} hosts filled from the dump`
   )
+}
+
+/**
+ * 6c. A HOST'S SOCKETS ARE BROWSABLE ONE AT A TIME (V8).
+ *
+ * The item-focused way in: a cell with a host draws all four of its sockets, and clicking one
+ * takes you to the effect browser already narrowed to that socket, that slot and that host. What
+ * is asserted is the trip and the narrowing — the preset chip is on screen, and the socket tab it
+ * forced is the socket that was clicked. Which effects come back is the corpus's business.
+ */
+async function stepSocketView(page: Page): Promise<void> {
+  if ((await countOf(page, SOCKET_BROWSE)) === 0) {
+    note('no cell has a host yet — the socket view step is skipped this run')
+    return
+  }
+  const socket = await page.evaluate(
+    (s) => document.querySelector(s)?.closest('[data-socket]')?.getAttribute('data-socket') ?? '',
+    SOCKET_BROWSE
+  )
+  await page.click(SOCKET_BROWSE, { timeout: 15_000 })
+
+  const filtered = await until(async () => (await countOf(page, PRESET_CHIP)) > 0, 15_000)
+  if (!check('clicking a socket on a host opens the effect browser filtered to it', filtered)) return
+  const label = (await textOf(page, PRESET_CHIP)).replace(/\s+/g, ' ').trim()
+  check(
+    '…and the browser is on that socket, for that slot and that host',
+    label.toLowerCase().includes(socket.toLowerCase()),
+    `preset "${label}" for socket ${socket}`
+  )
+
+  // Clearing hands the browser back — the preset is a filter, never a mode you get stuck in.
+  await page.click(`${PRESET_CHIP} .MuiChip-deleteIcon`, { timeout: 15_000 })
+  check('clearing the preset gives the browser back', await until(async () => (await countOf(page, PRESET_CHIP)) === 0, 10_000))
 }
 
 /** 7. THE FARM ROLLUP LISTS WHAT IS LEFT — or says, honestly, that nothing is. */
@@ -443,6 +485,7 @@ async function steps(page: Page): Promise<void> {
     if (await stepAddAndInventory(page)) {
       await stepInventoryFill(page)
       await stepHostPicker(page)
+      await stepSocketView(page)
       await stepFarm(page)
     }
   }

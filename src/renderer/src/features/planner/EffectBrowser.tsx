@@ -69,9 +69,12 @@ import {
   browserRows,
   groupDonors,
   type BrowserRow,
-  type DonorGroup
+  type DonorGroup,
+  type GroupAxis
 } from './plannerGroups'
 import { BestChip, DonorName, EraChip, NoSlotChip } from './PlannerChips'
+import { classesMismatch } from './plannerClasses'
+import { useHostClasses, type BrowsePreset } from './plannerPreset'
 import { sourceIndex, sourcesFor } from './sourceIndex'
 
 const ROW_HEIGHT = 44
@@ -295,6 +298,40 @@ function plannedPairs(plan: ExaltPlan | null): ReadonlySet<string> {
   return out
 }
 
+// ---- the row pipeline ------------------------------------------------------------------
+
+interface RowsInput {
+  donors: readonly DonorRow[]
+  filters: DonorFilters
+  /** the DEFERRED search text (the standing search law) */
+  text: string
+  planClasses: readonly ClassAbbr[]
+  view: { eraOnly: boolean; nonEquip: boolean }
+  /** V8 — the host's own class list; `[]` is unknown and filters nothing (law 1) */
+  hostClasses: readonly ClassAbbr[]
+  axis: GroupAxis
+  open: ReadonlySet<string>
+}
+
+/**
+ * Donors → the flat, windowable row array, in the THREE MEMOS the search law wants and not one.
+ *
+ * The FILTER is what a keystroke changes; the GROUPING keys off the filtered array's identity, so
+ * switching the group-by axis never re-filters 1.6k rows and a keystroke never pays for a fold it
+ * is about to redo; the row flattening keys off the groups and the expanded set.
+ */
+function useVisibleRows(input: RowsInput): BrowserRow[] {
+  const { donors, filters, text, planClasses, view, hostClasses, axis, open } = input
+  const filtered = useMemo(() => {
+    const rows = filterDonors(donors, { ...filters, text }, planClasses, view)
+    // R2's class half against the HOST, not the set: an effect can only move into an item that
+    // shares a class with it.
+    return hostClasses.length === 0 ? rows : rows.filter((d) => !classesMismatch(d.classes, hostClasses))
+  }, [donors, filters, text, planClasses, view, hostClasses])
+  const groups = useMemo(() => groupDonors(filtered, axis, donorEraOf), [filtered, axis])
+  return useMemo(() => browserRows(groups, open), [groups, open])
+}
+
 // ---- the browser ---------------------------------------------------------------------
 
 interface PendingAdd {
@@ -302,19 +339,86 @@ interface PendingAdd {
   anchor: HTMLElement
 }
 
+interface RowListProps {
+  rows: readonly BrowserRow[]
+  win: { start: number; end: number; topPad: number; bottomPad: number }
+  planClasses: readonly ClassAbbr[]
+  planned: ReadonlySet<string>
+  ready: boolean
+  onToggle: (id: string) => void
+  onAdd: (donor: DonorRow, anchor: HTMLElement) => void
+  onOpenLoot?: (item: string) => void
+}
+
+/** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
+function RowList({ rows, win, planClasses, planned, ready, onToggle, onAdd, onOpenLoot }: RowListProps): JSX.Element {
+  return (
+    <>
+      <Box sx={{ height: win.topPad }} />
+      {rows.slice(win.start, win.end).map((row: BrowserRow) =>
+        row.kind === 'header' ? (
+          <GroupLine key={row.group.id} group={row.group} expanded={row.expanded} onToggle={onToggle} />
+        ) : (
+          <DonorLine
+            key={`${row.groupId}:${row.donor.key}:${row.donor.effect}`}
+            donor={row.donor}
+            planClasses={planClasses}
+            planned={planned.has(`${row.donor.key}::${row.donor.effect}`)}
+            best={row.best}
+            namesEffect={row.namesEffect}
+            onAdd={onAdd}
+            onOpenLoot={onOpenLoot}
+          />
+        )
+      )}
+      <Box sx={{ height: win.bottomPad }} />
+      {rows.length === 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+          {ready ? 'No effects match these filters.' : 'Reading the item database…'}
+        </Typography>
+      )}
+    </>
+  )
+}
+
 export interface EffectBrowserProps {
   plan: ExaltPlan
+  /**
+   * V8 — browsing ONE SOCKET OF ONE HOST, arrived at by clicking a socket on the Inventory tab.
+   * It overrides the socket and slot controls and narrows to the host's own classes; clearing it
+   * (the X on the preset chip, or touching any filter control) hands the browser back.
+   */
+  preset?: BrowsePreset | null
+  onClearPreset?: () => void
   /** write one socket of the selected set (usePlans' `setSocket`) */
   onSocket: (slot: EquipSlot, socket: SocketType, planned: { effect: string; donorKey: string }) => void
   /** deep-link a donor into the Loot tab's item drill-down (App's `openLoot`) */
   onOpenLoot?: (item: string) => void
 }
 
-export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrowserProps): JSX.Element {
+export default function EffectBrowser({
+  plan,
+  preset = null,
+  onClearPreset,
+  onSocket,
+  onOpenLoot
+}: EffectBrowserProps): JSX.Element {
   const { donors, ready } = useDonors()
   const era = useEraOnly()
   const nonEquip = useNonEquip()
-  const [filters, setFilters] = useState<DonorFilters>(DEFAULT_FILTERS)
+  const [own, setOwn] = useState<DonorFilters>(DEFAULT_FILTERS)
+  const hostClasses = useHostClasses(preset)
+  // THE PRESET WINS while it is on: the socket and slot it names are facts about the item window
+  // you came from, not preferences. Touching any control clears it (`change` below), because
+  // changing the socket tab while filtered to a Proc socket would be asking two things at once.
+  const filters: DonorFilters = useMemo(
+    () => (preset === null ? own : { ...own, socket: preset.socket, slot: preset.slot }),
+    [own, preset]
+  )
+  const change = (next: DonorFilters): void => {
+    setOwn(next)
+    onClearPreset?.()
+  }
   const groupBy = useGroupBy(filters.socket)
   const [text, setText] = useState('')
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -329,20 +433,19 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
 
   // The input echoes instantly; the FILTER runs on the deferred value (the standing search law).
   const deferredText = useDeferredValue(text)
-  // Read out of the tuples so the memo's dependency list names the BOOLEANS: the setter half of
+  // Read out of the tuples so the memo's dependency list names the VALUES: the setter half of
   // each tuple is a fresh identity nothing here depends on.
-  const eraOnly = era[0]
-  const showNonEquip = nonEquip[0]
-  const axis = groupBy[0]
-  // TWO MEMOS, NOT ONE: the FILTER is what a keystroke changes, and the GROUPING then keys off the
-  // filtered array's identity — so switching the group-by axis never re-filters 1.6k rows, and a
-  // keystroke never pays for a fold it is about to redo.
-  const filtered = useMemo(
-    () => filterDonors(donors, { ...filters, text: deferredText }, plan.classes, { eraOnly, nonEquip: showNonEquip }),
-    [donors, filters, deferredText, plan.classes, eraOnly, showNonEquip]
-  )
-  const groups = useMemo(() => groupDonors(filtered, axis, donorEraOf), [filtered, axis])
-  const rows = useMemo(() => browserRows(groups, open), [groups, open])
+  const view = useMemo(() => ({ eraOnly: era[0], nonEquip: nonEquip[0] }), [era, nonEquip])
+  const rows = useVisibleRows({
+    donors,
+    filters,
+    text: deferredText,
+    planClasses: plan.classes,
+    view,
+    hostClasses,
+    axis: groupBy[0],
+    open
+  })
   const planned = useMemo(() => plannedPairs(plan), [plan])
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT, scrollRef })
 
@@ -356,8 +459,13 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
 
   // One slot ⇒ one click. Several ⇒ a menu of the donor's own slots, because the planner must not
   // pick which of PRIMARY/SECONDARY a sword is going into on the user's behalf.
+  //
+  // UNDER A PRESET THERE IS NOTHING TO ASK (V8): you clicked a specific socket of a specific item,
+  // so a two-slot sword goes into the socket you opened, not into a menu re-asking the question.
   const add = (donor: DonorRow, anchor: HTMLElement): void => {
-    if (donor.slots.length === 1) onSocket(donor.slots[0], donor.socket, { effect: donor.effect, donorKey: donor.key })
+    const planned = { effect: donor.effect, donorKey: donor.key }
+    if (preset !== null) onSocket(preset.slot, preset.socket, planned)
+    else if (donor.slots.length === 1) onSocket(donor.slots[0], donor.socket, planned)
     else if (donor.slots.length > 1) setPending({ donor, anchor })
   }
 
@@ -370,12 +478,14 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
     <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
       <EffectFilterBar
         filters={filters}
-        setFilters={setFilters}
+        setFilters={change}
         text={text}
         setText={setText}
         era={era}
         nonEquip={nonEquip}
         groupBy={groupBy}
+        preset={preset}
+        onClearPreset={onClearPreset}
       />
 
       <Box
@@ -383,29 +493,16 @@ export default function EffectBrowser({ plan, onSocket, onOpenLoot }: EffectBrow
         data-testid="planner-effect-list"
         sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1 }}
       >
-        <Box sx={{ height: win.topPad }} />
-        {rows.slice(win.start, win.end).map((row: BrowserRow) =>
-          row.kind === 'header' ? (
-            <GroupLine key={row.group.id} group={row.group} expanded={row.expanded} onToggle={toggle} />
-          ) : (
-            <DonorLine
-              key={`${row.groupId}:${row.donor.key}:${row.donor.effect}`}
-              donor={row.donor}
-              planClasses={plan.classes}
-              planned={planned.has(`${row.donor.key}::${row.donor.effect}`)}
-              best={row.best}
-              namesEffect={row.namesEffect}
-              onAdd={add}
-              onOpenLoot={onOpenLoot}
-            />
-          )
-        )}
-        <Box sx={{ height: win.bottomPad }} />
-        {rows.length === 0 && (
-          <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-            {ready ? 'No effects match these filters.' : 'Reading the item database…'}
-          </Typography>
-        )}
+        <RowList
+          rows={rows}
+          win={win}
+          planClasses={plan.classes}
+          planned={planned}
+          ready={ready}
+          onToggle={toggle}
+          onAdd={add}
+          onOpenLoot={onOpenLoot}
+        />
       </Box>
 
       <Menu anchorEl={pending?.anchor ?? null} open={pending !== null} onClose={() => setPending(null)}>

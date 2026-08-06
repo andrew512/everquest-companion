@@ -10,6 +10,14 @@
 // never written by the dump, so a hand-pick always wins and an auto-filled host follows your gear
 // instead of freezing the day you first opened the tab.
 //
+// THE SOCKET LIST IS THE ANCHOR (V8, owner 2026-08-05: "a different, item-focused way to plan").
+// Once a cell has a host, ALL FOUR of its sockets are drawn, filled or not — the empty ones are
+// the point, exactly as they are in the game's own item window. Clicking one opens the effect
+// browser already narrowed to what can legally go there (that socket, this slot, this host's
+// classes), so the second way into the planner is "open an item and fill it" rather than "find an
+// effect and place it". A cell with NO host still draws only what is planned: four empty rows on
+// eighteen untouched slots would be noise, not an invitation.
+//
 // THE NARROWED-CLASS LINE IS R2 MADE VISIBLE. Socketing narrows the host's class list to the
 // overlap with the donor's, so a six-class sword quietly becomes a four-class sword the moment you
 // plan a Ranger-only proc into it.
@@ -23,7 +31,7 @@ import { Box, Chip, IconButton, Paper, Stack, Typography } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { PlannerInventoryHost } from '@shared/planner/inventorySlots'
-import { SOCKET_TYPES, type EquipSlot, type PlanSlot, type SocketType } from '@shared/planner/types'
+import { SOCKET_TYPES, type EquipSlot, type PlanSlot, type PlanSocket, type SocketType } from '@shared/planner/types'
 import { extractionTier, narrowedClasses } from '@shared/planner/rules'
 import { Tooltip } from '../../lib/Tooltip'
 import { DonorName, EraChip, MismatchChip, NoSlotChip, StateChip } from './PlannerChips'
@@ -66,54 +74,58 @@ export function cellNarrowing(planSlot: PlanSlot, index: DonorIndex, hostKey?: s
 
 // ---- one socket line -----------------------------------------------------------------
 
-function SocketLine({
-  slot,
-  socket,
-  effect,
-  donorKey,
-  planClasses,
-  index,
-  progress,
-  onRemove,
-  onOpenLoot
-}: {
+interface SocketLineProps {
   slot: EquipSlot
   socket: SocketType
-  effect: string
-  donorKey: string
+  /** what the set plans here, or null for an EMPTY socket of a host (V8) */
+  planned: PlanSocket | null
+  /** the host's merge tier when it is known — decides whether a socket reads as unlocked yet */
+  hostTier?: number
   /** the set's class FILTER — a donor outside it is chipped, never dropped (V2) */
   planClasses: readonly ClassAbbr[]
   index: DonorIndex
   progress: PlannerProgressApi
   onRemove: (slot: EquipSlot, socket: SocketType) => void
+  /** open the effect browser filtered to this socket of this host (V8) */
+  onBrowse: (slot: EquipSlot, socket: SocketType) => void
   onOpenLoot?: (item: string) => void
-}): JSX.Element {
-  const donor = donorFor(index, donorKey, effect)
+}
+
+/** R1 for one socket, read out of the rules and never restated: `@+2`, or `+2 to unlock`. */
+function unlockText(socket: SocketType, hostTier: number | undefined): string {
+  const at = extractionTier(socket)
+  return hostTier !== undefined && hostTier < at ? `+${String(at)} to unlock` : `@+${String(at)}`
+}
+
+/** What a FILLED socket says: the effect, its donor, and how far along that donor is. */
+function FilledSocket({
+  planned,
+  slot,
+  socket,
+  planClasses,
+  index,
+  progress,
+  onRemove,
+  onOpenLoot
+}: SocketLineProps & { planned: PlanSocket }): JSX.Element {
+  const donor = donorFor(index, planned.donorKey, planned.effect)
   // No corpus row (a donor the DB no longer carries) still has a KNOWN extraction tier: it is a
   // property of the SOCKET, not of the item (R1).
-  const state = progress.of(donorKey, donor?.tierRequired ?? extractionTier(socket))
+  const state = progress.of(planned.donorKey, donor?.tierRequired ?? extractionTier(socket))
   return (
-    <Stack
-      direction="row"
-      spacing={0.75}
-      alignItems="center"
-      data-testid="planner-socket-line"
-      data-socket={socket}
-      sx={{ flexWrap: 'nowrap', minWidth: 0 }}
-    >
-      <Chip size="small" variant="outlined" label={SOCKET_LABEL[socket]} sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />
+    <>
       <Box sx={{ minWidth: 0, flexShrink: 1 }}>
         <Typography variant="caption" noWrap sx={{ display: 'block', fontWeight: 600 }}>
-          {effect}
+          {planned.effect}
         </Typography>
         <Typography variant="caption" component="div" noWrap sx={{ color: 'text.secondary' }}>
-          {donor === null ? donorKey : <DonorName name={donor.name} onOpen={onOpenLoot} />}
+          {donor === null ? planned.donorKey : <DonorName name={donor.name} onOpen={onOpenLoot} />}
         </Typography>
       </Box>
       <Box sx={{ flexGrow: 1, minWidth: 4 }} />
       {donor !== null && classesMismatch(donor.classes, planClasses) && <MismatchChip classes={donor.classes} />}
       {donor !== null && isNonEquippable(donor) && <NoSlotChip />}
-      <EraChip subject={donor ?? { key: donorKey }} />
+      <EraChip subject={donor ?? { key: planned.donorKey }} />
       <StateChip progress={state} />
       <Tooltip title="Remove">
         <IconButton
@@ -125,6 +137,49 @@ function SocketLine({
           <CloseIcon sx={{ fontSize: 13 }} />
         </IconButton>
       </Tooltip>
+    </>
+  )
+}
+
+function SocketLine(props: SocketLineProps): JSX.Element {
+  const { slot, socket, planned, hostTier, onBrowse } = props
+  const browse = (): void => onBrowse(slot, socket)
+  return (
+    <Stack
+      direction="row"
+      spacing={0.75}
+      alignItems="center"
+      data-testid={planned === null ? 'planner-socket-open' : 'planner-socket-line'}
+      data-socket={socket}
+      sx={{ flexWrap: 'nowrap', minWidth: 0 }}
+    >
+      <Tooltip title={`Browse ${SOCKET_LABEL[socket].toLowerCase()} effects for ${slot}`}>
+        <Chip
+          size="small"
+          variant="outlined"
+          label={SOCKET_LABEL[socket]}
+          data-testid="planner-socket-browse"
+          onClick={browse}
+          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+        />
+      </Tooltip>
+      {planned === null ? (
+        <>
+          <Typography
+            variant="caption"
+            onClick={browse}
+            sx={{ color: 'text.disabled', cursor: 'pointer', '&:hover': { color: 'text.secondary' } }}
+          >
+            pick an effect…
+          </Typography>
+          <Box sx={{ flexGrow: 1, minWidth: 4 }} />
+          <Typography variant="caption" sx={{ color: 'text.disabled', flexShrink: 0 }}>
+            {unlockText(socket, hostTier)}
+          </Typography>
+        </>
+      ) : (
+        <FilledSocket {...props} planned={planned} />
+      )}
     </Stack>
   )
 }
@@ -215,15 +270,21 @@ export interface PlanCellProps {
   onSocket: (slot: EquipSlot, socket: SocketType, planned: null) => void
   onHost: (slot: EquipSlot, host: { key: string; name: string } | null) => void
   onPickHost: (slot: EquipSlot, anchor: HTMLElement) => void
+  /** open the effect browser filtered to one socket of this cell's host (V8) */
+  onBrowse: (slot: EquipSlot, socket: SocketType, host: EffectiveHost) => void
   onOpenLoot?: (item: string) => void
 }
 
 export default function PlanCell(props: PlanCellProps): JSX.Element {
-  const { slot, planSlot, planClasses, equipped, index, progress, onSocket, onHost, onPickHost, onOpenLoot } = props
+  const { slot, planSlot, planClasses, equipped, index, progress, onSocket, onHost, onPickHost, onBrowse, onOpenLoot } =
+    props
   const host = effectiveHost(planSlot, equipped)
   const planned = SOCKET_TYPES.filter((s) => planSlot.sockets[s] !== undefined)
   const empty = planned.length === 0 && host === null
   const narrowed = planned.length === 0 ? [] : cellNarrowing(planSlot, index, host?.key)
+  // With a host, the item window: all four sockets, filled or not. Without one, only what is
+  // planned — four empty rows on eighteen untouched slots would be noise, not an invitation.
+  const rows = host === null ? planned : SOCKET_TYPES
 
   return (
     <Paper
@@ -241,24 +302,23 @@ export default function PlanCell(props: PlanCellProps): JSX.Element {
           narrows to {narrowed.join('/')}
         </Typography>
       )}
-      {planned.map((socket) => {
-        const entry = planSlot.sockets[socket]
-        if (!entry) return null
-        return (
-          <SocketLine
-            key={socket}
-            slot={slot}
-            socket={socket}
-            effect={entry.effect}
-            donorKey={entry.donorKey}
-            planClasses={planClasses}
-            index={index}
-            progress={progress}
-            onRemove={(s, k) => onSocket(s, k, null)}
-            onOpenLoot={onOpenLoot}
-          />
-        )
-      })}
+      {rows.map((socket) => (
+        <SocketLine
+          key={socket}
+          slot={slot}
+          socket={socket}
+          planned={planSlot.sockets[socket] ?? null}
+          hostTier={host?.tier}
+          planClasses={planClasses}
+          index={index}
+          progress={progress}
+          onRemove={(s, k) => onSocket(s, k, null)}
+          onBrowse={(s, k) => {
+            if (host !== null) onBrowse(s, k, host)
+          }}
+          onOpenLoot={onOpenLoot}
+        />
+      ))}
     </Paper>
   )
 }

@@ -23,6 +23,7 @@ import HostPicker from './HostPicker'
 import PlanCell from './PlanCell'
 import { indexDonors, useDonors } from './plannerData'
 import { hostsBySlot, usePlannerInventory } from './plannerInventory'
+import type { BrowsePreset } from './plannerPreset'
 import type { PlannerProgressApi } from './plannerProgress'
 
 /**
@@ -54,6 +55,8 @@ export interface PlanBoardProps {
   progress: PlannerProgressApi
   onSocket: (slot: EquipSlot, socket: SocketType, planned: null) => void
   onHost: (slot: EquipSlot, host: { key: string; name: string } | null) => void
+  /** V8 — hand the effect browser a preset for one socket of one host */
+  onBrowse: (preset: BrowsePreset) => void
   /** deep-link a donor (or the host item) into the Loot tab's drill-down — App's `openLoot` */
   onOpenLoot?: (item: string) => void
 }
@@ -63,7 +66,14 @@ interface Picking {
   anchor: HTMLElement
 }
 
-export default function PlanBoard({ plan, progress, onSocket, onHost, onOpenLoot }: PlanBoardProps): JSX.Element {
+export default function PlanBoard({
+  plan,
+  progress,
+  onSocket,
+  onHost,
+  onBrowse,
+  onOpenLoot
+}: PlanBoardProps): JSX.Element {
   const { donors } = useDonors()
   const index = useMemo(() => indexDonors(donors), [donors])
   const { inventory, ready } = usePlannerInventory()
@@ -105,6 +115,9 @@ export default function PlanBoard({ plan, progress, onSocket, onHost, onOpenLoot
             onSocket={onSocket}
             onHost={onHost}
             onPickHost={(s, anchor) => setPicking({ slot: s, anchor })}
+            onBrowse={(s, socket, host) =>
+              onBrowse({ slot: s, socket, hostKey: host.key, hostName: host.name })
+            }
             onOpenLoot={onOpenLoot}
           />
         ))}

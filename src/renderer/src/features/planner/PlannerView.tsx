@@ -48,6 +48,7 @@ import EffectBrowser from './EffectBrowser'
 import FarmList from './FarmList'
 import PlanBoard from './PlanBoard'
 import { boundClasses, detectedOffer } from './plannerClasses'
+import type { BrowsePreset } from './plannerPreset'
 import { usePlannerProgress, type PlannerProgressApi } from './plannerProgress'
 import { usePlans, type PlannerMode, type PlansApi } from './usePlans'
 
@@ -209,13 +210,17 @@ function ModePane({
   plan,
   plans,
   progress,
+  preset,
   onOpenLoot
 }: {
   plan: ExaltPlan
   plans: PlansApi
   progress: PlannerProgressApi
+  /** V8 — the socket-of-a-host filter, and the two ends of the trip between the tabs */
+  preset: [BrowsePreset | null, (p: BrowsePreset | null) => void]
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
+  const [browsing, setBrowsing] = preset
   if (plans.mode === 'inventory') {
     return (
       <PlanBoard
@@ -223,12 +228,24 @@ function ModePane({
         progress={progress}
         onSocket={plans.setSocket}
         onHost={plans.setHost}
+        onBrowse={(p) => {
+          setBrowsing(p)
+          plans.setMode('effects')
+        }}
         onOpenLoot={onOpenLoot}
       />
     )
   }
   if (plans.mode === 'farm') return <FarmList plan={plan} progress={progress} onOpenLoot={onOpenLoot} />
-  return <EffectBrowser plan={plan} onSocket={plans.setSocket} onOpenLoot={onOpenLoot} />
+  return (
+    <EffectBrowser
+      plan={plan}
+      preset={browsing}
+      onClearPreset={() => setBrowsing(null)}
+      onSocket={plans.setSocket}
+      onOpenLoot={onOpenLoot}
+    />
+  )
 }
 
 // ---- the view ------------------------------------------------------------------------
@@ -254,6 +271,9 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
   const combo = useComboSnap()
   const progress = usePlannerProgress()
   const [editing, setEditing] = useState<Editing>(NO_EDIT)
+  // V8 — which socket of which host the browser is filtered to, held HERE because the trip
+  // crosses two modes: it is set on the Inventory tab and consumed on the Effects tab.
+  const [browsing, setBrowsing] = useState<BrowsePreset | null>(null)
   const selected = plans.selected
 
   // What the app currently believes this character is running. An unresolved slot contributes
@@ -309,7 +329,13 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
         </ToggleButtonGroup>
       </Stack>
 
-      <ModePane plan={selected} plans={plans} progress={progress} onOpenLoot={onOpenLoot} />
+      <ModePane
+        plan={selected}
+        plans={plans}
+        progress={progress}
+        preset={[browsing, setBrowsing]}
+        onOpenLoot={onOpenLoot}
+      />
 
       <Menu anchorEl={editing.menu} open={editing.menu !== null} onClose={() => setEditing(NO_EDIT)}>
         <MenuItem onClick={() => setEditing({ ...NO_EDIT, rename: selected })}>Rename</MenuItem>

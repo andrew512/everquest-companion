@@ -24,6 +24,7 @@ import { EQUIP_SLOTS, type EquipSlot, type SocketType } from '@shared/planner/ty
 import { Tooltip } from '../../lib/Tooltip'
 import { CURRENT_ERA_LABEL, type DonorFilters } from './plannerData'
 import { AXIS_LABEL, SOCKET_LABEL, axesFor, type GroupAxis } from './plannerGroups'
+import type { BrowsePreset } from './plannerPreset'
 
 /** The socket tabs, in the order the planner leads with (proc first — see DEFAULT_FILTERS). */
 const SOCKETS: SocketType[] = ['proc', 'worn', 'focus', 'click']
@@ -61,6 +62,26 @@ function ToggleChip({
   )
 }
 
+/**
+ * THE PRESET CHIP (V8) — "HEAD · Proc · Valorium Helmet", with an X.
+ *
+ * It is the whole of the browser's honesty about arriving from an item window: the socket tabs and
+ * the slot select beside it are showing values you did not choose, and this says who did. Clearing
+ * it (or touching any other control) hands the browser back with those values still selected.
+ */
+function PresetChip({ label, onClear }: { label: string; onClear: () => void }): JSX.Element {
+  return (
+    <Chip
+      size="small"
+      color="primary"
+      label={label}
+      data-testid="planner-preset-chip"
+      onDelete={onClear}
+      sx={{ flexShrink: 0, maxWidth: 260 }}
+    />
+  )
+}
+
 export interface EffectFilterBarProps {
   filters: DonorFilters
   setFilters: (f: DonorFilters) => void
@@ -70,6 +91,9 @@ export interface EffectFilterBarProps {
   era: [boolean, (v: boolean) => void]
   nonEquip: [boolean, (v: boolean) => void]
   groupBy: [GroupAxis, (v: GroupAxis) => void]
+  /** V8 — the socket-of-a-host filter the browser was opened with, if any */
+  preset?: BrowsePreset | null
+  onClearPreset?: () => void
 }
 
 export default function EffectFilterBar({
@@ -79,13 +103,21 @@ export default function EffectFilterBar({
   setText,
   era,
   nonEquip,
-  groupBy
+  groupBy,
+  preset = null,
+  onClearPreset
 }: EffectFilterBarProps): JSX.Element {
   const [eraOnly, setEraOnly] = era
   const [showNonEquip, setShowNonEquip] = nonEquip
   const [axis, setAxis] = groupBy
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1 }}>
+      {preset !== null && (
+        <PresetChip
+          label={`${preset.slot} · ${SOCKET_LABEL[preset.socket]} · ${preset.hostName}`}
+          onClear={() => onClearPreset?.()}
+        />
+      )}
       <ToggleButtonGroup
         exclusive
         size="small"
