@@ -9,10 +9,16 @@
 // app they can see and step back out of.
 //
 // THE BREADCRUMB IS THAT ADDRESS, and it is the reason this is a takeover rather than a separate
-// tab. "Loot › <item>" says where you are and where back is, the root is a real control (not
-// decoration beside a close button), and the back chevron is its twin for the reader who reaches
-// for one. Both do exactly the same thing, deliberately: a takeover with two exits is a takeover
-// nobody gets stuck in.
+// tab. "Loot › <item>" says where you are, the root is a real control (not decoration beside a
+// close button), and the back chevron sits beside it for the reader who reaches for one. A
+// takeover with two exits is a takeover nobody gets stuck in.
+//
+// THE TWO EXITS ARE NO LONGER THE SAME EXIT (JOS-43). They were, until deep links made "back"
+// ambiguous: arrive here from the Planner and the loot ledger is not where you came from, it is
+// just the list this item happens to live in. So the ARROW is Back — it returns to the origin the
+// navigation stack parked (`origin` names it, and the tooltip says so out loud) — while the
+// breadcrumb ROOT keeps meaning what it reads: the Loot list. With no origin (you clicked a row
+// in that list) the two coincide again, exactly as before.
 //
 // SCROLL POSITION IS THE LIST'S OWN CONCERN (LootView): this pane replaces the list, so the list
 // unmounts, and the view saves the scroll offset before the swap and restores it after. That is
@@ -30,13 +36,26 @@ import { ItemDetailContent, type ItemDetailProps } from './ItemDetailDialog'
 import { Tooltip } from '../../lib/Tooltip'
 
 export interface ItemDetailPaneProps extends ItemDetailProps {
-  /** Back to the loot list, with its scroll position. Both affordances call it. */
+  /** THE Back: wherever the reader actually came from. Origin-aware — see the header and LootView. */
   onBack: () => void
+  /** The breadcrumb root. The loot list, with its scroll position, always. */
+  onList: () => void
+  /** The tab a deep link arrived from ("Planner"), or null/absent when this drill was opened from
+   *  the list itself. Names the back ARROW; the breadcrumb never changes what it says. */
+  origin?: string | null
 }
 
 /** "Loot › <item>". The root is a control; the leaf is the item, in the game's own item colour so
  *  it reads as the same name the row and the item window use. */
-function Breadcrumb({ item, isQuestItem, onBack }: Omit<ItemDetailPaneProps, 'events' | 'stats'>): JSX.Element {
+function Breadcrumb({
+  item,
+  isQuestItem,
+  onList
+}: {
+  item: string
+  isQuestItem: boolean
+  onList: () => void
+}): JSX.Element {
   return (
     <Breadcrumbs aria-label="breadcrumb" sx={{ minWidth: 0 }}>
       <Link
@@ -45,7 +64,7 @@ function Breadcrumb({ item, isQuestItem, onBack }: Omit<ItemDetailPaneProps, 'ev
         underline="hover"
         color="inherit"
         data-testid="loot-breadcrumb-root"
-        onClick={onBack}
+        onClick={onList}
         sx={{ font: 'inherit', cursor: 'pointer' }}
       >
         Loot
@@ -60,16 +79,20 @@ function Breadcrumb({ item, isQuestItem, onBack }: Omit<ItemDetailPaneProps, 'ev
   )
 }
 
-export function ItemDetailPane({ item, events, stats, isQuestItem, onBack }: ItemDetailPaneProps): JSX.Element {
+export function ItemDetailPane(props: ItemDetailPaneProps): JSX.Element {
+  const { item, events, stats, isQuestItem, onBack, onList, origin } = props
+  // ONE string for the tooltip and the accessible name — they are the same sentence, and the e2e
+  // reads the aria-label to prove the arrow knows where it is going.
+  const backLabel = origin ? `Back to ${origin}` : 'Back to the loot list'
   return (
     <Stack spacing={1.5} data-testid="loot-detail" sx={{ height: '100%', minHeight: 0 }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flexShrink: 0 }}>
-        <Tooltip title="Back to the loot list">
-          <IconButton size="small" data-testid="loot-back" aria-label="Back to the loot list" onClick={onBack}>
+        <Tooltip title={backLabel}>
+          <IconButton size="small" data-testid="loot-back" aria-label={backLabel} onClick={onBack}>
             <ArrowBackIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Breadcrumb item={item} isQuestItem={isQuestItem} onBack={onBack} />
+        <Breadcrumb item={item} isQuestItem={isQuestItem} onList={onList} />
       </Stack>
       {/* The pane owns its own scroll for the same reason every panel in this app does: the
           content area must never grow the document (AGENTS.md's fixed-height law). */}

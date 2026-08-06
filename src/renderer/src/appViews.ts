@@ -28,6 +28,30 @@ export type View =
 export const VIEW_KEY = 'eq.view'
 export const DEFAULT_VIEW: View = 'overview'
 
+/**
+ * What a view is CALLED, once. Two surfaces now say a tab's name out loud — the nav drawer's
+ * rows, and a deep-linked drill's Back ("Back to Raid Targets", navOrigin.ts) — and a second copy
+ * is exactly how one of them ends up saying "Bosses" while the other says "Raid Targets".
+ *
+ * A `Record<View, string>` rather than a lookup with a fallback: adding a view to the union
+ * without naming it is a type error here, which is the only moment anyone would remember to.
+ */
+export const VIEW_LABELS: Record<View, string> = {
+  overview: 'Overview',
+  combat: 'Combat',
+  mobs: 'Mobs',
+  maps: 'Maps',
+  bosses: 'Raid Targets',
+  posky: 'Plane of Sky',
+  alerts: 'Alerts',
+  leveling: 'Leveling',
+  loot: 'Loot',
+  planner: 'Planner',
+  buffs: 'Buffs',
+  preferences: 'Preferences',
+  triage: 'Triage'
+}
+
 // Every member of `View` this BUILD can actually render. A view missing here is silently
 // bounced to the default on the next launch, so the two lists are edited together — always.
 const KNOWN_VIEWS: View[] = [

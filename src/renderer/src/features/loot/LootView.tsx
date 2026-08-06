@@ -33,6 +33,7 @@ import {
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import type { CountSource } from '@shared/types'
+import type { NavBack } from '../../appRouting'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemCountKey } from '../../lib/itemName'
 import { formatDateTime, formatTime } from '../../lib/formatDate'
@@ -175,6 +176,10 @@ export interface LootViewProps {
   /** Told the moment the focus has been applied, so the router drops it and a later plain visit
    *  to this tab lands on the ledger rather than on wherever the last link pointed. */
   onFocusConsumed?: () => void
+  /** The app's ONE back contract (appRouting `NavBack`, JOS-43). Present ⇒ the detail pane's Back
+   *  returns to whatever tab deep-linked here (the Planner, the Overview, a Sky quest); absent or
+   *  empty ⇒ it means the ledger, exactly as it always did. */
+  nav?: NavBack
 }
 
 /** Which item the pane has taken over for, and the two ways in and out of it. */
@@ -190,7 +195,8 @@ interface LootDetail {
  * The list unmounts on the swap, so the offset is captured on the way in and re-applied in a
  * LAYOUT effect on the way back — before paint, so returning never flashes the top of an
  * eleven-thousand-row table. A DEEP-LINKED entry saves 0 instead: the reader was on the Overview,
- * so there is no position of theirs to return to and "back" means the top of the ledger.
+ * so there is no position of theirs to return to — and since JOS-43 "back" does not mean the
+ * ledger for them at all, it means the tab they came from.
  *
  * Its own hook rather than inline, so `LootView` itself stays inside the measured
  * lines-per-function ceiling and this rule is readable in one screen.
@@ -221,6 +227,10 @@ function useLootDetail(
     selected,
     open: (item) => {
       savedScroll.current = scrollRef.current?.scrollTop ?? 0
+      // A NATIVE drill: the reader clicked a row in the ledger they are standing in, so the list
+      // IS where back goes — and whatever a link parked before belongs to a journey that ended
+      // when they started browsing here (navOrigin.ts).
+      props.nav?.clear()
       setSelected(item)
     },
     close: () => setSelected(null)
@@ -279,7 +289,14 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
         events={history.filter((e) => e.item.toLowerCase() === selected.toLowerCase())}
         stats={itemStats[itemCountKey(selected)]}
         isQuestItem={questItemNames.has(itemCountKey(selected))}
-        onBack={detail.close}
+        // Back consults the origin stack FIRST and falls back to closing the pane — the whole
+        // JOS-43 contract in one line. `back()` reports whether it navigated, so a natively
+        // opened drill (nothing parked) behaves exactly as it did before.
+        onBack={() => {
+          if (!props.nav?.back()) detail.close()
+        }}
+        onList={detail.close}
+        origin={props.nav?.origin?.label ?? null}
       />
     )
   }

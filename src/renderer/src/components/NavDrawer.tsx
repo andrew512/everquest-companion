@@ -18,13 +18,14 @@ import FeedbackIcon from '@mui/icons-material/Feedback'
 import RuleFolderIcon from '@mui/icons-material/RuleFolder'
 import UpdateChip from './UpdateChip'
 import { DEV_TOOLS } from '../devFlags'
-import type { View } from '../appViews'
+import { VIEW_LABELS, type View } from '../appViews'
 
 export const DRAWER_WIDTH = 220
 
+/** A row is a view + an icon. The LABEL is not a field: it comes from `VIEW_LABELS`, the one
+ *  place a tab is named, because a drill's Back button now says those names too (navOrigin.ts). */
 interface NavRow {
   view: View
-  label: string
   icon: JSX.Element
   /** trailing state chip, when a row has one to state */
   badge?: JSX.Element
@@ -48,23 +49,23 @@ const IN_DEV = (
 // the loot detail). Loot's old home at the bottom of the list put five unrelated tabs between
 // them.
 const ROWS: NavRow[] = [
-  { view: 'overview', label: 'Overview', icon: <SpaceDashboardIcon /> },
-  { view: 'combat', label: 'Combat', icon: <BarChartIcon /> },
-  { view: 'mobs', label: 'Mobs', icon: <PetsIcon /> },
-  { view: 'loot', label: 'Loot', icon: <ReceiptLongIcon /> },
+  { view: 'overview', icon: <SpaceDashboardIcon /> },
+  { view: 'combat', icon: <BarChartIcon /> },
+  { view: 'mobs', icon: <PetsIcon /> },
+  { view: 'loot', icon: <ReceiptLongIcon /> },
   // Planner follows Loot for the same reason Loot follows Mobs: it is the third face of one
   // question — what drops it, what did I get, and what am I still farming for.
-  { view: 'planner', label: 'Planner', icon: <AutoAwesomeIcon />, badge: IN_DEV },
-  { view: 'maps', label: 'Maps', icon: <MapIcon /> },
-  { view: 'bosses', label: 'Raid Targets', icon: <EmojiEventsIcon /> },
-  { view: 'posky', label: 'Plane of Sky', icon: <ShieldMoonIcon /> },
-  { view: 'alerts', label: 'Alerts', icon: <NotificationsActiveIcon /> },
-  { view: 'leveling', label: 'Leveling', icon: <TrendingUpIcon /> },
-  { view: 'buffs', label: 'Buffs', icon: <AutoFixHighIcon />, badge: IN_DEV }
+  { view: 'planner', icon: <AutoAwesomeIcon />, badge: IN_DEV },
+  { view: 'maps', icon: <MapIcon /> },
+  { view: 'bosses', icon: <EmojiEventsIcon /> },
+  { view: 'posky', icon: <ShieldMoonIcon /> },
+  { view: 'alerts', icon: <NotificationsActiveIcon /> },
+  { view: 'leveling', icon: <TrendingUpIcon /> },
+  { view: 'buffs', icon: <AutoFixHighIcon />, badge: IN_DEV }
 ]
 
 /** Bottom-aligned, outside ROWS — it is not a feature view and never moves. */
-const PREFERENCES: NavRow = { view: 'preferences', label: 'Preferences', icon: <SettingsIcon /> }
+const PREFERENCES: NavRow = { view: 'preferences', icon: <SettingsIcon /> }
 
 /** One nav row. `data-testid="nav-<view>"` is the stable handle the e2e clicks. */
 function NavRowButton({
@@ -83,7 +84,7 @@ function NavRowButton({
       onClick={() => onSelect(row.view)}
     >
       <ListItemIcon>{row.icon}</ListItemIcon>
-      <ListItemText primary={row.label} />
+      <ListItemText primary={VIEW_LABELS[row.view]} />
       {row.badge}
     </ListItemButton>
   )
@@ -138,7 +139,6 @@ export default function NavDrawer({
           <NavRowButton
             row={{
               view: 'triage',
-              label: 'Triage',
               icon: <RuleFolderIcon />,
               badge: (
                 <Chip

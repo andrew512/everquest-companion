@@ -1,12 +1,11 @@
 import { type JSX, useEffect, useState } from 'react'
-import { Box, Button, CssBaseline, Snackbar, Alert, Typography } from '@mui/material'
-import SettingsIcon from '@mui/icons-material/Settings'
-import TravelExploreIcon from '@mui/icons-material/TravelExplore'
+import { Box, CssBaseline, Snackbar, Alert } from '@mui/material'
 import ShieldMoonIcon from '@mui/icons-material/ShieldMoon'
 import EmojiEventsIcon2 from '@mui/icons-material/EmojiEvents'
 import type { AppFocus, CharacterRef } from '@shared/types'
 import TitleBar from './components/TitleBar'
 import NavDrawer from './components/NavDrawer'
+import NoLogsEmptyState from './components/NoLogsEmptyState'
 import { VIEW_KEY, loadView, type View } from './appViews'
 // The app's navigation MODEL — the deep-link routers and their nonce contract. See appRouting.ts.
 import { useAppRouting, usePrefsRouting, type AppRouting, type PrefsRouting } from './appRouting'
@@ -52,46 +51,6 @@ import { tierStyle } from './lib/tierChip'
 const bossData = getBossData()
 
 /**
- * Fresh-machine empty state: no eqlog_*.txt were found in the (auto-detected or
- * overridden) EQ folder. Quiet + actionable — points the user at Preferences > Game
- * to set the install folder, rather than showing empty/erroring feature views.
- */
-function NoLogsEmptyState({ onOpenPreferences }: { onOpenPreferences: () => void }): JSX.Element {
-  return (
-    <Box
-      sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        textAlign: 'center',
-        gap: 1.5,
-        color: 'text.secondary'
-      }}
-    >
-      <TravelExploreIcon sx={{ fontSize: 48, opacity: 0.6 }} />
-      <Typography variant="h6" color="text.primary">
-        No EverQuest logs found yet
-      </Typography>
-      <Typography variant="body2" sx={{ maxWidth: 440 }}>
-        We looked for your EverQuest Legends install automatically but didn&apos;t find any
-        character logs. Make sure logging is on in-game (type <code>/log on</code>), or point us
-        at your install folder.
-      </Typography>
-      <Button
-        variant="contained"
-        startIcon={<SettingsIcon />}
-        onClick={onOpenPreferences}
-        sx={{ mt: 1 }}
-      >
-        Open preferences
-      </Button>
-    </Box>
-  )
-}
-
-/**
  * The views the router reaches with at most ONE callback — split out of `ViewContent` purely as
  * factoring: the switch is one branch per view, so every view added to the app costs the
  * enclosing function a point of cyclomatic complexity, and the deep-linked views (the ones
@@ -124,6 +83,7 @@ function PlainView({
           focusItem={routing.lootItem}
           focusNonce={routing.lootNonce}
           onFocusConsumed={routing.clearLootFocus}
+          nav={routing.nav}
         />
       )}
       {/* Maps remounts per character rebuild like the rest: the zone it auto-opens comes from
@@ -200,6 +160,7 @@ function ViewContent({
           target={routing.mobTarget}
           targetNonce={routing.mobNonce}
           onTargetConsumed={routing.clearMob}
+          nav={routing.nav}
         />
       )}
       {view === 'bosses' && <BossView key={viewKey} onOpenMob={routing.openMob} />}
@@ -383,6 +344,8 @@ interface DeepLinkOpeners {
   openMob: (t: { mob: string }) => void
   openQuest: (quest?: string) => void
   openLeveling: (level?: number) => void
+  /** A bare `{view}` focus is a tab switch, so it takes the app's MANUAL navigator (JOS-43). */
+  selectView: (v: View) => void
 }
 
 /**
@@ -398,7 +361,7 @@ interface DeepLinkOpeners {
  * A module-level function rather than an inline closure because App is at its factoring ceiling
  * and this is the branchy part of that effect, not the subscription bookkeeping around it.
  */
-function applyDeepLink(focus: AppFocus | null, setView: (v: View) => void, open: DeepLinkOpeners): void {
+function applyDeepLink(focus: AppFocus | null, open: DeepLinkOpeners): void {
   if (focus?.view === 'posky') {
     open.openQuest(focus.quest)
     return
@@ -409,7 +372,7 @@ function applyDeepLink(focus: AppFocus | null, setView: (v: View) => void, open:
   }
   if (focus?.view !== 'mobs') return
   if (focus.mob) open.openMob({ mob: focus.mob })
-  else setView('mobs')
+  else open.selectView('mobs')
 }
 
 export default function App(): JSX.Element {
@@ -428,9 +391,11 @@ export default function App(): JSX.Element {
   // ErrorBoundary's "Report this", which reloads the window to get here.
   const feedback = useFeedbackDialog()
 
-  const routing = useAppRouting(setView)
-  const prefsRouting = usePrefsRouting(view, setView)
-  const { openMob, openQuest, openLeveling } = routing
+  // `view` goes IN as well as out: the router parks the tab a cross-view deep link is leaving, so
+  // the drill it opens can offer a Back that returns there (JOS-43, navOrigin.ts).
+  const routing = useAppRouting(view, setView)
+  const prefsRouting = usePrefsRouting(view, routing.selectView)
+  const { openMob, openQuest, openLeveling, selectView } = routing
 
   useAppCelebrations(setDefeatToast, setQuestToast)
 
@@ -464,7 +429,7 @@ export default function App(): JSX.Element {
       void window.eq.listCharacters().then(setCharacters)
     })
     const offFocus = window.eq.onFocusView((focus) =>
-      applyDeepLink(focus, setView, { openMob, openQuest, openLeveling })
+      applyDeepLink(focus, { openMob, openQuest, openLeveling, selectView })
     )
     return () => {
       offDelta()
@@ -472,7 +437,7 @@ export default function App(): JSX.Element {
       offEqConfig()
       offFocus()
     }
-  }, [openMob, openQuest, openLeveling])
+  }, [openMob, openQuest, openLeveling, selectView])
 
   const onSelectCharacter = async (logPath: string): Promise<void> => {
     const res = await window.eq.setCharacter(logPath)
@@ -495,12 +460,14 @@ export default function App(): JSX.Element {
         character={character}
         characters={characters}
         onSelectCharacter={(logPath) => void onSelectCharacter(logPath)}
-        onOpenPreferences={() => setView('preferences')}
+        onOpenPreferences={() => selectView('preferences')}
       />
 
       {/* Everything below the bar: nav drawer + main content, side by side. */}
       <Box sx={{ display: 'flex', flexGrow: 1, minHeight: 0 }}>
-        <NavDrawer view={view} onSelect={setView} onSendFeedback={() => feedback.openFeedback()} />
+        {/* MANUAL navigation: `selectView`, not the raw setter — the user choosing a tab by hand
+            is also the user ending whatever deep-link journey was parked (navOrigin.ts). */}
+        <NavDrawer view={view} onSelect={selectView} onSendFeedback={() => feedback.openFeedback()} />
 
         <Box
           component="main"
@@ -513,7 +480,7 @@ export default function App(): JSX.Element {
               viewKey={viewKey}
               routing={routing}
               prefs={prefsRouting}
-              onOpenPreferences={() => setView('preferences')}
+              onOpenPreferences={() => selectView('preferences')}
               onOpenLeveling={() => openLeveling()}
               onSendFeedback={feedback.openFeedback}
             />

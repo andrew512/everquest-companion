@@ -55,6 +55,7 @@ import type {
   MobEntry
 } from '@shared/types'
 import { killsBaselineStale, mergeKillsDelta } from '@shared/kills'
+import type { NavBack } from '../../appRouting'
 import { useModule } from '../../lib/useModule'
 import { MobPage } from './MobPage'
 import { RecentlyConsidered, applyConsiderDelta } from './RecentlyConsidered'
@@ -242,6 +243,45 @@ function NoZoneYet({ hasConsidered }: { hasConsidered: boolean }): JSX.Element {
 }
 
 /**
+ * THE DRILL STATE: one mob page under one Back.
+ *
+ * THE BUTTON NAMES ITS DESTINATION, which is why it never just said "Back". Normally that is this
+ * tab's own browse surface ("Mobs"). But a mob page reached by a DEEP LINK — an Overview kill row,
+ * a raid card, a Sky dropper, an overlay con row — belongs to the tab that sent you, and since
+ * JOS-43 Back returns there and says so ("Overview", "Raid Targets"). `nav.back()` reports whether
+ * it navigated, so with nothing parked this is exactly the button it has always been.
+ */
+function MobDrill({
+  target,
+  nav,
+  onClose
+}: {
+  target: MobTarget
+  nav?: NavBack
+  onClose: () => void
+}): JSX.Element {
+  return (
+    <Stack spacing={1} sx={{ height: '100%' }}>
+      <Box>
+        <Button
+          size="small"
+          data-testid="mobs-back"
+          startIcon={<ArrowBackIcon />}
+          onClick={() => {
+            if (!nav?.back()) onClose()
+          }}
+        >
+          {nav?.origin?.label ?? 'Mobs'}
+        </Button>
+      </Box>
+      <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto' }}>
+        <MobPage key={`${target.mob}#${target.entry?.page ?? ''}`} target={target} />
+      </Box>
+    </Stack>
+  )
+}
+
+/**
  * @param target             a mob to open on arrival (a deep link from the events overlay, or a
  *                           raid target card). Re-applied whenever `targetNonce` changes, so
  *                           asking for the SAME mob twice opens it twice instead of looking
@@ -250,19 +290,31 @@ function NoZoneYet({ hasConsidered }: { hasConsidered: boolean }): JSX.Element {
  *                           Load-bearing: this view unmounts when you switch tabs, and a target
  *                           still parked in the router would silently re-open a page you'd
  *                           already backed out of the next time you came here.
+ * @param nav                the app's ONE back contract (appRouting `NavBack`, JOS-43). A mob
+ *                           page reached from the Overview, a raid card, a Sky dropper or an
+ *                           overlay row backs out to THERE; one reached from this tab's own
+ *                           search/roster/con strip backs out to the browse surface, unchanged.
  */
 export default function MobsView({
   target,
   targetNonce,
-  onTargetConsumed
+  onTargetConsumed,
+  nav
 }: {
   target?: MobTarget | null
   targetNonce?: number
   onTargetConsumed?: () => void
+  nav?: NavBack
 }): JSX.Element {
   const [query, setQuery] = useState('')
   const deferred = useDeferredValue(query)
   const [drill, setDrill] = useState<MobTarget | null>(target ?? null)
+  // A NATIVE drill — a row on this tab's own surfaces. It ends whatever journey a link parked, so
+  // Back below means the browse surface, which is where the reader genuinely came from.
+  const openNative = (t: MobTarget): void => {
+    nav?.clear()
+    setDrill(t)
+  }
 
   const kills = useKills()
   const considered = useModule<ConsiderSnap, ConsiderDelta>('consider', applyConsiderDelta) ?? []
@@ -286,20 +338,7 @@ export default function MobsView({
   // when you zone, so memoize on the zone string.
   const zoneRows = useMemo(() => (zone ? mobsInZone(zone, MOB_CATALOG) : []), [zone])
 
-  if (drill) {
-    return (
-      <Stack spacing={1} sx={{ height: '100%' }}>
-        <Box>
-          <Button size="small" startIcon={<ArrowBackIcon />} onClick={() => setDrill(null)}>
-            Mobs
-          </Button>
-        </Box>
-        <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto' }}>
-          <MobPage key={`${drill.mob}#${drill.entry?.page ?? ''}`} target={drill} />
-        </Box>
-      </Stack>
-    )
-  }
+  if (drill) return <MobDrill target={drill} nav={nav} onClose={() => setDrill(null)} />
 
   return (
     <Stack spacing={1.5} sx={{ height: '100%' }}>
@@ -319,7 +358,7 @@ export default function MobsView({
                 {hits.length} of {MOB_CATALOG.length} mobs
               </Typography>
               {hits.map((h) => (
-                <MobResultRow key={h.entry.page} entry={h.entry} kills={kills} onOpen={setDrill} />
+                <MobResultRow key={h.entry.page} entry={h.entry} kills={kills} onOpen={openNative} />
               ))}
             </>
           ) : (
@@ -342,18 +381,18 @@ export default function MobsView({
         <>
           {zone ? (
             <>
-              <ZoneRoster zone={zone} rows={zoneRows} kills={kills} onOpen={setDrill} />
+              <ZoneRoster zone={zone} rows={zoneRows} kills={kills} onOpen={openNative} />
               {zoneRows.length === 0 ? (
                 <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                  <RecentlyConsidered rows={considered} kills={kills} onOpen={setDrill} />
+                  <RecentlyConsidered rows={considered} kills={kills} onOpen={openNative} />
                 </Box>
               ) : (
-                <RecentlyConsidered rows={considered} kills={kills} onOpen={setDrill} />
+                <RecentlyConsidered rows={considered} kills={kills} onOpen={openNative} />
               )}
             </>
           ) : (
             <>
-              <RecentlyConsidered rows={considered} kills={kills} onOpen={setDrill} />
+              <RecentlyConsidered rows={considered} kills={kills} onOpen={openNative} />
               <NoZoneYet hasConsidered={considered.length > 0} />
             </>
           )}

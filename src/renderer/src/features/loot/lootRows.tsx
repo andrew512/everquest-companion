@@ -80,6 +80,9 @@ export const GroupedRow = memo(function GroupedRow({
   return (
     <TableRow
       hover
+      // The stable handle for "a drill opened from the ledger itself" — a NATIVE arrival, whose
+      // Back must still mean this list (JOS-43). Both row kinds carry it: they are one control.
+      data-testid="loot-row"
       sx={{ cursor: 'pointer', height: ROW_HEIGHT, '& td': { py: 0 }, opacity: g.invOnly ? 0.7 : 1 }}
       onClick={() => onSelect(g.item)}
     >
@@ -131,6 +134,7 @@ export const FlatRow = memo(function FlatRow({
   return (
     <TableRow
       hover
+      data-testid="loot-row"
       sx={{ cursor: 'pointer', height: ROW_HEIGHT, '& td': { py: 0 } }}
       onClick={() => onSelect(e.item)}
     >
