@@ -28,8 +28,9 @@
  * Inventory tab either fills its hosts from a real `/outputfile inventory` dump or teaches the
  * command, never both (V7 — whether this machine has a dump is not something a spec may assume);
  * clicking one of a host's sockets lands in the effect browser filtered to that socket, that slot
- * and that host, with a chip that can be cleared (V8); and the exaltation rules card is up on a
- * first visit, closes for good when dismissed, and comes back from the toolbar's `?` (V10).
+ * and that host, with a chip that can be cleared (V8); and the exaltation rules card is NOT up on a
+ * first visit, comes up only from the toolbar's `?`, and closes for good when dismissed (V10 as
+ * JOS-51 revised it — the rules are there when asked for, never by default).
  *
  * The one thing it deliberately does NOT assert is which effects or donors are on screen: a
  * rescrape may re-word an effect, and a spec that pins today's proc names would rot (AGENTS.md:
@@ -49,7 +50,8 @@ import {
   rectOf,
   reportRun,
   settleCount,
-  settleGone
+  settleGone,
+  settleStable
 } from './appHarness.mjs'
 
 import { mainWindow } from './appWindow.mjs'
@@ -153,27 +155,45 @@ async function stepCreateSet(page: Page): Promise<boolean> {
 }
 
 /**
- * 2b. THE RULES CARD IS UP ON A FIRST VISIT, AND DISMISSING IT STICKS (V10).
+ * 2b. THE RULES CARD WAITS TO BE ASKED, AND DISMISSING IT STICKS (V10, revised by JOS-51).
  *
- * The one collaborative explainer this app allows: a planner is a set of rules you plan against,
- * and a player who does not know them cannot tell a good plan from a bad one. So it opens by
- * default, closes for good when dismissed, and the permanent `?` brings it back — which is what
- * makes dismissing it safe. It is dismissed on the way out so every measurement below sees the
- * pane at the height a returning player sees.
+ * The one collaborative explainer this app allows — but the owner overturned the "meet the rules on
+ * your first visit" argument it used to open on (2026-08-06): the card is CLOSED on a fresh install
+ * and the toolbar's `?` is the only door in. So the first assertion here is an ABSENCE, taken the
+ * settle way: wait for the toolbar's own reading to STOP CHANGING (the pane legitimately remounts
+ * while the app is still reading the log) and only then assert nothing is up. Never a sleep.
+ *
+ * The three facts after it are unchanged in substance: asking puts it up, dismissing puts it away,
+ * and asking again brings it back. It ends dismissed so every measurement below sees the pane at
+ * the height a returning player sees.
  */
 async function stepExplainer(page: Page): Promise<void> {
-  if (!check('the planner opens with the exaltation rules card', (await countOf(page, EXPLAINER)) > 0)) return
+  const first = await settleStable(
+    async () => ({ card: await countOf(page, EXPLAINER), ask: await countOf(page, EXPLAINER_OPEN) }),
+    { timeoutMs: 20_000 }
+  )
+  check(
+    'the planner does NOT teach unasked — no rules card on a first visit',
+    first.card === 0,
+    `${String(first.card)} cards up before anyone asked`
+  )
+  if (!check('…and the toolbar carries the ? that is now the only way in', first.ask > 0)) return
+
+  await page.click(EXPLAINER_OPEN, { timeout: 15_000 })
+  if (!check('asking with the ? puts the exaltation rules card up', (await settleCount(page, EXPLAINER, 1, { timeoutMs: 8_000 })) > 0)) {
+    return
+  }
   // The numbers are read from the rules, never written here — so the unlock tiers must be on it.
   const text = (await textOf(page, EXPLAINER)).replace(/\s+/g, ' ')
   check('…and it states the unlock tiers it reads out of the rules', /Focus at \+\d/.test(text), text.slice(0, 90))
 
   await page.click(`${EXPLAINER} .MuiAlert-action button`, { timeout: 15_000 })
-  check('dismissing the card puts it away', await until(async () => (await countOf(page, EXPLAINER)) === 0, 8000))
+  check('dismissing the card puts it away', await settleGone(page, EXPLAINER, { timeoutMs: 8_000 }))
 
   await page.click(EXPLAINER_OPEN, { timeout: 15_000 })
-  check('the ? in the toolbar brings it back', await until(async () => (await countOf(page, EXPLAINER)) > 0, 8000))
+  check('the ? brings it back after a dismissal', (await settleCount(page, EXPLAINER, 1, { timeoutMs: 8_000 })) > 0)
   await page.click(`${EXPLAINER} .MuiAlert-action button`, { timeout: 15_000 })
-  await until(async () => (await countOf(page, EXPLAINER)) === 0, 8000)
+  await settleGone(page, EXPLAINER, { timeoutMs: 8_000 })
 }
 
 /** 3. THE EFFECT BROWSER LISTS THE COMMITTED CORPUS, in a bounded box. */

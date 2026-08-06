@@ -199,8 +199,9 @@ function DetectedChip({ offer, onApply }: { offer: ClassAbbr[]; onApply: () => v
 }
 
 /**
- * THE ONE NOWRAP ROW. Which set, for which classes, in which mode — plus the permanent `?` that
- * brings the explainer back (V10), so dismissing it is never a one-way door.
+ * THE ONE NOWRAP ROW. Which set, for which classes, in which mode — plus the permanent `?`, which
+ * since JOS-51 is the ONLY way the explainer ever appears (V10): the card no longer opens itself,
+ * so the `?` is both the way in and the way back after a dismissal.
  */
 function Toolbar({
   plans,

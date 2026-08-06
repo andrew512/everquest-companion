@@ -6,6 +6,14 @@
 // So this is the one collaborative explainer the tooltip-and-caveat diet explicitly allows: it
 // helps someone use the feature successfully, it is dismissible, and dismissing it is remembered.
 //
+// BUT IT WAITS TO BE ASKED (owner, 2026-08-06 — JOS-51). This file used to argue that a player
+// should MEET the rules on their first visit, so the card opened itself and filled the top of the
+// tab for every new install. The owner overturned that: the rules are there when asked for, never
+// by default. The `?` in the toolbar is now the ONLY way the card first appears — which does not
+// weaken the teaching claim above, it just stops the teaching from being an interruption. The
+// remembered state is unchanged in both directions: a card you left open is up next visit, a card
+// you dismissed stays away.
+//
 // EVERY NUMBER IS READ, NOT WRITTEN. `extractionTier` gives the four unlock tiers, `extractionCost`
 // gives the merge arithmetic, `SOCKET_TYPES` gives how many sockets there are, `CURRENT_ERA_LABEL`
 // gives which expansion the filter is scoped to. Nothing here restates a constant — the whole
@@ -27,11 +35,13 @@ import { SOCKET_LABEL } from './plannerGroups'
 const KEY = 'eq.planner.explainer'
 
 /**
- * Whether the card is showing. OPEN by default and remembered once dismissed — a player meets the
- * rules on their first visit and never again unless they ask (the `?` in the toolbar).
+ * Whether the card is showing. CLOSED unless the store explicitly says otherwise (JOS-51): only a
+ * remembered '1' — written when someone asked for the card with the toolbar's `?` and left it up —
+ * opens it. Absent (a fresh install) and '0' (dismissed) both mean closed, so the ask is the only
+ * door in and the state is still remembered in both directions.
  */
 export function useExplainer(): { open: boolean; show: () => void; dismiss: () => void } {
-  const [open, setOpen] = useState(() => localStorage.getItem(KEY) !== '0')
+  const [open, setOpen] = useState(() => localStorage.getItem(KEY) === '1')
   const set = useCallback((v: boolean) => {
     localStorage.setItem(KEY, v ? '1' : '0')
     setOpen(v)
