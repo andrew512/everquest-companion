@@ -35,9 +35,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseEvent } from '../src/main/log/parser'
+import { installCharacterName } from '../src/main/log/rulesets'
 import { CombatEngine } from '../src/main/combat/engine'
 import { WorldModel } from '../src/main/combat/world'
 import type { SegmentView } from '../src/shared/combat'
+
+// The tailed character, as session.ts injects it before a replay. Only the `/pet who leader` rule
+// reads it here (JOS-52) — none of the synthetic lines below is a `/who` row.
+installCharacterName('Primitive')
 
 // ── the pure model ─────────────────────────────────────────────────────────────────────────
 
@@ -154,6 +159,9 @@ test('a claim on the far side of a zone retires the pet that came through with y
 
 const TELL = (t: string, name: string): string =>
   `[Thu Aug 06 ${t} 2026] ${name} told you, 'Attacking a greater kobold Master.'`
+/** The `/pet who leader` answer (JOS-52) — the log's other binding line, in its one real shape. */
+const LEADER = (t: string, name: string, leader = 'Primitive'): string =>
+  `[Thu Aug 06 ${t} 2026] ${name} says, 'My leader is ${leader}.'`
 const SWING = (t: string, name: string, amount: number): string =>
   `[Thu Aug 06 ${t} 2026] ${name} slashes a greater kobold for ${amount} points of damage.`
 
@@ -238,4 +246,94 @@ test('the everCharmed re-arm still wins: an ever-charmed name binds CHARMED, bes
   ])
   assert.deepEqual(eng.petDisplayNames().sort(), ['Gonekn', 'an ice giant'])
   assert.deepEqual(eng.charmedPetNames(), ['an ice giant'], 'promoted as CHARMED, not summoned')
+})
+
+// ── `/pet who leader`: the same rules, because it is the same event (JOS-52) ────────────────
+//
+// `<Name> says, 'My leader is <You>.'` parses to `petClaim` with `via: 'leader'` — the one
+// canonical event both binding lines produce. That is the whole design, and this block is what
+// makes it a fact rather than an intention: every rule above is re-run through the say, and none
+// of them is re-implemented anywhere to make it pass.
+
+test('a leader say binds a never-ordered pet, and retires the pet you had (JOS-54 path)', () => {
+  // The ticket's own case: a player who never types `/pet attack` asks instead. Jaber is bound by
+  // asking, Gonekn replaces it by asking, and the succession fires exactly as it does for tells —
+  // including the retired pet's later swing going back to being nobody's.
+  const { eng, lastTs } = replay([
+    `[Thu Aug 06 12:35:28 2026] You have entered Nagafen's Lair.`,
+    LEADER('12:36:00', 'Jaber'),
+    SWING('12:36:02', 'Jaber', 40),
+    SWING('12:36:04', 'Jaber', 60),
+    LEADER('12:37:00', 'Gonekn'),
+    SWING('12:37:02', 'Gonekn', 30),
+    SWING('12:37:04', 'Jaber', 999),
+    SWING('12:37:06', 'Gonekn', 70)
+  ])
+  const rows = petRows(eng, lastTs)
+  assert.deepEqual(rows.get('Jaber'), { hits: 2, total: 100 }, 'the 999 after the succession is not yours')
+  assert.deepEqual(rows.get('Gonekn'), { hits: 2, total: 100 })
+  assert.deepEqual(eng.petDisplayNames(), ['Gonekn'], 'one pet at a time, however it was bound')
+})
+
+test('a leader say binds FORWARD, not backward — same limit as the tell', () => {
+  // `ingestPetClaim` binds from the line's own timestamp and nothing reaches back, so asking LATE
+  // costs exactly what ordering late costs (petClaimWindows.test.mts measures that on the owner's
+  // real window). Ask before the first swing and you keep all of it.
+  const late = replay([
+    `[Thu Aug 06 12:35:28 2026] You have entered Nagafen's Lair.`,
+    SWING('12:36:02', 'Jaber', 500),
+    LEADER('12:36:30', 'Jaber'),
+    SWING('12:36:40', 'Jaber', 60)
+  ])
+  assert.deepEqual(petRows(late.eng, late.lastTs).get('Jaber'), { hits: 1, total: 60 })
+
+  const early = replay([
+    `[Thu Aug 06 12:35:28 2026] You have entered Nagafen's Lair.`,
+    LEADER('12:35:30', 'Jaber'),
+    SWING('12:36:02', 'Jaber', 500),
+    SWING('12:36:40', 'Jaber', 60)
+  ])
+  assert.deepEqual(petRows(early.eng, early.lastTs).get('Jaber'), { hits: 2, total: 560 })
+})
+
+test('an ever-charmed name saying you are its leader re-arms the CHARMED set, not the permanent one', () => {
+  // The PROMOTE path, reached through the say. A charmed mob can be asked `/pet who leader` like
+  // any other pet, and if the answer bound it as SUMMONED it would follow you through every zone
+  // line for the rest of the session, crediting its kills to you forever.
+  const { eng } = replay([
+    `[Thu Aug 06 12:35:28 2026] You have entered Nagafen's Lair.`,
+    LEADER('12:36:00', 'Gonekn'),
+    `[Thu Aug 06 12:36:30 2026] an ice giant has been charmed.`,
+    LEADER('12:36:40', 'an ice giant')
+  ])
+  assert.deepEqual(eng.petDisplayNames().sort(), ['Gonekn', 'an ice giant'])
+  assert.deepEqual(eng.charmedPetNames(), ['an ice giant'], 'promoted as CHARMED, not summoned')
+  // …and, being charmed, it does NOT walk through a zone line with you, while the class pet does.
+  const zoned = replay([
+    `[Thu Aug 06 12:35:28 2026] You have entered Nagafen's Lair.`,
+    LEADER('12:36:00', 'Gonekn'),
+    `[Thu Aug 06 12:36:30 2026] an ice giant has been charmed.`,
+    LEADER('12:36:40', 'an ice giant'),
+    `[Thu Aug 06 12:37:00 2026] You have entered Solusek's Eye.`
+  ])
+  assert.deepEqual(zoned.eng.petDisplayNames(), ['Gonekn'])
+})
+
+test('a leader say naming SOMEBODY ELSE binds nothing and retires nothing', () => {
+  // The line is broadcast, so a stranger's pet three feet away prints this shape naming ITS owner.
+  // Two things have to hold: it must not bind that pet, and it must not count as a succession
+  // against the pet you do have — a rule that fired on the shape alone would silently un-own your
+  // own pet every time somebody nearby ran the command.
+  const { eng, lastTs } = replay([
+    `[Thu Aug 06 12:35:28 2026] You have entered Nagafen's Lair.`,
+    LEADER('12:36:00', 'Gonekn'),
+    SWING('12:36:02', 'Gonekn', 30),
+    LEADER('12:36:30', 'Vebarn', 'Rykkerr'),
+    SWING('12:36:40', 'Gonekn', 70),
+    SWING('12:36:42', 'Vebarn', 999)
+  ])
+  assert.deepEqual(eng.petDisplayNames(), ['Gonekn'], 'still exactly one pet, and still yours')
+  const rows = petRows(eng, lastTs)
+  assert.deepEqual(rows.get('Gonekn'), { hits: 2, total: 100 })
+  assert.equal(rows.has('Vebarn'), false, "the stranger's pet earns no row")
 })
