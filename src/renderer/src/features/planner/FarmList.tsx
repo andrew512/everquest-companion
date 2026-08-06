@@ -38,8 +38,8 @@ const KIND_HINT: Record<FarmGroup['kind'], string> = {
   zone: 'Donors whose best-known camp is in this zone.',
   quest: 'These come from a quest, not a camp.',
   crafted: 'These are made, not dropped.',
-  unstated: 'The catalog names a mob for these but states no home zone for it.',
-  unknown: 'Nothing in the committed data says where these come from.'
+  unstated: 'The catalog states no home zone for these.',
+  unknown: 'Nothing says where these come from.'
 }
 
 function Row({

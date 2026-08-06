@@ -243,8 +243,7 @@ export interface EraChipInfo {
   tooltip: string
 }
 
-const UNKNOWN_TOOLTIP =
-  'Nothing places this donor: no mob catalog zone, no zone on its page, and no era banner. We will not claim it is out of era.'
+const UNKNOWN_TOOLTIP = 'Nothing in our data states an era for this donor.'
 
 /**
  * The one chip the era join draws.
@@ -261,9 +260,7 @@ export function eraChip(subject: EraSubject): EraChipInfo | null {
     label,
     unknown: false,
     tooltip:
-      by === 'tag'
-        ? `No zone places this donor; its wiki page is banner-tagged ${label}.`
-        : `This donor's sources are in ${label}.`
+      by === 'tag' ? `Its wiki page is banner-tagged ${label}.` : `This donor's sources are in ${label}.`
   }
 }
 

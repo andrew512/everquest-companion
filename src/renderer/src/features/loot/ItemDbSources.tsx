@@ -41,8 +41,7 @@ const MAX_ROWS = 50
 /** Fixed height, its own scrollbar — a growing list never grows the page (AGENTS.md). */
 const LIST_SX = { maxHeight: 220, overflowY: 'auto', pr: 0.5 } as const
 
-const DB_HINT =
-  'From the committed wiki data — the mob catalog’s loot lists plus this item’s own page. It is what the wiki says drops it, not what you have seen drop.'
+const DB_HINT = 'What the wiki says drops it, not what you have seen.'
 
 /** The `db` provenance chip. Same vocabulary the buffs pane uses for `db` vs `observed`. */
 export function DbChip(): JSX.Element {
@@ -56,7 +55,7 @@ export function DbChip(): JSX.Element {
 /** The `observed` provenance chip — its twin, worn by the columns built from your loot events. */
 export function ObservedChip(): JSX.Element {
   return (
-    <Tooltip title="From your own loot history in this log — what you have actually seen drop, and how often.">
+    <Tooltip title="What you have actually seen drop.">
       <Chip size="small" variant="outlined" label="observed" sx={{ height: 18, fontSize: 10 }} />
     </Tooltip>
   )

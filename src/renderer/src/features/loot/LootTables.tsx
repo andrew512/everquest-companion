@@ -92,7 +92,7 @@ export function GroupedLootTable({
           <TableCell padding="checkbox" />
           <TableCell>Item</TableCell>
           <TableCell align="right">Times looted</TableCell>
-          <Tooltip title="Estimated count still on you: the active count source minus anything consumed by a turned-in quest. Inferred, not observed — the log never sees bank deposits, trades or destroys.">
+          <Tooltip title="Estimated count still on you.">
             <TableCell align="right">In inventory</TableCell>
           </Tooltip>
           <TableCell>Top source</TableCell>
