@@ -43,6 +43,7 @@ import {
   parseStartupProfile,
   percentile,
   perfProcessType,
+  replayDutyOf,
   pushSample,
   sparklinePoints,
   totalsOf,
@@ -377,12 +378,40 @@ test('a launch that measured its blocking states it in the profile; one that did
   assert.equal(parseStartupProfile(legacy)?.phases.length, STARTUP_PHASES.length)
 })
 
+test('the DUTY the replay achieved is a measurement the profile carries, or nothing at all', () => {
+  // JOS-50. The slicer rests on a real timer between slices, and a Windows timer delivers its own
+  // idea of a rest — so what the launch states is what happened, never the target it aimed at.
+  const replay = { slices: 3_400, workMs: 42_000, restMs: 28_000 }
+  const measured = buildProfile(fullChain(), { startedAt: 1, version: '', replay })
+  assert.deepEqual(measured.replay, replay)
+  assert.equal(replayDutyOf(replay), 0.6, '42 s folding against 28 s resting IS a 60% duty')
+
+  // Absent, never a fabricated zero — the same rule `eventsReplayed` and `block` follow. A launch
+  // with no log to replay had no duty; it had no fold.
+  assert.equal(buildProfile(fullChain(), { startedAt: 1, version: '' }).replay, undefined)
+  assert.equal(replayDutyOf({ slices: 0, workMs: 0, restMs: 0 }), 0, 'and nothing measured is 0, not NaN')
+
+  // A fold that never rested reads as 100%: that is the pre-JOS-50 behaviour, and it must be
+  // VISIBLE rather than rounded away — it is exactly what a broken throttle looks like.
+  assert.equal(replayDutyOf({ slices: 10, workMs: 500, restMs: 0 }), 1)
+
+  // Read back off disk: all three fields or none, like the block stats.
+  const onDisk = { ...measured, replay: { slices: 3, workMs: 'soon' } }
+  assert.equal(parseStartupProfile(JSON.parse(JSON.stringify(onDisk)) as unknown)?.replay, undefined)
+  // …and a profile written by a build that predates the ledger still parses.
+  const legacy = JSON.parse(JSON.stringify(measured)) as Record<string, unknown>
+  delete legacy.replay
+  assert.equal(parseStartupProfile(legacy)?.replay, undefined)
+  assert.equal(parseStartupProfile(legacy)?.phases.length, STARTUP_PHASES.length)
+})
+
 test('a profile round-trips through JSON, and anything else parses to null', () => {
   const profile = buildProfile(fullChain(), {
     startedAt: 5,
     version: '9.9.9',
     eventsReplayed: 7,
-    block: { samples: 12, maxBlockMs: 31, blocksOver50Ms: 0 }
+    block: { samples: 12, maxBlockMs: 31, blocksOver50Ms: 0 },
+    replay: { slices: 9, workMs: 120.5, restMs: 80.4 }
   })
   const parsed = parseStartupProfile(JSON.parse(JSON.stringify(profile)) as unknown)
   assert.deepEqual(parsed, profile)

@@ -25,9 +25,10 @@ export interface ScanOptions {
   profileId?: string
   /**
    * The cooperative scheduler (docs/plans/chunked-replay.md §1). Defaults to a REPLAY_SLICE_MS
-   * budget, which is what production always wants — the only other caller is the equivalence test,
-   * which passes `unchunkedSlicer()` to fold the same bytes with no yielding at all and compare.
-   * There is deliberately no environment variable behind this: see replaySlicer.ts.
+   * budget at REPLAY_DUTY — which is what production always wants, and is what session.ts passes
+   * explicitly so it can read the duty the slicer measured. The other caller is the equivalence
+   * test, which passes `unchunkedSlicer()` to fold the same bytes with no yielding at all and
+   * compare. There is deliberately no environment variable behind this: see replaySlicer.ts.
    */
   slicer?: Slicer
 }
@@ -102,7 +103,10 @@ async function consumeChunk(
  *
  * COOPERATIVELY SCHEDULED (docs/plans/chunked-replay.md §1): "periodically" used to mean "between
  * read chunks", which measured at 75 ms of main-loop stall per chunk. It now means "every
- * REPLAY_SLICE_MS of folding", which bounds the block directly. See replaySlicer.ts.
+ * REPLAY_SLICE_MS of folding", which bounds the block directly — and, since JOS-50, each of those
+ * pauses is a real REST rather than a `setImmediate`, so the fold cannot hold a core flat out for
+ * the length of a replay either. See replaySlicer.ts for both constants and the measurements
+ * behind them.
  *
  * Bounded (FIX 1): captures the file size S up front, processes only bytes [0, S),
  * and returns `endOffset` = the byte offset of the end of the last complete line

@@ -40,9 +40,11 @@ import {
   lagStats,
   PERF_LAG_PROBE_INTERVAL_MS,
   PERF_SAMPLE_INTERVAL_MS,
+  replayDutyOf,
   totalsOf,
   type PerfSample,
   type RawProcessMetric,
+  type ReplayDutyStats,
   type StartupBlockStats,
   type StartupMark,
   type StartupPhase,
@@ -65,6 +67,7 @@ const LAUNCH_STARTED_AT = Math.round(performance.timeOrigin)
 
 let marks: StartupMark[] = []
 let eventsReplayed: number | undefined
+let replayStats: ReplayDutyStats | undefined
 let profileWritten = false
 
 // ------------------------------------------------------------------- the startup block probe
@@ -117,6 +120,9 @@ function stopStartupBlockProbe(): void {
 export interface MarkOptions {
   atMs?: number
   eventsReplayed?: number
+  /** How the replay's slicer split its wall clock (JOS-50). Only `replayDone` carries it, and
+   *  only when there was a log to replay. */
+  replay?: ReplayDutyStats
 }
 
 /**
@@ -130,6 +136,7 @@ export interface MarkOptions {
 export function markStartupPhase(phase: StartupPhase, opts: MarkOptions = {}): void {
   const at = opts.atMs ?? performance.now()
   if (opts.eventsReplayed !== undefined) eventsReplayed = opts.eventsReplayed
+  if (opts.replay !== undefined) replayStats = opts.replay
   const result = addMark(marks, phase, at)
   if (!result.ok) {
     logError('main:perfStartup', describeMarkError(result.error))
@@ -150,7 +157,8 @@ export function startupProfile(): StartupProfile {
     startedAt: LAUNCH_STARTED_AT,
     version: app.getVersion(),
     ...(eventsReplayed === undefined ? {} : { eventsReplayed }),
-    ...(blockStats === undefined ? {} : { block: blockStats })
+    ...(blockStats === undefined ? {} : { block: blockStats }),
+    ...(replayStats === undefined ? {} : { replay: replayStats })
   })
 }
 
@@ -170,9 +178,18 @@ function logStartupSummary(profile: StartupProfile): void {
     profile.block === undefined
       ? ''
       : `, worst main-loop block ${String(profile.block.maxBlockMs)}ms (${String(profile.block.blocksOver50Ms)} over 50ms)`
+  // …and so does the duty the replay ACHIEVED (JOS-50). The slicer aims at REPLAY_DUTY and the
+  // Windows timer decides what it actually gets, so the launch states the measurement rather than
+  // the intention — a replay that somehow rested not at all is then visible in errors.log.
+  const duty =
+    profile.replay === undefined
+      ? ''
+      : `, replay duty ${String(Math.round(replayDutyOf(profile.replay) * 100))}%` +
+        ` (${String(Math.round(profile.replay.workMs))}ms folding / ${String(Math.round(profile.replay.restMs))}ms resting` +
+        ` over ${String(profile.replay.slices)} slices)`
   logInfo(
     `[everquest-companion] Startup ${String(Math.round(profile.totalMs))}ms` +
-      `${replayed}${blocked} (${worst}) — profile at ${profilePath()}`
+      `${replayed}${blocked}${duty} (${worst}) — profile at ${profilePath()}`
   )
 }
 

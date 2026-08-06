@@ -226,6 +226,35 @@ export function foldBlockSamples(drifts: readonly number[]): StartupBlockStats {
 }
 
 /**
+ * WHAT THE DUTY-CYCLED REPLAY ACTUALLY SPENT (JOS-50, `main/log/replaySlicer.ts`).
+ *
+ * The slicer rests on a real timer between slices so the fold cannot hold a core flat out, and a
+ * timer on Windows delivers whatever the 15.6 ms quantum decides rather than what was asked for.
+ * So the achieved duty is a MEASUREMENT, not a setting, and the launch states it: `restMs` is time
+ * the OS handed back, timed by the slicer itself.
+ *
+ * Separate from `block` because they answer different questions about the same seconds — `block`
+ * says how LATE the loop ran, this says how much of the wall clock the fold claimed at all.
+ */
+export interface ReplayDutyStats {
+  /** Slices folded; each one ended in a yield (resting or not). */
+  slices: number
+  /** Milliseconds spent FOLDING. */
+  workMs: number
+  /** Milliseconds spent RESTING — measured, never requested. */
+  restMs: number
+}
+
+/**
+ * Achieved duty: the fraction of the replay's wall clock that was folding. 0 when nothing was
+ * measured, which is honest — a replay that folded no events had no duty, it had no work.
+ */
+export function replayDutyOf(stats: ReplayDutyStats): number {
+  const total = Math.max(0, finite(stats.workMs)) + Math.max(0, finite(stats.restMs))
+  return total > 0 ? round(Math.max(0, finite(stats.workMs)) / total, 3) : 0
+}
+
+/**
  * Chip colour, from lag ALONE (plan P3). Deliberately not from CPU%: an app that is busy because
  * you asked it to replay a 1.1M-line log is not misbehaving, and colouring that red would train
  * the user to ignore the chip exactly when it finally means something.
@@ -375,6 +404,11 @@ export interface StartupProfile {
    * tick), never a fabricated zero.
    */
   block?: StartupBlockStats
+  /**
+   * How the historical fold split its wall clock between working and resting (JOS-50). Absent on a
+   * launch with no log to replay, never a fabricated zero.
+   */
+  replay?: ReplayDutyStats
   /** Did every phase land? False for a launch that quit early (or crashed) mid-boot. */
   complete: boolean
 }
@@ -455,6 +489,7 @@ export interface StartupProfileMeta {
   version: string
   eventsReplayed?: number
   block?: StartupBlockStats
+  replay?: ReplayDutyStats
 }
 
 /**
@@ -482,6 +517,13 @@ export function buildProfile(
   }
   if (meta.eventsReplayed !== undefined) profile.eventsReplayed = Math.max(0, meta.eventsReplayed)
   if (meta.block !== undefined) profile.block = meta.block
+  if (meta.replay !== undefined) {
+    profile.replay = {
+      slices: Math.max(0, Math.round(finite(meta.replay.slices))),
+      workMs: round(Math.max(0, finite(meta.replay.workMs)), 1),
+      restMs: round(Math.max(0, finite(meta.replay.restMs)), 1)
+    }
+  }
   return profile
 }
 
@@ -495,6 +537,20 @@ function parseBlockStats(raw: unknown): StartupBlockStats | null {
     samples: Math.max(0, finite(raw.samples)),
     maxBlockMs: Math.max(0, finite(raw.maxBlockMs)),
     blocksOver50Ms: Math.max(0, finite(raw.blocksOver50Ms))
+  }
+}
+
+/** Shape check for the duty stats read back off disk. All three fields or none, for the same
+ *  reason `parseBlockStats` insists: a half-parsed ledger invites a duty computed from one number
+ *  the file never stated. */
+function parseReplayStats(raw: unknown): ReplayDutyStats | null {
+  if (!isPlainObject(raw)) return null
+  if (typeof raw.slices !== 'number' || typeof raw.workMs !== 'number') return null
+  if (typeof raw.restMs !== 'number') return null
+  return {
+    slices: Math.max(0, finite(raw.slices)),
+    workMs: Math.max(0, finite(raw.workMs)),
+    restMs: Math.max(0, finite(raw.restMs))
   }
 }
 
@@ -513,6 +569,7 @@ export function parseStartupProfile(raw: unknown): StartupProfile | null {
   }
   if (timings.length === 0) return null
   const block = parseBlockStats(raw.block)
+  const replay = parseReplayStats(raw.replay)
   return {
     startedAt: finite(raw.startedAt),
     version: typeof raw.version === 'string' ? raw.version : '',
@@ -520,6 +577,7 @@ export function parseStartupProfile(raw: unknown): StartupProfile | null {
     totalMs: finite(raw.totalMs),
     ...(typeof raw.eventsReplayed === 'number' ? { eventsReplayed: finite(raw.eventsReplayed) } : {}),
     ...(block === null ? {} : { block }),
+    ...(replay === null ? {} : { replay }),
     complete: raw.complete === true
   }
 }
