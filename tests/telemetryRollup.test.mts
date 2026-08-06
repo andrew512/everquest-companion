@@ -56,8 +56,8 @@ const batchOf = (events: TelemetryEvent[], appVersion = '0.2.0'): TelemetryBatch
   events: events.map((ev, i): TelemetryRecord => ({ ts: 1_000 + i, ev }))
 })
 
-const FIRST: RollupContext = { firstOfDay: true, newInstall: false }
-const LATER: RollupContext = { firstOfDay: false, newInstall: false }
+const FIRST: RollupContext = { firstOfDay: true, newInstall: false, upgraded: false }
+const LATER: RollupContext = { firstOfDay: false, newInstall: false, upgraded: false }
 
 /** `metric dim` -> n, for assertions that do not care about ordering. */
 function counters(batch: TelemetryBatch, ctx: RollupContext = LATER): Map<string, number> {
@@ -226,9 +226,32 @@ test('THE DISTINCT-INSTALL GATE: envelope facts are counted once a day, not once
 
 test('a NEW install is counted once, and only alongside its first-of-day batch', () => {
   const events: TelemetryEvent[] = [{ t: 'sessionStart', coldStartMsBucket: 1 }]
-  const fresh = counters(batchOf(events), { firstOfDay: true, newInstall: true })
+  const fresh = counters(batchOf(events), { firstOfDay: true, newInstall: true, upgraded: false })
   assert.equal(fresh.get(`${USAGE_METRICS.newInstalls} ${DIM_NONE}`), 1)
   assert.equal(counters(batchOf(events), FIRST).has(`${USAGE_METRICS.newInstalls} ${DIM_NONE}`), false)
+})
+
+test('an UPGRADE is counted once, from a fact only the ingest path can know', () => {
+  // The third member of RollupContext, and it exists for the same reason the other two do: the
+  // client cannot know it (a build reads its own version and has no memory of the one before),
+  // and the row the install UPSERT is already touching does.
+  const events: TelemetryEvent[] = [{ t: 'sessionStart', coldStartMsBucket: 1 }]
+  const key = `${USAGE_METRICS.upgrades} ${DIM_NONE}`
+  assert.equal(
+    counters(batchOf(events), { firstOfDay: false, newInstall: false, upgraded: true }).get(key),
+    1
+  )
+  // NOT counted on any batch that reports the version the row already held…
+  assert.equal(counters(batchOf(events), LATER).has(key), false)
+  // …and NOT on a brand-new install: `newInstalls` and `upgrades` are disjoint on purpose, so a
+  // reader can put them side by side without wondering whether one contains the other.
+  const fresh = counters(batchOf(events), { firstOfDay: true, newInstall: true, upgraded: false })
+  assert.equal(fresh.has(key), false)
+  assert.equal(fresh.get(`${USAGE_METRICS.newInstalls} ${DIM_NONE}`), 1)
+  // It rides the SAME counter batch as everything else, which is what puts it in the same
+  // transaction as the session it arrived with (infra/lambda/telemetry.ts writeCounters).
+  const roll = rollupBatch(batchOf(events), { firstOfDay: true, newInstall: false, upgraded: true })
+  assert.ok(roll.counters.some((c) => c.metric === USAGE_METRICS.upgrades && c.n === 1))
 })
 
 // ---- 3. nothing identifying, and nothing unstable -------------------------------------------

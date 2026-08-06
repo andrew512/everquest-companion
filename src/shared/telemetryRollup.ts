@@ -264,6 +264,18 @@ export interface RollupContext {
   firstOfDay: boolean
   /** Was the install row created by this batch? */
   newInstall: boolean
+  /**
+   * Did this batch arrive on a DIFFERENT `appVersion` than the install row was holding?
+   *
+   * The third fact of exactly the same kind as the two above: it is knowable only from the row
+   * the ingest path is already touching, and it is knowable NOWHERE on the client — a build
+   * reads its own version and has no memory of the one before it. Asking the client would mean a
+   * new event, a schema change, and a number we would then have to trust.
+   *
+   * False on a brand-new install (there was no previous version to differ from), so
+   * `newInstalls` and `upgrades` are disjoint and can be read side by side.
+   */
+  upgraded: boolean
 }
 
 /**
@@ -421,6 +433,10 @@ export function rollupBatch(batch: TelemetryBatch, ctx: RollupContext): RollupRe
   const bag: Bag = new Map()
   if (ctx.firstOfDay) foldEnvelope(bag, batch)
   if (ctx.newInstall) add(bag, USAGE_METRICS.newInstalls, DIM_NONE, 1)
+  // Counted ONCE per version change, and that is a property of the statement that hands this
+  // fact over rather than of a flag here: the same UPSERT writes the new version, so the very
+  // next batch from this install sees no difference to report.
+  if (ctx.upgraded) add(bag, USAGE_METRICS.upgrades, DIM_NONE, 1)
   for (const { ev } of batch.events) foldEvent(bag, ev)
   const counters = [...bag.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
