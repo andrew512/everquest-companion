@@ -13,13 +13,39 @@
 // the renderer uses for gap detection + dupe rejection.
 
 import type { EqModule, ModuleDelta } from './types'
-import type { LogBus } from '../log/bus'
+import type { LogBus, LogEventListener } from '../log/bus'
 
 const FLUSH_THROTTLE_MS = 100
 
 export interface RegistryHost {
   /** Push a `module:delta` to the renderer. */
   emitDelta(delta: ModuleDelta): void
+}
+
+/**
+ * THE ATTRIBUTION SEAM (JOS-55): who spends the startup fold.
+ *
+ * MEASURED: parsing the owner's 1.4M-event log alone runs at 565k events/sec, and the whole
+ * pipeline at ~32k — so ~94% of a startup replay happens downstream of the parser and, until this
+ * existed, nothing said which consumer it happened in. This interface is how `npm run bench:replay`
+ * finds out: it is handed to `attach()` and the registry installs a TIMED dispatch loop instead of
+ * the plain one.
+ *
+ * A PARAMETER, NOT AN ENVIRONMENT VARIABLE — the `replaySlicer.ts` precedent, and the same
+ * argument: a knob that installs a per-event profiler on a real user's startup is a knob a support
+ * answer will eventually recommend. A seam in the signature is visible to the bench and to nobody
+ * else, and the branch is taken ONCE, at attach: a normal boot subscribes the same closure it
+ * always did, with no timer, no clock reads and no test per event.
+ *
+ * `note(index, ms)` rather than `note(id, ms)` because it is called once per MODULE per EVENT —
+ * 18 million times on this log — and an array index add is a cost the measurement can afford where
+ * a map lookup is a cost it would end up measuring.
+ */
+export interface ModuleDispatchTimer {
+  /** The modules about to be dispatched, in delivery order. Called once, from `attach`. */
+  begin(ids: readonly string[]): void
+  /** Module `index` folded one event in `ms`. HOT — keep it to an array write. */
+  note(index: number, ms: number): void
 }
 
 export class ModuleRegistry {
@@ -46,14 +72,48 @@ export class ModuleRegistry {
     return this.byId.get(id)
   }
 
-  /** Subscribe every module to the bus (registration order). Returns unsubscribe. */
-  attach(bus: LogBus): () => void {
-    const off = bus.subscribe((ev, live) => {
-      for (const mod of this.modules) mod.onEvent(ev, live)
-      if (live) this.scheduleFlush()
-    })
+  /**
+   * Subscribe every module to the bus (registration order). Returns unsubscribe.
+   *
+   * `timer` is the bench's attribution seam (see ModuleDispatchTimer) and is absent everywhere
+   * else. The choice is made HERE, once, so a normal boot's dispatch loop is byte for byte the
+   * one that existed before JOS-55.
+   */
+  attach(bus: LogBus, timer?: ModuleDispatchTimer): () => void {
+    const off = bus.subscribe(timer ? this.timedDispatch(timer) : this.dispatch())
     this.unsub = off
     return off
+  }
+
+  /** The ordinary dispatch: every module, in order, and a trailing flush after a LIVE event. */
+  private dispatch(): LogEventListener {
+    return (ev, live) => {
+      for (const mod of this.modules) mod.onEvent(ev, live)
+      if (live) this.scheduleFlush()
+    }
+  }
+
+  /**
+   * The same dispatch, clocked BETWEEN modules: one `performance.now()` before the first and one
+   * after each, so module i's cost is the difference of two consecutive readings. N+1 clock reads
+   * per event rather than 2N — the cheapest honest per-module attribution there is, and the bench
+   * states what even that costs (a timed run against an untimed one).
+   */
+  private timedDispatch(
+    timer: ModuleDispatchTimer
+  ): LogEventListener {
+    const mods = this.modules
+    timer.begin(mods.map((m) => m.id))
+    return (ev, live) => {
+      let t = performance.now()
+      for (let i = 0; i < mods.length; i++) {
+        mods[i]?.onEvent(ev, live)
+        const t1 = performance.now()
+        timer.note(i, t1 - t)
+        t = t1
+      }
+      if (live) this.scheduleFlush()
+    }
   }
 
   /** Reset every module (character (re)load) and drop any pending flush. */
