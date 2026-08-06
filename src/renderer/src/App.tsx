@@ -26,14 +26,17 @@ import FeedbackDialog from './features/feedback/FeedbackDialog'
 // without the flag its only use below is dead code, so rollup drops the import and the entire
 // triage feature with it. See devTriage.tsx / devFlags.ts.
 import DevTriageView from './devTriage'
-import { DEV_TOOLS } from './devFlags'
+// UNRELEASED (JOS-45). Same shape, different axis: a product surface awaiting the owner's
+// review rather than operator tooling. See unreleasedCharacter.tsx / devFlags.ts.
+import UnreleasedCharacterView from './unreleasedCharacter'
+import { DEV_TOOLS, UNRELEASED } from './devFlags'
 import { useFeedbackDialog, type FeedbackPrefill } from './features/feedback/useFeedback'
 // Usage analytics (docs/plans/usage-analytics.md). The notice is mounted unconditionally and
 // renders nothing once it has been answered; `useViewDwell` reports how long each tab was on
 // screen. Both are local: the renderer only ever records into main's ring, and main decides —
 // behind the consent gates — whether anything is ever sent.
 import { TelemetryNotice } from './features/preferences/TelemetryNotice'
-import { useViewDwell } from './lib/telemetry'
+import { dwellView, useViewDwell } from './lib/telemetry'
 import AlertPlayer, { fireAppSignal } from './features/alerts/player'
 import { getBossData } from './data'
 import { useBossKills } from './features/bosses/useBossKills'
@@ -105,6 +108,12 @@ function PlainView({
       {view === 'planner' && <PlannerView key={viewKey} onOpenLoot={routing.openLoot} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
       {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
+      {/* UNRELEASED (JOS-45). It sits HERE, below the no-characters gate, and not beside the
+          triage branch: unlike triage this tab reads the game log (name, level, loadout) and
+          the character's own inventory dump, so a machine with no EverQuest install has
+          nothing to show it. `UNRELEASED` folds to a literal in every build, so the branch and
+          the lazily-imported tree behind it are deleted from shipped bytes. */}
+      {UNRELEASED && view === 'character' && <UnreleasedCharacterView key={viewKey} />}
     </>
   )
 }
@@ -405,9 +414,10 @@ export default function App(): JSX.Element {
   }, [view])
 
   // How long each tab was on screen, reported ON SWITCH (plan §2). `View` and the schema's
-  // `viewDwell` enum are the same set by construction — a tab the schema does not list could
-  // not be reported at all.
-  useViewDwell(view)
+  // `viewDwell` enum are the same set apart from the UNRELEASED views, which report nothing:
+  // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop
+  // every counter with it (JOS-45; `dwellView` states the rule).
+  useViewDwell(dwellView(view))
 
   useEffect(() => {
     void window.eq.getCharacter().then(setCharacter)

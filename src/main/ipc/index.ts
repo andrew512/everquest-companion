@@ -15,6 +15,7 @@
 
 import { registerAlertsIpc } from './alerts'
 import { registerCharacterIpc } from './character'
+import { registerCharacterSheetIpc } from './characterSheet'
 import { registerClipboardIpc } from './clipboard'
 import { registerComboIpc } from './combo'
 import { registerFeedbackIpc } from './feedback'
@@ -34,9 +35,14 @@ import { registerTelemetryIpc } from './telemetry'
 import { registerToastIpc } from '../toast'
 import { registerWindowIpc } from './windowControls'
 import { registerWorldIpc } from './world'
+import { UNRELEASED } from '../unreleased'
 
 export function registerIpc(): void {
   registerCharacterIpc()
+  // GATED (JOS-45): the character sheet has not passed the owner's review gate, so its channel
+  // exists only in a dev build (or under an explicit EQ_UNRELEASED=1). The renderer surface is
+  // stripped from production bytes independently; this is the second lock. See ../unreleased.ts.
+  if (UNRELEASED) registerCharacterSheetIpc()
   registerWorldIpc()
   registerComboIpc()
   registerRosterIpc()

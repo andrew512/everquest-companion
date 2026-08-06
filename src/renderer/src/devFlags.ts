@@ -50,3 +50,28 @@ export const DEV_TOOLS: boolean =
  *  a second bare-ish reader of the identifier: this file stays the one place that names it. */
 export const DEV_TOOLS_DEFINE: boolean | undefined =
   typeof __EQ_DEV_TOOLS__ === 'undefined' ? undefined : __EQ_DEV_TOOLS__
+
+// ============================================================================
+// UNRELEASED — a DIFFERENT axis from DEV_TOOLS, deliberately not the same flag.
+// ============================================================================
+//
+// `DEV_TOOLS` means "this is operator tooling and will never ship" (the triage backlog). This
+// one means "this is a PRODUCT surface that has landed on main and has not passed the owner's
+// review gate yet" (JOS-45's character sheet, owner 2026-08-06). They are separate because their
+// futures are: an unreleased surface graduates by DELETING its gate, and folding it into the
+// dev-tools flag would make that deletion look like shipping a dev tool.
+//
+// IT USES THE SAME MECHANISM, WHICH IS THE POINT — `import.meta.env.DEV` is a literal `false` in
+// every `electron-vite build`, so `UNRELEASED && …` folds and rollup deletes the nav row, the
+// route and the lazily-imported component tree. Structurally absent for packaged users, not
+// hidden by CSS or by a runtime boolean somebody could flip.
+//
+// AND IT DELIBERATELY TAKES NO `define`. A vite `define` only exists from the moment a dev
+// server booted, so adding one would mean a stale `npm run dev` silently loses the surface and
+// the owner has to restart to review anything (the exact failure written up above). The builtin
+// needs no config, is true on any dev server however old, and strips identically.
+//
+// A store-backed flag was considered and rejected: a persisted boolean cannot be structurally
+// absent — the feature would still be compiled into every installer, one flipped key away from a
+// user who was never meant to see it. The review gate asked for absence, not for a switch.
+export const UNRELEASED: boolean = import.meta.env.DEV

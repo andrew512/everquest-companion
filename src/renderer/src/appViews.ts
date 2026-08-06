@@ -2,7 +2,7 @@
 // persisted "which tab was I on" key all agree on. Lives outside App.tsx so the nav drawer
 // can import it without importing the app itself.
 
-import { DEV_TOOLS } from './devFlags'
+import { DEV_TOOLS, UNRELEASED } from './devFlags'
 
 export type View =
   | 'overview'
@@ -24,6 +24,12 @@ export type View =
   // the string itself in a build without the flag, so a persisted 'triage' can never leave a
   // shipped app staring at an empty content area.
   | 'triage'
+  // UNRELEASED view (src/renderer/src/features/character/**, JOS-45). Same erasure argument as
+  // 'triage' above: the member is a TYPE. What strips is the CODE — the nav row, the content
+  // branch and the lazily-imported tree all sit behind `UNRELEASED`, and `KNOWN_VIEWS` drops
+  // the string in a build without it, so a persisted 'character' can never leave a shipped app
+  // staring at an empty content area.
+  | 'character'
 
 export const VIEW_KEY = 'eq.view'
 export const DEFAULT_VIEW: View = 'overview'
@@ -54,7 +60,8 @@ export const VIEW_LABELS: Record<View, string> = {
   planner: 'Exaltations',
   buffs: 'Buffs',
   preferences: 'Preferences',
-  triage: 'Triage'
+  triage: 'Triage',
+  character: 'Character'
 }
 
 // Every member of `View` this BUILD can actually render. A view missing here is silently
@@ -73,7 +80,8 @@ const KNOWN_VIEWS: View[] = [
   'buffs',
   'preferences',
   // Compile-time: `false ? [...] : []` folds away, taking the literal with it.
-  ...(DEV_TOOLS ? (['triage'] as const) : [])
+  ...(DEV_TOOLS ? (['triage'] as const) : []),
+  ...(UNRELEASED ? (['character'] as const) : [])
 ]
 
 export function loadView(): View {

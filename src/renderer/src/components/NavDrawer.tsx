@@ -16,8 +16,10 @@ import FeedbackIcon from '@mui/icons-material/Feedback'
 // Dev-only, and its import goes with it: MUI's icon packages declare `sideEffects: false`, so
 // an icon whose only use sits inside a `false &&` branch is tree-shaken out with the branch.
 import RuleFolderIcon from '@mui/icons-material/RuleFolder'
+// Unreleased-only, and stripped with its branch for the same reason (JOS-45).
+import AccountBoxIcon from '@mui/icons-material/AccountBox'
 import UpdateChip from './UpdateChip'
-import { DEV_TOOLS } from '../devFlags'
+import { DEV_TOOLS, UNRELEASED } from '../devFlags'
 import { VIEW_LABELS, type View } from '../appViews'
 
 export const DRAWER_WIDTH = 220
@@ -129,6 +131,30 @@ export default function NavDrawer({
         {ROWS.map((row) => (
           <NavRowButton key={row.view} row={row} view={view} onSelect={onSelect} />
         ))}
+        {/* UNRELEASED (JOS-45): the character sheet has landed on main but has not passed the
+            owner's review gate, so it is reachable in a dev build and STRIPPED from every
+            packaged build. Same mechanism and same in-branch construction as the triage row
+            below; `tests/e2e/character-sheet.e2e.mts` asserts `nav-character` is ABSENT in a
+            production-shaped build. It graduates by moving into ROWS and deleting this block. */}
+        {UNRELEASED && (
+          <NavRowButton
+            row={{
+              view: 'character',
+              icon: <AccountBoxIcon />,
+              badge: (
+                <Chip
+                  size="small"
+                  label="unreleased"
+                  variant="outlined"
+                  color="warning"
+                  sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.75 } }}
+                />
+              )
+            }}
+            view={view}
+            onSelect={onSelect}
+          />
+        )}
         {/* DEV-ONLY: the feedback-triage tab. `DEV_TOOLS` folds to a compile-time literal, so
             in `electron-vite build` this reads `false && …` and rollup deletes the branch —
             the row, its label, its chip and its icon are not in the shipped bundle at all.
