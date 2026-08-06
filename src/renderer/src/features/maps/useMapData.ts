@@ -31,22 +31,26 @@ export const PACK_PREFS_KEY = 'eq.maps.packs'
 /** The zone stem the viewer was last showing, so a relaunch opens where you left off. */
 export const LAST_ZONE_KEY = 'eq.maps.zone'
 /**
- * Is the right-hand "what's in this zone" pane open? `'1'` / absent.
+ * Is the find-a-mob-or-label sidebar open? `'0'` when the user closed it, absent when open.
  *
- * OFF BY DEFAULT, and it lives here rather than in `UI_PREF_SPECS` for the same reason the other
- * two do: it is a fact about this window's layout, not a setting worth carrying to another
- * machine. The TOGGLE is on the map toolbar (MapToolbar), beside the layer and floor controls it
- * belongs with — Preferences is for things you set once, and this is a thing you flick.
+ * ON BY DEFAULT, and stored INVERTED for exactly that reason: absent means open, so a fresh
+ * install and an install that has never touched the control both get the sidebar. It is the way
+ * you find anything on a map — the toolbar carries no search box — so the default cannot be the
+ * state where nothing is findable.
+ *
+ * It lives here rather than in `UI_PREF_SPECS` for the same reason the other two do: it is a fact
+ * about this window's layout, not a setting worth carrying to another machine. The control is the
+ * sidebar's own close button (and the reopen affordance on the map), not Preferences.
  */
 export const PANE_OPEN_KEY = 'eq.maps.pane'
 
 export function loadPaneOpen(): boolean {
-  return localStorage.getItem(PANE_OPEN_KEY) === '1'
+  return localStorage.getItem(PANE_OPEN_KEY) !== '0'
 }
 
 export function savePaneOpen(open: boolean): void {
-  if (open) localStorage.setItem(PANE_OPEN_KEY, '1')
-  else localStorage.removeItem(PANE_OPEN_KEY)
+  if (open) localStorage.removeItem(PANE_OPEN_KEY)
+  else localStorage.setItem(PANE_OPEN_KEY, '0')
 }
 
 function nonEmpty(value: unknown): string | undefined {

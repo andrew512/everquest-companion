@@ -1,5 +1,5 @@
-// The Maps tab (docs/plans/map-viewer.md §10, §11 wave 3) — the view that owns the positioned
-// host box, resolves WHICH zone to show, and wires the search's jump-to.
+// The Maps tab (docs/plans/map-viewer.md §10, §11 wave 3) — the view that resolves WHICH zone to
+// show and hands everything about the drawing to MapBody.tsx.
 //
 // AUTO-OPEN, AND THE ONE THING IT MUST NEVER DO. The log states the zone you are in and nothing
 // else positional, so the feature's whole "it just knows" is one fold: `CharacterSnap.zone` (the
@@ -14,6 +14,12 @@
 // in every state — map or no map — so browsing to a zone you are not standing in, and leaving
 // the map you are on, are the same one control rather than a state you have to fall back into.
 //
+// FINDING ANYTHING IS THE SIDEBAR'S JOB, and it is OPEN BY DEFAULT (MapMobPane.tsx). The toolbar
+// used to carry a label-search box and a This zone / All zones toggle beside the sidebar's own
+// toggle — three controls over one question, answered in two places. The bar now describes the
+// DRAWING and nothing else; the sidebar is the one filter over the wiki's bestiary, this map's
+// own labels and every other installed map.
+//
 // WHAT THIS VIEW CANNOT DO, STATED ON SCREEN: there is no "you are here" marker, and there
 // cannot be — `Your Location` appears ZERO times in 86.6 MB of log. A user hunting for a dot
 // that does not exist is a worse outcome than one quiet line saying so (§10).
@@ -25,38 +31,24 @@
 // character, and the log never says where that is, so there is no auto-select and the default is
 // All levels. Out-of-band geometry DIMS rather than disappearing — a floor with its surroundings
 // deleted is a diagram you cannot place.
-//
-// COMPOSITION is the recipe from `useMapViewport.ts`'s header, verbatim: this view owns the
-// relative-positioned host, hands the viewport to the canvas and the label layer, and puts the
-// search's flash marker at `labelPosition(vp, point)` — the SAME arithmetic the labels use, so
-// the marker and its label can never disagree.
 
-import { useCallback, useEffect, useMemo, useState, useRef, type JSX, type RefObject } from 'react'
-import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
+import { useCallback, useEffect, useMemo, useState, useRef, type JSX } from 'react'
+import { Chip, Paper, Stack, Typography } from '@mui/material'
 import MapIcon from '@mui/icons-material/Map'
 import type { CharacterDelta, CharacterSnap } from '@shared/types'
-import type { MapBounds, MapData, MapPackPrefs, MapSearchHit, ZoneShort } from '@shared/maps'
+import type { MapBounds, MapData, MapPackPrefs, ZoneShort } from '@shared/maps'
 import { zoneShortName } from '@shared/zones'
 import { useModule } from '../../lib/useModule'
 import { trackFeature } from '../../lib/telemetry'
-import { MapCanvas } from './MapCanvas'
-import { MapPointsLayer, labelPosition } from './MapPointsLayer'
-import { MapMobPins } from './MapMobPins'
-import MapMobPane from './MapMobPane'
-import { paneOverlay, useZonePane, type PaneOverlay, type ZonePaneState } from './useMapPane'
+import MapBody, { useSearchJump } from './MapBody'
+import { useZonePane } from './useMapPane'
 import { DEFAULT_LAYERS, type LayerMask } from './mapGeometry'
-import { bandRange, floorBands, type FloorBand } from './floorSlice'
-import { useMapViewport, type MapViewport } from './useMapViewport'
-import MapSearch from './MapSearch'
+import { floorBands } from './floorSlice'
+import { useMapViewport } from './useMapViewport'
 import MapToolbar from './MapToolbar'
 import { zoneLabel } from './zoneOptions'
 import { loadLastZone, loadPackPrefs, savePackPrefs, saveLastZone, useMapData, useMapPacks } from './useMapData'
 import { Tooltip } from '../../lib/Tooltip'
-
-/** How long the jump-to marker stays on screen. Long enough to find, short enough to forget. */
-const MARKER_MS = 2600
-/** Scale bump when jumping from a fitted view — a fitted zone puts a POI at a couple of pixels. */
-const JUMP_ZOOM = 6
 
 /** A stand-in extent for the frames where no map is loaded. Never drawn; keeps the hook honest. */
 const EMPTY_BOUNDS: MapBounds = { minX: -1, maxX: 1, minY: -1, maxY: 1, minZ: 0, maxZ: 0 }
@@ -87,19 +79,12 @@ function headerTitle(zone: ZoneShort | null, raw: string | undefined): string {
  *
  * The log's own spelling wins when it resolved to THIS map; a manually picked stem falls back to
  * the zone table's name. `null` when nothing is open. Same rule the header displays by, on
- * purpose: the pane's list and the title must be describing one place.
+ * purpose: the sidebar's list and the title must be describing one place.
  */
 function zoneLongName(zone: ZoneShort | null, raw: string | undefined): string | null {
   if (zone == null) return null
   if (raw != null && zoneShortName(raw) === zone) return raw
   return zoneLabel(zone)
-}
-
-/** The transient "here it is" pip a search hit leaves behind. */
-interface Marker {
-  x: number
-  y: number
-  at: number
 }
 
 /**
@@ -186,7 +171,8 @@ function MapsHeader({
  * directly above this panel, so a second list here would be the same control twice — and the
  * older arrangement, where selection existed ONLY here, is exactly what made a drawn map a dead
  * end (feedback: no visible way back to map selection). This states WHY there is no map; the
- * selector above is how you get one.
+ * selector above is how you get one, and the sidebar beside it still searches every other
+ * installed map.
  */
 function MapsEmpty({
   raw,
@@ -223,218 +209,6 @@ function MapsEmpty({
         )}
       </Stack>
     </Paper>
-  )
-}
-
-/**
- * THE JUMP-TO-A-HIT half of search, including the cross-zone case.
- *
- * A hit in the zone on screen is one `centerOn`. A hit in ANOTHER zone cannot be: the map has to
- * be fetched and the pane re-measured first, so the hit is PARKED and the jump fires from an
- * effect once `data.zone` matches and the host has a real size. Jumping into a zero-size pane
- * would clamp against a fit scale of 1 and land nowhere near the point.
- */
-function useSearchJump(args: {
-  vp: MapViewport
-  /** The zone actually ON SCREEN (`data.zone`), never the one being fetched. */
-  zone: ZoneShort | undefined
-  pick: (zone: ZoneShort) => void
-}): { marker: Marker | null; onJump: (hit: MapSearchHit) => void } {
-  const { vp, zone, pick } = args
-  const { centerOn, zoomedIn, view, size } = vp
-  const [marker, setMarker] = useState<Marker | null>(null)
-  const [pending, setPending] = useState<MapSearchHit | null>(null)
-
-  const jump = useCallback(
-    (x: number, y: number) => {
-      // Fitted ⇒ a POI is a couple of pixels wide, so the jump also zooms in; already zoomed ⇒
-      // keep the scale the user chose and only re-centre.
-      centerOn(x, y, zoomedIn ? undefined : view.scale * JUMP_ZOOM)
-      setMarker({ x, y, at: Date.now() })
-    },
-    [centerOn, zoomedIn, view.scale]
-  )
-
-  const onJump = useCallback(
-    (hit: MapSearchHit) => {
-      if (hit.zone === zone) jump(hit.point.x, hit.point.y)
-      else {
-        pick(hit.zone)
-        setPending(hit)
-      }
-    },
-    [zone, jump, pick]
-  )
-
-  useEffect(() => {
-    if (pending == null || zone !== pending.zone || size.w <= 0) return
-    jump(pending.point.x, pending.point.y)
-    setPending(null)
-  }, [pending, zone, size.w, jump])
-
-  // Transient by design: a marker that never fades becomes a second, permanent map symbol.
-  useEffect(() => {
-    if (marker == null) return
-    const t = setTimeout(() => {
-      setMarker(null)
-    }, MARKER_MS)
-    return () => {
-      clearTimeout(t)
-    }
-  }, [marker])
-
-  return { marker, onJump }
-}
-
-/**
- * The drawn map: the positioned host the viewport measures, the canvas, the label layer, and the
- * search marker — positioned through `labelPosition`, the SAME arithmetic the labels use.
- */
-function MapSurface({
-  data,
-  vp,
-  hostRef,
-  layers,
-  bands,
-  floor,
-  marker,
-  pane
-}: {
-  data: MapData
-  vp: MapViewport
-  hostRef: RefObject<HTMLDivElement | null>
-  layers: LayerMask
-  bands: readonly FloorBand[]
-  floor: number | null
-  marker: Marker | null
-  /** The zone pane's contribution, or null when the pane is closed and draws nothing. */
-  pane: PaneOverlay | null
-}): JSX.Element {
-  const at = marker == null ? null : labelPosition(vp, marker)
-  // The SELECTION ring — one symbol for both kinds of pane row, so a wiki mob and a map label
-  // are marked identically once clicked. Persistent, unlike the search jump's flash: a selection
-  // is a state you can look away from and come back to.
-  const ringAt = pane?.selectedAt == null ? null : labelPosition(vp, pane.selectedAt)
-  // Resolved here rather than inside the canvas so the canvas stays ignorant of clustering: it
-  // takes a z window and dims what falls outside it, nothing more. Memoized because it is a
-  // canvas redraw dependency — a fresh object every render would repaint on every render.
-  const zBand = useMemo(() => (floor == null ? null : bandRange(bands, floor)), [bands, floor])
-  return (
-    <Box
-      ref={hostRef}
-      data-testid="maps-surface"
-      onPointerDown={vp.onPointerDown}
-      onPointerMove={vp.onPointerMove}
-      onPointerUp={vp.onPointerUp}
-      sx={{
-        position: 'relative',
-        flexGrow: 1,
-        minHeight: 0,
-        overflow: 'hidden',
-        borderRadius: 1,
-        bgcolor: 'background.paper',
-        touchAction: 'none',
-        cursor: vp.dragging ? 'grabbing' : 'grab'
-      }}
-    >
-      <MapCanvas lines={data.lines} vp={vp} layers={layers} zBand={zBand} />
-      <MapPointsLayer points={data.points} vp={vp} layers={layers} bands={bands} floor={floor} />
-      {pane != null && <MapMobPins pins={pane.pins} vp={vp} selectedId={pane.selectedId} />}
-      {ringAt != null && (
-        <Box
-          data-testid="maps-pane-marker"
-          sx={{
-            position: 'absolute',
-            left: ringAt.px,
-            top: ringAt.py,
-            width: 26,
-            height: 26,
-            transform: 'translate(-50%, -50%)',
-            borderRadius: '50%',
-            border: '2px solid',
-            borderColor: 'warning.main',
-            pointerEvents: 'none'
-          }}
-        />
-      )}
-      {at != null && (
-        <Box
-          data-testid="maps-marker"
-          sx={{
-            position: 'absolute',
-            left: at.px,
-            top: at.py,
-            width: 22,
-            height: 22,
-            transform: 'translate(-50%, -50%)',
-            borderRadius: '50%',
-            border: '2px solid',
-            borderColor: 'warning.main',
-            pointerEvents: 'none'
-          }}
-        />
-      )}
-    </Box>
-  )
-}
-
-/**
- * THE MAP AND ITS PANE — one flex row.
- *
- * When the pane is off it is not rendered AT ALL, so the surface is the row's only child and
- * takes the full width. That is the whole anti-flicker design: no zero-width box, no width
- * transition, no fixed-size arithmetic on either side. The surface is `flexGrow:1; minHeight:0`
- * and the pane is a fixed `flexShrink:0` column, so a toggle is one layout pass and the
- * viewport's ResizeObserver sees exactly one new size — it can never feed back into itself,
- * because nothing here is sized from its own content.
- */
-function MapBody({
-  data,
-  vp,
-  hostRef,
-  layers,
-  bands,
-  floor,
-  marker,
-  pane,
-  zoneName
-}: {
-  data: MapData
-  vp: MapViewport
-  hostRef: RefObject<HTMLDivElement | null>
-  layers: LayerMask
-  bands: readonly FloorBand[]
-  floor: number | null
-  marker: Marker | null
-  pane: ZonePaneState
-  zoneName: string | null
-}): JSX.Element {
-  return (
-    <Stack direction="row" spacing={1.5} sx={{ flexGrow: 1, minHeight: 0 }}>
-      <MapSurface
-        data={data}
-        vp={vp}
-        hostRef={hostRef}
-        layers={layers}
-        bands={bands}
-        floor={floor}
-        marker={marker}
-        pane={paneOverlay(pane)}
-      />
-      {pane.open && (
-        <MapMobPane
-          zoneName={zoneName}
-          mobs={pane.mobs}
-          labels={pane.labels}
-          counts={pane.counts}
-          query={pane.query}
-          onQuery={pane.setQuery}
-          selectedId={pane.selectedId}
-          onSelect={pane.select}
-          pinsCapped={pane.pinsCapped}
-        />
-      )}
-    </Stack>
   )
 }
 
@@ -515,10 +289,10 @@ export default function MapsView(): JSX.Element {
   const vp = useMapViewport({ bounds: data?.bounds ?? EMPTY_BOUNDS, id: data?.zone ?? '', hostRef })
   const { marker, onJump } = useSearchJump({ vp, zone: data?.zone, pick })
 
-  // THE ZONE PANE. Off by default, remembered in `eq.maps.pane`, toggled from the toolbar. Its
+  // THE SIDEBAR. Open by default, remembered in `eq.maps.pane`, closed from its own header. Its
   // filtered rows are derived ONCE and read by both the list and the surface's pins.
   const zoneName = zoneLongName(zone, raw)
-  const pane = useZonePane({ vp, data, zoneName })
+  const pane = useZonePane({ vp, data, zoneName, prefs })
 
   return (
     <Stack spacing={1.5} sx={{ height: '100%' }}>
@@ -544,28 +318,24 @@ export default function MapsView(): JSX.Element {
         zoomedIn={vp.zoomedIn}
         onZoom={vp.zoomBy}
         onFit={vp.fit}
-        paneOpen={pane.open}
-        onPaneOpen={pane.setOpen}
       />
-      <MapSearch zone={zone} prefs={prefs} onJump={onJump} />
-
-      {data != null ? (
-        <MapBody
-          data={data}
-          vp={vp}
-          hostRef={hostRef}
-          layers={layers}
-          bands={bands}
-          floor={floor}
-          marker={marker}
-          pane={pane}
-          zoneName={zoneName}
-        />
-      ) : (
+      <MapBody
+        data={data}
         // Nothing is claimed before the pack listing and the first fetch have answered — a
         // panel that flashes up and vanishes reads as a bug, not as a load.
-        ready && !loading && <MapsEmpty raw={raw} auto={auto} zones={zones} zone={zone} error={error} />
-      )}
+        empty={
+          ready && !loading && <MapsEmpty raw={raw} auto={auto} zones={zones} zone={zone} error={error} />
+        }
+        vp={vp}
+        hostRef={hostRef}
+        layers={layers}
+        bands={bands}
+        floor={floor}
+        pane={pane}
+        zoneName={zoneName}
+        marker={marker}
+        onJump={onJump}
+      />
       <MapCredits data={data} />
     </Stack>
   )

@@ -26,8 +26,8 @@
 // as a top-priority symbol would re-run placement and shuffle every other label the instant the
 // pointer moved. The layout is hover-independent; the raised label is drawn OVER the result.
 //
-// No search UI lives here (that is `MapSearch.tsx`); `labelPosition` is exported so the
-// jump-to-a-hit path positions its marker with exactly the arithmetic the labels used.
+// No search UI lives here (that is the sidebar, `MapMobPane.tsx`); `labelPosition` is exported so
+// the jump-to-a-hit path positions its marker with exactly the arithmetic the labels used.
 
 import { useMemo, useState, type JSX } from 'react'
 import type { MapPoint } from '@shared/maps'

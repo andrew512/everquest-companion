@@ -10,6 +10,12 @@
 // STATE, NEVER PROCESS (AGENTS.md UI conventions). Every control here states a fact — which
 // layers are drawn, which pack each half came from, which zone is open. Nothing narrates.
 //
+// NOTHING HERE SEARCHES. The bar used to carry a `Search labels…` box, a This zone / All zones
+// scope toggle and a sidebar toggle called `Zone` — three controls asking the same question the
+// sidebar's one box now answers, in a hit list that lived somewhere else entirely (MapMobPane.tsx
+// carries the merge). What is left describes the DRAWING, which is the only thing this row was
+// ever coherent about.
+//
 // WHY THE PACK CHOICE IS PER LAYER, and why `Auto` is the default: MEASURED (§1a) — the game's
 // own map set holds 285 label points across 58 files while the shipped Brewall pack holds 26,607
 // across 562. Geometry wants the EQL-authored default set; labels are a Brewall-pack feature.
@@ -32,7 +38,6 @@ import {
   ToggleButton,
   ToggleButtonGroup
 } from '@mui/material'
-import ViewSidebarIcon from '@mui/icons-material/ViewSidebar'
 import ZoomInIcon from '@mui/icons-material/ZoomIn'
 import ZoomOutIcon from '@mui/icons-material/ZoomOut'
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong'
@@ -153,9 +158,6 @@ export interface MapToolbarProps {
   /** > 1 zooms in, < 1 out, around the pane centre. */
   onZoom: (factor: number) => void
   onFit: () => void
-  /** Is the zone pane (named mobs + this map's labels) open? Off by default. */
-  paneOpen: boolean
-  onPaneOpen: (open: boolean) => void
 }
 
 /**
@@ -211,7 +213,7 @@ function PackSelect({
  */
 function DrawnControls(props: MapToolbarProps): JSX.Element {
   const { layers, onLayers, bands, floor, onFloor, packs, prefs, onPrefs } = props
-  const { zoomedIn, onZoom, onFit, paneOpen, onPaneOpen } = props
+  const { zoomedIn, onZoom, onFit } = props
   const on = TOGGLEABLE.filter((t) => layers[t.layer]).map((t) => String(t.layer))
   return (
     <>
@@ -268,25 +270,6 @@ function DrawnControls(props: MapToolbarProps): JSX.Element {
           onPrefs({ ...prefs, ...(id == null ? { labels: undefined } : { labels: id }) })
         }}
       />
-
-      {/* THE ZONE PANE'S TOGGLE LIVES HERE, not in Preferences. It is a thing you flick while
-          reading a map — like the layer and floor controls it sits beside — not a thing you set
-          once for every machine you own. Its state is remembered in `eq.maps.pane`, alongside
-          the pack choice and the last zone (useMapData.ts). */}
-      <Tooltip title={paneOpen ? 'Hide this zone’s mobs and labels' : 'Show this zone’s mobs and labels'}>
-        <ToggleButton
-          size="small"
-          value="pane"
-          selected={paneOpen}
-          data-testid="maps-pane-toggle"
-          onChange={() => {
-            onPaneOpen(!paneOpen)
-          }}
-        >
-          <ViewSidebarIcon fontSize="small" sx={{ mr: 0.5 }} />
-          Zone
-        </ToggleButton>
-      </Tooltip>
     </>
   )
 }

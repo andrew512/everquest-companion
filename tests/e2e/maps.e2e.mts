@@ -15,13 +15,15 @@
  * WHAT IT ASSERTS, against whatever the real machine holds right now: the nav row mounts the
  * view; the canvas has non-zero size and a devicePixelRatio-scaled backing store (the difference
  * between a crisp map and a blurry one); when the log has stated a zone AND the hand-authored
- * table resolves it, the header states that zone and names a source pack per layer; the
- * search-hit list is a BOUNDED scroll box (the Task-#56 law, measured); a label prefix taken
- * from the map on screen finds itself; clicking a hit leaves the transient marker; the ZONE PANE
- * is absent until its toolbar toggle is pressed, then lists the wiki's mobs and the map's own
- * labels, filters both from one box, centres the viewport on a clicked row (asserted through the
- * pin's screen position — a real transform change) and gives the width back on close; and there
- * are no renderer console errors.
+ * table resolves it, the header states that zone and names a source pack per layer; the SIDEBAR
+ * is on screen WITHOUT BEING ASKED FOR (it is the default experience, and this run starts from a
+ * wiped `userData`, so nothing remembered can be producing it); it lists the wiki's mobs and the
+ * map's own labels and filters both from one box; it is a BOUNDED scroll box (the Task-#56 law,
+ * measured); clicking a row centres the viewport on it (asserted through the pin's screen
+ * position — a real transform change) and rings it; closing it gives the width back to the map
+ * and leaves a way back in; and one query reaches the corpus — a label prefix taken from the map
+ * on screen lists matches in OTHER zones, and clicking one loads that zone and flashes the
+ * transient marker. And there are no renderer console errors.
  *
  * FRESH-MACHINE HONESTY, twice over. A machine with no EQ install has no logs (so the app shows
  * its no-logs empty state and no feature view mounts at all) and no `maps\` directory (so the
@@ -61,20 +63,17 @@ const CANVAS = '[data-testid="map-canvas"]'
 const SURFACE = '[data-testid="maps-surface"]'
 const EMPTY = '[data-testid="maps-empty"]'
 const POINT = '[data-testid="map-point"]'
-const HITS = '[data-testid="maps-hits"]'
-const HIT_ROW = '[data-testid="maps-hit-row"]'
-const SEARCH = '[data-testid="maps-search-input"]'
 const PANE = '[data-testid="maps-pane"]'
-const PANE_TOGGLE = '[data-testid="maps-pane-toggle"]'
+const PANE_CLOSE = '[data-testid="maps-pane-close"]'
+const PANE_OPEN = '[data-testid="maps-pane-open"]'
+const PANE_SCROLL = '[data-testid="maps-pane-scroll"]'
 const PANE_SEARCH = '[data-testid="maps-pane-search"]'
 const PANE_MOB = '[data-testid="maps-pane-mob"]'
 /** A mob row the wiki actually placed — the only kind that is clickable (the rest are disabled). */
 const PANE_MOB_PINNED = '[data-testid="maps-pane-mob"]:has([data-testid="maps-pane-pin"])'
 const PANE_LABEL = '[data-testid="maps-pane-label"]'
+const PANE_HIT = '[data-testid="maps-pane-hit"]'
 const PANE_MARKER = '[data-testid="maps-pane-marker"]'
-
-/** The fixed-height law's ceiling for a hit list, in CSS pixels (MapSearch.HIT_LIST_MAX_H + trim). */
-const HIT_LIST_CEILING = 320
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
@@ -248,44 +247,59 @@ async function stepHeader(page: Page, zone: string | undefined): Promise<void> {
   )
 }
 
-/** 5. SEARCH: a bounded hit list, and a label on screen finds itself. */
-async function stepSearch(page: Page): Promise<void> {
+/**
+ * 5. THE SIDEBAR IS ITS OWN SCROLLER (the Task-#56 law, measured where it now applies).
+ *
+ * 343 mobs and 316 labels live in one column; if that column sized to its content it would push
+ * the map out of the window instead of scrolling inside itself. Stated as an identity against the
+ * map row rather than as a pixel number — the pane is as tall as the row and no taller.
+ */
+async function stepPaneBounds(page: Page): Promise<void> {
+  const surface = await rectOf(page, SURFACE)
+  const pane = await boxOf(page, PANE)
+  const scroll = await boxOf(page, PANE_SCROLL)
+  if (pane == null || scroll == null || surface == null) return
+  check(
+    'the sidebar is as tall as the map beside it and no taller (it cannot grow to eat the page)',
+    pane.h > 0 && pane.h <= surface.h + 2,
+    `pane ${String(pane.h)}px vs map ${String(surface.h)}px`
+  )
+  check(
+    '…and its list is its own scroller (content scrolls INSIDE the box)',
+    scroll.scrollH >= scroll.clientH,
+    `scrollHeight ${String(scroll.scrollH)} vs clientHeight ${String(scroll.clientH)}`
+  )
+}
+
+/**
+ * 6. ONE BOX REACHES THE WHOLE CORPUS — the capability the toolbar's `All zones` scope carried.
+ *
+ * A prefix taken from a label on the map on screen is searched, and the OTHER ZONES section is
+ * required to answer with maps that are not this one. Clicking one is a zone change plus a jump,
+ * so it runs LAST: the map on screen afterwards is a different map.
+ */
+async function stepCrossZone(page: Page): Promise<void> {
   const prefix = await labelPrefix(page)
-  const query = prefix === '' ? 'a' : prefix
-  await page.fill(SEARCH, query, { timeout: 15_000 })
-  await until(async () => (await countOf(page, HITS)) > 0, 10_000)
-
-  const box = await boxOf(page, HITS)
-  if (!check('typing shows the hit list', box !== null, `query "${query}"`)) return
-  const b = box as { h: number; scrollH: number; clientH: number }
-  check(
-    'the hit list is bounded (it cannot grow to eat the page)',
-    b.h > 0 && b.h <= HIT_LIST_CEILING,
-    `${String(b.h)}px tall`
-  )
-  check(
-    '…and it is its own scroller (content scrolls INSIDE the box)',
-    b.scrollH >= b.clientH,
-    `scrollHeight ${String(b.scrollH)} vs clientHeight ${String(b.clientH)}`
-  )
-
   if (prefix === '') {
-    note('no labels are drawn in this zone at the fit view — the "a label finds itself" half is not asserted this run')
+    note('no labels are drawn in this zone at the fit view — the cross-zone half is not asserted this run')
     return
   }
-  const found = await until(async () => (await countOf(page, HIT_ROW)) > 0, 10_000)
+  await page.fill(PANE_SEARCH, prefix, { timeout: 15_000 })
+  const found = await until(async () => (await countOf(page, PANE_HIT)) > 0, 15_000)
+  if (!found) {
+    note(`no other installed map labels "${prefix}" — the cross-zone list is correctly empty and the jump is not asserted`)
+    return
+  }
   check(
-    'a label prefix taken from the map on screen finds at least one hit',
-    found,
-    `"${query}" → ${String(await countOf(page, HIT_ROW))} hits`
+    'one box also finds labels in OTHER zones (the corpus lookup the toolbar used to hold)',
+    true,
+    `"${prefix}" → ${String(await countOf(page, PANE_HIT))} rows in other zones`
   )
-  if (!found) return
-
-  // 6. CLICKING A HIT JUMPS THE VIEW AND FLASHES A MARKER. The marker is transient by design,
-  //    so it is polled for immediately and its later disappearance is not asserted.
-  await page.click(HIT_ROW, { timeout: 15_000 })
-  const marked = await until(async () => (await countOf(page, '[data-testid="maps-marker"]')) > 0, 3000)
-  check('clicking a hit centres the view on it and flashes a marker', marked)
+  // The marker is transient by design, so it is polled for immediately and its later
+  // disappearance is not asserted.
+  await page.click(PANE_HIT, { timeout: 15_000 })
+  const marked = await until(async () => (await countOf(page, '[data-testid="maps-marker"]')) > 0, 20_000)
+  check('clicking one loads that zone and flashes the marker where the label is', marked)
 }
 
 /** The viewport transform, as the surface itself reports it. Proves the view actually MOVED. */
@@ -366,41 +380,56 @@ async function stepPaneSelect(page: Page): Promise<void> {
 }
 
 /**
- * 7. THE ZONE PANE (wiki mobs + this map's labels).
+ * CLOSE AND COME BACK.
  *
- * ABSENT BY DEFAULT is the first assertion, and it is a layout claim as much as a state one: a
- * pane that is off must not be a zero-width box stealing from the map. So the surface's width is
- * measured before, during and after, and the map is required to actually GIVE UP width when the
- * pane opens and to take all of it back when it closes — the fixed-size-math bug class, measured.
+ * The layout claim is the point: a pane that is off must not be a zero-width box still stealing
+ * from the map, so the surface's width is measured open, closed and open again and the map is
+ * required to actually TAKE the width back — the fixed-size-math bug class, measured. And a panel
+ * you can hide has to be recoverable, so the reopen affordance is asserted to exist and to work.
  */
-async function stepPane(page: Page): Promise<void> {
-  check('the zone pane is absent until it is asked for', (await countOf(page, PANE)) === 0)
-  const widthClosed = (await viewOf(page))?.w ?? 0
-
-  await page.click(PANE_TOGGLE, { timeout: 15_000 })
-  const opened = await until(async () => (await countOf(page, PANE)) > 0, 8000)
-  if (!check('the toolbar toggle opens the pane', opened)) return
-  await sleep(600) // let the ResizeObserver deliver the new surface size
-
+async function stepPaneClose(page: Page): Promise<void> {
   const widthOpen = (await viewOf(page))?.w ?? 0
-  check(
-    'opening the pane takes width from the MAP, and the map relayouts (no fixed-size arithmetic)',
-    widthOpen > 0 && widthOpen < widthClosed,
-    `surface ${String(widthClosed)}px → ${String(widthOpen)}px`
-  )
 
-  await stepPaneFilter(page)
-  await stepPaneSelect(page)
-
-  await page.click(PANE_TOGGLE, { timeout: 15_000 })
+  await page.click(PANE_CLOSE, { timeout: 15_000 })
   const closed = await until(async () => (await countOf(page, PANE)) === 0, 8000)
+  await sleep(600) // let the ResizeObserver deliver the new surface size
+  const widthClosed = (await viewOf(page))?.w ?? 0
+  check(
+    'closing the sidebar gives its width back to the MAP (no fixed-size arithmetic, no ghost column)',
+    closed && widthClosed > widthOpen,
+    `surface ${String(widthOpen)}px → ${String(widthClosed)}px`
+  )
+  if (!check('closing it leaves a way back in', (await countOf(page, PANE_OPEN)) > 0)) return
+
+  await page.click(PANE_OPEN, { timeout: 15_000 })
+  const reopened = await until(async () => (await countOf(page, PANE)) > 0, 8000)
   await sleep(600)
   const widthAgain = (await viewOf(page))?.w ?? 0
   check(
-    'closing the pane gives the width back to the map',
-    closed && Math.abs(widthAgain - widthClosed) <= 2,
-    `surface ${String(widthOpen)}px → ${String(widthAgain)}px (was ${String(widthClosed)}px)`
+    'and reopening it takes exactly that width back',
+    reopened && Math.abs(widthAgain - widthOpen) <= 2,
+    `surface ${String(widthClosed)}px → ${String(widthAgain)}px (was ${String(widthOpen)}px)`
   )
+}
+
+/**
+ * 7. THE SIDEBAR (wiki mobs + this map's labels + every other map).
+ *
+ * OPEN WITHOUT BEING ASKED FOR is the first assertion, and it is the headline of this wave: the
+ * toolbar carries no search box any more, so a sidebar that started closed would leave a map with
+ * no way to find anything on it. `userData` is wiped at launch, so nothing remembered can be
+ * producing it — this is the default, not a restored state.
+ */
+async function stepPane(page: Page): Promise<void> {
+  const open = await until(async () => (await countOf(page, PANE)) > 0, 8000)
+  if (!check('the sidebar is on screen without being asked for (it is the default experience)', open))
+    return
+
+  await stepPaneBounds(page)
+  await stepPaneFilter(page)
+  await stepPaneSelect(page)
+  await stepPaneClose(page)
+  await stepCrossZone(page)
 }
 
 async function main(): Promise<void> {
@@ -433,7 +462,6 @@ async function main(): Promise<void> {
         await sleep(1200)
         await stepCanvas(page)
         await stepHeader(page, zone)
-        await stepSearch(page)
         await stepPane(page)
       }
     }

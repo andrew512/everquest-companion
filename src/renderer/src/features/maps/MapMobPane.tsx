@@ -1,11 +1,18 @@
-// The Maps tab's RIGHT-HAND PANE: what the wiki says lives in this zone, and what the map file
-// itself labels — one search box over both, click to light it up on the map.
+// The Maps tab's SIDEBAR — the way you find anything on a map: what the wiki says lives in this
+// zone, what the map file itself labels, and what every other installed zone labels. One box over
+// all three, click to light it up on the map.
 //
-// TWO SECTIONS BECAUSE THERE ARE TWO AUTHORITIES, and merging them would be the unlabelled
+// IT IS THE DEFAULT EXPERIENCE, and the toolbar carries no search of its own. The bar used to
+// hold a `Search labels…` box with a This zone / All zones toggle beside it, which asked the user
+// to choose an authority before typing and then answered in a fourth list somewhere else on
+// screen. One box, three labelled sections, is the same corpus with the choice removed.
+//
+// THREE SECTIONS BECAUSE THERE ARE THREE AUTHORITIES, and merging them would be the unlabelled
 // inference the world-model laws forbid. "Named mobs" is the committed wiki catalog joined to
 // this zone; "Map labels" is the parser's own `MapData.points` — the same points already drawn
-// on the surface, never re-parsed. A row from one is never silently presented as a row from the
-// other.
+// on the surface, never re-parsed; "Other zones" is `maps:search` over the whole installed
+// corpus, which is a different MAP, not a different part of this one, and says so by living
+// under its own heading. A row from one is never silently presented as a row from another.
 //
 // THE HONEST BIT IS THE PIN AFFORDANCE. Roughly four in five catalog pages state coordinates;
 // the rest say "Various" or "?" (MEASURED, 2026-08-04: 6,283 of 7,866 state at least one). A mob
@@ -19,18 +26,21 @@
 // never a frame out of step.
 //
 // FIXED HEIGHT, OWN SCROLLER (AGENTS.md: "a growing list lives in a FIXED-height scroll box").
-// Both sections share one `flexGrow:1; minHeight:0; overflow:auto` column, so 343 mobs scroll
-// inside the pane instead of pushing the map out of the window.
+// All three sections share one `flexGrow:1; minHeight:0; overflow:auto` column, so 343 mobs
+// scroll inside the pane instead of pushing the map out of the window.
 //
-// THE PANE DOES NOT EXIST WHEN IT IS OFF. MapsView renders nothing rather than a zero-width box,
+// THE PANE DOES NOT EXIST WHEN IT IS OFF. MapBody renders nothing rather than a zero-width box,
 // so the map's flex child is the only thing in the row and the ResizeObserver sees one clean
-// resize on toggle — no width animation, no fixed-size arithmetic, nothing that could feed back
-// into its own measurement.
+// resize on close — no width animation, no fixed-size arithmetic, nothing that could feed back
+// into its own measurement. Closing it is this pane's own button; reopening is the affordance
+// MapBody floats over the map, because a control that hides a panel has to live somewhere the
+// panel is not.
 
 import type { JSX } from 'react'
 import {
   Box,
   Chip,
+  IconButton,
   List,
   ListItemButton,
   ListItemText,
@@ -39,7 +49,9 @@ import {
   TextField,
   Typography
 } from '@mui/material'
+import CloseIcon from '@mui/icons-material/Close'
 import PlaceIcon from '@mui/icons-material/Place'
+import type { MapSearchHit } from '@shared/maps'
 import {
   MAX_PINS,
   isLocatable,
@@ -59,15 +71,22 @@ const SECTION_ROWS = 300
 export interface MapMobPaneProps {
   /** Null ⇒ no zone is open, which the mob section states rather than showing an empty list. */
   zoneName: string | null
+  /** Is a map actually DRAWN? The label section says which kind of nothing it is showing. */
+  hasMap: boolean
   mobs: readonly MobPaneRow[]
   labels: readonly LabelPaneRow[]
+  /** Matching labels in every OTHER zone — the cross-zone lookup, under its own heading. */
+  hits: readonly MapSearchHit[]
   counts: PaneCounts
   query: string
   onQuery: (q: string) => void
   selectedId: string | null
   onSelect: (row: MapPaneRow) => void
+  /** A cross-zone hit was clicked: change zone, then centre on it. */
+  onHit: (hit: MapSearchHit) => void
   /** The drawn pin set hit its ceiling — said out loud rather than quietly trimmed. */
   pinsCapped: boolean
+  onClose: () => void
 }
 
 /** The pin affordance: present exactly when the row has a real coordinate behind it. */
@@ -136,6 +155,20 @@ function Row({
   )
 }
 
+/** The heading that names an AUTHORITY. Every list in this pane sits under exactly one. */
+function SectionHead({ title, note }: { title: string; note: string }): JSX.Element {
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="baseline" sx={{ px: 1 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+        {title}
+      </Typography>
+      <Typography variant="caption" color="text.disabled" noWrap>
+        {note}
+      </Typography>
+    </Stack>
+  )
+}
+
 /** One titled section with its own list. An empty section still renders its title and says why. */
 function Section({
   title,
@@ -154,14 +187,7 @@ function Section({
 }): JSX.Element {
   return (
     <Stack spacing={0.5} sx={{ mb: 1 }}>
-      <Stack direction="row" spacing={0.75} alignItems="baseline" sx={{ px: 1 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-          {title}
-        </Typography>
-        <Typography variant="caption" color="text.disabled" noWrap>
-          {note}
-        </Typography>
-      </Stack>
+      <SectionHead title={title} note={note} />
       {rows.length > 0 ? (
         <List dense disablePadding>
           {rows.slice(0, SECTION_ROWS).map((r) => (
@@ -177,8 +203,64 @@ function Section({
   )
 }
 
+/**
+ * THE CROSS-ZONE SECTION — a label on a DIFFERENT map, so every row names its zone.
+ *
+ * Absent until the box has something in it, because with no query it would be the whole 35,720-
+ * record corpus and a scroll bar to nowhere. Clicking one loads that zone and centres on it, so
+ * the row is a doorway out of this map rather than a thing to select on it: it carries no
+ * selection ring, and the pin column is deliberately empty here — the coordinate is real, but it
+ * is real somewhere else.
+ */
+function HitSection({
+  query,
+  hits,
+  onHit
+}: {
+  query: string
+  hits: readonly MapSearchHit[]
+  onHit: (hit: MapSearchHit) => void
+}): JSX.Element | null {
+  if (query.trim().length === 0) return null
+  return (
+    <Stack spacing={0.5} sx={{ mb: 1 }}>
+      <SectionHead title="Other zones" note="every installed map" />
+      {hits.length > 0 ? (
+        <List dense disablePadding>
+          {hits.map((hit) => (
+            <ListItemButton
+              key={`${hit.zone}#${hit.point.label}#${String(hit.point.x)},${String(hit.point.y)}`}
+              dense
+              data-testid="maps-pane-hit"
+              onClick={() => {
+                onHit(hit)
+              }}
+              sx={{ gap: 0.75, alignItems: 'flex-start' }}
+            >
+              <PinMark locatable={false} />
+              <ListItemText
+                primary={hit.point.display}
+                secondary={hit.zone}
+                slotProps={{
+                  primary: { variant: 'body2', noWrap: true },
+                  secondary: { variant: 'caption' }
+                }}
+              />
+            </ListItemButton>
+          ))}
+        </List>
+      ) : (
+        <Typography variant="caption" color="text.disabled" sx={{ px: 1, pb: 0.5 }}>
+          No other installed map labels that.
+        </Typography>
+      )}
+    </Stack>
+  )
+}
+
 export default function MapMobPane(props: MapMobPaneProps): JSX.Element {
-  const { zoneName, mobs, labels, counts, query, onQuery, selectedId, onSelect, pinsCapped } = props
+  const { zoneName, hasMap, mobs, labels, hits, counts, query, onQuery } = props
+  const { selectedId, onSelect, onHit, pinsCapped, onClose } = props
   return (
     <Paper
       variant="outlined"
@@ -193,16 +275,23 @@ export default function MapMobPane(props: MapMobPaneProps): JSX.Element {
       }}
     >
       <Box sx={{ p: 1, pb: 0.75, flexShrink: 0 }}>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder="Find a mob or label…"
-          value={query}
-          onChange={(e) => {
-            onQuery(e.target.value)
-          }}
-          slotProps={{ htmlInput: { 'data-testid': 'maps-pane-search' } }}
-        />
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <TextField
+            size="small"
+            fullWidth
+            placeholder="Find a mob or label…"
+            value={query}
+            onChange={(e) => {
+              onQuery(e.target.value)
+            }}
+            slotProps={{ htmlInput: { 'data-testid': 'maps-pane-search' } }}
+          />
+          <Tooltip title="Hide this panel">
+            <IconButton size="small" data-testid="maps-pane-close" onClick={onClose}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
         <Stack direction="row" spacing={0.5} sx={{ mt: 0.75 }} flexWrap="wrap" useFlexGap>
           <Tooltip
             title={`${String(counts.located)} of ${String(counts.mobs)} named mobs here state a position on their wiki page — the rest are listed without a pin`}
@@ -250,8 +339,15 @@ export default function MapMobPane(props: MapMobPaneProps): JSX.Element {
           rows={labels}
           selectedId={selectedId}
           onSelect={onSelect}
-          empty={counts.labels === 0 ? 'This map has no label points.' : 'No label matches.'}
+          empty={
+            !hasMap
+              ? 'No map is open.'
+              : counts.labels === 0
+                ? 'This map has no label points.'
+                : 'No label matches.'
+          }
         />
+        <HitSection query={query} hits={hits} onHit={onHit} />
       </Box>
     </Paper>
   )

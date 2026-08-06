@@ -1,4 +1,4 @@
-// The zone pane's STATE — its query, its two filtered lists, and which row is selected.
+// The sidebar's STATE — its query, its filtered lists, and which row is selected.
 //
 // IT LIVES ABOVE THE PANE, not inside it, and that is the whole reason this file exists: the
 // pane LISTS the mobs and the surface PINS them, and both must be showing the same set. Typing
@@ -16,7 +16,7 @@
 // mob id means nothing in another zone.
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
-import type { MapData, MapPoint } from '@shared/maps'
+import type { MapData, MapPackPrefs, MapPoint, MapSearchHit, ZoneShort } from '@shared/maps'
 import type { MobEntry } from '@shared/types'
 import { MOB_CATALOG } from '../mobs/mobSearch'
 import { loadPaneOpen, savePaneOpen } from './useMapData'
@@ -112,6 +112,70 @@ export function useMapPane({ zoneName, points, catalog, mapId, onCenter }: MapPa
   }
 }
 
+// ---- the OTHER ZONES half -----------------------------------------------------------------
+
+/** Hits fetched per query. Main clamps this again; a longer list is scrolled, not fetched. */
+const HIT_LIMIT = 60
+
+/** Module-level empty so a query that asks nothing hands the pane a STABLE reference. */
+const NO_HITS: MapSearchHit[] = []
+
+/**
+ * THE THIRD SECTION: labels in every OTHER installed zone.
+ *
+ * This is the capability the toolbar's `All zones` scope carried, moved into the one filter box —
+ * "which zone is Ambassador D`Vinn in?" is a question the corpus makes answerable and nothing
+ * else in the app answers. It is a SECTION rather than a mode because the two other sections are
+ * scoped to the map on screen: one query, three answers, each labelled with where it came from.
+ *
+ * The zone ON SCREEN is filtered out here rather than in main: those labels are already the
+ * pane's own "Map labels" section, and listing them twice under two headings would make the
+ * sections' authorities meaningless.
+ *
+ * It carries the viewer's pack prefs for the same reason the old in-zone search did — the corpus
+ * index is built once under DEFAULT prefs and ignores them, but `maps:search` takes one field and
+ * the caller has no business deciding which half reads it.
+ */
+export function useCorpusHits(args: {
+  query: string
+  /** The zone actually ON SCREEN, whose hits belong to the map-labels section instead. */
+  zone: ZoneShort | undefined
+  prefs: MapPackPrefs
+}): MapSearchHit[] {
+  const { query, zone } = args
+  const [hits, setHits] = useState<MapSearchHit[]>(NO_HITS)
+  // The pref FIELDS, not the object — useMapData.ts's rule: a caller that rebuilds `prefs` every
+  // render must not be able to re-query on every render.
+  const { geometry, labels } = args.prefs
+
+  useEffect(() => {
+    if (query.length === 0) {
+      setHits(NO_HITS)
+      return
+    }
+    let cancelled = false
+    void window.eq
+      .searchMapPoints(query, {
+        limit: HIT_LIMIT,
+        prefs: {
+          ...(geometry == null ? {} : { geometry }),
+          ...(labels == null ? {} : { labels })
+        }
+      })
+      .then((res) => {
+        if (!cancelled) setHits(res.filter((h) => h.zone !== zone))
+      })
+      .catch(() => {
+        if (!cancelled) setHits(NO_HITS)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [query, zone, geometry, labels])
+
+  return hits
+}
+
 // ---- the view's whole pane wiring, in one call ------------------------------------------
 
 /** Scale bump when centring from a FITTED view — fitted, a spawn point is a couple of pixels. */
@@ -122,14 +186,16 @@ const JUMP_ZOOM = 6
 const NO_POINTS: readonly MapPoint[] = []
 
 export interface ZonePaneState extends MapPaneState {
-  /** Is the pane on screen? Off by default, remembered in `eq.maps.pane`. */
+  /** Is the sidebar on screen? ON by default, remembered in `eq.maps.pane`. */
   open: boolean
   setOpen: (open: boolean) => void
+  /** Matching labels in every OTHER installed zone. Empty until the box has something in it. */
+  hits: MapSearchHit[]
 }
 
 /**
- * Everything MapsView needs to render the pane and its pins: the persisted open flag, and the
- * pane state itself wired to the viewport's `centerOn`.
+ * Everything MapsView needs to render the sidebar and its pins: the persisted open flag, the pane
+ * state wired to the viewport's `centerOn`, and the cross-zone hits for the same query.
  *
  * It lives here rather than inline in the view for the reason the whole module does — the pane
  * and the surface must read ONE derivation — and because the view is at the repo's complexity
@@ -141,8 +207,10 @@ export function useZonePane(args: {
   data: MapData | null
   /** The LONG zone name to join the catalog on, or null when nothing is open. */
   zoneName: string | null
+  /** The viewer's per-layer pack preference, carried into the cross-zone search. */
+  prefs: MapPackPrefs
 }): ZonePaneState {
-  const { vp, data, zoneName } = args
+  const { vp, data, zoneName, prefs } = args
   const [open, setOpenState] = useState<boolean>(loadPaneOpen)
   const setOpen = useCallback((next: boolean) => {
     setOpenState(next)
@@ -166,7 +234,9 @@ export function useZonePane(args: {
     mapId: data?.zone ?? '',
     onCenter
   })
-  return { ...pane, open, setOpen }
+  // The box echoes every keystroke; only what reaches the IPC waits for the paint to settle.
+  const hits = useCorpusHits({ query: useDeferredValue(pane.query).trim(), zone: data?.zone, prefs })
+  return { ...pane, open, setOpen, hits }
 }
 
 /** What the surface needs from the pane: the pins and the selection. Null ⇒ draw nothing. */
