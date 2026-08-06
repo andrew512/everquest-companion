@@ -1,7 +1,8 @@
 /**
  * appHarness.mts — the PLUMBING behind tests/e2e/combat-dashboard.e2e.mts: the tiny assertion
- * harness, the out-e2e/ build gate, the page-measurement helpers, the two composite checkers
- * (header shape + 2x2 grid) and the failure-artifact dump.
+ * harness, the page-measurement helpers, the two composite checkers (header shape + 2x2 grid)
+ * and the failure-artifact dump. (The out-e2e/ build gate moved to build.mts and is re-exported
+ * from here, so a spec still has one import to remember.)
  *
  * Split out of that file, which had grown past the 400-code-line factoring ceiling. Nothing
  * changed: every helper, threshold and comment is as it was, and the e2e entry point is still
@@ -10,45 +11,26 @@
  */
 
 import type { Page } from 'playwright-core'
-import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { ROOT } from './build.mjs'
 
-export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-export const ARTIFACTS = join(ROOT, 'tests', 'e2e', 'artifacts')
+// The out-e2e/ build gate and the binaries it needs live in build.mts — re-exported here so
+// every spec keeps its single `./appHarness.mjs` import.
+export { MAIN_ENTRY, ROOT, buildIfStale, electronBinary } from './build.mjs'
+
 /**
- * Its OWN build output, never `out/`: the user keeps `npm run dev --watch` running, which
- * owns out/main + out/preload and rewrites them on every source edit. Building into out-e2e/
- * means the harness can never race that watcher (or leave a production bundle where the dev
- * app expects its own). The main bundle resolves preload/renderer relative to __dirname, so
- * an alternate root just works.
- */
-const OUT_DIR = join(ROOT, 'out-e2e')
-export const MAIN_ENTRY = join(OUT_DIR, 'main', 'index.js')
-/**
- * Throwaway `userData` for the app under test — wiped per run, so every run starts fresh
- * (default view, no saved character, no overlays) and the real store is never opened.
+ * Failure evidence for ONE spec of ONE run: `artifacts/<runId>/<spec>/`.
  *
- * KEYED BY CHECKOUT, and that suffix is load-bearing. It used to be one fixed path in the OS
- * temp dir, which is a SINGLETON PER MACHINE, not per repo: a second checkout of this repo (a
- * `git worktree`, a CI runner with two jobs, two agents working in parallel) ran its specs
- * against the very same dir. That is not a slow test, it is a WRONG one — `firstRun()` wipes
- * this dir with `rmSync`, so a neighbour's fresh-install step deletes the store THIS spec is
- * mid-way through asserting about. The telemetry spec is where it surfaced, because it is the
- * only spec whose assertion spans two launches: launch 3 opted out, a neighbour wiped the dir,
- * and launch 4 read defaults back — "the answer SURVIVES a restart" failing against an app
- * that had persisted the answer perfectly.
- *
- * A hash of ROOT keeps every property the fixed path had — stable across runs of THIS checkout,
- * so runs still overwrite rather than litter temp — while making the collision impossible.
+ * Per-run and per-spec because artifacts used to be one flat directory that a spec wiped at
+ * startup — which deletes a CONCURRENT spec's evidence, and the run you most want to read is
+ * the one whose dumps went missing. The runner passes both ids down; a spec run by hand mints
+ * its own from the clock and its own file name, so a standalone run is still self-describing.
  */
-export const USER_DATA = join(
-  tmpdir(),
-  `everquest-companion-e2e-userdata-${createHash('sha1').update(ROOT).digest('hex').slice(0, 10)}`
-)
+const RUN_ID = process.env.EQ_E2E_RUN_ID ?? new Date().toISOString().replace(/[:.]/g, '-')
+const SPEC_ID =
+  process.env.EQ_E2E_SPEC ?? basename(process.argv[1] ?? 'spec').replace(/\.e2e\.mts$/, '')
+export const ARTIFACTS = join(ROOT, 'tests', 'e2e', 'artifacts', RUN_ID, SPEC_ID)
 
 /** A full-log scan of a months-old live log takes a while; be generous, fail loudly. */
 export const HYDRATE_TIMEOUT_MS = 300_000
@@ -88,54 +70,6 @@ export function reportRun(): void {
 }
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-
-// ── build (reuse out/ when it's newer than every source file) ──────────────────────────
-
-function newestMtime(dir: string): number {
-  let newest = 0
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, entry.name)
-    newest = Math.max(newest, entry.isDirectory() ? newestMtime(p) : statSync(p).mtimeMs)
-  }
-  return newest
-}
-
-export function buildIfStale(): void {
-  let outMs = 0
-  try {
-    outMs = statSync(MAIN_ENTRY).mtimeMs
-  } catch {
-    outMs = 0
-  }
-  const srcMs = Math.max(
-    newestMtime(join(ROOT, 'src')),
-    statSync(join(ROOT, 'electron.vite.config.ts')).mtimeMs
-  )
-  if (outMs > srcMs) {
-    console.log(`build: ${OUT_DIR}/ is fresh — reusing it`)
-    return
-  }
-  console.log(`build: electron-vite build --outDir=${OUT_DIR} (it is stale)…`)
-  // ABSOLUTE outDir on purpose: electron-vite resolves a relative --outDir against each
-  // section's own `root`, and the renderer's root is src/renderer — a relative 'out-e2e'
-  // silently emits the HTML into src/renderer/out-e2e/ and the app then loads a 404.
-  const res = spawnSync(
-    process.execPath,
-    [
-      join(ROOT, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'),
-      'build',
-      `--outDir=${OUT_DIR.replace(/\\/g, '/')}`
-    ],
-    { cwd: ROOT, stdio: 'inherit' }
-  )
-  if (res.status !== 0) throw new Error(`electron-vite build failed (exit ${res.status})`)
-}
-
-export function electronBinary(): string {
-  return process.platform === 'win32'
-    ? join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
-    : join(ROOT, 'node_modules', 'electron', 'dist', 'electron')
-}
 
 // ── page helpers ───────────────────────────────────────────────────────────────────────
 
@@ -617,15 +551,16 @@ export async function dumpArtifacts(page: Page, tag: string): Promise<void> {
       return (view ?? document.body).outerHTML
     })
     writeFileSync(join(ARTIFACTS, `${tag}.html`), html, 'utf8')
-    console.log(`artifact: tests/e2e/artifacts/${tag}.html`)
+    console.log(`artifact: ${join(ARTIFACTS, `${tag}.html`)}`)
   } catch (err) {
     console.log(`artifact: DOM dump failed — ${String(err)}`)
   }
   try {
-    // A hidden window still composites through CDP; if a given platform refuses, we say so
-    // rather than failing the run over missing evidence.
-    await page.screenshot({ path: join(ARTIFACTS, `${tag}.png`), timeout: 20_000 })
-    console.log(`artifact: tests/e2e/artifacts/${tag}.png`)
+    // A hidden window is not composited on every platform, and a FAILING run is exactly when
+    // waiting 20 s for a frame that will never arrive costs the most. The HTML above is the
+    // evidence that matters; the PNG is a bonus with a 3 s budget.
+    await page.screenshot({ path: join(ARTIFACTS, `${tag}.png`), timeout: 3_000 })
+    console.log(`artifact: ${join(ARTIFACTS, `${tag}.png`)}`)
   } catch (err) {
     console.log(`artifact: screenshot unavailable — ${String(err)}`)
   }

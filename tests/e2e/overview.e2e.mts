@@ -32,17 +32,13 @@
  *
  * Run: `npm run test:e2e` (this spec runs second).
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import {
   HYDRATE_TIMEOUT_MS,
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   pageOverflow,
@@ -53,7 +49,7 @@ import {
   snapshot,
   type Snap
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 
 const GRID = '[data-testid="overview-grid"]'
 const SEGMENT_SELECT = '[data-testid="segment-select"]'
@@ -512,18 +508,11 @@ async function stepLootLink(page: Page): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  // Fresh userData is load-bearing for assertion 1 — see the file header. ARTIFACTS is left
-  // alone so the combat spec's dump from earlier in the same `npm run test:e2e` survives.
-  await freshUserData()
 
+  // Fresh userData is load-bearing for assertion 1 — see the file header. It is what a launch
+  // now IS: `launchApp()` mints a dir of its own and deletes it on close.
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Overview spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -554,7 +543,7 @@ async function main(): Promise<void> {
     if (failures.length) await dumpArtifacts(page, 'overview-FAIL')
     else await dumpArtifacts(page, 'overview-pass')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()

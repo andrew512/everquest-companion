@@ -9,8 +9,8 @@
  * WHY `userData` IS WIPED FIRST: the headline assertion is AUTO-OPEN — the log says which zone
  * you are in and the viewer opens that zone's map without being asked. The viewer also remembers
  * the last zone in `localStorage['eq.maps.zone']`, which lives inside `userData`; a stale one
- * would open a map the log never asked for and make the assertion vacuous. ARTIFACTS is
- * deliberately NOT wiped — the earlier specs' dumps must survive this run.
+ * would open a map the log never asked for and make the assertion vacuous. Every launch now gets
+ * a userData dir of its own, so "wiped first" is simply what a launch is.
  *
  * WHAT IT ASSERTS, against whatever the real machine holds right now: the nav row mounts the
  * view; the canvas has non-zero size and a devicePixelRatio-scaled backing store (the difference
@@ -36,17 +36,13 @@
  *
  * Run: `npm run test:e2e` (this spec runs last).
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import {
   HYDRATE_TIMEOUT_MS,
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   pageOverflow,
@@ -55,7 +51,7 @@ import {
   sleep,
   snapshot
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 
 const NAV = '[data-testid="nav-maps"]'
 const HEADER = '[data-testid="maps-header"]'
@@ -434,17 +430,11 @@ async function stepPane(page: Page): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  // See the header: a remembered `eq.maps.zone` would make the auto-open assertion vacuous.
-  await freshUserData()
 
+  // See the header: a remembered `eq.maps.zone` would make the auto-open assertion vacuous, and
+  // this launch's userData dir is one nothing has ever written to.
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Maps spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -471,7 +461,7 @@ async function main(): Promise<void> {
     if (failures.length) await dumpArtifacts(page, 'maps-FAIL')
     else await dumpArtifacts(page, 'maps-pass')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()

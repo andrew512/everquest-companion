@@ -27,22 +27,18 @@
  *
  * Run: `npm run test:e2e` (or `node --import tsx tests/e2e/feedback.e2e.mts`).
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import {
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   note,
   reportRun,
   sleep
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 
 const DIALOG = '[data-testid="feedback-dialog"]'
 const DESCRIPTION = '[data-testid="feedback-description"]'
@@ -252,16 +248,9 @@ async function stepAttachAndPreview(page: Page): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  await freshUserData()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Feedback spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -286,7 +275,7 @@ async function main(): Promise<void> {
 
     if (failures.length) await dumpArtifacts(page, 'feedback-FAIL')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()

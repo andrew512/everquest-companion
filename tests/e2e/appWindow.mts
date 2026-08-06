@@ -20,9 +20,11 @@
  * race: at the instant a window appears its preload may not have run yet.
  */
 
-import { rmSync } from 'node:fs'
-import type { ElectronApplication, Page } from 'playwright-core'
-import { USER_DATA, sleep } from './appHarness.mjs'
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import { MAIN_ENTRY, ROOT, electronBinary, sleep } from './appHarness.mjs'
 
 /** The MAIN application window. Never `app.firstWindow()` — see the header. */
 export async function mainWindow(app: ElectronApplication, timeoutMs = 60_000): Promise<Page> {
@@ -48,27 +50,108 @@ export async function mainWindow(app: ElectronApplication, timeoutMs = 60_000): 
 }
 
 /**
- * Wipe the throwaway `userData` so this spec starts from a FRESH INSTALL — with retries.
+ * THE ISOLATION UNIT IS ONE LAUNCH.
  *
- * A bare `rmSync` is what every spec used to do, and on Windows it is a race the suite started
- * losing once the app began opening two windows: `app.close()` resolves when Electron says the
- * app is gone, but the OS releases the handles a beat later, and a second window is a second set
- * of handles. The next spec's wipe then throws EPERM before it has launched anything — and,
- * because that spec's own Electron is left running, the spec AFTER it fails the same way. One
- * slow teardown was taking three specs down with it.
+ * It used to be one CHECKOUT: a single `userData` dir keyed by a hash of the repo root, shared by
+ * every spec, every launch and every rerun — and every spec began by `rmSync`-ing it. That is not
+ * a slow suite, it is a WRONG one. Two specs (or two runs) overlapping meant one deleting the
+ * store the other was mid-way through asserting about, and on Windows the delete itself EPERMs
+ * against a neighbour's still-closing window, taking the specs after it down as well.
  *
- * So the wipe waits instead of failing: a handful of short retries costs nothing when the dir is
- * already free, and the failure it prevents is not a bug in anything it is testing. A dir that is
- * still locked after all of them is a real problem and still throws.
+ * A dir per launch removes the reason for both. Nothing is ever wiped out from under a live
+ * process, because nothing is ever shared with one: `mkdtempSync` hands out a name no other
+ * launch has, "fresh install" is what a new dir already means, and cleanup is a delete of a dir
+ * whose only user has just exited.
  */
-export async function freshUserData(attempts = 12, waitMs = 400): Promise<void> {
+const USER_DATA_PREFIX = 'everquest-companion-e2e-'
+
+/** A userData dir the CALLER owns — for the specs whose assertion spans two launches. */
+export function makeUserData(): string {
+  return mkdtempSync(join(tmpdir(), USER_DATA_PREFIX))
+}
+
+/**
+ * Best-effort delete, never fatal. `app.close()` resolves when Electron says the app is gone, but
+ * Windows releases the handles a beat later (and a second window is a second set of them), so a
+ * few short retries turn the common case into a clean delete. A dir that outlives them all is
+ * litter in the OS temp dir, not a test result — the runner's reaper collects it later, and
+ * failing a green spec over it would be reporting the harness's own timing as the app's bug.
+ */
+export async function removeUserData(dir: string, attempts = 8, waitMs = 250): Promise<void> {
   for (let i = 1; ; i++) {
     try {
-      rmSync(USER_DATA, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
       return
     } catch (err) {
-      if (i >= attempts) throw err
+      if (i >= attempts) {
+        console.log(`note: could not remove ${dir} — ${String(err)} (reaped on a later run)`)
+        return
+      }
       await sleep(waitMs)
+    }
+  }
+}
+
+/**
+ * Collect e2e userData dirs left behind by runs that were killed before they could clean up.
+ * By AGE only, and by a name no other tool writes: a dir younger than the cutoff may belong to a
+ * spec running right now in another process, and this must never be the thing that deletes it.
+ */
+export function reapOrphanUserData(maxAgeMs = 86_400_000): number {
+  const now = Date.now()
+  let reaped = 0
+  let entries: string[] = []
+  try {
+    entries = readdirSync(tmpdir())
+  } catch {
+    return 0
+  }
+  for (const name of entries) {
+    if (!name.startsWith(USER_DATA_PREFIX)) continue
+    const dir = join(tmpdir(), name)
+    try {
+      if (now - statSync(dir).mtimeMs < maxAgeMs) continue
+      rmSync(dir, { recursive: true, force: true })
+      reaped += 1
+    } catch {
+      // Locked or already gone; the next run tries again.
+    }
+  }
+  return reaped
+}
+
+/** A launched app, its userData dir, and the teardown that matches how the dir was obtained. */
+export interface LaunchedApp {
+  readonly app: ElectronApplication
+  /** Where this launch's store, image cache and perf profile live — read it after `close()`. */
+  readonly userData: string
+  /** Quit the app, then delete the dir IF this launch created it. */
+  close(): Promise<void>
+}
+
+/**
+ * Launch the app under test on a userData dir of its own.
+ *
+ * Pass `userData` only when the assertion is ABOUT the dir surviving the process — telemetry's
+ * restart, overlay-sync's persisted overlay state. Such a caller owns the dir's lifetime
+ * (`makeUserData()` / `removeUserData()`); `close()` here will not delete what it did not create.
+ */
+export async function launchApp(opts: { userData?: string } = {}): Promise<LaunchedApp> {
+  const owned = opts.userData === undefined
+  const userData = opts.userData ?? makeUserData()
+  const app = await electron.launch({
+    executablePath: electronBinary(),
+    args: [MAIN_ENTRY],
+    cwd: ROOT,
+    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: userData, NODE_ENV: 'production' },
+    timeout: 60_000
+  })
+  return {
+    app,
+    userData,
+    close: async (): Promise<void> => {
+      await app.close().catch(() => undefined)
+      if (owned) await removeUserData(userData)
     }
   }
 }

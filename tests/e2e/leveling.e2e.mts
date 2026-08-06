@@ -10,8 +10,8 @@
  * WHY `userData` IS WIPED FIRST: the headline assertion is that the range-stats panel does NOT
  * exist until a selection does. Nothing about a selection is persisted today (the plan defers
  * that deliberately, §9), but a fresh dir is what makes "before any selection" mean the same
- * thing on every machine and after every earlier spec. ARTIFACTS is deliberately NOT wiped —
- * the earlier specs' dumps must survive this run.
+ * thing on every machine and after every earlier spec — which is what a per-launch userData dir
+ * now guarantees for free.
  *
  * WHAT IT ASSERTS, against whatever the real log holds right now:
  *   1. the nav row mounts the view (or the no-logs empty state honestly explains why not);
@@ -37,17 +37,13 @@
  *
  * Run: `npm run test:e2e`.
  */
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
+import type { Page } from 'playwright-core'
 import {
   HYDRATE_TIMEOUT_MS,
-  MAIN_ENTRY,
-  ROOT,
-  USER_DATA,
   buildIfStale,
   check,
   countOf,
   dumpArtifacts,
-  electronBinary,
   failures,
   hoverAt,
   note,
@@ -57,7 +53,7 @@ import {
   sleep,
   snapshot
 } from './appHarness.mjs'
-import { freshUserData, mainWindow } from './appWindow.mjs'
+import { launchApp, mainWindow } from './appWindow.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -351,18 +347,11 @@ async function stepOverflow(page: Page): Promise<void> {
 
 async function main(): Promise<void> {
   buildIfStale()
-  // See the header: a fresh dir is what makes "before any selection" mean the same thing on
-  // every machine. ARTIFACTS is left alone so the earlier specs' dumps survive this run.
-  await freshUserData()
 
+  // See the header: a fresh dir is what makes "before any selection" mean the same thing on
+  // every machine, and every launch gets one.
   console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Leveling spec…')
-  const app: ElectronApplication = await electron.launch({
-    executablePath: electronBinary(),
-    args: [MAIN_ENTRY],
-    cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: USER_DATA, NODE_ENV: 'production' },
-    timeout: 60_000
-  })
+  const { app, close } = await launchApp()
 
   let page: Page | null = null
   try {
@@ -398,7 +387,7 @@ async function main(): Promise<void> {
     if (failures.length) await dumpArtifacts(page, 'leveling-FAIL')
     else await dumpArtifacts(page, 'leveling-pass')
   } finally {
-    await app.close().catch(() => undefined)
+    await close()
   }
 
   reportRun()
