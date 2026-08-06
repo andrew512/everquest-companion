@@ -23,7 +23,8 @@ import { formatDateTime } from '../../lib/formatDate'
 import type { SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
-import { useQuestList, type QuestListState, type SortKey, type TabKey } from './useQuestList'
+import { useQuestList, type QuestListState, type TabKey } from './useQuestList'
+import { SORT_OPTIONS, type SortKey } from './questSort'
 import type { MobTarget } from '../mobs/mobTarget'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
 import Confetti from '../../lib/Confetti'
@@ -119,9 +120,9 @@ function FilterBar({
         onChange={(e) => list.setSort(e.target.value as SortKey)}
         sx={{ minWidth: 180 }}
       >
-        <MenuItem value="closest">Closest to done</MenuItem>
-        <MenuItem value="least-missing">Fewest missing</MenuItem>
-        <MenuItem value="class">By class</MenuItem>
+        {SORT_OPTIONS.map((o) => (
+          <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+        ))}
       </TextField>
       <FormControlLabel
         control={<Checkbox checked={list.hideCompleted} onChange={(e) => list.setHideCompleted(e.target.checked)} />}

@@ -35,3 +35,28 @@ export function computeHeldCounts(lootHistory: readonly LootEvent[]): Record<str
   }
   return c
 }
+
+/**
+ * Fold loot history into WHEN each item last dropped, epoch millis, same counting key.
+ *
+ * The disposition rule differs from held counts on exactly one row type, deliberately:
+ *   'sold'     — SKIPPED. Auto-vendored the instant it dropped, so it never affected a quest;
+ *      counting it would float a quest to the top of "most recent drop" for an item the user
+ *      never held.
+ *   'combined' — COUNTED, unlike in held counts. It is net-ZERO on the count (see above) but it
+ *      is a real drop of a real item that is still held on this key, so its recency is true.
+ *
+ * Absent = never seen dropping. Never 0 — 0 renders as 1970 and sorts as an ancient drop, which
+ * is a fabricated answer (law 1). Callers get `undefined` and must say "no drops", not guess.
+ * Scope is the current character epoch: history is wiped and replayed per character.
+ */
+export function computeLastLootedAt(lootHistory: readonly LootEvent[]): Record<string, number> {
+  const t: Record<string, number> = {}
+  for (const e of lootHistory) {
+    if (e.disposition === 'sold') continue
+    const k = itemCountKey(e.item)
+    const prev = t[k]
+    if (prev === undefined || e.ts > prev) t[k] = e.ts
+  }
+  return t
+}

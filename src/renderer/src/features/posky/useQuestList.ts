@@ -11,8 +11,9 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { QuestProgress } from './useProgress'
 import { useFavorites } from '../favorites/useFavorites'
 import { useQuestFavorites, useQuestIgnored, type QuestFlagSet } from '../favorites/useQuestFlags'
+import { DEFAULT_SORT, isSortKey, sortQuests, type SortKey } from './questSort'
 
-export type SortKey = 'closest' | 'least-missing' | 'class'
+export type { SortKey }
 
 export type TabKey = 'quests' | 'ignored'
 
@@ -20,6 +21,7 @@ export type TabKey = 'quests' | 'ignored'
 const PAGE = 40
 
 const SELECTED_CLASSES_KEY = 'eq.selectedClasses'
+const SORT_KEY = 'eq.questSort'
 
 function loadSelectedClasses(): string[] {
   try {
@@ -28,6 +30,12 @@ function loadSelectedClasses(): string[] {
   } catch {
     return []
   }
+}
+
+// An order retired from SORT_OPTIONS falls back to the default rather than sorting by nothing.
+function loadSort(): SortKey {
+  const v = localStorage.getItem(SORT_KEY)
+  return isSortKey(v) ? v : DEFAULT_SORT
 }
 
 function questHasFavorite(q: QuestProgress, isFavorite: (name: string) => boolean): boolean {
@@ -67,19 +75,7 @@ function selectQuests(sel: QuestSelection): QuestProgress[] {
         x.items.some((i) => i.name.toLowerCase().includes(q))
     )
   }
-  const sorted = [...list]
-  if (sel.sort === 'closest') {
-    sorted.sort(
-      (a, b) =>
-        b.ratio - a.ratio ||
-        a.missing.length - b.missing.length ||
-        a.className.localeCompare(b.className)
-    )
-  } else if (sel.sort === 'least-missing') {
-    sorted.sort((a, b) => a.missing.length - b.missing.length || b.ratio - a.ratio)
-  } else {
-    sorted.sort((a, b) => a.className.localeCompare(b.className) || a.name.localeCompare(b.name))
-  }
+  const sorted = sortQuests(list, sel.sort)
   // Pin to the top (stable sort, so ties keep the sort above). A quest the user
   // STARRED outright outranks one that merely contains a favorited item — the star is
   // an explicit "I'm working on this", so it pins even once turned in; the item-level
@@ -140,7 +136,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
   const [tab, setTab] = useState<TabKey>('quests')
   const [selectedClasses, setSelectedClasses] = useState<string[]>(loadSelectedClasses)
   const [query, setQuery] = useState('')
-  const [sort, setSort] = useState<SortKey>('closest')
+  const [sort, setSort] = useState<SortKey>(loadSort)
   const [hideCompleted, setHideCompleted] = useState(false)
   const [hideNoItems, setHideNoItems] = useState(true)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
@@ -159,10 +155,14 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     return [shown, hidden]
   }, [quests, ignoredKeys])
 
-  // Remember the class filter across restarts.
+  // Remember the class filter and the sort order across restarts.
   useEffect(() => {
     localStorage.setItem(SELECTED_CLASSES_KEY, JSON.stringify(selectedClasses))
   }, [selectedClasses])
+
+  useEffect(() => {
+    localStorage.setItem(SORT_KEY, sort)
+  }, [sort])
 
   // Typing echoes immediately; the (accordion-rebuilding) filter consumes a deferred
   // copy so a keystroke never blocks on re-rendering dozens of Accordions (Task #41).

@@ -11,13 +11,14 @@ import type {
 } from '@shared/types'
 import { getPoskyData } from '../../data'
 import { itemCountKey, normalizeItemName } from '../../lib/itemName'
-import { computeHeldCounts } from './heldCounts'
+import { computeHeldCounts, computeLastLootedAt } from './heldCounts'
 import { useModule } from '../../lib/useModule'
 import { reconcile, type InventoryRow } from '../inventory/reconcile'
 import { questKey } from './keys'
 import { ambiguousQuestNames, computeSharedItems, type SharedItemsMap } from './sharedItems'
 import { skyDroppersFor, type DropperMob } from './poskyDroppers'
 import { matchTurnIns, newlyCompletedTurnIns } from './turnInCelebration'
+import { questDropRecency } from './questSort'
 
 const applyLootDelta = (s: LootSnap, d: LootDelta): LootSnap => [...s, ...d.appended]
 const applyTurnInDelta = (s: TurnInSnap, d: TurnInDelta): TurnInSnap => [...s, ...d.appended]
@@ -77,6 +78,8 @@ export interface ItemProgress {
   have: number
   stats?: string
   page?: string
+  /** epoch ms this item last dropped (computeLastLootedAt); absent = never seen dropping. */
+  lastLootedAt?: number
 }
 
 export interface QuestProgress {
@@ -93,17 +96,26 @@ export interface QuestProgress {
   ratio: number
   missing: string[]
   completed: boolean
+  /**
+   * epoch ms of the NEWEST drop among this quest's required items — the "most recent drop"
+   * sort key. Absent when nothing it needs has ever dropped; recency is then unknown, not old.
+   * Read from the loot log regardless of the count source: a drop is a log fact, and an
+   * inventory export carries no timestamps at all.
+   */
+  lastDropAt?: number
 }
 
 export function computeQuestProgress(
   quest: PoskyQuest,
   held: Record<string, number>,
-  completedSet: Set<string>
+  completedSet: Set<string>,
+  lastLootedAt: Record<string, number> = {}
 ): QuestProgress {
   const key = questKey(quest)
   const items: ItemProgress[] = quest.items.map((it) => {
     const need = it.count > 0 ? it.count : 1
-    const have = Math.min(need, held[itemCountKey(it.name)] ?? 0)
+    const countKey = itemCountKey(it.name)
+    const have = Math.min(need, held[countKey] ?? 0)
     return {
       name: it.name,
       who: it.who,
@@ -114,7 +126,8 @@ export function computeQuestProgress(
       need,
       have,
       stats: it.stats,
-      page: it.page
+      page: it.page,
+      lastLootedAt: lastLootedAt[countKey]
     }
   })
   const needCount = items.reduce((s, i) => s + i.need, 0)
@@ -133,7 +146,8 @@ export function computeQuestProgress(
     needCount,
     ratio: completed ? 1 : needCount === 0 ? 0 : haveCount / needCount,
     missing: items.filter((i) => i.have < i.need).map((i) => i.name),
-    completed
+    completed,
+    lastDropAt: questDropRecency(items)
   }
 }
 
@@ -268,6 +282,10 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
 
   const lootNames = useMemo(() => deriveLootNames(lootHistory), [lootHistory])
 
+  // Per-item drop recency, same counting key as the held counts — the whole plumbing the
+  // "most recent drop" sort needs, folded from the loot history that is already here.
+  const lastLootedAt = useMemo(() => computeLastLootedAt(lootHistory), [lootHistory])
+
   // Reconcile held items (log + inventory), subtracting anything consumed by
   // quests that have been turned in.
   const { net, rows: inventoryRows } = useMemo(
@@ -286,8 +304,8 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
   const quests = useMemo<QuestProgress[]>(() => {
     if (!progress) return []
     const completedSet = new Set(progress.completedQuests)
-    return posky.quests.map((q) => computeQuestProgress(q, net, completedSet))
-  }, [progress, net])
+    return posky.quests.map((q) => computeQuestProgress(q, net, completedSet, lastLootedAt))
+  }, [progress, net, lastLootedAt])
 
   const classes = useMemo(() => [...new Set(posky.quests.map((q) => q.className))].sort(), [])
 
