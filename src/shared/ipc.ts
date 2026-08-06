@@ -450,6 +450,20 @@ export const IPC = {
   // normalizer the store reader and the 9→10 migration use. Returns what was stored.
   graphicsPrefsSet: 'graphicsPrefs:set',
 
+  // ---- dev restart (JOS-61 — src/main/devRestart.ts) ------------------------------------
+  //
+  // renderer -> main: relaunch the app. Hand-testing startup performance means restarting it
+  // over and over, and Preferences → Performance already prints the breakdown of the launch
+  // you are in; this is the button beside that readout.
+  //
+  // UNLIKE THE TRIAGE CHANNELS BELOW, THIS HANDLER IS REGISTERED IN EVERY BUILD — and REFUSES
+  // in a packaged one, answering `false` having done nothing (src/main/ipc/dev.ts). A packaged
+  // build is therefore provably inert even if the channel is reached, rather than relying on
+  // the renderer surface having been stripped (it has been: `DEV_TOOLS`, anchored on
+  // `import.meta.env.DEV`, deletes the button from those bytes). Takes no arguments, so there
+  // is nothing at this handler to validate.
+  devRestart: 'dev:restart',
+
   // ---- feedback TRIAGE (the dev-only operator tab — src/main/triage/**) ----------------
   //
   // ============ DEV BUILDS ONLY. NO SHIPPED APP EVER REGISTERS THESE HANDLERS. ============

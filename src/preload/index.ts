@@ -80,6 +80,8 @@ import { perfBridge } from './perf'
 // The two graphics-compatibility switches (JOS-40), spread in below for the same file-size
 // reason as perfBridge. Shapes live beside their normalizer in shared/graphicsPrefs.ts.
 import { graphicsBridge } from './graphics'
+// The dev-only restart button's one method (JOS-61), split out for the same file-mass reason.
+import { devBridge } from './dev'
 // The DEV-ONLY triage surface (see the banner above its methods, below). Types only — the
 // contract lives in src/shared so main, preload and the renderer name one definition.
 import type {
@@ -242,6 +244,8 @@ const api = {
   ...perfBridge,
   // …and the two graphics-compatibility switches (./graphics.ts), for the same reason.
   ...graphicsBridge,
+  // …and `restartApp` (./dev.ts), whose handler refuses in a packaged build.
+  ...devBridge,
 
   /**
    * Is this the headless integration-test channel (`EQ_E2E=1`, src/main/e2e.ts)?
