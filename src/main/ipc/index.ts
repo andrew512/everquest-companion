@@ -18,6 +18,7 @@ import { registerCharacterIpc } from './character'
 import { registerClipboardIpc } from './clipboard'
 import { registerComboIpc } from './combo'
 import { registerFeedbackIpc } from './feedback'
+import { registerGraphicsIpc } from './graphics'
 import { registerKnowledgeIpc } from './knowledge'
 import { registerMapsIpc } from './maps'
 import { registerPerfIpc } from './perf'
@@ -53,4 +54,5 @@ export function registerIpc(): void {
   registerFeedbackIpc()
   registerTelemetryIpc()
   registerPerfIpc()
+  registerGraphicsIpc()
 }

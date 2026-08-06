@@ -411,6 +411,20 @@ export const IPC = {
   // repeat is refused by the phase accounting itself (shared/perf.ts `addMark`).
   perfRendererHydrated: 'perf:rendererHydrated',
 
+  // ---- graphics compatibility (JOS-40 — shared/graphicsPrefs.ts) ------------------------
+  //
+  // Two switches for machines whose driver dislikes what this app draws: software rendering
+  // for the whole app, and opaque (non-transparent) overlay windows. NEITHER takes effect on
+  // the call — safe mode is a before-`ready` flag (next launch) and a window's transparency is
+  // fixed at construction (next overlay open) — so there is deliberately no "apply now" channel
+  // to pretend otherwise.
+  //
+  // renderer -> main: the persisted blob {safeMode, opaqueOverlays}. Returns GraphicsPrefs.
+  graphicsPrefsGet: 'graphicsPrefs:get',
+  // renderer -> main: merge-patch the blob. VALIDATED AT THE HANDLER through the same
+  // normalizer the store reader and the 9→10 migration use. Returns what was stored.
+  graphicsPrefsSet: 'graphicsPrefs:set',
+
   // ---- feedback TRIAGE (the dev-only operator tab — src/main/triage/**) ----------------
   //
   // ============ DEV BUILDS ONLY. NO SHIPPED APP EVER REGISTERS THESE HANDLERS. ============

@@ -32,6 +32,9 @@
 //   Overlays — when the floating meters get out of the way: hide them while EverQuest isn't
 //             running (on by default) and/or while it isn't the window you're in (off).
 //             Lives in ./OverlayAutoHideSetting.tsx.
+//   Graphics — the two compatibility switches for a machine whose graphics driver dislikes what
+//             this app draws: software rendering (next launch) and solid, non-transparent
+//             overlays (next overlay open). Lives in ./GraphicsSetting.tsx, descriptor and all.
 //   Cursor ring — the opt-in white halo that follows the mouse over the EQ window (off by
 //             default; size + thickness). Lives in ./CursorRingSetting.tsx.
 //   Voice    — spoken alerts (docs/plans/voice-alerts.md §2): engine tier, default voice +
@@ -88,6 +91,9 @@ import { TelemetrySetting } from './TelemetrySetting'
 // file sits at the 400-code-line factoring ceiling, and the section's own file is the honest
 // place for the label, icon and search keywords that name it. See ./PerfSetting.tsx.
 import { perfSection } from './PerfSetting'
+// Same arrangement, same reason: the two graphics-compatibility switches name their own section
+// beside the card that renders them. See ./GraphicsSetting.tsx.
+import { graphicsSection } from './GraphicsSetting'
 // The section CARD and the arrival pulse live together in their own file — same ceiling, same
 // answer as PerfSetting's descriptor: split, don't widen the threshold.
 import PrefSectionBlock, { useLandedSection } from './PrefSectionBlock'
@@ -291,6 +297,7 @@ function buildSections(
       ]
     },
     overlaysSection(),
+    graphicsSection(),
     cursorRingSection(),
     voiceSection(),
     {

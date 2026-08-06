@@ -73,6 +73,9 @@ import type {
 // storeMigrations.ts must reach the prefs normalizer from module scope.
 import type { PerfHudPrefs, PerfSample, StartupProfile } from '../shared/perf'
 import { perfBridge } from './perf'
+// The two graphics-compatibility switches (JOS-40), spread in below for the same file-size
+// reason as perfBridge. Shapes live beside their normalizer in shared/graphicsPrefs.ts.
+import { graphicsBridge } from './graphics'
 // The DEV-ONLY triage surface (see the banner above its methods, below). Types only — the
 // contract lives in src/shared so main, preload and the renderer name one definition.
 import type {
@@ -233,6 +236,8 @@ const api = {
   // The performance HUD's five methods (./perf.ts). Spread rather than inlined for file size
   // alone; on `window.eq` they are indistinguishable from every method written out below.
   ...perfBridge,
+  // …and the two graphics-compatibility switches (./graphics.ts), for the same reason.
+  ...graphicsBridge,
 
   /**
    * Is this the headless integration-test channel (`EQ_E2E=1`, src/main/e2e.ts)?
@@ -687,15 +692,8 @@ const api = {
     ipcRenderer.invoke(IPC.triageAnalytics, days, includeOwner === true),
 
   // ---- frameless window controls (Task #23) ----
-  minimizeWindow: (): void => ipcRenderer.send(IPC.windowMinimize),
-  toggleMaximizeWindow: (): void => ipcRenderer.send(IPC.windowToggleMaximize),
-  closeWindow: (): void => ipcRenderer.send(IPC.windowClose),
-  /** Subscribe to maximize/unmaximize so the title bar can swap the max/restore icon. */
-  onWindowMaximized: (cb: (maximized: boolean) => void): (() => void) => {
-    const listener = (_e: unknown, maximized: boolean): void => cb(maximized)
-    ipcRenderer.on(IPC.onWindowMaximized, listener)
-    return () => ipcRenderer.removeListener(IPC.onWindowMaximized, listener)
-  },
+  // Moved to ./windows.ts (spread in above) — this file is at the 400-code-line ceiling, and
+  // the file about windows is where the window controls belong.
 
   /**
    * Fire-and-forget error report from the renderer (window.onerror,

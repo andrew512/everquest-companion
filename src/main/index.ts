@@ -16,9 +16,10 @@
 //   ipc/           the IPC surface, one module per domain.
 //
 // What remains here is the sequence those pieces must be assembled in, and the app lifecycle
-// that drives it. Three orderings are load-bearing and are called out at their call sites:
-// the first-import law, the epoch subscription being the LAST bus subscriber, and
-// `registerSchemesAsPrivileged` running at module scope (before `ready`).
+// that drives it. FOUR orderings are load-bearing and are called out at their call sites:
+// the first-import law, the epoch subscription being the LAST bus subscriber,
+// `registerSchemesAsPrivileged` running at module scope (before `ready`), and graphics safe mode
+// being applied at module scope for the same before-`ready` reason (graphics.ts).
 
 // FIRST import on purpose: channel.ts picks this process's `userData` dir (prod / dev /
 // e2e — Task #58) and runs the one-time state seed, before electron-store is constructed
@@ -35,6 +36,7 @@ import { saveUserOverlay } from './data/overlayPersistence'
 import { startQueueFlush, stopQueueFlush } from './feedback'
 import { startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
+import { applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
 import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
@@ -61,6 +63,16 @@ import { OVERLAY_KINDS } from '../shared/types'
 // scope; each handler itself is installed in whenReady below. Electron permits exactly ONE
 // registerSchemesAsPrivileged call, which is why both schemes go through appSchemes.ts.
 registerAppSchemes(protocol)
+
+// --- graphics safe mode (JOS-40) ---
+// FIRST STATEMENT OF THE BODY, and at module scope for a hard reason: Electron reads
+// `disableHardwareAcceleration()` while it assembles the GPU process and ignores every call that
+// arrives after `ready`. The imports above have already run, so the settings store is open and
+// migrated by now (channel.ts → store.ts, the first-import law) and this can consult a PERSISTED
+// switch at a point that precedes the app itself. `EQ_DISABLE_GPU=1` forces it for one launch
+// without any UI, which is the case it exists for: you cannot open Preferences in a window you
+// cannot see. All of the reasoning lives in graphics.ts.
+applyGraphicsSafeMode()
 
 // Cold-start stopwatch: module scope is the earliest this process can measure from, and the
 // number is bucketed (never sent raw) into `sessionStart` when the window exists. See
