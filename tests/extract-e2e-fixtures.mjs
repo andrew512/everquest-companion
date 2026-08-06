@@ -82,6 +82,11 @@ const FIXTURES_SPEC = [
     spans: [[1393700, 1394400]]
   },
   {
+    out: 'e2e-deep-link.log',
+    why: 'deep-link-back: the Overview needs a DROP row and a KILL row to click through, so this is the tightest slice that has both — two loot lines off a credited Lord Nagafen kill, plus the zone lines around them.',
+    spans: [[1393850, 1394200]]
+  },
+  {
     out: 'e2e-timeline.log',
     why: 'timeline: one long Lord Nagafen fight with a dense per-event ring — the timeline needs a selection that HAS a ring — plus the zone changes that finalize it.',
     spans: [[1398000, 1399240]]
