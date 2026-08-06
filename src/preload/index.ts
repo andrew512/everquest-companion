@@ -41,6 +41,7 @@ import type { LevelUnlockData } from '../shared/levelUnlocks'
 // main (which builds the donor rows), this bridge, and the renderer that edits the plans.
 import type { ExaltPlan, PlannerDonor, PlannerItemHit } from '../shared/planner/types'
 import type { PlannerInventory } from '../shared/planner/inventorySlots'
+import type { CharacterSheet } from '../shared/characterSheet'
 import type {
   MapGetResult,
   MapPackListResult,
@@ -380,6 +381,18 @@ const api = {
    *  `null` when no dump exists. Re-ask on `onInventoryReload` and the tab fills itself the
    *  moment the command is typed in game. */
   plannerInventory: (): Promise<PlannerInventory | null> => ipcRenderer.invoke(IPC.plannerInventory),
+  // ---- character sheet (JOS-45) ----
+  /** The armory grid + the gear sum for the active character, from their newest
+   *  `/outputfile inventory` dump; `null` when no dump exists.
+   *
+   *  UNLIKE EVERY OTHER METHOD HERE, THIS ONE CAN REJECT — and that is the design. The handler
+   *  behind it is registered only when `UNRELEASED` (src/main/unreleased.ts) is true, so in a
+   *  packaged build there is nothing on the other side and the invoke fails with Electron's own
+   *  "No handler registered for 'character:sheet'". The bridge is a door; a shipped app has no
+   *  renderer code to open it (the surface is stripped) and no handler if something tried.
+   *  Same shape as the `triage*` methods above. */
+  characterSheet: (): Promise<CharacterSheet | null> => ipcRenderer.invoke(IPC.characterSheet),
+
   /** The active character's saved exaltation sets — `[]` when it has none. */
   getExaltPlans: (): Promise<ExaltPlan[]> => ipcRenderer.invoke(IPC.plannerGetPlans),
   /** Replace the whole set list for the active character. Main re-validates every field against

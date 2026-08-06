@@ -297,6 +297,18 @@ export const IPC = {
   // typing the command in game fills the tab with no click anywhere.
   plannerInventory: 'planner:inventory',
 
+  // ---- character sheet (JOS-45) ----
+  // renderer -> main: the armory grid + the gear sum, built from the active character's newest
+  // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB
+  // corpus already lives). Returns CharacterSheet | null — null means no dump, which the tab
+  // answers with its instructions card, never an error.
+  //
+  // THIS CHANNEL IS GATED. Its handler is registered only when `UNRELEASED` (src/main/unreleased.ts)
+  // is true — dev builds, or an explicit EQ_UNRELEASED=1 — because the module has not passed the
+  // owner's review gate. In a packaged build there is no handler and the preload method rejects,
+  // which is the designed outcome: the renderer surface is stripped from those bytes entirely.
+  characterSheet: 'character:sheet',
+
   // ---- map viewer (docs/plans/map-viewer.md §4.2) ----
   // Main owns `fs` and owns effectiveEqRoot(), so main reads and parses `<eqRoot>\maps` and
   // the renderer receives columnar typed arrays (~690 KB worst case, once per zone change).

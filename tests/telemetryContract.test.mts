@@ -216,6 +216,12 @@ test('the overlay-kind list is the SAME set the app uses (the duplication cannot
   assert.deepEqual([...TELEMETRY_OVERLAY_KINDS].sort(), [...OVERLAY_KINDS].sort())
 })
 
+/** The views `appViews.ts` gates behind `UNRELEASED` — read out of its `KNOWN_VIEWS` spread. */
+function unreleasedViews(src: string): string[] {
+  const spread = /UNRELEASED \? \(\[([^\]]*)\]/.exec(src)?.[1] ?? ''
+  return [...spread.matchAll(/'([a-z]+)'/g)].map((m) => m[1])
+}
+
 test('the view list is the SAME set the app can render', () => {
   // Same duplication, same tripwire — read out of appViews.ts's source, because that module is
   // renderer-only (it reads a vite define) and cannot be imported under plain node.
@@ -224,7 +230,28 @@ test('the view list is the SAME set the app can render', () => {
   // Deduped: the union's own doc comment quotes 'triage' while explaining why it stays in.
   const declared = [...new Set([...union.matchAll(/'([a-z]+)'/g)].map((m) => m[1] as string))]
   assert.ok(declared.length > 5, 'failed to read the View union out of appViews.ts')
-  assert.deepEqual(declared.sort(), [...TELEMETRY_VIEWS].sort())
+
+  // ...MINUS the UNRELEASED views, which report NOTHING on purpose (JOS-45). A new enum value is
+  // not additive-safe: the app auto-updates and the ingest Lambda is deployed by hand, so a
+  // client that reported a view the deployed validator has not learned would 400 the whole batch
+  // and drop every counter with it. A surface no user can reach is not worth that, so it stays
+  // out of the schema until it graduates. The tripwire is UNWEAKENED — this list is read from
+  // the source, not hand-maintained here, so an ordinary new view still fails until the schema
+  // (and therefore TELEMETRY.md) learns about it.
+  const unreleased = unreleasedViews(src)
+  assert.ok(unreleased.length > 0, 'failed to read the UNRELEASED spread out of appViews.ts')
+  const reportable = declared.filter((v) => !unreleased.includes(v))
+  assert.deepEqual(reportable.sort(), [...TELEMETRY_VIEWS].sort())
+
+  // And the other half of the same rule: an unreleased view must NOT already be in the schema.
+  // Graduation is both edits at once — out of this spread, into TELEMETRY_VIEWS — and doing only
+  // one of them fails here.
+  for (const view of unreleased) {
+    assert.ok(
+      !(TELEMETRY_VIEWS as readonly string[]).includes(view),
+      `'${view}' is gated behind UNRELEASED but is already in TELEMETRY_VIEWS`
+    )
+  }
 })
 
 // ---- counts, durations and buckets -------------------------------------------------------
