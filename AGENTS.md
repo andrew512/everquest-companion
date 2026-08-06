@@ -1395,17 +1395,14 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
 
 ## Known open items
 
-- **TOOLCHAIN WAVE (security, owner-flagged 2026-08-04)**: Electron 33 is
-  EOL (Chromium 130, ~13 majors behind; 17 open advisories, most
-  foreclosed by the trust boundary — the honest residual is Chromium
-  image decoders fed by wiki-fetched icons). The wave: electron 33→43
-  PAIRED WITH electron-builder 25→26 (they travel together), and
-  vite 5→7 PAIRED WITH electron-vite 2→5 (lower urgency, dev-server
-  only). Gate with full e2e + the Windows Sandbox tier. Also stale after
-  onnxruntime-node landed: .npmrc's audited-hooks comment (it declares a
-  postinstall — verified NOT needed on win32-x64, binaries ship in the
-  tarball), electron-builder.yml's 'no native modules' comment, and the
-  installer ships ~150MB of other-platform onnx binaries (trim via
+- **TOOLCHAIN WAVE — LANDED** (was: security, owner-flagged 2026-08-04;
+  verified installed/declared 2026-08-06 during JOS-63): electron **43.2.0**,
+  vite **7.3.6**, electron-vite **5.0.0** are what the tree runs today —
+  the 33→43 / 5→7 / 2→5 upgrades this item tracked are done. Still open
+  from the same flag: .npmrc's audited-hooks comment for onnxruntime-node
+  (declares a postinstall — verified NOT needed on win32-x64, binaries ship
+  in the tarball), electron-builder.yml's 'no native modules' comment, and
+  the installer shipping ~150MB of other-platform onnx binaries (trim via
   asarUnpack filters).
 
 - **Feedback loop (the next big feature)**: fully planned + reviewed in
