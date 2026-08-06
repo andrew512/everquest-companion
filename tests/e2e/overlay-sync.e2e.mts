@@ -251,6 +251,56 @@ async function stepLockedSelector(overlay: Page): Promise<void> {
 }
 
 /**
+ * THE OVERLAY'S SCOPE CHIP (docs/plans/group-model.md §3) — the second half of "on the combat
+ * toolbar AND overlay headers", and the half with a rule of its own.
+ *
+ * The overlay gets a one-click CYCLE and no popover: two inches of transparent chrome pinned
+ * over a running game is not where a name-entry box belongs. And it must vanish while LOCKED —
+ * a click-through window may not show an affordance it cannot deliver, which is the same
+ * discipline the bars are held to just above.
+ */
+async function stepOverlayScope(overlay: Page): Promise<void> {
+  const CHIP = '[data-testid="overlay-scope-chip"]'
+  await overlay.evaluate(() => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
+  })
+  await sleep(500)
+
+  check('an INTERACTIVE overlay header carries the scope chip', (await countOf(overlay, CHIP)) === 1)
+  const label = async (): Promise<string> => (await overlay.textContent(CHIP))?.trim() ?? ''
+  const first = await label()
+  // The SAME phrasing the Combat tab shows, because both go through `chipLabel` — one wording,
+  // two renderers. Which of the two Group states the live log leaves behind is not this spec's
+  // business; that both windows would spell it identically is.
+  check(
+    'it defaults to Group, stating any fallback in the chip rather than switching scope for you',
+    first === 'Group' || first === 'Group (no roster yet)',
+    first
+  )
+
+  await overlay.click(CHIP)
+  await sleep(400)
+  check('one click cycles it — the overlay control is the cycle, with no popover', (await label()) === 'Everyone', await label())
+  // …and no roster editor came with it: that is the Combat tab's job.
+  check('the overlay offers no roster popover', (await countOf(overlay, '[data-testid="roster-open"]')) === 0)
+
+  await overlay.evaluate(() => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(true)
+  })
+  await sleep(700)
+  check('a LOCKED overlay hides the chip — no affordance it cannot deliver', (await countOf(overlay, CHIP)) === 0)
+
+  await overlay.evaluate(() => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
+  })
+  await sleep(500)
+  // PERSISTED PER SURFACE: the cycle above survived the lock round trip, because it is a stored
+  // preference rather than component state — and it is the overlay's OWN key, so the Combat tab
+  // is still on whatever the user left it on.
+  check('the overlay remembers its own scope across the lock round trip', (await label()) === 'Everyone', await label())
+}
+
+/**
  * LAUNCH 1 EXISTS TO LEAVE STATE BEHIND. This spec is written against an install that already
  * has an overlay open — its ask-first toggle below is exactly that assumption — and it used to
  * get one by inheriting whatever the previous spec left in the shared userData dir. That is not
@@ -329,6 +379,7 @@ async function main(): Promise<void> {
     }
     await stepStaleId(page, ov)
     await stepLockedSelector(ov)
+    await stepOverlayScope(ov)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'overlay-sync-FAIL')

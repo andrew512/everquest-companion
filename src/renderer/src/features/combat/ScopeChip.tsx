@@ -129,13 +129,17 @@ function RosterPanel({
         Group roster
       </Typography>
       {roster.members.length === 0 ? (
-        // NOT a zeroed list. `seen` is the difference between "we have been told nothing" — in
-        // which case the Group scope is showing everybody rather than hiding them — and "the
-        // group ended". Saying which one it is here is what keeps the fallback from reading as
-        // a bug.
+        // NOT a zeroed list, and NOT one sentence. `seen` is the difference between two empty
+        // rosters that mean opposite things, and the Group scope behaves differently in each —
+        // so saying the same words for both would make one of them a lie:
+        //
+        //   seen: false  we have been told NOTHING. Group falls back to Everyone (law 1 —
+        //                unknown must not hide people), so the meter really is showing all.
+        //   seen: true   we were told, and the group is over. Group means just you now, and
+        //                it is genuinely filtering.
         <Typography variant="caption" sx={{ display: 'block', color: 'text.disabled', mt: 0.5 }}>
           {roster.seen
-            ? 'Nobody on the roster right now — the Group scope is showing everyone.'
+            ? 'Nobody on the roster right now — the Group scope is showing you and your pets.'
             : 'No group signal yet this session — the Group scope is showing everyone.'}
         </Typography>
       ) : (

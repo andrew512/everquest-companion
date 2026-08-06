@@ -60,7 +60,7 @@ import {
 } from './appHarness.mjs'
 import { launchApp, mainWindow } from './appWindow.mjs'
 import { meterRows } from './drill.mjs'
-import { stepFrozenList, stepHealingDimension, stepRoundsPanel } from './combatSteps.mjs'
+import { stepFrozenList, stepHealingDimension, stepMeterScope, stepRoundsPanel } from './combatSteps.mjs'
 
 // ── the run, one step per numbered section ─────────────────────────────────────────────
 //
@@ -521,6 +521,7 @@ async function main(): Promise<void> {
     let snap = await stepHydration(page)
     const shape = await stepDashboardShape(page, snap)
     snap = await stepScopeAndSelector(page, snap, shape)
+    await stepMeterScope(page)
     snap = await stepCombatLogAndRegression(page, snap)
     await stepHealingDimension(page)
     await stepRoundsPanel(page)
