@@ -6,7 +6,8 @@ import { useState, type ReactNode } from 'react'
 import { Box, Collapse, Paper, Stack, Typography } from '@mui/material'
 import type { DamageCategory } from '@shared/combat'
 import { CATEGORY_LABEL } from '@shared/combat'
-import { formatNum as fmt } from '../../lib/formatRate'
+import { formatNum as fmt, formatRate } from '../../lib/formatRate'
+import { laneDps } from './petRows'
 import { MARKER_COLOR } from './markerStyle'
 import type { ProcAnnotation } from './procRows'
 import { landEvidence } from './landEvidence'
@@ -357,11 +358,19 @@ export function SkillBar({
   s,
   approx,
   nested,
+  activeSec,
   proc
 }: {
   s: SkillRow
   approx?: boolean
   nested?: boolean
+  /**
+   * The segment's active seconds. Present ⇒ the row's right end carries its OWN rate beside its
+   * total (`rate · total`, petRows.laneDps — owner ruling 2026-08-05: "every lane shows its own
+   * DPS beside its total"). Absent ⇒ the total alone, which is what a row outside a drill
+   * (an incoming source's inline expansion) has no honest divisor for.
+   */
+  activeSec?: number
   /** The proc-rate annotation, when the ledger has a lane for this skill. Absent otherwise —
    *  the row simply says nothing rather than guessing. */
   proc?: ProcAnnotation
@@ -413,7 +422,11 @@ export function SkillBar({
           </>
         }
         adorn={proc ? <ProcTag proc={proc} /> : undefined}
-        right={`${a}${fmt(s.total)}`}
+        right={
+          activeSec === undefined
+            ? `${a}${fmt(s.total)}`
+            : `${a}${formatRate(laneDps(s.total, activeSec))} · ${a}${fmt(s.total)}`
+        }
       />
       <Collapse in={open} unmountOnExit>
         <SkillReadout

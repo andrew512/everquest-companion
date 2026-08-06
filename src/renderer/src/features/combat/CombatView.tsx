@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Box, CircularProgress, Paper, Skeleton, Stack, Typography } from '@mui/material'
 import { useCombat } from './useCombat'
 import { CombatTimeline } from './CombatTimeline'
@@ -8,8 +8,7 @@ import { SegmentBody } from './SegmentPanel'
 import { DpsChartCard, MobDamageCard, type Ringless } from './CombatDashboard'
 import { BreakdownPreviewCard } from './BreakdownCard'
 import { scopeOptions, type CombatScope, type Drill, type MeterMode, type ScopeOptions } from './dashboardData'
-import { defaultDrill, selfSource } from './petRows'
-import { useCombinePetRow, useMeterScope } from './useCombatPrefs'
+import { useMeterScope } from './useCombatPrefs'
 import { EMPTY_ROSTER, type MeterScope, type RosterSnap } from '@shared/roster'
 import type { CombatFocus } from './combatFocus'
 import type { CombatSnapshot, SegmentView, SourceView, TimelineView } from '@shared/combat'
@@ -143,56 +142,35 @@ function DashboardGrid({
 }
 
 /**
- * DRILL STATE for the main panel — and the DEFAULT it opens on.
+ * DRILL STATE for the main panel — and the LEVEL it opens on.
  *
- * THE PET PREFERENCE IS THE DEFAULT ZOOM (owner direction, 2026-08-04) — `petRows.defaultDrill`
- * carries the whole rule and why. On: your breakdown with the pet nested in it as one line item.
- * Off: fully zoomed out, one bar per source. There is no second persisted bit any more: the old
- * `eq.combat.drill` made "off" still open on your (pet-less) breakdown, and let one Back click
- * quietly redefine what every later fight opened on.
+ * LEVEL 1, ALWAYS (owner ruling, 2026-08-05 — JOS-35): the tab opens on the ranked source list,
+ * one bar per combatant, and a drill is something the USER did. It used to open on your own
+ * breakdown whenever the pet preference was on (`petRows.defaultDrill`, deleted) — a shortcut
+ * from when this app assumed solo play, and one that hid every group-mate's row behind a chevron
+ * the moment the meters learned about groups.
  *
- * Three states, deliberately, not two:
- *   undefined — the user hasn't navigated within THIS selection: the preference's default level.
- *   null      — an explicit un-drill: level 1, even though the default says otherwise.
- *   Drill     — an explicit subject.
- * Collapsing null into undefined would re-drill the list the user just backed out of.
+ * Two states now, not three: `null` is level 1 and it is both the opening value and what an
+ * explicit un-drill produces, so there is nothing left for a third state to distinguish.
  *
- * Navigation NEVER writes the preference: drilling your row, a mob or a nested pet — and backing
- * out of any of them — is movement inside one fight, and the next fight still opens where the
- * preference says. (A nested pet's Back hands us its PARENT, your breakdown, not `null`; the
- * crumb spells that hierarchy out.)
+ * Navigation NEVER writes a preference: drilling your row, a mob or a nested pet — and backing
+ * out of any of them — is movement inside one fight, and the next fight still opens on level 1.
+ * (A nested pet's Back hands us its PARENT, your breakdown, not `null`; the crumb spells that
+ * hierarchy out.)
  */
 function useDashboardDrill({
-  seg,
   mode,
   selection,
   view
 }: {
-  seg: SegmentView | null
   mode: MeterMode
   selection: string
   view: 'dash' | 'timeline'
 }): { drill: Drill | null; setDrill: (d: Drill | null) => void } {
-  const [combinePetRow] = useCombinePetRow()
-  const [chosen, setChosen] = useState<Drill | null | undefined>(undefined)
+  const [drill, setDrill] = useState<Drill | null>(null)
 
-  // Incoming is a list of ENEMIES and Healing is a list of HEALERS — neither has a "your
-  // breakdown" to default into, so the pet-nesting default only ever applies to Outgoing. (The
-  // Healing dimension reuses the same `{kind:'entity'}` drill token, which is why one state
-  // machine, one Esc handler and one per-selection reset cover all three.)
-  const rows = mode === 'out' ? seg?.entities ?? [] : []
-  const selfId = selfSource(rows)?.id ?? null
-  // Memoized on the two values the answer depends on, so a live fight's per-second snapshot
-  // doesn't hand the view (and the Esc listener below) a brand-new drill object every tick.
-  const fallback = useMemo((): Drill | null => defaultDrill(selfId, combinePetRow), [selfId, combinePetRow])
-  const drill = chosen === undefined ? fallback : chosen
-
-  // Narrower than `setChosen` on purpose: a panel may name a subject or un-drill, and nothing
-  // else — `undefined` is the default's own state, not something a click can ask for.
-  const setDrill = useCallback((next: Drill | null): void => setChosen(next), [])
-
-  // A drill is per-fight and per-direction: changing either returns to the default.
-  useEffect(() => setChosen(undefined), [selection, mode])
+  // A drill is per-fight and per-direction: changing either returns to level 1.
+  useEffect(() => setDrill(null), [selection, mode])
 
   // Esc leaves the drill-down.
   useEffect(() => {
@@ -208,7 +186,7 @@ function useDashboardDrill({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [view, drill, setDrill])
+  }, [view, drill])
 
   return { drill, setDrill }
 }
@@ -298,7 +276,7 @@ export default function CombatView({
   const tl = useStableTimeline(snap?.timeline)
   const ringless = ringlessOf(tl, seg)
   const live = isLiveSelection(opts, selection)
-  const { drill, setDrill } = useDashboardDrill({ seg, mode, selection, view })
+  const { drill, setDrill } = useDashboardDrill({ mode, selection, view })
   const previewSource = previewSourceOf(seg, mode, drill)
 
   // TIMELINE AVAILABILITY. The timeline is drawn from an encounter's event ring, and a ring only

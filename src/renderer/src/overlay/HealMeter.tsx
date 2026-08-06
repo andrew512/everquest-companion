@@ -77,7 +77,6 @@ interface HealView {
   seg: SegmentView | undefined
   live: boolean
   headerName: string
-  durationSec: number
   totalHps: number
   totalTitle: string
 }
@@ -105,8 +104,7 @@ function healView(snap: CombatSnapshot | null, isFight: boolean): HealView {
   // The restored/absorbed split, phrased once (healRows) and printed by both healing surfaces.
   const totalTitle = healTotalTitle(healing)
   const live = !hydrating && !!snap?.inCombat
-  const durationSec = seg?.durationSec ?? 0
-  return { seg, live, headerName: headerNameFor(hydrating, seg, isFight), durationSec, totalHps, totalTitle }
+  return { seg, live, headerName: headerNameFor(hydrating, seg, isFight), totalHps, totalTitle }
 }
 
 /** "Reading log…" during hydration, then the segment's name — never a borrowed one. */
@@ -160,7 +158,7 @@ export default function HealMeter(): JSX.Element {
   const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
   const roster = snap?.roster ?? EMPTY_ROSTER
 
-  const { seg, live, headerName, durationSec, totalHps, totalTitle } = healView(snap, isFight)
+  const { seg, live, headerName, totalHps, totalTitle } = healView(snap, isFight)
   const selectRows = useMemo(
     () => healSelectRows(snap, isFight, now),
     // Same deps as before the extraction: the two lists the rows are built from, plus the
@@ -205,7 +203,9 @@ export default function HealMeter(): JSX.Element {
         tag={isFight ? 'HEAL · FIGHT' : 'HEAL · ZONE'}
         title={headerName}
         titleColor={HEAL_GOLD}
-        tail={`${fmtDur(durationSec)} · ${formatHealRate(totalHps)}`}
+        // The rate alone — the fight clock lives on the crumb row above the bars now, exactly as
+        // it does on the damage pair (overlay/meterCrumb.tsx; JOS-35).
+        tail={formatHealRate(totalHps)}
         tailTitle={totalTitle}
         iconAccentBg={ICON_ACCENT_GREEN}
         select={{ rows: selectRows, value: selection, onChange: selectSegment, accent: HEAL_GOLD }}

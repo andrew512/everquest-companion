@@ -17,6 +17,9 @@ import type { OverlayDrill } from '@shared/types'
 import type { HealSourceView, HealSpellView, MitigationView, SegmentView } from '@shared/combat'
 import type { MeterScope, RosterSnap } from '@shared/roster'
 import { scopeHealing } from '../features/combat/meterScope'
+import { MeterCrumb } from './meterCrumb'
+// The app's ONE `m:ss` spelling — see meterBars.tsx for why it comes from here.
+import { fmtDur } from '../features/combat/copyTable'
 import { formatNum as fmt, formatHealRate } from '../lib/formatRate'
 import {
   ABSORB_NOTE,
@@ -170,18 +173,20 @@ export function HealBars({
   // and your pets, Group keeps the healers the roster names, Everyone keeps them all. One filter
   // and one builder, so the pinned overlay and the docked tab can never rank a fight differently.
   const panel = healPanel(scopeHealing(seg?.healing, scope, roster), drill?.entityId ?? null)
+  const dur = fmtDur(seg?.durationSec ?? 0)
 
-  // Level 2: the healer's spells.
+  // Level 2: the healer's spells. Back is offered here and on every other meter kind now — the
+  // SAME component, so the four kinds cannot drift into four opinions again (JOS-35).
   if (panel.level === 2) {
     return (
-      <Crumb name={panel.subject.name} onBack={setDrill ? () => setDrill(null) : null}>
+      <MeterCrumb name={panel.subject.name} dur={dur} onBack={setDrill ? () => setDrill(null) : null}>
         {/* ONE flat ranked list: heal spells and the absorption lane together, biggest first.
             No grouping level — that is what hid the flat breakdown in the damage drill-down.
             The absorption lane is told apart by COLOR + chip, never by where it sits. */}
         {panel.rows.map((s) => (
           <SpellBar key={`${s.classification}:${s.name}`} s={s} healerKind={panel.subject.kind} />
         ))}
-      </Crumb>
+      </MeterCrumb>
     )
   }
 
@@ -189,7 +194,7 @@ export function HealBars({
 
   // Level 1: healers, then the absorption section.
   return (
-    <>
+    <MeterCrumb name={null} dur={dur} onBack={null}>
       {panel.healers.map((h, i) => (
         <HealerBar
           key={h.id}
@@ -200,7 +205,7 @@ export function HealBars({
       ))}
       {panel.mitigation && <AbsorbCounts mit={panel.mitigation} />}
       <EnemyHealedLine enemy={panel.enemy} />
-    </>
+    </MeterCrumb>
   )
 }
 
@@ -287,38 +292,6 @@ function EnemyHealedLine({
         .join(', ')}`}
     >
       enemies healed {fmt(enemy.total)}
-    </div>
-  )
-}
-
-/** A crumb header for the drill level: a back chevron when interactive, static text when locked. */
-function Crumb({
-  name,
-  onBack,
-  children
-}: {
-  name: string
-  onBack: (() => void) | null
-  children: React.ReactNode
-}): JSX.Element {
-  return (
-    <div>
-      <div
-        onClick={onBack ?? undefined}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          cursor: onBack ? 'pointer' : 'default',
-          fontSize: 11,
-          color: 'rgba(255,255,255,0.7)',
-          marginBottom: 3
-        }}
-      >
-        <span style={{ fontSize: 13 }}>{onBack ? '‹' : '·'}</span>
-        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
-      </div>
-      {children}
     </div>
   )
 }

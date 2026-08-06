@@ -207,7 +207,7 @@ export function TargetSkillBars({
         </Tooltip>
       </Stack>
       {detail.rows.map((s) => (
-        <SkillBar key={`${s.category}|${s.name}`} s={s} approx={detail.estimated} />
+        <SkillBar key={`${s.category}|${s.name}`} s={s} approx={detail.estimated} activeSec={seg.activeSec} />
       ))}
       {detail.rows.length === 0 && <QuietNote>Nothing landed on this mob in the selected segment.</QuietNote>}
     </Box>

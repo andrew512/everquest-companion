@@ -20,10 +20,14 @@ import type { OverlayDrill } from '@shared/types'
 import { CATEGORY_LABEL, type DamageCategory, type SegmentView, type SourceView } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../lib/formatRate'
 import { type FlatSkill, type SkillRow } from '../features/combat/dashboardData'
-import { defaultEntityId, meterPanel, selfSource, type OwnRow, type PetRow } from '../features/combat/petRows'
+import { laneDps, meterPanel, type OwnRow, type PetRow } from '../features/combat/petRows'
 import { useCombinePetRow } from '../features/combat/useCombatPrefs'
 import { scopeSources } from '../features/combat/meterScope'
 import { landEvidence } from '../features/combat/landEvidence'
+import { MeterCrumb } from './meterCrumb'
+// The app's ONE `m:ss` spelling, out of the MUI-free primitives module every plain-text and
+// plain-React surface already reads it from. The overlay does not get a second one.
+import { fmtDur } from '../features/combat/copyTable'
 import type { MeterScope, RosterSnap } from '@shared/roster'
 
 // Kept in step with the Combat tab's KIND_COLOR (features/combat/combatShared.tsx) — the overlay
@@ -72,6 +76,9 @@ function Bar({
 }): JSX.Element {
   return (
     <div
+      // The e2e's only anchor into the bar body: a hidden always-on-top window has no cursor, so
+      // the overlay drill spec drives these rows by selector (tests/e2e/overlay-sync.e2e.mts).
+      data-testid="overlay-bar"
       onClick={onClick}
       title={title}
       style={{
@@ -120,11 +127,11 @@ function Bar({
 // type" breakdown up and expects to find it there again. Locked mode RENDERS it (read-only,
 // static crumb, zero affordances, still fully click-through); only interactive mode can change it.
 //
-// `null` (or absent) is not "level 1", it is "no drill of your own" — and the DEFAULT ZOOM then
-// decides, from the same preference, exactly as the Combat tab's does (petRows.defaultEntityId):
-// preference on ⇒ your breakdown with the pets nested in, off ⇒ the source bars. That is what
-// makes "picking a different fight undrills" mean the same thing on both surfaces: the meter
-// returns to what the preference says it opens on, not to a level the preference rejected.
+// `null` (or absent) IS LEVEL 1 — the ranked source list — and it means exactly that on the
+// Combat tab too (JOS-35). It used to mean "no drill of your own", with the pet preference then
+// picking the opening level; that made "picking a different fight undrills" land somewhere
+// different on each surface and, with the preference on, left the meter with no way back out at
+// all. One spelling, one level, both surfaces.
 export type Drill = OverlayDrill
 
 // The row shaping — the flatten, the Slay Undead grouping, the pet nesting, the ranking and the
@@ -194,8 +201,11 @@ function skillTitle(s: SkillRow, catLabel: string): string {
   return `${head}\nBy skill:\n${lines.join('\n')}`
 }
 
-/** ONE skill/spell lane of the drilled source — category-colored, stats inside the bar. */
-function SkillLine({ s }: { s: SkillRow }): JSX.Element {
+/** ONE skill/spell lane of the drilled source — category-colored, stats inside the bar, and its
+ *  OWN rate at the right end beside its total (petRows.laneDps; owner ruling 2026-08-05). Every
+ *  row in a level-2 list therefore ends `rate · total`, exactly like the pet line and like a
+ *  level-1 source bar, so the three levels read as one column. */
+function SkillLine({ s, activeSec }: { s: SkillRow; activeSec: number }): JSX.Element {
   return (
     <Bar
       color={CAT_COLOR[s.category]}
@@ -220,7 +230,7 @@ function SkillLine({ s }: { s: SkillRow }): JSX.Element {
           <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>{skillStat(s)}</span>
         </>
       }
-      right={fmt(s.total)}
+      right={`${formatRate(laneDps(s.total, activeSec))} · ${fmt(s.total)}`}
       title={skillTitle(s, CATEGORY_LABEL[s.category])}
     />
   )
@@ -302,7 +312,7 @@ function SourceLines({
 }
 
 /** One row of a level-2 list: a lane of the subject's, or a whole pet folded into one line. */
-function ownLine(r: OwnRow, setDrill: ((d: Drill | null) => void) | null): JSX.Element {
+function ownLine(r: OwnRow, activeSec: number, setDrill: ((d: Drill | null) => void) | null): JSX.Element {
   return r.kind === 'pet' ? (
     <PetLine
       key={r.pet.id}
@@ -311,7 +321,7 @@ function ownLine(r: OwnRow, setDrill: ((d: Drill | null) => void) | null): JSX.E
       onDrill={setDrill ? () => setDrill({ entityId: r.pet.id }) : undefined}
     />
   ) : (
-    <SkillLine key={`${r.skill.category}|${r.skill.name}`} s={r.skill} />
+    <SkillLine key={`${r.skill.category}|${r.skill.name}`} s={r.skill} activeSec={activeSec} />
   )
 }
 
@@ -342,66 +352,35 @@ export function MeterBars({
   // returns the identical array by reference when nothing is filtered out, so a solo session
   // pays nothing and this memo does not churn.
   const entities = useMemo(() => scopeSources(seg?.entities ?? [], scope, roster), [seg, scope, roster])
-  // No drill of our own ⇒ the preference decides the level (the default zoom), exactly as it does
-  // on the Combat tab. A drill that resolves to nothing renders level 1 for THIS render only —
+  // No drill of our own ⇒ LEVEL 1, the ranked source list — the same thing `null` means on the
+  // Combat tab (JOS-35). A drill that resolves to nothing renders level 1 for THIS render only:
   // `meterPanel` never touches the stored value, so a restored `pet:<instanceId>` from a past
   // session, a fight that moved on, or a 'you' that blinks out between fights all re-drill
   // silently the moment the entity is back in the segment.
-  const home = defaultEntityId(selfSource(entities)?.id ?? null, combine)
   const panel = useMemo(
-    () => meterPanel(entities, combine, drill?.entityId ?? home),
-    [entities, combine, drill, home]
+    () => meterPanel(entities, combine, drill?.entityId ?? null),
+    [entities, combine, drill]
   )
+  const dur = fmtDur(seg?.durationSec ?? 0)
 
   if (!seg || (panel.level === 1 && panel.sources.length === 0)) return <MeterEmpty live={live} />
 
   if (panel.level === 2) {
-    // Back goes to the row this one was opened FROM — a nested pet's owner (your breakdown),
-    // else all the way out. It is NOT offered when this level already IS the default zoom: with
-    // the preference on, your breakdown is where the meter lives, and a back chevron that
-    // re-resolved straight back to the same view would be an affordance that does nothing.
-    const canLeave = panel.parent !== null || panel.subject.id !== home
+    // Back goes to the row this one was opened FROM — a nested pet's owner (your breakdown), else
+    // all the way out to the source list. It is offered at EVERY level-2 view there is: the
+    // meter no longer opens drilled, so there is no view that is its own home and no reason to
+    // withhold the way out (the `canLeave` gate this replaces is JOS-35's zoom-out regression).
     const out: Drill | null = panel.parent ? { entityId: panel.parent.id } : null
     return (
-      <MeterCrumb name={panel.subject.name} onBack={setDrill && canLeave ? () => setDrill(out) : null}>
-        {panel.rows.map((r) => ownLine(r, setDrill))}
+      <MeterCrumb name={panel.subject.name} dur={dur} onBack={setDrill ? () => setDrill(out) : null}>
+        {panel.rows.map((r) => ownLine(r, seg.activeSec, setDrill))}
       </MeterCrumb>
     )
   }
 
-  return <SourceLines sources={panel.sources} setDrill={setDrill} />
-}
-
-/** A crumb header for the drill-down level: a back chevron when there is somewhere to go back TO,
- *  and the SAME row as static text otherwise — locked mode (the drill still shows, nothing is
- *  clickable), and the level the preference says this meter opens on (nowhere to leave to). */
-function MeterCrumb({
-  name,
-  onBack,
-  children
-}: {
-  name: string
-  onBack: (() => void) | null
-  children: React.ReactNode
-}): JSX.Element {
   return (
-    <div>
-      <div
-        onClick={onBack ?? undefined}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          cursor: onBack ? 'pointer' : 'default',
-          fontSize: 11,
-          color: 'rgba(255,255,255,0.7)',
-          marginBottom: 3
-        }}
-      >
-        <span style={{ fontSize: 13 }}>{onBack ? '‹' : '·'}</span>
-        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
-      </div>
-      {children}
-    </div>
+    <MeterCrumb name={null} dur={dur} onBack={null}>
+      <SourceLines sources={panel.sources} setDrill={setDrill} />
+    </MeterCrumb>
   )
 }

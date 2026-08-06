@@ -75,10 +75,11 @@ export interface OverlayConfig {
    * the moment the entity reappears. Only an explicit back/undrill (or picking a different
    * fight/zone session) clears it.
    *
-   * `null` is "no drill of my own", NOT "level 1": the damage meter then opens where the shared
-   * 'Combine pet into your damage' preference says it should (renderer
-   * `features/combat/petRows.ts` — `defaultEntityId`), which is the same default zoom the Combat
-   * tab opens on. That is what keeps one preference from meaning two things on two surfaces.
+   * `null` (or absent) IS LEVEL 1 — the ranked source list, which is what every meter and the
+   * Combat tab open on (owner ruling 2026-08-05, JOS-35; renderer `features/combat/petRows.ts`).
+   * It used to mean "no drill of my own", with the pet preference then choosing the opening
+   * level; a stored `null` written under that rule reads correctly here — it is still "the level
+   * I did not drill from".
    */
   drill?: OverlayDrill | null
   /**

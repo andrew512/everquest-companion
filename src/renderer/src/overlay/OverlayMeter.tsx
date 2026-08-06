@@ -68,7 +68,6 @@ interface MeterView {
   seg: SegmentView | undefined
   live: boolean
   headerName: string
-  durationSec: number
   totalDps: number
   rows: OverlaySelectRow[]
   /** on the head row, but the head row is the LAST (finished) fight — never dress it up as live */
@@ -81,11 +80,10 @@ function headerFor(
   seg: SegmentView | undefined,
   isFight: boolean,
   hydrating: boolean
-): Pick<MeterView, 'live' | 'headerName' | 'durationSec' | 'totalDps'> {
+): Pick<MeterView, 'live' | 'headerName' | 'totalDps'> {
   return {
     live: !hydrating && !!snap?.inCombat,
     headerName: hydrating ? 'Reading log…' : seg?.name ?? (isFight ? 'No fight' : 'No zone'),
-    durationSec: seg?.durationSec ?? 0,
     totalDps: seg?.outDps ?? 0
   }
 }
@@ -155,7 +153,7 @@ export default function OverlayMeter(): JSX.Element {
   const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
   const roster = snap?.roster ?? EMPTY_ROSTER
 
-  const { seg, live, headerName, durationSec, totalDps, rows, headIsLast } = meterView(
+  const { seg, live, headerName, totalDps, rows, headIsLast } = meterView(
     snap,
     isFight,
     selection,
@@ -209,7 +207,11 @@ export default function OverlayMeter(): JSX.Element {
         last={headIsLast}
         title={headerName}
         titleColor={GOLD}
-        tail={`${fmtDur(durationSec)} · ${formatRate(totalDps)}`}
+        // THE SEGMENT'S RATE, AND NOTHING ELSE (owner ruling 2026-08-05 — JOS-35). The header is
+        // the selector: it states which fight you are watching and how hard it is going. The
+        // fight CLOCK moved down to the crumb row above the bars (overlay/meterCrumb.tsx), which
+        // is what gives a long mob name room to be read at 380px.
+        tail={formatRate(totalDps)}
         select={{ rows, value: selection, onChange: selectSegment, accent: GOLD }}
         scope={{
           label: chipLabel(meterScope, roster),
