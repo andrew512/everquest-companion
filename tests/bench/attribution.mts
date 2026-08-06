@@ -4,16 +4,21 @@
  * ============================================================================
  *
  * `foldArm.mts` folds the log; this file decides what a run of it consists of and how the result
- * is read out. Four arms, in this order, and the order is the design:
+ * is read out. Five arms over one warm-up, in this order, and the order is the design:
  *
- *   1. PARSE ONLY      — `scanLog` with no subscribers. The comparator row, and the reason the
- *                        "565k events/sec" claim in replay.bench.mts's header is reproducible from
- *                        something committed instead of from a script somebody deleted.
- *   2. FOLD, TIMING OFF — every consumer, no instrument. The honest denominator.
- *   3. FOLD, TIMING ON  — the same, with the registry/bus seam installed. The table's source.
- *   4. FOLD, TIMING OFF again.
+ *   0. A page-cache warm-up read, so the first timed arm is not the one charged for a cold 109 MB.
+ *   1. PARSE ONLY, BARE — `scanLog` with no subscribers AND no spell DB. What the deleted
+ *                        throwaway behind the "565k events/sec" claim in replay.bench.mts's header
+ *                        almost certainly measured, now reproducible from something committed.
+ *   2. PARSE ONLY, APP  — the same, with the spell DB the app installs. The honest comparator for
+ *                        the fold: a parser configured differently is a different parser. The gap
+ *                        between arms 1 and 2 is what the message-driven buff matching costs, and
+ *                        it is charged before any consumer sees a single event.
+ *   3. FOLD, TIMING OFF — every consumer, no instrument. The honest denominator.
+ *   4. FOLD, TIMING ON  — the same, with the registry/bus seam installed. The table's source.
+ *   5. FOLD, TIMING OFF again.
  *
- * ARM 4 IS THE POINT OF ARM 2. A profiler that distorts what it measures has to say so, and a
+ * ARM 5 IS THE POINT OF ARM 3. A profiler that distorts what it measures has to say so, and a
  * single before/after pair cannot tell "the instrument cost 3%" from "the machine was 3% busier".
  * Bracketing the timed arm with two untimed ones gives the overhead figure a noise floor to be
  * bigger than: if the two untimed runs disagree by more than the overhead they were supposed to
@@ -24,9 +29,9 @@
  * dispatches; two `performance.now()` calls around each would be 36 million clock reads. The
  * registry's timed loop instead reads the clock ONCE between consecutive modules (N+1 per event)
  * and differences the readings, which halves that. Whether even the halved version distorts the
- * fold is not an argument to have — it is arms 2/3/4, printed.
+ * fold is not an argument to have — it is arms 3/4/5, printed.
  */
-import { foldFull, foldParseOnly, type ConsumerCost } from './foldArm.mjs'
+import { foldFull, foldParseOnly, warmPageCache, type ConsumerCost } from './foldArm.mjs'
 
 /** A consumer's row, with the two derived figures the table renders. */
 export interface AttributedConsumer extends ConsumerCost {
@@ -38,8 +43,13 @@ export interface AttributedConsumer extends ConsumerCost {
 export interface AttributionRun {
   /** Events folded. The same bytes as the Electron arm, parsed by the same parser. */
   events: number
+  /** Parse with the spell DB the app installs — the honest comparator for the fold below. */
   parseOnlyMs: number
   parseOnlyEventsPerSec: number
+  /** Parse with NO spell DB and no character name — the bare parser, and almost certainly what
+   *  the deleted throwaway's 565k events/sec measured. */
+  bareParseMs: number
+  bareParseEventsPerSec: number
   /** The two untimed folds, in run order (ms). */
   untimedMs: [number, number]
   /** Their mean — the fold's speed with no instrument attached. */
@@ -64,7 +74,7 @@ const pct = (n: number): string => `${(n * 100).toFixed(1)}%`
 const num = (n: number): string => n.toLocaleString('en-US')
 
 /**
- * Run all four arms. Sequential and single-threaded on purpose: two folds racing on one machine
+ * Run every arm. Sequential and single-threaded on purpose: two folds racing on one machine
  * measure the scheduler.
  */
 export async function runAttribution(character: {
@@ -72,7 +82,9 @@ export async function runAttribution(character: {
   server: string
   logPath: string
 }): Promise<AttributionRun> {
-  const parse = await foldParseOnly(character)
+  await warmPageCache(character.logPath)
+  const bare = await foldParseOnly(character, { spellDb: false })
+  const parse = await foldParseOnly(character, { spellDb: true })
   const untimedA = await foldFull(character, false)
   const timed = await foldFull(character, true)
   const untimedB = await foldFull(character, false)
@@ -87,6 +99,8 @@ export async function runAttribution(character: {
     events,
     parseOnlyMs: parse.ms,
     parseOnlyEventsPerSec: parse.eventsPerSec,
+    bareParseMs: bare.ms,
+    bareParseEventsPerSec: bare.eventsPerSec,
     untimedMs: [untimedA.ms, untimedB.ms],
     foldMs,
     foldEventsPerSec: foldMs > 0 ? Math.round((events / foldMs) * 1000) : 0,
@@ -146,8 +160,15 @@ export function printAttribution(run: AttributionRun): void {
   console.log(
     `  unattributed = read + line split + parseEvent + bus dispatch + the instrument itself.`
   )
+  const us = (ms: number): string => ((ms * 1000) / Math.max(1, run.events)).toFixed(2)
   console.log(
-    `  parse only (no subscribers): ${num(Math.round(run.parseOnlyMs))} ms — ${num(run.parseOnlyEventsPerSec)} events/sec, ${((run.parseOnlyMs * 1000) / Math.max(1, run.events)).toFixed(2)} us/event`
+    `  parse only, APP parser:      ${num(Math.round(run.parseOnlyMs))} ms — ${num(run.parseOnlyEventsPerSec)} events/sec, ${us(run.parseOnlyMs)} us/event  (the spell DB installed, as the app installs it)`
+  )
+  console.log(
+    `  parse only, BARE parser:     ${num(Math.round(run.bareParseMs))} ms — ${num(run.bareParseEventsPerSec)} events/sec, ${us(run.bareParseMs)} us/event  (no spell DB, no character name)`
+  )
+  console.log(
+    `  …so the spell DB costs       ${num(Math.round(run.parseOnlyMs - run.bareParseMs))} ms — ${us(run.parseOnlyMs - run.bareParseMs)} us/event — inside the parser, before any consumer sees the event.`
   )
   console.log(
     `  fold, timing OFF:            ${num(Math.round(run.foldMs))} ms — ${num(run.foldEventsPerSec)} events/sec` +

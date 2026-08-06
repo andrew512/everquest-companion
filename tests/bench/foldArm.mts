@@ -36,13 +36,14 @@
  *     seeds the miner with the committed baseline alone. It changes which cast messages the parser
  *     recognizes at the margin, not the shape of the fold.
  */
+import { createReadStream } from 'node:fs'
 import { CombatEngine } from '../../src/main/combat/engine'
 import { EpochDetector } from '../../src/main/log/epochDetector'
 import { LogBus, type LogBusProbe, type LogEventListener } from '../../src/main/log/bus'
 import { ModuleRegistry, type ModuleDispatchTimer } from '../../src/main/modules/registry'
 import { SessionDetector } from '../../src/main/log/sessionDetector'
 import { createModules } from '../../src/main/modules/wiring'
-import { installCharacterName } from '../../src/main/log/rulesets'
+import { installCharacterName, installSpellDb } from '../../src/main/log/rulesets'
 import { MobLootIndex } from '../../src/main/mobLookupParse'
 import { scanLog } from '../../src/main/log/scanHistory'
 import { unchunkedSlicer } from '../../src/main/log/replaySlicer'
@@ -230,22 +231,50 @@ export interface FoldResult {
 const rate = (events: number, ms: number): number => (ms > 0 ? Math.round((events / ms) * 1000) : 0)
 
 /**
+ * Read the log once and throw the bytes away, so the FIRST timed arm is not the one that pays for
+ * a cold page cache. 109 MB off an NVMe is not seconds — but it is not nothing either, and it
+ * lands entirely on whichever arm runs first, which would make the arms incomparable for a reason
+ * that has nothing to do with what any of them measure.
+ */
+export async function warmPageCache(logPath: string): Promise<number> {
+  const t0 = performance.now()
+  const stream = createReadStream(logPath, { highWaterMark: 1 << 20 })
+  for await (const chunk of stream) void (chunk as Buffer).length
+  return performance.now() - t0
+}
+
+/**
  * THE COMPARATOR ARM: `scanLog` with NO subscribers — read, split, parse, emit to an empty
  * listener list. It replaces a throwaway script whose 565k events/sec number is quoted in
  * replay.bench.mts's own header and could not be reproduced from anything committed.
  *
- * It still builds the module world and throws it away, and that is not waste: `createModules`
- * installs the EFFECTIVE spell DB into the parser (spells.json + the message overlay), and a
- * parser configured differently is a different parser. The comparator has to be the same parse
- * the attributed arm performs, or the subtraction between them means nothing.
+ * IT RUNS TWICE, and the difference between the two runs is the point.
+ *
+ *   `spellDb: true` — the parser THE APP ACTUALLY INSTALLS. `createModules` builds the effective
+ *      spell DB (spells.json + the observed-message overlay) and installs it into the parser
+ *      config, which is what turns on the message-driven buffApply/buffWearOff matching: ~1.9k
+ *      spells' worth of cast-on-you / wear-off text, consulted per line. This is the honest
+ *      comparator for the attributed fold, because a parser configured differently is a different
+ *      parser and the subtraction between them would otherwise mean nothing.
+ *   `spellDb: false` — the BARE parser, with no DB and no character name. This is almost certainly
+ *      what the deleted throwaway measured, and it is here so the 565k/s number in the ledger's
+ *      history has something committed to be compared against instead of remembered.
+ *
+ * The character name matters for the same reason the DB does: the self-`/who` rule cannot fire
+ * without it (`installCharacterName`), and session.ts installs it before the replay for exactly
+ * that reason.
  */
-export async function foldParseOnly(character: {
-  name: string
-  server: string
-  logPath: string
-}): Promise<FoldResult> {
-  createModules({ overlays: [BASELINE] })
-  installCharacterName(character.name)
+export async function foldParseOnly(
+  character: { name: string; server: string; logPath: string },
+  opts: { spellDb: boolean }
+): Promise<FoldResult> {
+  if (opts.spellDb) {
+    createModules({ overlays: [BASELINE] })
+    installCharacterName(character.name)
+  } else {
+    installSpellDb(undefined)
+    installCharacterName(undefined)
+  }
   const bus = new LogBus()
   const t0 = performance.now()
   const res = await scanLog(character.logPath, bus, 0, { slicer: unchunkedSlicer() })
