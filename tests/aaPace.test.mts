@@ -37,7 +37,7 @@ import { AA_POTION_CHARGES, aaEta, aaPace, aaPotionState } from '../src/shared/a
 import { rangeStats } from '../src/shared/progressionStats'
 import type { AAEvent, LevelingSnap, ProgressionSnap } from '../src/shared/types'
 // Imported RELATIVELY: node tests run through tsx with no `@shared` / `@renderer` aliases.
-import { aaPaceTiles, potionText } from '../src/renderer/src/features/leveling/aaPaceRows'
+import { AA_EST, aaPaceLine, aaPaceTiles, potionText } from '../src/renderer/src/features/leveling/aaPaceRows'
 import { NONE, aaRateText } from '../src/renderer/src/features/leveling/rangeStatsRows'
 import { readFixture } from './harness.mts'
 
@@ -389,6 +389,27 @@ test('the potion tile shows the charges left and quotes the points the game prin
   // The model's evidence rides in the tooltip: what those charges actually paid.
   assert.match(tile?.title ?? '', /2, 2, 2, 2/)
   assert.equal(potionText(pace.potion), '1 of 5 charges · 1 quaffed')
+})
+
+test('the COMPACT line says the same thing in one line, and labels the model in one word', () => {
+  // The same window the tiles above shape, on a surface that has a caption instead of a row.
+  const t1 = T0 + HOUR
+  const gains = gainsEvery(T0 + 15 * MIN, 15 * MIN, 3, 2)
+  const prog = progWithGains(gains, T0, t1)
+  prog.lastTs = t1
+  const w = rangeStats({ snap: prog, range: { t0: T0, t1 } })
+  const line = aaPaceLine(w, aaEta(w, gains[2].ts, prog, t1))
+  // Both rates first and ADJACENT — they diverge only while a bottle runs, and that comparison
+  // is the reading. The doubled points say a bottle is running here.
+  assert.equal(line, `3.00 AA/hr · 6.00 pts/hr · next in ~5m ${AA_EST}`)
+  // The tiles carry the chip and the INFERRED sentence; the line carries neither.
+  const tiles = aaPaceTiles({ events: w.aaGainEvents, points: w.aaGained, perHourActive: w.aaPerHourActive, pointsPerHourActive: w.aaPointsPerHourActive, eta: aaEta(w, gains[2].ts, prog, t1), potion: aaPotionState(gains, []) })
+  assert.match(tiles.find((t) => t.id === 'eta')?.title ?? '', /INFERRED/)
+  assert.ok(!/INFERRED/.test(line ?? ''), 'a caption cannot carry the account the tile does')
+
+  // No completion in the window ⇒ no line at all, the same rule `aaRateText` already obeys.
+  const bare = rangeStats({ snap: progWithGains([], T0, t1), range: { t0: T0, t1 } })
+  assert.equal(aaPaceLine(bare, aaEta(bare, null, prog, t1)), null)
 })
 
 test('a refused estimate still prints a reason, and an em-dash rather than a number', () => {

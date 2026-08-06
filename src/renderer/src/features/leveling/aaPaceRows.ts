@@ -8,9 +8,10 @@
 // two are a model over them. So every shaped value carries an `inferred` flag, and every
 // inferred one carries a sentence saying what the model is and what the log actually said.
 
-import type { AaEtaBlocked, AaPace, AaPotionState } from '@shared/aaPace'
+import type { AaEta, AaEtaBlocked, AaPace, AaPotionState } from '@shared/aaPace'
+import type { RangeStats } from '@shared/progressionStats'
 import { AA_POTION_CHARGES } from '../../../../shared/aaPace'
-import { NONE } from './rangeStatsRows'
+import { NONE, aaRateText } from './rangeStatsRows'
 import { fmtDuration } from './levelChartGeometry'
 import { formatAaRate, formatPointRate } from '../../lib/formatRate'
 
@@ -155,6 +156,54 @@ export function aaPaceCaption(pace: AaPace): string {
   const n = pace.events
   if (n === 0) return 'no AA completions in this window'
   return `${n} completion${n === 1 ? '' : 's'} · ${pace.points} point${pace.points === 1 ? '' : 's'}`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// THE COMPACT READ — the same numbers on a surface that has one line, not a tile row
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The one word an INFERRED number wears on a caption line.
+ *
+ * The tiles above can afford a chip AND a sentence; a line under a glance card can afford
+ * neither without becoming a footnote, and the UI conventions are explicit that when
+ * stated-vs-inferred genuinely matters, one word beats a caveat. This is that word. The full
+ * account — what the model is, what the log actually stated — stays on the tile that owns the
+ * number, one click away on the Leveling tab.
+ */
+export const AA_EST = 'est.'
+
+/**
+ * 'next in ~12m est.' / 'next due est.', or NULL when the window states no rhythm to project
+ * from.
+ *
+ * Absent, never an em-dash with a reason attached: on a compact line a refusal would spend more
+ * words explaining itself than the answer would have taken, and `etaTile` above already carries
+ * the refusal and its reason for the surface that has room for it.
+ */
+export function aaNextText(eta: AaEta): string | null {
+  if (eta.blocked !== null) return null
+  return eta.overdue ? `next due ${AA_EST}` : `next in ~${fmtDuration(eta.ms)} ${AA_EST}`
+}
+
+/**
+ * The whole AA pace read in one line: '2.40 AA/hr · 4.80 pts/hr · next in ~12m est.'.
+ *
+ * The rates are `aaRateText`'s — the Leveling tab's own spelling of them, reused rather than
+ * re-worded, so the glance and the tab can never describe the same hour differently. Null when
+ * the window holds no completion at all: a character earning no AA is told nothing about AA
+ * (law 1), never a row of em-dashes.
+ *
+ * THE RATES LEAD AND THE ESTIMATE TRAILS, so the two rates stay ADJACENT. They are printed
+ * together on purpose — they are equal until an item-shop bottle is running and diverge while
+ * one is, and that divergence is the entire reading; an estimate wedged between them would
+ * break the comparison the pair exists to offer.
+ */
+export function aaPaceLine(stats: RangeStats, eta: AaEta): string | null {
+  const rates = aaRateText(stats)
+  if (rates === null) return null
+  const next = aaNextText(eta)
+  return next === null ? rates : `${rates} · ${next}`
 }
 
 /**

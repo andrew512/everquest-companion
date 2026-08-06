@@ -30,6 +30,10 @@
  * breadcrumb root comes back to the ledger. The class-loadout card is gone from this page (the
  * feature lives on in Preferences → Profiles), so nothing here looks for it any more.
  *
+ * WAVE 2026-08-05 (JOS-36) added one more to that panel: the AA line, the read that keeps
+ * working once the level bar caps out — both rates together and, when the window states a
+ * rhythm, an inferred wait wearing one word of label rather than a caveat sentence.
+ *
  * Run: `npm run test:e2e` (this spec runs second).
  */
 import type { Page } from 'playwright-core'
@@ -375,6 +379,25 @@ async function stepLevelingPanel(page: Page): Promise<void> {
     'the pace tile speaks the app’s rate vocabulary (never "/hr" alone, never "/s")',
     rate.includes('lvl/hr') && !rate.includes('/s'),
     rate.slice(0, 60) || 'empty'
+  )
+
+  // 11b. THE AA LINE — the read that survives the level cap (JOS-36). Conditional on the log:
+  //      an hour with no AA completion legitimately has no line, and that ABSENCE is the honest
+  //      answer (law 1) rather than a row of em-dashes, so it is noted, not failed.
+  const aa = (await textOf(page, '[data-testid="overview-leveling-aa"]')).replace(/\s+/g, ' ').trim()
+  if (aa === '') {
+    note('no AA completion in the last hour — the AA line is correctly absent (never em-dashes)')
+    return
+  }
+  check(
+    'the AA line states both rates together, in the app’s rate vocabulary (never "/s")',
+    aa.includes('AA/hr') && aa.includes('pts/hr') && !aa.includes('/s'),
+    aa.slice(0, 70)
+  )
+  check(
+    '…and its INFERRED wait is labeled in one word, never a caveat sentence',
+    (!aa.includes('next') || aa.includes('est.')) && aa.length < 70,
+    aa.slice(0, 70)
   )
 }
 

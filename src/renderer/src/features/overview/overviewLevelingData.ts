@@ -84,10 +84,22 @@
 // three-class loadout and swapping a class in drops the level with NO log line of any kind, so
 // the span across that drop covers time the log cannot account for. `progressionStats` splits
 // runs on exactly that rule (a value below the previous one opens a new run) and so does this.
+//
+// AA IS THE READ THAT SURVIVES THE CAP. Every number above is built on stated level-bar
+// percentages, and at max level the game stops stating them — so the headline goes to an
+// em-dash and the `at cap` chip exactly when the character starts caring about AA instead. The
+// AA line (`aaLine` below) is the answer that keeps working: completions per hour, points per
+// hour, and the inferred wait for the next one, all over the SAME window A the headline used.
+// It reuses the Leveling tab's own shaping (`aaPaceLine`) rather than re-wording the numbers,
+// and it is ABSENT — not em-dashed — for a window holding no completion, which is every window
+// a character not earning AA will ever have. Nothing else on the card changes shape because of
+// it: below the cap this reads exactly as it always did, plus one line whenever AA arrived.
 
 import type { ProgressionSnap } from '@shared/types'
 import type { RangeStats, ZoneRangeRow } from '@shared/progressionStats'
 import { IDLE_GAP_MS, offlineMsIn, rangeStats } from '../../../../shared/progressionStats'
+import { aaEta } from '../../../../shared/aaPace'
+import { aaPaceLine } from '../leveling/aaPaceRows'
 import { NONE, activeIdleText, idleRuleCaption, offlineText } from '../leveling/rangeStatsRows'
 import { fmtDelta, fmtDuration } from '../leveling/levelChartGeometry'
 import { formatKillRate, formatLevelRate } from '../../lib/formatRate'
@@ -417,6 +429,21 @@ function zoneCompareText(zones: readonly ZoneRangeRow[]): string | null {
   return `best this hour: ${best.zone} at ${formatLevelRate(best.levelsPerHourActive)}`
 }
 
+/**
+ * The compact AA pace read for window A, or null when there is nothing to read.
+ *
+ * The ETA's anchor is the LOG'S LAST completion (`aaGainTs` is one of the snapshot's UNCAPPED
+ * columns, so the tail is always the real last one) measured against the log's own clock — never
+ * `Date.now()`, for the same reason the window is: this card is read after alt-tabbing out.
+ * A snapshot with no completion at all hands `aaEta` a null anchor, which refuses the estimate;
+ * `aaPaceLine` then returns null because the window states no rate either, and the card shows
+ * no AA line whatsoever rather than a line made of em-dashes.
+ */
+function aaLine(snap: ProgressionSnap, hour: RangeStats): string | null {
+  const n = snap.aaGainTs.length
+  return aaPaceLine(hour, aaEta(hour, n > 0 ? snap.aaGainTs[n - 1] : null, snap, snap.lastTs))
+}
+
 /** True when the window gained experience but the log stated no percentage for ANY of it. */
 function atCap(stats: RangeStats): boolean {
   return stats.expSamples > 0 && stats.expSamples === stats.expUnstated
@@ -452,6 +479,14 @@ export interface OverviewLevelingState {
   zoneLine: string | null
   /** 'best this hour: <zone> at X lvl/hr'. Null unless window A spans 2+ rated zones. */
   zoneCompare: string | null
+  /**
+   * The AA pace read: '2.40 AA/hr · 6.00 pts/hr · next in ~12m est.'. Null when window A holds
+   * no AA completion — a character not earning AA is told nothing about it (law 1), never a row
+   * of em-dashes. The wait is INFERRED (the log carries no AA-experience line anywhere, so
+   * there is no bar position to sum) and wears the one word that says so; the trailing segment
+   * is simply ABSENT when the window states no rhythm to project from.
+   */
+  aa: string | null
   /** '~2h 10m to level 44' / '>1 day to level 44 at this pace'. Null when no honest estimate
    *  exists — the card still shows an em-dash and `etaTitle` says which hole caused it. */
   eta: string | null
@@ -493,6 +528,7 @@ function emptyState(): OverviewLevelingState {
     clipped: false,
     zoneLine: null,
     zoneCompare: null,
+    aa: null,
     eta: null,
     etaTitle: ETA_BLOCKED_TITLE['no-ding'],
     history: null,
@@ -543,6 +579,7 @@ export function overviewLeveling(snap: ProgressionSnap): OverviewLevelingState {
     clipped: a.clipped,
     zoneLine: b && zone ? zoneLineText(b, zone.zone) : null,
     zoneCompare: zoneCompareText(a.zones),
+    aa: aaLine(snap, a),
     eta: etaText(eta),
     etaTitle: etaTitleText(eta),
     history: historyText(spans),
