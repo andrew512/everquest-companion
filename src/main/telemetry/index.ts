@@ -19,6 +19,7 @@
 export {
   ensureAnalyticsId,
   noteLinesParsed,
+  noteStartupReplay,
   pendingBatch,
   platformOf,
   recordEvent,

@@ -341,6 +341,17 @@ export interface TailResult {
    * same launch throttled differently, and only this says which.
    */
   replay: ReplayDutyStats
+  /**
+   * Bytes the scan actually folded — `ScanResult.endOffset`, i.e. the end of the last COMPLETE
+   * line at or before the frozen EOF. It is the log's size to within a trailing partial line, and
+   * it is free: the scan already computed it for the tailer handoff, so nothing here stats a file
+   * a second time.
+   *
+   * Reported for the same reason the other two are: the fleet reading buckets a replay by the size
+   * of the log it read (JOS-57), because "6 s" is a fine launch on a 600 MB log and a bad one on
+   * a 2 MB log. It never leaves the process as a byte count — perf.ts turns it into a bucket.
+   */
+  logBytes: number
 }
 
 /** Point the tailer + loot history at a character (used at startup and on switch). */
@@ -407,7 +418,8 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   sendToMain(IPC.onCharacter, character)
   return {
     eventsReplayed: scan.seq,
-    replay: { slices: slicer.slices, workMs: slicer.workMs, restMs: slicer.restMs }
+    replay: { slices: slicer.slices, workMs: slicer.workMs, restMs: slicer.restMs },
+    logBytes: scan.endOffset
   }
 }
 

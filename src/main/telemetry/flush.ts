@@ -24,6 +24,7 @@ import { logInfo } from '../errorLog'
 import {
   bucketOf,
   COLD_START_MS_EDGES,
+  type StartupReplayStats,
   type TelemetryBatch,
   type TelemetryPrefs
 } from '../../shared/telemetry'
@@ -44,6 +45,7 @@ import {
   sessionUptimeMs,
   setTelemetryEnabled,
   takeLinesParsed,
+  takeStartupReplay,
   viewsVisited
 } from './collector'
 import { markFunnelStep } from './funnels'
@@ -98,6 +100,17 @@ function retireBatch(batch: TelemetryBatch, accepted: boolean): TelemetryBatch |
   return accepted ? batch : null
 }
 
+/**
+ * The optional `startup` field, spread into whichever session report drains it — `{}` when there
+ * is nothing to report, so the property is ABSENT rather than `undefined`. That matters twice: the
+ * validator's `startup === undefined` arm and JSON's own omission both mean "no reading", and an
+ * explicit `startup: undefined` key would be a third spelling of it in the payload viewer.
+ */
+function startupField(): { startup?: StartupReplayStats } {
+  const startup = takeStartupReplay()
+  return startup === undefined ? {} : { startup }
+}
+
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let flushTimer: ReturnType<typeof setInterval> | null = null
 
@@ -132,7 +145,10 @@ function startTimers(prefs: TelemetryPrefs): void {
     recordEvent({
       t: 'sessionHeartbeat',
       uptimeMs: sessionUptimeMs(),
-      linesParsed: takeLinesParsed()
+      linesParsed: takeLinesParsed(),
+      // …and this launch's startup replay, on the first heartbeat after it finished (JOS-57).
+      // Drained, so exactly one report carries it: one launch is one reading.
+      ...startupField()
     })
   }, HEARTBEAT_INTERVAL_MS)
   heartbeat.unref()
@@ -225,7 +241,10 @@ export function stopTelemetry(): void {
       viewsVisited: viewsVisited(),
       // The tail of the line delta: everything parsed since the last heartbeat. Without it every
       // session under five minutes would report zero lines, and short sessions are common.
-      linesParsed: takeLinesParsed()
+      linesParsed: takeLinesParsed(),
+      // …and the startup reading, if no heartbeat got there first — which is the common case,
+      // since most sessions end before the five-minute mark.
+      ...startupField()
     })
   }
   clearTimers()

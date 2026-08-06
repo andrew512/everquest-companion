@@ -232,9 +232,10 @@ if (!gotSingleInstanceLock) {
       .then((res) => {
         markStartupPhase('replayDone', {
           eventsReplayed: res?.eventsReplayed ?? 0,
-          // …and what the fold's duty cycle actually cost (JOS-50). Absent on a machine with no
-          // log to replay, where there was no fold to have a duty.
-          ...(res ? { replay: res.replay } : {})
+          // …and what the fold's duty cycle actually cost (JOS-50), plus how many bytes it read
+          // (JOS-57, the fleet reading's size bucket). Both absent on a machine with no log to
+          // replay, where there was no fold to have a duty and no bytes to have a size.
+          ...(res ? { replay: res.replay, bytesReplayed: res.logBytes } : {})
         })
       })
       .catch((err: unknown) => {

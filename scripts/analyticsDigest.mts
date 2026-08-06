@@ -144,6 +144,34 @@ function healthLines(d: TriageAnalyticsData): string[] {
   ]
 }
 
+/**
+ * STARTUP REPLAY, per build (JOS-57) — the terminal's copy of the tab's section, off the same
+ * `TriageAnalyticsData`, so the CLI cannot disagree with the panel.
+ *
+ * Percentiles print as bucket RANGES because that is what the counters hold; `—` means no launch
+ * on that build reported one, which is not the same fact as a fast launch. The log-size mix is
+ * printed under the rows rather than beside each of them: it belongs to no build.
+ */
+function startupLines(d: TriageAnalyticsData): string[] {
+  const s = d.startup
+  const head = ['', 'STARTUP REPLAY (per build; percentiles are bucket ranges, not exact numbers)']
+  if (s.byVersion.length === 0) return [...head, '  (no launch has reported a replay yet)']
+  return [
+    ...head,
+    ...s.byVersion.map(
+      (r) =>
+        `  ${r.version.padEnd(14)} ${String(r.launches).padStart(5)} launches` +
+        ` · replay p50 ${(r.p50ReplayLabel ?? '—').padStart(11)} p95 ${(r.p95ReplayLabel ?? '—').padStart(11)}` +
+        ` · block p50 ${(r.p50BlockLabel ?? '—').padStart(10)} p95 ${(r.p95BlockLabel ?? '—').padStart(10)}` +
+        ` · duty ${r.dutyAchieved === null ? '—' : pct(r.dutyAchieved)}` +
+        ` · ${r.meanEventsReplayed === null ? '—' : String(Math.round(r.meanEventsReplayed))} events/launch` +
+        ` · ${String(r.blocksOver50)} stalls >50ms`
+    ),
+    '  log size of measured launches (all builds)',
+    ...mixBlock(s.logSizes),
+  ]
+}
+
 function versionLines(d: TriageAnalyticsData): string[] {
   if (d.versions.length === 0) return ['', 'VERSIONS', '  (nothing recorded)']
   return [
@@ -259,6 +287,7 @@ export function renderAnalyticsDigest(
     ...adoptionLines(d),
     ...funnelLines(d),
     ...healthLines(d),
+    ...startupLines(d),
     ...versionLines(d),
     ...downloadsLines(downloads),
     ...retentionLines(d),

@@ -239,6 +239,17 @@ export const MAX_TELEMETRY_BODY_BYTES = 256 * 1024
 
 /** Ceiling for every plain count field. Well past any real session; refuses nonsense. */
 export const MAX_COUNT = 1_000_000
+/**
+ * Ceiling for a REPLAY event count, and it is deliberately not `MAX_COUNT`.
+ *
+ * MEASURED: the owner's own log is past 1.35M lines and the startup replay folds every one of
+ * them, so `MAX_COUNT` is not "well past any real session" for this one number — it sits BELOW
+ * the logs the measurement exists to describe, and clamping there would report every big log as
+ * exactly one million. `linesParsed` can live with the cap because it is a delta that keeps its
+ * remainder for the next heartbeat (collector.ts); a single launch's `eventsReplayed` has no
+ * next report to carry a remainder into, so it needs a ceiling that is genuinely out of reach.
+ */
+export const MAX_REPLAY_EVENTS = 100_000_000
 /** Ceiling for every duration field (30 days). A longer session is a broken clock. */
 export const MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -247,6 +258,84 @@ export const UUID_V4_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 /** `app.getVersion()` — semver, optionally with the CI channel prerelease tag. */
 export const APP_VERSION_RE = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/
+
+// ------------------------------------------------------- the startup replay reading (JOS-57)
+//
+// WHAT THIS IS FOR. The chunked replay (docs/plans/chunked-replay.md) and its duty cycle (JOS-50)
+// are throttles tuned on ONE developer machine against ONE 1.35M-line log. Everything the app
+// knows about whether they work is therefore a fact about that machine. These six numbers are the
+// same launch measured on machines nobody here owns — the whole point of the ticket.
+//
+// NUMBERS ONLY, and structurally so: the same posture as `updateOutcome`'s `failureClass` (a
+// message reduced to one of five words before it can reach an event). There is no field here a
+// character, a server, a zone or a PATH could go in, and the one number that would itself be
+// revealing — how big your log is — is a BUCKET INDEX before it is ever assigned.
+//
+// ONE LAUNCH IS ONE READING, and `src/main/perf.ts` enforces that at the seam: it is produced when
+// the `replayDone` startup phase lands, which happens exactly once per process (`addMark` refuses
+// a duplicate). A character SWITCH replays a log too — and is deliberately not measured, because a
+// switch replay and a launch replay are different work under different conditions, and a
+// population that mixed them could not answer "how long does starting this app take".
+
+export interface StartupReplayStats {
+  /** Wall clock of the startup replay, ms: `tailAttached` → `replayDone`. */
+  replayMs: number
+  /** Log events the historical scan folded. Ceiling `MAX_REPLAY_EVENTS`, not `MAX_COUNT`. */
+  eventsReplayed: number
+  /**
+   * The duty the fold ACHIEVED, whole percent 0..100 — measured by the slicer, never the setting
+   * it aimed at (Windows' 15.6 ms timer quantum decides what a rest is actually worth).
+   */
+  dutyPct: number
+  /** The worst single main-loop block observed during the replay, ms. */
+  maxBlockMs: number
+  /** Probe ticks that were at least 50 ms late (`STARTUP_BLOCK_THRESHOLD_MS`). */
+  blocksOver50: number
+  /** Index into `LOG_SIZE_BYTES_EDGES`. A raw byte count is a fingerprint; a decade is not. */
+  logSizeBucket: number
+}
+
+/** The raw facts the producer holds, before any of them is a legal wire value. */
+export interface StartupReplayInput {
+  replayMs: number
+  eventsReplayed: number
+  /** The duty ledger, as `shared/perf.ts ReplayDutyStats` states it. */
+  workMs: number
+  restMs: number
+  maxBlockMs: number
+  blocksOver50: number
+  /** Bytes the scan actually folded (its frozen EOF) — bucketed here, never sent raw. */
+  logBytes: number
+}
+
+/**
+ * THE ONE PLACE A READING IS BUILT, so the producer cannot invent a shape and the ceilings cannot
+ * be forgotten. Total: every field is clamped to what its own validator will accept, so an event
+ * this function returns is one this app's own validator can never refuse (a producer whose events
+ * are silently dropped at the IPC boundary would be indistinguishable from a fleet with no slow
+ * launches). The duty is computed here rather than sent as two numbers because the wire should
+ * carry the ANSWER, and `workMs`/`restMs` separately would invite a reader to re-derive it wrong.
+ */
+export function startupReplayStats(input: StartupReplayInput): StartupReplayStats {
+  const work = clampWhole(input.workMs, MAX_DURATION_MS)
+  const rest = clampWhole(input.restMs, MAX_DURATION_MS)
+  const wall = work + rest
+  return {
+    replayMs: clampWhole(input.replayMs, MAX_DURATION_MS),
+    eventsReplayed: clampWhole(input.eventsReplayed, MAX_REPLAY_EVENTS),
+    dutyPct: wall > 0 ? Math.round((work / wall) * 100) : 0,
+    maxBlockMs: clampWhole(input.maxBlockMs, MAX_DURATION_MS),
+    blocksOver50: clampWhole(input.blocksOver50, MAX_COUNT),
+    logSizeBucket: bucketOf(clampWhole(input.logBytes, Number.MAX_SAFE_INTEGER), LOG_SIZE_BYTES_EDGES)
+  }
+}
+
+/** A whole number in `[0, max]`. Non-finite reads as 0 — the producer's numbers come from timers
+ *  and a `stat()`, both of which can hand over a NaN on a bad day. */
+function clampWhole(value: number, max: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(Math.round(value), max))
+}
 
 // ---------------------------------------------------------------- the event union
 //
@@ -268,6 +357,12 @@ export const APP_VERSION_RE = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/
 //
 // That is why `linesParsed` rides on `sessionHeartbeat`/`sessionEnd` instead of arriving as its
 // own event: the client half of this feature is safe to ship BEFORE the additive infra apply.
+//
+// `startup` (JOS-57) is the SECOND measurement to take that deal, and it took it for exactly the
+// same reason. A `startupReplay` event of its own would have read better and would have blacked
+// out every counter this app collects — not just the startup ones — on every install that
+// auto-updated ahead of the Lambda deploy. What it costs instead is stated on the field itself:
+// the reading rides the next session report, so a launch killed before either one is lost.
 
 export interface EvSessionStart {
   t: 'sessionStart'
@@ -278,6 +373,8 @@ export interface EvSessionHeartbeat {
   uptimeMs: number
   /** Log lines parsed since the previous report. OPTIONAL — see THE ADDITIVE-FIELD RULE below. */
   linesParsed?: number
+  /** This launch's startup replay, if it has not been reported yet. Optional, same rule. */
+  startup?: StartupReplayStats
 }
 export interface EvSessionEnd {
   t: 'sessionEnd'
@@ -285,6 +382,8 @@ export interface EvSessionEnd {
   viewsVisited: number
   /** The tail of the same counter: lines parsed since the last heartbeat. Optional, same rule. */
   linesParsed?: number
+  /** This launch's startup replay, if no heartbeat carried it first. Optional, same rule. */
+  startup?: StartupReplayStats
 }
 export interface EvViewDwell {
   t: 'viewDwell'

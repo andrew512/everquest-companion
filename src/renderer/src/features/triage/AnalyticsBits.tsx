@@ -139,6 +139,61 @@ export function HealthSection({ data }: { data: TriageAnalyticsData }): JSX.Elem
   )
 }
 
+/**
+ * STARTUP, per build (JOS-57) — beside Health and rendered in its conventions: one line per row,
+ * tabular numerals, a caption that says what the numbers cannot answer.
+ *
+ * IT IS A TABLE OF RANGES, and deliberately so. The counters keep a histogram (a median cannot be
+ * summed), so a percentile here is the bucket it fell in — `2.5 s–5 s` — never an exact figure the
+ * storage never had. `—` is "no launch on this build reported one", which is a different fact
+ * from a fast launch and must not share a rendering with it.
+ */
+export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
+  const s = data.startup
+  return (
+    <Section title="Startup replay — per build">
+      <Typography variant="caption" color="text.secondary">
+        One reading per launch, from the machines that run it: how long reading the log history
+        took, the worst single main-loop block while it did, and the duty the fold actually
+        achieved (measured, never the setting). Percentiles are bucket ranges — the counters keep a
+        histogram, so an exact figure would be invented. Character-switch replays are not measured.
+      </Typography>
+      {s.byVersion.length === 0 ? (
+        <Typography variant="caption" color="text.secondary" data-testid="analytics-startup-empty">
+          No launch has reported a replay yet.
+        </Typography>
+      ) : (
+        <Stack spacing={0.25}>
+          {s.byVersion.map((r) => (
+            <Typography
+              key={r.version}
+              variant="caption"
+              sx={{ fontVariantNumeric: 'tabular-nums' }}
+              data-testid="analytics-startup-row"
+            >
+              <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                {r.version}
+              </Box>{' '}
+              {formatNum(r.launches)} launches · replay p50 {r.p50ReplayLabel ?? '—'} · p95{' '}
+              {r.p95ReplayLabel ?? '—'} · worst block p50 {r.p50BlockLabel ?? '—'} · p95{' '}
+              {r.p95BlockLabel ?? '—'} · duty {pctLabel(r.dutyAchieved ?? 0)} ·{' '}
+              {r.meanEventsReplayed === null ? '—' : formatNum(Math.round(r.meanEventsReplayed))}{' '}
+              events/launch · {formatNum(r.blocksOver50)} stalls over 50 ms
+            </Typography>
+          ))}
+        </Stack>
+      )}
+      <Stack spacing={0.5}>
+        <Typography variant="caption" color="text.secondary">
+          Log size of the measured launches (all builds — a log&apos;s size is a fact about the
+          player, and the context every row above is read in)
+        </Typography>
+        <MixList rows={s.logSizes} empty="No launch has reported a log size yet." />
+      </Stack>
+    </Section>
+  )
+}
+
 export function VersionsSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
   return (
     <Section title="Versions">

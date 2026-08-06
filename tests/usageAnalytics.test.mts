@@ -441,7 +441,12 @@ test('the digest prints the SAME numbers, and says so when the tables are empty'
   const text = renderAnalyticsDigest(build())
   assert.match(text, /usage analytics — last 30 days/)
   assert.match(text, /NO DATA YET/)
-  assert.match(text, /PULSE[\s\S]*ADOPTION[\s\S]*FUNNELS[\s\S]*HEALTH[\s\S]*VERSIONS[\s\S]*RETENTION/)
+  assert.match(
+    text,
+    /PULSE[\s\S]*ADOPTION[\s\S]*FUNNELS[\s\S]*HEALTH[\s\S]*STARTUP REPLAY[\s\S]*VERSIONS[\s\S]*RETENTION/
+  )
+  // An unmeasured startup says so in words; it never prints a build with zeros in it.
+  assert.match(text, /\(no launch has reported a replay yet\)/)
   // Every funnel is named even with nothing in it.
   for (const funnel of ['first-run', 'voice-install', 'feedback']) assert.ok(text.includes(funnel))
 })
