@@ -31,16 +31,28 @@ import type {
 
 // ---- UI preferences (machine-class, raw localStorage) ------------------------------
 
-export type PlannerMode = 'effects' | 'board' | 'farm'
+/**
+ * The three modes. `board` was renamed to `inventory` in V7 — the tab fills itself from the
+ * character's `/outputfile inventory` dump now, so "Board" named the layout while "Inventory"
+ * names what is in it.
+ */
+export type PlannerMode = 'effects' | 'inventory' | 'farm'
 
 const SET_KEY = 'eq.planner.set'
 const MODE_KEY = 'eq.planner.mode'
-const MODES: PlannerMode[] = ['effects', 'board', 'farm']
+const MODES: PlannerMode[] = ['effects', 'inventory', 'farm']
+
+/** What a stored mode from an older build means. One entry, and it will never grow a second. */
+const RENAMED: Record<string, PlannerMode> = { board: 'inventory' }
 
 /** The persisted mode, bounced to Effects when the stored string is not one this build renders. */
 export function loadMode(): PlannerMode {
   const v = localStorage.getItem(MODE_KEY)
-  return v !== null && (MODES as string[]).includes(v) ? (v as PlannerMode) : 'effects'
+  if (v === null) return 'effects'
+  if ((MODES as string[]).includes(v)) return v as PlannerMode
+  // A user who left the pane on the Board finds it on the Inventory tab, not bounced to Effects:
+  // the rename is ours, and it must not cost them their place.
+  return RENAMED[v] ?? 'effects'
 }
 
 function loadSelectedId(): string | null {

@@ -51,7 +51,7 @@ const SET_CHIP = '[data-testid="planner-set-chip"]'
 const EFFECT_LIST = '[data-testid="planner-effect-list"]'
 const ERA_TOGGLE = '[data-testid="planner-era-toggle"]'
 const ADD_BUTTON = '[data-testid="planner-add"]:not([disabled])'
-const MODE_BOARD = '[data-testid="planner-mode-board"]'
+const MODE_BOARD = '[data-testid="planner-mode-inventory"]'
 const MODE_FARM = '[data-testid="planner-mode-farm"]'
 const BOARD = '[data-testid="planner-board"]'
 const BOARD_CELL = '[data-testid="planner-board-cell"]'
@@ -59,6 +59,8 @@ const SOCKET_LINE = '[data-testid="planner-socket-line"]'
 const HOST_SEARCH = '[data-testid="planner-host-search"] input'
 const HOST_HIT = '[data-testid="planner-host-hit"]'
 const HOST_NAME = '[data-testid="planner-host-name"]'
+const HOST_WORN = '[data-testid="planner-host-worn"]'
+const INVENTORY_HELP = '[data-testid="planner-inventory-help"]'
 const STATE_CHIP = '[data-testid="planner-state-chip"]'
 const FARM_LIST = '[data-testid="planner-farm-list"]'
 const FARM_ROW = '[data-testid="planner-farm-row"]'
@@ -287,8 +289,16 @@ async function ensureDonorRow(page: Page): Promise<boolean> {
   return false
 }
 
-/** 5. ADDING A DONOR WRITES A SOCKET THE BOARD DRAWS. */
-async function stepAddAndBoard(page: Page): Promise<boolean> {
+/**
+ * 5. ADDING A DONOR WRITES A SOCKET THE INVENTORY TAB DRAWS.
+ *
+ * The tab is called Inventory since V7 — it fills its cells from the character's own
+ * `/outputfile inventory` dump — but what is asserted here is unchanged: eighteen cells whatever
+ * the dump says, and the socket the browser just wrote drawn in one of them. Nothing here can
+ * assume a dump exists (a fresh e2e userData has no gear knowledge at all), so the auto-fill is
+ * checked by `stepInventoryFill` as an identity: either it filled cells or it says how to.
+ */
+async function stepAddAndInventory(page: Page): Promise<boolean> {
   if (!check('an effect row expands into at least one donor', await ensureDonorRow(page), `${String(await countOf(page, ADD_BUTTON))} donors`)) {
     return false
   }
@@ -303,8 +313,8 @@ async function stepAddAndBoard(page: Page): Promise<boolean> {
   await page.click(MODE_BOARD, { timeout: 15_000 })
   const drawn = await until(async () => (await countOf(page, SOCKET_LINE)) > 0, 15_000)
   const cells = await countOf(page, BOARD_CELL)
-  check('the Board draws every equipment slot, planned or not', cells >= 18, `${String(cells)} cells`)
-  check('adding a donor from the browser writes a socket the Board draws', drawn, `${String(await countOf(page, SOCKET_LINE))} socket lines`)
+  check('the Inventory tab draws every equipment slot, planned or not', cells >= 18, `${String(cells)} cells`)
+  check('adding a donor from the browser writes a socket the Inventory tab draws', drawn, `${String(await countOf(page, SOCKET_LINE))} socket lines`)
   check(
     'each planned socket carries exactly one state chip',
     (await countOf(page, STATE_CHIP)) === (await countOf(page, SOCKET_LINE)),
@@ -342,6 +352,24 @@ async function stepHostPicker(page: Page): Promise<void> {
   await page.click(HOST_HIT, { timeout: 15_000 })
   const named = await until(async () => (await countOf(page, HOST_NAME)) > 0, 8000)
   check('picking a hit sets that cell’s host item', named, `${String(hits)} compatible hits`)
+}
+
+/**
+ * 6b. THE INVENTORY TAB EITHER FILLS ITSELF OR TEACHES THE COMMAND (V7).
+ *
+ * An identity, because the machine running this may or may not have a dump: a character whose
+ * `/outputfile inventory` exists gets `worn` hosts in its cells, and one whose does not gets the
+ * instructions card. Exactly one of those must be on screen — neither is the failure, and BOTH
+ * would mean the card is lying to someone who already ran it.
+ */
+async function stepInventoryFill(page: Page): Promise<void> {
+  const help = await countOf(page, INVENTORY_HELP)
+  const worn = await countOf(page, HOST_WORN)
+  check(
+    'the Inventory tab either fills its hosts from the dump, or says how to make one',
+    (help > 0) !== (worn > 0),
+    help > 0 ? 'no dump on this machine — the instructions card is up' : `${String(worn)} hosts filled from the dump`
+  )
 }
 
 /** 7. THE FARM ROLLUP LISTS WHAT IS LEFT — or says, honestly, that nothing is. */
@@ -412,7 +440,8 @@ async function steps(page: Page): Promise<void> {
     await stepEra(page)
     await stepNonEquip(page)
     await stepFocusFamilies(page)
-    if (await stepAddAndBoard(page)) {
+    if (await stepAddAndInventory(page)) {
+      await stepInventoryFill(page)
       await stepHostPicker(page)
       await stepFarm(page)
     }

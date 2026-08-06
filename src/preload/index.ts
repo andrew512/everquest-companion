@@ -39,6 +39,7 @@ import type { LevelUnlockData } from '../shared/levelUnlocks'
 // The exaltation planner's model (docs/plans/exaltation-planner.md §3.1) — one definition for
 // main (which builds the donor rows), this bridge, and the renderer that edits the plans.
 import type { ExaltPlan, PlannerDonor, PlannerItemHit } from '../shared/planner/types'
+import type { PlannerInventory } from '../shared/planner/inventorySlots'
 import type {
   MapGetResult,
   MapPackListResult,
@@ -369,6 +370,10 @@ const api = {
    *  shortest name; capped at 50). An empty query resolves to no hits. */
   plannerSearchItems: (query: string): Promise<PlannerItemHit[]> =>
     ipcRenderer.invoke(IPC.plannerSearchItems, query),
+  /** What the active character is WEARING, from their newest `/outputfile inventory` dump —
+   *  `null` when no dump exists. Re-ask on `onInventoryReload` and the tab fills itself the
+   *  moment the command is typed in game. */
+  plannerInventory: (): Promise<PlannerInventory | null> => ipcRenderer.invoke(IPC.plannerInventory),
   /** The active character's saved exaltation sets — `[]` when it has none. */
   getExaltPlans: (): Promise<ExaltPlan[]> => ipcRenderer.invoke(IPC.plannerGetPlans),
   /** Replace the whole set list for the active character. Main re-validates every field against

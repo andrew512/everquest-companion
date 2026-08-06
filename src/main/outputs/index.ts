@@ -20,7 +20,7 @@ import { findOutputFile } from './discovery'
 import { parseOutput, type OutputKindId, type OutputParseResult } from './kinds'
 
 export { findOutputFile } from './discovery'
-export { watchOutputFile, type OutputWatchHandlers } from './watch'
+export { watchForOutputFile, watchOutputFile, type OutputWatchHandlers } from './watch'
 export { inventoryHeldCounts, parseInventoryDump } from './inventoryParse'
 export {
   OUTPUT_KINDS,

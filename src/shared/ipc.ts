@@ -277,6 +277,13 @@ export const IPC = {
   // payload is re-validated AT THE HANDLER against the closed slot/socket/class allowlists
   // (src/main/planner/validate.ts) — renderer input is never trusted, here as everywhere.
   plannerSetPlans: 'planner:setPlans',
+  // renderer -> main: what the active character is WEARING, read from their newest
+  // `/outputfile inventory` dump and joined to the planner's slots by the hand-authored table in
+  // shared/planner/inventorySlots.ts (V7, law 12). Returns PlannerInventory | null — null means
+  // no dump exists, which the Inventory tab answers with its instructions card, never an error.
+  // The dump is re-read on demand; the renderer re-asks when `inventory:autoReloaded` fires, so
+  // typing the command in game fills the tab with no click anywhere.
+  plannerInventory: 'planner:inventory',
 
   // ---- map viewer (docs/plans/map-viewer.md §4.2) ----
   // Main owns `fs` and owns effectiveEqRoot(), so main reads and parses `<eqRoot>\maps` and

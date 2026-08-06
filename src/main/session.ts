@@ -15,6 +15,7 @@ import { IPC } from '../shared/ipc'
 import { logConsoleError, logInfo, logWarn } from './errorLog'
 import {
   characterId,
+  effectiveEqRoot,
   invalidateEqDiscovery,
   listCharacters,
   parseLogName,
@@ -29,7 +30,7 @@ import { installCharacterName } from './log/rulesets'
 import { scanLog } from './log/scanHistory'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { findInventoryFile, loadInventory } from './inventory/parseInventory'
-import { watchOutputFile } from './outputs'
+import { watchForOutputFile, watchOutputFile } from './outputs'
 import {
   bus,
   buffsModule,
@@ -366,27 +367,48 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
  * Auto-reload the active character's `*-Inventory.txt` when it changes on disk.
  * EQ rewrites this file on `/outputfile inventory`; the settle-debounced change event
  * (`outputs/watch.ts`, the shared `/outputfile` watcher layer — same chokidar settings this
- * watcher has always used) triggers a reload + a push so InventoryView and the
- * Plane-of-Sky progress refresh without a manual click.
+ * watcher has always used) triggers a reload + a push so InventoryView, the Plane-of-Sky
+ * progress and the Planner's Inventory tab refresh without a manual click.
+ *
+ * TWO WATCHERS, ONE SLOT, because the interesting case used to be uncovered (owner, 2026-08-05:
+ * "type the command, watch it fill"). A character with a dump gets the FILE watched. A character
+ * with NO dump has nothing to point a file watcher at, so the install ROOT is watched for one to
+ * appear — and that is exactly the player the Planner's instructions card is talking to. The
+ * appearance re-arms this function, which then finds the file and switches to watching it.
  */
 function startInventoryWatch(ref: CharacterRef): void {
   void inventoryWatcher?.close()
   inventoryWatcher = null
   const invPath = findInventoryFile(ref.name, ref.server)
-  if (!invPath) return
+  const onError = (err: unknown): void =>
+    logConsoleError('[everquest-companion] inventory watch error', err)
+
+  if (!invPath) {
+    inventoryWatcher = watchForOutputFile(effectiveEqRoot(), 'Inventory', {
+      onChange: () => {
+        if (character?.logPath !== ref.logPath) return
+        startInventoryWatch(ref)
+        reloadInventoryNow(ref)
+      },
+      onError
+    })
+    return
+  }
   inventoryWatcher = watchOutputFile(invPath, {
-    onChange: () => {
-      // Guard against a stale watcher firing after a character switch.
-      if (character?.logPath !== ref.logPath) return
-      const res = loadInventory(character.name, character.server)
-      if (!res) return
-      setInventory(activeCharId(), res.counts, { path: res.path, loadedAt: res.loadedAt })
-      logInfo(`[everquest-companion] Inventory auto-reloaded: ${res.path}`)
-      sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
-      sendToMain(IPC.onProgress, getProgress(activeCharId()))
-    },
-    onError: (err) => logConsoleError('[everquest-companion] inventory watch error', err)
+    onChange: () => reloadInventoryNow(ref),
+    onError
   })
+}
+
+/** Re-read the dump and push it, guarded against a stale watcher firing after a switch. */
+function reloadInventoryNow(ref: CharacterRef): void {
+  if (character?.logPath !== ref.logPath) return
+  const res = loadInventory(character.name, character.server)
+  if (!res) return
+  setInventory(activeCharId(), res.counts, { path: res.path, loadedAt: res.loadedAt })
+  logInfo(`[everquest-companion] Inventory auto-reloaded: ${res.path}`)
+  sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
+  sendToMain(IPC.onProgress, getProgress(activeCharId()))
 }
 
 /** Startup entry point: resolve a character and tail it, or idle quietly if there is none.

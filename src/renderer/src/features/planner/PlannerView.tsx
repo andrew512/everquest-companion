@@ -12,9 +12,10 @@
 // class filter's is 240px, the mode toggle's is its buttons — and the one thing carrying
 // world-supplied text, the set names, is the group allowed to scroll.
 //
-// THREE MODES, ONE SET: Effects picks what you want, Board shows where it all goes, Farm turns
+// THREE MODES, ONE SET: Effects picks what you want, Inventory shows where it all goes over the
+// gear you are actually wearing (V7 — it was called Board while it started empty), Farm turns
 // what is missing into a route. All three read the SAME selected plan, and the progress join is
-// mounted ONCE here and handed to Board and Farm — two mounts would subscribe to the inventory,
+// mounted ONCE here and handed to Inventory and Farm — two mounts would subscribe to the inventory,
 // the loot module and the observed tiers twice over to compute the identical answer.
 
 import { type JSX, useEffect, useMemo, useState } from 'react'
@@ -52,7 +53,7 @@ import { usePlans, type PlannerMode, type PlansApi } from './usePlans'
 
 const MODES: { value: PlannerMode; label: string }[] = [
   { value: 'effects', label: 'Effects' },
-  { value: 'board', label: 'Board' },
+  { value: 'inventory', label: 'Inventory' },
   { value: 'farm', label: 'Farm' }
 ]
 
@@ -215,7 +216,7 @@ function ModePane({
   progress: PlannerProgressApi
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
-  if (plans.mode === 'board') {
+  if (plans.mode === 'inventory') {
     return (
       <PlanBoard
         plan={plan}
