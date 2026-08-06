@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import { windowsApi } from './windows'
+import { rosterApi } from './roster'
 import type {
   AlertDef,
   AlertPrefs,
@@ -475,17 +476,6 @@ const api = {
   clearComboCorrection: (range: ComboRange): Promise<ComboWriteResult> =>
     ipcRenderer.invoke(IPC.comboClearCorrection, range),
 
-  // ---- group-roster edits (docs/plans/group-model.md §3) ----
-  // The roster READ path is `CombatSnapshot.roster` — it rides the snapshot both meter surfaces
-  // already poll. These two are the writes: the top rung of the provenance ladder, and the only
-  // roster state that survives a replay.
-  /** "This person is with me" / "this person is not." Name re-validated + canonicalized in main. */
-  setRosterEdit: (edit: { name: string; action: 'add' | 'remove' }): Promise<ComboWriteResult> =>
-    ipcRenderer.invoke(IPC.rosterSetEdit, edit),
-  /** "Let the log decide again" — forget the hand-made statement about this name. */
-  clearRosterEdit: (name: string): Promise<ComboWriteResult> =>
-    ipcRenderer.invoke(IPC.rosterClearEdit, { name }),
-
   onProgress: (cb: (p: ProgressState) => void): (() => void) => {
     const listener = (_e: unknown, p: ProgressState): void => cb(p)
     ipcRenderer.on(IPC.onProgress, listener)
@@ -542,6 +532,9 @@ const api = {
   // Task #54) and the celebration toast (docs/plans/celebration-toasts.md). Written next door
   // for file mass only — see preload/windows.ts, the same split perf.ts uses.
   ...windowsApi,
+  // The group roster's WRITES (docs/plans/group-model.md §3); the read rides the combat
+  // snapshot. See roster.ts for why only one direction needs a channel.
+  ...rosterApi,
 
   // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
   // Both are main-owned store blobs, so Preferences has no other door. The setters take a
