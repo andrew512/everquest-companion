@@ -25,6 +25,7 @@ import {
 import { normalizeTelemetryPrefs, type TelemetryPrefs } from '../shared/telemetry'
 import { DEFAULT_TOAST_CONFIG, normalizeToastConfig } from '../shared/toast'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
+import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { ComboCorrection } from '../shared/classCombo'
 // The exaltation planner's sets. The validator is main-side and pure; it runs on the way OUT as
 // well as in (see the accessors below), so a hand-edited store cannot poison the renderer.
@@ -128,6 +129,11 @@ interface StoreShape {
    * default — an enabled HUD is the only thing that creates the metrics poll and the lag probe.
    */
   perfHud?: PerfHudPrefs
+  /**
+   * Graphics compatibility (schema migration 9→10; JOS-40). Both switches OFF by default —
+   * see shared/graphicsPrefs.ts for why a compatibility switch that ships on is not one.
+   */
+  graphics?: GraphicsPrefs
 }
 
 /**
@@ -717,5 +723,30 @@ export function getPerfHudPrefs(): PerfHudPrefs {
 export function setPerfHudPrefs(patch: Partial<PerfHudPrefs>): PerfHudPrefs {
   const next = normalizePerfHudPrefs({ ...getPerfHudPrefs(), ...patch })
   store.set('perfHud', next)
+  return next
+}
+
+// ----- Graphics compatibility (schema v10; shared/graphicsPrefs.ts) -----
+//
+// The same read-through-the-normalizer / write-through-the-same-normalizer shape as every prefs
+// blob above, and it is read from an unusual place: `getGraphicsPrefs()` is called from the
+// composition root's MODULE SCOPE, before Electron's `ready`, because `disableHardwareAcceleration`
+// is only accepted there (src/main/graphics.ts). That is safe precisely because this file has
+// already opened and migrated the store by the time any other module body runs — the same
+// property `STORE_READY_MS` above is measuring.
+//
+// NOT part of the shared settings profile (src/main/share.ts), deliberately: these two switches
+// describe THIS MACHINE's graphics driver, and importing a friend's workaround for a card you do
+// not own is how a working install acquires someone else's bug.
+
+/** The graphics prefs, defaulted. Never throws, never returns a partial. */
+export function getGraphicsPrefs(): GraphicsPrefs {
+  return normalizeGraphicsPrefs(store.get('graphics'))
+}
+
+/** Merge-patch the graphics prefs; returns the stored (re-normalized) value. */
+export function setGraphicsPrefs(patch: Partial<GraphicsPrefs>): GraphicsPrefs {
+  const next = normalizeGraphicsPrefs({ ...getGraphicsPrefs(), ...patch })
+  store.set('graphics', next)
   return next
 }

@@ -65,6 +65,10 @@ import { normalizeTelemetryPrefs } from '../shared/telemetry'
 // performance contract, and its prefs normalizer is the one answer to "what is a valid perf-HUD
 // pref block" that the store, the IPC handler and this migration all have to agree on.
 import { normalizePerfHudPrefs } from '../shared/perf'
+// The FIFTH, and identical in kind to the third and fourth: shared/graphicsPrefs.ts is the pure,
+// ZERO-IMPORT graphics-compatibility contract, and its normalizer is the one answer to "what is a
+// valid graphics pref block" that the store, the IPC handler and this migration all share.
+import { normalizeGraphicsPrefs } from '../shared/graphicsPrefs'
 
 /** A store file, parsed. Deliberately untyped: a migration's INPUT is a shape the current
  *  code no longer describes, so `StoreShape` would be a lie at every step but the last. */
@@ -77,7 +81,7 @@ export const SCHEMA_VERSION_KEY = 'schemaVersion'
  * The schema the code running right now expects. Bump by exactly one whenever a persisted
  * shape changes, and add the matching MIGRATIONS entry in the same commit.
  */
-export const CURRENT_SCHEMA_VERSION = 9
+export const CURRENT_SCHEMA_VERSION = 10
 
 export interface Migration {
   /** Version this step produces. Steps run in ascending `to` order, contiguously. */
@@ -474,6 +478,29 @@ const migrateToV9: Migration = {
   }
 }
 
+// ------------------------------------------------ 9 → 10: the graphics compatibility switches
+//
+// JOS-40. ONE new top-level blob, holding two booleans:
+//
+//   `graphics` {safeMode:false, opaqueOverlays:false}
+//
+// OFF IS THE POLICY, not a placeholder — see shared/graphicsPrefs.ts. Hardware acceleration and
+// a see-through overlay are what every machine should get; these two switches exist for the
+// machine that cannot, and shipping either one ON would be handing every install a workaround
+// for a driver it does not have.
+//
+// Same treatment as 4→5, 5→6 and 6→7: every reader defaults, so a v9 store boots fine without
+// this step — it ships so a v10 store is a PROMISE that whatever is in the key is a complete
+// block. A malformed value is replaced by the documented default, never coerced.
+const migrateToV10: Migration = {
+  to: 10,
+  describe: 'add the graphics prefs blob (software rendering + opaque overlays, both off)',
+  migrate(data) {
+    data.graphics = normalizeGraphicsPrefs(data.graphics)
+    return data
+  }
+}
+
 /**
  * The chain, ascending. APPEND ONLY — never renumber, never edit a shipped step (a store
  * out there was migrated by the old text and will never run it again), never delete one:
@@ -487,7 +514,8 @@ export const MIGRATIONS: readonly Migration[] = [
   migrateToV6,
   migrateToV7,
   migrateToV8,
-  migrateToV9
+  migrateToV9,
+  migrateToV10
 ]
 
 /** Version recorded in `data`; anything absent, non-integer or < 1 means "pre-framework" ⇒ 1. */

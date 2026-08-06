@@ -50,6 +50,41 @@ export async function mainWindow(app: ElectronApplication, timeoutMs = 60_000): 
 }
 
 /**
+ * ONE KIND'S OVERLAY WINDOW, identified by the `?kind=` query it was opened with.
+ *
+ * It lives here for the same reason `mainWindow` does: "which of these windows is the one I mean"
+ * is one question, and answering it POSITIVELY — by what the window IS rather than by what order
+ * Playwright attached to it — is the rule that stopped this suite asserting against the toast
+ * strip. Polling covers the other half of the race: at the instant a window appears its preload
+ * may not have run yet, so the BRIDGE is the readiness signal, never the window's existence.
+ * `getFightSelection` is on every kind's overlay bridge (the cross-window selection trio), so it
+ * is the cheapest such probe and works for a meter, the event log and the toast alike.
+ */
+export async function overlayWindow(
+  app: ElectronApplication,
+  kind: string,
+  timeoutMs = 30_000
+): Promise<Page | null> {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    for (const w of app.windows()) {
+      const search = await w.evaluate(() => window.location.search).catch(() => '')
+      if (!search.includes(`kind=${kind}`)) continue
+      const ready = await w
+        .evaluate(
+          () =>
+            typeof (window as unknown as { eqOverlay?: { getFightSelection?: unknown } }).eqOverlay
+              ?.getFightSelection === 'function'
+        )
+        .catch(() => false)
+      if (ready) return w
+    }
+    await sleep(400)
+  }
+  return null
+}
+
+/**
  * THE ISOLATION UNIT IS ONE LAUNCH.
  *
  * It used to be one CHECKOUT: a single `userData` dir keyed by a hash of the repo root, shared by
@@ -135,15 +170,28 @@ export interface LaunchedApp {
  * Pass `userData` only when the assertion is ABOUT the dir surviving the process — telemetry's
  * restart, overlay-sync's persisted overlay state. Such a caller owns the dir's lifetime
  * (`makeUserData()` / `removeUserData()`); `close()` here will not delete what it did not create.
+ *
+ * Pass `env` only when the assertion is ABOUT a launch-time environment the app reads before it
+ * can be driven — `EQ_DISABLE_GPU`, whose whole point is that it is decided before Electron is
+ * ready and therefore cannot be flipped through any bridge (JOS-40). It is merged LAST, so a
+ * spec can override the harness's own variables deliberately rather than by accident.
  */
-export async function launchApp(opts: { userData?: string } = {}): Promise<LaunchedApp> {
+export async function launchApp(
+  opts: { userData?: string; env?: Record<string, string> } = {}
+): Promise<LaunchedApp> {
   const owned = opts.userData === undefined
   const userData = opts.userData ?? makeUserData()
   const app = await electron.launch({
     executablePath: electronBinary(),
     args: [MAIN_ENTRY],
     cwd: ROOT,
-    env: { ...process.env, EQ_E2E: '1', EQ_E2E_USER_DATA: userData, NODE_ENV: 'production' },
+    env: {
+      ...process.env,
+      EQ_E2E: '1',
+      EQ_E2E_USER_DATA: userData,
+      NODE_ENV: 'production',
+      ...(opts.env ?? {})
+    },
     timeout: 60_000
   })
   return {

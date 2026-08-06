@@ -1,6 +1,6 @@
-// windows.ts — the slice of the main app's bridge that is about the app's OTHER WINDOWS:
-// the floating overlays' open-state, and the celebration toast
-// (docs/plans/celebration-toasts.md).
+// windows.ts — the slice of the main app's bridge that is about WINDOWS: this window's own
+// frameless title-bar controls (Task #23), the floating overlays' open-state, and the
+// celebration toast (docs/plans/celebration-toasts.md).
 //
 // A separate file for FILE MASS, not for scope: src/preload/index.ts sits at the measured
 // 400-code-line ceiling and the rule here is to split rather than ratchet (perf.ts is the same
@@ -16,6 +16,20 @@ import type { ToastRequest } from '../shared/toast'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
 
 export const windowsApi = {
+  // ---- frameless window controls (Task #23) ----
+  // The React title bar (App.tsx) drives the native window: these mirror the OS min/max/close
+  // chrome removed with `frame: false`. They moved here from index.ts when that file hit the
+  // 400-code-line ceiling again — the same split, and this is the file about windows.
+  minimizeWindow: (): void => ipcRenderer.send(IPC.windowMinimize),
+  toggleMaximizeWindow: (): void => ipcRenderer.send(IPC.windowToggleMaximize),
+  closeWindow: (): void => ipcRenderer.send(IPC.windowClose),
+  /** Subscribe to maximize/unmaximize so the title bar can swap the max/restore icon. */
+  onWindowMaximized: (cb: (maximized: boolean) => void): (() => void) => {
+    const listener = (_e: unknown, maximized: boolean): void => cb(maximized)
+    ipcRenderer.on(IPC.onWindowMaximized, listener)
+    return () => ipcRenderer.removeListener(IPC.onWindowMaximized, listener)
+  },
+
   // ---- the floating overlays' open-state (Task #52; per-kind in Task #54) ----
   /** Toggle a kind's overlay window; resolves to the resulting open-state. */
   toggleOverlay: (kind: OverlayKind): Promise<boolean> => ipcRenderer.invoke(IPC.overlayToggle, kind),

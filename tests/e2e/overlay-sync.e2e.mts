@@ -1,7 +1,11 @@
 /**
  * Headless Electron test for the two CROSS-WINDOW rulings of
  * docs/plans/combat-overlay-parity.md — P4/P5/P6 (fight selection is GLOBAL) and P3 (a LOCKED
- * overlay keeps its selector).
+ * overlay keeps its selector) — and, since JOS-40, for HOW THE OVERLAY WINDOWS ARE BUILT: the
+ * opaque-overlay compatibility mode (an overlay reopened without transparency is still an
+ * overlay, in both modes) and graphics safe mode (a third launch, because
+ * `disableHardwareAcceleration` is decided before Electron is ready). Both live here because
+ * both are claims about the window this spec already owns.
  *
  * WHAT ONLY THE REAL APP CAN SHOW. The pure halves are pinned elsewhere: the value model and the
  * one-seam wiring in tests/fightSelection.test.mts, the locked-selector mechanism in
@@ -41,7 +45,7 @@ import {
   sleep,
   snapshot
 } from './appHarness.mjs'
-import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { launchApp, mainWindow, makeUserData, overlayWindow, removeUserData } from './appWindow.mjs'
 
 /** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
 interface OverlayBridge {
@@ -81,30 +85,9 @@ function writeSelection(page: Page, bridge: 'eq' | 'eqOverlay', id: string): Pro
   )
 }
 
-/** The overlay page for one kind, identified by the `?kind=` query its window was opened with. */
-async function findOverlay(app: ElectronApplication, kind: string): Promise<Page | null> {
-  for (const w of app.windows()) {
-    const search = await w.evaluate(() => window.location.search).catch(() => '')
-    if (search.includes(`kind=${kind}`)) return w
-  }
-  return null
-}
-
-async function waitForOverlay(app: ElectronApplication, kind: string, timeoutMs = 30_000): Promise<Page | null> {
-  const t0 = Date.now()
-  while (Date.now() - t0 < timeoutMs) {
-    const w = await findOverlay(app, kind)
-    // The window can exist a beat before its preload has run; the bridge is the real signal.
-    if (w) {
-      const ready = await w
-        .evaluate(() => typeof (window as unknown as { eqOverlay?: FightBridge }).eqOverlay?.getFightSelection === 'function')
-        .catch(() => false)
-      if (ready) return w
-    }
-    await sleep(400)
-  }
-  return null
-}
+/** The overlay page for one kind — `overlayWindow` in ./appWindow.mts, beside `mainWindow`,
+ *  because "which window is the one I mean" is one question and it is answered there. */
+const waitForOverlay = overlayWindow
 
 /** Hydration has to finish before any fight id exists to select. */
 async function waitHydrated(page: Page): Promise<boolean> {
@@ -356,6 +339,168 @@ async function stepOverlayDrill(overlay: Page): Promise<void> {
   check('…and the chevron really goes back out to the source list', (await crumbText(overlay)) === level1, await crumbText(overlay))
 }
 
+// ── JOS-40: the opaque-overlay compatibility mode ───────────────────────────────────────
+//
+// A player on an RTX 5080 reported the transparent overlays producing black-screen artifacting.
+// The mitigation is a switch that builds those windows WITHOUT transparency, and the only
+// process that can see how a window was constructed is MAIN — so this is one of the few
+// assertions in this suite that reads through `app.evaluate` rather than a page.
+//
+// WHAT THIS PROVES, and it is the whole reason the step exists: an overlay reopened in the new
+// mode is still an OVERLAY. It opens, its bridge is live, its selector is there, it locks and
+// unlocks, and its open-state persists — in BOTH modes. A compatibility switch that quietly
+// broke the window it was compensating for would be worse than the artifacting.
+
+interface GraphicsPrefsBridge {
+  getGraphicsPrefs: () => Promise<{ safeMode: boolean; opaqueOverlays: boolean }>
+  setGraphicsPrefs: (patch: Record<string, boolean>) => Promise<{
+    safeMode: boolean
+    opaqueOverlays: boolean
+  }>
+}
+
+/** How the fight overlay window was actually built, read in the main process. Identified by its
+ *  `?kind=fight` URL rather than its title — the loaded page owns the title. */
+function overlayBackground(app: ElectronApplication): Promise<string> {
+  return app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((win) =>
+      win.webContents.getURL().includes('kind=fight')
+    )
+    return w ? w.getBackgroundColor() : ''
+  })
+}
+
+/** Close the fight overlay and open it again, returning its new page. The setting applies at
+ *  CONSTRUCTION, so a reopen is the whole ceremony — exactly what the label promises. */
+async function reopenFightOverlay(app: ElectronApplication, page: Page): Promise<Page | null> {
+  await page.evaluate(async () => {
+    const eq = (window as unknown as { eq: OverlayBridge }).eq
+    if ((await eq.getOverlayState()).fight) await eq.toggleOverlay('fight')
+  })
+  await sleep(800)
+  await page.evaluate(async () => {
+    const eq = (window as unknown as { eq: OverlayBridge }).eq
+    if (!(await eq.getOverlayState()).fight) await eq.toggleOverlay('fight')
+  })
+  return waitForOverlay(app, 'fight')
+}
+
+/** The overlay still behaves like one: selector, lock round trip, persisted open-state. */
+async function checkOverlayStillWorks(page: Page, overlay: Page, mode: string): Promise<void> {
+  check(`${mode}: the reopened overlay's bridge is live and its open-state persisted`,
+    (await overlayState(page)).fight === true)
+  await overlay.evaluate(() => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
+  })
+  await sleep(500)
+  check(`${mode}: it renders its selector`, (await countOf(overlay, TRIGGER)) === 1)
+  await overlay.evaluate(() => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(true)
+  })
+  await sleep(600)
+  check(`${mode}: it locks, and the locked selector survives (ruling 3 holds in this mode too)`,
+    (await countOf(overlay, TRIGGER)) === 1)
+  await overlay.evaluate(() => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
+  })
+  await sleep(400)
+}
+
+async function stepOpaqueOverlays(app: ElectronApplication, page: Page): Promise<void> {
+  const prefs = await page.evaluate(() =>
+    (window as unknown as { eq: GraphicsPrefsBridge }).eq.getGraphicsPrefs()
+  )
+  check('a fresh install carries both graphics switches OFF', prefs.safeMode === false && prefs.opaqueOverlays === false,
+    JSON.stringify(prefs))
+
+  const transparentBg = await overlayBackground(app)
+  note(`transparent overlay background: ${transparentBg || '(none)'}`)
+
+  const written = await page.evaluate(() =>
+    (window as unknown as { eq: GraphicsPrefsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: true })
+  )
+  check('flipping the opaque-overlay switch persists it (main answers with what it stored)',
+    written.opaqueOverlays === true && written.safeMode === false, JSON.stringify(written))
+
+  const opaque = await reopenFightOverlay(app, page)
+  if (!check('the fight overlay reopens in opaque mode', opaque !== null)) return
+  const opaqueBg = await overlayBackground(app)
+  note(`opaque overlay background: ${opaqueBg || '(none)'}`)
+  // MEASURED: a transparent window reports `#000000` here, an opaque one the colour it was given.
+  // The expected value is spelled out rather than imported (the telemetry spec's precedent — an
+  // e2e file loads no src module): it is `OPAQUE_OVERLAY_BG` in src/shared/graphicsPrefs.ts, the
+  // same RGB the overlay page paints, which is what makes the mode a compatibility switch rather
+  // than a second palette.
+  check('…and it really was built differently — the window carries the solid overlay colour now',
+    opaqueBg.toLowerCase() === '#0e1115' && opaqueBg !== transparentBg, `${transparentBg} → ${opaqueBg}`)
+  await checkOverlayStillWorks(page, opaque as Page, 'opaque')
+
+  // …and back. The switch is a switch, not a one-way door.
+  await page.evaluate(() =>
+    (window as unknown as { eq: GraphicsPrefsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: false })
+  )
+  const clear = await reopenFightOverlay(app, page)
+  if (!check('the fight overlay reopens transparent again', clear !== null)) return
+  check('…and the window is back to the transparent background it started with',
+    (await overlayBackground(app)) === transparentBg, await overlayBackground(app))
+  await checkOverlayStillWorks(page, clear as Page, 'transparent')
+}
+
+/**
+ * GRAPHICS SAFE MODE, AND THE ONE THING ONLY A REAL LAUNCH CAN SAY (JOS-40).
+ *
+ * `app.disableHardwareAcceleration()` is accepted ONLY before Electron's `ready` event, which is
+ * why the composition root calls it from module scope. Get that placement wrong — move it into
+ * `whenReady`, import it a line too late — and NOTHING fails: the call silently does nothing, the
+ * app looks fine here, and the only person who finds out is the user who turned the switch on
+ * because their screen was black. So this launch asserts the OUTCOME in Chromium's own terms:
+ * with `EQ_DISABLE_GPU=1` in the environment, the process really is running with `--disable-gpu`,
+ * and it still starts all the way to a hydrated window.
+ *
+ * The ENV door is what is tested rather than the stored switch, because they meet in one function
+ * (src/main/graphics.ts) and the env half needs no second launch to write a setting first — and
+ * because it is the door a user with an unusable window is told to use, and the one JOS-31 will
+ * reuse for Wine.
+ */
+/**
+ * Ask MAIN whether Chromium got the switch, RETRYING a few times.
+ *
+ * Not flake-hiding: `app.evaluate` reaches into a main process that spends the first seconds of
+ * every launch blocked on the historical replay, and Playwright answers a call that lands in that
+ * window with "Resulting promise was garbage collected" — observed here, on a launch whose app was
+ * otherwise perfectly healthy. The FACT under test is a launch-time constant that cannot change
+ * between attempts, so asking again once the loop is free is asking the same question, not a
+ * different one.
+ */
+async function hasDisableGpuSwitch(app: ElectronApplication): Promise<boolean> {
+  for (let i = 0; i < 4; i++) {
+    try {
+      return await app.evaluate(({ app: a }) => a.commandLine.hasSwitch('disable-gpu'))
+    } catch {
+      await sleep(2_000)
+    }
+  }
+  return false
+}
+
+async function checkSafeModeLaunch(): Promise<void> {
+  console.log('launch 3: EQ_DISABLE_GPU=1 — does safe mode actually reach Chromium…')
+  const { app, close } = await launchApp({ env: { EQ_DISABLE_GPU: '1' } })
+  try {
+    const page = await mainWindow(app)
+    await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
+    check('EQ_DISABLE_GPU=1 still starts the app all the way to a drawn window', true)
+    // Hydration first: the evaluate below has to reach a main loop that is not mid-replay.
+    await waitHydrated(page)
+    check(
+      '…and the launch really is in software rendering (Chromium has --disable-gpu)',
+      await hasDisableGpuSwitch(app)
+    )
+  } finally {
+    await close()
+  }
+}
+
 /**
  * LAUNCH 1 EXISTS TO LEAVE STATE BEHIND. This spec is written against an install that already
  * has an overlay open — its ask-first toggle below is exactly that assumption — and it used to
@@ -437,6 +582,8 @@ async function main(): Promise<void> {
     await stepOverlayDrill(ov)
     await stepLockedSelector(ov)
     await stepOverlayScope(ov)
+    // LAST, because it closes and reopens the very window every step above holds a page for.
+    await stepOpaqueOverlays(app, page)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'overlay-sync-FAIL')
@@ -444,6 +591,10 @@ async function main(): Promise<void> {
     await close()
     await removeUserData(userData)
   }
+
+  // Its own launch, on its own throwaway dir: safe mode is decided before Electron is ready, so
+  // it cannot be asserted about a process that is already running.
+  await checkSafeModeLaunch()
 
   reportRun()
 }

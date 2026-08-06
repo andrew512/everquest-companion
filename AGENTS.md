@@ -1018,6 +1018,30 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   Default geometry is one uniform size for every kind, docked bottom-right
   and stacking upward with column wrap (`overlayLayout.ts`); PERSISTED bounds
   always win.
+- **GRAPHICS COMPATIBILITY IS TWO SWITCHES, AND NEITHER IS INSTANT (JOS-40).**
+  A player on an RTX 5080 reported the overlays black-screen artifacting; it
+  cannot be reproduced here and they left no contact, so the app ships
+  self-serve mitigations rather than a guess. `shared/graphicsPrefs.ts` is the
+  pure half (store `graphics`, schema v10, both default OFF — a compatibility
+  mode shipped ON is a downgrade for every machine that never needed one).
+  (a) SAFE MODE — `app.disableHardwareAcceleration()`, called from index.ts
+  MODULE SCOPE (`src/main/graphics.ts`), because Electron accepts it only
+  before `ready`; that is why the label says "next launch" and why moving the
+  call into `whenReady` would silently do nothing. `EQ_DISABLE_GPU=1` forces
+  it for one launch WITHOUT the UI — the door for a user whose window is black,
+  and the one JOS-31 (Wine) reuses: NO platform detection lives here.
+  (b) OPAQUE OVERLAYS — overlay windows built `transparent:false` on
+  `OPAQUE_OVERLAY_BG` (#0e1115, deliberately the same RGB the pages paint, so
+  it is the bgAlpha look minus the alpha, never a second palette). A window's
+  transparency is fixed at construction ⇒ applies on the next overlay OPEN.
+  The TOAST is the one kind that changes behavior: opaque, an empty strip
+  would be a solid rectangle over the game, so it is shown only while it has a
+  card — driven off the `overlay:setIgnoreMouse` signal its queue already
+  sends, never a second timer. The cursor ring is NEVER opaque (it is sized to
+  the whole EQ window). Neither switch is in the shared settings profile: they
+  describe one machine's driver. Proven end-to-end in
+  `tests/e2e/overlay-sync.e2e.mts` (both modes open/lock/persist; a third
+  launch asserts `--disable-gpu` really reached Chromium).
 
 ## Cloud (feedback backend + future web) — state as of 2026-08-04
 

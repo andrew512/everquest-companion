@@ -26,7 +26,8 @@ import { E2E } from './e2e'
 import { logError } from './errorLog'
 import { defaultOverlayBounds, overlayDefaultSize } from './overlayLayout'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
-import { getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
+import { getGraphicsPrefs, getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
+import { TRANSPARENT_OVERLAY_BG, overlayBackgroundColor } from '../shared/graphicsPrefs'
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
 // ScreenRect lives in shared/presencePrefs.ts, not shared/types.ts — see the note at the
 // bottom of types.ts (that file is at its factoring ceiling).
@@ -41,6 +42,22 @@ const overlayWindows = Object.fromEntries(OVERLAY_KINDS.map((k) => [k, null])) a
   OverlayKind,
   BrowserWindow | null
 >
+
+/**
+ * Was the LIVE toast window built OPAQUE (the JOS-40 compatibility switch)?
+ *
+ * Recorded at construction rather than re-read from the store, because transparency is fixed
+ * when a BrowserWindow is created: a user who flips the setting while an overlay is open still
+ * has a transparent window on screen, and the behavior that depends on this answer (the toast's
+ * idle visibility, below) must describe the window that EXISTS, not the setting. Only the toast
+ * needs it — every other kind fills its window and behaves identically either way.
+ */
+let opaqueToastWindow = false
+
+/** Is that opaque toast window currently drawing nothing? Only ever consulted while
+ *  `opaqueToastWindow` is true — see `applyOpaqueToastVisibility`, which owns this value.
+ *  True to start, because an empty strip is the toast's resting state. */
+let opaqueToastIdle = true
 
 /** The main window while it exists (null before creation / after close). */
 export function getMainWindow(): BrowserWindow | null {
@@ -406,6 +423,39 @@ export function setOverlayIgnoreMouse(kind: OverlayKind, ignore: boolean): void 
   if (!w || w.isDestroyed()) return
   if (ignore) w.setIgnoreMouseEvents(true, { forward: kind !== 'toast' })
   else w.setIgnoreMouseEvents(false)
+  applyOpaqueToastVisibility(kind, ignore)
+}
+
+/**
+ * THE ONE KIND OPACITY CHANGES THE BEHAVIOR OF (JOS-40): the celebration toast.
+ *
+ * Every other overlay is a panel that fills its window — opaque, it looks like the same meter
+ * with its see-through taken away, and nothing else about it moves. The toast is the opposite:
+ * it is a mostly-EMPTY strip whose resting state is an invisible window, so building it opaque
+ * would park a solid dark rectangle across the top of the game forever. That is not a
+ * compatibility mode, it is a new bug.
+ *
+ * So an opaque toast window is SHOWN ONLY WHEN IT HAS SOMETHING TO SHOW, and this function reads
+ * that state off the signal the overlay already sends: `overlay:setIgnoreMouse`. The toast
+ * renderer's rule (ToastOverlay.useMouseCapture) is `ignore = !ready ? true : locked ? !hasCards
+ * : false` — i.e. it asks to be ignored in exactly the states where it is drawing nothing, and to
+ * capture the moment a card is on screen or the user is positioning it unlocked. One signal, one
+ * meaning, no second timer in main that could disagree with the queue.
+ *
+ * Transparent windows are untouched: the empty transparent strip is already invisible, and
+ * hiding/showing it on every card would be churn for no pixel.
+ */
+function applyOpaqueToastVisibility(kind: OverlayKind, idle: boolean): void {
+  if (kind !== 'toast' || !opaqueToastWindow) return
+  opaqueToastIdle = idle
+  const w = overlayWindows.toast
+  if (!w || w.isDestroyed()) return
+  if (idle && w.isVisible()) w.hide()
+  // Idle is done here; and E2E never shows a window (src/main/e2e.ts is the whole test mode).
+  if (idle || E2E || w.isVisible()) return
+  w.showInactive()
+  w.setAlwaysOnTop(true, 'screen-saver')
+  raiseCursorRing()
 }
 
 /** Apply the locked/interactive mouse + focus behavior to a kind's overlay window. */
@@ -449,6 +499,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
     if (!E2E) existing.show()
     return
   }
+  // OPAQUE-OVERLAY COMPATIBILITY MODE (JOS-40). Read here, at construction, because that is the
+  // only moment a window's transparency can be decided — which is exactly why the setting is
+  // documented as applying when an overlay is next opened rather than instantly.
+  const opaque = getGraphicsPrefs().opaqueOverlays
+  if (kind === 'toast') opaqueToastWindow = opaque
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
     minWidth: 200,
@@ -462,7 +517,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
     resizable: kind !== 'toast',
     show: false,
     frame: false,
-    transparent: true,
+    // THE ONE FLAG THE COMPATIBILITY SWITCH EXISTS FOR. A transparent window is composited by the
+    // driver per pixel, and that is the path a player's RTX 5080 turned into black-screen
+    // artifacting (JOS-40) — unreproducible here, so the app ships a way out instead of a guess.
+    // Opaque, this is an ordinary window on a solid background and none of that path runs.
+    transparent: !opaque,
     // Never take focus from the game when it appears (locked mode). We also avoid
     // adding it to the taskbar — it's an accessory of the main app.
     skipTaskbar: true,
@@ -474,8 +533,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
     // the main app while playing must never take the overlays down with it.
     type: 'toolbar',
     // A transparent window can't have a native background; element rgba does the
-    // translucency (per-element alpha beats window-level setOpacity).
-    backgroundColor: '#00000000',
+    // translucency (per-element alpha beats window-level setOpacity). Opaque, it is the SAME
+    // RGB the page already paints, so the meter simply loses its see-through and keeps its
+    // colour — the alpha slider still works, it just has nothing left to show through to
+    // (shared/graphicsPrefs.ts).
+    backgroundColor: overlayBackgroundColor(opaque),
     hasShadow: false,
     title: OVERLAY_TITLE[kind],
     // Same hardened posture as the main window — one definition, every window (see
@@ -505,6 +567,14 @@ export function createOverlayWindow(kind: OverlayKind): void {
   w.on('ready-to-show', () => {
     // E2E: overlays stay hidden too (they're always-on-top — showing one would cover the game).
     if (E2E) return
+    // An OPAQUE toast opens HIDDEN and is brought up by its own queue (see
+    // applyOpaqueToastVisibility). Showing it here would put a solid rectangle over the game for
+    // the moment between first paint and the renderer's first capture signal — the very thing
+    // this mode exists to avoid.
+    if (kind === 'toast' && opaque) {
+      applyOverlayLocked(kind, getOverlayConfig(kind).locked)
+      return
+    }
     // showInactive so opening the overlay never steals focus from the game.
     w.showInactive()
     w.setAlwaysOnTop(true, 'screen-saver')
@@ -590,6 +660,9 @@ export function setOverlaysHidden(hidden: boolean): void {
       continue
     }
     if (E2E || w.isVisible()) continue
+    // An OPAQUE toast with nothing queued must not come back as a solid rectangle: its
+    // visibility belongs to its queue, and the next card brings it up (JOS-40).
+    if (kind === 'toast' && opaqueToastWindow && opaqueToastIdle) continue
     w.showInactive()
     w.setAlwaysOnTop(true, 'screen-saver')
     applyOverlayLocked(kind, getOverlayConfig(kind).locked)
@@ -657,7 +730,11 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
     focusable: false,
     skipTaskbar: true,
     type: 'toolbar',
-    backgroundColor: '#00000000',
+    // NEVER OPAQUE, whatever the JOS-40 compatibility switch says: this window is sized to the
+    // WHOLE EverQuest window and holds one small circle. Opaque, it would not be a cursor aid,
+    // it would be a lid over the game. A user on a driver that cannot composite transparency
+    // turns the ring off; there is no solid version of it to offer.
+    backgroundColor: TRANSPARENT_OVERLAY_BG,
     hasShadow: false,
     title: 'Cursor Ring',
     // Same hardened posture as every other window in this app — ONE definition (WEB_PREFERENCES).

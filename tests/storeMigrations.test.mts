@@ -194,6 +194,9 @@ test('an EMPTY pre-framework store migrates to a valid current store, not to jun
     overlayAutoHide: { hideWhenNotRunning: true, hideWhenUnfocused: false },
     telemetry: { enabled: true, noticeShown: false, analyticsId: null },
     perfHud: { enabled: false },
+    // Both graphics-compatibility switches off (v10, JOS-40): software rendering and opaque
+    // overlays are workarounds for a driver, and a fresh store has no driver complaint.
+    graphics: { safeMode: false, opaqueOverlays: false },
     [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION
   })
 })
