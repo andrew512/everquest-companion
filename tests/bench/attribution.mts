@@ -111,7 +111,7 @@ function row(cells: { name: string; events: number; ms: number; share: number })
   const us = ((cells.ms * 1000) / Math.max(1, cells.events)).toFixed(2)
   return (
     `  ${cells.name.padEnd(24)}${num(cells.events).padStart(11)}` +
-    `${num(Math.round(cells.ms)).padStart(11)}${us.padStart(11)}${pct(cells.share).padStart(9)}`
+    `${num(Math.round(cells.ms)).padStart(11)}${us.padStart(11)}${pct(cells.share).padStart(11)}`
   )
 }
 
@@ -125,7 +125,7 @@ export function printAttribution(run: AttributionRun): void {
   console.log(`  ATTRIBUTION — in-process fold, ${num(run.events)} events (no Electron; see foldArm.mts)`)
   console.log('')
   console.log(
-    `  ${'consumer'.padEnd(24)}${'events'.padStart(11)}${'total ms'.padStart(11)}${'us/event'.padStart(11)}${'% of fold'.padStart(9)}`
+    `  ${'consumer'.padEnd(24)}${'events'.padStart(11)}${'total ms'.padStart(11)}${'us/event'.padStart(11)}${'% of fold'.padStart(11)}`
   )
   for (const c of run.consumers) {
     console.log(row({ name: c.consumer, events: c.events, ms: c.totalMs, share: c.pctOfFold }))
@@ -138,7 +138,7 @@ export function printAttribution(run: AttributionRun): void {
       share: run.timedFoldMs > 0 ? run.unattributedMs / run.timedFoldMs : 0
     })
   )
-  console.log('  ' + '-'.repeat(66))
+  console.log('  ' + '-'.repeat(68))
   console.log(
     row({ name: 'fold total (timed)', events: run.events, ms: run.timedFoldMs, share: 1 })
   )
