@@ -17,6 +17,7 @@ import {
   setOverlayIgnoreMouse,
   setOverlayOpen
 } from '../windows'
+import { OVERLAY_KINDS } from '../../shared/types'
 import type { AppFocus, AppFocusView, OverlayConfig, OverlayKind } from '../../shared/types'
 
 /** A non-empty display string, or undefined. Trimmed only for the emptiness test — the receiving
@@ -90,7 +91,23 @@ export function registerWindowIpc(): void {
   ipcMain.handle(IPC.overlayGetState, () => overlayStateMap())
   ipcMain.handle(IPC.overlayGetConfig, (_e, kind: OverlayKind) => getOverlayConfig(kind))
   ipcMain.handle(IPC.overlaySetConfig, (_e, kind: OverlayKind, patch: Partial<OverlayConfig>) => {
-    const next = setOverlayConfig(kind, patch ?? {})
+    // TEXT SCALE IS ONE VALUE ACROSS EVERY OVERLAY (owner, 2026-08-05: scaling the fight meter
+    // and watching the overall meter not move reads as broken). The field still LIVES per kind
+    // (config shape untouched, every reader unchanged) — this setter is the one door every
+    // patch walks through, so a textScale write simply fans out to all kinds and every open
+    // overlay window hears its own echo. A locked window with hidden controls follows along,
+    // which is half the point.
+    const p = patch ?? {}
+    if (p.textScale !== undefined) {
+      let out: OverlayConfig | null = null
+      for (const k of OVERLAY_KINDS) {
+        const merged = setOverlayConfig(k, k === kind ? p : { textScale: p.textScale })
+        getOverlayWindow(k)?.webContents.send(IPC.onOverlayConfig, { kind: k, config: merged })
+        if (k === kind) out = merged
+      }
+      return out ?? setOverlayConfig(kind, {})
+    }
+    const next = setOverlayConfig(kind, p)
     // Echo the merged config to that kind's overlay window so its UI stays in sync if the change
     // originated elsewhere (keeps the contract honest and cheap).
     getOverlayWindow(kind)?.webContents.send(IPC.onOverlayConfig, { kind, config: next })

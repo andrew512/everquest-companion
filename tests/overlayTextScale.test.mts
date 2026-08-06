@@ -115,6 +115,15 @@ test('NO NEW CHANNEL: the scale rides the existing per-kind overlay config', () 
   assert.doesNotMatch(stepper, /ipcRenderer|window\.eqOverlay\./, 'and reaches for no channel of its own')
 })
 
+test('ONE SCALE FOR EVERY OVERLAY: a textScale patch fans out to all kinds (owner, 2026-08-05)', () => {
+  // Scaling the fight meter and watching the overall meter not move reads as broken. The field
+  // still lives per kind; the ONE setter every patch walks through is where the value becomes
+  // shared — each kind written, each open window echoed.
+  const ipc = src('../src/main/ipc/windowControls.ts')
+  const fanout = /if \(p\.textScale !== undefined\) \{[\s\S]*?for \(const k of OVERLAY_KINDS\) \{[\s\S]*?setOverlayConfig\(k, k === kind \? p : \{ textScale: p\.textScale \}\)[\s\S]*?send\(IPC\.onOverlayConfig/
+  assert.match(ipc, fanout, 'the overlaySetConfig handler fans a textScale write out to every kind and echoes every window')
+})
+
 // ---- the rendering rule -----------------------------------------------------------------
 
 test('the zoom is applied in exactly ONE place: the content pane', () => {
