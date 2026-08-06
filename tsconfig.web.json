@@ -41,6 +41,8 @@
     // …and `roster.ts` (the group roster's user edits), likewise.
     "src/preload/roster.ts",
     // …and `graphics.ts` (the two graphics-compatibility switches), likewise.
-    "src/preload/graphics.ts"
+    "src/preload/graphics.ts",
+    // …and `dev.ts` (the dev-only restart button's one method, JOS-61), likewise.
+    "src/preload/dev.ts"
   ]
 }

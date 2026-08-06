@@ -18,8 +18,10 @@
 // Stacks.
 
 import { type JSX, useCallback, useEffect, useState } from 'react'
-import { Box, FormControlLabel, Stack, Switch, Typography } from '@mui/material'
+import { Box, Button, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 import SpeedIcon from '@mui/icons-material/Speed'
+import RestartAltIcon from '@mui/icons-material/RestartAlt'
+import { DEV_TOOLS } from '../../devFlags'
 import {
   DEFAULT_PERF_HUD_PREFS,
   formatMs,
@@ -126,6 +128,54 @@ function StartupBreakdown({ profile }: { profile: StartupProfile }): JSX.Element
 }
 
 /**
+ * DEV-ONLY: relaunch the app (JOS-61).
+ *
+ * IT LIVES HERE, under the startup breakdown, because that is the readout it exists to refresh:
+ * hand-testing startup performance is restart → read the new phases → repeat, and the two halves
+ * of that loop belong on one card. (The other candidate was the dev-triage nav row, which is
+ * where dev tooling lives — but the triage tab is about the feedback backlog, and a restart
+ * button parked in it would be a second, unrelated meaning for that surface.)
+ *
+ * `DEV_TOOLS` folds to a compile-time literal (src/renderer/src/devFlags.ts, anchored on
+ * `import.meta.env.DEV`), so in `electron-vite build` its one call site reads `false && …`,
+ * rollup deletes the branch and then this now-unreferenced function with it. A COMPONENT rather
+ * than a module-level element for exactly that reason (NavDrawer's note): a top-level `jsx()`
+ * call is not something rollup can prove side-effect free and would keep the strings alive,
+ * while a function nobody calls is plainly dead. MEASURED on `npm run build` output, not
+ * assumed: `Restart app`, `restartApp` and `dev:restart` are all absent from `out/renderer`,
+ * which is the shape every packaged build and every e2e launch runs.
+ *
+ * The chip, not a tooltip, says what this is (the UI conventions' tooltip diet). Nothing
+ * confirms: the whole point is that it is one click, and main's handler refuses outright in a
+ * packaged build anyway (src/main/devRestart.ts).
+ */
+function DevRestartRow(): JSX.Element {
+  return (
+    <Stack direction="row" alignItems="center" spacing={1}>
+      <Button
+        size="small"
+        variant="outlined"
+        startIcon={<RestartAltIcon fontSize="small" />}
+        data-testid="pref-dev-restart"
+        onClick={() => {
+          // Fire-and-forget: the process is gone before the reply could arrive.
+          void window.eq.restartApp()
+        }}
+      >
+        Restart app
+      </Button>
+      <Chip
+        size="small"
+        label="dev only"
+        variant="outlined"
+        color="warning"
+        sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.75 } }}
+      />
+    </Stack>
+  )
+}
+
+/**
  * The Preferences section this card belongs to — its label, icon and search keywords.
  *
  * It lives HERE rather than in PreferencesView (where its four siblings do) because that file
@@ -196,6 +246,8 @@ export function PerfSetting(): JSX.Element {
           No startup breakdown recorded yet.
         </Typography>
       )}
+
+      {DEV_TOOLS && <DevRestartRow />}
     </Stack>
   )
 }

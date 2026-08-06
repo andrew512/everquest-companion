@@ -18,6 +18,7 @@ import { registerCharacterIpc } from './character'
 import { registerCharacterSheetIpc } from './characterSheet'
 import { registerClipboardIpc } from './clipboard'
 import { registerComboIpc } from './combo'
+import { registerDevIpc } from './dev'
 import { registerFeedbackIpc } from './feedback'
 import { registerGraphicsIpc } from './graphics'
 import { registerKnowledgeIpc } from './knowledge'
@@ -63,4 +64,8 @@ export function registerIpc(): void {
   registerTelemetryIpc()
   registerPerfIpc()
   registerGraphicsIpc()
+  // Registered in EVERY build, and a no-op in a packaged one — the refusal lives inside the
+  // handler rather than around this call, so it is a decision a test can watch being made.
+  // See ./dev.ts.
+  registerDevIpc()
 }
