@@ -95,8 +95,9 @@ export const PET_CLAIM_RE =
 /**
  * THE PET-RESPONSE VOCABULARY — the six exact sentences a pet says OUT LOUD, in the order the
  * whole-log sweep counted them (calm 61, regroup 29, comply 13, illegal-target 7, follow 2,
- * hold 1). PUBLIC, so they identify a pet but never WHOSE — see the carve-out note above and
- * combat/petCandidates.ts for what the app is allowed to do with one.
+ * hold 1). PUBLIC, so they identify a pet but never WHOSE — which is why, since JOS-49, the app
+ * is allowed to do NOTHING with one beyond parse it and let an alert fire on it. See the
+ * carve-out note above for why the scrub keeps them anyway.
  *
  * Exported as sentences rather than as one regex so the parser can name WHICH response it saw
  * without a second table: `PET_SAY_RE` below is built from this list, and the parser matches

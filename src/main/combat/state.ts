@@ -414,11 +414,11 @@ export class EngineState {
    * the other end. Being hit is something that HAPPENS to you; hitting is something you DO, and
    * only the second one names a mob.
    *
-   * It is deliberately BEHAVIOURAL rather than a catalog lookup, and that is not a compromise —
-   * petCandidates.ts already excludes proper-named mobs (`Cleric of Innoruuk`, `Lord of
-   * Loathing`) by this exact reasoning, and it works identically for a mob no catalog has ever
-   * heard of. `Lord of Loathing` is in the shipped catalog and `a fire giant warrior` is too;
-   * neither fact is consulted, and the fix would hold if both were absent.
+   * It is deliberately BEHAVIOURAL rather than a catalog lookup, and that is not a compromise:
+   * it works identically for a mob no catalog has ever heard of. `Lord of Loathing` is in the
+   * shipped catalog and `a fire giant warrior` is too; neither fact is consulted, and the fix
+   * would hold if both were absent. (The deleted pet-candidate detector excluded proper-named
+   * mobs — `Cleric of Innoruuk`, `Lord of Loathing` — by this same reasoning, JOS-49.)
    *
    * ONE DIRECTION ONLY, and that is measured too. The refusal fires when your own damage came
    * FIRST; it does not RETIRE a filing the heal got in ahead of. Full replays say that ordering

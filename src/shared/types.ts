@@ -734,27 +734,24 @@ export interface ProgressState {
    */
   rosterEdits?: RosterEdit[]
   /**
-   * PET CLAIMS (JOS-47, shared/petClaims.ts). Character-scoped, like everything else here, and
-   * the one piece of pet state the log can never tell us again: a summoned pet that is never
-   * ORDERED sends no `… Master.'` tell, so nothing in the file says it is yours.
+   * PET CLAIMS (JOS-47) — RETIRED AND UNREAD SINCE JOS-49. Nothing writes this key and nothing
+   * reads it; the accessors that did are gone from src/main/store.ts along with the question
+   * they answered ("<Name> — your pet?", cut by the owner: "if you just have to pet attack once,
+   * this is a lot of work we can get wrong").
    *
-   * NOT time-keyed, and that is the difference from `rosterEdits` above. A roster edit describes
-   * a GROUP, and a group ends; "Vararab is my pet" describes a class ability, and the next pet
-   * you summon has a different random name anyway — a claim that expired on a timer would simply
-   * lose the user their answer. It is cleared by the same thing that clears everything else
-   * about a character: a rebirth (epoch), which re-keys the store entry outright.
-   *
-   * Additive and optional — every reader defaults on a missing key, so no schema bump and no
-   * migration (the `exaltPlans` / `rosterEdits` precedent above).
+   * IT STAYS ON THE TYPE ON PURPOSE. A v0.4.x user's answers are still in their store file, and
+   * deleting them would be destroying that user's own statements to tidy up our types; a
+   * migration that dropped the key would make going back to a build that reads them lossy.
+   * electron-store rewrites the whole parsed object, so an unread key round-trips for free.
+   * Delete it only if the feature is ever ruled out for good and the data is worth nothing.
    */
   petClaims?: PetClaimEdit[]
 }
 
 /**
- * ONE hand-made statement about a pet: "this is mine" or "this is not". The provenance ladder's
- * top rung (shared/roster.ts `outranks`, same rule) — a later log line can neither undo it nor
- * be undone by it, and a message-grade binding signal arriving afterwards simply CONFIRMS the
- * claim rather than competing with it (state.ts applyPetClaim: both walk one door).
+ * ONE hand-made statement about a pet: "this is mine" or "this is not" — the shape of the
+ * RETIRED claim store above. Kept only so `ProgressState.petClaims` can go on describing bytes
+ * that are already on disk; nothing constructs one any more (JOS-49).
  */
 export interface PetClaimEdit {
   /** Canonical identity key — `idKey(name)`. */

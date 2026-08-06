@@ -387,13 +387,19 @@ export type PetSayKind = 'follow' | 'regroup' | 'calm' | 'hold' | 'comply' | 'il
  * precisely the failure Task #65 spent a wave undoing for charm broadcasts, which are
  * broadcasts for the same reason.
  *
- * What it does is NOMINATE: `combat/petCandidates.ts` pairs it with "…and that entity is
- * fighting the target YOU are fighting" and offers the user a claim. Evidence, never ownership.
+ * IT ALSO NO LONGER NOMINATES. It used to pair with "…and that entity is fighting the target
+ * YOU are fighting" to put a "<Name> — your pet?" question above the meter; the owner cut that
+ * outright (JOS-49 — "if you just have to pet attack once, this is a lot of work we can get
+ * wrong"), so the combat engine consumes this event nowhere at all. It still PARSES, and it is
+ * still in the alert-trigger vocabulary (shared/logEventKinds.ts), so a user can alert on their
+ * pet answering a command. JOS-52 is where a say gets a real job: `<Name> says, 'My leader is
+ * <You>.'` — the /pet who leader answer, which unlike these six NAMES ITS OWNER OUT LOUD.
  *
  * MEASURED (whole-log sweep, 1.4M lines, JOS-47): 113 of these exist across 6 sentence forms.
  * 85 came from a name an EARLIER private tell had already bound (so binding on the say would
  * have added nothing at all), 22 from a name a LATER tell bound, and 6 from names no tell ever
- * bound — that last six is the entire population this event is for.
+ * bound — six lines of upside against adopting a stranger's pet, which is the trade that got
+ * the question deleted rather than tuned.
  */
 export interface PetSayEvent extends LogEventBase {
   kind: 'petSay'
