@@ -46,7 +46,7 @@
 // landings + wear-offs, loot/currency/turn-ins, zone lines, level-ups, AA, charm/pet lines,
 // stances, and system messages.
 //
-// TWO CARVE-OUTS, both load-bearing, both checked BEFORE the drop list:
+// THREE CARVE-OUTS, all load-bearing, all checked BEFORE the drop list:
 //
 //   * THE PET-CLAIM TELL —
 //       `<Name> told you, 'Attacking <target> Master.'`
@@ -56,6 +56,27 @@
 //     the 3403 `told you` lines in the log are this family; the rest are merchant NPCs.
 //     Dropping it would silently unbind every pet in every combat fixture, so it is kept
 //     verbatim. It has NO self-name dependency: a pet's name is not the user's.
+//
+//   * THE PET-VOICED SAY FAMILY (JOS-47) —
+//       `<Name> says, 'Following you, Master.'`
+//       `<Name> says, 'Now regrouping, master.'`
+//       `<Name> says, 'Sorry, Master... calming down.'`
+//       `<Name> says, 'Now holding, Master.  I will not start new attacks until ordered.'`
+//       `<Name> says, 'As you wish, oh great one.'`
+//       `<Name> says, 'I beg forgiveness, Master.  That is not a legal target.'`
+//     Six EXACT sentences — the complete pet-response vocabulary in the 1.4M-line corpus (113
+//     lines; the sweep that enumerated them also proved there is no seventh, and that every
+//     OTHER quote containing "master" is mob flavor: "None shall defile the realm of our
+//     master!", "Uninvited guests to our master's home…", `<X>'s corpse says, 'Innoruuk, I have
+//     failed you!'`). Same argument as the tell above: an NPC pet speaks them, never a person,
+//     and the SPEAKER is a pet's name — either a random summoned name (Kober, Vabn) or a mob
+//     name (`a large heart spider`). No player's words and no player's name can ride this out.
+//
+//     Kept for a reason the tell's carve-out does not share: these lines are PUBLIC, so they
+//     can NEVER bind on their own (another player's pet in earshot says exactly the same
+//     words). What they do is NOMINATE — they are the evidence behind the meter's
+//     "<Name> — your pet?" offer, and a fixture that cannot carry them cannot test the offer.
+//     An exact-sentence match rather than a `Master` pattern is the whole safety of it.
 //
 //   * THE SELF `/who` ROW — `opts.selfName`. The owner's own identity is theirs to publish,
 //     and their row is the ONLY line in the log that states the class loadout
@@ -70,6 +91,39 @@
 /** The owner-only pet-claim tell — an NPC pet's binding signal, NOT a person's words. */
 export const PET_CLAIM_RE =
   /told you, '(?:Attacking .+ Master|I am unable to wake .+?, Master)\.'$/
+
+/**
+ * THE PET-RESPONSE VOCABULARY — the six exact sentences a pet says OUT LOUD, in the order the
+ * whole-log sweep counted them (calm 61, regroup 29, comply 13, illegal-target 7, follow 2,
+ * hold 1). PUBLIC, so they identify a pet but never WHOSE — see the carve-out note above and
+ * combat/petCandidates.ts for what the app is allowed to do with one.
+ *
+ * Exported as sentences rather than as one regex so the parser can name WHICH response it saw
+ * without a second table: `PET_SAY_RE` below is built from this list, and the parser matches
+ * the same list to derive its `say` discriminant. One vocabulary, two readers.
+ */
+export const PET_SAY_LINES = [
+  ['follow', 'Following you, Master.'],
+  ['regroup', 'Now regrouping, master.'],
+  ['calm', 'Sorry, Master... calming down.'],
+  ['hold', 'Now holding, Master.  I will not start new attacks until ordered.'],
+  ['comply', 'As you wish, oh great one.'],
+  ['illegalTarget', 'I beg forgiveness, Master.  That is not a legal target.']
+] as const
+
+/** Regex metacharacters in the sentences are literal (`...`, `.`). */
+function reEscape(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * `<Name> says, '<one of the six>'` — the pet-voiced PUBLIC say. Anchored on the whole line
+ * body and on the exact sentence, so a mob growl that merely contains the word "master"
+ * ("None shall defile the realm of our master!") can never match. Capture 1 is the speaker.
+ */
+export const PET_SAY_RE = new RegExp(
+  `^(.+?) says, '(${PET_SAY_LINES.map(([, s]) => reEscape(s)).join('|')})'$`
+)
 
 export interface ScrubOpts {
   /** The character whose own `/who` row survives. Fixtures: 'Primitive'. A user's report:
@@ -140,11 +194,14 @@ function cachedSelfWhoRe(selfName: string): RegExp {
 
 /**
  * True when the line is third-party chat/social and must be DROPPED from a public artifact.
- * The pet-claim carve-out and the owner's own `/who` row are checked FIRST.
+ * The two pet carve-outs and the owner's own `/who` row are checked FIRST.
  */
 export function isThirdPartyChat(line: string, opts?: ScrubOpts): boolean {
   if (PET_CLAIM_RE.test(line)) return false
   const b = body(line)
+  // The pet-voiced PUBLIC say. Anchored on the body (the tell's regex above is a suffix match
+  // and needs no strip), and on the exact sentence — see PET_SAY_RE.
+  if (PET_SAY_RE.test(b)) return false
   const selfName = opts?.selfName
   // the owner's own /who row (`[50 PAL/MNK/ENC] Primitive (Dark Elf) ...`) is their identity
   if (selfName !== undefined && selfName !== '' && cachedSelfWhoRe(selfName).test(b))

@@ -36,6 +36,10 @@ export type LogEventKind =
   | 'uncharm'
   | 'cc'
   | 'petClaim'
+  // A pet's PUBLIC response ("Following you, Master.", "Sorry, Master... calming down." — the
+  // six in shared/logScrub.ts). Somebody's pet spoke; whose is never stated, which is why the
+  // combat model only nominates on it (JOS-47).
+  | 'petSay'
   | 'castBegin'
   | 'castFizzle'
   | 'castInterrupted'

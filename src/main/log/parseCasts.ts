@@ -4,7 +4,8 @@
 // DB-gated message-driven buff events, and — matched LAST of all — spell-landing emotes.
 // Every regex, table and comment here is verbatim from the single-pass parser.
 
-import type { LogEvent } from '../../shared/logEvents'
+import type { LogEvent, PetSayKind } from '../../shared/logEvents'
+import { PET_SAY_LINES, PET_SAY_RE } from '../../shared/logScrub'
 import type { PoisonProcDef } from '../../shared/poisons'
 import { POISON_BY_COAT_MSG, POISON_DRY_MSG, POISON_PROCS } from '../../shared/poisons'
 import type { ParserConfig } from './rulesets'
@@ -26,6 +27,11 @@ const CC_APPLY_RE = /^(.+?) has been (?:mesmerized|enthralled|entranced|ensnared
 // than a loose "…Master.'" to stay conservative. Captures the pet's name.
 const PET_CLAIM_RE =
   /^(.+?) told you, '(?:Attacking .+ Master|I am unable to wake .+?, Master)\.'$/
+// The PET-VOICED PUBLIC SAY (JOS-47) — the six exact sentences a pet speaks out loud. The
+// vocabulary and the regex live in shared/logScrub.ts, because the SCRUB has to carve the same
+// six lines out of every public artifact and a second copy of the list here is a second copy
+// that drifts. Imported rather than restated; `PET_SAY_LINES` also supplies the discriminant.
+const SAY_KIND_BY_TEXT = new Map<string, PetSayKind>(PET_SAY_LINES.map(([k, s]) => [s, k]))
 
 // ----- buffs (Task #19): cast lifecycle + self/pet buff fades -----
 // Validated shapes (real log, 2026-08-01):
@@ -224,6 +230,24 @@ export function classifyPetClaim({ text, ts, seq, raw }: ClassifyCtx): LogEvent 
     if (m) return { kind: 'petClaim', seq, ts, raw, name: norm(m[1]) }
   }
   return null
+}
+
+/**
+ * A pet's PUBLIC response (JOS-47) — `<Name> says, '<one of six>'`.
+ *
+ * NOT a claim, and the two classifiers sit next to each other so that stays obvious: `told you`
+ * is a channel only the owner can read, `says` is a channel everyone in earshot reads. This
+ * event nominates a candidate; it never binds a pet. See shared/logEvents.ts PetSayEvent.
+ *
+ * The `says, '` pre-test is the same cheap guard the claim family uses — this runs on every
+ * line of a 1.4M-line replay and the full regex is an alternation of six sentences.
+ */
+export function classifyPetSay({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  if (!text.includes(" says, '")) return null
+  const m = PET_SAY_RE.exec(text)
+  if (!m) return null
+  const say = SAY_KIND_BY_TEXT.get(m[2])
+  return say ? { kind: 'petSay', seq, ts, raw, name: norm(m[1]), say } : null
 }
 
 /** Activated AA (Task #34): "You activate <X>." (e.g. Quick Buff). */

@@ -267,6 +267,21 @@ export const IPC = {
   // renderer -> main: forget the hand-made statement about one name — "let the log decide again".
   rosterClearEdit: 'roster:clearEdit',
 
+  // ---- pet claims (JOS-47, shared/petClaims.ts) ----
+  // The same write-only shape, for the same reason: the questions and the answers ride
+  // `CombatSnapshot.petClaims`, so the offer and the rows it sits above are read in one call.
+  // renderer -> main: answer the question. Payload {name, action: 'claim'|'deny'}. Validated and
+  // canonicalized AT THE HANDLER against the shape a real entity name has.
+  //
+  // A 'claim' is RETROACTIVE by construction and the handler is where that happens: it persists
+  // the statement and then re-runs the character's replay (the same full-rebuild path a
+  // character switch uses), so the pet's whole history arrives at once rather than the meter
+  // growing a row that starts counting from the click. Law 5 — a total that only covers the
+  // seconds since you clicked is an aggregate that lies.
+  petClaimSet: 'petClaims:set',
+  // renderer -> main: forget the statement about one name — "ask me again".
+  petClaimClear: 'petClaims:clear',
+
   // ---- item knowledge ("what's this lore/quest item for", Task #53) ----
   // renderer -> main: look up an item's lore/quest knowledge (local posky-first, then a
   // cached, politely-throttled wiki lookup). Returns ItemKnowledge.

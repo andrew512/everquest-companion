@@ -2,8 +2,8 @@
 // verbatim from engine.ts and split along the three event FAMILIES the original switch
 // already grouped its cases into:
 //
-//   ingestWorld    — epoch / zone / charm / petClaim / uncharm / cc / death: the entity and
-//                    segmentation lifecycle.
+//   ingestWorld    — epoch / zone / charm / petClaim / petSay / uncharm / cc / death: the
+//                    entity and segmentation lifecycle.
 //   ingestCombat   — damage / heal / mitigation / miss / resist: the meter itself.
 //   ingestCast     — castBegin / fizzle / interrupt: the own-cast lifecycle both ownership
 //                    inferences (cast-less procs, charm/CC binding) run off.
@@ -43,6 +43,7 @@ import type {
   MissEvent,
   MitigationEvent,
   PetClaimEvent,
+  PetSayEvent,
   SpecialAttackEvent
 } from '../../shared/logEvents'
 
@@ -118,6 +119,27 @@ function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
   st.log(ev.ts, promote ? 'charm' : 'pet', 'info', `⚡ ${what} ${st.world.label(inst)} [${inst.instanceId}]`)
 }
 
+/**
+ * `<Name> says, '… Master.'` — a pet spoke OUT LOUD, on a channel every player in earshot
+ * reads (JOS-47). It proves the speaker is somebody's pet and nothing at all about whose, so
+ * this handler is deliberately the smallest one in the file: it files EVIDENCE and returns.
+ *
+ * It does not bind, does not engage, does not touch `lastActivityTs`, does not resolve a world
+ * instance and does not open an encounter — the same total inertness a FOREIGN charm broadcast
+ * has (ingestCharm), and for the identical reason. What it can do is turn a behavioural
+ * candidate into a spoken one, which is the difference between the meter asking after twenty
+ * hits and asking after three.
+ *
+ * A name that is ALREADY a pet is skipped rather than filed: the offer is an unbound-state
+ * offer, and `notePet` has already retired the question.
+ */
+function ingestPetSay(st: EngineState, ev: PetSayEvent): void {
+  const key = idKey(ev.name)
+  if (st.petNames.has(key) || st.isKnownPlayer(key) || st.isMember(key) || st.charm.everCharmed(key)) return
+  st.candidates.noteSay(key, ev.name, ev.ts)
+  st.log(ev.ts, 'pet', 'info', `♪ ${ev.name} answered a pet command (${ev.say}) — whose pet is unstated`)
+}
+
 function ingestDeath(st: EngineState, ev: DeathEvent): void {
   const key = idKey(ev.name)
   const killerKey = ev.bySelf ? 'you' : ev.killer ? idKey(ev.killer) : undefined
@@ -189,6 +211,9 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       return true
     case 'petClaim':
       ingestPetClaim(st, ev)
+      return true
+    case 'petSay':
+      ingestPetSay(st, ev)
       return true
     case 'uncharm': {
       // `Your <charm spell> spell has worn off of <mob>` — only the CASTER sees this, so it is

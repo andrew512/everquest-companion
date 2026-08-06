@@ -7,9 +7,12 @@
 // honest.
 //
 // Every sample below is copied from the live log or a committed fixture — never invented. The
-// families are the five enumerated in the module header, and BOTH carve-outs are pinned:
+// families are the five enumerated in the module header, and ALL THREE carve-outs are pinned:
 //   * the pet-claim tell — an NPC pet's binding signal for a summoned pet, kept verbatim,
 //     with no dependence on who is reading the log;
+//   * the six pet-voiced PUBLIC says (JOS-47) — the same argument (an NPC's words, an NPC's
+//     name) for the only public evidence that an entity is somebody's pet. Pinned as an EXACT
+//     sentence set, because a loose `Master` pattern would have leaked six kinds of mob flavor;
 //   * the owner's own /who row — kept ONLY for the name passed in `selfName`, which is the
 //     whole reason the carve-out became a PARAMETER instead of a constant (a fixture's self is
 //     'Primitive'; a user's report's self is whoever they are playing).
@@ -23,6 +26,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   PET_CLAIM_RE,
+  PET_SAY_RE,
   isThirdPartyChat,
   scrubKeep,
   scrubLines
@@ -177,7 +181,53 @@ test('a real tell that merely mentions a pet is NOT the carve-out', () => {
   }
 })
 
-// ---- CARVE-OUT 2: the owner's own /who row, PARAMETERIZED --------------------------------
+// ---- CARVE-OUT 2: the pet-voiced PUBLIC say (JOS-47) --------------------------------------
+//
+// Six exact sentences, all copied verbatim from the real log's 113 occurrences. They are an
+// NPC's words spoken by an NPC's name, so keeping them costs no one their privacy — and they
+// are the only public evidence that an entity is somebody's pet, which the meter's
+// "<Name> — your pet?" offer is built on. A fixture that cannot carry them cannot test it.
+
+const PET_SAYS = [
+  "[Thu Jul 30 16:10:18 2026] Kober says, 'Sorry, Master... calming down.'",
+  "[Thu Jul 30 16:10:24 2026] Kober says, 'Now regrouping, master.'",
+  "[Thu Jul 30 16:29:50 2026] Kober says, 'As you wish, oh great one.'",
+  "[Sun Jul 26 21:44:12 2026] Gobantik says, 'Following you, Master.'",
+  "[Wed Jul 22 02:11:53 2026] An isle goblin says, 'Now holding, Master.  I will not start new attacks until ordered.'",
+  "[Fri Jul 24 18:03:09 2026] A large heart spider says, 'I beg forgiveness, Master.  That is not a legal target.'"
+]
+
+test('CARVE-OUT: the six pet-voiced SAY sentences survive — they are an NPC pet speaking', () => {
+  for (const line of PET_SAYS) {
+    assert.ok(PET_SAY_RE.test(line.slice(line.indexOf('] ') + 2)), `PET_SAY_RE must match: ${line}`)
+    // Like the tell, this has no self-name dependence: a pet's name is nobody's identity.
+    assert.equal(scrubKeep(line, { selfName: SELF }), true)
+    assert.equal(scrubKeep(line), true)
+    assert.equal(scrubKeep(line, { selfName: 'Vexxa' }), true)
+  }
+})
+
+test('the vocabulary is EXACT — mob flavor that merely says "master" is still dropped', () => {
+  // Every one of these is real, and every one of them is a mob talking about ITS master or a
+  // player talking about a mastery AA. An anchored six-sentence alternation is the whole
+  // safety of the carve-out; a `/Master/` pattern would have leaked all of them.
+  const stillDropped = [
+    "[Thu Aug 06 19:04:11 2026] An ire ghast says, 'Uninvited guests to our master's home must be shown the way out!'",
+    "[Thu Aug 06 19:12:02 2026] A scorn banshee says, 'You are almost beneath notice, but our master commands your death.'",
+    "[Thu Aug 06 19:20:41 2026] Cleric of Innoruuk says, 'None shall defile the realm of our master!'",
+    "[Tue Jul 28 03:14:55 2026] Cazic-Thule shouts, 'Denizens of Fear, your master commands you to come forth to his aid!'",
+    "[Thu Aug 06 19:31:22 2026] Cleric of Innoruuk's corpse says, 'Innoruuk, I have failed you!'",
+    "[Wed Jul 29 11:02:14 2026] Bloody tells General1:1, 'Wu's Fist of Mastery +6 is what ya want'",
+    // …and the pet sentence spoken on ANY other channel is still a person's words.
+    "[Thu Jul 30 16:10:18 2026] Rykkerr tells you, 'Sorry, Master... calming down.'",
+    "[Thu Jul 30 16:10:18 2026] Rykkerr shouts, 'As you wish, oh great one.'"
+  ]
+  for (const line of stillDropped) {
+    assert.equal(scrubKeep(line, { selfName: SELF }), false, `must drop: ${line}`)
+  }
+})
+
+// ---- CARVE-OUT 3: the owner's own /who row, PARAMETERIZED --------------------------------
 
 /** The real self rows from the log, for two different owners. */
 const selfWho = (name: string): string[] => [

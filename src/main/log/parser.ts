@@ -38,6 +38,7 @@ import {
   classifyDbBuff,
   classifyIllusionFade,
   classifyPetClaim,
+  classifyPetSay,
   classifyPoisonCoat,
   classifyPoisonProc,
   classifySpellEmote,
@@ -106,6 +107,10 @@ const CLASSIFIERS: readonly Classifier[] = [
   classifyWornOff,
   classifyCcApply,
   classifyPetClaim,
+  // …and the PUBLIC half of the same family, directly beneath it so the private/public split
+  // is visible in the cascade itself (JOS-47). Cannot shadow anything: the six sentences it
+  // matches were `{kind:'unknown'}` before it existed.
+  classifyPetSay,
   classifyDeath,
   classifyZone,
   // SESSION frame (login / camp-out / camp-abort). Beside the zone rule because they answer
