@@ -159,8 +159,7 @@ export async function applyEqDirChange(): Promise<EqConfig> {
     // so views show the quiet empty state instead of stale data.
     await tailer?.stop()
     tailer = null
-    if (tickTimer) clearInterval(tickTimer)
-    tickTimer = null
+    stopHeartbeat()
     inventoryWatch?.close()
     inventoryWatch = null
     character = null
@@ -314,8 +313,19 @@ function startTailer(logPath: string, startOffset: number): void {
  * scanned from the log lands on the first tick (now ≫ its beganTs). Clear any prior
  * timer first (a character switch re-enters startTailing).
  */
-function startHeartbeat(): void {
+/**
+ * Stop the wall-clock heartbeat. Called on the way into a replay as well as on the way out of a
+ * session (JOS-60): the interval belongs to the character being LEFT, and letting it keep firing
+ * through the next character's replay is what used to tick a half-rebuilt world — and, before the
+ * registry's replay gate existed, push that world to the renderer as an increment.
+ */
+function stopHeartbeat(): void {
   if (tickTimer) clearInterval(tickTimer)
+  tickTimer = null
+}
+
+function startHeartbeat(): void {
+  stopHeartbeat()
   let overlaySaveTick = 0
   tickTimer = setInterval(() => {
     registry.tick(Date.now())
@@ -403,6 +413,9 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   stopWatchingForFirstLog()
   await tailer?.stop()
   tailer = null
+  // The heartbeat belongs to the character we are leaving; it must not tick (nor push) through
+  // the replay that follows. `startHeartbeat()` below re-arms it once the live tail is running.
+  stopHeartbeat()
   character = ref
   setActiveLogPath(ref.logPath)
   logInfo(`[everquest-companion] Tailing ${ref.name}@${ref.server}: ${ref.logPath}`)
@@ -431,6 +444,16 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // the instrument as well as the throttle. It times every rest the OS actually delivered, and
   // that measurement rides `TailResult` into the startup profile — a duty cycle nobody can read
   // back is a claim, not a measurement.
+  //
+  // THE REPLAY IS A STATE, AND THE REGISTRY IS TOLD SO (JOS-60). Modules fold replay events
+  // "silently" only in the sense that no flush is SCHEDULED for them — they still accumulate a
+  // pending delta, and anything that flushed mid-replay (the heartbeat above, the `flushNow()`
+  // below) shipped the target character's whole history to the renderer as an INCREMENT against
+  // the character it was still holding. Every celebration detector reads an increment as news, so
+  // a switch re-fired the boss/quest alerts and re-showed the announcement cards. `endReplay()`
+  // DISCARDS what the fold accumulated; the renderer gets all of it from `snapshot()` the moment
+  // the `onCharacter` send below makes it re-hydrate.
+  registry.beginReplay()
   const slicer = createSlicer()
   let scan: ScanResult
   try {
@@ -442,10 +465,14 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
     seq = scan.seq
     combat.setLive()
   } finally {
-    // THE ONE DONE SIGNAL — and it is a `finally` on purpose: a scan that throws (the log deleted
-    // out from under us mid-fold) must not leave the user's overlays hidden and their ring off
-    // for the rest of the session. `setLive()` is inside, so the meters that come back are live
-    // ones rather than a frame of the hydrating placeholder.
+    // THE ONE DONE SIGNAL, twice over (JOS-60 + JOS-62) — and a `finally` on purpose: a scan that
+    // throws (the log deleted out from under us mid-fold) must strand neither the registry (which
+    // would otherwise never flush a delta again) nor the user's overlays and ring. `endReplay()`
+    // discards the fold's accumulated deltas — the renderer gets all of it from `snapshot()` on
+    // re-hydrate — and `setReplayGate(false)` brings the windows and the mouse back. `setLive()`
+    // stays inside the try, so the meters that come back are live ones rather than a frame of the
+    // hydrating placeholder.
+    registry.endReplay()
     setReplayGate(false)
   }
   const lootState = lootModule.snapshot().state
@@ -534,6 +561,5 @@ export function stopSession(): void {
   void tailer?.stop()
   inventoryWatch?.close()
   stopWatchingForFirstLog()
-  if (tickTimer) clearInterval(tickTimer)
-  tickTimer = null
+  stopHeartbeat()
 }

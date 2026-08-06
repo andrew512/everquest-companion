@@ -11,6 +11,23 @@
 // scheduled — the renderer hydrates via getSnapshot once, then rides deltas. The
 // seq on every delta/snapshot is the last LogEvent seq the module consumed, which
 // the renderer uses for gap detection + dupe rejection.
+//
+// "SILENTLY" USED TO MEAN "NO FLUSH IS SCHEDULED", WHICH IS NOT THE SAME THING (JOS-60).
+// Modules ACCUMULATE their pending deltas while folding — no `onEvent` in the tree looks at
+// `live` before appending to its pending list — so the replay leaves a full delta sitting in
+// every module. Two callers then shipped it: `tick()`, driven by session.ts's 1-second wall-clock
+// heartbeat, which belongs to the PREVIOUS character and keeps firing straight through the new
+// one's replay; and the `flushNow()` at the end of `tailCharacter`, one statement before
+// `log:character`. Either way the renderer received ANOTHER CHARACTER'S ENTIRE HISTORY as an
+// INCREMENT against the state it was still holding — and an increment is exactly what every
+// always-mounted celebration detector is watching for. MEASURED on a padded two-character e2e
+// install: a `kills` delta carrying a boss the previous character never killed, delivered 1.7 s
+// before `log:character`, firing the seeded bossDefeat alert on every switch back.
+//
+// So a replay is now a STATE, not just a flag on each event: `beginReplay()` / `endReplay()`
+// bracket it, nothing is pushed while it is in flight, and what it accumulated is DISCARDED
+// rather than flushed. Discarding loses nothing — everything the replay folded is in
+// `snapshot()`, and `log:character` makes every consumer re-hydrate from exactly that.
 
 import type { EqModule, ModuleDelta } from './types'
 import type { LogBus, LogEventListener } from '../log/bus'
@@ -53,6 +70,11 @@ export class ModuleRegistry {
   private byId = new Map<string, EqModule>()
   private unsub: (() => void) | null = null
   private flushTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * True while a HISTORICAL REPLAY is folding (see the header). Every push path checks it, so
+   * there is one answer to "may a delta leave this process right now" rather than one per caller.
+   */
+  private replaying = false
 
   constructor(private host: RegistryHost) {}
 
@@ -125,6 +147,35 @@ export class ModuleRegistry {
     for (const mod of this.modules) mod.reset()
   }
 
+  /**
+   * A historical replay is starting: nothing may be pushed until `endReplay()`.
+   *
+   * Idempotent, and it drops any flush the PREVIOUS character's last live event had already
+   * scheduled — that timer would otherwise fire mid-replay and push a delta describing a world
+   * that no longer exists.
+   */
+  beginReplay(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
+    this.replaying = true
+  }
+
+  /**
+   * The replay is over: DISCARD everything it accumulated.
+   *
+   * Draining `flushDelta()` and throwing the results away is the whole point — it is how each
+   * module's pending list gets cleared without the renderer ever seeing it, so the first delta
+   * after a switch describes LIVE events only. The full historical state is served by
+   * `snapshot()`, which `log:character` sends every consumer back to.
+   */
+  endReplay(): void {
+    if (!this.replaying) return
+    this.replaying = false
+    for (const mod of this.modules) mod.flushDelta()
+  }
+
   /** Full snapshot for `module:getSnapshot`. Null when the id is unknown. */
   snapshot(id: string): { seq: number; state: unknown } | null {
     return this.byId.get(id)?.snapshot() ?? null
@@ -138,6 +189,11 @@ export class ModuleRegistry {
    * timeout) fire even when the log is idle.
    */
   tick(nowMs: number): void {
+    // NOT DURING A REPLAY (JOS-60). The heartbeat's interval outlives a character switch, so this
+    // fires while the NEXT character's history is still folding — and a wall-clock deadline
+    // evaluated against a half-rebuilt world is meaningless even before the push it used to do.
+    // session.ts stops the heartbeat around a replay as well; this is the structural half.
+    if (this.replaying) return
     for (const mod of this.modules) mod.onTick?.(nowMs)
     this.doFlush()
   }
@@ -160,6 +216,8 @@ export class ModuleRegistry {
   }
 
   private doFlush(): void {
+    // THE ONE GATE every push path funnels through — see `beginReplay`.
+    if (this.replaying) return
     for (const mod of this.modules) {
       const out = mod.flushDelta()
       if (out) this.host.emitDelta({ moduleId: mod.id, seq: out.seq, delta: out.delta })

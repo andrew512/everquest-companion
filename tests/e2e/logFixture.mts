@@ -47,6 +47,8 @@ const FIXTURES = join(HERE, '..', 'fixtures')
  */
 const LOG_NAME = 'eqlog_Primitive_freeport.txt'
 const STAGE_PREFIX = 'everquest-companion-e2e-log-'
+/** The server every staged character logs on — the same one `LOG_NAME` names. */
+const SERVER = 'freeport'
 
 /** Two-digit, zero-padded — the way EQ writes it (`[Wed Aug 05 20:48:16 2026]`). */
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -84,6 +86,14 @@ export interface FixtureLog {
    * rate — scripting a fight means scripting WHEN each swing landed, not just what it was.
    */
   appendAt(at: Date, ...messages: readonly string[]): number
+  /**
+   * The OTHER characters staged into this same install (character name → log path), for the specs
+   * whose subject is the character SELECTOR rather than one character's log. `listCharacters()`
+   * reads the Logs dir, so a second `eqlog_<Name>_<server>.txt` beside the first is all it takes
+   * for the app to offer a switch — and the switch is a real one: main re-tails, re-replays and
+   * rebuilds every module against the other file.
+   */
+  readonly others: Readonly<Record<string, string>>
   /** Delete the staged install. Best-effort, never fatal (the same discipline as userData). */
   dispose(): Promise<void>
 }
@@ -101,7 +111,10 @@ function realEqRoot(): string | null {
  * writes to whatever it is given — pointing the app at `tests/fixtures/` directly would leave the
  * working tree dirty the first time a spec scripted a pull.
  */
-export function stageFixture(fixture: string, opts: { maps?: boolean } = {}): FixtureLog {
+export function stageFixture(
+  fixture: string,
+  opts: { maps?: boolean; others?: Readonly<Record<string, string>> } = {}
+): FixtureLog {
   const source = join(FIXTURES, fixture)
   if (!existsSync(source)) {
     throw new Error(`e2e: no such fixture — ${source} (run: npm run fixtures:e2e)`)
@@ -110,6 +123,19 @@ export function stageFixture(fixture: string, opts: { maps?: boolean } = {}): Fi
   mkdirSync(join(installDir, 'Logs'), { recursive: true })
   const logPath = join(installDir, 'Logs', LOG_NAME)
   copyFileSync(source, logPath)
+
+  // A SECOND (third, …) character in the same Logs dir. Same copy discipline as the first: the
+  // committed fixture is never the file the app reads, so a spec is free to append to either.
+  const others: Record<string, string> = {}
+  for (const [name, other] of Object.entries(opts.others ?? {})) {
+    const otherSource = join(FIXTURES, other)
+    if (!existsSync(otherSource)) {
+      throw new Error(`e2e: no such fixture — ${otherSource} (run: npm run fixtures:e2e)`)
+    }
+    const otherPath = join(installDir, 'Logs', `eqlog_${name}_${SERVER}.txt`)
+    copyFileSync(otherSource, otherPath)
+    others[name] = otherPath
+  }
 
   if (opts.maps) {
     const root = realEqRoot()
@@ -145,6 +171,7 @@ export function stageFixture(fixture: string, opts: { maps?: boolean } = {}): Fi
   return {
     installDir,
     logPath,
+    others,
     append: (...messages: readonly string[]): number => appendAt(new Date(), ...messages),
     appendAt,
     dispose: (): Promise<void> => removeUserData(installDir)
@@ -167,10 +194,20 @@ export interface FixtureLaunch extends LaunchedApp {
  */
 export async function launchOnFixture(
   fixture: string | FixtureLog,
-  opts: { maps?: boolean; userData?: string; env?: Record<string, string> } = {}
+  opts: {
+    maps?: boolean
+    userData?: string
+    env?: Record<string, string>
+    others?: Readonly<Record<string, string>>
+  } = {}
 ): Promise<FixtureLaunch> {
   const owned = typeof fixture === 'string'
-  const log = owned ? stageFixture(fixture, { ...(opts.maps === undefined ? {} : { maps: opts.maps }) }) : fixture
+  const log = owned
+    ? stageFixture(fixture, {
+        ...(opts.maps === undefined ? {} : { maps: opts.maps }),
+        ...(opts.others === undefined ? {} : { others: opts.others })
+      })
+    : fixture
   const launched = await launchApp({
     installDir: log.installDir,
     ...(opts.userData === undefined ? {} : { userData: opts.userData }),
