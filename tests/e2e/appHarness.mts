@@ -90,13 +90,19 @@ export interface Snap {
   hydrating: boolean
   selectedId: string
   zone?: string
-  selected: { kind: string; name: string; entities: unknown[]; outTotal: number } | null
+  selected: { kind: string; name: string; entities: SnapEntity[]; outTotal: number } | null
   segments: { kind: string; id: string; name: string; total: number }[]
   zoneSessions: { id: string; total: number }[]
   recent: unknown[]
-  /** "IS THIS THING YOURS?" (JOS-47/49) — what MAIN believes there is to ask about, which the
-   *  surface gate then decides whether to render. Both halves are asserted separately. */
-  petClaims: { candidates: { key: string; name: string; why: string }[]; claimed: string[] }
+}
+
+/** One meter row, as the snapshot serializes it. Narrow on purpose — specs assert `kind`/`name`
+ *  (whose damage this is) and `total`; everything else they need comes off the rendered DOM. */
+export interface SnapEntity {
+  kind: string
+  name: string
+  total: number
+  hits: number
 }
 
 export function snapshot(page: Page): Promise<Snap> {

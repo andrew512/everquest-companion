@@ -9,7 +9,6 @@ import type {
   StateSpan
 } from './procAnalytics'
 import type { RosterSnap } from './roster'
-import type { PetClaimsSnap } from './petClaims'
 
 /**
  * WHOSE ROW THIS IS. `'member'` (docs/plans/group-model.md) is a player currently or formerly on
@@ -922,16 +921,11 @@ export interface CombatSnapshot {
    * silently hiding people (law 1 — unknown must not hide).
    */
   roster: RosterSnap
-  /**
-   * "IS THIS THING YOURS?" — the unbound pet-shaped entities the meter is asking about, and the
-   * names this character has already claimed (JOS-47, shared/petClaims.ts).
-   *
-   * Rides the combat snapshot for the same reason the roster does: the question belongs
-   * directly above the rows it is about, on BOTH meter surfaces, and a second transport for it
-   * would be a second answer to "whose damage is this". `candidates` is empty for every player
-   * whose pets bind normally, which is nearly all of them.
-   */
-  petClaims: PetClaimsSnap
+  // NOTE: there is deliberately NO `petClaims` here any more (JOS-49). The snapshot used to carry
+  // "IS THIS THING YOURS?" — unbound pet-shaped entities for the meter to ask about, plus the
+  // names the user had claimed. The owner cut the question: "if you just have to pet attack once,
+  // this is a lot of work we can get wrong." A pet ordered once sends the private tell, the tell
+  // binds it, and its rows are ordinary `kind: 'pet'` sources like any other pet's.
   // NOTE: there is deliberately NO `liveFallback` here any more. Fight vs Overall is an explicit
   // user-chosen SCOPE (renderer-side), not an automatic switch: the default selection resolves to
   // the open fight, else the most recent finalized fight, and NEVER to the zone aggregate. The

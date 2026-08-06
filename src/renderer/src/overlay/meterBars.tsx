@@ -15,7 +15,7 @@
 // no component library — every pixel here is plain React + inline styles. Do not import
 // @mui/* into this bundle. petRows/dashboardData/landEvidence are pure TS and import legally.
 
-import { type JSX, useMemo, useState } from 'react'
+import { type JSX, useMemo } from 'react'
 import type { OverlayDrill } from '@shared/types'
 import { CATEGORY_LABEL, type DamageCategory, type SegmentView, type SourceView } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../lib/formatRate'
@@ -29,7 +29,6 @@ import { MeterCrumb } from './meterCrumb'
 // plain-React surface already reads it from. The overlay does not get a second one.
 import { fmtDur } from '../features/combat/copyTable'
 import type { MeterScope, RosterSnap } from '@shared/roster'
-import { claimEvidence, claimPrompt, type PetClaimsSnap } from '@shared/petClaims'
 
 // Kept in step with the Combat tab's KIND_COLOR (features/combat/combatShared.tsx) — the overlay
 // is MUI-free and cannot import the theme, so the two lists are written out and must move
@@ -52,73 +51,6 @@ const CAT_COLOR: Record<DamageCategory, string> = {
   ds: '#cf6679'
 }
 
-/**
- * THE QUESTION ABOVE THE BARS — "<Name> — your pet?" (JOS-47), the overlay's own spelling of the
- * Combat tab's `PetClaimOffer`. Same sentence (shared/petClaims.ts owns the wording, so the two
- * surfaces cannot phrase one question two ways), plain React because this bundle has no MUI.
- *
- * `interactive` mirrors the drill gate: a LOCKED overlay is click-through by law, so the answers
- * are rendered but inert rather than absent — the user can still read the question, and the whole
- * window is one unpin away from being answerable.
- */
-function PetClaimOffer({
-  petClaims,
-  interactive
-}: {
-  petClaims: PetClaimsSnap
-  interactive: boolean
-}): JSX.Element | null {
-  const [busy, setBusy] = useState(false)
-  if (petClaims.candidates.length === 0) return null
-  const answer = (name: string, action: 'claim' | 'deny'): void => {
-    if (!interactive || busy) return
-    setBusy(true)
-    void window.eqOverlay
-      .setPetClaim({ name, action })
-      .catch(() => undefined)
-      .finally(() => setBusy(false))
-  }
-  const btn = (label: string, name: string, action: 'claim' | 'deny', color: string): JSX.Element => (
-    <span
-      onClick={() => answer(name, action)}
-      style={{
-        color,
-        cursor: interactive && !busy ? 'pointer' : 'default',
-        opacity: busy ? 0.4 : 1,
-        marginLeft: 6,
-        fontWeight: 600
-      }}
-    >
-      {label}
-    </span>
-  )
-  return (
-    <div data-testid="overlay-pet-claim" style={{ marginBottom: 3 }}>
-      {petClaims.candidates.map((c) => (
-        <div
-          key={c.key}
-          title={claimEvidence(c)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            fontSize: 11,
-            lineHeight: '15px',
-            color: '#9aa0a6',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden'
-          }}
-        >
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {claimPrompt(c)}
-          </span>
-          {/* The pet colour, because that is the colour of the row saying yes creates. */}
-          {btn('Yes', c.name, 'claim', KIND_COLOR.pet)}
-          {btn('No', c.name, 'deny', '#767b80')}
-        </div>
-      ))}
-    </div>
-  )
-}
 
 /** A single horizontal bar: label + right-text + pct-fill. Dense + high-contrast. Clickable to drill. */
 function Bar({
@@ -403,22 +335,16 @@ export function MeterBars({
   seg,
   scope,
   roster,
-  petClaims,
   drill,
   setDrill,
   live,
-  liveSelection
 }: {
   seg: SegmentView | undefined
   scope: MeterScope
   roster: RosterSnap
-  petClaims: PetClaimsSnap
   drill: Drill | null
   setDrill: ((d: Drill | null) => void) | null
   live: boolean
-  /** The SELECTION is the live one (an open fight / the running zone session) — not merely "you
-   *  are in combat", which is what `live` above means. Gates the pet question only (JOS-49). */
-  liveSelection: boolean
 }): JSX.Element {
   // The SAME preference the Combat tab reads, out of the same localStorage key — one origin, one
   // store, and a 'storage' event when the other window's Preferences tab writes it.
@@ -455,14 +381,6 @@ export function MeterBars({
 
   return (
     <MeterCrumb name={null} dur={dur} onBack={null}>
-      {/* "IS THIS YOURS?" (JOS-47) — ABOVE the bars, at level 1 only. This window is where the
-          report came from ("Dps overlay meter is not showing my pet dps"), so it is where the
-          question has to be answerable; the drilled level is a breakdown of ONE source and a
-          question about a different entity has no business inside it.
-          …and on the LIVE selection only (JOS-49): the same gate the Combat tab's SegmentBody
-          applies, off the same `isLiveSelection`, because a question hanging over last Tuesday's
-          zone session is the surface half of the wall this ticket closed. Parity is the law. */}
-      {liveSelection && <PetClaimOffer petClaims={petClaims} interactive={setDrill !== null} />}
       <SourceLines sources={panel.sources} setDrill={setDrill} />
     </MeterCrumb>
   )

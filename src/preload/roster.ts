@@ -27,17 +27,5 @@ export const rosterApi = {
     ipcRenderer.invoke(IPC.rosterSetEdit, edit),
   /** "Let the log decide again" — forget the hand-made statement about this name. */
   clearRosterEdit: (name: string): Promise<ComboWriteResult> =>
-    ipcRenderer.invoke(IPC.rosterClearEdit, { name }),
-
-  // ---- pet claims (JOS-47) ----
-  // Beside the roster because they are the same kind of thing said about a different subject:
-  // the user answering a question the log cannot. Write-only for the same reason — the offer
-  // and the answer both ride `CombatSnapshot.petClaims`.
-  /** "That one is mine" / "that one is not." A claim re-runs the replay in main, so the pet's
-   *  whole history arrives at once; the promise resolves when it has. */
-  setPetClaim: (edit: { name: string; action: 'claim' | 'deny' }): Promise<ComboWriteResult> =>
-    ipcRenderer.invoke(IPC.petClaimSet, edit),
-  /** "Ask me again" — forget the statement about this name. */
-  clearPetClaim: (name: string): Promise<ComboWriteResult> =>
-    ipcRenderer.invoke(IPC.petClaimClear, { name })
+    ipcRenderer.invoke(IPC.rosterClearEdit, { name })
 }

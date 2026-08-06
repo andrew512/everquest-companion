@@ -17,7 +17,6 @@ import {
 } from './dashboardData'
 import { useMeterScope } from './useCombatPrefs'
 import { EMPTY_ROSTER, type MeterScope, type RosterSnap } from '@shared/roster'
-import { EMPTY_PET_CLAIMS, type PetClaimsSnap } from '@shared/petClaims'
 import type { CombatFocus } from './combatFocus'
 import type { CombatSnapshot, SegmentView, TimelineView } from '@shared/combat'
 
@@ -98,7 +97,6 @@ function DashboardGrid({
   mode,
   meterScope,
   roster,
-  petClaims,
   drill,
   setDrill,
   live,
@@ -109,7 +107,6 @@ function DashboardGrid({
   mode: MeterMode
   meterScope: MeterScope
   roster: RosterSnap
-  petClaims: PetClaimsSnap
   drill: Drill | null
   setDrill: (d: Drill | null) => void
   live: boolean
@@ -140,10 +137,6 @@ function DashboardGrid({
         mode={mode}
         scope={meterScope}
         roster={roster}
-        petClaims={petClaims}
-        // The SAME liveness the DPS curve reads, for the same reason: the pet question is about
-        // the fight in front of you, so it belongs only above a meter that is showing one.
-        live={live}
         drill={drill}
         setDrill={setDrill}
       />
@@ -278,7 +271,6 @@ export default function CombatView({
   // flight means Group renders as Everyone for that instant, never as an empty meter.
   const [meterScope, setMeterScope] = useMeterScope('combat')
   const roster = snap?.roster ?? EMPTY_ROSTER
-  const petClaims = petClaimsOf(snap)
 
   // An inbound focus (deep link) picks the scope + selection, then is consumed. Keyed on the
   // NONCE, not the payload's identity: the same fight asked for twice must select twice.
@@ -353,7 +345,6 @@ export default function CombatView({
         mode={mode}
         meterScope={meterScope}
         roster={roster}
-        petClaims={petClaims}
         drill={drill}
         setDrill={setDrill}
         live={live}
@@ -396,15 +387,6 @@ function ringlessOf(tl: TimelineView | null, seg: SegmentView | null): Ringless 
   return seg?.kind === 'zone' ? 'zone' : 'evicted'
 }
 
-/**
- * The pet questions the meter should be asking (JOS-47). Off the SAME snapshot as the rows they
- * sit above, so an offer can never describe a fight the meter is no longer showing; empty while
- * the first fetch is in flight, which is also what nearly every player sees forever.
- */
-function petClaimsOf(snap: CombatSnapshot | null): PetClaimsSnap {
-  return snap?.petClaims ?? EMPTY_PET_CLAIMS
-}
-
 /** The one body slot: loading, the timeline, the 2x2 dashboard, or the honest empty state. */
 function CombatBody({
   hydrating,
@@ -421,7 +403,6 @@ function CombatBody({
   mode: MeterMode
   meterScope: MeterScope
   roster: RosterSnap
-  petClaims: PetClaimsSnap
   drill: Drill | null
   setDrill: (d: Drill | null) => void
   live: boolean

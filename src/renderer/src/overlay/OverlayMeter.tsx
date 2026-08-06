@@ -3,7 +3,7 @@ import type { OverlayKind } from '@shared/types'
 import type { CombatSnapshot, SegmentView } from '@shared/combat'
 import { formatRate } from '../lib/formatRate'
 import { formatTime } from '../lib/formatDate'
-import { LIVE_SELECTION, isLiveSelection, scopeOptions, type ScopeOption } from '../features/combat/dashboardData'
+import { LIVE_SELECTION, scopeOptions, type ScopeOption } from '../features/combat/dashboardData'
 import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
@@ -14,7 +14,6 @@ import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
 import { EMPTY_ROSTER, SCOPE_HINT, SCOPE_LABEL, chipLabel, nextScope } from '@shared/roster'
-import { EMPTY_PET_CLAIMS, type PetClaimsSnap } from '@shared/petClaims'
 
 // Palette (matches the app's combat colors; the overlay has no MUI theme).
 const GOLD = '#d9b25f'
@@ -73,14 +72,6 @@ interface MeterView {
   rows: OverlaySelectRow[]
   /** on the head row, but the head row is the LAST (finished) fight — never dress it up as live */
   headIsLast: boolean
-  /**
-   * Is the SELECTED segment the live one — an open fight, or the running zone session? A
-   * different question from `live` above, which is "are you in combat at all": you can be
-   * swinging at something while this window shows Tuesday's zone session. The pet question is
-   * gated on THIS one (JOS-49), through the same `isLiveSelection` the Combat tab uses, because
-   * panel/overlay parity is house law and two opinions about "live" is how it breaks.
-   */
-  liveSelection: boolean
 }
 
 /** Header title + live dot + rate/duration for the selected segment. */
@@ -95,12 +86,6 @@ function headerFor(
     headerName: hydrating ? 'Reading log…' : seg?.name ?? (isFight ? 'No fight' : 'No zone'),
     totalDps: seg?.outDps ?? 0
   }
-}
-
-/** The pet questions this meter should be asking (JOS-47) — off the SAME snapshot as the rows
- *  they sit above, so the offer and the bars can never describe two different fights. */
-function petClaimsOf(snap: CombatSnapshot | null): PetClaimsSnap {
-  return snap?.petClaims ?? EMPTY_PET_CLAIMS
 }
 
 /** Selector options — ONE scope's rows, filtered by the shared helper the main view uses. */
@@ -137,10 +122,7 @@ function meterView(
     seg,
     ...headerFor(snap, seg, isFight, hydrating),
     rows,
-    headIsLast: selection === LIVE && !!head && !head.live,
-    // While hydrating there is no honest selection at all (scopeRows was handed empty lists), so
-    // this resolves false and the offer stays down with the rest of the surface.
-    liveSelection: isLiveSelection(head, selection)
+    headIsLast: selection === LIVE && !!head && !head.live
   }
 }
 
@@ -170,9 +152,8 @@ export default function OverlayMeter(): JSX.Element {
   // and the tab always filter by the same five names.
   const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
   const roster = snap?.roster ?? EMPTY_ROSTER
-  const petClaims = petClaimsOf(snap)
 
-  const { seg, live, headerName, totalDps, rows, headIsLast, liveSelection } = meterView(
+  const { seg, live, headerName, totalDps, rows, headIsLast } = meterView(
     snap,
     isFight,
     selection,
@@ -253,11 +234,9 @@ export default function OverlayMeter(): JSX.Element {
           seg={seg}
           scope={meterScope}
           roster={roster}
-          petClaims={petClaims}
           drill={drill}
           setDrill={locked ? null : setDrill}
           live={live}
-          liveSelection={liveSelection}
         />
       </OverlayContent>
 

@@ -66,7 +66,6 @@ import { searchFights } from './fightSearch'
 import { ACTIVE_MS, SLOW_SAMPLE_CAP } from './encounter'
 import type { LogEvent } from '../../shared/logEvents'
 import type { RosterSnap, RosterView } from '../../shared/roster'
-import type { PetClaimsView } from '../../shared/petClaims'
 import type {
   BladeCoatState,
   CombatSnapshot,
@@ -195,16 +194,6 @@ export class CombatEngine {
     this.st.rosterSnapProvider = () => access.snap()
   }
 
-  /**
-   * Install the PET-CLAIM pull (JOS-47). ipc/petClaims.ts wires this to the per-character store
-   * at registration, before any replay runs, so a claim made in a previous session is already in
-   * force on the first line of the next one. Absent — every test, and any future embedding — the
-   * engine behaves exactly as it did before pet claims existed.
-   */
-  setPetClaims(view: () => PetClaimsView): void {
-    this.st.petClaimsProvider = view
-  }
-
   reset(): void {
     this.st.reset()
   }
@@ -251,8 +240,7 @@ export class CombatEngine {
       // snapshot; teaching the module transport to reach them as well would be a second path to
       // the same five names, and two paths can disagree. The scope chip's label and the rows it
       // filters are then guaranteed to describe one roster, read in one call.
-      roster: st.rosterSnap(),
-      petClaims: st.petClaimsSnap()
+      roster: st.rosterSnap()
     }
   }
 

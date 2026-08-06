@@ -15,7 +15,6 @@ import { CAT_COLOR, QuietNote, RESIST_COLOR, SkillBar } from './combatShared'
 import { skillsForTarget, type Drill, type MeterMode, type TargetDetail } from './dashboardData'
 import { HealBody } from './HealPanel'
 import { MultiAttackPanel } from './MultiAttackPanel'
-import { PetClaimOffer } from './PetClaimOffer'
 import { SegmentHeader } from './SegmentHeader'
 import { procAnnotationFor, procTagIndex } from './procRows'
 import { meterPanel, type MeterPanel, type OwnRow } from './petRows'
@@ -26,7 +25,6 @@ import { formatNum as fmt } from '../../lib/formatRate'
 import type { DamageCategory, SegmentView, SourceView, TimelineView } from '@shared/combat'
 import type { ProcSkillTag } from '@shared/procAnalytics'
 import type { MeterScope, RosterSnap } from '@shared/roster'
-import type { PetClaimsSnap } from '@shared/petClaims'
 import { CATEGORY_LABEL } from '@shared/combat'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -375,35 +373,12 @@ function scopedDimension(
   return { rows, ...scopeTotals(base.rows, rows, base.total, base.dps) }
 }
 
-/**
- * MAY THE PET QUESTION BE ASKED HERE? (JOS-47 + JOS-49.)
- *
- * OUTGOING, because that is the only list a pet's damage belongs in. Deliberately NOT filtered
- * by the You/Group/Everyone scope: ownership is not a scoped idea, and no scope makes an unowned
- * pet appear.
- *
- * LIVE SELECTION, which is the owner's JOS-49 override of exactly that reasoning. Ownership is
- * not scoped, but the QUESTION is: it asks the user to look up at the fight in front of them and
- * say whose that pet is. Above a finalized fight, or a zone session left days ago, there is
- * nothing to look at — and a wall of those rows is what made the meter unusable. Main's currency
- * gate decides WHETHER there is a current question; this decides WHERE it may be asked.
- *
- * A function rather than an inline conjunction because the panel is at its complexity ceiling,
- * and because the overlay makes the identical decision (overlay/meterBars.tsx) — the two are
- * pinned together by tests/petOfferSurface.test.mts.
- */
-function askPetClaim(mode: MeterMode, live: boolean): boolean {
-  return mode === 'out' && live
-}
-
 export function SegmentBody({
   seg,
   tl,
   mode,
   scope,
   roster,
-  petClaims,
-  live,
   drill,
   setDrill
 }: {
@@ -412,10 +387,6 @@ export function SegmentBody({
   mode: MeterMode
   scope: MeterScope
   roster: RosterSnap
-  petClaims: PetClaimsSnap
-  /** Is the SELECTION the live one — an open fight or the running zone session? Gates the pet
-   *  question alone (dashboardData `isLiveSelection`); nothing else in this panel reads it. */
-  live: boolean
   drill: Drill | null
   setDrill: (d: Drill | null) => void
 }): React.JSX.Element {
@@ -465,9 +436,6 @@ export function SegmentBody({
       }}
     >
       <SegmentHeader seg={seg} mode={mode} total={total} dps={dps} copyView={heal ? null : copyView} />
-      {/* "IS THIS YOURS?" (JOS-47 + JOS-49) — directly under the headline it would change.
-          `askPetClaim` above has the two conditions and why each one is there. */}
-      {askPetClaim(mode, live) && <PetClaimOffer petClaims={petClaims} />}
       {/* The damage crumb; the Healing dimension draws its own inside HealBody, because its one
           drill level has no nested-pet case and therefore no parent link to render. */}
       {!heal && d.crumb && (

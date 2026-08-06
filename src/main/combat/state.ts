@@ -22,16 +22,9 @@ import {
 import { idKey } from '../log/parser'
 import { StateTimeline } from './stateTimeline'
 import { CharmModel } from './charmModel'
-import { PetCandidates } from './petCandidates'
 import { SpecialAttacks } from './specialAttacks'
 import type { RecentCasts } from './procDetect'
 import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } from '../../shared/roster'
-import {
-  EMPTY_PET_CLAIMS,
-  EMPTY_PET_CLAIMS_VIEW,
-  type PetClaimsSnap,
-  type PetClaimsView
-} from '../../shared/petClaims'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 
 export class EngineState {
@@ -50,13 +43,6 @@ export class EngineState {
    * this model says the broadcast resolved one of the OWNER's own casts.
    */
   charm = new CharmModel()
-  /**
-   * WHO ELSE MIGHT BE YOURS (JOS-47). The detector behind the meter's "<Name> — your pet?"
-   * question: it watches the damage `classify()` is currently dropping and remembers the
-   * pet-shaped entities worth asking about. It binds nothing and books nothing — see
-   * petCandidates.ts for the disqualifiers that make an offer safe to show.
-   */
-  candidates = new PetCandidates()
   /**
    * Canonical name keys of entities known to be PLAYERS — never hostiles, never a pet's
    * target, never enemy healers. TWO sources, both narrow on purpose:
@@ -90,18 +76,11 @@ export class EngineState {
    *  UI tick, never per line, and from the same module as `rosterProvider`, so the rows the
    *  meter draws and the chip that filters them always describe one group. */
   rosterSnapProvider: () => RosterSnap = () => EMPTY_ROSTER
-  /**
-   * THE USER'S OWN PET STATEMENTS, pulled live exactly like the roster (JOS-47). Installed by
-   * ipc/petClaims.ts as `() => petClaimsView(activeCharId())`; the default returns an empty
-   * view, so every test and every player who has never been asked behaves as before.
-   *
-   * Top of the provenance ladder, and the roster's rule applies verbatim (shared/roster.ts
-   * `outranks`): a user statement is rank 'user' and NOTHING the log later says can overwrite
-   * it. So a claimed pet that afterwards sends a real `… Master.'` tell is not a conflict and
-   * not a second pet — the tell walks the SAME `world.claim()` door, which is idempotent on a
-   * live pet instance, and the claim goes on being the reason the app believes it.
-   */
-  petClaimsProvider: () => PetClaimsView = () => EMPTY_PET_CLAIMS_VIEW
+  // NOTE: there is deliberately NO `petClaimsProvider` here any more (JOS-49). The engine used to
+  // pull the user's own "that one is mine" statements per line, as a top-of-the-ladder override
+  // the log could not contradict. The owner cut the question that produced them — "if you just
+  // have to pet attack once, this is a lot of work we can get wrong" — so the ONLY thing that
+  // binds a summoned pet is its own private tell, through `notePet` below.
   /** Every name key that has EVER been one of your pets this session. Small, never pruned,
    *  and the reason `notePlayer` can never mistake a pet for a player (see notePet). */
   everPet = new Set<string>()
@@ -241,7 +220,6 @@ export class EngineState {
     this.everStruck.clear()
     this.world.reset()
     this.charm.reset()
-    this.candidates.reset()
     this.knownPlayers.clear()
     this.playerKey = undefined
     this.playerKeyInjected = false
@@ -375,22 +353,6 @@ export class EngineState {
   }
 
   /**
-   * The pet-claim state the snapshot serializes: the questions worth asking, plus what this
-   * character has already answered yes to.
-   *
-   * DENIED NAMES ARE FILTERED HERE, not at note-time, so clearing a "no" gives the accumulated
-   * evidence straight back instead of restarting the count. And a name that has BECOME a pet is
-   * gone by construction — `notePet` released it the moment anything bound it (the offer is an
-   * unbound-state offer), which is why nothing here has to re-check `petNames`.
-   */
-  petClaimsSnap(): PetClaimsSnap {
-    const view = this.petClaims()
-    const claimed = [...view.claimed].map((k) => view.nameOf(k) ?? k)
-    if (this.candidates.idle) return claimed.length === 0 ? EMPTY_PET_CLAIMS : { candidates: [], claimed }
-    return { candidates: this.candidates.candidates(view.denied), claimed }
-  }
-
-  /**
    * True when `nameKey` is someone the engine may book OUTGOING damage for as a group member.
    * This is the ADMISSION test — deliberately the wider `admitted` set, not the live roster, so
    * that a member who left mid-pull keeps being recorded (their damage is real and the Everyone
@@ -494,37 +456,6 @@ export class EngineState {
     this.petNames.add(nameKey)
     this.everPet.add(nameKey)
     this.knownPlayers.delete(nameKey)
-    // THE OFFER IS AN UNBOUND-STATE OFFER (owner, JOS-47). The instant ANY binding signal lands
-    // — the private tell, an owner charm, or the user's own claim, all of which come through
-    // this one door — the question stops being a question and the meter stops asking it. No
-    // lingering chip, no second question, and no path where a bound pet is also a candidate.
-    this.candidates.release(nameKey)
-  }
-
-  /** The live pet-claim view (see petClaimsProvider). One call per decision, never cached
-   *  across lines — a claim made between two log lines must reach the very next one. */
-  petClaims(): PetClaimsView {
-    return this.petClaimsProvider()
-  }
-
-  /**
-   * THE USER'S CLAIM, applied at the first sighting of the name.
-   *
-   * It walks the SAME door a `… Master.'` tell walks (`world.claim()` + `notePet`), which is
-   * what makes the two paths converge rather than compete: `world.claim()` is idempotent on a
-   * live pet instance, so whichever arrives second is a no-op and there is exactly one pet, one
-   * instance and one row. A claimed pet is a SUMMONED pet — it survives zoning, which is right
-   * for the class pets this feature exists for and harmless for anything else (a claimed
-   * charmed mob would be re-bound by its own charm line anyway).
-   *
-   * Returns true when this call did the binding, so the caller can log it once.
-   */
-  applyPetClaim(name: string, nameKey: string, ts: number): boolean {
-    if (this.petNames.has(nameKey)) return false
-    if (!this.petClaims().claimed.has(nameKey)) return false
-    this.world.claim(name, ts)
-    this.notePet(nameKey)
-    return true
   }
 
   /**

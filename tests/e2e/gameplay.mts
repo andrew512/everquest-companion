@@ -99,31 +99,32 @@ export async function playPull(
 
 /**
  * THE UNBOUND PET, SCRIPTED (JOS-49) — an entity the log never says is yours, fighting what you
- * are fighting, so the meter has to ASK.
+ * are fighting, which the meter must show NOTHING about until you order it.
  *
- * WHY IT NEEDS ITS OWN PULL: the candidate detector's anti-coincidence rule is TWO shared
- * targets (petCandidates.ts MIN_SHARED_TARGETS — sharing one mob is what everybody in a
- * contested camp does; following you to a second one is what a pet does), so the ordinary
- * single-mob `playPull` cannot produce one however long it runs. This writes two mobs.
+ * The blind spot is an accepted, documented non-distinguishable now (AGENTS.md world-model law
+ * 6). JOS-47 shipped a question here — "<Name> — your pet?", with Yes/No above the bars — and
+ * the owner cut it: "if you just have to pet attack once, this is a lot of work we can get
+ * wrong." So this pull exists to be INVISIBLE, and `playPetOrder` below is the cure.
  *
  * EVERY SHAPE IS REAL. The pet's melee lines are Jaber's, verbatim in form
  * (`Jaber slashes a greater kobold for 21 points of damage.` — tests/fixtures/p2-pet-arc-bound.log),
- * and `Following you, Master.` is one of the six pet-voiced sentences the whole-log sweep
- * enumerated (shared/logScrub.ts PET_SAY_LINES). Both mobs are ones the owner's log has him
- * fighting in Nagafen's Lair, which is the fixture's own zone.
+ * the tell is the shape `/pet attack` produces, and `Following you, Master.` is one of the six
+ * pet-voiced sentences the whole-log sweep enumerated (shared/logScrub.ts PET_SAY_LINES) — kept
+ * here precisely because it must NOT bind anything: `says` is broadcast. Both mobs are ones the
+ * owner's log has him fighting in Nagafen's Lair, which is the fixture's own zone.
  *
- * THE SAY IS WHAT KEEPS THIS SHORT: with a pet-voiced say in hand the volume bar drops from 20
- * landed hits to 3, so the offer stands after six lines instead of forty. It deliberately does
- * NOT write a killing blow — the fight must still be OPEN, because "the live selection" is the
- * thing under test.
+ * Neither driver writes a killing blow: the fight stays OPEN so the assertions read a live meter.
  */
 export const PET_NAME = 'Vebarn'
 
-/** The second mob, so the pet has TWO shared targets. Nagafen's Lair, like `PULL_TARGET`. */
+/** The second mob the pet works on — Nagafen's Lair, like `PULL_TARGET`. */
 export const PET_SECOND_TARGET = 'a greater kobold'
 
 /** Every line `playPetPull` writes — stated so the caller asserts a number, not a hope. */
 export const PET_PULL_LINES = 6
+
+/** Σ of the pet's UNBOUND hits. Nothing in the app may ever show this number. */
+export const PET_UNBOUND_DAMAGE = 21 + 52 + 46
 
 /** Play an unbound pet fighting beside you, and leave the fight open. Returns lines written. */
 export function playPetPull(log: FixtureLog): number {
@@ -136,6 +137,28 @@ export function playPetPull(log: FixtureLog): number {
   written += log.appendAt(new Date(now - 1000), petHit('cleaves', PET_SECOND_TARGET, 52))
   written += log.appendAt(new Date(now - 1000), `You crush ${PULL_TARGET} for 41 points of damage.`)
   written += log.appendAt(new Date(now), petHit('slashes', PULL_TARGET, 46), `${PET_NAME} says, 'Following you, Master.'`)
+  return written
+}
+
+/** Every line `playPetOrder` writes. */
+export const PET_ORDER_LINES = 2
+
+/** The one hit the pet lands AFTER its tell — and therefore the whole of its meter row, because
+ *  a tell binds FORWARD from its own timestamp and never reaches back (measured, JOS-49). */
+export const PET_BOUND_DAMAGE = 63
+
+/**
+ * ORDER THE PET — `/pet attack`, and the private tell it answers with. This is the entire
+ * feature: the one line in this log that says a summoned pet is yours.
+ */
+export function playPetOrder(log: FixtureLog): number {
+  const now = Date.now()
+  let written = 0
+  written += log.appendAt(new Date(now), `${PET_NAME} told you, 'Attacking ${PULL_TARGET} Master.'`)
+  written += log.appendAt(
+    new Date(now + 1000),
+    `${PET_NAME} slashes ${PULL_TARGET} for ${String(PET_BOUND_DAMAGE)} points of damage.`
+  )
   return written
 }
 
