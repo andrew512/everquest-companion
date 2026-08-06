@@ -5,13 +5,18 @@ import { getEqInstallDir } from '../store'
 import {
   EQ_ROOT,
   countCharacterLogs,
+  dirHasCharacterLogs,
   discoverEqRoot,
   fixedDrives,
   logIsUnderLogsDir,
+  normalizeEqDirOverride,
+  realOverrideProbes,
   registryInstallCandidates,
   rootHasLogs,
   tailSurvivesRootChange,
-  type DiscoveryProbes
+  type DiscoveryProbes,
+  type NormalizedEqDir,
+  type OverrideProbes
 } from './discovery'
 
 /**
@@ -28,22 +33,38 @@ import {
 export {
   EQ_ROOT,
   discoverEqRoot,
+  dirHasCharacterLogs,
   rootHasLogs,
   countCharacterLogs,
   logIsUnderLogsDir,
+  normalizeEqDirOverride,
   tailSurvivesRootChange,
-  type DiscoveryProbes
+  type DiscoveryProbes,
+  type NormalizedEqDir,
+  type OverrideProbes
 }
 
-/** The env escape hatch: an explicit install dir (tests/dev), highest priority. */
+/**
+ * The env escape hatch: an explicit install dir (tests/dev), highest priority.
+ *
+ * Each value is offered VERBATIM first — that is the shape the e2e harness supplies
+ * (`tests/e2e/logFixture.mts` stages `<tmp>\Logs\eqlog_*.txt` and hands over `<tmp>`),
+ * and it must keep resolving on the same first probe it always did. The NORMALIZED
+ * reading follows as an additional candidate, so `EQ_INSTALL_DIR` pointed at a `Logs`
+ * folder or a log file gets the same tolerance the persisted override now has
+ * (JOS-53). `discoverEqRoot` dedupes, so when the two agree nothing is probed twice.
+ */
 function envCandidates(): string[] {
   const out: string[] = []
+  const probes = realOverrideProbes()
   const dir = process.env.EQ_INSTALL_DIR
-  if (dir) out.push(dir)
+  if (dir) out.push(dir, normalizeEqDirOverride(dir, probes).root)
   // EQ_LOG_PATH points at a log FILE; its grandparent is the install root
-  // (<root>\Logs\eqlog_*.txt). Kept for back-compat with the old override.
+  // (<root>\Logs\eqlog_*.txt). Kept for back-compat with the old override — the
+  // literal grandparent join stays first so a path that does not exist yet still
+  // yields the same candidate it used to.
   const logPath = process.env.EQ_LOG_PATH
-  if (logPath) out.push(join(logPath, '..', '..'))
+  if (logPath) out.push(join(logPath, '..', '..'), normalizeEqDirOverride(logPath, probes).root)
   return out
 }
 
@@ -121,7 +142,7 @@ export type EqDirSource = 'manual' | 'auto' | 'default'
 export interface ResolvedEqDir {
   /** The effective install root in use. */
   root: string
-  /** The `<root>\Logs` directory. */
+  /** The directory the `eqlog_*.txt` files live in — `<root>\Logs` as the game spells it. */
   logsDir: string
   /** How `root` was chosen: a saved override, auto-discovery, or the fallback. */
   source: EqDirSource
@@ -134,24 +155,27 @@ export interface ResolvedEqDir {
  * else auto-discovery, else the canonical default (so the UI always has a path
  * to show even on a machine with no install yet). This is the single source of
  * truth for `effectiveEqRoot()` / `eqLogsDir()` and the Settings panel.
+ *
+ * THE OVERRIDE IS NORMALIZED, NOT TRUSTED (JOS-53). `normalizeEqDirOverride` decides
+ * what the path the user picked actually IS — install root, `Logs` folder, or a log
+ * file — because two prod reports proved that "the folder with my log in it" is a
+ * reading a reasonable person picks and the old verbatim-as-root reading answered it
+ * with a silent `…\Logs\Logs` and "no logs detected". Normalizing HERE, at resolution
+ * time rather than at save time, is also what makes an override that is already
+ * persisted in a broken shape start working on upgrade with no re-save.
+ *
+ * Discovery is untouched by this: it returns a root by construction (its predicate IS
+ * `<root>\Logs` holding a log), and so does the default.
  */
 export function resolveEqDir(): ResolvedEqDir {
-  const override = getEqInstallDir()
-  let root: string
-  let source: EqDirSource
-  if (override?.trim()) {
-    root = override
-    source = 'manual'
-  } else {
-    const discovered = discoverOnce()
-    if (discovered) {
-      root = discovered
-      source = 'auto'
-    } else {
-      root = EQ_ROOT
-      source = 'default'
-    }
+  const override = getEqInstallDir()?.trim()
+  if (override) {
+    const { root, logsDir } = normalizeEqDirOverride(override, realOverrideProbes())
+    return { root, logsDir, source: 'manual', characterCount: countCharacterLogs(logsDir) }
   }
+  const discovered = discoverOnce()
+  const root = discovered ?? EQ_ROOT
+  const source: EqDirSource = discovered ? 'auto' : 'default'
   const logsDir = join(root, 'Logs')
   return { root, logsDir, source, characterCount: countCharacterLogs(logsDir) }
 }

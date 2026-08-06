@@ -44,6 +44,7 @@ function EqFolderPath({ config }: { config: EqConfig | null }): JSX.Element {
       <Box sx={{ minWidth: 0, flexGrow: 1 }}>
         <Typography
           variant="body2"
+          data-testid="eq-folder-path"
           sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}
           title={config?.root}
         >
@@ -65,11 +66,11 @@ function EqFolderCheck({ config }: { config: EqConfig | null }): JSX.Element | n
   const found = config.characterCount
   // variant="standard": a tonal fill, no border ring — same no-boxes-in-boxes rule.
   return found > 0 ? (
-    <Alert severity="success" variant="standard">
+    <Alert severity="success" variant="standard" data-testid="eq-folder-check">
       Found {found} character log{found === 1 ? '' : 's'} in this folder.
     </Alert>
   ) : (
-    <Alert severity="warning" variant="standard">
+    <Alert severity="warning" variant="standard" data-testid="eq-folder-check">
       No character logs (eqlog_*.txt) found here. Make sure EverQuest logging is enabled
       (/log on) and pick the game&apos;s install folder.
     </Alert>
