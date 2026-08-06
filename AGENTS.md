@@ -55,6 +55,20 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   partitioned into disjoint waves with per-wave regression gates and run
   until done. The user gets a short "In flight / Settled" readout whenever
   a turn ends with agents still running.
+- **BRANCH INTEGRATION RULES (owner, 2026-08-05 — one merge behavior, not a
+  juggle).** Every worker commits on its OWN worktree branch, never on main.
+  Before reporting done, the worker makes the branch MERGE-READY: full checks
+  green at its tip (typecheck + lint + full unit suite + the e2e specs it
+  touched), no stray diagnostics/junctions/tsbuildinfo noise in the tree, and
+  — if main has moved under it — rebased onto current main (or explicitly
+  reports the conflict it cannot resolve). The integrator then ALWAYS
+  integrates by MERGING the worker branch (`git merge --no-ff`), one branch
+  at a time, re-verifying on merged main before push, then deletes branch +
+  worktree. Cherry-picking is reserved for salvage (a dead agent's WIP), not
+  routine integration. Conflicts the merge surfaces are resolved by the
+  integrator when small, bounced back to the worker when semantic. The
+  destination is a PR model (workers push branches, review happens on the
+  PR); these rules are that model minus the forge.
 - **Planner/integrator diagnoses against the REAL log first** (grep/sed, or a
   throwaway `scripts/_*.mts` replay via `npx tsx` — delete after). Executors
   get verified findings, not hypotheses. Never write to the game log.
