@@ -51,6 +51,33 @@
  *   matching. The consumers below it are the combat engine (21%) and the buffs module (10%);
  *   everything else in the tree together is under 4%.
  *
+ * AND THEN JOS-58 SPENT THAT FINDING, which is what the table was built to make possible. The
+ *   5.72 us was not "the spell DB": it was ONE of its three tables. `castOnYou` (849 messages) and
+ *   `wearsOff` (397) were already exact-match hash lookups and cost 0.06 us/event between them;
+ *   the cast-on-OTHER table could not be one, because the log names the target the wiki calls
+ *   "Someone", so it was matched by walking all 648 suffixes calling `endsWith` — for every line
+ *   no earlier family claimed, which is 20.2% of a real log. `SpellDb.castOnOtherByLastWord` now
+ *   buckets those suffixes by the last word a matching line must end with. PAIRED BEFORE/AFTER,
+ *   2026-08-06, this machine, this log, verified quiet (idle 1-3%), the two runs half an hour
+ *   apart with nothing else changed:
+ *
+ *                                          before            after
+ *     parse only, BARE parser         2,582 ms / 1.84 us   2,475 ms / 1.76 us
+ *     parse only, THE APP INSTALLS   12,269 ms / 8.73 us   2,491 ms / 1.77 us
+ *     …so the spell DB costs          9,688 ms / 6.90 us      17 ms / 0.01 us
+ *     the whole fold, untimed        20,028 ms /  70,149/s  9,600 ms / 146,348/s
+ *     the LAUNCH's replay phase      18,807 ms /  74,701/s 12,695 ms / 110,669/s
+ *     …events/sec FOLDING               122,934              181,304
+ *     max block                            22 ms                22 ms
+ *
+ *   The event stream is byte-identical across the change — same sha256 over all 1,404,455
+ *   serialized events, same 94,923 buffApply, same 36,154,350 damage (law 8's tripwire, and
+ *   tests/spellMessageIndex.test.mts is the permanent oracle). The parser the app installs is now
+ *   within 1% of a parser with no spell DB at all, so the line item is not reduced but GONE, and
+ *   `unattributed` — read + split + parse + dispatch — falls from 60.6% of the fold to 33.0%.
+ *   What is left on top is the combat engine (37.3% of the smaller fold) and buffs (16.6%): the
+ *   same absolute milliseconds as before, now the whole of the problem.
+ *
  * THE INPUT. A bench that reads a different log each run measures the log, not the code. So:
  *   1. `tests/bench/fixtures/Logs/eqlog_*.txt` — the STANDARD fixture, if you have put one there.
  *      (Gitignored: a comparable bench log is ~100 MB of one person's real game log, which is
@@ -133,8 +160,33 @@ const MAX_BLOCK_MS_BUDGET = 50
  * what a bench whose verdict depends on how busy the machine is will hand you if you let it.
  * JOS-56 should confirm on a quiet machine before bisecting anything. Raising the floor to match
  * today's rate is a budget decision, not a measurement, and is deliberately not taken here.
+ *
+ * RE-DERIVED 2026-08-06 (JOS-58) — 90,000, and the postscript above is why it had to move.
+ *
+ * That postscript disowned the foundation this number stood on: the 32k it is half of was a
+ * loaded machine, not this code. A floor 11× below the real rate is not a lax floor, it is an
+ * absent one — it could not catch a change that made the fold five times slower, and this file's
+ * own doctrine is that a budget which has stopped saying anything is worse than no budget.
+ *
+ * THE HONEST BASELINE, on a machine verified quiet before each run (1-3% idle, nothing else on
+ * the box — the contamination above is the reason that is now a precondition and not a habit):
+ * 134,182 / 134,494 / 132,957 from JOS-55's three launches, 122,934 from JOS-58's paired BEFORE
+ * run, and 181,304 AFTER it. Five launches, one machine, one log.
+ *
+ * So the floor is 0.5× the post-JOS-58 rate — the SAME rule as before ("chunking may cost
+ * throughput, but not half of it"), applied to a baseline this repo can now reproduce rather than
+ * to one it has since disavowed. 0.5 × 181,304 = 90,652, stated as a round 90,000.
+ *
+ * WHAT IT WILL AND WILL NOT CATCH, said plainly so the next failure is read correctly. It will
+ * catch a real halving of the fold's speed. It will ALSO fail on a machine that is busy, because
+ * a loaded box measured 32k on unmodified code — but every other number this bench prints (the
+ * duty, the arms comparison, the whole attribution table) is already meaningless under load, the
+ * header says so twice, and this bench deliberately does not run in CI. A red here means "either
+ * you regressed the fold or you ran this beside something else"; check the second before
+ * bisecting the first. A human edits this deliberately and states why, as here; nothing ratchets
+ * it automatically.
  */
-const EVENTS_PER_WORK_SEC_FLOOR = 16_000
+const EVENTS_PER_WORK_SEC_FLOOR = 90_000
 
 /**
  * THE DUTY CEILING (JOS-50): the fold may not claim more of the wall clock than it said it would.
@@ -430,7 +482,8 @@ function assertBudgets(run: BenchRun): number {
     failures.push('the replay left no duty ledger — neither the fold rate nor the duty can be asserted')
   } else if (run.eventsPerWorkSec < EVENTS_PER_WORK_SEC_FLOOR) {
     failures.push(
-      `events/sec folding ${num(run.eventsPerWorkSec)} is under the ${num(EVENTS_PER_WORK_SEC_FLOOR)} floor (0.5× the 2026-08-06 baseline)`
+      `events/sec folding ${num(run.eventsPerWorkSec)} is under the ${num(EVENTS_PER_WORK_SEC_FLOOR)} floor ` +
+        `(0.5× the post-JOS-58 quiet-machine baseline) — confirm the machine was idle before bisecting the fold`
     )
   }
   if (run.replayDuty !== null && run.replayDuty > REPLAY_DUTY_CEILING) {
