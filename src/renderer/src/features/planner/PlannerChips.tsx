@@ -1,9 +1,9 @@
 // planner/PlannerChips.tsx — the planner's shared atoms: the state chip, the era chip, the
 // no-slot chip, and a donor NAME that both hovers and links.
 //
-// ONE CHIP PER SOCKET (UI conventions: chips convey STATE, never process). The Board cell and the
-// Farm row show the same four states in the same colours, so a socket you looked at on the board
-// is recognisable in the rollup without re-reading it.
+// ONE CHIP PER SOCKET (UI conventions: chips convey STATE, never process). The Inventory cell and
+// the Farm row show the same four states in the same colours, so a socket you looked at on the
+// Inventory tab is recognisable in the rollup without re-reading it.
 //
 // THE DONOR NAME HOVERS *AND* CLICKS (owner, 2026-08-04). The hover is unchanged:
 // `KnownItemTooltip` (lib/) is what every other item name in this app opens — the EQ-style item

@@ -178,7 +178,7 @@ export default function EffectFilterBar({
         label="Usable by this set"
         on={filters.trioOnly}
         onToggle={() => setFilters({ ...filters, trioOnly: !filters.trioOnly })}
-        hint="Hide donors no class in this set can use. Donors whose page states no class list are kept and chipped 'class unknown'."
+        hint="Hide donors no class in this set can use"
       />
 
       <ToggleChip
@@ -186,7 +186,7 @@ export default function EffectFilterBar({
         testId="planner-era-toggle"
         on={eraOnly}
         onToggle={() => setEraOnly(!eraOnly)}
-        hint={`Hide donors whose only known sources are outside ${CURRENT_ERA_LABEL}. Donors no zone places stay, chipped 'era?'.`}
+        hint={`Hide donors from outside ${CURRENT_ERA_LABEL}`}
       />
 
       <ToggleChip
@@ -194,7 +194,7 @@ export default function EffectFilterBar({
         testId="planner-nonequip-toggle"
         on={showNonEquip}
         onToggle={() => setShowNonEquip(!showNonEquip)}
-        hint="Show items whose page states no equipment slot — potions, poisons and the like. An exaltation can only move between items sharing a slot, so these can never donate; they are hidden by default and chipped 'no slot' when shown."
+        hint="Show items whose page states no equipment slot"
       />
     </Stack>
   )

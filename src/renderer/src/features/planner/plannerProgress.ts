@@ -91,7 +91,7 @@ export function foldInventory(inventory: Readonly<Record<string, number>>): Reco
 }
 
 /**
- * The planner's progress join. Mounted ONCE by PlannerView and handed down, so Board and Farm
+ * The planner's progress join. Mounted ONCE by PlannerView and handed down, so Inventory and Farm
  * read the same three sources rather than subscribing twice.
  */
 export function usePlannerProgress(): PlannerProgressApi {
