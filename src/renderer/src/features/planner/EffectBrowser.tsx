@@ -309,8 +309,8 @@ interface RowsInput {
   view: { eraOnly: boolean; nonEquip: boolean }
   /** V8 — the host's own class list; `[]` is unknown and filters nothing (law 1) */
   hostClasses: readonly ClassAbbr[]
-  /** V8 — a socket preset is active. Haste-locked donors are ILLEGAL there, not merely chipped:
-   *  R3 says haste never moves, and a preset promises only-legal-fits (owner verdict, 2026-08-05). */
+  /** V8 — a preset promises only-legal-fits, so haste-locked donors are OUT there (R3; owner
+   *  verdict 2026-08-05). In the free browser they stay, chipped — that is where R3 is taught. */
   presetActive: boolean
   axis: GroupAxis
   open: ReadonlySet<string>
@@ -327,9 +327,7 @@ function useVisibleRows(input: RowsInput): BrowserRow[] {
   const { donors, filters, text, planClasses, view, hostClasses, presetActive, axis, open } = input
   const filtered = useMemo(() => {
     let rows = filterDonors(donors, { ...filters, text }, planClasses, view)
-    // Under a preset, haste-locked donors are not shown-and-chipped — they are OUT: the preset
-    // is "what can legally fill this socket", and R3's answer for haste is never. In the free
-    // browser they stay visible (the chip is how the rule gets taught).
+    // Haste-locked donors are illegal under a preset — see RowsInput.presetActive.
     if (presetActive) rows = rows.filter((d) => !d.hasteLocked)
     // R2's class half against the HOST, not the set: an effect can only move into an item that
     // shares a class with it.
