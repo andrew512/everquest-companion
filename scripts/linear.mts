@@ -64,15 +64,29 @@ const flag = (name: string): string | undefined => {
 }
 
 if (cmd === 'list') {
+  // THE SYNC READ: the owner steers by reordering the board and cancelling tickets. Output is
+  // sorted by the kanban's own manual order (sortOrder within a column) with the priority
+  // field shown — this listing IS the dispatch queue, never a cached plan of it.
   const want = flag('state')
-  const d = await gql<{ issues: { nodes: { identifier: string; title: string; state: { name: string } }[] } }>(
-    'query($id: ID!) { issues(filter: { team: { id: { eq: $id } } }, first: 250, orderBy: updatedAt) { nodes { identifier title state { name } } } }',
+  const d = await gql<{ issues: { nodes: { identifier: string; title: string; sortOrder: number; priority: number; state: { name: string; position: number } }[] } }>(
+    'query($id: ID!) { issues(filter: { team: { id: { eq: $id } } }, first: 250) { nodes { identifier title sortOrder priority state { name position } } } }',
     { id: team.id }
   )
-  for (const n of d.issues.nodes) {
-    if (want && n.state.name.toLowerCase() !== want.toLowerCase()) continue
-    console.log(`${n.identifier}  [${n.state.name}]  ${n.title}`)
+  const PRIO = ['—', 'URGENT', 'High', 'Med', 'Low']
+  const rows = d.issues.nodes
+    .filter((n) => !want || n.state.name.toLowerCase() === want.toLowerCase())
+    .sort((a, b) => a.state.position - b.state.position || a.sortOrder - b.sortOrder)
+  for (const n of rows) {
+    console.log(`${n.identifier}  [${n.state.name}]  (${PRIO[n.priority] ?? n.priority})  ${n.title}`)
   }
+} else if (cmd === 'show' && a) {
+  const issue = await issueByIdentifier(a)
+  const d = await gql<{ issue: { title: string; description: string; state: { name: string }; priority: number; comments: { nodes: { body: string; createdAt: string }[] } } }>(
+    'query($id: String!) { issue(id: $id) { title description priority state { name } comments { nodes { body createdAt } } } }',
+    { id: issue.id }
+  )
+  console.log(`# ${issue.identifier}: ${d.issue.title}\nState: ${d.issue.state.name} · priority ${String(d.issue.priority)}\n\n${d.issue.description}\n`)
+  for (const c of d.issue.comments.nodes) console.log(`--- comment (${c.createdAt}):\n${c.body}\n`)
 } else if (cmd === 'create' && a) {
   const d = await gql<{ issueCreate: { issue: { identifier: string } } }>(
     'mutation($input: IssueCreateInput!) { issueCreate(input: $input) { issue { identifier } } }',

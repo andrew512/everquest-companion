@@ -55,12 +55,18 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   partitioned into disjoint waves with per-wave regression gates and run
   until done. The user gets a short "In flight / Settled" readout whenever
   a turn ends with agents still running.
-- **THE BOARD IS IN LINEAR (owner, 2026-08-05).** Canonical project management
-  is the kanban in the owner's PERSONAL Linear workspace (Josh's Maker Space,
-  team JOS — never the work workspace). `scripts/linear.mts` is the CLI
-  (auth: `.triage/linear.env`, gitignored). The integrator moves an issue to
-  In Progress (with a comment naming the wave/agent) at dispatch and to Done
-  (with the commit hash) at merge; owner requests become issues as accepted.
+- **THE BOARD IS IN LINEAR, AND THE OWNER STEERS IT (owner, 2026-08-05).**
+  Canonical project management is the kanban in the owner's PERSONAL Linear
+  workspace (Josh's Maker Space, team JOS — never the work workspace).
+  `scripts/linear.mts` is the CLI (auth: `.triage/linear.env`, gitignored).
+  The full loop is the `linear-board` skill (.claude/skills/linear-board) —
+  the short form: SYNC fresh before every pick (the owner reorders,
+  reprioritizes and cancels between reads; a Canceled ticket is a STOP order
+  even mid-flight), the ticket IS the brief (`linear.mts show JOS-N`; bodies
+  are self-contained build briefs), states are Todo → In Progress → Done
+  only (no Backlog), tickets are END-TO-END improvements titled
+  `Module / What the user gets`, and In Progress/Done moves carry
+  wave-and-commit comments. Only owner-accepted work becomes a ticket.
 - **BRANCH INTEGRATION RULES (owner, 2026-08-05 — one merge behavior, not a
   juggle).** Every worker commits on its OWN worktree branch, never on main.
   Before reporting done, the worker makes the branch MERGE-READY: full checks
