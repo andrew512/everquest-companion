@@ -93,6 +93,7 @@ import {
   stepEra,
   stepFocusFamilies,
   stepNonEquip,
+  stepOutputsRegistry,
   textOf,
   until
 } from './plannerSteps.mjs'
@@ -327,6 +328,10 @@ async function stepInventoryFill(page: Page): Promise<void> {
       line.slice(0, 120)
     )
   }
+
+  // …and the same facts, live over the registry's own channel (JOS-44). Next door, with the rest
+  // of the measurements this spec only orders.
+  await stepOutputsRegistry(page, fresh > 0)
 }
 
 /**

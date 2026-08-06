@@ -13,6 +13,7 @@
 
 import { watch, type FSWatcher } from 'chokidar'
 import { basename } from 'path'
+import { isOutputFileName, type OutputKindDef } from '../../shared/outputs/kinds'
 
 /** Hold a change until the file has been the same size for this long (ms). */
 const STABILITY_THRESHOLD_MS = 400
@@ -58,10 +59,9 @@ export function watchOutputFile(path: string, handlers: OutputWatchHandlers): FS
  */
 export function watchForOutputFile(
   dir: string,
-  fileKind: string,
+  def: OutputKindDef,
   handlers: OutputWatchHandlers
 ): FSWatcher {
-  const suffix = `-${fileKind}.txt`.toLowerCase()
   const watcher = watch(dir, {
     ignoreInitial: true,
     depth: 0,
@@ -71,7 +71,7 @@ export function watchForOutputFile(
     }
   })
   watcher.on('add', (path: string) => {
-    if (basename(path).toLowerCase().endsWith(suffix)) handlers.onChange()
+    if (isOutputFileName(def, basename(path))) handlers.onChange()
   })
   watcher.on('error', handlers.onError)
   return watcher

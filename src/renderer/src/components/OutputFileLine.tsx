@@ -24,7 +24,8 @@
 
 import { type JSX, useEffect, useState } from 'react'
 import { Box, Paper, Stack, Typography } from '@mui/material'
-import { formatAge, formatDateTime } from '../lib/formatDate'
+import { formatDateTime } from '../lib/formatDate'
+import { outputAgeLabel, outputUpdatedMillis } from '../lib/outputFreshness'
 
 /** How often the age re-renders. Coarse, matching `formatAge`'s own resolution (UpdateChip). */
 const AGE_TICK_MS = 60_000
@@ -35,19 +36,13 @@ export interface OutputFileLineProps {
   /** ONE clause saying why it is worth typing. No caveats, no methodology. */
   why: string
   /**
-   * The dump file's mtime, ISO. Absent means no file exists yet, and the line then states the
-   * command WITHOUT claiming an age — "never" is not a timestamp, and a surface with no dump is
-   * usually already showing its own instructions.
+   * The dump file's mtime, ISO. Absent means no file exists yet, and the line then says so in
+   * words — "not yet run" — rather than claiming an age. "Never" is not a timestamp, and the
+   * silence it replaced read as "no age worth mentioning" on a surface whose data does not exist
+   * at all (JOS-44: the never-run state is a state, not an omission).
    */
   updatedAt?: string
   testId?: string
-}
-
-/** ISO → epoch millis, or undefined when the string is absent or unparseable (never `0`). */
-function millis(iso: string | undefined): number | undefined {
-  if (iso === undefined) return undefined
-  const t = Date.parse(iso)
-  return Number.isNaN(t) ? undefined : t
 }
 
 export default function OutputFileLine({ command, why, updatedAt, testId }: OutputFileLineProps): JSX.Element {
@@ -59,8 +54,10 @@ export default function OutputFileLine({ command, why, updatedAt, testId }: Outp
     }
   }, [])
 
-  const at = millis(updatedAt)
-  const age = at === undefined ? '' : formatAge(at, now)
+  // THREE STATES, one slot on the right — never run / fresh / stale. The rule (and why "stale" is
+  // not a separate rendering) lives with the words, in lib/outputFreshness.ts.
+  const at = outputUpdatedMillis(updatedAt)
+  const age = outputAgeLabel(at, now)
   return (
     <Paper variant="outlined" data-testid={testId} sx={{ px: 1.25, py: 0.75, mb: 1 }}>
       <Stack direction="row" spacing={1} alignItems="baseline" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
@@ -75,20 +72,18 @@ export default function OutputFileLine({ command, why, updatedAt, testId }: Outp
           {why}
         </Typography>
         <Box sx={{ flexGrow: 1, minWidth: 8 }} />
-        {age !== '' && (
-          // The exact clock time is one hover away; the ambient text stays coarse (formatDate's
-          // own contract). This is the ONE place a tooltip is warranted here — it states the
-          // precise value of the number beside it, which is what makes the coarse one safe.
-          <Typography
-            variant="caption"
-            color="text.disabled"
-            title={at === undefined ? undefined : formatDateTime(at)}
-            data-testid={testId === undefined ? undefined : `${testId}-age`}
-            sx={{ flexShrink: 0 }}
-          >
-            updated {age}
-          </Typography>
-        )}
+        {/* The exact clock time is one hover away; the ambient text stays coarse (formatDate's
+            own contract). This is the ONE place a tooltip is warranted here — it states the
+            precise value of the number beside it, which is what makes the coarse one safe. */}
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          title={at === undefined ? undefined : formatDateTime(at)}
+          data-testid={testId === undefined ? undefined : `${testId}-age`}
+          sx={{ flexShrink: 0 }}
+        >
+          {age}
+        </Typography>
       </Stack>
     </Paper>
   )

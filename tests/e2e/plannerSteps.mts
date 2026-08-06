@@ -279,3 +279,40 @@ export async function stepFocusFamilies(page: Page): Promise<void> {
   await page.click(SOCKET_PROC, { timeout: 15_000 })
   await until(async () => (await countOf(page, `${EFFECT_ROW}[data-axis="effect"]`)) > 0, 20_000)
 }
+
+/**
+ * THE `/outputfile` REGISTRY IS LIVE OVER ITS OWN CHANNEL (JOS-44).
+ *
+ * The freshness line above the Inventory tab renders from strings the renderer already holds; the
+ * Sky tracker's copy of that same line renders from `outputs:status`. This is asserted because
+ * FEATURE-HIDDEN IS A SILENT WRONG ANSWER (AGENTS.md): an unregistered handler, or a bridge method
+ * that never landed, would leave the Sky line rendering nothing at all with no error to grep.
+ *
+ * Two identities, never counts: the command the app teaches ON SCREEN and the command it answers
+ * with OVER IPC must be one string, and the registry must agree with the tab about whether this
+ * machine has a dump at all (`dumpOnScreen` is what the tab itself decided).
+ */
+export async function stepOutputsRegistry(page: Page, dumpOnScreen: boolean): Promise<void> {
+  const registry = await page.evaluate(async () => {
+    interface Status {
+      kind: string
+      command: string
+      why: string
+      updatedAt: string | null
+    }
+    const bridge = window as unknown as { eq: { outputsStatus: () => Promise<Status[]> } }
+    const all = await bridge.eq.outputsStatus()
+    const inv = all.find((s) => s.kind === 'inventory')
+    return { kinds: all.length, command: inv?.command ?? '', why: inv?.why ?? '', dated: inv?.updatedAt != null }
+  })
+  check(
+    'the /outputfile registry answers over IPC with the command the tab is teaching',
+    registry.kinds > 0 && registry.command === '/outputfile inventory' && registry.why.length > 0,
+    `${String(registry.kinds)} kinds · ${registry.command}`
+  )
+  check(
+    '…and it agrees with the tab about whether a dump exists on this machine',
+    registry.dated === dumpOnScreen,
+    `registry dated=${String(registry.dated)} · tab shows a dump=${String(dumpOnScreen)}`
+  )
+}

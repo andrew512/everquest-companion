@@ -1,8 +1,11 @@
 import { type JSX, useCallback, useEffect, useState } from 'react'
 import { Alert, Box, Button, Chip, Snackbar, Stack, Tab, Tabs, Typography } from '@mui/material'
 import type { CountSource } from '@shared/types'
-import { useProgress, type QuestProgress, type UseProgress } from './useProgress'
-import { formatDateTime } from '../../lib/formatDate'
+import { useProgress, type QuestProgress } from './useProgress'
+// The `/outputfile` freshness line (JOS-44), wired to the registry: this tab's have/need chips
+// read the same dump the Exaltations tab does, so they get the same one-line treatment — the
+// command, one clause of why, and the FILE's own age (or "not yet run").
+import OutputKindLine from '../../components/OutputKindLine'
 import type { SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
@@ -64,19 +67,22 @@ function IgnoredList({
 
 // The one-line status under the filters. It states which of three situations you are in —
 // there is no Sky data at all, there is data but you ignored every quest, or here are the
-// counts — and where the "have" numbers came from.
+// counts — and which SOURCE the "have" numbers came from.
+//
+// HOW OLD that source is moved out of here in JOS-44: it is the `/outputfile` registry's line
+// (OutputKindLine, right above), which reads the file's own mtime rather than the store's record
+// of the last reload — so a dump this app has never loaded still dates itself honestly, and a
+// character who has never run the command reads "not yet run" instead of nothing at all.
 function CountsLine({
   questCount,
   totalQuests,
   filteredCount,
-  countSource,
-  inventoryInfo
+  countSource
 }: {
   questCount: number
   totalQuests: number
   filteredCount: number
   countSource: CountSource
-  inventoryInfo: UseProgress['inventoryInfo']
 }): JSX.Element {
   if (questCount === 0) {
     return (
@@ -97,10 +103,6 @@ function CountsLine({
     <Typography variant="body2" color="text.secondary">
       {filteredCount} of {totalQuests} quests · counting from{' '}
       {countSource === 'log' ? 'looted log' : countSource === 'inventory' ? 'inventory export' : 'log + inventory'}
-      {countSource !== 'log' &&
-        (inventoryInfo
-          ? ` · inventory loaded ${formatDateTime(new Date(inventoryInfo.loadedAt).getTime())}`
-          : ' · no inventory loaded yet')}
     </Typography>
   )
 }
@@ -238,7 +240,6 @@ export default function PoskyView({
     setCountSource,
     reloadInventory,
     setQuestComplete,
-    inventoryInfo,
     sharedItems,
     ambiguousQuestNames
   } = useProgress({ onQuestComplete })
@@ -277,12 +278,17 @@ export default function PoskyView({
             onCountSource={setCountSource}
             onReload={onReload}
           />
+          {/* Only when the dump actually feeds the numbers: counting from the looted log alone
+              means this tab does not read the export at all, and a freshness line about a file
+              nothing on screen depends on is the caveat this diet exists to refuse. */}
+          {countSource !== 'log' && (
+            <OutputKindLine kind="inventory" testId="posky-inventory-fresh" />
+          )}
           <CountsLine
             questCount={quests.length}
             totalQuests={totalQuests}
             filteredCount={list.filtered.length}
             countSource={countSource}
-            inventoryInfo={inventoryInfo}
           />
           <QuestList
             list={list}

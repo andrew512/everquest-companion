@@ -18,8 +18,8 @@
 // `loadInventoryDump` from `../outputs` instead. This flat view is not the substrate; it is
 // one derived projection of it.
 
-import { readFileSync, statSync } from 'fs'
-import { findOutputFile, inventoryHeldCounts } from '../outputs'
+import { findOutputFile, inventoryHeldCounts, loadInventoryDump } from '../outputs'
+import { heldCountsFromDump } from '../../shared/outputs/inventory'
 import type { HeldCounts } from '../../shared/types'
 
 /**
@@ -45,9 +45,17 @@ export function findInventoryFile(characterName?: string, server?: string): stri
   return findOutputFile('inventory', characterName, server)
 }
 
+/**
+ * The active character's newest dump, as held counts.
+ *
+ * ONE READ PATH (JOS-44). This used to do its own find + readFile + stat beside the engine's;
+ * now it is `loadInventoryDump` (the registry's find + mtime + parse) with the compatibility
+ * derivation applied on top, so "which file" and "how old" can never disagree with what the
+ * Exaltations tab and the freshness line are saying. Byte-identical by construction:
+ * `heldCountsFromDump` is exactly what `inventoryHeldCounts` applies to the same parsed dump.
+ */
 export function loadInventory(characterName?: string, server?: string): InventoryLoadResult | null {
-  const path = findInventoryFile(characterName, server)
-  if (!path) return null
-  const counts = parseInventoryText(readFileSync(path, 'utf8'))
-  return { path, counts, loadedAt: new Date(statSync(path).mtimeMs).toISOString() }
+  const loaded = loadInventoryDump(characterName, server)
+  if (!loaded) return null
+  return { path: loaded.path, counts: heldCountsFromDump(loaded.dump), loadedAt: loaded.loadedAt }
 }

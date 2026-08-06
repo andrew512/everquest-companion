@@ -2,32 +2,48 @@
 // outputs/ — the ENGINE that reads EQ `/outputfile` dumps. Public surface.
 // ============================================================================
 //
-// Four pieces, deliberately separable:
-//   kinds.ts           the REGISTRY: which kinds exist, what their files are called,
-//                      and which ones we are allowed to parse (the no-guessing law).
-//   discovery.ts       finding a kind's file under `effectiveEqRoot()`.
-//   watch.ts           the shared "a dump was rewritten" watcher.
-//   inventoryParse.ts  the one graduated kind's pure parser (model: shared/outputs/inventory.ts).
+// Five pieces, deliberately separable:
+//   shared/outputs/kinds.ts  the FACTS: which kinds exist, the command, the why-clause, the
+//                            filename pattern, and which ones we may parse (the no-guessing law).
+//   kinds.ts                 the PARSE half of that registry (parsers are main's).
+//   discovery.ts             finding a kind's file under `effectiveEqRoot()`.
+//   watch.ts                 the shared "a dump was rewritten"/"a dump appeared" watchers.
+//   registry.ts              the RUNTIME registry: status (path + the player's own mtime) and
+//                            the one watch entry point every consumer uses.
+//   inventoryParse.ts        the one graduated kind's pure parser (model: shared/outputs/inventory.ts).
 //
-// NOTHING IS PERSISTED FROM HERE. Dumps are parsed on demand and held in memory by their
-// caller. The only persisted artifact remains the flat `HeldCounts` map the reconcile
-// surfaces already store (`store.ts setInventory`, `ProgressState.inventory`) — see the
-// note on `loadInventoryDump` below.
+// NOTHING IS PERSISTED FROM HERE. Dumps are parsed on demand and held in memory by their caller.
+// The only persisted artifact remains the flat `HeldCounts` map the reconcile surfaces already
+// store (`store.ts setInventory`, `ProgressState.inventory`) — see the note on
+// `loadInventoryDump` below.
 
-import { readFileSync, statSync } from 'fs'
+import { readFileSync } from 'fs'
 import type { InventoryDump } from '../../shared/outputs/inventory'
-import { findOutputFile } from './discovery'
-import { parseOutput, type OutputKindId, type OutputParseResult } from './kinds'
+import type { OutputKindId } from '../../shared/outputs/kinds'
+import { parseOutput, type OutputParseResult } from './kinds'
+import { outputStatus, type OutputCharacter } from './registry'
 
 export { findOutputFile } from './discovery'
 export { watchForOutputFile, watchOutputFile, type OutputWatchHandlers } from './watch'
 export { inventoryHeldCounts, parseInventoryDump } from './inventoryParse'
 export {
+  outputStatus,
+  outputStatuses,
+  watchOutputKind,
+  type OutputCharacter,
+  type OutputKindWatch,
+  type OutputWatchOptions
+} from './registry'
+export {
+  isOutputFileName,
+  outputFileNames,
   OUTPUT_KINDS,
   outputKind,
   parseOutput,
+  preferredOutputFile,
   type InventoryOutput,
   type OutputData,
+  type OutputFileStatus,
   type OutputKindDef,
   type OutputKindId,
   type OutputParseResult
@@ -42,19 +58,25 @@ export interface LoadedOutput {
   result: OutputParseResult
 }
 
-/** Find + read + parse a kind's dump for a character. Null when there is no such file. */
+/**
+ * Find + read + parse a kind's dump for a character. Null when there is no such file.
+ *
+ * The find + the mtime both come from `outputStatus`, so "where is it" and "how old is it" have
+ * exactly ONE answer in this process — the same one the UI's freshness line is rendering.
+ */
 export function loadOutput(
   id: OutputKindId,
   characterName?: string,
   server?: string
 ): LoadedOutput | null {
-  const path = findOutputFile(id, characterName, server)
-  if (!path) return null
+  const character: OutputCharacter = { name: characterName, server }
+  const status = outputStatus(id, character)
+  if (status.path === null || status.updatedAt === null) return null
   return {
     kind: id,
-    path,
-    loadedAt: new Date(statSync(path).mtimeMs).toISOString(),
-    result: parseOutput(id, readFileSync(path, 'utf8'))
+    path: status.path,
+    loadedAt: status.updatedAt,
+    result: parseOutput(id, readFileSync(status.path, 'utf8'))
   }
 }
 
