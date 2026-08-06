@@ -604,6 +604,42 @@ export interface SessionStartEvent extends LogEventBase {
 }
 
 /**
+ * WHO YOU ARE GROUPED WITH — one membership statement (docs/plans/group-model.md §1).
+ *
+ * The game states group membership outright, so nothing here is ever inferred from proximity
+ * (world-model law 1). Every shape below was MEASURED against the real 1,382,093-line log on
+ * 2026-08-05; the counts are in parseGroup.ts beside each pattern, and the two shapes with no
+ * occurrence in this log are labeled `unverified` there rather than pretended verified.
+ *
+ * These lines used to be scrubbed out of committed fixtures and feedback slices; JOS-15 kept
+ * them (shared/logScrub.ts family 3) precisely so this model could exist. Group CHAT still
+ * falls to the quoted-speech drop rule, which is why `confirm` — the one shape carried by a
+ * chat line — can never appear in a committed fixture and is tested from synthetic lines.
+ *
+ * `change` is the whole payload beside the name:
+ *   'join'      `<Name> has joined the group.`             — <Name> is with you
+ *   'leave'     `<Name> has left the group.`               — <Name> is not
+ *   'leader'    `<Name> is now the leader of your group.`  — <Name> is with you (weaker: it
+ *               states a role, and the leader of YOUR group is by definition in it)
+ *   'confirm'   `<Name> tells the group, '…'`              — <Name> is with you, re-asserted;
+ *               the recovery path when the join predates the log
+ *   'selfJoin'  `You have joined the group.`               — a group now exists; no member named
+ *   'selfLeave' `You have been removed from the group.`    — the group is over; roster clears
+ *   'invite'    `You invite <Name> to join your group.` / `<Name> invites you to join a group.`
+ *               — an OFFER, never a membership fact (it may be declined and often is: this log
+ *               has 7 invites and only 5 of the joins that would answer them). Parsed so the
+ *               UI can explain a missing member, never folded into the roster.
+ *
+ * `name` is absent exactly for the two self shapes.
+ */
+export interface GroupEvent extends LogEventBase {
+  kind: 'group'
+  change: 'join' | 'leave' | 'leader' | 'confirm' | 'selfJoin' | 'selfLeave' | 'invite'
+  /** The member the line names. Absent for `selfJoin` / `selfLeave`. */
+  name?: string
+}
+
+/**
  * The player STARTED camping out — `It will take you about 30 seconds to prepare your camp.`
  * (20× in the real log). Only the INITIATION line is an event; the five countdown ticks
  * (`It will take about {25,20,15,10,5} more seconds to prepare your camp.`, 78 lines) stay
@@ -1124,6 +1160,7 @@ export type LogEvent =
   | SessionStartEvent
   | CampStartEvent
   | CampAbortEvent
+  | GroupEvent
   | OfflineGapEvent
   | StanceChangeEvent
   | InvocationChangeEvent
