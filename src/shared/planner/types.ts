@@ -172,6 +172,22 @@ export interface PlanSlot {
   sockets: Partial<Record<SocketType, PlanSocket>>
 }
 
+/**
+ * WHERE A SET'S CLASS FILTER CAME FROM (planner-v2 V2).
+ *
+ * `detected` — the set is FOLLOWING live class-combo inference: a loadout switch or a fresh
+ * `/who` rewrites the filter, because a set that was seeded once and then orphaned goes stale
+ * silently (the owner's live case: the planner showed `rog pal ber` long after the truth was
+ * `pal enc mnk`).
+ * `user` — the user edited the trio, so it is PINNED. Detection never overwrites it; when the two
+ * disagree the toolbar offers the detected trio as a chip and applying it is one click.
+ *
+ * ABSENT MEANS `user`, and that is the honest reading rather than a default: every set stored
+ * before this field existed carries a trio a person typed (or accepted) at creation, and silently
+ * re-binding those to today's detection would rewrite work nobody asked us to touch.
+ */
+export type ClassesProvenance = 'detected' | 'user'
+
 /** A named exaltation set. Persisted per character under `ProgressState.exaltPlans` (D4). */
 export interface ExaltPlan {
   /** `crypto.randomUUID()` — stable across renames, the React key and the CRUD handle */
@@ -179,6 +195,13 @@ export interface ExaltPlan {
   name: string
   /** the target loadout this set is built for (D5); 1–3 classes, defaulting to the inferred combo */
   classes: ClassAbbr[]
+  /**
+   * V2 — whether `classes` is following detection or pinned by the user. OPTIONAL and additive,
+   * exactly like `exaltPlans` itself (D4): every reader defaults (absent ⇒ `user`, see the type),
+   * so no schema bump and no migration step — `tests/plannerStore.test.mts` pins that a set
+   * written without it round-trips byte-for-byte.
+   */
+  classesProvenance?: ClassesProvenance
   createdAt: number
   updatedAt: number
   slots: Partial<Record<EquipSlot, PlanSlot>>

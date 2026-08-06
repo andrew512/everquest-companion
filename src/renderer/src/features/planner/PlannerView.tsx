@@ -17,7 +17,7 @@
 // mounted ONCE here and handed to Board and Farm — two mounts would subscribe to the inventory,
 // the loot module and the observed tiers twice over to compute the identical answer.
 
-import { type JSX, useState } from 'react'
+import { type JSX, useEffect, useMemo, useState } from 'react'
 import {
   Box,
   Button,
@@ -38,13 +38,15 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
-import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses } from '@shared/classCombo'
+import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses, type ClassAbbr } from '@shared/classCombo'
 import type { ExaltPlan } from '@shared/planner/types'
 import { useComboSnap } from '../profiles/ClassComboData'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
+import { Tooltip } from '../../lib/Tooltip'
 import EffectBrowser from './EffectBrowser'
 import FarmList from './FarmList'
 import PlanBoard from './PlanBoard'
+import { boundClasses, detectedOffer } from './plannerClasses'
 import { usePlannerProgress, type PlannerProgressApi } from './plannerProgress'
 import { usePlans, type PlannerMode, type PlansApi } from './usePlans'
 
@@ -163,6 +165,30 @@ function ClassFilter({ plan, plans }: { plan: ExaltPlan; plans: PlansApi }): JSX
   )
 }
 
+/**
+ * THE DISAGREE CHIP (V2) — "detected: PAL ENC MNK — apply".
+ *
+ * Shown only on a set whose trio the user PINNED, and only while live inference has resolved a
+ * different one. It never changes anything on its own: the whole point of the chip idiom here is
+ * that the app states what it thinks and the click is the user's. Applying does NOT un-pin the
+ * set either — accepting one answer is not handing the filter back to inference.
+ */
+function DetectedChip({ offer, onApply }: { offer: ClassAbbr[]; onApply: () => void }): JSX.Element {
+  return (
+    <Tooltip title="Use the combo detected from your log">
+      <Chip
+        size="small"
+        color="warning"
+        variant="outlined"
+        data-testid="planner-detected-chip"
+        label={`detected: ${offer.join(' ')} — apply`}
+        onClick={onApply}
+        sx={{ flexShrink: 0 }}
+      />
+    </Tooltip>
+  )
+}
+
 // ---- empty + not-yet states ----------------------------------------------------------
 
 function NoSets({ onNew }: { onNew: () => void }): JSX.Element {
@@ -229,11 +255,29 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
   const [editing, setEditing] = useState<Editing>(NO_EDIT)
   const selected = plans.selected
 
-  // A new set defaults to the CURRENTLY INFERRED combo (D5). An unresolved slot contributes
-  // nothing, so a half-known combo seeds the classes it does know and nothing it doesn't.
+  // What the app currently believes this character is running. An unresolved slot contributes
+  // nothing, so a half-known combo yields the classes it does know and nothing it doesn't (law 1).
+  const current = combo.current
+  const detected = useMemo(() => (current === null ? [] : resolvedClasses(current)), [current])
+
+  // A new set defaults to the CURRENTLY INFERRED combo (D5) — and, since V2, keeps FOLLOWING it.
   const newSet = (): void => {
-    plans.create(combo.current === null ? [] : resolvedClasses(combo.current))
+    plans.create(detected)
   }
+
+  // THE BINDING (V2): a set whose trio came from detection tracks detection. Scoped to the
+  // SELECTED set on purpose — it is the one whose filter is on screen and whose donor list is
+  // about to be read, and rewriting nine unopened sets on every loadout switch would be nine
+  // `updatedAt` stamps for edits nobody made. `boundClasses` returns null once they agree, so
+  // this settles after one write rather than looping.
+  const bound = selected === null ? null : boundClasses(selected, detected)
+  const selectedId = selected?.id ?? null
+  const { adoptClasses } = plans
+  useEffect(() => {
+    if (selectedId !== null && bound !== null) adoptClasses(selectedId, bound)
+  }, [selectedId, bound, adoptClasses])
+
+  const offer = selected === null ? null : detectedOffer(selected, detected)
 
   if (!plans.ready) return <Box />
   if (plans.plans.length === 0 || selected === null) return <NoSets onNew={newSet} />
@@ -244,6 +288,9 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
         <SetSwitcher plans={plans} onNew={newSet} onMenu={(menu) => setEditing({ ...NO_EDIT, menu })} />
         <Box sx={{ flexGrow: 1, minWidth: 8 }} />
         <ClassFilter plan={selected} plans={plans} />
+        {offer !== null && (
+          <DetectedChip offer={offer} onApply={() => plans.adoptClasses(selected.id, offer)} />
+        )}
         <ToggleButtonGroup
           exclusive
           size="small"

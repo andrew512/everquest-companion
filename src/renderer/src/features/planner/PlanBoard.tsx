@@ -36,7 +36,8 @@ import {
 import { extractionTier, narrowedClasses } from '@shared/planner/rules'
 import { Tooltip } from '../../lib/Tooltip'
 import HostPicker from './HostPicker'
-import { DonorName, EraChip, NoSlotChip, StateChip } from './PlannerChips'
+import { DonorName, EraChip, MismatchChip, NoSlotChip, StateChip } from './PlannerChips'
+import { classesMismatch } from './plannerClasses'
 import { donorFor, indexDonors, isNonEquippable, useDonors, type DonorRow } from './plannerData'
 import type { PlannerProgressApi } from './plannerProgress'
 
@@ -77,6 +78,7 @@ function SocketLine({
   socket,
   effect,
   donorKey,
+  planClasses,
   index,
   progress,
   onRemove,
@@ -86,6 +88,8 @@ function SocketLine({
   socket: SocketType
   effect: string
   donorKey: string
+  /** the set's class FILTER — a donor outside it is chipped, never dropped (V2) */
+  planClasses: readonly ClassAbbr[]
   index: DonorIndex
   progress: PlannerProgressApi
   onRemove: (slot: EquipSlot, socket: SocketType) => void
@@ -113,6 +117,7 @@ function SocketLine({
         </Typography>
       </Box>
       <Box sx={{ flexGrow: 1, minWidth: 4 }} />
+      {donor !== null && classesMismatch(donor.classes, planClasses) && <MismatchChip classes={donor.classes} />}
       {donor !== null && isNonEquippable(donor) && <NoSlotChip />}
       <EraChip subject={donor ?? { key: donorKey }} />
       <StateChip progress={state} />
@@ -232,6 +237,7 @@ function Cell({ slot, plan, index, progress, onSocket, onHost, onPickHost, onOpe
             socket={socket}
             effect={entry.effect}
             donorKey={entry.donorKey}
+            planClasses={plan.classes}
             index={index}
             progress={progress}
             onRemove={(s, k) => onSocket(s, k, null)}

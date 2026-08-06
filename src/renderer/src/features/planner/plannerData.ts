@@ -25,6 +25,7 @@ import {
   type Era,
   type EraVerdict
 } from '@shared/planner/era'
+import { classesMismatch } from './plannerClasses'
 import { defaultAxis, isAxisFor, type GroupAxis } from './plannerGroups'
 import { sourcesFor } from './sourceIndex'
 
@@ -329,11 +330,15 @@ export function useNonEquip(): [boolean, (v: boolean) => void] {
 /**
  * R2's class half, as a three-valued answer. An empty `planClasses` (a set with no trio picked)
  * asks for NO class filter — it is not a claim that zero classes are wanted.
+ *
+ * The `no` case is `plannerClasses.classesMismatch` and nothing else: the browser filter and the
+ * Board's mismatch chip (V2) are the same question asked at two moments, and one rule is what
+ * stops a donor being hidden here and unmarked there.
  */
 export function classFit(donor: PlannerDonor, planClasses: readonly ClassAbbr[]): ClassFit {
   if (planClasses.length === 0) return 'fits'
   if (donor.classes.length === 0) return 'unknown'
-  return donor.classes.some((c) => planClasses.includes(c)) ? 'fits' : 'no'
+  return classesMismatch(donor.classes, planClasses) ? 'no' : 'fits'
 }
 
 /**

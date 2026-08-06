@@ -116,6 +116,29 @@ export function BestChip(): JSX.Element {
 }
 
 /**
+ * THE CLASS MISMATCH (V2) — this donor is already in the build and no longer matches the set's
+ * class filter.
+ *
+ * NOTHING IS REMOVED, and that is the decision this chip exists to make visible: the trio is a
+ * FILTER, not a rule, so re-inference or a loadout switch can never invalidate work you already
+ * planned. It can only point at it. Same family as the era chip on purpose — both say "this row
+ * survives, and here is why it looks out of place".
+ */
+export function MismatchChip({ classes }: { classes: readonly string[] }): JSX.Element {
+  return (
+    <Tooltip title={`Usable by ${classes.join('/')}`}>
+      <Chip
+        size="small"
+        label="off filter"
+        data-testid="planner-mismatch-chip"
+        color="warning"
+        sx={CHIP_SX}
+      />
+    </Tooltip>
+  )
+}
+
+/**
  * NO EQUIP SLOT — the R2 disqualifier, stated rather than assumed.
  *
  * An exaltation can only be socketed into an item sharing the donor's equipment slot, so a donor
