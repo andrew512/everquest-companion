@@ -1,6 +1,9 @@
 # E2E, made repeatable — parallel-safe, worktree-runnable, deterministic
 
-Status: DESIGN + wave E1 dispatched. Author: planning session (Fable), 2026-08-05.
+Status: **DONE — E1, E2 and E3 all landed** (E2/E3: JOS-29, 2026-08-06). The suite reads
+committed per-spec fixtures, scripts its own live gameplay, and waits for conditions:
+13/13 green twice consecutively at 150.4 s and 148.2 s wall from a worktree, against
+12/13 at 175.7 s before. Author: planning session (Fable), 2026-08-05.
 Grounded in a full harness audit (same date): 13 hand-listed serial specs, ~28 min
 observed wall clock (one spec: ~20 min), one shared userData dir for every spec
 and rerun, the user's LIVE EverQuest log as the system input, ~60 raw sleeps,
@@ -36,12 +39,24 @@ a worktree" stops being an excuse any doer can reach for — see the standing ru
   rm-rf. NO spec-assertion changes beyond what the isolation forces. Exit
   criterion: two `npm run test:e2e` invocations racing each other both go 13/13,
   and a worktree run completes.
-- **E2 — determinism**: per-spec fixture logs + env override + the append-driver
-  for live-line scenarios; retighten the worst data-dependent assertions
-  (Rounds lanes, search hits) against known fixture content.
-- **E3 — the sleep purge**: convert raw sleeps to `settle()` spec by spec,
-  worst first (combat-dashboard ×13, leveling, perf's absence-after-1.5 s).
-  Mechanical; can ride along with any feature wave that touches a spec.
+- **E2 — determinism (DONE, JOS-29)**: 13 committed fixtures cut by
+  `tests/extract-e2e-fixtures.mjs` through the shared scrub (~800 KB, largest
+  225 KB); `tests/e2e/logFixture.mts` stages a throwaway EQ install per launch
+  and hands it over via `EQ_INSTALL_DIR`; the APPEND DRIVER writes whole
+  EQ-stamped lines into the tailed copy, so `tests/e2e/gameplay.mts` scripts a
+  pull whose damage the repo STATES — ten hits, 442 points, four seconds — and
+  the combat and overview specs assert that total exactly instead of a floor.
+  The maps spec junctions the real install's `maps/` dir in beside its fixture
+  (200 MB of packs is a game install, not a repo artifact).
+- **E3 — the sleep purge (DONE, JOS-29)**: `tests/e2e/settle.mts` — `settle` /
+  `settleCount` / `settleGone` / `settleStable`, plus a `hoverAt` that clips
+  against every ancestor and verifies its own hit. ~60 raw sleeps → 2, and both
+  survivors are instruments: the timeline SAMPLES geometry on a clock because
+  change over time is its subject, and telemetry dwells past a second because
+  `useViewDwell` ignores anything shorter.
+  **The leveling red was the harness**: `hoverAt` clamped only to the window, so
+  the drag point for a chart clipped by its own scrolling column landed on the
+  app's content area and the pointer handlers never fired.
 
 ## What deliberately does NOT change
 
