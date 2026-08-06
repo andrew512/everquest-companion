@@ -53,13 +53,13 @@ function RowBadges({ row }: { row: AaAbilityRow }): JSX.Element {
     <>
       {row.autoRanks > 0 && (
         <Tooltip
-          title={`${String(row.autoRanks)} rank${row.autoRanks === 1 ? '' : 's'} logged at a cost of 0 — granted, not bought`}
+          title={`${String(row.autoRanks)} rank${row.autoRanks === 1 ? '' : 's'} granted, not bought`}
         >
           <Chip size="small" label="auto" data-testid="aa-ledger-auto" sx={chipSx(AUTO_COLOR)} />
         </Tooltip>
       )}
       {row.rebuys > 0 && (
-        <Tooltip title="a rank already owned was purchased again — the only refund evidence the log carries (there is no refund line); the later purchase is the one counted">
+        <Tooltip title="a rank already owned was purchased again">
           <Chip
             size="small"
             label={`re-bought ×${String(row.rebuys)}`}
@@ -70,7 +70,7 @@ function RowBadges({ row }: { row: AaAbilityRow }): JSX.Element {
       )}
       {row.unlogged.length > 0 && (
         <Tooltip
-          title={`rank${row.unlogged.length === 1 ? '' : 's'} ${rangeLabel(row.unlogged)} never appear in this log — how they were obtained is something the log cannot say`}
+          title={`rank${row.unlogged.length === 1 ? '' : 's'} ${rangeLabel(row.unlogged)} never appear in this log`}
         >
           <Chip
             size="small"

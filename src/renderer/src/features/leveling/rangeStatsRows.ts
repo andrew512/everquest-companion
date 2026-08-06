@@ -245,18 +245,11 @@ export function offlineText(stats: RangeStats): string | null {
   return stats.offlineMs > 0 ? `${fmtDuration(stats.offlineMs)} offline` : null
 }
 
-/** The offline chip's caption — WHERE the number came from, in the log's own terms. */
-export const OFFLINE_CAPTION = 'logged out — from the camp/login lines'
+/** The offline chip's caption. One word for the state, no account of how it was derived. */
+export const OFFLINE_CAPTION = 'logged out'
 
-/**
- * The offline chip's tooltip: the source, and the limit that comes with it. A logout is
- * knowable only in hindsight — the evidence is the login line that ENDED it — so an absence
- * still in progress cannot be seen at all, and its silence is counted as idle. Stating that
- * beside the number is the difference between a measurement and a claim (laws 1/6).
- */
-export const OFFLINE_TITLE =
-  'Time the log says you were logged out: a login line closed the gap, and a camp line often opened it. ' +
-  'A logout is only known once you log back in, so silence at the end of the log is still counted as idle.'
+/** The offline chip's tooltip — what the number is, in one clause (AGENTS.md tooltip diet). */
+export const OFFLINE_TITLE = 'Time the log says you were logged out.'
 
 /** How many separate logouts produced that total — a title-attribute detail, null when none. */
 export function offlineGapsText(stats: RangeStats): string | null {
@@ -300,11 +293,10 @@ export function aaText(stats: RangeStats): string | null {
 }
 
 /**
- * The AA caption — the SAME reservation the "AA gained over time" panel carries (law 5): this
- * is Σ of the gain LINES, and a respec re-logs purchases while refunding nothing, so points
- * re-earned after one are counted again. It is not the AA identity.
+ * The AA caption. It is Σ of the gain LINES, not the AA identity — the reservation stays in
+ * this doc comment, where it belongs; the caption just names the source in two words.
  */
-export const AA_RESPEC_CAPTION = 'gain lines — includes points re-gained after a respec'
+export const AA_RESPEC_CAPTION = 'from the gain lines'
 
 /**
  * The AA pace in the selection: completions per hour and points per hour, both over ACTIVE
@@ -321,11 +313,8 @@ export function aaRateText(stats: RangeStats): string | null {
   return `${rate(stats.aaPerHourActive, formatAaRate)} · ${rate(stats.aaPointsPerHourActive, formatPointRate)}`
 }
 
-/** The AA-rate chip's tooltip — what each half measures, and why they can differ. */
-export const AA_RATE_TITLE =
-  'AA completions and ability points per hour of ACTIVE time. The two differ only when the ' +
-  'item-shop potion is running: it doubles the points a completion pays and cannot change how ' +
-  'fast completions arrive, so the first number is the farming rate and the second is the payout.'
+/** The AA-rate chip's tooltip — what each half measures. */
+export const AA_RATE_TITLE = 'AA completions and ability points per hour of active time.'
 
 /**
  * The footnote for rows whose experience lines stated no percentage. Null when every sample
@@ -334,5 +323,5 @@ export const AA_RATE_TITLE =
 export function unstatedCaption(stats: RangeStats): string | null {
   if (stats.expUnstated === 0) return null
   const n = stats.expUnstated
-  return `* ${n} experience line${n === 1 ? '' : 's'} stated no percentage — the game prints one only while a level bar exists, so that progress is counted nowhere above`
+  return `* ${n} experience line${n === 1 ? '' : 's'} stated no percentage`
 }

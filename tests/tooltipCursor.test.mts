@@ -91,6 +91,6 @@ test('the nav’s update indicator mounts NO tooltip popper over Preferences', (
   assert.ok(!/<Tooltip/.test(chip), 'no Tooltip element survives in the file')
   // The strings it used to carry are native `title` attributes: an OS tooltip is not in the DOM
   // and has no hit area, so it cannot intercept the click aimed at the row above.
-  assert.ok(/title="Auto-update runs only in the installed app/.test(chip))
+  assert.ok(/title="Only the installed app auto-updates\./.test(chip))
   assert.ok(/title=\{tip\}/.test(chip))
 })

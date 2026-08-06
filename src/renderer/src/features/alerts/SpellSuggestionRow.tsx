@@ -80,7 +80,7 @@ export function relativeTime(ms: number): string {
 
 /** "ENC 16" — one class's entry level for this LINE. Yours is coloured; the DB fact is the same. */
 function LevelChip({ chip }: { chip: ClassLevelChip }): JSX.Element {
-  const title = `${chip.cls} learns this spell line at level ${chip.level}${chip.yours ? ' — one of your resolved classes' : ''}. Ranks within a line have no level of their own in the spell database.`
+  const title = `${chip.cls} learns this spell line at level ${chip.level}${chip.yours ? ' — one of your classes' : ''}`
   return (
     <Tooltip title={title}>
       <Chip

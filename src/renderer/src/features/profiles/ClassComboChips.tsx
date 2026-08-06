@@ -73,7 +73,7 @@ export function ProvenanceChip({ interval }: { interval: ComboInterval }): JSX.E
     <Tooltip
       title={
         p === 'inferred'
-          ? 'The log never states a loadout swap, so this loadout is read from the classes that show up in it.'
+          ? 'Read from the classes that show up in the log.'
           : p === 'who'
             ? 'Your own /who row named this loadout outright.'
             : 'You set this range yourself.'
@@ -93,7 +93,7 @@ export function ProvenanceChip({ interval }: { interval: ComboInterval }): JSX.E
 /** Confidence, the MIN over slots. Absent slots ⇒ 0, which prints as 0% rather than hiding. */
 export function ConfidenceChip({ interval }: { interval: ComboInterval }): JSX.Element {
   return (
-    <Tooltip title="The least confident slot decides — a loadout you two-thirds know is two-thirds known.">
+    <Tooltip title="The least confident slot decides.">
       <Chip
         size="small"
         variant="outlined"
@@ -107,7 +107,7 @@ export function ConfidenceChip({ interval }: { interval: ComboInterval }): JSX.E
 /** Shown only on a corrected interval: inference will not touch these slots. */
 export function LockedChip(): JSX.Element {
   return (
-    <Tooltip title="You set this range, so it is left exactly as you stated it.">
+    <Tooltip title="You set this range.">
       <Chip size="small" variant="outlined" color="info" label="locked" sx={CHIP_SX} />
     </Tooltip>
   )

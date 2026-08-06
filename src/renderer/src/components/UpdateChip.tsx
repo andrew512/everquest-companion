@@ -142,7 +142,7 @@ function DisabledChip({ version }: { version: string }): JSX.Element {
       <Typography
         data-testid="update-chip-disabled"
         variant="caption"
-        title="Auto-update runs only in the installed app — the dev build never checks."
+        title="Only the installed app auto-updates."
         sx={{ display: 'block', color: 'text.disabled', lineHeight: 1.4, cursor: 'default' }}
       >
         {version ? `v${version} · ` : ''}updates off (dev)

@@ -59,7 +59,7 @@ function ExpCell({ row }: { row: ProgressionKill }): JSX.Element {
   const tip =
     row.expFlag === undefined
       ? 'No experience line accompanied this kill.'
-      : 'Experience was gained, but the log stated no percentage — at the level cap there is no bar to report against.'
+      : 'Experience gained, but the log stated no percentage.'
   return (
     <Tooltip title={tip}>
       <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
@@ -106,7 +106,7 @@ function Row({ row, onOpenMob }: { row: ProgressionKill; onOpenMob: (t: MobTarge
         {row.name}
       </Typography>
       {row.credit === 1 && (
-        <Tooltip title="Credited to a bound pet — inferred from its pet/charm lines, not stated on the kill line.">
+        <Tooltip title="Credited to your pet.">
           <Chip size="small" variant="outlined" label="pet" sx={{ height: 18, flexShrink: 0 }} />
         </Tooltip>
       )}
@@ -117,7 +117,7 @@ function Row({ row, onOpenMob }: { row: ProgressionKill; onOpenMob: (t: MobTarge
         </Typography>
       )}
       {party && (
-        <Tooltip title="Paid as party experience — a group-mate's kill counted toward your bar.">
+        <Tooltip title="A group-mate’s kill that paid you experience.">
           <Chip size="small" variant="outlined" label="party" sx={{ height: 18, flexShrink: 0 }} />
         </Tooltip>
       )}

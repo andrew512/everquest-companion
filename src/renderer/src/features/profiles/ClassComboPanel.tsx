@@ -109,7 +109,7 @@ export function ClassComboSetting(): JSX.Element {
     <Stack spacing={1}>
       <CurrentLine current={snap.current} />
       {!snap.ready && (
-        <Tooltip title="The class knowledge tables this build ships with are empty, so nothing can be read from stances, skills or spells.">
+        <Tooltip title="This build ships no class knowledge tables.">
           <Chip size="small" variant="outlined" color="warning" label="class tables unavailable" sx={{ alignSelf: 'flex-start', height: 20 }} />
         </Tooltip>
       )}

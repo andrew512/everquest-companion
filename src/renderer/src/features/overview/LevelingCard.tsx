@@ -77,12 +77,11 @@ export interface LevelingCardProps {
   onOpenLeveling: () => void
 }
 
-/** The chip's tooltip: WHY the rate is an em-dash, in the log's own terms. */
-const AT_CAP_TITLE =
-  'The game prints a level-bar percentage only while a level bar exists, so progress here is unknown — not zero.'
+/** The chip's tooltip: WHY the rate is an em-dash. */
+const AT_CAP_TITLE = 'At cap: the game prints no level-bar percentage.'
 
 /** `clipped`: the window reaches past the oldest instant the series still holds in full. */
-const CLIPPED_TITLE = 'This hour reaches past the oldest samples still held, so it covers a partial record.'
+const CLIPPED_TITLE = 'This hour reaches past the oldest samples still held.'
 
 function OpenLeveling({ onOpenLeveling }: { onOpenLeveling: () => void }): JSX.Element {
   return (

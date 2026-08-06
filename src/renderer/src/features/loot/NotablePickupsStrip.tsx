@@ -121,7 +121,7 @@ function TradeskillToggle({
   onToggleTradeskill: (v: boolean) => void
 }): JSX.Element {
   return (
-    <Tooltip title="Tradeskill components (spider legs, bone chips, gnome meat…) are ingredients, not quest items — hidden here by default. Hover any item name to see what it's for.">
+    <Tooltip title="Tradeskill components are hidden here by default.">
       <FormControlLabel
         sx={{ m: 0 }}
         control={

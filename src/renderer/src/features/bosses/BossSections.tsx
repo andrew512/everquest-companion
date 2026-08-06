@@ -335,9 +335,7 @@ export function CategorySection({ category, list, ...grid }: SectionProps & { ca
   )
 }
 
-const GROUP_RULE =
-  'Grouped by the loadout you were running for these kills. A target killed at more than one ' +
-  'instance tier files one card per tier, each under the loadout of its own kills.'
+const GROUP_RULE = 'Grouped by the loadout you were running for these kills.'
 
 /** The loadout header: the slots as chips, its provenance, and the span they cover. */
 function LoadoutHeader({ group }: { group: LoadoutGrouping }): JSX.Element {

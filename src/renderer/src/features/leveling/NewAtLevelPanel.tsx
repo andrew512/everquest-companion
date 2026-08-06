@@ -88,7 +88,7 @@ function ComboChips({
         />
       ))}
       {ambiguous && (
-        <Tooltip title="Your loadout is not fully resolved yet, so these lists cover every class still consistent with the evidence — an upper bound, not a fact.">
+        <Tooltip title="Covers every class your loadout could still be.">
           <Chip
             size="small"
             label="~ambiguous"

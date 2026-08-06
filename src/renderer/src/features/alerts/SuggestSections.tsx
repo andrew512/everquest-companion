@@ -182,7 +182,7 @@ export function PoisonSlowRow({
         </Typography>
       </Box>
       <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
-        <Tooltip title="Weakening Strike, the rogue utility-poison slow — 3:30, rate-limited to about one nudge per pull">
+        <Tooltip title="Weakening Strike — the rogue utility-poison slow, 3:30">
           {/* The SAME wording the per-spell `lands` template uses, from the same constant: this
               row creates the same kind of alert, so it must not invent a second phrasing. */}
           <span>

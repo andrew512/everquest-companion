@@ -59,9 +59,9 @@ export function SeverityChip({ severity }: { severity?: Severity }): JSX.Element
 export function LogChip({ state }: { state: TriageLogState }): JSX.Element | null {
   if (state === 'none') return null
   const spec = {
-    declared: { label: 'log', color: 'default' as ChipColor, title: 'A log slice is attached to this report. Open it to check whether the upload actually landed.' },
+    declared: { label: 'log', color: 'default' as ChipColor, title: 'A log slice is attached to this report.' },
     present: { label: 'log ✔', color: 'success' as ChipColor, title: 'The slice is in the bucket.' },
-    missing: { label: 'log ✗', color: 'error' as ChipColor, title: 'Declared but never landed — the upload failed or the presigned POST expired.' }
+    missing: { label: 'log ✗', color: 'error' as ChipColor, title: 'Declared but never landed.' }
   }[state]
   return (
     <Tooltip title={spec.title}>

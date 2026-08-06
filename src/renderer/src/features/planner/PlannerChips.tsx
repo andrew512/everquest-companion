@@ -40,9 +40,9 @@ const STATE_COLOR: Record<DonorState, ChipColor> = {
 
 /** What each state MEANS, in the tooltip — the chip itself stays one word. */
 const STATE_HINT: Record<DonorState, string> = {
-  planned: 'Nothing observed yet: no copy in your inventory dump, none in your loot history, and no merge seen in the log.',
-  have: 'You hold (or have looted) a copy. The log has not seen you merge it yet.',
-  partial: 'The log saw you merge this item to the tier shown, of the tier the effect extracts at.',
+  planned: 'Nothing observed yet — no copy held, looted or merged.',
+  have: 'You hold a copy, not yet merged.',
+  partial: 'Merged to the tier shown, short of the extraction tier.',
   ready: 'The log saw this item merged to at least the tier its effect extracts at.'
 }
 
@@ -109,7 +109,7 @@ export function EraChip({ subject }: { subject: EraSubject }): JSX.Element | nul
  */
 export function BestChip(): JSX.Element {
   return (
-    <Tooltip title="The highest tier of this focus family among the donors these filters leave visible. The corpus states no focus percentages anywhere — the rank in the effect's name is the only magnitude signal there is.">
+    <Tooltip title="The highest tier of this focus family among the visible donors.">
       <Chip size="small" label="best" data-testid="planner-best-chip" color="primary" sx={CHIP_SX} />
     </Tooltip>
   )
@@ -149,7 +149,7 @@ export function MismatchChip({ classes }: { classes: readonly string[] }): JSX.E
  */
 export function NoSlotChip(): JSX.Element {
   return (
-    <Tooltip title="This page states no equipment slot, so nothing shares a slot with it and its effect can never be socketed elsewhere (R2). Usually a potion or a poison; occasionally a gap on the wiki page.">
+    <Tooltip title="This page states no equipment slot, so its effect can never move.">
       <Chip
         size="small"
         label="no slot"

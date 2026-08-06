@@ -101,7 +101,7 @@ export default function QuestFilterBar({
         label="Favorites only"
       />
       <Box sx={{ flexGrow: 1 }} />
-      <Tooltip title="How the app decides which items you have. Log = everything you've ever looted (survives an un-exported bank). Inventory = your last /outputfile dump. Both = the higher of the two.">
+      <Tooltip title="Which source decides what you have.">
         <TextField
           select
           size="small"

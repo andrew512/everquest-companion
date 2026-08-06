@@ -93,7 +93,7 @@ function LootToolbar({
         label="Only Plane of Sky items"
       />
       {groupByItem && invOnlyCount > 0 && (
-        <Tooltip title="Items your inventory export holds that you haven't looted this epoch — appended below the looted rows.">
+        <Tooltip title="Items your inventory export holds that you haven’t looted this epoch.">
           <Chip
             size="small"
             variant={showInventoryOnly ? 'filled' : 'outlined'}
@@ -104,7 +104,7 @@ function LootToolbar({
         </Tooltip>
       )}
       <Box sx={{ flexGrow: 1 }} />
-      <Tooltip title="Which source feeds the 'In inventory' estimate (and Plane of Sky progress). Log = everything you've looted; Inventory = your last /outputfile dump; Both = the higher.">
+      <Tooltip title="Which source feeds the ‘In inventory’ estimate.">
         <TextField
           select
           size="small"

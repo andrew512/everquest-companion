@@ -114,14 +114,14 @@ export type Drill = OverlayDrill
  * it ranks among the bars above as an `absorbed` row. These two do not: the log gives them no
  * number at all, so they are counts under the bars, in no total, never a bar (a bar would imply
  * a magnitude that was never recorded).
+ *
+ * No `title`: the line itself ends '· no amount logged', which is the whole disclosure — a hover
+ * restating the label earns nothing (AGENTS.md tooltip and caveat diet).
  */
 function AbsorbCounts({ mit }: { mit: MitigationView }): JSX.Element | null {
   if (!hasAbsorbCounts(mit)) return null
   return (
-    <div
-      style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', padding: '5px 2px 0', lineHeight: 1.5 }}
-      title="The log records these as events with no amount, so they are shown as counts and enter no total."
-    >
+    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', padding: '5px 2px 0', lineHeight: 1.5 }}>
       {mit.absorbedSwings > 0 && <>{mit.absorbedSwings} swings absorbed</>}
       {mit.absorbedSwings > 0 && mit.absorbedDamageShields > 0 && ' · '}
       {mit.absorbedDamageShields > 0 && <>{mit.absorbedDamageShields} damage shields absorbed</>}
@@ -286,7 +286,7 @@ function EnemyHealedLine({
   return (
     <div
       style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', padding: '6px 2px 0' }}
-      title={`Healing that landed on mobs you were engaged with — it undid this much of your damage. Top: ${enemy.healers
+      title={`Healing that landed on mobs you fought. Top: ${enemy.healers
         .slice(0, 3)
         .map((h) => `${h.name} ${fmt(h.total)}`)
         .join(', ')}`}
