@@ -45,6 +45,16 @@ const read = (name: string): string[] => {
 const P1 = read('p1-unbound-pet.log')
 const skip = P1.length === 0 ? 'fixture not present' : false
 
+/**
+ * THE OTHER SESSION (JOS-49). `w46-special-eagle-strike.log` is a four-minute froglok camp from
+ * Tue Jul 28 22:06 — forty-two hours before P1 — and it is the only OTHER committed fixture that
+ * contains an entity clearing the candidate bars: `Dranix`, 175 landed hits across four mobs the
+ * owner also fought, never bound by anything. It was cut for an entirely different feature, which
+ * is what makes it honest evidence here: the wall was not built out of exotic logs.
+ */
+const W46 = read('w46-special-eagle-strike.log')
+const skipWall = P1.length === 0 || W46.length === 0 ? 'fixture not present' : false
+
 /** The pet-claim view a character with these statements has. */
 function claims(claimed: string[] = [], denied: string[] = []): PetClaimsView {
   const names = new Map(claimed.map((n) => [n.toLowerCase(), n]))
@@ -234,6 +244,126 @@ test('P1: a claimed pet that LATER sends a real tell is one pet, not a conflict'
   const snap = eng.snapshot(lastTs + 120_000, {})
   assert.deepEqual(snap.petClaims.candidates, [])
   assert.deepEqual(snap.petClaims.claimed, ['Kober'])
+})
+
+// ── 6. THE QUESTION IS ABOUT THE FIGHT IN FRONT OF YOU (JOS-49) ────────────────────────────
+//
+// THE BUG, in the owner's words: the offer is fed by the FULL historical replay, so every
+// never-ordered pet since the beginning of the log becomes a standing question — a streamer's
+// meter opened onto a wall of "your pet?" rows and was unusable. Measured on the owner's own log
+// before the fix: 101 entities cleared the bars and were still being offered at the end of the
+// replay, the three the meter actually showed last seen six, nine and two DAYS earlier.
+//
+// The corpus below is that wall in miniature and made of committed bytes: two real spans from two
+// different days, replayed through ONE engine the way the startup scan replays a whole log.
+
+/** Replay several fixture spans through one engine, in the order the log wrote them. */
+function replaySpans(...spans: string[][]): { eng: CombatEngine; lastTs: number } {
+  const eng = new CombatEngine()
+  eng.setPlayerName('Primitive')
+  let seq = 0
+  let lastTs = 0
+  for (const span of spans) {
+    for (const raw of span) {
+      const ev = parseEvent(raw, seq++)
+      if (!ev) continue
+      eng.ingestEvent(ev, false)
+      lastTs = ev.ts
+    }
+  }
+  return { eng, lastTs }
+}
+
+test('JOS-49: the earlier session’s pet really would have qualified — the wall was real', { skip: skipWall }, () => {
+  // Half of the reproduction: on its OWN, W46's span ends with Dranix standing as a question.
+  // Without this the test below would prove nothing (an entity that never qualified is not
+  // evidence that historical entities stop being offered).
+  const { eng, lastTs } = replaySpans(W46)
+  const { candidates } = eng.snapshot(lastTs + 120_000, {}).petClaims
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].name, 'Dranix')
+  assert.ok(candidates[0].hits >= 100, `${candidates[0].hits} landed hits`)
+})
+
+test('JOS-49: replaying BOTH days leaves only the pet that is still there', { skip: skipWall }, () => {
+  // The whole point. Two sessions, two qualifying entities, forty-two hours apart. Before the
+  // currency gate the answer here was BOTH of them — Dranix carried into Thursday evening as a
+  // permanent, unanswerable question. Now the replay resolves to what was current when it ended.
+  const { eng, lastTs } = replaySpans(W46, P1)
+  const { candidates } = eng.snapshot(lastTs + 120_000, {}).petClaims
+  assert.deepEqual(candidates.map((c) => c.name), ['Kober'])
+})
+
+test('JOS-49: …and the survivor keeps every point of its evidence', { skip: skipWall }, () => {
+  // The gate hides questions; it must never quietly shrink the answer behind the one it keeps.
+  // Same numbers as section 2, through a replay that crossed another day and five zone lines.
+  const { eng, lastTs } = replaySpans(W46, P1)
+  const [c] = eng.snapshot(lastTs + 120_000, {}).petClaims.candidates
+  assert.equal(c.why, 'say')
+  assert.equal(c.says, 4)
+  assert.equal(c.hits, 105)
+  assert.equal(c.damage, 1966)
+  assert.equal(c.sharedTargets, 4)
+})
+
+test('JOS-49: logging in the next day is not asked about yesterday’s pet', { skip }, () => {
+  // The user-visible shape of the same rule, driven by real log lines rather than by reaching
+  // into the detector: replay the window, then let the log go on WITHOUT the pet. A zone line is
+  // the everyday way that happens (you walked out), and it is what the owner does next.
+  const { eng, lastTs } = replaySpans(P1)
+  assert.equal(eng.snapshot(lastTs + 120_000, {}).petClaims.candidates.length, 1, 'asked at the end of the window')
+  const after = parseEvent(`[Thu Jul 30 16:31:00 2026] You have entered East Commonlands.`, 99_000)
+  assert.equal(after?.kind, 'zone')
+  eng.ingestEvent(after!, false)
+  assert.deepEqual(
+    eng.snapshot(lastTs + 120_000, {}).petClaims.candidates,
+    [],
+    'an unbound candidate does not follow you through a zone line — it has to show up again'
+  )
+})
+
+test('JOS-49: a pet that goes quiet while the log runs on stops being asked about', { skip }, () => {
+  // The other axis, and the one that matters inside a long camp: the pet despawned or the fight
+  // ended, and the log keeps printing. Real line shapes, stamped past OFFER_IDLE_MS.
+  const { eng, lastTs } = replaySpans(P1)
+  let seq = 99_000
+  for (const clock of ['16:31:30', '16:32:30', '16:33:30']) {
+    const ev = parseEvent(`[Thu Jul 30 ${clock} 2026] You have become better at 1H Blunt! (121)`, seq++)
+    if (ev) eng.ingestEvent(ev, false)
+  }
+  assert.deepEqual(eng.snapshot(lastTs + 300_000, {}).petClaims.candidates, [])
+})
+
+test('JOS-49: an ANSWERED question is untouched by any of it — a claim still recovers everything', { skip: skipWall }, () => {
+  // The gate is on the QUESTION, never on the answer. A claim made today still re-runs the whole
+  // replay and books the pet's entire history, across both days and every zone line in them.
+  const eng = new CombatEngine()
+  eng.setPlayerName('Primitive')
+  eng.setPetClaims(() => claims(['Kober']))
+  let seq = 0
+  let lastTs = 0
+  for (const span of [W46, P1]) {
+    for (const raw of span) {
+      const ev = parseEvent(raw, seq++)
+      if (!ev) continue
+      eng.ingestEvent(ev, false)
+      lastTs = ev.ts
+    }
+  }
+  // Scoped to Kober's own rows: Tuesday's camp has a genuine charmed pet of its own
+  // (`a froglok ton knight`), which is a correct row and none of this test's business.
+  let hits = 0
+  let total = 0
+  for (const v of allSessions(eng, lastTs)) {
+    for (const e of v.entities) {
+      if (e.kind === 'pet' && e.name === 'Kober') {
+        hits += e.hits
+        total += e.total
+      }
+    }
+  }
+  assert.equal(hits, 105)
+  assert.equal(total, 1966)
 })
 
 test('P1: the tell alone would ALSO have worked — the claim is a backstop, not a replacement', { skip }, () => {

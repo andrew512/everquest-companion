@@ -203,6 +203,11 @@ function ingestWorld(st: EngineState, ev: LogEvent): boolean {
       const survivors = st.world.zone(ev.ts)
       st.petNames = new Set(survivors.map((i) => i.nameKey))
       st.charm.zone(survivors.map((i) => i.nameKey))
+      // The same censor, applied to the QUESTION (JOS-49). A candidate is UNBOUND, so it has no
+      // instance for `world.zone()` to keep or retire — the app cannot know whether it is a
+      // summoned pet that follows you or a charmed mob that does not, and the honest test is
+      // whether it shows up again on the other side. Until it does, it is not offered.
+      st.candidates.zone(ev.ts)
       st.log(ev.ts, 'zone', 'info', `▸ entered ${ev.zone}`)
       return true
     }
@@ -584,6 +589,11 @@ export function ingestEvent(st: EngineState, ev: LogEvent, live: boolean): void 
   // driven from the event stream and from snapshot(now) — whichever observes the deadline
   // first. Guarded on an empty-map read, so the ordinary line costs nothing.
   st.sweepCharm(ev.ts)
+  // …and the pet-claim OFFER ages out on the same log clock (JOS-49, petCandidates OFFER_IDLE_MS).
+  // Every event, not just the damage ones: the question is "is this entity still fighting beside
+  // me", and the only way to know it went quiet is to watch the log go on without it. One
+  // comparison per line.
+  st.candidates.observe(ev.ts)
   if (ingestWorld(st, ev)) return
   if (ingestCombat(st, ev)) return
   if (ingestCast(st, ev)) return
