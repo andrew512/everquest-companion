@@ -27,7 +27,9 @@
 //      the way out and reads nothing until it is active again, so a mouselook turn costs zero
 //      `getCursorScreenPoint()` calls rather than one per tick of a pointer EverQuest is
 //      re-centering every frame. `cursorStreamStats()` exists so that can be MEASURED rather
-//      than asserted.
+//      than asserted. A HISTORICAL REPLAY is one more reason to be off (JOS-62): the ring is not
+//      on screen while the log is being folded, so main does not carry a 125 Hz timer through the
+//      fold either. That gate is `ringDisposition` in replayGate.ts.
 //   3. AN UNMOVED CURSOR SENDS NOTHING. The sample is compared against the last one sent and
 //      dropped if identical, so a hand resting on the mouse costs one `getCursorScreenPoint()`
 //      per tick and zero IPC. Reading a quest text with the ring on is free.
@@ -43,6 +45,7 @@ import { IPC } from '../shared/ipc'
 import { logError } from './errorLog'
 import { presenceSnapshot, stopPresence, subscribePresence } from './presence'
 import { cursorRingActive, overlaysShouldHide } from './presenceProtocol'
+import { historicalReplayRunning, ringDisposition } from './replayGate'
 import { getCursorRing, getOverlayAutoHide } from './store'
 import {
   createCursorRingWindow,
@@ -155,23 +158,52 @@ function stopStream(): void {
   pollTimer = null
 }
 
+/**
+ * Stop sampling and take the ring off screen, without touching the window itself.
+ *
+ * Order matters: stop sampling FIRST, then park, so the park is the last word the ring hears.
+ * Exported because session.ts needs exactly this on the way INTO a historical replay (JOS-62) —
+ * and only this. `refreshPresenceEffects` would be the symmetric-looking call and is the wrong
+ * one there: at cold start the replay begins before `initPresenceEffects` has run, and a full
+ * re-evaluation would spawn the presence watcher child early, during the fold, which is the
+ * opposite of the point. On the way OUT the full pass is exactly right, and that is what
+ * session.ts calls.
+ */
+export function suspendCursorStream(): void {
+  stopStream()
+  setCursorRingVisible(false)
+  parkRing()
+}
+
 /** Fold the current presence + settings into the ring window's existence, bounds and stream. */
 function applyRing(state: PresenceState): void {
   const ring = getCursorRing()
-  if (!ring.enabled) {
+  const bounds = state.eqBounds
+  // THE 8 ms POLL'S GATE, in one pure decision (replayGate.ts ringDisposition): the feature
+  // switch, whether we know where to put the ring, whether it is active right now, and whether a
+  // historical replay is folding. The last of those is JOS-62's half — main must not be carrying
+  // a 125 Hz timer while it is slicing the log, and the ring is not on screen to need one.
+  const disposition = ringDisposition({
+    enabled: ring.enabled,
+    hasBounds: bounds !== null,
+    active: cursorRingActive(state, ring),
+    replayRunning: historicalReplayRunning()
+  })
+  if (disposition === 'off') {
     stopStream()
     ringOrigin = null
     destroyCursorRingWindow()
     return
   }
-  const bounds = state.eqBounds
-  if (!bounds) {
-    // The ring is on, but the EQ window has never been seen this session — there is nowhere to
-    // put it, and inventing a rectangle would put a halo over the desktop. (A watcher that DIES
-    // lands here too, with a live ring window, so it parks like any other deactivation.)
-    stopStream()
-    setCursorRingVisible(false)
-    parkRing()
+  // 'suspended' — the ring is on, but the EQ window has never been seen this session (there is
+  // nowhere to put it, and inventing a rectangle would put a halo over the desktop; a watcher
+  // that DIES lands here too, with a live ring window, so it parks like any other deactivation)
+  // or a replay is folding. Either way the window is NOT created: a page load for a window that
+  // will not be shown is main-process work at the one moment there is none to spare, and the
+  // fold's end re-runs this whole pass. The `bounds === null` half is also what proves the
+  // rectangle below is real.
+  if (disposition === 'suspended' || bounds === null) {
+    suspendCursorStream()
     return
   }
   createCursorRingWindow(bounds)
@@ -181,15 +213,13 @@ function applyRing(state: PresenceState): void {
     // The window moved under the pointer, so the last sent point describes the wrong origin.
     lastSent = null
   }
-  const active = cursorRingActive(state, ring)
-  setCursorRingVisible(active)
-  if (active) {
+  if (disposition === 'run') {
+    setCursorRingVisible(true)
     startStream()
     return
   }
-  // Order matters: stop sampling first, THEN park, so the park is the last word the ring hears.
-  stopStream()
-  parkRing()
+  // 'idle' — warm and positioned, but not on screen and not sampling.
+  suspendCursorStream()
 }
 
 function sameRect(a: ScreenRect | null, b: ScreenRect | null): boolean {

@@ -51,8 +51,11 @@ import {
   setInventory
 } from './store'
 import { markFunnelStep, noteLinesParsed } from './telemetry'
-import { sendToMain } from './windows'
+import { refreshPresenceEffects, suspendCursorStream } from './presenceEffects'
+import { setHistoricalReplayRunning } from './replayGate'
+import { sendToMain, setOverlaysHidden } from './windows'
 import type { CharacterRef, EqConfig } from '../shared/types'
+import type { ScanResult } from './log/scanHistory'
 import type { ReplayDutyStats } from '../shared/perf'
 
 let tailer: Tailer | null = null
@@ -354,8 +357,48 @@ export interface TailResult {
   logBytes: number
 }
 
+/**
+ * THE REPLAY GATE (JOS-62) — ONE signal, both halves, both replays.
+ *
+ * While a historical fold is running, nothing of ours rides the user's mouse or their screen:
+ * every locked overlay's click-through drops the WH_MOUSE_LL forwarding hook (which would
+ * otherwise make every system mouse event queue behind a 12 ms fold slice — the reported jerky
+ * mouselook), the overlays and the cursor ring stay off screen (they would be showing half-parsed
+ * state), and the ring's 8 ms sampler does not run. `replayGate.ts` states the rules; this
+ * function is where they are turned on and off, and it is called from exactly one place below —
+ * so the cold-start scan and the shorter fold a character SWITCH runs get the same treatment
+ * without a second call site to keep in step.
+ *
+ * The two sides are deliberately NOT mirror images, and both asymmetries are load-bearing:
+ *
+ *   * going IN we hide and park directly, because at cold start this runs before
+ *     `initPresenceEffects` has — and a full presence re-evaluation there would spawn the watcher
+ *     child early, during the fold, which is the opposite of the point;
+ *   * coming OUT the full presence pass is the only correct restore, because IT is the authority
+ *     on whether an overlay or the ring belongs on screen at all (auto-hide, EQ focus). The
+ *     windows come back in their CONFIGURED state, which for an auto-hide user whose game is not
+ *     focused is still "hidden" — never a flash of five overlays.
+ *
+ * Nothing here remembers a lock state: `setOverlaysHidden` re-applies each overlay's mode from
+ * its PERSISTED flag on both edges, so there is exactly one definition of "is this locked" and
+ * the gate only changes what that flag costs while the fold owns the message loop.
+ */
+function setReplayGate(running: boolean): void {
+  setHistoricalReplayRunning(running)
+  if (running) {
+    setOverlaysHidden(true)
+    suspendCursorStream()
+    return
+  }
+  refreshPresenceEffects()
+}
+
 /** Point the tailer + loot history at a character (used at startup and on switch). */
 export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
+  // THE GATE CLOSES FIRST — before the first `await`, so at cold start it is already shut when the
+  // composition root goes on to restore the overlays and start the presence features a few
+  // statements later. Those windows are then born hidden instead of being shown and hidden again.
+  setReplayGate(true)
   // We have a log; the idle rescan (if it was running) has nothing left to look for.
   stopWatchingForFirstLog()
   await tailer?.stop()
@@ -389,13 +432,22 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // that measurement rides `TailResult` into the startup profile — a duty cycle nobody can read
   // back is a claim, not a measurement.
   const slicer = createSlicer()
-  const scan = await scanLog(ref.logPath, bus, seq, { slicer })
-  // The replay's whole cost, in one call: `seq` was reset to 0 by `resetWorldFor`, so `scan.seq`
-  // IS the number of lines this scan parsed. Counted here rather than per line inside the fold so
-  // the replay's inner loop is untouched.
-  noteParsed(scan.seq)
-  seq = scan.seq
-  combat.setLive()
+  let scan: ScanResult
+  try {
+    scan = await scanLog(ref.logPath, bus, seq, { slicer })
+    // The replay's whole cost, in one call: `seq` was reset to 0 by `resetWorldFor`, so `scan.seq`
+    // IS the number of lines this scan parsed. Counted here rather than per line inside the fold so
+    // the replay's inner loop is untouched.
+    noteParsed(scan.seq)
+    seq = scan.seq
+    combat.setLive()
+  } finally {
+    // THE ONE DONE SIGNAL — and it is a `finally` on purpose: a scan that throws (the log deleted
+    // out from under us mid-fold) must not leave the user's overlays hidden and their ring off
+    // for the rest of the session. `setLive()` is inside, so the meters that come back are live
+    // ones rather than a frame of the hydrating placeholder.
+    setReplayGate(false)
+  }
   const lootState = lootModule.snapshot().state
   const killState = killsModule.snapshot().state
   const lvlState = levelingModule.snapshot().state

@@ -30,9 +30,16 @@ test('NO NEW HOOK: main still decides forwarding per kind, in exactly one place'
   // (The cursor ring's own `setIgnoreMouseEvents(true)` is the deliberate non-forwarding one and
   // is counted out here by the `{ forward` it does not have.)
   assert.equal((windows.match(/setIgnoreMouseEvents\(true, \{ forward/g) ?? []).length, 1)
-  assert.match(windows, /forward: kind !== 'toast'/)
-  // The freeze-hazard note has to survive: it is the reason the split exists at all.
+  // …and it asks ONE predicate what the answer is. The rule moved to replayGate.ts with JOS-62,
+  // which added the second reason not to forward (a historical replay is folding); the toast's
+  // exemption is unchanged and still lives in exactly one expression.
+  assert.match(windows, /forward: overlayMouseForward\(kind\)/)
+  const gate = src('../src/main/replayGate.ts')
+  assert.match(gate, /kind !== 'toast' && !replayRunning/)
+  // The freeze-hazard note has to survive in BOTH halves: it is the reason the split exists at
+  // all, and now also the reason the replay drops the hook entirely.
   assert.match(windows, /WH_MOUSE_LL/)
+  assert.match(gate, /WH_MOUSE_LL/)
 })
 
 test('NO NEW CHANNEL: the capture flip rides the existing fine-grained pass-through', () => {
