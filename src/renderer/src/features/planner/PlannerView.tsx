@@ -1,5 +1,10 @@
-// planner/PlannerView.tsx — the Planner shell: which set you are editing, for which classes,
+// planner/PlannerView.tsx — the EXALTATIONS shell: which set you are editing, for which classes,
 // in which mode (design §5.1).
+//
+// THE TAB IS CALLED EXALTATIONS (owner, 2026-08-06, JOS-42). "Planner" named what the surface does
+// for us; "Exaltations" names the game system a player came here about. The rename is a LABEL —
+// the `planner` view id, its route, its `eq.planner.*` keys and every `planner-*` testid are
+// unchanged, because renaming those would be a refactor with no user on the other end of it.
 //
 // A SET IS A LOADOUT'S SHOPPING LIST. You keep several — the trio you run now, the trio you are
 // building toward — so the toolbar leads with the set switcher, and each set carries its OWN

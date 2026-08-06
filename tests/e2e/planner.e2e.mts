@@ -1,6 +1,7 @@
 /**
- * Headless Electron integration test for the PLANNER tab (docs/plans/exaltation-planner.md §9,
- * wave 3).
+ * Headless Electron integration test for the EXALTATIONS tab (docs/plans/exaltation-planner.md §9,
+ * wave 3). The tab is LABELLED Exaltations since JOS-42; every id, route, store key and testid in
+ * here still says `planner`, because the rename was a label and not a refactor.
  *
  * WHY ITS OWN FILE: one spec per surface, all of them sharing `appHarness.mts` and running back
  * to back from `npm run test:e2e`. `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
@@ -50,35 +51,48 @@ import {
   sleep
 } from './appHarness.mjs'
 import { launchApp, mainWindow } from './appWindow.mjs'
-
-const NAV = '[data-testid="nav-planner"]'
-const VIEW = '[data-testid="planner-view"]'
-const NEW_SET_EMPTY = '[data-testid="planner-new-set-empty"]'
-const SET_CHIP = '[data-testid="planner-set-chip"]'
-const EFFECT_LIST = '[data-testid="planner-effect-list"]'
-const ERA_TOGGLE = '[data-testid="planner-era-toggle"]'
-const ADD_BUTTON = '[data-testid="planner-add"]:not([disabled])'
-const MODE_BOARD = '[data-testid="planner-mode-inventory"]'
-const MODE_FARM = '[data-testid="planner-mode-farm"]'
-const BOARD = '[data-testid="planner-board"]'
-const BOARD_CELL = '[data-testid="planner-board-cell"]'
-const SOCKET_LINE = '[data-testid="planner-socket-line"]'
-const HOST_SEARCH = '[data-testid="planner-host-search"] input'
-const HOST_HIT = '[data-testid="planner-host-hit"]'
-const HOST_NAME = '[data-testid="planner-host-name"]'
-const HOST_WORN = '[data-testid="planner-host-worn"]'
-const INVENTORY_HELP = '[data-testid="planner-inventory-help"]'
-const SOCKET_BROWSE = '[data-testid="planner-socket-browse"]'
-const PRESET_CHIP = '[data-testid="planner-preset-chip"]'
-const EXPLAINER = '[data-testid="planner-explainer"]'
-const EXPLAINER_OPEN = '[data-testid="planner-explainer-open"]'
-const STATE_CHIP = '[data-testid="planner-state-chip"]'
-const FARM_LIST = '[data-testid="planner-farm-list"]'
-const FARM_ROW = '[data-testid="planner-farm-row"]'
-const MODE_EFFECTS = '[data-testid="planner-mode-effects"]'
-const NONEQUIP_TOGGLE = '[data-testid="planner-nonequip-toggle"]'
-const NOSLOT_CHIP = '[data-testid="planner-noslot-chip"]'
-const DONOR_NAME = '[data-testid="planner-donor-name"]'
+// Every `planner-*` selector, the DOM measurements, and the four steps that measure the EFFECT
+// LIST live next door — this spec sits at the repo's max-lines budget and the rule is to split,
+// never ratchet (drill.mts, combatSteps.mts). The ORDER is still owned here.
+import {
+  ADD_BUTTON,
+  BOARD,
+  BOARD_CELL,
+  DONOR_NAME,
+  DONOR_ROW,
+  EFFECT_LIST,
+  EFFECT_ROW,
+  EFFECT_SAYS,
+  EXPLAINER,
+  EXPLAINER_OPEN,
+  FARM_ALSO_ERA,
+  FARM_GROUP_OUT_OF_ERA,
+  FARM_LIST,
+  FARM_ROW,
+  HOST_HIT,
+  HOST_NAME,
+  HOST_SEARCH,
+  HOST_WORN,
+  INVENTORY_FRESH,
+  INVENTORY_HELP,
+  MODE_BOARD,
+  MODE_EFFECTS,
+  MODE_FARM,
+  NAV,
+  NEW_SET_EMPTY,
+  PRESET_CHIP,
+  SET_CHIP,
+  SOCKET_BROWSE,
+  SOCKET_LINE,
+  STATE_CHIP,
+  VIEW,
+  boxOf,
+  stepEra,
+  stepFocusFamilies,
+  stepNonEquip,
+  textOf,
+  until
+} from './plannerSteps.mjs'
 
 /** The Loot tab's drill-down, where a donor name deep-links to. */
 const LOOT_DETAIL = '[data-testid="loot-detail"]'
@@ -88,51 +102,21 @@ const LOOT_DB_SOURCES = '[data-testid="loot-db-sources"]'
 const LOOT_BACK = '[data-testid="loot-back"]'
 
 /**
- * A GROUP HEADER — one per group on whatever axis the tab is grouped by, and expanding it lists
- * that group's donors. The testid predates V4's grouping model and still says "effect" because the
- * effect axis is still what every tab but Focus opens on; `data-axis` is how a spec asks which
- * fold it is actually looking at.
+ * 1. THE NAV ROW MOUNTS THE PANE. False on the no-logs machine, where no feature view mounts.
+ *
+ * The row's testid is `nav-planner` and always will be — the view id, the route and the store keys
+ * are internal (JOS-42 renamed the LABEL, not the feature). So the label is asserted as TEXT: that
+ * is the only place the rename is visible, and a spec that only clicked the testid would have let
+ * it silently revert.
  */
-const EFFECT_ROW = '[data-testid="planner-effect-row"]'
-const FAMILY_ROW = '[data-testid="planner-effect-row"][data-axis="family"]'
-const GROUPBY = '[data-testid="planner-groupby"]'
-const SOCKET_FOCUS = '[data-testid="planner-socket-focus"]'
-const SOCKET_PROC = '[data-testid="planner-socket-proc"]'
-const BEST_CHIP = '[data-testid="planner-best-chip"]'
-const DONOR_ROW = '[data-testid="planner-donor-row"]'
-const EFFECT_SAYS = '[data-testid="planner-effect-says"]'
-
-/** Rendered text of the first match; '' when the node isn't mounted. */
-function textOf(page: Page, sel: string): Promise<string> {
-  return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
-}
-
-/** Box + scroll geometry — enough to prove a growing list is a BOUNDED scroller. */
-function boxOf(page: Page, sel: string): Promise<{ h: number; scrollH: number; clientH: number } | null> {
-  return page.evaluate((s) => {
-    const el = document.querySelector(s)
-    if (!el) return null
-    return { h: Math.round(el.getBoundingClientRect().height), scrollH: el.scrollHeight, clientH: el.clientHeight }
-  }, sel)
-}
-
-/** Poll a predicate until it holds or the deadline passes. */
-async function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
-  const t0 = Date.now()
-  for (;;) {
-    if (await fn()) return true
-    if (Date.now() - t0 >= ms) return false
-    await sleep(300)
-  }
-}
-
-/** 1. THE NAV ROW MOUNTS THE PANE. False on the no-logs machine, where no feature view mounts. */
 async function stepMount(page: Page): Promise<boolean> {
   const hasRow = await page.waitForSelector(NAV, { timeout: 60_000 }).then(
     () => true,
     () => false
   )
-  if (!check('the nav drawer has a Planner row', hasRow)) return false
+  if (!check('the nav drawer has an Exaltations row', hasRow)) return false
+  const label = (await textOf(page, NAV)).replace(/\s+/g, ' ').trim()
+  check('…and it is called Exaltations, the name the game uses', label.includes('Exaltations'), `reads "${label}"`)
   await page.click(NAV, { timeout: 15_000 })
 
   // A character with no sets gets the invitation; one with sets gets the toolbar. Either is a
@@ -143,12 +127,12 @@ async function stepMount(page: Page): Promise<boolean> {
   )
   if (!mounted) {
     const noLogs = (await textOf(page, 'main')).includes('No EverQuest logs found')
-    check('clicking Planner mounts the pane (or the no-logs empty state explains why not)', noLogs)
+    check('clicking Exaltations mounts the pane (or the no-logs empty state explains why not)', noLogs)
     if (noLogs) note('no character logs on this machine — the app shows its fresh-machine empty state')
     return false
   }
   check(
-    'clicking the Planner nav row mounts the pane on its create-a-set empty state',
+    'clicking the Exaltations nav row mounts the pane on its create-a-set empty state',
     (await countOf(page, NEW_SET_EMPTY)) > 0,
     `${String(await countOf(page, SET_CHIP))} sets already stored`
   )
@@ -198,120 +182,6 @@ async function stepEffects(page: Page): Promise<boolean> {
     box ? `${String(box.h)}px tall · scrollHeight ${String(box.scrollH)} vs clientHeight ${String(box.clientH)}` : 'absent'
   )
   return listed
-}
-
-/**
- * The effect list's SCROLL HEIGHT — the total row count, in pixels.
- *
- * Not a count of rows in the DOM: the list is windowed, so the number of mounted rows says how
- * tall the viewport is, not how many rows exist. And it POLLS for the element, because the view
- * legitimately remounts while the app is still reading the log (App keys the view on the
- * character), and a measurement taken inside that gap would read as "the list vanished".
- */
-async function listHeight(page: Page): Promise<number> {
-  let last = 0
-  await until(async () => {
-    last = (await boxOf(page, EFFECT_LIST))?.scrollH ?? 0
-    return last > 0
-  }, 20_000)
-  return last
-}
-
-/** Poll until the list's height settles at something other than `was` (or give up and report). */
-async function heightAfterToggle(page: Page, was: number): Promise<number> {
-  let now = was
-  await until(async () => {
-    now = await listHeight(page)
-    return now !== was
-  }, 15_000)
-  return now
-}
-
-/**
- * 4. THE ERA FILTER IS ON BY DEFAULT, AND TURNING IT OFF REVEALS MORE.
- *
- * This is an identity, not a number: the committed corpus documents every expansion, so a filter
- * that is genuinely hiding out-of-era donors must have a SHORTER list than the same filter off,
- * and switching it back must land on exactly the height it started at.
- */
-async function stepEra(page: Page): Promise<void> {
-  if (!check('the effect browser offers the current-era filter', (await countOf(page, ERA_TOGGLE)) > 0)) return
-  const filtered = await listHeight(page)
-
-  await page.click(ERA_TOGGLE, { timeout: 15_000 })
-  const unfiltered = await heightAfterToggle(page, filtered)
-  check(
-    'the era filter is ON by default and hides out-of-era donors (turning it off can only reveal more)',
-    unfiltered > filtered,
-    `list ${String(filtered)}px filtered → ${String(unfiltered)}px unfiltered`
-  )
-
-  // Put it back: the rest of the run should see the default surface.
-  await page.click(ERA_TOGGLE, { timeout: 15_000 })
-  const again = await heightAfterToggle(page, unfiltered)
-  check('…and switching it back on restores exactly the filtered list', again === filtered, `${String(again)}px`)
-}
-
-/**
- * 4b. THE NON-EQUIPPABLE FILTER IS OFF BY DEFAULT, AND TURNING IT ON REVEALS MORE.
- *
- * The mirror image of the era check, and an identity for the same reason: R2 only lets an
- * exaltation move between items sharing an equipment slot, so the 284 slotless donor rows in the
- * committed corpus (the potion aisle, plus poisons on the Proc tab) can never legally donate and
- * are hidden by default. Switching the escape hatch on can therefore only ADD rows — and each one
- * it adds must carry the `no slot` chip that says why it was hidden.
- */
-async function stepNonEquip(page: Page): Promise<void> {
-  if (!check('the effect browser offers the non-equippable escape toggle', (await countOf(page, NONEQUIP_TOGGLE)) > 0)) return
-  const hidden = await listHeight(page)
-  check('slotless donors are hidden by default, so no row claims "no slot"', (await countOf(page, NOSLOT_CHIP)) === 0)
-
-  await page.click(NONEQUIP_TOGGLE, { timeout: 15_000 })
-  const shown = await heightAfterToggle(page, hidden)
-  check(
-    'turning non-equippable ON can only reveal more donors (R2 hides them, it never invents them)',
-    shown > hidden,
-    `list ${String(hidden)}px equippable-only → ${String(shown)}px with consumables`
-  )
-
-  await page.click(NONEQUIP_TOGGLE, { timeout: 15_000 })
-  const again = await heightAfterToggle(page, shown)
-  check('…and switching it back off restores exactly the equippable list', again === hidden, `${String(again)}px`)
-}
-
-/**
- * 4c. THE FOCUS TAB OPENS ON FAMILIES, AND THE BEST OF EACH IS CROWNED (V4 + V5).
- *
- * Two facts in one trip. The GROUPING is a per-socket default, not a global one: Proc opens on
- * effects (the browser's original fold) and Focus opens on families, because "the best Improved
- * Healing I can reach" is the question that tab exists to answer. And the CROWN is derived from
- * what survived the filters, so it can be asserted as an identity — every family header has at
- * least one donor, therefore expanding one must produce at least one crowned row.
- *
- * Skipped, with a note, when this set's classes leave the Focus tab empty: focus effects are
- * caster gear, and a melee trio filtering the tab down to nothing is a correct answer, not a
- * failure. Ends back on the Proc tab so every step after it sees the surface it expects.
- */
-async function stepFocusFamilies(page: Page): Promise<void> {
-  if (!check('the effect browser offers a group-by control', (await countOf(page, GROUPBY)) > 0)) return
-  await page.click(SOCKET_FOCUS, { timeout: 15_000 })
-  const grouped = await until(async () => (await countOf(page, FAMILY_ROW)) > 0, 20_000)
-  if (grouped) {
-    check(
-      'the Focus tab groups by focus family without being asked (the per-socket default)',
-      (await textOf(page, GROUPBY)).includes('Focus family'),
-      `${String(await countOf(page, FAMILY_ROW))} family headers`
-    )
-    await page.click(FAMILY_ROW, { timeout: 15_000 })
-    check(
-      'expanding a family crowns the best tier it can currently see',
-      await until(async () => (await countOf(page, BEST_CHIP)) > 0, 10_000)
-    )
-  } else {
-    note('no focus donor survives this set’s class filter — the family grouping step is skipped this run')
-  }
-  await page.click(SOCKET_PROC, { timeout: 15_000 })
-  await until(async () => (await countOf(page, `${EFFECT_ROW}[data-axis="effect"]`)) > 0, 20_000)
 }
 
 /**
@@ -432,6 +302,70 @@ async function stepInventoryFill(page: Page): Promise<void> {
     (help > 0) !== (worn > 0),
     help > 0 ? 'no dump on this machine — the instructions card is up' : `${String(worn)} hosts filled from the dump`
   )
+
+  // JOS-42 refinement 5 — and when a dump DOES exist, the freshness line is up instead: the same
+  // command, one clause of why, and how old the file is. Exactly one of the two, always: the card
+  // teaches a command to someone who has never run it, the line tells someone who has when they
+  // last did. A tab rendering gear with no age on it is the failure this closes.
+  const fresh = await countOf(page, INVENTORY_FRESH)
+  check(
+    'a filled Inventory tab states the command and how old the dump is; an empty one teaches it',
+    (help > 0) !== (fresh > 0),
+    `${String(help)} instruction cards · ${String(fresh)} freshness lines`
+  )
+  if (fresh > 0) {
+    const line = (await textOf(page, INVENTORY_FRESH)).replace(/\s+/g, ' ').trim()
+    check(
+      '…and that line names the command and dates the FILE, not the read',
+      line.includes('/outputfile inventory') && /updated (just now|\d+[mhd] ago)/.test(line),
+      line.slice(0, 120)
+    )
+  }
+}
+
+/**
+ * 6c-i. ADD SAYS REPLACE WHEN IT WOULD REPLACE (JOS-42 refinement 3).
+ *
+ * Asserted UNDER A PRESET, because that is the only place the target socket is unambiguous: you
+ * clicked one socket of one item, so every row on screen would write to exactly that socket, and
+ * the button can therefore be checked against the socket's own state.
+ *
+ * The direction that matters is the FALSE REPLACE — a button warning about an overwrite that
+ * would not happen teaches the user to ignore the warning — so "empty socket ⇒ nothing says
+ * Replace" is asserted flat. The other direction allows one honest exception: a row whose donor
+ * and effect are ALREADY what sits there replaces nothing (it is chipped "in set"), so a preset
+ * showing only that row legitimately offers no Replace at all.
+ */
+async function checkReplaceLabels(page: Page, occupied: boolean): Promise<void> {
+  const labels = await page.evaluate(
+    (s) => Array.from(document.querySelectorAll(s)).map((b) => (b as HTMLElement).innerText.trim()),
+    ADD_BUTTON
+  )
+  if (labels.length === 0) {
+    note('the preset matched no addable donor — the replace-label step is skipped this run')
+    return
+  }
+  const replace = labels.filter((l) => l.toLowerCase() === 'replace').length
+  if (!occupied) {
+    check(
+      'an empty socket is never offered as a Replace — the add button only warns about a real overwrite',
+      replace === 0,
+      `${String(replace)} of ${String(labels.length)} buttons said Replace over an empty socket`
+    )
+    return
+  }
+  const inSet = await page.evaluate(
+    () => Array.from(document.querySelectorAll('.MuiChip-label')).filter((e) => e.textContent === 'in set').length
+  )
+  if (replace === 0 && inSet >= labels.length) {
+    note('every donor the preset offers is already the one in this socket — nothing here would replace anything')
+    return
+  }
+  check(
+    'browsing an OCCUPIED socket, the add button says Replace instead of Add to set',
+    replace > 0,
+    `${String(replace)} of ${String(labels.length)} buttons said Replace (${String(inSet)} already in set)`
+  )
 }
 
 /**
@@ -447,10 +381,15 @@ async function stepSocketView(page: Page): Promise<void> {
     note('no cell has a host yet — the socket view step is skipped this run')
     return
   }
-  const socket = await page.evaluate(
-    (s) => document.querySelector(s)?.closest('[data-socket]')?.getAttribute('data-socket') ?? '',
-    SOCKET_BROWSE
-  )
+  // The socket's own row says whether it is FILLED: `planner-socket-line` is a planned socket,
+  // `planner-socket-open` is an empty one. That is the fact the ADD control has to reflect.
+  const target = await page.evaluate((s) => {
+    const line = document.querySelector(s)?.closest('[data-socket]')
+    return {
+      socket: line?.getAttribute('data-socket') ?? '',
+      occupied: line?.getAttribute('data-testid') === 'planner-socket-line'
+    }
+  }, SOCKET_BROWSE)
   await page.click(SOCKET_BROWSE, { timeout: 15_000 })
 
   const filtered = await until(async () => (await countOf(page, PRESET_CHIP)) > 0, 15_000)
@@ -458,9 +397,10 @@ async function stepSocketView(page: Page): Promise<void> {
   const label = (await textOf(page, PRESET_CHIP)).replace(/\s+/g, ' ').trim()
   check(
     '…and the browser is on that socket, for that slot and that host',
-    label.toLowerCase().includes(socket.toLowerCase()),
-    `preset "${label}" for socket ${socket}`
+    label.toLowerCase().includes(target.socket.toLowerCase()),
+    `preset "${label}" for socket ${target.socket}`
   )
+  await checkReplaceLabels(page, target.occupied)
 
   // Under a preset, haste-locked donors are OUT, not chipped (owner verdict 2026-08-05): the
   // preset promises only-legal-fits and R3 says haste never moves. The chip only exists in the
@@ -500,6 +440,29 @@ async function stepFarm(page: Page): Promise<void> {
     box !== null && box.h > 0 && box.scrollH >= box.clientH,
     box ? `${String(box.h)}px tall` : 'absent'
   )
+  // JOS-42 refinement 4, THE TRUST INVARIANT, measured on the real corpus in the real app: with
+  // the era filter on (its default, and where this run is), no heading may name a zone from an
+  // expansion the server has not opened. A route that sends you to Dragon Necropolis is not a
+  // partial answer, it is a wrong one — and it is the bug the owner reported.
+  const unreachable = await countOf(page, FARM_GROUP_OUT_OF_ERA)
+  check(
+    'no farm heading sends you to a zone this era cannot reach',
+    unreachable === 0,
+    `${String(unreachable)} out-of-era headings`
+  )
+  // Those zones are not deleted — they drop into the row's "also:" tail, each naming its own
+  // expansion. Present or not depends on what is planned, so this only checks the WORDING.
+  const alsoEras = await page.evaluate(
+    (s) => Array.from(document.querySelectorAll(s)).map((e) => (e as HTMLElement).innerText.trim()),
+    FARM_ALSO_ERA
+  )
+  if (alsoEras.length > 0) {
+    check(
+      'an out-of-era camp survives in the "also:" tail, naming the expansion it belongs to',
+      alsoEras.every((t) => /^\((Classic|Kunark|Velious|Luclin)\)$/.test(t)),
+      alsoEras.slice(0, 3).join(' ')
+    )
+  }
   check(
     'every farm row states the merge cost in the shared vocabulary ("needs +N — ≈X D0 merges")',
     /needs \+\d+ — ≈\d+ D0 merges/.test(text),
@@ -520,9 +483,9 @@ async function stepFarm(page: Page): Promise<void> {
  * AND IT IS A ROUND TRIP (JOS-43). The reported bug was the return leg: Back on that drill meant
  * the top of the loot ledger, so reading one donor cost you your place in the plan. The arrow now
  * names the tab that sent you and goes there, which is asserted both by its accessible name
- * (before the click) and by the Planner being on screen after it.
+ * (before the click) and by the Exaltations tab being on screen after it.
  *
- * Runs LAST: it leaves the app on the Planner having passed through the Loot tab, so every
+ * Runs LAST: it leaves the app on Exaltations having passed through the Loot tab, so every
  * planner-scoped measurement above it must already have been taken.
  */
 async function stepDeepLink(page: Page): Promise<void> {
@@ -547,10 +510,10 @@ async function stepDeepLink(page: Page): Promise<void> {
   // the tooltip and the accessible name — and then it goes there. "Back to the loot list" here
   // would be the exact bug this ticket was filed for.
   const label = await page.getAttribute(LOOT_BACK, 'aria-label')
-  check('the drill’s back arrow names the Planner, not the loot list', label === 'Back to Planner', String(label))
+  check('the drill’s back arrow names Exaltations, not the loot list', label === 'Back to Exaltations', String(label))
   await page.click(LOOT_BACK, { timeout: 15_000 })
   const home = await until(async () => (await countOf(page, VIEW)) > 0, 20_000)
-  check('…and pressing Back returns to the Planner you were reading', home)
+  check('…and pressing Back returns to the Exaltations tab you were reading', home)
   check('…with the plan still on screen, not the loot ledger', (await countOf(page, LOOT_DETAIL)) === 0)
   check(
     '…and the nav agreeing about where we are',
@@ -574,7 +537,7 @@ async function steps(page: Page): Promise<void> {
   }
   const over = await pageOverflow(page)
   check(
-    'the Planner never scrolls the page (its lists clip inside their own boxes)',
+    'Exaltations never scrolls the page (its lists clip inside their own boxes)',
     over.doc === 0 && over.content === 0,
     `document +${String(over.doc)}px · content area +${String(over.content)}px`
   )
@@ -586,7 +549,7 @@ async function main(): Promise<void> {
 
   // See the header: a stored set (or a remembered mode) would make the empty-state assertion
   // vacuous — this launch's userData dir has never held either.
-  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Planner spec…')
+  console.log('launch: hidden Electron (EQ_E2E=1) against the real log — Exaltations spec…')
   const { app, close } = await launchApp()
 
   let page: Page | null = null

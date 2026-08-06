@@ -53,8 +53,9 @@ const ROWS: NavRow[] = [
   { view: 'combat', icon: <BarChartIcon /> },
   { view: 'mobs', icon: <PetsIcon /> },
   { view: 'loot', icon: <ReceiptLongIcon /> },
-  // Planner follows Loot for the same reason Loot follows Mobs: it is the third face of one
-  // question — what drops it, what did I get, and what am I still farming for.
+  // EXALTATIONS follows Loot for the same reason Loot follows Mobs: it is the third face of one
+  // question — what drops it, what did I get, and what am I still farming for. (Its LABEL lives
+  // in `VIEW_LABELS`; JOS-42 renamed the tab there, which is also where Back reads it from.)
   { view: 'planner', icon: <AutoAwesomeIcon />, badge: IN_DEV },
   { view: 'maps', icon: <MapIcon /> },
   { view: 'bosses', icon: <EmojiEventsIcon /> },

@@ -14,13 +14,33 @@
 // are equally good answers, and a stable, statable rule beats "whichever the scrape listed first"
 // — a rescrape must never silently re-route the list.
 //
+// …AND THE ERA COMES FIRST, ABOVE BOTH (JOS-42, owner-reported 2026-08-06). Batfang Headband was
+// filed under DRAGON NECROPOLIS — Velious, which this server has not opened — with Western Plains
+// of Karana, where four classic-era ogres drop it, demoted to the muted "also:" tail. Nothing in
+// the arithmetic was wrong: the three zones each fed one need, and the alphabetical tiebreak
+// picked the first. But the heading a farm route prints is a place you are being told to GO, and
+// a rollup that sends you somewhere unreachable is not a smaller answer than the right one — it
+// is a wrong one, and it costs the whole surface its credibility.
+//
+// So with the era filter on, the primary zone is chosen from the IN-ERA zones whenever there are
+// any, and the weights and the alphabetical tiebreak then decide among those. Out-of-era zones
+// still appear — in the "also:" tail, each naming its own expansion, because "you could also camp
+// this in Velious, later" is real knowledge and deleting it would be its own kind of lie. When NO
+// zone is in era the candidate set is every zone again, which is the pre-existing behaviour: such
+// a donor is out-of-era wholesale and the filter has already hidden it (FarmList), or the filter
+// is off and the user has asked to see everything.
+//
 // THE FOUR NON-ZONE HEADINGS ARE HONEST STATES, NOT LEFTOVERS. A quest reward and a crafted item
 // have no camp; a mob whose page states no home zone is a real camp with an unstated address; a
 // donor with no source at all is a fact about our knowledge, not about the game. Each says which
 // one it is rather than being dropped into a zone we invented.
 
 import type { EquipSlot, ExaltPlan, ExtractTier, SocketType } from '@shared/planner/types'
-import { extractionCost, extractionTier } from '@shared/planner/rules'
+// RELATIVE value imports (the mobSearch house law): `tests/plannerFarm.test.mts` drives this
+// rollup under the node runner, where the `@shared` alias — a vite-only resolution — does not
+// exist. Type-only imports are erased and keep the alias.
+import { extractionCost, extractionTier } from '../../../../shared/planner/rules'
+import { CURRENT_ERA, ERA_LABEL, eraRank, zoneEra, type Era } from '../../../../shared/planner/era'
 import { mergeItemSources } from '../../lib/itemSources'
 import type { DonorRow } from './plannerData'
 import { donorFor } from './plannerData'
@@ -48,15 +68,50 @@ export interface FarmNeed {
 
 export type FarmGroupKind = 'zone' | 'quest' | 'crafted' | 'unstated' | 'unknown'
 
+/**
+ * One zone name with the expansion the zone table places it in — the "also:" tail's unit (JOS-42).
+ *
+ * `outOfEra` is a POSITIVE answer only. A zone the table cannot place (`era: null` — junk, prose,
+ * an EQL-new zone) is never called out-of-era: that would dress a gap in our own tables up as a
+ * fact about the game (law 1). It is simply a zone name with nothing else to say.
+ */
+export interface FarmZone {
+  name: string
+  era: Era | null
+  outOfEra: boolean
+  /** the expansion's display spelling, or '' — so a chip never re-states `ERA_LABEL` itself */
+  eraLabel: string
+}
+
+/** A catalog zone string, placed. The one seam through which this rollup asks about eras. */
+export function farmZone(name: string): FarmZone {
+  const era = zoneEra(name)
+  const outOfEra = era !== null && eraRank(era) > eraRank(CURRENT_ERA)
+  return { name, era, outOfEra, eraLabel: era === null ? '' : ERA_LABEL[era] }
+}
+
 export interface FarmRow extends FarmNeed {
-  /** the donor's OTHER zones — the "also: …" note */
-  also: string[]
+  /** the donor's OTHER zones — the "also: …" note, each carrying its own era verdict */
+  also: FarmZone[]
+}
+
+/** What the rollup needs to know about the surface it is being drawn on. */
+export interface FarmGrouping {
+  /** the shared "Current era" toggle. ON ⇒ a donor never leads with a zone you cannot reach. */
+  eraOnly: boolean
 }
 
 export interface FarmGroup {
   /** the zone name, or the heading for one of the four non-zone kinds */
   title: string
   kind: FarmGroupKind
+  /**
+   * The heading's own era, for a ZONE group; `null` for the four non-zone headings and for a zone
+   * the table cannot place. With the era filter ON this is never a later expansion — that is the
+   * JOS-42 invariant, and it is stated here so the UI can say so when the filter is OFF rather
+   * than leaving "go to Dragon Necropolis" looking like an ordinary suggestion.
+   */
+  zone: FarmZone | null
   rows: FarmRow[]
 }
 
@@ -141,10 +196,21 @@ function primaryZone(zones: readonly string[], weights: ReadonlyMap<string, numb
 }
 
 /**
+ * WHICH ZONES MAY BE THE HEADING (JOS-42). With the era filter on, the reachable ones — and only
+ * if there are none does every zone become a candidate again, which is exactly the old behaviour
+ * for the wholesale-out-of-era donor the filter has already hidden.
+ */
+function candidateZones(zones: readonly string[], eraOnly: boolean): readonly string[] {
+  if (!eraOnly) return zones
+  const inEra = zones.filter((z) => !farmZone(z).outOfEra)
+  return inEra.length > 0 ? inEra : zones
+}
+
+/**
  * Needs → the rollup: zone groups first (most needed donors first, ties alphabetical), then the
  * four honest non-zone headings. Every need appears EXACTLY ONCE.
  */
-export function groupNeeds(needs: readonly FarmNeed[]): FarmGroup[] {
+export function groupNeeds(needs: readonly FarmNeed[], opts: FarmGrouping): FarmGroup[] {
   const weights = zoneWeights(needs)
   const zones = new Map<string, FarmRow[]>()
   const tails = new Map<FarmGroupKind, FarmRow[]>()
@@ -158,20 +224,21 @@ export function groupNeeds(needs: readonly FarmNeed[]): FarmGroup[] {
       else tails.set(kind, [row])
       continue
     }
-    const primary = primaryZone(need.zones, weights)
-    const row: FarmRow = { ...need, also: need.zones.filter((z) => z !== primary) }
+    const primary = primaryZone(candidateZones(need.zones, opts.eraOnly), weights)
+    const row: FarmRow = { ...need, also: need.zones.filter((z) => z !== primary).map(farmZone) }
     const list = zones.get(primary)
     if (list) list.push(row)
     else zones.set(primary, [row])
   }
 
   const zoneGroups: FarmGroup[] = [...zones.entries()]
-    .map(([title, rows]) => ({ title, kind: 'zone' as const, rows }))
+    .map(([title, rows]) => ({ title, kind: 'zone' as const, zone: farmZone(title), rows }))
     .sort((a, b) => b.rows.length - a.rows.length || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0))
 
   const tailGroups: FarmGroup[] = TAIL.filter((kind) => tails.has(kind)).map((kind) => ({
     title: HEADINGS[kind],
     kind,
+    zone: null,
     rows: tails.get(kind) ?? []
   }))
 

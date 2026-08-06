@@ -15,6 +15,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { EquipSlot, PlannerDonor, SocketType } from '@shared/planner/types'
+// RELATIVE value import (the mobSearch house law): the era join is reached under the node
+// runner through `plannerFarm`, where the vite-only `@shared` alias does not resolve.
 import {
   CURRENT_ERA,
   ERA_LABEL,
@@ -24,7 +26,7 @@ import {
   zoneEra,
   type Era,
   type EraVerdict
-} from '@shared/planner/era'
+} from '../../../../shared/planner/era'
 import { classesMismatch } from './plannerClasses'
 import { defaultAxis, isAxisFor, type GroupAxis } from './plannerGroups'
 import { sourcesFor } from './sourceIndex'

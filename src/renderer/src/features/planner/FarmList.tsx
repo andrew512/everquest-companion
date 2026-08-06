@@ -16,6 +16,9 @@
 // THE ERA TOGGLE IS SHARED WITH THE EFFECT BROWSER (one localStorage key, default ON). Out-of-era
 // donors are HIDDEN rather than deleted from the plan — the count of what it hid is stated beside
 // the toggle, because a rollup that silently drops half your set would be lying about the route.
+// It also STEERS THE GROUPING (JOS-42): while it is on, a donor is filed under a zone you can
+// actually reach, and its later-expansion zones drop to the "also:" tail chipped with their own
+// expansion. `plannerFarm.groupNeeds` owns that rule; this file passes the toggle and draws it.
 //
 // THE BROWSER'S NON-EQUIPPABLE FILTER DELIBERATELY DOES NOT REACH HERE. That filter governs what
 // you can PICK; this list is what you already picked. A slotless donor sitting in a plan (added
@@ -31,7 +34,15 @@ import { Tooltip } from '../../lib/Tooltip'
 import { DonorName, EraChip, MismatchChip, NoSlotChip, StateChip } from './PlannerChips'
 import { classesMismatch } from './plannerClasses'
 import { CURRENT_ERA_LABEL, eraHides, indexDonors, isNonEquippable, useDonors, useEraOnly } from './plannerData'
-import { campText, collectNeeds, costText, groupNeeds, type FarmGroup, type FarmRow } from './plannerFarm'
+import {
+  campText,
+  collectNeeds,
+  costText,
+  groupNeeds,
+  type FarmGroup,
+  type FarmRow,
+  type FarmZone
+} from './plannerFarm'
 import type { PlannerProgressApi } from './plannerProgress'
 
 const KIND_HINT: Record<FarmGroup['kind'], string> = {
@@ -40,6 +51,36 @@ const KIND_HINT: Record<FarmGroup['kind'], string> = {
   crafted: 'These are made, not dropped.',
   unstated: 'The catalog states no home zone for these.',
   unknown: 'Nothing says where these come from.'
+}
+
+/**
+ * The "also: …" tail — the donor's other camps. A zone from a LATER expansion carries its own
+ * expansion name inline, because that is the whole difference between "another place you could
+ * camp this" and "another place, once the server opens it". A zone the table cannot place says
+ * nothing extra: an unplaceable name is a gap in our tables, not a claim about the game (law 1).
+ */
+function AlsoZones({ zones }: { zones: readonly FarmZone[] }): JSX.Element {
+  return (
+    <Typography
+      variant="caption"
+      noWrap
+      data-testid="planner-farm-also"
+      sx={{ display: 'block', color: 'text.disabled' }}
+    >
+      also:{' '}
+      {zones.map((z, i) => (
+        <Box key={z.name} component="span">
+          {i > 0 && ', '}
+          {z.name}
+          {z.outOfEra && (
+            <Box component="span" data-testid="planner-farm-also-era" sx={{ ml: 0.5, opacity: 0.85 }}>
+              ({z.eraLabel})
+            </Box>
+          )}
+        </Box>
+      ))}
+    </Typography>
+  )
 }
 
 function Row({
@@ -74,11 +115,7 @@ function Row({
         <Typography variant="caption" noWrap sx={{ display: 'block' }}>
           {camp === '' ? '—' : camp}
         </Typography>
-        {row.also.length > 0 && (
-          <Typography variant="caption" noWrap sx={{ display: 'block', color: 'text.disabled' }}>
-            also: {row.also.join(', ')}
-          </Typography>
-        )}
+        {row.also.length > 0 && <AlsoZones zones={row.also} />}
       </Box>
 
       <Typography variant="caption" sx={{ color: 'text.secondary', flexShrink: 1, minWidth: 0 }}>
@@ -105,7 +142,12 @@ function Group({
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
   return (
-    <Paper variant="outlined" data-testid="planner-farm-group" sx={{ mb: 1 }}>
+    <Paper
+      variant="outlined"
+      data-testid="planner-farm-group"
+      data-out-of-era={group.zone?.outOfEra === true ? 'true' : 'false'}
+      sx={{ mb: 1 }}
+    >
       <Stack
         direction="row"
         spacing={1}
@@ -117,6 +159,17 @@ function Group({
             {group.title}
           </Typography>
         </Tooltip>
+        {/* Only reachable with the era filter OFF — with it on, a heading is always a zone you can
+            go to (JOS-42). Off, the heading is honest about what it is asking of you. */}
+        {group.zone?.outOfEra === true && (
+          <Chip
+            size="small"
+            color="warning"
+            variant="outlined"
+            label={group.zone.eraLabel}
+            sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+          />
+        )}
         <Box sx={{ flexGrow: 1 }} />
         <Typography variant="caption" color="text.secondary">
           {group.rows.length} {group.rows.length === 1 ? 'donor' : 'donors'}
@@ -149,7 +202,11 @@ export default function FarmList({ plan, progress, onOpenLoot }: FarmListProps):
   const { groups, hidden, outstanding } = useMemo(() => {
     const needs = collectNeeds(plan, index, progress.of).filter((n) => n.progress.state !== 'ready')
     const kept = needs.filter((n) => !eraHides(n.donor ?? { key: n.donorKey }, eraOnly))
-    return { groups: groupNeeds(kept), hidden: needs.length - kept.length, outstanding: needs.length }
+    return {
+      groups: groupNeeds(kept, { eraOnly }),
+      hidden: needs.length - kept.length,
+      outstanding: needs.length
+    }
   }, [plan, index, progress, eraOnly])
 
   return (

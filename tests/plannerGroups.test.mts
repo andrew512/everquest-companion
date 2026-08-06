@@ -28,6 +28,7 @@ import {
   type DonorGroup
 } from '../src/renderer/src/features/planner/plannerGroups'
 import type { Era } from '../src/shared/planner/era'
+import type { EffectFacts } from '../src/shared/planner/effectText'
 import type { EquipSlot, SocketType } from '../src/shared/planner/types'
 
 interface Spec {
@@ -39,6 +40,8 @@ interface Spec {
   familyTier?: number
   haste?: boolean
   era?: Era | null
+  /** V6's spell-DB join, as it rides on the donor row. Absent = the join missed (law 1). */
+  facts?: EffectFacts
 }
 
 const ERAS = new Map<string, Era | null>()
@@ -59,6 +62,7 @@ function row(spec: Spec): DonorRow {
     hasteLocked: spec.haste ?? false,
     quest: false,
     playerCrafted: false,
+    ...spec.facts,
     searchKey: `${spec.name} ${spec.effect}`.toLowerCase()
   }
 }
@@ -148,6 +152,90 @@ test('a group header is a ROW, and expanding one only makes the array longer', (
   assert.ok(open.every((r) => r.kind === 'header' || r.namesEffect))
   const byEffect = browserRows(groupDonors(FOCUS_ROWS, 'effect', eraOf), new Set(['effect:Improved Healing III']))
   assert.ok(byEffect.every((r) => r.kind === 'header' || !r.namesEffect))
+})
+
+// ---- JOS-42 refinement 2: the one-liner belongs to the family, not to every row ---------------
+
+const BURNING: EffectFacts = { spellType: 'Beneficial', spellTarget: 'Self', spellDuration: '2:24:00' }
+
+/** Three ranks of one family, all saying the same three things about themselves — the real case. */
+const BURN_ROWS = [
+  focus('Runed Bolster Belt', 'Burning Affliction I', ['Burning Affliction', 1], { facts: BURNING }),
+  focus('Shissar Focus Ring', 'Burning Affliction III', ['Burning Affliction', 3], { facts: BURNING })
+]
+
+test('a family header states the one-liner its whole family shares, and the rows stop repeating it', () => {
+  const [family] = groupDonors(BURN_ROWS, 'family', eraOf)
+  assert.equal(family.says, 'Beneficial · Self · 2:24:00')
+
+  const rows = browserRows([family], new Set([family.id]))
+  // Every donor under it goes quiet — that repeated text is exactly what was truncating the
+  // effect NAME on each row ("Burning Af…", the JOS-42 screenshot).
+  assert.ok(rows.every((r) => r.kind === 'header' || !r.namesSays))
+  // …and the effect name is still on the row, because a family header does not name a rank.
+  assert.ok(rows.every((r) => r.kind === 'header' || r.namesEffect))
+})
+
+test('a header only speaks for rows that AGREE — one dissenter and the rows keep their own line', () => {
+  // The corpus's real case: Percussion Resonance carries `Self · 1:57:00` AND `Self · 2:12:00`,
+  // so no line is true of the family and the header must say nothing.
+  const dissenting = [
+    ...BURN_ROWS,
+    focus('Odd Trinket', 'Burning Affliction II', ['Burning Affliction', 2], {
+      facts: { spellType: 'Detrimental', spellTarget: 'Single Hostile' }
+    })
+  ]
+  const [family] = groupDonors(dissenting, 'family', eraOf)
+  assert.equal(family.says, '', 'a header may only state what is true of every row under it')
+  assert.ok(browserRows([family], new Set([family.id])).every((r) => r.kind === 'header' || r.namesSays))
+})
+
+test('a SILENT rank does not veto a header — the join missing is not a disagreement', () => {
+  // The other real case: one family joins the spell DB on some ranks and not others (5.8% of
+  // effect rows miss the join, law 1). Letting a row that states nothing suppress a line true of
+  // every row that speaks would trade a fact for nothing.
+  const withSilent = [...BURN_ROWS, focus('Plain Band', 'Burning Affliction II', ['Burning Affliction', 2])]
+  const [family] = groupDonors(withSilent, 'family', eraOf)
+  assert.equal(family.says, 'Beneficial · Self · 2:24:00')
+  // …and every row goes quiet: the two that agreed because the header took their line, the silent
+  // one because it never had a line to draw.
+  assert.ok(browserRows([family], new Set([family.id])).every((r) => r.kind === 'header' || !r.namesSays))
+})
+
+test('a header that spoke does not silence the ONE rank that says something else', () => {
+  const odd = focus('Odd Trinket', 'Burning Affliction II', ['Burning Affliction', 2], {
+    facts: { spellType: 'Beneficial', spellTarget: 'Self', spellDuration: '9:99:99' }
+  })
+  // Two ranks agree, one differs, and one is silent — so the header can state nothing (the
+  // dissenter vetoes), which is the case above. Take the dissenter away from the veto by giving
+  // the majority its own group: what is pinned here is the per-ROW rule, read directly.
+  const [family] = groupDonors([...BURN_ROWS, odd], 'family', eraOf)
+  assert.equal(family.says, '')
+  const rows = browserRows([family], new Set([family.id]))
+  assert.ok(
+    rows.every((r) => r.kind === 'header' || r.namesSays),
+    'with no header line every row that HAS a line speaks'
+  )
+  // And with a header line in place, the row carrying exactly it is the only kind that goes quiet.
+  const [agreeing] = groupDonors(BURN_ROWS, 'family', eraOf)
+  const quiet = browserRows([agreeing], new Set([agreeing.id])).filter((r) => r.kind === 'donor' && !r.namesSays)
+  assert.equal(quiet.length, BURN_ROWS.length)
+})
+
+test('a family the spell DB never joined says nothing — no placeholder, no invented line', () => {
+  const [family] = groupDonors([HEAL_I, HEAL_III_A], 'family', eraOf)
+  assert.equal(family.says, '')
+  // …and neither do its rows: `namesSays` means "this row DRAWS a line", and a row the join
+  // missed has none to draw. Silence at both levels, which is law 1 rather than a layout choice.
+  assert.ok(browserRows([family], new Set([family.id])).every((r) => r.kind === 'header' || !r.namesSays))
+})
+
+test('only the family axis lifts the line — every other axis groups rows whose effects differ', () => {
+  for (const axis of ['effect', 'slot', 'socket', 'era'] as const) {
+    for (const group of groupDonors(BURN_ROWS, axis, eraOf)) {
+      assert.equal(group.says, '', `the ${axis} axis lifted a one-liner`)
+    }
+  }
 })
 
 test('the slot axis lists a two-slot donor twice, in character-sheet order, slotless last', () => {
