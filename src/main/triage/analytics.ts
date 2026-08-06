@@ -95,8 +95,19 @@ function activeWithin(installs: readonly InstallRow[], ref: string, days: number
   return installs.filter((i) => i.lastSeenDay >= floor && i.lastSeenDay <= ref).length
 }
 
+/**
+ * One metric's total ON ONE DAY. The counterpart to `sumOf` (the whole window) and `seriesOf`
+ * (per day), for the two "today" numbers — which anchor on the CLOCK's UTC day rather than on the
+ * reference day DAU uses. A "today" that quietly meant "the last day anything arrived" would read
+ * as live and be stale; a true zero is the honest answer to a quiet morning.
+ */
+function onDay(rows: readonly UsageRow[], metric: string, day: string): number {
+  return rows.reduce((total, r) => (r.metric === metric && r.day === day ? total + r.n : total), 0)
+}
+
 function buildPulse(input: AnalyticsInput, days: string[], ref: string): TriageAnalyticsPulse {
   const { usage, installs } = input
+  const today = dayOf(input.nowMs)
   const activeSeries = seriesOf(usage, USAGE_METRICS.activeInstalls, days)
   const sessionSeries = seriesOf(usage, USAGE_METRICS.sessions, days)
   const sessions = sessionSeries.reduce((sum, p) => sum + p.n, 0)
@@ -111,6 +122,12 @@ function buildPulse(input: AnalyticsInput, days: string[], ref: string): TriageA
     wau: activeWithin(installs, ref, 7),
     mau: activeWithin(installs, ref, 30),
     installsTotal: installs.length,
+    installsToday: onDay(usage, USAGE_METRICS.newInstalls, today),
+    // SERVER-DERIVED (src/shared/telemetryRollup.ts): the ingest path counts a version change
+    // against the version the install row was holding. Disjoint from `installsToday` — a first
+    // batch is an install, never an upgrade — so the two read side by side without overlap.
+    upgradesToday: onDay(usage, USAGE_METRICS.upgrades, today),
+    linesParsed: sumOf(usage, USAGE_METRICS.linesParsed),
     sessions,
     sessionsPerDay: ratio(sessions, liveDays) ?? 0,
     meanSessionMs: ratio(totalMs, ends),

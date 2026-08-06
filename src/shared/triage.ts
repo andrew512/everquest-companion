@@ -237,6 +237,20 @@ export interface TriageAnalyticsPulse {
   mau: number
   /** Every `analytics_install` row — the all-time footprint, not a window. */
   installsTotal: number
+  /**
+   * TODAY, in UTC, and today is the CLOCK's day rather than the window's last day with data —
+   * unlike DAU beside it, which anchors on the last day anything arrived. "Installs today" that
+   * silently meant "installs on the last day we heard anything" would read as a live number and
+   * be a stale one; a true zero is the honest answer to a quiet morning.
+   */
+  installsToday: number
+  /** Installs that reported a different build than they were last on, today. Server-derived. */
+  upgradesToday: number
+  /**
+   * Log lines this fleet parsed IN THE WINDOW. Counts parsing work, not distinct lines: the
+   * startup replay re-reads a character's history every launch and TELEMETRY.md says so.
+   */
+  linesParsed: number
   sessions: number
   sessionsPerDay: number
   /** From the `sessionMsTotal` / `sessionEnds` pair. Null when no session has ended yet. */
@@ -356,6 +370,42 @@ export type TriageDownloads =
   | { available: true; releases: TriageDownloadRow[]; fetchedAtMs: number }
   | { available: false; reason: string }
 
+/**
+ * WHO IS IN THE APP RIGHT NOW — the one number in this whole readout that does not come from the
+ * counter tables, because they cannot answer it: `usage_daily` is keyed on a DAY, and "right now"
+ * is not a day.
+ *
+ * ITS SOURCE IS THE CloudWatch EMF METRIC `EQCompanion/Telemetry · Heartbeats` (Channel=prod),
+ * which the ingest Lambda emits per accepted batch. One heartbeat per open session per five
+ * minutes, so the Sum over a 300-second period IS the number of sessions that were alive in it.
+ * Deliberately channel-split rather than cohort-split (a CloudWatch metric's identity is its
+ * dimension set; adding Cohort would orphan every dashboard widget).
+ *
+ * THE AGE IS AN ESTIMATE AND IS LABELLED ONE, everywhere it is rendered. Nothing anywhere knows
+ * when an individual session started — that would need the per-id, per-session trail this design
+ * refuses to keep — so it is derived from how far back the heartbeat count has been sustained:
+ * a session alive for N buckets contributes a heartbeat to each of them, so the number of
+ * sessions alive now that were ALSO alive j buckets ago is at most `min(now, then)`, and summing
+ * that over j gives a mean age in buckets. It is a FLOOR whenever the lookback window is fully
+ * occupied (`ageIsFloor`), because a session older than the window is only counted as far back as
+ * the window reaches.
+ */
+export type TriageLiveSessions =
+  | {
+      available: true
+      /** Sessions alive in the last COMPLETE 5-minute bucket. Zero is a real answer. */
+      activeNow: number
+      /** End of that bucket, ms — what "now" actually means in this number. */
+      asOfMs: number
+      /** ESTIMATED mean age of those sessions, ms. Null when nothing is alive to have an age. */
+      avgAgeMs: number | null
+      /** The estimate hit the end of the lookback: `avgAgeMs` is a floor, not a mean. */
+      ageIsFloor: boolean
+      /** How far back the derivation could see. */
+      lookbackMs: number
+    }
+  | { available: false; reason: string }
+
 export interface TriageCohortRow {
   cohortDay: string
   installs: number
@@ -417,6 +467,14 @@ export type TriageAnalytics =
        * once, never split or summed per cohort.
        */
       downloads?: TriageDownloads
+      /**
+       * LIVE SESSIONS, merged at the same edge and for the same reason: it is a CloudWatch read,
+       * not a counter row, and `buildAnalytics` stays pure over the three tables.
+       *
+       * It is likewise GLOBAL rather than per cohort — the EMF metric is split by channel, never
+       * by cohort (`TriageLiveSessions` says why) — so it is rendered once, above both readouts.
+       */
+      live?: TriageLiveSessions
     }
 
 // ---- the reply envelope ----------------------------------------------------------------

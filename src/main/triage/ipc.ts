@@ -31,8 +31,9 @@
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import type { TriageResult } from '../../shared/triage'
-import { awsBackend, type TriageBackend } from './backend'
+import { awsBackend, TRIAGE_PROFILE, type TriageBackend } from './backend'
 import { fetchGhDownloads } from './ghDownloads'
+import { fetchLiveSessions } from './liveSessions'
 import { unreachable } from './store'
 import {
   isInstallId,
@@ -139,12 +140,18 @@ export function registerTriageIpc(backend: TriageBackend = awsBackend()): () => 
   ipcMain.handle(IPC.triageAnalytics, async (_e, rawDays: unknown, rawIncludeOwner: unknown) => {
     const days = validateAnalyticsDays(rawDays)
     if (days === null) return REJECT
-    const [result, downloads] = await Promise.all([
+    //
+    // THE LIVE-SESSION READ RIDES ALONGSIDE THEM BOTH, for the same reasons: it is CloudWatch
+    // rather than the cluster, `buildAnalytics` never learns it exists, and a throttled or
+    // credential-less CloudWatch is an `available:false` inside the value rather than a failure
+    // of this channel. Three reads, one round trip's worth of latency.
+    const [result, downloads, live] = await Promise.all([
       attempt(() => backend.analytics(days, rawIncludeOwner === true)),
-      fetchGhDownloads()
+      fetchGhDownloads(),
+      fetchLiveSessions({ profile: TRIAGE_PROFILE })
     ])
     if (!result.ok || !result.value.available) return result
-    return { ok: true as const, value: { ...result.value, downloads } }
+    return { ok: true as const, value: { ...result.value, downloads, live } }
   })
 
   return () => backend.close()

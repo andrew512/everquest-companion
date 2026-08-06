@@ -18,6 +18,7 @@ import type {
   TriageAnalyticsData,
   TriageDownloads,
   TriageFunnelStepRow,
+  TriageLiveSessions,
   TriageMixRow
 } from '../src/shared/triage'
 
@@ -49,13 +50,36 @@ function funnelBlock(steps: readonly TriageFunnelStepRow[]): string[] {
   )
 }
 
-function pulseLines(d: TriageAnalyticsData): string[] {
+/**
+ * RIGHT NOW, from CloudWatch rather than from the counter tables — the one line in the digest
+ * that is not a fact about a day (`src/main/triage/liveSessions.ts` explains the metric and the
+ * derivation). Absent (`--json`, which is a machine shape over the counter tables) prints
+ * nothing; unavailable prints the reason, because "CloudWatch did not answer" and "nobody is in
+ * the app" are opposite facts and must not share a rendering.
+ *
+ * The age says `est.` and, when the lookback truncated it, `≥`. That is the whole caveat: one
+ * word and one glyph, not a sentence about methodology.
+ */
+export function liveLines(live: TriageLiveSessions | undefined): string[] {
+  if (live === undefined) return []
+  if (!live.available) return [`  live sessions: (unavailable: ${live.reason})`]
+  const age =
+    live.avgAgeMs === null
+      ? ''
+      : ` · avg age ${live.ageIsFloor ? '≥' : ''}${minutes(live.avgAgeMs)} est.`
+  return [`  live sessions ${String(live.activeNow)} right now${age}`]
+}
+
+function pulseLines(d: TriageAnalyticsData, live?: TriageLiveSessions): string[] {
   const p = d.pulse
   return [
     'PULSE',
+    ...liveLines(live),
     `  DAU ${String(p.dau)} · WAU ${String(p.wau)} · MAU ${String(p.mau)} · installs all-time ${String(p.installsTotal)}`,
+    `  today (UTC): ${String(p.installsToday)} new install(s) · ${String(p.upgradesToday)} upgrade(s)`,
     `  sessions ${String(p.sessions)} (${p.sessionsPerDay.toFixed(1)}/day on days with data)`,
     `  session length: mean ${minutes(p.meanSessionMs)} · median ${p.medianSessionLabel ?? '—'}`,
+    `  log lines parsed ${String(p.linesParsed)} in the window (re-reads included)`,
   ]
 }
 
@@ -218,7 +242,8 @@ function cohortLines(cohort: string): string[] {
 export function renderAnalyticsDigest(
   d: TriageAnalyticsData,
   cohort = 'user',
-  downloads?: TriageDownloads
+  downloads?: TriageDownloads,
+  live?: TriageLiveSessions
 ): string {
   const head = [
     `usage analytics — last ${String(d.windowDays)} days (${d.days[0] ?? '?'} → ${d.days.at(-1) ?? '?'})`,
@@ -230,7 +255,7 @@ export function renderAnalyticsDigest(
   return [
     ...head,
     '',
-    ...pulseLines(d),
+    ...pulseLines(d, live),
     ...adoptionLines(d),
     ...funnelLines(d),
     ...healthLines(d),

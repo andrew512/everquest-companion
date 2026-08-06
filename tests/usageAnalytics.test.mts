@@ -404,13 +404,22 @@ test('the pulse tiles say what they are counting, and never claim "right now"', 
     'WAU',
     'MAU',
     'Installs',
+    'Installs today',
+    'Upgrades today',
     'Sessions',
-    'Session length'
+    'Session length',
+    'Lines parsed'
   ])
   for (const t of tiles) assert.ok(t.note.length > 0, `${t.label} has no note`)
   assert.match(tiles[1].note, /last day with data/)
-  assert.equal(tiles[5].value, '—', 'no session ended: the tile does not invent a length')
+  // THE COUNTER TILES STILL NEVER SAY "now": the two "today" tiles name their day (UTC) and the
+  // line counter names its window, so the only tile on this row that claims the present tense is
+  // the CloudWatch one — which is a different function and a different source.
+  assert.match(tiles[4].note, /UTC day/)
+  assert.match(tiles[8].note, /window/)
+  assert.equal(tiles[7].value, '—', 'no session ended: the tile does not invent a length')
 })
+
 
 test('funnel bars are relative to STEP ONE, so the curve reads as a shape', () => {
   const bars = funnelBars([
