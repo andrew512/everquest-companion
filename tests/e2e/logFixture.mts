@@ -167,13 +167,14 @@ export interface FixtureLaunch extends LaunchedApp {
  */
 export async function launchOnFixture(
   fixture: string | FixtureLog,
-  opts: { maps?: boolean; userData?: string } = {}
+  opts: { maps?: boolean; userData?: string; env?: Record<string, string> } = {}
 ): Promise<FixtureLaunch> {
   const owned = typeof fixture === 'string'
   const log = owned ? stageFixture(fixture, { ...(opts.maps === undefined ? {} : { maps: opts.maps }) }) : fixture
   const launched = await launchApp({
     installDir: log.installDir,
-    ...(opts.userData === undefined ? {} : { userData: opts.userData })
+    ...(opts.userData === undefined ? {} : { userData: opts.userData }),
+    ...(opts.env === undefined ? {} : { env: opts.env })
   })
   return {
     ...launched,

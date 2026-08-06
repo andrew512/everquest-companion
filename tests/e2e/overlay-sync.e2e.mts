@@ -44,6 +44,7 @@ import {
   settle,
   settleCount,
   settleStable,
+  sleep,
   snapshot,
   waitHydrated
 } from './appHarness.mjs'
@@ -377,7 +378,9 @@ async function reopenFightOverlay(app: ElectronApplication, page: Page): Promise
     const eq = (window as unknown as { eq: OverlayBridge }).eq
     if ((await eq.getOverlayState()).fight) await eq.toggleOverlay('fight')
   })
-  await sleep(800)
+  // The window has to be GONE before it can be built differently, and main is the only side that
+  // knows: the open-state it reports back is the close completing (wave E3 — condition, not clock).
+  await settle(() => overlayState(page), (s) => s.fight === false, { timeoutMs: 10_000 })
   await page.evaluate(async () => {
     const eq = (window as unknown as { eq: OverlayBridge }).eq
     if (!(await eq.getOverlayState()).fight) await eq.toggleOverlay('fight')
@@ -389,21 +392,12 @@ async function reopenFightOverlay(app: ElectronApplication, page: Page): Promise
 async function checkOverlayStillWorks(page: Page, overlay: Page, mode: string): Promise<void> {
   check(`${mode}: the reopened overlay's bridge is live and its open-state persisted`,
     (await overlayState(page)).fight === true)
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
-  })
-  await sleep(500)
+  await setLocked(overlay, false)
   check(`${mode}: it renders its selector`, (await countOf(overlay, TRIGGER)) === 1)
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(true)
-  })
-  await sleep(600)
+  await setLocked(overlay, true)
   check(`${mode}: it locks, and the locked selector survives (ruling 3 holds in this mode too)`,
     (await countOf(overlay, TRIGGER)) === 1)
-  await overlay.evaluate(() => {
-    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
-  })
-  await sleep(400)
+  await setLocked(overlay, false)
 }
 
 async function stepOpaqueOverlays(app: ElectronApplication, page: Page): Promise<void> {
@@ -483,9 +477,9 @@ async function hasDisableGpuSwitch(app: ElectronApplication): Promise<boolean> {
   return false
 }
 
-async function checkSafeModeLaunch(): Promise<void> {
+async function checkSafeModeLaunch(log: FixtureLog): Promise<void> {
   console.log('launch 3: EQ_DISABLE_GPU=1 — does safe mode actually reach Chromium…')
-  const { app, close } = await launchApp({ env: { EQ_DISABLE_GPU: '1' } })
+  const { app, close } = await launchOnFixture(log, { env: { EQ_DISABLE_GPU: '1' } })
   try {
     const page = await mainWindow(app)
     await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
@@ -594,12 +588,13 @@ async function main(): Promise<void> {
   } finally {
     await close()
     await removeUserData(userData)
-    await log.dispose()
   }
 
   // Its own launch, on its own throwaway dir: safe mode is decided before Electron is ready, so
-  // it cannot be asserted about a process that is already running.
-  await checkSafeModeLaunch()
+  // it cannot be asserted about a process that is already running. It reads the SAME staged log,
+  // which is why the fixture is disposed only after it.
+  await checkSafeModeLaunch(log)
+  await log.dispose()
 
   reportRun()
 }
