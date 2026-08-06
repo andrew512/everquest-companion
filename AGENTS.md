@@ -767,6 +767,21 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `oneClick:true, perMachine:false` installs to `%LOCALAPPDATA%\Programs`
   with NO UAC ever — which is what lets electron-updater silently
   self-install and relaunch (the Discord model). Never flip perMachine.
+- **Windows 10+ gate** (`customInit` in `build/installer.nsh`, JOS-32):
+  `${IfNot} ${AtLeastWin10}` → one-sentence MessageBox + `Quit`. Electron
+  dropped Win7/8/8.1 at v23, so the old behaviour was a successful install
+  of an exe that dies on launch. `customInit`, NOT `preInit` — preInit sits
+  above installer.nsi's `!ifdef BUILD_UNINSTALLER`, so it would also gate
+  the build-machine uninstaller-writing pass and the uninstaller itself.
+  **The version lie is the trap**: WinVer.nsh calls `GetVersionEx`, which
+  reports 6.2 to an unmanifested process on Win10/11 — a naive gate blocks
+  everyone. NSIS 3's `ManifestSupportedOS` defaults to Win7+8+8.1+10 and
+  electron-builder never overrides it, so the truth comes through; that was
+  VERIFIED by compiling a probe with the cached makensis (nsis-3.0.4.1,
+  v3.04), dumping the four `<supportedOS>` GUIDs out of the stub, and
+  running it on 10.0.22631. Re-run that probe if electron-builder ever
+  starts setting ManifestSupportedOS. `/SD IDOK` so a `/S` run refuses
+  without blocking on the dialog.
 - **Add/Remove Programs**: the entry lives at
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\<UUIDv5(appId)>`
   (`d1172923-5a3d-5d6c-812f-04090617a582` today) — the key is named by GUID, not
