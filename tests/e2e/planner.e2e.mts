@@ -84,6 +84,8 @@ const DONOR_NAME = '[data-testid="planner-donor-name"]'
 const LOOT_DETAIL = '[data-testid="loot-detail"]'
 const LOOT_TITLE = '[data-testid="loot-detail-title"]'
 const LOOT_DB_SOURCES = '[data-testid="loot-db-sources"]'
+/** The drill's back ARROW — origin-aware since JOS-43, and the return leg of this spec. */
+const LOOT_BACK = '[data-testid="loot-back"]'
 
 /**
  * A GROUP HEADER — one per group on whatever axis the tab is grouped by, and expanding it lists
@@ -515,8 +517,13 @@ async function stepFarm(page: Page): Promise<void> {
  * `loot-db-sources` is the section that closes that contradiction, so its presence is the actual
  * contract this link depends on.
  *
- * Runs LAST: it leaves the app on the Loot tab, so every planner-scoped measurement above it must
- * already have been taken.
+ * AND IT IS A ROUND TRIP (JOS-43). The reported bug was the return leg: Back on that drill meant
+ * the top of the loot ledger, so reading one donor cost you your place in the plan. The arrow now
+ * names the tab that sent you and goes there, which is asserted both by its accessible name
+ * (before the click) and by the Planner being on screen after it.
+ *
+ * Runs LAST: it leaves the app on the Planner having passed through the Loot tab, so every
+ * planner-scoped measurement above it must already have been taken.
  */
 async function stepDeepLink(page: Page): Promise<void> {
   await page.click(MODE_EFFECTS, { timeout: 15_000 })
@@ -534,6 +541,20 @@ async function stepDeepLink(page: Page): Promise<void> {
   check(
     'the drill states what the committed DBs know about where it drops (never-looted items included)',
     (await countOf(page, LOOT_DB_SOURCES)) > 0
+  )
+
+  // THE RETURN LEG (JOS-43). The arrow says where it goes before you press it — one string feeds
+  // the tooltip and the accessible name — and then it goes there. "Back to the loot list" here
+  // would be the exact bug this ticket was filed for.
+  const label = await page.getAttribute(LOOT_BACK, 'aria-label')
+  check('the drill’s back arrow names the Planner, not the loot list', label === 'Back to Planner', String(label))
+  await page.click(LOOT_BACK, { timeout: 15_000 })
+  const home = await until(async () => (await countOf(page, VIEW)) > 0, 20_000)
+  check('…and pressing Back returns to the Planner you were reading', home)
+  check('…with the plan still on screen, not the loot ledger', (await countOf(page, LOOT_DETAIL)) === 0)
+  check(
+    '…and the nav agreeing about where we are',
+    (await countOf(page, `${NAV}.Mui-selected`)) === 1
   )
 }
 
