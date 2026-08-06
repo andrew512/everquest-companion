@@ -74,6 +74,12 @@ interface BlockStats {
   maxBlockMs: number
   blocksOver50Ms: number
 }
+/** What the duty-cycled replay spent, as the profile states it (JOS-50). */
+interface ReplayStats {
+  slices: number
+  workMs: number
+  restMs: number
+}
 interface Profile {
   startedAt: number
   version: string
@@ -81,6 +87,7 @@ interface Profile {
   totalMs: number
   eventsReplayed?: number
   block?: BlockStats
+  replay?: ReplayStats
   complete: boolean
 }
 
@@ -276,6 +283,43 @@ function stepProfileFile(userData: string): void {
     `${String(profile.eventsReplayed)} events`
   )
   stepBlockProbe(profile.block, profile.phases.find((p) => p.phase === 'replayDone')?.durationMs ?? 0)
+  stepReplayDuty(profile.replay, profile.phases.find((p) => p.phase === 'replayDone')?.durationMs ?? 0)
+}
+
+/**
+ * THE DUTY LEDGER (JOS-50), asserted the same way and for the same reason as the block probe: as
+ * IDENTITIES about a file a real launch wrote, never as this machine's numbers.
+ *
+ * What a spec can honestly claim here is that the launch STATED its duty and that the statement is
+ * internally consistent — work and rest are non-negative, they fit inside the phase they describe,
+ * and a fold that yielded at all did not somehow rest a negative amount. Whether 60% was actually
+ * held on a 100 MB log is the bench's budget, on one machine, against a known input.
+ */
+function stepReplayDuty(replay: ReplayStats | undefined, replayMs: number): void {
+  const ok = check(
+    'the launch states how the replay split its time between folding and resting',
+    replay !== undefined,
+    replay ? `${String(replay.slices)} slices` : 'absent'
+  )
+  if (!ok || !replay) return
+  const sane =
+    Number.isFinite(replay.workMs) &&
+    Number.isFinite(replay.restMs) &&
+    replay.workMs >= 0 &&
+    replay.restMs >= 0 &&
+    Number.isInteger(replay.slices) &&
+    replay.slices >= 0
+  check(
+    '…and the two of them fit inside the phase they describe (nothing invented, nothing negative)',
+    // +1 ms of slack: `replayDone` is rounded to a tenth and the ledger is timed inside it.
+    sane && replay.workMs + replay.restMs <= replayMs + 1,
+    `${String(Math.round(replay.workMs))}ms folding + ${String(Math.round(replay.restMs))}ms resting ≤ ${String(Math.round(replayMs))}ms replay`
+  )
+  check(
+    'a replay that never yielded never rested either — a rest without a slice would be fiction',
+    replay.slices > 0 || replay.restMs === 0,
+    `${String(replay.slices)} slices · ${String(Math.round(replay.restMs))}ms rest`
+  )
 }
 
 /**
