@@ -22,6 +22,99 @@
 !macroend
 
 # ---------------------------------------------------------------------------------------
+# customInit - refuse cleanly on Windows 8.1 and older instead of installing an app that
+# cannot start.
+#
+# THE REPORT: a player on Windows 8.1 installed the app and it never launched. Electron
+# (Chromium) dropped Windows 7/8/8.1 support in Electron 23; our build cannot run there
+# and never will. 8.1 has been out of support since 2023-01-10. The installer should say
+# so in one sentence rather than leaving files, a shortcut and an ARP entry behind for an
+# exe that dies on double-click.
+#
+# THE HOOK, VERIFIED AGAINST THE INSTALLED app-builder-lib (26.15.7), templates/nsis/
+# installer.nsi:
+#
+#   Function .onInit
+#     Call setInstallSectionSpaceRequired
+#     SetOutPath $INSTDIR
+#     ...
+#     !ifdef BUILD_UNINSTALLER
+#       WriteUninstaller ... / quitSuccess
+#     !else
+#       !insertmacro check64BitAndSetRegView
+#       !insertmacro ALLOW_ONLY_ONE_INSTALLER_INSTANCE
+#       !insertmacro initMultiUser
+#       !ifmacrodef customInit
+#         !insertmacro customInit          <- here
+#       !endif
+#       ...
+#     !endif
+#   FunctionEnd
+#
+# customInit is the right hook and `preInit` is NOT: preInit is inserted ABOVE the
+# `!ifdef BUILD_UNINSTALLER` branch, so it also runs during the -DBUILD_UNINSTALLER pass -
+# the throwaway stub whose whole job is `WriteUninstaller`, executed on the BUILD machine.
+# A version gate there would be a build-time gate, which is not what anyone wants. It also
+# runs in the uninstaller itself; a user who somehow got the app installed must always be
+# able to remove it.
+#
+# customInit lands after check64BitAndSetRegView (which already Quits on 2000/ME/XP/Vista
+# with $(win7Required), and on a non-x64 host with $(x64WinRequired)) and after
+# initMultiUser, so on a 32-bit or ancient host the stock message wins and ours never
+# shows. That ordering is fine: both outcomes are a refusal, and ours is the one that
+# covers the actual report (64-bit Windows 7/8/8.1).
+#
+# WHY ${AtLeastWin10} IS SAFE HERE - this is the trap that makes naive WinVer gates block
+# the machines they meant to allow. WinVer.nsh's __WinVer_InitVars calls
+# kernel32::GetVersionEx, and since Windows 8.1 that API version-LIES to any process whose
+# manifest does not claim compatibility with the running OS: an unmanifested binary is told
+# 6.2 (Windows 8) on Windows 10 and 11, which would make ${AtLeastWin10} false everywhere
+# and refuse every install. NSIS 3's `ManifestSupportedOS` defaults to Win7+Win8+Win8.1+
+# Win10, and electron-builder never overrides it (no ManifestSupportedOS anywhere in
+# app-builder-lib's templates or NsisTarget), so the stub carries all four supportedOS
+# GUIDs and GetVersionEx tells the truth up to 10.0. VERIFIED EMPIRICALLY, not from the
+# docs: a probe .nsi compiled with the very makensis electron-builder uses
+# (%LOCALAPPDATA%\electron-builder\Cache\nsis\nsis-3.0.4.1, v3.04) embeds
+# <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/> (Win10) in its manifest, and
+# running it on Windows 11 10.0.22631 took the ${AtLeastWin10} branch. If a future
+# electron-builder ever sets ManifestSupportedOS, re-run that probe before trusting this.
+# (Windows 11 reports 10.0, so ${AtLeastWin10} covers it; Server 2016+ likewise.)
+#
+# ${AtLeastWin10} (not ${IsWin10}) is the correct spelling: __WinVer_DefineOSTests defines
+# AtLeastWin10 as `WinVerAtLeast ${WINVER_10}`, which masks off the NT bit and compares
+# >=, whereas the Is* family is an exact-version equality test.
+#
+# `/SD IDOK` matters: a silent run (`/S`, i.e. an electron-updater-driven reinstall or the
+# tier-1/tier-2 harnesses) would otherwise still block on the MessageBox. With it the box
+# is skipped and we Quit regardless - refusing is correct on every path.
+#
+# UNDER WINE/CROSSOVER this reads the BOTTLE's configured Windows version, not macOS. That
+# is the right answer and not an exception worth carving: Electron needs a Win10 bottle to
+# run at all, so a bottle still set to Windows 7 should be refused, and the message names
+# exactly what to change it to. (customCheckAppRunning's Wine skip is a different problem -
+# process enumeration is unreliable in a bottle; the reported OS version is not.)
+#
+# Not cleaned up on purpose: .onInit's own `SetOutPath $INSTDIR` (three lines above
+# check64BitAndSetRegView) has already created an empty install dir by the time any of
+# these gates fire. The stock win7Required/x64WinRequired paths leave it too. Nothing is
+# extracted and no registry key is written, so an empty directory is the entire residue;
+# an RMDir here would be new behaviour on a path that is meant to stay boring.
+!macro customInit
+  # Build-time proof the hook fired, same trick as customCheckAppRunning / customUnInstall
+  # below. !verbose 4 is required for !echo to print and is NOT a warning, so -WX stays happy.
+  !verbose push
+  !verbose 4
+  !echo "everquest-companion: customInit inserted (Windows 10+ gate is live)"
+  !verbose pop
+
+  ${IfNot} ${AtLeastWin10}
+    # Deliberately ONE line and one sentence: it names the requirement and stops.
+    MessageBox MB_OK|MB_ICONEXCLAMATION|MB_TOPMOST|MB_SETFOREGROUND "${PRODUCT_NAME} needs Windows 10 or later, so it can't be installed on this version of Windows." /SD IDOK
+    Quit
+  ${EndIf}
+!macroend
+
+# ---------------------------------------------------------------------------------------
 # customCheckAppRunning - skip the "app is running" gate under Wine / CrossOver.
 #
 # THE BUG: on macOS + CrossOver the installer dies at "EQ Legends Companion is running.

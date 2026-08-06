@@ -29,6 +29,9 @@ Everything is per-character; switch characters and the app re-reads that log.
 
 ## Getting started
 
+**Requires 64-bit Windows 10 or 11.** Windows 8.1 and older can't run it — the installer
+checks and stops with a message rather than leaving you an app that won't start.
+
 1. Download `everquest-companion-Setup-<version>.exe` from the
    [**Releases**](https://github.com/jmoyers/everquest-companion/releases) page.
 2. Run it. It's a one-click, per-user install (like Discord) — no admin prompt, no
