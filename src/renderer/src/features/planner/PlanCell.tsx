@@ -86,8 +86,13 @@ interface SocketLineProps {
   index: DonorIndex
   progress: PlannerProgressApi
   onRemove: (slot: EquipSlot, socket: SocketType) => void
-  /** open the effect browser filtered to this socket of this host (V8) */
-  onBrowse: (slot: EquipSlot, socket: SocketType) => void
+  /**
+   * Open the effect browser filtered to this socket of this host (V8) — NULL when the cell has no
+   * host yet. The preset is "this socket of THIS item" (socket + slot + the host's own classes),
+   * so with no host there is nothing legal to narrow to, and the socket label stops being a
+   * control rather than staying a click that goes nowhere.
+   */
+  onBrowse: ((slot: EquipSlot, socket: SocketType) => void) | null
   onOpenLoot?: (item: string) => void
 }
 
@@ -141,9 +146,28 @@ function FilledSocket({
   )
 }
 
+/** The socket's name. A CONTROL only where the browser has a host to narrow to (see `onBrowse`). */
+function SocketChip({
+  slot,
+  socket,
+  onBrowse
+}: Pick<SocketLineProps, 'slot' | 'socket' | 'onBrowse'>): JSX.Element {
+  const chip = (
+    <Chip
+      size="small"
+      variant="outlined"
+      label={SOCKET_LABEL[socket]}
+      data-testid="planner-socket-browse"
+      {...(onBrowse === null ? {} : { onClick: () => onBrowse(slot, socket) })}
+      sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+    />
+  )
+  if (onBrowse === null) return chip
+  return <Tooltip title={`Browse ${SOCKET_LABEL[socket].toLowerCase()} effects for ${slot}`}>{chip}</Tooltip>
+}
+
 function SocketLine(props: SocketLineProps): JSX.Element {
   const { slot, socket, planned, hostTier, onBrowse } = props
-  const browse = (): void => onBrowse(slot, socket)
   return (
     <Stack
       direction="row"
@@ -153,21 +177,13 @@ function SocketLine(props: SocketLineProps): JSX.Element {
       data-socket={socket}
       sx={{ flexWrap: 'nowrap', minWidth: 0 }}
     >
-      <Tooltip title={`Browse ${SOCKET_LABEL[socket].toLowerCase()} effects for ${slot}`}>
-        <Chip
-          size="small"
-          variant="outlined"
-          label={SOCKET_LABEL[socket]}
-          data-testid="planner-socket-browse"
-          onClick={browse}
-          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
-        />
-      </Tooltip>
+      <SocketChip slot={slot} socket={socket} onBrowse={onBrowse} />
       {planned === null ? (
         <>
+          {/* An empty socket only ever draws under a host (`rows` below), so this is always live. */}
           <Typography
             variant="caption"
-            onClick={browse}
+            onClick={() => onBrowse?.(slot, socket)}
             sx={{ color: 'text.disabled', cursor: 'pointer', '&:hover': { color: 'text.secondary' } }}
           >
             pick an effect…
@@ -313,9 +329,7 @@ export default function PlanCell(props: PlanCellProps): JSX.Element {
           index={index}
           progress={progress}
           onRemove={(s, k) => onSocket(s, k, null)}
-          onBrowse={(s, k) => {
-            if (host !== null) onBrowse(s, k, host)
-          }}
+          onBrowse={host === null ? null : (s, k) => onBrowse(s, k, host)}
           onOpenLoot={onOpenLoot}
         />
       ))}
