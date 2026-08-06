@@ -41,8 +41,8 @@ const STATE_COLOR: Record<DonorState, ChipColor> = {
 /** What each state MEANS, in the tooltip — the chip itself stays one word. */
 const STATE_HINT: Record<DonorState, string> = {
   planned: 'Nothing observed yet — no copy held, looted or merged.',
-  have: 'You hold (or have looted) a copy. The log has not seen you merge it yet.',
-  partial: 'The log saw you merge this item to the tier shown, of the tier the effect extracts at.',
+  have: 'You hold a copy, not yet merged.',
+  partial: 'Merged to the tier shown, short of the extraction tier.',
   ready: 'The log saw this item merged to at least the tier its effect extracts at.'
 }
 

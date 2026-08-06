@@ -156,8 +156,6 @@ export interface LevelingTileInput {
   eta: LevelEta
   /** window A's rate, ALREADY worded by `formatLevelRate` (or the em-dash). */
   rateText: string
-  /** the idle rule, verbatim — the rate tile's hover sentence borrows it. */
-  idleCaption: string
 }
 
 /** The level tile. Omitted entirely when the snapshot holds no ding: the log states your level
@@ -170,8 +168,7 @@ function levelTile(level: number | null): LevelingTile[] {
       value: String(level),
       unit: '',
       label: 'level',
-      title:
-        'The level the log last reported. One level is shared by your three-class loadout, so a class swap re-reports it — this is the latest value, never the highest.'
+      title: 'The level the log last reported.'
     }
   ]
 }
@@ -206,7 +203,7 @@ export function levelingTiles(input: LevelingTileInput): LevelingTile[] {
       value,
       unit: unit || 'lvl/hr',
       label: 'last hour',
-      title: `Levels of progress per hour of ACTIVE time in the last hour of the log — ${input.idleCaption}`
+      title: 'Levels of progress per hour of active time.'
     },
     {
       id: 'aa',

@@ -576,7 +576,7 @@ export function overviewLeveling(snap: ProgressionSnap): OverviewLevelingState {
     level,
     idleCaption,
     kills: a.kills,
-    tiles: levelingTiles({ level, hour: a, eta, rateText, idleCaption }),
+    tiles: levelingTiles({ level, hour: a, eta, rateText }),
     spark: levelingSpark(snap, hour)
   }
 }

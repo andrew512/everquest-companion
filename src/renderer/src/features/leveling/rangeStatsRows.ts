@@ -323,5 +323,5 @@ export const AA_RATE_TITLE = 'AA completions and ability points per hour of acti
 export function unstatedCaption(stats: RangeStats): string | null {
   if (stats.expUnstated === 0) return null
   const n = stats.expUnstated
-  return `* ${n} experience line${n === 1 ? '' : 's'} stated no percentage — the game prints one only while a level bar exists, so that progress is counted nowhere above`
+  return `* ${n} experience line${n === 1 ? '' : 's'} stated no percentage`
 }

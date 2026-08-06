@@ -135,8 +135,7 @@ test('the AA tile reports a measured zero rather than disappearing', () => {
     level: null,
     hour: hourStats(snap),
     eta: { blocked: 'no-ding' },
-    rateText: '1.00 lvl/hr',
-    idleCaption: 'idle rule'
+    rateText: '1.00 lvl/hr'
   }).find((t) => t.id === 'aa')
   assert.ok(aa)
   assert.equal(aa.value, '0', 'zero gain LINES in the hour is a count, not an unknown')
@@ -147,8 +146,7 @@ test('an absurd horizon says so in the tile instead of pretending to minutes', (
     level: 43,
     hour: hourStats(farming({ pct: 1 })),
     eta: { blocked: null, ms: 50 * 60 * 60_000, toLevel: 44, progress: 0.1, offlineMs: 0 },
-    rateText: '0.01 lvl/hr',
-    idleCaption: 'idle rule'
+    rateText: '0.01 lvl/hr'
   })
   assert.equal(tiles.find((t) => t.id === 'eta')?.value, '>1 day')
 })
