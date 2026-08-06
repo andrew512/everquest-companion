@@ -483,9 +483,9 @@ async function stepFarm(page: Page): Promise<void> {
  * AND IT IS A ROUND TRIP (JOS-43). The reported bug was the return leg: Back on that drill meant
  * the top of the loot ledger, so reading one donor cost you your place in the plan. The arrow now
  * names the tab that sent you and goes there, which is asserted both by its accessible name
- * (before the click) and by the Planner being on screen after it.
+ * (before the click) and by the Exaltations tab being on screen after it.
  *
- * Runs LAST: it leaves the app on the Planner having passed through the Loot tab, so every
+ * Runs LAST: it leaves the app on Exaltations having passed through the Loot tab, so every
  * planner-scoped measurement above it must already have been taken.
  */
 async function stepDeepLink(page: Page): Promise<void> {
@@ -510,10 +510,10 @@ async function stepDeepLink(page: Page): Promise<void> {
   // the tooltip and the accessible name — and then it goes there. "Back to the loot list" here
   // would be the exact bug this ticket was filed for.
   const label = await page.getAttribute(LOOT_BACK, 'aria-label')
-  check('the drill’s back arrow names the Planner, not the loot list', label === 'Back to Planner', String(label))
+  check('the drill’s back arrow names Exaltations, not the loot list', label === 'Back to Exaltations', String(label))
   await page.click(LOOT_BACK, { timeout: 15_000 })
   const home = await until(async () => (await countOf(page, VIEW)) > 0, 20_000)
-  check('…and pressing Back returns to the Planner you were reading', home)
+  check('…and pressing Back returns to the Exaltations tab you were reading', home)
   check('…with the plan still on screen, not the loot ledger', (await countOf(page, LOOT_DETAIL)) === 0)
   check(
     '…and the nav agreeing about where we are',

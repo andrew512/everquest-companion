@@ -22,9 +22,9 @@ import { MAX_ORIGINS, afterBack, afterLink, originTop, type NavOrigin } from '..
 const at = (view: View, label: string): NavOrigin => ({ view, label })
 
 test('an anchored cross-view link parks the tab it left', () => {
-  const s = afterLink([], at('planner', 'Planner'), 'loot', true)
-  assert.deepEqual(s, [{ view: 'planner', label: 'Planner' }])
-  assert.deepEqual(originTop(s), { view: 'planner', label: 'Planner' })
+  const s = afterLink([], at('planner', 'Exaltations'), 'loot', true)
+  assert.deepEqual(s, [{ view: 'planner', label: 'Exaltations' }])
+  assert.deepEqual(originTop(s), { view: 'planner', label: 'Exaltations' })
 })
 
 test('a native arrival parks nothing — an empty stack is the "back to my own list" state', () => {
@@ -34,13 +34,13 @@ test('a native arrival parks nothing — an empty stack is the "back to my own l
 })
 
 test('a bare opener is a tab switch: it clears whatever was parked', () => {
-  const parked = afterLink([], at('planner', 'Planner'), 'loot', true)
+  const parked = afterLink([], at('planner', 'Exaltations'), 'loot', true)
   // The drops card's "All loot" — same destination, no anchor.
   assert.deepEqual(afterLink(parked, at('overview', 'Overview'), 'loot', false), [])
 })
 
 test('links chain, and Back unwinds them in the order they were walked', () => {
-  let s = afterLink([], at('planner', 'Planner'), 'loot', true)
+  let s = afterLink([], at('planner', 'Exaltations'), 'loot', true)
   s = afterLink(s, at('loot', 'Loot'), 'mobs', true)
   assert.deepEqual(
     s.map((o) => o.view),
@@ -48,7 +48,7 @@ test('links chain, and Back unwinds them in the order they were walked', () => {
   )
   assert.deepEqual(originTop(s), { view: 'loot', label: 'Loot' })
   s = afterBack(s)
-  assert.deepEqual(originTop(s), { view: 'planner', label: 'Planner' })
+  assert.deepEqual(originTop(s), { view: 'planner', label: 'Exaltations' })
   s = afterBack(s)
   assert.equal(originTop(s), null)
 })
@@ -72,8 +72,8 @@ test('the trail is bounded — overflow drops the OLDEST hop, never the one Back
 
 test('afterLink never mutates the stack it was handed', () => {
   const before: NavOrigin[] = [at('overview', 'Overview')]
-  afterLink(before, at('planner', 'Planner'), 'loot', true)
-  afterLink(before, at('planner', 'Planner'), 'loot', false)
+  afterLink(before, at('planner', 'Exaltations'), 'loot', true)
+  afterLink(before, at('planner', 'Exaltations'), 'loot', false)
   afterBack(before)
   assert.deepEqual(before, [{ view: 'overview', label: 'Overview' }])
 })
