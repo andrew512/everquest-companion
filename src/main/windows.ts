@@ -25,6 +25,7 @@ import { IPC } from '../shared/ipc'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
 import { defaultOverlayBounds, overlayDefaultSize } from './overlayLayout'
+import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { getGraphicsPrefs, getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
 import { TRANSPARENT_OVERLAY_BG, overlayBackgroundColor } from '../shared/graphicsPrefs'
@@ -417,11 +418,17 @@ export function createMainWindow(): void {
  * mouse-move if we forward one. The TOAST has no hover sensor — its capture is driven by its
  * QUEUE (a card is on screen, or it is not), which it learns over IPC — so it would pay the
  * hook for a window that is empty and idle almost all of the time. It does not forward.
+ *
+ * ...AND NOBODY FORWARDS DURING A HISTORICAL REPLAY (JOS-62). "Does this kind forward" is
+ * answered by `overlayMouseForward` (replayGate.ts), which folds both rules into ONE place: for
+ * the seconds the fold owns the message loop, the hook the meters normally pay for would land
+ * squarely on the user's own mouselook — and the window it exists to serve is hidden anyway.
+ * Click-through itself is unchanged; only its implementation gets cheaper.
  */
 export function setOverlayIgnoreMouse(kind: OverlayKind, ignore: boolean): void {
   const w = overlayWindows[kind]
   if (!w || w.isDestroyed()) return
-  if (ignore) w.setIgnoreMouseEvents(true, { forward: kind !== 'toast' })
+  if (ignore) w.setIgnoreMouseEvents(true, { forward: overlayMouseForward(kind) })
   else w.setIgnoreMouseEvents(false)
   applyOpaqueToastVisibility(kind, ignore)
 }
@@ -451,8 +458,9 @@ function applyOpaqueToastVisibility(kind: OverlayKind, idle: boolean): void {
   const w = overlayWindows.toast
   if (!w || w.isDestroyed()) return
   if (idle && w.isVisible()) w.hide()
-  // Idle is done here; and E2E never shows a window (src/main/e2e.ts is the whole test mode).
-  if (idle || E2E || w.isVisible()) return
+  // Idle is done here; and nothing shows while a window may not be shown at all — E2E (the whole
+  // test mode, src/main/e2e.ts) or a historical replay in flight (replayGate.ts).
+  if (idle || !windowsMayShow() || w.isVisible()) return
   w.showInactive()
   w.setAlwaysOnTop(true, 'screen-saver')
   raiseCursorRing()
@@ -496,7 +504,7 @@ function overlayPlacement(kind: OverlayKind) {
 export function createOverlayWindow(kind: OverlayKind): void {
   const existing = overlayWindows[kind]
   if (existing && !existing.isDestroyed()) {
-    if (!E2E) existing.show()
+    if (windowsMayShow()) existing.show()
     return
   }
   // OPAQUE-OVERLAY COMPATIBILITY MODE (JOS-40). Read here, at construction, because that is the
@@ -566,7 +574,10 @@ export function createOverlayWindow(kind: OverlayKind): void {
 
   w.on('ready-to-show', () => {
     // E2E: overlays stay hidden too (they're always-on-top — showing one would cover the game).
-    if (E2E) return
+    // A HISTORICAL REPLAY holds the same door shut (JOS-62): an overlay that first painted mid-fold
+    // would be showing half-parsed state over the game, and the fold's end shows it properly (with
+    // its locked mode re-applied) via `applyOverlayReplayGate` + the presence pass beside it.
+    if (!windowsMayShow()) return
     // An OPAQUE toast opens HIDDEN and is brought up by its own queue (see
     // applyOpaqueToastVisibility). Showing it here would put a solid rectangle over the game for
     // the moment between first paint and the renderer's first capture signal — the very thing
@@ -649,17 +660,27 @@ export function overlayStateMap(): Record<OverlayKind, boolean> {
  * on the way back, because a hidden window can lose both on Windows.
  *
  * E2E never shows a window (src/main/e2e.ts is the whole test mode), so a re-show is skipped
- * there; hiding stays live, since hiding an already-hidden window is a no-op.
+ * there; hiding stays live, since hiding an already-hidden window is a no-op. A historical replay
+ * (replayGate.ts) suppresses the re-show for the same seconds and by the same predicate — and
+ * this function is ALSO the restore path afterwards, which is why the re-show re-asserts the
+ * locked mode from the persisted config rather than remembering anything of its own.
  */
 export function setOverlaysHidden(hidden: boolean): void {
   for (const kind of OVERLAY_KINDS) {
     const w = overlayWindows[kind]
     if (!w || w.isDestroyed()) continue
     if (hidden) {
+      // The mouse mode is re-applied on the way DOWN as well as on the way back up, from the same
+      // persisted flag — which is what makes this function the whole of the JOS-62 replay gate's
+      // overlay half (session.ts hides them for the fold). A locked overlay's click-through drops
+      // its WH_MOUSE_LL forwarding hook the moment the gate closes, rather than keeping a
+      // system-wide mouse hook alive for a window that is not even on screen. Idempotent
+      // otherwise: for an ordinary auto-hide this re-states what was already true.
+      applyOverlayLocked(kind, getOverlayConfig(kind).locked)
       if (w.isVisible()) w.hide()
       continue
     }
-    if (E2E || w.isVisible()) continue
+    if (!windowsMayShow() || w.isVisible()) continue
     // An OPAQUE toast with nothing queued must not come back as a solid rectangle: its
     // visibility belongs to its queue, and the next card brings it up (JOS-40).
     if (kind === 'toast' && opaqueToastWindow && opaqueToastIdle) continue
@@ -763,7 +784,7 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
   forwardConsoleMessages(wc, 'cursorRing:console')
 
   w.on('ready-to-show', () => {
-    if (E2E) return
+    if (!windowsMayShow()) return
     w.showInactive()
     w.setAlwaysOnTop(true, 'screen-saver')
   })
@@ -809,7 +830,7 @@ export function setCursorRingVisible(visible: boolean): void {
     if (w.isVisible()) w.hide()
     return
   }
-  if (E2E || w.isVisible()) return
+  if (!windowsMayShow() || w.isVisible()) return
   w.showInactive()
   w.setAlwaysOnTop(true, 'screen-saver')
 }
