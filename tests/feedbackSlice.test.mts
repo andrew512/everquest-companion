@@ -138,10 +138,13 @@ test('the scrub drops third-party chat and counts every drop honestly', async ()
   try {
     const slice = await buildSlice({ logPath: fx.path, windowMinutes: 30 })
     assert.ok(slice)
-    // Six chat/social lines out; the zone line, the pet-claim tell and both combat lines stay.
-    assert.equal(slice.dropped, 6)
-    assert.equal(slice.lines, 4)
+    // Five chat/social lines out; the zone line, the GROUP MEMBERSHIP event (kept since
+    // 2026-08-05 — structural fact, not communication), the pet-claim tell and both combat
+    // lines stay.
+    assert.equal(slice.dropped, 5)
+    assert.equal(slice.lines, 5)
     assert.ok(slice.text.includes('Attacking a gnoll Master.'), 'the pet-claim tell is load-bearing')
+    assert.ok(slice.text.includes('has joined the group'), 'membership events are triage context')
     assert.ok(!slice.text.includes('wanna group'))
     assert.ok(!slice.text.includes('WTS Fungi Tunic'))
     assert.ok(!slice.text.includes('Stranger'))
