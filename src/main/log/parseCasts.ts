@@ -8,6 +8,7 @@ import type { LogEvent, PetSayKind } from '../../shared/logEvents'
 import { PET_LEADER_RE, PET_SAY_LINES, PET_SAY_RE } from '../../shared/logScrub'
 import type { PoisonProcDef } from '../../shared/poisons'
 import { POISON_BY_COAT_MSG, POISON_DRY_MSG, POISON_PROCS } from '../../shared/poisons'
+import { matchCastOnOtherSuffix } from '../data/spellDb'
 import type { ParserConfig } from './rulesets'
 import { idKey, norm, type ClassifyCtx } from './parseCommon'
 
@@ -406,26 +407,16 @@ export function classifyPoisonProc({ text, ts, seq, raw }: ClassifyCtx): LogEven
  * line matches when it ENDS WITH a known suffix ("looks tranquil.") and the prefix is a
  * plausible (non-empty) target name. Returns the spell + captured target, or null.
  *
- * Linear over the (few-hundred) unique suffixes only when the line could be an emote — the
- * caller reaches here only after every combat/cast/charm family missed, so the volume is
- * tiny. We test the longest suffixes first so a specific message isn't shadowed by a
- * shorter generic one.
+ * The lookup itself lives in spellDb.ts beside the table and the index it reads (JOS-58 — it
+ * used to walk all 648 suffixes here, which was 9.2 s of an 11.5 s parse); this wrapper is the
+ * parser's half, and all it adds is `norm` on the captured target.
  */
 function matchCastOnOther(
   text: string,
   db: NonNullable<ParserConfig['spellDb']>
 ): { cands: import('../data/spellDb').SpellDb['spells']; target: string } | null {
-  for (const [suffix, cands] of db.castOnOtherSuffix) {
-    // Possessive suffixes ("'s face contorts …") attach directly to the name; others
-    // ("looks tranquil.") follow a space.
-    const attach = suffix.startsWith("'s") ? '' : ' '
-    const tail = attach + suffix
-    if (text.endsWith(tail) && text.length > tail.length) {
-      const target = text.slice(0, text.length - tail.length).trim()
-      if (target && target.length <= 60) return { cands, target: norm(target) }
-    }
-  }
-  return null
+  const hit = matchCastOnOtherSuffix(text, db)
+  return hit ? { cands: hit.entry.cands, target: norm(hit.target) } : null
 }
 
 /** Build a buffApply event from a target + candidate spell list (Task #34). The `spell`
