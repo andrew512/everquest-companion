@@ -50,10 +50,46 @@ export interface SpellDb {
    * a leading "Someone " (or "Someone's "/"Someone 's ") stripped — the invariant tail
    * ("looks tranquil.", "'s face contorts …") that follows whatever the log names the
    * target. Matched by testing whether a log line ENDS WITH the suffix.
+   *
+   * THE TABLE, NOT THE INDEX. This is the definition; `castOnOtherByLastWord` below is a
+   * derived lookup over exactly these entries, in exactly this order, and the parser reads
+   * only the index. Keeping the table is what lets the equivalence oracle
+   * (tests/spellMessageIndex.test.mts) re-derive the linear answer from first principles
+   * every time spells.json changes, instead of trusting a structure to be its own witness.
    */
   castOnOtherSuffix: Map<string, SpellEntry[]>
+  /**
+   * THE HOT-PATH INDEX (JOS-58): last WORD of a suffix's match tail → the entries ending with
+   * it, in table order. See `indexSuffixesByLastWord` for why this is exactly equivalent to
+   * walking the whole table and why it is 36× cheaper.
+   */
+  castOnOtherByLastWord: Map<string, SuffixEntry[]>
+  /**
+   * The suffixes the index CANNOT key (see `lastWordKey`). Consulted on every lookup beside the
+   * bucket, so the pair is total rather than lucky. MEASURED EMPTY on today's spells.json (all
+   * 648 suffixes key), which is why the hot path is one map lookup and a zero-iteration loop —
+   * but the matcher does not depend on that and a future scrape cannot silently unmatch a spell.
+   */
+  castOnOtherUnkeyed: SuffixEntry[]
   /** The raw spell list (for stats / diagnostics). */
   spells: SpellEntry[]
+}
+
+/**
+ * One cast-on-other suffix, precompiled for matching (JOS-58).
+ *
+ * `tail` is what a log line must END WITH — the possessive suffixes ("'s face contorts …")
+ * attach straight to the target's name, the rest ("looks tranquil.") follow a space — computed
+ * once at build time instead of concatenated per line per suffix. `index` is the entry's
+ * position in `castOnOtherSuffix`, which is the ONLY thing that decides precedence when a line
+ * ends with two different known suffixes: the pre-index matcher walked the table and took the
+ * first match, so the indexed one takes the lowest index and the two can never disagree.
+ */
+export interface SuffixEntry {
+  suffix: string
+  tail: string
+  index: number
+  cands: SpellEntry[]
 }
 
 /** Rank tail (mirrors parser.spellCanonKey — kept local to avoid a cycle). */
@@ -95,6 +131,79 @@ function pushCandidate(map: Map<string, SpellEntry[]>, msg: string, s: SpellEntr
   if (!list.some((e) => canonKey(e.name) === canonKey(s.name))) list.push(s)
 }
 
+/**
+ * What a log line must END WITH for this suffix to match: possessive suffixes ("'s face
+ * contorts …") attach straight to the target's name, everything else follows a space. The one
+ * place this rule is written down — the matcher reads `SuffixEntry.tail`, never re-derives it.
+ */
+function matchTail(suffix: string): string {
+  return suffix.startsWith("'s") ? suffix : ` ${suffix}`
+}
+
+/**
+ * The bucket key for a suffix, or null when it has none.
+ *
+ * THE WHOLE ARGUMENT FOR THE INDEX (JOS-58), and it is a proof rather than a measurement, so
+ * read it before touching either side. A line matches when it ends with the suffix's TAIL. If
+ * that tail contains a space, then the line's own last word IS the tail's last word — the space
+ * that separates them sits at the same offset from the end of both strings. So every suffix
+ * whose tail contains a space can only ever be matched by a line whose last word is that same
+ * word, and bucketing by it cannot lose a match: it only skips suffixes that could not have
+ * matched anyway.
+ *
+ * A non-possessive suffix always qualifies, because its tail begins with the space we added.
+ * A POSSESSIVE one qualifies only if the suffix itself contains a space ("'s face contorts and
+ * stretches.") — a hypothetical "'sface." attaches with no space at all, so a line ending in
+ * "Fredsface." would have last word "Fredsface." and no key could find it. Those (zero today;
+ * `castOnOtherUnkeyed` is measured empty) are scanned linearly instead of being quietly dropped.
+ *
+ * The key is computed with `lastIndexOf(' ')`, which returns -1 for a spaceless string and
+ * therefore yields the whole string — correct for a spaceless NON-possessive suffix, whose tail
+ * is " " + suffix and whose last word is the suffix entire (22 of those today: "weakens.",
+ * "dies." …).
+ */
+function lastWordKey(suffix: string): string | null {
+  const space = suffix.lastIndexOf(' ')
+  if (space >= 0) return suffix.slice(space + 1)
+  return suffix.startsWith("'s") ? null : suffix
+}
+
+/**
+ * Precompile the cast-on-other table into the last-word index the parser matches against.
+ *
+ * WHY (measured, JOS-58, 1,404,455 events of the owner's log): the matcher used to walk all 648
+ * suffixes calling `endsWith` for every line that reached it — 284,073 lines, 20.2% of the log,
+ * every line no earlier family claimed. That scan alone cost 9.2 s of an 11.5 s parse and was
+ * the single largest line item in the whole startup fold (5.8 us of every event, before any
+ * consumer saw anything). Bucketing by last word turns it into one hash lookup over 381 buckets
+ * whose largest holds 18 entries.
+ *
+ * It is the SAME shape `POISON_PROC_BY_LAST_WORD` in parseCasts.ts already uses, and for the
+ * same stated reason — that table just happened to be small enough that nobody noticed the big
+ * one beside it had never been given the treatment.
+ */
+function indexSuffixesByLastWord(table: Map<string, SpellEntry[]>): {
+  byLastWord: Map<string, SuffixEntry[]>
+  unkeyed: SuffixEntry[]
+} {
+  const byLastWord = new Map<string, SuffixEntry[]>()
+  const unkeyed: SuffixEntry[] = []
+  let index = 0
+  for (const [suffix, cands] of table) {
+    const entry: SuffixEntry = { suffix, tail: matchTail(suffix), index, cands }
+    index += 1
+    const key = lastWordKey(suffix)
+    if (key === null) {
+      unkeyed.push(entry)
+      continue
+    }
+    const bucket = byLastWord.get(key)
+    if (bucket) bucket.push(entry)
+    else byLastWord.set(key, [entry])
+  }
+  return { byLastWord, unkeyed }
+}
+
 /** Build the derived lookup tables from a spell list. Each message maps to ALL candidates
  *  sharing it; the buffs module resolves an ambiguous apply via cast history. */
 export function buildSpellDb(spells: SpellEntry[]): SpellDb {
@@ -112,7 +221,81 @@ export function buildSpellDb(spells: SpellEntry[]): SpellDb {
       if (suf) pushCandidate(castOnOtherSuffixMap, suf, s)
     }
   }
-  return { byKey, castOnYou, wearsOff, castOnOtherSuffix: castOnOtherSuffixMap, spells }
+  const { byLastWord, unkeyed } = indexSuffixesByLastWord(castOnOtherSuffixMap)
+  return {
+    byKey,
+    castOnYou,
+    wearsOff,
+    castOnOtherSuffix: castOnOtherSuffixMap,
+    castOnOtherByLastWord: byLastWord,
+    castOnOtherUnkeyed: unkeyed,
+    spells
+  }
+}
+
+/** No allocation for the overwhelmingly common "this line's last word names no spell" case. */
+const NO_SUFFIXES: readonly SuffixEntry[] = []
+
+/**
+ * The first entry of `list` (which is in table order) whose tail this line really ends with.
+ *
+ * The two rejections are as load-bearing as the match and are why this is a LOOP rather than a
+ * lookup: a line that is nothing BUT the tail has no target, and a "target" longer than 60
+ * characters is a sentence that happens to end in a spell's words rather than a mob's name. In
+ * both cases the pre-index matcher carried on down the table, so this one carries on down the
+ * bucket.
+ */
+function firstSuffixMatch(
+  text: string,
+  list: readonly SuffixEntry[]
+): { entry: SuffixEntry; target: string } | null {
+  for (const entry of list) {
+    const tail = entry.tail
+    if (text.endsWith(tail) && text.length > tail.length) {
+      const target = text.slice(0, text.length - tail.length).trim()
+      if (target && target.length <= 60) return { entry, target }
+    }
+  }
+  return null
+}
+
+/**
+ * Which cast-on-other message this line is, and who it landed on — ONE HASH LOOKUP, not 648
+ * `endsWith` calls (JOS-58).
+ *
+ * MEASURED, 1,404,455 events of the owner's log, on a quiet machine: the matcher this replaces
+ * walked the whole suffix table for every line that reached it, and the comment claiming "the
+ * volume is tiny" was wrong by two orders of magnitude — the caller is reached by every line NO
+ * earlier family claimed, which is 284,073 lines, 20.2% of the log. The walk cost 9.2 s of an
+ * 11.5 s parse and was the largest single line item in the entire startup fold: 5.8 us of every
+ * event, charged inside `parseEvent` before any consumer saw anything. `castOnOtherByLastWord`
+ * buckets the same entries by the last word a matching line must end with (`lastWordKey` proves
+ * that is lossless), so a line now costs one `lastIndexOf` + one map lookup + at most 18
+ * `endsWith` calls.
+ *
+ * PRECEDENCE IS UNCHANGED, and that is the whole equivalence claim: matches are still taken in
+ * TABLE ORDER. Within a bucket that is simply its own order; the unkeyable entries (measured
+ * zero today) are merged in by `index`, so a table that ever grows one cannot silently change
+ * which spell a shared message resolves to. The old comment claimed longest-suffix-first
+ * ordering — it never did that, the Map was iterated in insertion order, and
+ * tests/spellMessageIndex.test.mts pins the real behaviour against a linear reference.
+ *
+ * The target comes back RAW; canonicalization is the parser's (`norm`), because it is the
+ * parser's names that have to be dirty-tolerant, not this table's.
+ */
+export function matchCastOnOtherSuffix(
+  text: string,
+  db: SpellDb
+): { entry: SuffixEntry; target: string } | null {
+  const bucket = db.castOnOtherByLastWord.get(text.slice(text.lastIndexOf(' ') + 1)) ?? NO_SUFFIXES
+  const keyed = firstSuffixMatch(text, bucket)
+  // Total rather than lucky: a suffix the index cannot key (`lastWordKey`) is still matched, and
+  // still by table order. The list is empty on today's spells.json, so this is one length check —
+  // but a future scrape cannot quietly unmatch a spell.
+  const unkeyed =
+    db.castOnOtherUnkeyed.length > 0 ? firstSuffixMatch(text, db.castOnOtherUnkeyed) : null
+  if (!unkeyed) return keyed
+  return !keyed || unkeyed.entry.index < keyed.entry.index ? unkeyed : keyed
 }
 
 /**
