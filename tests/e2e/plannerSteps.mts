@@ -206,19 +206,38 @@ export async function stepNonEquip(page: Page): Promise<void> {
 /**
  * 4c-ii. A FAMILY'S ROWS ARE READABLE — the effect NAME always fits (JOS-42 refinement 2).
  *
- * Two halves of one fix, and both are identities rather than numbers. The one-liner every rank of
- * a family shares moves UP to the header, so with a family open exactly one of the two carries it
- * — never both, which is the duplication that was eating the row. And with that width handed back,
- * no effect name on screen may be ellipsized: "Improved Healing III" is not "Improved Healing I",
- * and a row that truncates it is a row you cannot read.
+ * Two halves of one fix, and both are identities rather than numbers.
+ *
+ * NO ROW REPEATS ITS OWN HEADER'S LINE. Note the scope: not "headers have lines XOR rows do",
+ * which is a different (and false) claim — the list is windowed, so a dozen COLLAPSED family
+ * headers are on screen carrying lines of their own, and one open family may legitimately hold a
+ * rank that says something the header could not (Percussion Resonance is the corpus's one such
+ * family, carrying two different durations). The contract is the DUPLICATION, so the walk pairs
+ * each donor row with the header above it and asks only about that pair.
+ *
+ * AND NO EFFECT NAME IS ELLIPSIZED. "Improved Healing III" is not "Improved Healing I", and a row
+ * that truncates it is a row you cannot read.
  */
 async function stepFamilyReadability(page: Page): Promise<void> {
-  const header = await countOf(page, GROUP_SAYS)
-  const rows = await countOf(page, EFFECT_SAYS)
+  const dupes = await page.evaluate(() => {
+    const out: string[] = []
+    let header = ''
+    for (const row of document.querySelectorAll(
+      '[data-testid="planner-effect-row"],[data-testid="planner-donor-row"]'
+    )) {
+      if (row.getAttribute('data-testid') === 'planner-effect-row') {
+        header = row.querySelector('[data-testid="planner-group-says"]')?.textContent?.trim() ?? ''
+        continue
+      }
+      const says = row.querySelector('[data-testid="planner-effect-says"]')?.textContent?.trim() ?? ''
+      if (says !== '' && says === header) out.push(says)
+    }
+    return out
+  })
   check(
-    'the family header states the line its rows share, and then the rows do not repeat it',
-    header === 0 || rows === 0,
-    `${String(header)} header lines · ${String(rows)} row lines`
+    'no donor row repeats the one-liner its own family header already states',
+    dupes.length === 0,
+    dupes.length > 0 ? `${String(dupes.length)} rows repeated "${dupes[0]}"` : 'nothing duplicated'
   )
   const names = await truncated(page, DONOR_EFFECT)
   check(

@@ -177,6 +177,8 @@ test('a family header states the one-liner its whole family shares, and the rows
 })
 
 test('a header only speaks for rows that AGREE — one dissenter and the rows keep their own line', () => {
+  // The corpus's real case: Percussion Resonance carries `Self · 1:57:00` AND `Self · 2:12:00`,
+  // so no line is true of the family and the header must say nothing.
   const dissenting = [
     ...BURN_ROWS,
     focus('Odd Trinket', 'Burning Affliction II', ['Burning Affliction', 2], {
@@ -188,10 +190,44 @@ test('a header only speaks for rows that AGREE — one dissenter and the rows ke
   assert.ok(browserRows([family], new Set([family.id])).every((r) => r.kind === 'header' || r.namesSays))
 })
 
+test('a SILENT rank does not veto a header — the join missing is not a disagreement', () => {
+  // The other real case: one family joins the spell DB on some ranks and not others (5.8% of
+  // effect rows miss the join, law 1). Letting a row that states nothing suppress a line true of
+  // every row that speaks would trade a fact for nothing.
+  const withSilent = [...BURN_ROWS, focus('Plain Band', 'Burning Affliction II', ['Burning Affliction', 2])]
+  const [family] = groupDonors(withSilent, 'family', eraOf)
+  assert.equal(family.says, 'Beneficial · Self · 2:24:00')
+  // …and every row goes quiet: the two that agreed because the header took their line, the silent
+  // one because it never had a line to draw.
+  assert.ok(browserRows([family], new Set([family.id])).every((r) => r.kind === 'header' || !r.namesSays))
+})
+
+test('a header that spoke does not silence the ONE rank that says something else', () => {
+  const odd = focus('Odd Trinket', 'Burning Affliction II', ['Burning Affliction', 2], {
+    facts: { spellType: 'Beneficial', spellTarget: 'Self', spellDuration: '9:99:99' }
+  })
+  // Two ranks agree, one differs, and one is silent — so the header can state nothing (the
+  // dissenter vetoes), which is the case above. Take the dissenter away from the veto by giving
+  // the majority its own group: what is pinned here is the per-ROW rule, read directly.
+  const [family] = groupDonors([...BURN_ROWS, odd], 'family', eraOf)
+  assert.equal(family.says, '')
+  const rows = browserRows([family], new Set([family.id]))
+  assert.ok(
+    rows.every((r) => r.kind === 'header' || r.namesSays),
+    'with no header line every row that HAS a line speaks'
+  )
+  // And with a header line in place, the row carrying exactly it is the only kind that goes quiet.
+  const [agreeing] = groupDonors(BURN_ROWS, 'family', eraOf)
+  const quiet = browserRows([agreeing], new Set([agreeing.id])).filter((r) => r.kind === 'donor' && !r.namesSays)
+  assert.equal(quiet.length, BURN_ROWS.length)
+})
+
 test('a family the spell DB never joined says nothing — no placeholder, no invented line', () => {
   const [family] = groupDonors([HEAL_I, HEAL_III_A], 'family', eraOf)
   assert.equal(family.says, '')
-  assert.ok(browserRows([family], new Set([family.id])).every((r) => r.kind === 'header' || r.namesSays))
+  // …and neither do its rows: `namesSays` means "this row DRAWS a line", and a row the join
+  // missed has none to draw. Silence at both levels, which is law 1 rather than a layout choice.
+  assert.ok(browserRows([family], new Set([family.id])).every((r) => r.kind === 'header' || !r.namesSays))
 })
 
 test('only the family axis lifts the line — every other axis groups rows whose effects differ', () => {

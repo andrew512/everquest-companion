@@ -232,20 +232,40 @@ function familyNote(donors: readonly DonorRow[], label: string): string {
 }
 
 /**
- * The one-liner EVERY donor here shares, or '' (see `DonorGroup.says`).
+ * The one-liner every SPEAKING donor here shares, or '' (see `DonorGroup.says`).
  *
- * Unanimity is the whole contract. In practice a focus family is unanimous — the ranks of one
- * focus differ in magnitude, which the spell DB does not carry (effectText.ts: "how MUCH is not in
- * the corpus anywhere"), so type/target/duration come back identical — but that is an observation
- * about today's data, not a licence to state one row's line over the others. When they diverge the
- * header says nothing and the rows speak for themselves.
+ * MEASURED over the committed corpus (2026-08-06, `buildPlannerDonors`): 29 focus families — 27
+ * unanimous, 1 where a single line is joined and the other ranks are silent, and exactly 1 that
+ * genuinely disagrees (Percussion Resonance carries both `Self · 1:57:00` and `Self · 2:12:00`).
+ * That distribution is why the rule is what it is:
+ *
+ *   * SILENT ROWS DO NOT VETO. A rank the spell DB never joined states nothing at all (law 1 —
+ *     5.8% of effect rows miss the join), and letting one silence a header that is true of every
+ *     row that speaks would trade a fact for nothing.
+ *   * A DISSENTER STILL DOES. Two different durations under one family means no line is true of
+ *     the family, so the header says nothing and every row speaks for itself.
+ *
+ * The row-level half is `rowNamesSays`: a row goes quiet exactly when its own line is the one the
+ * header took, which is the same rule read from the other end and needs no second decision.
  */
 function sharedSays(donors: readonly DonorRow[]): string {
-  const first = donors[0]
-  if (first === undefined) return ''
-  const says = effectOneLiner(first)
-  if (says === '') return ''
-  return donors.every((d) => effectOneLiner(d) === says) ? says : ''
+  let says = ''
+  for (const d of donors) {
+    const line = effectOneLiner(d)
+    if (line === '') continue
+    if (says === '') says = line
+    else if (says !== line) return ''
+  }
+  return says
+}
+
+/**
+ * Does this row DRAW a one-liner of its own? False in the two quiet cases and no others: the
+ * header already states exactly this row's line, or the row never had one to state.
+ */
+function rowNamesSays(donor: DonorRow, groupSays: string): boolean {
+  const line = effectOneLiner(donor)
+  return line !== '' && line !== groupSays
 }
 
 /** A group plus the DECLARED order of its axis — the rank is an ordering input, not group state. */
@@ -308,10 +328,11 @@ export function browserRows(groups: readonly DonorGroup[], open: ReadonlySet<str
     rows.push({ kind: 'header', group, expanded })
     if (!expanded) continue
     const namesEffect = group.axis !== 'effect'
-    // The header took the line only if it could state it for everyone; otherwise the rows keep it.
-    const namesSays = group.says === ''
     for (const donor of group.donors) {
       const best = group.topTier !== null && donor.familyTier === group.topTier
+      // Per ROW, not per group: a family whose header took the common line can still hold one
+      // rank that says something else, and that rank must keep saying it.
+      const namesSays = rowNamesSays(donor, group.says)
       rows.push({ kind: 'donor', donor, groupId: group.id, best, namesEffect, namesSays })
     }
   }

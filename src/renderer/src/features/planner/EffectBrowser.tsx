@@ -58,6 +58,7 @@ import {
   type DonorRow
 } from './plannerData'
 import { browserRows, groupDonors, type BrowserRow, type GroupAxis } from './plannerGroups'
+import { outgoing, plannedBySocket, replacesFor, type SocketKey } from './plannerReplace'
 import { classesMismatch } from './plannerClasses'
 import { useHostClasses, type BrowsePreset } from './plannerPreset'
 import { sourceIndex } from './sourceIndex'
@@ -73,55 +74,9 @@ function plannedPairs(plan: ExaltPlan | null): ReadonlySet<string> {
   return out
 }
 
-// ---- what is already in the socket you are aiming at (JOS-42 refinement 3) --------------
-//
-// ADDING INTO AN OCCUPIED SOCKET IS A REPLACE, and the control has to say so BEFORE the click: a
-// socket holds one effect (R1), so the old plan is discarded silently otherwise. The browser is
-// the only place that can answer this — it holds the plan AND knows which socket a click would
-// write — so the answer is resolved here and handed down as one string.
-//
-// WHEN THE TARGET IS KNOWN, AND WHEN IT IS NOT. Under a preset it is exact: you clicked THAT
-// socket of THAT item. Without one, a donor with a single slot implies its target (that slot, the
-// donor's own socket type). A donor listed for two slots does not — the slot menu is the question
-// being asked — so its button stays "Add to set" and the MENU names what each slot would cost.
-// Claiming a replace before the slot is chosen would be guessing which one the user meant.
-
-/** `slot:socket → the effect planned there`, for the two lookups below. */
-function plannedBySocket(plan: ExaltPlan): ReadonlyMap<string, PlanSocket> {
-  const out = new Map<string, PlanSocket>()
-  for (const [slot, planSlot] of Object.entries(plan.slots)) {
-    for (const [socket, planned] of Object.entries(planSlot?.sockets ?? {})) {
-      if (planned) out.set(`${slot}:${socket}`, planned)
-    }
-  }
-  return out
-}
-
-/** The effect a write to (slot, socket) would displace, or null — including "it is already this". */
-function outgoing(
-  occupied: ReadonlyMap<string, PlanSocket>,
-  slot: EquipSlot,
-  socket: SocketType,
-  donor: DonorRow
-): string | null {
-  const there = occupied.get(`${slot}:${socket}`)
-  if (!there) return null
-  // Re-adding the row that is ALREADY there replaces nothing — the row says "in set" instead, and
-  // a button reading "Replace Improved Healing III" with Improved Healing III would be nonsense.
-  if (there.donorKey === donor.key && there.effect === donor.effect) return null
-  return there.effect
-}
-
-/** The target socket a click on this row would write, or null when the slot menu decides it. */
-function replacesFor(
-  occupied: ReadonlyMap<string, PlanSocket>,
-  preset: BrowsePreset | null,
-  donor: DonorRow
-): string | null {
-  if (preset !== null) return outgoing(occupied, preset.slot, preset.socket, donor)
-  const only = donor.slots.length === 1 ? donor.slots[0] : null
-  return only === null ? null : outgoing(occupied, only, donor.socket, donor)
-}
+// WHAT AN ADD WOULD OVERWRITE is `plannerReplace.ts` — pure, node-tested, and imported rather
+// than improvised here. The browser is the only place that holds BOTH the plan and the target
+// socket, so it is the caller; it is not the right place for the rule itself.
 
 // ---- the row pipeline ------------------------------------------------------------------
 
@@ -184,7 +139,7 @@ function SlotMenu({
   onPick
 }: {
   pending: PendingAdd | null
-  occupied: ReadonlyMap<string, PlanSocket>
+  occupied: ReadonlyMap<SocketKey, PlanSocket>
   onClose: () => void
   onPick: (slot: EquipSlot) => void
 }): JSX.Element {

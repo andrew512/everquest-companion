@@ -35,13 +35,22 @@ const CLASS_CHIP_CAP = 6
  * HOW A ROW GIVES WIDTH BACK, IN ONE PLACE (JOS-42 refinement 2).
  *
  * `flex-shrink` is WEIGHTED BY BASE WIDTH, so these are ratios rather than an order: the source
- * line (~320px base × 30) absorbs ~99% of any deficit before the effect name (~140px × 1) gives up
- * a single pixel. That is the owner's rule — the effect name has ellipsis priority OVER the source
- * text, not the other way round — expressed as something the layout enforces rather than something
- * a `maxWidth` guesses at. Nothing is pinned at 0: a group that cannot shrink is a row that
- * overflows, and the compact-bar contract is nowrap PLUS a shrinkable group, never nowrap alone.
+ * line and the effect's one-liner (each ~300px base × 30) absorb the deficit long before the donor
+ * NAME (×3) gives up a pixel. That is the owner's rule — the names have ellipsis priority over the
+ * source text, not the other way round.
+ *
+ * THE EFFECT NAME IS THE ONE GROUP THAT DOES NOT SHRINK AT ALL, and it took a measurement to earn
+ * that. Ratios alone were not enough: a weight of 1 against 30 still hands the effect ~1.4% of any
+ * deficit, and the e2e caught "Percussion Resonance 14" clipped by those few pixels on the one
+ * focus family in the whole corpus whose ranks disagree — so its rows keep their own one-liner and
+ * the row is at its most crowded. `flexShrink: 0` is what makes "the effect name always reads" a
+ * property rather than a tendency. It is BOUNDED by `EFFECT_MAX_WIDTH` so a pathological corpus
+ * entry cannot push the row's controls off the end: past that it ellipsizes like anything else,
+ * and the compact-bar contract (nowrap PLUS shrinkable groups) still holds through the other three.
  */
-const SHRINK = { name: 3, effect: 1, says: 30, source: 30 }
+const SHRINK = { name: 3, says: 30, source: 30 }
+/** Enough for every effect name the corpus states; a cap, not a size. */
+const EFFECT_MAX_WIDTH = '34%'
 
 // ---- one donor's source line ---------------------------------------------------------
 
@@ -198,7 +207,7 @@ export function DonorLine({
           color="text.secondary"
           noWrap
           data-testid="planner-donor-effect"
-          sx={{ minWidth: 0, flexShrink: SHRINK.effect }}
+          sx={{ minWidth: 0, flexShrink: 0, maxWidth: EFFECT_MAX_WIDTH }}
         >
           {donor.effect}
         </Typography>
@@ -281,7 +290,9 @@ export function GroupLine({
       <IconButton size="small" sx={{ flexShrink: 0 }}>
         {expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
       </IconButton>
-      <Typography variant="body2" noWrap sx={{ minWidth: 0, flexShrink: SHRINK.effect, fontWeight: 600 }}>
+      {/* The family's own name gets the header's equivalent of the row rule: it does not shrink,
+          because it is the thing you are reading the header for. */}
+      <Typography variant="body2" noWrap sx={{ minWidth: 0, flexShrink: 0, maxWidth: EFFECT_MAX_WIDTH, fontWeight: 600 }}>
         {group.label}
       </Typography>
       {group.note !== '' && (
