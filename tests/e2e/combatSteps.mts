@@ -27,7 +27,7 @@ import {
   sleep,
   snapshot
 } from './appHarness.mjs'
-import { meterRows } from './drill.mjs'
+import { drilled, meterRows } from './drill.mjs'
 
 const TOGGLE = '[data-testid="direction-toggle"]'
 
@@ -77,6 +77,42 @@ export async function stepHealingDimension(page: Page): Promise<void> {
   check('…and switching back to Outgoing restores the damage meter', /\bdps\b/.test(await meterPanelText(page)))
 }
 
+// ── THE METER DRILL, LEVEL BY LEVEL (JOS-35) ───────────────────────────────────────────
+//
+// The model is pinned purely in tests/combatPetNesting.test.mts — which level a drill token
+// resolves to, what folds into whose bar, what a stale id degrades to. What only the real app
+// can show is that the LEVELS ARE REACHABLE with a mouse: that the tab opens zoomed OUT, that
+// clicking a bar (INCLUDING YOUR OWN — the click this surface lost) opens that entity's
+// breakdown, and that there is a way back from it. Two of those three were the regressions the
+// ticket was filed for, and all three are invisible to a unit test.
+//
+// Floors and identities only (AGENTS.md): the live log decides who is in the fight, so this
+// asserts "at least one bar, and the first one drills", never a name or a count.
+
+export async function stepMeterDrill(page: Page): Promise<void> {
+  // 1. LEVEL 1 IS WHERE IT OPENS. No crumb, no Back — nothing has been drilled yet.
+  //    (Every step before this one leaves the meter un-drilled; `meterRows` guarantees it.)
+  const rows = await meterRows(page)
+  check('the Combat tab opens ZOOMED OUT — one bar per combatant, no auto-drill', !(await drilled(page)))
+  if (rows === 0) {
+    note('the selection has no outgoing damage right now — there is no bar to click')
+    return
+  }
+
+  // 2. CLICKING A BAR DRILLS IT. The first row is the biggest source, which on this log is you
+  //    (or your bar with the pet folded in) — the exact bar whose click went missing.
+  await page.click('[data-testid="meter-row"]', { timeout: 15_000 })
+  await sleep(600)
+  check('…and clicking a source bar — your own included — opens that entity’s breakdown', await drilled(page))
+
+  // 3. AND THERE IS A WAY BACK. The meter used to withhold Back on precisely the view it had
+  //    opened on, which with the pet preference on was every view there was.
+  const back = await inMeterPanel(page, '[data-testid="drill-back"]')
+  check('…with the zoom-out affordance on that level', back === 1, `${back} back control(s)`)
+  const after = await meterRows(page)
+  check('…and Back returns to the same source list it came from', after === rows, `${rows} → ${after} rows`)
+}
+
 // ── THE ROUNDS PANEL (docs/plans/attack-round-stats.md) ────────────────────────────────
 //
 // The grouper, the tiers and every word of the tooltips are pinned in
@@ -93,9 +129,9 @@ const ROUNDS = '[data-testid="rounds-panel"]'
 const ROUNDS_LANE = '[data-testid="rounds-lane"]'
 
 export async function stepRoundsPanel(page: Page): Promise<void> {
-  // The dashboard opens on your breakdown, but a run that arrives here un-drilled (no fight of
-  // yours in the selection) has to drill itself before the panel can exist at all.
-  if ((await inMeterPanel(page, ROUNDS)) === 0 && (await inMeterPanel(page, '[data-testid="drill-back"]')) === 0) {
+  // The dashboard opens on LEVEL 1 (JOS-35), so this step drills itself — `stepMeterDrill` above
+  // left it un-drilled on purpose, and the Rounds panel lives one level down.
+  if ((await inMeterPanel(page, ROUNDS)) === 0 && !(await drilled(page))) {
     await page.click('[data-testid="meter-row"]', { timeout: 15_000 }).catch(() => undefined)
     await sleep(600)
   }

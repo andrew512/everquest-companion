@@ -35,7 +35,7 @@ import type { CombatSnapshot, SegmentView, SourceView } from '@shared/combat'
 import { Bar, CAT_COLOR, DashCard, KIND_COLOR, QuietNote, fmtDur } from '../combat/combatShared'
 import { LIVE_SELECTION, fightScopeOptions } from '../combat/dashboardData'
 import { PetBar } from '../combat/PetBar'
-import { nestedRows, ownBreakdown, type OwnRow } from '../combat/petRows'
+import { meterSources, nestedRows, ownBreakdown, type OwnRow } from '../combat/petRows'
 import { useCombinePetRow } from '../combat/useCombatPrefs'
 import type { CombatFocus } from '../combat/combatFocus'
 import { formatNum, formatRate } from '../../lib/formatRate'
@@ -181,7 +181,14 @@ function DpsRows({
   if (drill.kind === 'sources') {
     return (
       <Stack sx={{ minWidth: 0 }}>
-        <SourceLevel entities={seg.entities} hasSelf={!!own.self} onDrill={() => setDrill({ kind: 'self' })} />
+        {/* Through the SAME fold the meters rank (petRows.meterSources), so the pet is inside
+            your bar here too whenever the preference says it is — this card and the Combat tab
+            must never disagree about how many rows the fight had (JOS-35). */}
+        <SourceLevel
+          entities={meterSources(seg.entities, combinePetRow)}
+          hasSelf={!!own.self}
+          onDrill={() => setDrill({ kind: 'self' })}
+        />
       </Stack>
     )
   }

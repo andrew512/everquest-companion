@@ -22,12 +22,20 @@
 // the pet's own skills. A preference ('Show your pet inside your damage') turns the nesting off
 // and restores the separate sources.
 //
-// THE PREFERENCE IS THE ZOOM (owner direction, 2026-08-04). Layout and default LEVEL are one
-// choice, not two — see `defaultDrill` below. It used to be two: a second persisted bit
-// (`eq.combat.drill`) decided the opening level on its own, so the preference OFF still opened
-// on your breakdown (level 2, pet-less) instead of the fully-zoomed-out source list the owner
-// asked for, and backing out once quietly re-taught the app to open zoomed out with the
-// preference ON. That bit is retired; this module owns the whole rule now.
+// LEVEL 1 IS THE DEFAULT, EVERYWHERE (owner ruling, 2026-08-05 — JOS-35). Every damage meter and
+// the Combat tab OPEN on the ranked source list: one bar per combatant. Auto-drilling was the
+// solo-play shortcut of 2026-08-03/04 (`defaultDrill`, now deleted), and it stopped being right
+// the moment the meters grew group members — a meter that opens inside YOUR breakdown hides the
+// four other people in the fight behind a chevron nobody knew to press. A drill the user makes is
+// still remembered per surface; the out-of-box level is 1.
+//
+// THE PREFERENCE IS THE PET'S LAYOUT, AND ONLY THAT. `combine` no longer decides a level; it
+// decides where the pet's damage LIVES, at every level:
+//   ON  ⇒ the pet is NOT a source row of its own. Its damage rides inside YOUR level-1 bar
+//         (`meterSources` below folds it in), and it appears exactly once more: as one named,
+//         drillable line item inside your breakdown. Nowhere else — a pet listed both as its own
+//         bar and inside your row was the double-count the owner saw (JOS-35).
+//   OFF  ⇒ the pet is its own level-1 bar and nothing is nested; your breakdown is yours alone.
 //
 // HONESTY (world-model law 4 — "pet" is presentation, never a data-model class; law 5 —
 // aggregates lie, derive from identities):
@@ -42,7 +50,7 @@
 //     keys outgoing damage as 'you' or 'pet:<id>'). Every surface that shows a combined headline
 //     reads `outTotal`, so the two can't drift.
 
-import { flattenSkills, type Drill, type SkillRow } from './dashboardData'
+import { flattenSkills, type SkillRow } from './dashboardData'
 import type { SourceView } from '@shared/combat'
 
 /** The synthetic line item that stands for ONE pet inside your breakdown. */
@@ -92,38 +100,107 @@ export function petSources(entities: SourceView[]): SourceView[] {
 }
 
 /**
- * THE DEFAULT ZOOM — which level the dashboard OPENS on, decided by the same preference that
- * decides the pet's layout (owner direction, 2026-08-04):
+ * ONE LANE'S RATE — a level-2 row's own DPS, over the SEGMENT's active seconds (owner ruling,
+ * 2026-08-05: "every lane shows its own DPS beside its total").
  *
- *   ON  ⇒ your breakdown (level 2), with each pet nested inside it as one line item ranked
- *         among your skills. Clicking the pet line drills to JUST that pet; Back returns to
- *         this combined view (the crumb spells the hierarchy out).
- *   OFF ⇒ fully zoomed out (level 1): one bar per source — you, your pet. Clicking the pet bar
- *         drills to the pet's skills, clicking yours drills to your skills with NO pet line
- *         (nothing is nested while the preference is off); Back returns to the two-bar list.
+ * The divisor is `SegmentView.activeSec`, which is exactly the denominator behind the segment's
+ * shipped `activeDps` (`main/combat/segmentViews.ts` — `outTotal / Math.max(1, activeSec)`), so a
+ * drill's lane rates and the fight's headline active rate are the same arithmetic. Wall-clock
+ * duration would divide a lane by idle time it wasn't there for; active seconds is the meter
+ * convention and the one this app already shipped.
  *
- * Both directions of the loop (in → out → in) are ordinary navigation and DO NOT write the
- * preference — a fight you happened to back out of must not redefine what the next one opens on.
- *
- * Takes the self row's ID rather than the row (or the whole source list) on purpose: every
- * snapshot tick rebuilds those objects, and the caller memoizes this on a value that only
- * changes when the answer can — so a live fight doesn't hand the view a new drill object every
- * second. `null` (a segment with no outgoing damage of yours) has no "your breakdown" to open,
- * so the source list is the only honest default there whatever the preference says.
- *
- * TWO SPELLINGS, ONE RULE. The Combat tab's drill is a union that can also name a MOB
- * (`dashboardData.Drill`); the overlay's persisted drill is the bare `{ entityId }` of
- * `OverlayConfig`. `defaultEntityId` is the rule itself, and each surface wraps it in its own
- * token — so the two can never open on different levels for the same preference.
+ * One number, stated plainly. There is no caveat prose beside it: the basis is the segment's, it
+ * is the same for every lane in the list, and a per-row asterisk would say nothing a reader could
+ * act on (AGENTS.md — the tooltip and caveat diet).
  */
-export function defaultEntityId(selfId: string | null, combine: boolean): string | null {
-  return combine ? selfId : null
+export function laneDps(total: number, activeSec: number): number {
+  return total / Math.max(1, activeSec)
 }
 
-/** `defaultEntityId` in the Combat tab's drill spelling. */
-export function defaultDrill(selfId: string | null, combine: boolean): Drill | null {
-  const id = defaultEntityId(selfId, combine)
-  return id ? { kind: 'entity', entityId: id } : null
+/** Sum one numeric field across a set of sources. */
+function sum(sources: SourceView[], pick: (s: SourceView) => number): number {
+  return sources.reduce((n, s) => n + pick(s), 0)
+}
+
+/** Landed detrimental spell/dot hits — the resist rate's denominator, minus the resists
+ *  themselves. Mirrors `main/combat/sourceViews.ts` exactly: melee/slay/ds hits can't be
+ *  resisted, so they are not casts. */
+function spellHits(s: SourceView): number {
+  return s.categories.reduce((n, c) => n + (c.category === 'spell' || c.category === 'dot' ? c.hits : 0), 0)
+}
+
+/**
+ * YOUR LEVEL-1 BAR WITH THE PETS INSIDE IT — the combine preference's whole meaning at level 1.
+ *
+ * Every counter here is SUMMED FROM IDENTITIES (law 5): the pet's hits are hits, its crits are
+ * crits, and the three percentages are re-derived from those sums by the engine's own formulas
+ * rather than blended from the sources' percentages. Nothing is invented and nothing is dropped —
+ * `total` is `self + pets`, which is `SegmentView.outTotal` for a solo fight, the same number the
+ * panel header and the Overview card headline.
+ *
+ * What it does NOT touch: `skills`, `categories`, `rounds`, `roundStats` stay YOURS. They are
+ * read one level down, where the pet is a line item of its own rather than a lane of yours (law
+ * 4: "pet" is presentation, and the engine's attribution has to survive the layout). So drilling
+ * this bar shows your lanes plus the pet's line — which sums to exactly this bar's total.
+ */
+function combinedSelf(self: SourceView, pets: SourceView[]): SourceView {
+  const all = [self, ...pets]
+  const hits = sum(all, (s) => s.hits)
+  const misses = sum(all, (s) => s.misses)
+  const crits = sum(all, (s) => s.crits)
+  const resists = sum(all, (s) => s.resists)
+  const swings = hits + misses
+  const casts = sum(all, spellHits) + resists
+  return {
+    ...self,
+    total: sum(all, (s) => s.total),
+    dps: sum(all, (s) => s.dps),
+    hits,
+    crits,
+    critPct: hits ? (crits / hits) * 100 : 0,
+    // The pet's name-ambiguity travels WITH its damage: folding the row must not fold away the
+    // one badge that says some of these hits may belong to a hostile twin.
+    ambiguousHits: sum(all, (s) => s.ambiguousHits),
+    ambiguousTotal: sum(all, (s) => s.ambiguousTotal),
+    misses,
+    hitPct: swings ? (hits / swings) * 100 : 100,
+    missBreakdown: {
+      miss: sum(all, (s) => s.missBreakdown.miss),
+      dodge: sum(all, (s) => s.missBreakdown.dodge),
+      parry: sum(all, (s) => s.missBreakdown.parry),
+      riposte: sum(all, (s) => s.missBreakdown.riposte),
+      block: sum(all, (s) => s.missBreakdown.block),
+      absorb: sum(all, (s) => s.missBreakdown.absorb)
+    },
+    resists,
+    resistPct: casts ? (resists / casts) * 100 : 0
+  }
+}
+
+/**
+ * THE LEVEL-1 SOURCE LIST every damage meter ranks — the engine's rows, with the combine
+ * preference applied.
+ *
+ * `combine` off (or nothing to fold) returns the SAME ARRAY BY REFERENCE, so an ungrouped,
+ * petless session builds exactly the list it built before and no memo downstream churns — the
+ * same invariant `meterScope.scopeSources` keeps.
+ *
+ * `pct` is re-based over the surviving rows because it is a BAR WIDTH: after the fold your row is
+ * usually the longest, and leaving the engine's segment-relative percentages in place would draw
+ * a ranking whose top bar stops short for no visible reason.
+ */
+export function meterSources(entities: SourceView[], combine: boolean): SourceView[] {
+  if (!combine) return entities
+  const self = selfSource(entities)
+  const pets = petSources(entities)
+  if (!self || pets.length === 0) return entities
+  const petIds = new Set(pets.map((p) => p.id))
+  const kept = entities
+    .filter((e) => !petIds.has(e.id))
+    .map((e) => (e.id === self.id ? combinedSelf(self, pets) : e))
+    .sort((a, b) => b.total - a.total)
+  const max = Math.max(1, ...kept.map((e) => e.total))
+  return kept.map((e) => ({ ...e, pct: (e.total / max) * 100 }))
 }
 
 function toPetRow(p: SourceView): PetRow {
@@ -183,7 +260,8 @@ export function ownBreakdown(entities: SourceView[], combine: boolean): OwnBreak
 /**
  * WHAT ONE DAMAGE METER IS SHOWING — the whole answer, for every surface that shows one.
  *
- * Level 1 is the ranked source list (you, your pets, and in Incoming the enemies). Level 2 is ONE
+ * Level 1 is the ranked source list AS THE PREFERENCE LAYS IT OUT (`meterSources`): one bar per
+ * combatant, with your pets folded into your bar while combine is on. Level 2 is ONE
  * source's breakdown: its skill lanes, with the pets nested in as line items when the subject is
  * YOU and the preference is on. `parent` is the source the subject is currently being shown as a
  * line item OF — non-null only for a nested pet — and it is what lets a Back button return to the
@@ -208,12 +286,17 @@ export type MeterPanel =
 /**
  * THE ROW BUILDER. Both damage meters call exactly this, with exactly their own drill id: the
  * Combat tab passes `drill.kind === 'entity' ? drill.entityId : null`, the overlay passes its
- * persisted `drill?.entityId ?? defaultEntityId(...)`. Everything downstream — nesting, ranking,
+ * persisted `drill?.entityId ?? null`. `null` means LEVEL 1 on both — one spelling, one level, so
+ * the two surfaces cannot open on different things. Everything downstream — nesting, ranking,
  * bar widths, the pet's real name, the parent for the crumb — is decided here, once.
+ *
+ * The drill is resolved against the RAW entity list, never the folded one: a pet that has no
+ * level-1 bar of its own while combine is on is still a perfectly good drill subject (it is a
+ * line item inside your breakdown, and a persisted drill straight into it must still resolve).
  */
 export function meterPanel(entities: SourceView[], combine: boolean, entityId: string | null): MeterPanel {
   const subject = entityId === null ? undefined : entities.find((e) => e.id === entityId)
-  if (!subject) return { level: 1, sources: entities }
+  if (!subject) return { level: 1, sources: meterSources(entities, combine) }
   // Pets nest into YOUR row only: a pet inside a pet would be a fiction, and an enemy's row in
   // the Incoming direction has no pets of yours in it at all.
   const nestable = combine ? petSources(entities) : []

@@ -130,11 +130,14 @@ function CategoryLegend({
 function EntitySkillBars({
   e,
   rows: all,
+  activeSec,
   procs,
   onDrillPet
 }: {
   e: SourceView
   rows: OwnRow[]
+  /** The segment's active seconds — every lane's own rate divides by it (petRows.laneDps). */
+  activeSec: number
   /** The is-a-proc tags for THIS source — empty for anyone but you (see `SegmentContent`). */
   procs: readonly ProcSkillTag[]
   onDrillPet: (id: string) => void
@@ -152,6 +155,7 @@ function EntitySkillBars({
           <SkillBar
             key={`${r.skill.category}|${r.skill.name}`}
             s={r.skill}
+            activeSec={activeSec}
             proc={procAnnotationFor(tags, r.skill.name)}
           />
         )
@@ -267,6 +271,8 @@ function SegmentContent({
 }: {
   seg: SegmentView
   mode: MeterMode
+  /** the level-1 bars — `MeterPanel.sources`, so the pet is folded into your row when the
+   *  preference says so and appears nowhere twice. Empty while a level-2 subject is open. */
   rows: SourceView[]
   /** the drilled source's rows (skill lanes + nested pets) — `MeterPanel.rows`, empty at level 1. */
   ownRows: OwnRow[]
@@ -314,6 +320,7 @@ function SegmentContent({
           key={d.entity.id}
           e={d.entity}
           rows={ownRows}
+          activeSec={seg.activeSec}
           procs={ownProcTags(seg, d.entity)}
           onDrillPet={(id) => setDrill({ kind: 'entity', entityId: id })}
         />
@@ -383,13 +390,16 @@ export function SegmentBody({
   setDrill: (d: Drill | null) => void
 }): React.JSX.Element {
   const heal = mode === 'heal'
-  const { rows, total, dps } = scopedDimension(seg, mode, scope, roster)
+  const { rows: scoped, total, dps } = scopedDimension(seg, mode, scope, roster)
   const [combinePetRow] = useCombinePetRow()
   // THE one row builder — the same call the floating overlay makes (petRows.meterPanel). Nesting
   // is an OUTGOING idea: the Incoming direction lists enemies, and none of them owns a pet of
   // yours, so the preference is folded into the `combine` argument rather than tested downstream.
-  const panel = meterPanel(rows, mode === 'out' && combinePetRow, drill?.kind === 'entity' ? drill.entityId : null)
+  const panel = meterPanel(scoped, mode === 'out' && combinePetRow, drill?.kind === 'entity' ? drill.entityId : null)
   const d = useDrillState(panel, tl, drill)
+  // The BARS are the builder's, not the scoped list: at level 1 that is the list with your pets
+  // folded into your row (JOS-35 — with the preference on the pet must not also be its own bar).
+  const rows = panel.level === 1 ? panel.sources : []
   const ownRows = panel.level === 2 ? panel.rows : []
   const pets = panel.level === 2 ? panel.pets : []
   // A drilled pet is NESTED (and so has a parent in the trail) only while it is actually being

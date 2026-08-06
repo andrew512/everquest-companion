@@ -89,7 +89,10 @@ export const EntityRow = memo(function EntityRow({
           <>
             {e.name}
             <KindChip kind={e.kind} />
-            {e.kind === 'pet' && e.ambiguousHits > 0 && (
+            {/* Not gated on `kind` any more: with the pet preference on, a pet's damage is
+                folded into YOUR level-1 bar (petRows.meterSources) and its name-ambiguity comes
+                with it. The badge belongs to the number, wherever the number is shown. */}
+            {e.ambiguousHits > 0 && (
               <Tooltip
                 title={`${e.ambiguousHits} hit${e.ambiguousHits === 1 ? '' : 's'} (${fmt(
                   e.ambiguousTotal

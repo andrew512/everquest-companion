@@ -34,15 +34,17 @@ export function PetBar({
         <>
           {pet.name}
           <Typography component="span" variant="caption" sx={{ ml: 0.75, color: 'text.secondary', fontWeight: 400 }}>
-            pet · {formatRate(pet.dps)}
-            {pet.hits > 0 ? ` · ${pet.hits} hits` : ''}
+            pet{pet.hits > 0 ? ` · ${pet.hits} hits` : ''}
           </Typography>
           {onDrill && (
             <ChevronRightIcon sx={{ fontSize: 13, ml: 0.25, mb: '-2px', color: 'text.disabled' }} />
           )}
         </>
       }
-      right={formatNum(pet.total)}
+      // `rate · total`, the SAME right end every other row of a drill now carries (JOS-35): the
+      // pet's dps used to ride in the stat run, which left it as the one line in the list whose
+      // rate was somewhere else.
+      right={`${formatRate(pet.dps)} · ${formatNum(pet.total)}`}
     />
   )
 }

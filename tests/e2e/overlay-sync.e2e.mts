@@ -300,6 +300,62 @@ async function stepOverlayScope(overlay: Page): Promise<void> {
   check('the overlay remembers its own scope across the lock round trip', (await label()) === 'Everyone', await label())
 }
 
+// ── JOS-35: the overlay meter's levels, driven for real ────────────────────────────────
+//
+// The model is pinned in tests/combatPetNesting.test.mts, and it is pinned as ONE call the tab
+// and the overlay both make. What only the real app can show is that this window can be NAVIGATED
+// — that it opens zoomed out, that a bar drills, and that there is a chevron back. The damage
+// overlay had no way out at all until this ticket: it opened inside your own breakdown and
+// withheld Back on exactly that view, so with the pet preference on (the default) level 1 was
+// unreachable in a floating meter.
+
+const CRUMB = '[data-testid="overlay-crumb"]'
+const BAR = '[data-testid="overlay-bar"]'
+
+/** The crumb row's text — the drill subject, if any, and the fight clock. */
+async function crumbText(overlay: Page): Promise<string> {
+  return ((await overlay.textContent(CRUMB)) ?? '').replace(/\s+/g, ' ').trim()
+}
+
+async function stepOverlayDrill(overlay: Page): Promise<void> {
+  await overlay.evaluate(() => {
+    ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(false)
+  })
+  await sleep(500)
+  // Start from level 1 however the persisted drill left this window — the drill outlives a run,
+  // by design (it is remembered state, like window position). Backing out with the chevron is
+  // also the only way to reach level 1, so this loop is the affordance proving itself: bounded at
+  // two, because a nested pet is the deepest the model goes.
+  for (let i = 0; i < 2 && (await crumbText(overlay)).includes('‹'); i++) {
+    await overlay.click(CRUMB)
+    await sleep(500)
+  }
+
+  const bars = await countOf(overlay, BAR)
+  if (bars === 0) {
+    note('the overlay’s selected fight has no bars right now — the drill steps need one')
+    return
+  }
+  check('the overlay meter opens ZOOMED OUT — one bar per combatant', (await countOf(overlay, CRUMB)) === 1)
+  const level1 = await crumbText(overlay)
+  // THE HEADER GAVE UP THE CLOCK, and this row took it: the header states the fight and the rate,
+  // and the timer sits on the line that has room for it.
+  check('…and the fight timer lives on that row, not in the header', /\d+:\d\d/.test(level1), level1 || 'empty')
+  check('…with no back chevron, because there is nowhere further out', !level1.includes('‹'), level1)
+
+  // Clicking a bar drills it — including the top one, which on this log is yours.
+  await overlay.click(BAR)
+  await sleep(600)
+  const level2 = await crumbText(overlay)
+  check('clicking a bar opens that entity’s breakdown', (await countOf(overlay, BAR)) > 0 && level2 !== level1, level2)
+  check('…and the zoom-out chevron is offered on it (it was not, before JOS-35)', level2.includes('‹'), level2)
+  check('…and the fight timer is still on the row', /\d+:\d\d/.test(level2), level2)
+
+  await overlay.click(CRUMB)
+  await sleep(600)
+  check('…and the chevron really goes back out to the source list', (await crumbText(overlay)) === level1, await crumbText(overlay))
+}
+
 /**
  * LAUNCH 1 EXISTS TO LEAVE STATE BEHIND. This spec is written against an install that already
  * has an overlay open — its ask-first toggle below is exactly that assumption — and it used to
@@ -378,6 +434,7 @@ async function main(): Promise<void> {
       note('the live log holds no finalized fight right now — the cross-window selection steps were skipped')
     }
     await stepStaleId(page, ov)
+    await stepOverlayDrill(ov)
     await stepLockedSelector(ov)
     await stepOverlayScope(ov)
 

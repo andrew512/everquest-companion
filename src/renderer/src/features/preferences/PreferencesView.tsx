@@ -102,9 +102,11 @@ import { normalizeQuery } from '../../lib/search'
  * labelled with its real name, drillable into its own skills, and never summed into a skill row
  * of yours (features/combat/petRows.ts). Off, it is a separate source row, as it always was.
  *
- * It is also the DEFAULT ZOOM (owner direction, 2026-08-04): on ⇒ the meter opens on your
- * breakdown (pet nested); off ⇒ it opens fully zoomed out on the source list. One switch, both
- * halves of one choice — `petRows.defaultDrill`.
+ * IT IS THE PET'S LAYOUT, NOT A ZOOM (owner ruling, 2026-08-05 — JOS-35). Every meter opens on
+ * level 1 whatever this says; what it decides is WHERE the pet's damage lives. On ⇒ inside your
+ * level-1 bar, and once more as a drillable line item in your breakdown — never a source row of
+ * its own, so a fight's damage is never listed twice. Off ⇒ the pet keeps its own bar and
+ * nothing is nested.
  *
  * ONE SWITCH, EVERY DAMAGE METER (owner ruling, 2026-08-04 — the floating overlay used to render
  * the engine's own pet fold instead, and showed a different breakdown for the same fight). The
@@ -132,8 +134,8 @@ function PetNestingSetting(): JSX.Element {
       />
       <Typography variant="caption" color="text.secondary">
         {combine
-          ? 'The Combat tab and the floating meters open on your damage breakdown with your pet as one row inside it — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
-          : 'The Combat tab and the floating meters open on the source list — one bar for you, one for your pet — and each bar drills into its own skills.'}
+          ? 'Your pet’s damage rides inside your bar, and appears once more as one row inside your breakdown — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
+          : 'Your pet gets its own bar beside yours, and each bar drills into its own skills.'}
       </Typography>
     </Stack>
   )

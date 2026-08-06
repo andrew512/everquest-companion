@@ -60,7 +60,13 @@ import {
 } from './appHarness.mjs'
 import { launchApp, mainWindow } from './appWindow.mjs'
 import { meterRows } from './drill.mjs'
-import { stepFrozenList, stepHealingDimension, stepMeterScope, stepRoundsPanel } from './combatSteps.mjs'
+import {
+  stepFrozenList,
+  stepHealingDimension,
+  stepMeterDrill,
+  stepMeterScope,
+  stepRoundsPanel
+} from './combatSteps.mjs'
 
 // ── the run, one step per numbered section ─────────────────────────────────────────────
 //
@@ -524,6 +530,7 @@ async function main(): Promise<void> {
     await stepMeterScope(page)
     snap = await stepCombatLogAndRegression(page, snap)
     await stepHealingDimension(page)
+    await stepMeterDrill(page)
     await stepRoundsPanel(page)
     await stepPickAFight(page, snap)
     await stepFrozenList(page)

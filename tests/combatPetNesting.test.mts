@@ -20,9 +20,12 @@
 //   5. bar widths are re-based over the merged list, so the biggest row — usually the pet — is
 //      the one that renders full width.
 //
-// THE PREFERENCE IS ALSO THE ZOOM (owner direction, 2026-08-04) — `defaultDrill` decides which
-// LEVEL the dashboard opens on, and the last block below walks the owner's whole navigation loop
-// (in → out → in) in both preference states. Verified against a real charmed-pet fight before it
+// THE PREFERENCE IS THE PET'S LAYOUT, AND ONLY THAT (owner ruling, 2026-08-05 — JOS-35). It used
+// to double as the default ZOOM: with nesting on, every meter opened INSIDE your breakdown. That
+// stopped being right the moment the meters grew group-mates, and it hid the pet double-count
+// below — so every surface opens on LEVEL 1 now, and the preference decides only where the pet's
+// damage lives. The last blocks walk the owner's whole navigation loop (in → out → in) in both
+// preference states, and pin the fold. Verified against a real charmed-pet fight before it
 // was written: Plane of Sky, Tue Aug 04 22:48–22:52, `a thunder spirit` charmed with Allure VI —
 // the engine binds it, hands it over as a `kind: 'pet'` SourceView, and one segment of that
 // session legitimately carries TWO pet sources (the first charm broke and a second was landed),
@@ -33,9 +36,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { flattenSkills, type Drill } from '../src/renderer/src/features/combat/dashboardData'
 import {
-  defaultDrill,
-  defaultEntityId,
+  laneDps,
   meterPanel,
+  meterSources,
   nestedRows,
   ownBreakdown,
   petSources,
@@ -63,7 +66,12 @@ function cat(category: SourceView['categories'][number]['category'], skills: Ski
   }
 }
 
-/** Only the fields the nesting reads are populated — the rest of SourceView is irrelevant here. */
+/**
+ * A whole SourceView, derived the way the engine derives one (`main/combat/sourceViews.ts`) — the
+ * counters summed from the categories and the three percentages taken from those counters. It is
+ * fully populated rather than cast-and-hope because the LEVEL-1 FOLD reads every counter on it:
+ * a half-built fixture would have let `meterSources` combine fields nothing here ever checked.
+ */
 function source(
   id: string,
   name: string,
@@ -71,18 +79,30 @@ function source(
   categories: SourceView['categories']
 ): SourceView {
   const total = categories.reduce((n, c) => n + c.total, 0)
+  const hits = categories.reduce((n, c) => n + c.hits, 0)
+  const crits = categories.reduce((n, c) => n + c.crits, 0)
+  const misses = categories.reduce((n, c) => n + c.skills.reduce((m, s) => m + (s.misses ?? 0), 0), 0)
+  const swings = hits + misses
   return {
     id,
     name,
     kind,
     total,
     dps: total / 60,
-    hits: categories.reduce((n, c) => n + c.hits, 0),
-    crits: 0,
-    misses: categories.reduce((n, c) => n + (c.skills.reduce((m, s) => m + (s.misses ?? 0), 0)), 0),
+    pct: 100,
+    hits,
+    crits,
+    critPct: hits ? (crits / hits) * 100 : 0,
+    ambiguousHits: 0,
+    ambiguousTotal: 0,
+    misses,
+    hitPct: swings ? (hits / swings) * 100 : 100,
+    missBreakdown: { miss: misses, dodge: 0, parry: 0, riposte: 0, block: 0, absorb: 0 },
     resists: 0,
+    resistPct: 0,
+    skills: categories.flatMap((c) => c.skills),
     categories
-  } as unknown as SourceView
+  }
 }
 
 const YOU = source('you', 'You', 'you', [
@@ -189,16 +209,13 @@ test('the source split is by KIND, never by the aggregate’s key spelling', () 
   assert.equal(b.total, 16500)
 })
 
-// ── THE DEFAULT ZOOM, AND THE WHOLE NAVIGATION LOOP ────────────────────────────────────────
+// ── LEVEL 1 IS THE DEFAULT, AND THE WHOLE NAVIGATION LOOP ──────────────────────────────────
 //
-// One preference, both halves of one choice: it decides how the pet is LAID OUT *and* which
-// level the meter OPENS on. `meterPanel` is the whole three-way body (level 1 = the source rows;
-// a drilled source = its lanes with pets nested only into YOURS and only while the preference is
-// on), so a whole in → out → in loop is asserted as a sequence of real panels rather than
-// described in a comment — and asserted against the REAL builder both surfaces call, not a model
-// of it (see "ONE BUILDER, TWO SURFACES" at the bottom).
-
-const SELF_ID = selfSource(ENTITIES)?.id ?? null
+// `meterPanel` is the whole three-way body (level 1 = the source rows AS THE PREFERENCE LAYS
+// THEM OUT; a drilled source = its lanes with pets nested only into YOURS and only while the
+// preference is on), so a whole in → out → in loop is asserted as a sequence of real panels
+// rather than described in a comment — and asserted against the REAL builder both surfaces call,
+// not a model of it (see "ONE BUILDER, TWO SURFACES" at the bottom).
 
 /** What a rendered meter LOOKS like, reduced to text: its level, its subject, its row labels. */
 interface Panel {
@@ -224,36 +241,21 @@ function combatTab(entities: SourceView[], combine: boolean, drill: Drill | null
 
 /**
  * THE OVERLAY'S CALL, spelled exactly as `meterBars.tsx` spells it: its drill is the persisted
- * `{ entityId }` of `overlays.<kind>.drill`, and having none means "no drill of my own" — so the
- * DEFAULT ZOOM decides, from the same preference, by the same rule.
+ * `{ entityId }` of `overlays.<kind>.drill`, and having none is LEVEL 1 — the same thing `null`
+ * means on the Combat tab.
  */
 function overlayMeter(entities: SourceView[], combine: boolean, drill: { entityId: string } | null): MeterPanel {
-  const home = defaultEntityId(selfSource(entities)?.id ?? null, combine)
-  return meterPanel(entities, combine, drill?.entityId ?? home)
+  return meterPanel(entities, combine, drill?.entityId ?? null)
 }
 
 const panel = (entities: SourceView[], combine: boolean, drill: Drill | null): Panel =>
   shown(combatTab(entities, combine, drill))
 
-test('preference ON: the default view is YOUR breakdown with the pet as one ranked line item', () => {
-  const opening = defaultDrill(SELF_ID, true)
-  assert.deepEqual(opening, { kind: 'entity', entityId: 'you' })
-  assert.deepEqual(panel(ENTITIES, true, opening), {
-    level: 2,
-    subject: 'You',
-    rows: ['Vebarn', 'Melee', 'Backstab', 'Ancient Wrath']
-  })
-})
-
-test('preference OFF: the default view is FULLY ZOOMED OUT — one bar per source', () => {
-  const opening = defaultDrill(SELF_ID, false)
-  assert.equal(opening, null, 'no drill at all: level 1')
-  // The level-1 list is the engine's own source rows, in its own ranking — you and your pet.
-  assert.deepEqual(panel(ENTITIES, false, opening), {
-    level: 1,
-    subject: 'sources',
-    rows: ['Vebarn', 'You']
-  })
+test('LEVEL 1 IS THE DEFAULT: no drill opens on the source list, whatever the preference says', () => {
+  // ON: one bar, because the pet's damage is inside yours (see the fold block below).
+  assert.deepEqual(panel(ENTITIES, true, null), { level: 1, subject: 'sources', rows: ['You'] })
+  // OFF: two bars, the engine's own rows in the engine's own ranking.
+  assert.deepEqual(panel(ENTITIES, false, null), { level: 1, subject: 'sources', rows: ['Vebarn', 'You'] })
 })
 
 test('preference OFF: your bar drills to your skills with NO pet line; the pet bar to the pet', () => {
@@ -261,43 +263,106 @@ test('preference OFF: your bar drills to your skills with NO pet line; the pet b
   assert.deepEqual(mine.rows, ['Melee', 'Backstab', 'Ancient Wrath'], 'nothing is nested while it is off')
   const pet = panel(ENTITIES, false, { kind: 'entity', entityId: 'pet:7' })
   assert.deepEqual(pet, { level: 2, subject: 'Vebarn', rows: ['Melee'] })
-  // …and backing out of either lands on the same two-bar list it opened on.
-  assert.deepEqual(panel(ENTITIES, false, null), panel(ENTITIES, false, defaultDrill(SELF_ID, false)))
 })
 
-test('preference ON: in → out → in — pet drill, Back, and the combined view is exactly as it opened', () => {
-  const opening = panel(ENTITIES, true, defaultDrill(SELF_ID, true))
-  assert.ok(opening.rows.includes('Vebarn'), 'the pet is a line item of the opening view')
+test('preference ON: out → in → in → out — the whole loop, and every level has a way back', () => {
+  // OUT is where it opens now.
+  assert.equal(panel(ENTITIES, true, null).level, 1)
 
-  // IN: clicking that line drills to JUST the pet — no pet nested inside a pet.
-  const petView = panel(ENTITIES, true, { kind: 'entity', entityId: 'pet:7' })
-  assert.deepEqual(petView, { level: 2, subject: 'Vebarn', rows: ['Melee'] })
+  // IN: your bar opens YOUR breakdown, with the pet as one ranked line item.
+  const mine = panel(ENTITIES, true, { kind: 'entity', entityId: 'you' })
+  assert.deepEqual(mine, { level: 2, subject: 'You', rows: ['Vebarn', 'Melee', 'Backstab', 'Ancient Wrath'] })
 
-  // OUT: the pet's Back goes to its PARENT (your breakdown), not to level 1 — and lands on a
-  // view byte-identical to the one it was clicked from.
-  assert.deepEqual(panel(ENTITIES, true, { kind: 'entity', entityId: 'you' }), opening)
+  // IN AGAIN: clicking that line drills to JUST the pet — no pet nested inside a pet — and the
+  // panel knows whose line item it was, which is what the back chevron returns to.
+  const petView = combatTab(ENTITIES, true, { kind: 'entity', entityId: 'pet:7' })
+  assert.deepEqual(shown(petView), { level: 2, subject: 'Vebarn', rows: ['Melee'] })
+  assert.equal(petView.level === 2 && petView.parent?.id, 'you')
 
-  // …and all the way out is still reachable, one more Back / the "All" crumb.
+  // OUT: the pet's Back goes to its PARENT and lands on the view it was clicked from; one more
+  // Back is level 1. There is a level to go back to from every level-2 view, which is the whole
+  // point — the meter used to withhold Back on exactly the view it opened on (JOS-35).
+  assert.deepEqual(panel(ENTITIES, true, { kind: 'entity', entityId: 'you' }), mine)
   assert.equal(panel(ENTITIES, true, null).level, 1)
 })
 
-test('the preference is the ONLY thing that moves the default level', () => {
-  assert.notDeepEqual(defaultDrill(SELF_ID, true), defaultDrill(SELF_ID, false))
-  // A segment with no outgoing damage of yours has no "your breakdown" to open: level 1 either
-  // way, so the pet's own row is what you see rather than an empty pane.
-  assert.equal(defaultDrill(null, true), null)
-  assert.deepEqual(panel([PET], true, defaultDrill(null, true)).rows, ['Vebarn'])
+test('a segment with no damage of yours is still level 1 — the pet is simply its own bar', () => {
+  // Nothing to fold INTO, so the fold stands down rather than inventing a row for you.
+  assert.deepEqual(panel([PET], true, null), { level: 1, subject: 'sources', rows: ['Vebarn'] })
 })
 
 test('two pets in one segment are two line items, each drilling to its own breakdown', () => {
   const second = source('pet:9', 'Garer', 'pet', [cat('melee', [skill('Melee', { total: 500, hits: 9, max: 80, min: 4 })])])
   const segment = [YOU, PET, second]
-  const opening = panel(segment, true, defaultDrill(SELF_ID, true))
-  assert.deepEqual(opening.rows, ['Vebarn', 'Melee', 'Backstab', 'Ancient Wrath', 'Garer'])
+  const mine = panel(segment, true, { kind: 'entity', entityId: 'you' })
+  assert.deepEqual(mine.rows, ['Vebarn', 'Melee', 'Backstab', 'Ancient Wrath', 'Garer'])
   assert.equal(panel(segment, true, { kind: 'entity', entityId: 'pet:9' }).subject, 'Garer')
   assert.equal(panel(segment, true, { kind: 'entity', entityId: 'pet:7' }).subject, 'Vebarn')
-  // Zoomed out, the same segment is three bars.
-  assert.deepEqual(panel(segment, false, defaultDrill(SELF_ID, false)).rows, ['You', 'Vebarn', 'Garer'])
+  // Both pets fold into the one bar at level 1; uncombined, the same segment is three bars.
+  assert.deepEqual(panel(segment, true, null).rows, ['You'])
+  assert.deepEqual(panel(segment, false, null).rows, ['You', 'Vebarn', 'Garer'])
+})
+
+// ── THE LEVEL-1 FOLD: with the preference on, the pet appears in exactly ONE place ─────────
+//
+// OWNER, 2026-08-05 (JOS-35): "when ON, pet damage lives inside your bar and the pet appears
+// NOWHERE else — today it leaks into both places, the bug." It did: `meterPanel` handed level 1
+// the engine's raw rows, so the pet was a bar of its own AND a line item inside your breakdown,
+// and the two bars added up to more than the fight.
+
+test('FOLD: with the preference on there is no pet BAR — its damage is inside yours', () => {
+  const rows = meterSources(ENTITIES, true)
+  assert.deepEqual(rows.map((r) => r.name), ['You'])
+  assert.equal(rows[0].total, 16000, 'self + pets — exactly SegmentView.outTotal for this fight')
+  assert.equal(rows[0].dps, YOU.dps + PET.dps)
+  assert.equal(Math.round(rows[0].pct), 100, 'the bar is re-based over the surviving rows')
+  // …and the drill into that bar sums to the same number, so no level contradicts another.
+  const mine = combatTab(ENTITIES, true, { kind: 'entity', entityId: 'you' })
+  assert.equal(mine.level === 2 && mine.rows.reduce((n, r) => n + r.total, 0), 16000)
+})
+
+test('FOLD: every counter is SUMMED FROM IDENTITIES, and the rates re-derived from those sums', () => {
+  const [me] = meterSources(ENTITIES, true)
+  assert.equal(me.hits, YOU.hits + PET.hits, '124 + 210')
+  assert.equal(me.misses, YOU.misses + PET.misses, '20 + 30')
+  assert.equal(me.missBreakdown.miss, YOU.missBreakdown.miss + PET.missBreakdown.miss)
+  // The percentage is taken from the SUMS, never blended from the two sources' percentages.
+  assert.equal(me.hitPct, ((YOU.hits + PET.hits) / (YOU.hits + PET.hits + YOU.misses + PET.misses)) * 100)
+  // What is NOT folded: your lanes stay yours. The pet's damage is a line item one level down,
+  // never a lane of yours (law 4), so `skills`/`categories` are byte-identical to your own row.
+  assert.deepEqual(me.skills, YOU.skills)
+  assert.deepEqual(me.categories, YOU.categories)
+})
+
+test('FOLD: a pet’s name-ambiguity travels with its damage into your bar', () => {
+  // The `~` badge says "some of these hits may belong to a same-named hostile twin". Folding the
+  // row must not fold away the warning — it is a fact about the number, and the number moved.
+  const twin: SourceView = {
+    ...source('pet:8', 'a thunder spirit', 'pet', [cat('melee', [skill('Melee', { total: 900, hits: 12, max: 90, min: 5 })])]),
+    ambiguousHits: 4,
+    ambiguousTotal: 300
+  }
+  const [me] = meterSources([YOU, twin], true)
+  assert.equal(me.ambiguousHits, 4)
+  assert.equal(me.ambiguousTotal, 300)
+})
+
+test('FOLD: nothing to fold ⇒ the SAME ARRAY back, by reference', () => {
+  // The invariant that keeps solo-with-no-pet and every incoming list exactly as they were: no
+  // new objects, no re-ranking, no memo churn (the same rule meterScope.scopeSources keeps).
+  assert.equal(meterSources(ENTITIES, false), ENTITIES, 'the preference is off')
+  const petless = [YOU]
+  assert.equal(meterSources(petless, true), petless, 'no pets in this segment')
+  const ownerless = [PET]
+  assert.equal(meterSources(ownerless, true), ownerless, 'no row of yours to fold into')
+})
+
+test('a lane’s own rate divides by the segment’s ACTIVE seconds — the activeDps divisor', () => {
+  // Same arithmetic as the engine's shipped `activeDps` (main/combat/segmentViews.ts), so a
+  // drill's lane rates and the fight's headline active rate can never disagree about a divisor.
+  assert.equal(laneDps(5000, 100), 50)
+  // A segment with no active time yet does not divide by zero, and does not print Infinity.
+  assert.equal(laneDps(5000, 0), 5000)
 })
 
 // ── ONE BUILDER, TWO SURFACES ──────────────────────────────────────────────────────────────
@@ -342,16 +407,16 @@ test('ONE CALL: an overlay with no drill of its own rests exactly where the Comb
   for (const combine of [true, false]) {
     assert.deepEqual(
       overlayMeter(ENTITIES, combine, null),
-      combatTab(ENTITIES, combine, defaultDrill(SELF_ID, combine)),
-      `combine=${String(combine)}: the resting overlay is not the tab's default zoom`
+      combatTab(ENTITIES, combine, null),
+      `combine=${String(combine)}: the resting overlay is not where the tab opens`
     )
   }
-  // Spelled out, because this is the bug the owner saw: ON is your breakdown WITH the pet as a
-  // real-named, drillable line item — not a "You +pets" row, and not two bare source bars.
+  // Spelled out: LEVEL 1 in both preference states, differing only in whether the pet has a bar
+  // of its own — never "you are already drilled into yourself and cannot get out" (JOS-35).
   assert.deepEqual(shown(overlayMeter(ENTITIES, true, null)), {
-    level: 2,
-    subject: 'You',
-    rows: ['Vebarn', 'Melee', 'Backstab', 'Ancient Wrath']
+    level: 1,
+    subject: 'sources',
+    rows: ['You']
   })
   assert.deepEqual(shown(overlayMeter(ENTITIES, false, null)), {
     level: 1,
@@ -382,14 +447,17 @@ test('the overlay drill maps onto the collapsed model: pet drill, its way back, 
   const loose = overlayMeter(ENTITIES, false, { entityId: 'pet:7' })
   assert.equal(loose.level === 2 && loose.parent, null)
   // A stale id renders level 1 — the caller's stored value is never consulted for the fallback,
-  // so nothing here can clear it.
-  for (const combine of [true, false]) {
-    assert.deepEqual(shown(overlayMeter(ENTITIES, combine, { entityId: 'pet:404' })), {
-      level: 1,
-      subject: 'sources',
-      rows: ['Vebarn', 'You']
-    })
-  }
+  // so nothing here can clear it. Level 1 is the preference's own layout, as always.
+  assert.deepEqual(shown(overlayMeter(ENTITIES, true, { entityId: 'pet:404' })), {
+    level: 1,
+    subject: 'sources',
+    rows: ['You']
+  })
+  assert.deepEqual(shown(overlayMeter(ENTITIES, false, { entityId: 'pet:404' })), {
+    level: 1,
+    subject: 'sources',
+    rows: ['Vebarn', 'You']
+  })
 })
 
 // ── the source tripwire: a second row builder has nowhere to live ──────────────────────────
