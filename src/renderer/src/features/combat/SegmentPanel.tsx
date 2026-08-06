@@ -18,11 +18,13 @@ import { RoundsPanel } from './RoundsPanel'
 import { SegmentHeader } from './SegmentHeader'
 import { procAnnotationFor, procTagIndex } from './procRows'
 import { meterPanel, type MeterPanel, type OwnRow } from './petRows'
+import { scopeSources, scopeTotals } from './meterScope'
 import { useCombinePetRow } from './useCombatPrefs'
 import { formatEntityText, formatSegmentText, formatTargetText } from './copyText'
 import { formatNum as fmt } from '../../lib/formatRate'
 import type { DamageCategory, SegmentView, SourceView, TimelineView } from '@shared/combat'
 import type { ProcSkillTag } from '@shared/procAnalytics'
+import type { MeterScope, RosterSnap } from '@shared/roster'
 import { CATEGORY_LABEL } from '@shared/combat'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -257,6 +259,8 @@ function SegmentContent({
   mode,
   rows,
   ownRows,
+  scope,
+  roster,
   d,
   drill,
   setDrill
@@ -266,6 +270,8 @@ function SegmentContent({
   rows: SourceView[]
   /** the drilled source's rows (skill lanes + nested pets) — `MeterPanel.rows`, empty at level 1. */
   ownRows: OwnRow[]
+  scope: MeterScope
+  roster: RosterSnap
   d: DrillState
   /** the raw token — the Healing dimension resolves it against healers, not damage sources. */
   drill: Drill | null
@@ -277,7 +283,7 @@ function SegmentContent({
   if (mode === 'heal') {
     return (
       <Box data-testid="meter-body" sx={{ overflow: 'auto', flexGrow: 1, minHeight: 0 }}>
-        <HealBody healing={seg.healing} drill={drill} setDrill={setDrill} />
+        <HealBody healing={seg.healing} scope={scope} roster={roster} drill={drill} setDrill={setDrill} />
       </Box>
     )
   }
@@ -339,21 +345,45 @@ function dimension(seg: SegmentView, mode: MeterMode): { rows: SourceView[]; tot
   return { rows: seg.entities, total: seg.outTotal, dps: seg.outDps }
 }
 
+/**
+ * …and the same three things once the SCOPE has had its say (docs/plans/group-model.md §2).
+ *
+ * Only the OUTGOING dimension is scoped, because scope is a statement about whose damage — the
+ * incoming list is always "what is hitting You", and no roster changes that. The headline pair
+ * is recomputed from the surviving rows rather than carried over: `outTotal` counts members, so
+ * a You-scoped list under a group-scoped total would headline a number no visible row explains.
+ */
+function scopedDimension(
+  seg: SegmentView,
+  mode: MeterMode,
+  scope: MeterScope,
+  roster: RosterSnap
+): { rows: SourceView[]; total: number; dps: number } {
+  const base = dimension(seg, mode)
+  if (mode !== 'out') return base
+  const rows = scopeSources(base.rows, scope, roster)
+  return { rows, ...scopeTotals(base.rows, rows, base.total, base.dps) }
+}
+
 export function SegmentBody({
   seg,
   tl,
   mode,
+  scope,
+  roster,
   drill,
   setDrill
 }: {
   seg: SegmentView
   tl: TimelineView | null
   mode: MeterMode
+  scope: MeterScope
+  roster: RosterSnap
   drill: Drill | null
   setDrill: (d: Drill | null) => void
 }): React.JSX.Element {
   const heal = mode === 'heal'
-  const { rows, total, dps } = dimension(seg, mode)
+  const { rows, total, dps } = scopedDimension(seg, mode, scope, roster)
   const [combinePetRow] = useCombinePetRow()
   // THE one row builder — the same call the floating overlay makes (petRows.meterPanel). Nesting
   // is an OUTGOING idea: the Incoming direction lists enemies, and none of them owns a pet of
@@ -400,7 +430,17 @@ export function SegmentBody({
       {!heal && d.crumb && (
         <DrillCrumb crumb={d.crumb} isTarget={!!d.targetDetail} parent={nestedIn} setDrill={setDrill} />
       )}
-      <SegmentContent seg={seg} mode={mode} rows={rows} ownRows={ownRows} d={d} drill={drill} setDrill={setDrill} />
+      <SegmentContent
+        seg={seg}
+        mode={mode}
+        rows={rows}
+        ownRows={ownRows}
+        scope={scope}
+        roster={roster}
+        d={d}
+        drill={drill}
+        setDrill={setDrill}
+      />
     </Paper>
   )
 }

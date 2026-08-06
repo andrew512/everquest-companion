@@ -27,6 +27,7 @@ import { baselineOverlay, loadUserOverlay } from './data/overlayPersistence'
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
 import { ComboModule } from './modules/combo'
+import { RosterModule } from './modules/roster'
 import { LootModule } from './modules/loot'
 import { TurnInsModule } from './modules/turnins'
 import { KillsModule } from './modules/kills'
@@ -92,6 +93,12 @@ export const registry = new ModuleRegistry({
 // Class-combo inference (docs/plans/class-combo-inference.md): which up-to-three classes the
 // character was running, and when that changed — a swap the game NEVER logs.
 export const comboModule = new ComboModule()
+// The group roster (docs/plans/group-model.md): who you are with, folded from the membership
+// lines the log prints outright. Registered SECOND, right behind combo and ahead of everything
+// else, for the reason combo goes first — the combat engine subscribes to the bus AFTER the
+// registry, so by the time it folds a line the roster it consults is already advanced for that
+// same line. Consumes no derived events and emits none.
+export const rosterModule = new RosterModule()
 export const lootModule = new LootModule()
 export const turnInsModule = new TurnInsModule()
 export const killsModule = new KillsModule()
@@ -173,6 +180,7 @@ function feedAlertDelta(delta: ModuleDelta): void {
 // It is purely additive to this documented order: combo consumes no derived events and emits
 // none, so nothing that used to run before it can observe the difference.
 registry.register(comboModule)
+registry.register(rosterModule)
 registry.register(lootModule)
 registry.register(turnInsModule)
 registry.register(killsModule)
@@ -191,6 +199,12 @@ registry.register(eventFeedModule)
 // down and re-subscribing (the old bus.clear() churned subscriptions and risked
 // registration-order drift). Registry first, then combat — same order as before.
 registry.attach(bus)
+// THE ROSTER SEAM (docs/plans/group-model.md §3.5). The engine's admission gate and its scope
+// filtering both read the roster through this ONE pull, installed before the engine ever folds
+// a line: the registry is attached above, so within a single bus delivery the roster module has
+// already consumed the event the engine is about to. A pull rather than a copy, because a user
+// edit made between two log lines must be visible to the very next one.
+combat.setRoster(rosterModule)
 bus.subscribe((ev, live) => combat.ingestEvent(ev, live))
 // Item-knowledge prefetch (Task #53): when a LIVE loot event arrives, warm the
 // "what's this for" cache in the background (throttled by itemLookup's serialized queue

@@ -30,8 +30,10 @@ import {
   spellTitle
 } from './healRows'
 import { formatNum as fmt, formatHealRate } from '../../lib/formatRate'
+import { scopeHealing } from './meterScope'
 import type { Drill } from './dashboardData'
 import type { HealSourceView, HealSpellView, HealingView, MitigationView } from '@shared/combat'
+import type { MeterScope, RosterSnap } from '@shared/roster'
 import { Tooltip } from '../../lib/Tooltip'
 
 /**
@@ -202,14 +204,25 @@ function HealCrumb({ name, setDrill }: { name: string; setDrill: (d: Drill | nul
  */
 export function HealBody({
   healing,
+  scope,
+  roster,
   drill,
   setDrill
 }: {
   healing: HealingView | undefined
+  scope: MeterScope
+  roster: RosterSnap
   drill: Drill | null
   setDrill: (d: Drill | null) => void
 }): JSX.Element {
-  const panel = healPanel(healing, drill?.kind === 'entity' ? drill.entityId : null)
+  // SCOPE APPLIES TO HEALERS TOO, and it needed no engine change: `HealSourceKind` has carried
+  // an ally lane ('other' — any non-you, non-pet healer) since Task #59, so the group model only
+  // had to say which of those the roster names. You keeps you and your pets; Group keeps the
+  // healers on the roster; Everyone keeps the passing stranger who topped you up.
+  //
+  // Through the SHARED filter, in front of the SHARED builder — this surface does not reach into
+  // the model itself, for the same reason it does not re-fold it (healRows.test.mts).
+  const panel = healPanel(scopeHealing(healing, scope, roster), drill?.kind === 'entity' ? drill.entityId : null)
 
   if (panel.level === 2) {
     return (

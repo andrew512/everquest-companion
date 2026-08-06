@@ -215,10 +215,15 @@ export interface DpsSeries {
   /** smoothed rate (damage per second) per bucket. */
   you: Float64Array
   pet: Float64Array
+  /** your GROUP's contribution (docs/plans/group-model.md) — every `member` instant, summed.
+   *  Its own band rather than folded into `you` or `inc`: it is neither, and a curve that filed
+   *  a group-mate's damage as incoming would draw the fight upside down. */
+  group: Float64Array
   inc: Float64Array
-  /** peak smoothed OUTGOING (you+pet) rate across the whole fight. */
+  /** peak smoothed OUTGOING (you+pet+group) rate across the whole fight. */
   peakOut: number
   hasPet: boolean
+  hasGroup: boolean
   hasInc: boolean
   /** true when any damage at all landed in the window. */
   hasAny: boolean
@@ -245,8 +250,10 @@ export function buildDpsSeries(tl: TimelineView, live = false): DpsSeries {
   const n = Math.max(1, Math.ceil(durationMs / bucketMs))
   const rawYou = new Float64Array(n)
   const rawPet = new Float64Array(n)
+  const rawGroup = new Float64Array(n)
   const rawInc = new Float64Array(n)
   let hasPet = false
+  let hasGroup = false
   let hasInc = false
   let hasAny = false
   const scale = sampleScale(tl)
@@ -258,6 +265,12 @@ export function buildDpsSeries(tl: TimelineView, live = false): DpsSeries {
     else if (e.kind === 'pet') {
       rawPet[i] += e.amount
       hasPet = true
+    } else if (e.kind === 'member') {
+      // EXPLICIT, not an `else`. Before the group model the final branch was "everything that is
+      // not you or your pet is incoming", which is exactly the assumption a fourth source kind
+      // breaks: a group-mate's 300-damage nuke would have been drawn as damage taken.
+      rawGroup[i] += e.amount
+      hasGroup = true
     } else {
       rawInc[i] += e.amount
       hasInc = true
@@ -277,18 +290,21 @@ export function buildDpsSeries(tl: TimelineView, live = false): DpsSeries {
   }
   const you = smooth(rawYou)
   const pet = smooth(rawPet)
+  const group = smooth(rawGroup)
   const inc = smooth(rawInc)
   let peakOut = 0
-  for (let i = 0; i < n; i++) peakOut = Math.max(peakOut, you[i] + pet[i])
+  for (let i = 0; i < n; i++) peakOut = Math.max(peakOut, you[i] + pet[i] + group[i])
   return {
     bucketMs,
     smoothMs: w * bucketMs,
     n,
     you,
     pet,
+    group,
     inc,
     peakOut,
     hasPet,
+    hasGroup,
     hasInc,
     hasAny,
     durationMs,

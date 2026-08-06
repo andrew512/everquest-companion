@@ -37,6 +37,8 @@
     // what `perf.ts` (the HUD's slice of the bridge) is doing in this list.
     "src/preload/perf.ts",
     // …and `windows.ts` (the overlays + the celebration toast), for the same reason.
-    "src/preload/windows.ts"
+    "src/preload/windows.ts",
+    // …and `roster.ts` (the group roster's user edits), likewise.
+    "src/preload/roster.ts"
   ]
 }

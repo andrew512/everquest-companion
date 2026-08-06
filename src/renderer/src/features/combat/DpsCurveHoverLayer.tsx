@@ -83,8 +83,10 @@ function sameHit(a: Hit, b: Hit): boolean {
 function dpsRows(series: DpsSeries, t: number): TooltipRow[] {
   const p = dpsAt(series, t)
   const a = series.estimated ? '~' : ''
-  const rows: TooltipRow[] = [{ label: 'you + pet', value: `${a}${formatRate(p.out)}`, color: KIND_COLOR.you }]
+  const outLabel = series.hasGroup ? 'you + pet + group' : 'you + pet'
+  const rows: TooltipRow[] = [{ label: outLabel, value: `${a}${formatRate(p.out)}`, color: KIND_COLOR.you }]
   if (series.hasPet) rows.push({ label: 'pet', value: `${a}${formatRate(p.pet)}`, color: KIND_COLOR.pet })
+  if (series.hasGroup) rows.push({ label: 'group', value: `${a}${formatRate(p.group)}`, color: KIND_COLOR.member })
   if (series.hasInc) rows.push({ label: 'incoming', value: `${a}${formatRate(p.inc)}`, color: KIND_COLOR.enemy })
   return rows
 }

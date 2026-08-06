@@ -9,7 +9,8 @@ import { DpsChartCard, MobDamageCard, type Ringless } from './CombatDashboard'
 import { BreakdownPreviewCard } from './BreakdownCard'
 import { scopeOptions, type CombatScope, type Drill, type MeterMode, type ScopeOptions } from './dashboardData'
 import { defaultDrill, selfSource } from './petRows'
-import { useCombinePetRow } from './useCombatPrefs'
+import { useCombinePetRow, useMeterScope } from './useCombatPrefs'
+import { EMPTY_ROSTER, type MeterScope, type RosterSnap } from '@shared/roster'
 import type { CombatFocus } from './combatFocus'
 import type { CombatSnapshot, SegmentView, SourceView, TimelineView } from '@shared/combat'
 
@@ -78,6 +79,8 @@ function DashboardGrid({
   seg,
   tl,
   mode,
+  meterScope,
+  roster,
   drill,
   setDrill,
   live,
@@ -88,6 +91,8 @@ function DashboardGrid({
   seg: SegmentView
   tl: TimelineView | null
   mode: MeterMode
+  meterScope: MeterScope
+  roster: RosterSnap
   drill: Drill | null
   setDrill: (d: Drill | null) => void
   live: boolean
@@ -114,7 +119,7 @@ function DashboardGrid({
         '& > *': { minWidth: 0, minHeight: 0 }
       }}
     >
-      <SegmentBody seg={seg} tl={tl} mode={mode} drill={drill} setDrill={setDrill} />
+      <SegmentBody seg={seg} tl={tl} mode={mode} scope={meterScope} roster={roster} drill={drill} setDrill={setDrill} />
       <DpsChartCard tl={tl} live={live} ringless={ringless} />
       <BreakdownPreviewCard
         source={previewSource}
@@ -265,6 +270,11 @@ export default function CombatView({
   } = useCombat()
   const [mode, setMode] = useState<MeterMode>('out')
   const [view, setView] = useState<'dash' | 'timeline'>('dash')
+  // WHOSE damage (docs/plans/group-model.md §2) — persisted per surface, so the docked tab and a
+  // pinned overlay can answer different questions. `EMPTY_ROSTER` while the first snapshot is in
+  // flight means Group renders as Everyone for that instant, never as an empty meter.
+  const [meterScope, setMeterScope] = useMeterScope('combat')
+  const roster = snap?.roster ?? EMPTY_ROSTER
 
   // An inbound focus (deep link) picks the scope + selection, then is consumed. Keyed on the
   // NONCE, not the payload's identity: the same fight asked for twice must select twice.
@@ -327,6 +337,9 @@ export default function CombatView({
         noTimeline={noTimeline}
         mode={mode}
         setMode={setMode}
+        meterScope={meterScope}
+        setMeterScope={setMeterScope}
+        roster={roster}
       />
 
       <CombatBody
@@ -335,6 +348,8 @@ export default function CombatView({
         seg={seg}
         tl={tl}
         mode={mode}
+        meterScope={meterScope}
+        roster={roster}
         drill={drill}
         setDrill={setDrill}
         live={live}
@@ -413,6 +428,8 @@ function CombatBody({
   seg: SegmentView | null
   tl: TimelineView | null
   mode: MeterMode
+  meterScope: MeterScope
+  roster: RosterSnap
   drill: Drill | null
   setDrill: (d: Drill | null) => void
   live: boolean

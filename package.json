@@ -27,6 +27,7 @@
     "fixtures:buffs": "node --import tsx tests/extract-fixtures.mjs",
     "fixtures:combat": "node --import tsx tests/extract-combat-fixtures.mjs",
     "fixtures:combo": "node --import tsx tests/extract-combo-fixtures.mjs",
+    "fixtures:group": "node --import tsx tests/extract-group-fixtures.mjs",
     "fixtures:consider": "node --import tsx tests/extract-consider-fixtures.mjs",
     "fixtures:item-tiers": "node --import tsx tests/extract-item-tier-fixtures.mjs",
     "fixtures:leveling": "node --import tsx tests/extract-leveling-fixtures.mjs",

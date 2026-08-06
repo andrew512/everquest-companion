@@ -9,6 +9,8 @@ import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { HealBars } from './healBars'
 import { healTotalTitle } from '../features/combat/healRows'
+import { useMeterScope } from '../features/combat/useCombatPrefs'
+import { EMPTY_ROSTER, SCOPE_HINT, SCOPE_LABEL, chipLabel, nextScope } from '@shared/roster'
 import { ICON_ACCENT_GREEN } from './IconButton'
 import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
@@ -153,6 +155,10 @@ export default function HealMeter(): JSX.Element {
   const { locked, bgAlpha, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
   const now = Date.now()
+  // WHOSE healing (docs/plans/group-model.md §2), persisted per overlay kind like the damage
+  // pair. The healing model already had the ally lane, so this is purely a filter over healers.
+  const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
+  const roster = snap?.roster ?? EMPTY_ROSTER
 
   const { seg, live, headerName, durationSec, totalHps, totalTitle } = healView(snap, isFight)
   const selectRows = useMemo(
@@ -203,6 +209,11 @@ export default function HealMeter(): JSX.Element {
         tailTitle={totalTitle}
         iconAccentBg={ICON_ACCENT_GREEN}
         select={{ rows: selectRows, value: selection, onChange: selectSegment, accent: HEAL_GOLD }}
+        scope={{
+          label: chipLabel(meterScope, roster),
+          title: `${SCOPE_HINT[meterScope]}. Click for ${SCOPE_LABEL[nextScope(meterScope)]}.`,
+          onCycle: () => setMeterScope(nextScope(meterScope))
+        }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
 
@@ -212,7 +223,7 @@ export default function HealMeter(): JSX.Element {
           (P3) is measured on exactly this box. Every healer renders and the pane scrolls, and the
           pane is also where the text scale is applied; the chrome around it stays at 1. */}
       <OverlayContent textScale={textScale} testId="overlay-bars">
-        <HealBars seg={seg} drill={drill} setDrill={locked ? null : setDrill} live={live} />
+        <HealBars seg={seg} scope={meterScope} roster={roster} drill={drill} setDrill={locked ? null : setDrill} live={live} />
       </OverlayContent>
 
       {!locked && <HealFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}

@@ -15,6 +15,8 @@
 import type { JSX } from 'react'
 import type { OverlayDrill } from '@shared/types'
 import type { HealSourceView, HealSpellView, MitigationView, SegmentView } from '@shared/combat'
+import type { MeterScope, RosterSnap } from '@shared/roster'
+import { scopeHealing } from '../features/combat/meterScope'
 import { formatNum as fmt, formatHealRate } from '../lib/formatRate'
 import {
   ABSORB_NOTE,
@@ -150,17 +152,24 @@ function NothingToRank({ live, mit }: { live: boolean; mit: MitigationView | nul
  */
 export function HealBars({
   seg,
+  scope,
+  roster,
   drill,
   setDrill,
   live
 }: {
   seg: SegmentView | undefined
+  scope: MeterScope
+  roster: RosterSnap
   drill: Drill | null
   setDrill: ((d: Drill | null) => void) | null
   live: boolean
 }): JSX.Element {
   // EVERY healer, ranked — no row budget (owner feedback 2026-08-05); the content pane scrolls.
-  const panel = healPanel(seg?.healing, drill?.entityId ?? null)
+  // Scoped first, through the SAME filter the Combat tab's Healing dimension uses: You keeps you
+  // and your pets, Group keeps the healers the roster names, Everyone keeps them all. One filter
+  // and one builder, so the pinned overlay and the docked tab can never rank a fight differently.
+  const panel = healPanel(scopeHealing(seg?.healing, scope, roster), drill?.entityId ?? null)
 
   // Level 2: the healer's spells.
   if (panel.level === 2) {

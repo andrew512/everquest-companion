@@ -28,6 +28,8 @@ import { Tooltip } from '../../lib/Tooltip'
 
 const OUT_COLOR = '#d9b25f'
 const PET_COLOR = '#6fb3d2'
+/** Matches KIND_COLOR.member (combatShared.tsx) — the group-mate green. */
+const GROUP_COLOR = '#7fbf8f'
 const INC_COLOR = '#cf6679'
 
 /**
@@ -119,6 +121,19 @@ function DpsCurve({
             vectorEffect="non-scaling-stroke"
           />
         )}
+        {/* Your group's own contribution, under the same outgoing line — drawn like the pet's
+            for the same reason: the headline curve is the sum, and this says how much of it was
+            somebody else's. */}
+        {chart.groupLine && (
+          <polyline
+            points={chart.groupLine}
+            fill="none"
+            stroke={GROUP_COLOR}
+            strokeWidth={1.2}
+            opacity={0.85}
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
         <polyline
           points={chart.outLine}
           fill="none"
@@ -205,8 +220,11 @@ function ChartLegend({
       flexWrap="wrap"
       useFlexGap
     >
-      <Legend color={OUT_COLOR} label="you + pet" />
+      {/* The headline curve's label names exactly what it sums, so a grouped fight's line is
+          never read as "yours". */}
+      <Legend color={OUT_COLOR} label={series.hasGroup ? 'you + pet + group' : 'you + pet'} />
       {series.hasPet && <Legend color={PET_COLOR} label="pet" />}
+      {series.hasGroup && <Legend color={GROUP_COLOR} label="group" />}
       {series.hasInc && <Legend color={INC_COLOR} label="incoming" />}
       {/* One legend entry per marker KIND actually present — an always-on legend for four
           kinds would spend the strip explaining ticks the fight never had. */}

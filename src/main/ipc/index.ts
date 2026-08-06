@@ -23,6 +23,7 @@ import { registerMapsIpc } from './maps'
 import { registerPerfIpc } from './perf'
 import { registerPlannerIpc } from './planner'
 import { registerPresenceIpc } from './presence'
+import { registerRosterIpc } from './roster'
 import { registerShareIpc } from './share'
 import { registerSoundsIpc } from './sounds'
 import { registerSpeechIpc } from './speech'
@@ -37,6 +38,7 @@ export function registerIpc(): void {
   registerCharacterIpc()
   registerWorldIpc()
   registerComboIpc()
+  registerRosterIpc()
   registerAlertsIpc()
   registerShareIpc()
   registerSoundsIpc()

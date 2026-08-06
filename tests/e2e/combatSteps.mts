@@ -20,12 +20,14 @@ import type { Page } from 'playwright-core'
 import {
   check,
   closePicker,
+  countOf,
   listedValues,
   note,
   openPicker,
   sleep,
   snapshot
 } from './appHarness.mjs'
+import { meterRows } from './drill.mjs'
 
 const TOGGLE = '[data-testid="direction-toggle"]'
 
@@ -154,4 +156,86 @@ export async function stepFrozenList(page: Page): Promise<void> {
     )
   }
   await closePicker(page)
+}
+
+/**
+ * 6b. THE METER SCOPE — You / Group / Everyone (docs/plans/group-model.md §2), a different axis
+ * from the Fight|Overall toggle: that one says WHICH segment, this one says WHOSE damage in it.
+ *
+ * THE ROSTER STATE IS NOT ASSERTED, because it belongs to whatever the live log happens to
+ * contain: a log with group lines in it leaves `seen: true`, one without leaves `seen: false`,
+ * and both are correct. What IS asserted is that the chip and the popover AGREE about which of
+ * the two it is — the pairing is the identity, and it is the one that can actually break. They
+ * are separate sentences derived from one flag, and a Group scope silently narrowing while the
+ * popover says it is showing everyone is precisely the lie this surface exists to prevent.
+ */
+export async function stepMeterScope(page: Page): Promise<void> {
+  const chip = '[data-testid="meter-scope-chip"]'
+  check('the meter scope chip is on the combat toolbar', (await countOf(page, chip)) === 1)
+
+  const label = async (): Promise<string> => (await page.textContent(chip))?.trim() ?? ''
+
+  // The default is Group either way — any fallback shows up in the chip's own words, never as a
+  // different scope silently selected for you.
+  const first = await label()
+  const noRoster = first === 'Group (no roster yet)'
+  check('it defaults to Group', first === 'Group' || noRoster, first)
+  const baseline = await meterRows(page)
+
+  // One click per scope, all the way round. The cycle is the whole control on this surface.
+  await page.click(chip)
+  await sleep(300)
+  check('clicking cycles Group to Everyone', (await label()) === 'Everyone', await label())
+  const everyone = await meterRows(page)
+  check('Everyone shows at least what Group did', everyone >= baseline, `${everyone} vs ${baseline}`)
+
+  await page.click(chip)
+  await sleep(300)
+  check('clicking again cycles Everyone to You', (await label()) === 'You', await label())
+  // NO SCOPE EVER HIDES YOU OR YOUR PETS. The live log is the owner's own, so the rows here are
+  // his and his pets' — they must survive every scope, and only a member row may ever go.
+  const you = await meterRows(page)
+  check('You scope keeps your own rows — only a member is ever filtered', you >= 1 && you <= everyone, `${you} of ${everyone}`)
+
+  // PERSISTED PER SURFACE: the choice survives leaving the tab and coming back, because it is a
+  // stored preference and not component state.
+  await page.click('[data-testid="nav-overview"]')
+  await sleep(400)
+  await page.click('[data-testid="nav-combat"]')
+  await sleep(1200)
+  check('the scope is remembered across a tab round trip', (await label()) === 'You', await label())
+
+  // The roster popover (G3) — the answer to "who does the app think is with me, and why".
+  await page.click('[data-testid="roster-open"]')
+  await sleep(400)
+  check('the roster popover opens from the chip', (await countOf(page, '[data-testid="roster-popover"]')) === 1)
+  const popover = (await page.textContent('[data-testid="roster-popover"]'))?.toLowerCase() ?? ''
+  check('…and offers the add box for the join line the log never carried', popover.includes('add'))
+  if (popover.includes('nobody on the roster') || popover.includes('no group signal')) {
+    // THE PAIRING. An empty roster says which KIND of empty it is, and the sentence has to match
+    // the chip: `seen: false` falls back to Everyone (law 1), `seen: true` means the group ended
+    // and Group really is narrowing to you and your pets.
+    check(
+      'the empty roster and the chip tell the same story',
+      noRoster ? popover.includes('no group signal') : popover.includes('nobody on the roster'),
+      `chip=${first} · popover=${popover.slice(0, 70)}`
+    )
+    check(
+      '…and only the law-1 fallback claims to be showing everyone',
+      noRoster ? popover.includes('showing everyone') : !popover.includes('showing everyone'),
+      popover.slice(0, 90)
+    )
+  } else {
+    note('the live log left real members on the roster — the empty-state wording was not exercised')
+  }
+
+  // Close the popover and leave the surface on its default, so nothing downstream inherits a
+  // narrowed meter. Bounded: three clicks is a full cycle, whatever it is on now.
+  await page.keyboard.press('Escape')
+  await sleep(200)
+  for (let i = 0; i < 3 && !(await label()).startsWith('Group'); i++) {
+    await page.click(chip)
+    await sleep(250)
+  }
+  check('the meter is left on its Group default', (await label()).startsWith('Group'), await label())
 }

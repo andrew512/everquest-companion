@@ -65,6 +65,7 @@ import { buildSelected, buildTimeline } from './segmentViews'
 import { searchFights } from './fightSearch'
 import { ACTIVE_MS, SLOW_SAMPLE_CAP } from './encounter'
 import type { LogEvent } from '../../shared/logEvents'
+import type { RosterSnap, RosterView } from '../../shared/roster'
 import type {
   BladeCoatState,
   CombatSnapshot,
@@ -182,6 +183,17 @@ export class CombatEngine {
     this.st.setPlayerName(name)
   }
 
+  /**
+   * Install the GROUP ROSTER pull (docs/plans/group-model.md). pipeline.ts wires this to the
+   * roster module before the engine subscribes to the bus, so the roster is always advanced for
+   * the line the engine is folding. Absent — every test, and any future embedding — the engine
+   * behaves exactly as it did before the group model existed.
+   */
+  setRoster(access: { view: () => RosterView; snap: () => RosterSnap }): void {
+    this.st.rosterProvider = () => access.view()
+    this.st.rosterSnapProvider = () => access.snap()
+  }
+
   reset(): void {
     this.st.reset()
   }
@@ -221,7 +233,14 @@ export class CombatEngine {
       currentTarget: this.currentTarget(),
       poison: { coat: this.coatState(), slow: this.slowRollup() },
       zoneSessions: zoneSessionSummaries(st),
-      hydrating: st.hydrating
+      hydrating: st.hydrating,
+      // THE GROUP ROSTER rides the combat snapshot rather than the module transport, even
+      // though the roster IS a module (docs/plans/group-model.md §3). Two surfaces filter by it
+      // — the Combat tab and every meter overlay — and the overlay windows already poll this
+      // snapshot; teaching the module transport to reach them as well would be a second path to
+      // the same five names, and two paths can disagree. The scope chip's label and the rows it
+      // filters are then guaranteed to describe one roster, read in one call.
+      roster: st.rosterSnap()
     }
   }
 

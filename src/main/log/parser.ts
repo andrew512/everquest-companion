@@ -46,6 +46,7 @@ import {
 } from './parseCasts'
 import { classifyItemActivate, classifySelfWho, classifySkillUp, classifySpecialAttack } from './parseWho'
 import { classifyCamp, classifySessionStart } from './parseSession'
+import { classifyGroup } from './parseGroup'
 import {
   classifyAa,
   classifyConsider,
@@ -116,6 +117,12 @@ const CLASSIFIERS: readonly Classifier[] = [
   // position is for legibility, not disambiguation.
   classifySessionStart,
   classifyCamp,
+  // WHO YOU ARE WITH (docs/plans/group-model.md §1) — beside the session frame for the same
+  // reason those two are beside the zone rule: they are the frame around the world model, one
+  // level up from its contents. Every shape it claims was MEASURED to be `{kind:'unknown'}`
+  // before this entry existed (parseGroup.ts lists the ten with their counts), so like the
+  // session family the position is for legibility, not disambiguation.
+  classifyGroup,
   classifyLoot,
   classifyItemMerge,
   classifyTurnIn,

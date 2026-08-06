@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import { windowsApi } from './windows'
+import { rosterApi } from './roster'
 import type {
   AlertDef,
   AlertPrefs,
@@ -531,6 +532,9 @@ const api = {
   // Task #54) and the celebration toast (docs/plans/celebration-toasts.md). Written next door
   // for file mass only — see preload/windows.ts, the same split perf.ts uses.
   ...windowsApi,
+  // The group roster's WRITES (docs/plans/group-model.md §3); the read rides the combat
+  // snapshot. See roster.ts for why only one direction needs a channel.
+  ...rosterApi,
 
   // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
   // Both are main-owned store blobs, so Preferences has no other door. The setters take a

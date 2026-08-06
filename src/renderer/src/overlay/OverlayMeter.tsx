@@ -12,6 +12,8 @@ import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
+import { useMeterScope } from '../features/combat/useCombatPrefs'
+import { EMPTY_ROSTER, SCOPE_HINT, SCOPE_LABEL, chipLabel, nextScope } from '@shared/roster'
 
 // Palette (matches the app's combat colors; the overlay has no MUI theme).
 const GOLD = '#d9b25f'
@@ -146,6 +148,12 @@ export default function OverlayMeter(): JSX.Element {
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
   const { locked, bgAlpha, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
+  // WHOSE damage (docs/plans/group-model.md §2). Persisted PER OVERLAY KIND — a pinned fight
+  // meter and the docked Combat tab are often asked different questions, and one shared key
+  // would make them fight over one value. The roster itself is the snapshot's, so this window
+  // and the tab always filter by the same five names.
+  const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
+  const roster = snap?.roster ?? EMPTY_ROSTER
 
   const { seg, live, headerName, durationSec, totalDps, rows, headIsLast } = meterView(
     snap,
@@ -203,6 +211,11 @@ export default function OverlayMeter(): JSX.Element {
         titleColor={GOLD}
         tail={`${fmtDur(durationSec)} · ${formatRate(totalDps)}`}
         select={{ rows, value: selection, onChange: selectSegment, accent: GOLD }}
+        scope={{
+          label: chipLabel(meterScope, roster),
+          title: `${SCOPE_HINT[meterScope]}. Click for ${SCOPE_LABEL[nextScope(meterScope)]}.`,
+          onCycle: () => setMeterScope(nextScope(meterScope))
+        }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
 
@@ -215,7 +228,7 @@ export default function OverlayMeter(): JSX.Element {
       {/* EVERY source, not a top-5: the pane scrolls (owner feedback 2026-08-05), and it is also
           the one place the text scale is applied — chrome above and below stays at 1. */}
       <OverlayContent textScale={textScale} testId="overlay-bars">
-        <MeterBars seg={seg} drill={drill} setDrill={locked ? null : setDrill} live={live} />
+        <MeterBars seg={seg} scope={meterScope} roster={roster} drill={drill} setDrill={locked ? null : setDrill} live={live} />
       </OverlayContent>
 
       {!locked && <MeterFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
