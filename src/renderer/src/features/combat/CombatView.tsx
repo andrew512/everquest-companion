@@ -6,12 +6,12 @@ import { CombatHeader } from './CombatHeader'
 import { ProcessingLog } from './ProcessingLog'
 import { SegmentBody } from './SegmentPanel'
 import { DpsChartCard, MobDamageCard, type Ringless } from './CombatDashboard'
-import { BreakdownPreviewCard } from './BreakdownCard'
+import { ProcsCard } from './ProcsPanel'
 import { scopeOptions, type CombatScope, type Drill, type MeterMode, type ScopeOptions } from './dashboardData'
 import { useMeterScope } from './useCombatPrefs'
 import { EMPTY_ROSTER, type MeterScope, type RosterSnap } from '@shared/roster'
 import type { CombatFocus } from './combatFocus'
-import type { CombatSnapshot, SegmentView, SourceView, TimelineView } from '@shared/combat'
+import type { CombatSnapshot, SegmentView, TimelineView } from '@shared/combat'
 
 /**
  * Stabilise the timeline's IDENTITY across snapshot ticks. Every poll rebuilds the payload,
@@ -64,8 +64,18 @@ function HydratingPanel(): React.JSX.Element {
 }
 
 /**
- * Dashboard: FOUR EQUAL panels in a 2x2 grid — source meter, DPS over time, breakdown preview,
- * damage by mob. `minmax(0, 1fr)` on both axes is the load-bearing bit: it lets every track
+ * Dashboard: FOUR EQUAL panels in a 2x2 grid — source meter, DPS over time, PROCS, damage by mob.
+ *
+ * THE ARRANGEMENT (JOS-37, owner ask). Cell 3 used to be the dedicated "You" breakdown preview:
+ * a category bar plus your top skills, which is exactly what drilling your own row shows. It
+ * retired. The cell went to PROCS — previously hidden behind a tab pair inside that very card,
+ * where the owner could not find it, and the one dashboard subject that belongs to the SELECTION
+ * rather than to a source. Multi-attack (the old Rounds block) deliberately did NOT take a cell:
+ * it is a statement about one SOURCE's swings, so it stays in the drill beside that source's
+ * skill list — a top-level "your multi-attack" panel would have re-created the You panel this
+ * ticket just deleted. Four cells, four subjects: WHO, WHEN, WHAT FIRED, WHOM.
+ *
+ * `minmax(0, 1fr)` on both axes is the load-bearing bit: it lets every track
  * shrink below its content, so no panel can dictate the grid's size (the old flex rail gave the
  * meter a 1.5x column and squeezed the other three into a strip, and an intrinsic-size track is
  * exactly how a growing panel used to push the page taller). Each cell is a `fill` panel: 100%
@@ -83,9 +93,7 @@ function DashboardGrid({
   drill,
   setDrill,
   live,
-  ringless,
-  previewSource,
-  snap
+  ringless
 }: {
   seg: SegmentView
   tl: TimelineView | null
@@ -96,8 +104,6 @@ function DashboardGrid({
   setDrill: (d: Drill | null) => void
   live: boolean
   ringless: Ringless
-  previewSource: SourceView | null
-  snap: CombatSnapshot | null
 }): React.JSX.Element {
   return (
     <Box
@@ -120,12 +126,9 @@ function DashboardGrid({
     >
       <SegmentBody seg={seg} tl={tl} mode={mode} scope={meterScope} roster={roster} drill={drill} setDrill={setDrill} />
       <DpsChartCard tl={tl} live={live} ringless={ringless} />
-      <BreakdownPreviewCard
-        source={previewSource}
-        seg={seg}
-        slow={snap?.poison?.slow}
-        onOpen={() => previewSource && setDrill({ kind: 'entity', entityId: previewSource.id })}
-      />
+      {/* PROCS: the selection's own ledger, three columns (name · PPM · count). No subject of its
+          own to keep in sync — it reads the same segment the meter ranks. */}
+      <ProcsCard seg={seg} />
       {/* The mob card is DAMAGE by mob, and its level-2 body renders inside the meter panel — so
           in the Healing dimension (where that panel is listing healers) its rows are read-only
           rather than a click that opens nothing. It still shows its numbers: "what did I kill"
@@ -277,7 +280,6 @@ export default function CombatView({
   const ringless = ringlessOf(tl, seg)
   const live = isLiveSelection(opts, selection)
   const { drill, setDrill } = useDashboardDrill({ mode, selection, view })
-  const previewSource = previewSourceOf(seg, mode, drill)
 
   // TIMELINE AVAILABILITY. The timeline is drawn from an encounter's event ring, and a ring only
   // exists for the live + most recent fights (older ones drop theirs at finalize; a zone
@@ -332,8 +334,6 @@ export default function CombatView({
         setDrill={setDrill}
         live={live}
         ringless={ringless}
-        previewSource={previewSource}
-        snap={snap}
         scope={scope}
       />
 
@@ -381,17 +381,6 @@ function isLiveSelection(opts: ScopeOptions, selection: string): boolean {
   return !!opts.head && selection === opts.head.value && opts.head.live
 }
 
-/** The breakdown preview follows the drill when a source is drilled, else the meter's top row. */
-function previewSourceOf(seg: SegmentView | null, mode: MeterMode, drill: Drill | null): SourceView | null {
-  // The breakdown preview is a DAMAGE card (category composition, proc rates). In the Healing
-  // dimension it has no subject at all, and borrowing the top damage source would park a number
-  // beside the heal meter that has nothing to do with what the panel is listing.
-  if (mode === 'heal') return null
-  const rows = mode === 'out' ? seg?.entities ?? [] : seg?.incoming ?? []
-  const drilled = drill?.kind === 'entity' ? rows.find((r) => r.id === drill.entityId) : undefined
-  return drilled ?? rows[0] ?? null
-}
-
 /** The one body slot: loading, the timeline, the 2x2 dashboard, or the honest empty state. */
 function CombatBody({
   hydrating,
@@ -412,8 +401,6 @@ function CombatBody({
   setDrill: (d: Drill | null) => void
   live: boolean
   ringless: Ringless
-  previewSource: SourceView | null
-  snap: CombatSnapshot | null
   scope: 'fight' | 'overall'
 }): React.JSX.Element {
   if (hydrating) return <HydratingPanel />

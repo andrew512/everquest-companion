@@ -18,7 +18,8 @@
  *
  * WHAT IT ASSERTS: hydration completes (replay → live tail), then, against whatever the real
  * log contains right now: the dashboard is present AND HAS HEIGHT (the regression), the
- * source meter has rows, the DPS-over-time and Damage-by-mob cards exist, the Fight/Overall
+ * source meter has rows, the DPS-over-time, Procs and Damage-by-mob cards exist (JOS-37: the
+ * dedicated You breakdown preview retired and Procs took its cell), the Fight/Overall
  * SCOPE filters the selector to exactly one scope's rows (Task #60 — a fight meter must never
  * wander into the zone aggregate), the header holds its two-rank shape (subject line, then
  * lens line) with the Timeline view offered only when the selection actually has an event
@@ -65,7 +66,7 @@ import {
   stepHealingDimension,
   stepMeterDrill,
   stepMeterScope,
-  stepRoundsPanel
+  stepMultiAttackPanel
 } from './combatSteps.mjs'
 
 // ── the run, one step per numbered section ─────────────────────────────────────────────
@@ -138,8 +139,21 @@ async function stepDashboardShape(page: Page, snap: Snap): Promise<DashboardShap
   check('the "DPS over time" card is present', text.includes('dps over time'))
   check('the "Damage by mob" card is present', text.includes('damage by mob'))
 
-  // 4b. THE LAYOUT: four EQUAL panels in a 2x2 grid. The rail layout this replaced gave the
-  //     source meter a 1.5x-wide column and squeezed the other three into a narrow strip.
+  // 4a. THE JOS-37 ARRANGEMENT. Cell 3 was the dedicated "You" breakdown preview — a category
+  //     bar plus your top skills, i.e. exactly what drilling your own row shows — with the proc
+  //     ledger hidden behind a tab pair inside it. The panel retired and PROCS took the cell, so
+  //     the card is now a first-class panel with no tab to find it behind. Assert both halves:
+  //     the new card is there, and the retired one (title + its tab pair) is nowhere.
+  check('the "Procs" card is present — a panel now, not a tab', text.includes('procs'))
+  check(
+    'the dedicated You breakdown panel is gone (its drill is the way to your breakdown)',
+    !text.includes('breakdown ·') && (await countOf(page, '[data-testid="procs-tab-breakdown"]')) === 0
+  )
+  check('…and so is the proc strip that used to advertise the hidden tab', (await countOf(page, '[data-testid="proc-strip"]')) === 0)
+
+  // 4b. THE LAYOUT: four EQUAL panels in a 2x2 grid — source meter, DPS over time, procs,
+  //     damage by mob. The rail layout this replaced gave the source meter a 1.5x-wide column
+  //     and squeezed the other three into a narrow strip.
   await checkGrid(page, 'quiet')
 
   // 4c. THE HEADER: one compact bar of two RANKS (subject line, then lens line), not a
@@ -531,7 +545,7 @@ async function main(): Promise<void> {
     snap = await stepCombatLogAndRegression(page, snap)
     await stepHealingDimension(page)
     await stepMeterDrill(page)
-    await stepRoundsPanel(page)
+    await stepMultiAttackPanel(page)
     await stepPickAFight(page, snap)
     await stepFrozenList(page)
     await stepSearch(page, snap)

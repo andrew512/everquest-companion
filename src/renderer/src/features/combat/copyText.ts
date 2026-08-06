@@ -20,9 +20,9 @@
 //   level 2  formatEntityText   — one source's flat skill list (pets nested, per the pref)
 //   level 2  formatTargetText   — everything you+pet landed on one mob
 //   panel    formatMobsText     — the Damage-by-mob card's ranked rows
-//   panel    formatProcsText    — the Procs tab. Lives in procsCopy.ts (it outgrew this file
-//                                 when the proc-analytics sections landed) and is re-exported
-//                                 below, so every existing importer is unaffected.
+//   panel    formatProcsText    — the Procs cell's ranked name/PPM/count list. Lives in
+//                                 procsCopy.ts and is re-exported below, so every existing
+//                                 importer is unaffected.
 // The layout primitives every block shares live in copyTable.ts.
 
 import type { SegmentView, SourceView } from '@shared/combat'
@@ -36,7 +36,7 @@ import { formatNum, formatRate } from '../../lib/formatRate'
 // re-exports `fmtDur` from HERE for every JSX surface, and the copy goldens import MAX_WIDTH.
 export { MAX_WIDTH, fmtDur } from './copyTable'
 // The Procs half, re-exported from its own module (see the header).
-export { fmtElapsed, formatProcsText, slowRollupText } from './procsCopy'
+export { fmtElapsed, formatProcsText } from './procsCopy'
 
 /**
  * Label for the aggregated slay row + its inline tag. Spelled literally for the same reason

@@ -323,7 +323,7 @@ function InlineStats({ children }: { children: ReactNode }): React.JSX.Element {
  * skill the proc ledger actually counts.
  *
  * The row is annotated because the LEDGER has a lane for it (the join runs in main against the
- * poison roster and the cast-less detector), so this can never appear on a row the Procs tab
+ * poison roster and the cast-less detector), so this can never appear on a row the Procs panel
  * would not list, and the rate is the lane's own — one number, two surfaces. The hover carries
  * the basis (count over active seconds) and, for an inferred lane, says that it is inferred.
  */

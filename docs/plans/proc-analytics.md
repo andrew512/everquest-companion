@@ -1,5 +1,14 @@
 # Proc analytics + counterfactual DPS attribution — design
 
+> **§7 (the renderer surface) is SUPERSEDED by JOS-37, 2026-08-06.** The owner's ruling was
+> that procs reduce to a glanceable list — name, PPM, count, count-desc, for the current
+> segment — with deeper attribution left to the damage breakdown, where a drilled skill row
+> still wears its `proc · N ppm` tag. The rate/contribution/active-state/effects sections and
+> their shapers were deleted with the tab that held them; `ProcAnalytics.tsx` no longer exists.
+> **The ENGINE half of this document stands unchanged** — procDetect / procRouting / procViews /
+> procWindows still fold every number described below, and `ProcsView` still carries them on the
+> wire. What retired is the surface, not the model.
+
 Task: **procs per minute** (fight AND overall), across weapon / poison / buff-granted
 procs; **rate modulation over time** (does some tracked state change the proc rate?); and
 **counterfactual DPS attribution** ("how much DPS does X add") for Slay Undead, poisons,

@@ -161,7 +161,7 @@ interface PanelRect {
   clipped: boolean
 }
 
-/** Every dashboard panel's box, in DOM order (meter, DPS, breakdown, mobs). */
+/** Every dashboard panel's box, in DOM order (meter, DPS, procs, mobs). */
 function panelRects(page: Page): Promise<PanelRect[]> {
   return page.evaluate(() =>
     [...document.querySelectorAll('[data-testid="dash-panel"]')].map((el) => {
@@ -351,9 +351,11 @@ export async function checkHeader(page: Page, tag: string, expectDirection: bool
 }
 
 /**
- * The 2x2 GRID assertions. The four dashboard panels (source meter, DPS over time, breakdown
- * preview, damage by mob) must be four EQUAL cells — equal width AND equal height — none
- * collapsed, none clipping its content, and the grid must never make the page scroll.
+ * The 2x2 GRID assertions. The four dashboard panels (source meter, DPS over time, PROCS,
+ * damage by mob — JOS-37 swapped the dedicated You breakdown preview out of the third cell for
+ * the proc list that used to hide behind a tab inside it) must be four EQUAL cells — equal width
+ * AND equal height — none collapsed, none clipping its content, and the grid must never make the
+ * page scroll.
  * Run more than once per session (quiet log, busy log, explicit fight pick) because the whole
  * point is that panel CONTENT growth can't move the layout.
  */

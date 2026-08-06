@@ -3,12 +3,13 @@
 //
 // The bug this feature fixes is a DISCOVERABILITY bug, not an arithmetic one: proc data shipped
 // behind the breakdown card's second tab and nothing on screen ever said so — the owner, who
-// wrote the engine half, could not find it. So the assertions here are about two things:
+// wrote the engine half, could not find it. JOS-37 closed that structurally (the tab pair is
+// gone; procs own a dashboard cell), and the assertions here survived it unchanged in spirit:
 //
-//   1. THE NUMBERS ARE READ, NEVER RECOMPUTED. The tab badge and the summary strip must equal
-//      the totals the panel behind them renders, so `procSummary` is pinned against
-//      `overallParts` — the panel's own headline shaping — rather than against a hand-written
-//      arithmetic of its own. A second rollup is the failure mode; equality is the test.
+//   1. THE NUMBERS ARE READ, NEVER RECOMPUTED. The card's header readout must equal the totals
+//      of the list beneath it, so `procSummary` is pinned against `procListRows` — the panel's
+//      own rows — rather than against a hand-written arithmetic of its own. A second rollup is
+//      the failure mode; equality is the test.
 //   2. THE IS-A-PROC JOIN GOES BOTH WAYS. A poison Strike and a cast-less spell effect annotate;
 //      an ordinary melee lane and a spell you actually CAST do not. The join is built in main
 //      (procViews.ts) from the poison roster and procDetect's inference, so the fixture half
@@ -40,9 +41,9 @@ import { CombatEngine } from '../src/main/combat/engine'
 import { formatPpm } from '../src/renderer/src/lib/formatRate'
 import {
   hasProcActivity,
-  overallParts,
   procAnnotationFor,
   procCount,
+  procListRows,
   procSummary,
   procTagIndex
 } from '../src/renderer/src/features/combat/procRows'
@@ -83,37 +84,32 @@ function tag(t: Omit<ProcSkillTag, 'activeSec'> & { activeSec?: number }): ProcS
   return { ...t, activeSec: t.activeSec ?? 200 }
 }
 
-test('zero procs: a plain label and no strip — an empty selection grows no furniture', () => {
+test('zero procs: no header readout at all — an empty selection grows no furniture', () => {
   const s = procSummary(view())
   assert.equal(s.count, 0)
-  assert.equal(s.tab, 'Procs')
   assert.equal(hasProcActivity(view()), false)
   assert.equal(s.ppm, undefined)
-  assert.equal(s.slow, undefined)
+  assert.deepEqual(procListRows(view()), [], 'and the card draws its quiet note, not a table')
 })
 
-test('the badge and the strip: one number, two spellings, plus the slow only when it landed', () => {
+test('the header readout: one count and one rate, in the app’s own spellings', () => {
   const overall = rate(12, 400, { ppmActive: 3.1, ppmWall: 2.8, per100Swings: 3 })
-  const s = procSummary(view({ overall, slowLandMs: 4200 }))
+  const s = procSummary(view({ overall }))
   assert.equal(s.count, 12)
   // The rate is the app's ONE proc-rate spelling (formatRate.formatPpm), not a second one.
   assert.equal(s.ppm, formatPpm(3.1))
-  assert.equal(s.tab, `Procs · 12 (${formatPpm(3.1)})`)
-  assert.equal(s.strip, `Procs: 12 landed · ${formatPpm(3.1)} · slow landed +4.2s`)
+  assert.equal(s.header, `12 procs · ${formatPpm(3.1)}`)
 
-  // No landing ⇒ the fragment is ABSENT, never "slow: none". "It did not land" and "no slow
-  // poison was on" are different facts and the strip states neither.
-  const noSlow = procSummary(view({ overall }))
-  assert.equal(noSlow.slow, undefined)
-  assert.equal(noSlow.strip, `Procs: 12 landed · ${formatPpm(3.1)}`)
+  // The SLOW is not restated here. "It landed at +4.2s" is the segment header's line, and a
+  // second copy of it in the proc list is exactly the clutter JOS-37 removed.
+  assert.equal(procSummary(view({ overall, slowLandMs: 4200 })).header, `12 procs · ${formatPpm(3.1)}`)
 })
 
-test('a rate the engine withheld is ABSENT from the badge, never zero (law 5)', () => {
+test('a rate the engine withheld is ABSENT from the header, never zero (law 5)', () => {
   // Below MIN_ACTIVE_SEC the engine sends no `ppmActive` at all. The COUNT is still exact, so
-  // the badge shows it — a count with no rate, which is the honest shape.
+  // the header shows it — a count with no rate, which is the honest shape.
   const s = procSummary(view({ overall: rate(3, 12) }))
-  assert.equal(s.tab, 'Procs · 3')
-  assert.equal(s.strip, 'Procs: 3 landed')
+  assert.equal(s.header, '3 procs')
   assert.equal(s.ppm, undefined)
 })
 
@@ -228,7 +224,7 @@ function annotatedRows(seg: SegmentView): Map<string, string> {
 
 const sortedKeys = (m: Map<string, string>): string[] => [...m.keys()].sort()
 
-test('W36: the badge, the strip and the drill rows all light from the same ledger', { skip: missing(W35, W36) }, () => {
+test('W36: the header, the list and the drill rows all light from the same ledger', { skip: missing(W35, W36) }, () => {
   const { eng, lastTs } = replay([...W35, ...W36])
   const zone = segment(eng, lastTs, 'zone')
   const s = procSummary(zone.procs)
@@ -236,9 +232,12 @@ test('W36: the badge, the strip and the drill rows all light from the same ledge
   // Hand-read: 23 poison Strike emotes + 27 cast-less Smiting Strike = 50 procs in the window.
   assert.equal(zone.procs.strikeCount, 23)
   assert.equal(s.count, 50)
-  assert.match(s.tab, /^Procs · 50 \(/)
-  assert.match(s.strip, /^Procs: 50 landed · /)
+  assert.match(s.header, /^50 procs · /)
   assert.equal(hasProcActivity(zone.procs), true)
+  // The list is ranked by count, and its counts add up to the header's number.
+  const list = procListRows(zone.procs)
+  assert.equal(list.reduce((n, r) => n + r.count, 0), 50)
+  for (let i = 1; i < list.length; i++) assert.ok(list[i - 1].count >= list[i].count, 'count desc')
 
   // THE DRILL. Three lanes carry damage — and THREE MORE carry only landing emotes (2026-08-04,
   // the owner's report). Befuddling, Stunning and Weakening Strike deal nothing at all; before
@@ -262,23 +261,23 @@ test('W36: the badge, the strip and the drill rows all light from the same ledge
   for (const text of rows.values()) assert.match(text, /^proc · \d/)
 })
 
-test('W36: a fight that slowed carries the landing in its strip', { skip: missing(W35, W36) }, () => {
+test('the slow stays the ENGINE’s fact, and no longer the proc list’s', { skip: missing(W35, W36) }, () => {
   const { eng, lastTs } = replay([...W35, ...W36])
   // e4 is the pull whose first Weakening Strike landed 31s in (hand-read off the fixture clock).
+  // The engine still states it — the segment header renders it — and JOS-37 only stopped the
+  // proc list from restating it a second time.
   const e4 = segment(eng, lastTs, 'e4')
   assert.equal(e4.procs.slowLandMs, 31_000)
-  const s = procSummary(e4.procs)
-  assert.equal(s.slow, 'slow landed +31.0s')
-  assert.match(s.strip, / · slow landed \+31\.0s$/)
+  // The Strike that carried it is still IN the list, as a counted lane like any other.
+  const weakening = procListRows(e4.procs).find((r) => r.name.includes('Weakening'))
+  assert.ok(weakening, 'the slow lane is a proc row like any other')
+  assert.ok(weakening.count >= 1)
 
-  // A pull with no landing says nothing about the slow at all (e3 opened slow-capable and never
-  // landed one — "not landed" is the PANEL's headline, and the strip declines to restate it).
   const e3 = segment(eng, lastTs, 'e3')
-  assert.equal(e3.procs.slowLandMs, undefined)
-  assert.equal(procSummary(e3.procs).slow, undefined)
+  assert.equal(e3.procs.slowLandMs, undefined, 'e3 opened slow-capable and never landed one')
 })
 
-test('badge and strip EQUAL the panel totals — read, never recomputed', { skip: missing(W35, W36, W41) }, () => {
+test('the header EQUALS the list’s own totals — read, never recomputed', { skip: missing(W35, W36, W41) }, () => {
   for (const [prime, win] of [
     [W35, W36],
     [W35, W41]
@@ -288,20 +287,18 @@ test('badge and strip EQUAL the panel totals — read, never recomputed', { skip
       const seg = segment(eng, lastTs, id)
       const p = seg.procs
       const s = procSummary(p)
-      const lanes = p.lanes ?? []
+      const rows = procListRows(p)
       const overall = p.overall
       assert.ok(overall, `${id} carries an overall rate`)
 
-      // The headline is an IDENTITY over the lanes the panel lists.
-      assert.equal(s.count, lanes.reduce((n, l) => n + l.count, 0))
+      // The header is an IDENTITY over the rows the panel lists.
+      assert.equal(s.count, rows.reduce((n, r) => n + r.count, 0))
       assert.equal(s.count, overall.count)
 
-      // …and the badge's two numbers are the panel's own headline cells, character for
-      // character. `overallParts` is what ProcAnalytics draws; nothing here re-divides.
-      const parts = overallParts(overall, seg.activeSec)
-      assert.equal(parts[0].text, `${s.count} proc${s.count === 1 ? '' : 's'}`)
-      assert.equal(s.ppm, parts[1].absent ? undefined : parts[1].text)
-      if (s.ppm !== undefined) assert.equal(s.ppm, formatPpm(overall.ppmActive ?? -1))
+      // …and its rate is the engine's `ppmActive` through the app's ONE spelling — never a
+      // second division, and absent (not zero) whenever the engine withheld it.
+      assert.equal(s.ppm, overall.ppmActive === undefined ? undefined : formatPpm(overall.ppmActive))
+      assert.equal(s.header, s.ppm === undefined ? `${s.count} procs` : `${s.count} procs · ${s.ppm}`)
     }
   }
 })

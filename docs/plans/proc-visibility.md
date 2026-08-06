@@ -1,5 +1,11 @@
 # Proc visibility — the ledger stops hiding, and drill rows learn their rate
 
+> **§1 (the tab badge + summary strip) is SUPERSEDED by JOS-37, 2026-08-06.** Both existed to
+> point at a tab; the tab is gone. Procs own a dashboard CELL now — the one the dedicated "You"
+> breakdown preview vacated — so the ledger is on screen without anything having to advertise it,
+> which is the strongest form of the fix this document was written for. §2 (drill rows learn
+> their rate) stands and is still the app's deeper proc attribution.
+
 Design by the integrator (Fable), 2026-08-04. Owner feedback: "not sure where
 we're showing proc information — it should be shown in a panel in combat; if
 we detect a spell is a proc, the proc rate should be shown in the drill
