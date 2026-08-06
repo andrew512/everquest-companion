@@ -25,11 +25,44 @@
 //
 // WHAT CONSUMES IT TODAY: `planner/effectIndex.ts` only, and only to EXCLUDE donors (V9) — an
 // excluded item stays in item lookup and stays a searchable host, because "you cannot pull an
-// effect off this" is not "this item does not exist".
+// effect off this" is not "this item does not exist". `instrument` has NO consumer yet: V11's
+// grouping axis is what will read it, and the table is filed ahead of it so commissioning that
+// axis stays a UI decision rather than a data one.
+//
+// THE TWO TABLES THE FILE CARRIES TODAY (JOS-25, the non-gated halves of planner-v2 §4):
+//
+//   * gmEvent × 10 — swept out of the item corpus's own `|notes` prose (`summary`) and the
+//     `|gmitem` template param. Every one of the ten states a GM hand-out AND names no drop
+//     source, quest or recipe anywhere on its page, so "unfarmable" is the page's whole story.
+//     Five pages whose prose is hedged or contradicted are DELIBERATELY ABSENT and are listed in
+//     the JOS-25 report — the loudest is `Dabner's Staff of Recall`, which carries `|gmitem` and
+//     a real `|dropsfrom` mob in the same template. A GM hand-out beside a live drop is not
+//     "unfarmable", and flagging it would have deleted a farmable donor.
+//   * instrument × 47 — the bard family every instrument page states for itself, in one of two
+//     places: 42 say it in the stats block (`Wind Resonance: 12`, and the older spelling
+//     `Stringed Instrument`), 5 say it in `|focus_effect` (`Brass Resonance 14`, which the scrape
+//     already folds in as a focus effect — see normalize.ts's focus-rank note). NORMALIZED here
+//     and nowhere else: the wiki spells one family four ways, and a consumer should not have to
+//     know that. `tests/itemsResearchLayer.test.mts` re-derives the whole table from the committed
+//     corpus and fails on ANY disagreement, so a rescrape that moves a family cannot leave a stale
+//     curated answer winning the merge — which is the one real hazard of restating scraped fact
+//     in a layer that overlays it.
 
 import itemsResearchJson from './data/itemsResearch.json'
 import { itemKey, knowledgeFromDb, type ItemDbEntry } from './itemsDb'
 import type { ItemKnowledge } from '../shared/types'
+
+/**
+ * The bard instrument families, as the game groups a bard's songs. `all` is one item's own claim
+ * ("All Instrument Types" on the Singing Short Sword), not a wildcard the code assigns.
+ *
+ * A CLOSED union rather than a string: the wiki writes one family four ways (`Wind Resonance`,
+ * `Wind Instrument`, `Stringed Instrument`, `String Resonance`), and the whole point of filing
+ * the table is that no consumer above this file ever meets that spelling problem again.
+ */
+export const INSTRUMENT_FAMILIES = ['wind', 'string', 'brass', 'percussion', 'all'] as const
+
+export type InstrumentFamily = (typeof INSTRUMENT_FAMILIES)[number]
 
 /**
  * One curated entry. Every field is OPTIONAL knowledge except the provenance pair, which is not:
@@ -41,7 +74,7 @@ export interface ItemResearch {
   /** only ever handed out in a GM event: real, unfarmable, and not a plan a player can execute */
   gmEvent?: boolean
   /** bard instrument family, for the grouping axis V11 defers until this layer carries it */
-  instrument?: string
+  instrument?: InstrumentFamily
   /** why this entry says what it says, in one sentence — for the next reader, not for code */
   note?: string
   /** where the claim came from: a URL, a page name, or the observation that produced it */

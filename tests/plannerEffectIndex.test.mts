@@ -17,7 +17,9 @@
 //
 // The V9 exclusion (`Summoned:` + the curated layer) is what re-based those from the 2026-08-04
 // build's 1,508: it took 39 summoned rows and one GM-event row off the donor list permanently, so
-// the floors below moved down with it rather than sitting a hair above the measurement.
+// the floors below moved down with it rather than sitting a hair above the measurement. JOS-25
+// then swept the corpus's GM-event prose properly and the exclusion measured 45 pages — the extra
+// five are effect-bearing GM-event items, and the floors already sat under them.
 //
 // The identities are the interesting half: one row per (key, effect, socket) with NO duplicates,
 // and every slot token canonical. Both are properties the UI depends on and neither is a count.
@@ -304,8 +306,10 @@ test('THE EPIC PIN: a dropperless epic reward is out-of-era on a classic server 
 
 test('V9: summoned and GM-event items are dropped from the DONOR index, and only from it', () => {
   // R7 (owner-observed, unverified — docs/plans/exaltation-planner.md §1) plus the curated layer.
-  // MEASURED 2026-08-05: 40 effect-bearing pages excluded — 39 `Summoned:` rows (focus 24, click
-  // 10, worn 4, proc 1) and the one GM-event entry the layer seeds.
+  // MEASURED 2026-08-06 (JOS-25): 45 effect-bearing pages excluded — 39 `Summoned:` rows (focus
+  // 24, click 10, worn 4, proc 1) and the six effect-bearing entries of the layer's ten-item
+  // GM-event table. The other four GM-event items carry no effect at all, so they were never
+  // donors to lose; `tests/itemsResearchLayer.test.mts` is what pins the table itself.
   console.log('planner exclusions', { excludedPages: index.stats.excludedPages })
   assert.ok(index.stats.excludedPages >= 30, `only ${index.stats.excludedPages} pages excluded`)
 
