@@ -105,6 +105,13 @@ export interface FarmGroup {
   /** the zone name, or the heading for one of the four non-zone kinds */
   title: string
   kind: FarmGroupKind
+  /**
+   * The heading's own era, for a ZONE group; `null` for the four non-zone headings and for a zone
+   * the table cannot place. With the era filter ON this is never a later expansion — that is the
+   * JOS-42 invariant, and it is stated here so the UI can say so when the filter is OFF rather
+   * than leaving "go to Dragon Necropolis" looking like an ordinary suggestion.
+   */
+  zone: FarmZone | null
   rows: FarmRow[]
 }
 
@@ -225,12 +232,13 @@ export function groupNeeds(needs: readonly FarmNeed[], opts: FarmGrouping): Farm
   }
 
   const zoneGroups: FarmGroup[] = [...zones.entries()]
-    .map(([title, rows]) => ({ title, kind: 'zone' as const, rows }))
+    .map(([title, rows]) => ({ title, kind: 'zone' as const, zone: farmZone(title), rows }))
     .sort((a, b) => b.rows.length - a.rows.length || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0))
 
   const tailGroups: FarmGroup[] = TAIL.filter((kind) => tails.has(kind)).map((kind) => ({
     title: HEADINGS[kind],
     kind,
+    zone: null,
     rows: tails.get(kind) ?? []
   }))
 

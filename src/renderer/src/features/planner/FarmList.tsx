@@ -142,7 +142,12 @@ function Group({
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
   return (
-    <Paper variant="outlined" data-testid="planner-farm-group" sx={{ mb: 1 }}>
+    <Paper
+      variant="outlined"
+      data-testid="planner-farm-group"
+      data-out-of-era={group.zone?.outOfEra === true ? 'true' : 'false'}
+      sx={{ mb: 1 }}
+    >
       <Stack
         direction="row"
         spacing={1}
@@ -154,6 +159,17 @@ function Group({
             {group.title}
           </Typography>
         </Tooltip>
+        {/* Only reachable with the era filter OFF — with it on, a heading is always a zone you can
+            go to (JOS-42). Off, the heading is honest about what it is asking of you. */}
+        {group.zone?.outOfEra === true && (
+          <Chip
+            size="small"
+            color="warning"
+            variant="outlined"
+            label={group.zone.eraLabel}
+            sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+          />
+        )}
         <Box sx={{ flexGrow: 1 }} />
         <Typography variant="caption" color="text.secondary">
           {group.rows.length} {group.rows.length === 1 ? 'donor' : 'donors'}

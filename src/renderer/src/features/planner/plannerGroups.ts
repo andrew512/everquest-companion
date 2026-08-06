@@ -22,6 +22,7 @@
 // function of the row, so the groups partition it.
 
 import { ERA_LABEL, ERA_ORDER, eraRank, type Era } from '../../../../shared/planner/era'
+import { effectOneLiner } from '../../../../shared/planner/effectText'
 import { EQUIP_SLOTS, SOCKET_TYPES, type SocketType } from '../../../../shared/planner/types'
 import type { DonorRow } from './plannerData'
 
@@ -86,6 +87,19 @@ export interface DonorGroup {
   label: string
   /** the muted note after the label; '' when the axis has nothing to add (never a placeholder) */
   note: string
+  /**
+   * THE ONE-LINER THE WHOLE GROUP SHARES — "Beneficial · Self · 2:24:00" (JOS-42 refinement 2).
+   *
+   * Under a family header every rank of Burning Affliction says the same three things about
+   * itself, so the row was carrying identical text N times and paying for it in the one place
+   * that mattered: the EFFECT NAME truncated ("Burning Af…", "String Resonan…") on every donor.
+   * The fact belongs to the family, so it is stated once where there is room for it, and the rows
+   * get their width back.
+   *
+   * '' means the rows do NOT agree (or none of them joined the spell DB), and then the rows keep
+   * their own line — a header may only state what is true of everything under it.
+   */
+  says: string
   /** every row under this header shares it — the header can therefore state the extraction cost */
   socket: SocketType
   /** R3 — at least one donor here is haste-locked, so the header says so before you expand it */
@@ -106,12 +120,23 @@ export interface DonorGroup {
  * on screen and repeating it on every row would be noise, but under a family, slot or era header
  * it is the row's most important fact ("Improved Healing I" is not "Improved Healing III").
  *
+ * `namesSays` is the same idea applied to the effect's one-liner (JOS-42): the header states it
+ * whenever every row under it agrees, and then the rows do not repeat it. That is the width the
+ * effect name needed.
+ *
  * `groupId` is what makes a donor row's React key unique: on the slot axis one donor is genuinely
  * listed twice (PRIMARY and SECONDARY), and (key, effect) alone would collide.
  */
 export type BrowserRow =
   | { kind: 'header'; group: DonorGroup; expanded: boolean }
-  | { kind: 'donor'; donor: DonorRow; groupId: string; best: boolean; namesEffect: boolean }
+  | {
+      kind: 'donor'
+      donor: DonorRow
+      groupId: string
+      best: boolean
+      namesEffect: boolean
+      namesSays: boolean
+    }
 
 /** Which expansion the browser's era join places a donor in; null when nothing places it. */
 export type EraOf = (donor: DonorRow) => Era | null
@@ -206,6 +231,23 @@ function familyNote(donors: readonly DonorRow[], label: string): string {
   return top === label ? '' : top
 }
 
+/**
+ * The one-liner EVERY donor here shares, or '' (see `DonorGroup.says`).
+ *
+ * Unanimity is the whole contract. In practice a focus family is unanimous — the ranks of one
+ * focus differ in magnitude, which the spell DB does not carry (effectText.ts: "how MUCH is not in
+ * the corpus anywhere"), so type/target/duration come back identical — but that is an observation
+ * about today's data, not a licence to state one row's line over the others. When they diverge the
+ * header says nothing and the rows speak for themselves.
+ */
+function sharedSays(donors: readonly DonorRow[]): string {
+  const first = donors[0]
+  if (first === undefined) return ''
+  const says = effectOneLiner(first)
+  if (says === '') return ''
+  return donors.every((d) => effectOneLiner(d) === says) ? says : ''
+}
+
 /** A group plus the DECLARED order of its axis — the rank is an ordering input, not group state. */
 interface Ranked {
   group: DonorGroup
@@ -221,6 +263,10 @@ function toGroup(bucket: Bucket, axis: GroupAxis): Ranked {
       axis,
       label: bucket.label,
       note: axis === 'family' ? familyNote(bucket.donors, bucket.label) : '',
+      // FAMILY ONLY. Every other axis groups rows whose effects genuinely differ, so there is no
+      // shared line to lift; the effect axis could lift one, but its rows have the room already
+      // (the header names the effect, so the row does not) and moving it would buy nothing.
+      says: axis === 'family' ? sharedSays(bucket.donors) : '',
       socket: bucket.socket,
       hasteLocked: bucket.hasteLocked,
       topTier: axis === 'family' ? topTierOf(bucket.donors) : null,
@@ -262,9 +308,11 @@ export function browserRows(groups: readonly DonorGroup[], open: ReadonlySet<str
     rows.push({ kind: 'header', group, expanded })
     if (!expanded) continue
     const namesEffect = group.axis !== 'effect'
+    // The header took the line only if it could state it for everyone; otherwise the rows keep it.
+    const namesSays = group.says === ''
     for (const donor of group.donors) {
       const best = group.topTier !== null && donor.familyTier === group.topTier
-      rows.push({ kind: 'donor', donor, groupId: group.id, best, namesEffect })
+      rows.push({ kind: 'donor', donor, groupId: group.id, best, namesEffect, namesSays })
     }
   }
   return rows

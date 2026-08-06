@@ -40,23 +40,16 @@
 // empty slot list is "the page stated none" (law 1) and just occasionally that is a wiki gap.
 
 import { type JSX, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Button, Chip, IconButton, Menu, MenuItem, Stack, Typography } from '@mui/material'
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
-import ChevronRightIcon from '@mui/icons-material/ChevronRight'
+import { Box, Menu, MenuItem, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
-import type { EquipSlot, ExaltPlan, SocketType } from '@shared/planner/types'
-import { effectOneLiner } from '@shared/planner/effectText'
-import { extractionTier } from '@shared/planner/rules'
+import type { EquipSlot, ExaltPlan, PlanSocket, SocketType } from '@shared/planner/types'
 import { useWindowedRows } from '../../lib/useWindowedRows'
-import { itemIconUrl } from '../../lib/ItemWindow'
-import { Tooltip } from '../../lib/Tooltip'
 import EffectFilterBar from './EffectFilterBar'
+import { DonorLine, GroupLine, ROW_HEIGHT } from './EffectRows'
 import {
   DEFAULT_FILTERS,
-  classFit,
   donorEraOf,
   filterDonors,
-  isNonEquippable,
   useDonors,
   useEraOnly,
   useGroupBy,
@@ -64,228 +57,10 @@ import {
   type DonorFilters,
   type DonorRow
 } from './plannerData'
-import {
-  SOCKET_LABEL,
-  browserRows,
-  groupDonors,
-  type BrowserRow,
-  type DonorGroup,
-  type GroupAxis
-} from './plannerGroups'
-import { BestChip, DonorName, EraChip, NoSlotChip } from './PlannerChips'
+import { browserRows, groupDonors, type BrowserRow, type GroupAxis } from './plannerGroups'
 import { classesMismatch } from './plannerClasses'
 import { useHostClasses, type BrowsePreset } from './plannerPreset'
-import { sourceIndex, sourcesFor } from './sourceIndex'
-
-const ROW_HEIGHT = 44
-/** How many class chips fit on a dense row before the rest collapse into "+N". */
-const CLASS_CHIP_CAP = 6
-
-// ---- one donor's source line ---------------------------------------------------------
-
-interface SourceText {
-  text: string
-  /** "+3 more" when the catalog knows other mobs; empty when it doesn't */
-  more: string
-}
-
-/**
- * What the catalog knows about where this donor comes from, in one line. The FIRST source plus a
- * count — a 40-mob drop list belongs in Farm mode, not on a dense row.
- */
-function sourceText(donor: DonorRow): SourceText {
-  const sources = sourcesFor(donor.key)
-  const first = sources[0]
-  if (first) {
-    const zone = first.zones[0] ?? 'zone unstated'
-    return { text: `${first.mob} — ${zone}`, more: sources.length > 1 ? `+${String(sources.length - 1)} more` : '' }
-  }
-  if (donor.quest) return { text: 'quest reward', more: '' }
-  if (donor.playerCrafted) return { text: 'player crafted', more: '' }
-  return { text: 'no known source', more: '' }
-}
-
-// ---- one donor row -------------------------------------------------------------------
-
-function ClassChips({ donor, planClasses }: { donor: DonorRow; planClasses: readonly ClassAbbr[] }): JSX.Element {
-  const fit = classFit(donor, planClasses)
-  if (fit === 'unknown') {
-    return <Chip size="small" variant="outlined" label="class unknown" sx={{ height: 18, fontSize: 10 }} />
-  }
-  const lit = donor.classes.filter((c) => planClasses.includes(c))
-  const rest = donor.classes.filter((c) => !planClasses.includes(c))
-  const shown = [...lit, ...rest].slice(0, CLASS_CHIP_CAP)
-  return (
-    <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
-      {shown.map((c) => (
-        <Chip
-          key={c}
-          size="small"
-          label={c}
-          color={lit.includes(c) ? 'primary' : 'default'}
-          variant={lit.includes(c) ? 'filled' : 'outlined'}
-          sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.5 } }}
-        />
-      ))}
-      {donor.classes.length > CLASS_CHIP_CAP && (
-        <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
-          +{donor.classes.length - CLASS_CHIP_CAP}
-        </Typography>
-      )}
-    </Stack>
-  )
-}
-
-interface DonorLineProps {
-  donor: DonorRow
-  planClasses: readonly ClassAbbr[]
-  planned: boolean
-  /** V5 — this row holds the top tier of its focus family among the rows that survived the filters */
-  best: boolean
-  /** the header above does not name this row's effect (any axis but `effect`), so the row does */
-  namesEffect: boolean
-  onAdd: (donor: DonorRow, anchor: HTMLElement) => void
-  /** deep-link this donor into the Loot drill-down; absent when the app wired no router */
-  onOpenLoot?: (item: string) => void
-}
-
-function DonorLine({ donor, planClasses, planned, best, namesEffect, onAdd, onOpenLoot }: DonorLineProps): JSX.Element {
-  const src = sourceText(donor)
-  // V6 — "Beneficial · Single Friendly · 27 minutes", or '' when the spell DB never named this
-  // effect. Same 44px row (the windowing law): muted inline text, ellipsized, with the full line
-  // in `title` for the ones that do not fit.
-  const says = effectOneLiner(donor)
-  return (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="center"
-      data-testid="planner-donor-row"
-      sx={{ height: ROW_HEIGHT, pl: 5, pr: 1, flexWrap: 'nowrap', borderBottom: 1, borderColor: 'divider' }}
-    >
-      {donor.iconId !== undefined && (
-        <Box
-          component="img"
-          src={itemIconUrl(donor.iconId)}
-          alt=""
-          onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
-            e.currentTarget.style.display = 'none'
-          }}
-          sx={{ width: 22, height: 22, imageRendering: 'pixelated', flexShrink: 0 }}
-        />
-      )}
-      <Typography variant="body2" component="div" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
-        <DonorName name={donor.name} bold onOpen={onOpenLoot} />
-      </Typography>
-      {namesEffect && (
-        <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
-          {donor.effect}
-        </Typography>
-      )}
-      {says !== '' && (
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          noWrap
-          title={says}
-          data-testid="planner-effect-says"
-          sx={{ minWidth: 0, flexShrink: 1 }}
-        >
-          {says}
-        </Typography>
-      )}
-      {best && <BestChip />}
-      <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
-        {donor.slots.map((s) => (
-          <Chip key={s} size="small" variant="outlined" label={s} sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.5 } }} />
-        ))}
-      </Stack>
-      {isNonEquippable(donor) && <NoSlotChip />}
-      <ClassChips donor={donor} planClasses={planClasses} />
-      <Tooltip title={`This effect only extracts once the donor is merged to +${String(donor.tierRequired)}.`}>
-        <Chip size="small" color="secondary" variant="outlined" label={`+${String(donor.tierRequired)} to extract`} sx={{ height: 18, fontSize: 10 }} />
-      </Tooltip>
-      {donor.hasteLocked && <Chip size="small" color="warning" label="haste — can't move" sx={{ height: 18, fontSize: 10 }} />}
-      <EraChip subject={donor} />
-      <Box sx={{ flexGrow: 1, minWidth: 8 }} />
-      <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1, maxWidth: 320 }}>
-        {src.text}
-      </Typography>
-      {src.more !== '' && (
-        <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
-          {src.more}
-        </Typography>
-      )}
-      {planned && <Chip size="small" color="success" variant="outlined" label="in set" sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />}
-      <Button
-        size="small"
-        data-testid="planner-add"
-        disabled={donor.slots.length === 0}
-        onClick={(e) => onAdd(donor, e.currentTarget)}
-        sx={{ flexShrink: 0, minWidth: 88 }}
-      >
-        Add to set
-      </Button>
-    </Stack>
-  )
-}
-
-// ---- one group header row --------------------------------------------------------------
-
-function GroupLine({
-  group,
-  expanded,
-  onToggle
-}: {
-  group: DonorGroup
-  expanded: boolean
-  onToggle: (id: string) => void
-}): JSX.Element {
-  return (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="center"
-      data-testid="planner-effect-row"
-      data-axis={group.axis}
-      onClick={() => onToggle(group.id)}
-      sx={{
-        height: ROW_HEIGHT,
-        px: 1,
-        flexWrap: 'nowrap',
-        cursor: 'pointer',
-        borderBottom: 1,
-        borderColor: 'divider',
-        bgcolor: 'action.hover'
-      }}
-    >
-      <IconButton size="small" sx={{ flexShrink: 0 }}>
-        {expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
-      </IconButton>
-      <Typography variant="body2" noWrap sx={{ minWidth: 0, flexShrink: 1, fontWeight: 600 }}>
-        {group.label}
-      </Typography>
-      {group.note !== '' && (
-        <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
-          best: {group.note}
-        </Typography>
-      )}
-      <Chip size="small" variant="outlined" label={SOCKET_LABEL[group.socket]} sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />
-      <Chip
-        size="small"
-        color="secondary"
-        variant="outlined"
-        label={`+${String(extractionTier(group.socket))} to extract`}
-        sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
-      />
-      {group.hasteLocked && <Chip size="small" color="warning" label="haste — can't move" sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />}
-      <Box sx={{ flexGrow: 1 }} />
-      <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-        {group.donors.length} {group.donors.length === 1 ? 'donor' : 'donors'}
-      </Typography>
-    </Stack>
-  )
-}
+import { sourceIndex } from './sourceIndex'
 
 /** Which (donor, effect) pairs the selected set already plans — the "in set" chip. */
 function plannedPairs(plan: ExaltPlan | null): ReadonlySet<string> {
@@ -296,6 +71,56 @@ function plannedPairs(plan: ExaltPlan | null): ReadonlySet<string> {
     }
   }
   return out
+}
+
+// ---- what is already in the socket you are aiming at (JOS-42 refinement 3) --------------
+//
+// ADDING INTO AN OCCUPIED SOCKET IS A REPLACE, and the control has to say so BEFORE the click: a
+// socket holds one effect (R1), so the old plan is discarded silently otherwise. The browser is
+// the only place that can answer this — it holds the plan AND knows which socket a click would
+// write — so the answer is resolved here and handed down as one string.
+//
+// WHEN THE TARGET IS KNOWN, AND WHEN IT IS NOT. Under a preset it is exact: you clicked THAT
+// socket of THAT item. Without one, a donor with a single slot implies its target (that slot, the
+// donor's own socket type). A donor listed for two slots does not — the slot menu is the question
+// being asked — so its button stays "Add to set" and the MENU names what each slot would cost.
+// Claiming a replace before the slot is chosen would be guessing which one the user meant.
+
+/** `slot:socket → the effect planned there`, for the two lookups below. */
+function plannedBySocket(plan: ExaltPlan): ReadonlyMap<string, PlanSocket> {
+  const out = new Map<string, PlanSocket>()
+  for (const [slot, planSlot] of Object.entries(plan.slots)) {
+    for (const [socket, planned] of Object.entries(planSlot?.sockets ?? {})) {
+      if (planned) out.set(`${slot}:${socket}`, planned)
+    }
+  }
+  return out
+}
+
+/** The effect a write to (slot, socket) would displace, or null — including "it is already this". */
+function outgoing(
+  occupied: ReadonlyMap<string, PlanSocket>,
+  slot: EquipSlot,
+  socket: SocketType,
+  donor: DonorRow
+): string | null {
+  const there = occupied.get(`${slot}:${socket}`)
+  if (!there) return null
+  // Re-adding the row that is ALREADY there replaces nothing — the row says "in set" instead, and
+  // a button reading "Replace Improved Healing III" with Improved Healing III would be nonsense.
+  if (there.donorKey === donor.key && there.effect === donor.effect) return null
+  return there.effect
+}
+
+/** The target socket a click on this row would write, or null when the slot menu decides it. */
+function replacesFor(
+  occupied: ReadonlyMap<string, PlanSocket>,
+  preset: BrowsePreset | null,
+  donor: DonorRow
+): string | null {
+  if (preset !== null) return outgoing(occupied, preset.slot, preset.socket, donor)
+  const only = donor.slots.length === 1 ? donor.slots[0] : null
+  return only === null ? null : outgoing(occupied, only, donor.socket, donor)
 }
 
 // ---- the row pipeline ------------------------------------------------------------------
@@ -344,11 +169,51 @@ interface PendingAdd {
   anchor: HTMLElement
 }
 
+/**
+ * WHICH SLOT — asked only when the donor is listed for more than one, because the planner must not
+ * pick which of PRIMARY/SECONDARY a sword goes into on the user's behalf.
+ *
+ * It is also where a two-slot donor's REPLACE warning lives (JOS-42): PRIMARY may be empty while
+ * SECONDARY already holds something, so the row's button cannot say which, and this menu is the
+ * moment the target stops being ambiguous.
+ */
+function SlotMenu({
+  pending,
+  occupied,
+  onClose,
+  onPick
+}: {
+  pending: PendingAdd | null
+  occupied: ReadonlyMap<string, PlanSocket>
+  onClose: () => void
+  onPick: (slot: EquipSlot) => void
+}): JSX.Element {
+  return (
+    <Menu anchorEl={pending?.anchor ?? null} open={pending !== null} onClose={onClose}>
+      {(pending?.donor.slots ?? []).map((slot) => {
+        const over = pending === null ? null : outgoing(occupied, slot, pending.donor.socket, pending.donor)
+        return (
+          <MenuItem key={slot} data-testid="planner-slot-choice" onClick={() => onPick(slot)}>
+            {slot}
+            {over !== null && (
+              <Typography variant="caption" color="warning.main" sx={{ ml: 1 }}>
+                replaces {over}
+              </Typography>
+            )}
+          </MenuItem>
+        )
+      })}
+    </Menu>
+  )
+}
+
 interface RowListProps {
   rows: readonly BrowserRow[]
   win: { start: number; end: number; topPad: number; bottomPad: number }
   planClasses: readonly ClassAbbr[]
   planned: ReadonlySet<string>
+  /** what each row's ADD would displace — `replacesFor`, folded once per plan change */
+  replaces: (donor: DonorRow) => string | null
   ready: boolean
   onToggle: (id: string) => void
   onAdd: (donor: DonorRow, anchor: HTMLElement) => void
@@ -356,7 +221,8 @@ interface RowListProps {
 }
 
 /** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
-function RowList({ rows, win, planClasses, planned, ready, onToggle, onAdd, onOpenLoot }: RowListProps): JSX.Element {
+function RowList(props: RowListProps): JSX.Element {
+  const { rows, win, planClasses, planned, replaces, ready, onToggle, onAdd, onOpenLoot } = props
   return (
     <>
       <Box sx={{ height: win.topPad }} />
@@ -371,6 +237,8 @@ function RowList({ rows, win, planClasses, planned, ready, onToggle, onAdd, onOp
             planned={planned.has(`${row.donor.key}::${row.donor.effect}`)}
             best={row.best}
             namesEffect={row.namesEffect}
+            namesSays={row.namesSays}
+            replaces={replaces(row.donor)}
             onAdd={onAdd}
             onOpenLoot={onOpenLoot}
           />
@@ -384,6 +252,43 @@ function RowList({ rows, win, planClasses, planned, ready, onToggle, onAdd, onOp
       )}
     </>
   )
+}
+
+/**
+ * THE TWO WRITES THE BROWSER MAKES, and the one question it may have to ask first.
+ *
+ * One slot ⇒ one click. Several ⇒ the slot menu, because the planner must not pick which of
+ * PRIMARY/SECONDARY a sword goes into on the user's behalf. UNDER A PRESET THERE IS NOTHING TO
+ * ASK (V8): you clicked a specific socket of a specific item, so a two-slot sword goes into the
+ * socket you opened rather than into a menu re-asking the question.
+ *
+ * A plain function, not a hook — it closes over props and state the caller already holds, and
+ * calls nothing of React's.
+ */
+function writeFlow(ctx: {
+  preset: BrowsePreset | null
+  onSocket: (slot: EquipSlot, socket: SocketType, planned: { effect: string; donorKey: string }) => void
+  pending: PendingAdd | null
+  setPending: (p: PendingAdd | null) => void
+}): {
+  add: (donor: DonorRow, anchor: HTMLElement) => void
+  chooseSlot: (slot: EquipSlot) => void
+} {
+  const { preset, onSocket, pending, setPending } = ctx
+  return {
+    add: (donor, anchor) => {
+      const planned = { effect: donor.effect, donorKey: donor.key }
+      if (preset !== null) onSocket(preset.slot, preset.socket, planned)
+      else if (donor.slots.length === 1) onSocket(donor.slots[0], donor.socket, planned)
+      else if (donor.slots.length > 1) setPending({ donor, anchor })
+    },
+    chooseSlot: (slot) => {
+      if (pending) {
+        onSocket(slot, pending.donor.socket, { effect: pending.donor.effect, donorKey: pending.donor.key })
+      }
+      setPending(null)
+    }
+  }
 }
 
 export interface EffectBrowserProps {
@@ -453,6 +358,13 @@ export default function EffectBrowser({
     open
   })
   const planned = useMemo(() => plannedPairs(plan), [plan])
+  // Folded once per plan (or preset) change, not per row: the occupancy map is a handful of
+  // entries and every visible row asks it the same question.
+  const occupied = useMemo(() => plannedBySocket(plan), [plan])
+  const replaces = useMemo(
+    () => (donor: DonorRow) => replacesFor(occupied, preset, donor),
+    [occupied, preset]
+  )
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT, scrollRef })
 
   const toggle = (id: string): void => {
@@ -462,23 +374,7 @@ export default function EffectBrowser({
       return next
     })
   }
-
-  // One slot ⇒ one click. Several ⇒ a menu of the donor's own slots, because the planner must not
-  // pick which of PRIMARY/SECONDARY a sword is going into on the user's behalf.
-  //
-  // UNDER A PRESET THERE IS NOTHING TO ASK (V8): you clicked a specific socket of a specific item,
-  // so a two-slot sword goes into the socket you opened, not into a menu re-asking the question.
-  const add = (donor: DonorRow, anchor: HTMLElement): void => {
-    const planned = { effect: donor.effect, donorKey: donor.key }
-    if (preset !== null) onSocket(preset.slot, preset.socket, planned)
-    else if (donor.slots.length === 1) onSocket(donor.slots[0], donor.socket, planned)
-    else if (donor.slots.length > 1) setPending({ donor, anchor })
-  }
-
-  const chooseSlot = (slot: EquipSlot): void => {
-    if (pending) onSocket(slot, pending.donor.socket, { effect: pending.donor.effect, donorKey: pending.donor.key })
-    setPending(null)
-  }
+  const { add, chooseSlot } = writeFlow({ preset, onSocket, pending, setPending })
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
@@ -504,6 +400,7 @@ export default function EffectBrowser({
           win={win}
           planClasses={plan.classes}
           planned={planned}
+          replaces={replaces}
           ready={ready}
           onToggle={toggle}
           onAdd={add}
@@ -511,13 +408,12 @@ export default function EffectBrowser({
         />
       </Box>
 
-      <Menu anchorEl={pending?.anchor ?? null} open={pending !== null} onClose={() => setPending(null)}>
-        {(pending?.donor.slots ?? []).map((slot) => (
-          <MenuItem key={slot} onClick={() => chooseSlot(slot)}>
-            {slot}
-          </MenuItem>
-        ))}
-      </Menu>
+      <SlotMenu
+        pending={pending}
+        occupied={occupied}
+        onClose={() => setPending(null)}
+        onPick={chooseSlot}
+      />
     </Box>
   )
 }

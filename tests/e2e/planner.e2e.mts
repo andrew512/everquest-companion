@@ -51,35 +51,47 @@ import {
   sleep
 } from './appHarness.mjs'
 import { launchApp, mainWindow } from './appWindow.mjs'
-
-const NAV = '[data-testid="nav-planner"]'
-const VIEW = '[data-testid="planner-view"]'
-const NEW_SET_EMPTY = '[data-testid="planner-new-set-empty"]'
-const SET_CHIP = '[data-testid="planner-set-chip"]'
-const EFFECT_LIST = '[data-testid="planner-effect-list"]'
-const ERA_TOGGLE = '[data-testid="planner-era-toggle"]'
-const ADD_BUTTON = '[data-testid="planner-add"]:not([disabled])'
-const MODE_BOARD = '[data-testid="planner-mode-inventory"]'
-const MODE_FARM = '[data-testid="planner-mode-farm"]'
-const BOARD = '[data-testid="planner-board"]'
-const BOARD_CELL = '[data-testid="planner-board-cell"]'
-const SOCKET_LINE = '[data-testid="planner-socket-line"]'
-const HOST_SEARCH = '[data-testid="planner-host-search"] input'
-const HOST_HIT = '[data-testid="planner-host-hit"]'
-const HOST_NAME = '[data-testid="planner-host-name"]'
-const HOST_WORN = '[data-testid="planner-host-worn"]'
-const INVENTORY_HELP = '[data-testid="planner-inventory-help"]'
-const SOCKET_BROWSE = '[data-testid="planner-socket-browse"]'
-const PRESET_CHIP = '[data-testid="planner-preset-chip"]'
-const EXPLAINER = '[data-testid="planner-explainer"]'
-const EXPLAINER_OPEN = '[data-testid="planner-explainer-open"]'
-const STATE_CHIP = '[data-testid="planner-state-chip"]'
-const FARM_LIST = '[data-testid="planner-farm-list"]'
-const FARM_ROW = '[data-testid="planner-farm-row"]'
-const MODE_EFFECTS = '[data-testid="planner-mode-effects"]'
-const NONEQUIP_TOGGLE = '[data-testid="planner-nonequip-toggle"]'
-const NOSLOT_CHIP = '[data-testid="planner-noslot-chip"]'
-const DONOR_NAME = '[data-testid="planner-donor-name"]'
+// Every `planner-*` selector, the DOM measurements, and the four steps that measure the EFFECT
+// LIST live next door — this spec sits at the repo's max-lines budget and the rule is to split,
+// never ratchet (drill.mts, combatSteps.mts). The ORDER is still owned here.
+import {
+  ADD_BUTTON,
+  BOARD,
+  BOARD_CELL,
+  DONOR_NAME,
+  DONOR_ROW,
+  EFFECT_LIST,
+  EFFECT_ROW,
+  EFFECT_SAYS,
+  EXPLAINER,
+  EXPLAINER_OPEN,
+  FARM_ALSO_ERA,
+  FARM_GROUP_OUT_OF_ERA,
+  FARM_LIST,
+  FARM_ROW,
+  HOST_HIT,
+  HOST_NAME,
+  HOST_SEARCH,
+  HOST_WORN,
+  INVENTORY_HELP,
+  MODE_BOARD,
+  MODE_EFFECTS,
+  MODE_FARM,
+  NAV,
+  NEW_SET_EMPTY,
+  PRESET_CHIP,
+  SET_CHIP,
+  SOCKET_BROWSE,
+  SOCKET_LINE,
+  STATE_CHIP,
+  VIEW,
+  boxOf,
+  stepEra,
+  stepFocusFamilies,
+  stepNonEquip,
+  textOf,
+  until
+} from './plannerSteps.mjs'
 
 /** The Loot tab's drill-down, where a donor name deep-links to. */
 const LOOT_DETAIL = '[data-testid="loot-detail"]'
@@ -87,45 +99,6 @@ const LOOT_TITLE = '[data-testid="loot-detail-title"]'
 const LOOT_DB_SOURCES = '[data-testid="loot-db-sources"]'
 /** The drill's back ARROW — origin-aware since JOS-43, and the return leg of this spec. */
 const LOOT_BACK = '[data-testid="loot-back"]'
-
-/**
- * A GROUP HEADER — one per group on whatever axis the tab is grouped by, and expanding it lists
- * that group's donors. The testid predates V4's grouping model and still says "effect" because the
- * effect axis is still what every tab but Focus opens on; `data-axis` is how a spec asks which
- * fold it is actually looking at.
- */
-const EFFECT_ROW = '[data-testid="planner-effect-row"]'
-const FAMILY_ROW = '[data-testid="planner-effect-row"][data-axis="family"]'
-const GROUPBY = '[data-testid="planner-groupby"]'
-const SOCKET_FOCUS = '[data-testid="planner-socket-focus"]'
-const SOCKET_PROC = '[data-testid="planner-socket-proc"]'
-const BEST_CHIP = '[data-testid="planner-best-chip"]'
-const DONOR_ROW = '[data-testid="planner-donor-row"]'
-const EFFECT_SAYS = '[data-testid="planner-effect-says"]'
-
-/** Rendered text of the first match; '' when the node isn't mounted. */
-function textOf(page: Page, sel: string): Promise<string> {
-  return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
-}
-
-/** Box + scroll geometry — enough to prove a growing list is a BOUNDED scroller. */
-function boxOf(page: Page, sel: string): Promise<{ h: number; scrollH: number; clientH: number } | null> {
-  return page.evaluate((s) => {
-    const el = document.querySelector(s)
-    if (!el) return null
-    return { h: Math.round(el.getBoundingClientRect().height), scrollH: el.scrollHeight, clientH: el.clientHeight }
-  }, sel)
-}
-
-/** Poll a predicate until it holds or the deadline passes. */
-async function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
-  const t0 = Date.now()
-  for (;;) {
-    if (await fn()) return true
-    if (Date.now() - t0 >= ms) return false
-    await sleep(300)
-  }
-}
 
 /**
  * 1. THE NAV ROW MOUNTS THE PANE. False on the no-logs machine, where no feature view mounts.
@@ -208,120 +181,6 @@ async function stepEffects(page: Page): Promise<boolean> {
     box ? `${String(box.h)}px tall · scrollHeight ${String(box.scrollH)} vs clientHeight ${String(box.clientH)}` : 'absent'
   )
   return listed
-}
-
-/**
- * The effect list's SCROLL HEIGHT — the total row count, in pixels.
- *
- * Not a count of rows in the DOM: the list is windowed, so the number of mounted rows says how
- * tall the viewport is, not how many rows exist. And it POLLS for the element, because the view
- * legitimately remounts while the app is still reading the log (App keys the view on the
- * character), and a measurement taken inside that gap would read as "the list vanished".
- */
-async function listHeight(page: Page): Promise<number> {
-  let last = 0
-  await until(async () => {
-    last = (await boxOf(page, EFFECT_LIST))?.scrollH ?? 0
-    return last > 0
-  }, 20_000)
-  return last
-}
-
-/** Poll until the list's height settles at something other than `was` (or give up and report). */
-async function heightAfterToggle(page: Page, was: number): Promise<number> {
-  let now = was
-  await until(async () => {
-    now = await listHeight(page)
-    return now !== was
-  }, 15_000)
-  return now
-}
-
-/**
- * 4. THE ERA FILTER IS ON BY DEFAULT, AND TURNING IT OFF REVEALS MORE.
- *
- * This is an identity, not a number: the committed corpus documents every expansion, so a filter
- * that is genuinely hiding out-of-era donors must have a SHORTER list than the same filter off,
- * and switching it back must land on exactly the height it started at.
- */
-async function stepEra(page: Page): Promise<void> {
-  if (!check('the effect browser offers the current-era filter', (await countOf(page, ERA_TOGGLE)) > 0)) return
-  const filtered = await listHeight(page)
-
-  await page.click(ERA_TOGGLE, { timeout: 15_000 })
-  const unfiltered = await heightAfterToggle(page, filtered)
-  check(
-    'the era filter is ON by default and hides out-of-era donors (turning it off can only reveal more)',
-    unfiltered > filtered,
-    `list ${String(filtered)}px filtered → ${String(unfiltered)}px unfiltered`
-  )
-
-  // Put it back: the rest of the run should see the default surface.
-  await page.click(ERA_TOGGLE, { timeout: 15_000 })
-  const again = await heightAfterToggle(page, unfiltered)
-  check('…and switching it back on restores exactly the filtered list', again === filtered, `${String(again)}px`)
-}
-
-/**
- * 4b. THE NON-EQUIPPABLE FILTER IS OFF BY DEFAULT, AND TURNING IT ON REVEALS MORE.
- *
- * The mirror image of the era check, and an identity for the same reason: R2 only lets an
- * exaltation move between items sharing an equipment slot, so the 284 slotless donor rows in the
- * committed corpus (the potion aisle, plus poisons on the Proc tab) can never legally donate and
- * are hidden by default. Switching the escape hatch on can therefore only ADD rows — and each one
- * it adds must carry the `no slot` chip that says why it was hidden.
- */
-async function stepNonEquip(page: Page): Promise<void> {
-  if (!check('the effect browser offers the non-equippable escape toggle', (await countOf(page, NONEQUIP_TOGGLE)) > 0)) return
-  const hidden = await listHeight(page)
-  check('slotless donors are hidden by default, so no row claims "no slot"', (await countOf(page, NOSLOT_CHIP)) === 0)
-
-  await page.click(NONEQUIP_TOGGLE, { timeout: 15_000 })
-  const shown = await heightAfterToggle(page, hidden)
-  check(
-    'turning non-equippable ON can only reveal more donors (R2 hides them, it never invents them)',
-    shown > hidden,
-    `list ${String(hidden)}px equippable-only → ${String(shown)}px with consumables`
-  )
-
-  await page.click(NONEQUIP_TOGGLE, { timeout: 15_000 })
-  const again = await heightAfterToggle(page, shown)
-  check('…and switching it back off restores exactly the equippable list', again === hidden, `${String(again)}px`)
-}
-
-/**
- * 4c. THE FOCUS TAB OPENS ON FAMILIES, AND THE BEST OF EACH IS CROWNED (V4 + V5).
- *
- * Two facts in one trip. The GROUPING is a per-socket default, not a global one: Proc opens on
- * effects (the browser's original fold) and Focus opens on families, because "the best Improved
- * Healing I can reach" is the question that tab exists to answer. And the CROWN is derived from
- * what survived the filters, so it can be asserted as an identity — every family header has at
- * least one donor, therefore expanding one must produce at least one crowned row.
- *
- * Skipped, with a note, when this set's classes leave the Focus tab empty: focus effects are
- * caster gear, and a melee trio filtering the tab down to nothing is a correct answer, not a
- * failure. Ends back on the Proc tab so every step after it sees the surface it expects.
- */
-async function stepFocusFamilies(page: Page): Promise<void> {
-  if (!check('the effect browser offers a group-by control', (await countOf(page, GROUPBY)) > 0)) return
-  await page.click(SOCKET_FOCUS, { timeout: 15_000 })
-  const grouped = await until(async () => (await countOf(page, FAMILY_ROW)) > 0, 20_000)
-  if (grouped) {
-    check(
-      'the Focus tab groups by focus family without being asked (the per-socket default)',
-      (await textOf(page, GROUPBY)).includes('Focus family'),
-      `${String(await countOf(page, FAMILY_ROW))} family headers`
-    )
-    await page.click(FAMILY_ROW, { timeout: 15_000 })
-    check(
-      'expanding a family crowns the best tier it can currently see',
-      await until(async () => (await countOf(page, BEST_CHIP)) > 0, 10_000)
-    )
-  } else {
-    note('no focus donor survives this set’s class filter — the family grouping step is skipped this run')
-  }
-  await page.click(SOCKET_PROC, { timeout: 15_000 })
-  await until(async () => (await countOf(page, `${EFFECT_ROW}[data-axis="effect"]`)) > 0, 20_000)
 }
 
 /**
@@ -445,6 +304,51 @@ async function stepInventoryFill(page: Page): Promise<void> {
 }
 
 /**
+ * 6c-i. ADD SAYS REPLACE WHEN IT WOULD REPLACE (JOS-42 refinement 3).
+ *
+ * Asserted UNDER A PRESET, because that is the only place the target socket is unambiguous: you
+ * clicked one socket of one item, so every row on screen would write to exactly that socket, and
+ * the button can therefore be checked against the socket's own state.
+ *
+ * The direction that matters is the FALSE REPLACE — a button warning about an overwrite that
+ * would not happen teaches the user to ignore the warning — so "empty socket ⇒ nothing says
+ * Replace" is asserted flat. The other direction allows one honest exception: a row whose donor
+ * and effect are ALREADY what sits there replaces nothing (it is chipped "in set"), so a preset
+ * showing only that row legitimately offers no Replace at all.
+ */
+async function checkReplaceLabels(page: Page, occupied: boolean): Promise<void> {
+  const labels = await page.evaluate(
+    (s) => Array.from(document.querySelectorAll(s)).map((b) => (b as HTMLElement).innerText.trim()),
+    ADD_BUTTON
+  )
+  if (labels.length === 0) {
+    note('the preset matched no addable donor — the replace-label step is skipped this run')
+    return
+  }
+  const replace = labels.filter((l) => l.toLowerCase() === 'replace').length
+  if (!occupied) {
+    check(
+      'an empty socket is never offered as a Replace — the add button only warns about a real overwrite',
+      replace === 0,
+      `${String(replace)} of ${String(labels.length)} buttons said Replace over an empty socket`
+    )
+    return
+  }
+  const inSet = await page.evaluate(
+    () => Array.from(document.querySelectorAll('.MuiChip-label')).filter((e) => e.textContent === 'in set').length
+  )
+  if (replace === 0 && inSet >= labels.length) {
+    note('every donor the preset offers is already the one in this socket — nothing here would replace anything')
+    return
+  }
+  check(
+    'browsing an OCCUPIED socket, the add button says Replace instead of Add to set',
+    replace > 0,
+    `${String(replace)} of ${String(labels.length)} buttons said Replace (${String(inSet)} already in set)`
+  )
+}
+
+/**
  * 6c. A HOST'S SOCKETS ARE BROWSABLE ONE AT A TIME (V8).
  *
  * The item-focused way in: a cell with a host draws all four of its sockets, and clicking one
@@ -457,10 +361,15 @@ async function stepSocketView(page: Page): Promise<void> {
     note('no cell has a host yet — the socket view step is skipped this run')
     return
   }
-  const socket = await page.evaluate(
-    (s) => document.querySelector(s)?.closest('[data-socket]')?.getAttribute('data-socket') ?? '',
-    SOCKET_BROWSE
-  )
+  // The socket's own row says whether it is FILLED: `planner-socket-line` is a planned socket,
+  // `planner-socket-open` is an empty one. That is the fact the ADD control has to reflect.
+  const target = await page.evaluate((s) => {
+    const line = document.querySelector(s)?.closest('[data-socket]')
+    return {
+      socket: line?.getAttribute('data-socket') ?? '',
+      occupied: line?.getAttribute('data-testid') === 'planner-socket-line'
+    }
+  }, SOCKET_BROWSE)
   await page.click(SOCKET_BROWSE, { timeout: 15_000 })
 
   const filtered = await until(async () => (await countOf(page, PRESET_CHIP)) > 0, 15_000)
@@ -468,9 +377,10 @@ async function stepSocketView(page: Page): Promise<void> {
   const label = (await textOf(page, PRESET_CHIP)).replace(/\s+/g, ' ').trim()
   check(
     '…and the browser is on that socket, for that slot and that host',
-    label.toLowerCase().includes(socket.toLowerCase()),
-    `preset "${label}" for socket ${socket}`
+    label.toLowerCase().includes(target.socket.toLowerCase()),
+    `preset "${label}" for socket ${target.socket}`
   )
+  await checkReplaceLabels(page, target.occupied)
 
   // Under a preset, haste-locked donors are OUT, not chipped (owner verdict 2026-08-05): the
   // preset promises only-legal-fits and R3 says haste never moves. The chip only exists in the
@@ -510,6 +420,29 @@ async function stepFarm(page: Page): Promise<void> {
     box !== null && box.h > 0 && box.scrollH >= box.clientH,
     box ? `${String(box.h)}px tall` : 'absent'
   )
+  // JOS-42 refinement 4, THE TRUST INVARIANT, measured on the real corpus in the real app: with
+  // the era filter on (its default, and where this run is), no heading may name a zone from an
+  // expansion the server has not opened. A route that sends you to Dragon Necropolis is not a
+  // partial answer, it is a wrong one — and it is the bug the owner reported.
+  const unreachable = await countOf(page, FARM_GROUP_OUT_OF_ERA)
+  check(
+    'no farm heading sends you to a zone this era cannot reach',
+    unreachable === 0,
+    `${String(unreachable)} out-of-era headings`
+  )
+  // Those zones are not deleted — they drop into the row's "also:" tail, each naming its own
+  // expansion. Present or not depends on what is planned, so this only checks the WORDING.
+  const alsoEras = await page.evaluate(
+    (s) => Array.from(document.querySelectorAll(s)).map((e) => (e as HTMLElement).innerText.trim()),
+    FARM_ALSO_ERA
+  )
+  if (alsoEras.length > 0) {
+    check(
+      'an out-of-era camp survives in the "also:" tail, naming the expansion it belongs to',
+      alsoEras.every((t) => /^\((Classic|Kunark|Velious|Luclin)\)$/.test(t)),
+      alsoEras.slice(0, 3).join(' ')
+    )
+  }
   check(
     'every farm row states the merge cost in the shared vocabulary ("needs +N — ≈X D0 merges")',
     /needs \+\d+ — ≈\d+ D0 merges/.test(text),
