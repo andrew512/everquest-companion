@@ -105,6 +105,22 @@ export class EngineState {
   /** Every name key that has EVER been one of your pets this session. Small, never pruned,
    *  and the reason `notePlayer` can never mistake a pet for a player (see notePet). */
   everPet = new Set<string>()
+  /**
+   * Every name key YOU have LANDED DAMAGE ON this session (JOS-48) — the third absolute refusal
+   * `notePlayer` runs beside `everPet` and `everCharmed`, and the mob half of `everPet`.
+   *
+   * Small and never pruned, exactly like its two siblings: a name is a handful of bytes and
+   * "have I been killing this?" must have ONE answer for the whole session, not a per-encounter
+   * one. Name-keyed rather than instance-keyed on purpose — `a spite golem` respawns, and the
+   * eleventh one is the same KIND of thing as the first.
+   *
+   * WRITTEN FROM YOUR OWN OUTGOING DAMAGE AND NOTHING ELSE, which is the whole measurement
+   * (see notePlayer). Not "it hit me", not "my pet hit it", not "it was engaged": those are all
+   * things a CHARMED ALLY does, and a raid boss that mind-controls your healer turns each of
+   * them into a rule that unfiles a real player. Your own swing is the one signal with a person
+   * behind it.
+   */
+  everStruck = new Set<string>()
   /** The player's own proper name key (e.g. "primitive"). Normally INJECTED by
    *  index.ts via setPlayerName() (it knows the character from the tail ref). As a
    *  cheap fallback (guards a mis-parsed injected name) it can also be LEARNED from
@@ -222,6 +238,7 @@ export class EngineState {
   reset(): void {
     this.petNames.clear()
     this.everPet.clear()
+    this.everStruck.clear()
     this.world.reset()
     this.charm.reset()
     this.candidates.reset()
@@ -410,11 +427,65 @@ export class EngineState {
    * filed here, and `notePet` below evicts a name the moment it becomes a pet. Getting this
    * wrong is expensive and silent: a "player" is excluded from `engaged`, from enemy healing,
    * and from a pet's target set, so one bad entry deletes real damage with no error anywhere.
+   *
+   * SOMETHING YOU HAVE BEEN KILLING IS NEVER A PLAYER EITHER (JOS-48), and it is the same guard
+   * for the same reason. The heal line the caller read is `<H> healed you for N`, and the belief
+   * behind it — "a mob cannot heal the owner" — is FALSE. Your OWN lifetap prints exactly that
+   * shape and names the DRAINED MOB as the healer:
+   *
+   *     You hit Lord of Loathing for 941 points of unresistable damage by Harm Touch X.
+   *     Lord of Loathing has taken 509 damage from your Harm Touch X. (Critical)
+   *     Your life force drains away.
+   *     Lord of Loathing healed you for 509 hit points by Leech Touch I.
+   *
+   * Five of those in one reporting slice, plus two more for `a spite golem`. Both were raid mobs
+   * the reporter was standing toe to toe with; filing them as players deleted every pet swing at
+   * them from that instant on (measured: 18 hits, 398 points, on one named pet in one pull).
+   *
+   * THE SIGNAL IS YOUR OWN SWING, AND THE NARROWNESS IS MEASURED, NOT TIMID. The obvious wider
+   * rule — "anything that was ever an engaged hostile" — is WRONG in the same corpus, and a raid
+   * boss is what proves it: Warlord Skarlon mind-controls the reporter's own healer, so
+   * `Sonista slashes YOU for 5 points of damage.` lands 27 seconds before
+   * `Sonista healed you for 1219 hit points by Healing Light.` A rule reading "it hit me" would
+   * unfile a real player and hand him straight back to the `engaged` set — which is the Task #65
+   * defect (a stranger's 214-second brawl swallowing three of the owner's pulls) rebuilt from
+   * the other end. Being hit is something that HAPPENS to you; hitting is something you DO, and
+   * only the second one names a mob.
+   *
+   * It is deliberately BEHAVIOURAL rather than a catalog lookup, and that is not a compromise —
+   * petCandidates.ts already excludes proper-named mobs (`Cleric of Innoruuk`, `Lord of
+   * Loathing`) by this exact reasoning, and it works identically for a mob no catalog has ever
+   * heard of. `Lord of Loathing` is in the shipped catalog and `a fire giant warrior` is too;
+   * neither fact is consulted, and the fix would hold if both were absent.
+   *
+   * ONE DIRECTION ONLY, and that is measured too. The refusal fires when your own damage came
+   * FIRST; it does not RETIRE a filing the heal got in ahead of. Full replays say that ordering
+   * is what actually happens — in the reporting slice the lifetap trailed the first exchange by
+   * 632 s and 336 s, because a lifetap tick is downstream of the damage that produced it, and on
+   * the owner's whole 1.4M-line log not one of the seven heal-minted players had ever been
+   * struck by him. The retirement is not free (it would have to overrule a filing that is
+   * protecting a real person), so it waits for a log that needs it.
    */
   notePlayer(nameKey: string | null | undefined): void {
     if (!nameKey || nameKey === 'you') return
     if (this.everPet.has(nameKey) || this.charm.everCharmed(nameKey)) return
+    if (this.everStruck.has(nameKey)) return
     this.knownPlayers.add(nameKey)
+  }
+
+  /**
+   * Record that YOU landed damage on `nameKey` (JOS-48) — the mob half of `notePet`, and the
+   * only writer of `everStruck`.
+   *
+   * Called from the single admission point in routing.ts, on the `out-you` verdict and nothing
+   * else, beside the pet-candidate disqualifier that reads the same fact ("you do not attack
+   * your own pet" — and you do not attack your own healer either). Your PET's swings are
+   * deliberately not evidence here: a pet auto-attacks what it is pointed at, including a
+   * charmed ally, so it carries no statement of intent.
+   */
+  noteStruck(nameKey: string): void {
+    if (nameKey === '' || nameKey === 'you') return
+    this.everStruck.add(nameKey)
   }
 
   /** Bind `nameKey` into the attribution set. THE one door, so "was this ever a pet?" has a

@@ -259,6 +259,12 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
  *   ignore     → the interesting case: an unattributed attacker landing on something. This is
  *                exactly the damage the meter is throwing away, so it is exactly the damage
  *                worth asking about.
+ *
+ * The `out-you` branch files the SAME fact twice on purpose (JOS-48). "You hit it" disqualifies
+ * a pet candidate and it disqualifies a heal-minted PLAYER claim, because it is one statement —
+ * you do not attack the things that are on your side — and the two readers happen to be asking
+ * about different halves of that. `EngineState.everStruck` is the second one; see notePlayer for
+ * the mob lifetap that made it necessary and for the charmed raid ally that kept it this narrow.
  */
 function noteCandidateEvidence(st: EngineState, ev: DamageEvent, at: Attribution): void {
   const aKey = idKey(ev.attacker)
@@ -266,6 +272,7 @@ function noteCandidateEvidence(st: EngineState, ev: DamageEvent, at: Attribution
   switch (at.kind) {
     case 'out-you':
       st.candidates.noteYourTarget(bKey, ev.ts)
+      st.noteStruck(bKey)
       return
     case 'incoming':
       st.candidates.disqualify(aKey)

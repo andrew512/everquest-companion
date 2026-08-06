@@ -127,6 +127,14 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   mechanical lines (kill credit, fizzle/interrupt, third-person buff-landing
   emotes) — those are load-bearing (own-cast gating, buff classification,
   entity retirement) and carry no one's words.
+  **A REPORTER'S SLICE NEVER BECOMES A FIXTURE** (.gitignore `.triage/`: those
+  slices are a user's own game log and never enter git). When a defect exists
+  only in someone else's log, the window stays the OWNER's real bytes and the
+  ONE sentence his log lacks is INJECTED as a parsed event in the test —
+  quoted verbatim from the slice, cited by report id, with the mob's name
+  swapped. petClaimWindows (the `… Master.'` tell) set the precedent;
+  mobLifetapPlayer (JOS-48) is the case that needed it. Never hand-author a
+  shape no real log has printed, and say in the header which line is injected.
 - **Headless app test** (`npm run test:e2e`, playwright-core `_electron`): drives
   the REAL app end-to-end and asserts what the user SEES
   (`tests/e2e/combat-dashboard.e2e.mts`). Use it for anything a fixture replay
@@ -474,6 +482,26 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    Deaths retire. **Unobservable fades censor, never pollute stats.**
    Own-cast gating: never track buffs we didn't cast (10s cast window or a
    Quick Buff burst).
+   **A HEALER OF YOURS IS NOT NECESSARILY A PLAYER (JOS-48).** `<X> healed you
+   for N hit points by <Spell>.` is also how YOUR OWN LIFETAP prints its
+   recourse, naming the DRAINED MOB as the healer (`Lord of Loathing healed
+   you for 509 hit points by Leech Touch I.`, seven times in one report slice,
+   under `Your life force drains away.`). Filing that mob as a KNOWN PLAYER
+   deleted every pet swing at it from that instant (measured: 41 hits / 768
+   points in one golden window; 18 / 398 in the reporter's own pull). The
+   refusal is `EngineState.everStruck` — **a name YOU have landed damage on is
+   a mob**, the third absolute guard beside `everPet` and `everCharmed`, and
+   it is BEHAVIOURAL: the mobs catalog is never consulted, so it holds for a
+   proper-named guard the catalog has never heard of.
+   **And the wider rule — "anything ever ENGAGED as a hostile" — is MEASURED
+   WRONG**: a raid boss mind-controls your healer, so
+   `Sonista slashes YOU for 5 points` lands 27 s before
+   `Sonista healed you for 1219 hit points` in a real slice. Being hit is
+   something that HAPPENS to you; hitting is something you DO, and only the
+   second names a mob. One direction only, too: the refusal never RETIRES a
+   filing the heal got in ahead of (a lifetap tick is downstream of the damage
+   that produced it — measured lags of 632 s / 336 s, and zero heal-first
+   cases in the owner's 1.4M lines).
 5. **Aggregates lie; derive from identities.** AA earned = net allocation
    (latest purchase per ability+rank, cost-0 auto-grants excluded) +
    unspent (last authoritative "You now have" − later spends); sum-of-gains
