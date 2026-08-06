@@ -733,6 +733,38 @@ export interface ProgressState {
    * schema bump and no migration (the `exaltPlans` precedent above).
    */
   rosterEdits?: RosterEdit[]
+  /**
+   * PET CLAIMS (JOS-47, shared/petClaims.ts). Character-scoped, like everything else here, and
+   * the one piece of pet state the log can never tell us again: a summoned pet that is never
+   * ORDERED sends no `… Master.'` tell, so nothing in the file says it is yours.
+   *
+   * NOT time-keyed, and that is the difference from `rosterEdits` above. A roster edit describes
+   * a GROUP, and a group ends; "Vararab is my pet" describes a class ability, and the next pet
+   * you summon has a different random name anyway — a claim that expired on a timer would simply
+   * lose the user their answer. It is cleared by the same thing that clears everything else
+   * about a character: a rebirth (epoch), which re-keys the store entry outright.
+   *
+   * Additive and optional — every reader defaults on a missing key, so no schema bump and no
+   * migration (the `exaltPlans` / `rosterEdits` precedent above).
+   */
+  petClaims?: PetClaimEdit[]
+}
+
+/**
+ * ONE hand-made statement about a pet: "this is mine" or "this is not". The provenance ladder's
+ * top rung (shared/roster.ts `outranks`, same rule) — a later log line can neither undo it nor
+ * be undone by it, and a message-grade binding signal arriving afterwards simply CONFIRMS the
+ * claim rather than competing with it (state.ts applyPetClaim: both walk one door).
+ */
+export interface PetClaimEdit {
+  /** Canonical identity key — `idKey(name)`. */
+  key: string
+  /** Display name as the log spelled it. */
+  name: string
+  /** 'claim' binds it as your pet everywhere; 'deny' means never ask about this name again. */
+  action: 'claim' | 'deny'
+  /** Wall-clock instant the statement was made — recorded for the reader, never for expiry. */
+  setAt: number
 }
 
 /**

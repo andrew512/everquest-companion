@@ -26,6 +26,7 @@ import { registerOutputsIpc } from './outputs'
 import { registerPerfIpc } from './perf'
 import { registerPlannerIpc } from './planner'
 import { registerPresenceIpc } from './presence'
+import { registerPetClaimIpc } from './petClaims'
 import { registerRosterIpc } from './roster'
 import { registerShareIpc } from './share'
 import { registerSoundsIpc } from './sounds'
@@ -48,6 +49,7 @@ export function registerIpc(): void {
   registerWorldIpc()
   registerComboIpc()
   registerRosterIpc()
+  registerPetClaimIpc()
   registerAlertsIpc()
   registerShareIpc()
   registerSoundsIpc()

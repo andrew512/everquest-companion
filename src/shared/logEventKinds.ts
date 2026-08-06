@@ -33,6 +33,7 @@ export const ALL_LOG_EVENT_KINDS = [
   'uncharm',
   'cc',
   'petClaim',
+  'petSay',
   'castBegin',
   'castFizzle',
   'castInterrupted',

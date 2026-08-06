@@ -147,6 +147,18 @@ const overlayApi = {
     return () => ipcRenderer.removeListener(IPC.onToast, listener)
   },
 
+  /**
+   * PET CLAIMS (JOS-47) — the one WRITE this lean bridge gains, and it earns its place: the
+   * report that produced the feature was about THIS window ("Dps overlay meter is not showing
+   * my pet dps"), so the surface that asks the question has to be the surface that can take
+   * the answer. The question itself rides the combat snapshot this bridge already fetches.
+   *
+   * Interactive mode only, by the caller's construction — a LOCKED overlay is click-through by
+   * law, so it has no clicks to give (the same footing as `focusMob` above).
+   */
+  setPetClaim: (edit: { name: string; action: 'claim' | 'deny' }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.petClaimSet, edit),
+
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)
 }

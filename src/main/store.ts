@@ -9,6 +9,7 @@ import type {
   HeldCounts,
   OverlayConfig,
   OverlayKind,
+  PetClaimEdit,
   ProgressState,
   RosterEdit,
   UpdateChannel,
@@ -345,6 +346,48 @@ export function setRosterEdit(charId: string, edit: RosterEdit): RosterEdit[] {
 export function clearRosterEdit(charId: string, key: string): RosterEdit[] {
   const next = getRosterEdits(charId).filter((e) => e.key !== key)
   setProgress(charId, { ...getProgress(charId), rosterEdits: next })
+  return next
+}
+
+// ----- Pet claims (JOS-47, shared/petClaims.ts) -----
+//
+// The same three functions as the roster edits above and for the same reason: attribution is
+// re-derived from the log on every replay, and a claim is the one part of it the log cannot
+// state. ONE STATEMENT PER NAME — "claim Vararab" then "deny Vararab" is one answer to one
+// question, the later one.
+//
+// Deliberately NOT time-keyed (see ProgressState.petClaims): a group ends, a class ability does
+// not, and an expiring claim would only ever lose the user their answer.
+
+function sanitizePetClaims(raw: unknown): PetClaimEdit[] {
+  if (!Array.isArray(raw)) return []
+  const out: PetClaimEdit[] = []
+  for (const e of raw as Partial<PetClaimEdit>[]) {
+    if (typeof e?.key !== 'string' || e.key === '') continue
+    if (typeof e.name !== 'string' || e.name === '') continue
+    if (e.action !== 'claim' && e.action !== 'deny') continue
+    if (typeof e.setAt !== 'number' || !Number.isFinite(e.setAt)) continue
+    out.push({ key: e.key, name: e.name, action: e.action, setAt: e.setAt })
+  }
+  return out
+}
+
+/** This character's pet claims ([] when it has none, or when the stored value is unusable). */
+export function getPetClaims(charId: string): PetClaimEdit[] {
+  return sanitizePetClaims(getProgress(charId).petClaims)
+}
+
+/** Record one claim/deny, REPLACING any existing statement about the same name. */
+export function setPetClaim(charId: string, edit: PetClaimEdit): PetClaimEdit[] {
+  const next = sanitizePetClaims([...getPetClaims(charId).filter((e) => e.key !== edit.key), edit])
+  setProgress(charId, { ...getProgress(charId), petClaims: next })
+  return next
+}
+
+/** Forget the hand-made statement about one name — "ask me again". */
+export function clearPetClaim(charId: string, key: string): PetClaimEdit[] {
+  const next = getPetClaims(charId).filter((e) => e.key !== key)
+  setProgress(charId, { ...getProgress(charId), petClaims: next })
   return next
 }
 

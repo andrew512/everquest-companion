@@ -360,14 +360,46 @@ export interface CcEvent extends LogEventBase {
  * — which in the real log is emitted ONLY by pets (no player false positives; see
  * parser.ts). This is how random proper-named SUMMONED pets (Vebarn, Garer, …),
  * which never appear in a charm line, get bound to you. Charmed pets also emit it
- * (harmlessly — they're already bound via the charm line). The say-family
- * ("Sorry, Master…", "As you wish…") is deliberately NOT used: common-named
- * charmed mobs emit it too, so it can't distinguish a summoned pet from an
- * unrelated mob, and it adds no binding a charm line didn't already provide.
+ * (harmlessly — they're already bound via the charm line).
+ *
+ * ITS ONE BLIND SPOT, and JOS-47 is what measured it: the tell fires only when the pet is
+ * ORDERED. `/pet attack` produces "Attacking X Master."; `/pet back off` on a mezzed mob
+ * produces the wake-failure variant. A pet that engages on its OWN aggro emits nothing
+ * private at all — so a player who never types a pet command has a pet this signal can never
+ * bind, and 13,555 points of it went unrecorded in the reporter's 30-minute slice. That is
+ * what `PetSayEvent` exists for, and why it nominates rather than binds.
  */
 export interface PetClaimEvent extends LogEventBase {
   kind: 'petClaim'
   name: string
+}
+
+/** Which of the six pet responses was spoken (shared/logScrub.ts `PET_SAY_LINES`). */
+export type PetSayKind = 'follow' | 'regroup' | 'calm' | 'hold' | 'comply' | 'illegalTarget'
+
+/**
+ * A pet-voiced PUBLIC say — one of the six exact sentences in `PET_SAY_LINES`
+ * ("Following you, Master.", "Sorry, Master... calming down.", "As you wish, oh great one.", …).
+ *
+ * THIS EVENT NEVER BINDS ANYTHING, and the pet model's honesty rests on that. `says` is
+ * broadcast to everyone in earshot, so the line proves the speaker is SOMEBODY's pet and says
+ * nothing whatever about whose. Binding on it would hand a stranger's pet to your meter —
+ * precisely the failure Task #65 spent a wave undoing for charm broadcasts, which are
+ * broadcasts for the same reason.
+ *
+ * What it does is NOMINATE: `combat/petCandidates.ts` pairs it with "…and that entity is
+ * fighting the target YOU are fighting" and offers the user a claim. Evidence, never ownership.
+ *
+ * MEASURED (whole-log sweep, 1.4M lines, JOS-47): 113 of these exist across 6 sentence forms.
+ * 85 came from a name an EARLIER private tell had already bound (so binding on the say would
+ * have added nothing at all), 22 from a name a LATER tell bound, and 6 from names no tell ever
+ * bound — that last six is the entire population this event is for.
+ */
+export interface PetSayEvent extends LogEventBase {
+  kind: 'petSay'
+  /** The speaker, spelled as the log spelled it (world-model law 2). */
+  name: string
+  say: PetSayKind
 }
 
 /**
@@ -1145,6 +1177,7 @@ export type LogEvent =
   | UncharmEvent
   | CcEvent
   | PetClaimEvent
+  | PetSayEvent
   | CastBeginEvent
   | CastFizzleEvent
   | CastInterruptedEvent

@@ -108,9 +108,20 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   It KEEPS combat, casts, buff landings/wear-offs, loot, turn-ins, zone
   lines, level-ups, AA, charm/pet lines and system messages.
   **CARVE-OUT: the pet-claim tell** `<Name> told you, '… Master.'` IS a tell
-  but is spoken by an NPC pet and is the ONLY binding signal for a summoned
-  pet (law below), so it is kept verbatim — dropping it silently unbinds
-  every pet in every combat fixture. The user's OWN `/who` row (Primitive)
+  but is spoken by an NPC pet and is the strongest binding signal for a
+  summoned pet (law below), so it is kept verbatim — dropping it silently
+  unbinds every pet in every combat fixture.
+  **CARVE-OUT: the six pet-voiced SAYS** (JOS-47) — `Following you, Master.`,
+  `Now regrouping, master.`, `Sorry, Master... calming down.`, `Now holding,
+  Master.  I will not start new attacks until ordered.`, `As you wish, oh
+  great one.`, `I beg forgiveness, Master.  That is not a legal target.` —
+  matched as EXACT SENTENCES, never as a `/Master/` pattern (the sweep that
+  enumerated them also found six kinds of mob flavor a loose pattern would
+  leak: "None shall defile the realm of our master!" and friends). Same
+  argument as the tell: an NPC's words under an NPC's name. They are the
+  only public evidence an entity is somebody's pet, and a fixture that
+  cannot carry them cannot test the meter's "your pet?" offer.
+  The user's OWN `/who` row (Primitive)
   is likewise exempt: it is the only line stating the class loadout and
   `extract-leveling-fixtures.mjs` needs it. Bystanders' NAMES survive in
   mechanical lines (kill credit, fizzle/interrupt, third-person buff-landing
@@ -609,6 +620,23 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   zones (charmed pets do not). A pet-claim tell from a name EVER seen
   charmed re-arms the charmed set, never the permanent one — one charmed
   mob's tell must not credit its kills to you forever (`everCharmed`).
+  **THE TELL ONLY FIRES WHEN THE PET IS ORDERED** (JOS-47) — `/pet attack`
+  produces "Attacking X Master.", `/pet back off` the wake-failure variant.
+  A pet that engages on its own aggro emits nothing private at all, so a
+  player who never types a pet command has a pet the log cannot bind (a
+  user's 30-min slice: three successive pets, 476 hits, 13,555 points,
+  ZERO tells; the owner's own log does it too — the enchanter animation pet
+  Kober, 105 hits, never once ordered). Three rungs now, strongest first:
+  the private TELL binds; a pet-voiced PUBLIC say (the six exact sentences
+  in `shared/logScrub.ts PET_SAY_LINES`) plus that entity fighting YOUR
+  target NOMINATES and never binds — `says` is broadcast, so it proves the
+  speaker is somebody's pet and nothing about whose (113 in the whole log:
+  85 from names an earlier tell had already bound, 6 from names no tell ever
+  bound); and the USER'S CLAIM binds, outranks everything, and persists per
+  character (`combat/petCandidates.ts`, `ipc/petClaims.ts`). The offer is an
+  UNBOUND-STATE offer: `notePet` releases the candidate, so anything that
+  binds retires the question. A claim and a later tell converge on one pet —
+  both walk `world.claim()`, which is idempotent on a live pet instance.
 - Exp: `You gain (party )?experience!( (N.NN%))?` — the percent is an
   INCREMENT of the current level bar (sums to ~100 between dings);
   unstated ⇒ at the cap, modeled `pct: undefined` never 0. The exp line
