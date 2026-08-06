@@ -192,7 +192,9 @@ test('an EMPTY pre-framework store migrates to a valid current store, not to jun
     voice: { engine: 'system', voiceId: null, rate: 1, volume: 1 },
     cursorRing: { enabled: false, sizePx: 44, thicknessPx: 4 },
     overlayAutoHide: { hideWhenNotRunning: true, hideWhenUnfocused: false },
-    telemetry: { enabled: true, noticeShown: false, analyticsId: null },
+    // `funnelsDone` is the once-ever funnel ledger (src/main/telemetry/funnels.ts): empty here,
+    // which is what makes a fresh install able to report `installed` exactly once.
+    telemetry: { enabled: true, noticeShown: false, analyticsId: null, funnelsDone: [] },
     perfHud: { enabled: false },
     // Both graphics-compatibility switches off (v10, JOS-40): software rendering and opaque
     // overlays are workarounds for a driver, and a fresh store has no driver complaint.

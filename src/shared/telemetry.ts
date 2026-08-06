@@ -249,6 +249,25 @@ export const UUID_V4_RE =
 export const APP_VERSION_RE = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/
 
 // ---------------------------------------------------------------- the event union
+//
+// THE ADDITIVE-FIELD RULE (learned while adding `linesParsed`, 2026-08-06). A shipped client can
+// be talking to a server running an OLDER copy of this contract, because the app auto-updates
+// itself and the Lambda is deployed by hand. The two ways to add a measurement are NOT equally
+// safe under that skew:
+//
+//   * A NEW EVENT KIND is fatal. `validateTelemetryBatch` fails the WHOLE batch on an unknown
+//     `t`, the endpoint answers 400, and `telemetryPermanentRefusal` (main/telemetry/net.ts)
+//     classes 400 as "these bytes will never be accepted" and DROPS the batch. So a client that
+//     emits an event the deployed server has never heard of throws away every counter it is
+//     carrying, on every flush, until the deploy lands.
+//
+//   * A NEW OPTIONAL FIELD on an existing kind is free. The validators do not sanitize an object,
+//     they CONSTRUCT one field by field — so an older server simply does not copy the field
+//     across, accepts the batch, and counts everything else exactly as before. The measurement
+//     starts at zero and begins moving the moment the Lambda is redeployed.
+//
+// That is why `linesParsed` rides on `sessionHeartbeat`/`sessionEnd` instead of arriving as its
+// own event: the client half of this feature is safe to ship BEFORE the additive infra apply.
 
 export interface EvSessionStart {
   t: 'sessionStart'
@@ -257,11 +276,15 @@ export interface EvSessionStart {
 export interface EvSessionHeartbeat {
   t: 'sessionHeartbeat'
   uptimeMs: number
+  /** Log lines parsed since the previous report. OPTIONAL — see THE ADDITIVE-FIELD RULE below. */
+  linesParsed?: number
 }
 export interface EvSessionEnd {
   t: 'sessionEnd'
   durationMs: number
   viewsVisited: number
+  /** The tail of the same counter: lines parsed since the last heartbeat. Optional, same rule. */
+  linesParsed?: number
 }
 export interface EvViewDwell {
   t: 'viewDwell'
@@ -411,12 +434,42 @@ export interface TelemetryPrefs {
   noticeShown: boolean
   /** The rotatable anonymous id, or null until the collector mints one. */
   analyticsId: string | null
+  /**
+   * ONCE-EVER FUNNEL STEPS ALREADY EMITTED, as `"<funnel>:<step>"` marks — see
+   * `funnelStepMark` below.
+   *
+   * The first-run and voice-install funnels ask "how far did this INSTALL get", so each of their
+   * steps may contribute at most one event for the life of the install. A counter that could be
+   * re-emitted would measure how often somebody re-opens a tab, not how many installs ever
+   * reached it, and the panel's conversion rates would exceed 100% by construction.
+   *
+   * It lives beside the switch rather than in the disposable ring because it must OUTLIVE the
+   * ring: the ring is dropped on opt-out, on rotation and on any unreadable file, and a mark that
+   * went with it would let `installed` fire a second time on the same machine.
+   *
+   * It is NOT an identifier and carries nothing personal — a list of at most a dozen schema
+   * constants, each of which is printed in TELEMETRY.md.
+   */
+  funnelsDone: string[]
 }
 
 export const DEFAULT_TELEMETRY_PREFS: TelemetryPrefs = {
   enabled: true,
   noticeShown: false,
-  analyticsId: null
+  analyticsId: null,
+  funnelsDone: []
+}
+
+/** The one spelling of a once-ever mark, so the writer and the reader cannot disagree. */
+export function funnelStepMark(funnel: TelemetryFunnel, step: string): string {
+  return `${funnel}:${step}`
+}
+
+/** Every mark that could ever be legal — the normalizer's allowlist, built from the schema. */
+export function allFunnelStepMarks(): string[] {
+  return TELEMETRY_FUNNELS.flatMap((funnel) =>
+    TELEMETRY_FUNNEL_STEPS[funnel].map((step) => funnelStepMark(funnel, step))
+  )
 }
 
 /** A plain object, or not. Shared with every validator in `./telemetryValidate.ts` — one
@@ -436,6 +489,16 @@ export function normalizeTelemetryPrefs(value: unknown): TelemetryPrefs {
     enabled: typeof v.enabled === 'boolean' ? v.enabled : DEFAULT_TELEMETRY_PREFS.enabled,
     noticeShown:
       typeof v.noticeShown === 'boolean' ? v.noticeShown : DEFAULT_TELEMETRY_PREFS.noticeShown,
-    analyticsId: typeof id === 'string' && UUID_V4_RE.test(id) ? id : null
+    analyticsId: typeof id === 'string' && UUID_V4_RE.test(id) ? id : null,
+    // ALLOWLISTED, deduped and canonically ordered: the marks are schema constants, so an
+    // unrecognized one (a hand edit, a downgrade from a build with more steps) is DROPPED rather
+    // than carried. A dropped mark can only ever cost one duplicate event, never a wrong one.
+    funnelsDone: normalizeFunnelsDone(v.funnelsDone)
   }
+}
+
+function normalizeFunnelsDone(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const held = new Set(value.filter((m): m is string => typeof m === 'string'))
+  return allFunnelStepMarks().filter((mark) => held.has(mark))
 }

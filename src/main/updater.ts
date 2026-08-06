@@ -146,6 +146,7 @@ import type { UpdateChannel, UpdateStatus } from '../shared/types'
 import { MAX_DOWNLOAD_ATTEMPTS, isStaleVersion, nextCheckDelayMs } from '../shared/update'
 import { logInfo } from './errorLog'
 import { getUpdateChannel, getUpdateLastCheckedAt, setUpdateLastCheckedAt } from './store'
+import { classifyFailure, recordEvent } from './telemetry'
 
 const { autoUpdater } = electronUpdater
 
@@ -213,6 +214,32 @@ const noInstallInDev = (): void => {
 const failureText = (e: unknown): string =>
   String((e as { message?: unknown } | null | undefined)?.message ?? e)
 
+/**
+ * THE `updateOutcome` PRODUCER (JOS-39). The schema has carried check/download/apply plus a
+ * coarse failure class since it was written and nothing ever emitted one, so the Analytics tab's
+ * update section was three rows of zeros — which reads as "no install has ever updated" and meant
+ * "we never measured it".
+ *
+ * WHAT EACH STEP MEANS HERE, because the honest answer is narrower than the word suggests:
+ *   * `check`    — a check reached a verdict (available / not available) or failed.
+ *   * `download` — a staged build appeared, or the download failed.
+ *   * `apply`    — the user CLICKED the chip and we handed the installer over. The silent
+ *     apply-on-quit path (`autoInstallOnAppQuit`) is invisible from inside this process by
+ *     construction: it happens as the app dies. The fleet-wide answer to "did installs actually
+ *     move" is the SERVER-side `upgrades` counter (src/shared/telemetryRollup.ts), which sees the
+ *     version change on the next batch however the update was applied.
+ *
+ * Never a message: `classifyFailure` reduces an error to one of five words before it can reach an
+ * event, and the event type has no field a message could go in.
+ */
+function noteUpdate(step: 'check' | 'download' | 'apply', err?: unknown): void {
+  if (err === undefined) {
+    recordEvent({ t: 'updateOutcome', step, ok: true })
+    return
+  }
+  recordEvent({ t: 'updateOutcome', step, ok: false, failureClass: classifyFailure(err) })
+}
+
 /** The two status sinks the electron-updater event handlers write through. */
 interface StatusSinks {
   /** Record + broadcast a status. */
@@ -231,6 +258,7 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
   autoUpdater.on('update-available', (info) => {
     const version: string | undefined = info?.version
     consecutiveFailures = 0 // the CHECK succeeded, whatever happens to the download
+    noteUpdate('check')
     // UPDATED-AWAY: the feed names a build we already are. Nothing to offer.
     if (isStaleVersion(version, currentVersion)) {
       checkDone({ state: 'idle' })
@@ -262,6 +290,7 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
   autoUpdater.on('update-not-available', () => {
     consecutiveFailures = 0
     downloading = null
+    noteUpdate('check')
     checkDone({ state: 'idle' })
   })
 
@@ -276,6 +305,12 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
 
   autoUpdater.on('update-downloaded', (info) => {
     const version: string | undefined = info?.version
+    // COUNTED ONLY WHEN THIS PROCESS ACTUALLY DOWNLOADED IT. Research §6b: this event is
+    // RE-EMITTED on every check that re-resolves an already-staged file, so counting the event
+    // itself would report one download per poll for the rest of the session — the same trap that
+    // made other apps' "restart to update" prompts into a nag, arriving as a fake metric.
+    // `downloading` is set only where we call `downloadUpdate()`, which makes it the exact latch.
+    if (downloading !== null) noteUpdate('download')
     downloading = null
     if (version) downloadAttempts.delete(version)
     // Belt and braces: a staged build that isn't newer than us is not an offer.
@@ -299,6 +334,10 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // only Preferences carries the text. The backoff below stops us from
     // hammering a feed that is refusing us.
     consecutiveFailures++
+    // WHICH STEP FAILED is `downloading`: electron-updater funnels a failed download through the
+    // same 'error' event as a failed check, and the only thing that tells them apart is whether
+    // we had a download in flight. Getting it wrong would put CDN failures in the check row.
+    noteUpdate(downloading !== null ? 'download' : 'check', err ?? 'unknown error')
     downloading = null
     checkDone({ state: 'error', message: err == null ? 'unknown error' : failureText(err) })
   })
@@ -400,7 +439,17 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
   // not spend it on a stale click.
   ipcMain.handle(IPC.installUpdate, () => {
     if (lastStatus.state !== 'ready') return
-    autoUpdater.quitAndInstall(true, true)
+    try {
+      autoUpdater.quitAndInstall(true, true)
+      // RECORDED AFTER THE CALL AND BEFORE THE PROCESS DIES, which works because the ring is
+      // written synchronously (telemetry/ring.ts) and `quitAndInstall` only *initiates* the quit.
+      // The event therefore survives on disk and is sent by the NEW build's first flush — which
+      // is the only process that could ever report it.
+      noteUpdate('apply')
+    } catch (err) {
+      noteUpdate('apply', err)
+      throw err
+    }
   })
 
   /**

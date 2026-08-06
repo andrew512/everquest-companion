@@ -254,6 +254,40 @@ test('A NEW DAY resets the cap and advances days_seen — the row is the whole p
 })
 
 /**
+ * THE UPGRADE COUNTER IS SERVER-DERIVED, and this is the only place it can be driven end to end
+ * without a cluster: the same id sends twice, on two different builds, and the second batch is
+ * the one that counts. The client sends nothing new for this — the version has always been in
+ * the envelope, exactly as `channel` always was for the cohort split.
+ */
+test('a version CHANGE on a known id counts one upgrade; the same version counts none', () => {
+  const state = emptyTelemetryState()
+  const id = randomUUID()
+  const ev: TelemetryEvent[] = [{ t: 'sessionStart', coldStartMsBucket: 1 }]
+  const at = Date.UTC(2026, 7, 3, 10)
+  const on = (version: string): Buffer => {
+    const b = batch(ev, id)
+    return Buffer.from(JSON.stringify({ ...b, env: { ...b.env, appVersion: version } }))
+  }
+  const key = `2026-08-03|owner|${USAGE_METRICS.upgrades}|${DIM_NONE}`
+
+  assert.equal(telemetryRoute(state, on('0.6.0'), at).status, 202)
+  assert.equal(state.usage.get(key), undefined, 'a first-ever batch is an install, not an upgrade')
+  assert.equal(telemetryRoute(state, on('0.6.0'), at).status, 202)
+  assert.equal(state.usage.get(key), undefined, 'the same build again is not a change')
+
+  assert.equal(telemetryRoute(state, on('0.7.0'), at).status, 202)
+  assert.equal(state.usage.get(key), 1, 'the build changed: one upgrade')
+  // EXACTLY ONCE per change — the same statement that reports the difference also stores the new
+  // version, so every later batch on 0.7.0 sees none.
+  assert.equal(telemetryRoute(state, on('0.7.0'), at).status, 202)
+  assert.equal(state.usage.get(key), 1)
+  // A ROLLBACK counts too: the fact is "this install changed build", and a downgrade is the
+  // version of that fact most worth seeing.
+  assert.equal(telemetryRoute(state, on('0.6.0'), at).status, 202)
+  assert.equal(state.usage.get(key), 2)
+})
+
+/**
  * THE DEV CHANNEL TAGS ITSELF, AND PROD DOES NOT — the whole reason no client change was needed
  * for the owner split. Same batch, same events, two channels, two disjoint sets of counter keys.
  */

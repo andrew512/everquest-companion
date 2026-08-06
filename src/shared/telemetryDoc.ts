@@ -72,6 +72,19 @@ function values(list: readonly string[]): string {
 const COUNT = 'whole number'
 const BUCKET = 'bucket index'
 
+/**
+ * The one place the log-line counter is described, shared by both events that carry it — a
+ * second copy of this sentence is a second thing to keep true.
+ *
+ * It says "how many, including re-reads" out loud because the number is bigger than a reader
+ * would expect: the app re-reads your log's history each time it starts, and every one of those
+ * lines is parsed again. The count is of PARSING WORK; nothing about a line survives it.
+ */
+const LINES_PARSED =
+  'How many log lines were read since the last one of these. A count of lines only — no line, ' +
+  'and no part of one, is ever sent. Starting the app re-reads your log history, so those ' +
+  'lines are counted again each launch.'
+
 export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
   {
     t: 'sessionStart',
@@ -83,14 +96,18 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
   {
     t: 'sessionHeartbeat',
     when: 'Every 5 minutes while the app is open — the "is anyone using it right now" signal.',
-    fields: [{ name: 'uptimeMs', type: COUNT, note: 'How long this session has been running.' }]
+    fields: [
+      { name: 'uptimeMs', type: COUNT, note: 'How long this session has been running.' },
+      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED }
+    ]
   },
   {
     t: 'sessionEnd',
     when: 'Once, when the app closes.',
     fields: [
       { name: 'durationMs', type: COUNT, note: 'How long the session lasted.' },
-      { name: 'viewsVisited', type: COUNT, note: 'How many different tabs were opened.' }
+      { name: 'viewsVisited', type: COUNT, note: 'How many different tabs were opened.' },
+      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED }
     ]
   },
   {

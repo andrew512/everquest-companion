@@ -42,6 +42,7 @@ import {
 } from '../src/main/triage/usageRows'
 import { USAGE_COHORTS, type UsageCohort } from '../src/shared/telemetryRollup'
 import { fetchGhDownloads } from '../src/main/triage/ghDownloads'
+import { fetchLiveSessions } from '../src/main/triage/liveSessions'
 import { renderAnalyticsDigest } from './analyticsDigest.mjs'
 import { sanitizeOneLine } from '../src/shared/sanitizeText'
 
@@ -141,11 +142,21 @@ export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
   // for the text digest — `--json` is the machine shape, whose consumers read the counter tables
   // this command owns and not a number from a third-party API. A GitHub failure cannot fail the
   // digest: `fetchGhDownloads` resolves to an `available: false` reason and the section says so.
-  const [usage, funnels, installs, downloads] = await Promise.all([
+  // The LIVE read rides along on the same terms as the GitHub one: text digest only, in parallel,
+  // and unavailable is a printed reason rather than a failed command. It is CloudWatch (the EMF
+  // heartbeat metric), not the cluster — the counter tables are keyed on a day and cannot answer
+  // "right now" at all.
+  const [usage, funnels, installs, downloads, live] = await Promise.all([
     readUsageDaily(c, since),
     readUsageFunnelDaily(c, since),
     readAnalyticsInstalls(c),
     ctx.args.json ? undefined : fetchGhDownloads(ctx.nowMs),
+    ctx.args.json
+      ? undefined
+      : fetchLiveSessions({
+          profile: typeof ctx.args.profile === 'string' ? ctx.args.profile : undefined,
+          nowMs: ctx.nowMs,
+        }),
   ])
   const rows: CohortRows = {
     usage: toUsageRows(usage),
@@ -176,7 +187,9 @@ export async function cmdAnalyticsDigest(ctx: AnalyticsCtx): Promise<void> {
   // that does not exist and invite somebody to add the two up.
   console.log(
     wanted
-      .map((k, i) => renderAnalyticsDigest(build(k), k, i === 0 ? downloads : undefined))
+      .map((k, i) =>
+        renderAnalyticsDigest(build(k), k, i === 0 ? downloads : undefined, i === 0 ? live : undefined),
+      )
       .join('\n'),
   )
 }

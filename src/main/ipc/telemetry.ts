@@ -24,6 +24,7 @@ import { getTelemetryPrefs } from '../store'
 import {
   answerNotice,
   applyTelemetryEnabled,
+  observeFirstRun,
   recordEvent,
   rotateAnalyticsId,
   telemetryPayload
@@ -35,7 +36,14 @@ export function registerTelemetryIpc(): void {
     // Dropped, not thrown: a bad counter must never become a renderer-visible failure. The
     // renderer validated the same value with the same function before it sent it, so reaching
     // here means either a bug we want to find in dev or a caller that is not our UI.
-    if (valid.ok) recordEvent(valid.value)
+    if (!valid.ok) return
+    recordEvent(valid.value)
+    // TWO FIRST-RUN STEPS ARE DERIVED FROM THESE EVENTS, in main, from the VALIDATED value —
+    // never sent as funnel steps by the renderer. "Visited a tab that is not overview" and
+    // "opened an overlay" are facts about `viewDwell` and `overlayToggle`, which already cross
+    // this boundary; deriving them here keeps the once-ever mark on the side of the process that
+    // owns the prefs file, so the renderer cannot mint a first-run step at all (funnels.ts).
+    observeFirstRun(valid.value)
   })
 
   ipcMain.handle(IPC.telemetryPrefsGet, () => getTelemetryPrefs())

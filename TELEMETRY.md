@@ -64,6 +64,7 @@ Every 5 minutes while the app is open — the "is anyone using it right now" sig
 | Field | Values | What it means |
 | --- | --- | --- |
 | `uptimeMs` | whole number | How long this session has been running. |
+| `linesParsed` | whole number (optional) | How many log lines were read since the last one of these. A count of lines only — no line, and no part of one, is ever sent. Starting the app re-reads your log history, so those lines are counted again each launch. |
 
 ### `sessionEnd`
 
@@ -73,6 +74,7 @@ Once, when the app closes.
 | --- | --- | --- |
 | `durationMs` | whole number | How long the session lasted. |
 | `viewsVisited` | whole number | How many different tabs were opened. |
+| `linesParsed` | whole number (optional) | How many log lines were read since the last one of these. A count of lines only — no line, and no part of one, is ever sent. Starting the app re-reads your log history, so those lines are counted again each launch. |
 
 ### `viewDwell`
 

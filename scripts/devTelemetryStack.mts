@@ -93,6 +93,9 @@ const fail = (status: number, error: string, message: string, extra: Record<stri
 interface InstallFacts {
   firstOfDay: boolean
   newInstall: boolean
+  /** Did this batch arrive on a different build than the row held? The Lambda reads this from a
+   *  PK lookup taken before its UPSERT; here the stored row is simply still in hand. */
+  upgraded: boolean
   cohort: UsageCohort
 }
 
@@ -119,10 +122,13 @@ function touchInstall(state: TelemetryState, batch: TelemetryBatch, day: string)
       quotaDay: day,
       quotaN: events
     })
-    return { firstOfDay: true, newInstall: true, cohort: byChannel }
+    return { firstOfDay: true, newInstall: true, upgraded: false, cohort: byChannel }
   }
   // The GUARD, read before the increment — exactly what the SQL `WHERE` evaluates.
   if (held.quotaDay === day && held.quotaN >= state.mode.maxEventsPerDay) return null
+  // Read BEFORE `held.appVersion` is overwritten below — the same ordering the Lambda buys with
+  // a separate statement (its `RETURNING` can only see the row it just wrote).
+  const upgraded = held.appVersion !== batch.env.appVersion
   const newDay = held.lastSeenDay < day
   held.daysSeen += newDay ? 1 : 0
   held.lastSeenDay = held.lastSeenDay > day ? held.lastSeenDay : day
@@ -131,7 +137,7 @@ function touchInstall(state: TelemetryState, batch: TelemetryBatch, day: string)
   held.cohort = byChannel === 'owner' ? 'owner' : cohortOf(held.cohort)
   held.quotaN = held.quotaDay === day ? held.quotaN + events : events
   held.quotaDay = day
-  return { firstOfDay: held.quotaN === events, newInstall: false, cohort: held.cohort }
+  return { firstOfDay: held.quotaN === events, newInstall: false, upgraded, cohort: held.cohort }
 }
 
 function bump(table: Map<string, number>, key: string, n: number): void {

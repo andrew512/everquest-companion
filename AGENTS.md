@@ -1116,6 +1116,22 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   - The telemetry kill switch is cached in warm Lambdas for 60s
     (`CONFIG_CACHE_MS`) — a 503 right after `analytics open` is the cache,
     not a failure; wait a minute before diagnosing.
+  - **THE PULSE'S LIVE HALF IS A CLOUDWATCH READ, NOT A COUNTER** (JOS-39).
+    `usage_daily` is keyed on a DAY and cannot answer "right now", so
+    `src/main/triage/liveSessions.ts` reads the `Heartbeats` EMF metric
+    directly (`@aws-sdk/client-cloudwatch`, a devDependency) and is merged at
+    the two presentation edges beside `ghDownloads` — never inside
+    `buildAnalytics`, which stays pure over the three tables. Active-now is the
+    last COMPLETE 300s bucket. The average AGE is an estimate and is labelled
+    `est.`: it is a running-minimum survival sum over 12h of buckets (a session
+    is continuous, so it cannot predate a bucket in which nobody was alive), it
+    can only under-claim, it prints `≥` when the lookback is fully occupied,
+    and it is NULL — never 0 — when nobody is alive.
+  - **`upgrades` IS DERIVED SERVER-SIDE**, from a PK read of the stored
+    `app_version` taken BEFORE the install UPSERT overwrites it (a CTE would be
+    tidier and is not worth betting a live endpoint on against DSQL's postgres
+    subset). Counted once per version change; a downgrade counts too; disjoint
+    from `newInstalls`.
   - Pre-marking counter rows carry no id and stay in the user cohort
     forever (e.g. historical `triage` dwell is the owner) — read old
     days with that in mind.
@@ -1140,6 +1156,18 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   pins the exact URL, the single fetch site, and the consent gates (nothing
   before the notice; opt-out destroys buffer + id). The same commit rewrote
   SECURITY.md / README / TELEMETRY.md — the forcing function worked as built.
+  **THE ADDITIVE-FIELD RULE (JOS-39, and it is a deploy-skew law).** The app
+  auto-updates itself; the ingest Lambda is deployed by hand — so a shipped
+  client is regularly talking to an OLDER copy of the shared contract. A NEW
+  EVENT KIND is fatal under that skew: the shared validator fails the whole
+  batch, the endpoint answers 400, and `telemetryPermanentRefusal` (net.ts)
+  classes 400 as "these bytes will never be accepted" and DROPS the batch — so
+  the client throws away every counter it is carrying, on every flush, until
+  the deploy lands. A NEW OPTIONAL FIELD on an existing kind is free: the
+  validators CONSTRUCT their result field by field, so an older server simply
+  does not copy it across and accepts the batch. Add measurements as fields
+  (`linesParsed` rides on `sessionHeartbeat`/`sessionEnd`), and the client half
+  is then safe to ship BEFORE the additive apply.
   **USER/OWNER SPLIT (2026-08-05, owner-directed, LIVE).** Every counter
   row carries a `cohort` ('user'|'owner'); it is IN the
   PRIMARY KEY of `usage_daily`/`usage_funnel_daily` (DSQL cannot alter a PK —

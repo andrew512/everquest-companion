@@ -209,8 +209,41 @@ interface InstallRow {
 export interface InstallFacts {
   firstOfDay: boolean
   newInstall: boolean
+  /** Did this batch arrive on a different build than the row was holding? (`upgrades`.) */
+  upgraded: boolean
   /** Which side of the split every counter this batch produces is keyed on. */
   cohort: UsageCohort
+}
+
+/**
+ * THE VERSION THIS INSTALL WAS ON BEFORE THIS BATCH — the `upgrades` counter's whole input.
+ *
+ * IT IS A SEPARATE READ, AND THAT IS A DECIDED TRADE. The obvious move is to fold it into
+ * INSTALL_SQL, which is already reading the stored version in order to overwrite it — but
+ * postgres's `RETURNING` on an `ON CONFLICT DO UPDATE` yields the UPDATED row, and `excluded` is
+ * not addressable there, so the old value cannot come back out of that statement without either a
+ * CTE or a column to smuggle it in. A CTE is the elegant answer and is exactly the kind of thing
+ * that is not worth betting a live ingest endpoint on when the cluster is Aurora DSQL (a
+ * documented SUBSET of postgres) and the only way to find out is to deploy it. One indexed
+ * primary-key lookup, once per batch — i.e. once a minute per active install — is the cheap,
+ * boring, verifiable option.
+ *
+ * THE RACE IS BENIGN AND BOUNDED. Two batches from one id could both read the old version and
+ * both count an upgrade; that needs one client to have two flushes in flight, which the 60 s
+ * serial flush loop does not do, and the cost if it ever happened is one extra count in an
+ * additive counter. The alternative — a value read inside the guarded UPSERT — is not available
+ * without the CTE this deliberately avoids.
+ *
+ * NULL means "no row yet", i.e. a first-ever batch: a new install is not an upgrade.
+ */
+const PRIOR_VERSION_SQL = 'SELECT app_version FROM analytics_install WHERE analytics_id = $1'
+
+async function priorVersion(analyticsId: string): Promise<string | null> {
+  const rows = await withRetry('priorVersion', () =>
+    query<{ app_version: string | null }>(PRIOR_VERSION_SQL, [analyticsId])
+  )
+  const version = rows[0]?.app_version
+  return typeof version === 'string' ? version : null
 }
 
 /**
@@ -224,7 +257,8 @@ export interface InstallFacts {
 async function touchInstall(
   batch: TelemetryBatch,
   config: TelemetryConfig,
-  day: string
+  day: string,
+  prior: string | null
 ): Promise<InstallFacts | null> {
   const events = batch.events.length
   const rows = await withRetry('install', () =>
@@ -244,6 +278,10 @@ async function touchInstall(
   return {
     firstOfDay,
     newInstall: firstOfDay && row.first_seen_day === day,
+    // A DOWNGRADE IS AN UPGRADE HERE, deliberately: the fact worth counting is "this install
+    // changed build", and a rollback is the version of that fact most worth seeing. `prior ===
+    // null` is a first-ever batch, which is a new install and not a change.
+    upgraded: prior !== null && prior !== batch.env.appVersion,
     cohort: cohortOf(row.cohort)
   }
 }
@@ -370,7 +408,10 @@ async function accept(batch: TelemetryBatch, now: number): Promise<HttpResult> {
     return fail(503, 'closed', 'Usage analytics is not being collected right now.')
   }
   const day = utcDay(now)
-  const facts = await touchInstall(batch, config, day)
+  // READ BEFORE THE UPSERT WRITES IT — the ordering is the whole correctness argument, so it is
+  // its own statement rather than a member of a `Promise.all` that a later edit could reorder.
+  const prior = await priorVersion(batch.env.analyticsId)
+  const facts = await touchInstall(batch, config, day, prior)
   if (facts === null) {
     emitRejected('quota_exceeded', now)
     return fail(429, 'quota_exceeded', 'Daily event limit reached for this analytics id.')
@@ -388,7 +429,10 @@ async function accept(batch: TelemetryBatch, now: number): Promise<HttpResult> {
     events: batch.events.length,
     counters: roll.counters.length,
     funnels: roll.funnels.length,
-    firstOfDay: facts.firstOfDay
+    firstOfDay: facts.firstOfDay,
+    // A BOOLEAN, never the two versions: this log is counts only, and a version pair plus a
+    // timestamp is a good deal more identifying than a count.
+    upgraded: facts.upgraded
   })
   return json(202, { ok: true, accepted: batch.events.length })
 }

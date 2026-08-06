@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import {
   ALERT_COUNT_EDGES,
+  allFunnelStepMarks,
   CHAR_COUNT_EDGES,
   COLD_START_MS_EDGES,
   DEFAULT_TELEMETRY_PREFS,
@@ -37,6 +38,7 @@ import {
   TELEMETRY_VIEWS,
   bucketOf,
   bucketRange,
+  funnelStepMark,
   normalizeTelemetryPrefs,
   tzOffsetBucket,
   type TelemetryEvent
@@ -342,7 +344,14 @@ test('the prefs default to OPT-OUT with the notice unshown and no id yet', () =>
   // Each of these three is a decision, and together they are the whole policy: on by default
   // (owner's call), nothing transmitted until the notice has rendered, and no identifier minted
   // for a user who has not run the app.
-  assert.deepEqual(DEFAULT_TELEMETRY_PREFS, { enabled: true, noticeShown: false, analyticsId: null })
+  // `funnelsDone` is the fourth and it is not a policy decision but a ledger: the once-ever marks
+  // for the first-run / voice-install steps, empty on a fresh install (telemetry/funnels.ts).
+  assert.deepEqual(DEFAULT_TELEMETRY_PREFS, {
+    enabled: true,
+    noticeShown: false,
+    analyticsId: null,
+    funnelsDone: []
+  })
   assert.deepEqual(normalizeTelemetryPrefs(undefined), DEFAULT_TELEMETRY_PREFS)
   for (const junk of [null, 42, 'yes', [], { nested: true }]) {
     assert.deepEqual(normalizeTelemetryPrefs(junk), DEFAULT_TELEMETRY_PREFS, JSON.stringify(junk))
@@ -358,6 +367,32 @@ test('a stored analyticsId that is not a UUID is DROPPED, never repaired into on
   assert.deepEqual(normalizeTelemetryPrefs({ enabled: false, noticeShown: true, analyticsId: 'x' }), {
     enabled: false,
     noticeShown: true,
-    analyticsId: null
+    analyticsId: null,
+    funnelsDone: []
   })
+})
+
+test('the once-ever funnel marks are ALLOWLISTED from the schema, deduped and ordered', () => {
+  // The marks are schema constants, so the normalizer treats the file as untrusted input exactly
+  // as it does the id: a mark that is not a real `<funnel>:<step>` pair is DROPPED rather than
+  // carried, because a mark nobody can produce is a step nobody can ever be counted at.
+  const marks = allFunnelStepMarks()
+  assert.ok(marks.includes(funnelStepMark('first-run', 'installed')))
+  assert.ok(marks.includes(funnelStepMark('voice-install', 'firstUtterance')))
+  assert.ok(!marks.includes('first-run:downloadStarted'), 'a step belongs to exactly one funnel')
+
+  const kept = normalizeTelemetryPrefs({
+    funnelsDone: [
+      'voice-install:firstUtterance',
+      'first-run:installed',
+      'first-run:installed',
+      'first-run:downloadStarted',
+      'made-up:step',
+      42
+    ]
+  }).funnelsDone
+  // Deduped, junk-free, and in the schema's own order — so two installs that reached the same
+  // steps hold byte-identical lists whatever order they got there in.
+  assert.deepEqual(kept, ['first-run:installed', 'voice-install:firstUtterance'])
+  assert.deepEqual(normalizeTelemetryPrefs({ funnelsDone: 'first-run:installed' }).funnelsDone, [])
 })

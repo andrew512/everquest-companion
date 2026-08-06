@@ -16,6 +16,7 @@ import { app } from 'electron'
 import { randomUUID } from 'node:crypto'
 import {
   tzOffsetBucket,
+  MAX_COUNT,
   TELEMETRY_API_VERSION,
   type TelemetryBatch,
   type TelemetryEnvelope,
@@ -39,6 +40,15 @@ export function platformOf(platform: string): TelemetryPlatform {
 /** Session bookkeeping. In-memory only: a session is by definition this process's lifetime. */
 let startedAt = 0
 const viewsSeen = new Set<string>()
+/**
+ * Log lines parsed since the last report went into the ring. A DELTA, not a total: it is drained
+ * by the heartbeat (every 5 min) and by `sessionEnd`, so the fleet-wide sum is a sum of deltas
+ * and no double counting is possible even when a session is killed rather than closed.
+ *
+ * A plain integer add, deliberately — this is incremented once per parsed line, which is the
+ * hottest path in the app, so it may not read the store, allocate or touch the ring.
+ */
+let linesPending = 0
 
 /** Wall-clock ms since `startTelemetry()` — 0 before it has run. */
 export function sessionUptimeMs(now = Date.now()): number {
@@ -48,11 +58,45 @@ export function sessionUptimeMs(now = Date.now()): number {
 export function beginSession(now = Date.now()): void {
   startedAt = now
   viewsSeen.clear()
+  linesPending = 0
 }
 
+/**
+ * Close the session's in-memory bookkeeping — including the undrained line delta, which is what
+ * makes "turn it off" mean it: `pauseTelemetry` comes through here, and lines counted before the
+ * switch was flipped must not be waiting to be reported if it is flipped back.
+ */
 export function endSession(): void {
   startedAt = 0
   viewsSeen.clear()
+  linesPending = 0
+}
+
+/**
+ * COUNT ONE (or n) PARSED LOG LINES. Called from the log feeders (`src/main/session.ts`) — both
+ * the startup replay and the live tail — and it counts PARSING WORK, not distinct lines: the
+ * replay re-reads a character's history on every launch and those lines are counted again.
+ * TELEMETRY.md's field note says exactly that, so the number cannot be read as "lines in the log".
+ *
+ * NOTHING ABOUT THE LINE IS RETAINED. The argument is a count; there is no parameter that could
+ * carry text even if a caller wanted to give it one.
+ */
+export function noteLinesParsed(n = 1): void {
+  if (!Number.isFinite(n) || n <= 0) return
+  linesPending += n
+}
+
+/**
+ * Drain the delta for a report, capped at `MAX_COUNT` — the schema's ceiling for every count
+ * field, which a 1.1M-event replay really does exceed.
+ *
+ * THE REMAINDER IS KEPT, not clamped away: the next heartbeat reports it. Clamping would quietly
+ * undercount exactly the biggest logs, which are the ones the number is most interesting for.
+ */
+export function takeLinesParsed(): number {
+  const taken = Math.min(linesPending, MAX_COUNT)
+  linesPending -= taken
+  return taken
 }
 
 /**

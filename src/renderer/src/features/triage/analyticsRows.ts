@@ -18,6 +18,7 @@ import { formatNum } from '../../lib/formatRate'
 import type {
   TriageAnalyticsData,
   TriageFunnelStepRow,
+  TriageLiveSessions,
   UsageDayPoint
 } from '@shared/triage'
 
@@ -62,13 +63,49 @@ export function pulseTiles(d: TriageAnalyticsData): StatTile[] {
     { label: 'WAU', value: formatNum(p.wau), note: '7 days to the last day with data' },
     { label: 'MAU', value: formatNum(p.mau), note: '30 days to the last day with data' },
     { label: 'Installs', value: formatNum(p.installsTotal), note: 'all-time, one row per id' },
+    // TWO TILES, NOT ONE COMBINED "new today": an install and an upgrade are different events and
+    // the counters keep them disjoint (a first batch is an install, never an upgrade), so adding
+    // them would be inventing a number neither table holds.
+    { label: 'Installs today', value: formatNum(p.installsToday), note: 'new ids, UTC day' },
+    { label: 'Upgrades today', value: formatNum(p.upgradesToday), note: 'builds changed, UTC day' },
     { label: 'Sessions', value: formatNum(p.sessions), note: `${p.sessionsPerDay.toFixed(1)} per active day` },
     {
       label: 'Session length',
       value: p.medianSessionLabel ?? '—',
       note: p.meanSessionMs === null ? 'no session has ended yet' : `median · mean ${durationLabel(p.meanSessionMs)}`
-    }
+    },
+    { label: 'Lines parsed', value: formatNum(p.linesParsed), note: 'in this window, re-reads included' }
   ]
+}
+
+/**
+ * THE LIVE TILES, which are not in `pulseTiles` because they are not in `TriageAnalyticsData`:
+ * they come from CloudWatch, merged at the IPC edge, and are GLOBAL rather than per cohort (the
+ * EMF metric is split by channel and never by cohort). Rendering them through the same StatTile
+ * shape keeps the row visually one thing while the sources stay separate.
+ *
+ * UNAVAILABLE IS A TILE TOO — with `—` and the reason — because "CloudWatch did not answer" and
+ * "nobody is in the app" are opposite facts and an absent tile would let them share a rendering.
+ *
+ * The age carries exactly one word of caveat (`est.`) plus a `≥` when the lookback truncated it.
+ * That is the caveat diet's allowance and the whole of what is said: the number is derived from
+ * how far back the heartbeat count has been sustained, which is a floor, never an over-claim.
+ */
+export function liveTiles(live: TriageLiveSessions | undefined): StatTile[] {
+  if (live === undefined) return []
+  if (!live.available) {
+    return [{ label: 'Live now', value: '—', note: live.reason }]
+  }
+  const tiles: StatTile[] = [
+    { label: 'Live now', value: formatNum(live.activeNow), note: 'sessions in the last 5 min' }
+  ]
+  if (live.avgAgeMs === null) return tiles
+  tiles.push({
+    label: 'Live session age',
+    value: `${live.ageIsFloor ? '≥' : ''}${durationLabel(live.avgAgeMs)}`,
+    note: 'est. mean, from heartbeats'
+  })
+  return tiles
 }
 
 /** A daily series as bare numbers, oldest first — what `sparklinePoints` consumes. */

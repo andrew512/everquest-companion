@@ -18,12 +18,19 @@
 
 export {
   ensureAnalyticsId,
+  noteLinesParsed,
   pendingBatch,
   platformOf,
   recordEvent,
   rotateAnalyticsId,
   telemetryPayload
 } from './collector'
+// The once-ever funnel marks. Producers (session.ts, ipc/speech.ts) reach them through here for
+// the same reason everything else does: the wiring may not reach around the façade.
+export { markFunnelStep, observeFirstRun, recordFunnelFailure } from './funnels'
+// The message → one-of-five-words reduction the two failure producers share. Exported from the
+// façade so no call site can import it and then reach one file further into the ring.
+export { classifyFailure } from './failureClass'
 // The switch and the notice go through flush.ts, not collector.ts: flipping the pref is only
 // half the job — this session's timers have to come into line with it too, and one function
 // doing both is how the toggle and the modal can never diverge.

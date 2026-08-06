@@ -48,7 +48,8 @@ import type {
   TriageAnalytics,
   TriageAnalyticsData,
   TriageDownloads,
-  TriageFunnelView
+  TriageFunnelView,
+  TriageLiveSessions
 } from '@shared/triage'
 import { TRIAGE_ANALYTICS_DAYS, TRIAGE_ANALYTICS_DEFAULT_DAYS } from '@shared/triage'
 import { formatNum } from '../../lib/formatRate'
@@ -65,16 +66,29 @@ import {
 import {
   durationLabel,
   funnelBars,
+  liveTiles,
   pctLabel,
   pulseTiles,
   windowIsEmpty
 } from './analyticsRows'
 
-function PulseSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
+/**
+ * `live` leads the tile row and comes from CloudWatch rather than from the counter tables — the
+ * one number here that is about RIGHT NOW rather than about a day, which is precisely what a
+ * day-keyed counter cannot be asked. It is global (the EMF metric is split by channel, never by
+ * cohort), so only this readout gets it; the owner readout below renders without it.
+ */
+function PulseSection({
+  data,
+  live
+}: {
+  data: TriageAnalyticsData
+  live?: TriageLiveSessions
+}): JSX.Element {
   return (
     <Section title="Pulse">
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-        {pulseTiles(data).map((t) => (
+        {[...liveTiles(live), ...pulseTiles(data)].map((t) => (
           <Stack key={t.label} spacing={0} sx={{ minWidth: 140 }}>
             <Typography variant="caption" color="text.secondary">
               {t.label}
@@ -204,10 +218,12 @@ function FunnelCard({ view }: { view: TriageFunnelView }): JSX.Element {
  */
 function Readout({
   data,
-  downloads
+  downloads,
+  live
 }: {
   data: TriageAnalyticsData
   downloads?: TriageDownloads
+  live?: TriageLiveSessions
 }): JSX.Element {
   return (
     <Stack spacing={2}>
@@ -219,7 +235,7 @@ function Readout({
           <code>telemetry_accepting</code> is still closed (<code>analytics open</code>).
         </Alert>
       )}
-      <PulseSection data={data} />
+      <PulseSection data={data} live={live} />
       <AdoptionSection data={data} />
       <Section title="Funnels">
         <Stack spacing={2}>
@@ -324,7 +340,9 @@ export default function AnalyticsPanel(): JSX.Element {
       {analytics.loading && <CircularProgress size={20} />}
       {analytics.error !== null && <Alert severity="error">{analytics.error}</Alert>}
       {analytics.data?.available === false && <Unavailable data={analytics.data} />}
-      {ready !== null && <Readout data={ready.data} downloads={ready.downloads} />}
+      {ready !== null && (
+        <Readout data={ready.data} downloads={ready.downloads} live={ready.live} />
+      )}
       {ready?.owner != null && <OwnerReadout data={ready.owner} />}
     </Stack>
   )

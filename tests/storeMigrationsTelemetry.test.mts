@@ -57,7 +57,12 @@ test('a v5 store gains the telemetry blob at its defaults, and nothing else move
   assert.equal(applied[0], 6, 'a v5 store enters the chain at the telemetry step')
 
   assert.deepEqual(data['telemetry'], DEFAULT_TELEMETRY_PREFS)
-  assert.deepEqual(data['telemetry'], { enabled: true, noticeShown: false, analyticsId: null })
+  assert.deepEqual(data['telemetry'], {
+    enabled: true,
+    noticeShown: false,
+    analyticsId: null,
+    funnelsDone: []
+  })
 
   // Everything the user already had is byte-identical: this step ADDS, it never edits.
   const untouched = ['byCharacter', 'activeLogPath', 'eqInstallDir', 'windowBounds', 'alerts',
@@ -98,11 +103,21 @@ test('an EXISTING telemetry blob is repaired field by field, never replaced whol
     [SCHEMA_VERSION_KEY]: 5,
     telemetry: { enabled: false, noticeShown: true, analyticsId: 'Primitive@freeport' }
   })
-  assert.deepEqual(data['telemetry'], { enabled: false, noticeShown: true, analyticsId: null })
+  assert.deepEqual(data['telemetry'], {
+    enabled: false,
+    noticeShown: true,
+    analyticsId: null,
+    funnelsDone: []
+  })
 
   // A real id survives untouched — rotation is the user's action, never a side effect.
   const kept = migrateStoreData({ [SCHEMA_VERSION_KEY]: 5, telemetry: { analyticsId: ID } })
-  assert.deepEqual(kept.data['telemetry'], { enabled: true, noticeShown: false, analyticsId: ID })
+  assert.deepEqual(kept.data['telemetry'], {
+    enabled: true,
+    noticeShown: false,
+    analyticsId: ID,
+    funnelsDone: []
+  })
 
   for (const junk of [null, 42, 'nonsense', [], { nested: true }]) {
     const out = migrateStoreData({ [SCHEMA_VERSION_KEY]: 5, telemetry: junk })

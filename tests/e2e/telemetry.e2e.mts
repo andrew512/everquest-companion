@@ -185,6 +185,49 @@ async function stepDismissKeepsOn(page: Page): Promise<void> {
 }
 
 /**
+ * THE FIRST-RUN FUNNEL, ON A REAL FIRST RUN — the assertion that JOS-39's producers are wired to
+ * moments rather than merely to functions.
+ *
+ * It can only be made HERE. The steps are once-ever per install (the marks are persisted in the
+ * telemetry prefs), so a unit test can prove the ledger's arithmetic and nothing else; whether
+ * `installed` actually fires on the launch that mints the id, and whether `logDetected` fires when
+ * this machine's real log is attached, is a fact about the running app on a genuinely fresh
+ * userData — which is exactly what this spec already builds three times.
+ *
+ * `installed` is asserted STRICTLY: it is recorded in `startTelemetry`, before the bar renders.
+ * `logDetected` / `firstParse` are reported rather than required, because they depend on this
+ * machine having a log to find and on the replay having reached its first event by the time the
+ * bar is dismissed — a floor-vs-timing distinction the harness must not turn into a flake.
+ * What IS strict about all of them: every funnel step in the buffer is a DECLARED first-run step
+ * and appears at most ONCE, which is the whole promise of the once-ever ledger.
+ */
+const FIRST_RUN_STEPS = [
+  'installed',
+  'logDetected',
+  'firstParse',
+  'firstNonOverviewView',
+  'firstOverlayEnabled'
+]
+
+async function stepFirstRunFunnel(page: Page): Promise<void> {
+  const p = await payload(page)
+  const steps = p.buffered
+    .filter((r) => r.ev.t === 'funnelStep' && r.ev.funnel === 'first-run')
+    .map((r) => String(r.ev.step))
+  check(
+    'a first run records the funnel step that says a first run happened',
+    steps.includes('installed'),
+    `first-run steps: ${steps.join(', ') || '(none)'}`
+  )
+  check(
+    'every recorded step is a DECLARED first-run step, exactly once',
+    steps.every((s) => FIRST_RUN_STEPS.includes(s)) && new Set(steps).size === steps.length,
+    steps.join(', ')
+  )
+  note(`first-run funnel on this machine: ${steps.join(' → ') || '(none)'}`)
+}
+
+/**
  * "DETAILS" IS THE REST OF THE SENTENCE. The bar is one line precisely because the explanation
  * lives somewhere a curious user can reach in one click — so that click is asserted to LAND, on
  * the pane that holds the switch, the id and the live payload. Reading is not consenting to
@@ -318,6 +361,23 @@ async function stepCollects(page: Page): Promise<void> {
     `${String(p.buffered.length)} buffered: ${[...new Set(p.buffered.map((r) => String(r.ev.t)))].join(', ')}`
   )
 
+  // …AND MAIN DERIVES THE FUNNEL STEP FROM THEM. `firstNonOverviewView` is never sent by the
+  // renderer: main watches the `viewDwell` events it already validates and mints the once-ever
+  // step itself, so the renderer cannot manufacture a first-run step. This launch is the honest
+  // test of it — its install opted OUT in launch 3, so the step was never marked (a step is not
+  // spent while collection is off), and switching to Combat here is the first time it can be.
+  const derived = p.buffered.filter((r) => r.ev.t === 'funnelStep' && r.ev.funnel === 'first-run')
+  check(
+    'main derives firstNonOverviewView from the renderer dwell it already receives',
+    derived.some((r) => String(r.ev.step) === 'firstNonOverviewView'),
+    derived.map((r) => String(r.ev.step)).join(', ') || '(no first-run steps)'
+  )
+  check(
+    '…once, and only for tabs that are not the one the app opens on',
+    derived.filter((r) => String(r.ev.step) === 'firstNonOverviewView').length === 1,
+    `${String(derived.length)} first-run step(s) after visiting combat, loot, overview`
+  )
+
   // THE PRIVACY PROPERTY, against the buffer this session actually produced. Every string in
   // every buffered event must be a short, lowercase enum-ish token — a character name, a zone,
   // a path or a log line could not survive the validator, and this is that claim measured on
@@ -409,6 +469,7 @@ async function main(): Promise<void> {
   await firstRun('launch 1: hidden Electron (EQ_E2E=1), fresh userData — the bar, and dismissing it…', consoleErrors, async (page) => {
     await stepBarShape(page)
     await stepDismissKeepsOn(page)
+    await stepFirstRunFunnel(page)
   })
   await firstRun('launch 2: fresh userData — the Details link…', consoleErrors, stepDetailsOpensPane)
   await firstRun('launch 3: fresh userData — opting out…', consoleErrors, stepOptOut, restartData)
