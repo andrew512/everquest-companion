@@ -326,12 +326,12 @@ interface RowsInput {
 function useVisibleRows(input: RowsInput): BrowserRow[] {
   const { donors, filters, text, planClasses, view, hostClasses, presetActive, axis, open } = input
   const filtered = useMemo(() => {
-    let rows = filterDonors(donors, { ...filters, text }, planClasses, view)
-    // Haste-locked donors are illegal under a preset — see RowsInput.presetActive.
-    if (presetActive) rows = rows.filter((d) => !d.hasteLocked)
-    // R2's class half against the HOST, not the set: an effect can only move into an item that
-    // shares a class with it.
-    return hostClasses.length === 0 ? rows : rows.filter((d) => !classesMismatch(d.classes, hostClasses))
+    const rows = filterDonors(donors, { ...filters, text }, planClasses, view)
+    // ONE pass, two rules. Haste-locked donors are illegal under a preset (see
+    // RowsInput.presetActive), and R2's class half runs against the HOST rather than the set: an
+    // effect can only move into an item that shares a class with it. No empty-hostClasses guard
+    // is needed — `classesMismatch` answers false for an unknown list by construction (law 1).
+    return rows.filter((d) => !(presetActive && d.hasteLocked) && !classesMismatch(d.classes, hostClasses))
   }, [donors, filters, text, planClasses, view, hostClasses, presetActive])
   const groups = useMemo(() => groupDonors(filtered, axis, donorEraOf), [filtered, axis])
   return useMemo(() => browserRows(groups, open), [groups, open])
