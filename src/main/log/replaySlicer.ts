@@ -132,7 +132,10 @@ export interface SlicerOptions {
 /** A slicer that yields every `budgetMs` of folding, resting to hold `duty`. */
 export function createSlicer(opts: SlicerOptions = {}): Slicer {
   const budgetMs = opts.budgetMs ?? REPLAY_SLICE_MS
-  const duty = opts.duty ?? REPLAY_DUTY
+  // Clamped into [0.05, 1]. Not defensiveness for its own sake: a duty of 0 means "rest forever",
+  // which is a hang rather than an error, and a hang in a startup path is the worst possible way
+  // for a typo in a future test to announce itself. A twentieth of a core is the floor.
+  const duty = Math.min(1, Math.max(0.05, opts.duty ?? REPLAY_DUTY))
   const now = opts.now ?? ((): number => performance.now())
   const yieldTo = opts.yieldTo ?? ((): Promise<void> => yieldToLoop())
   const restFor =
