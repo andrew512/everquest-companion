@@ -720,6 +720,34 @@ export interface ProgressState {
    * the planner (`tests/plannerStore.test.mts` pins both halves).
    */
   exaltPlans?: ExaltPlan[]
+  /**
+   * GROUP-ROSTER user edits (docs/plans/group-model.md §3). Character-scoped, like everything
+   * else here. The roster itself is re-derived from the log on every replay; an edit is the one
+   * piece of it the log can never tell us again — the member whose join line predates the file,
+   * or the ex-member the game never printed a leave line for.
+   *
+   * TIME-KEYED, for the same reason combo corrections are: the roster module drops any edit
+   * older than the epoch boundary or the last self-leave, because both mean the thing the edit
+   * described is gone. Additive and optional — every reader defaults on a missing key, so no
+   * schema bump and no migration (the `exaltPlans` precedent above).
+   */
+  rosterEdits?: RosterEdit[]
+}
+
+/**
+ * ONE hand-made statement about the group roster: "this person is with me" or "this person is
+ * not". The provenance ladder's top rung (shared/roster.ts) — a later log line can neither
+ * undo it nor be undone by it; only the opposite edit can.
+ */
+export interface RosterEdit {
+  /** Canonical identity key — `idKey(name)`. */
+  key: string
+  /** Display name as the user typed it (an add) or as the log spelled it (a remove). */
+  name: string
+  action: 'add' | 'remove'
+  /** Wall-clock instant the edit was made. Compared against the epoch boundary and the last
+   *  self-leave to decide whether it still describes anything. */
+  setAt: number
 }
 
 // ----- Cross-window deep link ("take me to this in the app", Task #64) -----

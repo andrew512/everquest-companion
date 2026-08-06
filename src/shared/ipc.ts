@@ -247,6 +247,18 @@ export const IPC = {
   // A TIME RANGE, not an interval id: ids are recompute-unstable by design (§ 5.4).
   comboClearCorrection: 'combo:clearCorrection',
 
+  // ---- group-roster user edits (docs/plans/group-model.md §3) ----
+  // Same shape as the combo pair above and for the same reason: the roster READS ride the
+  // combat snapshot (which both the Combat tab and every overlay already poll), so only the
+  // WRITES need channels. A roster edit is the user telling the app "this person is with me" or
+  // "this person is not" — persisted per character, outliving every replay.
+  // renderer -> main: record an edit. Payload {name, action}. The name is trimmed, length- and
+  // shape-checked AT THE HANDLER (a renderer string is a renderer string) and canonicalized
+  // there, so the store can never hold a key the model would not recognize.
+  rosterSetEdit: 'roster:setEdit',
+  // renderer -> main: forget the hand-made statement about one name — "let the log decide again".
+  rosterClearEdit: 'roster:clearEdit',
+
   // ---- item knowledge ("what's this lore/quest item for", Task #53) ----
   // renderer -> main: look up an item's lore/quest knowledge (local posky-first, then a
   // cached, politely-throttled wiki lookup). Returns ItemKnowledge.

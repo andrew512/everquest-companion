@@ -10,6 +10,7 @@ import type {
   OverlayConfig,
   OverlayKind,
   ProgressState,
+  RosterEdit,
   UpdateChannel,
   VoicePrefs
 } from '../shared/types'
@@ -290,6 +291,54 @@ export function getExaltPlans(charId: string): ExaltPlan[] {
 export function setExaltPlans(charId: string, plans: ExaltPlan[]): ExaltPlan[] {
   const next = sanitizeExaltPlans(plans)
   setProgress(charId, { ...getProgress(charId), exaltPlans: next })
+  return next
+}
+
+// ----- Group-roster user edits (docs/plans/group-model.md §3) -----
+//
+// The ONLY durable roster state. Membership is re-derived from the log on every replay; an edit
+// is the one thing the log can never tell us again — the member whose join line predates the
+// file, or the ex-member the game never printed a leave line for.
+//
+// ONE EDIT PER NAME. "Add Rykkerr" then "remove Rykkerr" is one statement about one person, the
+// later one — the same same-key-replace rule combo corrections use for a span, and the reason
+// the popover's add and remove read as inverses rather than as an accumulating log.
+//
+// ADDITIVE + OPTIONAL: no schema bump, no migration. Every reader defaults on a missing key and
+// electron-store rewrites the whole parsed object, so a store written by an older build loads
+// unchanged and one written here still opens in a build that predates the roster.
+
+/** Everything stored is re-validated on the way out: a hand-edited file must never be able to
+ *  hand the module a shape it will render, and the renderer cannot write one either. */
+function sanitizeRosterEdits(raw: unknown): RosterEdit[] {
+  if (!Array.isArray(raw)) return []
+  const out: RosterEdit[] = []
+  for (const e of raw as Partial<RosterEdit>[]) {
+    if (typeof e?.key !== 'string' || e.key === '') continue
+    if (typeof e.name !== 'string' || e.name === '') continue
+    if (e.action !== 'add' && e.action !== 'remove') continue
+    if (typeof e.setAt !== 'number' || !Number.isFinite(e.setAt)) continue
+    out.push({ key: e.key, name: e.name, action: e.action, setAt: e.setAt })
+  }
+  return out
+}
+
+/** This character's roster edits ([] when it has none, or when the stored value is unusable). */
+export function getRosterEdits(charId: string): RosterEdit[] {
+  return sanitizeRosterEdits(getProgress(charId).rosterEdits)
+}
+
+/** Record one edit, REPLACING any existing statement about the same name. */
+export function setRosterEdit(charId: string, edit: RosterEdit): RosterEdit[] {
+  const next = sanitizeRosterEdits([...getRosterEdits(charId).filter((e) => e.key !== edit.key), edit])
+  setProgress(charId, { ...getProgress(charId), rosterEdits: next })
+  return next
+}
+
+/** Forget the hand-made statement about one name — "let the log decide again". */
+export function clearRosterEdit(charId: string, key: string): RosterEdit[] {
+  const next = getRosterEdits(charId).filter((e) => e.key !== key)
+  setProgress(charId, { ...getProgress(charId), rosterEdits: next })
   return next
 }
 
