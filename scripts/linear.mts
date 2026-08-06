@@ -19,13 +19,13 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const env = readFileSync(join(import.meta.dirname, '..', '.triage', 'linear.env'), 'utf8')
-const KEY = /LINEAR_API_KEY=(\S+)/.exec(env)?.[1]
+const KEY = /LINEAR_API_KEY=(\S+)/.exec(env)?.[1] ?? ''
 if (!KEY) throw new Error('LINEAR_API_KEY missing from .triage/linear.env')
 
 async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
   const res = await fetch('https://api.linear.app/graphql', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: KEY as string },
+    headers: { 'content-type': 'application/json', authorization: KEY },
     body: JSON.stringify({ query, variables })
   })
   const body = (await res.json()) as { data?: T; errors?: unknown }
