@@ -25,6 +25,32 @@
  *                    always-on probe (plan §2). THE invariant: chunking exists to bound this.
  *   blocksOver50Ms   how many stalls crossed the same threshold the perf HUD calls "warn".
  *
+ * AND SINCE JOS-55, A SECOND ARM: WHERE THE FOLD GOES.
+ *   Everything above says how long the replay took; none of it says who spent it. `attribution.mts`
+ *   folds the same log IN THIS PROCESS through the same modules in the same order (they are
+ *   constructed by `src/main/modules/wiring.ts`, which pipeline.ts also calls, so the list cannot
+ *   drift), with a per-consumer timer installed at the ModuleRegistry dispatch seam and a probe on
+ *   the bus's derived drain. It prints a consumer × ms × us/event × % table, two parse-only
+ *   comparator arms, and the instrument's OWN measured cost. Read foldArm.mts's header for what
+ *   that arm shares with an Electron boot and what it honestly does not.
+ *
+ *   ITS FIRST RESULT OVERTURNED THE PREMISE IT WAS BUILT ON, which is the reason it exists as a
+ *   committed arm rather than as a remembered number. The claim it inherited was "parsing alone
+ *   runs at 565k events/sec while the pipeline manages 32k, so ~94% of a startup replay is
+ *   downstream of the parser". MEASURED 2026-08-06 on this machine, 1,404,455 events:
+ *
+ *     parse only, BARE parser (no spell DB)   2,418 ms   1.72 us/event   580,900 events/sec
+ *     parse only, the parser THE APP INSTALLS 10,454 ms  7.44 us/event   134,352 events/sec
+ *     the whole fold, every consumer          18,228 ms  12.98 us/event   77,050 events/sec
+ *
+ *   The 565k figure is real and reproduces exactly — of a parser this app never runs. Installing
+ *   the effective spell DB (spells.json + the observed-message overlay, which is what turns on
+ *   message-driven buffApply/buffWearOff matching) costs 5.72 us per event, 8.0 s of that fold,
+ *   and it is charged inside `parseEvent` before any consumer sees anything. So parsing is ~57% of
+ *   the fold, not 6%, and the largest single line item in a startup replay is the spell DB's own
+ *   matching. The consumers below it are the combat engine (21%) and the buffs module (10%);
+ *   everything else in the tree together is under 4%.
+ *
  * THE INPUT. A bench that reads a different log each run measures the log, not the code. So:
  *   1. `tests/bench/fixtures/Logs/eqlog_*.txt` — the STANDARD fixture, if you have put one there.
  *      (Gitignored: a comparable bench log is ~100 MB of one person's real game log, which is
@@ -48,6 +74,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { MAIN_ENTRY, ROOT, buildIfStale, electronBinary, sleep } from '../e2e/appHarness.mjs'
+import { printAttribution, runAttribution, type AttributionRun } from './attribution.mjs'
 import { discoverEqRoot, fixedDrives, registryInstallCandidates, rootHasLogs } from '../../src/main/log/discovery'
 import { REPLAY_DUTY } from '../../src/main/log/replaySlicer'
 import {
@@ -94,6 +121,18 @@ const MAX_BLOCK_MS_BUDGET = 50
  * cost throughput, but not half of it" rule applied to today's honest baseline. A human edits this
  * deliberately and states why, as here; nothing ratchets it automatically, because a budget that
  * moves itself has stopped saying anything.
+ *
+ * POSTSCRIPT, 2026-08-06 (JOS-55): THE 32k BASELINE DID NOT REPRODUCE, and the number above is
+ * left exactly where it is until somebody decides otherwise deliberately. Three consecutive
+ * launches on this machine and this log (ledger lines 1-3, same day, same 1,404,455 events) folded
+ * at 134,182 / 134,494 / 132,957 events per second OF FOLDING — within 1% of each other and 4.2×
+ * the 32k figure the floor was derived from, i.e. back level with the 143k measured on 2026-08-04
+ * before the "regression" was noticed. Nothing in this repo changed to explain that, and the two
+ * 32k lines were recorded on a day when several agents were running full e2e suites on the same
+ * box. The likeliest reading is that the regression was MACHINE LOAD, not code — which is exactly
+ * what a bench whose verdict depends on how busy the machine is will hand you if you let it.
+ * JOS-56 should confirm on a quiet machine before bisecting anything. Raising the floor to match
+ * today's rate is a budget decision, not a measurement, and is deliberately not taken here.
  */
 const EVENTS_PER_WORK_SEC_FLOOR = 16_000
 
@@ -230,6 +269,13 @@ interface BenchRun {
   blocksOver50Ms: number | null
   blockSamples: number
   phases: Record<string, number>
+  /**
+   * WHERE THE FOLD WENT (JOS-55) — the in-process arm's per-consumer table, its parse-only
+   * comparator and the instrument's own cost, carried on the SAME ledger line as the launch above
+   * so a run accumulates one comparable record rather than two files nobody joins. Null when the
+   * arm could not run (no log, or no character to name it after).
+   */
+  attribution: AttributionRun | null
 }
 
 /** What the ledger says the input WAS, so a run whose log moved is visible rather than mysterious. */
@@ -264,7 +310,12 @@ function dutyColumns(events: number, duty: ReplayDutyStats | undefined): DutyCol
   }
 }
 
-function foldRun(profile: StartupProfile, input: BenchInput, logPath: string | undefined): BenchRun {
+function foldRun(
+  profile: StartupProfile,
+  input: BenchInput,
+  logPath: string | undefined,
+  attribution: AttributionRun | null
+): BenchRun {
   const phases: Record<string, number> = {}
   for (const p of profile.phases) phases[p.phase] = Math.round(p.durationMs)
   const replayMs = phases.replayDone ?? 0
@@ -283,7 +334,8 @@ function foldRun(profile: StartupProfile, input: BenchInput, logPath: string | u
     maxBlockMs: block ? block.maxBlockMs : null,
     blocksOver50Ms: block ? block.blocksOver50Ms : null,
     blockSamples: block ? block.samples : 0,
-    phases
+    phases,
+    attribution
   }
 }
 
@@ -321,6 +373,39 @@ function printTable(run: BenchRun): void {
   for (const [label, value] of rows) console.log(`  ${label.padEnd(18)} ${value}`)
   console.log('')
   console.log(`  phases: ${Object.entries(run.phases).map(([k, v]) => `${k} ${num(v)}ms`).join(' · ')}`)
+  console.log('')
+}
+
+/**
+ * Who the attribution arm folds AS. The app's own answer if the launch gave one (it is the
+ * authority on which log it tailed); otherwise the log's file name, which is the only other place
+ * the character's name is written down. The name is not decoration: the parser's self-`/who` rule
+ * cannot fire without it, so a fold that guessed wrong would fold a slightly different program.
+ */
+function characterFor(
+  tailed: CharacterRefLite | null,
+  logPath: string
+): { name: string; server: string; logPath: string } | null {
+  if (tailed) return { name: tailed.name, server: tailed.server, logPath: tailed.logPath }
+  const m = /^eqlog_(.+)_([^_]+)\.txt$/i.exec(basename(logPath))
+  return m?.[1] && m[2] ? { name: m[1], server: m[2], logPath } : null
+}
+
+/**
+ * THE TWO ARMS ARE NOT THE SAME MEASUREMENT, and the readout says so rather than letting a reader
+ * assume it. The launch folds inside Electron beside a renderer, a window and the IPC surface, on
+ * a duty cycle; the attribution arm folds the same bytes through the same consumers in this
+ * process, unthrottled. When they agree, the table describes the launch. When they do not, THAT is
+ * the finding — something outside the fold's own code is charging the launch for it.
+ */
+function compareArms(run: BenchRun, attribution: AttributionRun): void {
+  const launch = run.eventsPerWorkSec
+  if (launch === null) return
+  const ratio = attribution.foldEventsPerSec / Math.max(1, launch)
+  console.log(
+    `  arms: launch ${num(launch)} events/sec folding vs in-process ${num(attribution.foldEventsPerSec)} — ` +
+      `${ratio.toFixed(2)}×${ratio > 1.25 || ratio < 0.8 ? ' — THE ARMS DISAGREE: the gap is not in the folding code' : ''}`
+  )
   console.log('')
 }
 
@@ -402,8 +487,22 @@ async function main(): Promise<void> {
     return
   }
 
-  const run = foldRun(profile, input, tailed?.logPath ?? input.logPath)
+  // THE ATTRIBUTION ARM (JOS-55), after the launch has closed: four folds of the same log in this
+  // process — parse-only, timing off, timing on, timing off again. Nothing else may be running on
+  // this machine while it does (see the header): the % column survives a busy machine, the
+  // absolute microseconds do not.
+  const foldPath = tailed?.logPath ?? input.logPath
+  const character = characterFor(tailed, foldPath)
+  const attribution = character ? await runAttribution(character) : null
+
+  const run = foldRun(profile, input, foldPath, attribution)
   printTable(run)
+  if (attribution) {
+    printAttribution(attribution)
+    compareArms(run, attribution)
+  } else {
+    console.log('  attribution: skipped — the log’s character could not be named (see characterFor).')
+  }
   record(run)
   process.exitCode = assertBudgets(run)
 }

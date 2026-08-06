@@ -7,38 +7,25 @@
 // CombatEngine folds it into its own state machine.
 //
 // This module CONSTRUCTS that world and wires it, at import time, in the order the design
-// requires — the module instances, the registry host that pushes `module:delta`, the
-// REGISTRATION ORDER (which is bus delivery order), and the two bus subscriptions. index.ts
-// imports it as the composition root's first act; `session.ts` drives it (scan → tail →
-// reset on character switch).
+// requires — the module instances (via `modules/wiring.ts`, which owns the list and its order),
+// the registry host that pushes `module:delta`, and the two bus subscriptions. index.ts imports
+// it as the composition root's first act; `session.ts` drives it (scan → tail → reset on
+// character switch).
 //
-// The ORDER of the `registry.register(...)` calls below is load-bearing and is documented at
-// the call site. Do not reorder them.
+// The module ORDER is load-bearing and is documented in modules/wiring.ts, beside the
+// constructions. Do not reorder them. That file is Electron-free on purpose: `npm run bench:replay`
+// folds the same modules in the same order OUTSIDE Electron to attribute the startup fold per
+// consumer (JOS-55), and it must not be holding a private copy of the list.
 
 import { IPC } from '../shared/ipc'
 import { logInfo } from './errorLog'
 import { LogBus } from './log/bus'
 import { EpochDetector } from './log/epochDetector'
 import { SessionDetector } from './log/sessionDetector'
-import { installSpellDb } from './log/rulesets'
-import { loadSpellDb, applyOverlayCorrections } from './data/spellDb'
-import { MessageOverlayMiner } from './data/messageOverlay'
 import { baselineOverlay, loadUserOverlay } from './data/overlayPersistence'
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
-import { ComboModule } from './modules/combo'
-import { RosterModule } from './modules/roster'
-import { LootModule } from './modules/loot'
-import { TurnInsModule } from './modules/turnins'
-import { KillsModule } from './modules/kills'
-import { LevelingModule } from './modules/leveling'
-import { ProgressionModule } from './modules/progression'
-import { CharacterModule } from './modules/character'
-import { ItemTiersModule } from './modules/itemTiers'
-import { AlertsModule } from './modules/alerts'
-import { BuffsModule } from './modules/buffs'
-import { ConsiderModule } from './modules/consider'
-import { EventFeedModule } from './modules/eventFeed'
+import { createModules } from './modules/wiring'
 import type { ModuleDelta } from './modules/types'
 import { lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
@@ -90,75 +77,51 @@ export const registry = new ModuleRegistry({
     if (evOverlay && !evOverlay.isDestroyed()) evOverlay.webContents.send(IPC.onModuleDelta, delta)
   }
 })
-// Class-combo inference (docs/plans/class-combo-inference.md): which up-to-three classes the
-// character was running, and when that changed — a swap the game NEVER logs.
-export const comboModule = new ComboModule()
-// The group roster (docs/plans/group-model.md): who you are with, folded from the membership
-// lines the log prints outright. Registered SECOND, right behind combo and ahead of everything
-// else, for the reason combo goes first — the combat engine subscribes to the bus AFTER the
-// registry, so by the time it folds a line the roster it consults is already advanced for that
-// same line. Consumes no derived events and emits none.
-export const rosterModule = new RosterModule()
-export const lootModule = new LootModule()
-export const turnInsModule = new TurnInsModule()
-export const killsModule = new KillsModule()
-// Leveling analytics (docs/plans/leveling-analytics.md): the capped, range-queryable series of
-// experience / credited kills / loot / zone intervals behind the drag-select stats panel. A
-// SEPARATE module from leveling on purpose — LevelingSnap is uncapped by contract (the AA
-// identity needs the whole history) and this one is a drop-oldest ring.
-export const progressionModule = new ProgressionModule()
-export const levelingModule = new LevelingModule()
-export const characterModule = new CharacterModule()
-// Observed item levels (Task #60): character-scoped, epoch-aware per-item tier state folded
-// from the merge lines, so an item window can show YOUR tier for an item you upgraded.
-export const itemTiersModule = new ItemTiersModule()
-// The alerts extension (Task #18): evaluates event/raw triggers on live events and
-// pushes fired deltas over the standard module transport. Its defs are user prefs
-// (owned by the store), loaded into the module here and re-synced on every save.
-export const alertsModule = new AlertsModule()
-alertsModule.setDefs(getAlerts())
-// Load the scraped spell DB (Task #34) and inject it into the parser config so the
-// parser emits PRECISE message-driven buff events (buffApply/buffWearOff) — and give the
-// same DB to the buffs module for authoritative durations + the self-heal-by-buff apply.
-export const spellDb = loadSpellDb()
-// Effective DB = spells.json + observed-message overlay, overlay WINS (Task #36): fold the
-// committed baseline + the user's persisted overlay into a miner, derive its verified /
-// wiki-contradicting landing corrections, and apply them to the parser's cast-on-you table
-// so a self-landing line the wiki got wrong or omitted (e.g. Symbol of Pinzarn's real
-// message) is recognized. Done BEFORE installSpellDb so the parser uses the corrected DB.
-{
-  const seedMiner = new MessageOverlayMiner(spellDb.byKey)
-  seedMiner.merge(baselineOverlay())
-  seedMiner.merge(loadUserOverlay())
-  const n = applyOverlayCorrections(spellDb, seedMiner.deriveLandingCorrections())
-  logInfo(`[everquest-companion] Message overlay: applied ${n} cast-message corrections over the wiki DB.`)
-}
-installSpellDb(spellDb)
+/**
+ * EVERY MODULE, IN BUS-DELIVERY ORDER — built by `modules/wiring.ts`, not here (JOS-55).
+ *
+ * The construction and the registration order moved to that file for one reason: the startup
+ * fold is what `npm run bench:replay` takes apart per consumer, and it measures the fold IN
+ * PROCESS, outside Electron, where THIS file cannot be imported (store, windows, the two
+ * knowledge lookups). A bench holding its own hand-copied list of modules would attribute a
+ * pipeline nobody ships. There is one list; this is its only Electron-flavoured caller.
+ *
+ * Everything impure is injected from here — the user's alert defs, both message overlays, the
+ * item/mob knowledge lookups, the shared own-loot index, and the bus the buffs module hands its
+ * derived `buffExpired` back to (Task #47: queued until the current primary event finishes
+ * delivering — no re-entrancy, no feedback loop, since buffs ignores buffExpired).
+ */
+const modules = createModules({
+  alertDefs: getAlerts(),
+  // The committed baseline first, then what this user's own log has taught since install.
+  overlays: [baselineOverlay(), loadUserOverlay()],
+  lookupItem,
+  lookupMob,
+  ownLoot,
+  emitDerived: (ev, live) => {
+    bus.emitDerived(ev, live)
+  }
+})
+
+export const spellDb = modules.spellDb
+export const comboModule = modules.combo
+export const rosterModule = modules.roster
+export const lootModule = modules.loot
+export const turnInsModule = modules.turnIns
+export const killsModule = modules.kills
+export const progressionModule = modules.progression
+export const levelingModule = modules.leveling
+export const characterModule = modules.character
+export const itemTiersModule = modules.itemTiers
+export const alertsModule = modules.alerts
+export const buffsModule = modules.buffs
+export const considerModule = modules.consider
+export const eventFeedModule = modules.eventFeed
+
+logInfo(
+  `[everquest-companion] Message overlay: applied ${modules.overlayCorrections} cast-message corrections over the wiki DB.`
+)
 logInfo(`[everquest-companion] Spell DB: ${spellDb.spells.length} spells (${spellDb.castOnYou.size} unique cast-on-you msgs).`)
-// The buffs extension (Task #19; message-driven model Task #34): tracks the player's own
-// buffs from precise message applies + cast-timing mining, serving live actives + stats.
-// Task #36: seed the observed-message overlay miner with the committed baseline + the user's
-// persisted overlay so it starts warm; the user's overlay is re-saved (debounced) as the
-// live log teaches it more.
-export const buffsModule = new BuffsModule(spellDb, [baselineOverlay(), loadUserOverlay()])
-// DERIVED EVENTS (Task #47): the buffs module is the only authoritative source of the RESOLVED
-// "wears off you / your pet" signal (the raw parser buffWearOff carries an ambiguous candidate
-// list for the 123 shared-message families). Let it synthesize a `buffExpired { spell, target }`
-// back onto the SAME bus so the alerts module (registered after buffs) can match one reliable
-// kind for both sides. bus.emitDerived queues it until the current primary event finishes
-// delivering — no re-entrancy, no feedback loop (buffs ignores buffExpired).
-buffsModule.setDerivedEmitter((ev, live) => bus.emitDerived(ev, live))
-// The event-log feed (Task #59): the live "things worth noticing" ring behind the 'events'
-// overlay — alert fires, NOTABLE loot, quest completions. It resolves loot notability through
-// the SAME cache-first lookupItem the loot tab uses (which also warms the cache, so this
-// replaces the old bare prefetch subscription below). Registered LAST so a row appended while
-// an earlier module's delta is being emitted still flushes in that pass.
-export const eventFeedModule = new EventFeedModule({ lookupItem })
-// The consider ring (Task #63): the mobs you've recently `/con`ed, enriched asynchronously with
-// drop knowledge. It also OWNS the shared own-loot index's lifetime — it folds every loot event
-// into `ownLoot` and resets it on epoch/character switch, so mobLookup's "what has this mob
-// dropped for ME" answer is rebuilt by the same replay that rebuilds the loot module.
-export const considerModule = new ConsiderModule({ lookupMob, ownLoot })
 logInfo(
   `[everquest-companion] Mob catalog: ${MOB_CATALOG_SIZE} mobs (scraped drop tables; the live wiki lookup is the fallback).`
 )
@@ -175,25 +138,11 @@ function feedAlertDelta(delta: ModuleDelta): void {
   }
 }
 
-// combo goes FIRST (design § 5.1): within one bus delivery every later module — and the combat
-// engine, which folds the same event afterwards — then sees an already-advanced combo state.
-// It is purely additive to this documented order: combo consumes no derived events and emits
-// none, so nothing that used to run before it can observe the difference.
-registry.register(comboModule)
-registry.register(rosterModule)
-registry.register(lootModule)
-registry.register(turnInsModule)
-registry.register(killsModule)
-registry.register(progressionModule)
-registry.register(levelingModule)
-registry.register(characterModule)
-registry.register(itemTiersModule)
-registry.register(alertsModule)
-registry.register(buffsModule)
-registry.register(considerModule)
-// eventFeed stays LAST: a row appended while an earlier module's delta is being emitted still
-// rides out on the same flush pass.
-registry.register(eventFeedModule)
+// REGISTRATION ORDER IS BUS DELIVERY ORDER, and the order itself is stated (with its reasons) in
+// modules/wiring.ts beside the constructions — combo first, roster second, eventFeed last. This
+// loop is the whole registration: a module added there is registered here without an edit, which
+// is exactly the property that keeps the bench's attribution honest.
+for (const mod of modules.ordered) registry.register(mod)
 // Subscribe consumers to the bus ONCE, at startup. The bus persists across
 // character switches; on a switch we reset() each consumer rather than tearing
 // down and re-subscribing (the old bus.clear() churned subscriptions and risked

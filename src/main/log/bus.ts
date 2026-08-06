@@ -22,6 +22,29 @@ interface DerivedEvent {
   live: boolean
 }
 
+/**
+ * THE DERIVED-DRAIN SEAM (JOS-55): the bench's per-consumer attribution needs the drain to be its
+ * own row, not a silent surcharge on every module's number.
+ *
+ * A derived event (`buffExpired`, `epoch`, `offlineGap`) travels the SAME listener loop as a
+ * primary one, so a timer wrapped around the listeners cannot tell the two apart — the modules'
+ * totals would quietly include work done on somebody else's behalf, and "the derived drain costs
+ * X" could only ever be a guess. So the bus brackets the drain and the probe brackets with it:
+ * `start()` before the first derived delivery, `end(count, ms)` after the last, and the bench's
+ * dispatch timer routes everything in between into a separate bucket. Rows that way are disjoint
+ * and add up.
+ *
+ * A constructor argument, absent everywhere except the bench (`replaySlicer.ts`'s precedent, and
+ * pipeline.ts constructs its bus with none): with no probe the emit path is the one that always
+ * ran, and there is no clock read per event to pay for.
+ */
+export interface LogBusProbe {
+  /** A derived drain is beginning. */
+  start(): void
+  /** …and it is over: `count` derived events delivered in `ms`. Never called for an empty drain. */
+  end(count: number, ms: number): void
+}
+
 export class LogBus {
   private listeners: LogEventListener[] = []
   /**
@@ -36,6 +59,9 @@ export class LogBus {
    */
   private derived: DerivedEvent[] = []
   private delivering = false
+
+  /** The bench's derived-drain observer (JOS-55). Undefined in the app, always. */
+  constructor(private probe?: LogBusProbe) {}
 
   /** Register a listener; returns an unsubscribe fn. Order is registration order. */
   subscribe(fn: LogEventListener): () => void {
@@ -55,15 +81,39 @@ export class LogBus {
     if (this.delivering) return
     this.delivering = true
     try {
-      // Shift-until-empty: `shift()` returns undefined exactly when the queue is empty, so the
-      // loop condition is also the proof that `next` is defined inside the body.
-      let next: DerivedEvent | undefined
-      while ((next = this.derived.shift()) !== undefined) {
-        for (const fn of this.listeners) fn(next.ev, next.live)
-      }
+      if (this.probe) this.timedDrain(this.probe)
+      else this.drain()
     } finally {
       this.delivering = false
     }
+  }
+
+  /**
+   * Deliver every queued derived event, and anything they in turn queue.
+   *
+   * Shift-until-empty: `shift()` returns undefined exactly when the queue is empty, so the loop
+   * condition is also the proof that `next` is defined inside the body.
+   */
+  private drain(): void {
+    let next: DerivedEvent | undefined
+    while ((next = this.derived.shift()) !== undefined) {
+      for (const fn of this.listeners) fn(next.ev, next.live)
+    }
+  }
+
+  /** The same drain, bracketed for the bench (see LogBusProbe). Two clock reads per emit that
+   *  actually had something to drain, and none at all on the ordinary path. */
+  private timedDrain(probe: LogBusProbe): void {
+    if (this.derived.length === 0) return
+    probe.start()
+    const t0 = performance.now()
+    let count = 0
+    let next: DerivedEvent | undefined
+    while ((next = this.derived.shift()) !== undefined) {
+      count += 1
+      for (const fn of this.listeners) fn(next.ev, next.live)
+    }
+    probe.end(count, performance.now() - t0)
   }
 
   /**
