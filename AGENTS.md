@@ -673,6 +673,19 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   a dismissible explainer that helps someone use a feature successfully (the
   planner's exaltation card is the model) — never defensive source-caveating.
   When in doubt: delete the tooltip and let the label earn its keep.
+- **BACK MEANS WHERE YOU CAME FROM, and there is ONE mechanism for it**
+  (JOS-43). Every cross-view link funnels through the `useAppRouting` openers
+  (and cross-window toasts reach the same ones via `applyDeepLink`), so the
+  navigation-origin STACK lives at that seam — `navOrigin.ts` (pure, node-tested)
+  plus `useNavSeam` in appRouting.ts. An ANCHORED link parks the tab it leaves; a
+  BARE opener is a tab switch and clears; MANUAL navigation (`selectView` — nav
+  drawer, title bar, Preferences sections) clears; a NATIVE drill (a row in the
+  list you are standing in) clears. Receivers take the same `NavBack` object and
+  keep their own fallback, because `back()` reports whether it navigated — a
+  drill reached natively behaves exactly as it did before. NEVER add a per-view
+  `cameFrom` prop: five of those are five opinions about what Back means. A back
+  affordance NAMES ITS DESTINATION ("Back to Planner"), and a breadcrumb root
+  keeps meaning the place it reads. Session-lifetime only, nothing persisted.
 - Search: input echoes instantly; filter on `useDeferredValue`; lowercase
   `searchKey` computed once per data change; long fixed-height lists
   windowed via `lib/useWindowedRows`, variable-height cap+paginate. These
