@@ -181,9 +181,83 @@ const HASTE_FOCUS_FAMILIES: ReadonlySet<string> = new Set([
   'reanimation haste'
 ])
 
-/** Effect names carry a Roman rank ("Brittle Haste IV"); the family is what the table keys on. */
+/**
+ * Effect names carry a Roman rank ("Brittle Haste IV"); the family is what the table keys on.
+ *
+ * DELIBERATELY LOOSER than V5's `parseFocusEffect` below, and for a different job: this one also
+ * runs over DETAIL prose, where case is not the wiki's strong suit, and its only consumer is an
+ * exact match against a closed hand-authored set — stripping too much can miss a lock, never
+ * invent one. V5's parser feeds a GROUPING and must not invent families, so it is strict.
+ */
 function effectFamily(name: string): string {
   return name.trim().replace(/\s+[IVX]+$/i, '').trim().toLowerCase()
+}
+
+// ---- V5: the focus family and its tier ------------------------------------------
+//
+// THE RANK IN THE NAME IS THE ONLY MAGNITUDE SIGNAL THE CORPUS HAS. No percent, no level, no
+// magnitude field exists on any focus row (measured) — "Improved Healing III" beats "Improved
+// Healing I" because of those three characters and nothing else. So the name is split ONCE, at
+// index build in main (law 2, boundary canonicalization), and every consumer above it sorts and
+// groups on the parsed pair instead of re-reading the string.
+//
+// MEASURED over the committed corpus (2026-08-05, after W-A's V9 exclusion took the 24 summoned
+// focus rows off the donor list): 119 focus rows, 53 distinct names → 29 families.
+//   * 39 names carry a Roman rank I–III (Improved Healing III, Burning Affliction II, …).
+//   * 5 carry an ARABIC one, and they are the bard instrument modifiers: Brass Resonance 14,
+//     Percussion Resonance 11 / 14, String Resonance 11, Wind Resonance 10. The number is the
+//     modifier's own scale, not a tier index — but it ranks its family exactly the way a Roman
+//     numeral ranks its own, and the two spellings never meet inside one family (measured), so
+//     they are read the same way and compared only within a family.
+//   * 9 carry NO rank: the Minion/Servant of Air/Earth/Fire/Water/Hate pet families. Law 1 says
+//     those are not tier 0 of some guessed family — an unranked name IS its own family, at tier 1.
+//
+// Only FOCUS rows are parsed. Roman ranks are all over the proc corpus too (System Shock V,
+// Berserker Madness IV, Flowing Thought I), but "which is best" is a focus question — a proc's
+// rank rides different resists, levels and procs-per-minute, and folding those into "best of
+// family" would be the planner claiming a comparison the corpus never states.
+
+/** A canonical Roman numeral, in the one spelling that is valid (no IIII, no VV). */
+const ROMAN = /^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/
+const ROMAN_VALUE: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 }
+
+/** A canonical Roman token → its value; null for anything that is not one. */
+function romanValue(token: string): number | null {
+  if (token === '' || !ROMAN.test(token)) return null
+  let total = 0
+  let biggest = 0
+  for (let i = token.length - 1; i >= 0; i--) {
+    const v = ROMAN_VALUE[token[i]]
+    total += v < biggest ? -v : v
+    if (v > biggest) biggest = v
+  }
+  return total
+}
+
+/** A focus effect name, split into the family it belongs to and its rank within that family. */
+export interface FocusRank {
+  /** the name with its rank stripped — the name ITSELF when it carries none */
+  family: string
+  /** the rank the name states; 1 when it states none (law 1: unranked is not tier 0) */
+  tier: number
+}
+
+/**
+ * "Improved Healing III" → `{ family: 'Improved Healing', tier: 3 }`; "Minion of Air" →
+ * `{ family: 'Minion of Air', tier: 1 }`; "Percussion Resonance 14" →
+ * `{ family: 'Percussion Resonance', tier: 14 }`.
+ *
+ * The trailing token must be a CANONICAL Roman numeral or a plain integer; anything else leaves
+ * the name whole, so a rescrape that spells a rank some new way makes a one-member family that is
+ * visible in the browser rather than a silently mis-tiered row.
+ */
+export function parseFocusEffect(name: string): FocusRank {
+  const trimmed = name.trim()
+  const m = /^(.+?)\s+([A-Z]+|\d{1,3})$/.exec(trimmed)
+  if (m === null) return { family: trimmed, tier: 1 }
+  const [, stem, token] = m
+  const tier = /^\d+$/.test(token) ? Number(token) : romanValue(token)
+  return tier === null || tier === 0 ? { family: trimmed, tier: 1 } : { family: stem.trim(), tier }
 }
 
 /**

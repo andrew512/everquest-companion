@@ -17,6 +17,7 @@ import type { ClassAbbr } from '@shared/classCombo'
 import type { EquipSlot, PlannerDonor, SocketType } from '@shared/planner/types'
 import {
   CURRENT_ERA,
+  ERA_LABEL,
   eraFromTag,
   eraRank,
   layeredVerdict,
@@ -24,20 +25,12 @@ import {
   type Era,
   type EraVerdict
 } from '@shared/planner/era'
+import { defaultAxis, isAxisFor, type GroupAxis } from './plannerGroups'
 import { sourcesFor } from './sourceIndex'
 
 /** A donor row with its search haystack precomputed. `searchKey` is never displayed. */
 export interface DonorRow extends PlannerDonor {
   searchKey: string
-}
-
-/** One effect and every donor that carries it — the unit the browser lists. */
-export interface EffectGroup {
-  effect: string
-  socket: SocketType
-  /** R3: the effect itself is haste, so NO donor of it can travel. Flagged, never hidden. */
-  hasteLocked: boolean
-  donors: DonorRow[]
 }
 
 /** Whether a donor can be used by the set's target classes. `unknown` is not a pass and not a
@@ -184,14 +177,8 @@ export interface DonorEra {
  */
 export type EraSubject = Pick<PlannerDonor, 'key'> & Partial<Pick<PlannerDonor, 'wikiSources' | 'eraTag'>>
 
-// Release order comes from era.ts (`eraRank`) — the planner never re-states which expansion came
-// first. Only the DISPLAY spelling lives here.
-const ERA_LABEL: Record<Era, string> = {
-  classic: 'Classic',
-  kunark: 'Kunark',
-  velious: 'Velious',
-  luclin: 'Luclin'
-}
+// Release order AND the display spellings come from era.ts (`eraRank`, `ERA_LABEL`) — the planner
+// never re-states which expansion came first, nor how one is spelled.
 
 /** The era the app is currently scoped to, spelled for a tooltip. */
 export const CURRENT_ERA_LABEL = ERA_LABEL[CURRENT_ERA]
@@ -233,6 +220,16 @@ export function donorEra(subject: EraSubject): DonorEra {
   }
   ERA_CACHE.set(id, value)
   return value
+}
+
+/**
+ * The ERA GROUPING AXIS's reader: which expansion places this donor, or null when nothing does.
+ * A module-level function so the browser's grouping memo has a stable identity to depend on, and
+ * the one seam through which `plannerGroups` touches the era join at all — it never re-decides a
+ * verdict, it reads this one.
+ */
+export function donorEraOf(donor: DonorRow): Era | null {
+  return donorEra(donor).era
 }
 
 /** The era chip's whole content, or null when the donor is in-era and there is nothing to say. */
@@ -365,25 +362,41 @@ export function filterDonors(
   })
 }
 
+// ---- the grouping axis (V4) ---------------------------------------------------------
+//
+// The FOLD itself lives in `plannerGroups.ts` (pure, node-tested); what lives here is the same
+// thing every other browser preference does — the persisted choice, in the `eq.planner.*` idiom
+// beside the era and non-equippable toggles.
+
+const GROUP_KEY = 'eq.planner.groupBy'
+
+function storedAxis(socket: SocketType): GroupAxis {
+  const stored = localStorage.getItem(`${GROUP_KEY}.${socket}`)
+  return stored !== null && isAxisFor(socket, stored) ? stored : defaultAxis(socket)
+}
+
 /**
- * Donors → effect groups.
+ * The group-by choice, REMEMBERED PER SOCKET TAB (V4). Per socket because the tabs ask different
+ * questions: Focus opens on families ("the best Improved Healing"), Proc on effects, and a user who
+ * groups the Proc tab by slot has said nothing about how they want to read Focus.
  *
- * ORDER: donor count DESC, then effect name — the effect with the most donors is the one you can
- * realistically go and get, which is the question this pane exists to answer. Within a group the
- * donors keep the corpus order main served them in.
+ * An axis stored under a socket that no longer offers it (a rename, or `family` read back on a
+ * non-focus tab) falls back to that socket's default rather than rendering an axis the model
+ * cannot serve.
  */
-export function groupByEffect(rows: readonly DonorRow[]): EffectGroup[] {
-  const groups = new Map<string, EffectGroup>()
-  for (const d of rows) {
-    const g = groups.get(d.effect)
-    if (g) {
-      g.donors.push(d)
-      g.hasteLocked = g.hasteLocked || d.hasteLocked
-    } else {
-      groups.set(d.effect, { effect: d.effect, socket: d.socket, hasteLocked: d.hasteLocked, donors: [d] })
-    }
-  }
-  return [...groups.values()].sort(
-    (a, b) => b.donors.length - a.donors.length || (a.effect < b.effect ? -1 : a.effect > b.effect ? 1 : 0)
+export function useGroupBy(socket: SocketType): [GroupAxis, (v: GroupAxis) => void] {
+  const [axis, setAxis] = useState<GroupAxis>(() => storedAxis(socket))
+  // The tab switch is what re-reads storage: one hook follows the socket, so switching to Focus
+  // lands on families and switching back lands on whatever that tab was left grouped by.
+  useEffect(() => {
+    setAxis(storedAxis(socket))
+  }, [socket])
+  const set = useCallback(
+    (v: GroupAxis) => {
+      localStorage.setItem(`${GROUP_KEY}.${socket}`, v)
+      setAxis(v)
+    },
+    [socket]
   )
+  return [axis, set]
 }

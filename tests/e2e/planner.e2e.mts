@@ -18,9 +18,10 @@
  * so this is deterministic — but it is asserted as a FLOOR, never as today's count); adding that
  * donor to the set writes a socket that BOTH other modes can see — the Board draws it in a cell
  * with a state chip, and the Farm rollup lists it under some heading; the two growing lists are
- * BOUNDED scroll boxes (the Task-#56 law); and the era filter is ON by default and actually
+ * BOUNDED scroll boxes (the Task-#56 law); the era filter is ON by default and actually
  * removes rows when it is switched off (the corpus is majority Kunark/Velious, so "off shows
- * more" is an identity, not a number).
+ * more" is an identity, not a number); and the Focus tab opens on FAMILIES with the best tier of
+ * each crowned, which is the per-socket grouping default (V4/V5) rather than a global one.
  *
  * The one thing it deliberately does NOT assert is which effects or donors are on screen: a
  * rescrape may re-word an effect, and a spec that pins today's proc names would rot (AGENTS.md:
@@ -71,8 +72,18 @@ const LOOT_DETAIL = '[data-testid="loot-detail"]'
 const LOOT_TITLE = '[data-testid="loot-detail-title"]'
 const LOOT_DB_SOURCES = '[data-testid="loot-db-sources"]'
 
-/** An effect group header — the browser lists one per effect, and expanding it lists its donors. */
+/**
+ * A GROUP HEADER — one per group on whatever axis the tab is grouped by, and expanding it lists
+ * that group's donors. The testid predates V4's grouping model and still says "effect" because the
+ * effect axis is still what every tab but Focus opens on; `data-axis` is how a spec asks which
+ * fold it is actually looking at.
+ */
 const EFFECT_ROW = '[data-testid="planner-effect-row"]'
+const FAMILY_ROW = '[data-testid="planner-effect-row"][data-axis="family"]'
+const GROUPBY = '[data-testid="planner-groupby"]'
+const SOCKET_FOCUS = '[data-testid="planner-socket-focus"]'
+const SOCKET_PROC = '[data-testid="planner-socket-proc"]'
+const BEST_CHIP = '[data-testid="planner-best-chip"]'
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
@@ -228,6 +239,41 @@ async function stepNonEquip(page: Page): Promise<void> {
 }
 
 /**
+ * 4c. THE FOCUS TAB OPENS ON FAMILIES, AND THE BEST OF EACH IS CROWNED (V4 + V5).
+ *
+ * Two facts in one trip. The GROUPING is a per-socket default, not a global one: Proc opens on
+ * effects (the browser's original fold) and Focus opens on families, because "the best Improved
+ * Healing I can reach" is the question that tab exists to answer. And the CROWN is derived from
+ * what survived the filters, so it can be asserted as an identity — every family header has at
+ * least one donor, therefore expanding one must produce at least one crowned row.
+ *
+ * Skipped, with a note, when this set's classes leave the Focus tab empty: focus effects are
+ * caster gear, and a melee trio filtering the tab down to nothing is a correct answer, not a
+ * failure. Ends back on the Proc tab so every step after it sees the surface it expects.
+ */
+async function stepFocusFamilies(page: Page): Promise<void> {
+  if (!check('the effect browser offers a group-by control', (await countOf(page, GROUPBY)) > 0)) return
+  await page.click(SOCKET_FOCUS, { timeout: 15_000 })
+  const grouped = await until(async () => (await countOf(page, FAMILY_ROW)) > 0, 20_000)
+  if (grouped) {
+    check(
+      'the Focus tab groups by focus family without being asked (the per-socket default)',
+      (await textOf(page, GROUPBY)).includes('Focus family'),
+      `${String(await countOf(page, FAMILY_ROW))} family headers`
+    )
+    await page.click(FAMILY_ROW, { timeout: 15_000 })
+    check(
+      'expanding a family crowns the best tier it can currently see',
+      await until(async () => (await countOf(page, BEST_CHIP)) > 0, 10_000)
+    )
+  } else {
+    note('no focus donor survives this set’s class filter — the family grouping step is skipped this run')
+  }
+  await page.click(SOCKET_PROC, { timeout: 15_000 })
+  await until(async () => (await countOf(page, `${EFFECT_ROW}[data-axis="effect"]`)) > 0, 20_000)
+}
+
+/**
  * Expand an effect group so its donors are on screen. Retried once: the view remounts while the
  * app is still reading the log (App keys it on the character), and a remount collapses the tree —
  * which is correct behaviour for a fresh mount, and must not be read as "effects have no donors".
@@ -365,6 +411,7 @@ async function steps(page: Page): Promise<void> {
   if (await stepEffects(page)) {
     await stepEra(page)
     await stepNonEquip(page)
+    await stepFocusFamilies(page)
     if (await stepAddAndBoard(page)) {
       await stepHostPicker(page)
       await stepFarm(page)

@@ -74,6 +74,18 @@ export const ERA_ORDER: readonly Era[] = ['classic', 'kunark', 'velious', 'lucli
  */
 export const CURRENT_ERA: Era = 'classic'
 
+/**
+ * The ONE display spelling of each era. Lives beside the ordering rather than in whichever UI file
+ * needed it first: the era chip, the era filter's tooltip and the browser's era grouping all say
+ * "Velious" the same way, and none of them owns the word.
+ */
+export const ERA_LABEL: Record<Era, string> = {
+  classic: 'Classic',
+  kunark: 'Kunark',
+  velious: 'Velious',
+  luclin: 'Luclin'
+}
+
 /** Release rank of an era; lower ships earlier. `ERA_ORDER.indexOf` with a name. */
 export function eraRank(era: Era): number {
   return ERA_ORDER.indexOf(era)

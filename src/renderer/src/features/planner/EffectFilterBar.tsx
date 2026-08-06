@@ -9,26 +9,56 @@
 // thing allowed to shrink — a bar that wraps turns a toolbar into a growing block and pushes the
 // list it filters off the bottom of the pane.
 //
-// FOUR FILTERS, TWO KINDS. Socket type / search / slot are this mount's own state; "Usable by this
-// set" reads the plan. "Current era" and "Non-equippable" are the PERSISTED pair (`eq.planner.*`),
-// handed in as their `useState`-shaped tuples so this file owns none of that storage — see
-// plannerData for what each one means and why their defaults are opposites.
+// FIVE CONTROLS, TWO KINDS. Socket type / search / slot are this mount's own state; "Usable by this
+// set" reads the plan. "Current era", "Non-equippable" and "Group by" are the PERSISTED set
+// (`eq.planner.*`), handed in as their `useState`-shaped tuples so this file owns none of that
+// storage — see plannerData for what each one means and why the two toggles' defaults are opposites.
+//
+// GROUP BY offers only the axes its socket tab can serve (`plannerGroups.axesFor` — "Focus family"
+// exists on the Focus tab and nowhere else), so the control can never ask for a fold the model
+// would answer with one header.
 
 import type { JSX } from 'react'
 import { Chip, MenuItem, Stack, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import { EQUIP_SLOTS, type EquipSlot, type SocketType } from '@shared/planner/types'
 import { Tooltip } from '../../lib/Tooltip'
 import { CURRENT_ERA_LABEL, type DonorFilters } from './plannerData'
+import { AXIS_LABEL, SOCKET_LABEL, axesFor, type GroupAxis } from './plannerGroups'
 
 /** The socket tabs, in the order the planner leads with (proc first — see DEFAULT_FILTERS). */
 const SOCKETS: SocketType[] = ['proc', 'worn', 'focus', 'click']
 
-/** The ONE spelling of a socket type in this feature's UI — the tabs and the effect rows share it. */
-export const SOCKET_LABEL: Record<SocketType, string> = {
-  proc: 'Proc',
-  worn: 'Worn',
-  focus: 'Focus',
-  click: 'Click'
+/**
+ * The bar's ON/OFF idiom: one chip, lit when the filter is on, and a tooltip that says what it
+ * hides and what it deliberately keeps. Three of them read identically because they ARE identical
+ * — the differences worth seeing are in the words, not in the markup.
+ */
+function ToggleChip({
+  label,
+  hint,
+  on,
+  onToggle,
+  testId
+}: {
+  label: string
+  hint: string
+  on: boolean
+  onToggle: () => void
+  testId?: string
+}): JSX.Element {
+  return (
+    <Tooltip title={hint}>
+      <Chip
+        size="small"
+        label={label}
+        data-testid={testId}
+        color={on ? 'primary' : 'default'}
+        variant={on ? 'filled' : 'outlined'}
+        onClick={onToggle}
+        sx={{ flexShrink: 0 }}
+      />
+    </Tooltip>
+  )
 }
 
 export interface EffectFilterBarProps {
@@ -39,6 +69,7 @@ export interface EffectFilterBarProps {
   setText: (v: string) => void
   era: [boolean, (v: boolean) => void]
   nonEquip: [boolean, (v: boolean) => void]
+  groupBy: [GroupAxis, (v: GroupAxis) => void]
 }
 
 export default function EffectFilterBar({
@@ -47,10 +78,12 @@ export default function EffectFilterBar({
   text,
   setText,
   era,
-  nonEquip
+  nonEquip,
+  groupBy
 }: EffectFilterBarProps): JSX.Element {
   const [eraOnly, setEraOnly] = era
   const [showNonEquip, setShowNonEquip] = nonEquip
+  const [axis, setAxis] = groupBy
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1 }}>
       <ToggleButtonGroup
@@ -93,40 +126,44 @@ export default function EffectFilterBar({
         ))}
       </TextField>
 
-      <Tooltip title="Hide donors no class in this set can use. Donors whose page states no class list are kept and chipped 'class unknown'.">
-        <Chip
-          size="small"
-          label="Usable by this set"
-          color={filters.trioOnly ? 'primary' : 'default'}
-          variant={filters.trioOnly ? 'filled' : 'outlined'}
-          onClick={() => setFilters({ ...filters, trioOnly: !filters.trioOnly })}
-          sx={{ flexShrink: 0 }}
-        />
-      </Tooltip>
+      <TextField
+        select
+        size="small"
+        label="Group by"
+        data-testid="planner-groupby"
+        value={axis}
+        onChange={(e) => setAxis(e.target.value as GroupAxis)}
+        sx={{ minWidth: 130, flexShrink: 0 }}
+      >
+        {axesFor(filters.socket).map((a) => (
+          <MenuItem key={a} value={a} data-testid={`planner-groupby-${a}`}>
+            {AXIS_LABEL[a]}
+          </MenuItem>
+        ))}
+      </TextField>
 
-      <Tooltip title={`Hide donors whose only known sources are outside ${CURRENT_ERA_LABEL}. Donors no zone places stay, chipped 'era?'.`}>
-        <Chip
-          size="small"
-          label="Current era"
-          data-testid="planner-era-toggle"
-          color={eraOnly ? 'primary' : 'default'}
-          variant={eraOnly ? 'filled' : 'outlined'}
-          onClick={() => setEraOnly(!eraOnly)}
-          sx={{ flexShrink: 0 }}
-        />
-      </Tooltip>
+      <ToggleChip
+        label="Usable by this set"
+        on={filters.trioOnly}
+        onToggle={() => setFilters({ ...filters, trioOnly: !filters.trioOnly })}
+        hint="Hide donors no class in this set can use. Donors whose page states no class list are kept and chipped 'class unknown'."
+      />
 
-      <Tooltip title="Show items whose page states no equipment slot — potions, poisons and the like. An exaltation can only move between items sharing a slot, so these can never donate; they are hidden by default and chipped 'no slot' when shown.">
-        <Chip
-          size="small"
-          label="Non-equippable"
-          data-testid="planner-nonequip-toggle"
-          color={showNonEquip ? 'primary' : 'default'}
-          variant={showNonEquip ? 'filled' : 'outlined'}
-          onClick={() => setShowNonEquip(!showNonEquip)}
-          sx={{ flexShrink: 0 }}
-        />
-      </Tooltip>
+      <ToggleChip
+        label="Current era"
+        testId="planner-era-toggle"
+        on={eraOnly}
+        onToggle={() => setEraOnly(!eraOnly)}
+        hint={`Hide donors whose only known sources are outside ${CURRENT_ERA_LABEL}. Donors no zone places stay, chipped 'era?'.`}
+      />
+
+      <ToggleChip
+        label="Non-equippable"
+        testId="planner-nonequip-toggle"
+        on={showNonEquip}
+        onToggle={() => setShowNonEquip(!showNonEquip)}
+        hint="Show items whose page states no equipment slot — potions, poisons and the like. An exaltation can only move between items sharing a slot, so these can never donate; they are hidden by default and chipped 'no slot' when shown."
+      />
     </Stack>
   )
 }
