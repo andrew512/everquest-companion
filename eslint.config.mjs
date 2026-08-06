@@ -178,6 +178,18 @@ const IGNORES = [
   'tests/e2e/artifacts/**',
   'scripts/sources/cache/**',
   'scripts/sandbox/results/**',
+  // Worker-agent worktrees are FULL repo copies parked under .claude/worktrees
+  // by the wave machinery. Linting the main checkout must never traverse them:
+  // N live worktrees ≈ N extra repos (measured: heap OOM at 4GB), and a worker
+  // mid-e2e rebuilds out-e2e/ under lint's feet (measured: ENOENT on a vanished
+  // renderer asset mid-run). Their own lint runs happen inside the worktree,
+  // where this entry matches nothing.
+  '.claude/worktrees/**',
+  // Local triage material: gitignored per-machine scratch (Linear API one-offs,
+  // feedback slices, linear.env). Never in git, never in CI — same standing as
+  // scripts/_* above. ESLint flat config does not read .gitignore, so the two
+  // lists both need the entry.
+  '.triage/**',
   // THROWAWAY diagnostic replays. AGENTS.md's operating model has the planner
   // write `scripts/_*.mts`, run it once against the real log, and delete it.
   // They exist for minutes and are never committed — linting them made the
