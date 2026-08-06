@@ -42,7 +42,6 @@ import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses } from '@shared/classComb
 import type { ExaltPlan } from '@shared/planner/types'
 import { useComboSnap } from '../profiles/ClassComboData'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
-import { Tooltip } from '../../lib/Tooltip'
 import EffectBrowser from './EffectBrowser'
 import FarmList from './FarmList'
 import PlanBoard from './PlanBoard'
@@ -146,25 +145,21 @@ function SetSwitcher({
  * gaps already claim ~373 of it. Three three-letter chips and a caret fit in 240 with room over.
  */
 function ClassFilter({ plan, plans }: { plan: ExaltPlan; plans: PlansApi }): JSX.Element {
+  // NO tooltip on this control (owner, 2026-08-05): a hover box over an input the user TYPES
+  // into floats exactly where the dropdown opens and reads as the UI blocking itself. The
+  // socketing-semantics explanation this used to carry belongs to the explainer card (W-G),
+  // not to a popper racing the option list.
   return (
-    <Tooltip
-      cursor="inherit"
-      placement="top"
-      title="The classes this set is planned for. A donor must share one of them to be socketable (and socketing narrows the host to the overlap)."
-    >
-      <Box sx={{ display: 'flex' }}>
-        <ChipMultiSelect
-          options={CLASS_ABBRS}
-          value={plan.classes}
-          onChange={(classes) => plans.setClasses(plan.id, classes)}
-          label="Classes"
-          placeholder="All classes"
-          max={MAX_COMBO_SLOTS}
-          minWidth={240}
-          testId="planner-classes"
-        />
-      </Box>
-    </Tooltip>
+    <ChipMultiSelect
+      options={CLASS_ABBRS}
+      value={plan.classes}
+      onChange={(classes) => plans.setClasses(plan.id, classes)}
+      label="Classes"
+      placeholder="All classes"
+      max={MAX_COMBO_SLOTS}
+      minWidth={240}
+      testId="planner-classes"
+    />
   )
 }
 
