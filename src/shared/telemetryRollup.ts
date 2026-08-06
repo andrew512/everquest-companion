@@ -43,6 +43,7 @@
 
 import {
   bucketOf,
+  type StartupReplayStats,
   type TelemetryBatch,
   type TelemetryEvent,
   type TelemetryRecord
@@ -173,6 +174,35 @@ export const USAGE_METRICS = {
   /** dim = the healthCounters field name; n = the count reported. */
   health: 'health',
   healthReports: 'healthReports',
+  /**
+   * THE STARTUP REPLAY (JOS-57), and every one of these is dimensioned BY VERSION because that is
+   * the only question worth asking of it: "did the throttle we shipped make launches better" is a
+   * comparison between builds, and a fleet-wide average over every version that ever ran would
+   * smear the change we are looking for across the releases either side of it.
+   *
+   * `usage_daily` has no version COLUMN (the key is day+cohort+metric+dim, and it cannot grow one
+   * — see infra/schema.sql), so the version lives in `dim`, exactly as `update` puts a step and an
+   * outcome there. That is also why this is additive with NO SCHEMA CHANGE: new metric names in a
+   * table that was built to hold arbitrary ones.
+   */
+  /** dim = appVersion. The DENOMINATOR: launches that reported a replay at all. */
+  startupReplays: 'startupReplays',
+  /** dim = `<version>:<index into REPLAY_MS_EDGES>`. A median cannot be summed — hence a histogram. */
+  startupReplayMs: 'startupReplayMs',
+  /** dim = `<version>:<index into BLOCK_MS_EDGES>`. Same argument, worst single stall. */
+  startupBlockMs: 'startupBlockMs',
+  /** dim = appVersion; n = the SUM of achieved duty percentages. Mean = this / startupReplays. */
+  startupDutyPct: 'startupDutyPct',
+  /** dim = appVersion; n = summed count of 50 ms+ stalls. */
+  startupBlocksOver50: 'startupBlocksOver50',
+  /** dim = appVersion; n = summed events folded. Mean = this / startupReplays. */
+  startupEventsReplayed: 'startupEventsReplayed',
+  /**
+   * dim = index into LOG_SIZE_BYTES_EDGES, and deliberately NOT versioned: how big the fleet's
+   * logs are is a fact about the population, not about a build, and it reads beside `setupLogSize`
+   * (the same edges) rather than against it.
+   */
+  startupLogSize: 'startupLogSize',
   /** dim = `<step>:ok` / `<step>:failed`. */
   update: 'update',
   /** dim = `<step>:<failureClass>`. */
@@ -201,6 +231,51 @@ export const SESSION_MS_EDGES = [
   240 * 60_000
 ] as const
 
+/**
+ * Startup-replay histogram edges (JOS-57): 0.25 s / 1 s / 2.5 s / 5 s / 10 s / 30 s / 60 s ⇒ eight
+ * buckets. STORAGE decisions like `SESSION_MS_EDGES` — the client sends the millisecond it
+ * measured and the server chooses how coarsely to remember it, which is why they are here and not
+ * in the contract.
+ *
+ * The spread is where the answers live rather than where the average is: a replay under a second
+ * is a small log, and everything the chunked-replay work was ABOUT happens past five seconds.
+ */
+export const REPLAY_MS_EDGES = [250, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000] as const
+
+/**
+ * Worst-single-block edges: 10 / 25 / 50 / 100 / 250 / 500 / 1000 ms ⇒ eight buckets.
+ *
+ * 50 IS AN EDGE ON PURPOSE — it is the same number `STARTUP_BLOCK_THRESHOLD_MS` (shared/perf.ts)
+ * calls a block and the HUD calls "warn", so "which bucket" and "did it count as a block" can
+ * never disagree by a millisecond. It is restated rather than imported because this file's whole
+ * contract is that it imports `./telemetry` and nothing else (it bundles into the Lambda).
+ * 250 and 1000 bracket the two figures a person actually feels: a visible hitch, and a freeze.
+ */
+export const BLOCK_MS_EDGES = [10, 25, 50, 100, 250, 500, 1_000] as const
+
+/** Milliseconds, or seconds once past a second: `250 ms`, `2.5 s`. */
+function msSpan(ms: number): string {
+  return ms >= 1_000 ? `${String(Math.round(ms / 100) / 10)} s` : `${String(Math.round(ms))} ms`
+}
+
+/** Human range for a bucket index over `edges`, in ms: `1 s–2.5 s`, `60 s+`, `< 250 ms`. */
+function msBucketLabel(edges: readonly number[], i: number): string {
+  const clamped = Math.max(0, Math.min(i, edges.length))
+  if (clamped >= edges.length) return `${msSpan(edges[edges.length - 1])}+`
+  if (clamped === 0) return `<${msSpan(edges[0])}`
+  return `${msSpan(edges[clamped - 1])}–${msSpan(edges[clamped])}`
+}
+
+/** Human range for a `startupReplayMs` bucket index. */
+export function replayMsBucketLabel(i: number): string {
+  return msBucketLabel(REPLAY_MS_EDGES, i)
+}
+
+/** Human range for a `startupBlockMs` bucket index. */
+export function blockMsBucketLabel(i: number): string {
+  return msBucketLabel(BLOCK_MS_EDGES, i)
+}
+
 /** Minutes, or hours once past the hour mark: `15 min`, `2 h`. */
 function span(ms: number): string {
   return ms >= 60 * 60_000
@@ -217,19 +292,32 @@ export function sessionBucketLabel(i: number): string {
 }
 
 /**
- * The median's bucket index, or -1 when the histogram is empty. Interpolating INSIDE a bucket
- * would be inventing precision the storage deliberately threw away, so the panel renders the
- * bucket's own range instead of a number.
+ * The bucket index the p-th percentile falls in, or -1 when the histogram is empty.
+ *
+ * NEAREST-BUCKET, never interpolated INSIDE one: the storage deliberately threw that precision
+ * away, so every reader renders the bucket's own RANGE rather than a number that would look
+ * exact and be invented. The same reasoning `shared/perf.ts percentile` gives for nearest-rank.
+ *
+ * A p95 over eight buckets is coarse and is the honest limit of a summable histogram: it answers
+ * "the slow tail is in the 10–30 s bucket", which is the question, and refuses "the p95 is
+ * 14,208 ms", which the data cannot support.
  */
-export function medianBucket(counts: readonly number[]): number {
+export function percentileBucket(counts: readonly number[], p: number): number {
   const total = counts.reduce((sum, n) => sum + Math.max(0, n), 0)
   if (total <= 0) return -1
+  const want = total * (Math.min(100, Math.max(0, p)) / 100)
   let seen = 0
   for (let i = 0; i < counts.length; i++) {
     seen += Math.max(0, counts[i])
-    if (seen * 2 >= total) return i
+    if (seen >= want) return i
   }
   return counts.length - 1
+}
+
+/** The median's bucket index, or -1 when the histogram is empty. `percentileBucket` at p50 —
+ *  one implementation, so the session median and the startup percentiles cannot drift apart. */
+export function medianBucket(counts: readonly number[]): number {
+  return percentileBucket(counts, 50)
 }
 
 // ---------------------------------------------------------------- the rollup
@@ -280,8 +368,9 @@ export interface RollupContext {
 
 /**
  * The accumulator key is the (metric, dim) PAIR, joined. A space is unambiguous: every legal
- * `dim` is a closed-enum member, a bucket index or a semver, none of which can contain one —
- * and the key is never parsed back apart (the counter it points at carries both fields).
+ * `dim` is a closed-enum member, a bucket index, a semver, or a colon-joined tuple of those
+ * (`<step>:ok`, `<version>:<bucket>`) — none of which can contain one — and the key is never
+ * parsed back apart (the counter it points at carries both fields).
  */
 const KEY_SEP = ' '
 
@@ -320,12 +409,35 @@ function foldHealth(bag: Bag, ev: Extract<TelemetryEvent, { t: 'healthCounters' 
 }
 
 /**
+ * ONE LAUNCH'S STARTUP REPLAY (JOS-57) — the passenger on whichever session report carried it.
+ *
+ * `startupReplays` is the only row that is always written, and it is the DENOMINATOR: every other
+ * number here is a sum, and a sum is meaningless without the count it was summed over. `add()`
+ * refuses non-positive values, so a perfectly smooth launch (0 duty, 0 blocks) writes no row for
+ * those — an ABSENT row and a zero row read identically to a SUM, which is the property that
+ * makes that refusal safe here.
+ */
+function foldStartup(bag: Bag, s: StartupReplayStats, version: string): void {
+  add(bag, USAGE_METRICS.startupReplays, version, 1)
+  add(bag, USAGE_METRICS.startupReplayMs, `${version}:${String(bucketOf(s.replayMs, REPLAY_MS_EDGES))}`, 1)
+  add(bag, USAGE_METRICS.startupBlockMs, `${version}:${String(bucketOf(s.maxBlockMs, BLOCK_MS_EDGES))}`, 1)
+  add(bag, USAGE_METRICS.startupDutyPct, version, s.dutyPct)
+  add(bag, USAGE_METRICS.startupBlocksOver50, version, s.blocksOver50)
+  add(bag, USAGE_METRICS.startupEventsReplayed, version, s.eventsReplayed)
+  add(bag, USAGE_METRICS.startupLogSize, String(s.logSizeBucket), 1)
+}
+
+/**
  * The three session events, split out of `foldEvent` so neither switch is past the repo's
  * complexity ceiling. Returns whether it handled the event — the caller's `switch` then covers
  * exactly the kinds this one does not, and a new event kind still fails to compile in one of
  * them (both are exhaustive over the union).
+ *
+ * It takes the batch's `appVersion` because two of the three kinds can carry a startup reading,
+ * and that reading is dimensioned by version (see `USAGE_METRICS.startupReplays`). The version is
+ * an ENVELOPE fact, not an event one — no event carries its own — so it has to be threaded here.
  */
-function foldSession(bag: Bag, ev: TelemetryEvent): boolean {
+function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
   switch (ev.t) {
     case 'sessionStart':
       add(bag, USAGE_METRICS.sessions, DIM_NONE, 1)
@@ -334,12 +446,14 @@ function foldSession(bag: Bag, ev: TelemetryEvent): boolean {
     case 'sessionHeartbeat':
       add(bag, USAGE_METRICS.heartbeats, DIM_NONE, 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
+      if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
       return true
     case 'sessionEnd':
       add(bag, USAGE_METRICS.sessionEnds, DIM_NONE, 1)
       add(bag, USAGE_METRICS.sessionMsTotal, DIM_NONE, ev.durationMs)
       add(bag, USAGE_METRICS.sessionLenBucket, String(bucketOf(ev.durationMs, SESSION_MS_EDGES)), 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
+      if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
       return true
     default:
       return false
@@ -369,8 +483,8 @@ function foldOutcome(bag: Bag, ev: TelemetryEvent): boolean {
 }
 
 /** One event's contribution. TOTAL: a kind with nothing to count simply adds nothing. */
-function foldEvent(bag: Bag, ev: TelemetryEvent): void {
-  if (foldSession(bag, ev) || foldOutcome(bag, ev)) return
+function foldEvent(bag: Bag, ev: TelemetryEvent, version: string): void {
+  if (foldSession(bag, ev, version) || foldOutcome(bag, ev)) return
   switch (ev.t) {
     case 'viewDwell':
       add(bag, USAGE_METRICS.viewVisits, ev.view, 1)
@@ -437,7 +551,7 @@ export function rollupBatch(batch: TelemetryBatch, ctx: RollupContext): RollupRe
   // fact over rather than of a flag here: the same UPSERT writes the new version, so the very
   // next batch from this install sees no difference to report.
   if (ctx.upgraded) add(bag, USAGE_METRICS.upgrades, DIM_NONE, 1)
-  for (const { ev } of batch.events) foldEvent(bag, ev)
+  for (const { ev } of batch.events) foldEvent(bag, ev, batch.env.appVersion)
   const counters = [...bag.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([, v]) => v)

@@ -20,6 +20,7 @@ import {
   TELEMETRY_API_VERSION,
   type TelemetryBatch,
   type TelemetryEnvelope,
+  type StartupReplayStats,
   type TelemetryEvent,
   type TelemetryPayloadView,
   type TelemetryPlatform,
@@ -49,6 +50,17 @@ const viewsSeen = new Set<string>()
  * hottest path in the app, so it may not read the store, allocate or touch the ring.
  */
 let linesPending = 0
+/**
+ * THIS LAUNCH'S STARTUP REPLAY READING, waiting for a session report to carry it (JOS-57).
+ *
+ * It is a PENDING VALUE for the same reason `linesPending` is: the reading is produced at the
+ * moment the replay finishes, and the events that can carry it (`sessionHeartbeat`, `sessionEnd`)
+ * fire on their own schedule. Whichever comes first drains it, so the fleet counter can never
+ * double-count one launch — and, since the drain is the only reader, a launch that is killed
+ * before either event simply never reports, which is the documented cost of riding an existing
+ * event instead of minting a new kind (shared/telemetry.ts, THE ADDITIVE-FIELD RULE).
+ */
+let startupPending: StartupReplayStats | null = null
 
 /** Wall-clock ms since `startTelemetry()` — 0 before it has run. */
 export function sessionUptimeMs(now = Date.now()): number {
@@ -59,6 +71,7 @@ export function beginSession(now = Date.now()): void {
   startedAt = now
   viewsSeen.clear()
   linesPending = 0
+  startupPending = null
 }
 
 /**
@@ -70,6 +83,7 @@ export function endSession(): void {
   startedAt = 0
   viewsSeen.clear()
   linesPending = 0
+  startupPending = null
 }
 
 /**
@@ -97,6 +111,31 @@ export function takeLinesParsed(): number {
   const taken = Math.min(linesPending, MAX_COUNT)
   linesPending -= taken
   return taken
+}
+
+/**
+ * HOLD THIS LAUNCH'S STARTUP REPLAY READING until a session report can carry it (JOS-57). Called
+ * once, from `src/main/perf.ts`, when the `replayDone` startup phase lands.
+ *
+ * FIRST WRITE WINS, and that is the comparability rule made mechanical: one launch is one reading,
+ * so a second call (which the `replayDone` seam cannot produce today — `addMark` refuses a
+ * duplicate phase — but a future wiring mistake could) is dropped rather than allowed to overwrite
+ * the measurement the launch actually made.
+ */
+export function noteStartupReplay(stats: StartupReplayStats): void {
+  // The same gate `recordEvent` applies, at the same place: an install with the switch off holds
+  // nothing in memory either, so turning the switch on mid-session cannot resurrect a reading
+  // taken while it was off.
+  if (!telemetryCollectEnabled(getTelemetryPrefs())) return
+  if (startupPending !== null) return
+  startupPending = stats
+}
+
+/** Drain the reading for a report, or `undefined` when there is nothing to say. */
+export function takeStartupReplay(): StartupReplayStats | undefined {
+  const held = startupPending
+  startupPending = null
+  return held ?? undefined
 }
 
 /**

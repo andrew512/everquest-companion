@@ -61,6 +61,7 @@ import {
   RetentionSection,
   Section,
   Sparkline,
+  StartupSection,
   VersionsSection
 } from './AnalyticsBits'
 import {
@@ -245,6 +246,8 @@ function Readout({
         </Stack>
       </Section>
       <HealthSection data={data} />
+      {/* Beside Health and above Versions: it is a health fact, read per build. */}
+      <StartupSection data={data} />
       <VersionsSection data={data} />
       <DownloadsSection downloads={downloads} />
       <RetentionSection data={data} />

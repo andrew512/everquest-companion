@@ -85,6 +85,52 @@ const LINES_PARSED =
   'and no part of one, is ever sent. Starting the app re-reads your log history, so those ' +
   'lines are counted again each launch.'
 
+/**
+ * The startup-replay group, listed on BOTH events that can carry it — one array, spread twice, for
+ * the same reason `LINES_PARSED` is one sentence: a second copy is a second thing to keep true.
+ *
+ * The rows are named `startup.x` because that is where they live in the payload the Preferences
+ * viewer prints, and a reader comparing the two should find the same names.
+ */
+const STARTUP_FIELDS: DocField[] = [
+  {
+    name: 'startup.replayMs',
+    type: `${COUNT} (optional)`,
+    note: 'How long the app took to read your log history when it started.'
+  },
+  {
+    name: 'startup.eventsReplayed',
+    type: COUNT,
+    note: 'How many log lines that was. A count only — no line, and no part of one, is sent.'
+  },
+  {
+    name: 'startup.dutyPct',
+    type: COUNT,
+    note: 'What share of that time was spent working rather than deliberately pausing, 0–100.'
+  },
+  {
+    name: 'startup.maxBlockMs',
+    type: COUNT,
+    note: 'The longest single moment the app was unresponsive while reading.'
+  },
+  {
+    name: 'startup.blocksOver50',
+    type: COUNT,
+    note: 'How many of those moments were longer than 50 ms.'
+  },
+  {
+    name: 'startup.logSizeBucket',
+    type: BUCKET,
+    note: 'How big the log it read is — a RANGE (see below), never the size itself.'
+  }
+]
+
+/** Why the group is optional and where it appears — said once, printed on both events. */
+const STARTUP_WHEN =
+  'Present on the first of these that follows startup, once per launch: how long reading your ' +
+  'log history took, and how smoothly. Reading a log after switching character is deliberately ' +
+  'not measured.'
+
 export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
   {
     t: 'sessionStart',
@@ -95,19 +141,23 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
   },
   {
     t: 'sessionHeartbeat',
-    when: 'Every 5 minutes while the app is open — the "is anyone using it right now" signal.',
+    when:
+      'Every 5 minutes while the app is open — the "is anyone using it right now" signal. ' +
+      STARTUP_WHEN,
     fields: [
       { name: 'uptimeMs', type: COUNT, note: 'How long this session has been running.' },
-      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED }
+      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
+      ...STARTUP_FIELDS
     ]
   },
   {
     t: 'sessionEnd',
-    when: 'Once, when the app closes.',
+    when: `Once, when the app closes. ${STARTUP_WHEN}`,
     fields: [
       { name: 'durationMs', type: COUNT, note: 'How long the session lasted.' },
       { name: 'viewsVisited', type: COUNT, note: 'How many different tabs were opened.' },
-      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED }
+      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
+      ...STARTUP_FIELDS
     ]
   },
   {

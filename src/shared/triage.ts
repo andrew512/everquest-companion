@@ -328,6 +328,47 @@ export interface TriageAnalyticsHealth {
   updateFailures: TriageMixRow[]
 }
 
+/**
+ * ONE BUILD'S STARTUP REPLAY, as the fleet measured it (JOS-57).
+ *
+ * PERCENTILES ARE BUCKET RANGES, not numbers, and for exactly the reason `medianSessionLabel` is
+ * one: the storage is a histogram, so a p95 rendered as `14,208 ms` would be a precision the data
+ * never had. `2.5 s–5 s` is what a summable counter can honestly say.
+ *
+ * EVERYTHING HERE IS PER VERSION because the question the measurement exists for is a COMPARISON:
+ * the chunked replay and its duty cycle were tuned on one machine, and "did the build that shipped
+ * them make launches better" can only be read across builds. A fleet-wide average would smear the
+ * change across the releases either side of it.
+ */
+export interface TriageStartupRow {
+  version: string
+  /** Launches that reported a replay on this build — the denominator for every mean below. */
+  launches: number
+  /** p50 / p95 of how long the startup replay took, as bucket ranges. Null when nothing reported. */
+  p50ReplayLabel: string | null
+  p95ReplayLabel: string | null
+  /** p50 / p95 of the WORST single main-loop block during that replay, as bucket ranges. */
+  p50BlockLabel: string | null
+  p95BlockLabel: string | null
+  /** Mean ACHIEVED duty, 0..1 — measured by the slicer, never the setting it aimed at. */
+  dutyAchieved: number | null
+  /** Mean log events folded per launch. Null when nothing reported. */
+  meanEventsReplayed: number | null
+  /** Total main-loop stalls of 50 ms or more, across those launches. */
+  blocksOver50: number
+}
+
+export interface TriageAnalyticsStartup {
+  /** One row per build that reported, newest first and capped. */
+  byVersion: TriageStartupRow[]
+  /**
+   * How big the measured fleet's logs are — bucket LABELS, never sizes. It is not split by version
+   * (a log's size is a fact about the player, not the build) and it is the context the rows above
+   * are read in: a build whose p95 rose may simply have been run on bigger logs.
+   */
+  logSizes: TriageMixRow[]
+}
+
 export interface TriageVersionRow {
   version: string
   /** Installs currently ON this version (`analytics_install.app_version`). */
@@ -425,6 +466,8 @@ export interface TriageAnalyticsData {
   adoption: TriageAnalyticsAdoption
   funnels: TriageFunnelView[]
   health: TriageAnalyticsHealth
+  /** How the fleet's launches actually went — the startup replay, per build (JOS-57). */
+  startup: TriageAnalyticsStartup
   versions: TriageVersionRow[]
   retention: TriageCohortRow[]
 }

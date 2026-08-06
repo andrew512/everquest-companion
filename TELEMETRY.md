@@ -59,22 +59,34 @@ Once, when the app finishes starting up.
 
 ### `sessionHeartbeat`
 
-Every 5 minutes while the app is open — the "is anyone using it right now" signal.
+Every 5 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured.
 
 | Field | Values | What it means |
 | --- | --- | --- |
 | `uptimeMs` | whole number | How long this session has been running. |
 | `linesParsed` | whole number (optional) | How many log lines were read since the last one of these. A count of lines only — no line, and no part of one, is ever sent. Starting the app re-reads your log history, so those lines are counted again each launch. |
+| `startup.replayMs` | whole number (optional) | How long the app took to read your log history when it started. |
+| `startup.eventsReplayed` | whole number | How many log lines that was. A count only — no line, and no part of one, is sent. |
+| `startup.dutyPct` | whole number | What share of that time was spent working rather than deliberately pausing, 0–100. |
+| `startup.maxBlockMs` | whole number | The longest single moment the app was unresponsive while reading. |
+| `startup.blocksOver50` | whole number | How many of those moments were longer than 50 ms. |
+| `startup.logSizeBucket` | bucket index | How big the log it read is — a RANGE (see below), never the size itself. |
 
 ### `sessionEnd`
 
-Once, when the app closes.
+Once, when the app closes. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured.
 
 | Field | Values | What it means |
 | --- | --- | --- |
 | `durationMs` | whole number | How long the session lasted. |
 | `viewsVisited` | whole number | How many different tabs were opened. |
 | `linesParsed` | whole number (optional) | How many log lines were read since the last one of these. A count of lines only — no line, and no part of one, is ever sent. Starting the app re-reads your log history, so those lines are counted again each launch. |
+| `startup.replayMs` | whole number (optional) | How long the app took to read your log history when it started. |
+| `startup.eventsReplayed` | whole number | How many log lines that was. A count only — no line, and no part of one, is sent. |
+| `startup.dutyPct` | whole number | What share of that time was spent working rather than deliberately pausing, 0–100. |
+| `startup.maxBlockMs` | whole number | The longest single moment the app was unresponsive while reading. |
+| `startup.blocksOver50` | whole number | How many of those moments were longer than 50 ms. |
+| `startup.logSizeBucket` | bucket index | How big the log it read is — a RANGE (see below), never the size itself. |
 
 ### `viewDwell`
 

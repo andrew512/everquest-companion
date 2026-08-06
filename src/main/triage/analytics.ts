@@ -22,19 +22,28 @@
 // say "no data yet" — a state that is genuinely different from "the tables do not exist".
 
 import {
+  blockMsBucketLabel,
   medianBucket,
+  percentileBucket,
+  replayMsBucketLabel,
   sessionBucketLabel,
   USAGE_METRICS
 } from '../../shared/telemetryRollup'
-import { TELEMETRY_FUNNEL_STEPS } from '../../shared/telemetry'
+import {
+  bucketRange,
+  LOG_SIZE_BYTES_EDGES,
+  TELEMETRY_FUNNEL_STEPS
+} from '../../shared/telemetry'
 import type {
   TriageAnalyticsAdoption,
   TriageAnalyticsData,
   TriageAnalyticsHealth,
   TriageAnalyticsPulse,
+  TriageAnalyticsStartup,
   TriageCohortRow,
   TriageFunnelStepRow,
   TriageFunnelView,
+  TriageStartupRow,
   TriageUpdateRow,
   TriageVersionRow
 } from '../../shared/triage'
@@ -250,6 +259,92 @@ function buildHealth(usage: readonly UsageRow[]): TriageAnalyticsHealth {
   }
 }
 
+// ---- startup -------------------------------------------------------------------------
+//
+// THE FLEET'S OWN ANSWER TO "DOES THE STARTUP THROTTLE WORK" (JOS-57). Everything below reads the
+// `startup*` counters `src/shared/telemetryRollup.ts` writes, and every one of them is keyed by
+// BUILD — the histograms as `<version>:<bucket>`, the sums as the version alone — because the
+// question is a comparison between releases, not a fleet-wide average.
+//
+// TWO SHAPES, AND THE DIFFERENCE IS THE WHOLE POINT: a p50/p95 comes from a HISTOGRAM (a median
+// cannot be summed, so the storage keeps buckets) and reads out as a bucket RANGE; a duty or an
+// event count is a SUM over the launches counter and reads out as a mean. Nothing here invents a
+// number between two buckets.
+
+/** Builds shown. More than this is a table nobody reads — the funnel section's own cap. */
+const MAX_STARTUP_VERSIONS = 5
+
+/**
+ * A `<version>:<bucket>` histogram, split back out per version. The version is everything before
+ * the LAST colon: a semver's prerelease tag cannot contain one, but reading from the right is free
+ * and cannot be wrong.
+ */
+function startupHistogram(counts: Map<string, number>, version: string): number[] {
+  const mine = new Map<string, number>()
+  for (const [dim, n] of counts) {
+    const cut = dim.lastIndexOf(':')
+    if (cut < 0 || dim.slice(0, cut) !== version) continue
+    mine.set(dim.slice(cut + 1), (mine.get(dim.slice(cut + 1)) ?? 0) + n)
+  }
+  return bucketCounts(mine)
+}
+
+/** A percentile of one histogram, as its bucket's own range — or null when nothing was measured. */
+function bucketLabelAt(
+  counts: readonly number[],
+  p: number,
+  label: (i: number) => string
+): string | null {
+  const i = percentileBucket(counts, p)
+  return i < 0 ? null : label(i)
+}
+
+function startupRow(
+  version: string,
+  launches: number,
+  usage: readonly UsageRow[]
+): TriageStartupRow {
+  const replay = startupHistogram(dimsOf(usage, USAGE_METRICS.startupReplayMs), version)
+  const block = startupHistogram(dimsOf(usage, USAGE_METRICS.startupBlockMs), version)
+  const duty = dimsOf(usage, USAGE_METRICS.startupDutyPct).get(version) ?? 0
+  const events = dimsOf(usage, USAGE_METRICS.startupEventsReplayed).get(version) ?? 0
+  const dutyMean = ratio(duty, launches)
+  return {
+    version,
+    launches,
+    p50ReplayLabel: bucketLabelAt(replay, 50, replayMsBucketLabel),
+    p95ReplayLabel: bucketLabelAt(replay, 95, replayMsBucketLabel),
+    p50BlockLabel: bucketLabelAt(block, 50, blockMsBucketLabel),
+    p95BlockLabel: bucketLabelAt(block, 95, blockMsBucketLabel),
+    // The counter sums WHOLE PERCENTS (the wire's own unit), and this shape reports a fraction
+    // like every other rate here — so the division by 100 belongs at this boundary, once.
+    dutyAchieved: dutyMean === null ? null : dutyMean / 100,
+    meanEventsReplayed: ratio(events, launches),
+    blocksOver50: dimsOf(usage, USAGE_METRICS.startupBlocksOver50).get(version) ?? 0
+  }
+}
+
+function buildStartup(usage: readonly UsageRow[]): TriageAnalyticsStartup {
+  const launches = dimsOf(usage, USAGE_METRICS.startupReplays)
+  const versions = [...launches.keys()]
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+    .slice(0, MAX_STARTUP_VERSIONS)
+  return {
+    byVersion: versions.map((v) => startupRow(v, launches.get(v) ?? 0, usage)),
+    logSizes: mixRows(dimsOf(usage, USAGE_METRICS.startupLogSize)).map((r) => ({
+      id: logSizeBucketLabel(Number(r.id)),
+      n: r.n
+    }))
+  }
+}
+
+/** A `logSizeBucket` index as the range it means — the same edges `setupLogSize` uses. */
+function logSizeBucketLabel(i: number): string {
+  const { lo, hi } = bucketRange(LOG_SIZE_BYTES_EDGES, Number.isInteger(i) ? i : 0)
+  const mb = (bytes: number): string => `${String(Math.round(bytes / 1_048_576))} MB`
+  return hi === null ? `≥ ${mb(lo)}` : i === 0 ? `< ${mb(hi)}` : `${mb(lo)}–${mb(hi)}`
+}
+
 // ---- versions ------------------------------------------------------------------------
 
 /**
@@ -364,6 +459,7 @@ export function buildAnalytics(input: AnalyticsInput): TriageAnalyticsData {
     adoption: buildAdoption(input.usage, pulse.sessions),
     funnels: buildFunnels(input.funnels, input.usage),
     health: buildHealth(input.usage),
+    startup: buildStartup(input.usage),
     versions: buildVersions(input.usage, input.installs),
     retention: buildRetention(input.installs, ref)
   }

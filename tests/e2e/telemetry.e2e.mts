@@ -23,7 +23,7 @@
  *
  * Run: `node --import tsx tests/e2e/telemetry.e2e.mts` (it is also in tests/e2e/run-all.mts).
  */
-import type { Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -308,6 +308,50 @@ function stepOnDisk(userData: string): void {
   )
 }
 
+/**
+ * THE STARTUP READING ACTUALLY FIRED (JOS-57) — read off the ring FILE, with the app that wrote
+ * it gone. It cannot be observed from inside a running launch: the reading is produced when the
+ * replay finishes and is carried by the next session report, which is a heartbeat five minutes
+ * later or the `sessionEnd` written on the way out. So this is the only place the whole chain —
+ * `replayDone` → perf.ts → the collector's pending slot → `sessionEnd` → the ring on disk — is
+ * visible at once, and it is exactly the failure JOS-39 was about: a schema and a panel that are
+ * both fine while nothing ever emits, which reads as "the fleet has no slow launches".
+ *
+ * The numbers are asserted as SHAPE, not as values: this launch really did replay the staged
+ * fixture, so a millisecond figure is a property of the machine running the suite (frozen numbers
+ * rot). What must be true on any machine is that the reading exists, carries all six fields, and
+ * that the size is a BUCKET INDEX rather than a byte count.
+ */
+function stepStartupReading(userData: string): void {
+  const path = join(userData, 'telemetry.json')
+  let events: { ev: Record<string, unknown> }[]
+  try {
+    events = (JSON.parse(readFileSync(path, 'utf8')) as { events?: { ev: Record<string, unknown> }[] }).events ?? []
+  } catch (err) {
+    check('the startup replay reading reached the ring on disk', false, String(err))
+    return
+  }
+  const carriers = events.filter((r) => r.ev.startup !== undefined)
+  if (!check(
+    'the startup replay reading reached the ring on disk, on a session report',
+    carriers.length === 1,
+    `${String(carriers.length)} carrier(s) among ${String(events.length)}: ${[...new Set(events.map((r) => String(r.ev.t)))].join(', ')}`
+  )) return
+  const s = carriers[0].ev.startup as Record<string, unknown>
+  check(
+    '…carrying all six numbers, and a log SIZE that is a bucket index rather than a byte count',
+    ['replayMs', 'eventsReplayed', 'dutyPct', 'maxBlockMs', 'blocksOver50', 'logSizeBucket'].every(
+      (k) => typeof s[k] === 'number'
+    ) && (s.logSizeBucket as number) <= 5,
+    JSON.stringify(s)
+  )
+  // ONE LAUNCH IS ONE READING: the app replayed once at startup and nothing else may report.
+  check(
+    '…exactly once for the launch — a second reading would be a second replay counted as a launch',
+    events.filter((r) => r.ev.startup !== undefined).length === 1
+  )
+}
+
 /** THE PERSISTENCE ASSERTION — a real second process against the same userData dir. */
 async function stepPersisted(page: Page): Promise<void> {
   const p = await payload(page)
@@ -451,11 +495,37 @@ interface FirstRun {
   errors: string[]
   step: (p: Page) => Promise<void>
   log: FixtureLog
-  /** Only launch 3 names one: it is the dir the RESTART assertion reads afterwards. */
+  /** Launches 1 and 3 name one: each is a dir something is read out of after the process exits. */
   userData?: string
+  /** Quit by CLOSING THE WINDOWS rather than by `app.quit()` — see `closeWindows`. */
+  byWindow?: boolean
 }
 
-async function firstRun({ label, errors, step, log, userData }: FirstRun): Promise<void> {
+/**
+ * QUIT THE WAY A USER QUITS, which is not the way Playwright does.
+ *
+ * MEASURED (JOS-57, and it cost a red run to find): `ElectronApplication.close()` calls
+ * `app.quit()`, and Electron does NOT emit `window-all-closed` on that path — it closes the
+ * windows itself as part of the quit sequence. Every teardown this app hangs off that event
+ * (`stopSession`, `stopTelemetry`, `stopPerf`) therefore never runs under the default harness
+ * exit, which is why no `sessionEnd` has ever appeared in an e2e ring. Closing the windows and
+ * letting the app quit itself is the real user path — clicking the X — and it is the only one
+ * under which the last record of a session is written.
+ *
+ * Best effort on both halves: a launch that has already gone is not an error here, and the
+ * caller's own `close()` still runs afterwards (it swallows "already closed").
+ */
+async function closeWindows(app: ElectronApplication): Promise<void> {
+  const exited = app.waitForEvent('close').catch(() => undefined)
+  await app
+    .evaluate(({ BrowserWindow }) => {
+      for (const w of BrowserWindow.getAllWindows()) w.close()
+    })
+    .catch(() => undefined)
+  await exited
+}
+
+async function firstRun({ label, errors, step, log, userData, byWindow }: FirstRun): Promise<void> {
   console.log(label)
   const { app, close } = await launchOnFixture(log, userData === undefined ? {} : { userData })
   try {
@@ -463,6 +533,7 @@ async function firstRun({ label, errors, step, log, userData }: FirstRun): Promi
     watch(page, errors)
     if (await stepNoticeShown(page)) await step(page)
     if (failures.length) await dumpArtifacts(page, `telemetry-FAIL-${label.split(':')[0].replace(/\s+/g, '-')}`)
+    if (byWindow === true) await closeWindows(app)
   } finally {
     await close()
   }
@@ -480,6 +551,10 @@ async function main(): Promise<void> {
   // share one that this spec owns and names explicitly, because the assertion between them is
   // that the dir OUTLIVES the process — the one thing a per-launch dir must not do by itself.
   const restartData = makeUserData()
+  // Launch 1's dir is NAMED for the same reason launch 3's is: something is read out of it after
+  // the process that wrote it has exited. Here it is the ring — the only place the startup
+  // reading is observable, because it rides the `sessionEnd` written on the way out.
+  const firstRunData = makeUserData()
   // ONE staged log for all four launches: none of them reads it for anything but "this machine
   // has a character", and staging it once keeps the four boots comparable.
   const log = stageFixture('e2e-telemetry.log')
@@ -488,12 +563,19 @@ async function main(): Promise<void> {
     label: 'launch 1: hidden Electron (EQ_E2E=1), fresh userData — the bar, and dismissing it…',
     errors: consoleErrors,
     log,
+    userData: firstRunData,
+    // …and it exits by CLOSING ITS WINDOWS, so `window-all-closed` fires and the session's last
+    // record is actually written. Every other launch here exits the harness's usual way.
+    byWindow: true,
     step: async (page) => {
       await stepBarShape(page)
       await stepDismissKeepsOn(page)
       await stepFirstRunFunnel(page)
     }
   })
+  // …and now that launch is gone, what it left behind. It is the one launch that ends with
+  // collection ON (dismissal is not an opt-out), so it is the one whose ring holds a reading.
+  stepStartupReading(firstRunData)
   await firstRun({ label: 'launch 2: fresh userData — the Details link…', errors: consoleErrors, log, step: stepDetailsOpensPane })
   await firstRun({ label: 'launch 3: fresh userData — opting out…', errors: consoleErrors, log, step: stepOptOut, userData: restartData })
 
@@ -517,6 +599,7 @@ async function main(): Promise<void> {
   } finally {
     await close()
     await removeUserData(restartData)
+    await removeUserData(firstRunData)
     await log.dispose()
   }
 
