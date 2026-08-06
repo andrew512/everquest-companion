@@ -35,6 +35,14 @@
 //                     the first charm of a name never seen, and re-charming while a
 //                     hostile twin is already live.
 //
+//  claim(name)      The SUMMONED-pet half of charm(): a `… Master.'` tell binds `name` as a
+//                   summoned pet. Idempotent FIRST (a live pet of that name just refreshes —
+//                   a claim and a later tell converge on one entity), else bind a lone live
+//                   hostile instance / spawn a fresh summoned one. Binding a NEW summoned pet
+//                   RETIRES the prior summoned pet (single-pet invariant, JOS-54 — you get one
+//                   class pet and re-summoning despawns the old one silently). Charmed pets are
+//                   untouched: the two kinds demonstrably co-exist (retirePriorSummoned).
+//
 //  twin evidence    You→name damage while an instance of name is charmed, OR
 //                   name→name damage, proves a hostile twin co-exists with the pet.
 //                   Ensure a second (hostile) active instance of name exists so the
@@ -332,6 +340,10 @@ export class WorldModel {
    * binds a lone live hostile instance as summoned, or spawns a fresh summoned
    * instance. Summoned pets survive zoning, so they must NOT be created via the
    * hostile-spawn path (which zone() would retire).
+   *
+   * BINDING A NEW SUMMONED PET RETIRES THE PRIOR ONE (JOS-54) — see retirePriorSummoned.
+   * The idempotence branch above is what keeps that safe, and it must stay FIRST: the same
+   * pet's repeat tells resolve to the same live instance and never reach the succession.
    */
   claim(name: string, ts: number): Instance {
     const key = idKey(name)
@@ -349,11 +361,56 @@ export class WorldModel {
       inst.petKind = 'summoned'
       inst.lastSeenTs = ts
       this.petTankedBy.set(inst.instanceId, new Set())
+      this.retirePriorSummoned(inst, ts)
       return inst
     }
     const inst = this.spawn(key, name, ts, 'summoned')
     this.petTankedBy.set(inst.instanceId, new Set())
+    this.retirePriorSummoned(inst, ts)
     return inst
+  }
+
+  /**
+   * THE SINGLE-PET INVARIANT, for summoned pets (AGENTS.md world-model law 4; JOS-54).
+   *
+   * You get one class pet. Re-summoning despawns the one you had — the game prints NOTHING
+   * when it happens (no death line, no fade, no tell), so the successor's own claim tell is the
+   * only evidence that arrives, and before this the world model held every pet the owner had
+   * ever ordered as simultaneously live. MEASURED on the owner's whole log (1.40M lines,
+   * 3,175 claim tells): the replay ended with TWENTY-THREE live summoned pets, every animation
+   * from Jul 19 to Aug 06 still attributing. The committed fixture is the same defect in one
+   * window: Jaber (tell 12:43:12) and Gonekn (tell 12:44:51) both stood live.
+   *
+   * RETIREMENT, NOT DELETION. The old pet keeps its instance and everything already attributed
+   * to it — aggregates key by instanceId, so its rows and its history are exactly as they were.
+   * What ends is its FUTURE: it is no longer a live pet, so nothing later is admitted as yours.
+   *
+   * AND IT COSTS NOTHING, which is the measurement that had to come before the rule. Over the
+   * whole log the invariant fires 23 times, and the pet it retires lands ZERO further damage
+   * lines — not within five minutes, not ever. A summoned pet that has been replaced is simply
+   * gone; the successor's tell is late news, never a race.
+   *
+   * SUMMONED ONLY, and that restraint is measured rather than assumed. 344 charm binds land
+   * while a summoned pet is still flagged live, so the crossover is not hypothetical — but of
+   * those, exactly FOUR have both entities swinging within five minutes of the bind, and in all
+   * four the "summoned" side is an article-named MOB that reached this method by its own tell
+   * (a charmed mob sends `… Master.'` too, and binds here as summoned whenever no charm
+   * broadcast was bound for it). So the log contains NO case of a proper-named class pet and a
+   * charmed pet demonstrably alive together, and none of one replacing the other either. That is
+   * an unobserved shape, and the awaiting-sample law says it does not get a rule invented for it
+   * — especially not one whose failure mode is silently deleting a live pet's damage, which is
+   * this model's whole stated bias. charm() is untouched for the same reason: charm succession
+   * has its own evidence (the wear-off line), and the buffs module (modules/buffs.ts onCharm /
+   * onPetClaim) already runs an entity-level succession across both kinds for its own purposes.
+   */
+  private retirePriorSummoned(pet: Instance, ts: number): void {
+    for (const list of this.byName.values()) {
+      for (const i of list) {
+        if (i.retired || !i.charmed || i.petKind !== 'summoned') continue
+        if (i.instanceId === pet.instanceId) continue
+        this.retire(i, ts)
+      }
+    }
   }
 
   /**

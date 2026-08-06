@@ -494,7 +494,25 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    (spell, entity) instances; "pet" is NOT a data-model class (self renders
    first, others second — presentation only). Charm break keeps the entity
    + buffs (re-charm same name w/o death/zone = same entity). Single-pet
-   invariant: new claim/charm retires the prior pet. Zoning: self +
+   invariant: new claim/charm retires the prior pet — but it is enforced in
+   TWO models with different reach, and the difference is measured, not an
+   oversight (JOS-54). `modules/buffs.ts` (onCharm/onPetClaim) retires across
+   BOTH kinds, at the buff-entity level. The combat `WorldModel` retires only
+   BY KIND: `claim()` retires the prior SUMMONED pet (the game gives you one
+   class pet and the recast despawns the old one printing NOTHING, so the
+   successor's tell is the only evidence there is — before this the owner's
+   log finished a replay holding 23 live pets), while `charm()` retires
+   nothing there. The crossover is deliberately left alone: 344 charm binds
+   land with a summoned pet flagged live, but the log has ZERO cases of a
+   proper-named class pet and a charmed pet demonstrably swinging together,
+   so it is an unobserved shape and gets no invented rule (awaiting-sample
+   law) — especially not one that deletes a live pet's damage. Succession
+   costs nothing where it DOES fire: 23 firings whole-log, the retired pet
+   lands zero further damage lines, ever. Retirement is not deletion — the
+   old pet keeps every point already attributed to it (rows key by
+   instanceId); it only stops being yours for FUTURE admission, which means
+   the engine's `petNames` index must follow the world model out
+   (`EngineState.syncPetNames`). Zoning: self +
    summoned pet keep buffs; charmed pets/hostiles are left behind (censor).
    Deaths retire. **Unobservable fades censor, never pollute stats.**
    Own-cast gating: never track buffs we didn't cast (10s cast window or a

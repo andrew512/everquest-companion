@@ -280,11 +280,37 @@ test('P2: each tell binds its own pet, and the arc is two rows not one', { skip:
   // Gonekn's tell arrives at 12:44:51, THREE SECONDS after its first swing, so its row is
   // essentially its whole life: 41 landed hits for 1,700 points, out of 41 damage lines.
   assert.deepEqual(rows.get('Gonekn'), { hits: 41, total: 1700 })
-  // OBSERVED AND DELIBERATELY NOT FROZEN (reported for a follow-up ticket): the single-pet
-  // invariant does NOT fire between two SUMMONED pets. `world.claim()` retires nothing — only
-  // `world.charm()` does — and no line in this span says Jaber went away, so both animations
-  // stand as live pets after 12:44:51 even though a recast replaces the first in the game.
-  // Asserting `petDisplayNames()` exactly here would freeze that gap into a golden.
+})
+
+test('P2: the second summons RETIRES the first — one pet at a time (JOS-54)', { skip: skipArc }, () => {
+  // FROZEN HERE, having been observed-and-not-frozen when JOS-49 measured this window. The
+  // single-pet invariant (AGENTS.md world-model law 4) did not exist anywhere in the combat
+  // world model: `world.claim()` retired nothing, and `world.charm()` — which the brief assumed
+  // did — does not either (charm succession lives in modules/buffs.ts, at the buff-entity
+  // level). So both animations stood as live pets after 12:44:51, and on the owner's whole log
+  // that compounded to TWENTY-THREE simultaneously live summoned pets by the last line.
+  //
+  // The game gives you one class pet and the recast despawns the old one, printing NOTHING when
+  // it does. So the successor's own tell is the only evidence that ever arrives, and it is what
+  // retires the predecessor now.
+  const { eng, lastTs } = replay([P2])
+  assert.deepEqual(eng.petDisplayNames(), ['Gonekn'], 'Gonekn is the pet; Jaber is retired')
+
+  // RETIREMENT, NOT DELETION — and this is the arithmetic of it. Jaber's row is byte-for-byte
+  // what it was before the invariant existed (see the tell-binds-forward test below for where
+  // those numbers come from): everything booked to it while it was yours stays booked to it.
+  const rows = petRowsByName(eng, lastTs)
+  assert.deepEqual(rows.get('Jaber'), { hits: 8, total: 599 })
+  assert.deepEqual(rows.get('Gonekn'), { hits: 41, total: 1700 })
+
+  // …and the retirement costs this window nothing, because the game had already taken the pet
+  // away: the second `Kintaz's Animation` cast lands at 12:44:45 and Jaber never swings again.
+  // That is the general case, not a lucky span — measured over the whole log (JOS-54), the
+  // invariant fires 23 times and the pet it retires lands ZERO further damage lines, ever.
+  const jaberAfter = P2.filter(
+    (l) => /\] Jaber .* for \d+ points? of (magic )?damage/.test(l) && l >= '[Thu Aug 06 12:44:45'
+  )
+  assert.equal(jaberAfter.length, 0, 'no post-recast Jaber swing exists to lose')
 })
 
 test('P2: A TELL BINDS FORWARD, NOT BACKWARD — ordering late costs you the rest', { skip: skipArc }, () => {

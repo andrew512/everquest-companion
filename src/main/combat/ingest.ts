@@ -116,6 +116,14 @@ function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
   st.charm.notePetEvidence(key)
   const what = promote ? 'charm claim' : 'pet claim'
   st.log(ev.ts, promote ? 'charm' : 'pet', 'info', `⚡ ${what} ${st.world.label(inst)} [${inst.instanceId}]`)
+  // SINGLE-PET SUCCESSION (JOS-54): claiming a NEW summoned pet retires the previous one inside
+  // the world model, and the name index has to follow it out or routing would go on admitting
+  // the retired pet's swings as yours. Same two-line follow-through death already does — the
+  // world model decides, `petNames` and the charm model are told.
+  for (const gone of st.syncPetNames()) {
+    st.charm.release(gone)
+    st.log(ev.ts, 'pet', 'info', `✕ ${gone} retired — one pet at a time; ${ev.name} is yours now`)
+  }
 }
 
 // THE ENGINE NO LONGER CONSUMES `petSay` (JOS-49). The six pet-voiced public sentences used to
