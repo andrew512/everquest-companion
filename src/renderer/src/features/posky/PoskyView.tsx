@@ -1,34 +1,15 @@
 import { type JSX, useCallback, useEffect, useState } from 'react'
-import {
-  Alert,
-  Box,
-  Button,
-  Checkbox,
-  Chip,
-  FormControlLabel,
-  MenuItem,
-  Snackbar,
-  Stack,
-  Tab,
-  Tabs,
-  TextField,
-  Typography
-} from '@mui/material'
-import RefreshIcon from '@mui/icons-material/Refresh'
-import StarIcon from '@mui/icons-material/Star'
-import StarBorderIcon from '@mui/icons-material/StarBorder'
+import { Alert, Box, Button, Chip, Snackbar, Stack, Tab, Tabs, Typography } from '@mui/material'
 import type { CountSource } from '@shared/types'
 import { useProgress, type QuestProgress, type UseProgress } from './useProgress'
 import { formatDateTime } from '../../lib/formatDate'
 import type { SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
+import QuestFilterBar from './QuestFilterBar'
 import { useQuestList, type QuestListState, type TabKey } from './useQuestList'
-import { SORT_OPTIONS, type SortKey } from './questSort'
 import type { MobTarget } from '../mobs/mobTarget'
-import ChipMultiSelect from '../../components/ChipMultiSelect'
 import Confetti from '../../lib/Confetti'
-import { Tooltip } from '../../lib/Tooltip'
 
 // The Ignored tab: every quest the user hid, in one flat compact list (no accordions —
 // there is nothing to work on here), each row carrying the same button that put it here,
@@ -78,100 +59,6 @@ function IgnoredList({
         ))}
       </Stack>
     </Box>
-  )
-}
-
-// Class filter, search, sort, the three hide-toggles, and the inventory controls that decide
-// which items the whole tab counts you as holding.
-function FilterBar({
-  list,
-  classes,
-  countSource,
-  onCountSource,
-  onReload
-}: {
-  list: QuestListState
-  classes: string[]
-  countSource: CountSource
-  onCountSource: (s: CountSource) => void
-  onReload: () => Promise<void>
-}): JSX.Element {
-  return (
-    <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center" useFlexGap>
-      <ChipMultiSelect
-        options={classes}
-        value={list.selectedClasses}
-        onChange={(v) => list.setSelectedClasses(v)}
-        label="Filter by class"
-        placeholder="All classes"
-      />
-      <TextField
-        size="small"
-        label="Search item / quest / reward"
-        value={list.query}
-        onChange={(e) => list.setQuery(e.target.value)}
-        sx={{ minWidth: 240 }}
-      />
-      <TextField
-        select
-        size="small"
-        label="Sort"
-        value={list.sort}
-        onChange={(e) => list.setSort(e.target.value as SortKey)}
-        sx={{ minWidth: 180 }}
-      >
-        {SORT_OPTIONS.map((o) => (
-          <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
-        ))}
-      </TextField>
-      <FormControlLabel
-        control={<Checkbox checked={list.hideCompleted} onChange={(e) => list.setHideCompleted(e.target.checked)} />}
-        label="Hide completed"
-      />
-      <FormControlLabel
-        control={<Checkbox checked={list.hideNoItems} onChange={(e) => list.setHideNoItems(e.target.checked)} />}
-        label="Only quests with turn-ins"
-      />
-      <FormControlLabel
-        control={
-          <Checkbox
-            checked={list.favoritesOnly}
-            onChange={(e) => list.setFavoritesOnly(e.target.checked)}
-            icon={<StarBorderIcon />}
-            checkedIcon={<StarIcon />}
-            sx={{ color: 'warning.main', '&.Mui-checked': { color: 'warning.main' } }}
-          />
-        }
-        label="Favorites only"
-      />
-      <Box sx={{ flexGrow: 1 }} />
-      <Tooltip title="How the app decides which items you have. Log = everything you've ever looted (survives an un-exported bank). Inventory = your last /outputfile dump. Both = the higher of the two.">
-        <TextField
-          select
-          size="small"
-          label="Count items from"
-          value={countSource}
-          onChange={(e) => onCountSource(e.target.value as CountSource)}
-          sx={{ minWidth: 170 }}
-        >
-          <MenuItem value="log">Log (looted)</MenuItem>
-          <MenuItem value="inventory">Inventory export</MenuItem>
-          <MenuItem value="both">Both (max)</MenuItem>
-        </TextField>
-      </Tooltip>
-      <Tooltip title="Run /outputfile inventory in-game, then reload">
-        <span>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={() => void onReload()}
-            disabled={countSource === 'log'}
-          >
-            Reload inventory
-          </Button>
-        </span>
-      </Tooltip>
-    </Stack>
   )
 }
 
@@ -383,7 +270,7 @@ export default function PoskyView({
         <IgnoredList quests={list.ignored} onUnignore={list.questIgnored.toggle} />
       ) : (
         <>
-          <FilterBar
+          <QuestFilterBar
             list={list}
             classes={classes}
             countSource={countSource}
