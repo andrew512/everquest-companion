@@ -1,13 +1,17 @@
 // ============================================================================
-// ipc.ts — the `triage:*` channels. DEV BUILDS ONLY. Never registered in a shipped app.
+// ipc.ts — the `triage:*` channels. OWNER OPT-IN ONLY. Never registered in a shipped app.
 // ============================================================================
 //
 // HOW THIS MODULE IS REACHED, and why a shipped build cannot reach it — three independent
 // locks, any one of which is sufficient:
 //
 //   1. THE GATE. `src/main/index.ts` calls `registerTriageIpc()` from inside
-//      `if (!app.isPackaged && !E2E)`, behind a DYNAMIC `import()`. A packaged app never
-//      evaluates this module at all, and neither does the headless e2e harness.
+//      `if (!OWNER_TOOLS) return`, behind a DYNAMIC `import()`. That predicate is
+//      `EQ_OWNER_TOOLS=1` AND not packaged AND not the e2e harness (src/shared/ownerTools.ts),
+//      so a packaged app never evaluates this module at all, neither does the headless
+//      harness — and neither does an ordinary `npm run dev` in a checkout that did not ask
+//      for it. JOS-72 added that last term after a stranger's self-compiled macOS build,
+//      which is not `app.isPackaged`, came up with this tab in its nav drawer.
 //   2. THE DEPENDENCIES. The chain below reaches `@aws-sdk/client-s3`,
 //      `@aws-sdk/credential-providers`, `@aws-sdk/dsql-signer` and `pg` — every one of them a
 //      **devDependency**. electron-builder packages `dependencies` only, so even a build with

@@ -345,6 +345,23 @@ cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/pr
   `import.meta.env.DEV && (typeof __X__ === 'undefined' || __X__)` —
   absent define means STALE SERVER, degrade upward — and log the resolved
   value once at renderer boot behind the same `DEV` guard.
+- **OWNER tooling needs `EQ_OWNER_TOOLS=1`; plain DEV is not enough** (JOS-72).
+  The dev flag is now TWO tiers: tier 1 (dev restart, `UNRELEASED`, boot
+  diagnostics — credential-free contributor conveniences) stays on plain
+  `import.meta.env.DEV`; tier 2 (the Triage tab + every `triage:*` handler,
+  which read the owner's DSQL/S3/CloudWatch) additionally requires the env var
+  at BOTH ends — main refuses to register the IPC (`src/main/ownerTools.ts`)
+  and the renderer hides the nav row (`OWNER_TOOLS` in devFlags.ts, the one
+  guarded reader, fed by `window.eq.ownerTools` out of the preload). It exists
+  because `app.isPackaged` is FALSE in a SELF-COMPILED build from this public
+  repo, so a stranger's macOS recompile came up holding the owner's backlog
+  tab. Tier 2 degrades **CLOSED** — the opposite of the tier-1 degrade-upward
+  rule; policy in `src/shared/ownerTools.ts`. electron-vite has NO `.env` →
+  `process.env` path (it only `define`s `*_VITE_*` into `import.meta.env`), so
+  the owner sets it in the SHELL: once per machine with
+  `setx EQ_OWNER_TOOLS 1` (new shells only, nothing committed), or per session
+  with `$env:EQ_OWNER_TOOLS='1'; npm run dev`. Never commit it, and never put
+  an AWS profile name in the gate.
 - MediaWiki: anonymous `eilimit` caps at 500; >50 pageids per revisions
   batch returns HTTP 200 with ZERO pages and no warning — BATCH=50 is
   measured, not tunable.

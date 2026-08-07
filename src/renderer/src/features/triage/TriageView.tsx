@@ -1,19 +1,23 @@
 // ============================================================================
-// TriageView — the DEV-ONLY operator tab. Reports · Ops · Digest · Analytics.
+// TriageView — the OWNER-ONLY operator tab. Reports · Ops · Digest · Analytics.
 // ============================================================================
 //
 // THIS FILE IS NOT IN SHIPPED BUILDS. It is reached exclusively through
-// `__EQ_DEV_TOOLS__ ? lazy(() => import('./features/triage/TriageView')) : null` in
-// `src/renderer/src/devTriage.tsx`. `__EQ_DEV_TOOLS__` is a compile-time define
-// (electron.vite.config.ts) that is `true` only under `electron-vite dev`, so
+// `DEV_TOOLS ? lazy(() => import('./features/triage/TriageView')) : null` in
+// `src/renderer/src/devTriage.tsx`, anchored on `import.meta.env.DEV`, so
 // `electron-vite build` — which is what every installer AND `npm run test:e2e` runs — sees
 // `false ? … : null`, and rollup deletes this entire subtree from the bundle. The e2e suite
 // asserts the nav row is ABSENT in exactly that build.
 //
+// AND IT IS NOT IN AN ORDINARY DEV BUILD EITHER (JOS-72). A build is a compile-time question
+// and a self-compiled copy of this public repo answers it the same way the owner's checkout
+// does — so the nav row, the route and this component are additionally gated on `OWNER_TOOLS`,
+// which is `DEV_TOOLS` AND an `EQ_OWNER_TOOLS=1` no fresh checkout has (src/shared/ownerTools.ts).
+//
 // AND THE DATA CANNOT BE REACHED EITHER. Every panel below reads through `window.eq.triage*`,
-// whose handlers are registered in main only when `!app.isPackaged && !E2E`, from a module that
-// imports devDependencies electron-builder never packages, authenticating with the launching
-// shell's AWS profile. Three independent locks; this one is the cosmetic one.
+// whose handlers are registered in main only under that same opt-in, from a module that imports
+// devDependencies electron-builder never packages, authenticating with the launching shell's AWS
+// profile. Four independent locks; this one is the cosmetic one.
 //
 // THE LAW (§10.3) rides along: a log slice never reaches anything public. Slice text is
 // fetched on demand into a local, fixed-height box (SliceBox) and has no path out of it.

@@ -22,14 +22,16 @@ import AlertsView from './features/alerts/AlertsView'
 import BuffsView from './features/buffs/BuffsView'
 import PreferencesView from './features/preferences/PreferencesView'
 import FeedbackDialog from './features/feedback/FeedbackDialog'
-// DEV-ONLY. `devTriage` holds the single `DEV_TOOLS ? lazy(() => import(…)) : null`; in a build
-// without the flag its only use below is dead code, so rollup drops the import and the entire
-// triage feature with it. See devTriage.tsx / devFlags.ts.
+// OWNER-ONLY. `devTriage` holds the single `DEV_TOOLS ? lazy(() => import(…)) : null` — the
+// STRIP, which is a compile-time question and stays on `DEV_TOOLS`; in a build without the flag
+// its only use below is dead code, so rollup drops the import and the entire triage feature with
+// it. WHETHER TO SHOW IT is a second question and a runtime one (`OWNER_TOOLS`, JOS-72). See
+// devTriage.tsx / devFlags.ts.
 import DevTriageView from './devTriage'
 // UNRELEASED (JOS-45). Same shape, different axis: a product surface awaiting the owner's
 // review rather than operator tooling. See unreleasedCharacter.tsx / devFlags.ts.
 import UnreleasedCharacterView from './unreleasedCharacter'
-import { DEV_TOOLS, UNRELEASED } from './devFlags'
+import { OWNER_TOOLS, UNRELEASED } from './devFlags'
 import { useFeedbackDialog, type FeedbackPrefill } from './features/feedback/useFeedback'
 // Usage analytics (docs/plans/usage-analytics.md). The notice is mounted unconditionally and
 // renders nothing once it has been answered; `useViewDwell` reports how long each tab was on
@@ -149,9 +151,10 @@ function ViewContent({
       <PreferencesView key={prefs.section ?? 'prefs'} onSendFeedback={onSendFeedback} section={prefs.section} />
     )
   }
-  // DEV-ONLY, and ABOVE the no-characters gate on purpose: the triage tab reads the cloud
-  // backlog, not the game log, so a machine with no EverQuest install must still reach it.
-  if (DEV_TOOLS && view === 'triage') return <DevTriageView />
+  // OWNER-ONLY (`OWNER_TOOLS` = DEV **and** `EQ_OWNER_TOOLS=1`, JOS-72), and ABOVE the
+  // no-characters gate on purpose: the triage tab reads the cloud backlog, not the game log, so
+  // a machine with no EverQuest install must still reach it.
+  if (OWNER_TOOLS && view === 'triage') return <DevTriageView />
   if (!hasCharacters) return <NoLogsEmptyState onOpenPreferences={onOpenPreferences} />
   return (
     <>

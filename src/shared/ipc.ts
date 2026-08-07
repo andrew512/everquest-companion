@@ -470,16 +470,19 @@ export const IPC = {
   // is nothing at this handler to validate.
   devRestart: 'dev:restart',
 
-  // ---- feedback TRIAGE (the dev-only operator tab — src/main/triage/**) ----------------
+  // ---- feedback TRIAGE (the OWNER-only operator tab — src/main/triage/**) --------------
   //
-  // ============ DEV BUILDS ONLY. NO SHIPPED APP EVER REGISTERS THESE HANDLERS. ============
+  // ========= OWNER OPT-IN ONLY. NO SHIPPED APP EVER REGISTERS THESE HANDLERS. =============
   //
   // The names live here because every channel name in this app lives here — but nothing in a
-  // packaged build listens on them. Registration happens from `src/main/index.ts` behind
-  // `if (!app.isPackaged && !E2E)` via a dynamic import, and the module it imports reaches
-  // `pg` + `@aws-sdk/*`, which are devDependencies and therefore never packaged. Calling one
-  // of these from a shipped build rejects with "No handler registered", which is the correct
-  // and intended outcome.
+  // packaged build listens on them, and since JOS-72 nothing in an ordinary dev build does
+  // either. Registration happens from `src/main/index.ts` behind `if (!OWNER_TOOLS) return`
+  // via a dynamic import — DEV **and** an explicit `EQ_OWNER_TOOLS=1` that no fresh checkout
+  // has (src/shared/ownerTools.ts; a self-compiled build from this public repo is not
+  // `app.isPackaged`, which is what the old predicate had missed) — and the module it imports
+  // reaches `pg` + `@aws-sdk/*`, which are devDependencies and therefore never packaged.
+  // Calling one of these from a shipped build rejects with "No handler registered", which is
+  // the correct and intended outcome.
   //
   // These channels read the OWNER'S FEEDBACK BACKLOG (Aurora DSQL + S3) using the launching
   // shell's AWS profile (AWS_PROFILE, default 'eqc'). Possession of those IAM credentials is
