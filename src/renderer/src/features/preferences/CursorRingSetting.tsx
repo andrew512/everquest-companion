@@ -16,6 +16,8 @@
 
 import { type JSX, useCallback, useEffect, useState } from 'react'
 import { FormControlLabel, Slider, Stack, Switch, Typography } from '@mui/material'
+import AdjustIcon from '@mui/icons-material/Adjust'
+import type { PrefSection } from './PreferencesView'
 import {
   type CursorRingPrefs,
   DEFAULT_CURSOR_RING,
@@ -148,4 +150,30 @@ export function CursorRingSetting(): JSX.Element {
       </Typography>
     </Stack>
   )
+}
+
+/**
+ * The Preferences section this card belongs to — its label, icon and search keywords.
+ *
+ * It lives HERE rather than in PreferencesView, beside `perfSection`, `graphicsSection` and
+ * `whatsNewSection`, for the reason that file's header gives: it sits at the repo's
+ * 400-code-line factoring ceiling and a split is the answer to that rather than a widened
+ * threshold. Co-locating costs nothing — the words somebody types to find this setting belong
+ * with the setting.
+ */
+export function cursorRingSection(): PrefSection {
+  return {
+    id: 'cursor',
+    label: 'Cursor ring',
+    icon: <AdjustIcon fontSize="small" />,
+    items: [
+      {
+        id: 'cursor-ring',
+        label: 'Cursor ring',
+        keywords:
+          'cursor mouse pointer ring circle halo highlight find lost locate ultimate size thickness white',
+        content: <CursorRingSetting />
+      }
+    ]
+  }
 }

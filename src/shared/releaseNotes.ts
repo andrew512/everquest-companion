@@ -38,13 +38,29 @@
 // into "New" / "Fixed" / "Changed" sub-headers, and a release whose entries carry no kind (the
 // one-line historical headlines below) renders as a bare line with no sub-header at all.
 
-/** Which sub-header an entry sits under. Absent ⇒ the entry is a bare headline line. */
+/** Which sub-header an entry sits under. Absent ⇒ the entry is a bullet under no sub-header. */
 export type ReleaseEntryKind = 'new' | 'fixed' | 'changed'
 
-/** One line of a release's notes. */
+/** One bullet of a release's notes. */
 export interface ReleaseEntry {
   readonly kind?: ReleaseEntryKind
   readonly text: string
+  /**
+   * THIS ONE CAME FROM A PLAYER (JOS-76, owner direction).
+   *
+   * Set only where a user report actually generated the work — the panel renders a small
+   * "player report" chip on the bullet, and any release carrying one gets a single plain thanks
+   * line under its header. NOBODY IS EVER NAMED: reports arrive with an install id and, when the
+   * reporter chose to leave one, a contact — none of which belongs on a screen every other user
+   * can read. The thanks is collective on purpose.
+   *
+   * THE BAR IS TRACEABILITY, NOT PLAUSIBILITY. A flag is set here only when the commit that did
+   * the work cites a report (a report id, "the YouTube report", "Mac/CrossOver user report").
+   * Owner-found defects are NOT tagged even though they were also "reported" — thanking the
+   * community for the owner's own bug reports would make the chip mean nothing. When the trail is
+   * unclear, the entry ships untagged: an unearned thanks costs more than a missing one.
+   */
+  readonly fromReport?: boolean
 }
 
 /** One release. `date` is an ISO calendar date (YYYY-MM-DD), rendered through the app's own
@@ -60,10 +76,17 @@ export interface ReleaseNote {
  * below assumes (`releaseNotesProblems` pins it, so the assumption is checked rather than
  * trusted).
  *
- * The releases before 0.7.0 carry ONE headline each. They are backfilled from the tag dates and
- * the commits in each tag's range, and a headline is the honest resolution for them: nobody was
- * writing player-facing notes at the time, so reconstructing a six-bullet changelog per patch
- * would be inventing detail rather than recovering it.
+ * EVERY RELEASE IS BULLETS (JOS-76). The backfilled ones shipped first as single comma-separated
+ * sentences, which is how "four things happened" gets read as one thing: a bullet per change is
+ * the whole difference between a list somebody scans and a paragraph somebody skips. Each
+ * historical release is split only as far as its own tag range honestly supports — two to four
+ * bullets where the range holds that many player-facing changes, one where it holds one. Nothing
+ * is invented to reach a count.
+ *
+ * The releases before 0.7.0 carry no `kind`. They are backfilled from the tag dates and the
+ * commits in each tag's range, and sorting them into New/Fixed/Changed after the fact would be
+ * guessing at a distinction nobody drew at the time — so they render as plain bullets, which is
+ * an honest shape rather than a degraded one.
  *
  * v0.3.3 is deliberately ABSENT: its tag points at the same commit as v0.3.2, so there is
  * nothing it changed. The comparison is by version, not by row, so an install stamped 0.3.3
@@ -74,21 +97,32 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     version: '0.8.0',
     date: '2026-08-07',
     entries: [
-      { kind: 'new', text: 'Suggested alerts for slows wearing off, mote drops, and receiving tells.' },
       {
         kind: 'new',
-        text: 'The exaltation planner has ear, wrist and finger slots — plan two ring effects at once.'
-      },
-      { kind: 'fixed', text: 'Maps render north correctly (north and south were mirrored).' },
-      {
-        kind: 'fixed',
-        text: 'Plane of Sky items on your Equipment keyring now count as owned.'
+        text: 'Suggested alerts for slows wearing off, mote drops, and receiving tells.',
+        fromReport: true
       },
       {
-        kind: 'fixed',
-        text: 'Items whose wiki pages hide their slot (like the Golem Metal Wand) can donate their effects, and an empty planner result now says which filters are hiding rows.'
+        kind: 'new',
+        text: 'The exaltation planner has ear, wrist and finger slots — plan two ring effects at once.',
+        fromReport: true
       },
-      { text: 'Plus: the log engine is faster again.' }
+      {
+        kind: 'fixed',
+        text: 'Maps render north correctly (north and south were mirrored).',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Plane of Sky items on your Equipment keyring now count as owned.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Items whose wiki pages hide their slot (like the Golem Metal Wand) can donate their effects, and an empty planner result now says which filters are hiding rows.',
+        fromReport: true
+      },
+      { text: 'The log engine is faster again.' }
     ]
   },
   {
@@ -97,11 +131,13 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'changed',
-        text: 'The meter no longer asks “your pet?” — order your pet once (/pet attack) or use /pet who leader and it is yours from that moment; re-summoning retires the old pet.'
+        text: 'The meter no longer asks “your pet?” — order your pet once (/pet attack) or use /pet who leader and it is yours from that moment; re-summoning retires the old pet.',
+        fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Raid mobs that lifetap are never misfiled as players, so your pet’s damage against them counts.'
+        text: 'Raid mobs that lifetap are never misfiled as players, so your pet’s damage against them counts.',
+        fromReport: true
       },
       {
         kind: 'fixed',
@@ -110,7 +146,8 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       { kind: 'fixed', text: 'Switching characters no longer replays old alerts and celebrations.' },
       {
         kind: 'fixed',
-        text: 'The game-folder setting works pointed at the install folder, the Logs folder, or a log file.'
+        text: 'The game-folder setting works pointed at the install folder, the Logs folder, or a log file.',
+        fromReport: true
       },
       {
         kind: 'changed',
@@ -122,8 +159,12 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     version: '0.6.3',
     date: '2026-08-06',
     entries: [
+      { text: 'The planner tab is called Exaltations.' },
+      { text: 'Back returns you where you came from, from every drill in the app.' },
+      { text: 'Every /outputfile export says which command to type and how old your last one is.' },
       {
-        text: 'The planner tab is called Exaltations, Back returns you where you came from, every /outputfile export says how to run it, and two graphics switches arrive for cards that dislike the overlays.'
+        text: 'Two graphics switches for a card that dislikes the overlays: software rendering, and solid instead of transparent overlays.',
+        fromReport: true
       }
     ]
   },
@@ -131,9 +172,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     version: '0.6.2',
     date: '2026-08-05',
     entries: [
-      {
-        text: 'Your group appears in the meters, overlay text can be sized, the Maps sidebar becomes one search box, and the planner learns to teach.'
-      }
+      { text: 'Your group appears in the meters, with a scope you choose.' },
+      { text: 'Overlay text can be sized, and every overlay follows the same setting.' },
+      { text: 'The Maps sidebar becomes one search box over mobs, labels and zones.' },
+      { text: 'The planner gains a card that teaches exaltation, and fills its Inventory tab from your own dump.' }
     ]
   },
   {
@@ -141,7 +183,8 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-05',
     entries: [
       {
-        text: 'Closing the app really closes it — a failed teardown could leave the process running with no window.'
+        text: 'Closing the app really closes it — a failed teardown could leave it running with no window, and block the next launch.',
+        fromReport: true
       }
     ]
   },
@@ -149,9 +192,12 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     version: '0.6.0',
     date: '2026-08-05',
     entries: [
+      { text: 'Attack-round stats, honest about what the log states and what it infers.' },
       {
-        text: 'Attack-round stats say what the log states and what it infers, picking your EverQuest folder attaches to the log right away, and the installer runs under Wine.'
-      }
+        text: 'Picking your EverQuest folder attaches right away — and so does typing /log on, without a restart.',
+        fromReport: true
+      },
+      { text: 'The installer runs under Wine and CrossOver instead of dead-ending.', fromReport: true }
     ]
   },
   {
@@ -159,26 +205,30 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-05',
     entries: [
       {
-        text: 'Monk special attacks get their real names, your /outputfile dumps are read on sight, and AA purchases read as ladders instead of a flat list.'
-      }
+        text: 'Monk special attacks get their real names — Dragon Punch and Flying Kick stop being counted as anonymous swings.',
+        fromReport: true
+      },
+      { text: 'Your /outputfile dumps are read the moment you write them.' },
+      { text: 'AA purchases read as ladders per ability instead of a flat list of lines.' }
     ]
   },
   {
     version: '0.4.0',
     date: '2026-08-05',
     entries: [
-      {
-        text: 'The exaltation planner arrives, celebration cards appear over the game, healing joins the meters, and only kills credited to you celebrate.'
-      }
+      { text: 'The exaltation planner arrives: plan sets over a class-filtered effect browser.' },
+      { text: 'Celebration cards appear over the game when something is worth cheering.' },
+      { text: 'Healing joins the meters, in the panel and in a floating overlay of its own.' },
+      { text: 'Only kills credited to you celebrate — a boss a stranger killed nearby no longer does.' }
     ]
   },
   {
     version: '0.3.5',
     date: '2026-08-04',
     entries: [
-      {
-        text: 'Maps gain a zone pane that says what lives there, Overview tiles link where you would click, and four rough edges around the timeline and Preferences are gone.'
-      }
+      { text: 'Maps gain a zone pane that says what lives there, pinned where the wiki says.' },
+      { text: 'Overview tiles link where you would click — a drop opens its item, a fight opens the meter.' },
+      { text: 'Kill records go per instance tier, so a d4 badge no longer stands under a d0 loadout.' }
     ]
   },
   {
@@ -195,18 +245,18 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     version: '0.3.1',
     date: '2026-08-04',
     entries: [
-      {
-        text: 'Reading your log history no longer blocks the app, and the pet setting stops folding your pet permanently into your own row.'
-      }
+      { text: 'Reading your log history no longer blocks the app while it loads.' },
+      { text: 'The pet setting stops folding your pet permanently into your own row.' }
     ]
   },
   {
     version: '0.3.0',
     date: '2026-08-04',
     entries: [
-      {
-        text: 'Alerts learn to speak, a cursor ring finds your mouse over EverQuest, poison and slow alerts arrive, and you can send feedback from inside the app.'
-      }
+      { text: 'Alerts learn to speak, in a system voice or a downloadable natural one.' },
+      { text: 'A cursor ring finds your mouse over the EverQuest window.' },
+      { text: 'Poison and slow alerts arrive, and the suggestion dialog becomes one search.' },
+      { text: 'You can send feedback, with a scrubbed log window attached, from inside the app.' }
     ]
   },
   {
@@ -218,9 +268,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     version: '0.2.0',
     date: '2026-08-03',
     entries: [
-      {
-        text: 'The first stable release: an Overview landing tab, the Maps tab, proc analytics, class-loadout inference and leveling range stats.'
-      }
+      { text: 'The first stable release.' },
+      { text: 'An Overview landing tab: live DPS, current mob, zone, leveling pace and recent drops.' },
+      { text: 'A Maps tab with zone search, label declutter and floor slicing.' },
+      { text: 'Proc analytics, class-loadout inference, and leveling stats over a range you drag out.' }
     ]
   }
 ]
@@ -282,6 +333,11 @@ export function hasReleaseNote(
     const got = parseVersion(n.version)
     return got.major === want.major && got.minor === want.minor && got.patch === want.patch
   })
+}
+
+/** Does this release carry any player-reported entry? — whether it gets a thanks line (JOS-76). */
+export function hasReportedEntry(note: ReleaseNote): boolean {
+  return note.entries.some((e) => e.fromReport === true)
 }
 
 // ---------------------------------------------------------------- the state
@@ -366,6 +422,12 @@ export function releaseNotesProblems(notes: readonly ReleaseNote[] = RELEASE_NOT
     for (const e of n.entries) {
       if (e.text.trim() === '') problems.push(`${n.version}: an entry has no text`)
       if (e.kind !== undefined && !KINDS.includes(e.kind)) problems.push(`${n.version}: unknown kind "${e.kind}"`)
+      // `fromReport: false` is not a third state — an untagged entry is simply absent, and a
+      // stored `false` would read as "we checked and it wasn't a report", which is a claim this
+      // file has no way to make. Present means true.
+      if (e.fromReport !== undefined && !e.fromReport) {
+        problems.push(`${n.version}: fromReport is a flag — set it to true or leave it out`)
+      }
     }
     const prev = notes[i - 1]
     if (prev && compareVersions(prev.version, n.version) <= 0) {
