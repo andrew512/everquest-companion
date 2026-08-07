@@ -661,20 +661,23 @@ const api = {
   // Its five methods live in ./perf.ts and are spread in below — this file is at the 400-line
   // factoring ceiling, and a split is the answer to that rather than a widened threshold.
 
-  // ---- feedback TRIAGE (DEV BUILDS ONLY — src/main/triage/**) ----------------------------
+  // ---- feedback TRIAGE (OWNER OPT-IN ONLY — src/main/triage/**) --------------------------
   //
-  // ============================ THESE METHODS ARE DEV-ONLY. ==============================
+  // =========================== THESE METHODS ARE OWNER-ONLY. =============================
   //
-  // The handlers behind them are registered from `src/main/index.ts` ONLY when
-  // `!app.isPackaged && !E2E`, via a dynamic import of a module that reaches `pg` and
-  // `@aws-sdk/*` — devDependencies, which electron-builder never packages. In a shipped build
+  // The handlers behind them are registered from `src/main/index.ts` ONLY when `OWNER_TOOLS`
+  // is true — `EQ_OWNER_TOOLS=1` AND not packaged AND not the e2e harness (JOS-72,
+  // ../shared/ownerTools.ts) — via a dynamic import of a module that reaches `pg` and
+  // `@aws-sdk/*`, devDependencies which electron-builder never packages. Without the opt-in
   // there are no handlers, so every one of these REJECTS with Electron's own
   // "No handler registered for 'triage:…'". That is the designed outcome, not a bug: the
-  // bridge is a door, and in a packaged app there is nothing on the other side of it.
+  // bridge is a door, and in a packaged app — or a contributor's checkout — there is nothing
+  // on the other side of it.
   //
-  // The renderer half of this feature is compiled out entirely by the `__EQ_DEV_TOOLS__`
-  // define (electron.vite.config.ts), so in practice nothing in a shipped build ever calls
-  // them either. Two independent mechanisms, deliberately.
+  // The renderer half of this feature is compiled out entirely in any `electron-vite build`
+  // (`DEV_TOOLS`, anchored on `import.meta.env.DEV`) and hidden without the opt-in on a dev
+  // server (`OWNER_TOOLS`), so in practice nothing ever calls them uninvited. Independent
+  // mechanisms, deliberately.
   //
   // Everything here reads the OWNER'S feedback backlog with the launching shell's AWS
   // credentials. Possession of those credentials is the access control.

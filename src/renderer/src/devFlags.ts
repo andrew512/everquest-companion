@@ -1,3 +1,6 @@
+// The tier-2 policy — see the OWNER_TOOLS block below, and src/shared/ownerTools.ts.
+import { ownerToolsGranted } from '@shared/ownerTools'
+
 // ============================================================================
 // devFlags — the ONE reference to `__EQ_DEV_TOOLS__` in the renderer, and the reason it is
 // written the way it is.
@@ -50,6 +53,45 @@ export const DEV_TOOLS: boolean =
  *  a second bare-ish reader of the identifier: this file stays the one place that names it. */
 export const DEV_TOOLS_DEFINE: boolean | undefined =
   typeof __EQ_DEV_TOOLS__ === 'undefined' ? undefined : __EQ_DEV_TOOLS__
+
+// ============================================================================
+// OWNER_TOOLS — DEV_TOOLS narrowed to the OWNER, and the only gate the Triage tab may use.
+// ============================================================================
+//
+// JOS-72: a stranger recompiled this public repo for native macOS and ran it. A self-compiled
+// build is not `app.isPackaged` and `import.meta.env.DEV` is true on any dev server, so
+// `DEV_TOOLS` said yes and they got the OWNER's feedback-backlog tab. `DEV_TOOLS` is still the
+// right answer for contributor tooling; it is the wrong answer for a surface that reads one
+// person's AWS account, so tier 2 gets its own flag. The policy — including why the opt-in is an
+// env var rather than a `define` — is written up in src/shared/ownerTools.ts.
+//
+// TWO TERMS, IN THIS ORDER, AND THE ORDER IS LOAD-BEARING.
+//
+//   `DEV_TOOLS &&` FIRST, because it is the STRIP. It folds to a literal `false` in every
+//   `electron-vite build`, so `false && ownerToolsGranted(…)` folds with it: rollup deletes the
+//   branch, never evaluates the call, and drops the now-unreferenced reader and its import.
+//   Everything the old `DEV_TOOLS` guarded is still absent from `out/renderer` — measured by
+//   grep on the build, not assumed. Writing the runtime read on the LEFT would defeat that and
+//   ship the triage nav row's strings into every installer, merely hidden.
+//
+//   The bridge read SECOND, in a function so there is nothing left at module scope for a build
+//   to keep alive. `window.eq.ownerTools` is a static boolean the preload lifts out of
+//   `EQ_OWNER_TOOLS` (src/preload/dev.ts) — asking the PROCESS, not a `define`: no stale-server
+//   hazard, no rebuild, one app restart to change the answer.
+//
+// AND IT DEGRADES **CLOSED**, which is the deliberate opposite of the rule twenty lines up.
+// `DEV_TOOLS` degrades UPWARD because a missing define means a stale server rather than a
+// decision. Here every form of silence — no env var, no bridge field, a preload bundle older
+// than this feature, `window` not there at all — is the ordinary state of every checkout on
+// earth, so it must resolve to NO. `ownerToolsGranted` compares against `true` and nothing else.
+
+/** What the preload bridge says, if there is a bridge and it is new enough to have the field. */
+function ownerToolsBridge(): unknown {
+  return (globalThis as { window?: { eq?: { ownerTools?: unknown } } }).window?.eq?.ownerTools
+}
+
+/** DEV **and** an explicit `EQ_OWNER_TOOLS=1`. The ONE gate for owner-only surfaces. */
+export const OWNER_TOOLS: boolean = DEV_TOOLS && ownerToolsGranted(ownerToolsBridge())
 
 // ============================================================================
 // UNRELEASED — a DIFFERENT axis from DEV_TOOLS, deliberately not the same flag.

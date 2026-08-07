@@ -78,27 +78,9 @@ async function setDescription(page: Page, text: string): Promise<void> {
   await settle(() => textOf(page, DESCRIPTION), (t) => t !== before, { timeoutMs: 8_000 })
 }
 
-/**
- * THE STRIP, asserted against a real running app.
- *
- * The dev-only feedback-TRIAGE tab (`src/renderer/src/features/triage/**`) is gated on the
- * compile-time `__EQ_DEV_TOOLS__` define, which `electron-vite build` sets to `false`. This
- * harness builds exactly that way (`buildIfStale` → `electron-vite build --outDir=out-e2e`), so
- * this run is production-shaped and the nav row must NOT exist. If it appears here, it appears
- * in the installer — and the installer would be shipping a button aimed at the owner's backlog.
- *
- * Absence is asserted on the DOM, not on the bundle: the grep-for-a-marker proof lives beside
- * the build, and this proves the user-visible consequence.
- */
-async function stepTriageStripped(page: Page): Promise<void> {
-  check(
-    'the dev-only Triage tab is STRIPPED from a production-shaped build (no nav row)',
-    (await countOf(page, '[data-testid="nav-triage"]')) === 0
-  )
-  // …and the bridge method the tab would call is a door with nothing behind it. It is still on
-  // the preload (channel names are not secrets), but the handler is registered only when
-  // `!app.isPackaged && !E2E`, so under EQ_E2E=1 an invoke must reject.
-  const reachable = await page.evaluate(async () => {
+/** Does `window.eq.triageOps()` resolve in this run? Never throws out of the page. */
+function triageReachable(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
     const call = (window as unknown as { eq: Record<string, unknown> }).eq.triageOps
     if (typeof call !== 'function') return false
     try {
@@ -108,10 +90,83 @@ async function stepTriageStripped(page: Page): Promise<void> {
       return false
     }
   })
+}
+
+/** What the preload lifted out of `EQ_OWNER_TOOLS` — the renderer's only door to the opt-in. */
+function ownerToolsFlag(page: Page): Promise<unknown> {
+  return page.evaluate(() => (window as unknown as { eq: Record<string, unknown> }).eq.ownerTools)
+}
+
+/**
+ * THE STRIP, asserted against a real running app.
+ *
+ * The owner-only feedback-TRIAGE tab (`src/renderer/src/features/triage/**`) is gated on
+ * `DEV_TOOLS`, anchored on `import.meta.env.DEV`, which `electron-vite build` makes a literal
+ * `false`. This harness builds exactly that way (`buildIfStale` → `electron-vite build
+ * --outDir=out-e2e`), so this run is production-shaped and the nav row must NOT exist. If it
+ * appears here, it appears in the installer — and the installer would be shipping a button aimed
+ * at the owner's backlog.
+ *
+ * Absence is asserted on the DOM, not on the bundle: the grep-for-a-marker proof lives beside
+ * the build, and this proves the user-visible consequence.
+ */
+async function stepTriageStripped(page: Page): Promise<void> {
+  check(
+    'the owner-only Triage tab is STRIPPED from a production-shaped build (no nav row)',
+    (await countOf(page, '[data-testid="nav-triage"]')) === 0
+  )
+  // …and the bridge method the tab would call is a door with nothing behind it. It is still on
+  // the preload (channel names are not secrets), but the handler is registered only under
+  // `OWNER_TOOLS` — `EQ_OWNER_TOOLS=1` AND not packaged AND not E2E — so under EQ_E2E=1 an
+  // invoke must reject.
+  const reachable = await triageReachable(page)
   check(
     '…and its IPC handlers are not registered in this build either',
     reachable === false,
     `triage:ops ${reachable ? 'ANSWERED' : 'rejected, as designed'}`
+  )
+  // JOS-72's default, read where the renderer reads it. An ambient `EQ_OWNER_TOOLS` in whatever
+  // shell ran the suite would show up right here rather than silently arming the second launch.
+  const flag = await ownerToolsFlag(page)
+  check(
+    '…and the owner-tools opt-in reads FALSE with nothing set — the default is hidden',
+    flag === false,
+    `window.eq.ownerTools = ${String(flag)}`
+  )
+}
+
+/**
+ * THE OPT-IN'S POLARITY (JOS-72), and an honest account of what an e2e can prove about it.
+ *
+ * An absence assertion is the weakest kind — it passes just as happily when the feature was
+ * never wired up. The character-sheet spec answers that by launching a second time with
+ * `EQ_UNRELEASED=1` and watching the same IPC channel answer. THIS TIER CANNOT DO THAT, BY
+ * DESIGN: `ownerToolsEnabled` refuses whenever `EQ_E2E=1`, because the harness must never reach
+ * the owner's AWS account, and the renderer half is a compile-time strip no env var can undo.
+ * Both refusals below are therefore the assertions, not limitations to work around.
+ *
+ * What the second launch DOES prove is the piece no unit test can reach: that the preload's
+ * runtime read exists and lands on the bridge. `window.eq.ownerTools` flipping to `true` on the
+ * SAME bytes is what makes the first launch's `false` a gate rather than a missing field — and a
+ * missing field would degrade closed, hiding the owner's tab with no error to grep, which is the
+ * exact failure mode this repo has paid for twice.
+ */
+async function stepOptInPolarity(page: Page): Promise<void> {
+  const flag = await ownerToolsFlag(page)
+  check(
+    'EQ_OWNER_TOOLS=1 reaches the renderer through the preload — the bridge field is real',
+    flag === true,
+    `window.eq.ownerTools = ${String(flag)}`
+  )
+  check(
+    '…but the nav row STAYS absent: the renderer half is a compile-time strip, not a switch',
+    (await countOf(page, '[data-testid="nav-triage"]')) === 0
+  )
+  const reachable = await triageReachable(page)
+  check(
+    '…and main STILL refuses to register the handlers, because EQ_E2E outranks the opt-in',
+    reachable === false,
+    `triage:ops ${reachable ? 'ANSWERED — the harness could reach the owner’s AWS account' : 'rejected, as designed'}`
   )
 }
 
@@ -294,6 +349,20 @@ async function main(): Promise<void> {
     if (failures.length) await dumpArtifacts(page, 'feedback-FAIL')
   } finally {
     await close()
+  }
+
+  // The SAME build, launched again with the opt-in set — see stepOptInPolarity for what that
+  // can and cannot prove. Its own fixture stage, so nothing about the run above is disturbed.
+  console.log('launch 2: the same build with EQ_OWNER_TOOLS=1 — the opt-in’s polarity…')
+  const second = await launchOnFixture('e2e-feedback.log', { env: { EQ_OWNER_TOOLS: '1' } })
+  let opted: Page | null = null
+  try {
+    opted = await mainWindow(second.app)
+    await opted.waitForSelector('[data-testid="nav-feedback"]', { timeout: 60_000 })
+    await stepOptInPolarity(opted)
+    if (failures.length) await dumpArtifacts(opted, 'feedback-optin-FAIL')
+  } finally {
+    await second.close()
   }
 
   reportRun()

@@ -2,7 +2,7 @@
 // persisted "which tab was I on" key all agree on. Lives outside App.tsx so the nav drawer
 // can import it without importing the app itself.
 
-import { DEV_TOOLS, UNRELEASED } from './devFlags'
+import { OWNER_TOOLS, UNRELEASED } from './devFlags'
 
 export type View =
   | 'overview'
@@ -17,12 +17,12 @@ export type View =
   | 'planner'
   | 'buffs'
   | 'preferences'
-  // DEV-ONLY view (src/renderer/src/features/triage/**). It stays in the union
+  // OWNER-ONLY view (src/renderer/src/features/triage/**). It stays in the union
   // unconditionally because a union member is a TYPE and types are erased — nothing of it
   // survives compilation. What actually strips is the CODE: the nav row, the content branch
-  // and the whole component tree sit behind `__EQ_DEV_TOOLS__`, and `KNOWN_VIEWS` below drops
-  // the string itself in a build without the flag, so a persisted 'triage' can never leave a
-  // shipped app staring at an empty content area.
+  // and the whole component tree sit behind `OWNER_TOOLS` (DEV **and** `EQ_OWNER_TOOLS=1`,
+  // JOS-72), and `KNOWN_VIEWS` below drops the string itself in a build or a checkout without
+  // it, so a persisted 'triage' can never leave anyone staring at an empty content area.
   | 'triage'
   // UNRELEASED view (src/renderer/src/features/character/**, JOS-45). Same erasure argument as
   // 'triage' above: the member is a TYPE. What strips is the CODE — the nav row, the content
@@ -79,8 +79,11 @@ const KNOWN_VIEWS: View[] = [
   'planner',
   'buffs',
   'preferences',
-  // Compile-time: `false ? [...] : []` folds away, taking the literal with it.
-  ...(DEV_TOOLS ? (['triage'] as const) : []),
+  // Compile-time in a BUILD (`false ? [...] : []` folds away, taking the literal with it) and a
+  // runtime read of the opt-in on a dev server — so a contributor's checkout, which has no
+  // `EQ_OWNER_TOOLS`, bounces a persisted 'triage' to the default view instead of routing to a
+  // tab it will not draw.
+  ...(OWNER_TOOLS ? (['triage'] as const) : []),
   ...(UNRELEASED ? (['character'] as const) : [])
 ]
 

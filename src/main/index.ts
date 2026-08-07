@@ -29,6 +29,7 @@ import { CHANNEL, USER_DATA } from './channel'
 // module body below can throw. See crashGuards.ts.
 import './crashGuards'
 import { E2E } from './e2e'
+import { OWNER_TOOLS } from './ownerTools'
 import { app, BrowserWindow, protocol, session } from 'electron'
 import { IPC } from '../shared/ipc'
 import { errorLogPath, logError, logInfo } from './errorLog'
@@ -141,12 +142,17 @@ bus.subscribe((ev, live) => {
 // ---------------------------------------------------------------------------------------
 //
 // This is the operator's window onto the feedback backlog — the same Aurora DSQL rows and S3
-// slices `scripts/triage-feedback.mts` reads, over the same IAM door. It exists in the DEV app
-// and nowhere else, and there are THREE independent reasons a shipped build cannot reach it:
+// slices `scripts/triage-feedback.mts` reads, over the same IAM door. It exists in the OWNER's
+// dev app and nowhere else, and there are THREE independent reasons a shipped build cannot
+// reach it:
 //
-//   1. THIS GATE. `app.isPackaged` is false only in a dev run; `E2E` excludes the headless
-//      harness, which builds production-shaped and must stay off the network. The import is
-//      DYNAMIC, so a packaged build never even evaluates the module.
+//   1. THIS GATE, which is `OWNER_TOOLS` since JOS-72 (src/shared/ownerTools.ts) and no longer
+//      "am I a dev build?". `app.isPackaged` is false in a dev run — but it is also false in a
+//      SELF-COMPILED build from this public repo, which is how a stranger's macOS recompile
+//      ended up with the owner's backlog tab in its nav drawer. So the predicate now also
+//      requires `EQ_OWNER_TOOLS=1`, which no fresh checkout has; `E2E` still excludes the
+//      headless harness, which builds production-shaped and must stay off the network. The
+//      import is DYNAMIC, so a build without the opt-in never even evaluates the module.
 //   2. THE DEPENDENCIES. That module reaches `pg` and `@aws-sdk/*` — devDependencies, which
 //      electron-builder never packages. A build with this gate patched out still could not
 //      resolve them. The property is structural, not a runtime check.
@@ -160,11 +166,13 @@ bus.subscribe((ev, live) => {
 let closeDevTriage: (() => Promise<void>) | null = null
 
 function registerDevTriageIpc(): void {
-  if (app.isPackaged || E2E) return
+  if (!OWNER_TOOLS) return
   void import('./triage/ipc')
     .then(({ registerTriageIpc }) => {
       closeDevTriage = registerTriageIpc()
-      logInfo('[everquest-companion] Dev triage IPC registered (dev build only, AWS profile auth).')
+      logInfo(
+        '[everquest-companion] Owner triage IPC registered (EQ_OWNER_TOOLS=1, AWS profile auth).'
+      )
     })
     .catch((err: unknown) => logError('main:triage', err))
 }

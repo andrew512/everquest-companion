@@ -19,7 +19,7 @@ import RuleFolderIcon from '@mui/icons-material/RuleFolder'
 // Unreleased-only, and stripped with its branch for the same reason (JOS-45).
 import AccountBoxIcon from '@mui/icons-material/AccountBox'
 import UpdateChip from './UpdateChip'
-import { DEV_TOOLS, UNRELEASED } from '../devFlags'
+import { OWNER_TOOLS, UNRELEASED } from '../devFlags'
 import { VIEW_LABELS, type View } from '../appViews'
 
 export const DRAWER_WIDTH = 220
@@ -155,14 +155,17 @@ export default function NavDrawer({
             onSelect={onSelect}
           />
         )}
-        {/* DEV-ONLY: the feedback-triage tab. `DEV_TOOLS` folds to a compile-time literal, so
-            in `electron-vite build` this reads `false && …` and rollup deletes the branch —
-            the row, its label, its chip and its icon are not in the shipped bundle at all.
-            Built INSIDE the branch rather than hoisted to a module const on purpose: a
-            top-level `jsx()` call is not something rollup can prove is side-effect free, and
-            it would keep the strings alive. The e2e suite asserts `nav-triage` is ABSENT in a
-            production-shaped build. */}
-        {DEV_TOOLS && (
+        {/* OWNER-ONLY: the feedback-triage tab. `OWNER_TOOLS` (JOS-72) is `DEV_TOOLS` AND the
+            `EQ_OWNER_TOOLS=1` opt-in, so this row is absent from a fresh checkout's `npm run
+            dev` as well as from every build — the tab reads the owner's AWS backlog, and a
+            self-compiled copy of this public repo used to show it. `DEV_TOOLS` is still the
+            left-hand term, so in `electron-vite build` this reads `false && …` and rollup
+            deletes the branch: the row, its label, its chip and its icon are not in the shipped
+            bundle at all. Built INSIDE the branch rather than hoisted to a module const on
+            purpose: a top-level `jsx()` call is not something rollup can prove is side-effect
+            free, and it would keep the strings alive. The e2e suite asserts `nav-triage` is
+            ABSENT in a production-shaped build. */}
+        {OWNER_TOOLS && (
           <NavRowButton
             row={{
               view: 'triage',
@@ -170,7 +173,7 @@ export default function NavDrawer({
               badge: (
                 <Chip
                   size="small"
-                  label="dev only"
+                  label="owner only"
                   variant="outlined"
                   color="warning"
                   sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.75 } }}
