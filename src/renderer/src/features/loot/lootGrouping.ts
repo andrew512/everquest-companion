@@ -1,6 +1,7 @@
 import type { LootDisposition, LootEvent } from '@shared/types'
 import type { InventoryRow } from '../inventory/reconcile'
 import { questItemNames } from './lootItemData'
+import { DEFAULT_LOOT_SORT, sortLootRows, type LootSortKey } from './lootSort'
 
 // A loot event with two precomputed keys — computed ONCE per history change so the
 // per-keystroke filter is a plain substring test (never re-lowercasing thousands of rows
@@ -80,7 +81,18 @@ function tallyGroups(events: KeyedLoot[]): Map<string, Group> {
   return map
 }
 
-export function groupLootRows(events: KeyedLoot[], isFavorite: (name: string) => boolean): GroupRow[] {
+/**
+ * One row per item, in the reader's chosen order (lootSort.ts), favorites pinned on top.
+ *
+ * The pin is a SECOND pass on purpose: Array#sort is stable, so favorites keep the chosen order
+ * among themselves and so does everything below them. Swapping sort keys therefore re-orders
+ * both blocks and moves nothing between them.
+ */
+export function groupLootRows(
+  events: KeyedLoot[],
+  isFavorite: (name: string) => boolean,
+  sort: LootSortKey = DEFAULT_LOOT_SORT
+): GroupRow[] {
   const list: GroupRow[] = [...tallyGroups(events).entries()].map(([key, g]) => {
     const topSource = [...g.sources.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
     // The group's dominant disposition — shown only when ALL of its rows share one, so a
@@ -97,9 +109,9 @@ export function groupLootRows(events: KeyedLoot[], isFavorite: (name: string) =>
       disposition
     }
   })
-  list.sort((a, b) => b.count - a.count || b.last - a.last)
+  const sorted = sortLootRows(list, sort)
   // Pin favorites to the top (stable).
-  return list.sort((a, b) => Number(isFavorite(b.item)) - Number(isFavorite(a.item)))
+  return sorted.sort((a, b) => Number(isFavorite(b.item)) - Number(isFavorite(a.item)))
 }
 
 /**
