@@ -7,7 +7,7 @@
 // it, and PreferencesView only names the three exports in its section table.
 
 import { type JSX, useCallback, useEffect, useState } from 'react'
-import { Box, Button, Chip, LinearProgress, Stack, Typography } from '@mui/material'
+import { Box, Button, Chip, LinearProgress, Link, Stack, Typography } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import RestartAltIcon from '@mui/icons-material/RestartAlt'
 import type { UpdateStatus } from '@shared/types'
@@ -45,11 +45,32 @@ export function useUpdateStatus(): UpdateStatus {
   return status
 }
 
-export function VersionSetting({ version }: { version: string }): JSX.Element {
+/**
+ * The version, and the way from it to what that version changed (JOS-73).
+ *
+ * The version number is the thing a person is looking at when the question "…and what is
+ * different about it?" occurs to them, so the answer is one click from here rather than only
+ * from the teaser strip, which a user can dismiss forever in half a second. It is a link and not
+ * a second copy of the panel: the notes have ONE home (Preferences → What's new), and this is a
+ * rail switch to it — manual navigation inside Preferences, so nothing is parked and there is
+ * nothing to come Back from.
+ */
+export function VersionSetting({
+  version,
+  onWhatsNew
+}: {
+  version: string
+  onWhatsNew: () => void
+}): JSX.Element {
   return (
-    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-      {version ? `v${version}` : '—'}
-    </Typography>
+    <Stack direction="row" alignItems="baseline" spacing={1.5}>
+      <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+        {version ? `v${version}` : '—'}
+      </Typography>
+      <Link component="button" type="button" variant="caption" data-testid="pref-version-whats-new" onClick={onWhatsNew}>
+        What&rsquo;s new
+      </Link>
+    </Stack>
   )
 }
 

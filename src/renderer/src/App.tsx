@@ -38,6 +38,10 @@ import { useFeedbackDialog, type FeedbackPrefill } from './features/feedback/use
 // screen. Both are local: the renderer only ever records into main's ring, and main decides —
 // behind the consent gates — whether anything is ever sent.
 import { TelemetryNotice } from './features/preferences/TelemetryNotice'
+// What's new (JOS-73). The teaser strip is the telemetry notice's twin — one quiet line along
+// the bottom edge, never a modal — and renders nothing unless this launch is the first one after
+// an update. See features/whatsnew/WhatsNewTeaser.tsx.
+import { WhatsNewTeaser } from './features/whatsnew/WhatsNewTeaser'
 import { dwellView, useViewDwell } from './lib/telemetry'
 import AlertPlayer, { fireAppSignal } from './features/alerts/player'
 import { getBossData } from './data'
@@ -348,6 +352,42 @@ function useAppCelebrations(
 }
 
 /**
+ * THE BOTTOM EDGE, and both of the things allowed to occupy it.
+ *
+ * Two one-line strips, same shape, same rule: fixed-position and portalled, so they float over
+ * the content area without reflowing anything, and NEITHER is ever a modal — this app must never
+ * interrupt play. Each renders null unless it has something to say, and the two can never say it
+ * at the same time: the telemetry notice is a FIRST-RUN event and the what's-new teaser is
+ * suppressed on a fresh install by construction (shared/releaseNotes.ts).
+ *
+ * A component rather than two lines in App because App is at its factoring ceiling — and because
+ * "what may appear along the bottom" is a real thing to be able to read in one place.
+ */
+function BottomStrips({ prefs }: { prefs: PrefsRouting }): JSX.Element {
+  return (
+    <>
+      <TelemetryNotice onOpenDetails={() => prefs.openSection('analytics')} />
+      <WhatsNewTeaser onOpen={() => prefs.openSection('whatsnew')} />
+    </>
+  )
+}
+
+/**
+ * Switch the tailed character (the title bar's selector).
+ *
+ * Module-level, with the state write handed in, because App sits at the 100-code-line function
+ * ceiling. `applied` runs ONLY when main actually moved: a refused switch must leave the selector
+ * and the live dot exactly as they were rather than optimistically clearing them.
+ */
+async function selectCharacter(
+  logPath: string,
+  applied: (character: CharacterRef) => void
+): Promise<void> {
+  const res = await window.eq.setCharacter(logPath)
+  if (res.ok && res.character) applied(res.character)
+}
+
+/**
  * The memoized openers a deep link can reach. Passed as ONE object so the router stays inside the
  * parameter ceiling; every member is a `useCallback` from appRouting, which is what lets the
  * `app:focusView` subscription stay a mount-only effect.
@@ -452,12 +492,9 @@ export default function App(): JSX.Element {
     }
   }, [openMob, openQuest, openLeveling, selectView])
 
-  const onSelectCharacter = async (logPath: string): Promise<void> => {
-    const res = await window.eq.setCharacter(logPath)
-    if (res.ok && res.character) {
-      setCharacter(res.character)
-      setLive(false)
-    }
+  const onCharacterSwitched = (c: CharacterRef): void => {
+    setCharacter(c)
+    setLive(false)
   }
 
   const viewKey = `${character?.logPath ?? 'none'}#${rebuild}`
@@ -472,7 +509,7 @@ export default function App(): JSX.Element {
         live={live}
         character={character}
         characters={characters}
-        onSelectCharacter={(logPath) => void onSelectCharacter(logPath)}
+        onSelectCharacter={(logPath) => void selectCharacter(logPath, onCharacterSwitched)}
         onOpenPreferences={() => selectView('preferences')}
       />
 
@@ -516,11 +553,11 @@ export default function App(): JSX.Element {
           (which reloads and lands a prefilled bug — see useFeedbackDialog). */}
       <FeedbackDialog open={feedback.open} onClose={feedback.close} prefill={feedback.prefill} />
 
-      {/* The first-run usage-analytics notice (plan T1) — a slim bottom bar, not a modal.
-          Renders nothing once answered — which is every launch after the first — and is the
-          ONLY thing that sets `noticeShown`, the flag main's network gate requires. Nothing
-          may be transmitted before it has shown. */}
-      <TelemetryNotice onOpenDetails={() => prefsRouting.openSection('analytics')} />
+      {/* The bottom edge: the first-run usage-analytics notice (plan T1 — the ONLY thing that
+          sets `noticeShown`, which main's network gate requires) and the what's-new teaser
+          (JOS-73). Both are slim bars rather than modals, and both render nothing most launches.
+          See BottomStrips above. */}
+      <BottomStrips prefs={prefsRouting} />
     </Box>
   )
 }

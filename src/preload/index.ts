@@ -86,6 +86,9 @@ import { perfBridge } from './perf'
 import { graphicsBridge } from './graphics'
 // The dev-only restart button's one method (JOS-61), split out for the same file-mass reason.
 import { devBridge } from './dev'
+// What's new (JOS-73): the one store key behind the release-notes panel and its teaser strip.
+// The NOTES are committed source the renderer imports directly — see ./releaseNotes.ts.
+import { releaseNotesBridge } from './releaseNotes'
 // The DEV-ONLY triage surface (see the banner above its methods, below). Types only — the
 // contract lives in src/shared so main, preload and the renderer name one definition.
 import type {
@@ -251,6 +254,8 @@ const api = {
   ...graphicsBridge,
   // …and `restartApp` (./dev.ts), whose handler refuses in a packaged build.
   ...devBridge,
+  // …and the two what's-new methods (./releaseNotes.ts), for the same file-size reason.
+  ...releaseNotesBridge,
 
   /**
    * Is this the headless integration-test channel (`EQ_E2E=1`, src/main/e2e.ts)?

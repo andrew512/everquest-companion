@@ -134,6 +134,20 @@ interface StoreShape {
    * see shared/graphicsPrefs.ts for why a compatibility switch that ships on is not one.
    */
   graphics?: GraphicsPrefs
+  /**
+   * The newest release whose notes this install has been SHOWN (JOS-73; shared/releaseNotes.ts).
+   *
+   * ABSENT MEANS FRESH INSTALL, and that is the whole reason it is an optional key rather than a
+   * defaulted one: a person who installed twenty minutes ago has no news, so the teaser strip
+   * stays away and nothing is marked new. Everything above this value is "new" — which is what
+   * makes a 0.6.3 → 0.8.0 jump mark TWO releases without anybody bookkeeping per release.
+   *
+   * ADDITIVE + OPTIONAL ⇒ no schema bump, no migration — the `exaltPlans` / `rosterEdits`
+   * precedent above. Every reader defaults on a missing key and electron-store rewrites the
+   * whole parsed object, so a store written by an older build loads unchanged and one written
+   * here still opens in a build that predates the feature.
+   */
+  lastSeenNotesVersion?: string
 }
 
 /**
@@ -760,4 +774,34 @@ export function setGraphicsPrefs(patch: Partial<GraphicsPrefs>): GraphicsPrefs {
   const next = normalizeGraphicsPrefs({ ...getGraphicsPrefs(), ...patch })
   store.set('graphics', next)
   return next
+}
+
+// ----- What's new (JOS-73; shared/releaseNotes.ts) -----
+//
+// ONE STRING, and it is the only durable state the whole feature has: which releases are marked,
+// whether the teaser strip appears and what it names are all DERIVED from it by a pure function
+// over the committed notes list (`whatsNewState`). Nothing here is a preferences blob, so there
+// is no normalizer beside it — the shape is a version, and the setter is where that is enforced.
+
+/** The newest release this install has been shown notes for, or null when it never has
+ *  (a fresh install — see StoreShape.lastSeenNotesVersion for what that means). */
+export function getLastSeenNotesVersion(): string | null {
+  const v = store.get('lastSeenNotesVersion')
+  return typeof v === 'string' && v.trim() !== '' ? v : null
+}
+
+/**
+ * Stamp it, or CLEAR it with null — and clearing is not a tidy-up, it is the "pretend fresh
+ * install" state the DEV variant control drives (JOS-73). Returns what is now stored, so no
+ * caller has to assume its write landed.
+ *
+ * VALIDATED HERE because the renderer supplies the string (the `sounds:getData` rule): a plain
+ * MAJOR.MINOR.PATCH, or nothing at all. A junk value would not be dangerous — `parseVersion`
+ * reads anything unparseable as 0.0.0, so every release would simply look new — but a file this
+ * app writes should only ever hold shapes this app can read.
+ */
+export function setLastSeenNotesVersion(version: string | null): string | null {
+  if (version !== null && /^\d+\.\d+\.\d+$/.test(version)) store.set('lastSeenNotesVersion', version)
+  else store.delete('lastSeenNotesVersion')
+  return getLastSeenNotesVersion()
 }

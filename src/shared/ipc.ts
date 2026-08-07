@@ -420,6 +420,19 @@ export const IPC = {
   // while dark). Returns TelemetryPayloadView.
   telemetryPayload: 'telemetry:payload',
 
+  // ---- what's new (JOS-73; shared/releaseNotes.ts) --------------------------------------
+  //
+  // TWO CHANNELS, AND THE NOTES THEMSELVES CROSS NEITHER. `src/shared/releaseNotes.ts` is
+  // committed source that the bundler inlines into the renderer, exactly like the spell DB — so
+  // the only thing main owns here is the ONE store key that says which release this install has
+  // already been shown. Everything the user sees is derived from that string by a pure function.
+  // renderer -> main: the stored last-seen release, or null on a fresh install. Returns string|null.
+  releaseNotesSeenGet: 'releaseNotes:getSeen',
+  // renderer -> main: stamp it (the panel, on open) or CLEAR it with null (the DEV variant
+  // control's "pretend fresh install"). Arg: string|null, validated at the handler. Returns
+  // what is now stored.
+  releaseNotesSeenSet: 'releaseNotes:setSeen',
+
   // ---- performance HUD + startup profile (docs/plans/perf-profiling.md) ----------------
   //
   // NOTHING ON THIS CHANNEL SET COSTS ANYTHING WHILE THE HUD IS OFF. Main creates no timer at

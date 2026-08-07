@@ -27,6 +27,7 @@ import { registerOutputsIpc } from './outputs'
 import { registerPerfIpc } from './perf'
 import { registerPlannerIpc } from './planner'
 import { registerPresenceIpc } from './presence'
+import { registerReleaseNotesIpc } from './releaseNotes'
 import { registerRosterIpc } from './roster'
 import { registerShareIpc } from './share'
 import { registerSoundsIpc } from './sounds'
@@ -64,6 +65,7 @@ export function registerIpc(): void {
   registerTelemetryIpc()
   registerPerfIpc()
   registerGraphicsIpc()
+  registerReleaseNotesIpc()
   // Registered in EVERY build, and a no-op in a packaged one — the refusal lives inside the
   // handler rather than around this call, so it is a decision a test can watch being made.
   // See ./dev.ts.

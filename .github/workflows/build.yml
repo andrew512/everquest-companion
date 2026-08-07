@@ -188,6 +188,12 @@ jobs:
       - name: Test
         run: npm test
 
+      # A tag may not ship without release notes: the app's What's new panel reads committed
+      # source, so a missing entry is silence rather than a crash. See the script's header.
+      - name: Check release notes
+        run: node --import tsx scripts/check-release-notes.mjs $env:GITHUB_REF_NAME
+        shell: pwsh
+
       # --- Stamp the version from the tag ------------------------------------
       # CI-only rewrite (never committed): the tag IS the version. A v1.2.3 push
       # builds 1.2.3 regardless of what package.json says, so the two cannot drift.
