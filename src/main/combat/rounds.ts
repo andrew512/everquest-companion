@@ -112,12 +112,21 @@ export interface SwingRecord {
   modifiers: readonly string[]
 }
 
-/** Why a swing is not part of an attack round, or null when it is one. PURE. */
-export function roundExclusion(rec: {
-  verb: string
-  modifiers: readonly string[]
-}): RoundExclusion | null {
-  const byVerb = EXCLUDED_VERBS.get(rec.verb.toLowerCase())
+/**
+ * Why a swing is not part of an attack round, or null when it is one. PURE.
+ *
+ * `verbLower` is the caller's already-lowercased verb when it has one (JOS-59 — `RoundAccum.add`
+ * needs the same string a statement later, and lowercasing it twice per swing on a 1.4M-event
+ * fold is a measurable cost for no meaning). Absent, this lowercases it itself, exactly as before.
+ */
+export function roundExclusion(
+  rec: {
+    verb: string
+    modifiers: readonly string[]
+  },
+  verbLower?: string
+): RoundExclusion | null {
+  const byVerb = EXCLUDED_VERBS.get(verbLower ?? rec.verb.toLowerCase())
   if (byVerb !== undefined) return byVerb
   for (const m of rec.modifiers) {
     const byMod = EXTRA_SWING_MODS.get(m.toLowerCase())
@@ -139,6 +148,14 @@ export function roundBucket(swings: number): number {
   return Math.min(ROUND_BUCKETS, Math.max(1, swings)) - 1
 }
 
+/** One (verb, second) round after the per-target lanes were collapsed. */
+interface CollapsedRound {
+  verb: string
+  skill: string
+  seq: number[]
+  targets: number
+}
+
 /** One grouped attack round. */
 export interface RoundGroup {
   verb: string
@@ -151,12 +168,21 @@ export interface RoundGroup {
   targets: number
 }
 
-/** A per-target swing sequence being assembled for one (verb, second). */
+/**
+ * A per-target swing sequence being assembled for one (verb, second).
+ *
+ * `seq` holds NUMBERS (JOS-59): a landed swing contributes its amount, an avoided one contributes
+ * -1. It used to hold the string forms ('145' / 'x'), which meant a `String(amount)` allocation
+ * per swing purely to be joined into a signature that most seconds never need — the overwhelming
+ * majority hold ONE lane, and a single lane cannot be a fan-out. Amounts reaching a round are
+ * always > 0 (route() drops anything else) so -1 can never collide with one, and joining numbers
+ * produces exactly the grouping the string tokens produced.
+ */
 interface PendingLane {
   verb: string
   skill: string
-  /** ordered per-swing signature tokens ('145', or 'x' for an avoided swing). */
-  seq: string[]
+  /** ordered per-swing signature tokens (the amount, or -1 for an avoided swing). */
+  seq: number[]
 }
 
 /**
@@ -198,9 +224,9 @@ export function groupRounds(swings: readonly SwingRecord[]): RoundGroup[] {
   return out
 }
 
-/** One swing's contribution to a fan-out signature: its amount, or 'x' when it was avoided. */
-function signatureToken(s: { amount: number; avoided: boolean }): string {
-  return s.avoided ? 'x' : String(s.amount)
+/** One swing's contribution to a fan-out signature: its amount, or -1 when it was avoided. */
+function signatureToken(s: { amount: number; avoided: boolean }): number {
+  return s.avoided ? -1 : s.amount
 }
 
 /**
@@ -212,10 +238,13 @@ function signatureToken(s: { amount: number; avoided: boolean }): string {
  * verb open at once, so a signature-only key merged a 163-damage backstab with a 163-damage
  * slash in the same second into one "fanned" round — two real rounds silently becoming one.
  * (`groupRounds` partitions by verb before calling this, so the key costs it nothing.)
+ *
+ * ONE LANE IS NEVER A FAN-OUT, so `RoundAccum.flush` short-circuits that case without calling
+ * this at all — it is the case almost every second of a real log is (JOS-59).
  */
-function collapseFanOut(lanes: readonly PendingLane[]): { verb: string; skill: string; seq: string[]; targets: number }[] {
-  const bySig = new Map<string, { verb: string; skill: string; seq: string[]; targets: number }>()
-  const out: { verb: string; skill: string; seq: string[]; targets: number }[] = []
+function collapseFanOut(lanes: Iterable<PendingLane>): CollapsedRound[] {
+  const bySig = new Map<string, CollapsedRound>()
+  const out: CollapsedRound[] = []
   for (const lane of lanes) {
     const sig = `${lane.verb}|${lane.seq.join(',')}`
     const seen = bySig.get(sig)
@@ -273,7 +302,8 @@ export class RoundAccum {
 
   /** Fold one logged swing attempt. Excluded swings are TALLIED, never dropped silently. */
   add(rec: SwingRecord): void {
-    const why = roundExclusion(rec)
+    const verb = rec.verb.toLowerCase()
+    const why = roundExclusion(rec, verb)
     if (why !== null) {
       this.excluded[why] += 1
       return
@@ -283,23 +313,40 @@ export class RoundAccum {
       this.flush()
       this.openSecond = sec
     }
-    const verb = rec.verb.toLowerCase()
     const key = `${verb}|${rec.target.trim().toLowerCase()}`
-    const lane = this.pending.get(key) ?? { verb, skill: rec.skill, seq: [] }
+    const lane = this.pending.get(key)
+    if (lane === undefined) {
+      this.pending.set(key, { verb, skill: rec.skill, seq: [signatureToken(rec)] })
+      return
+    }
     lane.skill = rec.skill
     lane.seq.push(signatureToken(rec))
-    this.pending.set(key, lane)
   }
 
-  /** Close the open second into the counters. Idempotent on an empty pending map. */
+  /**
+   * Close the open second into the counters. Idempotent on an empty pending map.
+   *
+   * THE ONE-LANE FAST PATH (JOS-59) is the case, not an edge: one attacker swinging one verb at
+   * one defender inside one second is what a log is overwhelmingly made of, and a single lane
+   * cannot be a fan-out of anything. It skips the signature map and the `seq.join(',')` that
+   * `collapseFanOut` would build only to look it up once. The map is CLEARED rather than replaced
+   * — `count()` reads `seq.length` and keeps no reference to the lane.
+   */
   private flush(): void {
-    if (this.pending.size === 0) return
-    for (const g of collapseFanOut([...this.pending.values()])) this.count(this.lanes, g)
-    this.pending = new Map()
+    const n = this.pending.size
+    if (n === 0) return
+    if (n === 1) {
+      for (const lane of this.pending.values()) {
+        this.count(this.lanes, { verb: lane.verb, skill: lane.skill, seq: lane.seq, targets: 1 })
+      }
+    } else {
+      for (const g of collapseFanOut(this.pending.values())) this.count(this.lanes, g)
+    }
+    this.pending.clear()
   }
 
   /** Fold ONE collapsed round into a lane tally (shared by flush and the pure snapshot). */
-  private count(into: Map<string, RoundLaneTally>, g: { verb: string; skill: string; seq: string[]; targets: number }): void {
+  private count(into: Map<string, RoundLaneTally>, g: CollapsedRound): void {
     const lane = into.get(g.verb) ?? newLane(g.verb, g.skill)
     lane.skill = g.skill
     lane.buckets[roundBucket(g.seq.length)] += 1
@@ -318,7 +365,7 @@ export class RoundAccum {
     if (this.pending.size === 0) return [...this.lanes.values()].map(cloneLane)
     const copy = new Map<string, RoundLaneTally>()
     for (const [k, v] of this.lanes) copy.set(k, cloneLane(v))
-    for (const g of collapseFanOut([...this.pending.values()])) this.count(copy, g)
+    for (const g of collapseFanOut(this.pending.values())) this.count(copy, g)
     return [...copy.values()]
   }
 

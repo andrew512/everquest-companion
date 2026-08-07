@@ -18,7 +18,7 @@
 import { idKey } from '../log/parser'
 import { damageCategory } from './taxonomy'
 import { evalClosure, ensureEncounter, finalizeCurrent, finalizeZoneSession } from './lifecycle'
-import { route, routeHeal, routeMiss, routeMitigation, routeResist, verdict } from './routing'
+import { route, routeHeal, routeMiss, routeMitigation, routeResist } from './routing'
 import { SEC_ANALYTICS, SEC_DISPATCH } from './foldProbe'
 import {
   applyStance,

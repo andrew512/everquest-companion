@@ -87,18 +87,25 @@ function sourceLine(r: SourceView): string {
  */
 const FIGHT_DETAIL = 25
 
+/** The per-source drill for one selectable scope, as the UI would resolve it. */
+function drill(combat: CombatEngine, id: string, now: number): string[] {
+  const snap = combat.snapshot(now, { selectedId: id, maxSegments: 1 })
+  const out: string[] = []
+  for (const r of snap.selected?.entities ?? []) out.push(sourceLine(r))
+  for (const r of snap.selected?.incoming ?? []) out.push(sourceLine(r))
+  return out
+}
+
 /** Every scope the engine can be asked for, each with its per-source damage. */
 function scopes(combat: CombatEngine, now: number): string[] {
   const out: string[] = []
   const base = combat.snapshot(now, { maxSegments: 100_000 })
   for (const zs of base.zoneSessions) {
-    const snap = combat.snapshot(now, { selectedId: zs.id, maxSegments: 1 })
     out.push(
       `  zoneSession ${zs.id} | ${zs.zone} | total ${String(zs.total)} | ` +
         `start ${String(zs.startTs)} | end ${String(zs.endTs)}`
     )
-    for (const r of snap.selected?.entities ?? []) out.push(sourceLine(r))
-    for (const r of snap.selected?.incoming ?? []) out.push(sourceLine(r))
+    out.push(...drill(combat, zs.id, now))
   }
   let detailed = 0
   for (const seg of base.segments) {
@@ -110,9 +117,7 @@ function scopes(combat: CombatEngine, now: number): string[] {
     )
     if (detailed >= FIGHT_DETAIL) continue
     detailed += 1
-    const snap = combat.snapshot(now, { selectedId: seg.id, maxSegments: 1 })
-    for (const r of snap.selected?.entities ?? []) out.push(sourceLine(r))
-    for (const r of snap.selected?.incoming ?? []) out.push(sourceLine(r))
+    out.push(...drill(combat, seg.id, now))
   }
   return out
 }

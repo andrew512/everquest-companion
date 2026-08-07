@@ -62,8 +62,27 @@ export function idKey(name: string): string {
  * only the KEY is canonicalized.
  */
 const RANK_TAIL_RE = / (?:I|II|III|IV|V|VI|VII|VIII|IX|X)$/
+
+/**
+ * MEMOIZED, and the measurement is why (JOS-59). This is a PURE function of its argument — a
+ * trim, a regex, a trim and a lowercase — and it is called from the parser on every cast-shaped
+ * line AND from the buffs module's per-event hygiene sweep, once per live buff instance. On the
+ * owner's log the sweep alone asks it tens of millions of times, and it was 1.8% of the whole
+ * fold's self time.
+ *
+ * The domain is the set of SPELL AND SKILL NAMES a log prints, which is closed and small (the
+ * shipped DB carries ~1.9k). The cap is a guard against a pathological input stream rather than
+ * an expectation: past it the cache stops GROWING and every further call simply computes the
+ * answer, so behaviour is identical either way and memory cannot run away.
+ */
+const CANON_CACHE = new Map<string, string>()
+const CANON_CACHE_MAX = 20_000
 export function spellCanonKey(spell: string): string {
-  return spell.trim().replace(RANK_TAIL_RE, '').trim().toLowerCase()
+  const hit = CANON_CACHE.get(spell)
+  if (hit !== undefined) return hit
+  const key = spell.trim().replace(RANK_TAIL_RE, '').trim().toLowerCase()
+  if (CANON_CACHE.size < CANON_CACHE_MAX) CANON_CACHE.set(spell, key)
+  return key
 }
 
 export function cleanMob(s?: string): string | undefined {
