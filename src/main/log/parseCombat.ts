@@ -181,7 +181,8 @@ export function meleeVerbBase(verb: string): string {
  * ABILITY the class list grants gets its own row, because a player who pressed a button wants to
  * see what it did. Each entry below is evidence-verified against `src/main/data/classes.json`'s
  * skill→class table (Backstab ROG, Bash PAL/SHD/WAR, Kick BST/MNK/RNG/WAR, Frenzy BER,
- * Cleave WAR) — never a matcher over verb spelling, which would happily promote `slice`.
+ * Cleave WAR, Smite PAL) — never a matcher over verb spelling, which would happily promote
+ * `slice`.
  *
  * CLEAVE (JOS-77, user report 01KZCZ3BYRQRD4JQJ0PW7FQRG5 — "the combat parser does not appear
  * to capture cleave, or at a minimum it's not split out like Frenzy, Bash and Kick are"). The
@@ -194,10 +195,22 @@ export function meleeVerbBase(verb: string): string {
  * carries 20,334 INCOMING ones from mobs. A verb that never once prints for a player who lacks
  * the skill, however hard he swings, is gated on the skill and not on the damage.
  *
- * KNOWN, DELIBERATE GAP: `smite` (PAL) is the same shape and still reads "Melee" — 13,968 self
- * swings and 280 `better at Smite!` ticks in the owner's log. It is left alone here because it
- * is nobody's report and its own measurement; `tests/specialAttackWindows.test.mts` (W48)
- * already pins that absence as a documented gap rather than an oversight.
+ * SMITE (JOS-81 — cleave's twin, closing the gap this comment used to describe). `Smite` is a
+ * PAL-only innate at level 9 in the class table, and the owner IS a paladin, so unlike cleave
+ * the evidence is his own swings: 13,984 `You smite` lines and 1,223 third-person ones (all of
+ * them other players' — Lizgar and friends), every one of them reading "Melee" until now.
+ * WHAT PROVES IT IS A SKILL AND NOT A WEAPON VERB is the skill-up stream, and it is decisive:
+ * `You have become better at Smite!` ticks 280 times, whereas a weapon verb NEVER ticks under
+ * its own name — a slash ticks `1H Slashing`, a crush `1H Blunt`, a pierce `1H Piercing`, a
+ * punch `Hand to Hand` (whole-log enumeration of all 56 skill-up names, 2026-08-06). Smite ticks
+ * beside Kick, Bash, Backstab and Frenzy, which is exactly the company this table keeps.
+ *
+ * THE SKILL LANE AND THE SPELL LANE SHARE A STEM AND MUST NEVER MERGE. `Smiting Strike` is the
+ * paladin's proc — `You hit <mob> for 259 points of magic damage by Smiting Strike.`, 15,016
+ * lines — and it is a SPELL: it comes in on the `by <Spell>` path, carries no melee verb at all
+ * (`verb` is undefined by construction), lands in the `spell` category and has always had its
+ * own named row. This function never sees it. The two are one second apart in the log and one
+ * letter apart in the eye; "Smite" is the melee verb only.
  */
 export function meleeSkill(verb: string): string {
   const v = verb.toLowerCase()
@@ -205,6 +218,7 @@ export function meleeSkill(verb: string): string {
   if (v.startsWith('bash')) return 'Bash'
   if (v.startsWith('kick')) return 'Kick'
   if (v.startsWith('cleav')) return 'Cleave'
+  if (v.startsWith('smite')) return 'Smite'
   if (v.startsWith('frenz')) return 'Frenzy'
   if (v.startsWith('flurr')) return 'Flurry'
   return 'Melee'

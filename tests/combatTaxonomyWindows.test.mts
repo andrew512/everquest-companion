@@ -300,10 +300,15 @@ test('W-res1: resist is a lane + a rate, and does NOT move the damage total (tri
 
 /**
  * min is over LANDED amounts only. This window is the proof: nine avoided swings and one
- * fully-resisted spell, none of which carries an amount — so the melee lane's min stays the
- * real smallest hit (the 2-damage smite) and the resist-only mez lane reports NO min at all
- * rather than a fabricated 0. Hand-read from RESIST_WINDOW:
- *   'Melee' (slash 83 + smite 2)  → min  2 / max  83, plus 9 misses
+ * fully-resisted spell, none of which carries an amount — so each lane's min stays the real
+ * smallest hit it landed and the resist-only mez lane reports NO min at all rather than a
+ * fabricated 0. Hand-read from RESIST_WINDOW:
+ *   'Melee' (slash 83)            → min  83 / max  83, and it carries ALL 9 misses — an
+ *                                   avoided swing lanes 'Melee' whatever verb it swung
+ *                                   (routing.ts missFold), including the whiffed bash/kick
+ *   'Smite' (2)                   → min   2 / max   2  — its own lane since JOS-81; it used to
+ *                                   be the 2 that made Melee's min 2, which is why this test
+ *                                   moved rather than broke
  *   'Kick'  (106, 106)            → min 106 / max 106  (min === max)
  *   'Mesmerization III'           → 0 hits, 1 resist   → min undefined
  */
@@ -313,8 +318,11 @@ test('W-res1: misses and resists never fabricate a min of 0', () => {
   const you = snap.selected!.entities.find((e) => e.id === 'you')!
   const top = new Map(you.skills.map((s) => [s.name, s]))
   assert.equal(top.get('Melee')?.misses, 9, 'the whiffs bucket under the Melee lane')
-  assert.equal(top.get('Melee')?.min, 2, 'nine whiffs did NOT pull the minimum to 0')
+  assert.equal(top.get('Melee')?.min, 83, 'nine whiffs did NOT pull the minimum to 0')
   assert.equal(top.get('Melee')?.max, 83)
+  assert.equal(top.get('Smite')?.min, 2, 'the smallest landed hit in the window keeps its lane')
+  assert.equal(top.get('Smite')?.max, 2)
+  assert.equal(top.get('Smite')?.misses, 0, 'no smite was avoided in this window')
   assert.equal(top.get('Kick')?.min, 106)
   assert.equal(top.get('Kick')?.max, 106)
   const mez = you.categories.find((c) => c.category === 'spell')!.skills.find((s) => s.name === 'Mesmerization III')!
