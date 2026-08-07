@@ -22,6 +22,8 @@ import { getBossData } from '../../data'
 import { useBossKills } from './useBossKills'
 import type { TargetStatus } from './bossStatus'
 import { CategorySection, LoadoutSections } from './BossSections'
+import { untilReset } from './lockout'
+import { useLockoutWeek } from './useLockoutWeek'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
 
@@ -31,18 +33,29 @@ const CATEGORY_ORDER = ['Open World', 'Plane of Fear', 'Plane of Hate', 'Plane o
 const DENSITY_KEY = 'eq.bossDensity'
 type Density = 'compact' | 'comfortable'
 
+/**
+ * The two readings of the same roster (JOS-74). OVERALL is the default and is the view this tab
+ * has always been — everything you have ever killed. THIS WEEK is the loot-lockout view: of those
+ * kills, the ones inside the current lockout window (lockout.ts). Deliberately NOT persisted —
+ * the roster's job is progression, so a new session opens on progression.
+ */
+type Mode = 'overall' | 'week'
+
 const bosses = getBossData()
 
-// Search / defeated-only / grouping / density, plus the running "N of M defeated" tally.
+// Mode / search / defeated-only / grouping / density, plus the running tally on the right.
 function BossToolbar({
+  mode,
+  onModeChange,
   query,
   onQueryChange,
   filters,
   density,
   onDensityChange,
-  defeated,
-  total
+  tally
 }: {
+  mode: Mode
+  onModeChange: (m: Mode | null) => void
   query: string
   onQueryChange: (q: string) => void
   /** The two switches, bundled so the toolbar keeps a readable parameter list. */
@@ -54,11 +67,19 @@ function BossToolbar({
   }
   density: Density
   onDensityChange: (d: Density | null) => void
-  defeated: number
-  total: number
+  tally: string
 }): JSX.Element {
   return (
     <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+      <ToggleButtonGroup
+        size="small"
+        exclusive
+        value={mode}
+        onChange={(_e, v: Mode | null) => onModeChange(v)}
+      >
+        <ToggleButton value="overall">Overall</ToggleButton>
+        <ToggleButton value="week">This week</ToggleButton>
+      </ToggleButtonGroup>
       <TextField
         size="small"
         label="Search target"
@@ -95,7 +116,7 @@ function BossToolbar({
       </ToggleButtonGroup>
       <Box sx={{ flexGrow: 1 }} />
       <Typography variant="body2" color="text.secondary">
-        {defeated} / {total} defeated · badge = highest instance tier
+        {tally}
       </Typography>
     </Stack>
   )
@@ -106,6 +127,7 @@ function BossToolbar({
  *                   longer owns a detail surface of its own — one mob, one page, everywhere.
  */
 export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => void }): JSX.Element {
+  const [mode, setMode] = useState<Mode>('overall')
   const [query, setQuery] = useState('')
   const [defeatedOnly, setDefeatedOnly] = useState(false)
   // Sectioning: progression category (the default — it is what the roster is for) or the class
@@ -167,13 +189,29 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
     )
   }, [filtered])
 
+  const { week, lockOf } = useLockoutWeek(mode === 'week')
+  const locked = statuses.filter((s) => lockOf(s).length > 0).length
   const defeated = statuses.filter((s) => s.killed).length
-  const section = { compact, minCol: compact ? 116 : 180, flashing, onOpenMob }
+  const tally =
+    mode === 'week'
+      ? `${locked} / ${statuses.length} locked this week · resets in ${untilReset(week)}`
+      : `${defeated} / ${statuses.length} defeated · badge = highest instance tier`
+  const section = {
+    compact,
+    minCol: compact ? 116 : 180,
+    flashing,
+    onOpenMob,
+    ...(mode === 'week' ? { lockOf } : {})
+  }
 
   return (
     <Stack spacing={1.5} sx={{ height: '100%', position: 'relative' }}>
       {burst != null && <Confetti key={burst} onDone={() => setBurst(null)} />}
       <BossToolbar
+        mode={mode}
+        onModeChange={(m) => {
+          if (m) setMode(m)
+        }}
         query={query}
         onQueryChange={setQuery}
         filters={{
@@ -184,8 +222,7 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
         }}
         density={density}
         onDensityChange={setDensityPersist}
-        defeated={defeated}
-        total={statuses.length}
+        tally={tally}
       />
 
       <Box sx={{ flexGrow: 1, overflow: 'auto' }}>

@@ -10,10 +10,15 @@
 
 /** `ts` is epoch millis. A falsy/0 ts renders as empty (unknown timestamp). */
 
-/** Date only, local: e.g. "8/1/2026". */
-export function formatDate(ts: number): string {
+/**
+ * Date only, local: e.g. "8/1/2026". `opts` is additive — omitted, the output is exactly the
+ * runtime's default short date it always was; the weekly-lockout view passes
+ * `{ weekday: 'short', month: 'numeric', day: 'numeric' }` because inside a seven-day window the
+ * day of the week is the useful referent and the year is noise.
+ */
+export function formatDate(ts: number, opts?: Intl.DateTimeFormatOptions): string {
   if (!ts) return ''
-  return new Date(ts).toLocaleDateString()
+  return new Date(ts).toLocaleDateString(undefined, opts)
 }
 
 /**
