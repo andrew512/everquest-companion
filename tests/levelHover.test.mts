@@ -30,8 +30,11 @@ import type { LevelSegment } from '../src/renderer/src/features/leveling/levelSe
 const T0 = Date.parse('2026-07-28T12:00:00')
 const H = 3_600_000
 
-/** The AA chart's scale: domain = first..last point, pad 8, no trailing pad. */
-const aaScale: ChartScale = { t0: T0, t1: T0 + 10 * H, w: CHART_W, padX: 8 }
+/** The AA chart's scale: domain = first..last point, pad 8, no trailing pad. `bucketMs` is the
+ *  window's sampling grid (chartWindow.ts); nothing in THIS module's arithmetic reads it, which
+ *  is the point — the X mapping is the domain and the pad, and a timescale change cannot move a
+ *  pixel except by moving `t0`/`t1`. */
+const aaScale: ChartScale = { t0: T0, t1: T0 + 10 * H, bucketMs: 60_000, w: CHART_W, padX: 8 }
 
 test('xOf reproduces the inline arithmetic the charts drew with, endpoints included', () => {
   // The pre-extraction body, verbatim: pad + ((t - t0) / Math.max(1, t1 - t0)) * (W - 2*pad).
@@ -45,13 +48,13 @@ test('xOf reproduces the inline arithmetic the charts drew with, endpoints inclu
 })
 
 test('a degenerate (zero-width) domain does not divide by zero', () => {
-  const flat: ChartScale = { t0: T0, t1: T0, w: CHART_W, padX: 8 }
+  const flat: ChartScale = { t0: T0, t1: T0, bucketMs: 1000, w: CHART_W, padX: 8 }
   assert.equal(xOf(flat, T0), 8)
   assert.ok(Number.isFinite(xOf(flat, T0 + 1)), 'still finite one ms past a flat domain')
 })
 
 test('tOf is the exact inverse of xOf, in both directions', () => {
-  const scale: ChartScale = { t0: T0, t1: T0 + 37 * H, w: CHART_W, padX: 8 }
+  const scale: ChartScale = { t0: T0, t1: T0 + 37 * H, bucketMs: 300_000, w: CHART_W, padX: 8 }
   for (const t of [T0, T0 + 1234, T0 + 11 * H, T0 + 37 * H]) {
     assert.ok(Math.abs(tOf(scale, xOf(scale, t)) - t) < 1e-6, `round-trip ts ${t}`)
   }

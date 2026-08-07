@@ -28,6 +28,9 @@ import type { ProgressionSnap } from '@shared/types'
 // rule exists to prevent. It is a pure, node-testable function with only a type import.
 import { zoneKey } from '../mobs/mobZone'
 import { CHART_W, xOf, type ChartScale } from './levelChartGeometry'
+// The window/bucket derivation (JOS-71). It knows nothing about a snapshot — this module owns
+// "where does the data start and end", that one owns "which slice of it are we looking at".
+import { windowFor, type TimescaleId } from './chartWindow'
 
 /** The band strip's height, in viewBox units. */
 export const BAND_H = 8
@@ -35,13 +38,6 @@ export const BAND_H = 8
 export const BAND_PAD = BAND_H + 2
 /** The horizontal inset both charts draw with. One value, so one domain maps to one pixel. */
 export const PAD_X = 8
-/**
- * Trailing pad on the shared domain, as a fraction of its span. Preserved from the level
- * chart's own former domain: without it the CURRENT level is a bare endpoint on the right
- * edge instead of reading as the plateau it is.
- */
-const TRAILING_FRAC = 0.04
-
 /**
  * OUR palette, not the game's (see the header). Twelve hues chosen to stay distinguishable
  * side by side in an 8px strip on the dark theme. This is the ONLY place in this feature
@@ -122,17 +118,21 @@ function widen(bounds: { lo: number; hi: number }, ts: number): void {
   if (ts > bounds.hi) bounds.hi = ts
 }
 
+/** The first and last instant this character's history holds. `hi - lo` is the span every
+ *  timescale decision is measured against (chartWindow.ts `availableTimescales`). */
+export interface DataBounds {
+  lo: number
+  hi: number
+}
+
 /**
- * THE ONE TIME DOMAIN (plan §6.1). Both charts used to compute their own `t0/t1` from their
- * own points, so the AA chart and the level chart were on DIFFERENT x axes: a zone band or a
- * drag selection at the same pixel meant two different instants. This computes one domain
- * from every progression timestamp plus whatever series the caller draws (level dings, AA
- * gains), and both charts take it as a prop.
+ * WHERE THE DATA STARTS AND ENDS: the extremes of every progression timestamp plus whatever
+ * series the caller draws (level dings, AA gains).
  *
  * Returns null when nothing has a timestamp at all — the caller renders its empty state
  * rather than a chart over a fabricated axis.
  */
-export function chartDomain(snap: ProgressionSnap, extraTs: readonly number[]): ChartScale | null {
+export function dataBounds(snap: ProgressionSnap, extraTs: readonly number[]): DataBounds | null {
   const b = { lo: Infinity, hi: -Infinity }
   for (const ts of extraTs) widen(b, ts)
   // Columns are ascending (log order is time order), so the ends are the extremes.
@@ -143,9 +143,26 @@ export function chartDomain(snap: ProgressionSnap, extraTs: readonly number[]): 
     }
   }
   widen(b, snap.lastTs)
-  if (!Number.isFinite(b.lo) || !Number.isFinite(b.hi)) return null
-  const span = Math.max(1, b.hi - b.lo)
-  return { t0: b.lo, t1: b.hi + span * TRAILING_FRAC, w: CHART_W, padX: PAD_X }
+  return Number.isFinite(b.lo) && Number.isFinite(b.hi) ? { lo: b.lo, hi: b.hi } : null
+}
+
+/**
+ * THE ONE TIME DOMAIN (plan §6.1). Both charts used to compute their own `t0/t1` from their
+ * own points, so the AA chart and the level chart were on DIFFERENT x axes: a zone band or a
+ * drag selection at the same pixel meant two different instants. This computes one domain
+ * from `dataBounds`, cut to the requested TIMESCALE (JOS-71), and both charts take it as a prop.
+ *
+ * The default is `full`, which is the domain these charts have always drawn — so a caller that
+ * never mentions a timescale, and a user who never touches the control, get exactly what they
+ * had. Returns null when there is nothing to draw over.
+ */
+export function chartDomain(
+  snap: ProgressionSnap,
+  extraTs: readonly number[],
+  scale: TimescaleId = 'full'
+): ChartScale | null {
+  const b = dataBounds(snap, extraTs)
+  return b ? { ...windowFor(b.lo, b.hi, scale), w: CHART_W, padX: PAD_X } : null
 }
 
 /** The zone columns this module reads. `ProgressionSnap` is structurally assignable. */

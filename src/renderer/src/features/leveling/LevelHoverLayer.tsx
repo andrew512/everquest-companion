@@ -126,7 +126,10 @@ function aaContent(points: readonly AaPoint[], ts: number, gainIdx: number): Con
   const rows: TooltipRow[] = []
   if (gainIdx >= 0) {
     const p = points[gainIdx]
-    const gained = p.y - (gainIdx > 0 ? points[gainIdx - 1].y : 0)
+    // The gain LINE's own number, never a difference against the previous drawn point: a
+    // windowed series (chartWindow.ts) opens on an anchor gain with nothing in front of it, and
+    // `p.y - 0` there would report the whole cumulative total as a single gain.
+    const gained = p.gain ?? p.y - (gainIdx > 0 ? points[gainIdx - 1].y : 0)
     rows.push({
       label: `+${gained} AA`,
       value: p.nowHave != null ? `${p.nowHave} unspent at the time` : formatDateTime(p.ts)

@@ -44,8 +44,16 @@ export interface ChartChrome {
  */
 const WRAP_STYLE: CSSProperties = { position: 'relative', touchAction: 'none', userSelect: 'none' }
 
-/** z-order reserved across the chart stack: 1 = range band, 2 = crosshair, 3 = tooltip. */
-const SEL_LAYER: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 1 }
+/**
+ * z-order reserved across the chart stack: 1 = range band, 2 = crosshair, 3 = tooltip.
+ *
+ * `overflow:hidden` is the timescale guard (JOS-71): the band is positioned in PERCENT of the
+ * domain, so a selection that ends up outside a narrower window would paint at -400% — over the
+ * neighbouring panels. The view drops a selection the new window cannot contain, and this makes
+ * that a structural impossibility rather than a promise. The edge tick labels sit inside the
+ * band's own edges, so nothing legitimate is clipped.
+ */
+const SEL_LAYER: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 1, overflow: 'hidden' }
 const TICK: CSSProperties = { position: 'absolute', bottom: 0, fontSize: 9, lineHeight: '11px', whiteSpace: 'nowrap' }
 
 /**
@@ -155,7 +163,20 @@ export function ZoneLegendStrip({
   )
 }
 
-/** Simple filled area chart of a cumulative series over time. */
+/**
+ * Simple filled area chart of a cumulative series over time.
+ *
+ * `points` is the WINDOWED series (chartWindow.ts `visibleFrom`): everything inside the chosen
+ * timescale plus the anchor gain that preceded it. One point is enough to draw — the trailing
+ * plateau below carries it across the window — because at a narrow scale "no gains in this hour"
+ * is a real answer and an unmounting chart would be a worse one. Nothing at all still draws
+ * nothing.
+ *
+ * THE FLOOR IS THE TOTAL BEFORE THE WINDOW OPENED, so a zoomed view shows the gains it contains
+ * instead of a flat line pinned to the top of a 3,000-point cumulative. At full history that
+ * value is 0 — the anchor IS the first gain line, so subtracting its own `gain` lands on zero —
+ * which is why the full-history picture is unchanged to the pixel.
+ */
 export function AreaChart({
   points,
   color,
@@ -165,15 +186,18 @@ export function AreaChart({
   color: string
   chrome: ChartChrome
 }): JSX.Element | null {
-  if (points.length < 2) return null
+  if (points.length === 0) return null
   const pad = PAD_X
   // The X mapping is the SHARED scale, so the hover layer below reads the cursor back
   // through the same domain the level chart plots and neither can drift from the other.
   const scale = chrome.scale
   const padTop = pad + BAND_PAD
-  const yMax = points[points.length - 1].y || 1
+  const first = points[0]
+  const base = Math.max(0, first.y - (first.gain ?? first.y))
+  const top = points[points.length - 1].y
+  const ySpan = Math.max(1, top - base)
   const x = (t: number): number => xOf(scale, t)
-  const y = (v: number): number => H - pad - (v / yMax) * (H - pad - padTop)
+  const y = (v: number): number => H - pad - ((v - base) / ySpan) * (H - pad - padTop)
   const line = points.map((p) => `${x(p.ts).toFixed(1)},${y(p.y).toFixed(1)}`).join(' ')
   // Hold the curve flat to the end of the shared domain. Cumulative AA is a STEP function
   // between gain lines (that is what `cumulativeAt` reads), so the plateau is what the
@@ -186,6 +210,18 @@ export function AreaChart({
         <ZoneBandStrip bands={chrome.bands} scale={scale} />
         <polygon points={area} fill={color} opacity={0.18} />
         <polyline points={`${line} ${tail}`} fill="none" stroke={color} strokeWidth={2} />
+        {/* Drawn exactly when the floor is NOT zero, which is exactly when it needs stating: a
+            windowed view whose baseline is the total you already had. */}
+        {base > 0 && (
+          <>
+            <text x={PAD_X} y={padTop} fill={color} fontSize={10} opacity={0.7}>
+              {top.toLocaleString()}
+            </text>
+            <text x={PAD_X} y={H - pad - 2} fill={color} fontSize={10} opacity={0.7}>
+              {base.toLocaleString()}
+            </text>
+          </>
+        )}
       </svg>
       <SelectionBand scale={scale} range={chrome.range} color={color} />
       <LevelHoverLayer
@@ -277,8 +313,12 @@ export function LevelStepChart({
   aaPoints: AaPoint[]
   chrome: ChartChrome
 }): JSX.Element | null {
+  // `segments` is the WINDOWED run list (chartWindow.ts `visibleSegments`). One ding is enough
+  // to draw: the anchor plus the trailing plateau is the honest picture of "you held this level
+  // the whole hour", and a chart that unmounted at a narrow timescale would answer a question
+  // with a blank. Nothing at all still draws nothing.
   const all = segments.flatMap((s) => s.points)
-  if (all.length < 2) return null
+  if (all.length === 0) return null
   const padTop = 14 + BAND_PAD
   const padBottom = 8
   const scale = chrome.scale
@@ -324,9 +364,13 @@ export function LevelStepChart({
         <text x={PAD_X} y={padTop} fill={color} fontSize={10} opacity={0.7}>
           {hi}
         </text>
-        <text x={PAD_X} y={floor - 2} fill={color} fontSize={10} opacity={0.7}>
-          {lo}
-        </text>
+        {/* One visible level means one label: a window that contains no ding is a plateau, and
+            printing the same number top and bottom would read as a range that isn't one. */}
+        {lo !== hi && (
+          <text x={PAD_X} y={floor - 2} fill={color} fontSize={10} opacity={0.7}>
+            {lo}
+          </text>
+        )}
       </svg>
       <SelectionBand scale={scale} range={chrome.range} color={color} />
       <LevelHoverLayer

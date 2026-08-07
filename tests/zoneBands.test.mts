@@ -147,7 +147,7 @@ test('zoneColor is stable and agrees whichever spelling the caller holds', () =>
 })
 
 test('bandRects drops sub-pixel bands from the DRAWING only', () => {
-  const scale = { t0: T0, t1: T0 + 24 * H, w: CHART_W, padX: 8 }
+  const scale = { t0: T0, t1: T0 + 24 * H, bucketMs: 300_000, w: CHART_W, padX: 8 }
   // 24h across ~704 usable units ⇒ ~2 minutes per unit. A 20-second visit is sub-pixel.
   const bands = mergeZoneBands(
     cols(
