@@ -110,9 +110,11 @@ test('the whole fixture, folded: two kills of one boss, exactly one of them your
   assert.ok(princess, 'both casings fold onto the canonical lowercase key')
   assert.equal(princess.count, 2, 'both deaths are recorded — the tracker is not a credit filter')
   assert.equal(princess.credited, 1, 'and exactly one of them paid you experience')
-  // Same zone, same tier: the credit lives on the RUN, beside the kills it describes.
+  // Same zone, same tier: the credit lives on the RUN, beside the kills it describes — and
+  // `lastCreditedTs` dates YOUR kill, not the stranger's, which is exactly the distinction the
+  // weekly lockout view rests on (`lastTs` here is the kill that paid you nothing).
   assert.deepEqual(princess.tiers, {
-    0: { count: 2, firstTs: MINE, lastTs: STRANGERS, credited: 1 }
+    0: { count: 2, firstTs: MINE, lastTs: STRANGERS, credited: 1, lastCreditedTs: MINE }
   })
 })
 

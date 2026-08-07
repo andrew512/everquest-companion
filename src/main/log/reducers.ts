@@ -58,10 +58,21 @@ export function recordKill(kills: KillMap, kill: KillRecord): void {
     display,
     tiers: {}
   })
-  const run = (k.tiers[tier] ??= { count: 0, firstTs: ts, lastTs: ts, credited: 0 })
+  const run = (k.tiers[tier] ??= {
+    count: 0,
+    firstTs: ts,
+    lastTs: ts,
+    credited: 0,
+    lastCreditedTs: 0
+  })
   run.count += 1
   run.firstTs = Math.min(run.firstTs, ts)
   run.lastTs = Math.max(run.lastTs, ts)
-  if (credited) run.credited += 1
+  if (credited) {
+    run.credited += 1
+    // A max, not an assignment: a replay is chronological, but a fold must not depend on that
+    // (addTierRun unions runs from several roster `match` names, in no particular order).
+    run.lastCreditedTs = Math.max(run.lastCreditedTs, ts)
+  }
   Object.assign(k, killTotals(k.tiers))
 }
