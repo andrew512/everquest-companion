@@ -17,15 +17,19 @@ export const CHART_H = 150
 
 /**
  * A chart's X mapping, in USER (viewBox) units. `t0..t1` is the time domain the chart
- * plots; `padX` is the horizontal inset; `w` is the viewBox width.
+ * plots; `bucketMs` is the grid that domain is quantized to; `padX` is the horizontal
+ * inset; `w` is the viewBox width.
  *
- * Note the two charts do NOT share a domain today (the level chart adds a 4% trailing
- * pad so the current level reads as a plateau). That is preserved deliberately — this
- * type is the seam a future shared `ChartDomain` slots into without touching callers.
+ * THIS OBJECT IS THE ONE TIME BASE (world-model law 9). Both charts take the same instance
+ * through `ChartChrome`, and so do the zone strip, the range band, the hover crosshair and
+ * its X→time inverse — so a pixel is one instant across the whole leveling tab. The
+ * timescale control (chartWindow.ts) replaces it WHOLESALE; nothing ever holds half of it.
  */
 export interface ChartScale {
   t0: number
   t1: number
+  /** the sampling grid `t0`/`t1` are quantized to — see chartWindow.ts's bucket rule. */
+  bucketMs: number
   w: number
   padX: number
 }
@@ -116,6 +120,13 @@ export interface AaPoint {
   ts: number
   y: number
   nowHave?: number
+  /**
+   * The points THIS gain line reported. Carried rather than re-derived as `y - points[i-1].y`
+   * because a windowed curve (chartWindow.ts) opens on an ANCHOR — a gain that happened before
+   * the window — and there is no `i-1` in front of it to subtract. The difference used to be
+   * invisible only because the array always started at the character's first gain.
+   */
+  gain?: number
 }
 
 /**

@@ -153,6 +153,16 @@ export function useChartSelection(scale: ChartScale | null): SelectionApi {
   const onPointerCancel = useCallback((): void => { stop() }, [stop])
   const clear = useCallback((): void => { setSel(null) }, [])
 
+  // THE TIMESCALE SEAM (JOS-71). Picking a scale replaces the whole time base, and a committed
+  // range from outside the new window is no longer on the chart: its band has no pixels to draw
+  // in and its stats describe a stretch the user can no longer see. A selection the new window
+  // CONTAINS survives untouched — zooming out around your own selection keeps it, which is the
+  // only reason this is a containment test rather than a blanket clear.
+  useEffect(() => {
+    if (!sel || !scale) return
+    if (sel.t0 < scale.t0 || sel.t1 > scale.t1) setSel(null)
+  }, [sel, scale])
+
   // Escape is the keyboard twin of the click-to-clear gesture. Bound only while a selection
   // exists, so this view never holds a global key listener it has no use for.
   useEffect(() => {

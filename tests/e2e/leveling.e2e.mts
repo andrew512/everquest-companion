@@ -22,6 +22,10 @@
  *      committed range always covers at least one zone row, even if it is the `unknown` one);
  *   5. a CLICK (under `DRAG_THRESHOLD_PX`) dismisses it again — the panel is selection-scoped,
  *      not sticky;
+ *   5b. the TIMESCALE control (JOS-71) offers only the windows this log can fill, and picking one
+ *      replaces the whole time base: the strip re-cuts itself and stays inside its plot, the
+ *      hover still resolves a cursor, a drag still commits a range and a click still dismisses it,
+ *      and `All` restores the exact window it started on;
  *   6. the "New at this level" panel is mounted with its stepper — and, once the combo module
  *      has resolved a loadout, draws real unlock rows for it (floors, never today's counts);
  *   7. the tab never scrolls the page, and there are no renderer console errors.
@@ -73,6 +77,9 @@ const LEVEL_NEXT = '[data-testid="new-at-level-next"]'
 const UNLOCK_ROW = '[data-testid="unlock-row"]'
 const COMBO_CHIP = '[data-testid="new-at-level-combo-chip"]'
 const UNKNOWN_COMBO = '[data-testid="new-at-level-unknown"]'
+const TIMESCALE = '[data-testid="leveling-timescale"]'
+const TS_WINDOW = '[data-testid="leveling-timescale-window"]'
+const TOOLTIP = '[data-testid="chart-tooltip"]'
 const HERO = '[data-testid="leveling-range-hero"]'
 const ZONE_ROW = '[data-testid="leveling-range-zone-row"]'
 const LEDGER = '[data-testid="aa-ledger"]'
@@ -125,9 +132,53 @@ async function dragRange(page: Page, sel: string): Promise<boolean> {
   if (!(await hoverAt(page, sel, 0.1, 0.5))) return false
   await page.mouse.down()
   await hoverAt(page, sel, 0.5, 0.5)
+  // THE CHART-INTERACTION SEAM, read mid-gesture: the hover layer binds pointermove only and
+  // bails while `ev.buttons !== 0`, and `useChartSelection` additionally flows `dragging` down as
+  // `suppressed`. A tooltip here is the regression — and it is asserted at EVERY timescale,
+  // because the seam is what a new window is most likely to break.
+  const held = await countOf(page, TOOLTIP)
   await hoverAt(page, sel, 0.9, 0.5)
   await page.mouse.up()
+  check('a range drag suppresses the hover tooltip (the pointer seam)', held === 0, `${String(held)} tooltip(s) mid-drag`)
   return true
+}
+
+/** The scale ids the control is offering — `full` plus whatever this character's span can fill. */
+function offeredScales(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid^="leveling-timescale-"]'))
+      .map((e) => (e.getAttribute('data-testid') ?? '').replace('leveling-timescale-', ''))
+      .filter((id) => id.length > 0 && id !== 'window')
+  )
+}
+
+/** How many zone bands are drawn OUTSIDE their own plot — the law-9 tripwire (see stepTimescale). */
+function bandsOutsidePlot(page: Page): Promise<number> {
+  return page.evaluate((s) => {
+    const rects = Array.from(document.querySelectorAll<SVGRectElement>(s))
+    return rects.filter((r) => {
+      const vb = r.ownerSVGElement?.viewBox.baseVal.width ?? 0
+      const x = r.x.baseVal.value
+      const w = r.width.baseVal.value
+      return x < -0.01 || x + w > vb + 0.01
+    }).length
+  }, BAND)
+}
+
+/**
+ * The drawn strip's GEOMETRY, as a comparable string: every band's x and width in viewBox units.
+ *
+ * A band count is not evidence that the strip moved — the same number of bands can survive a
+ * window change by coincidence. The rectangles cannot: they are `xOf(scale, …)` of the strip's own
+ * clipped intervals, so if this string is unchanged after a window change, the strip is still
+ * drawing the old time base while the curve draws the new one.
+ */
+function bandSignature(page: Page): Promise<string> {
+  return page.evaluate((s) =>
+    Array.from(document.querySelectorAll<SVGRectElement>(s))
+      .map((r) => `${r.x.baseVal.value.toFixed(1)}+${r.width.baseVal.value.toFixed(1)}`)
+      .join(' ')
+  , BAND)
 }
 
 /** A press-and-release with NO travel — the click gesture, which is the dismissal. */
@@ -260,6 +311,89 @@ async function stepSelection(page: Page, chart: string): Promise<void> {
 }
 
 /**
+ * 5b. THE TIMESCALE (JOS-71) — the window is the user's to pick, and picking one must move the
+ * WHOLE time base with it (world-model law 9: one `{t0,t1,bucketMs}` per chart).
+ *
+ * The three things this asserts that no unit test can:
+ *   • the presets on screen are the ones this character's history can FILL — `All` alone on a
+ *     short log, more rungs as the log gets longer, and never a rung that would draw empty time;
+ *   • every interaction survives the swap. The drag-select range panel, the zone strip, the
+ *     legend and the hover tooltip are re-exercised AT THE NARROW SCALE, because a window is
+ *     exactly the shared state that lets them start disagreeing about what a pixel means;
+ *   • the bands stay INSIDE their plot. `mergeZoneBands` clips to the domain, so a band drawn
+ *     past the viewBox edge means the strip is still reading the old window while the curve
+ *     reads the new one — the marker-swim shape, caught geometrically instead of by eye.
+ *
+ * The committed selection from the previous step is expected to be GONE after the switch: a range
+ * the new window does not contain is not on the chart any more, and the panel is selection-scoped.
+ */
+async function stepTimescale(page: Page, chart: string): Promise<void> {
+  if (!check('the timescale control is mounted with the charts', (await countOf(page, TIMESCALE)) > 0)) return
+  const before = await textOf(page, TS_WINDOW)
+  check('…and it states the window on screen', before.includes('→'), before.replace(/\s+/g, ' '))
+
+  const offered = await offeredScales(page)
+  if (offered.length < 2) {
+    note(
+      `this log spans too little to fill a second scale — the control offers only [${offered.join(', ')}] and states the window instead of drawing a one-button choice, which is the honest surface`
+    )
+    return
+  }
+  check('the scales offered are the ones this history can fill', offered[0] === 'full', `[${offered.join(', ')}]`)
+
+  // A committed range from the WIDE window, so the switch has something to invalidate.
+  if (!(await dragRange(page, chart))) return
+  await settleCount(page, PANEL, 1, { timeoutMs: 8000 })
+  const bandsBefore = await bandSignature(page)
+
+  // The narrowest offered scale — the strongest zoom this data supports.
+  const narrow = offered[offered.length - 1]
+  await page.click(`[data-testid="leveling-timescale-${narrow}"]`, { timeout: 10_000 })
+  const after = await settle(() => textOf(page, TS_WINDOW), (t) => t !== before, { timeoutMs: 8000 })
+  check(`picking "${narrow}" replaces the window wholesale`, after !== before, `${before} → ${after}`.replace(/\s+/g, ' '))
+  check(
+    'a selection the new window cannot contain is dropped with it',
+    await settleGone(page, PANEL, { timeoutMs: 8000 }),
+    `${String(await countOf(page, PANEL))} panel(s) after the switch`
+  )
+
+  // Everything still on screen, and still agreeing about the new base.
+  const box = await rectOf(page, chart)
+  check('the chart still draws at the narrow scale', !!box && box.w > 0 && box.h > 0, box ? `${String(box.w)}×${String(box.h)}px` : 'absent')
+  const bands = await countOf(page, BAND)
+  check(
+    'the zone strip stays inside its plot at the new scale',
+    (await bandsOutsidePlot(page)) === 0,
+    `${String(bands)} bands, ${String(await countOf(page, LEGEND_ROW))} legend rows`
+  )
+  check(
+    '…and it re-cut itself to the new window (the strip reads the SAME base the curve does)',
+    bands === 0 || (await bandSignature(page)) !== bandsBefore
+  )
+
+  // Hover, at the new scale: the tooltip reads the cursor back through the SAME base the curve
+  // was drawn with, so a card here is the inverse mapping still working.
+  if (await hoverAt(page, chart, 0.55, 0.55)) {
+    check('the hover readout still resolves a cursor at the narrow scale', (await countOf(page, TOOLTIP)) > 0)
+    await page.mouse.move(2, 2)
+    await settleGone(page, TOOLTIP, { timeoutMs: 5000 })
+  }
+
+  // …and a drag inside the narrow window still commits a range and still dismisses.
+  if (await dragRange(page, chart)) {
+    const mounted = await settleCount(page, PANEL, 1, { timeoutMs: 8000 })
+    check('dragging a range at the narrow scale mounts the panel', mounted > 0, `${String(await countOf(page, HERO))} hero cards`)
+    await clickChart(page, chart)
+    check('…and a click dismisses it there too', (await countOf(page, PANEL)) === 0)
+  }
+
+  // Back to the default: the control is a view, not a trapdoor.
+  await page.click('[data-testid="leveling-timescale-full"]', { timeout: 10_000 })
+  const back = await settle(() => textOf(page, TS_WINDOW), (t) => t === before, { timeoutMs: 8000 })
+  check('returning to All restores the full-history window exactly', back === before, `${back}`.replace(/\s+/g, ' '))
+}
+
+/**
  * 6. "NEW AT THIS LEVEL" (docs/plans/levelup-whats-new.md) — the panel the level-up toast links
  * to, and the one surface here that does NOT depend on the log having any dings in it: it is
  * computed from the committed spells.json + classes.json against the inferred loadout.
@@ -387,6 +521,9 @@ async function main(): Promise<void> {
         // column, and the ledger assertions want the tab in the state a user first sees.
         await stepAaLedger(page)
         await stepSelection(page, chart)
+        // AFTER the selection step, which proves the panel works on the default (full-history)
+        // window — this one then proves the same gestures survive a wholesale window change.
+        await stepTimescale(page, chart)
       } else {
         // The empty-state half of the headline assertion still holds, and is the honest thing
         // to assert on a log with no chart: no selection can exist, so no panel may.
