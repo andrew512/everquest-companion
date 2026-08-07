@@ -753,6 +753,24 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   cast lines. Permanent Illusion AA (ownership learned from its purchase
   line): illusion self-buffs permanent; ONE illusion per entity;
   `Your illusion fades.` is the shared remover.
+  **THE BURST IS ALSO THE ONLY LINE THAT ENUMERATES YOUR GROUP BY NAME**
+  (JOS-85). One cast of it prints two or more
+  `You healed <X> … by <Spell>.` lines in the SAME second — the only shape in
+  this log where the game lists who your buffs reached. MEASURED: 83 such
+  fan-out casts in the owner's 900,562-line log and **all 83** are within 15 s
+  of a Quick Buff line, so it is a fact about the ABILITY, not about spell
+  target types — spells.json calls `Skin Like Nature` / `Symbol of Pinzarn`
+  "Single Friendly (or Self)" while the log lands each on three entities in one
+  second, because the wiki describes a different server. It proves RECIPIENTS,
+  not membership (a burst hits your own pets, and two of the owner's 67 bursts
+  reached a player he was demonstrably not grouped with), so the roster admits
+  a name only in conjunction with `You gain party experience!` earlier in the
+  session — measured 2/2 correct, 0 false positives, identical at every backward
+  window from 2 min to 6 h. It is the roster's SECOND recovery path and exists
+  because the first (`<Name> tells the group, '…'`) needs somebody to talk: a
+  reporter's 12,376-line session held two group-mates and ZERO group events.
+  Weakest provenance rung (`buffed`); self / charmed / claimed-pet names refused.
+  src/main/modules/buffFanOut.ts, docs/plans/group-model.md §1 G4.
 - Summoned pets have random proper names (Vebarn, Garer…); bind via
   owner-only tells `<Name> told you, '… Master.'`; they persist across
   zones (charmed pets do not). A pet-claim tell from a name EVER seen
