@@ -20,6 +20,7 @@ import {
   type ZoneSession
 } from './encounter'
 import { idKey } from '../log/parser'
+import { SEC_RINGS, type EngineFoldProbe } from './foldProbe'
 import { StateTimeline } from './stateTimeline'
 import { CharmModel } from './charmModel'
 import { SpecialAttacks } from './specialAttacks'
@@ -194,6 +195,12 @@ export class EngineState {
    * hundreds of zone lines), cleared by reset() and by the epoch boundary.
    */
   specials = new SpecialAttacks()
+  /**
+   * THE ENGINE'S OWN ATTRIBUTION SEAM (JOS-59, foldProbe.ts). Undefined on every boot and in
+   * every test; installed only by `CombatEngine.attachFoldProbe`, which only the bench calls.
+   * Read as `const p = this.probe; if (p) …` on the hot paths — one field read and one branch.
+   */
+  probe?: EngineFoldProbe
 
   /** Enable classification logging (after the historical scan, for the live tail), and
    *  flip HYDRATION off — from here on every snapshot describes the real present. */
@@ -252,8 +259,11 @@ export class EngineState {
 
   log(ts: number, cat: string, role: ClassifiedLine['role'], text: string): void {
     if (!this.recording) return
+    const p = this.probe
+    if (p) p.enter(SEC_RINGS)
     this.recent.push({ ts, cat, role, text })
     if (this.recent.length > RECENT_CAP) this.recent.shift()
+    if (p) p.leave()
   }
 
   /** The in-progress encounter, but only while it is FRESH — the same rule routeMiss uses so a
@@ -266,8 +276,11 @@ export class EngineState {
   /** Append a point annotation to an encounter's marker ring (Task #64), drop-oldest at
    *  MARKER_CAP. Draw-only: no count, DPS or attribution ever reads this. */
   pushMarker(enc: Encounter, m: MarkerRaw): void {
+    const p = this.probe
+    if (p) p.enter(SEC_RINGS)
     enc.markers.push(m)
     if (enc.markers.length > MARKER_CAP) enc.markers.shift()
+    if (p) p.leave()
   }
 
   /** Append one instant to the current encounter's timeline ring (Task #51), capped
@@ -277,9 +290,12 @@ export class EngineState {
    *  length as if it were the fight (law 1). The counter is display metadata only — no
    *  aggregate, DPS or attribution reads it. */
   pushTimeline(enc: Encounter, rec: TimelineRaw): void {
+    const p = this.probe
+    if (p) p.enter(SEC_RINGS)
     enc.events.push(rec)
     enc.eventsTotal++
     if (enc.events.length > TIMELINE_CAP) enc.events.shift()
+    if (p) p.leave()
   }
 
   /**

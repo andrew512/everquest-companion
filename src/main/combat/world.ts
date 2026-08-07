@@ -95,6 +95,7 @@
 import { idKey } from '../log/parser'
 import { PRESENCE_GONE_MS } from './encounter'
 import { isLeftBehindOnZone, type PetKind } from './entityRules'
+import { SEC_WORLD, type EngineFoldProbe } from './foldProbe'
 
 /**
  * How long a LIVE hostile instance may go completely unobserved before its slot is eligible
@@ -149,6 +150,13 @@ export class WorldModel {
   /** Killers each charmed pet has been observed tanking (pet instanceId → set of
    *  attacker nameKeys that hit it / that it hit). Drives death case (b). */
   private petTankedBy = new Map<string, Set<string>>()
+  /**
+   * THE BENCH'S SUB-ATTRIBUTION SEAM (JOS-59, foldProbe.ts) — undefined everywhere except under
+   * `CombatEngine.attachFoldProbe`. Only the five per-EVENT entry points below are bracketed;
+   * the lifecycle methods (charm/claim/death/uncharm/zone) fire per bind and per kill rather
+   * than per line and are charged to `dispatch`, which the table's header says out loud.
+   */
+  probe?: EngineFoldProbe
 
   reset(): void {
     this.byName.clear()
@@ -237,6 +245,15 @@ export class WorldModel {
    * pet as damage attacker). Otherwise prefers a hostile instance (mob references).
    */
   resolve(name: string, ts: number, preferCharmed = false): Instance {
+    const p = this.probe
+    if (!p) return this.resolveInner(name, ts, preferCharmed)
+    p.enter(SEC_WORLD)
+    const inst = this.resolveInner(name, ts, preferCharmed)
+    p.leave()
+    return inst
+  }
+
+  private resolveInner(name: string, ts: number, preferCharmed: boolean): Instance {
     if (idKey(name) === 'you') {
       // 'you' is not modeled as a spawnable instance; caller handles it. Return a
       // synthetic sentinel so callers never crash (they special-case 'you' first).
@@ -296,14 +313,22 @@ export class WorldModel {
    * defenderLabel make).
    */
   noteSeen(name: string, ts: number): void {
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
     for (const inst of this.byName.get(idKey(name)) ?? []) {
       if (!inst.retired && ts > inst.lastSeenTs) inst.lastSeenTs = ts
     }
+    if (p) p.leave()
   }
 
   /** Look up the charmed pet instance for a name (attribution helper). */
   petInstance(name: string): Instance | undefined {
-    return this.charmedActive(idKey(name))
+    const p = this.probe
+    if (!p) return this.charmedActive(idKey(name))
+    p.enter(SEC_WORLD)
+    const inst = this.charmedActive(idKey(name))
+    p.leave()
+    return inst
   }
 
   /**
@@ -585,7 +610,10 @@ export class WorldModel {
   /** True if the instance with this id has been retired (dead/zoned). Unknown ids
    *  (never spawned) are treated as retired — they can't be a live engagement. */
   isRetired(instanceId: string): boolean {
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
     const inst = this.find(instanceId)
+    if (p) p.leave()
     return inst ? inst.retired : true
   }
 
@@ -594,7 +622,10 @@ export class WorldModel {
    *  an encounter's death-close (a charmed pet never dies, so it would pin every
    *  charm-grind fight open forever). */
   isLivePet(instanceId: string): boolean {
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
     const inst = this.find(instanceId)
+    if (p) p.leave()
     return !!inst && !inst.retired && inst.charmed
   }
 
@@ -613,8 +644,11 @@ export class WorldModel {
 
   /** All live pets, charmed AND summoned (the attribution roster). */
   petInstances(): Instance[] {
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
     const out: Instance[] = []
     for (const list of this.byName.values()) for (const i of list) if (!i.retired && i.charmed) out.push(i)
+    if (p) p.leave()
     return out
   }
 
@@ -624,6 +658,15 @@ export class WorldModel {
    * visually distinct; the first gen keeps the bare name.
    */
   label(inst: Instance): string {
+    const p = this.probe
+    if (!p) return this.labelInner(inst)
+    p.enter(SEC_WORLD)
+    const out = this.labelInner(inst)
+    p.leave()
+    return out
+  }
+
+  private labelInner(inst: Instance): string {
     const total = this.gens.get(inst.nameKey) ?? 1
     if (total <= 1 || inst.gen === 1) return inst.display
     return `${inst.display} (${inst.gen})`
