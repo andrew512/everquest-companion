@@ -19,15 +19,27 @@
 // THE ITEM CARD IS THE CLICK TARGET (T6) and the only affordance: it takes the pointer cursor
 // and a hairline highlight on hover. The card as a whole pins on hover; only the reward block
 // claims to go anywhere.
+//
+// EVERY CARD SAYS WHOSE IT IS, AND EVERY CARD CLOSES (JOS-83). A new user reported the strip as a
+// nameless rectangle they took for a malfunction, so the card grew a chrome row: the app's name on
+// the left, a × on the right. The row is INSIDE the card, which is the only thing this overlay
+// ever paints — the resting state is still an empty transparent window, and that is what keeps
+// the kind defaultable-on. The × dismisses THIS card (the queue reducer has always had the
+// action; nothing was wired to it), and on the introduction card there is one more way out: a
+// button that closes the overlay for good.
 
-import { type CSSProperties, type JSX, useEffect, useState } from 'react'
-import type { ToastItemCard, ToastPayload } from '@shared/toast'
+import { type CSSProperties, type JSX, type MouseEvent, useEffect, useState } from 'react'
+import { TOAST_INTRO_BODY, type ToastItemCard, type ToastPayload } from '@shared/toast'
 import { TOAST_ENTER_MS, TOAST_EXIT_MS } from './toastQueue'
 
 const GOLD = '#d9b25f'
 const MUTED = '#a8b0c6'
 const ITEM_GREEN = '#5fe08a'
 const MONO = '"Consolas","Courier New",monospace'
+
+/** What the chrome row prints. Short enough for the lane at any text scale, specific enough that
+ *  a player who has never opened Preferences knows which program put it there. */
+const OVERLAY_LABEL = 'EQ Companion · celebration overlay'
 
 /** The name colour the payload's hint asks for. Unknown/absent ⇒ the ordinary item green. */
 function nameColor(flag: string | undefined): string {
@@ -38,6 +50,111 @@ function nameColor(flag: string | undefined): string {
  *  overlay's CSP lists `img-src 'self' data: eqimg:` precisely so that stays structural. */
 function iconUrl(iconId: number): string {
   return `eqimg://item/${String(iconId)}`
+}
+
+/**
+ * The identity + close row every card carries.
+ *
+ * `stop` on the button is load-bearing: a card with no reward block IS a click target (the
+ * level-up card takes you to the Leveling tab), and "close" must never double as "go there".
+ */
+function CardChrome({ onDismiss }: { onDismiss: () => void }): JSX.Element {
+  const [hot, setHot] = useState(false)
+  const close = (e: MouseEvent): void => {
+    e.stopPropagation()
+    onDismiss()
+  }
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        marginBottom: 6
+      }}
+    >
+      <span
+        data-testid="toast-source-label"
+        style={{
+          color: MUTED,
+          fontSize: 10,
+          letterSpacing: 0.6,
+          textTransform: 'uppercase',
+          opacity: 0.85,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }}
+      >
+        {OVERLAY_LABEL}
+      </span>
+      <button
+        type="button"
+        data-testid="toast-close"
+        aria-label="Dismiss this celebration"
+        title="Dismiss"
+        onClick={close}
+        onMouseEnter={() => setHot(true)}
+        onMouseLeave={() => setHot(false)}
+        style={{
+          flexShrink: 0,
+          width: 20,
+          height: 20,
+          lineHeight: '18px',
+          padding: 0,
+          borderRadius: 4,
+          border: `1px solid ${hot ? GOLD : 'rgba(255,255,255,0.18)'}`,
+          background: hot ? 'rgba(217,178,95,0.16)' : 'transparent',
+          color: hot ? GOLD : MUTED,
+          fontSize: 13,
+          cursor: 'pointer'
+        }}
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
+/**
+ * The introduction card's extra half (JOS-83): what this window is, and the way to be rid of it
+ * permanently rather than for six seconds. `eqOverlay.close()` is the same door the meters' close
+ * buttons use — it closes the window AND persists `open:false`, so it does not come back next
+ * launch and Preferences shows the state it is actually in.
+ */
+function IntroBlock(): JSX.Element {
+  const [hot, setHot] = useState(false)
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div data-testid="toast-intro-body" style={{ color: MUTED, fontSize: 12, lineHeight: 1.5 }}>
+        {TOAST_INTRO_BODY}
+      </div>
+      <button
+        type="button"
+        data-testid="toast-intro-disable"
+        onClick={(e) => {
+          e.stopPropagation()
+          window.eqOverlay.close()
+        }}
+        onMouseEnter={() => setHot(true)}
+        onMouseLeave={() => setHot(false)}
+        style={{
+          marginTop: 10,
+          border: `1px solid ${hot ? GOLD : 'rgba(217,178,95,0.45)'}`,
+          borderRadius: 4,
+          background: hot ? 'rgba(217,178,95,0.16)' : 'transparent',
+          color: GOLD,
+          fontSize: 12,
+          padding: '4px 10px',
+          cursor: 'pointer'
+        }}
+      >
+        Turn this overlay off
+      </button>
+    </div>
+  )
 }
 
 function RewardBlock({ item, onClick }: { item: ToastItemCard; onClick?: () => void }): JSX.Element {
@@ -107,12 +224,14 @@ export function ToastCard({
   payload,
   exiting,
   bgAlpha,
-  onHover
+  onHover,
+  onDismiss
 }: {
   payload: ToastPayload
   exiting: boolean
   bgAlpha: number
   onHover: (over: boolean) => void
+  onDismiss: () => void
 }): JSX.Element {
   const [entering, setEntering] = useState(true)
   useEffect(() => {
@@ -131,6 +250,10 @@ export function ToastCard({
   return (
     <div
       data-testid="toast-card"
+      /* The kind, on the DOM: the overlay's OWN introduction (JOS-83) is a card in the same queue
+         as a boss kill, and a harness counting CELEBRATIONS must be able to tell them apart
+         without reading the card's prose (tests/e2e/character-switch.e2e.mts). */
+      data-toast-kind={payload.kind}
       onClick={onCardClick}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
@@ -146,6 +269,7 @@ export function ToastCard({
         ...motionStyle(entering, exiting)
       }}
     >
+      <CardChrome onDismiss={onDismiss} />
       <div data-testid="toast-title" style={{ color: GOLD, fontSize: 18, fontWeight: 700, lineHeight: 1.3 }}>
         {payload.title}
       </div>
@@ -157,6 +281,8 @@ export function ToastCard({
       {/* Nothing else is clickable: a toast says a thing happened, and the reward block is the
           one place that promises to take you somewhere. */}
       {payload.item && <RewardBlock item={payload.item} onClick={onOpen} />}
+      {/* …except the introduction, whose whole job is to offer a way out (JOS-83). */}
+      {payload.kind === 'intro' && <IntroBlock />}
     </div>
   )
 }

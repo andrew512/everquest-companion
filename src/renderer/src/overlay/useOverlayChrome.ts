@@ -52,6 +52,13 @@ export interface OverlayChrome {
    * mouse) must not act on the default first and correct itself a frame later.
    */
   ready: boolean
+  /**
+   * The hydrated config itself, null until it arrives. Every field a surface routinely needs is
+   * broken out below; this is the door for a knob that belongs to ONE kind and has no business
+   * being a member of a hook five other overlays share — today, the toast blob (its duration, and
+   * whether this install has been introduced to the celebration overlay yet, JOS-83).
+   */
+  config: OverlayConfig | null
   /** click-through + no chrome; the persisted lock state */
   locked: boolean
   bgAlpha: number
@@ -141,6 +148,7 @@ export function useOverlayChrome(): OverlayChrome {
 
   return {
     ready: cfg !== null,
+    config: cfg,
     locked,
     bgAlpha,
     textScale,
