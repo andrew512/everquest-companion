@@ -45,6 +45,11 @@
 //   Updates — app version, last-checked time, a manual check, background download
 //             progress, and the "Relaunch to update" action when one is waiting.
 //             Lives in ./UpdateSetting.tsx; this file only names it in the table.
+//   What's new — the browsable release history, newest first, with everything since this
+//             install last read it marked new. A reading surface with no controls, which is why
+//             it is a section rather than a line under Updates (the same argument Performance
+//             and Usage analytics make). Lives in ../whatsnew/WhatsNewPanel.tsx, descriptor and
+//             all; the Version row above links straight to it.
 //   Usage analytics — the anonymous-counts switch, the rotatable id, and the payload
 //             viewer that makes the privacy claim checkable. ./TelemetrySetting.tsx.
 //   Performance — the title-bar CPU/memory HUD switch (off by default) and the read-only
@@ -94,6 +99,9 @@ import { perfSection } from './PerfSetting'
 // Same arrangement, same reason: the two graphics-compatibility switches name their own section
 // beside the card that renders them. See ./GraphicsSetting.tsx.
 import { graphicsSection } from './GraphicsSetting'
+// Same arrangement again (JOS-73): the release-notes panel names its own section beside the card
+// that renders it. See features/whatsnew/WhatsNewPanel.tsx for why the notes are a SECTION.
+import { whatsNewSection } from '../whatsnew/WhatsNewPanel'
 // The section CARD and the arrival pulse live together in their own file — same ceiling, same
 // answer as PerfSetting's descriptor: split, don't widen the threshold.
 import PrefSectionBlock, { useLandedSection } from './PrefSectionBlock'
@@ -263,12 +271,20 @@ function cursorRingSection(): PrefSection {
   }
 }
 
-/** The whole settings table, in render order. Rebuilt only when its inputs change. */
-function buildSections(
-  version: string,
-  status: UpdateStatus,
+/** What `buildSections` needs from the view. An OBJECT rather than four positional parameters:
+ *  the repo's `max-params` ceiling is 4 and the fourth argument was the one that would have hit
+ *  it, but the real reason is that "version" and "the way to the release notes" are two halves of
+ *  one row and read better named. */
+interface SectionInputs {
+  version: string
+  status: UpdateStatus
   onSendFeedback: OpenFeedback
-): PrefSection[] {
+  /** Rail switch to the What's new section — the Version row's link (JOS-73). */
+  onWhatsNew: () => void
+}
+
+/** The whole settings table, in render order. Rebuilt only when its inputs change. */
+function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionInputs): PrefSection[] {
   return [
     {
       id: 'game',
@@ -334,7 +350,7 @@ function buildSections(
           id: 'version',
           label: 'Version',
           keywords: 'about build release app version',
-          content: <VersionSetting version={version} />
+          content: <VersionSetting version={version} onWhatsNew={onWhatsNew} />
         },
         {
           id: 'app-updates',
@@ -344,6 +360,9 @@ function buildSections(
         }
       ]
     },
+    // Directly under Updates, which is where a person who just read the version number is
+    // standing when they wonder what it changed (JOS-73).
+    whatsNewSection(),
     analyticsSection(),
     perfSection(),
     {
@@ -480,9 +499,22 @@ export default function PreferencesView({
     }
   }, [])
 
+  // A rail click is always an exit from search mode into that one section.
+  const pick = useCallback((id: string): void => {
+    setQuery('')
+    setActive(id)
+  }, [])
+
+  // The Version row's "What's new" link (JOS-73) IS a rail click, so it goes through the same
+  // door rather than inventing a second way to switch sections. Memoized because it is an input
+  // to the section table below.
+  const openWhatsNew = useCallback(() => {
+    pick('whatsnew')
+  }, [pick])
+
   const sections = useMemo(
-    () => buildSections(version, status, onSendFeedback),
-    [version, status, onSendFeedback]
+    () => buildSections({ version, status, onSendFeedback, onWhatsNew: openWhatsNew }),
+    [version, status, onSendFeedback, openWhatsNew]
   )
   const keys = useMemo(() => sectionKeys(sections), [sections])
   const q = normalizeQuery(deferred)
@@ -495,12 +527,6 @@ export default function PreferencesView({
     const hit = new Set(matches.map((s) => s.id))
     return new Set(sections.filter((s) => !hit.has(s.id)).map((s) => s.id))
   }, [searching, matches, sections])
-
-  // A rail click is always an exit from search mode into that one section.
-  const pick = useCallback((id: string): void => {
-    setQuery('')
-    setActive(id)
-  }, [])
 
   const shown = searching ? matches : sections.filter((s) => s.id === active)
 

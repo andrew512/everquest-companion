@@ -1033,6 +1033,14 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   it, and can't drift from the tag — the old "bump after tagging" rule is
   dead). Release process: `git tag vX.Y.Z && git push origin vX.Y.Z`. Semver,
   increment per release; first stable is v0.1.0.
+- **A TAG MAY NOT SHIP WITHOUT RELEASE NOTES** (JOS-73). `src/shared/releaseNotes.ts`
+  is committed source (the bundler inlines it, like the spell DB), and the app's
+  Preferences → What's new panel reads it — so a missing entry is not a crash, it
+  is SILENCE: the fleet auto-updates and the panel has nothing to say about the
+  build everyone is now running. The release (tag) job runs
+  `node --import tsx scripts/check-release-notes.mjs $env:GITHUB_REF_NAME`, which
+  refuses a tag with no entry and re-runs the same `releaseNotesProblems` shape
+  check `tests/releaseNotes.test.mts` runs. Write the entry BEFORE tagging.
 - **RELEASE CADENCE: tag only when the user asks, or at a clearly STABLE
   point** — features verified end-to-end, the gauntlet green, no waves in
   flight. Commits land on main continuously; a tag is a deliberate act,

@@ -16,6 +16,25 @@ export function formatDate(ts: number): string {
   return new Date(ts).toLocaleDateString()
 }
 
+/**
+ * A CALENDAR date — `YYYY-MM-DD` with no instant behind it — rendered the same way as every
+ * other date in the app (JOS-73's release dates are the caller).
+ *
+ * It exists because `new Date('2026-08-07')` is parsed as UTC MIDNIGHT by the spec, so feeding
+ * an ISO date string through `formatDate` renders 8/6/2026 for everybody west of Greenwich. A
+ * release shipped on the 7th did not ship on the 6th in California. The parts are read out and
+ * handed to the LOCAL constructor instead, which is the same "never UTC for display" rule this
+ * file's header states, applied to a value that is a day rather than a moment.
+ *
+ * Anything that is not `YYYY-MM-DD` comes back verbatim — a malformed date should read oddly,
+ * not silently become some other day.
+ */
+export function formatCalendarDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  if (!m) return iso
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString()
+}
+
 /** Time only, local, 24h: e.g. "13:00:28". */
 export function formatTime(ts: number, opts?: Intl.DateTimeFormatOptions): string {
   if (!ts) return ''

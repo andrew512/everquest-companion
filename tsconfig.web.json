@@ -45,6 +45,8 @@
     // …and `dev.ts` (the dev-only restart button's one method, JOS-61), likewise.
     "src/preload/dev.ts",
     // …and `sounds.ts` (packs, the registry browser, the user's own imports — JOS-68), likewise.
-    "src/preload/sounds.ts"
+    "src/preload/sounds.ts",
+    // …and `releaseNotes.ts` (the one what's-new store key, JOS-73), likewise.
+    "src/preload/releaseNotes.ts"
   ]
 }
