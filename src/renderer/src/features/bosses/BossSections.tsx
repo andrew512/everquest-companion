@@ -28,6 +28,7 @@ import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import CheckIcon from '@mui/icons-material/Check'
 import type { RaidTarget } from '@shared/types'
 import type { TargetStatus } from './bossStatus'
+import type { TierLock } from './lockout'
 import { loadoutGroups, type LoadoutCard, type LoadoutGrouping } from './loadoutGroups'
 import type { MobTarget } from '../mobs/mobTarget'
 import { tierStyle, type TierStyle } from '../../lib/tierChip'
@@ -122,31 +123,69 @@ function TargetKilledBadge({ tier }: { tier: TierStyle }): JSX.Element {
   )
 }
 
+/**
+ * What the corner chip says, and whether the card reads as "you have this one".
+ *
+ * TWO READINGS, ONE CARD (JOS-74). Without a `lock` this is the OVERALL roster, unchanged since
+ * before the week view existed: the chip is the highest tier you have ever killed the target at,
+ * and an undefeated target greys out under a neutral "not defeated" scrim. WITH a `lock` — the
+ * THIS WEEK view — the same slot reports the difficulties you are on lockout at, so the card
+ * lights up for what you have already taken this week and greys out for what is still open.
+ * An empty `lock` array is "open", which is not the same statement as "never killed".
+ */
+function chipFacts(
+  s: TargetStatus,
+  tier: TierStyle,
+  lock?: TierLock[]
+): { on: boolean; label: string; title: string; style: TierStyle } {
+  if (!lock) {
+    return {
+      on: s.killed,
+      label: s.killed ? tier.label : 'not defeated',
+      title: s.killed ? tier.long : 'Not defeated',
+      style: tier
+    }
+  }
+  const top = lock[lock.length - 1]
+  if (!top) return { on: false, label: 'open', title: 'Open this week', style: tier }
+  const style = tierStyle(top.tier)
+  return {
+    on: true,
+    // The chip is 20px tall on a 116px card, so it names the highest difficulty and COUNTS the
+    // rest rather than spelling three labels into a space that fits one; the tooltip has them.
+    label: lock.length > 1 ? `${style.label} +${lock.length - 1}` : style.label,
+    title: lock.map((l) => tierStyle(l.tier).long).join(' · '),
+    style
+  }
+}
+
+type ChipFacts = ReturnType<typeof chipFacts>
+
 // Portrait + the tier chip that overlays its top-right corner. An undefeated target is
 // greyed out and its chip reads "not defeated" on a neutral scrim instead of a tier colour.
 function TargetCardMedia({
   s,
-  tier,
+  chip,
   height
 }: {
   s: TargetStatus
-  tier: TierStyle
+  chip: ChipFacts
   height: number
 }): JSX.Element {
   return (
     <Box sx={{ position: 'relative' }}>
-      <BossImage target={s.target} height={height} dim={!s.killed} />
-      <Tooltip title={s.killed ? tier.long : 'Not defeated'}>
+      <BossImage target={s.target} height={height} dim={!chip.on} />
+      <Tooltip title={chip.title}>
         <Chip
           size="small"
-          label={s.killed ? tier.label : 'not defeated'}
+          label={chip.label}
           sx={{
             position: 'absolute',
             top: 4,
             right: 4,
             height: 20,
-            bgcolor: s.killed ? tier.bg : 'rgba(0,0,0,0.65)',
-            color: s.killed ? tier.fg : '#fff',
+            bgcolor: chip.on ? chip.style.bg : 'rgba(0,0,0,0.65)',
+            color: chip.on ? chip.style.fg : '#fff',
             fontWeight: 700,
             fontSize: 11,
             '& .MuiChip-label': { px: 0.75 }
@@ -176,8 +215,42 @@ function TargetKillDate({ s, compact }: { s: TargetStatus; compact: boolean }): 
   )
 }
 
+/** Inside a seven-day window the weekday is the referent; the year is noise. */
+const LOCK_DAY: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'numeric', day: 'numeric' }
+
+/**
+ * The week view's line under the name: the day the locking kill landed, and the tier it was at.
+ * Locked at two difficulties, the line states the highest and the tooltip spells out each —
+ * the same division of labour TargetKillDate already makes for a repeat kill.
+ */
+function LockLine({ lock }: { lock: TierLock[] }): JSX.Element {
+  const top = lock[lock.length - 1]
+  if (!top) {
+    return (
+      <Typography variant="caption" color="text.disabled" noWrap display="block">
+        open
+      </Typography>
+    )
+  }
+  return (
+    <Tooltip title={lock.map((l) => `${tierStyle(l.tier).label} ${formatDate(l.ts, LOCK_DAY)}`).join(' · ')}>
+      <Typography variant="caption" color="text.secondary" noWrap display="block">
+        Locked · {formatDate(top.ts, LOCK_DAY)}
+      </Typography>
+    </Tooltip>
+  )
+}
+
 // Everything below the portrait: name, zone (comfortable only) and the kill/no-kill line.
-function TargetCardCaption({ s, compact }: { s: TargetStatus; compact: boolean }): JSX.Element {
+function TargetCardCaption({
+  s,
+  compact,
+  lock
+}: {
+  s: TargetStatus
+  compact: boolean
+  lock?: TierLock[]
+}): JSX.Element {
   return (
     <Box sx={{ p: compact ? 0.75 : 1 }}>
       <Typography
@@ -193,7 +266,9 @@ function TargetCardCaption({ s, compact }: { s: TargetStatus; compact: boolean }
           {s.target.zone ?? ''}
         </Typography>
       )}
-      {s.killed ? (
+      {lock ? (
+        <LockLine lock={lock} />
+      ) : s.killed ? (
         <TargetKillDate s={s} compact={compact} />
       ) : (
         !compact && (
@@ -226,15 +301,19 @@ function TargetCard({
   s,
   compact,
   flash,
+  lock,
   onOpen
 }: {
   s: TargetStatus
   compact: boolean
   flash?: boolean
+  /** present ⇒ THIS WEEK view; the difficulties this card is locked at (empty = open). */
+  lock?: TierLock[]
   onOpen: () => void
 }): JSX.Element {
   const imgH = compact ? 70 : 120
-  const tier = tierStyle(s.bestTier)
+  const chip = chipFacts(s, tierStyle(s.bestTier), lock)
+  const tier = chip.style
   const tierColor = tier.bg
   return (
     <Paper
@@ -247,10 +326,10 @@ function TargetCard({
         position: 'relative',
         cursor: 'pointer',
         borderWidth: 2,
-        borderColor: flash ? tierColor : s.killed ? tierColor : 'divider',
+        borderColor: flash ? tierColor : chip.on ? tierColor : 'divider',
         boxShadow: flash
           ? `0 0 22px ${tierColor}, 0 0 8px ${tierColor}`
-          : s.killed
+          : chip.on
             ? `0 0 10px ${tierColor}55`
             : 'none',
         transform: flash ? 'scale(1.04)' : 'none',
@@ -258,9 +337,9 @@ function TargetCard({
         '&:hover': { transform: flash ? 'scale(1.04)' : 'translateY(-2px)' }
       }}
     >
-      {s.killed && <TargetKilledBadge tier={tier} />}
-      <TargetCardMedia s={s} tier={tier} height={imgH} />
-      <TargetCardCaption s={s} compact={compact} />
+      {chip.on && <TargetKilledBadge tier={tier} />}
+      <TargetCardMedia s={s} chip={chip} height={imgH} />
+      <TargetCardCaption s={s} compact={compact} lock={lock} />
     </Paper>
   )
 }
@@ -271,6 +350,14 @@ interface GridProps {
   minCol: number
   flashing: Set<string>
   onOpenMob: (t: MobTarget) => void
+  /**
+   * THE VIEW MODE, and the only thing that distinguishes the two (JOS-74). Absent ⇒ OVERALL, the
+   * roster exactly as it has always rendered. Present ⇒ THIS WEEK: it answers, per card, which
+   * difficulties that card's kills have you on loot lockout at. It takes the CARD's status, so a
+   * loadout section's per-tier cards each report their own tier and never the target's whole
+   * record.
+   */
+  lockOf?: (s: TargetStatus) => TierLock[]
 }
 
 /** Everything a section needs to draw its grid — identical for both groupings. */
@@ -292,7 +379,7 @@ function wholeRows(list: TargetStatus[]): CardRow[] {
 }
 
 /** A header plus the grid under it. The ONE grid in this feature; both groupings use it. */
-function Section({ header, rows, compact, minCol, flashing, onOpenMob }: GridProps & { header: JSX.Element; rows: CardRow[] }): JSX.Element {
+function Section({ header, rows, compact, minCol, flashing, onOpenMob, lockOf }: GridProps & { header: JSX.Element; rows: CardRow[] }): JSX.Element {
   return (
     <Box sx={{ mb: compact ? 1.5 : 2.5 }}>
       {header}
@@ -309,6 +396,7 @@ function Section({ header, rows, compact, minCol, flashing, onOpenMob }: GridPro
             s={row.s}
             compact={compact}
             flash={flashing.has(row.s.target.name)}
+            lock={lockOf?.(row.s)}
             onOpen={() => onOpenMob(mobTargetForStatus(row.whole))}
           />
         ))}

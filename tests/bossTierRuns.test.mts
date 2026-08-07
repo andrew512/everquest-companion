@@ -113,8 +113,8 @@ test('golden window: one mob, two instance tiers, two runs that keep their own t
   // since 2026-08-05, how many of them the log CREDITED to you. Both kills in this window print
   // `You gain experience!` in the second before the slain line, so both are yours.
   assert.deepEqual(ire.tiers, {
-    0: { count: 1, firstTs: D0_KILL, lastTs: D0_KILL, credited: 1 },
-    4: { count: 1, firstTs: D4_KILL, lastTs: D4_KILL, credited: 1 }
+    0: { count: 1, firstTs: D0_KILL, lastTs: D0_KILL, credited: 1, lastCreditedTs: D0_KILL },
+    4: { count: 1, firstTs: D4_KILL, lastTs: D4_KILL, credited: 1, lastCreditedTs: D4_KILL }
   })
 
   // The scalars are DERIVED — and this is precisely the pair that used to lie together:
@@ -145,8 +145,8 @@ test('the fold writes only the tiers map; the scalars are re-derived from it', (
 
   const k = kills['a mob']
   assert.deepEqual(k.tiers, {
-    1: { count: 1, firstTs: 2000, lastTs: 2000, credited: 1 },
-    2: { count: 3, firstTs: 500, lastTs: 3000, credited: 2 }
+    1: { count: 1, firstTs: 2000, lastTs: 2000, credited: 1, lastCreditedTs: 2000 },
+    2: { count: 3, firstTs: 500, lastTs: 3000, credited: 2, lastCreditedTs: 1000 }
   })
   assert.equal(k.count, 4, 'count is the sum over runs')
   assert.equal(k.credited, 3, 'and credit is its own sum — three of the four were yours')
@@ -170,7 +170,7 @@ test('a mob killed at ONE tier folds to one run — the common case is unchanged
     lastTs: 20,
     credited: 2,
     display: 'a rat',
-    tiers: { 0: { count: 2, firstTs: 10, lastTs: 20, credited: 2 } }
+    tiers: { 0: { count: 2, firstTs: 10, lastTs: 20, credited: 2, lastCreditedTs: 20 } }
   })
 })
 
@@ -285,7 +285,7 @@ test('a delta REPLACES a mob wholesale — entries are never merged field by fie
         lastTs: 10,
         credited: 1,
         display: 'A mob',
-        tiers: { 4: { count: 1, firstTs: 10, lastTs: 10, credited: 1 } }
+        tiers: { 4: { count: 1, firstTs: 10, lastTs: 10, credited: 1, lastCreditedTs: 10 } }
       },
       'a rat': {
         count: 1,
@@ -294,7 +294,7 @@ test('a delta REPLACES a mob wholesale — entries are never merged field by fie
         lastTs: 5,
         credited: 1,
         display: 'a rat',
-        tiers: { 0: { count: 1, firstTs: 5, lastTs: 5, credited: 1 } }
+        tiers: { 0: { count: 1, firstTs: 5, lastTs: 5, credited: 1, lastCreditedTs: 5 } }
       }
     }
   }
@@ -310,11 +310,13 @@ test('a delta REPLACES a mob wholesale — entries are never merged field by fie
         lastTs: 99,
         credited: 1,
         display: 'A mob',
-        tiers: { 0: { count: 1, firstTs: 99, lastTs: 99, credited: 1 } }
+        tiers: { 0: { count: 1, firstTs: 99, lastTs: 99, credited: 1, lastCreditedTs: 99 } }
       }
     }
   })
-  assert.deepEqual(next.mobs['a mob'].tiers, { 0: { count: 1, firstTs: 99, lastTs: 99, credited: 1 } })
+  assert.deepEqual(next.mobs['a mob'].tiers, {
+    0: { count: 1, firstTs: 99, lastTs: 99, credited: 1, lastCreditedTs: 99 }
+  })
   assert.equal(next.mobs['a mob'].bestTier, 0, 'the replaced entry is exactly what main sent')
   assert.deepEqual(next.mobs['a rat'], baseline.mobs['a rat'], 'untouched mobs ride along unchanged')
   assert.notEqual(next.mobs, baseline.mobs, 'a new object, so React sees the change')
@@ -338,7 +340,7 @@ test('a baseline written under a different shape version is invalidated, never m
         lastTs: 9,
         credited: 1,
         display: 'A mob',
-        tiers: { 2: { count: 1, firstTs: 9, lastTs: 9, credited: 1 } }
+        tiers: { 2: { count: 1, firstTs: 9, lastTs: 9, credited: 1, lastCreditedTs: 9 } }
       }
     }
   }

@@ -49,16 +49,14 @@ function runRows(list: readonly TargetStatus[]): RunRow[] {
   const rows: RunRow[] = []
   for (const status of list) {
     if (!status.killed) continue
-    for (const run of tierRuns(status.tiers)) {
+    for (const { tier, ...run } of tierRuns(status.tiers)) {
       if (run.lastTs <= 0) continue
-      // `credited` rides along verbatim: a projected card must describe the same kills as the
-      // run it came from, celebration flag included, even though only bossStatus reads it.
-      rows.push({
-        ts: run.lastTs,
-        status,
-        tier: run.tier,
-        run: { count: run.count, firstTs: run.firstTs, lastTs: run.lastTs, credited: run.credited }
-      })
+      // The WHOLE run rides along, minus the tier key `tierRuns` attached: a projected card must
+      // describe the same kills as the run it came from — credit count, credit timestamp and
+      // anything a later shape adds — even where only bossStatus and the week view read them.
+      // Spelling the fields out by hand is how a new one gets silently dropped from every
+      // loadout card, which is why this is a rest spread and not a literal.
+      rows.push({ ts: run.lastTs, status, tier, run })
     }
   }
   return rows

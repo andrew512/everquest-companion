@@ -54,6 +54,19 @@ export interface KillTierRun {
    * the tier badges, the counts, the dates — reads `count` and is unchanged by it.
    */
   credited: number
+  /**
+   * WHEN the most recent CREDITED kill of this run happened (ms), or 0 if none of them were
+   * yours. `lastTs` cannot answer that: it is the most recent kill of this mob at this tier
+   * WHOEVER landed it, so a stranger's open-world kill moves it and `credited` (a count) says
+   * nothing about which kill it counted.
+   *
+   * The weekly LOCKOUT view is what needed the distinction (JOS-74). A lockout is a fact about
+   * a kill YOU were paid for, so "am I locked this week" is `lastCreditedTs >= <this week's
+   * reset>` — and with only `lastTs` to read, a boss a passer-by killed on Wednesday would have
+   * reported you locked out of loot you never took. Same argument as `credited` itself: credit
+   * is a fact ABOUT a kill (world-model law 10), so its timestamp lives with the kill.
+   */
+  lastCreditedTs: number
 }
 
 /** Aggregated kill info for a mob (for loot sourcing + boss instance tiers). */
@@ -89,7 +102,9 @@ export type KillMap = Record<string, KillInfo>
  * Shape version of a KillInfo entry, stamped onto every kills snapshot and delta.
  *
  * 1 = the five-scalar record (no `tiers`); 2 = the per-tier record; 3 = the same with each run
- * carrying how many of its kills were exp-CREDITED. It exists for ONE
+ * carrying how many of its kills were exp-CREDITED; 4 = the same with each run also carrying
+ * WHEN its most recent credited kill landed (`lastCreditedTs`, the weekly lockout's input).
+ * It exists for ONE
  * hazard, which is real in dev and at every app update: the delta is a PER-MOB merge, so a
  * renderer holding a v1 baseline that starts receiving v2 deltas would keep every untouched
  * mob's narrow entry forever — a stale record surviving the fix that replaced it. The
@@ -97,7 +112,7 @@ export type KillMap = Record<string, KillInfo>
  * throws the baseline away and re-hydrates rather than merging across shapes. Bump this
  * whenever a KillInfo field changes meaning.
  */
-export const KILLS_SHAPE_VERSION = 3
+export const KILLS_SHAPE_VERSION = 4
 
 /** kills module snapshot: the map plus the shape version its entries were written at. */
 export interface KillsSnap {
@@ -165,7 +180,8 @@ export function addTierRun(into: Record<number, KillTierRun>, tier: number, run:
       count: run.count,
       firstTs: run.firstTs,
       lastTs: run.lastTs,
-      credited: run.credited
+      credited: run.credited,
+      lastCreditedTs: run.lastCreditedTs
     }
     return
   }
@@ -173,6 +189,9 @@ export function addTierRun(into: Record<number, KillTierRun>, tier: number, run:
   prev.firstTs = prev.firstTs ? Math.min(prev.firstTs, run.firstTs) : run.firstTs
   prev.lastTs = Math.max(prev.lastTs, run.lastTs)
   prev.credited += run.credited
+  // 0 means "none of these were yours", so a plain max is also the right union: a run with no
+  // credited kill never drags a real timestamp backwards.
+  prev.lastCreditedTs = Math.max(prev.lastCreditedTs, run.lastCreditedTs)
 }
 
 /**
