@@ -8,10 +8,13 @@
 // nothing to drop here; the file IS the evidence, and trimming it would weaken the
 // equivalence proof below.
 //
-// The load-bearing test is `held counts are byte-identical to the old flat parser`: this
-// wave replaced the lossy line reader with a deep model + a derivation, and every
-// downstream consumer (reconcile.ts, posky/heldCounts.ts, `countSource`) must not be able
-// to tell. The OLD algorithm is replayed here verbatim and diffed key-for-key.
+// The load-bearing test replays the OLD flat parser verbatim and diffs it key-for-key
+// against the derivation. It began life as an equality gate (JOS-44 replaced a lossy line
+// reader with a deep model + a derivation, and no downstream consumer was allowed to tell).
+// JOS-66 makes ONE deliberate change on top, so the gate is now stated as a MEASURED
+// DIFFERENCE: identical on the `Location` table, plus exactly the held `KeyRing` rows. The
+// refactor's proof is intact — that is all it ever claimed — and the one behavior change
+// has to be spelled out in numbers to pass.
 //
 // Run: `npm test`.
 
@@ -20,6 +23,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  HELD_KEYRING_CATEGORIES,
   heldCountsFromDump,
   looksLikeContainer,
   parseItemName,
@@ -73,19 +77,37 @@ function allEntries(dump: ReturnType<typeof parseInventoryDump>): InventoryEntry
 // THE COMPATIBILITY GATE
 // ---------------------------------------------------------------------------
 
-test('held counts derived from the deep model are byte-identical to the old flat parser', () => {
+test('held counts differ from the old flat parser by EXACTLY the held keyring rows', () => {
   const legacy = legacyParseInventoryText(REAL_DUMP)
   const derived = inventoryHeldCounts(REAL_DUMP)
+  const dump = parseInventoryDump(REAL_DUMP)
 
   // Not a vacuous pass: the real dump holds a substantial map.
   assert.ok(Object.keys(legacy).length > 50, 'oracle produced a non-trivial map')
-  assert.deepEqual(derived, legacy)
 
-  // …and key-for-key, so a failure names the item rather than dumping two objects.
+  // The expected difference, derived from the dump's own keyring rather than hand-listed.
+  const expectedDelta: Record<string, number> = {}
+  for (const k of dump.keyRing) {
+    if (!HELD_KEYRING_CATEGORIES.includes(k.category)) continue
+    const key = k.name.toLowerCase()
+    expectedDelta[key] = (expectedDelta[key] ?? 0) + 1
+  }
+  assert.equal(
+    Object.values(expectedDelta).reduce((s, n) => s + n, 0),
+    36,
+    'the real dump carries 36 Equipment keyring rows'
+  )
+
+  // Key-for-key, so a failure names the item rather than dumping two objects.
   const keys = new Set([...Object.keys(legacy), ...Object.keys(derived)])
   for (const k of keys) {
-    assert.equal(derived[k], legacy[k], `count mismatch for ${k}`)
+    assert.equal(derived[k], (legacy[k] ?? 0) + (expectedDelta[k] ?? 0), `count mismatch for ${k}`)
   }
+
+  // And the item table alone still reproduces the old parser EXACTLY — the JOS-44 refactor's
+  // equivalence proof, unchanged, with the one JOS-66 addition subtracted back out.
+  const itemsOnly = heldCountsFromDump({ ...dump, keyRing: [] })
+  assert.deepEqual(itemsOnly, legacy)
 })
 
 test('held counts: the derivation counts what the old one counted, and nothing else', () => {
@@ -106,8 +128,11 @@ test('held counts: the derivation counts what the old one counted, and nothing e
   assert.equal(counts['moonstone ring +3'], 1)
   // Empty slots never count.
   assert.equal(counts['empty'], undefined)
-  // The KeyRing table never counts (its rows have no Count column at all).
-  assert.equal(counts['boots of the long road'], undefined)
+  // An `Equipment` keyring row counts ONE — the table has no Count column, and a copy is a
+  // row: `Boots of the Long Road` 177708 is listed base once and `+1` twice (JOS-66).
+  assert.equal(counts['boots of the long road'], 1)
+  assert.equal(counts['boots of the long road +1'], 2)
+  // …and the `Activated` category still does not count (awaiting a dump that says what it is).
   assert.equal(counts['guise of the deceiver'], undefined)
 })
 
@@ -317,7 +342,7 @@ test('an unknown Location token is reported honestly, never coerced to the neare
 // SECTIONS
 // ---------------------------------------------------------------------------
 
-test('the KeyRing table parses into its own section and never reaches held counts', () => {
+test('the KeyRing table parses into its own section, and only held categories count', () => {
   const dump = parseInventoryDump(REAL_DUMP)
   assert.deepEqual(dump.sections, ['Location', 'KeyRing'])
   assert.equal(dump.keyRing.length, 37)
@@ -332,6 +357,30 @@ test('the KeyRing table parses into its own section and never reaches held count
   assert.equal(
     topLocations(dump).some((l) => l === 'Equipment' || l === 'Activated'),
     false
+  )
+  // The held set is closed and stated (JOS-66): `Equipment` is in, everything else waits for
+  // a dump that says what it is.
+  assert.deepEqual(HELD_KEYRING_CATEGORIES, ['Equipment'])
+})
+
+// ---------------------------------------------------------------------------
+// THE KEYRING IS A STORAGE LOCATION (JOS-66)
+// ---------------------------------------------------------------------------
+
+test('the Equipment keyring is DISJOINT from the item table — counting it adds, never doubles', () => {
+  const dump = parseInventoryDump(REAL_DUMP)
+  const itemNames = new Set([...walkEntries(dump.items)].filter((e) => !e.empty).map((e) => e.name))
+  const shared = dump.keyRing
+    .filter((k) => k.category === 'Equipment' && itemNames.has(k.name))
+    .map((k) => k.name)
+  assert.deepEqual(shared, [], 'no Equipment keyring row names an item the Location table lists')
+
+  // A copy is a ROW: one item id, three rows, two of them the same name. A registry of
+  // distinct appearances cannot print that; a bin holding real copies does.
+  const boots = dump.keyRing.filter((k) => k.itemId === 177708)
+  assert.deepEqual(
+    boots.map((k) => k.name),
+    ['Boots of the Long Road', 'Boots of the Long Road +1', 'Boots of the Long Road +1']
   )
 })
 

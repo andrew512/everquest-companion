@@ -7,12 +7,14 @@
 // (`src/main/outputs/`) now parses the dump into the deep model, and this file derives the
 // same flat map from it.
 //
-// COMPATIBILITY IS THE CONTRACT. `parseInventoryText` returns the byte-identical
-// `HeldCounts` the old reader returned — the derivation rule is written out on
-// `heldCountsFromDump` (shared/outputs/inventory.ts) and pinned against the real 295-line
-// dump in tests/outputsInventory.test.mts, which replays the OLD algorithm and asserts
-// key-for-key, value-for-value equality. The downstream consumers (reconcile.ts,
-// posky/heldCounts.ts, `countSource`) therefore see nothing at all.
+// `parseInventoryText` returns the `HeldCounts` map the old reader returned — the derivation
+// rule is written out on `heldCountsFromDump` (shared/outputs/inventory.ts) and pinned against
+// the real 295-line dump in tests/outputsInventory.test.mts, which replays the OLD algorithm
+// and diffs it key-for-key. The refactor that created this facade changed nothing; JOS-66 then
+// made ONE deliberate change, and the test states it as a measured difference rather than
+// regenerating the oracle: a `KeyRing` row in a held category (today: `Equipment`) now counts,
+// because that table is a storage location holding real copies and a reporter's Plane of Sky
+// quest items live there and nowhere else. Everything about the `Location` table is unchanged.
 //
 // A caller that wants the deep model (sockets, bags, bank, keyring, tiers) imports
 // `loadInventoryDump` from `../outputs` instead. This flat view is not the substrate; it is
