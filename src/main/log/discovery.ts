@@ -50,25 +50,67 @@ export interface DiscoveryProbes {
   fixedDrives: () => string[]
 }
 
-/** Does `<root>\Logs` hold at least one character log? The discovery predicate. */
-export function rootHasLogs(root: string): boolean {
-  const logsDir = join(root, 'Logs')
-  if (!existsSync(logsDir)) return false
+/** The character-log filename the game writes: `eqlog_<Char>_<server>.txt`. */
+const EQLOG_RE = /^eqlog_.+\.txt$/i
+
+/**
+ * THE OUTCOME OF READING A LOGS DIR — three answers, never two (JOS-82).
+ *
+ * `countCharacterLogs` used to answer `0` for all of "the folder is not there", "the folder is
+ * there and holds no character log" and "the OS refused to let me list the folder". The Settings
+ * card then printed ONE sentence for all three — *"No character logs (eqlog_*.txt) found here.
+ * Make sure EverQuest logging is enabled (/log on)"* — which is actively misleading for the third:
+ * the user is looking at their files in Explorer while the app tells them to go turn logging on.
+ * A prod reporter on 0.6.3 hit exactly that shape ("I pointed it directly to the log folder and it
+ * said there were no character logs in that directory"), and a swallowed `readdir` throw is the
+ * only way the app can say that about a folder that demonstrably has logs in it.
+ *
+ * So the read REPORTS ITS FAILURE. Callers that must keep moving (discovery's predicate) still
+ * collapse it to "no", but the surface the user reads gets to say something true.
+ */
+export type LogsDirRead =
+  /** The directory was listed successfully; `count` character logs are in it (possibly 0). */
+  | { ok: true; count: number }
+  /** The directory does not exist. */
+  | { ok: false; reason: 'missing' }
+  /** The directory exists but could not be listed — permissions, a dead junction, an offline share. */
+  | { ok: false; reason: 'unreadable'; code: string }
+
+/**
+ * List a Logs dir and count its `eqlog_*.txt` files, distinguishing a FAILED read from an empty
+ * one. `existsSync` is not consulted first: a single `readdirSync` answers both questions and
+ * cannot race between them (a dir can vanish between the two calls), and ENOENT is exactly the
+ * "missing" answer.
+ */
+export function readLogsDir(logsDir: string): LogsDirRead {
   try {
-    return readdirSync(logsDir).some((f) => /^eqlog_.+\.txt$/i.test(f))
-  } catch {
-    return false
+    return { ok: true, count: readdirSync(logsDir).filter((f) => EQLOG_RE.test(f)).length }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code
+    // ENOENT (nothing there) and ENOTDIR (a FILE where a directory was expected) are both
+    // "there is no such directory" — neither is a permission story and neither should be
+    // reported to the user as one.
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { ok: false, reason: 'missing' }
+    return { ok: false, reason: 'unreadable', code: code ?? 'UNKNOWN' }
   }
 }
 
-/** Count the `eqlog_*.txt` files under a Logs dir (0 if the dir is absent). */
+/**
+ * Does `<root>\Logs` hold at least one character log? The discovery predicate.
+ *
+ * A dir we cannot read is `false` here on purpose — discovery is a sweep over candidate roots
+ * and must keep moving. The honest three-way answer is for the folder the user CHOSE, which is
+ * `resolveEqDir`'s business, not the sweep's.
+ */
+export function rootHasLogs(root: string): boolean {
+  const read = readLogsDir(join(root, 'Logs'))
+  return read.ok && read.count > 0
+}
+
+/** Count the `eqlog_*.txt` files under a Logs dir (0 if the dir is absent or unreadable). */
 export function countCharacterLogs(logsDir: string): number {
-  if (!existsSync(logsDir)) return 0
-  try {
-    return readdirSync(logsDir).filter((f) => /^eqlog_.+\.txt$/i.test(f)).length
-  } catch {
-    return 0
-  }
+  const read = readLogsDir(logsDir)
+  return read.ok ? read.count : 0
 }
 
 /** Does this directory hold an `eqlog_*.txt` DIRECTLY (i.e. is it itself a Logs dir)? */

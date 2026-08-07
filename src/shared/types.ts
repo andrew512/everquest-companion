@@ -150,6 +150,14 @@ export interface EqConfig {
   characterCount: number
   /** Whether a manual override is currently persisted (vs auto-detecting). */
   overridden: boolean
+  /**
+   * How reading `logsDir` went (JOS-82). `characterCount` is 0 for BOTH "the folder holds no
+   * character log" and "the folder could not be listed at all", and those two need opposite
+   * advice — so the verdict the card prints reads this, never the count alone.
+   */
+  readable: 'ok' | 'missing' | 'unreadable'
+  /** The OS errno behind `readable === 'unreadable'` (e.g. 'EPERM'), for the card's copy. */
+  readError?: string
 }
 
 /** Result of picking/validating an EQ install dir from the Settings folder-picker. */

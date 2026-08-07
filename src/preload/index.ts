@@ -280,6 +280,12 @@ const api = {
   getEqConfig: (): Promise<EqConfig> => ipcRenderer.invoke(IPC.getEqConfig),
   /** Open the OS folder-picker; on a pick, persist the override + re-scan. */
   pickEqDir: (): Promise<EqConfigResult> => ipcRenderer.invoke(IPC.pickEqDir),
+  /**
+   * Open the OS FILE-picker on the logs dir; on a pick, persist + re-scan (JOS-82).
+   * Windows' folder dialog shows no files, so this is the only way to point at the
+   * `eqlog_*.txt` the user can see in Explorer.
+   */
+  pickEqLogFile: (): Promise<EqConfigResult> => ipcRenderer.invoke(IPC.pickEqLogFile),
   /** Set the override to an explicit dir (undefined/'' reverts to auto-detect). */
   setEqDir: (dir: string | undefined): Promise<EqConfig> =>
     ipcRenderer.invoke(IPC.setEqDir, dir),
