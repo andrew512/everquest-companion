@@ -41,7 +41,13 @@ import { LAUNCH_MS } from '../src/main/log/epochDetector'
 import { parseEvent } from '../src/main/log/parser'
 import { installCharacterName, installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
-import type { ClassAbbr, ClassObservation, ComboCorrection, ComboInterval } from '../src/shared/classCombo'
+import {
+  resolvedClasses,
+  type ClassAbbr,
+  type ClassObservation,
+  type ComboCorrection,
+  type ComboInterval
+} from '../src/shared/classCombo'
 import { readFixture } from './harness.mts'
 
 const HOUR = 3_600_000
@@ -300,6 +306,53 @@ test('an override comes back after a restart, and clearing it returns to autodet
   assert.ok(cleared.slots.every((s) => s.provenance === 'inferred'))
   assert.equal(cleared.userLocked, false)
   assert.notDeepEqual(codes(cleared), MINE)
+})
+
+test('a correction pushes a delta the renderer will ACCEPT, on a log that has gone quiet', () => {
+  // MEASURED IN THE RUNNING APP (tests/e2e/loadout-override.e2e.mts caught this; before the
+  // fix the store had the override, the model had it, and the panel kept showing the detection
+  // that was wrong). `useModule` dedupes with `if (d.seq <= knownSeq) return`, and `knownSeq` is
+  // the hydration snapshot's seq. When the module reported the last LOG EVENT's seq, a
+  // correction — which advances no log seq whatsoever — produced a delta that was silently
+  // dropped as a duplicate. A user fixing their loadout in Preferences is, by definition, not
+  // generating log lines, so nothing ever came along to unstick it.
+  installSpellDb(loadSpellDb())
+  installCharacterName('Primitive')
+  const mod = new ComboModule()
+  mod.reset()
+  let stored: ComboCorrection[] = []
+  mod.setCorrectionsProvider(() => stored)
+  let n = 0
+  for (const raw of readFixture('cw2-loadout-swap-aug2.log')) {
+    const ev = parseEvent(raw, n++)
+    if (ev) mod.onEvent(ev)
+  }
+
+  // Hydration is the renderer's baseline, and it drains the delta bookkeeping with it.
+  const hydrated = mod.snapshot()
+  assert.equal(mod.flushDelta(), null, 'nothing moved since the snapshot')
+
+  // Not one more log line arrives. The user just presses Save.
+  stored = [
+    { startTs: hydrated.state.current?.startTs ?? 0, endTs: null, classes: MINE, setAt: Date.now() }
+  ]
+  mod.invalidate()
+  const pushed = mod.flushDelta()
+  assert.ok(pushed, 'the correction produced a delta')
+  assert.ok(
+    pushed.seq > hydrated.seq,
+    `the delta must outrank the baseline or the renderer drops it (${pushed.seq} vs ${hydrated.seq})`
+  )
+  assert.ok(
+    pushed.delta.changed.some((i) => resolvedClasses(i).join('/') === MINE.join('/')),
+    'and it carries the override, not just a bumped number'
+  )
+
+  // Monotonic across a reset too: a re-hydration after a character switch must not be able to
+  // hand back a seq that later deltas fail to beat.
+  const before = mod.snapshot().seq
+  mod.reset()
+  assert.ok(mod.snapshot().seq > before, 'the revision never goes backwards')
 })
 
 test('a write takes effect without waiting for another log event, and pre-launch ones never load', () => {

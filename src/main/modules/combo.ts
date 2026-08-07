@@ -49,7 +49,26 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
   private levels: LevelPoint[] = []
   private corrections: ComboCorrection[] = []
   private correctionsProvider: (() => readonly ComboCorrection[]) | null = null
-  private seq = 0
+
+  /**
+   * THE SEQ THIS MODULE REPORTS IS ITS OWN REVISION, NOT A LOG POSITION — and it has to be
+   * (JOS-87, measured in the real app before it was fixed).
+   *
+   * `useModule` dedupes deltas with `if (d.seq <= knownSeq) return`, and `knownSeq` comes from
+   * the hydration snapshot. Every other module's state moves only when an event moves it, so
+   * "the last event's seq" is a perfectly good revision counter for them. THIS module has a
+   * second input: a user correction, which changes every interval and advances no log seq at
+   * all. So a correction written while the log is idle — which is exactly when a user is sitting
+   * in Preferences fixing a wrong loadout — produced a delta the renderer dropped as a dupe. The
+   * store had it, the model had it, and the screen kept showing the detection that was wrong
+   * until the next log line happened to arrive. That is most of "there is no way to correct it".
+   *
+   * A counter bumped by anything that can change the intervals keeps hydrate and delta on ONE
+   * clock and is monotonic by construction. It is never compared to a LogEvent seq anywhere —
+   * the field's only consumer is that dedupe (verified repo-wide), which asks for nothing more
+   * than "strictly increasing when the state changed".
+   */
+  private rev = 0
 
   private intervals: ComboInterval[] = []
   private stale = true
@@ -60,10 +79,20 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
     this.observations = []
     this.whoRows = []
     this.levels = []
-    this.seq = 0
     this.intervals = []
     this.pushed.clear()
+    this.markStale()
+  }
+
+  /**
+   * Anything that can change what the intervals will be goes through here: a new observation, a
+   * level ding, a character reset, a correction written or withdrawn. It marks the fold dirty AND
+   * advances the revision the transport dedupes on, so the two can never disagree — a state
+   * change the renderer is not told about is the defect this whole path was fixed for.
+   */
+  private markStale(): void {
     this.stale = true
+    this.rev++
   }
 
   /**
@@ -77,12 +106,12 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
    */
   setCorrectionsProvider(provider: () => readonly ComboCorrection[]): void {
     this.correctionsProvider = provider
-    this.stale = true
+    this.markStale()
   }
 
   /** Call after writing a correction: the provider's answer changed. */
   invalidate(): void {
-    this.stale = true
+    this.markStale()
   }
 
   /**
@@ -94,7 +123,7 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
   setCorrections(corrections: readonly ComboCorrection[]): void {
     this.correctionsProvider = null
     this.corrections = corrections.filter((c) => c.startTs >= LAUNCH_MS)
-    this.stale = true
+    this.markStale()
   }
 
   getCorrections(): ComboCorrection[] {
@@ -102,7 +131,6 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
   }
 
   onEvent(ev: LogEvent): void {
-    this.seq = ev.seq
     if (ev.kind === 'epoch') {
       // Character rebirth: every observation before the boundary belongs to a dead character
       // whose loadout has nothing to do with this one. NOTE what is deliberately NOT here — a
@@ -115,7 +143,7 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
     }
     if (ev.kind === 'level') {
       this.levels.push({ ts: ev.ts, level: ev.level })
-      this.stale = true
+      this.markStale()
       return
     }
     if (ev.kind === 'selfWho') {
@@ -125,7 +153,7 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
     const observation = classObservation(ev)
     if (!observation) return
     this.observations.push(observation)
-    this.stale = true
+    this.markStale()
   }
 
   /** Rebuild the intervals if anything moved. Cheap enough to do on demand (~30k observations
@@ -151,7 +179,7 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
     // otherwise the next flush would re-send intervals the hydration already carried.
     this.pushed = new Map(intervals.map((i) => [i.id, JSON.stringify(i)]))
     return {
-      seq: this.seq,
+      seq: this.rev,
       state: {
         intervals,
         current: intervals.length > 0 ? intervals[intervals.length - 1] : null,
@@ -172,6 +200,6 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
     const removed = [...this.pushed.keys()].filter((id) => !next.has(id))
     if (changed.length === 0 && removed.length === 0) return null
     this.pushed = next
-    return { seq: this.seq, delta: { changed, removed } }
+    return { seq: this.rev, delta: { changed, removed } }
   }
 }
