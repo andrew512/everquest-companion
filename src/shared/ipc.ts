@@ -67,6 +67,14 @@ export const IPC = {
   // sound packs (discovery + audio bytes)
   listSoundPacks: 'sounds:listPacks',
   getSoundData: 'sounds:getData',
+  // "bring your own sound" (JOS-68): the user's OWN audio, in the reserved `my-sounds` pack.
+  // NO PATH EVER CROSSES THESE. `importUserSounds` opens the OS picker in MAIN and answers
+  // with minted soundIds + display labels; `removeUserSound` takes a manifest KEY, never a
+  // filename. The bytes are then served by `sounds:getData` like any other pack's — one
+  // validated door, not a second one.
+  listUserSounds: 'sounds:listUser',
+  importUserSounds: 'sounds:importUser',
+  removeUserSound: 'sounds:removeUser',
   // main -> renderer: the set of available sound packs changed (e.g. a shipped
   // default pack was auto-provisioned in the background at startup — Task #39). The
   // renderer re-lists packs + invalidates its sound caches so it becomes usable live.

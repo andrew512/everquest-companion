@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import { windowsApi } from './windows'
 import { rosterApi } from './roster'
+import { soundsBridge } from './sounds'
 import type {
   AlertDef,
   AlertPrefs,
@@ -30,6 +31,9 @@ import type {
   SpeechSayResult,
   SpeechVoice,
   SpellCatalog,
+  UserSound,
+  UserSoundImportResult,
+  UserSoundRemoveResult,
   VoicePrefs
 } from '../shared/types'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../shared/combat'
@@ -159,6 +163,7 @@ export interface SubmitOpts {
 export type { CharacterRef, EqConfig, EqConfigResult, LogLine, LootEvent, ProgressState }
 export type { ModuleDelta, ModuleSnapshot }
 export type { AlertDef, AlertPrefs, SoundData, SoundPack, SpellCatalog, ItemKnowledge, MobKnowledge }
+export type { UserSound, UserSoundImportResult, UserSoundRemoveResult }
 export type {
   SpeechEngine,
   SpeechInstallProgress,
@@ -315,15 +320,8 @@ const api = {
   getAlertPrefs: (): Promise<AlertPrefs> => ipcRenderer.invoke(IPC.getAlertPrefs),
   setAlertPrefs: (prefs: AlertPrefs): Promise<AlertPrefs> =>
     ipcRenderer.invoke(IPC.setAlertPrefs, prefs),
-  listSoundPacks: (): Promise<SoundPack[]> => ipcRenderer.invoke(IPC.listSoundPacks),
-  getSoundData: (packId: string, soundId: string): Promise<SoundData | null> =>
-    ipcRenderer.invoke(IPC.getSoundData, packId, soundId),
-  /** Subscribe to "available sound packs changed" pushes (startup auto-provisioning). */
-  onSoundPacksChanged: (cb: () => void): (() => void) => {
-    const listener = (): void => cb()
-    ipcRenderer.on(IPC.onSoundPacksChanged, listener)
-    return () => ipcRenderer.removeListener(IPC.onSoundPacksChanged, listener)
-  },
+  /** Sound packs, the openpeon registry and the user's own imports — preload/sounds.ts. */
+  ...soundsBridge,
   /** Suggested-alerts wizard (Task #38): the searchable spell catalog + live usage. */
   getSpellCatalog: (): Promise<SpellCatalog> => ipcRenderer.invoke(IPC.spellsCatalog),
   /**
@@ -461,29 +459,6 @@ const api = {
     ui: Record<string, string>,
     selection?: { alertIds?: string[]; scalarIds?: string[] }
   ): Promise<ShareApplyResult> => ipcRenderer.invoke(IPC.shareApply, text, ui, selection),
-
-  // ---- sound-pack registry (openpeon.com integration, Task #29) ----
-  /** List registry packs (installed-flag reconciled). `force` bypasses the 24h cache. */
-  listRegistryPacks: (force?: boolean): Promise<RegistryListResult> =>
-    ipcRenderer.invoke(IPC.packsRegistry, force ?? false),
-  /** Install a pack by name; watch onPackProgress for per-phase progress. */
-  installPack: (name: string): Promise<PackMutationResult> =>
-    ipcRenderer.invoke(IPC.packsInstall, name),
-  /** Uninstall a user-installed pack by name. */
-  uninstallPack: (name: string): Promise<PackMutationResult> =>
-    ipcRenderer.invoke(IPC.packsUninstall, name),
-  /** Preview a registry pack's sounds BEFORE install (fetched off GitHub raw). */
-  previewPackSounds: (name: string): Promise<PackPreviewList> =>
-    ipcRenderer.invoke(IPC.packsPreviewList, name),
-  /** Fetch one preview audio file's bytes for a registry pack (null on failure). */
-  previewPackSound: (name: string, file: string): Promise<SoundData | null> =>
-    ipcRenderer.invoke(IPC.packsPreviewSound, name, file),
-  /** Subscribe to install progress pushes. */
-  onPackProgress: (cb: (p: PackInstallProgress) => void): (() => void) => {
-    const listener = (_e: unknown, p: PackInstallProgress): void => cb(p)
-    ipcRenderer.on(IPC.onPackProgress, listener)
-    return () => ipcRenderer.removeListener(IPC.onPackProgress, listener)
-  },
 
   // ---- generic module transport ----
   /** Full hydration snapshot for a module (null if the id is unknown). */

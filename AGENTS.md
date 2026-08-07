@@ -908,6 +908,36 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   migration (`migrateAlertSounds` in data/defaultPacks.ts, run from
   `getAlerts()`), so an upgrading user's alerts never go silently mute. Every
   picker pre-selects alan-rickman (`fallbackPack`), never `packs[0]`.
+- **BRING YOUR OWN SOUND (JOS-68): `my-sounds` is a RESERVED pack with its own
+  ROOT.** Three users asked for custom alert audio and one asked for the FF7
+  fanfare, which copyright forecloses — import-your-own is the honest answer.
+  The user's imports live in `<userData>/my-sounds/` (manifest + `sounds/`,
+  the ordinary pack shape, so `readManifest`/`getSoundData`/every picker read
+  it with the code they already had), NOT under `<userData>/soundpacks/`. That
+  sibling root is what makes a registry collision UNREPRESENTABLE rather than
+  unlikely: installs/uninstalls only ever join onto `userPacksRoot()`, `packDir()`
+  resolves the reserved id to `userSoundsRoot()` FIRST, `installPack` refuses the
+  name, and `installedIds()` never annotates a registry row with it. Identity +
+  formats + the 25 MB cap + the id derivation are `shared/userSounds.ts`;
+  `main/userSounds.ts` is the file work and takes its ROOT as an argument (the
+  maps-library pattern) so tests/userSounds.test.mts drives real copies in a temp
+  dir. **The file is COPIED, and the id BECOMES the filename** —
+  `<soundId>.<ext>`, minted by `userSoundId()` (lowercase slug, capped at 64,
+  de-duped with `-N`, always `/^[a-z0-9][a-z0-9-]*$/`) — so a moved original can
+  never mute an alert and no byte of user-supplied path text reaches `join()`.
+  The picker is `dialog.showOpenDialog` in MAIN (never a renderer file input), so
+  NO absolute path crosses IPC in either direction; serving goes through the same
+  `sounds:getData` + `isSafePackId` door as every other pack, never a second one.
+  An EMPTY pack is not listed (a first dropdown entry whose second is blank).
+  **A missing custom sound is NOT silence**: `getSoundData` answers the reserved
+  pack alone with the shipped default's `buffWearsOff` line — the same choice
+  `migrateAlertSoundRef` makes for an unrecognizable retired-pack id. Removal
+  WARNS by naming the alerts that play it and then leaves their defs ALONE: the
+  retired-pack migration rewrites refs into packs the APP withdrew, and this is
+  the user's own removal (re-importing the file re-mints the same id). Managed
+  from "My sounds…" in the alerts toolbar, deliberately NOT a section of the
+  registry browser — one browses packs somebody published, the other manages the
+  pack you made.
 
 ## UI conventions
 

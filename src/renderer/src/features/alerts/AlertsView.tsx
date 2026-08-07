@@ -34,6 +34,7 @@ import type { AlertDef } from '@shared/types'
 import type { ShareApplyResult } from '@shared/profiles'
 import { previewAlertNow, refreshAlertStore } from './player'
 import SoundPacksDialog from './SoundPacksDialog'
+import MySoundsDialog from './MySoundsDialog'
 import SuggestAlertsDialog from './SuggestAlertsDialog'
 import AlertDialog from './AlertDialog'
 import AlertList from './AlertList'
@@ -141,6 +142,66 @@ function ConfirmResetDialog({
   )
 }
 
+/**
+ * The reset confirmation, whole: its flag, the confirm that performs the reset, and the
+ * dialog itself. A hook rather than four things in the view body, matching `useEditDialog`
+ * and `useShareToast` above — the view asks for a reset, it does not sequence one.
+ */
+function useResetConfirm(store: AlertsStore): { request: () => void; dialog: JSX.Element } {
+  const [open, setOpen] = useState(false)
+  const confirm = useCallback(async () => {
+    await store.resetAlerts()
+    setOpen(false)
+  }, [store])
+  return {
+    request: () => setOpen(true),
+    dialog: (
+      <ConfirmResetDialog
+        open={open}
+        onCancel={() => setOpen(false)}
+        onConfirm={() => void confirm()}
+      />
+    )
+  }
+}
+
+/** Which sound surface is open: the registry browser, the user's own imports, or neither. */
+type SoundSurface = 'packs' | 'mine' | null
+
+/**
+ * The two sound-library dialogs. One browses packs somebody PUBLISHED (the openpeon
+ * registry); the other manages the pack the user MADE (JOS-68) — import, hear, remove. They
+ * are mutually exclusive by construction: ONE piece of state, never two booleans that could
+ * both be true. `alerts` is read-only, and only so a removal can name what plays the sound.
+ */
+function SoundLibraryDialogs({
+  surface,
+  alerts,
+  onClose,
+  onChanged
+}: {
+  surface: SoundSurface
+  alerts: AlertDef[]
+  onClose: () => void
+  onChanged: () => void
+}): JSX.Element {
+  return (
+    <>
+      <SoundPacksDialog
+        open={surface === 'packs'}
+        onClose={onClose}
+        onInstalledChange={onChanged}
+      />
+      <MySoundsDialog
+        open={surface === 'mine'}
+        alerts={alerts}
+        onClose={onClose}
+        onChanged={onChanged}
+      />
+    </>
+  )
+}
+
 /** The share/import toast, plus the one action that raises it (copy a share string). */
 function useShareToast(): {
   toast: Toast | null
@@ -211,18 +272,13 @@ export default function AlertsView({
   const voiceSetup = useVoiceSetupNotice(onOpenVoicePrefs)
 
   const edit = useEditDialog()
-  const [confirmReset, setConfirmReset] = useState(false)
-  const [packsDialogOpen, setPacksDialogOpen] = useState(false)
+  const reset = useResetConfirm(store)
+  const [soundSurface, setSoundSurface] = useState<SoundSurface>(null)
   const [suggestOpen, setSuggestOpen] = useState(false)
   // Sharing (src/shared/profiles.ts): copy one/all alerts as a paste-safe EQC1- string, or
   // import someone else's ADDITIVELY through the shared preview dialog.
   const [importOpen, setImportOpen] = useState(false)
   const { toast, setToast, copyShare } = useShareToast()
-
-  const doReset = useCallback(async () => {
-    await store.resetAlerts()
-    setConfirmReset(false)
-  }, [store])
 
   return (
     <Stack spacing={2} sx={{ height: '100%' }}>
@@ -232,10 +288,11 @@ export default function AlertsView({
         onPrefsDrag={store.setPrefs}
         onPrefsCommit={(next) => void store.persistPrefs(next)}
         hasAlerts={alerts.length > 0}
-        onOpenPacks={() => setPacksDialogOpen(true)}
+        onOpenPacks={() => setSoundSurface('packs')}
+        onOpenMySounds={() => setSoundSurface('mine')}
         onCopyAll={() => void copyShare()}
         onOpenImport={() => setImportOpen(true)}
-        onReset={() => setConfirmReset(true)}
+        onReset={reset.request}
       />
 
       {/* What the app has noticed and would like to offer — see OfferStrips above. */}
@@ -270,10 +327,11 @@ export default function AlertsView({
         }}
       />
 
-      <SoundPacksDialog
-        open={packsDialogOpen}
-        onClose={() => setPacksDialogOpen(false)}
-        onInstalledChange={() => void store.refreshPacks()}
+      <SoundLibraryDialogs
+        surface={soundSurface}
+        alerts={alerts}
+        onClose={() => setSoundSurface(null)}
+        onChanged={() => void store.refreshPacks()}
       />
 
       <SuggestAlertsDialog
@@ -304,11 +362,7 @@ export default function AlertsView({
 
       <AlertsToast toast={toast} onClose={() => setToast(null)} />
 
-      <ConfirmResetDialog
-        open={confirmReset}
-        onCancel={() => setConfirmReset(false)}
-        onConfirm={() => void doReset()}
-      />
+      {reset.dialog}
     </Stack>
   )
 }

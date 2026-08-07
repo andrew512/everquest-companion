@@ -523,3 +523,38 @@ export interface PackPreviewList {
   /** present when the manifest couldn't be fetched/parsed. */
   error?: string
 }
+
+// ----- The user's OWN sounds (JOS-68, shared/userSounds.ts) -----
+//
+// An imported wav/mp3/ogg is COPIED into the reserved `my-sounds` pack, so a file the user
+// later moves, renames or deletes can never silently mute an alert. These are the two IPC
+// replies; the identity, the formats and the size cap live in shared/userSounds.ts.
+
+/** One sound the user imported: its minted id and the filename it was named after. */
+export interface UserSound {
+  soundId: string
+  label: string
+}
+
+/** A file the import refused, and the one sentence saying why. */
+export interface UserSoundRejection {
+  /** the file's basename — never an absolute path (no path ever crosses this channel). */
+  file: string
+  reason: string
+}
+
+/** Reply of sounds:importUser — what landed, what didn't, and the pack's full list after. */
+export interface UserSoundImportResult {
+  /** true when the user dismissed the OS picker: nothing happened, say nothing. */
+  canceled: boolean
+  added: UserSound[]
+  rejected: UserSoundRejection[]
+  /** every sound in the pack after the import (the management list re-renders off this). */
+  sounds: UserSound[]
+}
+
+/** Reply of sounds:removeUser — whether the entry went, plus the remaining list. */
+export interface UserSoundRemoveResult {
+  removed: boolean
+  sounds: UserSound[]
+}

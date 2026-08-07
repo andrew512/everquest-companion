@@ -69,7 +69,7 @@ import {
   withSoundId,
   withSpeechMode
 } from './audioChoice'
-import { fallbackPack } from './SoundPicker'
+import { fallbackPack, packLabel } from './SoundPicker'
 
 /**
  * The suffix the two voice entries carry when the chosen tier has nothing to speak with.
@@ -194,8 +194,7 @@ export default function AudioPicker({
         >
           {packs.map((p) => (
             <MenuItem key={p.id} value={p.id}>
-              {p.name}
-              {p.source === 'user' ? ' (user)' : ''}
+              {packLabel(p)}
             </MenuItem>
           ))}
           <Divider />
