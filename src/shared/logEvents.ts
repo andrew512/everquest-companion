@@ -895,24 +895,34 @@ export interface SpecialAttackEvent extends LogEventBase {
 }
 
 /**
- * AN ITEM'S OWN EFFECT FIRED — a click or a proc (class-combo inference Wave 3). TWO verified
- * shapes, and a full-log sweep found no third `Your <item> …` activation family:
+ * A WORN ITEM EFFECT ANNOUNCED ITSELF. TWO verified shapes, and a full-log sweep found no third
+ * `Your <item> …` activation family:
  *
- *   `Your Djarn's Amethyst Ring (Exaltation) shimmers briefly.`      5,421×  (2 items)
- *   `Your Idol of the Underking (Exaltation) feels alive with power.` 2,500× (2 items)
+ *   `Your Djarn's Amethyst Ring (Exaltation) shimmers briefly.`      7,014×
+ *   `Your Idol of the Underking (Exaltation) feels alive with power.` 2,408×
  *
- * WHY IT IS ITS OWN EVENT, and this is the load-bearing part: the very next line is `You begin
- * casting <Spell>.` at the SAME second, and that cast is the ITEM's, not the player's. Cast
- * evidence is the combo model's weakest tier precisely because items cast spells (design § 9
- * R3), and the design's proposed defence — require evidence in ≥2 hourly buckets — was
- * MEASURED IN WAVE 1 TO FAIL: after the Aug 2 loadout swap, ENC still shows SEVEN distinct
- * exclusive labels (illusions, Rampage I) purely through item clickies, comfortably clearing
- * any sustain threshold. So the combo module drops a `castBegin` that lands within 2.5 s after
- * one of these lines (modules/comboEvidence.ts). Hand-casts keep their full weight.
+ * WHAT IT IS NOT, and this correction is JOS-79: it is not an item CASTING a spell. Wave 3 read
+ * it that way — the next line is `You begin casting <Spell>.` in the same second — and had the
+ * combo module discard any cast within 2.5 s after one. MEASURED whole-log (1.43M lines,
+ * 2026-08-06) that reading is wrong three times over:
+ *   * FIVE items print the line and every one the catalog knows is a FOCUS item — Djarn's
+ *     Amethyst Ring / Spell Haste II, Idol of the Underking / Improved Healing III, Polished
+ *     Mithril Mask / Improved Damage II, Golden Efreeti Boots / Enhancement Haste II. A focus
+ *     is worn and passive; it speaks when it modifies a spell YOU cast.
+ *   * A clicky casts ONE spell. Djarn's ring precedes 7,033 casts across the player's whole
+ *     spellbook, era by era.
+ *   * The two healing/damage focuses precede a cast on only 2.0% of their firings (48 of 2,408;
+ *     25 of 1,281) — they fire when the spell LANDS. An item that cast would print one always.
+ * The rule cost 7,452 of 16,857 own casts (44.2%) and every WIZ observation in the log, which
+ * is why a wizard loadout was undetectable. `modules/comboEvidence.ts` carries the full note.
+ *
+ * WHY IT IS STILL ITS OWN EVENT: 7,749 of these lines were `{kind:'unknown'}` and 172 were
+ * being swept into the spell-emote candidate stream (below). Claiming them is worth it on its
+ * own; they simply say nothing about the wearer's classes, in either direction.
  *
  * `item` is the RAW display name including any trailing ` (Exaltation)` — law 2: canonicalize
  * at counting boundaries, display what the game printed. Nothing keys off it today; it exists
- * so a future consumer can say WHICH clicky fired.
+ * so a future consumer can say WHICH item spoke.
  *
  * CASCADE PLACEMENT: immediately before the permissive spell-landing-emote matcher. 7,749 of
  * the 7,921 lines were `{kind:'unknown'}`; the other 172 (`Your Idol of the Underking feels

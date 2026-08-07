@@ -13,29 +13,48 @@
 // Unioning them would hand MNK's Feign Death skill-ups to NEC and SHD and quietly destroy the
 // one signal that dates the Aug 2 swap. classes.json's `disputed[]` records all three rows.
 //
-// CLICKY SUPPRESSION (the wave-1 correction, and the reason cast evidence is usable at all).
-// Design § 4.2 proposed rejecting item-cast noise with "evidence must span ≥2 hourly buckets".
-// MEASURED: that fails. After the Aug 2 swap — a period where every other signal says the
-// loadout is PAL/ROG/BER — ENC still shows SEVEN distinct exclusive labels (illusion spells,
-// Rampage I) fired entirely by item clickies, across many buckets. The game does print the
-// tell, though: `Your <item> shimmers briefly.` lands immediately before the cast it caused
-// (ItemActivateEvent, added in this wave; 7,921 lines, two message families, two items each).
-// So a castBegin within CLICKY_SUPPRESSION_MS after an item activation contributes NO class
-// evidence at all. Hand-casts are untouched.
+// THERE IS NO CLICKY SUPPRESSION HERE ANY MORE, AND ITS REMOVAL IS THE JOS-79 FIX.
+//
+// Wave 3 read `Your <item> shimmers briefly.` / `… feels alive with power.` as "an item just
+// cast the spell on the next line", and dropped any `castBegin` landing within 2.5 s after one.
+// MEASURED WHOLE-LOG (1,433,047 lines, 2026-08-06), that reading is WRONG, and it was throwing
+// away 7,452 of the player's 16,857 own casts — 44.2% of all cast evidence:
+//
+//   * FIVE items print the line in this log, and every one of them is a FOCUS item in the
+//     committed catalog: Djarn's Amethyst Ring = Spell Haste II, Idol of the Underking =
+//     Improved Healing III, Polished Mithril Mask = Improved Damage II, Golden Efreeti Boots =
+//     Enhancement Haste II (Brell's Girdle, 6 lines, is not in the catalog). A focus effect is
+//     WORN — it announces itself when it modifies a spell YOU are casting. None of the five
+//     casts anything.
+//   * A CLICKY CASTS ONE SPELL. Djarn's ring precedes 7,033 casts spanning the player's whole
+//     spellbook era by era — Superior Healing, Greater Healing, Shiftless Deeds, Discordant
+//     Mind, Mesmerization, Garrison's Mighty Mana Shock — which no single item effect can be.
+//   * AND MOST OF THEM PRECEDE NO CAST AT ALL. Idol of the Underking fires 2,408 times and has
+//     a `You begin casting` within 2.5 s on 48 of them (2.0%); Polished Mithril Mask, 1,281
+//     times and 25 (2.0%). Both are heal/damage focuses: they fire when the spell LANDS, after
+//     the cast the old rule blamed them for. An item that cast a spell would print one every
+//     time.
+//
+// The cost of the wrong reading was total for one class: WIZ had ZERO observations in the whole
+// log, because this player's wizard nukes are cast under Spell Haste II and the ring shimmers
+// in the same second as every one of them. 824 wizard-exclusive observations on Aug 06 alone
+// were being discarded, which is why the app could not see a PAL/WIZ/DRU loadout at all.
+//
+// The wave-1 measurement that motivated the rule still stands and is simply not what the rule
+// was doing: after the Aug 2 swap ENC keeps seven exclusive labels (illusions, Rampage I) fired
+// by items that announce NOTHING. Those survived the suppression too — what rejects them is the
+// admission ranking in comboScore.ts, and CW4 pins exactly that with the rule gone.
+//
+// `itemActivate` stays a parsed event (it keeps 7,921 lines out of `unknown` and out of the
+// spell-emote miner); it is simply not evidence about the player's classes, in either
+// direction. A real self-announcing clicky would need its own observed sample before any rule
+// here may act on one (the awaiting-sample law).
 
 import classesJson from '../data/classes.json'
 import { classesForSpell } from '../data/spellClasses'
 import { spellCanonKey } from '../log/parseCommon'
 import type { LogEvent } from '../../shared/logEvents'
 import { isClassAbbr, type ClassAbbr, type ClassObservation } from '../../shared/classCombo'
-
-/**
- * How long after an item activation a cast is attributed to the ITEM rather than the player.
- * The real log prints both lines in the SAME second (ts resolution is 1s), so any positive
- * window works; 2.5 s covers a cast whose begin-line slips a second and stays far below the
- * ~6 s median gap between an unrelated hand-cast and the nearest clicky.
- */
-export const CLICKY_SUPPRESSION_MS = 2500
 
 /**
  * Source weights (§ 4.2). `who` is absent on purpose: a `/who` row is not scored, it OVERRIDES
@@ -108,17 +127,11 @@ function make(
 }
 
 /**
- * Turn one event into class evidence.
- *
- * `lastItemActivateTs` is the timestamp of the most recent `itemActivate` (null if none yet) —
- * the ONLY context this function needs, and the reason it can stay pure. A castBegin inside the
- * suppression window returns null: not "weak evidence", NO evidence. An item's spell says
- * nothing whatsoever about what the wearer's classes are.
+ * Turn one event into class evidence. Context-free — every input it needs is on the event, and
+ * that is what keeps it pure (and what the header's measurement bought back: the one piece of
+ * context it used to take was the last item activation, which turned out to say nothing).
  */
-export function classObservation(
-  ev: LogEvent,
-  lastItemActivateTs: number | null
-): ClassObservation | null {
+export function classObservation(ev: LogEvent): ClassObservation | null {
   switch (ev.kind) {
     case 'selfWho':
       return make(ev, 'who', 'who', ev.classes.filter(isClassAbbr))
@@ -134,12 +147,8 @@ export function classObservation(
       // eqlwiki Disciplines: "only Rogue poison disciplines are on Legends". Somebody ELSE's
       // blades (the third-person shapes) say nothing about this character.
       return ev.who === 'you' ? make(ev, 'poisonCoat', ev.poison, ['ROG']) : null
-    case 'castBegin': {
-      if (lastItemActivateTs !== null && ev.ts - lastItemActivateTs <= CLICKY_SUPPRESSION_MS) {
-        return null
-      }
+    case 'castBegin':
       return make(ev, 'cast', ev.spell.replace(RANK_TAIL_RE, '').trim(), castCandidates(ev.spell))
-    }
     default:
       return null
   }
