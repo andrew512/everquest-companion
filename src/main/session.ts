@@ -121,6 +121,8 @@ export function buildEqConfig(): EqConfig {
     logsDir: r.logsDir,
     source: r.source,
     characterCount: r.characterCount,
+    readable: r.readable,
+    readError: r.readError,
     overridden: getEqInstallDir() !== undefined
   }
 }

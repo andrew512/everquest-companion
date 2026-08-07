@@ -5,6 +5,7 @@
 import { dialog, ipcMain } from 'electron'
 import { existsSync } from 'fs'
 import { IPC } from '../../shared/ipc'
+import type { EqConfigResult } from '../../shared/types'
 import { listCharacters, parseLogName, resolveEqDir } from '../log/config'
 import { loadInventory } from '../inventory/parseInventory'
 import {
@@ -29,15 +30,15 @@ export function registerCharacterIpc(): void {
 
   // ---- EQ install-dir discovery + override (Settings gear) ----
   ipcMain.handle(IPC.getEqConfig, () => buildEqConfig())
-  // Open the OS folder-picker rooted at the current effective dir; on a pick,
-  // persist the override + re-scan/re-tail. Cancel leaves everything untouched.
-  ipcMain.handle(IPC.pickEqDir, async () => {
-    const current = resolveEqDir()
-    const opts = {
-      title: 'Select your EverQuest Legends install folder',
-      defaultPath: existsSync(current.root) ? current.root : undefined,
-      properties: ['openDirectory' as const]
-    }
+
+  /**
+   * Run one OS open-dialog and, on a pick, persist it as the override + re-scan/re-tail.
+   * Cancel leaves everything untouched. Shared by the folder and file pickers because the
+   * ONLY difference between them is the dialog options — what a picked path MEANS is
+   * `normalizeEqDirOverride`'s job (log file, Logs folder and install root all resolve to
+   * the same pair), so both buttons can hand it whatever the user chose.
+   */
+  const pickInto = async (opts: Electron.OpenDialogOptions): Promise<EqConfigResult> => {
     // Parent the dialog to the main window (modal) when we have one.
     const mainWindow = getMainWindow()
     const res = mainWindow
@@ -47,8 +48,45 @@ export function registerCharacterIpc(): void {
       return { ok: false as const, config: buildEqConfig() }
     }
     setEqInstallDir(res.filePaths[0])
-    const config = await applyEqDirChange()
-    return { ok: true as const, config }
+    return { ok: true as const, config: await applyEqDirChange() }
+  }
+
+  // The folder picker, rooted at the current effective dir.
+  ipcMain.handle(IPC.pickEqDir, () => {
+    const current = resolveEqDir()
+    return pickInto({
+      title: 'Select your EverQuest Legends install folder',
+      defaultPath: existsSync(current.root) ? current.root : undefined,
+      properties: ['openDirectory']
+    })
+  })
+
+  /**
+   * THE FILE PICKER (JOS-82) — the affordance the folder button structurally cannot be.
+   *
+   * Windows' folder dialog is `IFileOpenDialog` + `FOS_PICKFOLDERS`, which lists ONLY
+   * containers. A real EQ Legends `Logs` folder holds character logs and no subdirectories
+   * at all (measured: 6 files, 0 dirs), so a user who navigates into it looking for the file
+   * the app keeps naming — `eqlog_*.txt` — is shown an EMPTY pane while Explorer shows the
+   * files. That is report 01M0Q… on 0.10.0, near-verbatim. openFile and openDirectory cannot
+   * be combined on Windows (Electron shows the directory selector), so the honest fix is a
+   * SECOND dialog rather than a cleverer single one.
+   *
+   * It opens on the resolved LOGS dir, not the root: that is the folder the files are in, so
+   * the picker lands where the user was already looking.
+   */
+  ipcMain.handle(IPC.pickEqLogFile, () => {
+    const current = resolveEqDir()
+    const start = existsSync(current.logsDir) ? current.logsDir : current.root
+    return pickInto({
+      title: 'Select one of your EverQuest character logs',
+      defaultPath: existsSync(start) ? start : undefined,
+      filters: [
+        { name: 'EverQuest character log', extensions: ['txt'] },
+        { name: 'All files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    })
   })
   // Set the override to an explicit dir (undefined/'' ⇒ revert to auto-detect).
   ipcMain.handle(IPC.setEqDir, async (_e, dir: string | undefined) => {

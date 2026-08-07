@@ -35,6 +35,10 @@ export const IPC = {
   getEqConfig: 'eqconfig:get',
   // renderer -> main: open the OS folder-picker; on pick, persist the override + re-list.
   pickEqDir: 'eqconfig:pick',
+  // renderer -> main: open the OS FILE-picker on `eqlog_*.txt` (JOS-82). Windows' folder
+  // picker shows no files at all, so the folder button alone cannot answer "I can see the
+  // log right there in Explorer". Same persist + re-list tail as pickEqDir.
+  pickEqLogFile: 'eqconfig:pickFile',
   // renderer -> main: set the override to an explicit dir (undefined/'' ⇒ auto-detect).
   setEqDir: 'eqconfig:set',
   // renderer -> main: clear the override (revert to auto-discovery).

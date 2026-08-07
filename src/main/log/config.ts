@@ -10,11 +10,13 @@ import {
   fixedDrives,
   logIsUnderLogsDir,
   normalizeEqDirOverride,
+  readLogsDir,
   realOverrideProbes,
   registryInstallCandidates,
   rootHasLogs,
   tailSurvivesRootChange,
   type DiscoveryProbes,
+  type LogsDirRead,
   type NormalizedEqDir,
   type OverrideProbes
 } from './discovery'
@@ -38,8 +40,10 @@ export {
   countCharacterLogs,
   logIsUnderLogsDir,
   normalizeEqDirOverride,
+  readLogsDir,
   tailSurvivesRootChange,
   type DiscoveryProbes,
+  type LogsDirRead,
   type NormalizedEqDir,
   type OverrideProbes
 }
@@ -146,8 +150,23 @@ export interface ResolvedEqDir {
   logsDir: string
   /** How `root` was chosen: a saved override, auto-discovery, or the fallback. */
   source: EqDirSource
-  /** Number of `eqlog_*.txt` character logs found under `logsDir` (0 = none). */
+  /** Number of `eqlog_*.txt` character logs found under `logsDir` (0 = none, or unread). */
   characterCount: number
+  /** How reading `logsDir` went — a FAILED read is not "no logs" (JOS-82). */
+  readable: 'ok' | 'missing' | 'unreadable'
+  /** The OS errno when `readable === 'unreadable'` (e.g. 'EPERM'). Undefined otherwise. */
+  readError?: string
+}
+
+/** Fold one `readLogsDir` answer into the count + verdict every consumer reads. */
+function describeLogsDir(logsDir: string): Pick<
+  ResolvedEqDir,
+  'characterCount' | 'readable' | 'readError'
+> {
+  const read = readLogsDir(logsDir)
+  if (read.ok) return { characterCount: read.count, readable: 'ok' }
+  if (read.reason === 'missing') return { characterCount: 0, readable: 'missing' }
+  return { characterCount: 0, readable: 'unreadable', readError: read.code }
 }
 
 /**
@@ -171,13 +190,13 @@ export function resolveEqDir(): ResolvedEqDir {
   const override = getEqInstallDir()?.trim()
   if (override) {
     const { root, logsDir } = normalizeEqDirOverride(override, realOverrideProbes())
-    return { root, logsDir, source: 'manual', characterCount: countCharacterLogs(logsDir) }
+    return { root, logsDir, source: 'manual', ...describeLogsDir(logsDir) }
   }
   const discovered = discoverOnce()
   const root = discovered ?? EQ_ROOT
   const source: EqDirSource = discovered ? 'auto' : 'default'
   const logsDir = join(root, 'Logs')
-  return { root, logsDir, source, characterCount: countCharacterLogs(logsDir) }
+  return { root, logsDir, source, ...describeLogsDir(logsDir) }
 }
 
 /** The effective install root (override ?? discovery ?? default). */
