@@ -20,14 +20,17 @@ import { scopeHealing } from '../features/combat/meterScope'
 import { MeterCrumb } from './meterCrumb'
 // The app's ONE `m:ss` spelling — see meterBars.tsx for why it comes from here.
 import { fmtDur } from '../features/combat/copyTable'
-import { formatNum as fmt, formatHealRate } from '../lib/formatRate'
+import { formatNum as fmt } from '../lib/formatRate'
 import {
   ABSORB_NOTE,
   hasAbsorbCounts,
   healPanel,
+  healerAmount,
   healerStat,
   healerTitle,
   isAbsorbLane,
+  isUnstatedLane,
+  laneAmount,
   spellStat,
   spellTitle
 } from '../features/combat/healRows'
@@ -230,12 +233,18 @@ function SpellBar({ s, healerKind }: { s: HealSpellView; healerKind: string }): 
           {isAbsorbLane(s) && (
             <span style={{ color: 'rgba(255,255,255,0.5)', fontWeight: 400 }}> ·absorbed</span>
           )}
+          {/* …and the third classification: a heal the log announced without an amount (Mend).
+              The suffix is what stops the zero-length bar beside it reading as a heal that did
+              nothing. */}
+          {isUnstatedLane(s) && (
+            <span style={{ color: 'rgba(255,255,255,0.5)', fontWeight: 400 }}> ·unvalued</span>
+          )}
           <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>
             {spellStat(s)}
           </span>
         </>
       }
-      right={fmt(s.total)}
+      right={laneAmount(s)}
       title={spellTitle(s)}
     />
   )
@@ -268,7 +277,7 @@ function HealerBar({
           </span>
         </>
       }
-      right={`${formatHealRate(h.hps)} · ${fmt(h.total)}`}
+      right={healerAmount(h)}
       onClick={onDrill}
       title={healerTitle(h)}
     />

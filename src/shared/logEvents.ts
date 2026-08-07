@@ -222,6 +222,44 @@ export interface HealEvent extends LogEventBase {
 }
 
 /**
+ * AN ANNOUNCED HEAL THE LOG NEVER VALUES (JOS-86) — the monk's Mend.
+ *
+ * `You mend your wounds and heal some damage.` is the whole sentence: no number, no target, no
+ * third-person twin. Hit points really did go back on the bar and the game declines to say how
+ * many, so this is the exact inverse of MitigationEvent below — that one is an amount attached
+ * to something that never touched a health bar; this one is a health bar with no amount.
+ *
+ * IT IS ITS OWN KIND FOR THE SAME REASON MITIGATION IS. Emitting a `heal` with `amount: 0`
+ * would be a lie that every downstream consumer would then have to un-learn: the healing ledger
+ * would file it as a tick that landed on a full health bar (`fullOverheal`), the row's `min`
+ * would collapse to 0, and `foldHealAnalytics` would enter a 0-damage "Mend proc" into the proc
+ * model. A kind with NO `amount` FIELD AT ALL makes the absence structural — there is nothing
+ * to accidentally sum.
+ *
+ * VERIFIED shapes (full-log sweep of eqlog_Primitive_freeport.txt, 2026-08-07 — 1,178 lines
+ * contain "mend" case-insensitively and they partition exactly):
+ *   876  `You mend your wounds and heal some damage.`  — the ONLY mechanical heal shape
+ *   200  `You have become better at Mend! (N)`         — the skill-up stream (skillUp)
+ *     1  `You have gained the ability to use Mend.`
+ *     2  a mob literally named `a Nisch Mas Mender`
+ *    99  third-party chat about the skill (all quoted, all dropped by the scrub)
+ * So: FIRST PERSON ONLY (no `<X> mends …` exists), no failure shape, no "you are not wounded"
+ * refusal, and no amount in any of the 876. Do not invent a third-person arm for a sentence the
+ * game has never printed (AGENTS.md awaiting-sample law).
+ */
+export interface HealUnstatedEvent extends LogEventBase {
+  kind: 'healUnstated'
+  /**
+   * The class SKILL that healed. 'Mend' is the only value the log has ever produced; it is a
+   * field rather than a constant so a second amount-less family graduates by adding a regex,
+   * not by reshaping the ledger.
+   */
+  skill: string
+  /** Who it landed on. The sentence is first-person only, so this is always 'You' today. */
+  target: string
+}
+
+/**
  * ABSORPTION / MITIGATION families (Task #59) — damage PREVENTED, never hit points restored.
  * Deliberately a separate event kind from `heal`: folding these into healing would inflate a
  * healing meter with numbers that never touched the health bar.
@@ -1210,6 +1248,7 @@ export type LogEvent =
   | DeathEvent
   | DamageEventE
   | HealEvent
+  | HealUnstatedEvent
   | MitigationEvent
   | MissEvent
   | ResistEvent

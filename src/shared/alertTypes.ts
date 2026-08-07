@@ -29,6 +29,9 @@ export type LogEventKind =
   | 'death'
   | 'damage'
   | 'heal'
+  // A heal the log ANNOUNCED without an amount — the monk's Mend (JOS-86). Its own kind, not a
+  // zero-amount 'heal', so an alert can fire on "I mended" while nothing downstream can sum it.
+  | 'healUnstated'
   | 'mitigation'
   | 'miss'
   | 'resist'

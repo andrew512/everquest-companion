@@ -32,11 +32,19 @@ import type {
   HealingView,
   MitigationView
 } from '@shared/combat'
-import { formatNum as fmt } from '../../lib/formatRate'
+import { formatNum as fmt, formatHealRate } from '../../lib/formatRate'
 
 /** The one honest line about the assumption, surfaced on hover (never as a caption). */
 export const ABSORB_NOTE =
   'The log records absorption GRANTED, not consumed — counted here as effective sustain.'
+
+/** The same service for the other thing the log will not say (JOS-86). It is the WHOLE reason
+ *  an 'unstated' lane exists, so it is never abbreviated at either surface. */
+export const UNSTATED_NOTE =
+  'The log announces this heal without an amount, so it is counted and never valued — it adds nothing to any total.'
+
+/** The terse in-bar stand-in for a number that does not exist. Never "0". */
+export const UNSTATED_AMOUNT = 'amount not stated'
 
 const pct = (n: number): string => `${Math.round(n)}%`
 
@@ -51,9 +59,38 @@ export function isAbsorbLane(r: { classification: string }): boolean {
   return r.classification === 'absorbed'
 }
 
+/** An amount-less heal lane (Mend). Same rule: the CLASSIFICATION identifies it, never the name
+ *  — a lane called 'Mend' with a real number would be a different thing entirely. */
+export function isUnstatedLane(r: { classification: string }): boolean {
+  return r.classification === 'unstated'
+}
+
 /** True when the amount-less absorption families have anything to say. */
 export function hasAbsorbCounts(mit: MitigationView | null | undefined): boolean {
   return !!mit && (mit.absorbedSwings > 0 || mit.absorbedDamageShields > 0)
+}
+
+/**
+ * The mark that stands where a number would go when the log never printed one (JOS-86).
+ *
+ * It exists because `fmt(0)` is the string '0', and on an 'unstated' lane 0 is not the amount —
+ * it is the ABSENCE of one. A bar whose right end reads "0" says Mend healed you for nothing,
+ * which is the single wrong reading this whole classification was added to prevent.
+ */
+export const NO_AMOUNT_MARK = '—'
+
+/** What goes at the RIGHT end of a LANE bar. One answer, so the panel and the overlay cannot
+ *  disagree about which lanes have a number. */
+export function laneAmount(s: HealSpellView): string {
+  return isUnstatedLane(s) ? NO_AMOUNT_MARK : fmt(s.total)
+}
+
+/** What goes at the right end of a HEALER row: its rate and its total — unless the row has no
+ *  valued sustain at all and exists only to carry unvalued lanes, in which case "0/s · 0" would
+ *  be the same wrong reading one level up. */
+export function healerAmount(h: HealSourceView): string {
+  if (h.total === 0 && h.unstatedCount > 0) return NO_AMOUNT_MARK
+  return `${formatHealRate(h.hps)} · ${fmt(h.total)}`
 }
 
 /** Overheal as a share of RAW healing. 0 when nothing was recorded — never NaN, never invented. */
@@ -72,6 +109,9 @@ export function spellStat(s: HealSpellView): string {
   // An absorption lane has no overheal and no crits by construction — showing "0% over" would
   // imply the log measured something it never records.
   if (isAbsorbLane(s)) return `${s.count}x · ${healRange(s.min, s.max)} granted`
+  // …and an unstated lane has no NUMBER at all. `healRange` would print "0" here, which is the
+  // one reading the log cannot support, so the range is replaced by the reason there isn't one.
+  if (isUnstatedLane(s)) return `${s.count}x · ${UNSTATED_AMOUNT}`
   const parts: string[] = []
   if (s.overheal > 0) parts.push(`${pct(overhealPct(s.total, s.overheal))} over`)
   parts.push(healRange(s.min, s.max))
@@ -82,6 +122,11 @@ export function spellStat(s: HealSpellView): string {
 export function spellTitle(s: HealSpellView): string {
   if (isAbsorbLane(s)) {
     return `${s.name} (absorbed) — ${fmt(s.total)} absorption granted over ${s.count} runes · range ${healRange(s.min, s.max)}. ${ABSORB_NOTE}`
+  }
+  // No average, no range, no "0 effective" — every one of those would be a figure derived from a
+  // number the game never printed. The count and the reason are the whole truth available.
+  if (isUnstatedLane(s)) {
+    return `${s.name} (amount not stated) — used ${s.count}x. ${UNSTATED_NOTE}`
   }
   const bits = [
     `${fmt(s.total)} effective`,
@@ -110,6 +155,10 @@ export function healerStat(h: HealSourceView): string {
   if (h.crits > 0) parts.push(`${pct(h.critPct)} crit`)
   if (h.overheal > 0) parts.push(`${pct(h.overhealPct)} over`)
   if (h.absorbedTotal > 0) parts.push(`${fmt(h.absorbedTotal)} absorbed`)
+  // Stated as a COUNT with its own word, never merged into the `Nx` above — that figure is the
+  // denominator of every rate beside it. Without this a row whose only sustain was Mend reads as
+  // a bare "You" with nothing after it, which is how the report that started JOS-86 read.
+  if (h.unstatedCount > 0) parts.push(`${h.unstatedCount}x unvalued`)
   return parts.join(' · ')
 }
 
@@ -128,6 +177,7 @@ export function healerTitle(h: HealSourceView): string {
     bits.push((h.min ?? 0) !== h.max ? `range ${healRange(h.min, h.max)}` : `always ${fmt(h.max)}`)
   }
   if (h.absorbedTotal > 0) bits.push(`+ ${fmt(h.absorbedTotal)} absorbed. ${ABSORB_NOTE}`)
+  if (h.unstatedCount > 0) bits.push(`+ ${h.unstatedCount} unvalued. ${UNSTATED_NOTE}`)
   return `${h.name} — ${bits.join(' · ')}`
 }
 

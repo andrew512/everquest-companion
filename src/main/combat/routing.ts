@@ -14,7 +14,14 @@ import { ACTIVE_MS, type Encounter } from './encounter'
 import type { DamageEvent, MissFold, SourceRef } from './aggregate'
 import type { HealAccum, HealInput } from './healing'
 import type { EngineState } from './state'
-import type { HealEvent, MissEvent, MissType, MitigationEvent, ResistEvent } from '../../shared/logEvents'
+import type {
+  HealEvent,
+  HealUnstatedEvent,
+  MissEvent,
+  MissType,
+  MitigationEvent,
+  ResistEvent
+} from '../../shared/logEvents'
 import type { DamageCategory, HealSourceKind, SourceKind } from '../../shared/combat'
 
 /** How a damage event `A → B` is attributed given the pet-name set. */
@@ -662,6 +669,31 @@ export function routeHeal(st: EngineState, ev: HealEvent): void {
     return
   }
   addHostileHeal(st, r)
+}
+
+/**
+ * Consume an ANNOUNCED-BUT-UNVALUED heal (JOS-86) — `You mend your wounds and heal some damage.`
+ *
+ * It reaches the healing ledger as a COUNT on its own lane and nothing else. Everything
+ * `routeHeal` does with an amount is skipped rather than done with a zero: no `addIncHeal` (the
+ * top-healers list ranks by hit points and this line has none), no proc analytics (a 0-amount
+ * "Mend proc" is a fabricated observation), no min/max/overheal.
+ *
+ * NO WORLD-MODEL EVIDENCE IS READ OFF IT EITHER, unlike every other heal line. `noteHealEvidence`
+ * exists because a heal names two parties and one of them can be filed; this sentence names
+ * NOBODY — not even you, grammatically — so there is nothing to learn and nothing to get wrong.
+ *
+ * It never opens, joins or extends an encounter and never moves the damage timeline — the same
+ * rule mitigation, miss and resist follow (AGENTS.md world-model law 8). A Mend used while you
+ * stand around out of combat belongs to the zone lane and nowhere else.
+ */
+export function routeHealUnstated(st: EngineState, ev: HealUnstatedEvent): void {
+  const enc = st.freshEncounter(ev.ts)
+  const p = st.probe
+  if (p) p.enter(SEC_AGGREGATE)
+  enc?.agg.heal.addUnstated(ev.skill)
+  st.zoneAgg.heal.addUnstated(ev.skill)
+  if (p) p.leave()
 }
 
 /**
