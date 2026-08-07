@@ -657,9 +657,10 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   ("slashes"); missing `smite`/`cleave` once hid 22% of all damage. Paren
   modifiers are COMPOUND: `(Riposte Slay Undead)`.
 - **A VERB THAT NAMES A CLASS SKILL GETS ITS OWN LANE; A WEAPON VERB DOES
-  NOT** (JOS-77). `meleeSkill()` (log/parseCombat.ts) splits Backstab (ROG),
-  Bash (PAL/SHD/WAR), Kick (BST/MNK/RNG/WAR), Frenzy (BER), Flurry and now
-  **Cleave (WAR, level 5)**; slash/pierce/crush/hit/slice/claw/gore are what a
+  NOT** (JOS-77, JOS-81). `meleeSkill()` (log/parseCombat.ts) splits Backstab
+  (ROG), Bash (PAL/SHD/WAR), Kick (BST/MNK/RNG/WAR), Frenzy (BER), Flurry,
+  **Cleave (WAR, level 5)** and **Smite (PAL, level 9 innate)**;
+  slash/pierce/crush/hit/slice/claw/gore are what a
   weapon in a hand prints and share the generic "Melee" row (the Rounds panel
   splits those BY VERB instead). The table is HAND-AUTHORED against
   `data/classes.json`'s skill→class map — never a matcher over spelling, which
@@ -670,12 +671,29 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   and not a damage tier of some weapon verb: the owner's 1.4M-line log has
   71,104 `You slash` hits reaching 2,100 damage and **ZERO** `You cleave`
   lines, while carrying 20,334 INCOMING ones — a verb that never prints for a
-  player who lacks the skill is gated on the skill. `smite` (PAL) is the same
-  shape and is the KNOWN REMAINING GAP — 13,968 self swings + 280 `better at
-  Smite!` ticks in the owner's log, still reading "Melee"; W48 in
-  `tests/specialAttackWindows.test.mts` pins that absence deliberately.
-  Cleave claims no special-attack lane (no `will now use` line has ever named
-  one) and no reuse-timer confidence tier.
+  player who lacks the skill is gated on the skill.
+  **SMITE (JOS-81) NEEDED A DIFFERENT PROOF and the log gave a better one.**
+  Cleave's argument is an absence; the owner IS a paladin and smites 13,984
+  times, so it cannot borrow it. THE SKILL-UP STREAM decides: enumerating all
+  56 `You have become better at X!` names, a weapon verb NEVER ticks under its
+  own name (a slash ticks `1H Slashing` 365, a crush `1H Blunt` 248, a pierce
+  `1H Piercing` 410, a punch `Hand to Hand` 282; `better at Slash!` does not
+  exist), while `Smite` ticks 280 times beside Kick 296 / Bash 222 /
+  Backstab 200 / Frenzy 196. Neither verb claims a special-attack lane (no
+  `instead of Cleave`/`instead of Smite` line exists — Smite's three
+  `You will now use Smite while auto attacking.` grants are bare, and a special
+  earns a lane only when it prints NO verb of its own) nor a reuse-timer
+  confidence tier.
+  **THE SKILL LANE AND THE SPELL LANE SHARE A STEM AND MUST NEVER MERGE.**
+  `Smiting Strike` (the PAL proc, 15,016 lines, `by <Spell>` path, `spell`
+  category) is a different row and is byte-identical across JOS-81. But a spell
+  literally named **`Smite`** also exists (20 self lines / 1,820 points
+  whole-log; classes.json already flags the name clash — "never union them"),
+  and a source's TOP-LEVEL lane list is keyed by skill NAME alone
+  (`aggregate.ts bySkill`), so on 10 of 2,727 fights that one row now sums a
+  melee skill and a spell. The per-CATEGORY drill separates them exactly and
+  every category total is unaffected; `tests/combatSmiteLane.test.mts` W54
+  pins the collision on real bytes rather than hiding it.
 - **SPECIAL ATTACKS PRINT NO VERB OF THEIR OWN.** A Dragon Punch, an Eagle
   Strike and a Tiger Claw ALL land as `You strike …`; Round Kick and Flying
   Kick land as `You kick …`. The game names the live one exactly once, in

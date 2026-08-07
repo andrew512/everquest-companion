@@ -244,10 +244,12 @@ test('W46: the Eagle Strike era — strikes before the state line stay generic, 
   // HAND-TALLIED off the fixture: 7 `You strike … for N` lines after 22:07:16, summing to 89.
   lane(skills, 'Eagle Strike', 89, 7)
   // The 10 strike hits BEFORE the state line (102 damage) are inside the generic Melee lane —
-  // together with every crush/slash/hit/smite swing in the window. The window's Melee total is
+  // together with every crush/slash/hit swing in the window. The window's Melee total is
   // therefore strictly greater than the pre-state strikes alone.
   const melee = skills.get('Melee')
   assert.ok(melee && melee.total > 102, 'the pre-state strikes fall in the generic Melee lane')
+  // Smite left that lane in JOS-81: 9 swings for 157, hand-tallied off the fixture.
+  lane(skills, 'Smite', 157, 9)
   // THE KICK LANE IS UNTOUCHED. Round Kick was live for the whole window but its state line is
   // hours outside it, so the model must NOT reach into the table and name the lane.
   lane(skills, 'Kick', 292, 25)
@@ -255,7 +257,7 @@ test('W46: the Eagle Strike era — strikes before the state line stay generic, 
   assert.equal(skills.has('Tiger Claw'), false, 'the displaced special is never resurrected')
   lane(skills, 'Bash', 36, 18)
   // LAW 8 TRIPWIRE: the category totals are what must not move. Σ melee skills == melee total.
-  const meleeSkills = ['Melee', 'Eagle Strike', 'Kick', 'Bash']
+  const meleeSkills = ['Melee', 'Eagle Strike', 'Kick', 'Bash', 'Smite']
     .reduce((n, k) => n + (skills.get(k)?.total ?? 0), 0)
   assert.equal(meleeSkills, categories.get('melee'), 'Σ melee lanes == the melee category total')
   assert.equal(categories.get('melee'), 2105)
@@ -314,9 +316,15 @@ test('W48: Slam does NOT claim the bash lane — the refused inference stays ref
   // attribution and must be left exactly as the parser named them.
   lane(skills, 'Backstab', 762, 12)
   lane(skills, 'Frenzy', 485, 18)
-  // Smite has no lane of its own in the parser (it reads "Melee"), and this feature does not
-  // change that — a documented gap, not something to silently invent a row for.
-  assert.equal(skills.has('Smite'), false)
+  // SMITE HAS ITS OWN ROW NOW (JOS-81, flipped from the documented-absence assertion this test
+  // used to carry). The nine `You smite …` lines in this window — 24+19+19+28+24+24+26+29+13,
+  // hand-tallied off the fixture — used to be inside the generic Melee row; the grant three
+  // lines up (`You will now use Smite while auto attacking.`) is not what named them, and that
+  // is the point: Smite prints its OWN verb, so `meleeSkill('smite')` names the lane and
+  // specialAttacks.ts still claims nothing (see the Smite/Backstab/Frenzy refusal above).
+  lane(skills, 'Smite', 206, 9)
+  // …and not one point moved between categories: the melee total is exactly what this test
+  // asserted before the lane existed.
   assert.equal(categories.get('melee'), 5926)
   assert.equal(categories.get('slay'), 318)
   assert.equal(categories.get('spell'), 417)

@@ -100,6 +100,17 @@ const catOf = (row: SourceView, c: string): { hits: number; total: number } => {
 }
 
 /**
+ * One lane INSIDE one category. Needed since JOS-81 gave the melee verb `smite` its own lane:
+ * `Smite` is also a spell name, and a source's top-level `skills` list is keyed by name alone,
+ * so the two abilities share that row. The per-category maps are keyed inside a category and
+ * still separate them, which is where a claim about the SPELL has to be made.
+ */
+const catLaneOf = (row: SourceView, c: string, name: string): { hits: number; total: number } => {
+  const k = row.categories.find((x) => x.category === c)?.skills.find((s) => s.name === name)
+  return k ? { hits: k.hits, total: k.total } : { hits: 0, total: 0 }
+}
+
+/**
  * The plan's swing denominator: YOUR melee + slay hits, plus YOUR avoided swings.
  *
  * A naive grep of the fixture undercounts this — the avoided-swing family carries paren
@@ -372,7 +383,17 @@ test('W40: the cast-window control, and the slay marginal', { skip: missing(W40)
   // Smite.` at 19:30:28 — one second, far inside the 12s window, so this lane is a CAST and
   // must never appear as a proc. (Two `Your Smite spell fizzles!` lines precede it; a fizzle
   // carries no damage and must not be counted either way.)
-  assert.deepEqual(laneOf(z, 'Smite'), { hits: 1, total: 95 })
+  //
+  // READ INSIDE THE SPELL CATEGORY, and that is the point of this line since JOS-81: the melee
+  // verb `smite` now has a lane of its own and the paladin swings it 28 times in this window
+  // for 1,114 points, so the TOP-LEVEL row named "Smite" sums two different abilities the log
+  // gives one word (29 hits / 1,209). The cast is the 1/95 inside `spell`. The swings split by
+  // CATEGORY exactly as they always did — 26/690 melee and the two `(Slay Undead)` 212s in
+  // `slay` — which is the proof the rename crosses no category boundary.
+  assert.deepEqual(catLaneOf(z, 'spell', 'Smite'), { hits: 1, total: 95 })
+  assert.deepEqual(catLaneOf(z, 'melee', 'Smite'), { hits: 26, total: 690 })
+  assert.deepEqual(catLaneOf(z, 'slay', 'Smite'), { hits: 2, total: 424 })
+  assert.deepEqual(laneOf(z, 'Smite'), { hits: 29, total: 1209 })
   assert.equal(W40.filter((l) => l.includes('You begin casting Smite.')).length, 1)
   assert.equal(W40.filter((l) => l.includes('Your Smite spell fizzles!')).length, 2)
 
