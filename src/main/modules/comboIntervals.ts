@@ -363,11 +363,64 @@ function levelAt(input: IntervalInput, ts: number): number | null {
   return level
 }
 
-/** The correction covering `ts`, latest `setAt` first (a later edit supersedes an earlier one). */
-function correctionAt(corrections: readonly ComboCorrection[], ts: number): ComboCorrection | null {
-  const hits = corrections.filter((c) => ts >= c.startTs && (c.endTs === null || ts <= c.endTs))
-  if (hits.length === 0) return null
-  return hits.reduce((a, b) => (b.setAt >= a.setAt ? b : a))
+/** Latest-set wins: two statements about one span are one statement, the later one. */
+function laterOf(a: ComboCorrection, b: ComboCorrection): ComboCorrection {
+  return b.setAt >= a.setAt ? b : a
+}
+
+/** How much of `[start, end)` a correction covers. `Infinity` for two open-ended edges. */
+function overlapMs(c: ComboCorrection, start: number, end: number | null): number {
+  return Math.min(c.endTs ?? Infinity, end ?? Infinity) - Math.max(c.startTs, start)
+}
+
+/**
+ * The correction that governs a SLICE, or null. TWO RULES, in order, and the second one is the
+ * whole of JOS-87's "autodetect never silently overwrites an explicit override".
+ *
+ *   1. A correction COVERING the slice's start wins — the original rule, unchanged, so every
+ *      span that resolves today resolves the same way (this pass is strictly additive, the
+ *      law-8 shape: it only fills in cases that used to return null).
+ *   2. Otherwise the correction OVERLAPPING the slice most wins.
+ *
+ * Rule 2 exists because boundaries move under a standing override. A correction is written
+ * against the interval the user was looking at (`startTs` = that interval's cut) and intervals
+ * are rebuilt from scratch on every fold — `mergeBoundaries`/`reinstatedDrops`/`collapse` are
+ * not monotone, so a cut that existed when the user pressed Save can be gone one event later.
+ * When that happens the slice covering *now* begins BEFORE the correction, rule 1 misses, and
+ * under the old code the override vanished with no UI event and inference silently reclaimed
+ * the display — the exact failure the ticket is about. Greatest-overlap is the conservative
+ * repair: it never displaces a covering correction, and where several merely overlap it picks
+ * the one with the most claim on the span rather than the most recent opinion about a sliver.
+ * Ties (identical overlap, including two open-ended corrections) fall back to latest `setAt`.
+ */
+export function correctionForSlice(
+  corrections: readonly ComboCorrection[],
+  start: number,
+  end: number | null
+): ComboCorrection | null {
+  const covering = corrections.filter(
+    (c) => start >= c.startTs && (c.endTs === null || start <= c.endTs)
+  )
+  if (covering.length > 0) return covering.reduce(laterOf)
+  const overlapping = corrections.filter((c) => overlapMs(c, start, end) > 0)
+  if (overlapping.length === 0) return null
+  return overlapping.reduce((a, b) => {
+    const da = overlapMs(a, start, end)
+    const db = overlapMs(b, start, end)
+    if (db > da) return b
+    if (db < da) return a
+    return laterOf(a, b)
+  })
+}
+
+/** What `slotsFor` decided, and how much of it the user is responsible for. */
+interface SlotDecision {
+  slots: ComboSlot[]
+  expectedSlots: 2 | 3
+  /** the user's override is what is on screen — inference must not touch these slots */
+  provenanceLock: boolean
+  /** the user's override applies here and a `/who` row inside the span said otherwise */
+  overruled: boolean
 }
 
 /**
@@ -375,34 +428,45 @@ function correctionAt(corrections: readonly ComboCorrection[], ts: number): Comb
  *   1. the LAST `/who` row inside it — the game named the loadout for this very span, so it
  *      wins even over a user correction (a correction on an anchored span is the user being
  *      wrong, and it is the game that just spoke),
- *   2. a user correction covering it,
+ *   2. a user override governing it (`correctionForSlice`),
  *   3. inference.
  * A `/who` row also sets `expectedSlots` from its own arity, which is ground truth about
  * cardinality, not just membership.
+ *
+ * RULE 1 STILL WINS AND IS NOW AUDIBLE. It is the only way an explicit override loses, so when
+ * it fires against a live override the interval carries `userOverruled` and the surface says
+ * so. Silence there is what the ticket forbids — not the precedence itself.
  */
-function slotsFor(
-  slice: Slice,
-  input: IntervalInput,
-  prior: 2 | 3
-): { slots: ComboSlot[]; expectedSlots: 2 | 3; provenanceLock: boolean } {
+function slotsFor(slice: Slice, input: IntervalInput, prior: 2 | 3): SlotDecision {
   const rows = input.whoRows.filter(
     (r) => r.ts >= slice.start.at && (slice.end === null || r.ts < slice.end)
   )
   const row = rows.length > 0 ? rows[rows.length - 1] : null
+  const correction = correctionForSlice(input.corrections, slice.start.at, slice.end)
   if (row) {
     const expected = row.classes.length === 2 ? 2 : 3
-    return { slots: statedSlots(row.classes, 'who'), expectedSlots: expected, provenanceLock: false }
+    return {
+      slots: statedSlots(row.classes, 'who'),
+      expectedSlots: expected,
+      provenanceLock: false,
+      overruled: correction !== null && correction.classes.join('/') !== row.classes.join('/')
+    }
   }
-  const correction = correctionAt(input.corrections, slice.start.at)
   if (correction) {
     const expected = correction.classes.length === 2 ? 2 : 3
     return {
       slots: statedSlots(correction.classes, 'user'),
       expectedSlots: expected,
-      provenanceLock: true
+      provenanceLock: true,
+      overruled: false
     }
   }
-  return { slots: scoreSlots(slice.observations, prior), expectedSlots: prior, provenanceLock: false }
+  return {
+    slots: scoreSlots(slice.observations, prior),
+    expectedSlots: prior,
+    provenanceLock: false,
+    overruled: false
+  }
 }
 
 /** Levels observed inside a slice, for the interval's honest level range. */
@@ -420,7 +484,7 @@ function levelRange(input: IntervalInput, slice: Slice): [number | null, number 
 function toInterval(slice: Slice, input: IntervalInput, index: number): ComboInterval {
   const [levelLo, levelHi] = levelRange(input, slice)
   const prior: 2 | 3 = levelLo !== null && levelLo < TERTIARY_UNLOCK_LEVEL ? 2 : 3
-  const { slots, expectedSlots, provenanceLock } = slotsFor(slice, input, prior)
+  const { slots, expectedSlots, provenanceLock, overruled } = slotsFor(slice, input, prior)
   const last = slice.observations[slice.observations.length - 1]
   const interval: ComboInterval = {
     id: `ci${index + 1}`,
@@ -441,6 +505,9 @@ function toInterval(slice: Slice, input: IntervalInput, index: number): ComboInt
     evidenceCount: slice.observations.length,
     userLocked: provenanceLock
   }
+  // Optional and set only when true, so an interval nobody overrode serializes exactly as it
+  // did before this change — the delta transport diffs intervals by JSON.stringify.
+  if (overruled) interval.userOverruled = true
   const also = [...(slice.start.also ?? [])]
   // The window could not be split further and still names more classes than a loadout holds:
   // say so rather than silently dropping the surplus (§ 4.5's floor rule).
@@ -454,7 +521,10 @@ function mergeable(a: ComboInterval, b: ComboInterval): boolean {
   if (b.startReason === 'who' || b.startReason === 'levelDrop' || b.startReason === 'user') {
     return false
   }
+  // A locked span is the user's statement and an overruled one carries a notice they have to
+  // see; collapsing either into a neighbour would delete the thing the row exists to say.
   if (a.userLocked || b.userLocked) return false
+  if (a.userOverruled === true || b.userOverruled === true) return false
   const key = (i: ComboInterval): string =>
     i.slots.map((s) => s.candidates.join('|')).sort().join('/')
   return key(a) === key(b)

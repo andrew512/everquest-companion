@@ -454,6 +454,25 @@ on `log:character`. Overlay = second renderer entry (overlay.html) with a
 minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 ```
 
+- **A MODULE WITH A SECOND INPUT MUST REPORT ITS OWN REVISION AS `seq`, NOT
+  THE LAST EVENT'S** (JOS-87, measured in the running app). `useModule` dedupes
+  with `if (d.seq <= knownSeq) return`, and `knownSeq` comes from the hydration
+  snapshot — so "the last LogEvent seq folded in" only works as a revision
+  counter for a module whose state moves ONLY when an event moves it. The combo
+  module has a second input (a user correction, which re-labels every interval
+  and advances no log seq at all), and a correction written while the log was
+  idle produced a delta the renderer dropped as a duplicate: the store had it,
+  the model had it, and the screen kept showing the wrong answer until the next
+  log line happened to arrive. On an idle log — which is exactly when a user is
+  in Preferences fixing something — that is forever. The fix is a private
+  counter bumped by anything that can change the state (`ComboModule.markStale`,
+  reported by BOTH `snapshot()` and `flushDelta()` so hydrate and delta share
+  one clock); `seq`'s only consumer is that dedupe, which asks for nothing but
+  "strictly increasing when the state changed". The other half is the PUSH:
+  `invalidate()` alone waits for the 1 s heartbeat, so an out-of-band write
+  calls `registry.flushNow()` (ipc/combo.ts `republish()`). Both are needed —
+  flushing promptly is useless if the push is then dropped. A unit test cannot
+  see either half; `tests/e2e/loadout-override.e2e.mts` is what caught it.
 - **Character epochs**: character-scoped state (leveling/AA, loot, kills,
   turnins, buffs live-state) resets at the epoch boundary — anchored at
   OFFICIAL LAUNCH 2026-07-28 (`epochDetector.ts`; the user's beta character

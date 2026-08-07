@@ -135,6 +135,17 @@ export interface ComboInterval {
   evidenceCount: number
   /** set ONLY by a user correction; suppresses re-inference of these slots. */
   userLocked: boolean
+  /**
+   * A manual override applies to this span and the GAME contradicted it — a `/who` row inside
+   * the interval named a different loadout, and `/who` outranks the user (§ 4.4).
+   *
+   * The field exists because JOS-87's acceptance criterion is that autodetection never
+   * SILENTLY overwrites an explicit override. `/who` is not autodetection — it is the game
+   * stating the loadout outright — but it is the one path by which an override can still lose,
+   * so the loss is carried in the model and said out loud on screen rather than swallowed.
+   * Absent (undefined) on every interval where nothing was overruled.
+   */
+  userOverruled?: boolean
 }
 
 /** One atomic piece of evidence, before it is folded into a slot. */

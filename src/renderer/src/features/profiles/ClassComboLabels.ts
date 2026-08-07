@@ -71,6 +71,34 @@ export function provenanceLabel(p: ComboProvenance): string {
   return 'inferred'
 }
 
+/**
+ * WHERE THE LOADOUT ON SCREEN CAME FROM, in the words the override control needs (JOS-87).
+ *
+ * `provenanceLabel` is chip-sized and written from the interval's point of view; this is the
+ * sentence a user reads when they are deciding whether to correct it, so it names the two
+ * things they can act on — autodetection, which they can override, and their own override,
+ * which they can undo. A `/who` row is neither: it is the game stating the loadout, and the
+ * honest thing to say is that nothing needs correcting.
+ */
+export function loadoutSourceText(interval: ComboInterval): string {
+  const p = intervalProvenance(interval)
+  if (p === 'user') return 'Set by you — autodetection will not change it.'
+  if (p === 'who') return 'Named by your own /who row — the game stated this outright.'
+  return 'Autodetected from the classes showing up in your log.'
+}
+
+/**
+ * The notice for an override the game contradicted, or null. Stated as the two facts (what you
+ * set, what the log then said) with no adjudication — the model already picked `/who`, and the
+ * user's job here is to decide whether their override is stale, not to be told they were wrong.
+ */
+export function overruledText(interval: ComboInterval): string | null {
+  if (interval.userOverruled !== true) return null
+  return `A /who row inside this range named ${comboLabel(
+    interval
+  )}, so your manual setting is not in effect here. Clear it, or set it to match.`
+}
+
 /** Why the interval OPENED. Prose, because a raw `overDetermined` is not a state a user holds. */
 export function boundaryReasonLabel(reason: ComboBoundaryReason): string {
   switch (reason) {

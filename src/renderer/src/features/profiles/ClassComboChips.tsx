@@ -19,6 +19,7 @@ import { intervalConfidence, type ComboInterval, type ComboSlot } from '@shared/
 import {
   confidenceText,
   intervalProvenance,
+  overruledText,
   provenanceLabel,
   slotKind,
   slotLabel
@@ -109,6 +110,21 @@ export function LockedChip(): JSX.Element {
   return (
     <Tooltip title="You set this range.">
       <Chip size="small" variant="outlined" color="info" label="locked" sx={CHIP_SX} />
+    </Tooltip>
+  )
+}
+
+/**
+ * Shown only where a manual setting LOST — a `/who` row inside the span named something else
+ * (§ 4.4). It is the one way an explicit override stops being in effect, so it is a chip on the
+ * row rather than a silent substitution (JOS-87).
+ */
+export function OverruledChip({ interval }: { interval: ComboInterval }): JSX.Element | null {
+  const text = overruledText(interval)
+  if (!text) return null
+  return (
+    <Tooltip title={text}>
+      <Chip size="small" variant="outlined" color="warning" label="/who overrode you" sx={CHIP_SX} />
     </Tooltip>
   )
 }

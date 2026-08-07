@@ -327,8 +327,14 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
         },
         {
           id: 'class-combo',
-          label: 'Class loadout history',
-          keywords: 'class combo loadout classes swap paladin rogue berserker who correction slot',
+          // JOS-87: "history" was the whole label, and the setting's first job is now the
+          // OVERRIDE — a user arrives here because the app named the wrong classes, and the
+          // words they search for are the ones they would use about that ("wrong", "fix",
+          // "manual", "override"), not the ones the feature is built out of.
+          label: 'Your classes (loadout)',
+          keywords:
+            'class combo loadout classes swap paladin rogue berserker who correction slot ' +
+            'override manual set fix wrong incorrect change detect autodetect history',
           content: <ClassComboSetting />
         }
       ]

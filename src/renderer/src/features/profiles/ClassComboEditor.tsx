@@ -15,7 +15,6 @@ import { type JSX, useState } from 'react'
 import {
   Alert,
   Button,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -23,43 +22,14 @@ import {
   Stack,
   Typography
 } from '@mui/material'
-import { CLASS_ABBRS, MAX_COMBO_SLOTS, resolvedClasses, type ClassAbbr, type ComboInterval } from '@shared/classCombo'
+import { MAX_COMBO_SLOTS, resolvedClasses, type ClassAbbr, type ComboInterval } from '@shared/classCombo'
 import { spanText } from './ClassComboLabels'
+import ClassPicker, { togglePicked } from './ClassPicker'
 
 export interface ClassComboEditorProps {
   /** The interval whose SPAN is being corrected; null = closed. */
   interval: ComboInterval | null
   onClose: () => void
-}
-
-/** The 16 codes as toggles. Selection is capped at three; a full selection dims the rest. */
-function ClassPicker({
-  picked,
-  onToggle
-}: {
-  picked: ClassAbbr[]
-  onToggle: (c: ClassAbbr) => void
-}): JSX.Element {
-  const full = picked.length >= MAX_COMBO_SLOTS
-  return (
-    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-      {CLASS_ABBRS.map((abbr) => {
-        const on = picked.includes(abbr)
-        return (
-          <Chip
-            key={abbr}
-            size="small"
-            label={abbr}
-            color={on ? 'primary' : 'default'}
-            variant={on ? 'filled' : 'outlined'}
-            onClick={() => onToggle(abbr)}
-            disabled={!on && full}
-            sx={{ height: 24, fontWeight: on ? 700 : 400 }}
-          />
-        )
-      })}
-    </Stack>
-  )
 }
 
 /**
@@ -76,9 +46,7 @@ function EditorBody({ interval, onClose }: { interval: ComboInterval; onClose: (
   const range = { startTs: interval.startTs, endTs: interval.endTs }
 
   const toggle = (c: ClassAbbr): void => {
-    setPicked((prev) =>
-      prev.includes(c) ? prev.filter((x) => x !== c) : prev.length < MAX_COMBO_SLOTS ? [...prev, c] : prev
-    )
+    setPicked((prev) => togglePicked(prev, c))
   }
 
   const write = async (fn: () => Promise<{ ok: boolean; error?: string }>): Promise<void> => {

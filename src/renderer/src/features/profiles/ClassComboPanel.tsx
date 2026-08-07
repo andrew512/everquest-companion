@@ -2,11 +2,16 @@
 // Profiles). `profiles/` is the right neighbourhood: it already owns "who is this character"
 // concerns, whereas `leveling/` owns a chart pinned by a golden window.
 //
-// WHAT IT SHOWS. Every interval the combo module believes in, NEWEST FIRST, in a fixed-height
-// scroll box (a growing list lives in a bounded box — AGENTS.md; the list grows one row per
-// detected swap and must never push the settings page taller). Each row states the span, the
-// slots as chips, where the belief came from, how confident it is, and — when the boundary is
-// fuzzy — a '~' whose tooltip gives the WINDOW and the detector.
+// WHAT IT SHOWS. Two things, in the order a user needs them (JOS-87 put them in this order —
+// before it, the panel opened with a passive "Now" line and the only way to fix a wrong loadout
+// was to find its row in the history and press Edit):
+//   1. LoadoutOverride — what is in effect right now, where it came from, and the two buttons
+//      that set it by hand or hand it back to autodetection.
+//   2. the history — every interval the combo module believes in, NEWEST FIRST, in a
+//      fixed-height scroll box (a growing list lives in a bounded box — AGENTS.md; the list
+//      grows one row per detected swap and must never push the settings page taller). Each row
+//      states the span, the slots as chips, where the belief came from, how confident it is,
+//      and — when the boundary is fuzzy — a '~' whose tooltip gives the WINDOW and the detector.
 //
 // WHAT IT NEVER DOES. It does not explain the algorithm, and it does not smooth. A 33.9-hour
 // swap window renders as 33.9 hours of not-knowing; a `{CLR,PAL}` slot renders as `CLR|PAL`
@@ -17,9 +22,10 @@ import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material'
 import EditIcon from '@mui/icons-material/Edit'
 import type { ComboInterval } from '@shared/classCombo'
 import { useComboSnap } from './ClassComboData'
-import { ConfidenceChip, LockedChip, ProvenanceChip, SlotChips } from './ClassComboChips'
+import { ConfidenceChip, LockedChip, OverruledChip, ProvenanceChip, SlotChips } from './ClassComboChips'
 import { levelRangeText, spanText, startFuzzText } from './ClassComboLabels'
 import ClassComboEditor from './ClassComboEditor'
+import LoadoutOverride from './LoadoutOverride'
 import { Tooltip } from '../../lib/Tooltip'
 
 /** Explicit height + its own scroll, per the fixed-height law. Roughly four rows tall. */
@@ -55,6 +61,7 @@ function IntervalRow({
         <ProvenanceChip interval={interval} />
         <ConfidenceChip interval={interval} />
         {interval.userLocked && <LockedChip />}
+        <OverruledChip interval={interval} />
         <Button
           size="small"
           startIcon={<EditIcon sx={{ fontSize: 14 }} />}
@@ -73,28 +80,6 @@ function IntervalRow({
   )
 }
 
-/** The head line: what you are running NOW, or the honest reason there is no answer. */
-function CurrentLine({ current }: { current: ComboInterval | null }): JSX.Element {
-  if (!current) {
-    return (
-      <Typography variant="caption" color="text.disabled">
-        No loadout read yet — one appears as soon as the log names classes you played.
-      </Typography>
-    )
-  }
-  return (
-    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-      <Typography variant="caption" color="text.secondary">
-        Now
-      </Typography>
-      <SlotChips slots={current.slots} />
-      <ProvenanceChip interval={current} />
-      <ConfidenceChip interval={current} />
-      {current.userLocked && <LockedChip />}
-    </Stack>
-  )
-}
-
 /**
  * The Preferences → Profiles item. One component, so PreferencesView gains a single entry —
  * the same shape ProfileSharing's two settings take.
@@ -107,7 +92,7 @@ export function ClassComboSetting(): JSX.Element {
 
   return (
     <Stack spacing={1}>
-      <CurrentLine current={snap.current} />
+      <LoadoutOverride current={snap.current} />
       {!snap.ready && (
         <Tooltip title="This build ships no class knowledge tables.">
           <Chip size="small" variant="outlined" color="warning" label="class tables unavailable" sx={{ alignSelf: 'flex-start', height: 20 }} />
@@ -128,7 +113,8 @@ export function ClassComboSetting(): JSX.Element {
         )}
       </Box>
       <Typography variant="caption" color="text.secondary">
-        Edit any range you know better — your correction wins until a /who row says otherwise.
+        Edit any past range you know better — your correction wins over autodetection until a
+        /who row says otherwise, and the panel tells you when one does.
       </Typography>
       <ClassComboEditor interval={editing} onClose={() => setEditing(null)} />
     </Stack>
