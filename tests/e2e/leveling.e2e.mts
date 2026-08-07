@@ -33,7 +33,14 @@
  *      (a window inside another can never count more), and come back BYTE-IDENTICAL at `All`;
  *   6. the "New at this level" panel is mounted with its stepper — and, once the combo module
  *      has resolved a loadout, draws real unlock rows for it (floors, never today's counts);
- *   7. the tab never scrolls the page, and there are no renderer console errors.
+ *   7. the tab never scrolls the page, and there are no renderer console errors;
+ *   8. (JOS-78) the IN-WINDOW DROPS panel is mounted with the tab, states its empty window rather
+ *      than drawing a blank box, and fills from loot the harness plays into the tailed file —
+ *      ordered by observed drops, each row stating a count and a rate over a STATED active span;
+ *   9. and clicking a row opens that item's Loot drill-down (with its own per-zone drop-rate
+ *      table) through the app's ONE navigation seam, so Back NAMES the Leveling tab and returns
+ *      here (the JOS-43 law, on the app's newest cross-view link). Steps 8/9 live in
+ *      `dropSteps.mts` — this spec is at the repo's max-lines budget.
  *
  * FRESH-MACHINE HONESTY. A machine with no EQ logs mounts no feature view at all, and a
  * character whose log carries fewer than two dings and fewer than two AA gains draws no chart —
@@ -66,6 +73,9 @@ import {
 import { mainWindow } from './appWindow.mjs'
 import { playWho } from './gameplay.mjs'
 import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
+// The in-window drops panel and its round trip into the item drill-down (JOS-78) — next door
+// because this spec sits AT the repo max-lines budget; see that file's header.
+import { stepDrops } from './dropSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -657,6 +667,10 @@ async function main(): Promise<void> {
         // AFTER the selection step, which proves the panel works on the default (full-history)
         // window — this one then proves the same gestures survive a wholesale window change.
         await stepTimescale(page, chart)
+        // LAST among the chart steps (JOS-78): it APPENDS loot, and loot is one of the three
+        // columns the idle classifier walks — so every byte-identical reading above must already
+        // be behind us. See dropSteps.mts.
+        await stepDrops(page, log)
       } else {
         // The empty-state half of the headline assertion still holds, and is the honest thing
         // to assert on a log with no chart: there is no domain, so there is no scope, so there

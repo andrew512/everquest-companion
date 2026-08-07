@@ -248,8 +248,15 @@ interface Span {
  * Case-insensitive zone key. Mirrors main/log/parseCommon.ts `idKey` for zone names (trim +
  * lowercase); src/shared cannot import from src/main, and idKey's extra 'you'/'yourself'
  * folding is about entity names and can never apply to a zone.
+ *
+ * EXPORTED because `ZoneRangeRow` rows are grouped by it and a second reader has to JOIN onto
+ * them: `lootRates.ts` matches this character's loot events to the zone row whose ACTIVE TIME is
+ * their rate's denominator, and a second "same zone?" answer there would silently orphan every
+ * drop whose spelling the two folds disagreed about (world-model law 12's drift, in miniature).
+ * Deliberately NOT the renderer's `mobZone.zoneKey`, which additionally strips instance noise:
+ * these rows are keyed with THIS fold, so the join must use THIS fold.
  */
-function zoneIdKey(name: string): string {
+export function zoneIdKey(name: string): string {
   return name.trim().toLowerCase()
 }
 

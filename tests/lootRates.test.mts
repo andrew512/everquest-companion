@@ -1,0 +1,315 @@
+// PURE UNIT TESTS for "every item knows where and how often it drops for you"
+// (src/shared/lootRates.ts, JOS-78).
+//
+// No log, no fixture, no DOM — so this file never skips. It pins the five things this feature can
+// get quietly wrong, each of which would look exactly like a working feature on screen:
+//
+//   1. THE ZONE JOIN. Loot rows carry the zone they happened in (the loot module stamps it); the
+//      DENOMINATOR comes from the progression zone spans. The join has to run on `rangeStats`' own
+//      fold, so a differently-cased `You have entered` line cannot put the drops in one bucket and
+//      the active time in another — and a drop before any zone line has to land in the same
+//      `unknown` row that stretch of time is already filed under.
+//
+//   2. THE DENOMINATOR IS ACTIVE TIME, NOT WALL TIME. A zone you sat idle in for hours must not
+//      have its rate diluted by the sitting. This is `rangeStats`' subtraction; the test proves
+//      `itemZoneRows` divides by the ACTIVE column and not the span one.
+//
+//   3. UNKNOWN IS NOT ZERO. A zone with no active time (or a drop older than the capped analytics
+//      window, which keeps its timestamp and loses its span) states a NULL rate. A 0.00 there is a
+//      fabricated measurement, and the surfaces render null as an em-dash.
+//
+//   4. WINDOW FILTERING IS HALF-OPEN `[t0, t1)`, exactly like `rangeStats`, so the leveling tab's
+//      scope cannot count an event its own range panel excludes.
+//
+//   5. THE ORDER IS THE OBSERVATION, and a stack is its size. Drops descending with a total
+//      tie-break (nothing reshuffles between renders), and `2 Bone Chips` is two — the same
+//      quantity the loot ledger's group count has stated since Task #47.
+//
+// Imported RELATIVELY: node tests run through tsx with no `@shared` alias.
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import type { LootEvent } from '../src/shared/types'
+import { rangeStats, type ZoneRangeRow } from '../src/shared/progressionStats'
+import type { ProgressionSnap } from '../src/shared/progressionTypes'
+import { itemZoneRows, windowItemRows } from '../src/shared/lootRates'
+
+const MIN = 60_000
+const HOUR = 60 * MIN
+/** An arbitrary, readable anchor — nothing here depends on the wall clock. */
+const T0 = Date.parse('Sat Aug 01 12:00:00 2026')
+
+function emptySnap(): ProgressionSnap {
+  return {
+    expTs: [], expPct: [], expFlag: [],
+    killTs: [], killZone: [], killCredit: [],
+    witnessTs: [], recentKills: [], lootTs: [],
+    zoneStart: [], zoneEnd: [], zoneName: [],
+    offlineStart: [], offlineEnd: [], offlineCamped: [],
+    levelTs: [], levelValue: [], aaGainTs: [], aaGainAmount: [],
+    lastTs: 0, windowStart: 0, dropped: 0
+  }
+}
+
+function addZone(snap: ProgressionSnap, ts: number, name: string): void {
+  const n = snap.zoneStart.length
+  if (n > 0) snap.zoneEnd[n - 1] = ts
+  snap.zoneStart.push(ts)
+  snap.zoneEnd.push(0)
+  snap.zoneName.push(name)
+  snap.lastTs = Math.max(snap.lastTs, ts)
+}
+
+/** A loot line, folded exactly as the loot module folds it: item, zone, and a stack size. */
+function loot(ts: number, item: string, zone?: string, count?: number): LootEvent {
+  return { ts, item, zone, count }
+}
+
+/**
+ * A drip of activity across `[from, to]` so `idleSpans` does not classify the whole stretch as
+ * silence. The stream `rangeStats` walks is exp ∪ credited kill ∪ loot, and the idle threshold is
+ * 5 minutes — one sample every 2 minutes keeps a span fully active.
+ */
+function keepBusy(snap: ProgressionSnap, from: number, to: number): void {
+  for (let ts = from; ts <= to; ts += 2 * MIN) {
+    snap.lootTs.push(ts)
+    snap.lastTs = Math.max(snap.lastTs, ts)
+  }
+}
+
+/** Every zone row of the whole record — the range the item drill-down queries. */
+function zonesOf(snap: ProgressionSnap, t0: number, t1: number): ZoneRangeRow[] {
+  return rangeStats({ snap, range: { t0, t1 } }).zones
+}
+
+// ── 1 + 2. the join, and the denominator ─────────────────────────────────────────────────
+
+/**
+ * TWO ZONES, ONE ITEM, AND THE ANSWER THE FEATURE EXISTS TO GIVE.
+ *
+ * An hour in Nagafen's Lair produces 4 motes; an hour in The Plane of Hate produces 2. Same wall
+ * clock, so a per-hour rate is the only reading that distinguishes them — and it is 4/hr against
+ * 2/hr, which is the "which zone pays more motes an hour" question, answered.
+ */
+test('itemZoneRows: drops per hour of ACTIVE time, per zone, joined on the recorded zone', () => {
+  const snap = emptySnap()
+  addZone(snap, T0, "Nagafen's Lair")
+  addZone(snap, T0 + HOUR, 'The Plane of Hate')
+  keepBusy(snap, T0, T0 + 2 * HOUR)
+  snap.lastTs = T0 + 2 * HOUR
+
+  const events: LootEvent[] = [
+    loot(T0 + 5 * MIN, 'Mote of Minor Potential', "Nagafen's Lair"),
+    loot(T0 + 20 * MIN, 'Mote of Minor Potential', "Nagafen's Lair"),
+    loot(T0 + 35 * MIN, 'Mote of Minor Potential', "Nagafen's Lair"),
+    loot(T0 + 50 * MIN, 'Mote of Minor Potential', "Nagafen's Lair"),
+    loot(T0 + 70 * MIN, 'Mote of Minor Potential', 'The Plane of Hate'),
+    loot(T0 + 100 * MIN, 'Mote of Minor Potential', 'The Plane of Hate')
+  ]
+
+  const rows = itemZoneRows({ events, zones: zonesOf(snap, T0, T0 + 2 * HOUR) })
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0].zone, "Nagafen's Lair")
+  assert.equal(rows[0].drops, 4)
+  assert.equal(rows[0].events, 4)
+  assert.equal(rows[0].activeMs, HOUR)
+  assert.ok(rows[0].dropsPerHourActive !== null)
+  assert.equal(rows[0].dropsPerHourActive?.toFixed(2), '4.00')
+  assert.equal(rows[1].zone, 'The Plane of Hate')
+  assert.equal(rows[1].drops, 2)
+  assert.equal(rows[1].dropsPerHourActive?.toFixed(2), '2.00')
+  // The first/last stamps bracket only THIS zone's own drops.
+  assert.equal(rows[0].firstTs, T0 + 5 * MIN)
+  assert.equal(rows[0].lastTs, T0 + 50 * MIN)
+})
+
+/**
+ * THE CASE FOLD IS `rangeStats`' OWN. The log capitalizes inconsistently (world-model law 2), and
+ * the zone row keeps the FIRST-SEEN spelling. A drop whose line spelled the zone differently must
+ * still land on that row — with its span — rather than opening a second, span-less one.
+ */
+test('itemZoneRows: a differently-cased zone name joins the SAME row (one fold, not two)', () => {
+  const snap = emptySnap()
+  addZone(snap, T0, "Nagafen's Lair")
+  keepBusy(snap, T0, T0 + HOUR)
+  snap.lastTs = T0 + HOUR
+
+  const rows = itemZoneRows({
+    events: [loot(T0 + 10 * MIN, 'Jacinth', "NAGAFEN'S LAIR"), loot(T0 + 20 * MIN, 'Jacinth', "nagafen's lair")],
+    zones: zonesOf(snap, T0, T0 + HOUR)
+  })
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].zone, "Nagafen's Lair", 'the zone row’s first-seen spelling wins over the loot line’s')
+  assert.equal(rows[0].drops, 2)
+  assert.equal(rows[0].activeMs, HOUR)
+})
+
+/**
+ * A DROP BEFORE ANY ZONE LINE joins the `unknown` row — which is what `zoneSegments` already calls
+ * that same stretch of time, so the count and the denominator agree by construction.
+ */
+test('itemZoneRows: a zone-less drop lands on the same `unknown` row the range already files', () => {
+  const snap = emptySnap()
+  // The record opens with half an hour before the first `You have entered` line.
+  keepBusy(snap, T0, T0 + HOUR)
+  addZone(snap, T0 + 30 * MIN, "Nagafen's Lair")
+  snap.lastTs = T0 + HOUR
+
+  const rows = itemZoneRows({
+    events: [loot(T0 + 10 * MIN, 'Bone Chips'), loot(T0 + 40 * MIN, 'Bone Chips', "Nagafen's Lair")],
+    zones: zonesOf(snap, T0, T0 + HOUR)
+  })
+  const unknown = rows.find((r) => r.zone === 'unknown')
+  assert.ok(unknown, 'the pre-first-zone drop has a row')
+  assert.equal(unknown.drops, 1)
+  assert.equal(unknown.activeMs, 30 * MIN, 'and it divides by the very span rangeStats filed as unknown')
+})
+
+/**
+ * IDLE TIME IS NOT IN THE DENOMINATOR. Two hours in one zone, of which one is a single unbroken
+ * silence: the rate is measured over the hour you were playing, so it is 2/hr and not 1/hr.
+ * A wall-time denominator would halve every farming rate the app prints.
+ */
+test('itemZoneRows: the denominator is ACTIVE time — an idle hour never dilutes the rate', () => {
+  const snap = emptySnap()
+  addZone(snap, T0, "Nagafen's Lair")
+  keepBusy(snap, T0, T0 + HOUR)
+  // …then an hour of nothing at all (well over the 5-minute idle threshold).
+  snap.lastTs = T0 + 2 * HOUR
+
+  const zones = zonesOf(snap, T0, T0 + 2 * HOUR)
+  assert.equal(zones.length, 1)
+  assert.equal(zones[0].spanMs, 2 * HOUR)
+  assert.equal(zones[0].activeMs, HOUR, 'rangeStats already carved the silence out')
+
+  const rows = itemZoneRows({
+    events: [loot(T0 + 10 * MIN, 'Ruby', "Nagafen's Lair"), loot(T0 + 40 * MIN, 'Ruby', "Nagafen's Lair")],
+    zones
+  })
+  assert.equal(rows[0].spanMs, 2 * HOUR)
+  assert.equal(rows[0].activeMs, HOUR)
+  assert.equal(rows[0].dropsPerHourActive?.toFixed(2), '2.00')
+})
+
+// ── 3. unknown is not zero ───────────────────────────────────────────────────────────────
+
+/**
+ * A zone the range has NO span for — the shape a drop older than the capped analytics window
+ * takes — keeps its true count and states NO rate. Never 0.00: the log did not say the rate was
+ * zero, it said nothing about the denominator at all.
+ */
+test('itemZoneRows: no active time ⇒ a NULL rate, never 0.00', () => {
+  const rows = itemZoneRows({
+    events: [loot(T0, 'Efreeti War Staff', 'Solusek B'), loot(T0 + MIN, 'Efreeti War Staff', 'Solusek B')],
+    zones: []
+  })
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].drops, 2, 'the count is still a fact')
+  assert.equal(rows[0].activeMs, 0)
+  assert.equal(rows[0].dropsPerHourActive, null)
+})
+
+test('itemZoneRows: no loot at all ⇒ no rows (the question is where it drops, not where you were)', () => {
+  const snap = emptySnap()
+  addZone(snap, T0, "Nagafen's Lair")
+  keepBusy(snap, T0, T0 + HOUR)
+  assert.deepEqual(itemZoneRows({ events: [], zones: zonesOf(snap, T0, T0 + HOUR) }), [])
+})
+
+// ── 4 + 5. the window panel ──────────────────────────────────────────────────────────────
+
+/**
+ * HALF-OPEN `[t0, t1)`, the same convention `rangeStats` uses. The tab's scope and this panel
+ * must agree about which events are inside it, or the drops list and the numbers beside it are
+ * describing two different stretches.
+ */
+test('windowItemRows: membership is half-open [t0, t1) — the low edge is in, the high edge is out', () => {
+  const events = [
+    loot(T0 - 1, 'Ruby', "Nagafen's Lair"),
+    loot(T0, 'Ruby', "Nagafen's Lair"),
+    loot(T0 + 30 * MIN, 'Ruby', "Nagafen's Lair"),
+    loot(T0 + HOUR, 'Ruby', "Nagafen's Lair")
+  ]
+  const rows = windowItemRows({ events, t0: T0, t1: T0 + HOUR, activeMs: HOUR })
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].drops, 2, 'the event AT t1 is excluded and the one AT t0 is included')
+  assert.equal(rows[0].firstTs, T0)
+  assert.equal(rows[0].lastTs, T0 + 30 * MIN)
+})
+
+/**
+ * ORDER IS THE OBSERVATION — drops descending, no invented weighting. Motes float up because
+ * there are more of them, and a stack counts its size (Task #47's rule, shared with the ledger).
+ */
+test('windowItemRows: ordered by observed drops, and a stack counts its size', () => {
+  const events = [
+    loot(T0 + MIN, 'Jacinth', "Nagafen's Lair"),
+    loot(T0 + 2 * MIN, 'Mote of Infinitesimal Potential', "Nagafen's Lair"),
+    loot(T0 + 3 * MIN, 'Mote of Infinitesimal Potential', "Nagafen's Lair"),
+    loot(T0 + 4 * MIN, 'Bone Chips', "Nagafen's Lair", 5)
+  ]
+  const rows = windowItemRows({ events, t0: T0, t1: T0 + HOUR, activeMs: HOUR })
+  assert.deepEqual(
+    rows.map((r) => [r.item, r.drops, r.events]),
+    [
+      ['Bone Chips', 5, 1],
+      ['Mote of Infinitesimal Potential', 2, 2],
+      ['Jacinth', 1, 1]
+    ]
+  )
+  assert.equal(rows[0].dropsPerHourActive?.toFixed(2), '5.00')
+})
+
+/**
+ * A TOTAL ORDER. Two items with identical counts must not swap places between renders — the
+ * tie-break is the most recent, then the name, and both are deterministic.
+ */
+test('windowItemRows: ties break on recency then name (nothing reshuffles between renders)', () => {
+  const events = [
+    loot(T0 + 3 * MIN, 'Ruby', 'z'),
+    loot(T0 + 1 * MIN, 'Jacinth', 'z'),
+    loot(T0 + 2 * MIN, 'Diamond', 'z')
+  ]
+  const order = (): string[] => windowItemRows({ events, t0: T0, t1: T0 + HOUR, activeMs: HOUR }).map((r) => r.item)
+  assert.deepEqual(order(), ['Ruby', 'Diamond', 'Jacinth'])
+  assert.deepEqual(order(), ['Ruby', 'Diamond', 'Jacinth'], 'the sort is stable across calls')
+})
+
+/**
+ * ITEM IDENTITY IS THE LEDGER'S: raw, case-insensitive. A `+N` variant is its OWN item here for
+ * exactly the reason the loot ledger keeps it separate — it is a different thing to loot.
+ */
+test('windowItemRows: identity is the ledger’s raw lowercase key — a +N variant keeps its own row', () => {
+  const rows = windowItemRows({
+    events: [
+      loot(T0, 'Sphinx Claw', 'z'),
+      loot(T0 + MIN, 'sphinx claw', 'z'),
+      loot(T0 + 2 * MIN, 'Sphinx Claw +1', 'z')
+    ],
+    t0: T0,
+    t1: T0 + HOUR,
+    activeMs: HOUR
+  })
+  assert.deepEqual(
+    rows.map((r) => [r.item, r.drops]),
+    [
+      ['Sphinx Claw', 2],
+      ['Sphinx Claw +1', 1]
+    ]
+  )
+})
+
+/** A window with no active time states no rate at all — the em-dash rule, one level up. */
+test('windowItemRows: a window with no active time states NULL rates, never 0.00', () => {
+  const rows = windowItemRows({ events: [loot(T0, 'Ruby', 'z')], t0: T0, t1: T0 + HOUR, activeMs: 0 })
+  assert.equal(rows[0].drops, 1)
+  assert.equal(rows[0].dropsPerHourActive, null)
+})
+
+/** An empty window is a first-class state: no rows, and the panel says which window it is. */
+test('windowItemRows: nothing in range ⇒ no rows', () => {
+  assert.deepEqual(
+    windowItemRows({ events: [loot(T0, 'Ruby', 'z')], t0: T0 + HOUR, t1: T0 + 2 * HOUR, activeMs: HOUR }),
+    []
+  )
+})

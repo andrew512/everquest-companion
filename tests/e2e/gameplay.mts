@@ -232,6 +232,51 @@ export function playWho(log: FixtureLog): number {
 }
 
 /**
+ * THE SCRIPTED DROPS (JOS-78) — loot lines played into the tailed file so the Leveling tab's
+ * in-window drops panel has something to list, and the item drill-down has a rate to compute.
+ *
+ * The e2e leveling fixture carries no loot at all (it was cut for the CHARTS), and appending is
+ * how the harness supplies what a fixture does not fix — the same door `playWho` and `playKill`
+ * already use. Every shape is the real dashed loot family verbatim
+ * (`--You have looted a Mote of Major Potential from a fire giant warrior's corpse.--`, present in
+ * tests/fixtures/e2e-combat.log), and the mob is the one the fixture's own last zone contains.
+ *
+ * TWO DISTINCT ITEMS AT DIFFERENT COUNTS, on purpose: the panel's whole ordering rule is "most
+ * observed first", so a run where everything dropped once could not tell a sorted list from an
+ * unsorted one. The mote wins 3 to 1 — which is also exactly why motes float to the top of a real
+ * player's panel, with nothing anywhere ranking them.
+ */
+export const DROP_ITEM = 'Mote of Major Potential'
+
+/** The second item — one drop, so it must sort BELOW the mote. */
+export const DROP_ITEM_RARE = 'Jacinth'
+
+/** How many of `DROP_ITEM` the drops land. Stated so an assertion can name the number. */
+export const DROP_COUNT = 3
+
+/** Every line `playLootDrops` writes. */
+export const DROP_LINES = DROP_COUNT + 1
+
+/**
+ * Play the drops, and hand back how many lines were written.
+ *
+ * Stamped one second apart ENDING at `now`, so they land inside whatever window the tab is
+ * showing and the newest is at the live edge (`windowScope`'s one-millisecond tail is what puts
+ * an event stamped exactly at the record's end inside the scope).
+ */
+export function playLootDrops(log: FixtureLog): number {
+  const now = Date.now()
+  const line = (item: string): string =>
+    `--You have looted a ${item} from ${PULL_TARGET}'s corpse.--`
+  let written = 0
+  for (let i = 0; i < DROP_COUNT; i++) {
+    written += log.appendAt(new Date(now - (DROP_COUNT - i) * 1000), line(DROP_ITEM))
+  }
+  written += log.appendAt(new Date(now), line(DROP_ITEM_RARE))
+  return written
+}
+
+/**
  * A credited kill and nothing else — the smallest thing that fills a progression window.
  *
  * The Overview's leveling tiles read the LAST HOUR of log time, and a fixture cut from last
