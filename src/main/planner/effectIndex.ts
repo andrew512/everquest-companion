@@ -59,7 +59,7 @@
 //
 // TWO KINDS OF ITEM ARE DROPPED FROM THE DONOR INDEX AND ONLY FROM IT (V9, docs/plans/planner-v2
 // .md): the mage-conjured `Summoned:` family and whatever the curated layer flags `summoned` or
-// `gmEvent`. They stay in the ITEM index — a summoned item is a perfectly real thing to look up,
+// calls unfarmable (`gmEvent` / `gmOnly`). They stay in the ITEM index — a summoned item is a perfectly real thing to look up,
 // and "you cannot pull an effect off this" is not "this does not exist". See `excludedDonor`.
 
 import { itemKey, type ItemDbEntry, type ItemDbFile } from '../itemsDb'
@@ -70,6 +70,7 @@ import { itemKey, type ItemDbEntry, type ItemDbFile } from '../itemsDb'
 import spellsJson from '../data/spells.json'
 import {
   ITEMS_RESEARCH,
+  isUnfarmable,
   knowledgeWithResearch,
   type ItemResearchFile,
   type ResearchedKnowledge
@@ -222,8 +223,11 @@ const SUMMONED_PREFIX = /^summoned:/i
 /**
  * Can anything on this item be donated at all?
  *
- * TWO WITNESSES, no heuristics between them: the name prefix above, and the curated layer's
- * `summoned` / `gmEvent` flags (`itemsResearch.ts`). Neither is a guess about an item's stats.
+ * TWO WITNESSES, no heuristics between them: the name prefix above, and the curated layer
+ * (`itemsResearch.ts`) — its `summoned` flag, plus `isUnfarmable()`, which is that file's own
+ * verdict over its GM-provenance flags (`gmEvent`, and since JOS-64 `gmOnly`; the owner ruled the
+ * two mean the same thing to a planner). Neither witness is a guess about an item's stats, and the
+ * GM half is asked as ONE question so a flag added there can never be forgotten here.
  *
  * R7 — summoned items cannot donate — is OWNER-OBSERVED and unverified in any published source:
  * integrator research 2026-08-05 found the eqlwiki Exaltations page, the 7/14 patch notes and the
@@ -234,7 +238,7 @@ const SUMMONED_PREFIX = /^summoned:/i
  */
 function excludedDonor(name: string, research: ResearchedKnowledge['research']): boolean {
   if (SUMMONED_PREFIX.test(name)) return true
-  return research?.summoned === true || research?.gmEvent === true
+  return research?.summoned === true || isUnfarmable(research)
 }
 
 /**

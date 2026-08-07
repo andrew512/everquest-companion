@@ -102,13 +102,29 @@ same file and the same merge — no second path:
 - **GM-event × 10.** Swept from the corpus's own `|notes` prose (`summary`)
   plus the `|gmitem` template param. The bar is UNHEDGED prose *and* no drop
   source / quest / recipe anywhere on the page; six of the ten carry an
-  effect, so the V9 exclusion moved 40 → 45 pages. **Five mentions are
+  effect, so the V9 exclusion moved 40 → 45 pages. **Five mentions were
   refused and named in `tests/itemsResearchLayer.test.mts`**, the loudest
   being `Dabner's Staff of Recall`, which states `|gmitem` and a live
   `|dropsfrom` mob in one template — flagging it would have hidden a
   farmable donor. The others: `Shield of Hatred` ("Possibly … ?"),
   `Da Oogly Stick` / `Gnome Sandwich` (GM *item*, never GM *event*),
   `Stone of Gnoming` ("GM Only item" — and SOLD in Sunset Home).
+- **GM-only × 3 — the ruling (owner, 2026-08-06, JOS-64): GM-only and
+  GM-event both mean unfarmable.** Three of those five refusals were about
+  PHRASING, not facts: nothing hedged, no farm route on the page, and no plan
+  a player can execute. `Da Oogly Stick` ("This item is a GM item."),
+  `Gnome Sandwich` ("GM item occasionally handed out.") and
+  `Stone of Gnoming` ("GM Only item." — the wiki's Sunset Home is the GM
+  zone, not a player vendor) are now filed under a SECOND flag, `gmOnly`,
+  with the same treatment: verbatim source line, no farm route, excluded as
+  donors. Two of the three carry a click illusion, so the V9 exclusion moved
+  45 → 47 pages. A second boolean rather than one `unfarmable` field because
+  the layer states FACTS AS PAGES WRITE THEM and the tripwire re-derives each
+  table from its own anchored prose; the VERDICT is one exported function,
+  `isUnfarmable()`, which is the only thing `effectIndex.ts` asks. The two
+  surviving refusals are refused on facts and stay refused:
+  `Dabner's Staff of Recall` names a live drop mob (still a DONOR) and
+  `Shield of Hatred` asks a question.
 - **Bard instruments × 47.** Fully derivable from the committed corpus, so no
   new scrape happened: 42 pages state the family in the stats block
   (`Wind Resonance: 12`, older `Stringed Instrument`) and 5 state it in

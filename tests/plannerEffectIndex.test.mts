@@ -19,7 +19,9 @@
 // build's 1,508: it took 39 summoned rows and one GM-event row off the donor list permanently, so
 // the floors below moved down with it rather than sitting a hair above the measurement. JOS-25
 // then swept the corpus's GM-event prose properly and the exclusion measured 45 pages — the extra
-// five are effect-bearing GM-event items, and the floors already sat under them.
+// five are effect-bearing GM-event items, and the floors already sat under them. JOS-64 admitted
+// the three GM-ONLY pages on the owner's ruling and it measured 47 (two of the three carry a click
+// illusion); the floors still sit under that.
 //
 // The identities are the interesting half: one row per (key, effect, socket) with NO duplicates,
 // and every slot token canonical. Both are properties the UI depends on and neither is a count.
@@ -41,6 +43,7 @@ import { eraFromTag, layeredVerdict, zoneEra } from '../src/shared/planner/era'
 import { isClassAbbr } from '../src/shared/classCombo'
 import {
   ITEMS_RESEARCH,
+  isUnfarmable,
   knowledgeWithResearch,
   type ItemResearchFile
 } from '../src/main/itemsResearch'
@@ -304,12 +307,15 @@ test('THE EPIC PIN: a dropperless epic reward is out-of-era on a classic server 
   assert.equal(eraFromTag('Epics'), 'kunark')
 })
 
-test('V9: summoned and GM-event items are dropped from the DONOR index, and only from it', () => {
+test('V9: summoned and GM-handed-out items are dropped from the DONOR index, and only from it', () => {
   // R7 (owner-observed, unverified — docs/plans/exaltation-planner.md §1) plus the curated layer.
   // MEASURED 2026-08-06 (JOS-25): 45 effect-bearing pages excluded — 39 `Summoned:` rows (focus
   // 24, click 10, worn 4, proc 1) and the six effect-bearing entries of the layer's ten-item
   // GM-event table. The other four GM-event items carry no effect at all, so they were never
-  // donors to lose; `tests/itemsResearchLayer.test.mts` is what pins the table itself.
+  // donors to lose. JOS-64's ruling (GM-ONLY is as unfarmable as GM-event) then admitted three
+  // more pages and the exclusion measured 47: Da Oogly Stick and Stone of Gnoming each carry a
+  // click illusion, Gnome Sandwich carries nothing.
+  // `tests/itemsResearchLayer.test.mts` is what pins the tables themselves.
   console.log('planner exclusions', { excludedPages: index.stats.excludedPages })
   assert.ok(index.stats.excludedPages >= 30, `only ${index.stats.excludedPages} pages excluded`)
 
@@ -324,7 +330,7 @@ test('V9: summoned and GM-event items are dropped from the DONOR index, and only
 
   // The committed layer's own entries, whatever they are today: each must be excluded from donors,
   // present as an item, and carry its provenance (an entry with no source reads like scraped fact).
-  const flagged = Object.entries(ITEMS_RESEARCH).filter(([, r]) => r.summoned === true || r.gmEvent === true)
+  const flagged = Object.entries(ITEMS_RESEARCH).filter(([, r]) => r.summoned === true || isUnfarmable(r))
   assert.ok(flagged.length > 0, 'the curated layer seeds no exclusions at all')
   for (const [key, entry] of flagged) {
     assert.ok(entry.source.length > 0, `${key}: a curated entry with no source`)
@@ -340,27 +346,32 @@ test('the additive layer merges OVER the wiki record, and drives the exclusion f
   const fixture = {
     scrapedAt: '2026-08-05T00:00:00.000Z',
     source: 'fixture',
-    count: 3,
+    count: 4,
     items: {
       ghoulbane: { page: 'Ghoulbane', stats: { effects: [{ kind: 'click', name: 'Nullify Undead', detail: 'Must Equip' }], slot: 'PRIMARY' } },
       'summoned: waterstone': { page: 'Summoned: Waterstone', stats: { effects: [{ kind: 'click', name: 'Enduring Breath', detail: 'Any Slot' }], slot: 'PRIMARY' } },
-      'gm sword': { page: 'GM Sword', stats: { effects: [{ kind: 'worn', name: 'Regeneration', detail: 'Worn' }], slot: 'PRIMARY' } }
+      'gm sword': { page: 'GM Sword', stats: { effects: [{ kind: 'worn', name: 'Regeneration', detail: 'Worn' }], slot: 'PRIMARY' } },
+      'gm wand': { page: 'GM Wand', stats: { effects: [{ kind: 'click', name: 'Gate', detail: 'Any Slot' }], slot: 'PRIMARY' } }
     }
   } as unknown as ItemDbFile
+  // Both GM provenances, because `excludedDonor` reads the layer's `isUnfarmable` verdict rather
+  // than one named flag (JOS-64) — a fixture that only ever exercised `gmEvent` would go green
+  // against a consumer that had forgotten the other half.
   const research: ItemResearchFile = {
-    'gm sword': { gmEvent: true, source: 'fixture', checkedAt: '2026-08-05' }
+    'gm sword': { gmEvent: true, source: 'fixture', checkedAt: '2026-08-05' },
+    'gm wand': { gmOnly: true, source: 'fixture', checkedAt: '2026-08-06' }
   }
 
   const built = buildPlannerIndex(fixture, research)
   assert.deepEqual(built.donors.map((d) => d.key), ['ghoulbane'], 'exactly the un-excluded item donates')
-  assert.equal(built.stats.excludedPages, 2, 'both exclusions must be COUNTED, never silently dropped')
-  // All three stay searchable — the item index is not the donor index.
-  assert.deepEqual(built.items.map((i) => i.key).sort(), ['ghoulbane', 'gm sword', 'summoned: waterstone'])
+  assert.equal(built.stats.excludedPages, 3, 'every exclusion must be COUNTED, never silently dropped')
+  // All four stay searchable — the item index is not the donor index.
+  assert.deepEqual(built.items.map((i) => i.key).sort(), ['ghoulbane', 'gm sword', 'gm wand', 'summoned: waterstone'])
 
-  // With no layer at all the name prefix still fires and the curated one no longer does: the two
+  // With no layer at all the name prefix still fires and the curated ones no longer do: the two
   // witnesses are independent.
   const bare = buildPlannerIndex(fixture, {})
-  assert.deepEqual(bare.donors.map((d) => d.key).sort(), ['ghoulbane', 'gm sword'])
+  assert.deepEqual(bare.donors.map((d) => d.key).sort(), ['ghoulbane', 'gm sword', 'gm wand'])
 
   // The merge itself: the scrape's own defaults are restored FIRST (law 1 — `quest` is false
   // because the record omits it, not because the layer said so), the curated entry rides beside
