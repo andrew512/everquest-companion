@@ -143,10 +143,14 @@ function paint(ctx: CanvasRenderingContext2D, f: Frame): void {
     const z = Math.min(coords[o + 2], coords[o + 5])
     const inBand = !f.zBand || (z >= f.zBand.lo && z <= f.zBand.hi)
     const path = (inBand || !off ? paths : off)[colorIndex[seg]]
-    // Projection inlined: px = hw + (x-cx)*scale, py = hh - (y-cy)*scale. The `-` is the screen
-    // flip (map y grows up) and it is the only negation at render time.
-    path.moveTo(hw + (coords[o] - cx) * scale, hh - (coords[o + 1] - cy) * scale)
-    path.lineTo(hw + (coords[o + 3] - cx) * scale, hh - (coords[o + 4] - cy) * scale)
+    // Projection inlined: px = hw + (x-cx)*scale, py = hh + (y-cy)*scale — byte-for-byte the
+    // arithmetic in `mapGeometry.project`, which every label, pin and marker goes through. It is
+    // copied here only to avoid 52k short-lived objects per frame, so the two MUST be edited
+    // together: a canvas that disagrees with the label layer about y is walls in one hemisphere
+    // and names in the other. NEITHER AXIS IS NEGATED (JOS-65 — map y grows south, as does
+    // screen y); see `project` for the corpus measurement that settled it.
+    path.moveTo(hw + (coords[o] - cx) * scale, hh + (coords[o + 1] - cy) * scale)
+    path.lineTo(hw + (coords[o + 3] - cx) * scale, hh + (coords[o + 4] - cy) * scale)
   }
 
   ctx.lineWidth = 1

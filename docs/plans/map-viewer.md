@@ -90,7 +90,7 @@ P  x,  y,  z,  r,  g,  b,  size, label    (8 fields)
 ### 2.1 Coordinate system
 
 `/loc` prints **(North/South, West/East, Elevation)** — i.e. `loc = (Y, X, Z)` — and EQ's world
-axes grow **larger to the West and South**. The map file stores `(-X, -Y, Z)` in X,Y,Z order.
+axes grow **larger to the West and North**. The map file stores `(-X, -Y, Z)` in X,Y,Z order.
 
 Given a `/loc` reading of `(a, b, c)`:
 
@@ -100,12 +100,29 @@ mapX = -b      mapY = -a      mapZ = c        (Z is NEVER negated)
 
 Worked check (Yther Ore's canonical example): `/loc` `(155, -411, 15)` → `P 411, -155, 15`. ✔
 
-For **rendering**, `mapX` increases to the right and `mapY` increases upward, which is standard
-Cartesian — so the canvas transform must **flip Y** (screen Y grows downward) and nothing else.
-No negation happens at render time; the negation is already baked into the file.
+For **rendering**, `mapX` increases to the **east** and `mapY` increases to the **south** —
+which are the screen's own two directions — so the canvas transform is a plain
+scale-and-translate and **negates neither axis**. No negation happens at render time; the
+negation is already baked into the file.
 
-Since we have no player position (§0 #7), this transform is **documentation only** in v1. It
-becomes load-bearing only if a `/loc` pin is ever added (§13, deferred seam).
+> **CORRECTED 2026-08-06 (JOS-65).** This section originally read "larger to the West and
+> **South**", concluded `mapY` grows upward, and specified a **Y flip** at render time. The west
+> half was right and the south half was not, so every map shipped mirrored north-for-south while
+> east-west stayed accurate — which is exactly what the v0.6.3 report said. **Measured** across
+> the real corpus, both packs agreeing to the sign: Oasis of Marr writes `to_North_Desert_of_Ro`
+> at y = -2413 (default) / -2528 (Brewall) and `to_South_Desert_of_Ro` at y = +1859 / +1931;
+> North Qeynos puts `to_Qeynos_Hills` (north) at y = -1332 against `to_South_Qeynos` at y = +156;
+> West Freeport's four `to_North_Freeport` points are all negative y; North Karana writes
+> `to_The_Southern_Plains_of_Karana` at y = +4464 and puts `to_The_Eastern_Plains` at x = +3060
+> against `to_The_Western_Plains` at x = -3158. The `mapFromLoc` arithmetic above is **unchanged**
+> and independently evidenced (§ the pins wave: 99.4% of 7,423 wiki coordinates land inside their
+> own zone under it); only the belief about which way its result points was wrong. Pinned by
+> `tests/mapGeometry.test.mts`, which drives real records from BOTH packs through
+> `parseMapText` → `buildMapData` → `fit` → `project` and asserts north renders above south.
+
+Since we have no player position (§0 #7), the `/loc` half of this transform is **documentation
+only** in v1. It becomes load-bearing only if a `/loc` pin is ever added (§13, deferred seam) —
+but the file-to-screen half is load-bearing on every frame.
 
 ### 2.2 Parser edge cases — all measured, all mandatory
 

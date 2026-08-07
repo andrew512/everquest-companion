@@ -12,8 +12,12 @@
 // lie about distance. There is exactly one number that can zoom, so there is exactly one number
 // to clamp.
 //
-// THE Y FLIP IS THE ONLY NEGATION AT RENDER TIME (§2.1). See `mapFromLoc` below for the file
-// format's own negation, which is already baked into the bytes on disk.
+// THERE IS NO NEGATION AT RENDER TIME, AND THAT IS THE WHOLE OF JOS-65. Map-file y grows SOUTH,
+// which is the same direction screen y grows, so the projection is a pure scale-and-translate on
+// BOTH axes. A `-` on y here renders every zone mirrored north-for-south — a map that looks
+// perfectly good until you try to walk it. See `mapFromLoc` for the file format's own negation,
+// which is already baked into the bytes on disk, and `project` for the measurement that settled
+// the direction.
 //
 // CULLING IS ALLOCATION-FREE. `cullSegments` walks the columnar Float32Array and writes segment
 // INDICES into a caller-owned Uint32Array. At the measured worst case (26,383 segments in
@@ -98,8 +102,9 @@ const MIN_SPAN = 1
 /**
  * A `/loc` reading as the game prints it: (North/South, West/East, Elevation).
  *
- * EQ's world axes grow larger to the WEST and to the SOUTH, so `/loc` is neither x-first nor
- * sign-aligned with the map file.
+ * EQ's world axes grow larger to the WEST and to the NORTH, so `/loc` is neither x-first nor
+ * sign-aligned with the map file. (The plan said "West and South" and the South half was wrong —
+ * that single word is the whole of JOS-65; see `project`.)
  */
 export interface EqLoc {
   /** first number printed by /loc — North/South. */
@@ -124,10 +129,15 @@ export interface MapCoord {
  * as `P 411, -155, 15` — which is exactly this.
  *
  * This negation is already BAKED INTO THE FILE, so nothing at render time repeats it: in map
- * coordinates x grows to the right and y grows UP, which is plain Cartesian, and the only thing
- * `project` does is flip y for the screen's downward axis. v1 has no player marker to place
- * (`Your Location` appears 0 times in 86.6 MB of log — §0 #7), so this pair is the pinned
- * documentation of the convention and the seam a future `/loc` pin would use.
+ * coordinates x grows EAST and y grows SOUTH — the screen's own two directions — so `project` is
+ * a pure scale-and-translate and negates nothing. The log has no player marker to place
+ * (`Your Location` appears 0 times in 86.6 MB — §0 #7), so this pair is the pinned documentation
+ * of the convention and the seam a future `/loc` pin would use.
+ *
+ * The SIGNS here are independently evidenced and unchanged by JOS-65: `mobPins.ts` measured this
+ * transform against 7,423 wiki-stated coordinates across 119 mapped zones and it put 99.4% of
+ * them inside their zone's own extent, a median 14.8 map units from the nearest wall. What JOS-65
+ * corrected was the belief about which way the RESULT points, not the arithmetic that produces it.
  */
 export function mapFromLoc(loc: EqLoc): MapCoord {
   return { x: -loc.ew, y: -loc.ns, z: loc.z }
@@ -167,14 +177,36 @@ export function fit(bounds: MapBounds, vp: ViewportSize, pad = FIT_PAD): MapView
 }
 
 /**
- * Map coordinate → CSS pixel on the surface.
+ * Map coordinate → CSS pixel on the surface. Both axes are a plain scale-and-translate; NEITHER
+ * is negated.
  *
- * The `-` on y is the ONLY negation at render time: map y grows up, screen y grows down.
+ * WHY NO Y FLIP (JOS-65 — the user report was "North for South. East to West is accurate").
+ * `docs/plans/map-viewer.md` §2.1 asserted EQ's world grows west AND SOUTH, so map-file y (which
+ * is `-NS`) would grow NORTH and a screen flip would be needed. The west half is right; the south
+ * half is not, and E-W looked fine for exactly that reason. MEASURED against the real corpus, and
+ * both packs (default and Brewall) agree to the sign:
+ *
+ *   Oasis of Marr    `to_North_Desert_of_Ro`  y = -2413 (default) / -2528 (brewall)
+ *                    `to_South_Desert_of_Ro`  y = +1859 (default) / +1931 (brewall)
+ *   North Qeynos     `to_Qeynos_Hills` (north) y = -1332 ; `to_South_Qeynos` y = +156 / +20
+ *   West Freeport    `to_North_Freeport`      y = -215, -240, -758, -1581 (all negative)
+ *   North Karana     `to_The_Southern_Plains_of_Karana` y = +4464
+ *   North Ro         `to_East_Freeport` (north) y = -4047 ; `to_Oasis_of_Marr` (south) y = +1748
+ *
+ * So **map-file y grows SOUTH**, which is the direction screen y already grows, and the flip was
+ * the bug. X is unchanged and was never wrong: North Karana puts `to_The_Eastern_Plains` at
+ * x = +3060 against `to_The_Western_Plains` at x = -3158, so **map-file x grows EAST**.
+ *
+ * This is the ONE seam. Labels, POI dots, wiki mob pins, the search-jump marker and the selection
+ * ring all reach the screen through `project` (via `MapViewport.toScreen`); the canvas inlines the
+ * same two lines for allocation reasons and must be edited with it. There are no per-layer
+ * corrections and there must never be one — a layer that flips on its own is a map whose labels
+ * disagree with its walls.
  */
 export function project(view: MapView, vp: ViewportSize, p: MapPos): ScreenPos {
   return {
     px: vp.w / 2 + (p.x - view.cx) * view.scale,
-    py: vp.h / 2 - (p.y - view.cy) * view.scale
+    py: vp.h / 2 + (p.y - view.cy) * view.scale
   }
 }
 
@@ -182,7 +214,7 @@ export function project(view: MapView, vp: ViewportSize, p: MapPos): ScreenPos {
 export function unproject(view: MapView, vp: ViewportSize, s: ScreenPos): MapPos {
   return {
     x: view.cx + (s.px - vp.w / 2) / view.scale,
-    y: view.cy - (s.py - vp.h / 2) / view.scale
+    y: view.cy + (s.py - vp.h / 2) / view.scale
   }
 }
 
@@ -262,7 +294,7 @@ export function zoomAround(a: ZoomArgs): MapView {
   return clampView(
     {
       cx: at.x - (a.anchor.px - a.vp.w / 2) / scale,
-      cy: at.y + (a.anchor.py - a.vp.h / 2) / scale,
+      cy: at.y - (a.anchor.py - a.vp.h / 2) / scale,
       scale
     },
     a.bounds,
@@ -276,12 +308,12 @@ export function zoomAround(a: ZoomArgs): MapView {
  * exactly reversible instead of drifting by a rounding error per event.
  *
  * Dragging right moves the map right, so the viewport centre moves LEFT in map coordinates;
- * dragging down moves the map down, so the centre moves UP — hence the y sign, which is the
- * screen flip again.
+ * dragging down moves the map down, so the centre moves NORTH — and north is now the negative y
+ * direction, so both axes subtract. `panBy` is `project` read backwards and its signs move with it.
  */
 export function panBy(view: MapView, bounds: MapBounds, vp: ViewportSize, d: ScreenPos): MapView {
   return clampView(
-    { cx: view.cx - d.px / view.scale, cy: view.cy + d.py / view.scale, scale: view.scale },
+    { cx: view.cx - d.px / view.scale, cy: view.cy - d.py / view.scale, scale: view.scale },
     bounds,
     vp
   )
