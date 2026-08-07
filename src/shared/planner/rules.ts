@@ -15,8 +15,17 @@
 //       is worth 2^n (D0=1 … D4=16) AND arrives pre-plussed at +n.
 
 import { EXALTATION_SLOT_TYPES, expToNextTier } from '../itemStats'
+import { equipSlotOf, planSlotLabel } from './types'
 import type { ClassAbbr } from '../classCombo'
-import type { EquipSlot, ExaltPlan, ExtractTier, PlanSocket, PlannerDonor, SocketType } from './types'
+import type {
+  EquipSlot,
+  ExaltPlan,
+  ExtractTier,
+  PlanSlotId,
+  PlanSocket,
+  PlannerDonor,
+  SocketType
+} from './types'
 
 // ---- R1: which tier extracts which socket ---------------------------------------
 
@@ -123,7 +132,8 @@ export function extractionCost(tierRequired: ExtractTier): ExtractionCost {
 export type PlanWarningKind = 'unknown-donor' | 'haste' | 'slot' | 'class' | 'no-host'
 
 export interface PlanWarning {
-  slot: EquipSlot
+  /** the CELL, so a warning about your second ring says so (JOS-67) */
+  slot: PlanSlotId
   /** absent for a slot-level warning ('no-host') */
   socket?: SocketType
   kind: PlanWarningKind
@@ -140,14 +150,17 @@ export interface PlanWarning {
 export type DonorIndex = ReadonlyMap<string, readonly PlannerDonor[]>
 
 interface WarnCtx {
-  slot: EquipSlot
+  /** the cell being linted; `equipSlotOf` is what R2 is actually asked about */
+  cell: PlanSlotId
   classes: readonly ClassAbbr[]
   donors: DonorIndex
 }
 
 const REASON_MESSAGE: Record<IncompatibleReason, (donor: PlannerDonor, ctx: WarnCtx) => string> = {
   haste: (d) => `${d.name} — haste can't be moved`,
-  slot: (d, ctx) => `${d.name} can't go in ${ctx.slot}`,
+  // Named by CELL, because "can't go in FINGER 2" is what the user is looking at; the RULE it
+  // failed is about the slot, and `socketCompatibility` below is asked in those terms.
+  slot: (d, ctx) => `${d.name} can't go in ${planSlotLabel(ctx.cell)}`,
   class: (d, ctx) => `${d.name} — no class overlap with ${ctx.classes.join('/')}`
 }
 
@@ -155,17 +168,17 @@ function socketWarning(ctx: WarnCtx, socket: SocketType, planned: PlanSocket): P
   const donor = ctx.donors.get(planned.donorKey)?.find((d) => d.effect === planned.effect)
   if (!donor) {
     return {
-      slot: ctx.slot,
+      slot: ctx.cell,
       socket,
       kind: 'unknown-donor',
       donorKey: planned.donorKey,
       message: `${planned.effect} — no donor item in the database`
     }
   }
-  const compat = socketCompatibility(donor, [ctx.slot], ctx.classes)
+  const compat = socketCompatibility(donor, [equipSlotOf(ctx.cell)], ctx.classes)
   if (compat.ok) return null
   return {
-    slot: ctx.slot,
+    slot: ctx.cell,
     socket,
     kind: compat.reason,
     donorKey: donor.key,
@@ -182,11 +195,11 @@ export function planWarnings(plan: ExaltPlan, donorsByKey: DonorIndex): PlanWarn
   const out: PlanWarning[] = []
   for (const [slotName, planSlot] of Object.entries(plan.slots)) {
     if (!planSlot) continue
-    const slot = slotName as EquipSlot
+    const cell = slotName as PlanSlotId
     const entries = Object.entries(planSlot.sockets) as [SocketType, PlanSocket | undefined][]
-    const ctx: WarnCtx = { slot, classes: plan.classes, donors: donorsByKey }
+    const ctx: WarnCtx = { cell, classes: plan.classes, donors: donorsByKey }
     if (planSlot.hostKey == null && entries.some(([, s]) => s != null)) {
-      out.push({ slot, kind: 'no-host', message: 'No host item picked' })
+      out.push({ slot: cell, kind: 'no-host', message: 'No host item picked' })
     }
     for (const [socket, planned] of entries) {
       const warning = planned == null ? null : socketWarning(ctx, socket, planned)

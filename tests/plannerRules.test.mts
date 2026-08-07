@@ -180,6 +180,41 @@ test('the set lint names every unreachable socket', () => {
   assert.equal(haste.socket, 'worn')
 })
 
+test('the lint runs per CELL, and R2 is still asked about the SLOT (JOS-67)', () => {
+  // A ring donor planned into BOTH ring cells is legal twice over: `equipSlotOf('FINGER2')` is
+  // FINGER, so the compatibility question is unchanged, and the two cells are two sockets rather
+  // than one. Before JOS-67 the second one could not be expressed at all.
+  const ring = donor({
+    key: 'ring of pureblood',
+    name: 'Ring of Pureblood',
+    effect: 'Improved Healing II',
+    socket: 'focus',
+    tierRequired: 1,
+    slots: ['FINGER'],
+    classes: ['PAL', 'CLR']
+  })
+  const both = plan({
+    classes: ['PAL'],
+    slots: {
+      FINGER: { hostKey: 'ring a', sockets: { focus: { effect: ring.effect, donorKey: ring.key } } },
+      FINGER2: { hostKey: 'ring b', sockets: { focus: { effect: ring.effect, donorKey: ring.key } } }
+    }
+  })
+  assert.deepEqual(planWarnings(both, index([ring])), [])
+
+  // …and when a cell IS wrong, the message names the cell the user is looking at, not the slot.
+  const misplaced = plan({
+    classes: ['PAL'],
+    slots: {
+      FINGER2: { hostKey: 'ring b', sockets: { proc: { effect: 'Holy Might', donorKey: 'ghoulbane' } } }
+    }
+  })
+  const [warning] = planWarnings(misplaced, index([donor()]))
+  assert.equal(warning.slot, 'FINGER2')
+  assert.equal(warning.kind, 'slot')
+  assert.ok(warning.message.includes('FINGER 2'), warning.message)
+})
+
 test('an empty slot with no sockets is quiet, not an error', () => {
   const p = plan({ slots: { HEAD: { sockets: {} }, CHEST: { hostKey: 'robe', sockets: {} } } })
   assert.deepEqual(planWarnings(p, index([])), [])

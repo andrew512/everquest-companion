@@ -35,7 +35,7 @@
 // donor with no source at all is a fact about our knowledge, not about the game. Each says which
 // one it is rather than being dropped into a zone we invented.
 
-import type { EquipSlot, ExaltPlan, ExtractTier, SocketType } from '@shared/planner/types'
+import type { ExaltPlan, ExtractTier, PlanSlotId, SocketType } from '@shared/planner/types'
 // RELATIVE value imports (the mobSearch house law): `tests/plannerFarm.test.mts` drives this
 // rollup under the node runner, where the `@shared` alias — a vite-only resolution — does not
 // exist. Type-only imports are erased and keep the alias.
@@ -49,7 +49,8 @@ import type { DonorProgress } from './plannerProgress'
 
 /** One planned socket, resolved against the corpus, the catalog and your own progress. */
 export interface FarmNeed {
-  slot: EquipSlot
+  /** the plan CELL it was socketed into — `planSlotLabel` is how a farm row spells it */
+  slot: PlanSlotId
   socket: SocketType
   effect: string
   donorKey: string
@@ -152,7 +153,7 @@ export function collectNeeds(
       const tierRequired = donor?.tierRequired ?? extractionTier(socket)
       const sources = mergeItemSources(sourcesFor(planned.donorKey), donor?.wikiSources)
       needs.push({
-        slot: slotName as EquipSlot,
+        slot: slotName as PlanSlotId,
         socket,
         effect: planned.effect,
         donorKey: planned.donorKey,

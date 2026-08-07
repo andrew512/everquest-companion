@@ -69,7 +69,10 @@ function useHostSearch(query: string, open: boolean): HitsState {
 }
 
 export interface HostPickerProps {
+  /** the equip SLOT a candidate must occupy (R2). Which CELL is being filled is `label`. */
   slot: EquipSlot
+  /** what that cell is CALLED — "FINGER 2" rather than "FINGER", for the two sentences (JOS-67) */
+  label: string
   planClasses: readonly ClassAbbr[]
   anchor: HTMLElement | null
   onClose: () => void
@@ -114,7 +117,7 @@ function HitRow({ hit, onPick }: { hit: PlannerItemHit; onPick: (h: PlannerItemH
   )
 }
 
-export default function HostPicker({ slot, planClasses, anchor, onClose, onPick }: HostPickerProps): JSX.Element {
+export default function HostPicker({ slot, label, planClasses, anchor, onClose, onPick }: HostPickerProps): JSX.Element {
   const [text, setText] = useState('')
   const query = useDeferredValue(text)
   const open = anchor !== null
@@ -134,7 +137,7 @@ export default function HostPicker({ slot, planClasses, anchor, onClose, onPick 
           autoFocus
           fullWidth
           size="small"
-          label={`Host item for ${slot}`}
+          label={`Host item for ${label}`}
           value={text}
           data-testid="planner-host-search"
           onChange={(e) => setText(e.target.value)}
@@ -152,7 +155,7 @@ export default function HostPicker({ slot, planClasses, anchor, onClose, onPick 
                 ? 'Type at least two letters.'
                 : loading
                   ? 'Searching…'
-                  : `No item matching that can go in ${slot} for this set.`}
+                  : `No item matching that can go in ${label} for this set.`}
             </Typography>
           </Stack>
         )}

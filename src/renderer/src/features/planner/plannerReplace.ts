@@ -6,11 +6,15 @@
 // write to", and that question has two halves the view should not be improvising:
 //
 //   * WHICH SOCKET WOULD IT WRITE? Under a browse preset it is exact — you clicked that socket of
-//     that item. Without one, a donor listed for a SINGLE equipment slot implies its target (that
-//     slot, the donor's own socket type). A donor listed for two does NOT: the slot menu is the
-//     question being asked, and claiming a replace before the slot is chosen would be guessing
+//     that item. Without one, a donor whose slots resolve to a SINGLE board CELL implies its target
+//     (that cell, the donor's own socket type). Anything else does NOT: the slot menu is the
+//     question being asked, and claiming a replace before the cell is chosen would be guessing
 //     which one the user meant. `replacesFor` answers `null` there, and the MENU carries the
-//     warning per slot instead (EffectBrowser's SlotMenu).
+//     warning per cell instead (EffectBrowser's SlotMenu).
+//     CELLS, NOT SLOTS, SINCE JOS-67: a ring donor names one equip slot and TWO places to wear it,
+//     so `targetCells` below expands through `cellsForSlot` and a FINGER donor now opens the menu
+//     it used to skip. That is the whole reason the expansion is here rather than inline in the
+//     view — "which cells could this land in" is the same question the replace warning asks.
 //   * AND IS IT THE SAME ROW? Re-adding the effect that is already sitting there replaces nothing.
 //     The row is chipped "in set" and a button reading "Replace Improved Healing III" while adding
 //     Improved Healing III would be nonsense.
@@ -19,7 +23,14 @@
 // launched app: the e2e can only exercise whichever socket the machine's own data happens to leave
 // occupied, and it legitimately skips when nothing does. Relative value imports, house law.
 
-import type { EquipSlot, ExaltPlan, PlanSocket, SocketType } from '../../../../shared/planner/types'
+import { cellsForSlot } from '../../../../shared/planner/types'
+import type {
+  EquipSlot,
+  ExaltPlan,
+  PlanSlotId,
+  PlanSocket,
+  SocketType
+} from '../../../../shared/planner/types'
 
 /** What a row needs to state about itself for the question to be answerable. */
 export interface ReplaceSubject {
@@ -29,24 +40,33 @@ export interface ReplaceSubject {
   slots: readonly EquipSlot[]
 }
 
-/** The socket of a plan a write would land in — `slot:socket`, the key the map below uses. */
+/**
+ * Every board CELL this donor could be written into, in board order (JOS-67). A two-slot sword
+ * gives PRIMARY and SECONDARY as before; a ring gives FINGER 1 and FINGER 2, which is the fix.
+ * Deduped by construction — `cellsForSlot` reads one ordered list and a donor never repeats a slot.
+ */
+export function targetCells(donor: Pick<ReplaceSubject, 'slots'>): PlanSlotId[] {
+  return donor.slots.flatMap((s) => cellsForSlot(s))
+}
+
+/** The socket of a plan a write would land in — `cell:socket`, the key the map below uses. */
 export type SocketKey = string
 
-/** `slot:socket → the effect planned there`. Folded once per plan change, read by every row. */
+/** `cell:socket → the effect planned there`. Folded once per plan change, read by every row. */
 export function plannedBySocket(plan: ExaltPlan): ReadonlyMap<SocketKey, PlanSocket> {
   const out = new Map<SocketKey, PlanSocket>()
-  for (const [slot, planSlot] of Object.entries(plan.slots)) {
+  for (const [cell, planSlot] of Object.entries(plan.slots)) {
     for (const [socket, planned] of Object.entries(planSlot?.sockets ?? {})) {
-      if (planned) out.set(`${slot}:${socket}`, planned)
+      if (planned) out.set(`${cell}:${socket}`, planned)
     }
   }
   return out
 }
 
-/** The effect a write to (slot, socket) would displace, or null — including "it is already this". */
+/** The effect a write to (cell, socket) would displace, or null — including "it is already this". */
 export function outgoing(
   occupied: ReadonlyMap<SocketKey, PlanSocket>,
-  slot: EquipSlot,
+  slot: PlanSlotId,
   socket: SocketType,
   donor: ReplaceSubject
 ): string | null {
@@ -58,7 +78,7 @@ export function outgoing(
 
 /** The preset's shape, as far as this question is concerned (features/planner/plannerPreset.ts). */
 export interface ReplaceTarget {
-  slot: EquipSlot
+  slot: PlanSlotId
   socket: SocketType
 }
 
@@ -72,6 +92,7 @@ export function replacesFor(
   donor: ReplaceSubject
 ): string | null {
   if (preset !== null) return outgoing(occupied, preset.slot, preset.socket, donor)
-  const only = donor.slots.length === 1 ? donor.slots[0] : null
+  const cells = targetCells(donor)
+  const only = cells.length === 1 ? cells[0] : null
   return only === null ? null : outgoing(occupied, only, donor.socket, donor)
 }

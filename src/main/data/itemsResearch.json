@@ -9,6 +9,12 @@
     "source": "eqlwiki.com/Alluring Horn — stats block: \"Brass Resonance: 8\"",
     "checkedAt": "2026-08-06"
   },
+  "azarack skin wristwraps": {
+    "slots": ["WRIST"],
+    "note": "the page states its slot on an unkeyed stats-block line, so the scrape files it under flags and the item reached the planner with no slot at all",
+    "source": "eqlwiki.com/Azarack Skin Wristwraps — stats block: \"No Trade\\n\\nClass: BST\\n\\nRace: ALL\\n\\nWrist\\n\\nAC: 5 HP: +35 END: +10\"",
+    "checkedAt": "2026-08-06"
+  },
   "brahhms horn": {
     "instrument": "wind",
     "source": "eqlwiki.com/Brahhms Horn — stats block: \"Wind Resonance: 11\"",
@@ -56,6 +62,12 @@
     "source": "eqlwiki.com/Efreeti War Horn — stats block: \"Brass Resonance: 12\"",
     "checkedAt": "2026-08-06"
   },
+  "enchanted fine steel great staff": {
+    "slots": ["PRIMARY"],
+    "note": "the page states its slot on an unkeyed stats-block line, so the scrape files it under flags; it carries no effect today and is filed for the host picker, which reads the same slot list",
+    "source": "eqlwiki.com/Enchanted Fine Steel Great Staff — stats block: \"…Class: WAR CLR PAL RNG SHD DRU MNK SHM NEC WIZ MAG ENC BST BER\\n\\nRace: ALL\\n\\nPrimary\"",
+    "checkedAt": "2026-08-06"
+  },
   "ervaj's flute of flight": {
     "instrument": "wind",
     "source": "eqlwiki.com/Ervaj's Flute of Flight — stats block: \"Wind Resonance: 12\"",
@@ -91,6 +103,12 @@
     "gmOnly": true,
     "note": "unfarmable: the page states a GM item and names no drop source, quest or recipe (owner ruling JOS-64: GM-only is as unfarmable as GM-event)",
     "source": "eqlwiki.com/Gnome Sandwich — |notes: \"GM item occasionally handed out.\"",
+    "checkedAt": "2026-08-06"
+  },
+  "golem metal wand": {
+    "slots": ["PRIMARY", "SECONDARY"],
+    "note": "the page states its slot on an unkeyed stats-block line, so the scrape files it under flags and its Pillage Enchantment click was hidden from the effect browser (feedback 01KZCGXY8WC6YCD8W44W7EAS5H)",
+    "source": "eqlwiki.com/Golem Metal Wand — stats block: \"Attunable\\n\\nCharges: Unlimited\\n\\nEffect: [[Pillage Enchantment]] (Any Slot, Casting Time: 1.5)\\n\\nWT: 0.1 Size: TINY\\n\\nClass: ALL\\n\\nRace: ALL\\n\\nPrimary Secondary\"",
     "checkedAt": "2026-08-06"
   },
   "gypsy lute": {

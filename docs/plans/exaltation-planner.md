@@ -150,6 +150,19 @@ the plan models one PlanSlot per slot type; a user wanting two ring plans makes
 two entries via a second set or the same slot in another set — deliberate v1
 simplification, recorded in §8 open questions.
 
+> **SUPERSEDED (JOS-67, 2026-08-06).** A player reported it as a defect — *"only
+> allows one finger slot focus effect"* (feedback 01KZCGQ5M395WN93FQD40RXZC6,
+> v0.6.3) — which is the answer to §8.1. `ExaltPlan.slots` is now keyed by
+> `PlanSlotId` = the 18 equip slots **plus** `EAR2` / `WRIST2` / `FINGER2`, and
+> the board draws 21 cells. Compatibility is unchanged and still per slot TYPE:
+> `equipSlotOf(cell)` is the one-line bridge, and nothing below the board knows
+> the pair rule exists. The evidence for "two of each" is the game's own
+> `/outputfile inventory` dump, where `Ear`, `Wrist` and `Fingers` each print
+> twice at top level and nothing else repeats — the same fixture the auto-fill
+> already read, which used to keep the first row of each and discard the second.
+> The widening is ADDITIVE in the store (D4's own argument): every key a past
+> build could write is still legal, so no migration transforms anything.
+
 ### 3.2 Normalization — `src/shared/planner/normalize.ts` (new)
 
 - `normalizeSlotTokens(slot?: string): EquipSlot[]` — splits the space-joined
@@ -324,8 +337,9 @@ recorded in §8.
 
 ## 8. Open questions (owner)
 
-1. Paired slots (two rings/ears/wrists): v1 plans one per slot type. Worth a
-   `FINGER×2` cell pair in Board mode later?
+1. ~~Paired slots (two rings/ears/wrists): v1 plans one per slot type. Worth a
+   `FINGER×2` cell pair in Board mode later?~~ **ANSWERED BY A USER, JOS-67** —
+   shipped as `PlanSlotId` + 21 board cells; see the superseded block in §3.1.
 2. Should "add to set" from the Loot pane exist (deep link nonce à la
    `openMob`)? Cheap once the pane exists; not in v1 waves.
 3. Inventory Location column (equipped-vs-bag) — extend `parseInventory` in a

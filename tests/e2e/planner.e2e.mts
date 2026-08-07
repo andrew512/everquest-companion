@@ -56,6 +56,8 @@ import {
 
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+// The cell list itself, so the board's own count is never restated here (JOS-67 moved it 18 → 21).
+import { PLAN_SLOTS } from '../../src/shared/planner/types'
 // Every `planner-*` selector, the DOM measurements, and the four steps that measure the EFFECT
 // LIST live next door — this spec sits at the repo's max-lines budget and the rule is to split,
 // never ratchet (drill.mts, combatSteps.mts). The ORDER is still owned here.
@@ -269,7 +271,10 @@ async function stepAddAndInventory(page: Page): Promise<boolean> {
   await page.click(MODE_BOARD, { timeout: 15_000 })
   const drawn = await until(async () => (await countOf(page, SOCKET_LINE)) > 0, 15_000)
   const cells = await countOf(page, BOARD_CELL)
-  check('the Inventory tab draws every equipment slot, planned or not', cells >= 18, `${String(cells)} cells`)
+  check('the Inventory tab draws every equipment cell, planned or not', cells >= PLAN_SLOTS.length, `${String(cells)} cells`)
+  // JOS-67 — reported as "only allows one finger slot focus effect": BOTH ring cells must be here.
+  const rings = await countOf(page, `${BOARD_CELL}[data-slot="FINGER"], ${BOARD_CELL}[data-slot="FINGER2"]`)
+  check('both ring cells are on the board — you wear two rings', rings === 2, `${String(rings)} ring cells`)
   check('adding a donor from the browser writes a socket the Inventory tab draws', drawn, `${String(await countOf(page, SOCKET_LINE))} socket lines`)
   check(
     'each planned socket carries exactly one state chip',

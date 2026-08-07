@@ -29,7 +29,7 @@
 import { type JSX, useMemo } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
-import type { ExaltPlan } from '@shared/planner/types'
+import { planSlotLabel, type ExaltPlan } from '@shared/planner/types'
 import { Tooltip } from '../../lib/Tooltip'
 import { DonorName, EraChip, MismatchChip, NoSlotChip, StateChip } from './PlannerChips'
 import { classesMismatch } from './plannerClasses'
@@ -107,7 +107,7 @@ function Row({
           <DonorName name={row.donorName} bold onOpen={onOpenLoot} />
         </Typography>
         <Typography variant="caption" noWrap sx={{ display: 'block', color: 'text.secondary' }}>
-          {row.effect} · {row.slot}
+          {row.effect} · {planSlotLabel(row.slot)}
         </Typography>
       </Box>
 

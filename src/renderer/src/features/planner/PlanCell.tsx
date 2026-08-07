@@ -16,14 +16,14 @@
 // browser already narrowed to what can legally go there (that socket, this slot, this host's
 // classes), so the second way into the planner is "open an item and fill it" rather than "find an
 // effect and place it". A cell with NO host still draws only what is planned: four empty rows on
-// eighteen untouched slots would be noise, not an invitation.
+// twenty-one untouched cells would be noise, not an invitation.
 //
 // THE NARROWED-CLASS LINE IS R2 MADE VISIBLE. Socketing narrows the host's class list to the
 // overlap with the donor's, so a six-class sword quietly becomes a four-class sword the moment you
 // plan a Ranger-only proc into it.
 //
 // THE STATE CHIP IS THE ONLY PROGRESS THIS SURFACE SHOWS, and it is decoration (D6): a character
-// with no dumps, no loot history and no observed merges renders eighteen cells of `planned` and is
+// with no dumps, no loot history and no observed merges renders twenty-one cells of `planned` and is
 // a completely functional planner.
 
 import { type JSX } from 'react'
@@ -31,7 +31,14 @@ import { Box, Chip, IconButton, Paper, Stack, Typography } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { PlannerInventoryHost } from '@shared/planner/inventorySlots'
-import { SOCKET_TYPES, type EquipSlot, type PlanSlot, type PlanSocket, type SocketType } from '@shared/planner/types'
+import {
+  planSlotLabel,
+  SOCKET_TYPES,
+  type PlanSlot,
+  type PlanSlotId,
+  type PlanSocket,
+  type SocketType
+} from '@shared/planner/types'
 import { extractionTier, narrowedClasses } from '@shared/planner/rules'
 import { Tooltip } from '../../lib/Tooltip'
 import { DonorName, EraChip, MismatchChip, NoSlotChip, StateChip } from './PlannerChips'
@@ -75,7 +82,7 @@ export function cellNarrowing(planSlot: PlanSlot, index: DonorIndex, hostKey?: s
 // ---- one socket line -----------------------------------------------------------------
 
 interface SocketLineProps {
-  slot: EquipSlot
+  slot: PlanSlotId
   socket: SocketType
   /** what the set plans here, or null for an EMPTY socket of a host (V8) */
   planned: PlanSocket | null
@@ -85,14 +92,14 @@ interface SocketLineProps {
   planClasses: readonly ClassAbbr[]
   index: DonorIndex
   progress: PlannerProgressApi
-  onRemove: (slot: EquipSlot, socket: SocketType) => void
+  onRemove: (slot: PlanSlotId, socket: SocketType) => void
   /**
    * Open the effect browser filtered to this socket of this host (V8) — NULL when the cell has no
    * host yet. The preset is "this socket of THIS item" (socket + slot + the host's own classes),
    * so with no host there is nothing legal to narrow to, and the socket label stops being a
    * control rather than staying a click that goes nowhere.
    */
-  onBrowse: ((slot: EquipSlot, socket: SocketType) => void) | null
+  onBrowse: ((slot: PlanSlotId, socket: SocketType) => void) | null
   onOpenLoot?: (item: string) => void
 }
 
@@ -163,7 +170,7 @@ function SocketChip({
     />
   )
   if (onBrowse === null) return chip
-  return <Tooltip title={`Browse ${SOCKET_LABEL[socket].toLowerCase()} effects for ${slot}`}>{chip}</Tooltip>
+  return <Tooltip title={`Browse ${SOCKET_LABEL[socket].toLowerCase()} effects for ${planSlotLabel(slot)}`}>{chip}</Tooltip>
 }
 
 function SocketLine(props: SocketLineProps): JSX.Element {
@@ -209,10 +216,10 @@ function HostLine({
   onHost,
   onOpenLoot
 }: {
-  slot: EquipSlot
+  slot: PlanSlotId
   host: EffectiveHost | null
-  onPickHost: (slot: EquipSlot, anchor: HTMLElement) => void
-  onHost: (slot: EquipSlot, host: null) => void
+  onPickHost: (slot: PlanSlotId, anchor: HTMLElement) => void
+  onHost: (slot: PlanSlotId, host: null) => void
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
   return (
@@ -276,18 +283,18 @@ function HostLine({
 // ---- the cell ------------------------------------------------------------------------
 
 export interface PlanCellProps {
-  slot: EquipSlot
+  slot: PlanSlotId
   planSlot: PlanSlot
   planClasses: readonly ClassAbbr[]
   /** what the dump says is worn here; absent when there is no dump or the slot is empty */
   equipped: PlannerInventoryHost | undefined
   index: DonorIndex
   progress: PlannerProgressApi
-  onSocket: (slot: EquipSlot, socket: SocketType, planned: null) => void
-  onHost: (slot: EquipSlot, host: { key: string; name: string } | null) => void
-  onPickHost: (slot: EquipSlot, anchor: HTMLElement) => void
+  onSocket: (slot: PlanSlotId, socket: SocketType, planned: null) => void
+  onHost: (slot: PlanSlotId, host: { key: string; name: string } | null) => void
+  onPickHost: (slot: PlanSlotId, anchor: HTMLElement) => void
   /** open the effect browser filtered to one socket of this cell's host (V8) */
-  onBrowse: (slot: EquipSlot, socket: SocketType, host: EffectiveHost) => void
+  onBrowse: (slot: PlanSlotId, socket: SocketType, host: EffectiveHost) => void
   onOpenLoot?: (item: string) => void
 }
 
@@ -299,7 +306,7 @@ export default function PlanCell(props: PlanCellProps): JSX.Element {
   const empty = planned.length === 0 && host === null
   const narrowed = planned.length === 0 ? [] : cellNarrowing(planSlot, index, host?.key)
   // With a host, the item window: all four sockets, filled or not. Without one, only what is
-  // planned — four empty rows on eighteen untouched slots would be noise, not an invitation.
+  // planned — four empty rows on twenty-one untouched cells would be noise, not an invitation.
   const rows = host === null ? planned : SOCKET_TYPES
 
   return (
@@ -309,8 +316,11 @@ export default function PlanCell(props: PlanCellProps): JSX.Element {
       data-slot={slot}
       sx={{ p: 1, opacity: empty ? 0.65 : 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}
     >
+      {/* The CELL's name — "FINGER 1" / "FINGER 2" for a paired slot, the slot's own name for the
+          rest. Numbered rather than named (left/right): the inventory dump prints two rows in an
+          order and no column saying which hand, so a name would be a claim we cannot support. */}
       <Typography variant="caption" sx={{ color: 'text.secondary', letterSpacing: 0.6, fontWeight: 700 }}>
-        {slot}
+        {planSlotLabel(slot)}
       </Typography>
       <HostLine slot={slot} host={host} onPickHost={onPickHost} onHost={onHost} onOpenLoot={onOpenLoot} />
       {narrowed.length > 0 && (
