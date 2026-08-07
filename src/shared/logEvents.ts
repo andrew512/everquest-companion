@@ -482,7 +482,11 @@ export interface BuffFadeEvent extends LogEventBase {
   target?: string
 }
 
-/** `You have been slain by <killer>!` — the PLAYER died (buffs are stripped). */
+/**
+ * The PLAYER died (buffs are stripped). Two log shapes, one event: `You have been slain by
+ * <killer>!`, and the killerless `You died.` the client prints when a DoT tick lands the
+ * killing blow — hence `killer` is optional (JOS-88).
+ */
 export interface PlayerDeathEvent extends LogEventBase {
   kind: 'playerDeath'
   killer?: string

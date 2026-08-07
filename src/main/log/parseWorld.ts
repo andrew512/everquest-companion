@@ -86,6 +86,14 @@ const SLAIN_BY_RE = /^(.+?) has been slain by (.+?)!$/
 // Player's own death: "You have been slain by <killer>!" (distinct from the
 // third-person "<mob> has been slain by <x>!" SLAIN_BY_RE, which needs "has").
 const PLAYER_DEATH_RE = /^You have been slain by (.+?)!$/
+// …and the KILLERLESS form. When the killing blow is a DoT tick (or anything else with no
+// attacker to name), the client prints this instead of the slain sentence — same death,
+// no killer. Measured over the 1.11M-line sweep log: 23 player deaths, 22 slain sentences
+// and this one line, so the two shapes together are the whole set. Deliberately NOT
+// widened further: "You have been knocked unconscious!" precedes 23/23 deaths but also
+// fires once where the player survived, and "Returning to <bind>. Please wait..." is a
+// redundant echo whose text varies by server (JOS-88).
+const YOU_DIED = 'You died.'
 
 // Turn-ins: "You offered 1 Sphinx Claw to Dason Goldblade." then
 //           "You complete the trade with Dason Goldblade."
@@ -254,6 +262,11 @@ export function classifyConsider({ text, ts, seq, raw }: ClassifyCtx): LogEvent 
 
 /** Deaths (unifies self-slain and slain-by). */
 export function classifyDeath({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  // The killerless player death, checked first and by exact equality so the common path
+  // pays one length-guarded string compare. Emits the SAME `playerDeath` kind as the slain
+  // sentence — one death detector, one event — just without a killer (the field is already
+  // optional, and no consumer reads it: buffs strip, combat censors, the alert fires).
+  if (text === YOU_DIED) return { kind: 'playerDeath', seq, ts, raw }
   if (text.includes('slain')) {
     // Player's OWN death (Task #19): "You have been slain by <killer>!" — strips all
     // buffs. Matched before the third-person SLAIN_BY_RE (which needs "has been",
