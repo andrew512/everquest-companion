@@ -90,6 +90,7 @@ function RawConditionFields({ draft, onChange }: ConditionFieldProps): JSX.Eleme
       <TextField
         size="small"
         label="Regex (matched against the raw log line, case-insensitive)"
+        data-testid="alert-condition-regex"
         value={draft.regex}
         onChange={(e) => onChange({ ...draft, regex: e.target.value })}
         error={rawErr != null}
@@ -138,6 +139,7 @@ export default function ConditionEditor({ draft, onChange }: ConditionFieldProps
         <Select
           size="small"
           fullWidth
+          data-testid="alert-condition-type"
           value={draft.ttype}
           onChange={(e) =>
             onChange({ ...draft, ttype: e.target.value as AlertTriggerPrimitive['type'] })

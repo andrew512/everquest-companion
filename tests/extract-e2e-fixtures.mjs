@@ -149,6 +149,12 @@ const FIXTURES_SPEC = [
     why: 'voice-alerts: alerts are seeded from the store, not the log; this only has to make the app have a character.',
     spans: [[1399150, 1399300]],
     keep: WORLD_KEEP
+  },
+  {
+    out: 'e2e-alert-editor.log',
+    why: 'alert-editor: the dialog is driven entirely by typing into it, and the alerts it edits are seeded from the store — this only has to make the app have a character.',
+    spans: [[1399150, 1399300]],
+    keep: WORLD_KEEP
   }
 ]
 
