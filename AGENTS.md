@@ -474,6 +474,25 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   at startup from its pinned registry tag — seeded + suggested alert defs
   reference its derived soundIds. App signals (bossDefeat, questComplete)
   fire from single always-mounted detectors.
+  **A `where.spell` MATCHER TESTS THE WHOLE CANDIDATE LIST, NEVER THE FIRST PICK**
+  (JOS-84). EQ prints ONE landing/wears-off sentence per spell FAMILY, so
+  `buffApply.spell` / `buffWearOff.spell` are a documented best-effort first
+  candidate — alphabetical, and never the spell you cast — while `candidates`
+  carries the truth. The suggestion wizard's `lands` template pinned
+  `where:{spell:'<your spell>'}` to that pick and so could never fire: a v0.10.0
+  enchanter's Shiftless Deeds alert was compared to the string "Forlorn Deeds", and
+  Incapacitate's to "Disempower". Now `spellCandidateNames` widens the `spell` key
+  (and ONLY that key, and only when the event carries candidates) to every name the
+  line could be, and `matchedSpellName` reports the one that satisfied the def so a
+  spoken alert says your spell rather than the coin flip's. The consequence is
+  stated, not hidden: when one sentence is five spells, the alert is an alert on the
+  FAMILY — which is also what keeps it alive across the level-up that replaces the
+  spell. Nothing named `\] `-anchored or self-vs-third-person was ever the problem.
+  **AND `suggestions.ts` IS NODE-TESTED NOW** — it imported a VALUE through
+  `@shared/*`, so it could not load under tsx and no test had ever run a real
+  suggested def end to end. That is a large part of why this shipped; the import is
+  relative (repo law) and `tests/suggestedAlertsFire.test.mts` drives the real
+  wizard path through the real parser into the real module.
 
 ### Electron trust boundary (do not weaken)
 
@@ -879,6 +898,32 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   feel less drowsy.` (62) — that name no spell and resolve to all-slow candidate
   lists, so the alert reports the family and never which one. Its tripwire is one
   word away: `Your speed returns to normal.` is NINE HASTES (law 3).
+- **CHARM AND MEZ ARE ROSTERS TOO — AND THE SPELL DB IS THE ORACLE** (JOS-84).
+  `Your <spell> spell has worn off of <mob>.` is ONE sentence for three facts, and
+  `rulesets.ts` decides which by matching the spell NAME: `charmSpell` ⇒ `uncharm`,
+  `ccSpell` ⇒ `cc {refresh:true}`, neither ⇒ an ordinary `buffFade`. Both were
+  hand-audited against an ENCHANTER's log, so `ccSpell` held exactly one bard song
+  — Largo's Melodic Binding, level 20 — and nothing a bard casts after it. Every
+  bard past the mid-twenties therefore held a crowd-control break the parser filed
+  as a buff fade: no event, no alert, no way to tell ("Hey, for bard the charm
+  break doesnt work? :D"). The completion is DB knowledge, not a guess:
+  spells.json groups spells by LANDING MESSAGE, so "every castable spell sharing a
+  message with a member the roster already classifies" is enumerable, and
+  `tests/charmCcRoster.test.mts` RE-DERIVES both families from spells.json every
+  run — a future scrape that adds a member fails the suite instead of going mute.
+  Added: the bard holds (Kelin's Lucid Lullaby 15, Song of the Sirens 27,
+  Crission's Pixie Strike 28, Solon's Bewitching Bravura 39, Sionachie's Dreams 40,
+  Largo's **Assonant** Binding 51 — the direct upgrade of the one song that was
+  covered, one word apart) and the Necromancer charm-undead tail (Thrall of Bones
+  54, Enslave Death 60; the ladder's first three were covered by accident).
+  **THE BARD'S BRAVURA IS A MEZ, NOT A CHARM**, measured on the reporter's slice:
+  each own `You begin singing Solon's Bewitching Bravura IX.` is followed ~2 s
+  later by `<mob>'s eyes glaze over.` (Bravura's own landing message), while every
+  `<mob> has been charmed.` in that slice trails ANOTHER player's `begins casting
+  Allure X.` by one second. So it fires "Mez / root broke", not charm break.
+  **THE DB AND THE LOG DISAGREE ABOUT ITS NAME**: spells.json says `Solon's
+  Bravura`, the log prints `Solon's Bewitching Bravura` (the scrape lost the middle
+  word), so the stem answers to both — the oracle found that, not a reviewer.
 - **THE FRIEND SYSTEM ANNOUNCES NOTHING** (JOS-69, same sweep). It prints exactly
   two things: `Friends currently on EverQuest Legends:` (43× — the `/friends`
   command's own output, a header + dashed rule + a /who-style roster row, printed
