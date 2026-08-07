@@ -38,7 +38,6 @@
 import type {
   AlertAudio,
   AlertDef,
-  FiredAlert,
   SpeechEngine,
   SpeechSayResult,
   SpeechVoice,
@@ -48,6 +47,7 @@ import {
   DEFAULT_VOICE_PREFS,
   MAX_SPEECH_RATE,
   MIN_SPEECH_RATE,
+  type SpeechFiring,
   speechTextFor
 } from '../../../shared/speechText'
 
@@ -91,7 +91,7 @@ const SOUND_ONLY: SpeechPlan = { sound: true, speak: null, after: false }
  */
 export function speechPlan(
   def: Pick<AlertDef, 'name' | 'audio' | 'speech'>,
-  firing: Pick<FiredAlert, 'spell'> | null,
+  firing: SpeechFiring | null,
   muted: boolean
 ): SpeechPlan {
   if (muted) return SILENT

@@ -474,6 +474,41 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   at startup from its pinned registry tag — seeded + suggested alert defs
   reference its derived soundIds. App signals (bossDefeat, questComplete)
   fire from single always-mounted detectors.
+- **`$<name>` IN A SPOKEN PHRASE — ONE NAMESPACE, TWO SOURCES.** A custom
+  speech phrase can say what the line said (`$<attacker> hit you for
+  $<amount>`). `FiredAlert.captures` carries the values; `speechTextFor`
+  substitutes them, in the `custom` mode ONLY (the other modes are fixed
+  content, and a placeholder in a def's NAME would read differently in the
+  list than out loud). The syntax is JS's own named-group spelling, so the
+  phrase reads like the regex feeding it and `$<` can collide with no phrase
+  anyone already saved. Filled from:
+  1. the matched EVENT's own scalar fields, read REFLECTIVELY off the object
+     (`eventCaptures`) — so a parser change that adds a field makes it
+     speakable with no edit, and no list can go stale into a broken alert.
+     This reaches 'raw' triggers too: every line is parsed before any alert
+     sees it, so `kind:'damage'` already offers `$<attacker>`/`$<amount>`
+     with no regex written at all.
+  2. the trigger's REGEX NAMED GROUPS (`(?<mob>.+)`), which WIN a collision —
+     a group written by hand is the more specific statement of intent. Only
+     'raw' conditions capture; a `where` matcher's `/regex/` does NOT, because
+     a condition may carry several and two defining one name has no honest
+     winner. 'any' takes the matching condition's groups, 'all' merges with
+     EARLIER conditions winning.
+  ARRAYS AND OBJECTS ARE OMITTED, not stringified — `fieldText` reproduces JS
+  coercion for `where` MATCHING (that is what existing defs are matched
+  against), but nothing wants '[object Object]' spoken. Bounded at
+  MAX_CAPTURES/MAX_CAPTURE_CHARS: this rides every fire over IPC. AN
+  UNRESOLVED NAME IS DROPPED and the whitespace closes up; if the WHOLE phrase
+  resolves to nothing the existing alertName fallback takes over — still never
+  silent, never a guess. NO STORE MIGRATION: the phrase field already existed,
+  so this is a new reading of old data, not a new shape.
+  `shared/captureNames.ts` is the EDITOR's hint list (chips that insert a
+  placeholder) and is the one piece allowed to be incomplete — it is
+  `satisfies`-checked per kind against the real `LogEvent` interfaces, so it
+  can never PROMISE a name that does not resolve, and a kind added to the union
+  without an entry fails the build. A field added to an existing shape is the
+  drift it does not catch, which is exactly the drift the reflective runtime
+  already covers. Pinned by `tests/alertCaptures.test.mts`.
 
 ### Electron trust boundary (do not weaken)
 

@@ -343,6 +343,27 @@ export interface FiredAlert {
    * `SPELL_FIELD_BY_KIND` (main/modules/alerts.ts). Never synthesized, never guessed.
    */
   spell?: string
+  /**
+   * NAMED VALUES THIS FIRING CAN SPEAK — what a `$<name>` placeholder in a custom phrase
+   * resolves against (`speechTextFor`, shared/speechText.ts).
+   *
+   * ONE NAMESPACE, TWO SOURCES, one stated precedence (main/modules/alerts.ts `firingCaptures`):
+   *   1. the matched EVENT's own scalar fields — `attacker`, `target`, `amount`, `mob`, `item`,
+   *      … whatever the parser put on the shape it produced. Free, already canonicalized, and
+   *      available to a 'raw' trigger too: every line is parsed before any alert sees it, so a
+   *      raw match still has a typed event behind it.
+   *   2. the trigger's own REGEX NAMED GROUPS — `(?<mob>.+)` — which OVERRIDE an event field of
+   *      the same name, because a group the user wrote by hand is the more specific statement of
+   *      intent. Only 'raw' conditions capture; a `where` matcher's `/regex/` does not (its
+   *      groups would have no unambiguous owner when several fields each define one).
+   *
+   * ABSENT when neither source offered anything — a payload-free event family matched by a
+   * capture-less regex, and every renderer-evaluated 'app' signal. Values are strings because
+   * that is what gets spoken; a number/boolean field is stringified, and array/object fields are
+   * omitted entirely rather than spoken as '[object Object]'. Bounded (see MAX_CAPTURES /
+   * MAX_CAPTURE_CHARS) — this rides every firing over IPC.
+   */
+  captures?: Record<string, string>
 }
 
 /** One recorded fire in an alert's recent-fires ring buffer (Task #22). */

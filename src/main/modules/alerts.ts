@@ -212,6 +212,114 @@ function firingSpell(ev: LogEvent): string | undefined {
   return name && name !== 'unknown' ? name : undefined
 }
 
+// ---- named values a firing can speak (`$<name>` placeholders, shared/speechText.ts) ----
+//
+// ONE NAMESPACE, TWO SOURCES. A custom phrase says `$<mob> is casting $<spell>`; this is where
+// `mob` and `spell` get their values. They come from the matched EVENT's own scalar fields and
+// from the trigger's own regex named groups, merged with the groups winning — see
+// `mergeCaptures` for why that direction and not the other.
+//
+// THE EVENT HALF IS FREE, AND IT REACHES 'raw' TRIGGERS TOO. Every line is parsed into a typed
+// LogEvent before any alert sees it, so a raw-matched line still has a shape behind it with
+// `attacker`/`target`/`amount`/`mob`/… already extracted and canonicalized. That is the same
+// reason `firingSpell` above works for a raw trigger, and it means the common cases need no
+// regex at all: `kind:'damage'` already offers `$<attacker>` and `$<amount>`.
+//
+// REFLECTIVE, NOT A TABLE, and that is the load-bearing choice. `SPELL_FIELD_BY_KIND` above is a
+// table because it answers a question the shapes do not agree on (three families spell the spell
+// differently). This answers "what does this event carry", which the event itself already states
+// — so it is read off the object. A parser change that adds a field makes that field speakable
+// with no edit here, and no list can go stale into a broken alert. (shared/eventFields.ts holds a
+// per-kind list for the EDITOR's hint chips only; a gap there costs a chip, never a substitution.)
+
+/** Max named values one firing may carry. A bound on what rides every fire over IPC. */
+const MAX_CAPTURES = 24
+/**
+ * Max characters one captured value contributes. The whole utterance is capped again at
+ * MAX_SPEECH_CHARS by the resolver; this stops a `(?<all>.*)` group from putting a 400-character
+ * log line on the wire in the first place.
+ */
+const MAX_CAPTURE_CHARS = 120
+
+/**
+ * Event keys that are BOOKKEEPING, not content. `raw` is the whole line (including the timestamp
+ * prefix), `kind`/`seq`/`ts` are the envelope — none is something a player wants said aloud, and
+ * `raw` would blow the character cap on its own.
+ */
+const NON_CONTENT_KEYS = new Set(['kind', 'seq', 'ts', 'raw'])
+
+/**
+ * One field's spoken form, or null when it has none.
+ *
+ * Scalars only, DELIBERATELY: a few event fields hold arrays (`damage.modifiers`, the buff
+ * `candidates` lists — one of them an array of objects). `fieldText` above stringifies those for
+ * `where` MATCHING, where reproducing JS's own coercion is the whole point because it is what
+ * every existing def is already matched against. Nothing wants '[object Object]' spoken out loud,
+ * so this omits them instead: an absent name resolves to nothing and the rest of the phrase still
+ * speaks, which beats a sentence with punctuation read into the middle of it.
+ */
+function scalarText(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
+  if (typeof value === 'boolean') return String(value)
+  return null
+}
+
+/** Every scalar field of an event, as speakable text. Computed once per firing, not per alert. */
+function eventCaptures(ev: LogEvent): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(ev)) {
+    if (NON_CONTENT_KEYS.has(key)) continue
+    const text = scalarText(value)
+    if (text !== null) out[key] = text
+  }
+  return out
+}
+
+/**
+ * Extract a raw condition's named groups, or null when the line does not match at all.
+ *
+ * `{}` (matched, captured nothing) and `null` (did not match) are DIFFERENT ANSWERS and the
+ * caller depends on the difference — a capture-less regex is the ordinary case and must still
+ * fire. The regex carries no `g` flag (compileCondition builds it with 'i' alone), so `exec` has
+ * no `lastIndex` to carry between calls and this stays safe to run per event.
+ *
+ * A group that did not participate in the match is OMITTED rather than stored empty: absent is
+ * the honest encoding, and the resolver treats the two identically anyway.
+ */
+function rawCaptures(re: RegExp, line: string): Record<string, string> | null {
+  const m = re.exec(line)
+  if (!m) return null
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(m.groups ?? {})) {
+    const text = typeof value === 'string' ? value.trim() : ''
+    if (text) out[key] = text
+  }
+  return out
+}
+
+/**
+ * Merge the two sources into the firing's namespace, or undefined when there is nothing to carry.
+ *
+ * THE REGEX GROUPS GO IN FIRST, which is what makes them win a name collision — a group the user
+ * wrote by hand is a more specific statement of intent than a field the parser happened to name
+ * the same thing — and, because the cap fills in insertion order, what keeps THEM from being the
+ * ones dropped when an unusually wide event would overflow it.
+ */
+function mergeCaptures(
+  groups: Record<string, string>,
+  fields: Record<string, string>
+): Record<string, string> | undefined {
+  const out = new Map<string, string>()
+  const add = (key: string, text: string): void => {
+    if (out.size >= MAX_CAPTURES || out.has(key)) return
+    out.set(key, text.slice(0, MAX_CAPTURE_CHARS))
+  }
+  for (const [key, text] of Object.entries(groups)) add(key, text)
+  for (const [key, text] of Object.entries(fields)) add(key, text)
+  return out.size > 0 ? Object.fromEntries(out) : undefined
+}
+
 /**
  * The cooldown clock this firing belongs to (AlertDef.cooldownScope).
  *
@@ -243,6 +351,57 @@ function compileAlert(def: AlertDef): CompiledAlert {
     return { def, composite: t.type, conditions: t.conditions.map(compileCondition) }
   }
   return { def, composite: 'single', conditions: [compileCondition(t)] }
+}
+
+/** A trigger that matched: the text to record, and the regex groups it captured (often none). */
+interface TriggerHit {
+  text: string
+  captures: Record<string, string>
+}
+
+/** Whether ONE compiled EVENT condition matches `ev` (kind + every `where` field matcher). */
+function eventConditionMatches(spec: NonNullable<CompiledCondition['event']>, ev: LogEvent): boolean {
+  if (ev.kind !== spec.kind) return false
+  for (const f of spec.fields) {
+    const raw = (ev as unknown as Record<string, unknown>)[f.key]
+    if (raw == null) return false
+    if (!f.test(fieldText(raw))) return false
+  }
+  return true
+}
+
+/**
+ * Whether ONE primitive condition matches `ev`, and with what groups. Null is "did not match";
+ * `{}` is "matched, captured nothing" — the difference is what lets a capture-less regex fire.
+ *
+ * A `where` matcher's `/regex/` does NOT capture, deliberately: a condition may carry several
+ * such fields, and two of them defining the same group name would have no honest winner. Named
+ * groups belong to 'raw' conditions, where there is exactly one pattern per condition.
+ */
+function conditionMatches(cond: CompiledCondition, ev: LogEvent): Record<string, string> | null {
+  if (cond.event) return eventConditionMatches(cond.event, ev) ? {} : null
+  if (cond.raw) return rawCaptures(cond.raw, ev.raw)
+  // 'app' conditions never match main-side.
+  return null
+}
+
+/**
+ * The 'all' arm: every condition must match THE SAME event, and the groups of all of them are
+ * merged. Its own function so the nesting stays inside the tree's max-depth budget.
+ *
+ * EARLIER CONDITIONS WIN a name collision, matching the 'any' arm's "the groups belong to the
+ * condition you read first" rule. An empty condition list can't be satisfied meaningfully —
+ * treat it as no-match to avoid a firehose.
+ */
+function matchAll(conditions: CompiledCondition[], ev: LogEvent): Record<string, string> | null {
+  if (conditions.length === 0) return null
+  const merged: Record<string, string> = {}
+  for (const cond of conditions) {
+    const groups = conditionMatches(cond, ev)
+    if (!groups) return null
+    for (const [key, text] of Object.entries(groups)) merged[key] ??= text
+  }
+  return merged
 }
 
 export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
@@ -366,26 +525,33 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
     this.notePoisonSlow(ev)
     // Fire on LIVE events only — replay must never make a sound.
     if (!live) return
-    // Resolved once per firing (fires are rare), not once per compiled alert.
+    // Resolved once per firing (fires are rare), not once per compiled alert: both the spell and
+    // the event's field namespace are properties of the EVENT, so N alerts matching one line
+    // read them once between them. The regex groups are per-alert and come off the hit.
     let spell: string | undefined
-    let spellResolved = false
+    let fields: Record<string, string> = {}
+    let resolved = false
     for (const c of this.compiled) {
       if (!c.def.enabled) continue
-      const matchedText = this.matches(c, ev)
-      if (matchedText == null) continue
+      const hit = this.matches(c, ev)
+      if (hit === null) continue
       const key = cooldownKey(c.def, ev)
       if (this.onCooldown(key, c.def, ev.ts)) continue
       this.noteFire(key, ev.ts)
-      if (!spellResolved) {
+      if (!resolved) {
         spell = firingSpell(ev)
-        spellResolved = true
+        fields = eventCaptures(ev)
+        resolved = true
       }
-      const fired: FiredAlert = { alertId: c.def.id, ts: ev.ts, matchedText }
+      const fired: FiredAlert = { alertId: c.def.id, ts: ev.ts, matchedText: hit.text }
       // Omitted rather than set to undefined: the delta is JSON over IPC, and an absent key
       // is the honest encoding of "this family names no spell".
       if (spell !== undefined) fired.spell = spell
+      // Same rule: absent means "there was nothing to name", not "there were zero of them".
+      const captures = mergeCaptures(hit.captures, fields)
+      if (captures !== undefined) fired.captures = captures
       this.pending.push(fired)
-      this.record(c.def.id, ev.ts, matchedText)
+      this.record(c.def.id, ev.ts, hit.text)
     }
   }
 
@@ -445,7 +611,9 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
   }
 
   /**
-   * Returns the matched text if the alert's trigger matches `ev`, else null.
+   * Returns the matched text + this trigger's own regex named groups if the alert's trigger
+   * matches `ev`, else null. `captures` is `{}` for a trigger that declares no groups, which is
+   * the ordinary case — the EVENT's fields are folded in later (`mergeCaptures`), not here.
    *
    * Composite semantics (Task #47) — evaluated against the SINGLE incoming event:
    *   'any'    → fires when at least ONE condition matches (OR).
@@ -454,39 +622,18 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
    * Cross-event correlation is deliberately out of scope; an 'all' over conditions that can
    * never co-occur on one event (e.g. two different `kind`s) simply never fires.
    */
-  private matches(c: CompiledAlert, ev: LogEvent): string | null {
+  private matches(c: CompiledAlert, ev: LogEvent): TriggerHit | null {
     if (c.composite === 'all') {
-      // Every condition must match this one event. An empty condition list can't be satisfied
-      // meaningfully — treat it as no-match to avoid a firehose.
-      if (c.conditions.length === 0) return null
-      for (const cond of c.conditions) {
-        if (!this.conditionMatches(cond, ev)) return null
-      }
-      return ev.raw
+      const groups = matchAll(c.conditions, ev)
+      return groups ? { text: ev.raw, captures: groups } : null
     }
-    // 'any' and 'single': fire on the first matching condition.
+    // 'any' and 'single': fire on the first matching condition, and take ITS groups — evaluation
+    // stops there, so there is no second condition whose groups could have been meant instead.
     for (const cond of c.conditions) {
-      if (this.conditionMatches(cond, ev)) return ev.raw
+      const groups = conditionMatches(cond, ev)
+      if (groups) return { text: ev.raw, captures: groups }
     }
     return null
-  }
-
-  /** Whether ONE primitive condition matches `ev`. */
-  private conditionMatches(cond: CompiledCondition, ev: LogEvent): boolean {
-    if (cond.event) {
-      if (ev.kind !== cond.event.kind) return false
-      for (const f of cond.event.fields) {
-        const raw = (ev as unknown as Record<string, unknown>)[f.key]
-        if (raw == null) return false
-        if (!f.test(fieldText(raw))) return false
-      }
-      return true
-    }
-    if (cond.raw) {
-      return cond.raw.test(ev.raw)
-    }
-    // 'app' conditions never match main-side.
-    return false
   }
 
   snapshot(): { seq: number; state: AlertsSnap } {

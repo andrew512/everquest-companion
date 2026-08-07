@@ -22,6 +22,7 @@ import { type JSX, useEffect, useState } from 'react'
 import {
   Box,
   Button,
+  Chip,
   FormControlLabel,
   MenuItem,
   Select,
@@ -37,6 +38,7 @@ import {
   ALERT_AUDIO_ACTIONS,
   MAX_SPEECH_CHARS,
   SPEECH_MODES,
+  placeholdersIn,
   speechTextFor
 } from '@shared/speechText'
 import { currentVoicePrefs, speak } from '../../lib/speech'
@@ -141,10 +143,56 @@ export function speechFieldsFor(f: SpeechForm): Pick<AlertDef, 'audio' | 'speech
   }
 }
 
-/** The resolved sentence this alert will speak, with no firing — W1's editor-preview contract. */
-export function previewTextFor(name: string, f: SpeechForm): string | null {
+/**
+ * WHICH `$<name>` PLACEHOLDERS THIS TRIGGER OFFERS — computed by AlertDialog from the condition
+ * drafts the user is editing (shared/captureNames.ts) and handed down, because the trigger and
+ * the phrase live in two different halves of the same dialog.
+ *
+ * `partial` is set when any condition is a raw regex: such a match ALSO carries the fields of
+ * whatever event the line parsed to, and which event that is is unknowable until a line arrives.
+ * The block says so in words rather than listing a kind it would be guessing at.
+ */
+export interface CaptureHints {
+  names: string[]
+  partial: boolean
+}
+
+const NO_CAPTURES: CaptureHints = { names: [], partial: false }
+
+/**
+ * Stand-in values for the editor's preview, so it shows the SENTENCE that will be spoken rather
+ * than the holes a firing has not filled in yet.
+ *
+ * The stand-in is the NAME ITSELF, bare — not a bracketed marker. The ▶ button speaks this exact
+ * string through the real engine, and a marker character would be read aloud as punctuation.
+ * "attacker hit you for amount" is a sentence; "‹attacker› hit you for ‹amount›" is a noise.
+ */
+function sampleCaptures(names: readonly string[]): Record<string, string> {
+  return Object.fromEntries(names.map((n) => [n, n]))
+}
+
+/**
+ * The resolved sentence this alert will speak — W1's editor-preview contract, now resolved
+ * against `hints` so a phrase with placeholders previews as prose.
+ *
+ * A placeholder the trigger does NOT offer resolves to nothing here, exactly as it would at fire
+ * time. That is deliberate feedback, and `unknownPlaceholders` below names it out loud.
+ */
+export function previewTextFor(name: string, f: SpeechForm, hints: CaptureHints = NO_CAPTURES): string | null {
   const fields = speechFieldsFor(f)
-  return speechTextFor({ name, ...(fields.speech ? { speech: fields.speech } : {}) }, null)
+  const def = { name, ...(fields.speech ? { speech: fields.speech } : {}) }
+  return speechTextFor(def, { captures: sampleCaptures(hints.names) })
+}
+
+/**
+ * Placeholders the phrase names that this trigger cannot fill — a typo, or a group left behind
+ * after the trigger was edited. Empty for a raw trigger with `partial` hints: the event half of
+ * its namespace is unknown at edit time, so calling a name "unknown" there would be a false alarm.
+ */
+export function unknownPlaceholders(f: SpeechForm, hints: CaptureHints): string[] {
+  if (f.mode !== 'custom' || hints.partial) return []
+  const offered = new Set(hints.names)
+  return placeholdersIn(f.phrase).filter((n) => !offered.has(n))
 }
 
 /** Audio-channel selector + the always-play opt-out. Both apply whether or not speech is on. */
@@ -184,9 +232,56 @@ function AudioActionRow({ form }: { form: SpeechForm }): JSX.Element {
   )
 }
 
-/** Mode picker + live preview + (custom only) the capped phrase field. */
-function SaysRow({ name, form }: { name: string; form: SpeechForm }): JSX.Element {
-  const preview = previewTextFor(name, form)
+/**
+ * The `$<name>` values this trigger offers, as chips that INSERT rather than merely inform —
+ * clicking one appends it to the phrase, so the syntax never has to be typed from memory or
+ * learned from a tooltip.
+ *
+ * Renders nothing when the trigger offers nothing AND there is no raw condition to explain: an
+ * empty "you can use:" row is dead state (AGENTS.md: state, never process).
+ */
+function PlaceholderChips({ form, hints }: { form: SpeechForm; hints: CaptureHints }): JSX.Element | null {
+  if (hints.names.length === 0 && !hints.partial) return null
+  const insert = (n: string): void => form.setPhrase(`${form.phrase}${form.phrase ? ' ' : ''}$<${n}>`)
+  return (
+    <Box data-testid="alert-speech-placeholders">
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+        This trigger can say:
+      </Typography>
+      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+        {hints.names.map((n) => (
+          <Chip
+            key={n}
+            size="small"
+            variant="outlined"
+            label={`$<${n}>`}
+            onClick={() => insert(n)}
+            sx={{ fontFamily: 'monospace' }}
+          />
+        ))}
+      </Stack>
+      {hints.partial && (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+          A raw trigger can also say any field of the event the matched line turns out to be —
+          <code> $&lt;target&gt;</code>, <code>$&lt;amount&gt;</code> and so on.
+        </Typography>
+      )}
+    </Box>
+  )
+}
+
+/** Mode picker + live preview + (custom only) the capped phrase field and its placeholders. */
+function SaysRow({
+  name,
+  form,
+  hints
+}: {
+  name: string
+  form: SpeechForm
+  hints: CaptureHints
+}): JSX.Element {
+  const preview = previewTextFor(name, form, hints)
+  const unknown = unknownPlaceholders(form, hints)
   return (
     <Stack spacing={1}>
       <Box>
@@ -209,15 +304,23 @@ function SaysRow({ name, form }: { name: string; form: SpeechForm }): JSX.Elemen
       </Box>
 
       {form.mode === 'custom' && (
-        <TextField
-          size="small"
-          label="Phrase"
-          data-testid="alert-speech-phrase"
-          value={form.phrase}
-          onChange={(e) => form.setPhrase(e.target.value)}
-          slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
-          helperText={`${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`}
-        />
+        <>
+          <TextField
+            size="small"
+            label="Phrase"
+            data-testid="alert-speech-phrase"
+            value={form.phrase}
+            onChange={(e) => form.setPhrase(e.target.value)}
+            slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
+            error={unknown.length > 0}
+            helperText={
+              unknown.length > 0
+                ? `${unknown.map((n) => `$<${n}>`).join(', ')} — this trigger does not offer that; it will be left out.`
+                : `${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`
+            }
+          />
+          <PlaceholderChips form={form} hints={hints} />
+        </>
       )}
 
       <Typography variant="caption" color="text.secondary" data-testid="alert-speech-preview">
@@ -228,10 +331,18 @@ function SaysRow({ name, form }: { name: string; form: SpeechForm }): JSX.Elemen
 }
 
 /** Per-alert voice override + the ▶ that speaks the preview through the real engine. */
-function VoiceRow({ name, form }: { name: string; form: SpeechForm }): JSX.Element {
+function VoiceRow({
+  name,
+  form,
+  hints
+}: {
+  name: string
+  form: SpeechForm
+  hints: CaptureHints
+}): JSX.Element {
   const prefs = currentVoicePrefs()
   const voices = useVoiceOptions(prefs.engine)
-  const preview = previewTextFor(name, form)
+  const preview = previewTextFor(name, form, hints)
   return (
     <Stack direction="row" spacing={1.5} alignItems="flex-end" flexWrap="wrap" useFlexGap>
       <Box sx={{ minWidth: 240, flexGrow: 1 }}>
@@ -278,12 +389,19 @@ function VoiceRow({ name, form }: { name: string; form: SpeechForm }): JSX.Eleme
 export default function SpeechBlock({
   name,
   form,
-  voiceSetup
+  voiceSetup,
+  hints = NO_CAPTURES
 }: {
   name: string
   form: SpeechForm
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
+  /**
+   * The `$<name>` values the trigger being edited offers. Defaults to none so a caller with no
+   * trigger in hand (and every test that mounts this block bare) still compiles — the phrase
+   * field simply offers no chips, which is what an app-signal alert genuinely has.
+   */
+  hints?: CaptureHints
 }): JSX.Element {
   const speaks = form.audio !== 'sound'
   return (
@@ -300,8 +418,8 @@ export default function SpeechBlock({
             off in Preferences"): choosing 'Speak it' above IS the switch. The only thing left to
             say is that the chosen tier has nothing to speak with — and it says it with a LINK. */}
         {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />}
-        {speaks && <SaysRow name={name} form={form} />}
-        {speaks && <VoiceRow name={name} form={form} />}
+        {speaks && <SaysRow name={name} form={form} hints={hints} />}
+        {speaks && <VoiceRow name={name} form={form} hints={hints} />}
       </Stack>
     </Box>
   )

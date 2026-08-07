@@ -27,14 +27,8 @@
 // what they need without prop-drilling.
 
 import { useEffect } from 'react'
-import type {
-  AlertDef,
-  AlertPrefs,
-  AlertsDelta,
-  AppSignal,
-  FiredAlert,
-  ModuleDelta
-} from '@shared/types'
+import type { AlertDef, AlertPrefs, AlertsDelta, AppSignal, ModuleDelta } from '@shared/types'
+import type { SpeechFiring } from '@shared/speechText'
 import { playSound } from './soundCache'
 import { currentVoicePrefs, loadVoicePrefs, speak, speechPlan } from '../../lib/speech'
 import { coalesceAudio } from './audioThrottle'
@@ -93,16 +87,19 @@ function effectiveVolume(def: AlertDef): number {
  * Fire ONE alert's audio now — sound, speech, or both — respecting the master mute. Used by
  * both firing paths and by the list's Test button.
  *
- * `firing` carries the matched event's SPELL CONTEXT (rank intact, see FiredAlert.spell) so the
- * `spellName`/`spellFirstWord` modes have something to say; omitted for a Test or an app signal,
- * where `speechTextFor` falls back to the alert's own name rather than inventing one.
+ * `firing` carries what the matched event knew: the SPELL CONTEXT (rank intact, see
+ * FiredAlert.spell) that the `spellName`/`spellFirstWord` modes read, and the NAMED VALUES
+ * (FiredAlert.captures) that a custom phrase's `$<name>` placeholders resolve against. It is
+ * omitted for a Test or an app signal — neither has a matched event behind it — where
+ * `speechTextFor` drops the placeholders and falls back to the alert's own name rather than
+ * inventing values for them.
  *
  * CROSS-ALERT COALESCING is applied here and only here, AFTER the sound/speech plan and only
  * when something would actually have been audible: a muted app (or a plan that resolved to
  * nothing) must not consume the window and silence the next alert for 1.5s. The firing itself
  * is already recorded upstream — this drops noise, never history.
  */
-export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>): void {
+export function playAlertNow(def: AlertDef, firing?: SpeechFiring): void {
   const voice = currentVoicePrefs()
   const plan = speechPlan(def, firing ?? null, prefs.muted)
   if (!plan.sound && !plan.speak) return

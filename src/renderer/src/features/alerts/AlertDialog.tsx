@@ -9,6 +9,7 @@ import {
   type JSX,
   type SetStateAction,
   useEffect,
+  useRef,
   useState
 } from 'react'
 import {
@@ -42,7 +43,13 @@ import {
 } from './conditionDraft'
 import ConditionEditor from './ConditionEditor'
 import SoundPicker, { fallbackPack, firstSoundId } from './SoundPicker'
-import SpeechBlock, { type SpeechForm, speechFieldsFor, useSpeechForm } from './SpeechBlock'
+import SpeechBlock, {
+  type CaptureHints,
+  type SpeechForm,
+  speechFieldsFor,
+  useSpeechForm
+} from './SpeechBlock'
+import { captureNamesFor, hasRawCondition } from '@shared/captureNames'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { DEFAULT_PACK_ID } from './suggestions'
 import { Tooltip } from '../../lib/Tooltip'
@@ -91,9 +98,34 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
   // The Speech block hydrates itself from the same `open`/`initial` pair.
   const speech = useSpeechForm(open, initial)
 
-  // Hydrate the form from `initial` (edit) or blanks (add) whenever it opens.
+  /**
+   * WHAT HAS ALREADY BEEN HYDRATED — the guard that makes this form survive a window focus.
+   *
+   * The effect below hydrates from props, so anything that re-runs it OVERWRITES what the user
+   * has typed. It used to re-run on `packs`, and `packs` changes identity on every store reload:
+   * the always-mounted AlertPlayer refreshes the shared store on window FOCUS (player.tsx), the
+   * view re-`reload()`s, and `listSoundPacks()` returns a fresh array over IPC even when the pack
+   * set is identical. Alt-tab out and back with the dialog open and every field went blank —
+   * except the Speech sub-form, which does not depend on `packs`, so the form was left in a
+   * half-reset state that a Save would then persist.
+   *
+   * So hydration is keyed on the thing it actually means: ONE hydrate per opening. `undefined`
+   * is "nothing hydrated yet" and is deliberately distinct from `null`, which is a live "add"
+   * (re-opening Add after Cancel must blank the form again, and `null === null` would skip it).
+   * The dep array can safely keep every value the effect reads — this guard, not the deps, is
+   * what pins the behavior, so a future prop cannot quietly reintroduce the reset.
+   */
+  const hydratedFor = useRef<AlertDef | null | undefined>(undefined)
+
+  // Hydrate the form from `initial` (edit) or blanks (add) once per opening — never again while
+  // it stays open, however often the props are refreshed underneath it.
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      hydratedFor.current = undefined
+      return
+    }
+    if (hydratedFor.current === initial) return
+    hydratedFor.current = initial
     if (initial) {
       setName(initial.name)
       const t = initial.trigger
@@ -158,6 +190,16 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
 function triggerFromForm(mode: CombineMode, conditions: ConditionDraft[]): AlertTrigger {
   if (mode === 'single') return primitiveFromDraft(conditions[0])
   return { type: mode, conditions: conditions.map(primitiveFromDraft) }
+}
+
+/**
+ * The `$<name>` values the trigger BEING EDITED offers, recomputed on every keystroke from the
+ * same drafts that will be saved — so the chips under the phrase field always describe the
+ * trigger actually in the form, not the one the def was opened with.
+ */
+function captureHints(f: AlertForm): CaptureHints {
+  const trigger = triggerFromForm(f.mode, f.conditions)
+  return { names: captureNamesFor(trigger), partial: hasRawCondition(trigger) }
 }
 
 function formCanSave(f: AlertForm): boolean {
@@ -320,6 +362,7 @@ function VolumeCooldownSection({ f }: { f: AlertForm }): JSX.Element {
         size="small"
         type="number"
         label="Cooldown (ms)"
+        data-testid="alert-cooldown"
         value={f.cooldownMs}
         onChange={(e) => f.setCooldownMs(Math.max(0, Number(e.target.value) || 0))}
         sx={{ width: 140 }}
@@ -377,6 +420,7 @@ export default function AlertDialog({
           <TextField
             size="small"
             label="Name"
+            data-testid="alert-name"
             value={f.name}
             onChange={(e) => f.setName(e.target.value)}
             autoFocus
@@ -405,7 +449,12 @@ export default function AlertDialog({
           <VolumeCooldownSection f={f} />
 
           <Divider />
-          <SpeechBlock name={f.name} form={f.speech} voiceSetup={voiceSetup} />
+          <SpeechBlock
+            name={f.name}
+            form={f.speech}
+            voiceSetup={voiceSetup}
+            hints={captureHints(f)}
+          />
         </Stack>
       </DialogContent>
       <DialogActions>
