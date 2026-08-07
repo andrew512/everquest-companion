@@ -360,13 +360,25 @@ async function stepEditor(page: Page): Promise<string> {
   await page.click('[data-testid="alert-row"]:first-of-type [data-testid="alert-edit"]')
   await page.waitForSelector('[data-testid="alert-dialog"]', { timeout: 15_000 })
   const name = await editingName(page)
-  check('the alert editor carries a Speech block', (await countOf(page, '[data-testid="alert-speech-block"]')) === 1)
   check(
     'the audio channel is a sound/speech/both choice, and the throttle opt-out is beside it',
     (await countOf(page, '[data-testid="alert-audio-action"]')) === 1 &&
       (await countOf(page, '[data-testid="alert-always-play"]')) === 1
   )
 
+  // THE CHANNEL GOVERNS WHICH SECTIONS EXIST AT ALL — the whole of "the Sound options may not be
+  // relevant". Asserted by walking all three values rather than by trusting one, because the
+  // failure this guards against is a section that renders for a channel that will never use it.
+  // The def arrives as `audio:'speech'` — stepRowPicker set it from the row a moment ago.
+  const sections = async (): Promise<[number, number]> => [
+    await countOf(page, '[data-testid="alert-sound-section"]'),
+    await countOf(page, '[data-testid="alert-speech-block"]')
+  ]
+  check('“Speak it” shows the Voice section and hides Sound', String(await sections()) === '0,1')
+  await selectValue(page, 'alert-audio-action', 'sound')
+  check('“Play a sound” shows Sound and hides Voice', String(await sections()) === '1,0')
+  await selectValue(page, 'alert-audio-action', 'both')
+  check('“Sound, then speak” shows both', String(await sections()) === '1,1')
   await selectValue(page, 'alert-audio-action', 'speech')
   const preview = (await textOf(page, '[data-testid="alert-speech-preview"]')).replace(/\s+/g, ' ')
   check(

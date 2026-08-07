@@ -1,11 +1,19 @@
-// SpeechBlock — the alert editor's SPEECH half (docs/plans/voice-alerts.md §4): which audio
-// channel this alert uses, what it says, in whose voice, and whether it may be swallowed by the
-// cross-alert audio throttle.
+// SpeechBlock — the alert editor's SPEECH half (docs/plans/voice-alerts.md §4): what a speaking
+// alert says and in whose voice, plus the CHANNEL CHOICE that decides whether it speaks at all.
 //
 // Its own file because AlertDialog.tsx is already at the factoring ceiling, and because this
 // block is a self-contained sub-form: `useSpeechForm` owns its four fields, `speechFieldsFor`
 // turns them back into the def's optional keys, and the component is the rendering. AlertDialog
 // composes the three.
+//
+// TWO EXPORTED PIECES, DELIBERATELY SPLIT, because the dialog interleaves them with a section
+// this file knows nothing about:
+//   `AudioActionSection` — the channel (sound | speech | both) + the throttle opt-out. The dialog
+//     renders it ABOVE both the Sound picker and this block, because it is the question that
+//     decides which of the two is relevant.
+//   `SpeechBlock` (default) — the Voice section proper, rendered only when the channel speaks.
+// `playsSound`/`speaks` are the mapping between them, so the dialog's show/hide and the firing
+// path's own reading of `audio` can never drift apart.
 //
 // THE PREVIEW IS LIVE AND NEEDS NO FIRING. `speechTextFor(def, firing?)` is pure and takes an
 // OPTIONAL firing precisely so this line can be resolved while the user types (W1's contract) —
@@ -144,6 +152,24 @@ export function speechFieldsFor(f: SpeechForm): Pick<AlertDef, 'audio' | 'speech
 }
 
 /**
+ * WHICH SECTIONS THE CHANNEL GOVERNS — the whole of "the Sound options may not be relevant",
+ * as two predicates rather than as two `!==` scattered through a JSX tree.
+ *
+ * They are the same reading `speechPlan` (lib/speech.ts) makes at FIRE time, which is the point:
+ * the dialog shows exactly the sections that will be used, so a control on screen is a control
+ * that does something and a control that does something is on screen.
+ *   'sound'  → the pack sound only.
+ *   'speech' → the utterance only; the sound is kept on the def but never played.
+ *   'both'   → the sound, then the utterance queued behind it (voice-alerts D5).
+ */
+export function playsSound(f: SpeechForm): boolean {
+  return f.audio !== 'speech'
+}
+export function speaks(f: SpeechForm): boolean {
+  return f.audio !== 'sound'
+}
+
+/**
  * WHICH `$<name>` PLACEHOLDERS THIS TRIGGER OFFERS — computed by AlertDialog from the condition
  * drafts the user is editing (shared/captureNames.ts) and handed down, because the trigger and
  * the phrase live in two different halves of the same dialog.
@@ -195,8 +221,20 @@ export function unknownPlaceholders(f: SpeechForm, hints: CaptureHints): string[
   return placeholdersIn(f.phrase).filter((n) => !offered.has(n))
 }
 
-/** Audio-channel selector + the always-play opt-out. Both apply whether or not speech is on. */
-function AudioActionRow({ form }: { form: SpeechForm }): JSX.Element {
+/**
+ * THE CHANNEL CHOICE — audio-channel selector + the always-play opt-out.
+ *
+ * EXPORTED, and rendered by AlertDialog ABOVE the two sections it governs rather than buried in
+ * the Voice block below them. It is the question that decides whether Sound and Voice are
+ * relevant at all, so it has to be asked first; a user who picks "Speak it" should never have
+ * scrolled past a sound picker that will not be used to find out.
+ *
+ * BOTH CONTROLS BELONG TO EVERY ALERT, which is why they are here and not in either dependent
+ * section: the channel is the choice itself, and `alwaysPlay` opts out of the cross-alert audio
+ * throttle whichever channel it comes out of (audioThrottle.ts — one occupancy, not one per
+ * channel).
+ */
+export function AudioActionSection({ form }: { form: SpeechForm }): JSX.Element {
   return (
     <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
       <Box sx={{ minWidth: 200 }}>
@@ -381,10 +419,16 @@ function VoiceRow({
 }
 
 /**
- * The block. The speech controls are shown only when the alert actually speaks — a sound-only
- * alert has nothing to say, and offering it a phrase field would be offering dead state — but
- * the audio-action row and the throttle opt-out are always there, because both are true of every
- * alert.
+ * THE VOICE SECTION — what a speaking alert says, and in whose voice.
+ *
+ * IT RENDERS ONLY WHEN THE ALERT SPEAKS, and the CALLER decides that (`speaks()` below, used by
+ * AlertDialog) rather than this component returning null. The dialog owns the layout — which
+ * section follows which, and which divider goes between them — so a section that is absent must
+ * be absent to the thing doing the arranging, not merely invisible inside its own box. A
+ * self-hiding block would leave the dialog rendering a separator above nothing.
+ *
+ * The channel selector that governs this is `AudioActionSection` above, rendered by the dialog
+ * ahead of both dependent sections. What is left here is speech-only by construction.
  */
 export default function SpeechBlock({
   name,
@@ -403,7 +447,6 @@ export default function SpeechBlock({
    */
   hints?: CaptureHints
 }): JSX.Element {
-  const speaks = form.audio !== 'sound'
   return (
     <Box data-testid="alert-speech-block">
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5 }}>
@@ -413,13 +456,12 @@ export default function SpeechBlock({
         </Typography>
       </Stack>
       <Stack spacing={1.5}>
-        <AudioActionRow form={form} />
         {/* No master switch to warn about any more (this used to say "spoken alerts are switched
             off in Preferences"): choosing 'Speak it' above IS the switch. The only thing left to
             say is that the chosen tier has nothing to speak with — and it says it with a LINK. */}
-        {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />}
-        {speaks && <SaysRow name={name} form={form} hints={hints} />}
-        {speaks && <VoiceRow name={name} form={form} hints={hints} />}
+        <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />
+        <SaysRow name={name} form={form} hints={hints} />
+        <VoiceRow name={name} form={form} hints={hints} />
       </Stack>
     </Box>
   )
