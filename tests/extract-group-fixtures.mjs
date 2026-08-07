@@ -86,3 +86,51 @@ for (const [re, n] of expected) {
 const rykkerrHits = g1.filter((l) => /\] Rykkerr [a-z]+ /.test(l)).length
 if (rykkerrHits < 30) throw new Error(`g1-group-lifecycle.log: expected the member's combat lines to survive, got ${rykkerrHits}`)
 console.log(`g1-group-lifecycle.log: all six membership lines present, ${rykkerrHits} member combat lines`)
+
+// G2 THE QUICK BUFF FAN-OUT (Tue Jul 28 21:49:08–21:51:22, The Ruins of Old Guk) — JOS-85, user
+// report 01KZEWFNSEHJN33W1BA797F806 ("doesn't seem to be picking my group members sometimes").
+//
+// G1 is the case where the game SAYS who you are with. This is the case where it already said
+// it and the window missed it: the reporter's 12,376-line session carried ZERO group lines
+// because his group formed before the log window, and the only recovery rung the model had
+// (`<Name> tells the group, '…'`) needs somebody to talk — which a quiet group never does and
+// which the shared scrub strips from every artifact anyway.
+//
+// THIS WINDOW REPRODUCES THAT SITUATION IN THE OWNER'S OWN BYTES, which is why it is cut here
+// and not from the reporter's slice (AGENTS.md: a reporter's slice never becomes a fixture).
+// Dranix joined at 21:09:31 — FORTY MINUTES and 12,000 lines earlier, so the join line is not
+// in the window and cannot be. What IS in it, in order:
+//
+//   21:49:08  You gain party experience!            the gate: a group demonstrably exists
+//   21:49:11  a froglok ton warrior has been charmed. the pet the burst will also land on
+//   21:49:28  You gain party experience!
+//   21:49:58  You activate Quick Buff.
+//   21:50:01  You healed Primitive / a froglok ton warrior / Dranix … by Center.
+//             ONE cast, three names, one second — the enumeration the parser used to discard
+//   …then    Dranix's own combat lines, which are the damage the meter must show
+//
+// The join line 40 minutes earlier is the INDEPENDENT ground truth that the name this burst
+// recovers is the right one; the whole-log measurement behind the rule is in
+// src/main/modules/buffFanOut.ts.
+const g2 = slice(268141, 268700, 'g2-buff-fanout.log')
+
+const g2expected = [
+  // Two before the burst (the gate) and one after — the third is what makes the window honest
+  // about how ordinary this line is in a grouped session.
+  [/^\[.*\] You gain party experience!/, 3],
+  [/^\[.*\] You activate Quick Buff\.$/, 1],
+  [/^\[.*\] a froglok ton warrior has been charmed\.$/, 1],
+  [/^\[.*\] You healed Primitive for \d+ \(\d+\) hit points by Center\.$/, 1],
+  [/^\[.*\] You healed a froglok ton warrior for \d+ hit points by Center\.$/, 1],
+  [/^\[.*\] You healed Dranix for \d+ hit points by Center\.$/, 1]
+]
+for (const [re, n] of g2expected) {
+  const got = g2.filter((l) => re.test(l)).length
+  if (got !== n) throw new Error(`g2-buff-fanout.log: expected ${n} line(s) matching ${re}, got ${got}`)
+}
+// The window must NOT contain a membership line — its whole point is that there is none to read.
+const g2group = g2.filter((l) => /(joined the group|left the group|leader of your group|removed from the group)/.test(l)).length
+if (g2group !== 0) throw new Error(`g2-buff-fanout.log: the window must carry NO membership line, got ${g2group}`)
+const dranixHits = g2.filter((l) => /\] Dranix [a-z]+ /.test(l)).length
+if (dranixHits < 20) throw new Error(`g2-buff-fanout.log: expected the member's combat lines to survive, got ${dranixHits}`)
+console.log(`g2-buff-fanout.log: burst intact, 0 membership lines, ${dranixHits} member combat lines`)

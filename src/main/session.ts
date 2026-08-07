@@ -40,6 +40,7 @@ import {
   levelingModule,
   lootModule,
   registry,
+  rosterModule,
   sessionDetector,
   turnInsModule
 } from './pipeline'
@@ -253,6 +254,11 @@ function resetWorldFor(ref: CharacterRef): void {
   // can only fire once it knows the name — and it must learn it here, before the scan replay,
   // never from a constant. Same injection path as installSpellDb.
   installCharacterName(ref.name)
+  // …and tell the ROSTER too (JOS-85). A Quick Buff burst names the player exactly the way the
+  // log names them (`You healed <YourName> for …`), so the buff-fan-out rung would otherwise put
+  // the character on their own group roster. Same injection path, same instant, for the same
+  // reason: it must be in place before the scan replay folds the first burst.
+  rosterModule.setSelfName(ref.name)
   combat.reset()
   // Inject the player's own name (we know it from the ref) BEFORE the scan replay,
   // so incoming self-heals ("You healed <Name> for N") attribute from the first

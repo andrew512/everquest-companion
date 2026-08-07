@@ -37,13 +37,36 @@
 // individual shapes; scripts are throwaway per AGENTS.md). The chat shapes are the only ones
 // that could collide with anything, and nothing in this app parses chat.
 //
+// TWO LINES THIS FAMILY SEES AND DECLINES (JOS-85, report 01KZEWFNSEHJN33W1BA797F806) — named
+// here so the next reader knows they were read and refused, not missed. Both are in that
+// reporter's slice and both still parse to `{kind:'unknown'}`:
+//
+//   `Player <Name> creating instance <Zone> <N>.`
+//   `<Zone> - Group is now available to you.`
+//
+// The design doc (§1) expected an EQ Legends instance ROSTER family here (`X has been added to
+// <instance> - Group.`). Whatever that family looks like, these two are not it. The second names
+// nobody at all. The first names the instance's CREATOR — and in the ONE occurrence this app has
+// ever observed, the creator is the tailed character himself, so nothing in it says whether a
+// creator who is NOT you is in your group or merely someone whose instance you were handed.
+// Under the awaiting-sample law that is not enough to write a membership rule from, and a
+// membership event that carries no membership fact would only set `seen` — which would flip the
+// Group scope out of its show-everyone fallback and HIDE people, the exact defect the report is
+// about. So they stay unknown until a log prints one with somebody else's name in it.
+//
 // WHY THE CHAT SHAPES ARE HERE AT ALL. `<Name> tells the group, '…'` is the RECOVERY path: EQ
 // prints the join line once, so a group formed before the app opened — or before the log file
 // rolled — leaves no join line to replay, and the only remaining evidence that someone is with
-// you is that they keep talking to your group. It is deliberately the WEAKEST provenance rung
-// (shared/roster.ts) and it is invisible in every committed fixture and every feedback slice,
-// because shared/logScrub.ts drops quoted speech. That is the correct trade: the CONTENT of the
-// line never leaves the machine, and only the fact that a name spoke to your group is used.
+// you is that they keep talking to your group. It is invisible in every committed fixture and
+// every feedback slice, because shared/logScrub.ts drops quoted speech. That is the correct
+// trade: the CONTENT of the line never leaves the machine, and only the fact that a name spoke
+// to your group is used.
+//
+// IT IS NOT THE ONLY RECOVERY PATH ANY MORE, because it needs somebody to TALK and a quiet group
+// never does — measured: a reporter's 12,376-line session with two group-mates and ZERO group
+// events of any kind (JOS-85). The second path is folded by the roster MODULE, not by this file,
+// because it is a multi-line shape and nothing here is: one Quick Buff burst enumerating who
+// your buffs reached, gated on `You gain party experience!`. src/main/modules/buffFanOut.ts.
 
 import type { GroupEvent, LogEvent } from '../../shared/logEvents'
 import type { ClassifyCtx } from './parseCommon'
