@@ -43,12 +43,52 @@ import { ItemDetailPane } from './ItemDetailPane'
 import { itemStats, questItemNames } from './lootItemData'
 import { ROW_HEIGHT } from './lootRows'
 import { LootTable } from './LootTables'
+import {
+  DEFAULT_LOOT_SORT,
+  isLootSortKey,
+  LOOT_SORT_OPTIONS,
+  type LootSortKey
+} from './lootSort'
 import { NotablePickupsStrip, useNotableStrip } from './NotablePickupsStrip'
 import { useLootRows } from './useLootRows'
 import { Tooltip } from '../../lib/Tooltip'
 
-// The filter bar: search, the two view switches, the opt-in inventory-only chip, and the
-// count-source select that decides what "In inventory" is even counting.
+// The grouped table's order picker (JOS-91). Its own component so LootToolbar stays inside the
+// measured lines-per-function ceiling.
+//
+// It is rendered ONLY when grouping is on, and that is a claim about honesty rather than about
+// clutter: ungrouped, the ledger is already a chronological one — newest first — so an order
+// picker there would be a control that either does nothing or lies about what it changed.
+function LootSortSelect({
+  sort,
+  setSort
+}: {
+  sort: LootSortKey
+  setSort: (v: LootSortKey) => void
+}): JSX.Element {
+  return (
+    <Tooltip title="How the grouped rows are ordered. Favorites stay pinned on top.">
+      <TextField
+        select
+        size="small"
+        label="Sort"
+        value={sort}
+        onChange={(e) => setSort(e.target.value as LootSortKey)}
+        sx={{ minWidth: 160 }}
+        data-testid="loot-sort"
+      >
+        {LOOT_SORT_OPTIONS.map((o) => (
+          <MenuItem key={o.value} value={o.value}>
+            {o.label}
+          </MenuItem>
+        ))}
+      </TextField>
+    </Tooltip>
+  )
+}
+
+// The filter bar: search, the two view switches, the grouped table's sort, the opt-in
+// inventory-only chip, and the count-source select that decides what "In inventory" is counting.
 function LootToolbar({
   query,
   setQuery,
@@ -56,6 +96,8 @@ function LootToolbar({
   setGroupByItem,
   questOnly,
   setQuestOnly,
+  sort,
+  setSort,
   invOnlyCount,
   showInventoryOnly,
   onToggleInventoryOnly,
@@ -69,6 +111,8 @@ function LootToolbar({
   setGroupByItem: (v: boolean) => void
   questOnly: boolean
   setQuestOnly: (v: boolean) => void
+  sort: LootSortKey
+  setSort: (v: LootSortKey) => void
   invOnlyCount: number
   showInventoryOnly: boolean
   onToggleInventoryOnly: () => void
@@ -93,6 +137,7 @@ function LootToolbar({
         control={<Switch checked={questOnly} onChange={(e) => setQuestOnly(e.target.checked)} />}
         label="Only Plane of Sky items"
       />
+      {groupByItem && <LootSortSelect sort={sort} setSort={setSort} />}
       {groupByItem && invOnlyCount > 0 && (
         <Tooltip title="Items your inventory export holds that you haven’t looted this epoch.">
           <Chip
@@ -155,6 +200,25 @@ function LootSummary({
       )}
     </Typography>
   )
+}
+
+// The grouped table's order survives restarts, the way the Quests tab's does (useQuestList's
+// `eq.questSort`). An order retired from LOOT_SORT_OPTIONS falls back to the default rather than
+// sorting by nothing.
+const SORT_KEY = 'eq.lootSort'
+
+function loadLootSort(): LootSortKey {
+  const v = localStorage.getItem(SORT_KEY)
+  return isLootSortKey(v) ? v : DEFAULT_LOOT_SORT
+}
+
+/** The grouped order and its persistence, in one line of the view. */
+function useLootSort(): [LootSortKey, (v: LootSortKey) => void] {
+  const [sort, setSort] = useState<LootSortKey>(loadLootSort)
+  useEffect(() => {
+    localStorage.setItem(SORT_KEY, sort)
+  }, [sort])
+  return [sort, setSort]
 }
 
 // Nothing parsed yet is a STATE, not an error: say where the rows will come from.
@@ -253,6 +317,7 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
   const [query, setQuery] = useState('')
   const [groupByItem, setGroupByItem] = useState(true)
   const [questOnly, setQuestOnly] = useState(false)
+  const [sort, setSort] = useLootSort()
   const [showInventoryOnly, setShowInventoryOnly] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   // When main auto-reloads the *-Inventory.txt (chokidar watch), surface it quietly.
@@ -264,6 +329,7 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
     query,
     questOnly,
     showInventoryOnly,
+    sort,
     isFavorite
   })
 
@@ -310,6 +376,8 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
         setGroupByItem={setGroupByItem}
         questOnly={questOnly}
         setQuestOnly={setQuestOnly}
+        sort={sort}
+        setSort={setSort}
         invOnlyCount={invOnlySource.length}
         showInventoryOnly={showInventoryOnly}
         onToggleInventoryOnly={() => setShowInventoryOnly((v) => !v)}

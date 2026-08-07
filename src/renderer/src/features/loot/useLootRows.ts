@@ -4,6 +4,7 @@ import { itemCountKey } from '../../lib/itemName'
 import { normalizeQuery } from '../../lib/search'
 import type { InventoryRow } from '../inventory/reconcile'
 import { buildInvOnlyRows, filterLootEvents, groupLootRows, type GroupRow, type KeyedLoot } from './lootGrouping'
+import type { LootSortKey } from './lootSort'
 
 export interface LootRowsInput {
   history: LootEvent[]
@@ -12,6 +13,9 @@ export interface LootRowsInput {
   query: string
   questOnly: boolean
   showInventoryOnly: boolean
+  /** Which order the GROUPED table is in (lootSort.ts). The flat ledger is a chronological
+   *  ledger and stays newest-first whatever this says — see the toolbar's gate. */
+  sort: LootSortKey
   isFavorite: (name: string) => boolean
 }
 
@@ -39,6 +43,7 @@ export function useLootRows({
   query,
   questOnly,
   showInventoryOnly,
+  sort,
   isFavorite
 }: LootRowsInput): LootRows {
   // Typing echoes IMMEDIATELY (the caller's local `query` state); the filter consumes a
@@ -70,7 +75,9 @@ export function useLootRows({
   )
 
   const events = useMemo(() => filterLootEvents({ keyed, questOnly, q }), [keyed, q, questOnly])
-  const grouped = useMemo(() => groupLootRows(events, isFavorite), [events, isFavorite])
+  // Re-sorting is the ONLY thing a sort change costs: the filter above it is memoized on the
+  // query, so switching to "last looted" never re-runs the per-keystroke work.
+  const grouped = useMemo(() => groupLootRows(events, isFavorite, sort), [events, isFavorite, sort])
 
   // The opt-in inventory-only tail is kept OUT of the default view so the Loot table stays a
   // loot table; the toolbar chip says how many are hiding.
