@@ -125,6 +125,39 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.10.0',
+    date: '2026-08-07',
+    entries: [
+      {
+        kind: 'new',
+        text: "Every item's detail now shows where it drops for you: each zone with your observed drops, your drops per hour of active time there, and how long you actually farmed.",
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The leveling tab highlights what has been dropping in your selected time window — motes and farm targets float to the top — and clicking an item jumps to its detail.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Comparing farming spots used to mean notes and guesswork; now Befallen versus Plane of Hate is two clicks.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Cleave has its own row in the damage breakdown instead of hiding inside Melee.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Smite has its own row too — the skill swings split out from the Smiting Strike spell.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Loadout detection believes the swap you are playing: wizard casts under a haste focus were invisible, and a new swap could hide behind an older one. Your current classes now show within the half hour.'
+      }
+    ]
+  },
+  {
     version: '0.9.0',
     date: '2026-08-07',
     entries: [
