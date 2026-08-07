@@ -253,8 +253,39 @@ export function* walkEntries(entries: readonly InventoryEntry[]): Generator<Inve
 }
 
 /**
- * The COMPATIBILITY derivation: the exact `HeldCounts` the old lossy `parseInventoryText`
- * produced, now read off the deep model. Byte-identical by construction and pinned by
+ * The KeyRing categories whose rows are HELD ITEMS — a closed set, and today it holds one
+ * member (JOS-66).
+ *
+ * `Equipment` is a STORAGE LOCATION, not a claimed appearance. The evidence, all measured:
+ *
+ *   * A reporter's v0.6.3 dump carries his Plane of Sky quest items there and NOWHERE else
+ *     — `Light Woolen Mask` (20821) and `Light Woolen Mantle +1` (20823), both NO DROP LORE
+ *     Bard quest items, beside `Symbol of Marr +2`, `Bracelet of Cessation +4`,
+ *     `Bracelet of Quiescence +2` and `Black Silk Cape`
+ *     (`tests/fixtures/jos66-sky-keyring-Inventory.txt`, his six lines verbatim). He ran
+ *     `/outputfile inventory`, read those names back out of his own file, and reported the
+ *     Sky tab as wrong for saying he had none. A registry of appearances is not where a
+ *     player keeps the item he is about to hand to a quest NPC.
+ *   * The keyring is DISJOINT from the item table: in the owner's real 295-line dump, ZERO
+ *     of the 36 `Equipment` rows names an item the `Location` table also lists (raw name).
+ *     So counting them adds copies rather than double-counting ones already counted — which
+ *     is exactly why the reporter's Mask reads as zero today.
+ *   * One item appears on MULTIPLE rows at one item id (`Boots of the Long Road` 177708:
+ *     base once, `+1` twice). A collection of distinct appearances cannot print a duplicate
+ *     row; a bin holding real copies can, and does.
+ *
+ * `Activated` stays OUT (awaiting-sample law). Its single observed member whole-corpus is
+ * `Guise of the Deceiver` — an illusion clicky, the classic shape of a consumed item traded
+ * for a permanent claim — and one row is no evidence about whether that category holds a
+ * copy or a receipt. It ships when a dump proves which.
+ */
+export const HELD_KEYRING_CATEGORIES: readonly string[] = ['Equipment']
+
+const HELD_KEYRING_SET: ReadonlySet<string> = new Set(HELD_KEYRING_CATEGORIES)
+
+/**
+ * The flat `HeldCounts` view of a dump — what the Sky reconcile, `countSource` and
+ * `posky/heldCounts.ts` count as "in the player's possession". Pinned by
  * `tests/outputsInventory.test.mts` against the real dump:
  *
  *   * every row of the `Location` table counts, INCLUDING socket rows and bag rows
@@ -263,9 +294,17 @@ export function* walkEntries(entries: readonly InventoryEntry[]): Generator<Inve
  *   * the key is the RAW name lowercased — `+N` variants stay separate here and are folded
  *     onto the counting key downstream by `reconcile`/`itemCountKey` (law 2);
  *   * a Count of 0 or nonsense counts as 1 (the old parser's `count > 0 ? count : 1`);
- *   * the `KeyRing` table does NOT count — the old parser dropped its 3-column rows for
- *     lack of a Count column, and a keyring entry is a claimed appearance, not an item
- *     sitting in a slot. Keeping it out is what makes this derivation exact.
+ *   * a `KeyRing` row in a HELD category counts ONE (see HELD_KEYRING_CATEGORIES). The table
+ *     has no Count column at all, and a copy is one row — the duplicate
+ *     `Boots of the Long Road +1` rows are two boots, not a count of two on one row.
+ *
+ * THE ONE DELIBERATE DIVERGENCE from the old flat parser (JOS-66). It dropped every keyring
+ * row because they are 3 columns and it required 4; the deep model then inherited that as a
+ * stated rule ("a keyring entry is a claimed appearance, not an item sitting in a slot"),
+ * which was an INFERENCE nobody had measured, and the reporter's dump refutes it for
+ * `Equipment`. `tests/outputsInventory.test.mts` still replays the old algorithm and now
+ * asserts the difference is EXACTLY the held keyring rows — so the JOS-44 refactor's
+ * equivalence proof survives as "identical on the item table", which is all it ever claimed.
  */
 export function heldCountsFromDump(dump: InventoryDump): HeldCounts {
   const counts: HeldCounts = {}
@@ -273,6 +312,11 @@ export function heldCountsFromDump(dump: InventoryDump): HeldCounts {
     if (e.empty) continue
     const key = e.name.toLowerCase()
     counts[key] = (counts[key] ?? 0) + (e.count > 0 ? e.count : 1)
+  }
+  for (const k of dump.keyRing) {
+    if (!HELD_KEYRING_SET.has(k.category) || k.name === '' || k.name === 'Empty') continue
+    const key = k.name.toLowerCase()
+    counts[key] = (counts[key] ?? 0) + 1
   }
   return counts
 }
