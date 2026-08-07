@@ -6,6 +6,11 @@
 // the view can stay a view. The state deliberately lives ABOVE the tab switch (in the hook the
 // container calls, not inside the Quests tab's markup) so flipping to Ignored and back does not
 // reset the filters you had set up.
+//
+// Three of those choices outlive the hook entirely, in localStorage: the class filter, the sort
+// order and "hide completed" (JOS-90 — see loadHideCompleted). Living above the Quests/Ignored
+// switch was never enough for them, because leaving the Sky tab for another VIEW unmounts this
+// hook outright.
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { QuestProgress } from './useProgress'
@@ -22,6 +27,7 @@ const PAGE = 40
 
 const SELECTED_CLASSES_KEY = 'eq.selectedClasses'
 const SORT_KEY = 'eq.questSort'
+const HIDE_COMPLETED_KEY = 'eq.posky.hideCompleted'
 
 function loadSelectedClasses(): string[] {
   try {
@@ -36,6 +42,25 @@ function loadSelectedClasses(): string[] {
 function loadSort(): SortKey {
   const v = localStorage.getItem(SORT_KEY)
   return isSortKey(v) ? v : DEFAULT_SORT
+}
+
+/**
+ * "Hide completed" is a PLACE IN THE GRIND, not a momentary filter (JOS-90). Hiding the quests
+ * you have turned in is how a user says "show me what is left", and that answer is true until
+ * they say otherwise — but the state lived in plain `useState`, and `App`'s `ViewContent` mounts
+ * exactly ONE feature view at a time, so every trip to another tab unmounted the hook and handed
+ * the list back with completed quests in it. Same storage as the class filter and the sort order
+ * two lines up, so it survives the tab switch AND the restart by the same mechanism.
+ *
+ * '1'/'0' is the one-bit view-pref idiom (features/combat/useCombatPrefs.ts). An ABSENT key is
+ * the DEFAULT (false — a fresh install shows everything), never `false` itself: a user who has
+ * never touched the box has not un-ticked it.
+ *
+ * NOT WHITELISTED for share bundles (shared/shareSchema.ts UI_PREF_SPECS), deliberately: a new
+ * key is private by default, and where one player is in Sky is not a setting worth exporting.
+ */
+function loadHideCompleted(): boolean {
+  return localStorage.getItem(HIDE_COMPLETED_KEY) === '1'
 }
 
 function questHasFavorite(q: QuestProgress, isFavorite: (name: string) => boolean): boolean {
@@ -137,7 +162,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
   const [selectedClasses, setSelectedClasses] = useState<string[]>(loadSelectedClasses)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<SortKey>(loadSort)
-  const [hideCompleted, setHideCompleted] = useState(false)
+  const [hideCompleted, setHideCompleted] = useState(loadHideCompleted)
   const [hideNoItems, setHideNoItems] = useState(true)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   // Accordions are variable-height so we cap+paginate rather than window them; a
@@ -155,7 +180,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     return [shown, hidden]
   }, [quests, ignoredKeys])
 
-  // Remember the class filter and the sort order across restarts.
+  // Remember the class filter, the sort order and "hide completed" across restarts.
   useEffect(() => {
     localStorage.setItem(SELECTED_CLASSES_KEY, JSON.stringify(selectedClasses))
   }, [selectedClasses])
@@ -163,6 +188,14 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
   useEffect(() => {
     localStorage.setItem(SORT_KEY, sort)
   }, [sort])
+
+  // The BOX AND THE PREF ARE ONE THING — which is the whole reason `revealQuest`'s un-tick
+  // (below) persists too rather than being a hidden temporary override. A deep link that reveals
+  // a completed quest genuinely leaves the box unticked on screen, and what the user is looking
+  // at is what they get back next time; re-ticking it is the same one click that set it.
+  useEffect(() => {
+    localStorage.setItem(HIDE_COMPLETED_KEY, hideCompleted ? '1' : '0')
+  }, [hideCompleted])
 
   // Typing echoes immediately; the (accordion-rebuilding) filter consumes a deferred
   // copy so a keystroke never blocks on re-rendering dozens of Accordions (Task #41).
