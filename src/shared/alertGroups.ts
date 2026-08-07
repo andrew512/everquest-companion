@@ -31,6 +31,7 @@
 // its cooldown is "tell me once per approach", not "once per line".
 
 import type { AlertDef, AlertTrigger } from './alertTypes'
+import { REFUSED_ALERT_GROUPS } from './alertGroupsRefused'
 
 /** The shipped pack every group's sound points at (mirrors DEFAULT_ALERT_PACK_ID). */
 export const GROUP_PACK_ID = 'alan-rickman'
@@ -68,7 +69,24 @@ const SOUND = {
   /** an attention read — the thing you were holding is loose again. */
   ccBreak: 'input-required-input-required-03',
   /** "Consider this my opening move." — a debuff took hold on the mob in front of you. */
-  debuffLanded: 'task-acknowledge-task-acknowledge-05'
+  debuffLanded: 'task-acknowledge-task-acknowledge-05',
+  /** "Pause, please. I have need of you." — the slow expired; it needs re-landing. */
+  slowExpired: 'input-required-input-required-08',
+  /**
+   * "Your input would be most welcome. Whenever you're ready." — somebody is waiting on a reply.
+   *
+   * NOT A CHIME, and that is measured rather than a preference (JOS-69). The ONE pack the app
+   * ships and provisions is Alan Rickman: 60 spoken-word lines across six CESP categories and
+   * not a single tone, sting or bell in it (its manifest is the whole inventory). A seeded def
+   * may only point at a pack the app guarantees is on disk — provisionPacks verifies exactly
+   * REQUIRED_SOUND_IDS after the install, and an alert aimed at an un-provisioned registry pack
+   * is silently MUTE for every user who never installed it. So the seed takes the closest
+   * spoken line and the user re-points it at any installed pack from the alert row's picker,
+   * which pre-selects alan-rickman through the ordinary `fallbackPack` path.
+   */
+  tellReceived: 'input-required-input-required-04',
+  /** "There. Tied with a neat little bow." — something worth stopping for hit your bags. */
+  moteLooted: 'task-complete-task-complete-10'
 } as const
 
 /** Every group sound id, for the defaultPacks.ts cross-check + provisioning verification. */
@@ -139,6 +157,42 @@ export interface AlertGroup {
 function rawLine(text: string): AlertTrigger {
   return { type: 'raw', regex: `\\] ${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$` }
 }
+
+/**
+ * THE SLOW ROSTER — every attack-slow a PLAYER can cast, as a `where` field matcher.
+ *
+ * An `event` trigger's `where` value is an exact case-insensitive compare UNLESS it is wrapped
+ * in slashes, in which case it is a case-insensitive RegExp against the stringified field
+ * (main/modules/alerts.ts `compileFieldMatch`). That is what lets ONE def cover the whole
+ * family, which is the point: a slow is a spell you REPLACE as you level, so a def pinned to
+ * one name goes silently dead at the next tier. An enchanter walks Languid Pace (9) → Tepid
+ * Deeds (23) → Shiftless Deeds (41) → Forlorn Deeds (57) and a shaman walks Drowsy (5) →
+ * Walking Sleep (13) → Tagar's (27) → Togor's (38) → Turgur's (51) → Tigir's (58); one alert
+ * has to survive all of it or it is worse than no alert.
+ *
+ * THE ROSTER IS DB KNOWLEDGE, NOT A GUESS. It is every spells.json entry whose cast-on-other
+ * message is one of the game's two slow landing emotes — `Someone slows down.` (the enchanter
+ * line, and the one AGENTS.md's log-format reference already names as a slow LANDING) and
+ * `Someone yawns.` (the shaman line). Same argument as the rogue-slow group below, which
+ * matches on the poison `effect` rather than on a Strike name and reads its coat roster out of
+ * shared/poisons.ts: a family the DB enumerates is evidence, and pinning one member is the
+ * fragile choice. The two NPC-ONLY members of those emote families (Rejuvenation, Energy Sap)
+ * are deliberately absent — you cannot cast them, so `Your <X> spell has worn off of …` can
+ * never print for one.
+ *
+ * The `.` in `Tagar.s` is doing real work: EQ writes possessives with BOTH an apostrophe and a
+ * backtick and the spell DB carries both spellings of the same spell (`Turgur's Insects` /
+ * `Turgur\`s Insects`), so one character class covers the pair instead of eight alternatives.
+ *
+ * WHAT THE OWNER'S LOG ACTUALLY PRINTED (read-only sweep of eqlog_Primitive_freeport.txt,
+ * 1,406,311 lines, 2026-08-06): 52 mob-side wear-offs across three of the ten — Shiftless
+ * Deeds 26, Languid Pace 23, Tepid Deeds 3 — and zero for the other seven, because this
+ * character is an enchanter who has not reached 57. The two defs below quote what was
+ * observed; the roster is what the def has to cover to still be right next month.
+ */
+const SLOW_SPELLS =
+  '/^(Languid Pace|Tepid Deeds|Shiftless Deeds|Forlorn Deeds' +
+  '|Drowsy|Walking Sleep|Tagar.s Insects|Togor.s Insects|Turgur.s Insects|Tigir.s Insects)$/'
 
 /**
  * THE CATALOG. Order is the order the surface renders them: the two the owner called out
@@ -250,6 +304,79 @@ export const ALERT_GROUPS: AlertGroup[] = [
         cooldownMs: 3000,
         line: 'Your Mesmerization spell has worn off of <mob>.',
         observed: 1738
+      }
+    ]
+  },
+  {
+    // THE SLOW EXPIRING IS THE MEZ BREAK'S QUIET COUSIN (JOS-69). A mez break is loud — the mob
+    // is on you the same second. A slow just... stops, and the first evidence is the tank's
+    // health bar. Both sides of it are here for the reason Task #47 gave for the wears-off
+    // suggestion template ("the wears off for you is different than for somebody else … build
+    // good sane defaults that help with both by default"), and both were measured.
+    id: 'slow',
+    title: 'Slow wore off',
+    subtitle: 'A mob you slowed is swinging at full speed again.',
+    verified: true,
+    defs: [
+      {
+        // THE MOB SIDE. `Your <Slow> spell has worn off of <mob>.` is the universal named-target
+        // wear-off sentence, and the parser routes it by SPELL: a charm spell there is an
+        // `uncharm`, a mez/root spell is a `cc` refresh, and anything else — a slow included —
+        // is a `buffFade { spell, target }` (log/parseCasts.ts classifyWornOff). So the event
+        // kind cannot discriminate a slow on its own and the SPELL NAME is the whole matcher,
+        // which is why it is the family regex above rather than one name.
+        //
+        // COOLDOWN 5s: one wear-off per slow, and a pull rarely holds two slowed mobs whose
+        // timers land together. 5s only ever collapses a genuine double.
+        id: 'group:slow:mob',
+        name: 'Slow wore off a mob',
+        trigger: { type: 'event', kind: 'buffFade', where: { spell: SLOW_SPELLS } },
+        soundId: SOUND.slowExpired,
+        cooldownMs: 5000,
+        line: 'Your Shiftless Deeds spell has worn off of King Tranix.',
+        observed: 26,
+        line2: 'Your Languid Pace spell has worn off of a froglok ton knight.',
+        observed2: 23,
+        note:
+          'Fires for any player-castable attack slow — the enchanter line (Languid Pace, Tepid ' +
+          'Deeds, Shiftless Deeds, Forlorn Deeds) and the shaman line (Drowsy, Walking Sleep, ' +
+          "Tagar's, Togor's, Turgur's, Tigir's) — so it keeps working when you out-level the " +
+          'one you cast today. Tepid Deeds accounts for 3 more wear-offs in the reference log.'
+      },
+      {
+        // THE ON-YOU SIDE, and it is a SHARED MESSAGE (world-model law 3), so the trigger is
+        // built to be right about the FAMILY rather than about which spell it was. The two self
+        // sentences are `Your speed returns.` (21 in the reference log) and `You feel less
+        // drowsy.` (62) and neither names a spell — the parser resolves each against the DB and
+        // emits `buffWearOff { spell, candidates, target:'self' }` where `spell` is only the
+        // FIRST candidate. That would be a coin flip for a def that cared which one it was.
+        // It does not: every candidate of both messages is a slow (`Your speed returns.` →
+        // Forlorn/Shiftless/Tepid Deeds; `You feel less drowsy.` → the six insect/sleep spells),
+        // so whichever name the resolver picked, "a slow on you expired" is true.
+        //
+        // THE HASTE TWIN IS THE TRIPWIRE and it is one word apart: `Your speed returns to
+        // normal.` resolves to nine HASTES (Alacrity, Celerity, Swift Like The Wind …) and must
+        // never fire this. The roster regex is anchored `^…$`, which is what keeps them apart —
+        // pinned in tests/slowMoteTellAlerts.test.mts.
+        //
+        // COOLDOWN 5s, same episode length as the mob side.
+        id: 'group:slow:you',
+        name: 'Slow wore off you',
+        trigger: {
+          type: 'event',
+          kind: 'buffWearOff',
+          where: { spell: SLOW_SPELLS, target: 'self' }
+        },
+        soundId: SOUND.slowExpired,
+        cooldownMs: 5000,
+        line: 'Your speed returns.',
+        observed: 21,
+        line2: 'You feel less drowsy.',
+        observed2: 62,
+        note:
+          'Both sentences are shared by a whole slow family and name no spell, so this alert ' +
+          'reports that a slow expired, never which one. The haste line "Your speed returns to ' +
+          'normal." is deliberately not included.'
       }
     ]
   },
@@ -432,34 +559,126 @@ export const ALERT_GROUPS: AlertGroup[] = [
     ]
   },
   {
-    // ---- NOT OFFERED -------------------------------------------------------------------
-    id: 'feignDeath',
-    title: 'Feign death failed',
-    subtitle: 'Not available — the log never says a feign failed.',
-    verified: false,
-    unverifiedReason:
-      'Full-log sweep: the ONLY feign-death lines are the success emote "<Name> has fallen to ' +
-      'the ground." (103), the spell casts ("Rigamortis begins casting Feign Death."), the ' +
-      'interrupt of that spell, and skill-ups ("You have become better at Feign Death!"). ' +
-      'There is no failure line at all — no "ruse", no "fooled", no "not successful". A failed ' +
-      'feign is invisible in the log (world-model law 6: say what the log cannot say), so any ' +
-      'regex here would be a guess that never fires.',
-    defs: []
+    // A LOOT FILTER, IN THE PATH OF EXILE SENSE (JOS-69): the drop that is worth looking up from
+    // the fight for gets a sound of its own, and everything else stays silent. In this game that
+    // drop is a MOTE — the Item Upgrade System's currency, the thing an Exaltations plan is
+    // actually gated on — and it arrives inside an ordinary loot line with nothing to mark it.
+    id: 'motes',
+    title: 'Mote dropped',
+    subtitle: 'An upgrade mote just went into your bags.',
+    verified: true,
+    defs: [
+      {
+        // A PARSED EVENT, NOT A RAW REGEX — and that overturns the shape this was briefed as.
+        // The dashed loot family is already first-class: `--You have looted <item> from <mob>'s
+        // corpse.--` parses to `loot { item, source }` (log/parseWorld.ts), so the def matches
+        // the ITEM FIELD and inherits the parse instead of re-deriving it. That is this file's
+        // standing rule ("parsed events over raw regexes"), and here it also buys real safety: a
+        // raw regex over the whole line would fire on the four chat lines in the reference log
+        // in which players discuss motes, because a raw trigger sees text and knows nothing
+        // about who is speaking.
+        //
+        // THE MATCHER IS THE ITEM FAMILY, ANCHORED. Every mote the committed items catalog knows
+        // is `Mote of <tier> Potential` (10 entries: Infinitesimal, Minor, Lesser, Potential,
+        // Major, Greater, Superior, Grand, Ascendant, Infinite) and the reference log printed
+        // seven of them — Infinitesimal 220, Minor 31, Lesser 16, Major 8, Potential 7, Greater
+        // 2, Superior 1, for 285 loot lines. `^Mote of ` covers the three the log has not shown
+        // as well, which is the whole reason to anchor a family rather than list the tiers.
+        //
+        // NO PER-TIER SPLIT, deliberately. A real loot filter is loudest for the rarest drop,
+        // and the tier ORDER is exactly what nothing states: neither the items catalog nor the
+        // log ranks these names, and "Mote of Potential" sits at an unknown rung among the
+        // adjectives. Ranking them by eye to pick which gets the better sound would be an
+        // invented fact (the awaiting-sample law); one sound for the family is what the evidence
+        // supports today.
+        //
+        // ONE KNOWN OVER-REACH, stated rather than papered over: the loot family also covers the
+        // vendor shape (`You looted <item> … and sold it for <money>.`), which emits the same
+        // `loot` event, so vendoring motes would speak. A `where` cannot express "and no
+        // disposition" (an absent field fails every matcher), and the reference log contains
+        // zero sold motes — nobody sells the upgrade currency. The 4s cooldown bounds it if
+        // somebody does.
+        //
+        // COOLDOWN 4s: motes drop one per corpse and no two share a second anywhere in the
+        // reference log, so this is a bound on a bag-clearing burst, not on normal play.
+        id: 'group:motes:looted',
+        name: 'Mote dropped',
+        trigger: { type: 'event', kind: 'loot', where: { item: '/^Mote of /' } },
+        soundId: SOUND.moteLooted,
+        cooldownMs: 4000,
+        line: "--You have looted a Mote of Infinitesimal Potential from a zol ghoul knight's corpse.--",
+        observed: 285,
+        note:
+          'Every tier of Mote of Potential, from Infinitesimal to Ascendant — the currency the ' +
+          'Item Upgrade System runs on. All tiers share one sound: nothing in the game or the ' +
+          'catalog states which tier outranks which.'
+      }
+    ]
   },
   {
-    id: 'petDeath',
-    title: 'Pet died',
-    subtitle: 'Not available — the log does not mark your pet.',
-    verified: false,
-    unverifiedReason:
-      'Your summoned pet carries a random proper name (Giber, Kibn, Vebann…) and dies with the ' +
-      'ordinary "<Name> has been slain by <X>!" line — byte-identical to any other entity\'s ' +
-      'death. The " pet" token seen in "A necro neophyte pet has been slain by Kibn!" belongs ' +
-      "to OTHER owners' pets, never to yours. Only the world model knows which name is your " +
-      'pet (bound by the owner-only "…Master." tell), and an AlertDef cannot express that ' +
-      'binding — it matches text, not entities. Needs a derived event before it can ship.',
-    defs: []
-  }
+    // A PLAYER IS TALKING TO YOU AND THE GAME SAYS SO ONCE, in a chat window you are not looking
+    // at because a mob is on you (JOS-69).
+    id: 'tells',
+    title: 'Tell received',
+    subtitle: 'Another player sent you a private message.',
+    verified: true,
+    defs: [
+      {
+        // A RAW TRIGGER, AND THE BRIEF'S "PARSED TELL EVENT" DOES NOT EXIST. Swept the tree:
+        // the parser claims exactly two things out of the tell channel, both spoken by NPCs —
+        // the pet-claim tell (`<Name> told you, '… Master.'` → petClaim) and nothing else. A
+        // player's tell parses to `unknown`, deliberately: shared/logScrub.ts DROPS every line
+        // carrying quoted speech, so a tell can never reach a committed fixture and nothing
+        // downstream could ever be golden-tested on one. This file's own rule covers the case —
+        // raw regexes are for "lines no event covers" — and the four client notices already
+        // ship that way. The unknown event still carries `raw`, which is what a raw trigger
+        // tests, so nothing else is needed.
+        //
+        // THE TENSE IS THE DISCRIMINATOR, AND IT IS MEASURED (whole-log sweep,
+        // eqlog_Primitive_freeport.txt, 1,406,311 lines, 2026-08-06):
+        //   `<Name> tells you, '…'`   11 lines — every one a real player (ten distinct senders:
+        //                             a guild recruiter, a group invite, a thank-you …).
+        //   `<Name> told you, '…'`  3537 lines — NOT ONE of them a person: 3050 pet-claim tells
+        //                             and the rest a merchant NPC quoting prices ("Klok Sasz
+        //                             told you, 'I'll give you 3 platinum for the …'").
+        // Present tense is a player; past tense is the game. That is the whole rule, and it is
+        // why this pattern is anchored on ` tells you, '` rather than on anything cleverer.
+        //
+        // CAPITALIZATION IS NOT A SIGNAL, and the brief's other hypothesis — "capitalized proper
+        // name ⇒ a player" — is MEASURED WRONG here: the log capitalizes a sentence-initial
+        // article, so a charmed pet's tell reads `A gorgon told you, …` and looks exactly as
+        // proper as `Shiro tells you, …`. Adding a `[A-Z]` guard would have bought nothing and
+        // implied a rule the log does not follow.
+        //
+        // CHANNELS AND OUTGOING TELLS CANNOT MATCH, because they are different sentences:
+        // `X tells General:1, '…'`, `X tells the group, '…'`, `You told X, '…'` and `You tell
+        // your party, '…'`. All four are pinned as negatives in the suite.
+        //
+        // COOLDOWN 6s: a conversation arrives in bursts of two or three lines and one nudge per
+        // exchange is the point — you are being told to go and read the window, not to hear
+        // every sentence.
+        id: 'group:tells:received',
+        name: 'Tell received',
+        trigger: { type: 'raw', regex: "\\] .+ tells you, '" },
+        soundId: SOUND.tellReceived,
+        cooldownMs: 6000,
+        // The SHAPE, with the message elided — the `resists` def's convention, and here it is
+        // also the privacy rule: this string is rendered in the UI and committed to a public
+        // repo, and a real tell is someone else's words (shared/logScrub.ts family 1).
+        line: "<Player> tells you, '<message>'",
+        observed: 11,
+        note:
+          'Player tells only. NPC and pet tells use the past tense ("told you") and never fire ' +
+          'this; neither do channel tells, group chat, or the tells you send.'
+      }
+    ]
+  },
+  // ---- NOT OFFERED --------------------------------------------------------------------
+  // The refusal register: sets that were asked for and that no real log line can fire. They
+  // live in shared/alertGroupsRefused.ts — same list, same `verified:false` contract, kept
+  // apart because they are prose rather than triggers (and because this file is at its
+  // factoring ceiling). VERIFIED_ALERT_GROUPS filters them out; G4 pins that they stay out.
+  ...REFUSED_ALERT_GROUPS
 ]
 
 /** The groups the surface actually renders — the unverified ones are documentation only. */

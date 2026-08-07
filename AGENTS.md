@@ -799,6 +799,44 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   table measured from the log.
 - Feign death has NO failure line (1.14M lines: only the success emote).
   An alert cannot fire on the absence of a line — the group ships hidden.
+- **A TELL'S TENSE SAYS WHETHER A PERSON SENT IT** (JOS-69, measured whole-log
+  2026-08-06, 1,406,311 lines). `<Name> tells you, '…'` — 11 lines, EVERY one a
+  real player. `<Name> told you, '…'` — 3537 lines, NOT ONE a person: 3050 are
+  the pet-claim tell and the rest are a merchant NPC quoting prices (`Klok Sasz
+  told you, 'I'll give you 3 platinum for the …'`). Present tense is a player,
+  past tense is the game, and that is the whole discriminator. CAPITALIZATION IS
+  NOT ONE: the log capitalizes a sentence-initial article, so a charmed pet reads
+  `A gorgon told you, …` and looks exactly as proper-named as `Shiro tells you,
+  …`. There is NO parsed tell event and there cannot usefully be a golden-tested
+  one — the scrub drops all quoted speech, so no fixture can carry a tell — hence
+  the `tells` alert group is a RAW trigger (`\] .+ tells you, '`) and its unit
+  test constructs the sentence rather than committing a stranger's words.
+- **SLOWS ARE A ROSTER, NOT A NAME** (JOS-69). A slow wearing off a mob is the
+  ordinary named-target `buffFade` (`Your <Slow> spell has worn off of <mob>.`,
+  52 lines: Shiftless Deeds 26, Languid Pace 23, Tepid Deeds 3) — the event kind
+  cannot discriminate it, so the SPELL is the matcher, and it has to be the whole
+  family because a slow is the spell you replace as you level. spells.json
+  enumerates it by landing emote: `Someone slows down.` = the enchanter ladder
+  (Languid Pace/Tepid/Shiftless/Forlorn Deeds), `Someone yawns.` = the shaman one
+  (Drowsy, Walking Sleep, Tagar's/Togor's/Turgur's/Tigir's Insects); the NPC-only
+  members (Rejuvenation, Energy Sap) are excluded because you cannot cast them.
+  The ON-YOU side is two shared messages — `Your speed returns.` (21) and `You
+  feel less drowsy.` (62) — that name no spell and resolve to all-slow candidate
+  lists, so the alert reports the family and never which one. Its tripwire is one
+  word away: `Your speed returns to normal.` is NINE HASTES (law 3).
+- **THE FRIEND SYSTEM ANNOUNCES NOTHING** (JOS-69, same sweep). It prints exactly
+  two things: `Friends currently on EverQuest Legends:` (43× — the `/friends`
+  command's own output, a header + dashed rule + a /who-style roster row, printed
+  only when you ask) and `<name> is now your friend.` (3× — the `/friend add`
+  confirmation). No login line, no logout line. "A friend came online" is
+  knowable only by polling `/friends` and diffing rosters, which is something the
+  app would be DOING, not something the log says — so the group ships hidden
+  beside feign-death and pet-death.
+- Motes (the Item Upgrade System's currency) arrive ONLY inside ordinary loot
+  lines, which already parse to `loot { item, source }`; every one the items
+  catalog knows is `Mote of <tier> Potential` (10 tiers, 7 seen: Infinitesimal
+  220, Minor 31, Lesser 16, Major 8, Potential 7, Greater 2, Superior 1). Nothing
+  anywhere RANKS the tiers, so a per-tier loot filter would be an invented fact.
 - `LogEvent.raw` INCLUDES the `[timestamp] ` prefix: a `^`-anchored raw
   alert regex silently never matches — anchor on `\] ` (tripwire test).
 - WorldModel labels append a spawn-generation ` (N)` suffix that appears

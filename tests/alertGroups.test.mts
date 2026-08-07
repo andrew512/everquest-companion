@@ -20,6 +20,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseEvent } from '../src/main/log/parser'
+import { installSpellDb } from '../src/main/log/rulesets'
+import { loadSpellDb } from '../src/main/data/spellDb'
 import { AlertsModule } from '../src/main/modules/alerts'
 import {
   ALERT_GROUPS,
@@ -31,6 +33,14 @@ import { REQUIRED_SOUND_IDS } from '../src/main/data/defaultPacks'
 import type { AlertDef } from '../src/shared/types'
 
 const TS = '[Tue Jul 28 13:04:53 2026] '
+
+// THE SPELL DB IS INSTALLED, because the app always installs it and one group now depends on
+// it. `Your speed returns.` names no spell: the parser resolves that shared sentence against
+// spells.json into `buffWearOff { spell, candidates }` (world-model law 3), and with no DB it
+// is an `unknown` line that fires nothing. Installing it here makes every assertion below read
+// the same parser the user's session does. Node runs each test FILE in its own process, so this
+// global injection cannot reach another suite.
+installSpellDb(loadSpellDb())
 
 /** Feed raw log lines through the real parser into a module holding `defs`; return fired ids. */
 function fire(defs: AlertDef[], lines: string[]): Set<string> {
@@ -67,7 +77,22 @@ const VERIFIED_LINES: Record<string, string[]> = {
   // The rogue slow proc. Its full behaviour (the fixture window, the cooldown collapse, the
   // effect discriminator, the omitted on-you variant) lives in poisonSlowAlerts.test.mts;
   // this entry keeps it inside the completeness check every verified group def must pass.
-  'alert:poison-slow-landed': ["Stonesoul the Unmoving's limbs move slower!"]
+  'alert:poison-slow-landed': ["Stonesoul the Unmoving's limbs move slower!"],
+  // JOS-69. The three round-two sets; their negatives (the haste twin, the NPC tell, the
+  // channel tells, a non-mote drop) live in slowMoteTellAlerts.test.mts.
+  'group:slow:mob': [
+    'Your Shiftless Deeds spell has worn off of King Tranix.',
+    'Your Languid Pace spell has worn off of a froglok ton knight.'
+  ],
+  'group:slow:you': ['Your speed returns.', 'You feel less drowsy.'],
+  'group:motes:looted': [
+    "--You have looted a Mote of Infinitesimal Potential from a zol ghoul knight's corpse.--"
+  ],
+  // CONSTRUCTED CONTENT, MEASURED SHAPE. The 11 real tells in the reference log are other
+  // people's words and this repo is public, so the sentence carries an invented name and an
+  // innocuous body — the part under test is `<Name> tells you, '…'`, which is what the sweep
+  // verified and what the trigger matches. Same reason the def's own `line` elides the message.
+  'group:tells:received': ["Tellwyn tells you, 'group up?'"]
 }
 
 test('G1 every verified group def fires on its quoted real log line', () => {
@@ -129,8 +154,8 @@ test('G4 the unverifiable groups stay unoffered, with the reason recorded', () =
   const hidden = ALERT_GROUPS.filter((g) => !g.verified)
   assert.deepEqual(
     hidden.map((g) => g.id).sort(),
-    ['feignDeath', 'petDeath'],
-    'exactly the two the log cannot support'
+    ['feignDeath', 'friendOnline', 'petDeath'],
+    'exactly the three the log cannot support'
   )
   for (const g of hidden) {
     assert.equal(g.defs.length, 0, `${g.id} must ship NO defs — a guessed regex is worse than none`)
