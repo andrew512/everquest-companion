@@ -94,6 +94,33 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.9.0',
+    date: '2026-08-07',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Raid targets: a "This week" view shows your weekly lockouts per difficulty, with the kill that locked each one and time until the Tuesday reset.'
+      },
+      {
+        kind: 'new',
+        text: 'My sounds: import your own audio files from the alerts toolbar and use them for any alert.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The exp graph has a timescale picker — and the whole leveling dashboard follows it: rates, AA pace and zone stats all read the window you chose.'
+      },
+      {
+        kind: 'new',
+        text: "What's new: this panel — the app now tells you what changed after each update."
+      },
+      {
+        kind: 'fixed',
+        text: 'A kill or gain landing at the exact edge of a selected range was drawn on the chart but missing from the totals.'
+      }
+    ]
+  },
+  {
     version: '0.8.0',
     date: '2026-08-07',
     entries: [
