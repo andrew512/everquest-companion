@@ -95,6 +95,7 @@
 import { idKey } from '../log/parser'
 import { PRESENCE_GONE_MS } from './encounter'
 import { isLeftBehindOnZone, type PetKind } from './entityRules'
+import { SEC_WORLD, type EngineFoldProbe } from './foldProbe'
 
 /**
  * How long a LIVE hostile instance may go completely unobserved before its slot is eligible
@@ -141,24 +142,64 @@ export interface DeathResolution {
   reason: string
 }
 
+/** The answer `active()` gives for a name nothing has ever spawned under. Shared and frozen —
+ *  it is only ever read, and minting an empty array per miss on a 1.4M-event fold is exactly the
+ *  kind of allocation JOS-59 came here to delete. */
+const NO_INSTANCES: readonly Instance[] = []
+
 export class WorldModel {
-  /** All instances ever, keyed by nameKey → ordered spawn list. */
+  /**
+   * THE LIVE instances, keyed by nameKey → ordered oldest→newest. This is the index almost every
+   * read below walks, and it is a SEPARATE list from `byName` for one measured reason (JOS-59):
+   * a nameKey accumulates one instance per SPAWN and a busy zone respawns the same mob hundreds
+   * of times, so on the owner's log `a greater kobold` alone reaches gen 38 and the log's worst
+   * names run far past that. Every read used to walk the whole spawn history and allocate a
+   * filtered copy of it — `active()` was called two or three times per `resolve()`, and
+   * `resolve()` runs on every damage, miss, resist and heal line. Retirement is MONOTONE (nothing
+   * ever un-retires), so this list can simply be spliced and never rebuilt.
+   *
+   * An emptied entry is KEPT rather than deleted, so map insertion order — which is the order
+   * `petInstances()` and `charmedInstances()` report in, and therefore the order the UI lists
+   * pets in — is exactly what it was when this walked `byName`.
+   */
+  private activeByName = new Map<string, Instance[]>()
+  /** All instances ever, keyed by nameKey → ordered spawn list. Read only where the whole spawn
+   *  history genuinely matters (nothing does today) — kept because it is the honest record. */
   private byName = new Map<string, Instance[]>()
+  /** instanceId → instance, so `find()` is a lookup rather than a scan of a name's whole history
+   *  (it is called from `isRetired`/`isLivePet`, i.e. once per engaged mob per closure eval). */
+  private byId = new Map<string, Instance>()
   /** gen counter per nameKey. */
   private gens = new Map<string, number>()
   /** Killers each charmed pet has been observed tanking (pet instanceId → set of
    *  attacker nameKeys that hit it / that it hit). Drives death case (b). */
   private petTankedBy = new Map<string, Set<string>>()
+  /**
+   * THE BENCH'S SUB-ATTRIBUTION SEAM (JOS-59, foldProbe.ts) — undefined everywhere except under
+   * `CombatEngine.attachFoldProbe`. Only the five per-EVENT entry points below are bracketed;
+   * the lifecycle methods (charm/claim/death/uncharm/zone) fire per bind and per kill rather
+   * than per line and are charged to `dispatch`, which the table's header says out loud.
+   */
+  probe?: EngineFoldProbe
 
   reset(): void {
+    this.activeByName.clear()
     this.byName.clear()
+    this.byId.clear()
     this.gens.clear()
     this.petTankedBy.clear()
   }
 
-  /** Active (non-retired) instances for a nameKey, oldest→newest. */
-  private active(nameKey: string): Instance[] {
-    return (this.byName.get(nameKey) ?? []).filter((i) => !i.retired)
+  /**
+   * Active (non-retired) instances for a nameKey, oldest→newest — THE LIVE ARRAY, not a copy.
+   *
+   * Callers that RETIRE while walking it must therefore walk it backwards by index (retireStale,
+   * zone) or take a copy first; the two that do are commented at their loops. Everything else
+   * only reads, and handing them the array directly is the whole point: this is the hottest read
+   * in the engine and it used to allocate a filtered copy of a mob's entire spawn history.
+   */
+  private active(nameKey: string): readonly Instance[] {
+    return this.activeByName.get(nameKey) ?? NO_INSTANCES
   }
 
   /** Spawn a new instance of `nameKey`. A `petKind` IS the charm flag: every call that
@@ -181,6 +222,10 @@ export class WorldModel {
     const list = this.byName.get(nameKey) ?? []
     list.push(inst)
     this.byName.set(nameKey, list)
+    const live = this.activeByName.get(nameKey) ?? []
+    live.push(inst)
+    this.activeByName.set(nameKey, live)
+    this.byId.set(inst.instanceId, inst)
     return inst
   }
 
@@ -237,6 +282,15 @@ export class WorldModel {
    * pet as damage attacker). Otherwise prefers a hostile instance (mob references).
    */
   resolve(name: string, ts: number, preferCharmed = false): Instance {
+    const p = this.probe
+    if (!p) return this.resolveInner(name, ts, preferCharmed)
+    p.enter(SEC_WORLD)
+    const inst = this.resolveInner(name, ts, preferCharmed)
+    p.leave()
+    return inst
+  }
+
+  private resolveInner(name: string, ts: number, preferCharmed: boolean): Instance {
     if (idKey(name) === 'you') {
       // 'you' is not modeled as a spawnable instance; caller handles it. Return a
       // synthetic sentinel so callers never crash (they special-case 'you' first).
@@ -282,8 +336,13 @@ export class WorldModel {
    * spawns is refreshed by the very damage that proved it exists.
    */
   private retireStale(nameKey: string, ts: number): void {
-    for (const inst of this.byName.get(nameKey) ?? []) {
-      if (inst.retired || inst.charmed) continue
+    const live = this.activeByName.get(nameKey)
+    if (live === undefined || live.length === 0) return
+    // BACKWARDS BY INDEX: `retire()` splices this very array, and a forward walk would skip the
+    // element that slid into the hole. Every instance here is by definition unretired.
+    for (let i = live.length - 1; i >= 0; i--) {
+      const inst = live[i]
+      if (inst.charmed) continue
       if (ts - inst.lastSeenTs >= INSTANCE_STALE_MS) this.retire(inst, ts)
     }
   }
@@ -296,14 +355,22 @@ export class WorldModel {
    * defenderLabel make).
    */
   noteSeen(name: string, ts: number): void {
-    for (const inst of this.byName.get(idKey(name)) ?? []) {
-      if (!inst.retired && ts > inst.lastSeenTs) inst.lastSeenTs = ts
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
+    for (const inst of this.active(idKey(name))) {
+      if (ts > inst.lastSeenTs) inst.lastSeenTs = ts
     }
+    if (p) p.leave()
   }
 
   /** Look up the charmed pet instance for a name (attribution helper). */
   petInstance(name: string): Instance | undefined {
-    return this.charmedActive(idKey(name))
+    const p = this.probe
+    if (!p) return this.charmedActive(idKey(name))
+    p.enter(SEC_WORLD)
+    const inst = this.charmedActive(idKey(name))
+    p.leave()
+    return inst
   }
 
   /**
@@ -404,11 +471,13 @@ export class WorldModel {
    * onPetClaim) already runs an entity-level succession across both kinds for its own purposes.
    */
   private retirePriorSummoned(pet: Instance, ts: number): void {
-    for (const list of this.byName.values()) {
-      for (const i of list) {
-        if (i.retired || !i.charmed || i.petKind !== 'summoned') continue
-        if (i.instanceId === pet.instanceId) continue
-        this.retire(i, ts)
+    // Backwards by index, for the reason retireStale states: `retire()` splices these arrays.
+    for (const list of this.activeByName.values()) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const inst = list[i]
+        if (!inst.charmed || inst.petKind !== 'summoned') continue
+        if (inst.instanceId === pet.instanceId) continue
+        this.retire(inst, ts)
       }
     }
   }
@@ -547,6 +616,12 @@ export class WorldModel {
     inst.charmed = false
     inst.petKind = undefined
     this.petTankedBy.delete(inst.instanceId)
+    // Out of the live index — the one place retirement is recorded, so the index cannot drift.
+    const live = this.activeByName.get(inst.nameKey)
+    if (live) {
+      const at = live.indexOf(inst)
+      if (at >= 0) live.splice(at, 1)
+    }
   }
 
   /**
@@ -558,9 +633,11 @@ export class WorldModel {
    */
   zone(ts: number): Instance[] {
     const survivors: Instance[] = []
-    for (const list of this.byName.values()) {
-      for (const inst of list) {
-        if (inst.retired) continue
+    for (const list of this.activeByName.values()) {
+      // A COPY, not the live array: `retire()` splices it, and unlike retireStale this loop must
+      // stay FORWARD — the survivors it returns are rendered in this order. Zone lines are rare,
+      // so the copy costs nothing measurable.
+      for (const inst of [...list]) {
         // Shared rule (entityRules.isLeftBehindOnZone): only a live SUMMONED pet
         // survives a zone; charmed pets and hostiles are left behind. A hostile
         // instance has petKind undefined → left behind (unchanged behavior).
@@ -577,15 +654,16 @@ export class WorldModel {
   }
 
   private find(instanceId: string): Instance | undefined {
-    const hash = instanceId.lastIndexOf('#')
-    if (hash <= 0) return undefined
-    return this.byName.get(instanceId.slice(0, hash))?.find((i) => i.instanceId === instanceId)
+    return this.byId.get(instanceId)
   }
 
   /** True if the instance with this id has been retired (dead/zoned). Unknown ids
    *  (never spawned) are treated as retired — they can't be a live engagement. */
   isRetired(instanceId: string): boolean {
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
     const inst = this.find(instanceId)
+    if (p) p.leave()
     return inst ? inst.retired : true
   }
 
@@ -594,7 +672,10 @@ export class WorldModel {
    *  an encounter's death-close (a charmed pet never dies, so it would pin every
    *  charm-grind fight open forever). */
   isLivePet(instanceId: string): boolean {
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
     const inst = this.find(instanceId)
+    if (p) p.leave()
     return !!inst && !inst.retired && inst.charmed
   }
 
@@ -606,15 +687,18 @@ export class WorldModel {
    */
   charmedInstances(): Instance[] {
     const out: Instance[] = []
-    for (const list of this.byName.values())
-      for (const i of list) if (!i.retired && i.charmed && i.petKind === 'charmed') out.push(i)
+    for (const list of this.activeByName.values())
+      for (const i of list) if (i.charmed && i.petKind === 'charmed') out.push(i)
     return out
   }
 
   /** All live pets, charmed AND summoned (the attribution roster). */
   petInstances(): Instance[] {
+    const p = this.probe
+    if (p) p.enter(SEC_WORLD)
     const out: Instance[] = []
-    for (const list of this.byName.values()) for (const i of list) if (!i.retired && i.charmed) out.push(i)
+    for (const list of this.activeByName.values()) for (const i of list) if (i.charmed) out.push(i)
+    if (p) p.leave()
     return out
   }
 
@@ -624,6 +708,15 @@ export class WorldModel {
    * visually distinct; the first gen keeps the bare name.
    */
   label(inst: Instance): string {
+    const p = this.probe
+    if (!p) return this.labelInner(inst)
+    p.enter(SEC_WORLD)
+    const out = this.labelInner(inst)
+    p.leave()
+    return out
+  }
+
+  private labelInner(inst: Instance): string {
     const total = this.gens.get(inst.nameKey) ?? 1
     if (total <= 1 || inst.gen === 1) return inst.display
     return `${inst.display} (${inst.gen})`

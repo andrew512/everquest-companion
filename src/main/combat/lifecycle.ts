@@ -7,6 +7,7 @@
 
 import { sumHeal, sumMap } from './aggregate'
 import { Agg } from './aggregate'
+import { SEC_LIFECYCLE } from './foldProbe'
 import {
   ACTIVE_MS,
   FALLBACK_IDLE_MS,
@@ -27,25 +28,37 @@ import type { SegmentSummary, ZoneSessionSummary } from '../../shared/combat'
 export function ensureEncounter(st: EngineState, ts: number): Encounter {
   // Closure is decided by evalClosure() (death-linger / CC-hold / fallback), which
   // ingestEvent runs before routing. Here we only lazily open a new encounter.
-  if (!st.current) {
-    const spans: StanceRaw[] = []
-    // Seed the timeline's pinned rows with whatever stance/invocation is already active
-    // at the moment the fight opens (so a fight inherits the standing modifiers).
-    if (st.stance) spans.push({ group: 'stance', name: st.stance.name, start: ts })
-    if (st.invocation) spans.push({ group: 'invocation', name: st.invocation.name, start: ts })
-    st.current = {
-      id: `e${++st.seq}`, zone: st.zone, startTs: ts, lastTs: ts,
-      agg: new Agg(), engaged: new Set(), engagedSeen: new Map(), activeMs: 0,
-      ccActiveUntil: new Map(), events: [], eventsTotal: 0, stanceSpans: spans,
-      markers: [],
-      // Task #64: freeze the coats as they stand AT ENGAGE. "Could this pull have been
-      // slowed?" is a question about this instant — reading today's coat when the fight is
-      // later rendered would silently re-label every past fight after a poison swap.
-      coatAtEngage: st.coatUtility ? { ...st.coatUtility } : undefined,
-      combatAtEngage: st.coatCombat.map((c) => ({ ...c }))
-    }
+  const cur = st.current
+  if (cur) return cur
+  const p = st.probe
+  if (!p) return openEncounter(st, ts)
+  p.enter(SEC_LIFECYCLE)
+  const enc = openEncounter(st, ts)
+  p.leave()
+  return enc
+}
+
+/** Open a fresh encounter — the cold half of `ensureEncounter`, split out so the bench's
+ *  lifecycle bracket can be one straight-line call (foldProbe.ts). */
+function openEncounter(st: EngineState, ts: number): Encounter {
+  const spans: StanceRaw[] = []
+  // Seed the timeline's pinned rows with whatever stance/invocation is already active
+  // at the moment the fight opens (so a fight inherits the standing modifiers).
+  if (st.stance) spans.push({ group: 'stance', name: st.stance.name, start: ts })
+  if (st.invocation) spans.push({ group: 'invocation', name: st.invocation.name, start: ts })
+  const enc: Encounter = {
+    id: `e${++st.seq}`, zone: st.zone, startTs: ts, lastTs: ts,
+    agg: new Agg(), engaged: new Set(), engagedSeen: new Map(), activeMs: 0,
+    ccActiveUntil: new Map(), events: [], eventsTotal: 0, stanceSpans: spans,
+    markers: [],
+    // Task #64: freeze the coats as they stand AT ENGAGE. "Could this pull have been
+    // slowed?" is a question about this instant — reading today's coat when the fight is
+    // later rendered would silently re-label every past fight after a poison swap.
+    coatAtEngage: st.coatUtility ? { ...st.coatUtility } : undefined,
+    combatAtEngage: st.coatCombat.map((c) => ({ ...c }))
   }
-  return st.current
+  st.current = enc
+  return enc
 }
 
 /**
@@ -106,6 +119,18 @@ function hostilePresence(st: EngineState, enc: Encounter, now: number): { hostil
  * unrefreshed hold outliving a minute of total silence.
  */
 export function evalClosure(st: EngineState, now: number): void {
+  if (!st.current) return
+  const p = st.probe
+  if (!p) {
+    evalClosureInner(st, now)
+    return
+  }
+  p.enter(SEC_LIFECYCLE)
+  evalClosureInner(st, now)
+  p.leave()
+}
+
+function evalClosureInner(st: EngineState, now: number): void {
   const enc = st.current
   if (!enc) return
 

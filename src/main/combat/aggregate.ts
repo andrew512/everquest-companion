@@ -85,11 +85,18 @@ export interface CategoryStat {
  *  NOT record double/triple attack, so this is an HONEST cluster heuristic, never a
  *  fabricated multi-attack flag. Off-hand vs main-hand is not distinguishable. */
 export interface RoundsAccum {
-  /** key = `${skillLower}|${floor(ts/1000)}` → hit count in that bucket. THE ONLY state:
-   *  the hits-per-round histogram is derived from it at view time (`finalizeRounds`) and
-   *  deliberately not cached back here — a view build may not write to the aggregate
-   *  (tests/combatCombinePetsPurity.test.mts). */
-  bucket: Map<string, number>
+  /**
+   * skillLower → (floor(ts/1000) → hit count in that bucket). THE ONLY state: the hits-per-round
+   * histogram is derived from it at view time (`finalizeRounds`) and deliberately not cached back
+   * here — a view build may not write to the aggregate (tests/combatCombinePetsPurity.test.mts).
+   *
+   * NESTED rather than keyed on `${skillLower}|${second}` (JOS-59). Nothing has ever read the key
+   * — `finalizeRounds` only counts the VALUES — so the composite string was pure per-swing
+   * allocation on the hottest line in the fold: one template literal per landed melee swing, in
+   * BOTH the encounter aggregate and the zone aggregate. The bucketing is unchanged, because
+   * (skill, second) still identifies exactly one counter.
+   */
+  bucket: Map<string, Map<number, number>>
 }
 function newMissBreakdown(): MissBreakdown {
   return { miss: 0, dodge: 0, parry: 0, riposte: 0, block: 0, absorb: 0 }
@@ -192,13 +199,19 @@ export function newCategory(category: DamageCategory): CategoryStat {
 }
 
 function newRounds(): RoundsAccum {
-  return { bucket: new Map() }
+  return { bucket: new Map<string, Map<number, number>>() }
 }
 
 /** Fold a melee/slay hit into the rounds heuristic: bump the (skill, second) bucket. */
 function accrueRound(r: RoundsAccum, skill: string, ts: number): void {
-  const key = `${skill.toLowerCase()}|${Math.floor(ts / 1000)}`
-  r.bucket.set(key, (r.bucket.get(key) ?? 0) + 1)
+  const lane = skill.toLowerCase()
+  let seconds = r.bucket.get(lane)
+  if (seconds === undefined) {
+    seconds = new Map<number, number>()
+    r.bucket.set(lane, seconds)
+  }
+  const sec = Math.floor(ts / 1000)
+  seconds.set(sec, (seconds.get(sec) ?? 0) + 1)
 }
 
 /** Collapse the in-progress buckets into the hits-per-round histogram. PURE: the buckets are
@@ -206,9 +219,11 @@ function accrueRound(r: RoundsAccum, skill: string, ts: number): void {
  *  repeatable and cheap (buckets ≈ #seconds). */
 export function finalizeRounds(r: RoundsAccum): number[] {
   const hist: number[] = []
-  for (const hits of r.bucket.values()) {
-    const idx = Math.max(0, hits - 1)
-    hist[idx] = (hist[idx] ?? 0) + 1
+  for (const seconds of r.bucket.values()) {
+    for (const hits of seconds.values()) {
+      const idx = Math.max(0, hits - 1)
+      hist[idx] = (hist[idx] ?? 0) + 1
+    }
   }
   for (let i = 0; i < hist.length; i++) hist[i] ??= 0
   return hist

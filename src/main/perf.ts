@@ -42,6 +42,7 @@ import {
   PERF_SAMPLE_INTERVAL_MS,
   replayDutyOf,
   totalsOf,
+  type BlockSample,
   type PerfSample,
   type RawProcessMetric,
   type ReplayDutyStats,
@@ -86,7 +87,7 @@ let profileWritten = false
 // the few seconds a replay lasts, and nothing at all outside that window.
 
 let blockTimer: ReturnType<typeof setInterval> | null = null
-let blockDrifts: number[] = []
+let blockDrifts: BlockSample[] = []
 let blockDueAt = 0
 let blockStats: StartupBlockStats | undefined
 
@@ -97,7 +98,9 @@ function startStartupBlockProbe(): void {
   blockDueAt = performance.now() + PERF_LAG_PROBE_INTERVAL_MS
   blockTimer = setInterval(() => {
     const now = performance.now()
-    blockDrifts.push(Math.max(0, now - blockDueAt))
+    // `atMs` is the SAME clock the phase marks use (`performance.now()` against timeOrigin), so
+    // the worst block can be placed against the phase list without any further arithmetic.
+    blockDrifts.push({ driftMs: Math.max(0, now - blockDueAt), atMs: now })
     blockDueAt = now + PERF_LAG_PROBE_INTERVAL_MS
   }, PERF_LAG_PROBE_INTERVAL_MS)
   blockTimer.unref()
@@ -239,7 +242,9 @@ function logStartupSummary(profile: StartupProfile): void {
   const blocked =
     profile.block === undefined
       ? ''
-      : `, worst main-loop block ${String(profile.block.maxBlockMs)}ms (${String(profile.block.blocksOver50Ms)} over 50ms)`
+      : `, worst main-loop block ${String(profile.block.maxBlockMs)}ms (${String(profile.block.blocksOver50Ms)} over 50ms` +
+        // WHERE it landed, so errors.log alone says which phase to look at (JOS-59).
+        `${profile.block.worstAtMs === undefined ? '' : `, at ${String(Math.round(profile.block.worstAtMs))}ms — ${phaseAt(profile, profile.block.worstAtMs)}`})`
   // …and so does the duty the replay ACHIEVED (JOS-50). The slicer aims at REPLAY_DUTY and the
   // Windows timer decides what it actually gets, so the launch states the measurement rather than
   // the intention — a replay that somehow rested not at all is then visible in errors.log.
@@ -253,6 +258,18 @@ function logStartupSummary(profile: StartupProfile): void {
     `[everquest-companion] Startup ${String(Math.round(profile.totalMs))}ms` +
       `${replayed}${blocked}${duty} (${worst}) — profile at ${profilePath()}`
   )
+}
+
+/**
+ * Which phase was in flight at `atMs` — the phase whose window CONTAINS it (JOS-59).
+ *
+ * Phases are marked at their END, so the one that owns an instant is the first mark at or after
+ * it. Before the first mark is impossible (the probe opens at `appReady`) and after the last is
+ * reported as such rather than attributed to a phase that had already finished.
+ */
+function phaseAt(profile: StartupProfile, atMs: number): string {
+  for (const p of profile.phases) if (atMs <= p.atMs) return `during ${p.phase}`
+  return 'after the last phase'
 }
 
 function profilePath(): string {

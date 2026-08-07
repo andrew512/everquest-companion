@@ -8,6 +8,7 @@
 
 import { idKey } from '../log/parser'
 import { meleeSkill } from '../log/parseCombat'
+import { SEC_AGGREGATE, SEC_CLASSIFY } from './foldProbe'
 import { ensureEncounter } from './lifecycle'
 import { ACTIVE_MS, type Encounter } from './encounter'
 import type { DamageEvent, MissFold, SourceRef } from './aggregate'
@@ -89,6 +90,21 @@ export function classify(
   // mob hitting one of ours — deliberately NOT tracked as our incoming (existing behavior for
   // pets; docs/plans/group-model.md §3.5 defers "what is hitting my group" to a later wave).
   return { kind: 'ignore' }
+}
+
+/**
+ * `classify` AS THE ENGINE ASKS IT — the pure decision above, fed the three live membership sets
+ * off the state object, and charged to the bench's `classify` section when a probe is attached
+ * (foldProbe.ts). Every caller inside the engine goes through here, so the attribution row in the
+ * sub-table is the whole of the engine's attribution cost and not a sample of it.
+ */
+export function verdict(st: EngineState, ev: DamageEvent): Attribution {
+  const p = st.probe
+  if (!p) return classify(ev, st.petNames, st.knownPlayers, st.roster().admitted)
+  p.enter(SEC_CLASSIFY)
+  const at = classify(ev, st.petNames, st.knownPlayers, st.roster().admitted)
+  p.leave()
+  return at
 }
 
 /** The two name keys plus the three membership sets — the shared argument of the two branches
@@ -178,8 +194,11 @@ function routeIncomingDamage(st: EngineState, enc: Encounter, ev: DamageEvent): 
   const attInst = st.world.resolve(ev.attacker, ev.ts)
   const id = attInst.instanceId
   const name = st.world.label(attInst)
+  const p = st.probe
+  if (p) p.enter(SEC_AGGREGATE)
   enc.agg.addInc(id, name, ev)
   st.zoneAgg.addInc(id, name, ev)
+  if (p) p.leave()
   engageHostile(st, enc, attInst, ev.ts)
   // Timeline: an incoming instant lanes under the attacker's skill (its own row).
   st.pushTimeline(enc, {
@@ -209,19 +228,24 @@ function routeOutgoingDamage(st: EngineState, enc: Encounter, ev: DamageEvent, a
   // fact the log printed, not a name-matched guess. Outgoing only — a mob's poison DoT on
   // you is not a proc of ours. Additive: this is a second index over damage already counted,
   // so no total moves.
+  const p = st.probe
   if (ev.dclass === 'poison') {
+    if (p) p.enter(SEC_AGGREGATE)
     enc.agg.procs.addPoisonDamage(ev.skill, ev.amount)
     st.zoneAgg.procs.addPoisonDamage(ev.skill, ev.amount)
+    if (p) p.leave()
   }
   // Resolve the target to an instance. For a same-name ambiguous pet hit the
   // target is the HOSTILE twin (preferCharmed=false picks the hostile instance).
   const tgtInst = st.world.resolve(ev.target, ev.ts)
   const tgtId = tgtInst.instanceId
   const tgtName = st.world.label(tgtInst)
+  if (p) p.enter(SEC_AGGREGATE)
   enc.agg.addOut(src, ev, ambiguous)
   enc.agg.bumpTarget(tgtId, tgtName, ev.amount)
   st.zoneAgg.addOut(src, ev, ambiguous)
   st.zoneAgg.bumpTarget(tgtId, tgtName, ev.amount)
+  if (p) p.leave()
   engageHostile(st, enc, tgtInst, ev.ts)
   // LIVE-name tracking (Task #54): the current fight is named after whatever you're
   // presently swinging at (most recent outgoing target). Finalize switches to the
@@ -262,11 +286,21 @@ function noteStruckEvidence(st: EngineState, ev: DamageEvent, at: Attribution): 
   if (at.kind === 'out-you') st.noteStruck(idKey(ev.target))
 }
 
-export function route(st: EngineState, ev: DamageEvent): void {
-  if (ev.amount <= 0) return
-  const at = classify(ev, st.petNames, st.knownPlayers, st.roster().admitted)
+/**
+ * Fold one landed damage line, and REPORT THE VERDICT IT REACHED (JOS-59).
+ *
+ * The verdict used to be computed twice per damage line: once here, and again inside
+ * `damageAnalytics` a few statements later in ingest.ts — two `idKey` pairs, two roster pulls and
+ * two result objects for one decision that cannot have changed in between (nothing on this path
+ * writes `petNames`, `knownPlayers` or the roster). Returning it is what lets the analytics fold
+ * reuse it; `null` means the line was ignored, which is exactly the case the analytics fold
+ * already returned early on.
+ */
+export function route(st: EngineState, ev: DamageEvent): Attribution | null {
+  if (ev.amount <= 0) return null
+  const at = verdict(st, ev)
   noteStruckEvidence(st, ev, at)
-  if (at.kind === 'ignore') return
+  if (at.kind === 'ignore') return at
 
   // Twin evidence: You→pet-name or same-name→same-name proves a hostile twin
   // co-exists with the pet; ensure the world model has a second instance so the
@@ -295,9 +329,10 @@ export function route(st: EngineState, ev: DamageEvent): void {
 
   if (at.kind === 'incoming') {
     routeIncomingDamage(st, enc, ev)
-    return
+    return at
   }
   routeOutgoingDamage(st, enc, ev, at)
+  return at
 }
 
 /**
@@ -336,8 +371,11 @@ function routeOutgoingMiss(
   // (charmModel.ts corroboration — see routeOutgoingDamage's twin). A MEMBER's whiff proves
   // nothing about charm — they are a player, bound by a group line, not by evidence.
   if (kind === 'pet') st.charm.notePetEvidence(idKey(probe.attacker))
+  const p = st.probe
+  if (p) p.enter(SEC_AGGREGATE)
   enc?.agg.addOutMiss(src, probe.fold)
   st.zoneAgg.addOutMiss(src, probe.fold)
+  if (p) p.leave()
   // Timeline: a miss tick lanes under "Melee" (hollow/red mark in the renderer). The
   // defender goes through defenderLabel() so it matches the INSTANCE label the damage
   // path writes — a raw name made every whiff at a twin pile onto a phantom bare row.
@@ -360,7 +398,7 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     ts, attacker, target, amount: 0, dtype: 'melee', skill: 'Melee', crit: false,
     category: 'melee', modifiers: []
   }
-  const at = classify(probe, st.petNames, st.knownPlayers, st.roster().admitted)
+  const at = verdict(st, probe)
   if (at.kind === 'ignore') return
   const fold = missFold(st, ev, at.kind === 'out-you')
   // A miss doesn't open or extend an encounter (closure is death/CC/fallback driven),
@@ -376,8 +414,11 @@ export function routeMiss(st: EngineState, ev: MissEvent): void {
     const attInst = st.world.resolve(attacker, ts)
     const id = attInst.instanceId
     const name = st.world.label(attInst)
+    const p = st.probe
+    if (p) p.enter(SEC_AGGREGATE)
     enc?.agg.addIncMiss(id, name, fold)
     st.zoneAgg.addIncMiss(id, name, fold)
+    if (p) p.leave()
     // ABSORPTION (Task #59): an incoming swing absorbed by YOUR rune is also a mitigation
     // instant. `incoming` means the defender is YOU (a swing at your pet classifies as
     // 'ignore'), so this can't pick up a pet's or a mob's own rune. It is the SECOND source
@@ -405,8 +446,11 @@ function routeOutgoingResist(
   // Same corroboration as the damage/miss twins: a pet whose spell got resisted was casting
   // for us. A member's resisted cast is not charm evidence (see routeOutgoingMiss).
   if (kind === 'pet') st.charm.notePetEvidence(idKey(cast.caster))
+  const p = st.probe
+  if (p) p.enter(SEC_AGGREGATE)
   enc?.agg.addOutResist(src, cast.spell, cast.category)
   st.zoneAgg.addOutResist(src, cast.spell, cast.category)
+  if (p) p.leave()
   // Same instance resolution as the miss/damage paths (see defenderLabel) — a resisted
   // cast at a twin must land on that twin's per-mob row, not a bare-named ghost.
   const tgtName = enc ? st.defenderLabel(enc, cast.target, cast.ts) : cast.target
@@ -453,8 +497,11 @@ export function routeResist(st: EngineState, ev: ResistEvent): void {
     const attInst = st.world.resolve(caster, ts)
     const id = attInst.instanceId
     const name = st.world.label(attInst)
+    const p = st.probe
+    if (p) p.enter(SEC_AGGREGATE)
     enc?.agg.addIncResist(id, name, spell, category)
     st.zoneAgg.addIncResist(id, name, spell, category)
+    if (p) p.leave()
     if (enc) st.pushTimeline(enc, {
       ts, lane: spell, category, amount: 0, crit: false, kind: 'enemy',
       outcome: 'resist', detail: 'resisted', target: 'You'
@@ -497,6 +544,8 @@ function addFriendlyHeal(st: EngineState, r: HealRouting): void {
   const enc = st.freshEncounter(r.ts)
   const hk = r.healerKey ?? 'unknown'
   const healerName = r.healerName ?? 'Unknown'
+  const p = st.probe
+  if (p) p.enter(SEC_AGGREGATE)
   if (r.heal.amount > 0) {
     enc?.agg.addIncHeal(hk, healerName, r.heal.amount)
     st.zoneAgg.addIncHeal(hk, healerName, r.heal.amount)
@@ -508,6 +557,7 @@ function addFriendlyHeal(st: EngineState, r: HealRouting): void {
   const id = hk === 'you' ? 'you' : `heal:${hk}`
   enc?.agg.heal.addFriendly(id, healerName, kind, r.heal)
   st.zoneAgg.heal.addFriendly(id, healerName, kind, r.heal)
+  if (p) p.leave()
 }
 
 /** Heal on a hostile instance we're currently engaged with → enemy healing. */
@@ -526,6 +576,8 @@ function addHostileHeal(st: EngineState, r: HealRouting): void {
   const inst = st.world.resolve(r.target, r.ts)
   const enc = st.current
   if (enc?.engaged.has(inst.instanceId)) {
+    const p = st.probe
+    if (p) p.enter(SEC_AGGREGATE)
     if (r.heal.amount > 0) {
       enc.agg.addEnemyHeal(inst.instanceId, st.world.label(inst), r.heal.amount)
       st.zoneAgg.addEnemyHeal(inst.instanceId, st.world.label(inst), r.heal.amount)
@@ -535,6 +587,7 @@ function addHostileHeal(st: EngineState, r: HealRouting): void {
     const healerName = r.healerName ?? 'Unknown'
     enc.agg.heal.addHostile(`heal:${hk}`, healerName, r.heal)
     st.zoneAgg.heal.addHostile(`heal:${hk}`, healerName, r.heal)
+    if (p) p.leave()
     // PRESENCE (Task #55): a heal on an engaged hostile proves BOTH ends are still in
     // the fight — the mob receiving it, and (when a second mob cast it) the healer. The
     // real case this came from: "Baron Telyx V`Zher healed Soldier of V`Zher for 175" —
@@ -624,6 +677,8 @@ export function routeHeal(st: EngineState, ev: HealEvent): void {
  */
 export function routeMitigation(st: EngineState, ev: MitigationEvent): void {
   const enc = st.freshEncounter(ev.ts)
+  const p = st.probe
+  if (p) p.enter(SEC_AGGREGATE)
   const apply = (a: { heal: HealAccum }): void => {
     if (ev.mtype === 'rune') {
       // Defensive: the amount is required by the regex, but keep the ledger clean if a future
@@ -634,4 +689,5 @@ export function routeMitigation(st: EngineState, ev: MitigationEvent): void {
   }
   if (enc) apply(enc.agg)
   apply(st.zoneAgg)
+  if (p) p.leave()
 }

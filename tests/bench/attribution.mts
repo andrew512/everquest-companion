@@ -31,7 +31,7 @@
  * and differences the readings, which halves that. Whether even the halved version distorts the
  * fold is not an argument to have — it is arms 3/4/5, printed.
  */
-import { foldFull, foldParseOnly, warmPageCache, type ConsumerCost } from './foldArm.mjs'
+import { foldFull, foldParseOnly, foldSections, warmPageCache, type ConsumerCost, type SectionCost } from './foldArm.mjs'
 
 /** A consumer's row, with the two derived figures the table renders. */
 export interface AttributedConsumer extends ConsumerCost {
@@ -65,6 +65,17 @@ export interface AttributionRun {
   /** True when |timingOverhead| is inside the untimed spread — the run cannot separate them. */
   overheadUnresolved: boolean
   consumers: AttributedConsumer[]
+  /**
+   * WHERE THE COMBAT ENGINE'S OWN MICROSECONDS GO (JOS-59) — its own arm (see foldSections), so
+   * the table above keeps meaning what it meant. `engineMs` is the sum of the sections, i.e. the
+   * whole of `ingestEvent` as measured WITHOUT the registry timer attached; comparing it with the
+   * `combat engine` consumer row is the cross-check that the two instruments agree.
+   */
+  engineSections: SectionCost[]
+  engineMs: number
+  /** That arm's own untimed-equivalent fold time, so the sections have a denominator of their
+   *  own rather than borrowing the timed arm's. */
+  sectionArmMs: number
   /** Fold time no consumer claimed: reading, line splitting, parsing, bus dispatch — and the
    *  instrument itself, which is measured but not attributable to anyone it measures. */
   unattributedMs: number
@@ -88,6 +99,7 @@ export async function runAttribution(character: {
   const untimedA = await foldFull(character, false)
   const timed = await foldFull(character, true)
   const untimedB = await foldFull(character, false)
+  const sectioned = await foldSections(character)
 
   const events = timed.events
   const foldMs = (untimedA.ms + untimedB.ms) / 2
@@ -116,7 +128,10 @@ export async function runAttribution(character: {
         pctOfFold: timed.ms > 0 ? r.totalMs / timed.ms : 0
       }))
       .sort((a, b) => b.totalMs - a.totalMs),
-    unattributedMs: Math.max(0, timed.ms - attributed)
+    unattributedMs: Math.max(0, timed.ms - attributed),
+    engineSections: [...(sectioned.sections ?? [])].sort((a, b) => b.totalMs - a.totalMs),
+    engineMs: (sectioned.sections ?? []).reduce((sum, s) => sum + s.totalMs, 0),
+    sectionArmMs: sectioned.ms
   }
 }
 
@@ -181,6 +196,36 @@ export function printAttribution(run: AttributionRun): void {
     run.overheadUnresolved
       ? `  timing overhead:             ${pct(run.timingOverhead)} — UNRESOLVED: inside the ${pct(run.untimedSpread)} run-to-run spread, so this run cannot separate the instrument from the machine.`
       : `  timing overhead:             ${pct(run.timingOverhead)} of the untimed fold (run-to-run spread ${pct(run.untimedSpread)}).`
+  )
+  console.log('')
+  printEngineSections(run)
+}
+
+/**
+ * THE ENGINE'S OWN SUB-TABLE (JOS-59). Its own arm, so its denominator is that arm's fold and
+ * not the timed one's — the two are different measurements of the same code and printing a share
+ * of the wrong total is exactly the confusion `compareArms` exists to prevent elsewhere.
+ */
+function printEngineSections(run: AttributionRun): void {
+  if (run.engineSections.length === 0) return
+  const us = (ms: number): string => ((ms * 1000) / Math.max(1, run.events)).toFixed(2)
+  console.log(`  ENGINE SUB-ATTRIBUTION — combat/** only, its own arm (no registry timer attached)`)
+  console.log('')
+  console.log(`  ${'section'.padEnd(24)}${'total ms'.padStart(11)}${'us/event'.padStart(11)}${'% of engine'.padStart(13)}`)
+  for (const s of run.engineSections) {
+    const share = run.engineMs > 0 ? s.totalMs / run.engineMs : 0
+    console.log(
+      `  ${s.section.padEnd(24)}${num(Math.round(s.totalMs)).padStart(11)}${us(s.totalMs).padStart(11)}${pct(share).padStart(13)}`
+    )
+  }
+  console.log('  ' + '-'.repeat(59))
+  console.log(
+    `  ${'engine total'.padEnd(24)}${num(Math.round(run.engineMs)).padStart(11)}${us(run.engineMs).padStart(11)}${'100.0%'.padStart(13)}`
+  )
+  console.log('')
+  console.log(
+    `  that arm's whole fold: ${num(Math.round(run.sectionArmMs))} ms — so the engine is ` +
+      `${pct(run.sectionArmMs > 0 ? run.engineMs / run.sectionArmMs : 0)} of it.`
   )
   console.log('')
 }

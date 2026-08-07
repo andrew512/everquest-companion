@@ -38,6 +38,7 @@
  */
 import { createReadStream } from 'node:fs'
 import { CombatEngine } from '../../src/main/combat/engine'
+import { ENGINE_SECTIONS, type EngineFoldProbe } from '../../src/main/combat/foldProbe'
 import { EpochDetector } from '../../src/main/log/epochDetector'
 import { LogBus, type LogBusProbe, type LogEventListener } from '../../src/main/log/bus'
 import { ModuleRegistry, type ModuleDispatchTimer } from '../../src/main/modules/registry'
@@ -61,6 +62,51 @@ export interface ConsumerCost {
   consumer: string
   events: number
   totalMs: number
+}
+
+/** One row of the ENGINE's own sub-table (JOS-59): a section of combat/** and what it cost. */
+export interface SectionCost {
+  section: string
+  totalMs: number
+}
+
+/**
+ * THE ENGINE'S SECTION TIMER (JOS-59) — the bench half of `combat/foldProbe.ts`.
+ *
+ * A STACK, not a flat mark. The engine's work nests (route → resolve → aggregate → ring, with
+ * `classify` re-entered underneath the analytics fold), so time is charged to whichever section
+ * is INNERMOST and released back to its parent on `leave`. The rows are therefore disjoint and
+ * sum to the whole of `ingestEvent`, which is the same number the JOS-55 table's `combat engine`
+ * row reports — the two can be checked against each other, and the printout does.
+ *
+ * ONE clock read per transition, the same economy `ModuleRegistry`'s timed dispatch uses: a
+ * boundary is both an end and a beginning, so reading `performance.now()` once and differencing
+ * it against the previous reading costs half what a naive before/after pair would.
+ */
+class SectionTimer implements EngineFoldProbe {
+  readonly ms: number[] = ENGINE_SECTIONS.map(() => 0)
+  private stack: number[] = []
+  private depth = 0
+  private t0 = 0
+
+  enter(section: number): void {
+    const now = performance.now()
+    if (this.depth > 0) this.ms[this.stack[this.depth - 1]] += now - this.t0
+    this.stack[this.depth++] = section
+    this.t0 = now
+  }
+
+  leave(): void {
+    const now = performance.now()
+    if (this.depth > 0) {
+      this.ms[this.stack[--this.depth]] += now - this.t0
+    }
+    this.t0 = now
+  }
+
+  rows(): SectionCost[] {
+    return ENGINE_SECTIONS.map((section, i) => ({ section, totalMs: this.ms[i] ?? 0 }))
+  }
 }
 
 /**
@@ -170,7 +216,11 @@ class FoldTimer implements ModuleDispatchTimer, LogBusProbe {
  * ever folds a line), then the epoch and offline-gap detectors LAST — the order pipeline.ts and
  * index.ts subscribe them in, which is the order the bus delivers in.
  */
-function buildWorld(character: { name: string; server: string; logPath: string }, timer?: FoldTimer): LogBus {
+function buildWorld(
+  character: { name: string; server: string; logPath: string },
+  timer?: FoldTimer,
+  sections?: SectionTimer
+): { bus: LogBus; combat: CombatEngine } {
   const bus = new LogBus(timer)
   const modules = createModules({
     overlays: [BASELINE],
@@ -191,6 +241,7 @@ function buildWorld(character: { name: string; server: string; logPath: string }
   registry.attach(bus, timer)
 
   const combat = new CombatEngine()
+  if (sections) combat.attachFoldProbe(sections)
   combat.setRoster(modules.roster)
   combat.reset()
   combat.setPlayerName(character.name)
@@ -215,7 +266,27 @@ function buildWorld(character: { name: string; server: string; logPath: string }
   bus.subscribe(timer ? timer.wrap('combat engine', ingest) : ingest)
   bus.subscribe(timer ? timer.wrap('epoch detector', observeEpoch) : observeEpoch)
   bus.subscribe(timer ? timer.wrap('offline-gap detector', observeSession) : observeSession)
-  return bus
+  return { bus, combat }
+}
+
+/**
+ * THE LAW-8 ORACLE'S FOLD (JOS-59): the same world as every arm above, folded once, with the
+ * ENGINE handed back so its snapshots can be read. `engineOracle.mts` is the only caller — the
+ * timing arms deliberately throw the engine away, because a fold that also had to keep a
+ * snapshotable handle alive is not quite the fold the app runs.
+ */
+export async function foldForOracle(character: {
+  name: string
+  server: string
+  logPath: string
+}): Promise<{ combat: CombatEngine; events: number; lastTs: number }> {
+  const { bus, combat } = buildWorld(character)
+  let lastTs = 0
+  bus.subscribe((ev) => {
+    if (ev.ts > lastTs) lastTs = ev.ts
+  })
+  const res = await scanLog(character.logPath, bus, 0, { slicer: unchunkedSlicer() })
+  return { combat, events: res.seq, lastTs }
 }
 
 // ------------------------------------------------------------------------------------- the arms
@@ -226,6 +297,8 @@ export interface FoldResult {
   eventsPerSec: number
   /** Present only on the attributed arm. */
   rows?: ConsumerCost[]
+  /** Present only on the ENGINE-SECTION arm (JOS-59). */
+  sections?: SectionCost[]
 }
 
 const rate = (events: number, ms: number): number => (ms > 0 ? Math.round((events / ms) * 1000) : 0)
@@ -297,7 +370,7 @@ export async function foldFull(
   timed: boolean
 ): Promise<FoldResult> {
   const timer = timed ? new FoldTimer() : undefined
-  const bus = buildWorld(character, timer)
+  const { bus } = buildWorld(character, timer)
   const t0 = performance.now()
   const res = await scanLog(character.logPath, bus, 0, { slicer: unchunkedSlicer() })
   const ms = performance.now() - t0
@@ -307,4 +380,27 @@ export async function foldFull(
     eventsPerSec: rate(res.seq, ms),
     ...(timer ? { rows: timer.rows() } : {})
   }
+}
+
+/**
+ * THE ENGINE-SECTION ARM (JOS-59): the same fold with ONLY the engine's own probe installed —
+ * no per-module dispatch timer.
+ *
+ * ITS OWN ARM RATHER THAN A COLUMN ON THE TIMED ONE, deliberately. The section timer reads the
+ * clock at every boundary inside `ingestEvent`, so installing it beside the registry timer would
+ * inflate the `combat engine` row of the JOS-55 table — the very row this ticket has to quote
+ * before and after. Kept apart, that table means exactly what it meant in JOS-58, and this arm's
+ * numbers are read as SHARES OF THE ENGINE, which is the question it was built to answer.
+ */
+export async function foldSections(character: {
+  name: string
+  server: string
+  logPath: string
+}): Promise<FoldResult> {
+  const sections = new SectionTimer()
+  const { bus } = buildWorld(character, undefined, sections)
+  const t0 = performance.now()
+  const res = await scanLog(character.logPath, bus, 0, { slicer: unchunkedSlicer() })
+  const ms = performance.now() - t0
+  return { events: res.seq, ms, eventsPerSec: rate(res.seq, ms), sections: sections.rows() }
 }

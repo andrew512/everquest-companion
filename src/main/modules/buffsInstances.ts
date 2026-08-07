@@ -444,8 +444,13 @@ export class BuffInstances {
 
   /** Hygiene sweep (Task #33, finding #6): retire any active past its per-spell cap. */
   sweepHygiene(now: number): void {
+    // CALLED ONCE PER EVENT (buffs.ts onEvent), so its cost is paid 1.4M times on a full replay.
+    // It used to SPREAD the active map into a fresh array first — 1.4M throwaway arrays, and the
+    // copy bought nothing: deleting the entry a Map iteration is currently standing on is
+    // well-defined in JS, and this loop deletes nothing else. Everything the loop reads is
+    // unchanged (JOS-59).
     let changed = false
-    for (const [ik, a] of [...this.active]) {
+    for (const [ik, a] of this.active) {
       if (a.provisional) continue
       if (a.permanent) continue
       const sKey = spellKey(a.spell)

@@ -60,6 +60,7 @@
 
 import { EngineState } from './state'
 import { ingestEvent } from './ingest'
+import type { EngineFoldProbe } from './foldProbe'
 import { encSummary, evalClosure, zoneSessionSummaries, zoneSummary } from './lifecycle'
 import { buildSelected, buildTimeline } from './segmentViews'
 import { searchFights } from './fightSearch'
@@ -192,6 +193,17 @@ export class CombatEngine {
   setRoster(access: { view: () => RosterView; snap: () => RosterSnap }): void {
     this.st.rosterProvider = () => access.view()
     this.st.rosterSnapProvider = () => access.snap()
+  }
+
+  /**
+   * THE BENCH'S SUB-ATTRIBUTION SEAM (JOS-59 — see combat/foldProbe.ts for the whole rationale).
+   * A PARAMETER, exactly like `ModuleRegistry.attach(bus, timer)`: `tests/bench/foldArm.mts` is
+   * the only caller in the tree, there is no environment variable, and with no probe attached
+   * every instrumented site is one field read and one untaken branch.
+   */
+  attachFoldProbe(probe: EngineFoldProbe): void {
+    this.st.probe = probe
+    this.st.world.probe = probe
   }
 
   reset(): void {

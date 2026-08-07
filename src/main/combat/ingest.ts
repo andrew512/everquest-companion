@@ -18,7 +18,8 @@
 import { idKey } from '../log/parser'
 import { damageCategory } from './taxonomy'
 import { evalClosure, ensureEncounter, finalizeCurrent, finalizeZoneSession } from './lifecycle'
-import { classify, route, routeHeal, routeMiss, routeMitigation, routeResist } from './routing'
+import { route, routeHeal, routeMiss, routeMitigation, routeResist } from './routing'
+import { SEC_ANALYTICS, SEC_DISPATCH } from './foldProbe'
 import {
   applyStance,
   routeCoat,
@@ -33,6 +34,7 @@ import { CC_HOLD_MS } from './encounter'
 import { Agg, type DamageEvent } from './aggregate'
 import type { WindowFold } from './procWindows'
 import type { EngineState } from './state'
+import type { Attribution } from './routing'
 import type {
   CcEvent,
   CharmEvent,
@@ -297,11 +299,17 @@ interface DamageAnalytics {
   proc: boolean
 }
 
-/** The three judgements, separated from the accumulation so each stays readable. `null` means
- *  "the meter ignored this line", in which case the ledgers must ignore it too. */
-function damageAnalytics(st: EngineState, ev: DamageEvent): DamageAnalytics | null {
+/**
+ * The three judgements, separated from the accumulation so each stays readable. `null` means
+ * "the meter ignored this line", in which case the ledgers must ignore it too.
+ *
+ * `at` is the verdict `route()` ALREADY reached for this line (JOS-59). It used to be
+ * re-derived here, which cost a second pair of `idKey` calls, a second roster pull and a second
+ * result object per damage line for a decision that cannot have changed in between — nothing on
+ * the routing path writes `petNames`, `knownPlayers` or the roster.
+ */
+function damageAnalytics(st: EngineState, ev: DamageEvent, at: Attribution): DamageAnalytics | null {
   if (ev.amount <= 0) return null
-  const at = classify(ev, st.petNames, st.knownPlayers, st.roster().admitted)
   if (at.kind === 'ignore') return null
   // A GROUP MEMBER's hit is not yours, exactly like a pet's: it is not your swing, not your
   // proc, and not your active time. Proc analytics stay strictly first-person (the cast-less
@@ -329,9 +337,11 @@ function foldBoth(st: EngineState, ts: number, fold: (agg: Agg, active: Readonly
   if (enc) fold(enc.agg, active)
 }
 
-function foldDamageAnalytics(st: EngineState, ev: DamageEvent, activeDeltaMs: number): void {
-  const a = damageAnalytics(st, ev)
+function foldDamageAnalytics(st: EngineState, ev: DamageEvent, activeDeltaMs: number, at: Attribution): void {
+  const a = damageAnalytics(st, ev, at)
   if (!a) return
+  const p = st.probe
+  if (p) p.enter(SEC_ANALYTICS)
   const fold: WindowFold = {
     ts: ev.ts,
     activeDeltaMs,
@@ -345,6 +355,7 @@ function foldDamageAnalytics(st: EngineState, ev: DamageEvent, activeDeltaMs: nu
     if (a.swing) agg.procs.addSwing(active)
     if (a.proc) agg.procs.addSpellProc({ spell: ev.skill, amount: ev.amount, isHeal: false, active })
   })
+  if (p) p.leave()
 }
 
 /** A heal with no own cast behind it — the healing half of the same inference (`Lifetap
@@ -356,19 +367,25 @@ function foldHealAnalytics(st: EngineState, ev: HealEvent): void {
   const spell = ev.spell
   if (!spell || idKey(ev.healer ?? '') !== 'you') return
   if (!isCastlessHeal(st.recentCasts, { spell, ts: ev.ts, overTime: ev.overTime === true, quickBuffTs: st.quickBuffTs })) return
+  const p = st.probe
+  if (p) p.enter(SEC_ANALYTICS)
   foldBoth(st, ev.ts, (agg, active) => {
     agg.procs.addSpellProc({ spell, amount: ev.amount, isHeal: true, active })
   })
+  if (p) p.leave()
 }
 
 /** YOUR avoided swing. It is still a swing ATTEMPT, and the mechanical proc denominator is
  *  attempts — a proc that cannot fire on a miss still had the chance to. */
 function foldMissAnalytics(st: EngineState, ev: MissEvent): void {
   if (idKey(ev.attacker) !== 'you') return
+  const p = st.probe
+  if (p) p.enter(SEC_ANALYTICS)
   foldBoth(st, ev.ts, (agg, active) => {
     agg.windows.fold({ ts: ev.ts, swings: 1 }, active)
     agg.procs.addSwing(active)
   })
+  if (p) p.leave()
 }
 
 /**
@@ -408,9 +425,10 @@ function ingestDamage(st: EngineState, ev: DamageEventE): void {
   // contributes 0, which is precisely what routing.ts does for a first hit.
   const encBefore = st.current
   const activeBefore = encBefore?.activeMs ?? 0
-  route(st, dmgEv)
+  const at = route(st, dmgEv)
+  if (at === null) return
   const delta = st.current === encBefore ? (st.current?.activeMs ?? 0) - activeBefore : 0
-  foldDamageAnalytics(st, dmgEv, delta)
+  foldDamageAnalytics(st, dmgEv, delta, at)
 }
 
 /** damage / heal / mitigation / miss / resist. Returns true if consumed. */
@@ -585,6 +603,19 @@ function ingestModifier(st: EngineState, ev: LogEvent): void {
  * mutate state silently; live events are also ring-logged.
  */
 export function ingestEvent(st: EngineState, ev: LogEvent, live: boolean): void {
+  const p = st.probe
+  if (!p) {
+    ingestOne(st, ev, live)
+    return
+  }
+  // The whole body is a separate function so this bracket can be unconditional: `enter`/`leave`
+  // must balance on every path, and the chain below returns from five different places.
+  p.enter(SEC_DISPATCH)
+  ingestOne(st, ev, live)
+  p.leave()
+}
+
+function ingestOne(st: EngineState, ev: LogEvent, live: boolean): void {
   if (live) {
     st.recording = true
     st.hydrating = false
