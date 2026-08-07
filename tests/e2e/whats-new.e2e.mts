@@ -36,7 +36,7 @@ import {
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
-import { RELEASE_NOTES, hasReportedEntry, variantLastSeen } from '../../src/shared/releaseNotes'
+import { RELEASE_NOTES, variantLastSeen } from '../../src/shared/releaseNotes'
 
 const TEASER = '[data-testid="whats-new-teaser"]'
 const PANEL = '[data-testid="whats-new-panel"]'
@@ -51,7 +51,8 @@ const EXPECTED_TAGGED = RELEASE_NOTES.reduce(
   (n, r) => n + r.entries.filter((e) => e.fromReport === true).length,
   0
 )
-const EXPECTED_THANKED = RELEASE_NOTES.filter(hasReportedEntry).length
+// The thanks line renders ONCE at the panel top (owner, 2026-08-07), gated on any release
+// carrying a tagged entry — the check below asserts exactly one line panel-wide.
 /** The state a one-release upgrade leaves behind — exactly what the DEV control's second button
  *  writes, so the hand test and this spec are driving the same configuration. */
 const PREVIOUS = variantLastSeen('previous')
@@ -181,8 +182,8 @@ async function checkBulletsAndThanks(page: Page): Promise<void> {
     total: document.querySelectorAll('[data-testid="whats-new-bullet"]').length,
     tagged: document.querySelectorAll('[data-testid="whats-new-bullet"][data-from-report="true"]').length,
     chips: document.querySelectorAll('[data-testid="whats-new-report-chip"]').length,
-    thanks: document.querySelectorAll('[data-testid^="whats-new-thanks-"]').length,
-    firstThanks: document.querySelector('[data-testid^="whats-new-thanks-"]')?.textContent?.trim() ?? ''
+    thanks: document.querySelectorAll('[data-testid="whats-new-thanks"]').length,
+    firstThanks: document.querySelector('[data-testid="whats-new-thanks"]')?.textContent?.trim() ?? ''
   }))
   check(
     'every entry renders as a BULLET, not a packed sentence',
@@ -195,13 +196,13 @@ async function checkBulletsAndThanks(page: Page): Promise<void> {
     `tagged=${String(seen.tagged)} chips=${String(seen.chips)} expected=${String(EXPECTED_TAGGED)}`
   )
   check(
-    '…and every release carrying one thanks the people who filed them',
-    seen.thanks === EXPECTED_THANKED,
-    `thanksLines=${String(seen.thanks)} expected=${String(EXPECTED_THANKED)}`
+    '…and the panel thanks the people who filed them ONCE, at the top (owner, 2026-08-07)',
+    seen.thanks === 1,
+    `thanksLines=${String(seen.thanks)} expected=1`
   )
   check(
     '…collectively, naming nobody',
-    seen.firstThanks === 'Thanks to everyone who filed reports.',
+    seen.firstThanks === 'Thanks to everyone who filed reports — many of these came from you.',
     `line="${seen.firstThanks}"`
   )
 }

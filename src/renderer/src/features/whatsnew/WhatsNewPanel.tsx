@@ -110,11 +110,8 @@ function EntryGroup({ label, entries }: { label: string | null; entries: readonl
 
 /**
  * One release: its version, its date, a NEW chip when it postdates what this install had seen,
- * a thanks line when any of its bullets came from a player, and its bullets grouped by kind.
- *
- * THE THANKS IS COLLECTIVE AND IT IS PLAIN. One sentence, no names, no counts, no link to a
- * tracker — the people who filed those reports get told the app is better because of them, and
- * nobody's install id or handle appears on a screen every other user can read (JOS-76).
+ * and its bullets grouped by kind. Per-bullet "player report" chips carry the attribution; the
+ * collective thanks line lives ONCE at the top of the panel (owner, 2026-08-07), not here.
  */
 function ReleaseBlock({ note, isNew }: { note: ReleaseNote; isNew: boolean }): JSX.Element {
   const unkinded = note.entries.filter((e) => e.kind === undefined)
@@ -138,16 +135,6 @@ function ReleaseBlock({ note, isNew }: { note: ReleaseNote; isNew: boolean }): J
           />
         )}
       </Stack>
-      {hasReportedEntry(note) && (
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontStyle: 'italic' }}
-          data-testid={`whats-new-thanks-${note.version}`}
-        >
-          Thanks to everyone who filed reports.
-        </Typography>
-      )}
       {KIND_ORDER.map((kind) => {
         const entries = note.entries.filter((e) => e.kind === kind)
         return entries.length === 0 ? null : <EntryGroup key={kind} label={KIND_LABEL[kind]} entries={entries} />
@@ -203,6 +190,20 @@ export function WhatsNewPanel(): JSX.Element {
     // default `min-height: auto` refuses to shrink below its content, so without it the box would
     // grow past the pane and the PAGE would scroll instead of the list (the combat-log lesson).
     <Stack spacing={1.5} data-testid="whats-new-panel" sx={{ flexGrow: 1, minHeight: 0 }}>
+      {/* ONE collective thanks for the whole panel, not one per release (owner, 2026-08-07 —
+          repeating it under six releases read as boilerplate; said once, it reads as meant).
+          Rendered whenever any release carries a player-report bullet, which the chips below
+          then attribute release by release. Still collective, still nameless (JOS-76). */}
+      {RELEASE_NOTES.some(hasReportedEntry) && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ fontStyle: 'italic' }}
+          data-testid="whats-new-thanks"
+        >
+          Thanks to everyone who filed reports — many of these came from you.
+        </Typography>
+      )}
       <Box
         data-testid="whats-new-history"
         sx={{
