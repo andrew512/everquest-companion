@@ -1,4 +1,4 @@
-// THE CURATED ITEM-KNOWLEDGE LAYER, re-derived from the committed corpus (JOS-25).
+// THE CURATED ITEM-KNOWLEDGE LAYER, re-derived from the committed corpus (JOS-25, JOS-64).
 //
 // `src/main/data/itemsResearch.json` is hand-curated and merges OVER the wiki record, which makes
 // it the one file in the item pipeline that can state a wrong answer LOUDLY: a stale entry does
@@ -12,9 +12,19 @@
 //
 // WHAT "CLEARLY MARKED" MEANS, and why it is a test rather than a comment (the awaiting-sample
 // law): an entry is admitted only when the page states a GM hand-out in UNHEDGED words AND names
-// no drop source, quest or recipe anywhere. Five pages in the corpus mention a GM and are absent
-// on purpose; `AMBIGUOUS` below names all five, so re-admitting one is a deliberate edit to this
-// file rather than a silent widening of a regex.
+// no drop source, quest or recipe anywhere. Pages that mention a GM and are absent on purpose are
+// named one by one in `AMBIGUOUS` below with the reason each fails the bar, so re-admitting one is
+// a deliberate edit to this file rather than a silent widening of a regex.
+//
+// JOS-64 (owner ruling, 2026-08-06 — *GM-only and GM-event both mean unfarmable*) admitted three
+// of JOS-25's five refusals, which is why there are now TWO derivations here instead of one. The
+// three were never hedged: they said GM *item* where the sweep's phrasings say GM *event*, and a
+// player can no more farm a GM-only item than a GM-event one. They are filed under `gmOnly` and
+// re-derived from their OWN anchored prose — the `gmEvent` derivation below is untouched, and each
+// table must still equal its own half of the corpus exactly. Two refusals remain, for reasons that
+// are about the FACTS and not about phrasing: `Dabner's Staff of Recall` names a live drop mob (so
+// it is farmable, ruling or no ruling, and stays a DONOR), and `Shield of Hatred` asks a question
+// ("Possibly a GM Event item?") — the layer files no guesses.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -23,6 +33,7 @@ import { itemKey, knowledgeFromDb, type ItemDbEntry, type ItemDbFile } from '../
 import {
   INSTRUMENT_FAMILIES,
   ITEMS_RESEARCH,
+  isUnfarmable,
   type InstrumentFamily
 } from '../src/main/itemsResearch'
 
@@ -49,16 +60,32 @@ const GM_PROSE = [
 ]
 
 /**
- * The five pages that mention a GM and are NOT flagged, with the reason each fails the bar.
- * Named individually so a future sweep cannot quietly absorb one.
+ * The UNHEDGED GM-ONLY phrasings, quoted from the corpus (JOS-64). A separate list from `GM_PROSE`
+ * on purpose: these three pages name no event, and the flag they mint says so. Anchored per shape
+ * for the same reason — `Shield of Hatred` contains "GM Event item" and must match neither list.
+ */
+const GM_ONLY_PROSE = [
+  /This item is a GM item\./i,
+  /GM item occasionally handed out\./i,
+  /(^|\s)GM Only item\./i
+]
+
+/**
+ * The pages that mention a GM and are NOT flagged, with the reason each fails the bar. Named
+ * individually so a future sweep cannot quietly absorb one. JOS-64's ruling emptied this list of
+ * every entry that was refused over PHRASING; what is left is refused over facts.
  */
 const AMBIGUOUS: Record<string, string> = {
-  "dabner's staff of recall": 'carries |gmitem AND a real |dropsfrom mob — a hand-out beside a live drop is not unfarmable',
-  'shield of hatred': 'hedged: "Possibly a GM Event item?"',
-  'da oogly stick': 'says GM item, never GM event',
-  'gnome sandwich': 'says GM item occasionally handed out, never GM event',
-  'stone of gnoming': 'says GM Only item — and that it is SOLD in Sunset Home'
+  "dabner's staff of recall": 'carries |gmitem AND a real |dropsfrom mob — a hand-out beside a live drop is not unfarmable, so it stays a donor',
+  'shield of hatred': 'hedged: "Possibly a GM Event item?" — the layer files no guesses'
 }
+
+/**
+ * The three JOS-64 admitted, and the flag each must now carry. Pinned by name for the same reason
+ * `AMBIGUOUS` is: this is a RULING, and a ruling that quietly evaporates from the data is worse
+ * than one never made.
+ */
+const RULED_UNFARMABLE = ['da oogly stick', 'gnome sandwich', 'stone of gnoming']
 
 /** Does this page state a farm route of any kind? A GM hand-out beside one is not unfarmable. */
 function farmable(e: ItemDbEntry): boolean {
@@ -72,17 +99,31 @@ function farmable(e: ItemDbEntry): boolean {
   )
 }
 
-/** The pages the committed prose clearly marks — the set the layer's `gmEvent` must equal. */
-function derivedGmEvent(): Set<string> {
+/** The pages one prose list clearly marks AND that name no farm route — one table's whole source. */
+function derivedFromProse(prose: RegExp[]): Set<string> {
   const out = new Set<string>()
   for (const e of entries) {
-    const prose = e.summary ?? ''
-    if (!GM_PROSE.some((re) => re.test(prose))) continue
+    const summary = e.summary ?? ''
+    if (!prose.some((re) => re.test(summary))) continue
     if (farmable(e)) continue
     out.add(keyOf(e))
   }
   return out
 }
+
+/** The set the layer's `gmEvent` must equal. */
+const derivedGmEvent = (): Set<string> => derivedFromProse(GM_PROSE)
+
+/** The set the layer's `gmOnly` must equal (JOS-64). */
+const derivedGmOnly = (): Set<string> => derivedFromProse(GM_ONLY_PROSE)
+
+/** Every key the layer calls unfarmable, by either provenance. */
+const filedWith = (pick: (r: (typeof ITEMS_RESEARCH)[string]) => boolean): Set<string> =>
+  new Set(
+    Object.entries(ITEMS_RESEARCH)
+      .filter(([, r]) => pick(r))
+      .map(([k]) => k)
+  )
 
 // ---- the instrument half -------------------------------------------------------------
 
@@ -137,11 +178,7 @@ test('every curated entry names a real item and states its provenance', () => {
 })
 
 test('the GM-event table is exactly what the committed prose clearly marks', () => {
-  const flagged = new Set(
-    Object.entries(ITEMS_RESEARCH)
-      .filter(([, r]) => r.gmEvent === true)
-      .map(([k]) => k)
-  )
+  const flagged = filedWith((r) => r.gmEvent === true)
   const derived = derivedGmEvent()
   console.log('gm-event layer', { flagged: flagged.size, derived: derived.size })
   assert.deepEqual([...flagged].sort(), [...derived].sort())
@@ -161,12 +198,62 @@ test('the GM-event table is exactly what the committed prose clearly marks', () 
   assert.ok(withEffects.length >= 4, `only ${withEffects.length} flagged items carry an effect`)
 })
 
-test('the five hedged GM pages stay OUT, and each is named with its reason', () => {
+test('the GM-only table is exactly the three the ruling admitted, and each is unfarmable', () => {
+  const flagged = filedWith((r) => r.gmOnly === true)
+  const derived = derivedGmOnly()
+  console.log('gm-only layer', { flagged: flagged.size, derived: derived.size })
+
+  // Both directions, like the GM-event half: the corpus's own prose is the whole address list, so
+  // a rescrape that rewrites one of these three pages turns this red instead of leaving a curated
+  // answer winning a merge it can no longer support.
+  assert.deepEqual([...flagged].sort(), [...derived].sort())
+  assert.deepEqual([...flagged].sort(), [...RULED_UNFARMABLE].sort(), 'the JOS-64 ruling is no longer what the data says')
+
+  for (const key of flagged) {
+    const page = pages.get(key)
+    assert.ok(page, key)
+    assert.equal(farmable(page), false, `${key}: flagged GM-only but the page names a farm route`)
+    // The ruling is about DONATION, so a filed entry that no consumer would act on is a dead one.
+    assert.equal(isUnfarmable(ITEMS_RESEARCH[key]), true, `${key}: filed but not read as unfarmable`)
+    assert.equal(ITEMS_RESEARCH[key]?.gmEvent, undefined, `${key}: claims a GM EVENT its page never states`)
+  }
+
+  // The exclusion has to BITE for at least some of them — Da Oogly Stick and Stone of Gnoming both
+  // carry a click illusion, so admitting the three takes real donor rows off the planner's list.
+  const withEffects = [...flagged].filter((k) => (pages.get(k)?.stats?.effects.length ?? 0) > 0)
+  assert.ok(withEffects.length >= 2, `only ${withEffects.length} GM-only items carry an effect`)
+})
+
+test('one verdict reads BOTH provenances, and the two tables never overlap', () => {
+  // `effectIndex.excludedDonor` asks `isUnfarmable` and nothing else about GM provenance, so this
+  // is the assertion that a flag added to the vocabulary reaches the planner at all.
+  const unfarmable = filedWith((r) => isUnfarmable(r))
+  const gmEvent = filedWith((r) => r.gmEvent === true)
+  const gmOnly = filedWith((r) => r.gmOnly === true)
+  assert.deepEqual([...unfarmable].sort(), [...new Set([...gmEvent, ...gmOnly])].sort())
+  assert.equal(gmEvent.size + gmOnly.size, unfarmable.size, 'a page states one GM provenance, not two')
+  for (const [key, entry] of Object.entries(ITEMS_RESEARCH)) {
+    if (!isUnfarmable(entry)) continue
+    assert.ok(entry.note !== undefined && entry.note.length > 0, `${key}: an unfarmable claim with no note`)
+  }
+})
+
+test('the two remaining GM pages stay OUT, and each is named with its reason', () => {
   for (const [key, why] of Object.entries(AMBIGUOUS)) {
     assert.ok(pages.has(key), `${key}: the reject list names a page the corpus does not have`)
     assert.ok(why.length > 0)
-    assert.equal(ITEMS_RESEARCH[key]?.gmEvent, undefined, `${key} was admitted without review: ${why}`)
+    assert.equal(isUnfarmable(ITEMS_RESEARCH[key]), false, `${key} was admitted without review: ${why}`)
   }
+  // Shield of Hatred is pinned by its PROSE, not just by its absence: it is the one page whose
+  // wording sits between the two lists, so neither derivation may ever pick it up.
+  const hatred = pages.get('shield of hatred')
+  assert.ok(hatred)
+  const hatredProse = hatred.summary ?? ''
+  assert.ok(/GM Event item\?/i.test(hatredProse), 'the hedge this refusal rests on is gone from the corpus')
+  assert.ok(!GM_PROSE.some((re) => re.test(hatredProse)), 'a hedged page matched the GM-event prose list')
+  assert.ok(!GM_ONLY_PROSE.some((re) => re.test(hatredProse)), 'a hedged page matched the GM-only prose list')
+  assert.equal(ITEMS_RESEARCH['shield of hatred'], undefined, 'Shield of Hatred is filed at all — the layer files no guesses')
+
   // Dabner's is the one that would have cost a real donor, so it is pinned by its own facts
   // rather than by its absence alone.
   const dabner = pages.get("dabner's staff of recall")
@@ -197,11 +284,12 @@ test('the instrument table is exactly what the committed corpus states, both way
 })
 
 test('an instrument entry never excludes a donor', () => {
-  // The instrument table is a GROUPING fact. `excludedDonor` reads `summoned` / `gmEvent` only,
-  // so filing 47 families must not have quietly taken 47 items off the planner's donor list.
+  // The instrument table is a GROUPING fact. `excludedDonor` reads `summoned` plus the unfarmable
+  // verdict, so filing 47 families must not have quietly taken 47 items off the planner's donor
+  // list — and a bard's horn is exactly the kind of page a widened GM sweep could swallow.
   for (const [key, entry] of Object.entries(ITEMS_RESEARCH)) {
     if (entry.instrument === undefined) continue
-    assert.equal(entry.gmEvent, undefined, `${key}: an instrument entry also claims gmEvent`)
+    assert.equal(isUnfarmable(entry), false, `${key}: an instrument entry also claims a GM provenance`)
     assert.equal(entry.summoned, undefined, `${key}: an instrument entry also claims summoned`)
   }
 })

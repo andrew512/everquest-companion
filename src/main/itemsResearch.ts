@@ -29,15 +29,37 @@
 // grouping axis is what will read it, and the table is filed ahead of it so commissioning that
 // axis stays a UI decision rather than a data one.
 //
-// THE TWO TABLES THE FILE CARRIES TODAY (JOS-25, the non-gated halves of planner-v2 §4):
+// THE THREE TABLES THE FILE CARRIES TODAY (JOS-25 + JOS-64, the non-gated halves of planner-v2 §4):
 //
 //   * gmEvent × 10 — swept out of the item corpus's own `|notes` prose (`summary`) and the
 //     `|gmitem` template param. Every one of the ten states a GM hand-out AND names no drop
 //     source, quest or recipe anywhere on its page, so "unfarmable" is the page's whole story.
-//     Five pages whose prose is hedged or contradicted are DELIBERATELY ABSENT and are listed in
-//     the JOS-25 report — the loudest is `Dabner's Staff of Recall`, which carries `|gmitem` and
-//     a real `|dropsfrom` mob in the same template. A GM hand-out beside a live drop is not
-//     "unfarmable", and flagging it would have deleted a farmable donor.
+//     Five pages whose prose is hedged or contradicted were DELIBERATELY ABSENT at JOS-25 —
+//     the loudest is `Dabner's Staff of Recall`, which carries `|gmitem` and a real `|dropsfrom`
+//     mob in the same template. A GM hand-out beside a live drop is not "unfarmable", and
+//     flagging it would have deleted a farmable donor. It is still a donor today.
+//   * gmOnly × 3 — the OWNER RULING of 2026-08-06 (JOS-64): *GM-only and GM-event both mean
+//     unfarmable.* Three of those five refusals were never hedged at all — they were refused only
+//     for saying GM *item* where the sweep's phrasings say GM *event* (`Da Oogly Stick`:
+//     "This item is a GM item."; `Gnome Sandwich`: "GM item occasionally handed out.";
+//     `Stone of Gnoming`: "GM Only item." — the wiki page adds that it is sold in Sunset Home,
+//     which is the GM zone and not a player vendor). A player cannot execute a plan to obtain any
+//     of the three, which is the only thing the planner's exclusion has ever been about, so they
+//     are filed with the same treatment: verbatim source line, no farm route anywhere on the page,
+//     excluded from the donor index.
+//
+//     WHY A SECOND BOOLEAN RATHER THAN ONE `unfarmable` FLAG. The fields of this file are FACTS AS
+//     A PAGE STATES THEM, never a verdict computed from them (law 1) — "handed out at a GM event"
+//     and "GM-only, never obtainable" are two different sentences from two different pages, and the
+//     tripwire in `tests/itemsResearchLayer.test.mts` re-derives each from its OWN anchored prose.
+//     Collapsing them into one flag would have rewritten ten filed entries to say something their
+//     pages do not, and left the derivation unable to say which shape it matched. The VERDICT lives
+//     in one function instead — `isUnfarmable()` below — so a consumer asks one question, and a
+//     third unfarmable provenance is a change to this file and nowhere else. The merge stays
+//     additive: no existing entry changed, only new keys were added.
+//
+//     `Shield of Hatred` STAYS UNFILED under the same ruling: "Possibly a GM Event item?" is a
+//     question, and the layer files no guesses.
 //   * instrument × 47 — the bard family every instrument page states for itself, in one of two
 //     places: 42 say it in the stats block (`Wind Resonance: 12`, and the older spelling
 //     `Stringed Instrument`), 5 say it in `|focus_effect` (`Brass Resonance 14`, which the scrape
@@ -73,6 +95,8 @@ export interface ItemResearch {
   summoned?: boolean
   /** only ever handed out in a GM event: real, unfarmable, and not a plan a player can execute */
   gmEvent?: boolean
+  /** a GM-only item — no event named, no route at all: same unfarmability, different sentence */
+  gmOnly?: boolean
   /** bard instrument family, for the grouping axis V11 defers until this layer carries it */
   instrument?: InstrumentFamily
   /** why this entry says what it says, in one sentence — for the next reader, not for code */
@@ -88,6 +112,23 @@ export type ItemResearchFile = Record<string, ItemResearch>
 
 /** The committed layer. Tiny (hand-authored), so unlike items.json it is imported freely. */
 export const ITEMS_RESEARCH = itemsResearchJson as ItemResearchFile
+
+/**
+ * Is there NO plan a player can execute to obtain this item? The one verdict read off the curated
+ * provenance flags, and the only thing a consumer should ask (owner ruling, JOS-64: GM-only and
+ * GM-event both mean unfarmable).
+ *
+ * It lives here rather than at the consumer because the flags are a growing vocabulary and the
+ * verdict is not: `effectIndex.ts` asking `gmEvent === true || gmOnly === true` inline would need
+ * editing again the day a third GM phrasing is admitted, and an exclusion that silently forgets a
+ * flag is exactly the failure the planner cannot see (an unfarmable row in a farm plan).
+ *
+ * NOT the same question as "can this donate": `summoned` items are perfectly farmable and still
+ * cannot donate (R7). `excludedDonor` is the union; this is one half of it.
+ */
+export function isUnfarmable(research: ItemResearch | undefined): boolean {
+  return research?.gmEvent === true || research?.gmOnly === true
+}
 
 /**
  * The scraped record with its curated layer attached — the view every consumer should read.
