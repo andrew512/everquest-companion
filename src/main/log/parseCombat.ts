@@ -55,6 +55,21 @@ const DOT_NOCASTER_RE = /^(.+?) has taken (\d+) damage by (.+?)\.(?: \((.+?)\))?
 const HEAL_RE =
   /^(.+?) healed (.+?)( over time)? for (\d+)(?: \((\d+)\))? hit points?(?: by (.+?))?\.(?: \(([A-Za-z][A-Za-z ]*)\))?$/
 
+// ----- Mend (JOS-86): a heal the log ANNOUNCES but never VALUES -----
+// `You mend your wounds and heal some damage.` — the monk skill, 876 lines whole-log, and the
+// only mechanical Mend shape there is (the full partition of all 1,178 "mend" lines is written
+// out above HealUnstatedEvent in shared/logEvents.ts). It carries no number and no target, so it
+// yields a `healUnstated` event rather than a `heal` with a fabricated 0 — see that type's header
+// for why the absence is structural instead of a flag.
+//
+// ANCHORED WHOLE, deliberately. The sentence is a fixed string with no captures, so the regex
+// asserts the entire line rather than sniffing for the word "mend": `a Nisch Mas Mender healed
+// itself for 154 hit points by Symbol of Ryltan.` is a mob's name and belongs to the heal family,
+// and the 99 chat lines that discuss the skill must never reach the ledger.
+const MEND_RE = /^You mend your wounds and heal some damage\.$/
+/** The skill behind MEND_RE. Named here so the ledger lane and the parser can never disagree. */
+const MEND_SKILL = 'Mend'
+
 // ----- absorption / mitigation (Task #59) — damage PREVENTED, never hit points restored -----
 // Three VERIFIED self-form families (see MitigationEvent in shared/logEvents.ts for the counts):
 //   `You gain a rune for 12 points of absorption.`                       → 'rune' (has an amount)
@@ -450,8 +465,13 @@ export function classifyDamage(c: ClassifyCtx): LogEvent | null {
   return null
 }
 
-/** Heals (NEW). */
+/** Heals (NEW), plus the one heal family that states no amount (JOS-86). */
 export function classifyHeal({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  // Cheapest discriminator first, and it is disjoint from ' healed ' by construction — the mend
+  // sentence contains "heal some damage", never the past participle the HEAL_RE family uses.
+  if (text.startsWith('You mend') && MEND_RE.test(text)) {
+    return { kind: 'healUnstated', seq, ts, raw, skill: MEND_SKILL, target: 'You' }
+  }
   if (text.includes(' healed ')) {
     const m = HEAL_RE.exec(text)
     if (m) {

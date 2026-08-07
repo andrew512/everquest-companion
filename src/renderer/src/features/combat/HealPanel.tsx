@@ -23,13 +23,16 @@ import { Bar, QuietNote } from './combatShared'
 import {
   hasAbsorbCounts,
   healPanel,
+  healerAmount,
   healerStat,
   healerTitle,
   isAbsorbLane,
+  isUnstatedLane,
+  laneAmount,
   spellStat,
   spellTitle
 } from './healRows'
-import { formatNum as fmt, formatHealRate } from '../../lib/formatRate'
+import { formatNum as fmt } from '../../lib/formatRate'
 import { scopeHealing } from './meterScope'
 import type { Drill } from './dashboardData'
 import type { HealSourceView, HealSpellView, HealingView, MitigationView } from '@shared/combat'
@@ -82,7 +85,7 @@ function HealerBar({
               )}
             </>
           }
-          right={`${formatHealRate(h.hps)} · ${fmt(h.total)}`}
+          right={healerAmount(h)}
         />
       </Box>
     </Tooltip>
@@ -118,12 +121,21 @@ function SpellBar({ s, healerKind }: { s: HealSpellView; healerKind: string }): 
                   ·absorbed
                 </Typography>
               )}
+              {/* Same convention for the third classification: a heal the log announced without
+                  an amount (Mend). The suffix is what stops the ZERO-length bar beside it from
+                  reading as a heal that did nothing. */}
+              {isUnstatedLane(s) && (
+                <Typography component="span" variant="caption" sx={{ color: 'text.secondary', fontWeight: 400 }}>
+                  {' '}
+                  ·unvalued
+                </Typography>
+              )}
               <Typography component="span" variant="caption" sx={{ ml: 0.75, color: 'text.secondary', fontWeight: 400 }}>
                 {spellStat(s)}
               </Typography>
             </>
           }
-          right={fmt(s.total)}
+          right={laneAmount(s)}
         />
       </Box>
     </Tooltip>

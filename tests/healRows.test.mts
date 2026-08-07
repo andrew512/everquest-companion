@@ -21,19 +21,30 @@
 //   4. the count-only absorption families (absorbed swings, damage shields) carry no amount, so
 //      they are never a bar and never in a total.
 //   5. counter-healing (enemies healed) is an ANNOTATION and never enters the healer ranking.
+//   6. an UNSTATED lane (JOS-86 — Mend, whose line carries no number) never prints a figure it
+//      does not have. Its `total` is 0 because no amount exists, so every string that would
+//      render that 0 as a measurement — a range, an average, "0 effective" — is replaced by the
+//      reason there is no number. This is rule 3's twin: rule 3 stops a number meaning more than
+//      it does, rule 6 stops an ABSENCE being read as a number.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   ABSORB_NOTE,
+  NO_AMOUNT_MARK,
+  UNSTATED_AMOUNT,
+  UNSTATED_NOTE,
   hasAbsorbCounts,
   healPanel,
   healRange,
   healTotalTitle,
+  healerAmount,
   healerStat,
   healerTitle,
   isAbsorbLane,
+  isUnstatedLane,
+  laneAmount,
   spellStat,
   spellTitle
 } from '../src/renderer/src/features/combat/healRows'
@@ -69,6 +80,7 @@ function healer(id: string, over: Partial<HealSourceView> = {}): HealSourceView 
     hps: 0,
     pct: 0,
     count: 0,
+    unstatedCount: 0,
     crits: 0,
     critPct: 0,
     max: 0,
@@ -244,6 +256,70 @@ test('the headline title states the restored/absorbed split only when there is o
 
 test('a lane the log named no spell for is LABELED, never folded into a real spell', () => {
   assert.match(spellTitle(lane('Unspecified', { total: 12, count: 3, max: 5 })), /the log named no spell/)
+})
+
+// ── the UNSTATED lane (JOS-86 — Mend) ──────────────────────────────────────────────────
+//
+// The whole line is `You mend your wounds and heal some damage.` Hit points went back on the
+// bar and the game will not say how many, so the lane's 0 is the ABSENCE of a measurement. Every
+// assertion below exists to stop that 0 being rendered as one.
+
+/** The lane the model builds for Mend: a count, and every size field at its empty value. */
+const MEND = lane('Mend', { total: 0, count: 3, max: 0, classification: 'unstated' })
+
+test('an unstated lane prints its COUNT and the reason there is no amount — never a 0', () => {
+  assert.equal(isUnstatedLane(MEND), true)
+  assert.equal(isAbsorbLane(MEND), false, 'unstated and absorbed are different claims')
+  const stat = spellStat(MEND)
+  assert.match(stat, /3x/, 'the count is the one real figure the lane has')
+  assert.match(stat, new RegExp(UNSTATED_AMOUNT))
+  // `healRange(undefined, 0)` is the string '0' — the exact rendering this lane must not produce,
+  // because "Mend · 0" reads as a heal that restored nothing.
+  assert.doesNotMatch(stat, /\b0\b/, 'an unstated lane printed a 0 as though it were an amount')
+  assert.doesNotMatch(stat, /over\b/, 'an unstated heal cannot have an overheal')
+  assert.doesNotMatch(stat, /granted/, 'an unstated heal is not absorption')
+})
+
+test('an unstated lane derives NOTHING — no average, no range, no "0 effective"', () => {
+  const title = spellTitle(MEND)
+  assert.match(title, /Mend/)
+  assert.match(title, /used 3x/)
+  assert.match(title, new RegExp(UNSTATED_NOTE.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.doesNotMatch(title, /avg/, 'an average over a number that does not exist')
+  assert.doesNotMatch(title, /effective/, 'an unstated lane claimed an effective amount')
+  assert.doesNotMatch(title, /range|always/, 'an unstated lane claimed a size range')
+  assert.doesNotMatch(title, /overheal/, 'an unstated lane claimed an overheal')
+})
+
+test('an unvalued heal is counted BESIDE the row stats, never inside their denominator', () => {
+  // A row whose only sustain was Mend: without `unstatedCount` this reads as a bare name with
+  // nothing after it, which is how the meter looked in the report that opened JOS-86.
+  const mendOnly = healer('you', { name: 'You', unstatedCount: 2, spells: [MEND] })
+  // Asserted WHOLE, not by match: the bare `2x` this row must never print is a prefix of the
+  // `2x unvalued` it must, so only the exact string can tell the two apart.
+  assert.equal(healerStat(mendOnly), '2x unvalued')
+  // …and the right end of the bar, which is the LAST place a 0 could still get through.
+  assert.equal(healerAmount(mendOnly), NO_AMOUNT_MARK)
+  assert.match(healerTitle(mendOnly), new RegExp(UNSTATED_NOTE.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+  // …and on a MIXED row it never touches the figures beside it: SELF's 4 heals / 25% crit are
+  // computed over VALUED lines only, and adding two Mends must not move either.
+  const mixed = healer('you', { ...SELF, unstatedCount: 2 })
+  const mixedStat = healerStat(mixed)
+  assert.match(mixedStat, /4x/, 'the valued heal count moved when a Mend was added')
+  assert.match(mixedStat, /25% crit/, 'the crit rate was diluted by a line that cannot crit')
+  assert.match(mixedStat, /2x unvalued/)
+  // A row that DOES have valued sustain keeps printing it — the mark is for rows that have none.
+  assert.match(healerAmount(mixed), /1.4k/)
+})
+
+test('the bar’s right end shows a MARK, not a 0, where the log printed no number', () => {
+  assert.equal(laneAmount(MEND), NO_AMOUNT_MARK)
+  assert.notEqual(NO_AMOUNT_MARK, '0')
+  // Every other lane is unaffected — including a genuinely 0-total RESTORED lane (a heal that
+  // landed entirely on a full health bar), which really did measure zero and must still say so.
+  assert.equal(laneAmount(lane('Rune', { total: 400, classification: 'absorbed' })), '400')
+  assert.equal(laneAmount(lane('Healing', { total: 0, count: 2, classification: 'restored' })), '0')
 })
 
 // ── the one-builder pin ────────────────────────────────────────────────────────────────

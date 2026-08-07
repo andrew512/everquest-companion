@@ -732,6 +732,43 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   melee skill and a spell. The per-CATEGORY drill separates them exactly and
   every category total is unaffected; `tests/combatSmiteLane.test.mts` W54
   pins the collision on real bytes rather than hiding it.
+- **A HEAL THE LOG ANNOUNCES BUT NEVER VALUES GETS A LANE THAT CARRIES A COUNT
+  AND NO NUMBER** (JOS-86 — the monk's Mend). `You mend your wounds and heal
+  some damage.` is the whole sentence: no amount, no target, no third-person
+  twin. The user report ("Mend does not appear in the healing logs", v0.10.0)
+  reads like the Cleave/Smite shape and is its INVERSE — those were always
+  counted and merely lacked a row; Mend was never parsed at all, because every
+  heal path in the model is built around a number. WHOLE-LOG PARTITION, and it
+  is exact: of 1,178 case-insensitive `mend` lines, **876** are that sentence,
+  200 are `You have become better at Mend! (N)`, 1 is the ability grant, 2 are a
+  mob named `a Nisch Mas Mender`, and 99 are third-party chat. So FIRST PERSON
+  ONLY, no failure shape, no refusal shape, no amount anywhere — do not invent
+  an arm the game has never printed. THE FIX IS A KIND, NOT A FLAG: a `heal`
+  with `amount: 0` would have been a lie with a long tail (the ledger files a
+  tick that "landed on a full health bar", the row's `min` collapses to 0, and
+  `foldHealAnalytics` enters a 0-damage "Mend proc"), so it is `healUnstated`
+  with **no amount field at all** and a third `HealClassification`, `'unstated'`,
+  whose 0 means "no measurement exists" and never "the measurement was zero".
+  It enters NO sum — row total, view total, hps, overheal, `count` — and rides
+  its own `HealSourceView.unstatedCount` so the crit and overheal rates beside
+  it keep their VALUED denominator. Every string that would render that 0 as a
+  figure is replaced by the reason there isn't one (`laneAmount`/`healerAmount`
+  print an em dash, never `fmt(0)`); a genuinely 0-total *restored* lane still
+  prints 0, because that one really did measure zero. This is the rune lane's
+  treatment for the opposite reason — a rune is an amount attached to something
+  that never touched a health bar, a Mend is a health bar with no amount — and
+  the `magical skin absorbs` families' treatment for the identical one. THE
+  GOLDEN IS THE OWNER'S OWN BYTES, nothing injected: he mended 876 times, so
+  the reporter's slice never had to become a fixture (W55
+  `w39-spellblade-switch.log`, the lane beside three valued lanes; W56
+  `w47-special-dragon-punch.log`, a Mend alone SYNTHESIZING the self row the
+  way an out-of-combat rune already did). LAW 8 GATE over every committed
+  fixture, healing view diffed line-for-line: **every difference was an
+  ADDITION** — not one total, count, min/max, overheal, pct, hps, enemy row or
+  damage figure moved. A 0-total lane cannot move `rankLanes`' denominator
+  (`Math.max(1, …totals)`), which is why the existing bar fills are identical
+  too. One fixture (`e2e-combat.log`) shows no lane and that is correct: its
+  Mend precedes two zone lines, so it lands in a FINALIZED zone session (law 7).
 - **SPECIAL ATTACKS PRINT NO VERB OF THEIR OWN.** A Dragon Punch, an Eagle
   Strike and a Tiger Claw ALL land as `You strike …`; Round Kick and Flying
   Kick land as `You kick …`. The game names the live one exactly once, in
