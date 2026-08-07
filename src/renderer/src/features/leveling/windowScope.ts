@@ -1,0 +1,138 @@
+// windowScope.ts — WHICH STRETCH OF THE LOG the Leveling tab's numbers describe (JOS-75).
+//
+// JOS-71 gave the two plots a timescale; it moved the CURVES and nothing else, so a user who
+// picked `1h` got an hour-wide chart sitting above a rate measured over the whole log. This
+// module is the seam that fixes that: one scope, computed once, read by every number on the tab.
+//
+// Pure. No React, no DOM, no MUI. The one VALUE import is relative
+// (`../../../../shared/progressionStats`) rather than `@shared/*`, because the node test runner
+// has no such alias — the overviewLevelingData.ts precedent, and the reason
+// tests/levelingWindowScope.test.mts can import this file straight under tsx.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// THE THREE RULES
+//
+//   1. ONE DERIVATION, NEVER A SECOND RATE MATH. The scope's numbers are `rangeStats` — the
+//      same pure query the drag-select panel has always used, over a different pair of
+//      instants. Nothing here divides anything by anything; a second implementation of
+//      "levels per active hour" is exactly the drift this seam exists to prevent.
+//
+//   2. THE SCOPE IS THE WINDOW ∩ THE RECORD. The DRAWN window is not the stats window: every
+//      scale carries a trailing pad (chartWindow.ts `TRAILING_FRAC`) and a fixed one snaps both
+//      ends OUTWARD to the bucket grid, so the drawn `t1` sits past the newest event on purpose
+//      — that gutter is what makes the current level read as a plateau instead of a bare
+//      endpoint. Counting it as time would hand every window a slab of manufactured silence at
+//      its right edge. So the scope clamps to `dataBounds`, and the consequence is the identity
+//      this module is pinned on: at `All` the scope is EXACTLY `[lo, hi]`, which is the range a
+//      full-history read has always meant.
+//
+//   3. A SELECTION IS A NARROWER RANGE ON THE SAME BASE, AND IT WINS. A committed drag is the
+//      user saying something more specific than the timescale did, so while one exists every
+//      number follows IT — and `useChartSelection` already drops a selection the new window
+//      cannot contain, so the two can never describe disjoint stretches. Clearing it falls back
+//      to the window with no other state involved: the scope is a function of (snapshot,
+//      window, bounds, selection), never a thing anybody stores.
+
+import type { ProgressionSnap } from '@shared/types'
+import type { ComboSource, RangeStats } from '@shared/progressionStats'
+import { rangeStats } from '../../../../shared/progressionStats'
+import { TIMESCALES, type TimescaleId } from './chartWindow'
+import type { DataBounds } from './zoneBands'
+
+/** A half-open pair of instants. Structurally what `rangeStats` and `ChartScale` both carry. */
+export interface ScopeRange {
+  t0: number
+  t1: number
+}
+
+/** Which of the two things a user can ask for produced these numbers. */
+export type ScopeKind = 'window' | 'selection'
+
+export interface ScopedStats {
+  kind: ScopeKind
+  /**
+   * How the scope is WORDED wherever a number has to say which stretch it covers. One spelling
+   * per scope, so the AA pace caption and the range panel can never describe the same instants
+   * differently — the mistake `HEADLINE_WINDOW_LABEL` exists to prevent on the Overview card.
+   */
+  label: string
+  /** The instants the numbers cover — always `stats.t0`/`stats.t1`, restated for callers that
+   *  need the range without the whole answer (the progress feed filters on it). */
+  range: ScopeRange
+  stats: RangeStats
+}
+
+/** How a committed drag is worded. It names the gesture's result, not the gesture. */
+export const SELECTION_LABEL = 'the selected range'
+
+/**
+ * How a timescale is worded on a number that covers it: `All` is the whole log, every other
+ * rung is "last <its own button label> of the log".
+ *
+ * Derived from the button the user pressed rather than spelled out a second time — a scale
+ * whose label and whose caption could disagree is a scale nobody can trust.
+ */
+export function timescaleLabel(id: TimescaleId): string {
+  const scale = TIMESCALES.find((s) => s.id === id)
+  if (!scale || scale.ms === 0) return 'the whole log'
+  return `last ${scale.label} of the log`
+}
+
+/**
+ * THE RECORD'S NEWEST INSTANT IS INSIDE EVERY SCOPE.
+ *
+ * `rangeStats` ranges are half-open `[t0, t1)`, which is the right semantics for a band dragged
+ * with a cursor — the instant under the pointer belongs to whatever is to its right. For a
+ * WINDOW it is off by one event: the newest kill, gain line or ding in the log is stamped at
+ * `bounds.hi` EXACTLY, so an end at `hi` leaves the last thing that happened out of totals whose
+ * chart is plainly drawing it. MEASURED as a real off-by-one while writing
+ * tests/levelingWindowScope.test.mts, not reasoned about afterwards. So a scope ends one
+ * millisecond past the record; EQ stamps whole seconds, so nothing but the events already at
+ * `hi` can live in that millisecond, and no duration a user reads is moved by it.
+ */
+const TAIL_MS = 1
+
+/**
+ * The stretch of the RECORD a drawn window covers — rule 2 in the header.
+ *
+ * Both ends clamp: the right one drops the trailing gutter (and any outward bucket snap past
+ * the newest event), the left one drops an outward snap that reached back before the first.
+ * At `All` both clamps are no-ops apart from `TAIL_MS`, which is the identity the tests pin.
+ */
+export function statsRangeFor(win: ScopeRange, bounds: DataBounds): ScopeRange {
+  // WHOLE MILLISECONDS. A drawn edge can be fractional — the trailing pad is a FRACTION of the
+  // span, so a one-instant record draws a window 0.04 ms wide — and a duration of 0.04 ms is
+  // noise in every rate derived from it. Outward at both ends, so rounding never clips an event.
+  const t0 = Math.floor(Math.max(win.t0, bounds.lo))
+  return { t0, t1: Math.max(t0, Math.min(Math.ceil(win.t1), bounds.hi + TAIL_MS)) }
+}
+
+export interface ScopeArgs {
+  snap: ProgressionSnap
+  /** The DRAWN window — the `ChartScale` both plots read (chartWindow.ts `windowFor`). */
+  win: ScopeRange
+  /** Where the record actually starts and ends (zoneBands.ts `dataBounds`). */
+  bounds: DataBounds
+  /** Which timescale produced `win`. It supplies the WORDING and never the arithmetic. */
+  id: TimescaleId
+  /** A committed drag, or null. Present ⇒ it wins (rule 3). */
+  selection: ScopeRange | null
+  /** The optional class-combo seam `rangeStats` declares. Absent ⇒ `combos: []`. */
+  combo?: ComboSource
+}
+
+/**
+ * The tab's ONE scope: the range in force, what to call it, and everything `rangeStats` says
+ * about it. Exactly one query runs — the losing candidate is never computed, so widening the
+ * dashboard's scope-awareness cost the view a `rangeStats` call rather than adding one.
+ */
+export function scopedStats(args: ScopeArgs): ScopedStats {
+  const { snap, win, bounds, id, selection, combo } = args
+  const range = selection ?? statsRangeFor(win, bounds)
+  return {
+    kind: selection ? 'selection' : 'window',
+    label: selection ? SELECTION_LABEL : timescaleLabel(id),
+    range,
+    stats: rangeStats({ snap, range, combo })
+  }
+}

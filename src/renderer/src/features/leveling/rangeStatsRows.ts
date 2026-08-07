@@ -163,9 +163,22 @@ function killsSub(stats: RangeStats): string {
   return stats.killsPet > 0 ? `${mine} · ${stats.killsPet} pet (inferred)` : mine
 }
 
+/**
+ * THE ACTIVE SPAN A RATE WAS MEASURED OVER, in the words this feature already used for it.
+ *
+ * Exported because it is the honesty rule for every windowed rate on the tab (JOS-75), not just
+ * this panel's: a levels-per-hour or an AA-per-hour over a window the character barely played
+ * is a real measurement of a very small sample, and the only thing that separates it from a
+ * confident claim is saying how much play it is over. One spelling, so the range panel and the
+ * AA pace caption can never describe the same denominator differently.
+ */
+export function activeSpanText(activeMs: number): string {
+  return `over ${fmtDuration(activeMs)} active`
+}
+
 /** The levels-per-hour card's caption — including WHY it is an em-dash when it is. */
 function rateSub(stats: RangeStats): string {
-  if (stats.levelsPerHourActive != null) return `over ${fmtDuration(stats.activeMs)} active`
+  if (stats.levelsPerHourActive != null) return activeSpanText(stats.activeMs)
   if (stats.expSamples > 0) return 'the log stated no percentage in this range'
   return 'no active time in this range'
 }

@@ -7,25 +7,30 @@
  * single-instance lock and points `userData` at a throwaway temp dir, so this runs invisibly
  * beside the user's game and dev app.
  *
- * WHY `userData` IS WIPED FIRST: the headline assertion is that the range-stats panel does NOT
- * exist until a selection does. Nothing about a selection is persisted today (the plan defers
- * that deliberately, §9), but a fresh dir is what makes "before any selection" mean the same
- * thing on every machine and after every earlier spec — which is what a per-launch userData dir
- * now guarantees for free.
+ * WHY `userData` IS WIPED FIRST: several assertions here are about the state the tab comes up
+ * in. Nothing about a selection or a timescale is persisted today (both are session-lifetime
+ * component state, deliberately), but a fresh dir is what makes "before any interaction" mean
+ * the same thing on every machine and after every earlier spec — which is what a per-launch
+ * userData dir now guarantees for free.
  *
  * WHAT IT ASSERTS, against whatever the real log holds right now:
  *   1. the nav row mounts the view (or the no-logs empty state honestly explains why not);
  *   2. a chart is drawn, and the ZONE-BAND STRIP is mounted inside it with real bands;
- *   3. NO range-stats panel exists before a selection — the plan's §6.4 "only when sel != null";
- *   4. a real pointer DRAG across the chart commits a range, and the panel then mounts WITH
- *      rows (hero cards + at least one per-zone row — `Σ zones[].spanMs == durationMs` means a
- *      committed range always covers at least one zone row, even if it is the `unknown` one);
- *   5. a CLICK (under `DRAG_THRESHOLD_PX`) dismisses it again — the panel is selection-scoped,
- *      not sticky;
+ *   3. the range-stats panel is mounted with the view and scoped to the TIMESCALE'S WINDOW
+ *      (JOS-75 — it used to exist only while a drag did);
+ *   4. a real pointer DRAG across the chart narrows that scope to the selection, and the panel
+ *      re-derives WITH rows (hero cards + at least one per-zone row — `Σ zones[].spanMs ==
+ *      durationMs` means a committed range always covers at least one zone row, even if it is
+ *      the `unknown` one);
+ *   5. a CLICK (under `DRAG_THRESHOLD_PX`) drops the selection and the panel FALLS BACK to the
+ *      window, restoring exactly the numbers it had before the drag — the precedence contract;
  *   5b. the TIMESCALE control (JOS-71) offers only the windows this log can fill, and picking one
  *      replaces the whole time base: the strip re-cuts itself and stays inside its plot, the
  *      hover still resolves a cursor, a drag still commits a range and a click still dismisses it,
  *      and `All` restores the exact window it started on;
+ *   5c. and (JOS-75) the DASHBOARD NUMBERS move with it — the range panel's stated stretch, its
+ *      readouts and the AA pace panel all re-derive on a window change, dominate correctly
+ *      (a window inside another can never count more), and come back BYTE-IDENTICAL at `All`;
  *   6. the "New at this level" panel is mounted with its stepper — and, once the combo module
  *      has resolved a loadout, draws real unlock rows for it (floors, never today's counts);
  *   7. the tab never scrolls the page, and there are no renderer console errors.
@@ -71,6 +76,9 @@ const BANDS = '[data-testid="leveling-zone-bands"]'
 const BAND = '[data-testid="leveling-zone-band"]'
 const LEGEND_ROW = '[data-testid="leveling-zone-legend-row"]'
 const PANEL = '[data-testid="leveling-range-stats"]'
+/** The panel's stated stretch — the two instants its numbers cover (JOS-75). */
+const PANEL_RANGE = '[data-testid="leveling-range-window"]'
+const AA_PACE = '[data-testid="leveling-aa-pace"]'
 const NEW_AT_LEVEL = '[data-testid="new-at-level"]'
 const LEVEL_VALUE = '[data-testid="new-at-level-value"]'
 const LEVEL_NEXT = '[data-testid="new-at-level-next"]'
@@ -181,14 +189,47 @@ function bandSignature(page: Page): Promise<string> {
   , BAND)
 }
 
-/** A press-and-release with NO travel — the click gesture, which is the dismissal. */
+/**
+ * WHICH SCOPE the range-stats panel is showing — `window`, `selection`, or '' when the panel
+ * is not mounted at all. The `data-scope` attribute is the view's own answer, so this reads the
+ * precedence contract (JOS-75) rather than inferring it from which numbers happen to be there.
+ */
+function scopeOf(page: Page): Promise<string> {
+  return page.evaluate((s) => document.querySelector(s)?.getAttribute('data-scope') ?? '', PANEL)
+}
+
+/**
+ * THE DASHBOARD READOUT: every windowed number on the tab, as one comparable string.
+ *
+ * The range panel (its stated stretch, the four hero cards, the chip row and the per-zone table)
+ * plus the AA pace panel — i.e. exactly the surfaces JOS-75 bound to the scope. Comparing the
+ * whole thing is what makes "All restores the originals" an assertion about the DASHBOARD and
+ * not about one lucky number.
+ */
+async function dashboardReadout(page: Page): Promise<string> {
+  const parts = await page.evaluate(
+    (sels) => sels.map((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? ''),
+    [PANEL, AA_PACE]
+  )
+  return parts.join(' ¦ ').replace(/\s+/g, ' ').trim()
+}
+
+/** Credited kills as the panel's second hero card states them; null when it is not drawn. */
+function killsShown(page: Page): Promise<number | null> {
+  return page
+    .evaluate((s) => (Array.from(document.querySelectorAll(s))[1] as HTMLElement | undefined)?.innerText ?? '', HERO)
+    .then((t) => numIn(t))
+}
+
+/** A press-and-release with NO travel — the click gesture, which drops a committed selection. */
 async function clickChart(page: Page, sel: string): Promise<void> {
   await hoverAt(page, sel, 0.5, 0.5)
   await page.mouse.down()
   await page.mouse.up()
-  // The dismissal's own condition: the panel leaves. A committed selection unmounting IS the
-  // gesture's whole observable effect, so waiting for it is waiting for the thing under test.
-  await settleGone(page, PANEL, { timeoutMs: 8_000 })
+  // The dismissal's own condition: the panel falls back to the WINDOW scope. Since JOS-75 the
+  // panel does not unmount — dropping the selection is the whole observable effect, so waiting
+  // for the scope to flip is waiting for the thing under test.
+  await settle(() => scopeOf(page), (s) => s !== 'selection', { timeoutMs: 8_000 })
 }
 
 // ── the run ───────────────────────────────────────────────────────────────────────────
@@ -277,22 +318,36 @@ async function stepBands(page: Page): Promise<void> {
 }
 
 /**
- * 4 + 5. THE PANEL IS SELECTION-SCOPED — the headline of this spec.
+ * 3 + 4 + 5. THE PRECEDENCE CONTRACT — the headline of this spec since JOS-75.
  *
- * Absent before any selection, present WITH ROWS after a real drag, absent again after the click
- * that dismisses it. Stated as one step because the three readings are only meaningful together:
- * a panel that is always mounted passes the second reading alone.
+ * The panel is mounted with the view, scoped to the TIMESCALE'S WINDOW. A real drag NARROWS it
+ * to the selection — same panel, same derivation, different instants — and the click that drops
+ * the selection puts it back on the window with EXACTLY the numbers it had before. Stated as one
+ * step because the three readings are only meaningful together: a panel that never changed scope
+ * would pass any one of them alone.
+ *
+ * The restore is asserted on the WHOLE dashboard readout, not just the panel: the AA pace tiles
+ * read the same scope, so a drag that moved them and a clear that did not put them back would be
+ * the same defect one surface further along.
  */
 async function stepSelection(page: Page, chart: string): Promise<void> {
-  check(
-    'NO range-stats panel exists before a selection (it mounts only when one does)',
-    (await countOf(page, PANEL)) === 0,
-    `${String(await countOf(page, PANEL))} panel(s)`
-  )
+  if (
+    !check(
+      'the range-stats panel is mounted with the view, scoped to the timescale window',
+      (await countOf(page, PANEL)) === 1 && (await scopeOf(page)) === 'window',
+      `${String(await countOf(page, PANEL))} panel(s), scope "${await scopeOf(page)}"`
+    )
+  ) {
+    return
+  }
+  const windowReadout = await dashboardReadout(page)
+  const windowKills = await killsShown(page)
 
   if (!check('the chart is reachable for a drag', await dragRange(page, chart))) return
-  const appeared = await until(async () => (await countOf(page, PANEL)) > 0, 8000)
-  if (!check('dragging a range across the chart mounts the range-stats panel', appeared)) return
+  const narrowed = await settle(() => scopeOf(page), (s) => s === 'selection', { timeoutMs: 8000 })
+  if (!check('dragging a range across the chart narrows the panel to the selection', narrowed === 'selection', narrowed)) {
+    return
+  }
 
   // WITH ROWS: the four hero cards, and at least one per-zone row. The zone table is never
   // legitimately empty for a committed range — `Σ zones[].spanMs == durationMs` (plan §4) means
@@ -302,11 +357,65 @@ async function stepSelection(page: Page, chart: string): Promise<void> {
   check('…with its hero stats', heroes > 0, `${String(heroes)} hero cards`)
   check('…and at least one per-zone row (a committed range is always fully covered by zones)', zones > 0, `${String(zones)} zone rows`)
 
+  // A selection is a NARROWER range on the same base, so it can never count more than the window
+  // that contains it. An identity, not today's number.
+  const selKills = await killsShown(page)
+  check(
+    'a selection inside the window can never count MORE kills than the window',
+    selKills !== null && windowKills !== null && selKills <= windowKills,
+    `selection ${String(selKills)} vs window ${String(windowKills)}`
+  )
+
   await clickChart(page, chart)
   check(
-    'a click (under the drag threshold) dismisses the selection and unmounts the panel',
-    (await countOf(page, PANEL)) === 0,
-    `${String(await countOf(page, PANEL))} panel(s) after the click`
+    'a click (under the drag threshold) drops the selection and the panel falls back to the window',
+    (await scopeOf(page)) === 'window',
+    `scope "${await scopeOf(page)}" after the click`
+  )
+  check(
+    '…restoring the window readout byte for byte (clearing is a fallback, never a re-measurement)',
+    (await dashboardReadout(page)) === windowReadout
+  )
+}
+
+/** The full-history dashboard, read before the control is touched — what `All` must restore. */
+interface DashboardBaseline {
+  readout: string
+  range: string
+  kills: number | null
+}
+
+/**
+ * 5c. THE NUMBERS FOLLOWED THE WINDOW (JOS-75) — asserted right after a switch to `narrow`.
+ *
+ * Two identities, so nothing here rots with the fixture: the panel states the NEW window's own
+ * stretch rather than the full history's, and its counts are DOMINATED by the wide window's (a
+ * stretch contained in another can never hold more of anything). A fixture whose every kill
+ * happens to fall inside the narrow window makes the second reading a legitimate equality, and
+ * that is `note`d rather than quietly passed off as proof.
+ */
+async function stepScopedNumbers(page: Page, narrow: string, base: DashboardBaseline): Promise<void> {
+  const range = await settle(() => textOf(page, PANEL_RANGE), (t) => t !== base.range, { timeoutMs: 8000 })
+  check(
+    `the dashboard states the "${narrow}" window's own stretch, not the full history's`,
+    range !== base.range,
+    `${base.range} → ${range}`.replace(/\s+/g, ' ')
+  )
+  const kills = await killsShown(page)
+  const known = kills !== null && base.kills !== null
+  check(
+    '…and its counts are DOMINATED by the wide window (a narrower stretch can never hold more)',
+    known && kills <= base.kills,
+    `${String(kills)} kills at ${narrow} vs ${String(base.kills)} at All`
+  )
+  if (known && kills === base.kills) {
+    note(
+      `every credited kill in this fixture falls inside the "${narrow}" window, so the kills readout is legitimately unchanged — the stated stretch above is what proves the re-derivation`
+    )
+  }
+  check(
+    '…and the dashboard as a whole re-derived rather than restating the full-history numbers',
+    (await dashboardReadout(page)) !== base.readout
   )
 }
 
@@ -324,8 +433,17 @@ async function stepSelection(page: Page, chart: string): Promise<void> {
  *     past the viewBox edge means the strip is still reading the old window while the curve
  *     reads the new one — the marker-swim shape, caught geometrically instead of by eye.
  *
- * The committed selection from the previous step is expected to be GONE after the switch: a range
- * the new window does not contain is not on the chart any more, and the panel is selection-scoped.
+ * The committed selection from the previous step is expected to be DROPPED by the switch: a range
+ * the new window does not contain is not on the chart any more, so the panel falls back to the
+ * window (it no longer unmounts — JOS-75).
+ *
+ * AND THE NUMBERS MOVE WITH IT (JOS-75, the ticket this step grew for). Everything the tab states
+ * about a stretch of time is re-derived on the new window: the panel's stated stretch, its hero
+ * readouts, its per-zone table and the AA pace tiles. Two things are asserted about that, and
+ * both are identities rather than today's numbers — the narrow window's counts are DOMINATED by
+ * the wide one's (a window inside another can never count more), and `All` comes back byte for
+ * byte, which is the whole "nothing changes for the user who never touches the control" promise
+ * stated in pixels instead of prose.
  */
 async function stepTimescale(page: Page, chart: string): Promise<void> {
   if (!check('the timescale control is mounted with the charts', (await countOf(page, TIMESCALE)) > 0)) return
@@ -341,6 +459,11 @@ async function stepTimescale(page: Page, chart: string): Promise<void> {
   }
   check('the scales offered are the ones this history can fill', offered[0] === 'full', `[${offered.join(', ')}]`)
 
+  // The full-history dashboard, read BEFORE anything is touched — the state `All` must restore.
+  const allReadout = await dashboardReadout(page)
+  const allRange = await textOf(page, PANEL_RANGE)
+  const allKills = await killsShown(page)
+
   // A committed range from the WIDE window, so the switch has something to invalidate.
   if (!(await dragRange(page, chart))) return
   await settleCount(page, PANEL, 1, { timeoutMs: 8000 })
@@ -353,9 +476,11 @@ async function stepTimescale(page: Page, chart: string): Promise<void> {
   check(`picking "${narrow}" replaces the window wholesale`, after !== before, `${before} → ${after}`.replace(/\s+/g, ' '))
   check(
     'a selection the new window cannot contain is dropped with it',
-    await settleGone(page, PANEL, { timeoutMs: 8000 }),
-    `${String(await countOf(page, PANEL))} panel(s) after the switch`
+    (await settle(() => scopeOf(page), (s) => s === 'window', { timeoutMs: 8000 })) === 'window',
+    `scope "${await scopeOf(page)}" after the switch`
   )
+
+  await stepScopedNumbers(page, narrow, { readout: allReadout, range: allRange, kills: allKills })
 
   // Everything still on screen, and still agreeing about the new base.
   const box = await rectOf(page, chart)
@@ -379,18 +504,26 @@ async function stepTimescale(page: Page, chart: string): Promise<void> {
     await settleGone(page, TOOLTIP, { timeoutMs: 5000 })
   }
 
-  // …and a drag inside the narrow window still commits a range and still dismisses.
+  // …and a drag inside the narrow window still narrows the panel and still clears.
   if (await dragRange(page, chart)) {
-    const mounted = await settleCount(page, PANEL, 1, { timeoutMs: 8000 })
-    check('dragging a range at the narrow scale mounts the panel', mounted > 0, `${String(await countOf(page, HERO))} hero cards`)
+    const narrowed = await settle(() => scopeOf(page), (s) => s === 'selection', { timeoutMs: 8000 })
+    check('dragging a range at the narrow scale narrows the panel', narrowed === 'selection', `${String(await countOf(page, HERO))} hero cards`)
     await clickChart(page, chart)
-    check('…and a click dismisses it there too', (await countOf(page, PANEL)) === 0)
+    check('…and a click clears it back to the window there too', (await scopeOf(page)) === 'window')
   }
 
   // Back to the default: the control is a view, not a trapdoor.
   await page.click('[data-testid="leveling-timescale-full"]', { timeout: 10_000 })
   const back = await settle(() => textOf(page, TS_WINDOW), (t) => t === before, { timeoutMs: 8000 })
   check('returning to All restores the full-history window exactly', back === before, `${back}`.replace(/\s+/g, ' '))
+  // THE PROMISE, IN PIXELS: not just the drawn window but every number under it. A user who
+  // takes a look through the control and comes back must find the tab exactly as they left it.
+  const restored = await settle(() => dashboardReadout(page), (t) => t === allReadout, { timeoutMs: 8000 })
+  check(
+    '…and every dashboard number with it, byte for byte',
+    restored === allReadout,
+    restored === allReadout ? '' : `${allReadout.slice(0, 160)} ≠ ${restored.slice(0, 160)}`
+  )
 }
 
 /**
@@ -526,7 +659,8 @@ async function main(): Promise<void> {
         await stepTimescale(page, chart)
       } else {
         // The empty-state half of the headline assertion still holds, and is the honest thing
-        // to assert on a log with no chart: no selection can exist, so no panel may.
+        // to assert on a log with no chart: there is no domain, so there is no scope, so there
+        // is nothing for the panel to be a read of.
         check('…and with no chart there is no range-stats panel either', (await countOf(page, PANEL)) === 0)
       }
       // Deliberately OUTSIDE the chart branch: the unlock panel is computed from the committed

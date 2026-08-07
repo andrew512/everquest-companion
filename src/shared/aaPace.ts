@@ -116,6 +116,14 @@ export interface AaPotionState {
 }
 
 export interface AaPace {
+  /**
+   * The window's ACTIVE span — the denominator both rates below were divided by. MEASURED.
+   *
+   * Carried rather than left in the caller's `RangeStats` because the window is now the user's
+   * to choose (JOS-75): a rate over a scale the character barely played has to be able to say
+   * how much play it is over, and a shaper that holds the rate but not its denominator cannot.
+   */
+  activeMs: number
   /** completions inside the window (gain LINES). MEASURED. */
   events: number
   /** points inside the window — Σ of the stated amounts, doubling included. MEASURED. */
@@ -232,6 +240,7 @@ export function aaPace(args: AaPaceArgs): AaPace {
   const gains = leveling.aaGains
   const lastGainTs = gains.length > 0 ? gains[gains.length - 1].ts : null
   return {
+    activeMs: window.activeMs,
     events: window.aaGainEvents,
     points: window.aaGained,
     perHourActive: window.aaPerHourActive,
