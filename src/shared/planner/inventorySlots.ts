@@ -18,12 +18,18 @@
 //   * `Held` is the same story from the other side: the wiki's PRIMARY/SECONDARY split does not
 //     exist in that token, and picking one would be inventing which hand.
 //
+// AND THE DUMP IS WHERE WE LEARNED HOW MANY OF EACH YOU WEAR (JOS-67). `Ear`, `Wrist` and `Fingers`
+// each print TWICE at top level in the committed 295-line dump — three tokens, twice each, nothing
+// else repeating — which is the game itself stating the pair rule that `PLAN_SLOTS` now encodes.
+// The table below is unchanged: a client token names a SLOT, and how many cells that slot has is
+// types.ts's answer, not this table's.
+//
 // PURE: types plus a fold, no fs and no Electron, so both tsconfigs see it and the node runner
 // drives it against the real 295-line dump (`tests/plannerInventory.test.mts`).
 
 import { parseItemName, walkEntries, type InventoryDump, type InventoryEntry } from '../outputs/inventory'
 import type { EquipLocationToken } from '../outputs/inventory'
-import type { EquipSlot } from './types'
+import { cellsForSlot, type EquipSlot, type PlanSlotId } from './types'
 
 /**
  * The table. Keys are every member of `EQUIP_LOCATIONS`; a `null` value is a token that names no
@@ -56,7 +62,8 @@ export const SLOT_OF_LOCATION: Record<EquipLocationToken, EquipSlot | null> = {
 
 /** One equipped item, in planner terms. */
 export interface InventoryHost {
-  slot: EquipSlot
+  /** the CELL it fills — the second ear/wrist/ring lands in the pair's second cell (JOS-67) */
+  slot: PlanSlotId
   /** the item's own name — ` +N`, `*` and ` (Exaltation)` already split off */
   name: string
   /** the ` +N` merge tier the dump stated; absent means the name carried none, NOT tier 0 */
@@ -91,22 +98,30 @@ function equippedSlot(entry: InventoryEntry): EquipSlot | null {
 }
 
 /**
- * The dump → what is equipped, one entry per planner slot.
+ * The dump → what is equipped, one entry per planner CELL.
  *
- * FIRST WINS, and that is the only rule the file supports: `Ear`, `Wrist`, `Fingers` and
- * `Any Slot` each appear TWICE at top level (two ears, two rings…) and there is no column saying
- * which is left. The planner plans one socket set per slot TYPE (R2, types.ts), so it takes the
- * first one the client wrote and never pretends to know about the second.
+ * `Ear`, `Wrist`, `Fingers` and `Any Slot` each appear TWICE at top level, because the character
+ * wears two of each. This used to keep the FIRST of each and say so in writing: the plan could only
+ * hold one cell per slot type, so the second ring had nowhere to go. JOS-67 gave the paired three
+ * their second cell (types.ts `PLAN_SLOTS`), so both rows are now taken, IN THE ORDER THE CLIENT
+ * WROTE THEM — the dump still has no column saying which ring is left, and the cells are numbered
+ * 1 and 2 rather than named, precisely so the app is not claiming to know.
+ *
+ * `Any Slot` maps to no cell at all (see the table above), so it still contributes nothing; a
+ * THIRD row for a slot the game only gives two of would be dropped, which is the honest answer to
+ * a dump we cannot place.
  */
 export function equippedHosts(dump: InventoryDump): InventoryHost[] {
   const out: InventoryHost[] = []
-  const seen = new Set<EquipSlot>()
+  const filled = new Set<PlanSlotId>()
   for (const entry of walkEntries(dump.items)) {
     const slot = equippedSlot(entry)
-    if (slot === null || seen.has(slot)) continue
-    seen.add(slot)
+    if (slot === null) continue
+    const cell = cellsForSlot(slot).find((c) => !filled.has(c))
+    if (cell === undefined) continue
+    filled.add(cell)
     const parsed = parseItemName(entry.name)
-    const host: InventoryHost = { slot, name: parsed.base }
+    const host: InventoryHost = { slot: cell, name: parsed.base }
     if (parsed.tier !== undefined) host.tier = parsed.tier
     out.push(host)
   }

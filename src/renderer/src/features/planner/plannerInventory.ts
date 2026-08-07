@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { PlannerInventory, PlannerInventoryHost } from '@shared/planner/inventorySlots'
-import type { EquipSlot, PlanSlot } from '@shared/planner/types'
+import type { PlanSlot, PlanSlotId } from '@shared/planner/types'
 
 export interface PlannerInventoryState {
   /** the parsed dump, or null when this character has never written one */
@@ -28,8 +28,8 @@ export interface PlannerInventoryState {
   ready: boolean
 }
 
-/** `EquipSlot → the item worn there`, for the cells to read. Empty when there is no dump. */
-export type HostsBySlot = ReadonlyMap<EquipSlot, PlannerInventoryHost>
+/** `PlanSlotId → the item worn in that CELL`, for the cells to read. Empty when there is no dump. */
+export type HostsBySlot = ReadonlyMap<PlanSlotId, PlannerInventoryHost>
 
 export function hostsBySlot(inventory: PlannerInventory | null): HostsBySlot {
   return new Map((inventory?.hosts ?? []).map((h) => [h.slot, h]))

@@ -57,6 +57,11 @@
 // (`Healing  as Level 30`) and a matcher that stripped those would eventually state the wrong
 // spell's duration as fact. `buildSpellFacts` below is the whole join.
 //
+// THE CURATED LAYER ALSO REPAIRS THE ONE PARSE GAP THE CORPUS HAS (JOS-67): three pages state
+// their equip slot on an unkeyed stats-block line, which the scrape files under `flags`, and a
+// slotless donor can never be socketed anywhere (R2). `slotsOf` below is the whole seam — see
+// itemsResearch.ts's `slots` table for why it is a filed fact per page and not a matcher.
+//
 // TWO KINDS OF ITEM ARE DROPPED FROM THE DONOR INDEX AND ONLY FROM IT (V9, docs/plans/planner-v2
 // .md): the mage-conjured `Summoned:` family and whatever the curated layer flags `summoned` or
 // calls unfarmable (`gmEvent` / `gmOnly`). They stay in the ITEM index — a summoned item is a perfectly real thing to look up,
@@ -242,6 +247,23 @@ function excludedDonor(name: string, research: ResearchedKnowledge['research']):
 }
 
 /**
+ * WHICH SLOTS THIS ITEM OCCUPIES — the scrape's answer, or the curated one where the layer speaks.
+ *
+ * JOS-67. `shared/itemStats.ts applySlot` only fills `stats.slot` from a `Slot:` KEY, and three
+ * committed pages write their slot line unkeyed ("…Race: ALL\n\nPrimary Secondary"), so the line
+ * lands in `flags` and the item arrives here slotless. Slotless means "can never donate" under R2,
+ * which is how the Golem Metal Wand's click went missing from the browser (feedback
+ * 01KZCGXY8WC6YCD8W44W7EAS5H). `itemsResearch.ts` files those three by hand, with the page's own
+ * words as the source, and the entry REPLACES the scraped list rather than merging with it — see
+ * the field's doc. Nothing here matches on a flag: the layer is the only thing entitled to say a
+ * page states a slot the parser could not key.
+ */
+function slotsOf(k: ResearchedKnowledge, scraped: readonly EquipSlot[]): EquipSlot[] {
+  const curated = k.research?.slots
+  return curated === undefined ? [...scraped] : [...curated]
+}
+
+/**
  * One stored record → the page context. `knowledgeWithResearch` restores the fields the compact
  * record omits and lays the curated layer over the result, so the name (and therefore the key) is
  * the in-game `|itemname` when the page states one — which is what a loot line spells, and what
@@ -263,7 +285,7 @@ function pageContext(
       key,
       name: k.name,
       iconId: k.iconId,
-      slots: slot.slots,
+      slots: slotsOf(k, slot.slots),
       classes: normalizeClasses(k.stats?.classes),
       quest: k.quest,
       playerCrafted: k.playerCrafted ?? false,

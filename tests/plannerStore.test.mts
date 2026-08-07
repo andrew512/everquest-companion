@@ -71,7 +71,16 @@ const goodPlan: ExaltPlan = {
         focus: { effect: 'Improved Healing I', donorKey: 'emissary mask' }
       }
     },
-    FINGER: { hostKey: 'ring of the shissar', sockets: {} }
+    FINGER: { hostKey: 'ring of the shissar', sockets: {} },
+    // JOS-67 — the SECOND ring, keyed by a cell that is not an equip-slot name. It is in the
+    // fixed-point fixture rather than a test of its own because "a plan may say this" is the
+    // claim: if the validator ever stopped allowing it, every set carrying a second ring would
+    // lose it silently on the next read.
+    FINGER2: {
+      hostKey: 'ring of pureblood',
+      hostName: 'Ring of Pureblood',
+      sockets: { focus: { effect: 'Improved Healing II', donorKey: 'ring of pureblood' } }
+    }
   }
 }
 
@@ -149,6 +158,7 @@ test('malformed input is STRIPPED field by field, never thrown and never wholesa
           },
           CHARM: { hostKey: 'nope', sockets: {} }, // not a slot in this corpus
           BOOTS: { hostKey: 'nope', sockets: {} }, // never a slot name at all
+          HEAD2: { hostKey: 'nope', sockets: {} }, // JOS-67: only EAR/WRIST/FINGER have a second
           FEET: { sockets: {} } // empty cell: no host, no sockets
         }
       }

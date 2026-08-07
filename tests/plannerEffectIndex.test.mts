@@ -147,8 +147,12 @@ test('R2 has real work to do: a large slotless minority can never legally donate
   // really does carry a mass of slotless rows (it is the potion aisle) AND they really are a
   // minority (a filter that hid most of the planner would be a bug, not a rule).
   //
-  // MEASURED 2026-08-05: 284 of 1,468 rows — click 217/803, proc 67/446, focus 0/119, worn 0/100.
-  // Floors and identities only; a rescrape may move every one of those numbers.
+  // RE-MEASURED 2026-08-06 (JOS-67): 280 of 1,462 rows — click 213/799, proc 67/444, focus 0/119,
+  // worn 0/100. Two of the click rows left the slotless mass this ticket, and neither was a
+  // consumable: the Golem Metal Wand and the Azarack Skin Wristwraps state their slot on a line
+  // the scrape cannot key, so the curated layer now files it (`itemsResearch.ts` `slots`) and they
+  // arrive equipped like every other donor. Floors and identities only below; a rescrape may move
+  // every one of those numbers.
   const slotless = donors.filter((d) => d.slots.length === 0)
   const per = Object.fromEntries(
     SOCKET_TYPES.map((s) => [s, slotless.filter((d) => d.socket === s).length])

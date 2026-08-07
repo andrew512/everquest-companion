@@ -1,9 +1,14 @@
 // planner/PlanBoard.tsx — Inventory mode: the whole set on one screen, over what you are wearing.
 //
-// EIGHTEEN CELLS IN CHARACTER-SHEET ORDER, always all of them (`EQUIP_SLOTS`). A board that only
+// TWENTY-ONE CELLS IN CHARACTER-SHEET ORDER, always all of them (`PLAN_SLOTS`). A board that only
 // drew the slots you had already planned would answer "what have you done" when the question is
 // "what is left"; the empty cells are the point, and they are drawn QUIET — a slot label and one
 // muted invitation, never an error, never a warning about a decision you simply have not made.
+//
+// TWENTY-ONE AND NOT EIGHTEEN because you wear two ears, two wrists and two rings (JOS-67, reported
+// as "only allows one finger slot focus effect"). A cell is a PLACE to wear something; the equip
+// SLOT is what R2 compares against, and `equipSlotOf` is the one-line bridge — the host picker and
+// the browse preset both cross it, and nothing below this file knows the pair rule exists.
 //
 // IT FILLS ITSELF (V7). The tab was called Board and started empty, which made it eighteen
 // invitations to retype gear the game already knows about. Now each cell's host comes from the
@@ -18,7 +23,15 @@
 
 import { type JSX, useMemo, useState } from 'react'
 import { Box, Paper, Stack, Typography } from '@mui/material'
-import { EQUIP_SLOTS, type EquipSlot, type ExaltPlan, type PlannerItemHit, type SocketType } from '@shared/planner/types'
+import {
+  equipSlotOf,
+  PLAN_SLOTS,
+  planSlotLabel,
+  type ExaltPlan,
+  type PlannerItemHit,
+  type PlanSlotId,
+  type SocketType
+} from '@shared/planner/types'
 // The `/outputfile` registry (JOS-44) — the command string and the why-clause come from there, so
 // this tab and the Sky tracker cannot end up teaching two different commands for one dump.
 import { outputKind } from '@shared/outputs/kinds'
@@ -60,8 +73,8 @@ function InstructionsCard(): JSX.Element {
 export interface PlanBoardProps {
   plan: ExaltPlan
   progress: PlannerProgressApi
-  onSocket: (slot: EquipSlot, socket: SocketType, planned: null) => void
-  onHost: (slot: EquipSlot, host: { key: string; name: string } | null) => void
+  onSocket: (slot: PlanSlotId, socket: SocketType, planned: null) => void
+  onHost: (slot: PlanSlotId, host: { key: string; name: string } | null) => void
   /** V8 — hand the effect browser a preset for one socket of one host */
   onBrowse: (preset: BrowsePreset) => void
   /** deep-link a donor (or the host item) into the Loot tab's drill-down — App's `openLoot` */
@@ -69,7 +82,7 @@ export interface PlanBoardProps {
 }
 
 interface Picking {
-  slot: EquipSlot
+  slot: PlanSlotId
   anchor: HTMLElement
 }
 
@@ -126,7 +139,7 @@ export default function PlanBoard({
           pr: 0.5
         }}
       >
-        {EQUIP_SLOTS.map((slot) => (
+        {PLAN_SLOTS.map((slot) => (
           <PlanCell
             key={slot}
             slot={slot}
@@ -147,7 +160,8 @@ export default function PlanBoard({
       </Box>
       {picking && (
         <HostPicker
-          slot={picking.slot}
+          slot={equipSlotOf(picking.slot)}
+          label={planSlotLabel(picking.slot)}
           planClasses={plan.classes}
           anchor={picking.anchor}
           onClose={() => setPicking(null)}

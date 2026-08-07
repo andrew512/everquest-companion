@@ -296,15 +296,22 @@ const NONEQUIP_KEY = 'eq.planner.nonequip'
  * socketed into an item that SHARES the donor's equipment slot, so a donor the wiki gives no slot
  * shares a slot with nothing and can never be the source of one.
  *
- * MEASURED over the committed corpus (2026-08-04, `buildPlannerDonors`): 287 of 1,508 donor rows
- * are slotless — 220 of the 813 click rows (the potion mass: "10 Dose Blood of the Wolf" and its
- * nine hundred cousins) and 67 of the 448 proc rows (poisons and weapon coatings, which are
+ * RE-MEASURED over the committed corpus (2026-08-06, JOS-67, `buildPlannerIndex`): 280 of 1,462
+ * donor rows are slotless — 213 of the 799 click rows (the potion mass: "10 Dose Blood of the Wolf"
+ * and its nine hundred cousins) and 67 of the 444 proc rows (poisons and weapon coatings, which are
  * consumed rather than worn). Zero focus and zero worn rows are slotless, which is itself the
  * tell: those two effect families only ever appear on things you wear.
  *
  * SO THE DEFAULT FILTER DROPS THEM — and the toggle below is the escape hatch, because an empty
  * slot list is "the page stated none" (law 1), which is USUALLY a consumable and occasionally a
  * wiki gap. The rows are shown chipped `no slot` rather than silently trusted or silently lost.
+ *
+ * TWO OF THEM WERE THE THIRD THING — a SCRAPE gap — and a user found one before we did (JOS-67,
+ * feedback 01KZCGXY8WC6YCD8W44W7EAS5H: the Golem Metal Wand's click, invisible here because its
+ * page states "Primary Secondary" on a line the parser cannot key). Those are filed in the curated
+ * layer now (`src/main/itemsResearch.ts`, the `slots` table) and arrive with slots like any other
+ * donor, which is why the count above moved 282 → 280. The escape hatch stays: it is the only way
+ * a fourth one is ever visible before someone files it.
  */
 export function isNonEquippable(donor: Pick<PlannerDonor, 'slots'>): boolean {
   return donor.slots.length === 0
@@ -364,6 +371,46 @@ export function filterDonors(
     if (eraHides(d, view.eraOnly)) return false
     return needle === '' || d.searchKey.includes(needle)
   })
+}
+
+/**
+ * WHAT THE TWO VIEW TOGGLES ARE HOLDING BACK, for an empty list to be honest about (JOS-67).
+ *
+ * The era filter and the non-equippable filter are the two that can empty a search NOBODY typed
+ * wrong — they are on/off by default rather than by choice, and neither is visible in the row area
+ * where the answer is missing. A player searched for a real, legal click effect that the slot
+ * filter was hiding and read "No effects match these filters", which is true and useless.
+ *
+ * So: run the SAME filter with BOTH toggles wide open, then count how many of the rows that
+ * survived each ACTIVE toggle is rejecting. Counted per toggle rather than as one total because
+ * the two mean different things — era is "not on this server yet", no-slot is "R2 says never" —
+ * and a row both of them reject is counted by both, deliberately: each number answers "what is
+ * this control holding back", and releasing only one of the two would indeed still hide it.
+ * (The alternative — "what would releasing this one reveal" — reports ZERO for exactly that row,
+ * which is how a doubly-hidden answer would slip back into a silent empty list.)
+ *
+ * Only ever called when the visible list is EMPTY, so it costs one linear scan of ~1.5k rows plus
+ * two predicate passes, at the moment there is nothing else to draw.
+ */
+export interface HiddenByView {
+  /** rows the current-era filter is holding back (0 when it is already off) */
+  era: number
+  /** rows the no-slot filter is holding back (0 when it is already showing them) */
+  nonEquip: number
+}
+
+export function hiddenByView(
+  rows: readonly DonorRow[],
+  filters: DonorFilters,
+  planClasses: readonly ClassAbbr[],
+  view: DonorView
+): HiddenByView {
+  const open: DonorView = { eraOnly: false, nonEquip: true }
+  const candidates = filterDonors(rows, filters, planClasses, open)
+  return {
+    era: view.eraOnly ? candidates.filter((d) => eraHides(d, true)).length : 0,
+    nonEquip: view.nonEquip ? 0 : candidates.filter((d) => isNonEquippable(d)).length
+  }
 }
 
 // ---- the grouping axis (V4) ---------------------------------------------------------

@@ -29,7 +29,8 @@
 // grouping axis is what will read it, and the table is filed ahead of it so commissioning that
 // axis stays a UI decision rather than a data one.
 //
-// THE THREE TABLES THE FILE CARRIES TODAY (JOS-25 + JOS-64, the non-gated halves of planner-v2 §4):
+// THE FOUR TABLES THE FILE CARRIES TODAY (JOS-25 + JOS-64 + JOS-67, the non-gated halves of
+// planner-v2 §4):
 //
 //   * gmEvent × 10 — swept out of the item corpus's own `|notes` prose (`summary`) and the
 //     `|gmitem` template param. Every one of the ten states a GM hand-out AND names no drop
@@ -60,6 +61,25 @@
 //
 //     `Shield of Hatred` STAYS UNFILED under the same ruling: "Possibly a GM Event item?" is a
 //     question, and the layer files no guesses.
+//   * slots × 3 — JOS-67, and the first table that repairs a PARSE gap rather than adding knowledge
+//     the wiki never carried. `shared/itemStats.ts applySlot` fills `stats.slot` only from a
+//     `Slot:` KEY, and three committed pages write their slot line with NO key at all
+//     ("…Race: ALL\n\nPrimary Secondary"), so the scrape files that line under `flags` and the item
+//     reaches the planner with `slots: []`. An empty slot list is "no legal donation" under R2
+//     (plannerData `isNonEquippable`), so the Golem Metal Wand's click was hidden from the effect
+//     browser by default and refused by `socketCompatibility` when it was found — reported live
+//     against v0.6.3 (feedback 01KZCGXY8WC6YCD8W44W7EAS5H, *"can't find golem metal wand click
+//     exaltation to add to shield of rainbow hues"*; the Shield of Rainbow Hues is SECONDARY, and
+//     the wand really is Primary/Secondary, so that transfer is legal and the planner was refusing
+//     it over a missing field).
+//     FILED HERE RATHER THAN FIXED IN THE PARSER for the reason at the top of this file — the
+//     corpus is a machine scrape a rescrape overwrites wholesale — and NOT as a matcher over
+//     unkeyed stats-block lines: three pages are three facts, and a rule that reads any
+//     slot-shaped flag as a slot is exactly the fuzzy join law 12 refuses (the same corpus files
+//     a bare `MNK BRD ROG SHM` class line under `flags` too). `tests/itemsResearchLayer.test.mts`
+//     re-derives each entry from its own page AND sweeps the corpus for a fourth page of the same
+//     shape, so a rescrape that fixes the scrape, or one that adds another unkeyed slot line,
+//     turns the suite red instead of silently hiding a donor.
 //   * instrument × 47 — the bard family every instrument page states for itself, in one of two
 //     places: 42 say it in the stats block (`Wind Resonance: 12`, and the older spelling
 //     `Stringed Instrument`), 5 say it in `|focus_effect` (`Brass Resonance 14`, which the scrape
@@ -73,6 +93,7 @@
 import itemsResearchJson from './data/itemsResearch.json'
 import { itemKey, knowledgeFromDb, type ItemDbEntry } from './itemsDb'
 import type { ItemKnowledge } from '../shared/types'
+import type { EquipSlot } from '../shared/planner/types'
 
 /**
  * The bard instrument families, as the game groups a bard's songs. `all` is one item's own claim
@@ -99,6 +120,13 @@ export interface ItemResearch {
   gmOnly?: boolean
   /** bard instrument family, for the grouping axis V11 defers until this layer carries it */
   instrument?: InstrumentFamily
+  /**
+   * The equipment slots this item occupies — filed ONLY where the page states them in a line the
+   * scrape cannot key (JOS-67, see the header). Curated slots REPLACE the scraped list rather than
+   * merging with it: an entry here is a reading of the whole slot line, and a union would be this
+   * file guessing that the scrape got half of one right.
+   */
+  slots?: EquipSlot[]
   /** why this entry says what it says, in one sentence — for the next reader, not for code */
   note?: string
   /** where the claim came from: a URL, a page name, or the observation that produced it */

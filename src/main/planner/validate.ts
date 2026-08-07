@@ -19,12 +19,12 @@
 
 import { isClassAbbr, MAX_COMBO_SLOTS, type ClassAbbr } from '../../shared/classCombo'
 import {
-  EQUIP_SLOTS,
+  PLAN_SLOTS,
   SOCKET_TYPES,
   type ClassesProvenance,
-  type EquipSlot,
   type ExaltPlan,
   type PlanSlot,
+  type PlanSlotId,
   type PlanSocket,
   type SocketType
 } from '../../shared/planner/types'
@@ -34,7 +34,9 @@ const MAX_PLANS = 100
 const MAX_ID_CHARS = 128
 const MAX_NAME_CHARS = 120
 
-const SLOT_SET: ReadonlySet<string> = new Set<string>(EQUIP_SLOTS)
+// The CELL allowlist, not the equip-slot one (JOS-67): a plan may key `FINGER2`, and it is the
+// same list the board draws, so a cell the UI can fill can never be a cell the store strips.
+const SLOT_SET: ReadonlySet<string> = new Set<string>(PLAN_SLOTS)
 const SOCKET_SET: ReadonlySet<string> = new Set<string>(SOCKET_TYPES)
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -99,13 +101,13 @@ function planSlot(v: unknown): PlanSlot | undefined {
   return slot.hostKey || Object.keys(sockets).length > 0 ? slot : undefined
 }
 
-function planSlots(v: unknown): Partial<Record<EquipSlot, PlanSlot>> {
-  const out: Partial<Record<EquipSlot, PlanSlot>> = {}
+function planSlots(v: unknown): Partial<Record<PlanSlotId, PlanSlot>> {
+  const out: Partial<Record<PlanSlotId, PlanSlot>> = {}
   if (!isRecord(v)) return out
   for (const [name, value] of Object.entries(v)) {
     if (!SLOT_SET.has(name)) continue
     const slot = planSlot(value)
-    if (slot) out[name as EquipSlot] = slot
+    if (slot) out[name as PlanSlotId] = slot
   }
   return out
 }

@@ -7,7 +7,7 @@
 // live in raw `localStorage` under `eq.planner.*` — the same tier as `eq.view` (appViews.ts) and
 // `eq.combat.scope`.
 //
-// WRITES ARE DEBOUNCED WHOLE-ARRAY SAVES. A plan is small (a name, ≤3 classes, ≤18 slots) and the
+// WRITES ARE DEBOUNCED WHOLE-ARRAY SAVES. A plan is small (a name, ≤3 classes, ≤21 cells) and the
 // user edits it in bursts — typing a name is one keystroke per character — so the array is written
 // ~500 ms after the last change rather than per edit. React state is the source of truth in
 // between, so the UI never waits on the round trip.
@@ -22,8 +22,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import type { ClassAbbr } from '@shared/classCombo'
 import type {
   ClassesProvenance,
-  EquipSlot,
   ExaltPlan,
+  PlanSlotId,
   PlanSlot,
   PlanSocket,
   SocketType
@@ -107,7 +107,7 @@ function copyOf(plan: ExaltPlan, name: string): ExaltPlan {
   const now = Date.now()
   const slots: ExaltPlan['slots'] = {}
   for (const [slot, planSlot] of Object.entries(plan.slots)) {
-    if (planSlot) slots[slot as EquipSlot] = { ...planSlot, sockets: { ...planSlot.sockets } }
+    if (planSlot) slots[slot as PlanSlotId] = { ...planSlot, sockets: { ...planSlot.sockets } }
   }
   return { ...plan, id: newId(), name, createdAt: now, updatedAt: now, slots }
 }
@@ -143,7 +143,7 @@ export function withClasses(
  */
 export function withSocket(
   plan: ExaltPlan,
-  slot: EquipSlot,
+  slot: PlanSlotId,
   socket: SocketType,
   planned: PlanSocket | null
 ): ExaltPlan {
@@ -165,7 +165,7 @@ export function withSocket(
  */
 export function withHost(
   plan: ExaltPlan,
-  slot: EquipSlot,
+  slot: PlanSlotId,
   host: { key: string; name: string } | null
 ): ExaltPlan {
   const existing = plan.slots[slot] ?? { sockets: {} }
@@ -204,9 +204,9 @@ export interface PlansApi {
    */
   adoptClasses: (id: string, classes: readonly ClassAbbr[]) => void
   /** write/clear one socket of the SELECTED set (the only set the browser can edit) */
-  setSocket: (slot: EquipSlot, socket: SocketType, planned: PlanSocket | null) => void
+  setSocket: (slot: PlanSlotId, socket: SocketType, planned: PlanSocket | null) => void
   /** pick (or clear) the host item of one slot of the SELECTED set */
-  setHost: (slot: EquipSlot, host: { key: string; name: string } | null) => void
+  setHost: (slot: PlanSlotId, host: { key: string; name: string } | null) => void
 }
 
 const SAVE_DEBOUNCE_MS = 500
@@ -350,7 +350,7 @@ export function usePlans(): PlansApi {
 
   const selectedIdOrNull = selected?.id ?? null
   const setSocket = useCallback(
-    (slot: EquipSlot, socket: SocketType, planned: PlanSocket | null) => {
+    (slot: PlanSlotId, socket: SocketType, planned: PlanSocket | null) => {
       if (selectedIdOrNull === null) return
       setPlans((prev) => withPlan(prev, selectedIdOrNull, (p) => withSocket(p, slot, socket, planned)))
     },
@@ -358,7 +358,7 @@ export function usePlans(): PlansApi {
   )
 
   const setHost = useCallback(
-    (slot: EquipSlot, host: { key: string; name: string } | null) => {
+    (slot: PlanSlotId, host: { key: string; name: string } | null) => {
       if (selectedIdOrNull === null) return
       setPlans((prev) => withPlan(prev, selectedIdOrNull, (p) => withHost(p, slot, host)))
     },

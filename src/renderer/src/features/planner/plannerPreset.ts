@@ -20,11 +20,12 @@
 
 import { useEffect, useState } from 'react'
 import type { ClassAbbr } from '@shared/classCombo'
-import type { EquipSlot, SocketType } from '@shared/planner/types'
+import type { PlanSlotId, SocketType } from '@shared/planner/types'
 
 /** Which socket of which host the browser is currently filtered to. */
 export interface BrowsePreset {
-  slot: EquipSlot
+  /** the CELL you clicked — the browser filters by `equipSlotOf(slot)` and WRITES to this (JOS-67) */
+  slot: PlanSlotId
   socket: SocketType
   /** `itemKey(name)` of the host — the identity the class lookup matches on */
   hostKey: string

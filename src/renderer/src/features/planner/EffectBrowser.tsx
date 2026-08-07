@@ -34,31 +34,47 @@
 // expand into nothing would be worse than not listing it.
 //
 // THE NON-EQUIPPABLE FILTER IS OFF BY DEFAULT, and it is R2 rather than taste: a donor with no
-// equipment slot shares a slot with nothing, so its effect can never be socketed anywhere. 284 of
-// the 1,468 donor rows are slotless — 217 of them in the Click tab, which is the potion mass, and
+// equipment slot shares a slot with nothing, so its effect can never be socketed anywhere. 280 of
+// the 1,462 donor rows are slotless — 213 of them in the Click tab, which is the potion mass, and
 // 67 procs, which are poisons and coatings. Turning it on shows them chipped `no slot`, because an
 // empty slot list is "the page stated none" (law 1) and just occasionally that is a wiki gap.
+//
+// …AND WHEN THE TWO OF THEM EMPTY THE LIST, THE LIST SAYS SO (JOS-67). A player searched for a
+// click effect that was real, legal and hidden by the slot filter, and got "No effects match these
+// filters" — a true sentence that told them nothing (feedback 01KZCGXY8WC6YCD8W44W7EAS5H). An empty
+// result now counts what the two view toggles are holding back and names them, because a filter
+// that can hide everything must be able to admit it (`hiddenByView`, plannerData.ts).
 
 import { type JSX, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Menu, MenuItem, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
-import type { EquipSlot, ExaltPlan, PlanSocket, SocketType } from '@shared/planner/types'
+import {
+  equipSlotOf,
+  planSlotLabel,
+  type ExaltPlan,
+  type PlanSlotId,
+  type PlanSocket,
+  type SocketType
+} from '@shared/planner/types'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import EffectFilterBar from './EffectFilterBar'
 import { DonorLine, GroupLine, ROW_HEIGHT } from './EffectRows'
 import {
+  CURRENT_ERA_LABEL,
   DEFAULT_FILTERS,
   donorEraOf,
   filterDonors,
+  hiddenByView,
   useDonors,
   useEraOnly,
   useGroupBy,
   useNonEquip,
   type DonorFilters,
-  type DonorRow
+  type DonorRow,
+  type HiddenByView
 } from './plannerData'
 import { browserRows, groupDonors, type BrowserRow, type GroupAxis } from './plannerGroups'
-import { outgoing, plannedBySocket, replacesFor, type SocketKey } from './plannerReplace'
+import { outgoing, plannedBySocket, replacesFor, targetCells, type SocketKey } from './plannerReplace'
 import { classesMismatch } from './plannerClasses'
 import { useHostClasses, type BrowsePreset } from './plannerPreset'
 import { sourceIndex } from './sourceIndex'
@@ -97,13 +113,15 @@ interface RowsInput {
 }
 
 /**
- * Donors → the flat, windowable row array, in the THREE MEMOS the search law wants and not one.
+ * Donors → the flat, windowable row array, in the THREE MEMOS the search law wants and not one —
+ * plus, when the answer is EMPTY, what the view toggles are holding back (JOS-67).
  *
  * The FILTER is what a keystroke changes; the GROUPING keys off the filtered array's identity, so
  * switching the group-by axis never re-filters 1.6k rows and a keystroke never pays for a fold it
- * is about to redo; the row flattening keys off the groups and the expanded set.
+ * is about to redo; the row flattening keys off the groups and the expanded set. The fourth memo
+ * only ever runs when there is nothing to draw, and `NOTHING_HIDDEN` keeps that case free.
  */
-function useVisibleRows(input: RowsInput): BrowserRow[] {
+function useVisibleRows(input: RowsInput): { rows: BrowserRow[]; hidden: HiddenByView } {
   const { donors, filters, text, planClasses, view, hostClasses, presetActive, axis, open } = input
   const filtered = useMemo(() => {
     const rows = filterDonors(donors, { ...filters, text }, planClasses, view)
@@ -114,7 +132,13 @@ function useVisibleRows(input: RowsInput): BrowserRow[] {
     return rows.filter((d) => !(presetActive && d.hasteLocked) && !classesMismatch(d.classes, hostClasses))
   }, [donors, filters, text, planClasses, view, hostClasses, presetActive])
   const groups = useMemo(() => groupDonors(filtered, axis, donorEraOf), [filtered, axis])
-  return useMemo(() => browserRows(groups, open), [groups, open])
+  const rows = useMemo(() => browserRows(groups, open), [groups, open])
+  const hidden = useMemo(
+    () =>
+      rows.length > 0 ? NOTHING_HIDDEN : hiddenByView(donors, { ...filters, text }, planClasses, view),
+    [rows.length, donors, filters, text, planClasses, view]
+  )
+  return { rows, hidden }
 }
 
 // ---- the browser ---------------------------------------------------------------------
@@ -124,12 +148,15 @@ interface PendingAdd {
   anchor: HTMLElement
 }
 
+/** The answer for every render that HAS rows — a constant, so the memo below never allocates. */
+const NOTHING_HIDDEN: HiddenByView = { era: 0, nonEquip: 0 }
+
 /**
- * WHICH SLOT — asked only when the donor is listed for more than one, because the planner must not
- * pick which of PRIMARY/SECONDARY a sword goes into on the user's behalf.
+ * WHICH CELL — asked only when the donor could land in more than one, because the planner must not
+ * pick which of PRIMARY/SECONDARY a sword goes into, or WHICH RING (JOS-67), on the user's behalf.
  *
- * It is also where a two-slot donor's REPLACE warning lives (JOS-42): PRIMARY may be empty while
- * SECONDARY already holds something, so the row's button cannot say which, and this menu is the
+ * It is also where a multi-cell donor's REPLACE warning lives (JOS-42): FINGER 1 may be empty while
+ * FINGER 2 already holds something, so the row's button cannot say which, and this menu is the
  * moment the target stops being ambiguous.
  */
 function SlotMenu({
@@ -141,15 +168,15 @@ function SlotMenu({
   pending: PendingAdd | null
   occupied: ReadonlyMap<SocketKey, PlanSocket>
   onClose: () => void
-  onPick: (slot: EquipSlot) => void
+  onPick: (slot: PlanSlotId) => void
 }): JSX.Element {
   return (
     <Menu anchorEl={pending?.anchor ?? null} open={pending !== null} onClose={onClose}>
-      {(pending?.donor.slots ?? []).map((slot) => {
-        const over = pending === null ? null : outgoing(occupied, slot, pending.donor.socket, pending.donor)
+      {(pending === null ? [] : targetCells(pending.donor)).map((cell) => {
+        const over = pending === null ? null : outgoing(occupied, cell, pending.donor.socket, pending.donor)
         return (
-          <MenuItem key={slot} data-testid="planner-slot-choice" onClick={() => onPick(slot)}>
-            {slot}
+          <MenuItem key={cell} data-testid="planner-slot-choice" onClick={() => onPick(cell)}>
+            {planSlotLabel(cell)}
             {over !== null && (
               <Typography variant="caption" color="warning.main" sx={{ ml: 1 }}>
                 replaces {over}
@@ -170,14 +197,32 @@ interface RowListProps {
   /** what each row's ADD would displace — `replacesFor`, folded once per plan change */
   replaces: (donor: DonorRow) => string | null
   ready: boolean
+  /** what the two view toggles are holding back — only consulted when `rows` is empty (JOS-67) */
+  hidden: HiddenByView
   onToggle: (id: string) => void
   onAdd: (donor: DonorRow, anchor: HTMLElement) => void
   onOpenLoot?: (item: string) => void
 }
 
+/**
+ * WHY THE LIST IS EMPTY, in one sentence that names the filter responsible.
+ *
+ * "No effects match these filters" is true of a typo and of a filter quietly holding back four
+ * real answers, and the second is the case a user reported (JOS-67). The counts come from
+ * `hiddenByView`; the toggles they name are two controls up, in the filter bar.
+ */
+function emptyText(ready: boolean, hidden: HiddenByView): string {
+  if (!ready) return 'Reading the item database…'
+  const parts: string[] = []
+  if (hidden.era > 0) parts.push(`${String(hidden.era)} outside ${CURRENT_ERA_LABEL}`)
+  if (hidden.nonEquip > 0) parts.push(`${String(hidden.nonEquip)} with no equipment slot`)
+  if (parts.length === 0) return 'No effects match these filters.'
+  return `No effects match these filters — but ${parts.join(' and ')} are hidden by the toggles above.`
+}
+
 /** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
 function RowList(props: RowListProps): JSX.Element {
-  const { rows, win, planClasses, planned, replaces, ready, onToggle, onAdd, onOpenLoot } = props
+  const { rows, win, planClasses, planned, replaces, ready, hidden, onToggle, onAdd, onOpenLoot } = props
   return (
     <>
       <Box sx={{ height: win.topPad }} />
@@ -201,8 +246,8 @@ function RowList(props: RowListProps): JSX.Element {
       )}
       <Box sx={{ height: win.bottomPad }} />
       {rows.length === 0 && (
-        <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-          {ready ? 'No effects match these filters.' : 'Reading the item database…'}
+        <Typography variant="body2" color="text.secondary" data-testid="planner-effects-empty" sx={{ p: 2 }}>
+          {emptyText(ready, hidden)}
         </Typography>
       )}
     </>
@@ -212,30 +257,31 @@ function RowList(props: RowListProps): JSX.Element {
 /**
  * THE TWO WRITES THE BROWSER MAKES, and the one question it may have to ask first.
  *
- * One slot ⇒ one click. Several ⇒ the slot menu, because the planner must not pick which of
- * PRIMARY/SECONDARY a sword goes into on the user's behalf. UNDER A PRESET THERE IS NOTHING TO
- * ASK (V8): you clicked a specific socket of a specific item, so a two-slot sword goes into the
- * socket you opened rather than into a menu re-asking the question.
+ * One CELL ⇒ one click. Several ⇒ the slot menu, because the planner must not pick which of
+ * PRIMARY/SECONDARY a sword goes into — or which of your two rings (JOS-67) — on the user's behalf.
+ * UNDER A PRESET THERE IS NOTHING TO ASK (V8): you clicked a specific socket of a specific item, so
+ * a two-slot sword goes into the socket you opened rather than into a menu re-asking the question.
  *
  * A plain function, not a hook — it closes over props and state the caller already holds, and
  * calls nothing of React's.
  */
 function writeFlow(ctx: {
   preset: BrowsePreset | null
-  onSocket: (slot: EquipSlot, socket: SocketType, planned: { effect: string; donorKey: string }) => void
+  onSocket: (slot: PlanSlotId, socket: SocketType, planned: { effect: string; donorKey: string }) => void
   pending: PendingAdd | null
   setPending: (p: PendingAdd | null) => void
 }): {
   add: (donor: DonorRow, anchor: HTMLElement) => void
-  chooseSlot: (slot: EquipSlot) => void
+  chooseSlot: (slot: PlanSlotId) => void
 } {
   const { preset, onSocket, pending, setPending } = ctx
   return {
     add: (donor, anchor) => {
       const planned = { effect: donor.effect, donorKey: donor.key }
+      const cells = targetCells(donor)
       if (preset !== null) onSocket(preset.slot, preset.socket, planned)
-      else if (donor.slots.length === 1) onSocket(donor.slots[0], donor.socket, planned)
-      else if (donor.slots.length > 1) setPending({ donor, anchor })
+      else if (cells.length === 1) onSocket(cells[0], donor.socket, planned)
+      else if (cells.length > 1) setPending({ donor, anchor })
     },
     chooseSlot: (slot) => {
       if (pending) {
@@ -256,7 +302,7 @@ export interface EffectBrowserProps {
   preset?: BrowsePreset | null
   onClearPreset?: () => void
   /** write one socket of the selected set (usePlans' `setSocket`) */
-  onSocket: (slot: EquipSlot, socket: SocketType, planned: { effect: string; donorKey: string }) => void
+  onSocket: (slot: PlanSlotId, socket: SocketType, planned: { effect: string; donorKey: string }) => void
   /** deep-link a donor into the Loot tab's item drill-down (App's `openLoot`) */
   onOpenLoot?: (item: string) => void
 }
@@ -276,8 +322,10 @@ export default function EffectBrowser({
   // THE PRESET WINS while it is on: the socket and slot it names are facts about the item window
   // you came from, not preferences. Touching any control clears it (`change` below), because
   // changing the socket tab while filtered to a Proc socket would be asking two things at once.
+  // The preset names a CELL; the donor filter is about the equipment SLOT that cell occupies, so
+  // browsing FINGER 2 shows the same ring donors as browsing FINGER 1 (JOS-67).
   const filters: DonorFilters = useMemo(
-    () => (preset === null ? own : { ...own, socket: preset.socket, slot: preset.slot }),
+    () => (preset === null ? own : { ...own, socket: preset.socket, slot: equipSlotOf(preset.slot) }),
     [own, preset]
   )
   const change = (next: DonorFilters): void => {
@@ -301,7 +349,7 @@ export default function EffectBrowser({
   // Read out of the tuples so the memo's dependency list names the VALUES: the setter half of
   // each tuple is a fresh identity nothing here depends on.
   const view = useMemo(() => ({ eraOnly: era[0], nonEquip: nonEquip[0] }), [era, nonEquip])
-  const rows = useVisibleRows({
+  const { rows, hidden } = useVisibleRows({
     donors,
     filters,
     text: deferredText,
@@ -357,6 +405,7 @@ export default function EffectBrowser({
           planned={planned}
           replaces={replaces}
           ready={ready}
+          hidden={hidden}
           onToggle={toggle}
           onAdd={add}
           onOpenLoot={onOpenLoot}

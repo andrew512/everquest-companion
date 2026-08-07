@@ -18,9 +18,10 @@ import {
   outgoing,
   plannedBySocket,
   replacesFor,
+  targetCells,
   type ReplaceSubject
 } from '../src/renderer/src/features/planner/plannerReplace'
-import type { EquipSlot, ExaltPlan, SocketType } from '../src/shared/planner/types'
+import type { ExaltPlan, PlanSlotId, SocketType } from '../src/shared/planner/types'
 
 const HEAL: ReplaceSubject = {
   key: 'water sprinkler',
@@ -35,8 +36,15 @@ const SWORD: ReplaceSubject = {
   socket: 'focus',
   slots: ['PRIMARY', 'SECONDARY']
 }
+/** ONE equip slot, TWO places to wear it — the JOS-67 case (you have two ring fingers). */
+const RING: ReplaceSubject = {
+  key: 'ring of pureblood',
+  effect: 'Improved Healing III',
+  socket: 'focus',
+  slots: ['FINGER']
+}
 
-function planOf(picks: { slot: EquipSlot; socket: SocketType; effect: string; donorKey: string }[]): ExaltPlan {
+function planOf(picks: { slot: PlanSlotId; socket: SocketType; effect: string; donorKey: string }[]): ExaltPlan {
   const slots: ExaltPlan['slots'] = {}
   for (const p of picks) {
     const slot = slots[p.slot] ?? { sockets: {} }
@@ -62,8 +70,10 @@ test('a ONE-SLOT donor implies its target, so an occupied socket is named', () =
 })
 
 test('…but only that socket: another slot, or another socket type, is untouched', () => {
-  const wrist: ReplaceSubject = { ...HEAL, slots: ['WRIST'] }
-  assert.equal(replacesFor(HEAD_FOCUS_TAKEN, null, wrist), null)
+  // FEET rather than WRIST: a wrist donor resolves to TWO cells since JOS-67 and would answer
+  // null for the unrelated reason that its target is ambiguous, which is not what this pins.
+  const feet: ReplaceSubject = { ...HEAL, slots: ['FEET'] }
+  assert.equal(replacesFor(HEAD_FOCUS_TAKEN, null, feet), null)
   const proc: ReplaceSubject = { ...HEAL, socket: 'proc' }
   assert.equal(replacesFor(HEAD_FOCUS_TAKEN, null, proc), null)
 })
@@ -101,6 +111,36 @@ test('re-adding the row ALREADY in the socket replaces nothing — it is chipped
   // are going to farm, so swapping the donor is a real change of plan.
   const otherDonor: ReplaceSubject = { ...HEAL, key: 'coldain hammer' }
   assert.equal(replacesFor(same, null, otherDonor), HEAL.effect)
+})
+
+test('A RING DONOR HAS TWO TARGETS, so it asks instead of writing (JOS-67)', () => {
+  // The report, as a unit: "only allows one finger slot focus effect". A FINGER donor names ONE
+  // equip slot and TWO cells, so it now behaves like the two-slot sword — the menu is the question
+  // — where it used to imply FINGER and overwrite whatever was there.
+  assert.deepEqual(targetCells(RING), ['FINGER', 'FINGER2'])
+  assert.deepEqual(targetCells(HEAL), ['HEAD'])
+  assert.deepEqual(targetCells(SWORD), ['PRIMARY', 'SECONDARY'])
+
+  const firstRingTaken = plannedBySocket(
+    planOf([{ slot: 'FINGER', socket: 'focus', effect: 'Improved Healing I', donorKey: 'cloak of piety' }])
+  )
+  assert.equal(replacesFor(firstRingTaken, null, RING), null, 'the row must not claim which ring')
+  assert.equal(outgoing(firstRingTaken, 'FINGER', 'focus', RING), 'Improved Healing I')
+  // …and THE SECOND RING IS FREE, which is the whole fix: the same focus can be planned there
+  // without displacing anything.
+  assert.equal(outgoing(firstRingTaken, 'FINGER2', 'focus', RING), null)
+})
+
+test('the two cells of a pair are independent sockets, not one', () => {
+  const both = plannedBySocket(
+    planOf([
+      { slot: 'FINGER', socket: 'focus', effect: 'Improved Healing I', donorKey: 'ring a' },
+      { slot: 'FINGER2', socket: 'focus', effect: 'Improved Healing II', donorKey: 'ring b' }
+    ])
+  )
+  assert.deepEqual([...both.keys()].sort(), ['FINGER2:focus', 'FINGER:focus'])
+  assert.equal(outgoing(both, 'FINGER', 'focus', RING), 'Improved Healing I')
+  assert.equal(outgoing(both, 'FINGER2', 'focus', RING), 'Improved Healing II')
 })
 
 test('plannedBySocket folds every planned socket of every slot, and nothing else', () => {

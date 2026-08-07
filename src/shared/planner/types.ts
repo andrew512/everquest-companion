@@ -11,6 +11,10 @@
 //     committed corpus states (11,155 item pages, 32 raw tokens → 18 canonical; see normalize.ts).
 //     There is deliberately NO CHARM: zero pages in the corpus name one, and a slot no item can
 //     ever occupy would render as a permanently empty cell claiming a game fact we never observed.
+//   * …and a PLAN is keyed by `PlanSlotId`, which is those 18 plus the SECOND ear, wrist and ring
+//     (JOS-67). Two different questions: an item states which SLOT it occupies, a character has
+//     how many PLACES to wear one. See the block above `PairedSlot` for the evidence and the
+//     additive-store argument.
 //   * SocketType omits Ornamentation (R5 — cosmetic, token-gated, not in game) and folds
 //     `kind:'combat'` into 'proc' (D2 — the wiki spells procs `Combat Effect:`; measured
 //     proc 0 / combat 453).
@@ -22,8 +26,9 @@ import type { EffectFacts } from './effectText'
 
 /**
  * Canonical equipment slots, normalized from the dirty wiki tokens (normalize.ts owns the
- * variant table). One PlanSlot per slot TYPE: FINGER/EAR/WRIST are worn in pairs in game, but
- * exaltation compatibility is per-type (R2), so v1 plans one of each (design §3.1).
+ * variant table). This is the COMPATIBILITY vocabulary — what R2 compares a donor against — and
+ * it stays eighteen. How many of each a character WEARS is a separate question, answered by
+ * `PLAN_SLOTS` below.
  */
 export type EquipSlot =
   | 'PRIMARY'
@@ -45,7 +50,11 @@ export type EquipSlot =
   | 'LEGS'
   | 'FEET'
 
-/** Every equip slot, in character-sheet order (Board mode's grid order). */
+/**
+ * Every equip slot, in character-sheet order. The SLOT FILTER's option list and the ranking axis
+ * the browser groups by; the Inventory board draws `PLAN_SLOTS` instead, which is this list with
+ * the three paired slots doubled.
+ */
 export const EQUIP_SLOTS: readonly EquipSlot[] = [
   'HEAD',
   'FACE',
@@ -66,6 +75,96 @@ export const EQUIP_SLOTS: readonly EquipSlot[] = [
   'RANGE',
   'AMMO'
 ]
+
+// ---- how many of each you actually WEAR (JOS-67) ---------------------------------------
+//
+// THE GAME GIVES YOU TWO EARS, TWO RINGS AND TWO WRISTS, and the planner used to give you one of
+// each. `ExaltPlan.slots` was keyed by `EquipSlot`, so a Record could hold exactly one FINGER cell
+// — which a player reported as "only allows one finger slot focus effect" (feedback
+// 01KZCGQ5M395WN93FQD40RXZC6, v0.6.3). The design doc had already written the limitation down as a
+// v1 simplification and parked it as open question §8.1; the report is the answer to that question.
+//
+// THE EVIDENCE IS THE GAME'S OWN INVENTORY DUMP, not the wiki and not a memory of EverQuest: a
+// `/outputfile inventory` writes ONE top-level row per equipped slot, and in the committed 295-line
+// dump `Ear`, `Wrist` and `Fingers` each appear TWICE (see shared/planner/inventorySlots.ts, whose
+// `equippedHosts` used to take the first of each and say so). Three tokens, twice each — that is
+// the whole rule, and nothing else in the eighteen repeats.
+//
+// SO A PLAN IS KEYED BY A CELL, NOT BY A SLOT. `PlanSlotId` is the eighteen plus three second
+// cells; `equipSlotOf` maps a cell back to the compatibility vocabulary, and R2 is asked about the
+// SLOT exactly as before — two rings are two places to wear a FINGER item, not a new kind of item.
+// The widening is ADDITIVE in the store (D4's argument, and `classesProvenance`'s): every plan ever
+// written keys cells by the eighteen names, all of which are still legal, so no migration
+// transforms anything and `tests/plannerStore.test.mts` pins the round trip.
+
+/** The three equipment slots a character wears TWO of. Measured from the game's own dump. */
+export type PairedSlot = 'EAR' | 'FINGER' | 'WRIST'
+
+export const PAIRED_SLOTS: readonly PairedSlot[] = ['EAR', 'WRIST', 'FINGER']
+
+/** The SECOND cell of each paired slot — the only plan keys that are not equip-slot names. */
+export type SecondCell = 'EAR2' | 'WRIST2' | 'FINGER2'
+
+/**
+ * One cell of a plan: an equip slot, or the second of a pair. This is what `ExaltPlan.slots` is
+ * keyed by and what the Inventory board draws — never what a donor states about itself.
+ */
+export type PlanSlotId = EquipSlot | SecondCell
+
+/** Every cell, in character-sheet order, each pair adjacent — the board's grid order. */
+export const PLAN_SLOTS: readonly PlanSlotId[] = [
+  'HEAD',
+  'FACE',
+  'EAR',
+  'EAR2',
+  'NECK',
+  'SHOULDERS',
+  'BACK',
+  'CHEST',
+  'ARMS',
+  'WRIST',
+  'WRIST2',
+  'HANDS',
+  'FINGER',
+  'FINGER2',
+  'WAIST',
+  'LEGS',
+  'FEET',
+  'PRIMARY',
+  'SECONDARY',
+  'RANGE',
+  'AMMO'
+]
+
+/** `EAR2` → `EAR`. The table, not a suffix strip: three facts beat a regex over a key space. */
+const EQUIP_OF_CELL: Record<SecondCell, PairedSlot> = {
+  EAR2: 'EAR',
+  WRIST2: 'WRIST',
+  FINGER2: 'FINGER'
+}
+
+/**
+ * The equipment slot a cell occupies — what every compatibility question is really about (R2).
+ * The eighteen answer themselves; only the three second cells consult the table.
+ */
+export function equipSlotOf(cell: PlanSlotId): EquipSlot {
+  return EQUIP_OF_CELL[cell as SecondCell] ?? (cell as EquipSlot)
+}
+
+/** The cells one equip slot occupies, in board order — one for most, two for the paired three. */
+export function cellsForSlot(slot: EquipSlot): PlanSlotId[] {
+  return PLAN_SLOTS.filter((c) => equipSlotOf(c) === slot)
+}
+
+/**
+ * What a cell is CALLED. A paired slot's two cells are numbered ("FINGER 1", "FINGER 2") because a
+ * board that drew "FINGER" twice would read as a bug; every other cell is its own slot name.
+ */
+export function planSlotLabel(cell: PlanSlotId): string {
+  const slot = equipSlotOf(cell)
+  if (!(PAIRED_SLOTS as readonly string[]).includes(slot)) return slot
+  return `${slot} ${cell === slot ? '1' : '2'}`
+}
 
 /**
  * The four TRANSFERABLE socket types, in unlock order. Ornamentation is excluded on purpose
@@ -168,7 +267,7 @@ export interface PlanSocket {
   donorKey: string
 }
 
-/** One equipment slot of a plan: an optional host item plus up to one socket of each type. */
+/** One CELL of a plan: an optional host item plus up to one socket of each type. */
 export interface PlanSlot {
   /** `itemKey(name)` of the host item; absent = the user hasn't picked one yet */
   hostKey?: string
@@ -208,5 +307,10 @@ export interface ExaltPlan {
   classesProvenance?: ClassesProvenance
   createdAt: number
   updatedAt: number
-  slots: Partial<Record<EquipSlot, PlanSlot>>
+  /**
+   * The plan's cells, keyed by `PlanSlotId` (JOS-67 — twenty-one, because you wear two ears, two
+   * rings and two wrists). Widened ADDITIVELY from `EquipSlot`: every key a past build could write
+   * is still a legal key, so nothing needs migrating.
+   */
+  slots: Partial<Record<PlanSlotId, PlanSlot>>
 }

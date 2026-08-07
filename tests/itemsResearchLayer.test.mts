@@ -36,6 +36,8 @@ import {
   isUnfarmable,
   type InstrumentFamily
 } from '../src/main/itemsResearch'
+import { buildPlannerIndex } from '../src/main/planner/effectIndex'
+import type { EquipSlot } from '../src/shared/planner/types'
 
 const file = itemsJson as unknown as ItemDbFile
 const entries = Object.values(file.items ?? {})
@@ -124,6 +126,59 @@ const filedWith = (pick: (r: (typeof ITEMS_RESEARCH)[string]) => boolean): Set<s
       .filter(([, r]) => pick(r))
       .map(([k]) => k)
   )
+
+// ---- the slot-repair half (JOS-67) ----------------------------------------------------
+//
+// The one table that repairs a PARSE gap instead of adding knowledge. `applySlot` fills
+// `stats.slot` only from a `Slot:` KEY, and a handful of pages write the slot line with no key, so
+// it lands in `flags` and the item reaches the planner slotless — which R2 reads as "can never
+// donate". The derivation below re-reads each filed page's own slot line, and then SWEEPS the whole
+// corpus for a page of the same shape that nobody has filed. Both halves matter: the first catches
+// a rescrape that changes what a page says (or that finally keys the line), the second catches a
+// rescrape that adds a fourth one and would otherwise hide a donor in silence.
+
+/** The slot vocabulary as the pages spell it, unkeyed — one token per canonical slot. */
+const SLOT_WORD: Record<string, EquipSlot> = {
+  primary: 'PRIMARY',
+  secondary: 'SECONDARY',
+  range: 'RANGE',
+  ammo: 'AMMO',
+  head: 'HEAD',
+  face: 'FACE',
+  ear: 'EAR',
+  ears: 'EAR',
+  neck: 'NECK',
+  shoulders: 'SHOULDERS',
+  back: 'BACK',
+  chest: 'CHEST',
+  arms: 'ARMS',
+  wrist: 'WRIST',
+  wrists: 'WRIST',
+  hands: 'HANDS',
+  finger: 'FINGER',
+  fingers: 'FINGER',
+  waist: 'WAIST',
+  legs: 'LEGS',
+  feet: 'FEET'
+}
+
+/**
+ * The slots a page states on an unkeyed line, or null when it states none that way. A flag counts
+ * ONLY when every one of its words is a slot word — the same corpus files a bare `MNK BRD ROG SHM`
+ * class line under `flags`, and a looser read would mint slots out of it.
+ */
+function unkeyedSlots(e: ItemDbEntry): EquipSlot[] | null {
+  const stats = e.stats
+  if (!stats || stats.slot !== undefined) return null
+  const out: EquipSlot[] = []
+  for (const flag of stats.flags) {
+    const words = flag.trim().split(/\s+/)
+    const mapped = words.map((w) => SLOT_WORD[w.toLowerCase()])
+    if (words.length === 0 || mapped.some((m) => m === undefined)) continue
+    for (const slot of mapped) if (slot !== undefined && !out.includes(slot)) out.push(slot)
+  }
+  return out.length === 0 ? null : out
+}
 
 // ---- the instrument half -------------------------------------------------------------
 
@@ -281,6 +336,54 @@ test('the instrument table is exactly what the committed corpus states, both way
     assert.ok((INSTRUMENT_FAMILIES as readonly string[]).includes(fam), `${key}: ${fam} is not a family`)
   }
   assert.deepEqual([...new Set(filed.values())].sort(), [...INSTRUMENT_FAMILIES].sort())
+})
+
+test('the slot table is exactly the pages whose slot line the scrape could not key', () => {
+  const filed = new Map<string, EquipSlot[]>()
+  for (const [key, entry] of Object.entries(ITEMS_RESEARCH)) {
+    if (entry.slots !== undefined) filed.set(key, entry.slots)
+  }
+  const derived = new Map<string, EquipSlot[]>()
+  for (const e of entries) {
+    const slots = unkeyedSlots(e)
+    if (slots !== null) derived.set(keyOf(e), slots)
+  }
+  console.log('slot layer', { filed: filed.size, derived: derived.size })
+
+  // BOTH directions. A filed entry the corpus no longer supports is a stale answer winning a
+  // merge; a derived page nobody filed is a donor about to go missing the way the wand did.
+  assert.deepEqual([...filed.keys()].sort(), [...derived.keys()].sort())
+  for (const [key, slots] of derived) {
+    assert.deepEqual(filed.get(key), slots, `${key}: the filed slots disagree with the page`)
+  }
+  assert.ok(filed.size >= 3, `only ${filed.size} slot entries`)
+
+  // The report's own item, pinned by name: this is the fact JOS-67 shipped, and an entry that
+  // quietly evaporates from the data is worse than one never filed (the RULED_UNFARMABLE idiom).
+  assert.deepEqual(filed.get('golem metal wand'), ['PRIMARY', 'SECONDARY'])
+})
+
+test('the curated slots reach the planner index — the wand can be socketed again', () => {
+  // The end-to-end claim the report is about: the layer is worthless if the builder ignores it.
+  const index = buildPlannerIndex(file)
+  const wand = index.donors.filter((d) => d.key === 'golem metal wand')
+  assert.equal(wand.length, 1, 'the Golem Metal Wand carries exactly one effect')
+  assert.equal(wand[0].socket, 'click')
+  assert.deepEqual(wand[0].slots, ['PRIMARY', 'SECONDARY'])
+
+  // …and the host it was reported against really is one of those slots, so the transfer the user
+  // was refused is legal: SECONDARY shared, and the wand's ALL class list overlaps a six-class
+  // shield. The item index is what the Board's host picker reads.
+  const shield = index.items.find((i) => i.key === 'shield of rainbow hues')
+  assert.ok(shield, 'Shield of Rainbow Hues is missing from the item index')
+  assert.deepEqual(shield.slots, ['SECONDARY'])
+  assert.ok(shield.classes.some((c) => wand[0].classes.includes(c)), 'no class overlap')
+
+  // The wristwraps are the same repair on a donor with a REQUIRED LEVEL and one class — filed at
+  // the same time so the table is not a one-item special case.
+  const wraps = index.donors.filter((d) => d.key === 'azarack skin wristwraps')
+  assert.equal(wraps.length, 1)
+  assert.deepEqual(wraps[0].slots, ['WRIST'])
 })
 
 test('an instrument entry never excludes a donor', () => {
