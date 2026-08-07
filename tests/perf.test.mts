@@ -346,19 +346,34 @@ test('the startup block probe reports a worst stall and a count, and distinguish
   // startup that would have coloured the chip is a startup that reports blocks.
   assert.equal(STARTUP_BLOCK_THRESHOLD_MS, LAG_WARN_P95_MS)
 
-  assert.deepEqual(foldBlockSamples([2, 51, 7, 300, 49.6]), {
+  // Each tick carries WHEN it landed as well as how late it was (JOS-59), so the worst block can
+  // be placed against the phase list instead of being a bare magnitude nobody can act on.
+  const ticks = (drifts: readonly number[]): { driftMs: number; atMs: number }[] =>
+    drifts.map((driftMs, i) => ({ driftMs, atMs: (i + 1) * 500 }))
+
+  assert.deepEqual(foldBlockSamples(ticks([2, 51, 7, 300, 49.6])), {
     samples: 5,
     maxBlockMs: 300,
-    blocksOver50Ms: 2
+    blocksOver50Ms: 2,
+    worstAtMs: 2000
   })
   // AT the threshold counts (a boundary asserted, not assumed), just under it does not.
-  assert.equal(foldBlockSamples([50]).blocksOver50Ms, 1)
-  assert.equal(foldBlockSamples([49.999]).blocksOver50Ms, 0)
+  assert.equal(foldBlockSamples(ticks([50])).blocksOver50Ms, 1)
+  assert.equal(foldBlockSamples(ticks([49.999])).blocksOver50Ms, 0)
+  // Ties go to the FIRST tick that reached the maximum — arbitrary, but stated, so two readings
+  // of one launch name the same tick.
+  assert.equal(foldBlockSamples(ticks([80, 80, 3])).worstAtMs, 500)
   // A window that held no ticks says so: 0 ms here means "nothing was measured", which is not
-  // the same claim as "the launch never blocked".
+  // the same claim as "the launch never blocked" — and it has no position either.
   assert.deepEqual(foldBlockSamples([]), { samples: 0, maxBlockMs: 0, blocksOver50Ms: 0 })
-  // Scheduling noise and a C++ boundary both exist: negatives clamp, junk is dropped.
-  assert.deepEqual(foldBlockSamples([-5, NaN, Infinity, 12]), { samples: 2, maxBlockMs: 12, blocksOver50Ms: 0 })
+  // Scheduling noise and a C++ boundary both exist: negatives clamp, junk is dropped — and the
+  // position reported is the surviving tick's, never the dropped one's.
+  assert.deepEqual(foldBlockSamples(ticks([-5, NaN, Infinity, 12])), {
+    samples: 2,
+    maxBlockMs: 12,
+    blocksOver50Ms: 0,
+    worstAtMs: 2000
+  })
 })
 
 test('a launch that measured its blocking states it in the profile; one that did not omits it', () => {

@@ -78,6 +78,33 @@
  *   What is left on top is the combat engine (37.3% of the smaller fold) and buffs (16.6%): the
  *   same absolute milliseconds as before, now the whole of the problem.
  *
+ * AND THEN JOS-59 OPENED THE ENGINE ROW, which is what a table naming one opaque consumer is for.
+ *   A THIRD ARM (`foldSections`) folds the same log with `combat/foldProbe.ts` installed and
+ *   nothing else, and prints where the engine's own microseconds go. Its own arm on purpose: the
+ *   section timer reads the clock inside `ingestEvent`, so beside the registry timer it would
+ *   inflate the very row this comparison is about.
+ *
+ *   The sections named four per-line allocations, and a CPU profile of the same arm named the
+ *   functions. All four are gone; every damage number is byte-identical
+ *   (`npm run bench:engine-oracle`, 98 fixtures + the owner's log, diffs to nothing):
+ *
+ *                                        before            after
+ *     engine: world model              1,302 ms            481 ms   (a mob's whole spawn history,
+ *                                                                    walked and copied per line)
+ *     engine: aggregate                1,490 ms          1,160 ms   (a string key per swing, twice)
+ *     engine total                     4,042 ms          2,756 ms   2.88 -> 1.96 us/event
+ *     module:buffs                     1,802 ms            977 ms   (a per-event sweep of a copy,
+ *                                                                    through a regex, memoized)
+ *     the whole fold, untimed          9,252 ms /151,877  7,051 ms /199,319
+ *     the LAUNCH's replay phase       12,585 ms          9,034 ms
+ *     …events/sec FOLDING                181,819            252,164
+ *     max block                            18 ms             23 ms
+ *
+ *   Read the ARMS line with care after this change: the launch now reports a HIGHER folding rate
+ *   than the in-process arm (0.79×), which trips the "arms disagree" note. That is the in-process
+ *   arm being the slower of the two, not the launch cheating — the two were 0.84× before and the
+ *   threshold is 0.80.
+ *
  * THE INPUT. A bench that reads a different log each run measures the log, not the code. So:
  *   1. `tests/bench/fixtures/Logs/eqlog_*.txt` — the STANDARD fixture, if you have put one there.
  *      (Gitignored: a comparable bench log is ~100 MB of one person's real game log, which is
@@ -185,8 +212,27 @@ const MAX_BLOCK_MS_BUDGET = 50
  * you regressed the fold or you ran this beside something else"; check the second before
  * bisecting the first. A human edits this deliberately and states why, as here; nothing ratchets
  * it automatically.
+ *
+ * RE-DERIVED 2026-08-06 (JOS-59) — 115,000, by the SAME 0.5× rule, against a baseline this ticket
+ * moved on purpose.
+ *
+ * JOS-59 deleted four per-line allocations from the fold (the world model's per-name spawn-history
+ * walk, the two round accumulators' string keys, and the buffs module's per-event sweep through a
+ * regex — see the commit messages), and the launch's `events/sec folding` went with them. THREE
+ * consecutive launches after the change, this machine, this log: 252,164 / 236,376 / 228,457.
+ *
+ * AND THOSE THREE WERE NOT TAKEN ON A QUIET MACHINE, which is stated because this file's own
+ * doctrine is that a bench whose verdict depends on the box has to say what the box was doing.
+ * The owner returned mid-ticket: his dev app and `eqgame.exe` were both running for all three.
+ * That makes them a LOWER bound rather than a best case, which is exactly the right direction for
+ * a floor — so the derivation takes the WORST of the three rather than the mean or the best:
+ * 0.5 × 228,457 = 114,228, stated as a round 115,000. A quiet machine clears it with more room
+ * still (the quiet pre-change baseline was 181,819, and the quiet mid-ticket one 205,490).
+ *
+ * WHAT IT WILL AND WILL NOT CATCH is unchanged from the paragraph above, and so is the reading of
+ * a red: check whether the box was busy before bisecting the fold.
  */
-const EVENTS_PER_WORK_SEC_FLOOR = 90_000
+const EVENTS_PER_WORK_SEC_FLOOR = 115_000
 
 /**
  * THE DUTY CEILING (JOS-50): the fold may not claim more of the wall clock than it said it would.
@@ -483,7 +529,7 @@ function assertBudgets(run: BenchRun): number {
   } else if (run.eventsPerWorkSec < EVENTS_PER_WORK_SEC_FLOOR) {
     failures.push(
       `events/sec folding ${num(run.eventsPerWorkSec)} is under the ${num(EVENTS_PER_WORK_SEC_FLOOR)} floor ` +
-        `(0.5× the post-JOS-58 quiet-machine baseline) — confirm the machine was idle before bisecting the fold`
+        `(0.5× the worst of JOS-59's three post-change launches) — confirm the machine was idle before bisecting the fold`
     )
   }
   if (run.replayDuty !== null && run.replayDuty > REPLAY_DUTY_CEILING) {

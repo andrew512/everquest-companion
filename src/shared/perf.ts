@@ -205,6 +205,20 @@ export interface StartupBlockStats {
   maxBlockMs: number
   /** How many probe ticks were at least `STARTUP_BLOCK_THRESHOLD_MS` late. */
   blocksOver50Ms: number
+  /**
+   * WHEN the worst stall ENDED, on the same `atMs` clock the phases use (JOS-59). Absent when the
+   * window held no ticks, and absent from any profile written before this existed.
+   *
+   * It is here because "maxBlockMs 617" could not be acted on. Real dev boots report one block of
+   * 600-750 ms that no bench or e2e run reproduces (those measure 15-24 ms with the same log, the
+   * same 1.4M events and a copy of the same userData), and with only a magnitude there was no way
+   * to say WHICH of the eight phases it happened inside — the profile listed a `rendererHydrated`
+   * phase lasting 1,440 ms in dev against 170 ms in a production-shaped build, and a number that
+   * could be placed against it settles the question the next time anyone launches. One assignment
+   * per probe tick, on a probe that was already running: the performance contract at the top of
+   * main/perf.ts is unchanged.
+   */
+  worstAtMs?: number
 }
 
 /**
@@ -214,14 +228,28 @@ export interface StartupBlockStats {
  */
 export const STARTUP_BLOCK_THRESHOLD_MS = LAG_WARN_P95_MS
 
-/** Drift samples → the two facts the profile states. Pure, so the arithmetic is pinned by tests
- *  rather than inferred from a boot. Never NaN, never negative. */
-export function foldBlockSamples(drifts: readonly number[]): StartupBlockStats {
-  const clean = drifts.filter((d) => Number.isFinite(d)).map((d) => Math.max(0, d))
+/** One probe tick: how late it was, and when it landed on the profile's own `atMs` clock. */
+export interface BlockSample {
+  driftMs: number
+  atMs: number
+}
+
+/** Drift samples → the facts the profile states. Pure, so the arithmetic is pinned by tests
+ *  rather than inferred from a boot. Never NaN, never negative.
+ *
+ *  Ties go to the FIRST tick that reached the maximum — an arbitrary but stated choice, so two
+ *  runs of the same launch describe the same tick. */
+export function foldBlockSamples(samples: readonly BlockSample[]): StartupBlockStats {
+  const clean = samples
+    .filter((s) => Number.isFinite(s.driftMs))
+    .map((s) => ({ driftMs: Math.max(0, s.driftMs), atMs: s.atMs }))
+  let worst: BlockSample | undefined
+  for (const s of clean) if (worst === undefined || s.driftMs > worst.driftMs) worst = s
   return {
     samples: clean.length,
-    maxBlockMs: round(clean.length ? Math.max(...clean) : 0, 0),
-    blocksOver50Ms: clean.filter((d) => d >= STARTUP_BLOCK_THRESHOLD_MS).length
+    maxBlockMs: round(worst ? worst.driftMs : 0, 0),
+    blocksOver50Ms: clean.filter((s) => s.driftMs >= STARTUP_BLOCK_THRESHOLD_MS).length,
+    ...(worst && Number.isFinite(worst.atMs) ? { worstAtMs: round(worst.atMs, 0) } : {})
   }
 }
 
@@ -527,8 +555,10 @@ export function buildProfile(
   return profile
 }
 
-/** Shape check for the block stats read back off disk. All three fields or none — a half-parsed
- *  probe result would let a reader draw a conclusion from a number the file never stated. */
+/** Shape check for the block stats read back off disk. The three ORIGINAL fields or none — a
+ *  half-parsed probe result would let a reader draw a conclusion from a number the file never
+ *  stated. `worstAtMs` is optional and is simply absent from a profile written before it existed
+ *  (JOS-59), which is exactly what "the worst block's position is unknown for that launch" means. */
 function parseBlockStats(raw: unknown): StartupBlockStats | null {
   if (!isPlainObject(raw)) return null
   if (typeof raw.samples !== 'number' || typeof raw.maxBlockMs !== 'number') return null
@@ -536,7 +566,8 @@ function parseBlockStats(raw: unknown): StartupBlockStats | null {
   return {
     samples: Math.max(0, finite(raw.samples)),
     maxBlockMs: Math.max(0, finite(raw.maxBlockMs)),
-    blocksOver50Ms: Math.max(0, finite(raw.blocksOver50Ms))
+    blocksOver50Ms: Math.max(0, finite(raw.blocksOver50Ms)),
+    ...(typeof raw.worstAtMs === 'number' ? { worstAtMs: Math.max(0, finite(raw.worstAtMs)) } : {})
   }
 }
 
