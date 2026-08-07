@@ -656,6 +656,26 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 - Melee verbs CONJUGATE — match first person ("You slash") AND third
   ("slashes"); missing `smite`/`cleave` once hid 22% of all damage. Paren
   modifiers are COMPOUND: `(Riposte Slay Undead)`.
+- **A VERB THAT NAMES A CLASS SKILL GETS ITS OWN LANE; A WEAPON VERB DOES
+  NOT** (JOS-77). `meleeSkill()` (log/parseCombat.ts) splits Backstab (ROG),
+  Bash (PAL/SHD/WAR), Kick (BST/MNK/RNG/WAR), Frenzy (BER), Flurry and now
+  **Cleave (WAR, level 5)**; slash/pierce/crush/hit/slice/claw/gore are what a
+  weapon in a hand prints and share the generic "Melee" row (the Rounds panel
+  splits those BY VERB instead). The table is HAND-AUTHORED against
+  `data/classes.json`'s skill→class map — never a matcher over spelling, which
+  would promote `slice`. Cleave's row is user report
+  01KZCZ3BYRQRD4JQJ0PW7FQRG5, the Dragon Punch shape one lane over: the damage
+  was always counted, the ROW could not exist (171 hits / 11,256 points hidden
+  inside one "Melee" row in the reporter's slice). What proves it is a SKILL
+  and not a damage tier of some weapon verb: the owner's 1.4M-line log has
+  71,104 `You slash` hits reaching 2,100 damage and **ZERO** `You cleave`
+  lines, while carrying 20,334 INCOMING ones — a verb that never prints for a
+  player who lacks the skill is gated on the skill. `smite` (PAL) is the same
+  shape and is the KNOWN REMAINING GAP — 13,968 self swings + 280 `better at
+  Smite!` ticks in the owner's log, still reading "Melee"; W48 in
+  `tests/specialAttackWindows.test.mts` pins that absence deliberately.
+  Cleave claims no special-attack lane (no `will now use` line has ever named
+  one) and no reuse-timer confidence tier.
 - **SPECIAL ATTACKS PRINT NO VERB OF THEIR OWN.** A Dragon Punch, an Eagle
   Strike and a Tiger Claw ALL land as `You strike …`; Round Kick and Flying
   Kick land as `You kick …`. The game names the live one exactly once, in

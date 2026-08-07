@@ -377,3 +377,19 @@ slice(1102931, 1103533, 'w50-round-fanout.log')
 // exclusion ledger has all three reasons populated at once. It ends mid-grind — R`tal is still
 // alive — which is the live case the panel has to render honestly.
 slice(1241090, 1241650, 'w51-round-flurry-era.log')
+
+// W52 THE CLEAVE LANE (Wed Aug 05 17:05:51 -> 17:08:03, raw 1369065..1369590) — JOS-77, user
+// report 01KZCZ3BYRQRD4JQJ0PW7FQRG5: "the combat parser does not appear to capture cleave, or
+// at a minimum it's not split out like Frenzy, Bash and Kick are." The damage was always
+// counted; `meleeSkill('cleave')` answered "Melee", so no Cleave ROW could exist.
+//
+// THE OWNER'S LOG HAS NO SELF CLEAVE AT ALL — zero `You cleave` lines in 1,404,458, against
+// 71k `You slash`, because Cleave is a WAR-only skill (classes.json) and he has never carried
+// it. So this window pins the two arms his bytes DO have, and the test injects the third:
+//   PET  — `a gust of wind`, a charmed pet, cleaves throughout. Its claim tell
+//          (`Attacking an essence tamer Master.`) is line 1, so the whole window is bound and
+//          nothing has to reach backwards (a tell binds FORWARD, JOS-49).
+//   INCOMING — an essence carrier and an essence tamer both cleave YOU, landed and avoided,
+//          so the enemy lane and the avoided-swing (`tries to cleave YOU`) path are both live.
+// The window ends on the carrier's death + its two loot lines, so the fight closes inside it.
+slice(1369065, 1369590, 'w52-cleave-lane.log')
