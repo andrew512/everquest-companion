@@ -814,12 +814,26 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   pending exp line at the next credited kill, never search forward.
 - Self `/who` row (keyed on the tailed character's name via
   `ParserConfig.characterName`, never a constant) states the loadout;
-  skill-ups `You have become better at <Skill>! (n)`; item activations
-  `Your <item> shimmers briefly.` / `feels alive with power.` are CLICKY
-  emotes, not procs — a castBegin within ~2.5s of one is clicky-sourced
-  and is NOT class evidence. Wiki skill names ≠ client skill names
-  (`1 Hand Slashing` vs `1H Slashing`) — classes.json carries the alias
-  table measured from the log.
+  skill-ups `You have become better at <Skill>! (n)`; Wiki skill names ≠
+  client skill names (`1 Hand Slashing` vs `1H Slashing`) — classes.json
+  carries the alias table measured from the log.
+- **`Your <item> shimmers briefly.` / `feels alive with power.` IS A WORN
+  FOCUS TALKING, NOT AN ITEM CASTING** (JOS-79, measured whole-log
+  2026-08-06 — this entry previously said the opposite and it was wrong).
+  All FIVE items that print it are focus items (Djarn's Amethyst Ring =
+  Spell Haste II, Idol of the Underking = Improved Healing III, Polished
+  Mithril Mask = Improved Damage II, Golden Efreeti Boots = Enhancement
+  Haste II; Brell's Girdle, 6 lines, uncatalogued). A CLICKY CASTS ONE
+  SPELL — Djarn's ring precedes 7,033 casts spanning the player's whole
+  spellbook era by era — and the two heal/damage focuses precede a cast on
+  only 2.0% of their firings because they fire when the spell LANDS. The
+  combo module's rule that dropped a `castBegin` within 2.5 s of one was
+  discarding 7,452 of 16,857 own casts (44.2%) and EVERY wizard observation
+  in the log (0 whole-log, against 824 on Aug 06 alone), which is why a
+  PAL/WIZ/DRU loadout was undetectable. The rule is gone; the event stays
+  (it keeps 7,921 lines out of `unknown` and out of the emote miner) and
+  says nothing about class in either direction. A self-announcing clicky
+  needs its own observed sample before any rule acts on one.
 - Feign death has NO failure line (1.14M lines: only the success emote).
   An alert cannot fire on the absence of a line — the group ships hidden.
 - **A TELL'S TENSE SAYS WHETHER A PERSON SENT IT** (JOS-69, measured whole-log
@@ -1546,9 +1560,13 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   combo swap-back blind spot (capped-class swaps invisible; the model's
   CURRENT answer is wrong and tail evidence rewrote a settled span — the
   hardest inference fix in the repo, do not rush it; overDetermined test
-  guard + time-keyed corrections are the mitigations); the e2e per-checkout
-  lockfile; copyText still serializing the melee-rounds footer the Rounds
-  panel replaced.
+  guard + time-keyed corrections are the mitigations) — **PARTLY CLOSED by
+  JOS-79**: a swap the log DID ding for can no longer be swallowed by an
+  earlier silent one (`reinstatedDrops`), and the loadout converges within
+  one clock-hour rollover (measured 28.6 min on the Aug 06 wizard swap).
+  A swap between capped classes still dings for nothing and remains
+  evidence-only; the e2e per-checkout lockfile; copyText still serializing
+  the melee-rounds footer the Rounds panel replaced.
 - **Awaiting real samples** (the outputs registry refuses them typed until
   a committed fixture graduates each): /outputfile guild, raid, spellbook,
   factions, achievements, alternateadv — one in-game `/outputfile <kind>`

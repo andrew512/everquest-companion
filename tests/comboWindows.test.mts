@@ -12,6 +12,9 @@
 //     from the evidence shift.
 //   * CW3 pins the model REFUSING to guess: {CLR,PAL} stays {CLR,PAL}.
 //   * CW4 pins the model refusing to be fooled by one out-of-loadout cast.
+//   * CW5 pins the JOS-79 pair: a worn FOCUS effect is not an item casting a spell (the rule
+//     that read it as one was discarding 44% of all cast evidence and 100% of WIZ), and two
+//     real swaps 43.9 h apart no longer arrive as one boundary.
 //   * The full-log replay asserts INVARIANTS ONLY (the log grows by append — frozen numbers
 //     rot), and it drives the epoch exactly as the app does so the wiped beta character is
 //     excluded the same way.
@@ -31,6 +34,8 @@ import { classObservation } from '../src/main/modules/comboEvidence'
 import { scoreSlots } from '../src/main/modules/comboScore'
 import { levelDropBoundaries } from '../src/main/modules/comboIntervals'
 import { comboAt, groupByCombo } from '../src/shared/comboIndex'
+import { buildItemDbIndex, type ItemDbFile } from '../src/main/itemsDb'
+import itemsJson from '../src/main/data/items.json'
 import {
   resolvedClasses,
   type ClassAbbr,
@@ -72,22 +77,16 @@ function replay(lines: string[], opts: { epochs?: boolean } = {}): ComboSnap {
   return mod.snapshot().state
 }
 
-/** Every observation a fixture yields, with clicky suppression applied exactly as the module
- *  applies it — the input the SCORER sees. */
+/** Every observation a fixture yields — the input the SCORER sees. */
 function observationsOf(lines: string[]): ClassObservation[] {
   installSpellDb(loadSpellDb())
   installCharacterName(SELF)
   const out: ClassObservation[] = []
   let seq = 0
-  let lastItem: number | null = null
   for (const raw of lines) {
     const ev: LogEvent | null = parseEvent(raw, seq++)
     if (!ev) continue
-    if (ev.kind === 'itemActivate') {
-      lastItem = ev.ts
-      continue
-    }
-    const observation = classObservation(ev, lastItem)
+    const observation = classObservation(ev)
     if (observation) out.push(observation)
   }
   return out
@@ -276,28 +275,110 @@ test('CW4: a lone out-of-loadout cast never admits its class', () => {
   }
 })
 
-test('CW4: item clickies contribute NO class evidence at all', () => {
-  // The suppression rule, isolated. `Your <item> shimmers briefly.` is followed in the same
-  // second by the cast the ITEM made; wave 1 measured that the design's sustain>=2 rule does
-  // NOT reject those (post-swap ENC keeps 7 exclusive labels through clickies alone).
-  const lines = [
-    '[Sun Aug 02 19:20:00 2026] Your Djarn`s Amethyst Ring (Exaltation) shimmers briefly.',
-    '[Sun Aug 02 19:20:00 2026] You begin casting Mesmerization.'
-  ]
+// ---------------------------------------------------------------------------
+// CW5 — the JOS-79 pair. A focus item is not a clicky, and two swaps are not one.
+// ---------------------------------------------------------------------------
+
+test('CW5: every item that prints an activation line in this log is a WORN FOCUS', () => {
+  // The measurement that retired the clicky-suppression rule, made executable against the
+  // committed catalog. Wave 3 read `Your <item> shimmers briefly.` as "an item cast the spell
+  // on the next line" and dropped that cast; there is no clicky here to drop. All four items
+  // the catalog knows carry exactly one effect and it is a FOCUS — worn, passive, announcing
+  // itself when it modifies a spell the PLAYER is casting. (Brell's Girdle, 6 lines whole-log,
+  // is not in the catalog and is left out rather than guessed at.)
+  const items = buildItemDbIndex(itemsJson as unknown as ItemDbFile)
+  for (const [key, focus] of [
+    ['djarns amethyst ring', 'Spell Haste II'],
+    ['idol of the underking', 'Improved Healing III'],
+    ['polished mithril mask', 'Improved Damage II'],
+    ['golden efreeti boots', 'Enhancement Haste II']
+  ] as const) {
+    const effects = items.get(key)?.stats?.effects ?? []
+    assert.deepEqual(effects.map((e) => `${e.kind}:${e.name}`), [`focus:${focus}`], key)
+  }
+})
+
+test('CW5: a focus shimmer does not silence the cast beside it', () => {
+  // Both lines verbatim from the live log, same second, the first wizard nuke of the Aug 06
+  // session. The old rule dropped the cast; it is the player's, and dropping it cost WIZ every
+  // observation it ever had (0 in 1.43M lines, against 824 on Aug 06 alone).
+  //
+  // The three whole-log facts behind that, none of which a clicky can produce: Djarn's ring
+  // precedes 7,033 casts spanning the player's entire spellbook era by era; Idol of the
+  // Underking fires 2,408 times with a cast within 2.5 s on 48 of them (2.0%) because a healing
+  // focus fires when the spell LANDS; and 7,452 of 16,857 own casts — 44.2% — were being thrown
+  // away by the rule.
   installSpellDb(loadSpellDb())
   installCharacterName(SELF)
-  const activate = parseEvent(lines[0], 0)
-  assert.equal(activate?.kind, 'itemActivate')
-  const cast = parseEvent(lines[1], 1)
+  const shimmer = parseEvent(
+    "[Thu Aug 06 19:26:40 2026] Your Djarn's Amethyst Ring (Exaltation) shimmers briefly.",
+    0
+  )
+  assert.equal(shimmer?.kind, 'itemActivate', 'the line still parses — it just is not evidence')
+  const cast = parseEvent('[Thu Aug 06 19:26:40 2026] You begin casting Shock of Lightning.', 1)
   assert.equal(cast?.kind, 'castBegin')
-  assert.equal(classObservation(cast!, activate!.ts), null, 'the clicky cast says nothing')
-  // The SAME cast with no item activation in front of it is full evidence.
-  const handCast = classObservation(cast!, null)
-  assert.deepEqual(handCast?.candidates, ['ENC'])
-  assert.equal(handCast?.source, 'cast')
-  // …and one 2.5s later than the activation is a hand-cast again.
-  const later = parseEvent('[Sun Aug 02 19:20:03 2026] You begin casting Mesmerization.', 2)
-  assert.deepEqual(classObservation(later!, activate!.ts)?.candidates, ['ENC'])
+  const observation = classObservation(cast!)
+  assert.deepEqual(observation?.candidates, ['WIZ'], 'the wizard nuke is the player speaking')
+  assert.equal(observation?.source, 'cast')
+})
+
+test('CW5: the wizard swap is its own interval, and the ding is where it is cut', () => {
+  // Aug 04 00:00 → the log end at extraction. TWO swaps, and the model used to report one:
+  //   Aug 04 23:38:01  PAL/ROG/BER → ENC/MNK/PAL, dinged for by nothing (all three were capped
+  //                    at 50), so only the evidence shift dates it.
+  //   Aug 06 19:31:23  ENC/MNK/PAL → the wizard loadout, which DID ding non-increasing — and
+  //                    whose window therefore opened at the previous ding on Aug 04 20:57:35,
+  //                    46.6 h earlier, swallowing the shift above inside `mergeBoundaries`.
+  const snap = replay(readFixture('cw5-wizard-swap-aug6.log'))
+  assert.equal(snap.intervals.length, 3, 'two swaps, three intervals')
+  const [, before, after] = snap.intervals
+
+  assert.deepEqual([...resolvedClasses(before)].sort(), ['ENC', 'MNK', 'PAL'], 'the era it was stuck on')
+  assert.equal(before.endTs, at('Thu Aug 06 19:31:23 2026'), 'and it ENDS at the ding')
+
+  assert.equal(after.startTs, at('Thu Aug 06 19:31:23 2026'))
+  assert.equal(after.startReason, 'levelDrop', 'the log said a swap happened; the cut goes there')
+  assert.equal(after.startAlso?.includes('evidenceShift'), true, 'departure + arrival corroborate')
+  assert.equal(after.endTs, null, 'and it is the open interval')
+  assert.deepEqual(
+    [...resolvedClasses(after)].sort(),
+    ['DRU', 'PAL', 'WIZ'],
+    'the loadout the owner was actually playing'
+  )
+  for (const slot of after.slots) assert.equal(slot.provenance, 'inferred', 'nothing stated it')
+  const because = after.slots.flatMap((s) => s.because)
+  for (const key of ['cast:Shock of Lightning', 'cast:Spirit of Wolf', 'cast:Light Healing']) {
+    assert.ok(because.includes(key), `expected ${key} in the evidence, got ${because.join(', ')}`)
+  }
+  // The window is honest: it opens no earlier than the last evidence of the class that LEFT
+  // (a Tiger Claw skill-up — MNK's final word) and closes at the ding.
+  assert.equal(after.startLo, at('Wed Aug 05 20:32:32 2026'), 'last MNK-exclusive observation')
+  assert.equal(after.startHi, at('Thu Aug 06 19:31:23 2026'), 'the ding')
+})
+
+test('CW5: WIZ is named 28.6 minutes after the first wizard cast', () => {
+  // THE CONVERGENCE BOUND, and N is not a tuned constant — it is the model's own ≥2-hourly-
+  // bucket sustain bar (design § 9 R3/R8's anti-thrash protection, deliberately untouched here)
+  // expressed in time. A class is believed once its exclusive evidence appears in a SECOND
+  // distinct clock hour, so the worst case is one hour rollover and the best case is seconds.
+  //
+  // MEASURED on this span: the ding lands 19:31:23, the first `Shock of Lightning` at 19:31:49,
+  // and the second hourly bucket opens with another one at 20:00:04 — so the loadout is named
+  // at 20:00:04, 28.6 minutes after the wizard spam started and 28.7 after the ding. Before
+  // this wave it was never named at all: the owner played a full evening while the app showed
+  // a loadout he had left the day before.
+  const lines = readFixture('cw5-wizard-swap-aug6.log')
+  const firstCast = at('Thu Aug 06 19:31:49 2026')
+  const named = at('Thu Aug 06 20:00:04 2026')
+  const stamp = (line: string): number => parseEqTimestamp(line.slice(1, 25))
+  const names = (upTo: number): boolean => {
+    const current = replay(lines.filter((l) => stamp(l) <= upTo)).current
+    return current !== null && resolvedClasses(current).includes('WIZ')
+  }
+
+  assert.equal(names(named - 1000), false, 'one second early, the evidence is one bucket short')
+  assert.equal(names(named), true, 'and at the second bucket the model says WIZ')
+  assert.ok(named - firstCast <= 30 * 60_000, 'named within half an hour of the first cast')
 })
 
 test('a skill-up and a spell that SHARE a name resolve to different classes', () => {
@@ -307,11 +388,11 @@ test('a skill-up and a spell that SHARE a name resolve to different classes', ()
   installSpellDb(loadSpellDb())
   installCharacterName(SELF)
   const skillUp = parseEvent('[Sun Aug 02 00:57:55 2026] You have become better at Feign Death! (44)', 0)
-  assert.deepEqual(classObservation(skillUp!, null)?.candidates, ['MNK'])
+  assert.deepEqual(classObservation(skillUp!)?.candidates, ['MNK'])
   const cast = parseEvent('[Sun Aug 02 00:57:55 2026] You begin casting Feign Death.', 1)
-  assert.deepEqual(classObservation(cast!, null)?.candidates, ['NEC', 'SHD'])
+  assert.deepEqual(classObservation(cast!)?.candidates, ['NEC', 'SHD'])
   const frenzySkill = parseEvent('[Tue Jul 28 12:32:17 2026] You have become better at Frenzy! (9)', 2)
-  assert.deepEqual(classObservation(frenzySkill!, null)?.candidates, ['BER'])
+  assert.deepEqual(classObservation(frenzySkill!)?.candidates, ['BER'])
 })
 
 // ---------------------------------------------------------------------------

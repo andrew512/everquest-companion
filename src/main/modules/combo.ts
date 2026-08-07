@@ -49,8 +49,6 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
   private levels: LevelPoint[] = []
   private corrections: ComboCorrection[] = []
   private correctionsProvider: (() => readonly ComboCorrection[]) | null = null
-  /** When an item last fired its own effect — the clicky-suppression context (comboEvidence). */
-  private lastItemActivateTs: number | null = null
   private seq = 0
 
   private intervals: ComboInterval[] = []
@@ -62,7 +60,6 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
     this.observations = []
     this.whoRows = []
     this.levels = []
-    this.lastItemActivateTs = null
     this.seq = 0
     this.intervals = []
     this.pushed.clear()
@@ -116,10 +113,6 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
       this.corrections = kept.filter((c) => c.startTs >= LAUNCH_MS)
       return
     }
-    if (ev.kind === 'itemActivate') {
-      this.lastItemActivateTs = ev.ts
-      return
-    }
     if (ev.kind === 'level') {
       this.levels.push({ ts: ev.ts, level: ev.level })
       this.stale = true
@@ -129,7 +122,7 @@ export class ComboModule implements EqModule<ComboSnap, ComboDelta> {
       const classes = ev.classes.filter(isClassAbbr)
       if (classes.length > 0) this.whoRows.push({ ts: ev.ts, seq: ev.seq, classes, level: ev.level })
     }
-    const observation = classObservation(ev, this.lastItemActivateTs)
+    const observation = classObservation(ev)
     if (!observation) return
     this.observations.push(observation)
     this.stale = true

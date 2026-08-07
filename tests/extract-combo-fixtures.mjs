@@ -100,3 +100,21 @@ slice(177648, 185280, 'cw3-ambiguous-clr-pal.log')
 // never turns into a castBegin. Rampage I is the real instance of the case the design
 // describes, and it is inside the span the design already chose.
 slice(1019360, 1040292, 'cw4-stray-cast.log')
+
+// CW5 THE WIZARD SWAP — Tue Aug 04 00:00:00 → the log's end at extraction (Thu Aug 06 22:38).
+// The JOS-79 window, and it needs all three days for a reason the other fixtures do not:
+//   * Aug 04 00:00 – 20:57 is the tail of the PAL/ROG/BER era, and 20:57:35's `Welcome to level
+//     50!` is the ding that OPENS the level-drop window the bug lives in.
+//   * Aug 04 23:38:01 is a swap into ENC/MNK/PAL that the game never dinged for (all three were
+//     already capped), so only the evidence shift dates it.
+//   * Aug 06 19:31:23 dings NON-INCREASING — the swap into a wizard loadout, whose window
+//     therefore reaches all the way back to Aug 04 20:57:35 and swallowed the shift above.
+//     Two real swaps, 43.9 h apart, arriving as ONE boundary. The fixture is the whole shape.
+//   * Aug 06 19:31 → the end is the wizard evening itself: `Shock of Lightning` at 19:31:49,
+//     `Lightning Bolt`, `Garrison's Mighty Mana Shock` — 824 wizard-exclusive observations that
+//     the old clicky-suppression rule discarded to the last one, because this character casts
+//     under a Spell Haste II focus that shimmers in the same second as every cast.
+// Cannot be trimmed to the evening alone: the departure half of the reinstatement test needs
+// MNK sustained BEFORE the ding, and the shift at Aug 04 23:38 needs BER/ROG sustained before
+// IT — thinning either side would manufacture a silence the real session never had.
+slice(1232428, 1434122, 'cw5-wizard-swap-aug6.log')

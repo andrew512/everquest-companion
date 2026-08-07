@@ -226,6 +226,73 @@ function pickBoundary(group: Boundary[]): Boundary {
   return merged
 }
 
+/** The window an absorbed drop is judged against: from the boundary that swallowed it to the
+ *  next cut after it (or the end of the evidence). */
+function absorbedWindow(
+  drop: Boundary,
+  dated: readonly Boundary[],
+  end: number
+): { from: number; to: number } | null {
+  const before = dated.filter((b) => b.at <= drop.at)
+  if (before.length === 0) return null
+  const from = before.reduce((a, b) => (b.at > a.at ? b : a)).at
+  const after = dated.filter((b) => b.at > drop.at).map((b) => b.at)
+  return { from, to: after.length > 0 ? Math.min(...after) : end }
+}
+
+/**
+ * LEVEL DINGS THE MERGE SWALLOWED, PUT BACK WHEN THE EVIDENCE SAYS THEY WERE A SECOND SWAP.
+ * This is the JOS-79 convergence fix, and it is worth stating exactly what went wrong.
+ *
+ * `levelDropBoundaries` dates a ding's swap as "somewhere between the previous ding and this
+ * one" — and after a swap that previous ding is by construction in the PREVIOUS era, so the
+ * window routinely reaches back across an earlier swap. `mergeBoundaries` then reads that
+ * overlap as "these two detectors describe the same event", keeps the narrower one, and the
+ * ding's CUT is gone. MEASURED on the live log (2026-08-06): the swap into a wizard loadout
+ * dinged at Aug 06 19:31:23, and its window opened at the previous ding on Aug 04 20:57:35 —
+ * 46.6 h earlier, swallowing the Aug 04 23:38:01 evidence shift that was itself a real swap.
+ * One boundary came out where there were two, and the app spent the whole evening naming a
+ * loadout the owner had stopped playing.
+ *
+ * The discriminator is the EVIDENCE, never the clock, and it is the same test an evidence shift
+ * already has to pass: a class with sustained exclusive evidence GOES SILENT and a different one
+ * STARTS. Applied across the ding:
+ *
+ *   Aug 02 (the swap CW2 pins): before = {BER,ROG}, after = {BER,ENC,PAL,ROG}. Nothing departs —
+ *          the ding 19 minutes after the shift is that same swap, dated worse. Absorbed, as it
+ *          has always been, and CW2's boundary is untouched.
+ *   Aug 06: before = {ENC,MNK,PAL}, after = {ENC,PAL,WIZ}. MNK leaves, WIZ arrives. Two swaps.
+ *
+ * Requiring BOTH directions is what keeps it conservative: right after a ding everything looks
+ * "departed" simply because no time has passed, so an arrival that clears the ≥2-bucket sustain
+ * bar is what has to carry the claim. And because this only ever RE-ADDS a cut the merge had
+ * already deleted, it cannot move a boundary the model gets right today.
+ */
+export function reinstatedDrops(
+  observations: readonly ClassObservation[],
+  drops: readonly Boundary[],
+  dated: readonly Boundary[]
+): Boundary[] {
+  if (observations.length === 0) return []
+  const end = observations[observations.length - 1].ts + 1
+  const out: Boundary[] = []
+  for (const drop of drops) {
+    if (dated.some((b) => b.at === drop.at)) continue
+    const window = absorbedWindow(drop, dated, end)
+    if (!window) continue
+    const was = exclusiveSpans(observations.filter((o) => o.ts >= window.from && o.ts < drop.at))
+    const now = exclusiveSpans(observations.filter((o) => o.ts >= drop.at && o.ts < window.to))
+    const departed = was.filter((s) => !now.some((n) => n.cls === s.cls))
+    const arrived = now.some((n) => !was.some((s) => s.cls === n.cls))
+    if (departed.length === 0 || !arrived) continue
+    // The ding is the cut (the log spoke there); the window opens no earlier than the last
+    // evidence of a class that is gone, which is the narrowest honest left edge available.
+    const lo = Math.max(window.from, ...departed.map((s) => s.last))
+    out.push({ lo, hi: drop.at, at: drop.at, reason: 'levelDrop', also: ['evidenceShift'] })
+  }
+  return out
+}
+
 /** Collapse overlapping candidates into one boundary each, in time order. Windows that merely
  *  TOUCH (one ends exactly where the next begins) are separate swaps, not one. */
 export function mergeBoundaries(candidates: readonly Boundary[]): Boundary[] {
@@ -412,7 +479,11 @@ export function buildIntervals(input: IntervalInput): ComboInterval[] {
     // The prior is enough here: a 2-slot era simply cannot be over-determined at 3.
     evidenceShiftBoundaries(segment, 3)
   )
-  const dated = mergeBoundaries([...drops, ...shifts])
+  const merged = mergeBoundaries([...drops, ...shifts])
+  // …and put back any ding the merge swallowed that the evidence says was its OWN swap. Done
+  // after the merge rather than inside it because the test needs the observations, and because
+  // it may only ever ADD a cut the merge deleted (see reinstatedDrops).
+  const dated = mergeBoundaries([...merged, ...reinstatedDrops(observations, drops, merged)])
   const boundaries = mergeBoundaries([
     ...dated,
     ...whoBoundaries(input.whoRows, dated)

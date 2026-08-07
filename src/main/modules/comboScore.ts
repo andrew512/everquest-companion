@@ -30,6 +30,26 @@ import {
 
 const HOUR_MS = 3_600_000
 
+/**
+ * How many distinct hourly buckets an EXCLUSIVE label must span before it counts as exclusivity.
+ *
+ * JOS-79. `sustain` was supposed to be the guard against a one-off, and it cannot be: it counts
+ * buckets holding ANY evidence for the class, and three of the nine invocations span twelve
+ * classes — so on the owner's Aug 06 wizard session every one of the sixteen classes scored
+ * `sustain: 4` and the clause decided nothing at all. Admission then ranked on raw exclusive
+ * LABEL COUNT, and two lone item-cast labels — one `Pillage Enchantment` at 21:15, one
+ * `Illusion: Dark Elf` at 22:31, an hour apart and never again — gave ENC `exclusive: 2` and the
+ * third slot, over a druid who cast Shield of Barbs, Shield of Thistles, Spirit of Wolf, Wolf
+ * Form and Light Healing all evening (`exclusive: 1`, and 45% more support).
+ *
+ * The bar is the one the interval builder already uses to decide a class was PRESENT
+ * (comboIntervals `exclusiveSpans`): evidence in two distinct hours. Restated here per LABEL,
+ * which is the level the strays live at — a class whose only exclusive names each appeared once
+ * has not been evidenced, it has been glimpsed. Items cast spells (design § 9 R3) and this is
+ * what that costs when the item announces nothing; the shared invocations cannot pay for it.
+ */
+const EXCLUSIVE_BUCKETS = 2
+
 /** A class's standing in one window. */
 export interface ClassScore {
   cls: ClassAbbr
@@ -79,7 +99,7 @@ export function scoreClasses(observations: readonly ClassObservation[]): Map<Cla
   for (const fold of foldLabels(observations)) {
     for (const cls of fold.candidates) {
       const s = scores.get(cls) ?? { cls, exclusive: 0, support: 0, sustain: 0, labels: [] }
-      if (fold.candidates.length === 1) s.exclusive += 1
+      if (fold.candidates.length === 1 && fold.buckets.size >= EXCLUSIVE_BUCKETS) s.exclusive += 1
       s.support += fold.weight / fold.candidates.length
       s.labels.push(fold.display)
       scores.set(cls, s)
