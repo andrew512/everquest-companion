@@ -174,12 +174,37 @@ export function meleeVerbBase(verb: string): string {
  * The lane name a melee VERB damages under. Exported so an avoided swing can be laned the same
  * way a landed one is (`routeMiss` → the round grouper's lane label): one derivation, so a miss
  * can never disagree with the hit it accompanied about what skill was swung.
+ *
+ * THE RULE IS "A NAMED CLASS SKILL, NOT A WEAPON SWING". `slash`/`pierce`/`crush`/`hit` and the
+ * rest are what a weapon in a hand prints, and four of them are one auto-attack lane — so they
+ * share the generic name and the Rounds panel splits them by verb instead. A verb that names an
+ * ABILITY the class list grants gets its own row, because a player who pressed a button wants to
+ * see what it did. Each entry below is evidence-verified against `src/main/data/classes.json`'s
+ * skill→class table (Backstab ROG, Bash PAL/SHD/WAR, Kick BST/MNK/RNG/WAR, Frenzy BER,
+ * Cleave WAR) — never a matcher over verb spelling, which would happily promote `slice`.
+ *
+ * CLEAVE (JOS-77, user report 01KZCZ3BYRQRD4JQJ0PW7FQRG5 — "the combat parser does not appear
+ * to capture cleave, or at a minimum it's not split out like Frenzy, Bash and Kick are"). The
+ * damage was never missing: `cleave` has been in MELEE_VERBS since the missing-verbs fix, and
+ * the reporter's own 30-minute slice folds all 171 of his cleave hits into the generic lane.
+ * The ROW could not exist — the same shape as the Dragon Punch report, one lane over.
+ * MEASURED, and this is what makes it a skill rather than a damage tier of some weapon verb:
+ * `Cleave` is WAR-only at level 5 in the class table, and the owner's own 1.4M-line log — 71k
+ * `You slash` lines up to 2,100 damage, 11k `You crush` — contains ZERO self cleaves, while it
+ * carries 20,334 INCOMING ones from mobs. A verb that never once prints for a player who lacks
+ * the skill, however hard he swings, is gated on the skill and not on the damage.
+ *
+ * KNOWN, DELIBERATE GAP: `smite` (PAL) is the same shape and still reads "Melee" — 13,968 self
+ * swings and 280 `better at Smite!` ticks in the owner's log. It is left alone here because it
+ * is nobody's report and its own measurement; `tests/specialAttackWindows.test.mts` (W48)
+ * already pins that absence as a documented gap rather than an oversight.
  */
 export function meleeSkill(verb: string): string {
   const v = verb.toLowerCase()
   if (v.startsWith('backstab')) return 'Backstab'
   if (v.startsWith('bash')) return 'Bash'
   if (v.startsWith('kick')) return 'Kick'
+  if (v.startsWith('cleav')) return 'Cleave'
   if (v.startsWith('frenz')) return 'Frenzy'
   if (v.startsWith('flurr')) return 'Flurry'
   return 'Melee'
