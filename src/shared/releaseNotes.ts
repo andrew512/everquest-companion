@@ -37,6 +37,31 @@
 // names, not module names, not ticket ids. `kind` is the only structure — the panel groups by it
 // into "New" / "Fixed" / "Changed" sub-headers, and a release whose entries carry no kind (the
 // one-line historical headlines below) renders as a bare line with no sub-header at all.
+//
+// A NEW SURFACE EARNS EXTRA BULLETS — AT MOST FIVE (JOS-80, owner direction). The rule to apply
+// when writing a release's notes, including the per-release draft cut at tag time:
+//
+//   * A FIX, A CHANGE, A NEW OPTION → ONE bullet. "What changed" is the whole answer. A player
+//     reading "Maps render north correctly" needs nothing more, and explaining why north matters
+//     would be padding.
+//   * A NEW TAB, OR A MAJOR NEW SURFACE (a new mode on a tab, a new window, a way of working that
+//     did not exist) → TWO TO FIVE bullets, never more than five. One says what it is; the others
+//     say why it was built — the problem, in the player's terms and from before the thing existed
+//     — and what they can now do with it. Nobody has any idea why a tab they have never seen is
+//     there, and the one line that names it cannot tell them.
+//
+// IT IS PLAIN BULLETS IN THE SAME LIST, and that is the whole mechanism (owner ruling, 2026-08-07,
+// which reversed a `detail` sub-paragraph field this ticket started out building). No extra field,
+// no second rendering, no card, no header: an introduction is simply a change that took a few more
+// lines to state. The renderer never learns that some bullets are special, so there is no way for
+// the panel to become shouty and no shape for a future author to misuse.
+//
+//   * WHEN IN DOUBT, LEAVE IT OUT. The contrast is the signal: if most changes carried three
+//     bullets the introductions would stop standing out. A release that was a rollup of fixes gets
+//     no "why" at all — inventing one for a batch of repairs is the failure this rule prevents.
+//
+// A bullet NEVER restates its neighbour, never names a file, a module or a wave, and never
+// explains how the app works internally (state, never process — the UI conventions).
 
 /** Which sub-header an entry sits under. Absent ⇒ the entry is a bullet under no sub-header. */
 export type ReleaseEntryKind = 'new' | 'fixed' | 'changed'
@@ -83,6 +108,12 @@ export interface ReleaseNote {
  * bullets where the range holds that many player-facing changes, one where it holds one. Nothing
  * is invented to reach a count.
  *
+ * …and a release that INTRODUCED a surface spends a few more of them on it (JOS-80 — see the
+ * header's voice section for the cap and the rule). Four introductions carry that treatment
+ * today: the What's new panel and the "This week" lockout view in 0.9.0, and, backfilled where
+ * the tag range supports honest prose, the exaltation planner and the celebration cards in
+ * 0.4.0 — plus in-app feedback in 0.3.0, which is the one judgment call in the set.
+ *
  * The releases before 0.7.0 carry no `kind`. They are backfilled from the tag dates and the
  * commits in each tag's range, and sorting them into New/Fixed/Changed after the fact would be
  * guessing at a distinction nobody drew at the time — so they render as plain bullets, which is
@@ -99,7 +130,15 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
-        text: 'Raid targets: a "This week" view shows your weekly lockouts per difficulty, with the kill that locked each one and time until the Tuesday reset.'
+        text: 'Raid targets: a "This week" view lists the lockouts you are holding right now, one row per difficulty.'
+      },
+      {
+        kind: 'new',
+        text: 'Lockouts are per difficulty and they all reset on Tuesday, which is easy to lose track of when one target has four tiers you killed on different nights.'
+      },
+      {
+        kind: 'new',
+        text: 'Each row names the kill that locked it and counts down to the reset, so what is still worth going after is a glance rather than an argument.'
       },
       {
         kind: 'new',
@@ -112,7 +151,15 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: "What's new: this panel — the app now tells you what changed after each update."
+        text: "What's new: this panel — every release, newest first, with a strip along the bottom the first time you launch after an update."
+      },
+      {
+        kind: 'new',
+        text: 'The app updates itself quietly in the background, so releases were arriving with nothing to say they had — no way to know what was different, or that a fix was there because somebody asked for it.'
+      },
+      {
+        kind: 'new',
+        text: 'Everything that landed since the version you were last on is marked new, and the changes that came from a player report are tagged as such.'
       },
       {
         kind: 'fixed',
@@ -244,7 +291,19 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-05',
     entries: [
       { text: 'The exaltation planner arrives: plan sets over a class-filtered effect browser.' },
-      { text: 'Celebration cards appear over the game when something is worth cheering.' },
+      {
+        text: 'Working out which exaltation combinations are even legal, and then what the donor items would cost you to farm, was a job for a spreadsheet and a lot of wiki tabs.'
+      },
+      {
+        text: 'Pick your classes, browse every effect you could transfer, fill a socket, and see which zones drop the pieces you are still missing.'
+      },
+      { text: 'Celebration cards appear over EverQuest when a raid target dies or a Sky quest completes.' },
+      {
+        text: 'Those moments are the payoff for a long night, and the app used to note them quietly in a list you would find later.'
+      },
+      {
+        text: 'A card names what you just did, fades on its own, and takes you to the tab with the details if you click it.'
+      },
       { text: 'Healing joins the meters, in the panel and in a floating overlay of its own.' },
       { text: 'Only kills credited to you celebrate — a boss a stranger killed nearby no longer does.' }
     ]
@@ -283,7 +342,13 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       { text: 'Alerts learn to speak, in a system voice or a downloadable natural one.' },
       { text: 'A cursor ring finds your mouse over the EverQuest window.' },
       { text: 'Poison and slow alerts arrive, and the suggestion dialog becomes one search.' },
-      { text: 'You can send feedback, with a scrubbed log window attached, from inside the app.' }
+      { text: 'You can send feedback, with a scrubbed log window attached, from inside the app.' },
+      {
+        text: 'When something looked wrong there was nowhere to say so, and a problem nobody can see is a problem nobody fixes.'
+      },
+      {
+        text: 'The attached window carries combat, casts and loot — never chat, and never anyone else’s words — so a defect can be diagnosed from what actually happened instead of from a description of it.'
+      }
     ]
   },
   {

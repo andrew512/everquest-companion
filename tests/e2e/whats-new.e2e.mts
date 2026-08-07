@@ -47,6 +47,18 @@ const NEWEST = RELEASE_NOTES[0]!.version
 /** Derived from the data, never typed twice: the spec asserts the panel drew what the module
  *  holds, and `tests/releaseNotes.test.mts` is what pins the module's own counts. */
 const EXPECTED_BULLETS = RELEASE_NOTES.reduce((n, r) => n + r.entries.length, 0)
+/**
+ * The release whose notes spend extra bullets INTRODUCING two new surfaces (JOS-80) — the What's
+ * new panel and the "This week" lockout view.
+ *
+ * Asserted separately from the panel-wide total because the total cannot tell a release that
+ * grew from a release that shrank while another grew. An introduction is plain bullets in the
+ * same list, with no marker of its own, so its own count in the RENDERED panel is the only place
+ * "the extra bullets actually reached the screen" is observable.
+ */
+const INTRO_RELEASE = '0.9.0'
+const INTRO_RELEASE_BULLETS =
+  RELEASE_NOTES.find((r) => r.version === INTRO_RELEASE)?.entries.length ?? 0
 const EXPECTED_TAGGED = RELEASE_NOTES.reduce(
   (n, r) => n + r.entries.filter((e) => e.fromReport === true).length,
   0
@@ -178,17 +190,25 @@ async function checkFillsPane(page: Page, app: ElectronApplication): Promise<voi
 
 /** Bullets, the player-report chip, and the collective thanks line (JOS-76). */
 async function checkBulletsAndThanks(page: Page): Promise<void> {
-  const seen = await page.evaluate(() => ({
+  const seen = await page.evaluate((introRelease: string) => ({
     total: document.querySelectorAll('[data-testid="whats-new-bullet"]').length,
+    intro: document.querySelectorAll(
+      `[data-testid="whats-new-release-${introRelease}"] [data-testid="whats-new-bullet"]`
+    ).length,
     tagged: document.querySelectorAll('[data-testid="whats-new-bullet"][data-from-report="true"]').length,
     chips: document.querySelectorAll('[data-testid="whats-new-report-chip"]').length,
     thanks: document.querySelectorAll('[data-testid="whats-new-thanks"]').length,
     firstThanks: document.querySelector('[data-testid="whats-new-thanks"]')?.textContent?.trim() ?? ''
-  }))
+  }), INTRO_RELEASE)
   check(
     'every entry renders as a BULLET, not a packed sentence',
     seen.total === EXPECTED_BULLETS,
     `bullets=${String(seen.total)} expected=${String(EXPECTED_BULLETS)}`
+  )
+  check(
+    `a release that INTRODUCES a surface spends extra bullets on it, and they reach the screen`,
+    seen.intro === INTRO_RELEASE_BULLETS && seen.intro > 5,
+    `v${INTRO_RELEASE} bullets=${String(seen.intro)} expected=${String(INTRO_RELEASE_BULLETS)}`
   )
   check(
     'a player-reported bullet wears its chip, and only those bullets do',
