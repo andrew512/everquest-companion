@@ -102,9 +102,71 @@ function fieldText(value: unknown): string {
   return '[object Object]'
 }
 
+/**
+ * THE SPELL NAMES ONE EVENT CAN HONESTLY ANSWER TO (JOS-84) — `ev.spell` plus every name in the
+ * event's `candidates` list, or an empty array when the event carries no candidates.
+ *
+ * WHY THIS EXISTS. `buffApply.spell` / `buffWearOff.spell` are documented as a BEST-EFFORT PICK:
+ * EQ's landing and wears-off sentences are shared across a whole spell family (`<mob> slows
+ * down.` is Forlorn Deeds / Languid Pace / Rejuvenation / Shiftless Deeds / Tepid Deeds; `<mob>
+ * looks frail.` is Disempower / Incapacitate / Listless Power), so the parser cannot name the
+ * spell from the line and puts the FIRST DB candidate in `spell` while `candidates` carries the
+ * truth. The suggestion wizard authored `where:{spell:'<your spell>'}` against that first pick,
+ * which is a coin flip the user always loses: an enchanter's Shiftless Deeds alert was compared
+ * to the string "Forlorn Deeds" and could never fire. MEASURED against the reporter's own log
+ * lines — that is the whole of JOS-84.
+ *
+ * So a `where.spell` matcher tests the WHOLE SET. It is the same reading shared/alertGroups.ts
+ * already argues for the on-you slow ("both sentences are shared by a whole slow family and name
+ * no spell, so this alert reports that a slow expired, never which one"), applied to the mob side
+ * as well: when the game prints one sentence for five spells, an alert on any one of them is an
+ * alert on the family, and firing is the honest answer. The alternative — silence — is the bug.
+ *
+ * SCOPE. Only the `spell` key widens, and only when the event actually carries `candidates`.
+ * `where:{candidates:…}` is untouched (it still sees `fieldText`'s '[object Object]' join, which
+ * is what today's defs are matched against), families with no candidate list (castBegin, resist,
+ * buffFade, the derived buffExpired) are byte-for-byte unchanged, and an event that carries
+ * candidates but no `spell` field at all (poisonProc names its `strike`) still fails the
+ * pre-existing "field is absent ⇒ no match" test before this is ever consulted.
+ */
+function spellCandidateNames(ev: LogEvent): string[] {
+  const cands = (ev as unknown as Record<string, unknown>).candidates
+  if (!Array.isArray(cands)) return []
+  const out: string[] = []
+  for (const c of cands as unknown[]) {
+    if (typeof c === 'string') out.push(c)
+    else if (typeof c === 'object' && c !== null) {
+      const name = (c as { name?: unknown }).name
+      if (typeof name === 'string') out.push(name)
+    }
+  }
+  return out
+}
+
+/** One compiled `where` entry: the event field it names and the predicate it compiled to. */
+interface CompiledField {
+  key: string
+  test: (v: string) => boolean
+}
+
+/**
+ * Whether ONE compiled `where` field accepts `ev`.
+ *
+ * An ABSENT field is still an immediate no-match, exactly as before — that is what keeps a
+ * `where:{spell:…}` written against a family with no `spell` field (poisonProc names its
+ * `strike`) from being admitted through the candidate list below.
+ */
+function fieldMatches(ev: LogEvent, f: CompiledField): boolean {
+  const raw = (ev as unknown as Record<string, unknown>)[f.key]
+  if (raw == null) return false
+  if (f.test(fieldText(raw))) return true
+  // Only the `spell` key widens, and only when the event carries candidates (JOS-84).
+  return f.key === 'spell' && spellCandidateNames(ev).some((n) => f.test(n))
+}
+
 /** A single PRIMITIVE condition prepared for fast evaluation (regex compiled once). */
 interface CompiledCondition {
-  event?: { kind: string; fields: { key: string; test: (v: string) => boolean }[] }
+  event?: { kind: string; fields: CompiledField[] }
   raw?: RegExp
   // 'app' primitives compile to neither event nor raw → they never match main-side.
 }
@@ -210,6 +272,34 @@ function firingSpell(ev: LogEvent): string | undefined {
   const name = value.trim()
   // 'unknown' is what a poisonCoat says when the line deliberately hides which poison it was.
   return name && name !== 'unknown' ? name : undefined
+}
+
+/**
+ * The spell name to SPEAK for this firing — `base` (the event's own best-effort pick) unless the
+ * alert matched a different candidate (JOS-84).
+ *
+ * The companion to `spellCandidateNames`: once a Shiftless Deeds alert is allowed to fire on a
+ * line whose `spell` field says "Forlorn Deeds", announcing "Forlorn Deeds" would be a second
+ * wrong answer wearing the first one's clothes. So the name reported is the one that actually
+ * satisfied the alert's OWN `spell` matcher. A def whose matcher already accepts the base pick
+ * keeps it (nothing changes for the unambiguous case, which is every family without candidates),
+ * and a regex-shaped matcher resolves to the first candidate it accepts — the honest answer when
+ * one sentence is five spells, since the log itself does not say which.
+ *
+ * Runs once per FIRE, never per compiled alert per event: firings are rare, matching is not.
+ */
+function matchedSpellName(c: CompiledAlert, ev: LogEvent, base: string | undefined): string | undefined {
+  if (base === undefined) return undefined
+  const names = spellCandidateNames(ev)
+  if (names.length === 0) return base
+  for (const cond of c.conditions) {
+    if (cond.event?.kind !== ev.kind) continue
+    const f = cond.event.fields.find((x) => x.key === 'spell')
+    if (!f || f.test(base)) continue
+    const hit = names.find((n) => f.test(n))
+    if (hit !== undefined) return hit
+  }
+  return base
 }
 
 /**
@@ -366,8 +456,10 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
     this.notePoisonSlow(ev)
     // Fire on LIVE events only — replay must never make a sound.
     if (!live) return
-    // Resolved once per firing (fires are rare), not once per compiled alert.
-    let spell: string | undefined
+    // The event's own best-effort spell is resolved once per firing (fires are rare), not once
+    // per compiled alert; `matchedSpellName` then refines it PER ALERT for the shared-message
+    // families, where which name is right depends on which alert matched (JOS-84).
+    let base: string | undefined
     let spellResolved = false
     for (const c of this.compiled) {
       if (!c.def.enabled) continue
@@ -377,9 +469,10 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
       if (this.onCooldown(key, c.def, ev.ts)) continue
       this.noteFire(key, ev.ts)
       if (!spellResolved) {
-        spell = firingSpell(ev)
+        base = firingSpell(ev)
         spellResolved = true
       }
+      const spell = matchedSpellName(c, ev, base)
       const fired: FiredAlert = { alertId: c.def.id, ts: ev.ts, matchedText }
       // Omitted rather than set to undefined: the delta is JSON over IPC, and an absent key
       // is the honest encoding of "this family names no spell".
@@ -475,12 +568,7 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
   private conditionMatches(cond: CompiledCondition, ev: LogEvent): boolean {
     if (cond.event) {
       if (ev.kind !== cond.event.kind) return false
-      for (const f of cond.event.fields) {
-        const raw = (ev as unknown as Record<string, unknown>)[f.key]
-        if (raw == null) return false
-        if (!f.test(fieldText(raw))) return false
-      }
-      return true
+      return cond.event.fields.every((f) => fieldMatches(ev, f))
     }
     if (cond.raw) {
       return cond.raw.test(ev.raw)

@@ -17,7 +17,13 @@
 // suggestion has no `where`.
 
 import type { AlertDef, LogEventKind, SpellCatalogEntry } from '@shared/types'
-import { spellIdFragment, type SpellRank } from '@shared/spellLines'
+// RELATIVE value import, not `@shared/*` (repo law, the mobSearch.ts precedent): this module is
+// now NODE-TESTED — tests/suggestedAlertsFire.test.mts pushes the defs it authors through the
+// real parser and the real AlertsModule — and the alias resolves only through the vite/tsconfig
+// path map, so an aliased VALUE import makes the module unloadable under tsx. That it was
+// unloadable is part of why JOS-84 shipped: no test could ever have run a real suggestion def.
+import { spellIdFragment } from '../../../../shared/spellLines'
+import type { SpellRank } from '@shared/spellLines'
 
 export type TemplateKind = 'wearsOff' | 'fade' | 'lands'
 
@@ -64,6 +70,16 @@ export const SUGGEST_TEMPLATES: Record<
     where: (name) => ({ spell: name })
   },
   // Detrimental + cast-on-other: the debuff landing on a target.
+  //
+  // THE TRIGGER NAMES A FAMILY, NOT A SPELL (JOS-84), and it has to. EQ prints ONE landing
+  // sentence for a whole spell line — `<mob> slows down.` is five spells, `<mob> looks frail.`
+  // is three — so `buffApply.spell` is a documented BEST-EFFORT first candidate and pinning an
+  // alert to it was a coin flip the user always lost: a v0.10.0 enchanter created this exact
+  // suggestion for Shiftless Deeds and the parser handed the matcher "Forlorn Deeds", so it
+  // never fired once. The def below is UNCHANGED; what changed is that a `where.spell` matcher
+  // now tests the event's whole candidate list (main/modules/alerts.ts `spellCandidateNames`),
+  // which means this alert fires when the SENTENCE its spell prints appears — and cannot tell
+  // you which member of the family printed it, because the log does not say.
   // "Consider this my opening move."
   lands: {
     chip: 'When it lands on a target',
