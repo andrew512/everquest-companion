@@ -22,7 +22,7 @@
  *
  * Run: `npm run test:e2e -- whats-new`
  */
-import type { Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import {
   buildIfStale,
   check,
@@ -30,12 +30,13 @@ import {
   dumpArtifacts,
   failures,
   reportRun,
+  settle,
   settleCount,
   settleStable
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
-import { RELEASE_NOTES, variantLastSeen } from '../../src/shared/releaseNotes'
+import { RELEASE_NOTES, hasReportedEntry, variantLastSeen } from '../../src/shared/releaseNotes'
 
 const TEASER = '[data-testid="whats-new-teaser"]'
 const PANEL = '[data-testid="whats-new-panel"]'
@@ -43,6 +44,14 @@ const RAIL = '[data-testid="prefs-rail-whatsnew"]'
 const DEV_ROW = '[data-testid="whats-new-dev"]'
 
 const NEWEST = RELEASE_NOTES[0]!.version
+/** Derived from the data, never typed twice: the spec asserts the panel drew what the module
+ *  holds, and `tests/releaseNotes.test.mts` is what pins the module's own counts. */
+const EXPECTED_BULLETS = RELEASE_NOTES.reduce((n, r) => n + r.entries.length, 0)
+const EXPECTED_TAGGED = RELEASE_NOTES.reduce(
+  (n, r) => n + r.entries.filter((e) => e.fromReport === true).length,
+  0
+)
+const EXPECTED_THANKED = RELEASE_NOTES.filter(hasReportedEntry).length
 /** The state a one-release upgrade leaves behind — exactly what the DEV control's second button
  *  writes, so the hand test and this spec are driving the same configuration. */
 const PREVIOUS = variantLastSeen('previous')
@@ -74,10 +83,126 @@ async function openPanel(page: Page): Promise<{ releases: number; marked: string
   }))
 }
 
+/**
+ * The geometry that says "it fills the pane" (JOS-76): where the scroll box's bottom sits, versus
+ * where the content area it lives in ends.
+ *
+ * MEASURED, NOT INFERRED FROM CSS. `flexGrow:1` is easy to write and easy to have swallowed by
+ * one missing `minHeight: 0` somewhere up the chain — the symptom of which is that the box grows
+ * past the pane and the PAGE scrolls instead of the list. So the reading is the rendered box
+ * against the rendered pane, plus whether the page itself acquired a scrollbar.
+ */
+function paneFit(page: Page): Promise<{ gap: number; boxHeight: number; pageOverflow: number }> {
+  return page.evaluate(() => {
+    const box = document.querySelector('[data-testid="whats-new-history"]')?.getBoundingClientRect()
+    const pane = document.querySelector('main')?.getBoundingClientRect()
+    const scroller = document.querySelector('main > div')
+    return {
+      gap: box && pane ? pane.bottom - box.bottom : Number.NaN,
+      boxHeight: box ? box.height : 0,
+      // How far the pane's own scroller can travel. The list scrolls; the page must not.
+      pageOverflow: scroller ? scroller.scrollHeight - scroller.clientHeight : Number.NaN
+    }
+  })
+}
+
+/**
+ * Resize the (never-shown) main window from the MAIN process — the only place that can — and
+ * WAIT FOR THE RENDERER TO HAVE SEEN IT.
+ *
+ * The wait is the whole point and it cost this spec a red run: `settleStable` is the wrong
+ * instrument here, because the measurement is stable BEFORE the resize as well as after, so it
+ * returned the pre-resize geometry immediately and both window sizes measured identically. The
+ * condition is `window.innerHeight`, which is the renderer's own answer to "how big am I now" —
+ * so this waits for the positive signal rather than for a settling that had already happened.
+ *
+ * The main window is identified POSITIVELY, by the page whose bounds we are about to read, not by
+ * "the one that isn't an overlay" — the toast overlay is open by default and window order is not
+ * a promise (appWindow.mts's rule).
+ */
+async function setWindowHeight(page: Page, app: ElectronApplication, height: number): Promise<void> {
+  await app.evaluate(({ BrowserWindow }, h) => {
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isAlwaysOnTop())
+    win?.setContentSize(1280, h)
+  }, height)
+  const got = await settle(
+    () => page.evaluate(() => window.innerHeight),
+    (h) => h === height
+  )
+  check(`the window really resized to ${String(height)}px`, got === height, `innerHeight=${String(got)}`)
+}
+
 /** The one line the strip says, or '' when there is no strip. */
 function teaserText(page: Page): Promise<string> {
   return page.evaluate(
     () => document.querySelector('[data-testid="whats-new-teaser-text"]')?.textContent?.trim() ?? ''
+  )
+}
+
+/**
+ * THE PANEL FILLS THE PANE (JOS-76), measured at TWO window heights.
+ *
+ * Two, because "fills" is a claim about a RELATIONSHIP and a single measurement cannot tell it
+ * apart from a fixed height that happens to look right at this window size — which is exactly the
+ * thing being replaced. So the box must end near the pane's bottom at both, must never hand its
+ * scrolling to the page, and must GROW between them.
+ */
+async function checkFillsPane(page: Page, app: ElectronApplication): Promise<void> {
+  const heights: number[] = []
+  for (const [label, height] of [['tall', 1000] as const, ['short', 620] as const]) {
+    await setWindowHeight(page, app, height)
+    // The resize has landed by now (setWindowHeight waited for it); THIS settle is for the
+    // reflow that follows it, where "stopped changing" really is the right condition.
+    const fit = await settleStable(() => paneFit(page))
+    check(
+      `${label} window: the history box reaches the bottom of the pane`,
+      fit.gap >= 0 && fit.gap < 48,
+      `gap=${fit.gap.toFixed(1)}px boxHeight=${fit.boxHeight.toFixed(1)}px`
+    )
+    check(
+      `${label} window: the LIST scrolls, never the page`,
+      fit.pageOverflow <= 1,
+      `pageOverflow=${fit.pageOverflow.toFixed(1)}px`
+    )
+    heights.push(fit.boxHeight)
+  }
+  const [tall = 0, short = 0] = heights
+  check(
+    'the box GREW with the window — it is filling, not a fixed height that happened to fit',
+    tall > short + 200,
+    `tall=${tall.toFixed(1)}px short=${short.toFixed(1)}px`
+  )
+  await setWindowHeight(page, app, 900)
+}
+
+/** Bullets, the player-report chip, and the collective thanks line (JOS-76). */
+async function checkBulletsAndThanks(page: Page): Promise<void> {
+  const seen = await page.evaluate(() => ({
+    total: document.querySelectorAll('[data-testid="whats-new-bullet"]').length,
+    tagged: document.querySelectorAll('[data-testid="whats-new-bullet"][data-from-report="true"]').length,
+    chips: document.querySelectorAll('[data-testid="whats-new-report-chip"]').length,
+    thanks: document.querySelectorAll('[data-testid^="whats-new-thanks-"]').length,
+    firstThanks: document.querySelector('[data-testid^="whats-new-thanks-"]')?.textContent?.trim() ?? ''
+  }))
+  check(
+    'every entry renders as a BULLET, not a packed sentence',
+    seen.total === EXPECTED_BULLETS,
+    `bullets=${String(seen.total)} expected=${String(EXPECTED_BULLETS)}`
+  )
+  check(
+    'a player-reported bullet wears its chip, and only those bullets do',
+    seen.tagged === EXPECTED_TAGGED && seen.chips === EXPECTED_TAGGED,
+    `tagged=${String(seen.tagged)} chips=${String(seen.chips)} expected=${String(EXPECTED_TAGGED)}`
+  )
+  check(
+    '…and every release carrying one thanks the people who filed them',
+    seen.thanks === EXPECTED_THANKED,
+    `thanksLines=${String(seen.thanks)} expected=${String(EXPECTED_THANKED)}`
+  )
+  check(
+    '…collectively, naming nobody',
+    seen.firstThanks === 'Thanks to everyone who filed reports.',
+    `line="${seen.firstThanks}"`
   )
 }
 
@@ -115,6 +240,9 @@ async function main(): Promise<void> {
       'the DEV variant control is compiled OUT of a production-shaped build',
       (await countOf(page, DEV_ROW)) === 0
     )
+
+    await checkFillsPane(page, launched.app)
+    await checkBulletsAndThanks(page)
 
     // ---- 2. an upgraded install -------------------------------------------
     // The state is read ONCE per launch, so the reload is not a shortcut around anything: it is

@@ -79,7 +79,6 @@ import IosShareIcon from '@mui/icons-material/IosShare'
 import FeedbackIcon from '@mui/icons-material/Feedback'
 import PrivacyTipIcon from '@mui/icons-material/PrivacyTip'
 import LayersIcon from '@mui/icons-material/Layers'
-import AdjustIcon from '@mui/icons-material/Adjust'
 import { ExportSettingsSetting, ImportSettingsSetting } from '../profiles/ProfileSharing'
 import { ClassComboSetting } from '../profiles/ClassComboPanel'
 import { useCombinePetRow } from '../combat/useCombatPrefs'
@@ -90,7 +89,8 @@ import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
 import { VoiceSetting } from './VoiceSetting'
 import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
 import { ToastSetting } from './ToastSetting'
-import { CursorRingSetting } from './CursorRingSetting'
+// Cursor ring: another descriptor that lives beside its own card, same ceiling, same answer.
+import { cursorRingSection } from './CursorRingSetting'
 import { TelemetrySetting } from './TelemetrySetting'
 // Performance is the one section whose DESCRIPTOR lives with its card rather than here: this
 // file sits at the 400-code-line factoring ceiling, and the section's own file is the honest
@@ -104,7 +104,7 @@ import { graphicsSection } from './GraphicsSetting'
 import { whatsNewSection } from '../whatsnew/WhatsNewPanel'
 // The section CARD and the arrival pulse live together in their own file — same ceiling, same
 // answer as PerfSetting's descriptor: split, don't widen the threshold.
-import PrefSectionBlock, { useLandedSection } from './PrefSectionBlock'
+import PrefSectionBlock, { FILL_COLUMN_SX, FILL_ROOT_SX, FILL_ROW_SX, paneFills, useLandedSection } from './PrefSectionBlock'
 import { normalizeQuery } from '../../lib/search'
 
 // -------------------------------------------------------------- Combat section
@@ -173,6 +173,16 @@ export interface PrefSection {
   label: string
   icon: JSX.Element
   items: PrefItem[]
+  /**
+   * This section CLAIMS the pane's remaining height instead of sizing to its content (JOS-76).
+   *
+   * One section is a reading surface rather than a stack of controls (What's new), and its own
+   * scroll box belongs at the bottom of the window rather than 420px down it. Opt-in, because the
+   * chain of `flexGrow`/`minHeight:0` it turns on would stretch every OTHER section's cards too —
+   * see ./PrefSectionBlock.tsx. Honoured only outside search mode, where exactly one section is
+   * on screen and "the remaining height" is a thing that exists.
+   */
+  fill?: boolean
 }
 
 const RAIL_WIDTH = 168
@@ -248,24 +258,6 @@ function analyticsSection(): PrefSection {
         keywords:
           'telemetry analytics usage privacy tracking opt out optout data collect anonymous id rotate payload send stats metrics',
         content: <TelemetrySetting />
-      }
-    ]
-  }
-}
-
-/** The cursor ring (the "where is my mouse" halo). Same factory rationale as above. */
-function cursorRingSection(): PrefSection {
-  return {
-    id: 'cursor',
-    label: 'Cursor ring',
-    icon: <AdjustIcon fontSize="small" />,
-    items: [
-      {
-        id: 'cursor-ring',
-        label: 'Cursor ring',
-        keywords:
-          'cursor mouse pointer ring circle halo highlight find lost locate ultimate size thickness white',
-        content: <CursorRingSetting />
       }
     ]
   }
@@ -529,14 +521,15 @@ export default function PreferencesView({
   }, [searching, matches, sections])
 
   const shown = searching ? matches : sections.filter((s) => s.id === active)
+  const fills = paneFills(searching, shown)
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, ...(fills ? FILL_ROOT_SX : {}) }}>
       <Typography variant="h6" sx={{ fontWeight: 700 }}>
         Preferences
       </Typography>
 
-      <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start' }}>
+      <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start', ...(fills ? FILL_ROW_SX : {}) }}>
         <SectionRail
           sections={sections}
           active={searching ? null : active}
@@ -544,7 +537,16 @@ export default function PreferencesView({
           onPick={pick}
         />
 
-        <Box sx={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+        <Box
+          sx={{
+            flexGrow: 1,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2.5,
+            ...(fills ? FILL_COLUMN_SX : {})
+          }}
+        >
           <PrefSearch query={query} onQuery={setQuery} />
 
           {searching && matches.length === 0 && (

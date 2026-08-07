@@ -19,30 +19,35 @@
 // …and the Version row up in Updates carries a "What's new" link straight to it, so the version
 // number itself is clickable in the way the ticket asked for, without a second copy of the panel.
 //
-// A GROWING LIST IN A FIXED-HEIGHT SCROLL BOX (AGENTS.md UI conventions). Fifteen releases today
-// and one more every time we ship; letting it size to its content would push the rest of the
-// Preferences column off the screen the way the combat log once did.
+// A GROWING LIST IN A SCROLL BOX THAT FILLS THE PANE (AGENTS.md UI conventions; JOS-76). Fifteen
+// releases today and one more every time we ship; letting it size to its content would push the
+// rest of the Preferences column off the screen the way the combat log once did. It shipped first
+// at a fixed 420px, which was the other failure — a short window of history floating in a tall
+// empty pane. The box now CLAIMS the pane's remaining height (`flexGrow:1` + `minHeight:0`
+// through the chain PreferencesView opts this one section into), so a tall window shows more
+// releases and a short one still scrolls inside the box rather than moving the section chrome.
 //
 // STATE, NEVER PROCESS: the panel says what changed. It does not explain where notes come from,
-// how "new" is computed, or that anything is stored — the NEW chip is the whole disclosure.
+// how "new" is computed, or that anything is stored — the two chips are the whole disclosure.
 
 import { type JSX, useEffect, useMemo } from 'react'
 import { Box, Chip, Divider, Stack, Typography } from '@mui/material'
 import NewReleasesIcon from '@mui/icons-material/NewReleases'
-import { RELEASE_NOTES, type ReleaseEntryKind, type ReleaseNote } from '@shared/releaseNotes'
+import {
+  RELEASE_NOTES,
+  hasReportedEntry,
+  type ReleaseEntry,
+  type ReleaseEntryKind,
+  type ReleaseNote
+} from '@shared/releaseNotes'
 import { DEV_TOOLS } from '../../devFlags'
 import { formatCalendarDate } from '../../lib/formatDate'
 import type { PrefSection } from '../preferences/PreferencesView'
 import { markReleaseNotesSeen, useWhatsNew } from './session'
 import { WhatsNewDevRow } from './WhatsNewDevRow'
 
-/** How tall the history box is before it scrolls. Roughly two releases of detail — enough that
- *  the newest one is never cut off mid-thought, short enough to leave the rail's other rows
- *  reachable without scrolling the page. */
-const HISTORY_MAX_HEIGHT = 420
-
 /** What each `kind` is called in front of a person. Entries with no kind get no sub-header at
- *  all — that is the shape of the one-line historical headlines. */
+ *  all — that is the shape of the backfilled releases, which drew no such distinction. */
 const KIND_LABEL: Record<ReleaseEntryKind, string> = {
   new: 'New',
   fixed: 'Fixed',
@@ -53,8 +58,40 @@ const KIND_LABEL: Record<ReleaseEntryKind, string> = {
  *  scan a release for; New leads because it is why they would want the release at all. */
 const KIND_ORDER: readonly ReleaseEntryKind[] = ['new', 'fixed', 'changed']
 
-/** One group of lines under its sub-header, or a bare list when the entries carry no kind. */
-function EntryGroup({ label, texts }: { label: string | null; texts: readonly string[] }): JSX.Element {
+/**
+ * ONE BULLET (JOS-76). Every entry in every release renders this way — a real marker and a
+ * hanging indent, so a three-line change still reads as one item.
+ *
+ * The chip is TWO WORDS and states what the bullet IS, not how it came to be: "player report",
+ * never "fixed after a user filed a bug report on 2026-08-05". The tooltip diet — and the same
+ * reason the NEW chip has no explanation beside it.
+ */
+function EntryBullet({ entry }: { entry: ReleaseEntry }): JSX.Element {
+  return (
+    <Box
+      component="li"
+      data-testid="whats-new-bullet"
+      data-from-report={entry.fromReport === true ? 'true' : undefined}
+      sx={{ display: 'list-item', listStyleType: 'disc', ml: 2.5, pl: 0.5 }}
+    >
+      <Typography variant="body2" component="span">
+        {entry.text}
+      </Typography>
+      {entry.fromReport === true && (
+        <Chip
+          size="small"
+          variant="outlined"
+          label="player report"
+          data-testid="whats-new-report-chip"
+          sx={{ height: 16, fontSize: 10, ml: 0.75, verticalAlign: 'text-bottom', '& .MuiChip-label': { px: 0.6 } }}
+        />
+      )}
+    </Box>
+  )
+}
+
+/** One group of bullets under its sub-header, or a bare list when the entries carry no kind. */
+function EntryGroup({ label, entries }: { label: string | null; entries: readonly ReleaseEntry[] }): JSX.Element {
   return (
     <Stack spacing={0.25}>
       {label !== null && (
@@ -62,19 +99,25 @@ function EntryGroup({ label, texts }: { label: string | null; texts: readonly st
           {label}
         </Typography>
       )}
-      {texts.map((t) => (
-        <Typography key={t} variant="body2" sx={{ pl: label === null ? 0 : 1 }}>
-          {t}
-        </Typography>
-      ))}
+      <Box component="ul" sx={{ m: 0, p: 0, listStyle: 'none' }}>
+        {entries.map((e) => (
+          <EntryBullet key={e.text} entry={e} />
+        ))}
+      </Box>
     </Stack>
   )
 }
 
-/** One release: its version, its date, a NEW chip when it postdates what this install had seen,
- *  and its lines grouped by kind. */
+/**
+ * One release: its version, its date, a NEW chip when it postdates what this install had seen,
+ * a thanks line when any of its bullets came from a player, and its bullets grouped by kind.
+ *
+ * THE THANKS IS COLLECTIVE AND IT IS PLAIN. One sentence, no names, no counts, no link to a
+ * tracker — the people who filed those reports get told the app is better because of them, and
+ * nobody's install id or handle appears on a screen every other user can read (JOS-76).
+ */
 function ReleaseBlock({ note, isNew }: { note: ReleaseNote; isNew: boolean }): JSX.Element {
-  const unkinded = note.entries.filter((e) => e.kind === undefined).map((e) => e.text)
+  const unkinded = note.entries.filter((e) => e.kind === undefined)
   return (
     <Stack spacing={0.75} data-testid={`whats-new-release-${note.version}`} data-new={isNew ? 'true' : undefined}>
       <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
@@ -95,11 +138,21 @@ function ReleaseBlock({ note, isNew }: { note: ReleaseNote; isNew: boolean }): J
           />
         )}
       </Stack>
+      {hasReportedEntry(note) && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ fontStyle: 'italic' }}
+          data-testid={`whats-new-thanks-${note.version}`}
+        >
+          Thanks to everyone who filed reports.
+        </Typography>
+      )}
       {KIND_ORDER.map((kind) => {
-        const texts = note.entries.filter((e) => e.kind === kind).map((e) => e.text)
-        return texts.length === 0 ? null : <EntryGroup key={kind} label={KIND_LABEL[kind]} texts={texts} />
+        const entries = note.entries.filter((e) => e.kind === kind)
+        return entries.length === 0 ? null : <EntryGroup key={kind} label={KIND_LABEL[kind]} entries={entries} />
       })}
-      {unkinded.length > 0 && <EntryGroup label={null} texts={unkinded} />}
+      {unkinded.length > 0 && <EntryGroup label={null} entries={unkinded} />}
     </Stack>
   )
 }
@@ -114,12 +167,17 @@ export function whatsNewSection(): PrefSection {
     id: 'whatsnew',
     label: "What's new",
     icon: <NewReleasesIcon fontSize="small" />,
+    // THE ONE SECTION THAT CLAIMS THE PANE'S HEIGHT (JOS-76). Opt-in rather than the default,
+    // because every other section is a stack of controls that must size to its content — a
+    // Preferences pane where the Voice card stretched to fill the window would be worse
+    // everywhere to make this one card right. See PrefSectionBlock's `fill`.
+    fill: true,
     items: [
       {
         id: 'release-notes',
         label: 'Release notes',
         keywords:
-          'whats new release notes changelog changes history updates version fixed added changed news log recent',
+          'whats new release notes changelog changes history updates version fixed added changed news log recent thanks report',
         content: <WhatsNewPanel />
       }
     ]
@@ -141,10 +199,15 @@ export function WhatsNewPanel(): JSX.Element {
   const isNew = useMemo(() => new Set(state?.newVersions ?? []), [state])
 
   return (
-    <Stack spacing={1.5} data-testid="whats-new-panel">
+    // `minHeight: 0` on both this Stack and the scroll box is the whole trick: a flex child's
+    // default `min-height: auto` refuses to shrink below its content, so without it the box would
+    // grow past the pane and the PAGE would scroll instead of the list (the combat-log lesson).
+    <Stack spacing={1.5} data-testid="whats-new-panel" sx={{ flexGrow: 1, minHeight: 0 }}>
       <Box
+        data-testid="whats-new-history"
         sx={{
-          maxHeight: HISTORY_MAX_HEIGHT,
+          flexGrow: 1,
+          minHeight: 0,
           overflowY: 'auto',
           pr: 1,
           display: 'flex',

@@ -23,6 +23,7 @@ import {
   RELEASE_NOTES,
   compareVersions,
   hasReleaseNote,
+  hasReportedEntry,
   latestReleaseVersion,
   parseVersion,
   releaseNotesProblems,
@@ -86,7 +87,91 @@ test('releaseNotesProblems CATCHES the mistakes this file will actually acquire'
     ]),
     /unknown kind/
   )
+  // fromReport is a FLAG: present means true. A stored `false` would read as "we checked and it
+  // wasn't a report", which is a claim this file has no way to make.
+  assert.match(
+    bad([
+      {
+        version: '0.8.0',
+        date: '2026-08-07',
+        entries: [{ text: 'a', fromReport: false }]
+      }
+    ]),
+    /fromReport is a flag/
+  )
   assert.match(bad([]), /empty/)
+})
+
+// ------------------------------------------------------------------ bullets
+
+// "No bullet carries three features" is NOT testable by counting commas, and the attempt is
+// recorded here because it looked testable and is not: the first version of this suite rejected
+// "Suggested alerts for slows wearing off, mote drops, and receiving tells", which is ONE feature
+// listing the three things it watches, and would have equally rejected "the install folder, the
+// Logs folder, or a log file" — one setting, three inputs. A comma is not evidence of a packed
+// list, and a test that says it is teaches the next author to write worse sentences to satisfy it.
+//
+// What IS decidable is the COUNT: the defect this ticket fixed was a release with four changes in
+// its tag range shipping as one bullet, and a release's bullet count is a fact. That is what the
+// test below pins, and the prose stays a review question.
+
+test('a release states one change per bullet, and multi-change releases have several', () => {
+  const counts = new Map(RELEASE_NOTES.map((n) => [n.version, n.entries.length]))
+  // The two detailed releases keep their full detail…
+  assert.equal(counts.get('0.8.0'), 6)
+  assert.equal(counts.get('0.7.0'), 6)
+  // …and every backfilled release that covered several changes now says so in several bullets.
+  for (const v of ['0.6.3', '0.6.2', '0.6.0', '0.5.0', '0.4.0', '0.3.5', '0.3.1', '0.3.0', '0.2.0']) {
+    const n = counts.get(v) ?? 0
+    assert.ok(n >= 2 && n <= 4, `v${v} should be 2-4 bullets, got ${String(n)}`)
+  }
+  // Releases that genuinely did one thing stay at one bullet — padding them would be inventing.
+  for (const v of ['0.6.1', '0.3.4', '0.3.2', '0.2.1']) {
+    assert.equal(counts.get(v), 1, `v${v} did one thing and should say so once`)
+  }
+})
+
+// ------------------------------------------------------------------- thanks
+
+test('THANKS IS EARNED: only tagged entries carry the flag, and only tagged releases thank', () => {
+  const tagged = new Map(
+    RELEASE_NOTES.map((n) => [n.version, n.entries.filter((e) => e.fromReport === true).length])
+  )
+  // The releases whose work traceably came from player reports (each cited in the commit that
+  // did it — a report id, "the YouTube report", "Mac/CrossOver user report").
+  assert.equal(tagged.get('0.8.0'), 5)
+  assert.equal(tagged.get('0.7.0'), 3)
+  assert.equal(tagged.get('0.6.3'), 1)
+  assert.equal(tagged.get('0.6.1'), 1)
+  assert.equal(tagged.get('0.6.0'), 2)
+  assert.equal(tagged.get('0.5.0'), 1)
+  // …and everything else is UNTAGGED. An unearned thanks costs more than a missing one, so the
+  // releases whose defects the owner found himself (0.3.4's charm broadcast) do not claim one.
+  for (const v of ['0.6.2', '0.4.0', '0.3.5', '0.3.4', '0.3.2', '0.3.1', '0.3.0', '0.2.1', '0.2.0']) {
+    assert.equal(tagged.get(v), 0, `v${v} has no traceable report behind it and must not thank`)
+  }
+})
+
+test('hasReportedEntry decides the thanks line, and agrees with the entries', () => {
+  for (const n of RELEASE_NOTES) {
+    assert.equal(
+      hasReportedEntry(n),
+      n.entries.some((e) => e.fromReport === true),
+      `v${n.version}`
+    )
+  }
+  assert.equal(hasReportedEntry(RELEASE_NOTES.find((n) => n.version === '0.8.0')!), true)
+  assert.equal(hasReportedEntry(RELEASE_NOTES.find((n) => n.version === '0.2.0')!), false)
+})
+
+test('NOBODY IS EVER NAMED — no entry carries a report id, a handle or a contact', () => {
+  for (const n of RELEASE_NOTES) {
+    for (const e of n.entries) {
+      assert.ok(!/\b01[0-9A-HJKMNP-TV-Z]{24}\b/.test(e.text), `v${n.version} carries a report ULID`)
+      assert.ok(!/[\w.+-]+@[\w-]+\.\w+/.test(e.text), `v${n.version} carries an email address`)
+      assert.ok(!/thanks to \w/i.test(e.text), `v${n.version} thanks somebody by name in a bullet`)
+    }
+  }
 })
 
 // ---------------------------------------------------------------- versions
