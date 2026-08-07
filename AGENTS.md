@@ -24,9 +24,12 @@ page-top era banner resolves unknowns, shared/planner/*), and celebration
 toasts (docs/plans/celebration-toasts.md). Committed knowledge DBs: mobs
 (7.9k), items (11.2k incl. dropsfrom + eraTag), spells (1.9k), classes,
 zones (era-annotated). First stable release v0.2.0 (2026-08-03); latest
-release v0.4.0 (2026-08-05: planner, toasts, level-up unlocks, panel/overlay
-parity + global fight selection, credited-kill celebrations, per-mob alert
-cooldowns — sandbox-gated, smoke-verified). Layout: `src/main` (Node), `src/preload`, `src/renderer`,
+release v0.8.0 (2026-08-07: maps N-S fix, Sky keyring counting, planner
+21-cell board + slot-fact layer, alert sets round two, owner-tools gating,
+engine fold ~2x — after v0.7.0 the same day: pet-question removal +
+tell/leader binding + single-pet retirement, startup duty throttle + spell-DB
+hash matching, replay overlay/mouse gate, character-switch delta silence,
+custom-directory normalization, startup fleet telemetry, dev restart button). Layout: `src/main` (Node), `src/preload`, `src/renderer`,
 `src/shared`, `tests/`, `scripts/`.
 
 - Repo: `C:\Users\jmoye\everquest-companion` (public: github.com/jmoyers/everquest-companion).
