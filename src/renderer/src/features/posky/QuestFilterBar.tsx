@@ -81,7 +81,15 @@ export default function QuestFilterBar({
         ))}
       </TextField>
       <FormControlLabel
-        control={<Checkbox checked={list.hideCompleted} onChange={(e) => list.setHideCompleted(e.target.checked)} />}
+        control={
+          <Checkbox
+            // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
+            // box's tick is a stored preference, so it is the one control here an e2e reads back.
+            data-testid="posky-hide-completed"
+            checked={list.hideCompleted}
+            onChange={(e) => list.setHideCompleted(e.target.checked)}
+          />
+        }
         label="Hide completed"
       />
       <FormControlLabel
