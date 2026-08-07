@@ -19,12 +19,17 @@
 // window is empty most of the time. Unlocked (Preferences → Overlays → "Move the toast"), the
 // strip shows its outline and a drag bar, so "configurable position later" is the mechanism
 // every other overlay already has rather than a new one.
+//
+// THE ONE EXCEPTION TO "RENDERS NOTHING" IS THE INTRODUCTION (JOS-83, `useIntroduction` below):
+// the first time this overlay ever comes up on an install it queues ONE card naming itself, so a
+// user who has never triggered a celebration is not left staring at an anonymous rectangle.
 
-import { type JSX, useEffect, useReducer } from 'react'
-import type { ToastPayload } from '@shared/toast'
+import { type JSX, type Dispatch, useEffect, useReducer, useRef } from 'react'
+import { DEFAULT_TOAST_CONFIG, introToastPayload, type ToastPayload } from '@shared/toast'
+import type { OverlayConfig } from '@shared/types'
 import { ToastCard } from './ToastCard'
 import { ScaledContent } from './overlayScale'
-import { toastReduce, type ToastCardState } from './toastQueue'
+import { toastReduce, type ToastAction, type ToastCardState } from './toastQueue'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 
@@ -114,9 +119,42 @@ function useMouseCapture(ready: boolean, locked: boolean, hasCards: boolean): vo
   }, [ready, locked, hasCards])
 }
 
+/**
+ * THE INTRODUCTION (JOS-83): the one card this overlay ever shows about ITSELF.
+ *
+ * A brand-new user reported the celebration strip as a rectangle they took for a malfunction —
+ * the window is on by default and, until something is celebrated, it draws literally nothing to
+ * say what it is. Painting a permanent label would trade that rare confusion for a constant one
+ * (an empty, invisible, click-through strip is exactly why the kind can default on), so the
+ * overlay introduces itself ONCE, through the queue it already has: a labelled card with the same
+ * close button as every other, plus a button that switches the overlay off for good.
+ *
+ * ONCE PER INSTALL, and the flag is written the moment the card is queued rather than when it
+ * leaves: a second window (or a reload) mid-introduction must not stack a second copy, and the
+ * store is the only place two renderers can agree. A store with no `introduced` key reads false,
+ * so installs that predate this see it too — they are precisely the ones that have been living
+ * with the unlabelled strip.
+ */
+function useIntroduction(
+  config: OverlayConfig | null,
+  patch: (p: Partial<OverlayConfig>) => void,
+  dispatch: Dispatch<ToastAction>
+): void {
+  const doneRef = useRef(false)
+  useEffect(() => {
+    // Nothing is decided until the persisted answer is in hand — the same rule `ready` exists for.
+    if (doneRef.current || !config) return
+    doneRef.current = true
+    if (config.toast?.introduced === true) return
+    dispatch({ type: 'show', payload: introToastPayload() })
+    patch({ toast: { ...DEFAULT_TOAST_CONFIG, ...config.toast, introduced: true } })
+  }, [config, patch, dispatch])
+}
+
 export default function ToastOverlay(): JSX.Element {
   const chrome = useOverlayChrome()
   const [cards, dispatch] = useReducer(toastReduce, [] as ToastCardState[])
+  useIntroduction(chrome.config, chrome.patch, dispatch)
 
   // A toast overlay with nothing queued renders literally nothing — that empty, transparent,
   // click-through window IS the resting state, and it is why the window can stay open forever.
@@ -158,6 +196,7 @@ export default function ToastOverlay(): JSX.Element {
             exiting={c.exitingMs !== null}
             bgAlpha={chrome.bgAlpha}
             onHover={(over) => dispatch({ type: 'hover', id: c.payload.id, over })}
+            onDismiss={() => dispatch({ type: 'dismiss', id: c.payload.id })}
           />
         ))}
       </ScaledContent>

@@ -124,3 +124,31 @@ reasoning that produced them is still worth reading.
   11 → 13, item name 12 → 14, item lines 10.5 → 12, icon 40 → 52, padding
   10/12 → 14/18. §4's ANIMATION is untouched — it was already right.
   Persisted bounds still win, so a user who moved the strip keeps it.
+
+## 8. The window says what it is — JOS-83, 2026-08-07
+
+A brand-new user reported the strip as a black rectangle they took for a
+malfunction, and uninstalled. §4 gave the CARD an affordance (the reward
+block) and gave the WINDOW none, on the reasoning that a window rendering
+nothing needs no chrome. That reasoning holds right up until the window
+renders nothing *and is visible anyway* — which is what a driver that
+cannot composite a transparent window produces (the JOS-40 report;
+`shared/graphicsPrefs.ts` is the escape hatch, and it only helps someone
+who already knows which program to blame).
+
+- **Every card carries the overlay's name and a ×** (`ToastCard`'s chrome
+  row). The × dismisses that card through the queue reducer's `dismiss`
+  action, which had existed since wave L with nothing wired to it.
+- **The overlay introduces itself ONCE per install** — one card, on the
+  first launch that ever opens it, naming EQ Legends Companion, saying the
+  window is not EverQuest's, and offering a button that closes the overlay
+  and persists `open:false`. Remembered as `overlays.toast.toast.introduced`;
+  an absent key reads false, so installs written before this get it too.
+  Its hold is `TOAST_MAX_DURATION_MS` — the longest a card may ever hold,
+  and bounded, because a card on screen is a card capturing the mouse.
+- **The resting state is unchanged**: no card ⇒ nothing painted, fully
+  click-through. That is still what makes this the one kind that defaults
+  on, and it is why the introduction is a card rather than a permanent
+  label or an outline.
+- `intro` joins `ToastKind` but NOT `TOAST_KINDS`: the overlay builds the
+  card for itself out of its own config, so the wire must keep refusing it.

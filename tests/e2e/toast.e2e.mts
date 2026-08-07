@@ -10,6 +10,12 @@
  * crosses main (validation, item resolution, fan-out) and lands in that window's DOM as a card,
  * and that a refused payload lands nowhere.
  *
+ * AND WHAT A BRAND-NEW INSTALL ACTUALLY SEES (JOS-83). Every launch gets a fresh userData dir, so
+ * this spec is always a first run — which makes it the only place that can prove the introduction
+ * card appears unprompted, names the app, closes on its ×, and leaves the window empty again. It
+ * also reads the window's real bounds out of the main process, because "it covered the entire
+ * screen" is a claim about geometry and a first open is the one geometry no user has chosen.
+ *
  * NO WINDOW IS EVER SHOWN. `EQ_E2E=1` is the whole test mode (src/main/e2e.ts): the main window
  * never shows and overlays skip `showInactive`, so the toast window here is created, loaded and
  * driven entirely off-screen while the user plays. That is also why this spec drives the app's
@@ -124,6 +130,58 @@ async function stepPreferences(page: Page): Promise<void> {
   )
 }
 
+/**
+ * THE INTRODUCTION (JOS-83) — the one thing a BRAND-NEW install sees before anything is celebrated.
+ *
+ * The report this answers: a new user met the celebration strip as an anonymous rectangle, decided
+ * the app was broken, and uninstalled. A fresh userData dir (every launch gets one) is therefore
+ * the exact state under test, and what it must produce is a card that NAMES THE PROGRAM and can be
+ * closed — not an empty window.
+ *
+ * It also pins the window's real GEOMETRY from the main process, because the other half of that
+ * report was "it covered the entire screen": a first-open celebration overlay is a small strip near
+ * the top of the work area, and no stored bounds exist on a fresh install to say otherwise.
+ */
+async function stepIntroduction(app: ElectronApplication, toast: Page): Promise<void> {
+  const cards = await settle(() => cardTexts(toast), (c) => c.length >= 1, { timeoutMs: 20_000 })
+  if (!check('a fresh install is INTRODUCED to the celebration overlay (one card, unprompted)', cards.length === 1, `${cards.length} card(s)`)) {
+    return
+  }
+  check('…and the card names the program that put it there', cards[0].includes('EQ Legends Companion'), cards[0])
+  check('…saying the window is not EverQuest’s', cards[0].includes('not to EverQuest'), cards[0])
+  check('…and pointing at the switch that turns it off', cards[0].includes('Preferences'), cards[0])
+  check('…with a source label on the card chrome', (await countOf(toast, '[data-testid="toast-source-label"]')) === 1)
+  check('…a visible close control', (await countOf(toast, '[data-testid="toast-close"]')) === 1)
+  check('…and a one-click way to disable the overlay for good', (await countOf(toast, '[data-testid="toast-intro-disable"]')) === 1)
+
+  // GEOMETRY, read from MAIN — the answer to "it covered the entire screen".
+  const win = await app.browserWindow(toast)
+  const bounds = await win.evaluate((w) => w.getBounds())
+  const area = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea)
+  const share = (bounds.width * bounds.height) / (area.width * area.height)
+  check(
+    'the first-open celebration window is a small strip, not a screen-filling window',
+    share < 0.25 && bounds.width < area.width && bounds.height < area.height,
+    `${JSON.stringify(bounds)} on ${JSON.stringify(area)} (${(share * 100).toFixed(1)}%)`
+  )
+  check(
+    '…parked near the TOP of the work area, horizontally centred',
+    bounds.y - area.y < 100 && Math.abs(bounds.x - area.x - (area.width - bounds.width) / 2) <= 2,
+    JSON.stringify(bounds)
+  )
+
+  // DISMISSIBLE: the × is wired to the queue's own dismiss action, so the card goes NOW rather
+  // than at the end of its clock. (The overlay is never shown under EQ_E2E and has no pointer —
+  // `el.click()` is a real DOM click and React's delegated listener cannot tell the difference.)
+  await toast.evaluate(() => {
+    ;(document.querySelector('[data-testid="toast-close"]') as HTMLElement | null)?.click()
+  })
+  const after = await settle(() => cardTexts(toast), (c) => c.length === 0, { timeoutMs: 10_000 })
+  check('…and the close control actually dismisses it', after.length === 0, `${after.length} card(s)`)
+  const rest = await settleStable(() => cardTexts(toast), { timeoutMs: 5_000, stable: 5, pollMs: 150 })
+  check('…leaving the overlay back at its resting state: rendering nothing at all', rest.length === 0, rest.join(' | '))
+}
+
 /** A boss kill: a gold title line and nothing else — no reward, no click target. */
 async function stepBossToast(main: Page, toast: Page): Promise<void> {
   const cards = await sendAndSettle(
@@ -146,6 +204,12 @@ async function stepBossToast(main: Page, toast: Page): Promise<void> {
   }
   check('…carrying the kill’s own title', cards[0].includes('Lord Nagafen defeated'), cards[0])
   check('…and its tier/zone subtitle', cards[0].includes('D2'), cards[0])
+  // JOS-83: EVERY card says whose window it is and offers a way out — not just the introduction.
+  check(
+    '…and the overlay’s own label + close control, on an ordinary celebration',
+    (await countOf(toast, '[data-testid="toast-source-label"]')) === 1 &&
+      (await countOf(toast, '[data-testid="toast-close"]')) === 1
+  )
 }
 
 /** A refused payload must reach no window at all — the validator is main's, not the overlay's. */
@@ -320,7 +384,7 @@ async function main(): Promise<void> {
     const toast = await waitForToastWindow(app)
     if (check('the toast overlay is ON for a fresh install (hidden, under EQ_E2E)', toast !== null)) {
       const t = toast as Page
-      check('…which renders nothing at rest', (await countOf(t, '[data-testid="toast-card"]')) === 0)
+      await stepIntroduction(app, t)
       await stepPreferences(page)
       await stepBossToast(page, t)
       await stepRefusal(page, t)

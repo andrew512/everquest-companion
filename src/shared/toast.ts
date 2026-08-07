@@ -47,12 +47,25 @@ import type { AppFocus, AppFocusView } from './types'
 export interface ToastOverlayConfig {
   /** how long a card holds before it leaves, when the payload names no duration of its own */
   durationMs: number
+  /**
+   * Has this install ever been TOLD what the celebration overlay is (JOS-83)?
+   *
+   * False (the default, and what an absent key reads as) means the overlay owes the user one
+   * self-identifying card the next time it comes up — see `introToastPayload` below. It flips true
+   * the moment that card is queued, so the introduction is once per install and never again.
+   *
+   * It defaults false for a store that already HAS a toast blob too, which is deliberate: a store
+   * written before this field existed is exactly the population that has been living with an
+   * unlabelled strip, and one dismissible card is the cheapest way to answer it.
+   */
+  introduced: boolean
 }
 
 export const DEFAULT_TOAST_DURATION_MS = 6000
 
 export const DEFAULT_TOAST_CONFIG: ToastOverlayConfig = {
-  durationMs: DEFAULT_TOAST_DURATION_MS
+  durationMs: DEFAULT_TOAST_DURATION_MS,
+  introduced: false
 }
 
 const asRecord = (v: unknown): Record<string, unknown> =>
@@ -70,7 +83,11 @@ export function normalizeToastConfig(v: unknown): ToastOverlayConfig {
   const o = asRecord(v)
   const duration = Math.floor(asNumber(o.durationMs, DEFAULT_TOAST_CONFIG.durationMs))
   return {
-    durationMs: Math.min(TOAST_MAX_DURATION_MS, Math.max(TOAST_MIN_DURATION_MS, duration))
+    durationMs: Math.min(TOAST_MAX_DURATION_MS, Math.max(TOAST_MIN_DURATION_MS, duration)),
+    // Only a literal `true` counts. Anything else — absent, a string, a hand-edited 1 — leaves the
+    // introduction owed, because showing one extra card is a smaller failure than never explaining
+    // the window at all.
+    introduced: o.introduced === true
   }
 }
 
@@ -82,8 +99,16 @@ export function normalizeToastConfig(v: unknown): ToastOverlayConfig {
  * It carries no item card — a level is not a reward you can hold — so it is the first kind whose
  * click target is the card itself rather than an embedded reward block.
  */
-export type ToastKind = 'bossKill' | 'skyQuestComplete' | 'levelUp'
+export type ToastKind = 'bossKill' | 'skyQuestComplete' | 'levelUp' | 'intro'
 
+/**
+ * The kinds a PRODUCER may send over `toast:show` — deliberately NOT every member of the union.
+ *
+ * 'intro' (JOS-83) is built by the overlay window for itself out of its own persisted config and
+ * never crosses the wire, so admitting it here would only widen what a renderer can ask main to
+ * draw. The union is what the CARD can render; this list is what the CHANNEL accepts, and they
+ * are not the same question.
+ */
 export const TOAST_KINDS: ToastKind[] = ['bossKill', 'skyQuestComplete', 'levelUp']
 
 /**
@@ -135,6 +160,51 @@ export const TOAST_MAX_LINE = 64
 /** Longest a payload may hold the screen, whatever it asks for. */
 export const TOAST_MAX_DURATION_MS = 30_000
 export const TOAST_MIN_DURATION_MS = 1_000
+
+// ---- the introduction card (JOS-83) ---------------------------------------------------
+//
+// WHY A CARD AND NOT A LABEL. The celebration overlay's resting state is an EMPTY, transparent,
+// click-through strip, and that is exactly what lets it default ON: it costs the player nothing
+// the 99.9% of the time nothing is being celebrated. Anything permanently painted there —
+// a title bar, a watermark, a hairline outline — would park chrome over the game forever and
+// trade a rare confusion for a constant one.
+//
+// So the overlay says what it is ONCE, the first time it ever comes up, through the mechanism it
+// already has: a card, in the queue, with the same clock, the same hover-pin and the same close
+// button every other card now carries. A user who has never seen a celebration therefore meets a
+// LABELLED, DISMISSIBLE card instead of a nameless rectangle — which is the whole of the report
+// this exists for (a new user who took the strip for a malfunction and uninstalled).
+
+/** The introduction's dedupe key. Stable, so a double-mount refreshes one card rather than two. */
+export const TOAST_INTRO_ID = 'overlay-intro'
+
+/**
+ * How long the introduction holds. The MAXIMUM a card may ever hold, and bounded on purpose:
+ * a card on screen is a card capturing the mouse over the strip (ToastOverlay.useMouseCapture),
+ * so an introduction that waited forever for a click would be a permanent hole in the game's
+ * input. Long enough to read and act on, short enough that ignoring it costs nothing.
+ */
+export const TOAST_INTRO_MS = TOAST_MAX_DURATION_MS
+
+/** The line the introduction card prints under its subtitle — what the window IS, and the two
+ *  ways out of it. Lives here (not in the component) so a test can pin the promise it makes. */
+export const TOAST_INTRO_BODY =
+  'This window belongs to EQ Legends Companion, not to EverQuest. Close it with the ×, or switch it off any time in Preferences → Overlays.'
+
+/**
+ * The one card the celebration overlay shows about itself. Pure and argument-free: it is the same
+ * text on every install, and building it here rather than in the component is what lets
+ * `npm test` assert that the app NAMES ITSELF in it.
+ */
+export function introToastPayload(): ToastPayload {
+  return {
+    id: TOAST_INTRO_ID,
+    kind: 'intro',
+    title: 'EQ Legends Companion — celebration overlay',
+    subtitle: 'Boss kills, Sky quest completions and level-ups will appear here.',
+    durationMs: TOAST_INTRO_MS
+  }
+}
 
 /** The deep-link destinations a toast may name. Mirrors the AppFocusView union (closed set). */
 const FOCUS_VIEWS: AppFocusView[] = ['mobs', 'posky', 'leveling']

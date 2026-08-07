@@ -110,6 +110,36 @@ test('a display narrower than the strip still lands it on-screen', () => {
   assert.ok(b.y >= wa.y, 'and never above the top of the work area')
 })
 
+/**
+ * NO OVERLAY EVER OPENS OVER THE WHOLE SCREEN (JOS-83).
+ *
+ * A new user reported the celebration overlay as having "covered the entire screen" on their first
+ * install. Nothing in this module has ever placed a window that could — the toast is a 560x360
+ * strip and the meters are 380x320 — but the claim is cheap to make structurally impossible, and a
+ * first-open window is the ONE geometry a user cannot have chosen for themselves. So every kind's
+ * default bounds are pinned as a small fraction of any display it could land on.
+ *
+ * This says nothing about a window that PAINTS wrong (a driver that cannot composite a transparent
+ * window shows the strip as a black rectangle — the JOS-40 report, and shared/graphicsPrefs.ts is
+ * the answer to it). It pins the size, which is the half that lives here.
+ */
+test('a first-open overlay is a small window on any display — never a screen-filling one', () => {
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    for (const kind of OVERLAY_KINDS) {
+      const b = defaultOverlayBounds(kind, wa)
+      assert.ok(b.width < wa.width, `${name}/${kind}: as wide as the whole work area`)
+      assert.ok(b.height < wa.height, `${name}/${kind}: as tall as the whole work area`)
+      const share = (b.width * b.height) / (wa.width * wa.height)
+      assert.ok(share < 0.25, `${name}/${kind}: covers ${(share * 100).toFixed(1)}% of the display`)
+      assert.ok(b.x >= wa.x && b.y >= wa.y, `${name}/${kind}: starts off-screen`)
+      assert.ok(
+        b.x + b.width <= wa.x + wa.width && b.y + b.height <= wa.y + wa.height,
+        `${name}/${kind}: runs past the work area`
+      )
+    }
+  }
+})
+
 test('the toast holds NO slot in the meter stack — adding it moved nothing', () => {
   const wa = WORK_AREAS['1080p']
   assert.ok(OVERLAY_KINDS.includes('toast'), 'the toast is a registered overlay kind')
