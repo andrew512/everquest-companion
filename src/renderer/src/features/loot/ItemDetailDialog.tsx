@@ -18,7 +18,9 @@ import { formatDate } from '../../lib/formatDate'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { ObservedItemWindow } from '../../lib/ObservedItemWindow'
 import { ItemDbSources, ObservedChip } from './ItemDbSources'
+import { ItemZoneTable } from './ItemZoneTable'
 import { KnowledgeSection } from './KnowledgeSection'
+import { useItemZoneRates, type ItemZoneRates } from './useItemZoneRates'
 
 /**
  * "What it's for" knowledge (Task #53): fetch this item's lore/quest knowledge when the
@@ -247,18 +249,6 @@ function DroppedByColumn({ sources, max }: { sources: LootTally[]; max: number }
   )
 }
 
-function ZonesColumn({ zones, max }: { zones: LootTally[]; max: number }): JSX.Element {
-  return (
-    <Box sx={{ flex: 1, minWidth: 0 }}>
-      <ObservedHead title="Seen in zones" />
-      {zones.length === 0 && <Typography variant="caption">No zone recorded.</Typography>}
-      {zones.map((z) => (
-        <Bar key={z.name} label={z.name} value={z.count} max={max} right={`${z.count}×`} />
-      ))}
-    </Box>
-  )
-}
-
 /* Everything BELOW/BESIDE the game block is OUR knowledge — what the live log and the local
    dataset add that the in-game window can't tell you.
 
@@ -270,12 +260,14 @@ function ObservedColumn({
   events,
   agg,
   knowledge,
-  item
+  item,
+  zoneRates
 }: {
   events: LootEvent[]
   agg: LootBreakdown
   knowledge: ItemKnowledgeState
   item: string
+  zoneRates: ItemZoneRates
 }): JSX.Element {
   return (
     <Box sx={{ flex: 1, minWidth: 0, width: '100%' }}>
@@ -288,9 +280,11 @@ function ObservedColumn({
       {/* "What it's for" (Task #53) — quest knowledge. Local posky + cached wiki. */}
       <KnowledgeSection data={knowledge.data} loading={knowledge.loading} />
 
+      {/* WHO drops it beside WHERE — and the where half is a RATE now (JOS-78), because a zone's
+          count alone cannot tell eleven-in-an-evening from eleven-over-a-fortnight. */}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
         <DroppedByColumn sources={agg.sources} max={agg.sources[0]?.count ?? 1} />
-        <ZonesColumn zones={agg.zones} max={agg.zones[0]?.count ?? 1} />
+        <ItemZoneTable rows={zoneRates.rows} clipped={zoneRates.clipped} looted={events.length > 0} />
       </Stack>
 
       <ItemDbSources item={item} knowledge={knowledge.data} />
@@ -331,10 +325,14 @@ export function ItemDetailContent({
 }: Omit<ItemDetailProps, 'isQuestItem'> & { active: boolean }): JSX.Element {
   const agg = useMemo(() => aggregateLoot(events), [events])
   const knowledge = useItemKnowledge(item, active)
+  // The per-zone RATES (JOS-78). Its own hook because it joins a SECOND module — the progression
+  // snapshot, for the active-time denominators — and that join is the one thing on this surface
+  // that is not simply a fold of `events`.
+  const zoneRates = useItemZoneRates(events)
   return (
     <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems="flex-start">
       <ItemWindowColumn item={item} stats={stats} knowledge={knowledge} />
-      <ObservedColumn events={events} agg={agg} knowledge={knowledge} item={item} />
+      <ObservedColumn events={events} agg={agg} knowledge={knowledge} item={item} zoneRates={zoneRates} />
     </Stack>
   )
 }

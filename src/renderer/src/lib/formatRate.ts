@@ -56,6 +56,18 @@ export function formatKillRate(n: number): string {
   return `${formatSmall(n)} kills/hr`
 }
 
+/**
+ * A DROPS-per-hour rate (JOS-78): '3.20 drops/hr', '0.35 drops/hr', '124 drops/hr'. Small-number
+ * shaped like its leveling siblings — a farming rate lives in the 0–50 band and `formatNum` would
+ * render an honest 3.2 as a flat '3'.
+ *
+ * The word is 'drops' whatever the item is: the number counts stack sizes (a `2 Bone Chips` line
+ * is two), so "motes per hour" is this rate on a mote's row and needs no second spelling.
+ */
+export function formatDropRate(n: number): string {
+  return `${formatSmall(n)} drops/hr`
+}
+
 /** AA COMPLETIONS per hour: '2.40 AA/hr'. Gain lines — what the AA bar did, which the
  *  item-shop potion cannot change (it multiplies points, never experience). */
 export function formatAaRate(n: number): string {

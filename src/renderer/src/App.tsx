@@ -106,6 +106,9 @@ function PlainView({
           focusLevel={routing.levelFocus}
           focusNonce={routing.levelNonce}
           onFocusConsumed={routing.clearLevelFocus}
+          // JOS-78: the in-window drops panel links OUT to an item's Loot drill-down, through the
+          // same opener the Planner's donor names use — so the drill's Back returns HERE.
+          onOpenLoot={routing.openLoot}
         />
       )}
       {/* The Planner's SETS need no props: they are character-scoped in the store, so the

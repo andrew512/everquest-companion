@@ -58,6 +58,10 @@ import { AaLedgerPanel } from './AaLedgerPanel'
 // window; since JOS-75 it reads the tab's own SCOPE, like every other number here, and states
 // which one it got. The Overview card keeps its hour — that surface has no timescale to follow.
 import { AaPacePanel } from './AaPacePanel'
+// What DROPPED in the scope (JOS-78) — the loot half of the same question the rates answer. It
+// takes the whole `ScopedStats` and derives its own rows (pure `shared/lootRates.ts`), so this
+// view stays a composition and no second denominator can ever be assembled here.
+import { WindowDropsPanel } from './WindowDropsPanel'
 
 interface FeedItem {
   ts: number
@@ -363,12 +367,20 @@ export interface LevelingViewProps {
   focusLevel?: number | null
   focusNonce?: number
   onFocusConsumed?: () => void
+  /**
+   * The app's Loot opener (`AppRouting.openLoot`), handed down so the in-window drops panel can
+   * link out to an item's drill-down (JOS-78). It is the SAME opener the Planner's donor names
+   * use — every cross-view link goes through `useAppRouting`, which is what parks this tab on the
+   * navigation stack so the drill's Back reads "Back to Leveling" (JOS-43).
+   */
+  onOpenLoot?: (item?: string) => void
 }
 
 export default function LevelingView({
   focusLevel = null,
   focusNonce = 0,
-  onFocusConsumed
+  onFocusConsumed,
+  onOpenLoot
 }: LevelingViewProps): JSX.Element {
   const state = useModule<LevelingSnap, LevelingDelta>('leveling', applyLevelingDelta) ?? EMPTY_LEVELING
   const { levels, aaGains: aas, aaSpends: spends } = state
@@ -497,6 +509,10 @@ export default function LevelingView({
                 bought, and its footer must equal the AA-points-spent hero card. "AA allocated
                 in the last hour" is not a thing anyone owns. */}
             <AaLedgerPanel spends={spends} allocated={aaSpent} />
+            {/* SCOPED, like the feed below it: the items observed dropping in the stretch the
+                charts are drawing, ordered by how many you saw. Clicking one opens its Loot
+                drill-down through the app's own opener (JOS-43/JOS-78). */}
+            <WindowDropsPanel scope={scope} onOpenItem={onOpenLoot} />
             <ProgressFeedPanel feed={scopedFeed} scopeLabel={scope.label} />
           </Stack>
         </Stack>
