@@ -12,7 +12,7 @@
 import type { AaEta, AaEtaBlocked, AaPace, AaPotionState } from '@shared/aaPace'
 import type { RangeStats } from '@shared/progressionStats'
 import { AA_POTION_CHARGES } from '../../../../shared/aaPace'
-import { NONE, aaRateText } from './rangeStatsRows'
+import { NONE, aaRateText, activeSpanText } from './rangeStatsRows'
 import { fmtDuration } from './levelChartGeometry'
 import { formatAaRate, formatPointRate } from '../../lib/formatRate'
 
@@ -123,13 +123,16 @@ export function aaPaceTiles(pace: AaPace): AaPaceTile[] {
 }
 
 /**
- * The panel's one-line summary of the window: what was counted, so a rate reading 0.00 cannot
- * be mistaken for a bug. Counts, never rates — the tiles above own those.
+ * The panel's one-line summary of the window: what was counted and how much play it is over, so
+ * a rate reading 0.00 cannot be mistaken for a bug — and so a rate over a scale the character
+ * barely played states its own sample size. Counts and a span, never rates: the tiles above own
+ * those, and `activeSpanText` is the range panel's own wording rather than a second one (JOS-75).
  */
 export function aaPaceCaption(pace: AaPace): string {
+  const span = activeSpanText(pace.activeMs)
   const n = pace.events
-  if (n === 0) return 'no AA completions in this window'
-  return `${n} completion${n === 1 ? '' : 's'} · ${pace.points} point${pace.points === 1 ? '' : 's'}`
+  if (n === 0) return `no AA completions ${span}`
+  return `${n} completion${n === 1 ? '' : 's'} · ${pace.points} point${pace.points === 1 ? '' : 's'} · ${span}`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────

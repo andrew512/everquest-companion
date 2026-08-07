@@ -1,4 +1,13 @@
-// RangeStatsPanel — what a drag-selected time range says about progression.
+// RangeStatsPanel — what the time range in force says about progression.
+//
+// SINCE JOS-75 IT IS ALWAYS MOUNTED. It used to appear only on a drag; now it is the tab's
+// answer for whatever scope is in force — the TIMESCALE's window by default, narrowed to a
+// committed drag while one exists (`windowScope.ts` decides which, and this panel is told only
+// which kind it got). Every string below is unchanged: a window and a selection are the same
+// question over different instants, so they get the same panel, and the header states the two
+// instants outright rather than making the reader infer them. The ONE difference the `scope`
+// prop makes is the dismissal — you cannot clear a window, so the clear button and the
+// `selection` chip exist together or not at all.
 //
 // Presentation ONLY. Every number arrives already computed by the pure
 // `shared/progressionStats.rangeStats`, and every string it prints is shaped by the pure
@@ -43,6 +52,7 @@ import WhatshotIcon from '@mui/icons-material/Whatshot'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import MilitaryTechIcon from '@mui/icons-material/MilitaryTech'
 import type { RangeStats } from '@shared/progressionStats'
+import type { ScopeKind } from './windowScope'
 import { formatDateTime } from '../../lib/formatDate'
 import { fmtDuration } from './levelChartGeometry'
 import {
@@ -71,6 +81,8 @@ import { Tooltip } from '../../lib/Tooltip'
 
 export interface RangeStatsPanelProps {
   stats: RangeStats
+  /** Which scope produced `stats` — the timescale's window, or a drag that narrowed it. */
+  scope: ScopeKind
   onClear: () => void
 }
 
@@ -264,15 +276,18 @@ function ZoneTable({ zones }: { zones: RangeStats['zones'] }): JSX.Element | nul
   )
 }
 
-function HeaderRow({ stats, onClear }: RangeStatsPanelProps): JSX.Element {
+function HeaderRow({ stats, scope, onClear }: RangeStatsPanelProps): JSX.Element {
   return (
     <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }} data-testid="leveling-range-window">
         {formatDateTime(stats.t0)} → {formatDateTime(stats.t1)}
       </Typography>
       <Typography variant="caption" color="text.secondary">
         {fmtDuration(stats.durationMs)}
       </Typography>
+      {/* STATE, NOT PROCESS: one word saying these numbers are narrower than the timescale
+          above them. Absent for the window, which the timescale bar already names. */}
+      {scope === 'selection' && <Chip size="small" variant="outlined" label="selection" sx={CHIP_SX} />}
       {stats.clipped && (
         // State, not process (UI conventions): the analytics store is capped drop-oldest,
         // so a range reaching below `windowStart` is measured over a PARTIAL record and
@@ -285,22 +300,27 @@ function HeaderRow({ stats, onClear }: RangeStatsPanelProps): JSX.Element {
           sx={CHIP_SX}
         />
       )}
-      <IconButton size="small" onClick={onClear} aria-label="Clear selection" sx={{ ml: 'auto' }}>
-        <CloseIcon fontSize="small" />
-      </IconButton>
+      {/* There is nothing to clear about a window — the timescale bar is how you change that,
+          and a dead X beside it would be a control that does nothing. */}
+      {scope === 'selection' && (
+        <IconButton size="small" onClick={onClear} aria-label="Clear selection" sx={{ ml: 'auto' }}>
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      )}
     </Stack>
   )
 }
 
-export function RangeStatsPanel({ stats, onClear }: RangeStatsPanelProps): JSX.Element {
+export function RangeStatsPanel({ stats, scope, onClear }: RangeStatsPanelProps): JSX.Element {
   const footnote = unstatedCaption(stats)
   return (
     <Paper
       variant="outlined"
       sx={{ p: 1.5, display: 'flex', flexDirection: 'column', gap: 1.25, flexGrow: 1, minHeight: 0 }}
       data-testid="leveling-range-stats"
+      data-scope={scope}
     >
-      <HeaderRow stats={stats} onClear={onClear} />
+      <HeaderRow stats={stats} scope={scope} onClear={onClear} />
       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
         {rangeHeroes(stats).map((s) => (
           <StatCard key={s.id} stat={s} />

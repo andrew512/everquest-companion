@@ -8,8 +8,7 @@ import type {
   ProgressionSnap
 } from '@shared/types'
 import { computeAAAccounting } from '@shared/aa'
-import { aaPace } from '@shared/aaPace'
-import { rangeStats, type RangeStats } from '@shared/progressionStats'
+import { aaPace, type AaPace } from '@shared/aaPace'
 import { useModule } from '../../lib/useModule'
 import { formatDate } from '../../lib/formatDate'
 import {
@@ -37,6 +36,10 @@ import {
   type TimescaleId
 } from './chartWindow'
 import { TimescaleBar } from './TimescaleBar'
+// The SCOPE (JOS-75): which stretch of the log every number on this tab describes. The timescale
+// moved the curves; this moves the arithmetic with them — one `rangeStats` call over one range,
+// narrowed by a drag when there is one. Nothing here re-derives a rate.
+import { scopedStats, type ScopedStats } from './windowScope'
 import { useChartSelection } from './useChartSelection'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from './progressionDelta'
 import { RangeStatsPanel } from './RangeStatsPanel'
@@ -51,11 +54,9 @@ import { NewAtLevelPanel } from './NewAtLevelPanel'
 // The per-ability AA ladder — the flat purchases list's replacement in the same slot.
 import { AaLedgerPanel } from './AaLedgerPanel'
 // AA pace (AA/hr, points/hr, next-AA estimate, potion charges) — the tab's answer once the
-// level bar caps out. `levelingWindows` is borrowed from the Overview card rather than
-// re-derived: "the last hour of LOG time, anchored on the data's clock" is one rule, and two
-// copies of it would drift the day one of them learns something. The dependency runs one way
-// (that module already imports this feature's formatters; nothing there imports this view).
-import { HEADLINE_WINDOW_LABEL, levelingWindows } from '../overview/overviewLevelingData'
+// level bar caps out. It used to be pinned to the Overview card's "last hour of LOG time"
+// window; since JOS-75 it reads the tab's own SCOPE, like every other number here, and states
+// which one it got. The Overview card keeps its hour — that surface has no timescale to follow.
 import { AaPacePanel } from './AaPacePanel'
 
 interface FeedItem {
@@ -147,13 +148,25 @@ function LevelOverTimePanel({
   )
 }
 
-/** Interleaved level/AA/swap feed, newest first. */
-function ProgressFeedPanel({ feed }: { feed: FeedItem[] }): JSX.Element {
+/**
+ * Interleaved level/AA/swap feed, newest first — SCOPED like every other number on the tab
+ * (JOS-75). A feed still listing last week's dings under an hour-wide chart is the same
+ * disagreement the rates had.
+ *
+ * The empty case is STATED. A narrow window legitimately holds no ding and no gain line, and a
+ * silently empty box reads as a broken panel rather than as a quiet hour.
+ */
+function ProgressFeedPanel({ feed, scopeLabel }: { feed: FeedItem[]; scopeLabel: string }): JSX.Element {
   return (
     <Paper variant="outlined" sx={{ p: 2, flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <Typography variant="subtitle2" gutterBottom>
         Recent progress
       </Typography>
+      {feed.length === 0 && (
+        <Typography variant="caption" color="text.secondary" data-testid="leveling-feed-empty">
+          no level-ups or AA gains in {scopeLabel}
+        </Typography>
+      )}
       <Box sx={{ overflow: 'auto', pr: 0.75 }}>
         {feed.map((f, i) => (
           <Stack
@@ -191,7 +204,11 @@ interface LevelingCharts {
   /** null only when NOTHING in any series carries a timestamp — the view shows its empty state. */
   chrome: ChartChrome | null
   legend: ZoneLegend
-  stats: RangeStats | null
+  /**
+   * THE ONE SCOPE every number on this tab reads (JOS-75): the timescale's window, or the drag
+   * that narrowed it. Null exactly when `chrome` is — there is no scope without a domain.
+   */
+  scope: ScopedStats | null
   clear: () => void
   /** the scales this history can fill, and the one in force (which is `full` unless the pick
    *  survives the current character's span — see chartWindow.ts `resolveTimescale`). */
@@ -226,10 +243,11 @@ function useLevelingCharts(o: {
 }): LevelingCharts {
   const { prog, levels, aas, segments, picked } = o
   const extraTs = useMemo(() => [...levels.map((p) => p.ts), ...aas.map((a) => a.ts)], [levels, aas])
-  const spanMs = useMemo(() => {
-    const b = dataBounds(prog, extraTs)
-    return b ? b.hi - b.lo : 0
-  }, [prog, extraTs])
+  // Where the record starts and ends. It decides which scales are offerable AND — since JOS-75 —
+  // where a window's numbers stop: the drawn window runs past the newest event by design (the
+  // trailing gutter), and counting that as time would invent silence. See windowScope.ts rule 2.
+  const bounds = useMemo(() => dataBounds(prog, extraTs), [prog, extraTs])
+  const spanMs = bounds ? bounds.hi - bounds.lo : 0
   const scales = useMemo(() => availableTimescales(spanMs), [spanMs])
   const id = resolveTimescale(picked, spanMs)
   const scale = useMemo(() => chartDomain(prog, extraTs, id), [prog, extraTs, id])
@@ -246,12 +264,17 @@ function useLevelingCharts(o: {
   // has anything to print.
   const intervals = useComboIntervals()
   const combo = useMemo(() => comboSource(intervals), [intervals])
-  const stats = useMemo(() => (sel ? rangeStats({ snap: prog, range: sel, combo }) : null), [sel, prog, combo])
+  // ONE query, whichever scope won. The losing candidate is never computed — widening the tab's
+  // scope-awareness took a `rangeStats` call OUT of this view rather than adding one.
+  const scope = useMemo(
+    () => (scale && bounds ? scopedStats({ snap: prog, win: scale, bounds, id, selection: sel, combo }) : null),
+    [scale, bounds, prog, id, sel, combo]
+  )
   // Rebuilt narrow, NOT the whole SelectionApi: the charts spread this straight onto a DOM
   // element, so anything else on the object would land there as an unknown attribute.
   const pointer = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
   const chrome = scale ? { scale, bands, range: draft ?? sel, suppressed: dragging, pointer } : null
-  return { chrome, legend, stats, clear, scales, id, aaVisible, segVisible }
+  return { chrome, legend, scope, clear, scales, id, aaVisible, segVisible }
 }
 
 /**
@@ -261,6 +284,12 @@ function useLevelingCharts(o: {
  * A post-swap ding is the first level of a NEW loadout: the elapsed time back to the previous
  * ding spans the (unlogged) swap, so it is not a "time to level" — showing `+38.9h` there would
  * be fabricated. Label the swap instead.
+ *
+ * UNCUT, and the view slices it AFTER scoping (JOS-75): a `.slice(0, 60)` here would take the
+ * sixty NEWEST entries in the whole log and then filter, so a window that sits behind them
+ * would come up empty with events plainly drawn on the chart above it. Each `sinceMs` is still
+ * measured against the ding's true predecessor, in or out of scope — the elapsed time to reach
+ * a level is a fact about the level, not about what you are looking at.
  */
 function buildFeed(levels: readonly LevelPoint[], aas: readonly AAEvent[]): FeedItem[] {
   const items: FeedItem[] = []
@@ -275,7 +304,53 @@ function buildFeed(levels: readonly LevelPoint[], aas: readonly AAEvent[]): Feed
   for (const a of aas) {
     items.push({ ts: a.ts, kind: 'aa', label: `+${a.amount} AA`, detail: `${a.nowHave} unspent` })
   }
-  return items.sort((a, b) => b.ts - a.ts).slice(0, 60)
+  return items.sort((a, b) => b.ts - a.ts)
+}
+
+/** How many feed rows the panel draws. Applied AFTER the scope filter — see `buildFeed`. */
+const FEED_MAX = 60
+
+/**
+ * The charts column: the AA pace tiles, the timescale control, the two plots, and the window's
+ * own read under them. Its own component because the column is where the scope becomes visible —
+ * every surface in it describes the SAME stretch of time, and keeping them in one place is what
+ * makes that reviewable (it also keeps the view inside its measured line budget).
+ *
+ * It OWNS ITS SCROLL (the standing list law): the papers are intrinsically tall, and without
+ * this the column grew the app's content area instead — the one thing a view may never do.
+ */
+function ChartsColumn(p: {
+  chrome: ChartChrome
+  scope: ScopedStats
+  charts: Pick<LevelingCharts, 'legend' | 'clear' | 'scales' | 'id' | 'aaVisible' | 'segVisible'>
+  pace: AaPace | null
+  aaPoints: AaPoint[]
+  aaEarned: number
+  levelCount: number
+  swaps: number
+  onPick: (id: TimescaleId) => void
+}): JSX.Element {
+  const { chrome, scope, charts } = p
+  return (
+    <Stack spacing={2} sx={{ flex: 2, minWidth: 320, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
+      {p.pace && <AaPacePanel pace={p.pace} windowLabel={scope.label} />}
+      {/* Directly above the plots it governs, and ABOVE BOTH of them: the two charts draw one
+          time base, so there is one control for it — and since JOS-75 one scope under it. */}
+      <TimescaleBar scales={charts.scales} id={charts.id} scale={chrome.scale} onPick={p.onPick} />
+      <AaOverTimePanel points={p.aaPoints} drawn={charts.aaVisible} aaEarned={p.aaEarned} chrome={chrome} />
+      <LevelOverTimePanel
+        segments={charts.segVisible}
+        levelCount={p.levelCount}
+        swaps={p.swaps}
+        aaPoints={charts.aaVisible}
+        chrome={chrome}
+        legend={charts.legend}
+      />
+      {/* ALWAYS mounted since JOS-75: it is the window's own read, narrowed by a drag while one
+          exists. Below the plots it explains, so the picture stays the first thing on the tab. */}
+      <RangeStatsPanel stats={scope.stats} scope={scope.kind} onClear={charts.clear} />
+    </Stack>
+  )
 }
 
 /**
@@ -345,23 +420,29 @@ export default function LevelingView({
   // tab already keeps that way. No store key: no adjacent toggle on this view persists (JOS-71's
   // brief), and a window is a thing you choose while you are looking, not a preference.
   const [picked, setPicked] = useState<TimescaleId>('full')
-  const { chrome, legend, stats, clear, scales, id, aaVisible, segVisible } = useLevelingCharts({
+  const charts = useLevelingCharts({
     prog,
     levels: sortedLevels,
     aas: aaCumulative,
     segments: levelSegments,
     picked
   })
+  const { chrome, scope } = charts
 
-  // AA pace over the last hour of LOG time. A THIRD `rangeStats` call on this tab and
-  // deliberately its own: the drag selection answers "how was that stretch", this answers "how
-  // is it going right now", and folding the two would make the panel change meaning the moment
-  // a user dragged. Null before the snapshot has folded anything at all.
-  const pace = useMemo(() => {
-    const hour = levelingWindows(prog).hour
-    if (!hour || state.aaGains.length === 0) return null
-    return aaPace({ leveling: state, prog, window: rangeStats({ snap: prog, range: hour }) })
-  }, [prog, state])
+  // The feed, cut to the scope. Filter THEN cap — see `buildFeed`.
+  const scopedFeed = useMemo(
+    () => (scope ? feed.filter((f) => f.ts >= scope.range.t0 && f.ts <= scope.range.t1) : feed).slice(0, FEED_MAX),
+    [feed, scope]
+  )
+
+  // AA pace over the SAME scope everything else here reads (JOS-75). It was its own hour-wide
+  // window until the timescale existed; now the tab has one answer to "which stretch", and the
+  // panel states which one it got rather than carrying a second opinion. Null before the
+  // snapshot has folded anything at all, and for a character with no AA in the log.
+  const pace = useMemo(
+    () => (scope && state.aaGains.length > 0 ? aaPace({ leveling: state, prog, window: scope.stats }) : null),
+    [scope, prog, state]
+  )
 
   const nothing = sortedLevels.length === 0 && sortedAAs.length === 0
   // One props object, two placements (see both call sites): the panel is the same surface in the
@@ -375,6 +456,13 @@ export default function LevelingView({
 
   return (
     <Stack spacing={2} sx={{ height: '100%' }} data-testid="leveling-view">
+      {/* THE FOUR HEROES DO NOT FOLLOW THE SCOPE, and that is a decision rather than an
+          omission (JOS-75). Character level is your level RIGHT NOW — a level "as of an hour
+          ago" is a different fact wearing this one's label. The three AA figures are the
+          refund-proof identity (earned == allocated + unspent, shared/aa.ts): allocation is a
+          balance, not a flow, and a windowed "earned" could only be Σ of the gain lines in
+          range, which is precisely the double-counting world-model law 5 forbids. The windowed
+          AA reads live one panel down, where they are labelled as rates. */}
       <LevelingHeroes
         currentLevel={currentLevel}
         levelCount={sortedLevels.length}
@@ -386,36 +474,30 @@ export default function LevelingView({
         boughtCount={boughtCount}
       />
 
-      {nothing || !chrome ? (
+      {nothing || !chrome || !scope ? (
         <Typography color="text.secondary" sx={{ p: 2 }} data-testid="leveling-empty">
           No level-ups or AA gains found in this character&apos;s log yet. They&apos;ll appear here live as you play.
         </Typography>
       ) : (
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flexGrow: 1, minHeight: 0 }}>
-          {/* The charts column OWNS ITS SCROLL (the standing list law): its papers are
-              intrinsically tall — two plots plus a range panel that mounts on a drag — and
-              without this the column grew the app's content area instead, which is the one
-              thing a view may never do. */}
-          <Stack spacing={2} sx={{ flex: 2, minWidth: 320, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
-            {pace && <AaPacePanel pace={pace} windowLabel={HEADLINE_WINDOW_LABEL} />}
-            {/* Directly above the plots it governs, and ABOVE BOTH of them: the two charts draw
-                one time base, so there is one control for it. */}
-            <TimescaleBar scales={scales} id={id} scale={chrome.scale} onPick={setPicked} />
-            <AaOverTimePanel points={aaCumulative} drawn={aaVisible} aaEarned={aaEarned} chrome={chrome} />
-            <LevelOverTimePanel
-              segments={segVisible}
-              levelCount={sortedLevels.length}
-              swaps={swaps}
-              aaPoints={aaVisible}
-              chrome={chrome}
-              legend={legend}
-            />
-            {stats && <RangeStatsPanel stats={stats} onClear={clear} />}
-          </Stack>
+          <ChartsColumn
+            chrome={chrome}
+            scope={scope}
+            charts={charts}
+            pace={pace}
+            aaPoints={aaCumulative}
+            aaEarned={aaEarned}
+            levelCount={sortedLevels.length}
+            swaps={swaps}
+            onPick={setPicked}
+          />
 
           <Stack spacing={2} sx={{ flex: 1, minWidth: 260, minHeight: 0 }}>
+            {/* The AA LEDGER stays full-history on purpose: it is an ACCOUNT of what you have
+                bought, and its footer must equal the AA-points-spent hero card. "AA allocated
+                in the last hour" is not a thing anyone owns. */}
             <AaLedgerPanel spends={spends} allocated={aaSpent} />
-            <ProgressFeedPanel feed={feed} />
+            <ProgressFeedPanel feed={scopedFeed} scopeLabel={scope.label} />
           </Stack>
         </Stack>
       )}
