@@ -12,7 +12,19 @@
 import type { JSX } from 'react'
 import { MenuItem, Select, Stack } from '@mui/material'
 import type { SoundPack } from '@shared/types'
+import { USER_SOUNDS_PACK_ID } from '@shared/userSounds'
 import { DEFAULT_PACK_ID } from './suggestions'
+
+/**
+ * How a pack reads in a picker's first dropdown. A pack the user dropped into
+ * `<userData>/soundpacks` by hand is tagged "(user)" to distinguish it from the shipped and
+ * registry-installed ones; "My sounds" (JOS-68) is not, because its NAME already says whose
+ * it is and "My sounds (user)" says it twice.
+ */
+export function packLabel(p: SoundPack): string {
+  if (p.id === USER_SOUNDS_PACK_ID) return p.name
+  return p.source === 'user' ? `${p.name} (user)` : p.name
+}
 
 /**
  * The pack a picker falls back to when the alert's own pack is missing (uninstalled) or
@@ -57,8 +69,7 @@ export default function SoundPicker({
       >
         {packs.map((p) => (
           <MenuItem key={p.id} value={p.id}>
-            {p.name}
-            {p.source === 'user' ? ' (user)' : ''}
+            {packLabel(p)}
           </MenuItem>
         ))}
       </Select>

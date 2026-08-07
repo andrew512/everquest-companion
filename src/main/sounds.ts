@@ -11,6 +11,9 @@
 //       instead). asarUnpack in electron-builder.yml keeps these on disk in production.
 //   (2) user     — `<userData>/soundpacks/<id>/`, so a user can drop their own
 //       audio (e.g. their real FF fanfare mp3) + a manifest and select it.
+//   (3) MINE     — `<userData>/my-sounds/`, the RESERVED pack the in-app importer writes
+//       (JOS-68). Same shape as any other pack, so everything below reads it unchanged; a
+//       root of its own so no registry pack can ever collide with it (shared/userSounds.ts).
 //
 // getSoundData reads the referenced file and returns { mime, dataBase64 } so the
 // CSP-restricted renderer can build a Blob URL (no file:// or remote fetch).
@@ -19,6 +22,8 @@ import { app } from 'electron'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError } from './errorLog'
+import { DEFAULT_ALERT_PACK_ID, DEFAULT_ALERT_SOUNDS } from './data/defaultPacks'
+import { USER_SOUNDS_PACK_ID, USER_SOUNDS_PACK_NAME } from '../shared/userSounds'
 import type { PackSound, SoundData, SoundPack, SoundPackManifest } from '../shared/types'
 
 const AUDIO_MIME: Record<string, string> = {
@@ -48,6 +53,35 @@ function userRoot(): string {
 /** Public accessor for the user soundpacks root (used by packRegistry install/uninstall). */
 export function userPacksRoot(): string {
   return userRoot()
+}
+
+/**
+ * `<userData>/my-sounds` — the reserved "bring your own sound" pack (JOS-68). It is a
+ * SIBLING of the soundpacks root, not a child: registry installs and uninstalls only ever
+ * join onto `userRoot()`, so nothing the registry does can reach the user's own audio.
+ */
+export function userSoundsRoot(): string {
+  return join(app.getPath('userData'), USER_SOUNDS_PACK_ID)
+}
+
+/**
+ * The three places a pack can live, resolved once and passed down.
+ *
+ * Every reader below takes this record rather than calling `app` itself (the maps-library
+ * pattern) — which is what lets tests/userSounds.test.mts drive the real enumeration and the
+ * real missing-sound fallback against temp directories, with no Electron in the process.
+ */
+export interface SoundRoots {
+  bundled: string[]
+  /** `<userData>/soundpacks` — bundled-shadowing packs and every registry install. */
+  user: string
+  /** `<userData>/my-sounds` — the reserved pack the in-app importer writes. */
+  mine: string
+}
+
+/** The real roots on this machine. */
+function realRoots(): SoundRoots {
+  return { bundled: bundledRoots(), user: userRoot(), mine: userSoundsRoot() }
 }
 
 // ----- CESP → our-manifest conversion (shared with scripts/fetch-packs.mts) -----
@@ -196,29 +230,99 @@ function packsInRoot(root: string, source: SoundPack['source']): SoundPack[] {
  * packs shadow bundled ones with the same id (so a user can override a shipped pack
  * with their own audio under the same id).
  */
-function packDir(packId: string): { dir: string; source: SoundPack['source'] } | null {
-  const uDir = join(userRoot(), packId)
+function packDir(
+  roots: SoundRoots,
+  packId: string
+): { dir: string; source: SoundPack['source'] } | null {
+  // The reserved id resolves to its own root FIRST — ahead of both the soundpacks root and
+  // the bundled ones — so a directory that somehow acquired that name over there can never
+  // serve bytes in place of the user's imported audio.
+  if (packId === USER_SOUNDS_PACK_ID) {
+    return existsSync(join(roots.mine, 'manifest.json')) ? { dir: roots.mine, source: 'user' } : null
+  }
+  const uDir = join(roots.user, packId)
   if (existsSync(join(uDir, 'manifest.json'))) return { dir: uDir, source: 'user' }
-  for (const root of bundledRoots()) {
+  for (const root of roots.bundled) {
     const bDir = join(root, packId)
     if (existsSync(join(bDir, 'manifest.json'))) return { dir: bDir, source: 'bundled' }
   }
   return null
 }
 
-/** List all packs (bundled first, then user), de-duped by id (user wins). */
-export function listPacks(): SoundPack[] {
+/**
+ * The reserved "My sounds" pack, or null when the user has imported nothing yet.
+ *
+ * An EMPTY pack is not listed: a pack with no sounds is a dead entry in every picker's first
+ * dropdown whose second dropdown is blank. It appears the moment there is something in it,
+ * which is also when it becomes referenceable. Its id and display name come from the shared
+ * constants and never from the file, so a hand-edited manifest cannot re-title it into
+ * something that reads like a registry pack.
+ */
+function userSoundsPack(roots: SoundRoots): SoundPack | null {
+  const manifest = readManifest(roots.mine)
+  if (!manifest || Object.keys(manifest.sounds ?? {}).length === 0) return null
+  return {
+    id: USER_SOUNDS_PACK_ID,
+    name: USER_SOUNDS_PACK_NAME,
+    sounds: manifest.sounds,
+    source: 'user'
+  }
+}
+
+/**
+ * List all packs (bundled first, then user), de-duped by id (user wins). "My sounds" is
+ * appended LAST and overrides anything else claiming its id, so every picker in the app —
+ * the alert editor, the alert row, anything that takes `SoundPack[]` — offers the user's own
+ * audio through the seam it already had, with no per-picker special case.
+ */
+export function listPacksIn(roots: SoundRoots): SoundPack[] {
   const byId = new Map<string, SoundPack>()
-  for (const root of bundledRoots()) {
+  for (const root of roots.bundled) {
     for (const p of packsInRoot(root, 'bundled')) if (!byId.has(p.id)) byId.set(p.id, p)
   }
-  for (const p of packsInRoot(userRoot(), 'user')) byId.set(p.id, p) // user overrides bundled
+  for (const p of packsInRoot(roots.user, 'user')) byId.set(p.id, p) // user overrides bundled
+  const mine = userSoundsPack(roots)
+  if (mine) byId.set(mine.id, mine)
   return [...byId.values()]
 }
 
-/** Read a sound's bytes → { mime, dataBase64 }. Null if the pack/sound/file is missing. */
+/** Every pack on this machine. */
+export function listPacks(): SoundPack[] {
+  return listPacksIn(realRoots())
+}
+
+/**
+ * Read a sound's bytes → { mime, dataBase64 }.
+ *
+ * A MISSING CUSTOM SOUND IS NOT SILENCE. When the reserved pack cannot answer — the user
+ * removed that sound, or the copied file went missing — the shipped default's "A moment of
+ * your time, if you'd be so kind." line answers instead, which is the same choice
+ * `migrateAlertSoundRef` makes for an unrecognizable retired-pack id: an alert the user
+ * asked for fires audibly rather than failing quietly. Every other pack still answers null
+ * (an uninstalled registry pack is a pack the user removed on purpose, and the pickers
+ * already re-point those rows at the fallback pack on sight).
+ */
+export function getSoundDataIn(
+  roots: SoundRoots,
+  packId: string,
+  soundId: string
+): SoundData | null {
+  const direct = readPackSound(roots, packId, soundId)
+  if (direct) return direct
+  if (packId === USER_SOUNDS_PACK_ID) {
+    return readPackSound(roots, DEFAULT_ALERT_PACK_ID, DEFAULT_ALERT_SOUNDS.buffWearsOff)
+  }
+  return null
+}
+
+/** One sound's bytes from the real roots — what `sounds:getData` answers with. */
 export function getSoundData(packId: string, soundId: string): SoundData | null {
-  const loc = packDir(packId)
+  return getSoundDataIn(realRoots(), packId, soundId)
+}
+
+/** One pack's one sound, straight off disk. Null if the pack/sound/file is missing. */
+function readPackSound(roots: SoundRoots, packId: string, soundId: string): SoundData | null {
+  const loc = packDir(roots, packId)
   if (!loc) return null
   const manifest = readManifest(loc.dir)
   const sound = manifest?.sounds?.[soundId]

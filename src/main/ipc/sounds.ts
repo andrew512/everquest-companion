@@ -13,7 +13,8 @@ import {
 } from '../packRegistry'
 import { isSafePackId } from '../security'
 import { getSoundData, listPacks } from '../sounds'
-import { sendToMain } from '../windows'
+import { importUserSounds, listImportedSounds, removeUserSound } from '../userSounds'
+import { getMainWindow, sendToMain } from '../windows'
 import type { PackInstallProgress } from '../../shared/types'
 
 export function registerSoundsIpc(): void {
@@ -22,8 +23,22 @@ export function registerSoundsIpc(): void {
   // boundary (security.ts isSafePackId) rather than trusted because today's only caller
   // passes a listed pack's id. soundId is a KEY into that pack's manifest (never a path),
   // and sounds.ts already refuses a manifest entry that escapes the pack dir.
+  // The reserved `my-sounds` pack (JOS-68) comes through this SAME door: it is a directory
+  // name like any other, it satisfies isSafePackId, and sounds.ts resolves it to its own
+  // root. There is deliberately no second serving path for the user's own audio.
   ipcMain.handle(IPC.getSoundData, (_e, packId: string, soundId: string) =>
     isSafePackId(packId) ? getSoundData(packId, soundId) : null
+  )
+
+  // ---- the user's own sounds (JOS-68) ----
+  // The picker runs in MAIN (userSounds.ts), so no filesystem path is ever handed to — or
+  // accepted from — the renderer. `removeUserSound` takes a manifest key; an unknown one
+  // removes nothing, and the key never reaches a join() (the file deleted is the manifest's
+  // own entry, re-checked with isInsideDir).
+  ipcMain.handle(IPC.listUserSounds, () => listImportedSounds())
+  ipcMain.handle(IPC.importUserSounds, () => importUserSounds(getMainWindow()))
+  ipcMain.handle(IPC.removeUserSound, (_e, soundId: string) =>
+    removeUserSound(typeof soundId === 'string' ? soundId : '')
   )
 
   // ---- sound-pack registry (openpeon.com integration, Task #29) ----

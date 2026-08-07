@@ -893,7 +893,11 @@ export type {
   PackInstallProgress,
   PackMutationResult,
   PackPreviewSound,
-  PackPreviewList
+  PackPreviewList,
+  UserSound,
+  UserSoundRejection,
+  UserSoundImportResult,
+  UserSoundRemoveResult
 } from './alertTypes'
 
 export type {

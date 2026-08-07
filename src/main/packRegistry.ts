@@ -33,6 +33,7 @@ import {
   userPacksRoot,
   type CespManifest
 } from './sounds'
+import { USER_SOUNDS_PACK_ID } from '../shared/userSounds'
 import type {
   PackInstallProgress,
   PackPreviewList,
@@ -238,9 +239,14 @@ export async function fetchRegistry(force = false): Promise<RegistryListResult> 
   }
 }
 
-/** Set of installed pack ids (bundled + user), used to reconcile the registry. */
+/**
+ * Set of installed pack ids (bundled + user), used to reconcile the registry. The reserved
+ * `my-sounds` pack is NOT one: it is the user's own imported audio, it is never in this
+ * index, and letting it annotate a same-named registry row would badge that row "Installed"
+ * with an Uninstall button that (correctly) refuses.
+ */
 function installedIds(): Set<string> {
-  return new Set(listPacks().map((p) => p.id))
+  return new Set(listPacks().map((p) => p.id).filter((id) => id !== USER_SOUNDS_PACK_ID))
 }
 
 function annotate(packs: RegistryPack[]): RegistryPackView[] {
@@ -459,6 +465,11 @@ export async function installPack(
   targetRootOverride?: string
 ): Promise<void> {
   const name = pack.name
+  // `my-sounds` names the user's OWN imported audio (JOS-68) and is not the registry's to
+  // claim. Its bytes live in a different root, so an install here could not overwrite them —
+  // but it WOULD put a second pack under that id in the listing, and the picker would show
+  // whichever won the de-dupe. Refusing the name is one line and removes the question.
+  if (name === USER_SOUNDS_PACK_ID) throw new Error(`'${name}' is reserved for your imported sounds`)
   const packsRoot = targetRootOverride ?? userPacksRoot()
   const packDir = join(packsRoot, name)
 
@@ -517,6 +528,9 @@ export async function installPack(
  * uninstallable. Returns false if the pack dir doesn't exist under userData.
  */
 export function uninstallPack(name: string): boolean {
+  // Same reservation as installPack: the user's own sounds are managed from "My sounds…",
+  // one at a time and with a warning, never wiped wholesale by the registry browser.
+  if (name === USER_SOUNDS_PACK_ID) return false
   const packDir = join(userPacksRoot(), name)
   // Guard against traversal via a crafted name.
   const safe = safeJoin(userPacksRoot(), name)
