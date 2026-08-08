@@ -48,6 +48,18 @@ export interface DiscoveryProbes {
   extraCandidates: () => string[]
   /** Fixed-drive letters to sweep, e.g. ['C:', 'D:']. */
   fixedDrives: () => string[]
+  /**
+   * Wall-clock CEILING for the whole sweep, in ms (JOS-112). Omitted ⇒ unbounded (the unit
+   * tests, whose probes never block). When set, `discoverEqRoot` stops probing candidates once
+   * the budget is spent and returns null — a BOUNDED MISS (fall back to "user picks manually")
+   * beats an UNBOUNDED HANG. The individual blocking calls are bounded elsewhere (per-`reg`
+   * timeouts; `fixedDrives` skips the offline mapped drives that block on the SMB timeout), so
+   * this is the backstop that caps the CUMULATIVE cost, not a per-call interrupt: a single
+   * synchronous `readdir` cannot be aborted mid-flight, but the ones AFTER the deadline never run.
+   */
+  budgetMs?: number
+  /** Injectable clock for the ceiling (tests advance it deterministically). Defaults to `Date.now`. */
+  now?: () => number
 }
 
 /** The character-log filename the game writes: `eqlog_<Char>_<server>.txt`. */
@@ -279,6 +291,13 @@ export function tailSurvivesRootChange(
  * Duplicates are collapsed so a candidate is probed at most once.
  */
 export function discoverEqRoot(probes: DiscoveryProbes): string | null {
+  const now = probes.now ?? Date.now
+  // The ceiling is an absolute instant computed once, at entry. `extraCandidates()` (env +
+  // registry) runs first and carries its OWN per-`reg` timeout, so by the time we reach the
+  // probe loop the clock already reflects whatever that phase cost.
+  const deadline = probes.budgetMs === undefined ? Infinity : now() + probes.budgetMs
+  const overBudget = (): boolean => now() >= deadline
+
   const seen = new Set<string>()
   const candidates: string[] = []
   const push = (c: string | undefined | null): void => {
@@ -290,13 +309,64 @@ export function discoverEqRoot(probes: DiscoveryProbes): string | null {
   }
 
   for (const c of probes.extraCandidates()) push(c)
-  for (const drive of probes.fixedDrives()) {
-    const d = drive.replace(/[\\/]+$/, '')
-    for (const sub of DAYBREAK_SUBPATHS) push(`${d}\\${sub}`)
+  // Skip generating (and thus probing) the drive-sweep candidates once we are already over
+  // budget — the env/registry phase alone can spend it on a pathological Uninstall hive.
+  if (!overBudget()) {
+    for (const drive of probes.fixedDrives()) {
+      const d = drive.replace(/[\\/]+$/, '')
+      for (const sub of DAYBREAK_SUBPATHS) push(`${d}\\${sub}`)
+    }
   }
 
-  for (const c of candidates) if (probes.hasLogs(c)) return c
+  for (const c of candidates) {
+    // Check BEFORE each probe: a `readdir` on an offline share can take tens of seconds, so the
+    // guarantee is "no further probes after the deadline", which bounds the total to one such
+    // stall plus the budget. `fixedDrives` keeps those shares out of the list in the first place.
+    if (overBudget()) return null
+    if (probes.hasLogs(c)) return c
+  }
   return null
+}
+
+// ---------------------------------------------------------------------------
+// PERSISTED-ACROSS-LAUNCHES discovery (JOS-112). The pure precedence logic, injected so it is
+// unit-testable without a store or a disk — config.ts binds it to electron-store + the real sweep.
+// ---------------------------------------------------------------------------
+
+/** What `resolveDiscoveredRoot` needs, all injected → testable without electron-store or fs. */
+export interface CachedRootDeps {
+  /** The root a PREVIOUS launch persisted, or null if none is stored. */
+  persisted: string | null
+  /** Revalidate a candidate root — the one `readdir` `rootHasLogs` already does. */
+  hasLogs: (root: string) => boolean
+  /** Run the full (expensive) discovery sweep — registry subprocesses + the drive walk. */
+  sweep: () => string | null
+  /** Persist a POSITIVE discovery so the next launch can skip the sweep entirely. */
+  persist: (root: string) => void
+  /** Drop a persisted root that no longer validates — SELF-HEAL across sessions. */
+  dropPersisted: () => void
+}
+
+/**
+ * Resolve the discovered root with cross-launch persistence, first launch and every re-discovery:
+ *
+ *   1. a persisted root that STILL passes `hasLogs` (one readdir) wins — the sweep never runs;
+ *   2. a persisted root that FAILS revalidation is dropped (self-heal: the install moved or was
+ *      uninstalled under us) and we fall through to the sweep;
+ *   3. the sweep runs, and ONLY a positive hit is persisted — a null "not found" is NEVER cached,
+ *      so a brand-new user who has not run `/log on` yet keeps getting the cheap idle rescan
+ *      rather than a sticky negative.
+ *
+ * This is the ACROSS-SESSIONS extension of config.ts's in-memory invalidate/revalidate pattern.
+ */
+export function resolveDiscoveredRoot(deps: CachedRootDeps): string | null {
+  if (deps.persisted !== null) {
+    if (deps.hasLogs(deps.persisted)) return deps.persisted
+    deps.dropPersisted()
+  }
+  const found = deps.sweep()
+  if (found !== null) deps.persist(found)
+  return found
 }
 
 // ---------------------------------------------------------------------------
@@ -304,8 +374,57 @@ export function discoverEqRoot(probes: DiscoveryProbes): string | null {
 // fine and never throw.
 // ---------------------------------------------------------------------------
 
-/** Enumerate fixed-drive roots (e.g. ['C:', 'D:']). Falls back to ['C:']. */
+/**
+ * The genuinely FIXED (local-disk) drive letters, queried by TYPE so the name is true (JOS-112).
+ *
+ * WHY A TYPE FILTER, NOT A PER-LETTER TIMEOUT: the hang this bounds is a `readdir`/`existsSync`
+ * on an OFFLINE MAPPED NETWORK DRIVE blocking on the SMB timeout (tens of seconds). A synchronous
+ * fs call cannot be aborted once started, so a "per-letter timeout" would need a subprocess per
+ * letter — 26 of them — and the offline share would still be TOUCHED. Filtering by drive TYPE
+ * instead means those shares are never in the candidate list at all: `wmic logicaldisk` reads the
+ * mount table (drive metadata, DriveType 3 = local disk / 4 = network / 2 = removable) WITHOUT
+ * opening any of the drives, so it returns while the offline share stays untouched.
+ *
+ * One bounded subprocess (2 s), MEMOIZED for the process (drive topology barely changes and the
+ * idle rescan calls this every couple of seconds — see refreshEqDiscoveryCheaply). If the query is
+ * unavailable — `wmic` is deprecated and being removed from newer Windows — we FALL BACK to the
+ * legacy A–Z `existsSync` sweep, which can block on an offline share, but that path is now the
+ * exception and the discovery ceiling (`budgetMs`) caps it regardless.
+ */
+function queryFixedDriveLetters(): string[] | null {
+  let stdout = ''
+  try {
+    stdout = execFileSync('wmic', ['logicaldisk', 'get', 'DeviceID,DriveType', '/format:csv'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch {
+    // wmic absent / removed / errored — the caller falls back to the existsSync sweep.
+    return null
+  }
+  // CSV rows are `<Node>,<DeviceID>,<DriveType>` e.g. `MACHINE,C:,3`. DriveType 3 is a local disk;
+  // 2 (removable) / 4 (network) / 5 (CD) are exactly what we want to skip.
+  const out: string[] = []
+  for (const line of stdout.split(/\r?\n/)) {
+    const m = /,\s*([A-Za-z]:)\s*,\s*(\d+)\s*$/.exec(line.trim())
+    if (m?.[2] === '3') out.push(m[1].toUpperCase())
+  }
+  return out.length > 0 ? out : null
+}
+
+/** Process-lifetime memo for the drive-type query (undefined = not yet asked, null = query failed). */
+let cachedFixedLetters: string[] | null | undefined
+
+/**
+ * Enumerate FIXED (local-disk) drive roots (e.g. ['C:', 'D:']), skipping network + removable
+ * drives so an offline mapped share can never wedge the sweep (JOS-112). Falls back to the legacy
+ * A–Z existence sweep — then to ['C:'] — when the drive-type query is unavailable.
+ */
 export function fixedDrives(): string[] {
+  if (cachedFixedLetters === undefined) cachedFixedLetters = queryFixedDriveLetters()
+  if (cachedFixedLetters) return cachedFixedLetters
   const found: string[] = []
   for (let code = 'A'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
     const letter = String.fromCharCode(code)
@@ -333,7 +452,7 @@ function installPathFromRegLine(line: string): string | null {
  * `InstallPath` string values found — most machines have none (the game is a
  * public-folder install), which is fine.
  */
-export function registryInstallCandidates(): string[] {
+export function registryInstallCandidates(deadline = Infinity): string[] {
   const keys = [
     'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
     'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
@@ -346,6 +465,10 @@ export function registryInstallCandidates(): string[] {
   ]
   const out: string[] = []
   for (const key of keys) {
+    // Stop issuing more `reg query` subprocesses once the discovery ceiling has passed (JOS-112):
+    // a huge Uninstall hive makes each `/s` walk slow, and eight of them serially is the config-
+    // dependent boot stall. Each surviving query is still independently bounded by its own timeout.
+    if (Date.now() >= deadline) break
     // Search the subtree for value names holding an install path. `reg query /s`
     // walks recursively; we grep the "InstallLocation"/"InstallPath" REG_SZ lines
     // (see installPathFromRegLine).
@@ -354,7 +477,7 @@ export function registryInstallCandidates(): string[] {
       stdout = execFileSync('reg', ['query', key, '/s', '/f', 'EverQuest', '/t', 'REG_SZ'], {
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 4000,
+        timeout: 2000,
         stdio: ['ignore', 'pipe', 'ignore']
       })
     } catch {
