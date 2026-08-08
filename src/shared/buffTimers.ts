@@ -31,6 +31,14 @@
 // never an inflated land→fade span. `estimatedMs`/`durationSource` are the tab's own copies of the
 // same numbers; this surface reads `overlayDurationMs`/`overlaySource`.
 //
+// JOS-118 EXTENDS THAT RULE IN TWO PLACES, both for the same reason — only OUR OWN cast under OUR
+// OWN modifiers is a duration we are entitled to learn from. (1) An instance now opens only from a
+// LANDING line, so a cast that was resisted (or simply never confirmed) mints nothing, where the
+// old optimistic cast-timing path could open one on a target it had merely inferred. (2) A sample
+// requires an EXACT (spell, entity) chain: `recordFade` no longer falls back to the oldest open
+// cast of the same spell on a DIFFERENT entity, which used to measure a slow on mob B against the
+// older landing on mob A and hand the MAX estimator a span that is too long.
+//
 // NOT everything the overlay draws takes this path: the per-target MEZ/ROOT holds (main/modules/
 // buffTimers.ts, projected by `ccRow` below) stay DB-STATED. Their end line — `Your <mez> spell
 // has worn off of <mob>.` — is printed identically whether the mez ran its full course or a nuke
@@ -128,8 +136,6 @@ export interface BuffTimerRow {
   mode: TimerMode
   /** ONLY on 'countdown', and ONLY a DB-stated number. */
   durationMs?: number
-  /** The landing is optimistic (cast seen, confirmation pending) — the row renders dimmed. */
-  provisional?: true
 }
 
 /** What a row reads RIGHT NOW. `fraction` is 1 at the landing and 0 at/after the stated end. */
@@ -238,8 +244,7 @@ function buffRow(b: ActiveBuff): BuffTimerRow {
     ...(b.self ? {} : { target: b.target ?? 'unknown target', targetKey }),
     ...(b.inferredTarget === true ? { inferredTarget: true as const } : {}),
     startedTs: b.startedTs,
-    ...timing,
-    ...(b.provisional === true ? { provisional: true as const } : {})
+    ...timing
   }
 }
 

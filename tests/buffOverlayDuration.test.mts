@@ -92,6 +92,19 @@ function keepAlive(ts: number): Omit<LogEvent, 'seq'> {
   return { kind: 'aaActivate', ts, raw: '[x] You activate Mend.', name: 'Mend' }
 }
 
+/**
+ * Feed a fresh cast that LANDS, and return the landing ts. Since JOS-118 a cast displays
+ * nothing on its own — an instance opens only from the landing line — so a test that wants a
+ * live row to read the estimator off must land the buff, exactly as the game does. These cases
+ * are about the ESTIMATOR, and the cast+land pair is the shortest honest way to get a row.
+ */
+function castAndLand(feed: (ev: Omit<LogEvent, 'seq'>) => void, spell: string, ts: number): number {
+  feed(castBegin(spell, ts))
+  const land = ts + 1_000
+  feed(buffApply(spell, 'self', SWIFT_DB_MS, land))
+  return land
+}
+
 /** Feed one clean self cast→wear-off cycle of `spell`, lasting `durationMs`. Returns the fade ts. */
 function selfCycle(feed: (ev: Omit<LogEvent, 'seq'>) => void, spell: string, startTs: number, durationMs: number): number {
   feed(castBegin(spell, startTs))
@@ -123,8 +136,8 @@ test('a click-off after a full cycle does NOT drag the estimate down — max(DB,
   const afterFull = selfCycle(feed, SWIFT, t0, SWIFT_OBSERVED_MS) // 33m clean
   const afterClickoff = selfCycle(feed, SWIFT, afterFull + 5_000, SWIFT_CLICKOFF_MS) // 28m early click-off
 
-  // The next cast — what the overlay counts down from and what the tab estimates.
-  feed(castBegin(SWIFT, afterClickoff + 5_000))
+  // The next cast LANDS — what the overlay counts down from and what the tab estimates.
+  castAndLand(feed, SWIFT, afterClickoff + 5_000)
   const snap = mod.snapshot().state
 
   const active = snap.active.find((a) => a.spell === SWIFT)
@@ -158,7 +171,7 @@ test('growth over the DB base is captured — [16m base, then 33m] ⇒ estimate 
   const afterBase = selfCycle(feed, SWIFT, t0, SWIFT_DB_MS) // 16m — a cast at the base
   const afterGrown = selfCycle(feed, SWIFT, afterBase + 5_000, SWIFT_OBSERVED_MS) // 33m — focus/AA extended
 
-  feed(castBegin(SWIFT, afterGrown + 5_000))
+  castAndLand(feed, SWIFT, afterGrown + 5_000)
   const snap = mod.snapshot().state
 
   const active = snap.active.find((a) => a.spell === SWIFT)
@@ -282,7 +295,7 @@ test('a player-death-censored self buff mints no sample — the estimate falls b
   // Death strips the self buff BEFORE any wear-off — the instance ends without minting a sample.
   feed({ kind: 'playerDeath', ts: t0 + 60_000, raw: '[x] You have been slain.' } as Omit<LogEvent, 'seq'>)
 
-  feed(castBegin(SWIFT, t0 + 120_000))
+  castAndLand(feed, SWIFT, t0 + 120_000)
   const snap = mod.snapshot().state
 
   const active = snap.active.find((a) => a.spell === SWIFT)

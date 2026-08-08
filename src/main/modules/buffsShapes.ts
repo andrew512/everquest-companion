@@ -91,13 +91,17 @@ export interface OpenCast {
   spannedGap?: boolean
 }
 
-/** A cast in flight (You begin casting …) not yet landed/cleared. */
+/**
+ * A cast in flight (You begin casting …) not yet confirmed landed or cleared.
+ *
+ * It DISPLAYS NOTHING (JOS-118 — see BuffInstances.beginCast). It is the cast-in-flight
+ * bookkeeping the landing side consumes, and it is dropped by a fizzle, an interrupt, a fade of
+ * the same spell, or the landing window elapsing with no confirmation.
+ */
 export interface Pending {
   spell: string
   key: string
   beganTs: number
-  /** Refresh whose new startedTs is staged until confirmation (per matching instance). */
-  stagedRefresh: boolean
   /** The landing emote's subject key ('self' or a name key), once its text is recognized. */
   emoteSubjectKey?: string
 }

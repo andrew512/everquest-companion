@@ -128,9 +128,6 @@ function EstimateBar({
 export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX.Element {
   const elapsed = Math.max(0, now - buff.startedTs)
   const state = estimateState(buff, elapsed)
-  // Provisional (Task #30): shown optimistically the instant we saw the cast begin,
-  // before the land timeout confirms it. Dim the row + show a "casting…" hint.
-  const provisional = buff.provisional === true
 
   // Debuff target is INFERRED (castBegin carries no target) — surface it honestly as a
   // "target: inferred" chip, never a silent guess (Task #32 rule 5c).
@@ -148,8 +145,6 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
         display: 'flex',
         flexDirection: 'column',
         gap: 0.5,
-        opacity: provisional ? 0.6 : 1,
-        borderStyle: provisional ? 'dashed' : 'solid',
         // Class accent: red-ish left border for debuffs, green for pet, gold for self.
         borderLeft: '3px solid',
         borderLeftColor: classAccent(buff.cls)
@@ -170,16 +165,7 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
             sx={{ height: 18, fontSize: 11, maxWidth: 180, '& .MuiChip-label': { px: 0.75 } }}
           />
         ) : null}
-        {provisional && (
-          <Chip
-            size="small"
-            label="casting…"
-            variant="outlined"
-            color="info"
-            sx={{ height: 18, fontSize: 11 }}
-          />
-        )}
-        {buff.messageDriven && !provisional && (
+        {buff.messageDriven && (
           <Tooltip title="Confirmed by a chat message">
             <Chip
               size="small"

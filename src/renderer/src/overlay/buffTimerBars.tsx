@@ -57,10 +57,7 @@ export function BuffTimerBar({ row, nowMs }: { row: BuffTimerRow; nowMs: number 
         gap: 2,
         padding: '3px 4px 4px',
         borderLeft: `2px solid ${accent}`,
-        marginBottom: 3,
-        // A provisional landing is a cast we have SEEN but not had confirmed; dimming is how
-        // every other surface in this app says "not yet a fact".
-        opacity: row.provisional === true ? 0.55 : 1
+        marginBottom: 3
       }}
     >
       {/* ONE ROW, never wrapping: a wrap turns overflow into height and a compact bar list is

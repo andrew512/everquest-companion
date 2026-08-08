@@ -118,71 +118,48 @@ export class BuffInstances {
     }
   }
 
-  maybeLandPendingByTime(now: number): void {
-    if (this.pending && now - this.pending.beganTs >= LAND_TIMEOUT_MS) {
-      this.landPending(now)
-    }
-  }
-
   /**
-   * Promote the pending cast to a landed/active INSTANCE (Task #35). Binds it to a TARGET
-   * ENTITY so a later zone/death censors it. Self/pet mining is byte-identical to Task #30.
+   * A cast nothing confirmed within the landing window never landed, so its record is DROPPED
+   * (JOS-118). It opens nothing on the way out — see `beginCast` for why a cast is not evidence.
    */
-  landPending(_now: number): void {
-    const p = this.pending
-    if (!p) return
-    this.pending = null
-    const landedTs = p.beganTs
-
-    const disp = this.inferCastDisposition(p.key, p.emoteSubjectKey)
-    const eKey = this.pets.entityKeyFor(disp)
-    const iKey = instanceKey(p.key, eKey)
-    // Refresh censoring: replacing the same instance discards a prior open cast's pairing.
-    this.open.set(iKey, { spell: p.spell, spellKey: p.key, entityKey: eKey, landedTs, disp })
-
-    if (this.stats.everFaded.has(p.key)) {
-      this.active.set(iKey, this.build({ spell: p.spell, key: p.key, entityKey: eKey, startedTs: landedTs, provisional: false, dispOverride: disp }))
-      // ILLUSION EXCLUSIVITY (Task #36): landing an illusion cast replaces any prior
-      // illusion on the same entity.
-      if (this.stats.isIllusion(p.key)) this.clearIllusionsOn(eKey, iKey)
+  dropUnconfirmedPending(now: number): void {
+    if (this.pending && now - this.pending.beganTs >= LAND_TIMEOUT_MS) {
+      this.pending = null
     }
-    this.dirty = true
   }
 
   /**
-   * Stage a new cast in flight, and show it OPTIMISTICALLY right away (provisional) when the
-   * spell is a known buff/debuff — bound to the entity this cast most likely targets NOW
-   * (self, live pet, or the inferred hostile target for a debuff).
+   * Stage a new cast in flight. A CAST OPENS NOTHING — no instance, no open cast, no row
+   * (JOS-118, owner: "we should drop provisional all together. i dont want to complicate the
+   * model").
+   *
+   * This used to show the cast OPTIMISTICALLY the instant it began: a `provisional` ActiveBuff
+   * bound to `inferCastDisposition`'s guess at the target — for a debuff, `entityKeyFor('hostile')`,
+   * i.e. the pet's last CC'd mob or an `unknown-hostile` bucket. It was retracted only by a fizzle
+   * or an interrupt. A RESIST is neither, so a resisted debuff left a bar on screen naming a mob
+   * the log never said it landed on — the JOS-118 defect. Fifteen seconds later
+   * `maybeLandPendingByTime` PROMOTED that same guess to a solid row and an `open` cast that could
+   * pair with an unrelated later fade into a duration sample, so the cast path could also poison
+   * the mined statistics the JOS-114/117 clean-sample rule exists to protect.
+   *
+   * The rule is now uniform across buffs, debuffs and CC alike: an instance opens ONLY from a line
+   * that CONFIRMS the landing, keyed to the entity that line NAMES (`applyMessageBuff`, or the CC
+   * half's `cc` broadcast in modules/buffTimers.ts). No landing line ⇒ no row and no sample, which
+   * makes a resist correct by construction: there was never anything to retract.
+   *
+   * The pending record itself STAYS. It is the cast-in-flight bookkeeping the landing side hangs
+   * off — `applyMessageBuff` consumes it, a fizzle/interrupt clears it — and own-cast attribution
+   * (`BuffsModule.ownCastAttributed`) reads its own `castHistory` beside it. What went is the
+   * DISPLAY, not the attribution machinery.
    */
   beginCast(spell: string, key: string, ts: number): void {
-    const disp = this.inferCastDisposition(key, undefined)
-    const eKey = this.pets.entityKeyFor(disp)
-    const iKey = instanceKey(key, eKey)
-    const existing = this.active.get(iKey)
-    const stagedRefresh = !!existing && !existing.provisional
-    this.pending = { spell, key, beganTs: ts, stagedRefresh }
-    if (!existing && this.stats.everFaded.has(key)) {
-      this.active.set(iKey, this.build({ spell, key, entityKey: eKey, startedTs: ts, provisional: true, dispOverride: disp }))
-      // ILLUSION EXCLUSIVITY (Task #36): an optimistic illusion cast also replaces any
-      // prior illusion on the same entity (a message apply confirms it later).
-      if (this.stats.isIllusion(key)) this.clearIllusionsOn(eKey, iKey)
-      this.dirty = true
-    }
+    this.pending = { spell, key, beganTs: ts }
   }
 
-  /** A fizzle/interrupt of `key` clears the pending cast and retracts its optimistic instance. */
+  /** A fizzle/interrupt of `key` clears the pending cast. It never opened anything to retract. */
   clearPendingCast(key: string): void {
-    const p = this.pending
-    if (p?.key !== key) return
+    if (this.pending?.key !== key) return
     this.pending = null
-    if (p.stagedRefresh) return
-    // Retract the optimistic provisional instance this cast created.
-    for (const [ik, a] of [...this.active]) {
-      if (a.provisional && spellKey(a.spell) === key) {
-        this.active.delete(ik)
-        this.dirty = true
-      }
-    }
   }
 
   /**
@@ -203,21 +180,6 @@ export class BuffInstances {
     if (pets.charmedKey) return 'charmed'
     if (pets.summonedKey) return 'summoned'
     return 'self'
-  }
-
-  /**
-   * The message is GROUND TRUTH for this cast's target. Drop any cast-timing-inferred
-   * instance of the SAME spell (a provisional / unknown-hostile guess from the castBegin)
-   * so we don't double-list the spell as both an inferred and a message-bound instance.
-   */
-  private dropInferredDuplicates(key: string, keepKey: string): void {
-    for (const [ik, a] of [...this.active]) {
-      if (ik === keepKey) continue
-      if (spellKey(a.spell) === key && (a.provisional || a.inferredTarget)) {
-        this.active.delete(ik)
-        this.open.delete(ik)
-      }
-    }
   }
 
   /**
@@ -255,8 +217,6 @@ export class BuffInstances {
     if (!self) this.pets.namedEntityDisplay.set(eKey, target)
     const permanent = isPermanentIllusion(self, illusion, ts, spec.permanentIllusionOwnedTs)
 
-    this.dropInferredDuplicates(key, iKey)
-
     if (!permanent) {
       this.open.set(iKey, { spell, spellKey: key, entityKey: eKey, landedTs: ts, disp })
     } else {
@@ -266,7 +226,7 @@ export class BuffInstances {
     this.active.set(
       iKey,
       this.build({
-        spell, key, entityKey: eKey, startedTs: ts, provisional: false, dispOverride: disp,
+        spell, key, entityKey: eKey, startedTs: ts, dispOverride: disp,
         opts: { messageDriven: true, permanent }
       })
     )
@@ -315,36 +275,34 @@ export class BuffInstances {
   }
 
   /**
-   * Pair a fade with its open landed instance (a duration sample) and clear the active.
+   * Pair a fade with its own open landed instance (a duration sample) and clear the active.
    *
-   * The fade names the REAL target entity; a cast-timing open cast, though, may have bound
-   * to an INFERRED entity (self / the-live-pet / an inferred hostile) that differs from the
-   * fade's named target — the model can't always predict the exact target at cast time
-   * (castBegin carries none). So we pair the exact (spell,entity) instance when present,
-   * else fall back to ANY open cast of the same spell — preserving per-spell duration mining
-   * (unchanged from the pre-#35 per-spell samples) while keeping per-instance DISPLAY. We
-   * prefer the SAME-entity instance, then the oldest matching open cast.
+   * A SAMPLE IS MINTED ONLY FROM AN EXACT (spell, entity) CHAIN (JOS-118, owner): our own cast,
+   * landing on THAT entity, wearing off THAT entity. Only OUR modifiers — AAs, focus effects —
+   * shape a duration we are entitled to learn from, and another caster's identical spell on a
+   * different mob carries completely different ones. A fade that cannot be matched to its own
+   * exact instance mints NOTHING: an ambiguous pairing is not a clean sample.
+   *
+   * THE FALLBACK THIS REPLACES paired a fade with the OLDEST OPEN CAST of the same spell on ANY
+   * entity. It existed because a CAST-TIMING open cast bound to an entity the model had merely
+   * inferred (castBegin names no target), so the fade's real target routinely disagreed with it.
+   * JOS-118 removed cast-timing instances altogether — every open cast is now message-bound to
+   * an entity the log NAMED — so the mismatch it papered over can no longer arise, and what is
+   * left of it is only the cross-entity mis-pairing itself: slow cast on mob A, then on mob B,
+   * with B's fade measured against A's older landing. That span is too LONG, which is exactly
+   * the direction of the owner's live observation (a slow reading longer on the bar than on the
+   * mob) and exactly the direction the recency-weighted MAX estimator is most sensitive to.
+   * JOS-117 flagged this and left it; the owner's ruling is what justifies moving it now.
+   *
+   * CLOSURE is unchanged in spirit and stays honest: the fade proves THIS entity's copy is gone,
+   * so this instance closes. It never speaks for a copy on any other entity, so no other row is
+   * touched — a still-live slow on mob A survives mob B's wear-off.
    */
   recordFade(key: string, entityKey: string, spell: string, fadeTs: number): void {
     this.stats.touchLastSeen(key, fadeTs)
     const iKey = instanceKey(key, entityKey)
-    let openKey: string | undefined
-    let open: OpenCast | undefined
-    const exact = this.open.get(iKey)
-    if (exact) {
-      openKey = iKey
-      open = exact
-    } else {
-      let oldest = Infinity
-      for (const [ok, o] of this.open) {
-        if (o.spellKey === key && o.landedTs < oldest) {
-          oldest = o.landedTs
-          openKey = ok
-          open = o
-        }
-      }
-    }
-    if (openKey !== undefined && open !== undefined) {
+    const open: OpenCast | undefined = this.open.get(iKey)
+    if (open !== undefined) {
       const dur = fadeTs - open.landedTs
       // CENSOR a sample whose land→fade window crossed an offline gap (world-model law 5).
       // The fade itself is still authoritative — the instance clears exactly as it always
@@ -352,11 +310,8 @@ export class BuffInstances {
       // only to within the reconnect window. Contributing it would poison the per-spell
       // recency-weighted MAX with a value that is guaranteed too large.
       if (open.spannedGap !== true && dur > 0 && dur <= MAX_SAMPLE_MS) this.addSample(key, spell, dur)
-      this.open.delete(openKey)
-      this.active.delete(openKey)
+      this.open.delete(iKey)
     }
-    // Also clear the exact-target instance's active (the fade proves THAT entity's copy is
-    // gone), even if the paired open cast was a different-entity instance.
     this.active.delete(iKey)
     this.dirty = true
   }
@@ -373,7 +328,6 @@ export class BuffInstances {
             key,
             entityKey: instanceEntityKey(ik),
             startedTs: a.startedTs,
-            provisional: a.provisional,
             dispOverride: a.disposition,
             opts: { messageDriven: a.messageDriven, permanent: a.permanent }
           })
@@ -451,7 +405,6 @@ export class BuffInstances {
     // unchanged (JOS-59).
     let changed = false
     for (const [ik, a] of this.active) {
-      if (a.provisional) continue
       if (a.permanent) continue
       const sKey = spellKey(a.spell)
       const dbMs = this.stats.dbDurationFor(sKey)

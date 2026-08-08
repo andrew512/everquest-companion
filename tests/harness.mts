@@ -42,13 +42,21 @@ export function readFixture(name: string): string[] {
  * ≥30-min session-gap clear, which wipes stale ACTIVES/entities but PRESERVES the learned
  * maps (that's the point of priming): the window starts from a clean active set with a
  * warm classifier.
+ *
+ * THE SPELL DB IS INSTALLED, because production installs it (JOS-118). This replay used to
+ * clear it deliberately — "the W1–W6 windows assert the pre-DB cast-timing/emote path" — which
+ * modelled a configuration the app has not run since Task #34: `installSpellDb` fires at main
+ * startup, so the live parser ALWAYS has the DB and always emits the message-driven
+ * `buffApply`/`buffWearOff` events. With the DB cleared, no landing line parses at all, and the
+ * only thing that could ever open an instance was the cast-timing INFERENCE — the optimistic
+ * provisional JOS-118 deletes, and the source of the resisted-debuff bar the owner reported.
+ * So these windows were pinning the fallback rather than the behaviour. They keep their real
+ * bytes and their assertions; what changed is that they now run the configuration the user has.
  */
 export function replayBuffs(lines: string[], finalTickMs?: number, opts?: { prime?: string[] }): BuffsSnap {
-  // Ensure the shared parser config has NO DB (Task #34): the W1–W6 windows assert the
-  // pre-DB cast-timing/emote path. A prior DB-enabled test in the same process would
-  // otherwise leave the DB installed and change parser output; clear it deterministically.
-  installSpellDb(undefined)
-  const mod = new BuffsModule()
+  const db = loadSpellDb()
+  installSpellDb(db)
+  const mod = new BuffsModule(db)
   mod.reset()
   let seq = 0
   for (const raw of opts?.prime ?? []) {
@@ -68,10 +76,11 @@ export function replayBuffs(lines: string[], finalTickMs?: number, opts?: { prim
  * AND give it to the BuffsModule, then replay — exactly what production does. This
  * exercises the message-driven path (buffApply/buffWearOff from exact chat messages,
  * self-heal-by-buff applies, Permanent Illusion). Used by the W7–W9 golden windows.
- * The DB install is process-global, so DB-off tests (W1–W6) must not run interleaved with
- * the DB installed — they don't, because node:test runs files/tests sequentially and these
- * DB tests are in a separate file; still, we keep the plain replayBuffs above DB-free by
- * constructing its own module without a DB (the parser config is the only shared state).
+ *
+ * Since JOS-118 this is behaviourally identical to `replayBuffs` above (which no longer clears
+ * the DB) and the two are kept apart only so each window still says which path it was written
+ * to exercise. There is no longer a DB-off replay to interleave with, so the ordering caveat
+ * this comment used to carry is gone.
  */
 export function replayBuffsWithDb(
   lines: string[],

@@ -54,7 +54,7 @@ test('W1 current session: self Swift Like the Wind active, no stale pre-session 
   assert.equal(swift!.self, true, 'this instance is on the player (self landing emote)')
   assert.equal(swift!.disposition, 'self', 'bound disposition is self')
   assert.equal(swift!.target ?? undefined, undefined, 'a self buff has no target chip')
-  assert.equal(swift!.provisional, undefined, 'confirmed, not provisional, by 19:56')
+  assert.equal(swift!.messageDriven, true, 'opened by the landing line, the only way (JOS-118)')
 
   // Swift landed 19:51:33 → elapsed ~4.5m at 19:56 (loose — the user reported ~11m
   // REMAINING on the real 15m self-buff; the mined estimate is imperfect, but the
@@ -68,7 +68,6 @@ test('W1 current session: self Swift Like the Wind active, no stale pre-session 
   }
   // No active older than an hour (the "287h" class is impossible now).
   for (const a of snap.active) {
-    if (a.provisional) continue
     assert.ok(observe - a.startedTs < 60 * MIN, `no hours-old active (${a.spell})`)
   }
 })
@@ -83,14 +82,23 @@ test('W1 current session: self Swift Like the Wind active, no stale pre-session 
 //   …          (Intensify never fades — no "pet's Intensify Death worn off" after)
 //   20:22:03  Xeneker has been slain by a wan ghoul knight!   (a DIFFERENT killer)
 //
-// TASK #35 model: a buff binds to the entity the landing MESSAGE/emote named. Intensify
-// Death at 19:52:31 has NEITHER a message NOR a landing emote, and NO pet is live at cast
-// time (Xeneker is claimed 5m later), so the honest binding is SELF — the old pet-specific
-// `rebindPetBuffsToPet` retro-binding was DELETED. The property the user's complaint was
-// about STILL holds: nothing is bound to the (later-dead) pet Xeneker, so no stale
-// "Intensify on a corpse" active and no bogus multi-hour "287h" sample. Xeneker's death,
-// being a pet-entity retirement, censors any instance bound to Xeneker's key — there are
-// none here — and the self instance is short-lived flavor that hygiene sweeps.
+// JOS-118 CHANGED THE ANSWER HERE, and this is the one golden row in the file that moves.
+// MEASURED on these exact bytes (scripts probe, DB installed as production installs it): the
+// whole window emits ONE relevant event for this spell — `castBegin Intensify Death` at
+// 19:52:31 — and NO landing line of any kind, which is what the hand-read above already
+// recorded ("NEITHER a message NOR a landing emote"). Under the old model the cast ITSELF
+// opened an instance 15 s later, bound to a target the model inferred; the test asserted that
+// inferred row was present and merely checked it had not guessed "Xeneker". Under JOS-118 a
+// cast opens nothing, so there is no Intensify instance at all.
+//
+// That is MORE honest, not less: the log never said this buff landed, never said on whom, and
+// the app now says nothing rather than showing a bar attributed to a guess. It is the ticket's
+// stated honesty limit — where EQ surfaces no landing, silence stays silence — and it is the
+// same rule that makes a RESISTED debuff show nothing.
+//
+// Both properties the user's original complaint was actually about are unchanged and now hold
+// a fortiori: nothing is bound to the (later-dead) pet Xeneker, so no stale "Intensify on a
+// corpse" active, and no bogus multi-hour "287h" duration sample from the unobserved fade.
 test('W2 Xeneker death: no stale buff bound to the dead pet, no bogus multi-hour sample', () => {
   const prime = readFixture('w2-priming.log')
   const lines = readFixture('w2-xeneker-death.log')
@@ -99,12 +107,13 @@ test('W2 Xeneker death: no stale buff bound to the dead pet, no bogus multi-hour
   const before = lines.filter((l) => tsOf(l) > 0 && tsOf(l) < slainTs)
   const throughDeath = lines.filter((l) => tsOf(l) > 0 && tsOf(l) <= slainTs)
 
+  // The cast with no landing line tracks NOTHING (JOS-118) — not a self row, not a pet row.
   const snapBefore = replayBuffs(before, slainTs - 1000, { prime })
-  const intensBefore = findActive(snapBefore, 'intensify death')
-  assert.ok(intensBefore, 'Intensify Death should be active before the slain line')
-  assert.equal(intensBefore!.cls, 'buff', 'Intensify Death is a beneficial buff (spell property)')
-  // It is NOT bound to Xeneker (no message/emote named the pet; no pet live at cast).
-  assert.notEqual(intensBefore!.target, 'Xeneker', 'not bound to Xeneker (never message-named it)')
+  assert.equal(
+    findActive(snapBefore, 'intensify death'),
+    undefined,
+    'a cast the log never confirmed landing opens no instance — no target was ever named'
+  )
 
   const snapAfter = replayBuffs(throughDeath, slainTs, { prime })
   // No active is bound to the now-dead pet Xeneker (the actual user complaint).
@@ -152,11 +161,21 @@ test('W4 logout gap: a buff cast before a ≥30-min gap is cleared after relog',
   const lines = readFixture('w4-logout-gap.log')
 
   // The pause is 02:52:14 → 13:00:28. Cut BEFORE the pause (any pre-13:00 instant) to get
-  // the pre-gap state, and observe at 02:53 (just after the last pre-pause event) so the
-  // gap-clear hasn't fired yet.
-  const preGapCut = tsOf('[Sat Aug 01 03:00:00 2026] x')
-  const beforeGap = lines.filter((l) => tsOf(l) > 0 && tsOf(l) < preGapCut)
-  const observeBefore = tsOf('[Sat Aug 01 02:53:00 2026] x')
+  // the pre-gap state, and observe while Clarity is genuinely up so the gap-clear below is a
+  // real delta.
+  //
+  // THE OBSERVATION INSTANT MOVED 02:53 → 02:30 (JOS-118), because the log says so. Clarity
+  // lands 02:15:05 (`Boon of the Clear Mind` family landing, resolved to Clarity by the own
+  // cast at 02:15:04) and the log prints its WEARS-OFF at 02:52:05 — 37 minutes, a clean
+  // sample the model now mines. So at 02:53 Clarity is legitimately gone, and asserting it
+  // active there would be asserting against the log. It used to "survive" to 02:53 only
+  // because this replay ran with the spell DB cleared, which parses neither the landing nor
+  // the wear-off: the row was the cast-timing inference, held up by the absence of the very
+  // line that ends it. 02:30 is inside the real 02:15:05 → 02:52:05 span.
+  // Cut the LINES at the observation instant, not merely the tick: the wear-off at 02:52:05 is
+  // a real event in this window and folding it would (correctly) clear Clarity before we look.
+  const observeBefore = tsOf('[Sat Aug 01 02:30:00 2026] x')
+  const beforeGap = lines.filter((l) => tsOf(l) > 0 && tsOf(l) <= observeBefore)
 
   // Clarity is active/open right up to the gap (assert it was there to be cleared).
   const snapBefore = replayBuffs(beforeGap, observeBefore, { prime })
@@ -177,28 +196,48 @@ test('W4 logout gap: a buff cast before a ≥30-min gap is cleared after relog',
 //   15:43:53  an imp protector has been charmed.
 //   15:43:56  an imp protector feels a healing touch.   ← PET landing emote names the pet
 //   15:44:25  You begin casting Boon of the Garou.       (on the charmed imp)
-//   15:50:54  You have entered The Lavastorm Mountains.  (zone — charmed pet LEFT BEHIND)
-// A charmed pet cannot survive a zone, so its open pet buffs (Boon, Tashani) can never be
-// observed fading → CENSORED + removed from the active display on the zone line.
-test('W5 charmed pet zoned away: its pet buffs are censored + gone after the zone', () => {
+//   15:50:54  You have entered The Lavastorm Mountains.  (zone — mob LEFT BEHIND)
+// A mob cannot follow you through a zone, so a debuff open on it can never be observed
+// fading → CENSORED + removed from the active display on the zone line.
+//
+// THE INSTANCE THIS ASSERTS CHANGED (JOS-118), and it changed to the one the log confirms.
+// MEASURED on these bytes with the DB installed as production installs it: the 15:44:25
+// `You begin casting Boon of the Garou.` has NO landing line after it in any form — the next
+// imp line is `an imp protector slows down.` (a different spell) at 15:44:42 and the imp is
+// SLAIN at 15:45:30, 65 s after the cast. The DB does know Boon's cast-on-other message (the
+// priming excerpt lands it on `Innoruuk\`s Chosen` five times), so had it landed the log would
+// have said so. It did not, so no Boon-on-the-imp instance exists — the old "Boon active on
+// the charmed pet" row was the cast-timing guess, and asserting it is asserting the guess.
+// The only Boon here is a SELF one that really did land, at 15:32:16.
+//
+// What the window DOES confirm, and what this now pins, is the same law by a named instance:
+// `Tashani` lands on `an imp protector` at 15:40:52 (a message that NAMES the mob), is active
+// right up to the zone, and is censored by it — while the player's self buffs ride through.
+test('W5 mob zoned away: its named debuff is censored + gone after the zone, self buffs ride', () => {
   const prime = readFixture('w5-priming.log')
   const lines = readFixture('w5-charm-zone.log')
   const zoneTs = tsOf('[Thu Jul 30 15:50:54 2026] x')
 
   const before = lines.filter((l) => tsOf(l) > 0 && tsOf(l) < zoneTs)
   const snapBefore = replayBuffs(before, zoneTs - 1000, { prime })
+  const tashBefore = findActive(snapBefore, 'tashani')
+  assert.ok(tashBefore, 'Tashani should be active on the imp before the zone')
+  assert.equal(tashBefore!.cls, 'debuff', 'Tashani is a detrimental spell (spell property)')
+  assert.equal(tashBefore!.self, false, 'this instance is on the mob, not the player')
+  assert.equal(tashBefore!.target, 'an imp protector', 'keyed to the entity the landing line NAMED')
+  assert.equal(tashBefore!.messageDriven, true, 'opened by that landing line, never by the cast')
+  // The cast the log never confirmed landing tracks nothing at all — no invented pet row.
   const boonBefore = findActive(snapBefore, 'boon of the garou')
-  assert.ok(boonBefore, 'Boon should be active on the charmed imp before the zone')
-  assert.equal(boonBefore!.cls, 'buff', 'Boon of the Garou is a beneficial buff (spell property)')
-  assert.equal(boonBefore!.self, false, 'this instance is on the pet, not the player')
-  assert.equal(boonBefore!.disposition, 'charmed', 'bound to the charmed pet entity')
+  assert.equal(boonBefore?.self, true, 'the only Boon instance is the SELF one that really landed')
 
   const snapAfter = replayBuffs(lines, tsOf(lines[lines.length - 1]), { prime })
-  assert.ok(!findActive(snapAfter, 'boon of the garou'), 'Boon censored + gone after the zone')
-  // No charmed-disposition active survives the zone.
+  assert.ok(!findActive(snapAfter, 'tashani'), 'the mob debuff is censored + gone after the zone')
+  // Nothing left behind survives the zone; the player's own buffs do.
   for (const a of snapAfter.active) {
     assert.notEqual(a.disposition, 'charmed', `no charmed-pet buff survives a zone (${a.spell})`)
+    assert.notEqual(a.cls, 'debuff', `no mob debuff survives a zone (${a.spell})`)
   }
+  assert.ok(findActive(snapAfter, 'clarity'), 'a self buff rides through the zone (law 4)')
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

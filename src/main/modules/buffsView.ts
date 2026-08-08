@@ -15,7 +15,6 @@ export interface ActiveSpec {
   key: string
   entityKey: string
   startedTs: number
-  provisional?: boolean
   dispOverride?: EntityDisposition
   opts?: { messageDriven?: boolean; permanent?: boolean }
 }
@@ -30,6 +29,11 @@ function resolveTargetLabel(
 ): { target: string | undefined; inferredTarget: boolean } {
   const { entityKey, cls, disp } = a
   if (a.self) return { target: undefined, inferredTarget: false }
+  // A LANDING LINE NAMED THIS ENTITY (JOS-118), so the target is STATED, not inferred — even
+  // when it happens to also be the mob we believe the pet is fighting (the `petTargetKey` arm
+  // below used to flag exactly that coincidence as an inference and label a named mob
+  // "(inferred)"). Since JOS-118 this is the only way an instance is ever opened.
+  if (a.messageDriven) return { target: pets.entityDisplayFor(entityKey), inferredTarget: false }
   // Self-keyed debuff = an inferred, not-yet-named hostile target.
   if (cls === 'debuff' && entityKey === SELF_KEY) {
     return { target: pets.petTargetDisplay, inferredTarget: true }
@@ -97,7 +101,7 @@ function durationFields(
 }
 
 export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntities): ActiveBuff {
-  const { spell, key, entityKey, startedTs, provisional, dispOverride, opts } = spec
+  const { spell, key, entityKey, startedTs, dispOverride, opts } = spec
   const cls = stats.classOf(key)
   const disp: EntityDisposition | undefined = dispOverride
   // A DEBUFF is never the player's own buff, even if cast-timing bound it to the self key
@@ -120,7 +124,6 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
     n: d.n,
     target,
     ...(inferredTarget ? { inferredTarget: true } : {}),
-    ...(provisional ? { provisional: true } : {}),
     ...(d.durationSource ? { durationSource: d.durationSource } : {}),
     overlayDurationMs: d.overlayDurationMs,
     ...(d.overlaySource ? { overlaySource: d.overlaySource } : {}),
