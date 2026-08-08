@@ -141,11 +141,6 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'changed',
         text: 'When something breaks, the app now reports the technical details of the failure — the error, where in the app it happened, and what kinds of log line it had just read — so bugs get diagnosed instead of guessed at. Never your log contents, your chat, or any name from the game: the message is redacted on your machine and checked again on arrival. The usage-analytics switch still turns all of it off.'
-      },
-      {
-        kind: 'fixed',
-        text: 'Playing through Wine on Linux: the app now recognises it at startup and draws the compatible way on its own, so windows stop coming up blank and a celebration card stops sticking to the screen as a black box. Preferences → Graphics says so when it happens, and either half can be turned back off if you would rather have the see-through overlays.',
-        fromReport: true
       }
     ]
   },
