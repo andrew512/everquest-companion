@@ -22,6 +22,7 @@
 import { useState, type JSX, type KeyboardEvent } from 'react'
 import { Chip, IconButton, Stack, TextField, Typography } from '@mui/material'
 import AddLocationAltIcon from '@mui/icons-material/AddLocationAlt'
+import CancelIcon from '@mui/icons-material/Cancel'
 import PlaceIcon from '@mui/icons-material/Place'
 import type { EqLoc } from './mapGeometry'
 import { formatLoc, parseLoc } from './locMarker'
@@ -98,6 +99,12 @@ export default function MapLocField({ marker, onPlace, onShow, onClear }: MapLoc
             label={formatLoc(marker)}
             onClick={onShow}
             onDelete={onClear}
+            // NAMED, because the chip carries TWO icons and they do OPPOSITE things: the leading
+            // Place icon is part of the click target that centres on the marker, and this one
+            // deletes it. MUI's own class names distinguish them, but a spec that clicks
+            // `[chip] svg` gets the first — which is how the clear affordance was first asserted
+            // green while doing nothing at all.
+            deleteIcon={<CancelIcon data-testid="maps-loc-clear" titleAccess="Remove this marker" />}
           />
         </Tooltip>
       )}
