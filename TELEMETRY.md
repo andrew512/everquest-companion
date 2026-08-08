@@ -203,6 +203,20 @@ When the app hits an error: the technical details of the failure, so it can be f
 | `mode` | `live` · `replay` | Was it reading your log history, or following it live. |
 | `count` | whole number | How many times this same error happened since the last report. |
 
+### `optOut`
+
+Once, when you turn usage analytics off. It is the last thing this app ever sends, and it exists so opt-outs can be counted rather than guessed at. Everything else waiting to be sent is thrown away rather than sent with it, it is never retried if you are offline, and nothing further is ever sent.
+
+**This event has no fields at all.** It says only that it happened, alongside the
+five facts every send carries (above).
+
+### `optIn`
+
+Once, when you turn usage analytics back on. The counterpart to the notice above, under the new random id. It carries nothing either.
+
+**This event has no fields at all.** It says only that it happened, alongside the
+five facts every send carries (above).
+
 ## Flows
 
 A `funnelStep` event says which step of one of these you reached — nothing else.
@@ -278,3 +292,11 @@ These are the exact ranges, taken from the schema:
 away everything currently held on your machine, and discards the random id — all
 immediately. Nothing is kept to be sent later. Turning it back on starts from empty, with a
 new id, which counts as a brand-new install.
+
+**One last thing is sent when you turn it off, and this is it:** a single notice saying the
+switch was turned off, so opt-outs can be counted rather than guessed at. It carries no
+measurements at all, only the five facts at the top of this page that every send carries.
+Everything else waiting to be sent is thrown away rather than sent with it, and nothing
+further is ever sent. If your machine is offline at that moment the notice is simply lost;
+it is never retried, because keeping something to send later is exactly what turning this
+off is supposed to stop. Turning it back on sends the matching notice under the new id.

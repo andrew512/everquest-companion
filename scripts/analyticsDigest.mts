@@ -216,6 +216,48 @@ export function downloadsLines(gh: TriageDownloads | undefined): string[] {
   ]
 }
 
+/**
+ * COVERAGE (JOS-109) — the terminal's copy of the tab's coverage block, off the same
+ * `TriageAnalyticsData`, so the CLI cannot disagree with the panel.
+ *
+ * IT PRINTS AFTER `downloadsLines` ON PURPOSE, because it is the only section that reads BOTH the
+ * counters and the GitHub numbers, and the comparison lands better under the per-tag rows it is
+ * comparing against. `src/main/triage/coverage.ts` holds the argument; what is repeated here is
+ * only what stops a reader misreading the two figures.
+ *
+ * THE SUBTRACTION IS NOT PRINTED. `downloads - reporting` reads as a dark-install count and is
+ * not one; both numbers go out and the gap is left to speak for itself.
+ */
+function coverageLines(d: TriageAnalyticsData, gh: TriageDownloads | undefined): string[] {
+  const c = d.coverage
+  const out = [
+    '',
+    'COVERAGE (opt-out flips are EXACT over installs that ever reported; a FLOOR, never a rate)',
+    `  turned off: ${String(c.optOuts)} · turned back on: ${String(c.optIns)} (this window; never netted)`,
+  ]
+  if (!c.anyFlips) {
+    out.push('  (no flips reported: nobody left, OR no install is on a build new enough to say)')
+  } else {
+    out.push('  build            off      on')
+    out.push(
+      ...c.byVersion.map(
+        (v) =>
+          `  ${v.version.padEnd(14)} ${String(v.optOuts).padStart(5)}   ${String(v.optIns).padStart(5)}`
+      )
+    )
+  }
+  out.push(`  installs that ever reported: ${String(c.reportingInstalls)} (all time, not the window)`)
+  if (gh?.available === true) {
+    const fetches = gh.releases.reduce((sum, r) => sum + r.exeDownloads, 0)
+    out.push(
+      `  ESTIMATE: ${String(fetches)} installer fetches vs ${String(c.reportingInstalls)} reporting installs.`,
+      '    Downloads are NOT installs (updater re-fetches, re-downloads, curiosity clicks) and one',
+      '    machine updated four times is four of them. The gap is shown, never subtracted.'
+    )
+  }
+  return out
+}
+
 function retentionLines(d: TriageAnalyticsData): string[] {
   if (d.retention.length === 0) return ['', 'RETENTION', '  (no cohorts yet)']
   const cell = (v: number | null, of: number): string =>
@@ -290,6 +332,7 @@ export function renderAnalyticsDigest(
     ...startupLines(d),
     ...versionLines(d),
     ...downloadsLines(downloads),
+    ...coverageLines(d, downloads),
     ...retentionLines(d),
     '',
   ].join('\n')
