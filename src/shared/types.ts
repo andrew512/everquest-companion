@@ -10,6 +10,9 @@ import type { ExaltPlan } from './planner/types'
 // The toast overlay's per-kind knobs live beside its payload in ./toast (this file is at its
 // factoring ceiling); OverlayConfig names the blob, that file owns its shape + normalizer.
 import type { ToastOverlayConfig } from './toast'
+// The damage TAXONOMY, for the overlay drill's third level (JOS-105) — a type-only borrow of the
+// combat model's own category union rather than a second spelling of five string literals.
+import type { DamageCategory } from './combat'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -58,6 +61,16 @@ export function isFightOverlayKind(kind: OverlayKind): boolean {
  */
 export interface OverlayDrill {
   entityId: string
+  /**
+   * ONE damage type of that source — the drill's third level (JOS-105). Absent/null is level 2,
+   * the source's whole lane list, which is what every store written before this carried; the
+   * field is therefore additive and needs no migration.
+   *
+   * A persisted value the running build cannot honour needs no migration either: a category this
+   * source never dealt resolves to no level-3 detail and renders level 2, exactly the way a stale
+   * `entityId` renders level 1 (`petRows.meterPanel`).
+   */
+  category?: DamageCategory | null
 }
 
 /**

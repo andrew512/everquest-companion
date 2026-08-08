@@ -34,7 +34,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { flattenSkills, type Drill } from '../src/renderer/src/features/combat/dashboardData'
+import { flattenSkills, meterDrill, type Drill } from '../src/renderer/src/features/combat/dashboardData'
 import {
   laneDps,
   meterPanel,
@@ -219,33 +219,40 @@ test('the source split is by KIND, never by the aggregate’s key spelling', () 
 
 /** What a rendered meter LOOKS like, reduced to text: its level, its subject, its row labels. */
 interface Panel {
-  level: 1 | 2
+  level: 1 | 2 | 3
   subject: string
   rows: string[]
 }
 
 function shown(p: MeterPanel): Panel {
-  return p.level === 1
-    ? { level: 1, subject: 'sources', rows: p.sources.map((s) => s.name) }
-    : { level: 2, subject: p.subject.name, rows: p.rows.map((r) => (r.kind === 'pet' ? r.pet.name : r.skill.name)) }
+  if (p.level === 1) return { level: 1, subject: 'sources', rows: p.sources.map((s) => s.name) }
+  if (p.level === 3) {
+    return { level: 3, subject: `${p.subject.name}|${p.detail.category}`, rows: p.detail.rows.map((r) => r.name) }
+  }
+  return { level: 2, subject: p.subject.name, rows: p.rows.map((r) => (r.kind === 'pet' ? r.pet.name : r.skill.name)) }
 }
 
 /**
  * THE COMBAT TAB'S CALL, spelled exactly as `SegmentPanel.tsx` spells it: its drill is a union
- * that can also name a mob, so only the entity arm reaches the builder, and `null` means the user
- * explicitly backed all the way out.
+ * that can also name a mob, so `dashboardData.meterDrill` is what reaches the builder, and `null`
+ * means the user explicitly backed all the way out.
+ *
+ * THE OVERVIEW CARD MAKES THE IDENTICAL CALL (JOS-105 — `DpsCard.tsx`, same two functions in the
+ * same order), which is why there is no third helper here: a card that needed its own spelling
+ * would be the fork this ticket removed.
  */
 function combatTab(entities: SourceView[], combine: boolean, drill: Drill | null): MeterPanel {
-  return meterPanel(entities, combine, drill?.kind === 'entity' ? drill.entityId : null)
+  return meterPanel(entities, combine, meterDrill(drill))
 }
 
 /**
  * THE OVERLAY'S CALL, spelled exactly as `meterBars.tsx` spells it: its drill is the persisted
- * `{ entityId }` of `overlays.<kind>.drill`, and having none is LEVEL 1 — the same thing `null`
- * means on the Combat tab.
+ * `{ entityId, category? }` of `overlays.<kind>.drill` handed straight over — that record IS the
+ * builder's argument shape — and having none is LEVEL 1, the same thing `null` means on the
+ * Combat tab.
  */
 function overlayMeter(entities: SourceView[], combine: boolean, drill: { entityId: string } | null): MeterPanel {
-  return meterPanel(entities, combine, drill?.entityId ?? null)
+  return meterPanel(entities, combine, drill)
 }
 
 const panel = (entities: SourceView[], combine: boolean, drill: Drill | null): Panel =>
@@ -425,14 +432,26 @@ test('ONE CALL: an overlay with no drill of its own rests exactly where the Comb
   })
 })
 
-test('ONE CALL: the Overview card’s breakdown is the same rows as the meters’ level 2', () => {
-  // `ownBreakdown` is the third surface (features/overview/DpsCard.tsx) and is a thin wrapper over
-  // the same `nestedRows` fold, not a fourth opinion — so its rows must be the meters' rows.
+test('ONE CALL: the Overview card is the same panel as the Combat tab, at every level', () => {
+  // JOS-105. The card used to reach past the builder to `ownBreakdown`, hold its own three-value
+  // drill vocabulary, and draw bars with no click on them — so the SAME fight drilled on one
+  // surface and sat inert on the other. It now makes the identical call, so the panels are equal
+  // objects at every level there is, not merely "the same rows" at one of them.
+  const levels: (Drill | null)[] = [
+    null,
+    { kind: 'entity', entityId: 'you' },
+    { kind: 'entity', entityId: 'pet:7' },
+    { kind: 'category', entityId: 'you', category: 'melee' }
+  ]
   for (const combine of [true, false]) {
-    const card = ownBreakdown(ENTITIES, combine)
-    const meter = combatTab(ENTITIES, combine, { kind: 'entity', entityId: 'you' })
-    assert.deepEqual(card.rows, meter.level === 2 ? meter.rows : null, `combine=${String(combine)}`)
+    for (const drill of levels) {
+      const card = meterPanel(ENTITIES, combine, meterDrill(drill))
+      assert.deepEqual(shown(card), shown(combatTab(ENTITIES, combine, drill)), `combine=${String(combine)}`)
+    }
   }
+  // …and the fold is still the fold: your breakdown's rows are the meters' level-2 rows.
+  const meter = combatTab(ENTITIES, true, { kind: 'entity', entityId: 'you' })
+  assert.deepEqual(ownBreakdown(ENTITIES, true).rows, meter.level === 2 ? meter.rows : null)
 })
 
 test('the overlay drill maps onto the collapsed model: pet drill, its way back, and stale ids', () => {
@@ -464,10 +483,13 @@ test('the overlay drill maps onto the collapsed model: pet drill, its way back, 
 
 const src = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
 
-test('NO SECOND BUILDER: both meters call meterPanel, and neither shapes rows any other way', () => {
+test('NO SECOND BUILDER: all THREE meters call meterPanel, and none shapes rows any other way', () => {
   const metres = {
     'the Combat tab': src('../src/renderer/src/features/combat/SegmentPanel.tsx'),
-    'the floating overlay': src('../src/renderer/src/overlay/meterBars.tsx')
+    'the floating overlay': src('../src/renderer/src/overlay/meterBars.tsx'),
+    // JOS-105 added the third: the Overview glance card, which used to call `ownBreakdown` and
+    // `nestedRows` itself. Its density is a PROP on the shared components now, not a fork.
+    'the Overview card': src('../src/renderer/src/features/overview/DpsCard.tsx')
   }
   for (const [who, text] of Object.entries(metres)) {
     assert.match(text, /\bmeterPanel\s*\(/, `${who} does not call the shared row builder`)
@@ -475,6 +497,26 @@ test('NO SECOND BUILDER: both meters call meterPanel, and neither shapes rows an
     // SourceView — the exact seam that let the two surfaces drift. It belongs to petRows now.
     assert.doesNotMatch(text, /\bflattenSkills\s*\(/, `${who} builds its own flat list again`)
     assert.doesNotMatch(text, /\bnestedRows\s*\(/, `${who} reaches past meterPanel to the row fold`)
+    assert.doesNotMatch(text, /\bownBreakdown\s*\(/, `${who} reaches past meterPanel to the pet fold`)
+  }
+})
+
+test('NO SECOND PANEL: the multi-attack readout lives in the drill, not beside it', () => {
+  // JOS-105, the other half of the ticket. `MultiAttackPanel.tsx` is deleted; its rows are a
+  // SECTION of the level-3 body, reached by clicking the damage type they describe. The row
+  // shaper (`multiAttackRows.ts`, and the tests over it) is untouched — only its home moved.
+  assert.throws(
+    () => src('../src/renderer/src/features/combat/MultiAttackPanel.tsx'),
+    /ENOENT/,
+    'the standalone multi-attack panel is back'
+  )
+  const body = src('../src/renderer/src/features/combat/CategoryDrillBody.tsx')
+  assert.match(body, /multiAttackRow/i, 'the level-3 body no longer renders the multi-attack rows')
+  for (const [who, rel] of [
+    ['the Combat tab', '../src/renderer/src/features/combat/SegmentPanel.tsx'],
+    ['the drill body', '../src/renderer/src/features/combat/MeterRows.tsx']
+  ] as const) {
+    assert.doesNotMatch(src(rel), /<MultiAttackPanel\b/, `${who} still mounts a separate panel`)
   }
 })
 

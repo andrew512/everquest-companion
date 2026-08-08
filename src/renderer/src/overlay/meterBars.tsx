@@ -20,7 +20,8 @@ import type { OverlayDrill } from '@shared/types'
 import { CATEGORY_LABEL, type DamageCategory, type SegmentView, type SourceView } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../lib/formatRate'
 import { type FlatSkill, type SkillRow } from '../features/combat/dashboardData'
-import { laneDps, meterPanel, type OwnRow, type PetRow } from '../features/combat/petRows'
+import { laneDps, meterPanel, type MeterPanel, type OwnRow, type PetRow } from '../features/combat/petRows'
+import type { CategoryDrillView } from '../features/combat/categoryDrill'
 import { useCombinePetRow } from '../features/combat/useCombatPrefs'
 import { scopeSources } from '../features/combat/meterScope'
 import { landEvidence } from '../features/combat/landEvidence'
@@ -271,6 +272,93 @@ function PetLine({ pet, pct, onDrill }: { pet: PetRow; pct: number; onDrill?: ()
   )
 }
 
+/**
+ * THE DAMAGE-TYPE STRIP — the overlay's way into (and across) the drill's third level (JOS-105).
+ *
+ * The Combat tab and the Overview card draw the same strip out of `MeterRows.tsx`; this is its
+ * MUI-free twin, and the duplication is the same deliberate one every other row here carries (see
+ * the header): shared shaping, forked pixels, because this bundle has no theme to read.
+ *
+ * Nothing is drawn in locked mode — a click-through overlay has nowhere to put an affordance —
+ * except the chip for the type you are already inside, which is state, not an offer.
+ */
+function CategoryStrip({
+  source,
+  active,
+  setDrill
+}: {
+  source: SourceView
+  active: DamageCategory | null
+  setDrill: ((d: Drill | null) => void) | null
+}): JSX.Element | null {
+  const cats = source.categories.filter((c) => setDrill !== null || c.category === active)
+  if (cats.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 3 }}>
+      {cats.map((c) => (
+        <span
+          key={c.category}
+          data-testid="overlay-category"
+          onClick={setDrill ? () => setDrill({ entityId: source.id, category: c.category }) : undefined}
+          title={`${CATEGORY_LABEL[c.category]} — ${fmt(c.total)} over ${c.hits} hits`}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '1px 6px',
+            borderRadius: 999,
+            fontSize: 10,
+            lineHeight: 1.4,
+            cursor: setDrill ? 'pointer' : 'default',
+            border: `1px solid ${c.category === active ? CAT_COLOR[c.category] : 'rgba(255,255,255,0.18)'}`,
+            background: c.category === active ? `${CAT_COLOR[c.category]}33` : 'transparent'
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: 2, background: CAT_COLOR[c.category] }} />
+          {CATEGORY_LABEL[c.category]}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * LEVEL 3, the overlay's spelling: the category's own lanes, then the multi-attack reading that
+ * used to be a panel the overlay never had at all. One rate line above them, because the crit and
+ * resist rates are the whole reason a reader drills a damage type rather than reading its lanes
+ * off the level above.
+ */
+function CategoryLines({ d, activeSec }: { d: CategoryDrillView; activeSec: number }): JSX.Element {
+  const stats = [`${fmt(d.total)} total`, `${fmt(d.hits)} hits`, `${Math.round(d.critPct)}% crit`]
+  if (d.resists > 0) stats.push(`${Math.round(d.resistPct)}% resist`)
+  return (
+    <>
+      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)', marginBottom: 3 }}>{stats.join(' · ')}</div>
+      {d.rows.map((s) => (
+        <SkillLine key={`${s.category}|${s.name}`} s={s} activeSec={activeSec} />
+      ))}
+      {d.attack.map((row) => (
+        <Bar
+          key={row.verb}
+          color={CAT_COLOR.melee}
+          pct={row.pct}
+          label={
+            <>
+              {row.label}
+              {row.estimated && <span style={{ color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' }}> est.</span>}
+              <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>{row.text}</span>
+            </>
+          }
+          right={`${fmt(row.rounds)} rounds`}
+        />
+      ))}
+      {d.flurry !== null && (
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)', marginTop: 2 }}>{d.flurry}</div>
+      )}
+    </>
+  )
+}
+
 /** Nothing to show yet — quiet, and honest about which kind of nothing it is. */
 function MeterEmpty({ live }: { live: boolean }): JSX.Element {
   return (
@@ -327,6 +415,41 @@ function ownLine(r: OwnRow, activeSec: number, setDrill: ((d: Drill | null) => v
 }
 
 /**
+ * EVERY LEVEL BELOW THE FIRST: one source's lane list, or ONE damage type of it.
+ *
+ * Back goes to the row this level was opened FROM — a damage type's own source, a nested pet's
+ * owner (your breakdown), else all the way out to the source list. It is offered at EVERY level
+ * there is below the first: the meter no longer opens drilled, so there is no view that is its own
+ * home and no reason to withhold the way out (the `canLeave` gate this replaces is JOS-35's
+ * zoom-out regression).
+ */
+function DrilledBars({
+  panel,
+  activeSec,
+  dur,
+  setDrill
+}: {
+  panel: Extract<MeterPanel, { level: 2 } | { level: 3 }>
+  activeSec: number
+  dur: string
+  setDrill: ((d: Drill | null) => void) | null
+}): JSX.Element {
+  const subject = panel.subject
+  const level3 = panel.level === 3 ? panel.detail : null
+  const parent = level3 ? subject : panel.level === 2 ? panel.parent : null
+  const out: Drill | null = parent ? { entityId: parent.id } : null
+  const name = level3 ? `${subject.name} · ${CATEGORY_LABEL[level3.category]}` : subject.name
+  return (
+    <MeterCrumb name={name} dur={dur} onBack={setDrill ? () => setDrill(out) : null}>
+      <CategoryStrip source={subject} active={level3?.category ?? null} setDrill={setDrill} />
+      {level3
+        ? <CategoryLines d={level3} activeSec={activeSec} />
+        : panel.level === 2 && panel.rows.map((r) => ownLine(r, activeSec, setDrill))}
+    </MeterCrumb>
+  )
+}
+
+/**
  * The bar body: the source list, or ONE source's breakdown — whichever `petRows.meterPanel` says,
  * from the persisted drill and the shared preference. `setDrill` is null in locked mode: the same
  * levels render, minus every affordance.
@@ -358,26 +481,16 @@ export function MeterBars({
   // `meterPanel` never touches the stored value, so a restored `pet:<instanceId>` from a past
   // session, a fight that moved on, or a 'you' that blinks out between fights all re-drill
   // silently the moment the entity is back in the segment.
-  const panel = useMemo(
-    () => meterPanel(entities, combine, drill?.entityId ?? null),
-    [entities, combine, drill]
-  )
+  // The overlay hands its PERSISTED drill straight to the builder — `OverlayDrill` is exactly the
+  // shape `meterPanel` takes, which is why this surface needs no translation where the Combat tab
+  // and the Overview card each call `dashboardData.meterDrill` on their richer union.
+  const panel = useMemo(() => meterPanel(entities, combine, drill), [entities, combine, drill])
   const dur = fmtDur(seg?.durationSec ?? 0)
 
   if (!seg || (panel.level === 1 && panel.sources.length === 0)) return <MeterEmpty live={live} />
 
-  if (panel.level === 2) {
-    // Back goes to the row this one was opened FROM — a nested pet's owner (your breakdown), else
-    // all the way out to the source list. It is offered at EVERY level-2 view there is: the
-    // meter no longer opens drilled, so there is no view that is its own home and no reason to
-    // withhold the way out (the `canLeave` gate this replaces is JOS-35's zoom-out regression).
-    const out: Drill | null = panel.parent ? { entityId: panel.parent.id } : null
-    return (
-      <MeterCrumb name={panel.subject.name} dur={dur} onBack={setDrill ? () => setDrill(out) : null}>
-        {panel.rows.map((r) => ownLine(r, seg.activeSec, setDrill))}
-      </MeterCrumb>
-    )
-  }
+  if (panel.level !== 1) return <DrilledBars panel={panel} activeSec={seg.activeSec} dur={dur} setDrill={setDrill} />
+
 
   return (
     <MeterCrumb name={null} dur={dur} onBack={null}>
