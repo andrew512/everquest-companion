@@ -34,6 +34,7 @@ import {
   type CespManifest
 } from './sounds'
 import { USER_SOUNDS_PACK_ID } from '../shared/userSounds'
+import { isSafePackId, isSafeSourceRepo, isSafeSourceRef, isSafeSourcePath } from './security'
 import type {
   PackInstallProgress,
   PackPreviewList,
@@ -61,6 +62,53 @@ interface RegistryIndex {
   packs: RegistryPack[]
 }
 
+// ---- registry validation (defense in depth) ----------------------------------
+//
+// The registry index is fetched from an untrusted host (peonping.github.io /
+// raw.githubusercontent.com — malicious or MITM'd is the threat model). A crafted row can
+// carry a `name` that walks out of the soundpack root or a `source_*` field that re-points a
+// URL/archive path. installPack() is the sharp edge (it DELETES `packDir` and WRITES a staged
+// dir), so the primary guard lives there — but we also filter at INGEST so one poisoned row can
+// never reach the disk cache, the listing, or a preview, and a previously-poisoned on-disk
+// cache is neutralized on read. A single bad row DROPS; a good registry with one bad row still
+// works. Dropped rows are COUNTED, never interpolated — a crafted name must not ride into a log
+// line carrying escapes.
+
+/** Does a registry row's every path/URL-bound field pass the trust-boundary allowlists? */
+function isSafeRegistryPack(p: RegistryPack): boolean {
+  return (
+    isSafePackId(p.name) &&
+    isSafeSourceRepo(p.source_repo) &&
+    isSafeSourceRef(p.source_ref) &&
+    isSafeSourcePath(p.source_path)
+  )
+}
+
+/**
+ * Refuse a pack whose name or `source_*` fields could escape a path/URL — called by installPack
+ * BEFORE any path is built, against the same allowlists `sounds:getData` uses (no separators, no
+ * `..`, no drive/UNC/ADS). Throws a clear error the IPC layer surfaces; the message NEVER echoes
+ * the raw name, which is exactly the kind of string that could carry escapes. Re-checks `source_*`
+ * at use even though ingest already filters — provisionPacks calls installPack directly with the
+ * compiled-in default, and belt + suspenders is cheap.
+ */
+function assertPackInstallable(pack: RegistryPack): void {
+  if (!isSafePackId(pack.name)) throw new Error('pack name is not a valid identifier')
+  if (!isSafeSourceRepo(pack.source_repo) || !isSafeSourceRef(pack.source_ref) || !isSafeSourcePath(pack.source_path)) {
+    throw new Error('pack source fields are not valid')
+  }
+}
+
+/** Keep only rows that pass validation; log how many were dropped (count only, never the name). */
+export function sanitizeRegistryPacks(packs: RegistryPack[]): RegistryPack[] {
+  const kept = packs.filter(isSafeRegistryPack)
+  const dropped = packs.length - kept.length
+  if (dropped > 0) {
+    logError('main:packRegistry', { message: `dropped ${dropped} registry pack(s) failing validation` })
+  }
+  return kept
+}
+
 // ---- in-memory + on-disk cache ------------------------------------------------
 
 let memCache: { at: number; packs: RegistryPack[] } | null = null
@@ -73,7 +121,9 @@ function readDiskCache(): { at: number; packs: RegistryPack[] } | null {
   try {
     const raw = readFileSync(cacheFile(), 'utf8')
     const parsed = JSON.parse(raw) as { at: number; packs: RegistryPack[] }
-    if (parsed && Array.isArray(parsed.packs)) return parsed
+    // Neutralize a previously-poisoned on-disk cache on the way in: a row that fails validation
+    // never re-enters the listing or an install, even if it was written before this guard existed.
+    if (parsed && Array.isArray(parsed.packs)) return { at: parsed.at, packs: sanitizeRegistryPacks(parsed.packs) }
   } catch {
     // no/invalid cache
   }
@@ -230,7 +280,8 @@ export async function fetchRegistry(force = false): Promise<RegistryListResult> 
   try {
     const body = await httpGetBuffer(REGISTRY_URL)
     const index = JSON.parse(body.toString('utf8')) as RegistryIndex
-    const packs = Array.isArray(index.packs) ? index.packs : []
+    // Filter at ingest: a poisoned row can't reach memCache, the disk cache, or the listing.
+    const packs = sanitizeRegistryPacks(Array.isArray(index.packs) ? index.packs : [])
     memCache = { at: now, packs }
     writeDiskCache(packs)
     return { packs: annotate(packs) }
@@ -465,6 +516,11 @@ export async function installPack(
   targetRootOverride?: string
 ): Promise<void> {
   const name = pack.name
+  // TRAVERSAL GUARD — BEFORE any path is constructed. See assertPackInstallable: `name` and the
+  // `source_*` fields come from the untrusted registry and are about to become a path
+  // (`join(packsRoot, name)`, which installPack then DELETES and rewrites) and a download URL.
+  // (uninstallPack already guarded with safeJoin; this closes the asymmetry.)
+  assertPackInstallable(pack)
   // `my-sounds` names the user's OWN imported audio (JOS-68) and is not the registry's to
   // claim. Its bytes live in a different root, so an install here could not overwrite them —
   // but it WOULD put a second pack under that id in the listing, and the picker would show
