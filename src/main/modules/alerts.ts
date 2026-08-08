@@ -22,9 +22,21 @@
 //
 // Alert defs are owned by the store; the module holds a live copy that main keeps
 // in sync (setDefs) whenever the user saves/deletes an alert.
+//
+// CAPTURE GROUPS (JOS-103). A trigger's regexes may declare NAMED groups, and what they capture
+// rides out on `FiredAlert.captures` so a spoken alert can say it ("Puma on Fail"). THIS FILE IS
+// ONE OF THE TWO ENFORCEMENT POINTS — read the threat model in shared/alertCaptures.ts before
+// touching `fieldMatches`, `capturesFrom` or `conditionMatches`. The short form of what is
+// enforced HERE, and it is control 3 of that model: a capture may only come from the text the
+// def's OWN condition just tested, on an event this alert already subscribed to — a `raw`
+// condition captures from `ev.raw`, a `where` matcher captures from that one field's value.
+// There is no path to another event, another alert, or app state, and there are no ambient
+// tokens. Every value leaves through `harvestCaptures`, which sanitizes it and caps both its
+// length and the number of groups; nothing downstream is trusted to do that for us.
 
 import type { EqModule } from './types'
 import { idKey } from '../log/parseCommon'
+import { harvestCaptures } from '../../shared/alertCaptures'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
   AlertDef,
@@ -62,23 +74,39 @@ const SPELL_CAST_CAP = 400
 const COOLDOWN_KEY_CAP = 500
 
 /**
+ * A compiled matcher value: the predicate, plus the RegExp it compiled to when the spec was
+ * written in `/regex/` form.
+ *
+ * The regex is kept BESIDE the predicate rather than behind it because a named capture group is
+ * only readable from the RegExp itself (`exec().groups`) — see `fieldMatches`. Nothing else about
+ * matching changed: `test` is the same predicate it always was, and a literal spec has no `re` at
+ * all, so it can capture nothing.
+ */
+interface CompiledMatch {
+  test: (fieldValue: string) => boolean
+  re?: RegExp
+}
+
+/**
  * Compile a matcher value into a predicate. A value wrapped in slashes (`/.../`)
  * is a case-insensitive regex; anything else is a case-insensitive exact match on
  * the stringified field. Invalid regex falls back to literal equality so a bad
  * def degrades gracefully instead of throwing in the hot path.
  */
-function compileFieldMatch(spec: string): (fieldValue: string) => boolean {
+function compileFieldMatch(spec: string): CompiledMatch {
   if (spec.length >= 2 && spec.startsWith('/') && spec.endsWith('/')) {
     const body = spec.slice(1, -1)
     try {
+      // No 'g' flag, so `exec`/`test` are stateless and this compiled object is safe to reuse
+      // across every event without a `lastIndex` reset (the trap `hasWireControls` documents).
       const re = new RegExp(body, 'i')
-      return (v) => re.test(v)
+      return { test: (v) => re.test(v), re }
     } catch {
       // fall through to literal
     }
   }
   const lower = spec.toLowerCase()
-  return (v) => v.toLowerCase() === lower
+  return { test: (v) => v.toLowerCase() === lower }
 }
 
 /**
@@ -143,25 +171,67 @@ function spellCandidateNames(ev: LogEvent): string[] {
   return out
 }
 
-/** One compiled `where` entry: the event field it names and the predicate it compiled to. */
-interface CompiledField {
+/** One compiled `where` entry: the event field it names and the matcher it compiled to. */
+interface CompiledField extends CompiledMatch {
   key: string
-  test: (v: string) => boolean
 }
 
 /**
- * Whether ONE compiled `where` field accepts `ev`.
+ * A CONDITION THAT MATCHED, plus whatever its named groups captured (JOS-103).
+ *
+ * An object rather than a boolean because "matched" and "matched, and here is what it named" are
+ * one answer: recomputing the captures afterwards would mean running the pattern a second time
+ * and hoping the second run agreed with the first. `captures` is absent for the overwhelming
+ * majority of conditions, which declare no named group at all.
+ */
+interface ConditionHit {
+  captures?: Record<string, string>
+}
+
+/** Merge a hit's captures into an accumulator, first writer wins. Undefined stays undefined. */
+function mergeCaptures(
+  into: Record<string, string> | undefined,
+  from: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  if (!from) return into
+  if (!into) return { ...from }
+  for (const [k, v] of Object.entries(from)) if (!(k in into)) into[k] = v
+  return into
+}
+
+/**
+ * Whether ONE compiled `where` field accepts `ev`, and what it captured.
  *
  * An ABSENT field is still an immediate no-match, exactly as before — that is what keeps a
  * `where:{spell:…}` written against a family with no `spell` field (poisonProc names its
  * `strike`) from being admitted through the candidate list below.
+ *
+ * CAPTURES COME FROM THE TEXT THIS MATCHER ACTUALLY TESTED, and from nowhere else — control 3 of
+ * the threat model in shared/alertCaptures.ts. For a `/regex/`-form matcher that means the
+ * stringified value of the ONE field this `where` entry names, on the ONE event kind the trigger
+ * subscribed to. A literal matcher has no RegExp and therefore captures nothing.
+ *
+ * The JOS-84 spell widening captures from the CANDIDATE NAME that satisfied the matcher, for the
+ * same reason `matchedSpellName` reports that name rather than the event's best-effort pick: the
+ * text the pattern matched is the text it named.
  */
-function fieldMatches(ev: LogEvent, f: CompiledField): boolean {
+function fieldMatches(ev: LogEvent, f: CompiledField): ConditionHit | null {
   const raw = (ev as unknown as Record<string, unknown>)[f.key]
-  if (raw == null) return false
-  if (f.test(fieldText(raw))) return true
+  if (raw == null) return null
+  const text = fieldText(raw)
+  if (f.test(text)) return capturesFrom(f, text)
   // Only the `spell` key widens, and only when the event carries candidates (JOS-84).
-  return f.key === 'spell' && spellCandidateNames(ev).some((n) => f.test(n))
+  if (f.key !== 'spell') return null
+  const hit = spellCandidateNames(ev).find((n) => f.test(n))
+  return hit === undefined ? null : capturesFrom(f, hit)
+}
+
+/** Run a matcher's own RegExp over the text it just accepted, and bound what it named. */
+function capturesFrom(f: CompiledMatch, text: string): ConditionHit {
+  if (!f.re) return {}
+  const m = f.re.exec(text)
+  const captures = harvestCaptures(m?.groups)
+  return captures ? { captures } : {}
 }
 
 /** A single PRIMITIVE condition prepared for fast evaluation (regex compiled once). */
@@ -169,6 +239,12 @@ interface CompiledCondition {
   event?: { kind: string; fields: CompiledField[] }
   raw?: RegExp
   // 'app' primitives compile to neither event nor raw → they never match main-side.
+}
+
+/** What a matching trigger yields: the text to record, plus anything its pattern named. */
+interface AlertMatch {
+  text: string
+  captures?: Record<string, string>
 }
 
 /**
@@ -184,9 +260,9 @@ interface CompiledAlert {
 /** Compile one PRIMITIVE trigger into a matcher condition. */
 function compileCondition(t: AlertTriggerPrimitive): CompiledCondition {
   if (t.type === 'event') {
-    const fields = Object.entries(t.where ?? {}).map(([key, spec]) => ({
+    const fields: CompiledField[] = Object.entries(t.where ?? {}).map(([key, spec]) => ({
       key,
-      test: compileFieldMatch(spec)
+      ...compileFieldMatch(spec)
     }))
     return { event: { kind: t.kind, fields } }
   }
@@ -463,8 +539,8 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
     let spellResolved = false
     for (const c of this.compiled) {
       if (!c.def.enabled) continue
-      const matchedText = this.matches(c, ev)
-      if (matchedText == null) continue
+      const match = this.matches(c, ev)
+      if (match == null) continue
       const key = cooldownKey(c.def, ev)
       if (this.onCooldown(key, c.def, ev.ts)) continue
       this.noteFire(key, ev.ts)
@@ -473,12 +549,16 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
         spellResolved = true
       }
       const spell = matchedSpellName(c, ev, base)
-      const fired: FiredAlert = { alertId: c.def.id, ts: ev.ts, matchedText }
+      const fired: FiredAlert = { alertId: c.def.id, ts: ev.ts, matchedText: match.text }
       // Omitted rather than set to undefined: the delta is JSON over IPC, and an absent key
       // is the honest encoding of "this family names no spell".
       if (spell !== undefined) fired.spell = spell
+      // Likewise absent when the trigger declared no named group — which is nearly every alert,
+      // so the delta stays byte-identical for them. The values are already sanitized and capped
+      // (shared/alertCaptures.ts `harvestCaptures`); nothing downstream re-derives them.
+      if (match.captures) fired.captures = match.captures
       this.pending.push(fired)
-      this.record(c.def.id, ev.ts, matchedText)
+      this.record(c.def.id, ev.ts, match.text)
     }
   }
 
@@ -547,34 +627,54 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
    * Cross-event correlation is deliberately out of scope; an 'all' over conditions that can
    * never co-occur on one event (e.g. two different `kind`s) simply never fires.
    */
-  private matches(c: CompiledAlert, ev: LogEvent): string | null {
+  private matches(c: CompiledAlert, ev: LogEvent): AlertMatch | null {
     if (c.composite === 'all') {
       // Every condition must match this one event. An empty condition list can't be satisfied
       // meaningfully — treat it as no-match to avoid a firehose.
       if (c.conditions.length === 0) return null
+      // 'all' means EVERY condition matched this one event, so every one of them is "the
+      // condition that matched" and all their captures are in scope. First writer wins on a
+      // name collision, which is source order — the same rule the whole file reads by.
+      let captures: Record<string, string> | undefined
       for (const cond of c.conditions) {
-        if (!this.conditionMatches(cond, ev)) return null
+        const hit = this.conditionMatches(cond, ev)
+        if (!hit) return null
+        captures = mergeCaptures(captures, hit.captures)
       }
-      return ev.raw
+      return { text: ev.raw, ...(captures ? { captures } : {}) }
     }
-    // 'any' and 'single': fire on the first matching condition.
+    // 'any' and 'single': fire on the first matching condition, and take ITS captures. A
+    // later condition that would also have matched is never evaluated, so it can never
+    // contribute a value the firing did not actually match on.
     for (const cond of c.conditions) {
-      if (this.conditionMatches(cond, ev)) return ev.raw
+      const hit = this.conditionMatches(cond, ev)
+      if (hit) return { text: ev.raw, ...(hit.captures ? { captures: hit.captures } : {}) }
     }
     return null
   }
 
-  /** Whether ONE primitive condition matches `ev`. */
-  private conditionMatches(cond: CompiledCondition, ev: LogEvent): boolean {
+  /** Whether ONE primitive condition matches `ev`, and what its named groups captured. */
+  private conditionMatches(cond: CompiledCondition, ev: LogEvent): ConditionHit | null {
     if (cond.event) {
-      if (ev.kind !== cond.event.kind) return false
-      return cond.event.fields.every((f) => fieldMatches(ev, f))
+      if (ev.kind !== cond.event.kind) return null
+      let captures: Record<string, string> | undefined
+      for (const f of cond.event.fields) {
+        const hit = fieldMatches(ev, f)
+        if (!hit) return null
+        captures = mergeCaptures(captures, hit.captures)
+      }
+      return captures ? { captures } : {}
     }
     if (cond.raw) {
-      return cond.raw.test(ev.raw)
+      // A raw condition captures from `ev.raw` — the exact line it just tested, and the only
+      // text it ever sees. `cond.raw` carries no 'g' flag, so `exec` is stateless.
+      const m = cond.raw.exec(ev.raw)
+      if (!m) return null
+      const captures = harvestCaptures(m.groups)
+      return captures ? { captures } : {}
     }
     // 'app' conditions never match main-side.
-    return false
+    return null
   }
 
   snapshot(): { seq: number; state: AlertsSnap } {

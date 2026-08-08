@@ -265,12 +265,26 @@ export interface SpellDbFile {
 /** Which suggested-alert templates a spell supports (a template is offered only when its
  *  trigger can actually fire — gated by the DB fields the parser needs). */
 export interface SpellTemplateFlags {
-  /** Beneficial + has a wears-off message → "wears off you" (kind: buffWearOff). */
+  /** Beneficial-class + has a wears-off message → "wears off you" (buffExpired ∪ buffWearOff). */
   wearsOff: boolean
-  /** Beneficial → "fades on your pet/target" (kind: buffFade). */
+  /** Beneficial-class → "fades on your pet/target" (kind: buffFade). */
   fade: boolean
-  /** Detrimental + has a cast-on-other message → "lands on a target" (kind: buffApply). */
+  /**
+   * Detrimental-class + a cast-on-other message the parser can actually MATCH → "lands on a
+   * target" (kind: buffApply). The second half of that gate is not decoration: the message has
+   * to yield a `castOnOtherSuffix`, or no buffApply is ever emitted for the spell and the
+   * suggestion is dead on arrival (spellDb.ts `suggestionTemplates`).
+   */
   lands: boolean
+  /**
+   * Has a cast-on-other message whose SUBJECT can be turned into a named capture → "lands on
+   * someone, and say who" (a `raw` trigger with `(?<player>…)`, JOS-103).
+   *
+   * Deliberately NOT gated on beneficial/detrimental. It is the only template that covers a
+   * spell somebody else casts ON you or your group — Spirit of the Puma is the reported case —
+   * and "who did this land on" is a question worth asking of a buff and a debuff alike.
+   */
+  landsOnOther: boolean
 }
 
 /** One catalog row: a spell the wizard can build alerts for. */
@@ -285,6 +299,18 @@ export interface SpellCatalogEntry {
   illusion: boolean
   /** Which one-click alert templates this spell supports. */
   templates: SpellTemplateFlags
+  /**
+   * The `raw` trigger pattern the `landsOnOther` template uses, with the subject as a named
+   * capture — e.g. `^\[[^\]]*\] (?<player>[A-Za-z' \`]{1,48}) growls with the spirit of the puma\.`
+   * Present exactly when `templates.landsOnOther` is true.
+   *
+   * AUTHORED IN MAIN, not in the renderer, and that is deliberate. The anchor and the name
+   * character class are the two things that keep this pattern unreachable through a chat line
+   * (shared/alertCaptures.ts `subjectCapturePattern`), so the pattern is derived ONCE, beside the
+   * DB it is derived from, and travels to the wizard as a finished string. A renderer that
+   * rebuilt it from a message would be a second implementation of a security property.
+   */
+  castOnOtherCapture?: string
   /** How often the buffs model has observed this spell (land→fade sample count `n`); 0 = never. */
   usageCount: number
   /**

@@ -31,6 +31,10 @@ import { parseSpellClassLevels, parseSpellRank } from '../../shared/spellLines'
 // THE source of truth for which cast-on-other emotes are rogue-poison Strike procs. Imported,
 // never copied: the suffix list belongs to shared/poisons.ts and a second copy would drift.
 import { POISON_PROCS } from '../../shared/poisons'
+// The subject→named-capture authoring rule (JOS-103). Imported, never re-derived: the anchor and
+// the name class it produces are security-relevant, and a second copy would drift out of the
+// threat model that argues for them.
+import { subjectCapturePattern } from '../../shared/alertCaptures'
 // Import the committed catalog directly so it's BUNDLED into the main build (electron-vite
 // inlines JSON imports). A readFileSync from a path relative to import.meta.url would look
 // beside out/main/index.js in production, where the JSON isn't copied — so import it.
@@ -351,16 +355,105 @@ function rankNamesByLine(db: SpellDb): Map<string, string[]> {
  */
 const POISON_PROC_MSGS: ReadonlySet<string> = new Set(POISON_PROCS.map((p) => p.suffix))
 
-/** Which one-click suggestion templates a spell can offer (see SpellCatalogEntry.templates). */
+/**
+ * THE DB'S `spellType` VOCABULARY, folded into the two dispositions the templates care about
+ * (JOS-103).
+ *
+ * WHY THIS IS A TABLE. It used to be two string literals — `=== 'Beneficial'` and
+ * `=== 'Detrimental'` — which is right for 1,792 of the 1,926 spells and silently wrong for the
+ * other 134. The wiki's Template:Spellpage uses a longer vocabulary than two words, and a spell
+ * that matched neither literal earned NO template, and a spell with no template and no illusion
+ * flag is DROPPED from the catalog entirely (`buildSpellCatalog` below) — so it could not be
+ * found in the suggestion wizard's search at all. That is the reported defect: Spirit of the Puma
+ * is `Proc Buff`, and searching "puma" in Suggested returned nothing (feedback report
+ * 01KZH1YK7YPRC40QPV00X1Z4NX, v0.12.0).
+ *
+ * EXHAUSTIVE OVER THE COMMITTED DB, with the measured count beside each so a re-scrape that adds
+ * a value is visible: an unlisted type folds to 'unknown', which earns the same templates a bare
+ * `spellType` always did — none of the disposition-gated ones — rather than being guessed into a
+ * disposition. `tests/spellCatalogTemplates.test.mts` fails if spells.json grows a type this
+ * table does not name.
+ */
+const BENEFICIAL_TYPES: ReadonlySet<string> = new Set([
+  'Beneficial', // 1079
+  'Statistic Buff', // 34
+  'Resist Buff', // 11
+  'Pet', // 9  — the pet SUMMONS (Companion Spirit); a friendly cast either way
+  'Utility Beneficial', // 6
+  'Heal', // 6
+  'Heal Over Time', // 6
+  'Pet Buff', // 6
+  'Pet Heal', // 5
+  'Haste', // 3
+  'Cure', // 3
+  'Movement Buff', // 3
+  'Remove Curse', // 2
+  'Vision', // 2
+  'Summon Item', // 2
+  'Beneficial (Group only)', // 1
+  'Invisibility', // 1
+  'Buff', // 1
+  'Proc Buff', // 1  — Spirit of the Puma, the reported case
+  'Regen', // 1
+  'Damage Shield', // 1  — cast on you/your pet, not on the mob
+  'Block' // 1
+])
+
+const DETRIMENTAL_TYPES: ReadonlySet<string> = new Set([
+  'Detrimental', // 713
+  'Direct Damage', // 8
+  'Damage Over Time', // 4
+  'Utility Detrimental', // 2  — Cancel Magic, Flash of Light
+  'Curse', // 2
+  'Slow', // 2
+  'Stun', // 1
+  'Root', // 1
+  'Statistic Debuff', // 1
+  'DD' // 1
+])
+
+/** Every type this table names, for the audit test that pins it against spells.json. */
+export const CLASSIFIED_SPELL_TYPES: ReadonlySet<string> = new Set([
+  ...BENEFICIAL_TYPES,
+  ...DETRIMENTAL_TYPES
+])
+
+/**
+ * Which one-click suggestion templates a spell can offer (see SpellCatalogEntry.templates).
+ *
+ * EVERY FLAG IS A CLAIM THAT THE ALERT CAN ACTUALLY FIRE — the law shared/alertGroups.ts states
+ * and JOS-84 was written to enforce: a guessed trigger that never fires is worse than an absent
+ * one, because the user believes they are covered. So each gate below names the parser fact it
+ * depends on, and two of them were MEASURED for this ticket against the real parser:
+ *
+ *   * `lands` now also requires `castOnOtherSuffix(msg) !== null`. The suffix table is keyed by
+ *     the tail left after stripping the wiki's "Someone " subject, so a message written with any
+ *     OTHER subject ("Target growls…", "Player's eyes glow…", "Soandso screams…") or with no
+ *     subject at all is NOT IN THE TABLE, and no `buffApply` is ever emitted for that spell.
+ *     MEASURED: 68 of the 685 Detrimental spells with a cast-on-other message are in exactly that
+ *     state, and every one of them was being offered a `lands` suggestion that could not fire.
+ *
+ *   * `landsOnOther` is the new capture template and needs no event at all — it is a `raw`
+ *     trigger, which is the only thing that can work here. MEASURED: `Fail growls with the spirit
+ *     of the puma.` (the owner's own log, 2026-08-01 18:38:10) parses to kind `unknown`, because
+ *     of the same missing suffix. A raw pattern is not a shortcut around the typed path; for this
+ *     family there is no typed path.
+ */
 function suggestionTemplates(s: SpellEntry): SpellCatalogEntry['templates'] {
-  const beneficial = s.spellType === 'Beneficial'
+  const beneficial = BENEFICIAL_TYPES.has(s.spellType ?? '')
+  const detrimental = DETRIMENTAL_TYPES.has(s.spellType ?? '')
   return {
     wearsOff: beneficial && !!s.msgWearsOff,
     fade: beneficial,
     lands:
-      s.spellType === 'Detrimental' &&
+      detrimental &&
       !!s.msgCastOnOther &&
-      !POISON_PROC_MSGS.has(s.msgCastOnOther)
+      !POISON_PROC_MSGS.has(s.msgCastOnOther) &&
+      castOnOtherSuffix(s.msgCastOnOther) !== null,
+    landsOnOther:
+      !!s.msgCastOnOther &&
+      !POISON_PROC_MSGS.has(s.msgCastOnOther) &&
+      subjectCapturePattern(s.msgCastOnOther) !== null
   }
 }
 
@@ -391,15 +484,27 @@ export function buildSpellCatalog(
   let hasIllusions = false
   for (const [key, s] of db.byKey) {
     const templates = suggestionTemplates(s)
+    // Derived HERE, once, beside the DB — see SpellCatalogEntry.castOnOtherCapture for why the
+    // renderer is never allowed to rebuild it.
+    const capture = s.msgCastOnOther ? subjectCapturePattern(s.msgCastOnOther) : null
     if (s.illusion) hasIllusions = true
     // Nothing to suggest for a spell with no template and not an illusion — skip it.
-    if (!templates.wearsOff && !templates.fade && !templates.lands && !s.illusion) continue
+    if (
+      !templates.wearsOff &&
+      !templates.fade &&
+      !templates.lands &&
+      !templates.landsOnOther &&
+      !s.illusion
+    ) {
+      continue
+    }
     entries.push({
       key,
       name: s.name,
       spellType: s.spellType,
       illusion: s.illusion,
       templates,
+      ...(templates.landsOnOther && capture ? { castOnOtherCapture: capture } : {}),
       usageCount: usage.get(key) ?? 0,
       lastSeenMs: lastSeen?.get(key) ?? null,
       classLevels: parseSpellClassLevels(s.classes),
