@@ -72,7 +72,7 @@ import {
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
 import type { FixtureLog } from './logFixture.mjs'
-import { meterRows } from './drill.mjs'
+import { meterRows, stepDrillRoundTrip } from './drill.mjs'
 import {
   clickScope,
   clickView,
@@ -552,6 +552,7 @@ async function main(): Promise<void> {
     await stepHealingDimension(page)
     await stepMeterDrill(page)
     await stepAbilityStats(page)
+    await stepDrillRoundTrip(page)
     await stepPickAFight(page, snap)
     await stepFrozenList(page, log)
     await stepSearch(page, snap)

@@ -182,61 +182,54 @@ function HeaderTag({ tag, last }: { tag: string; last: boolean }): JSX.Element {
 }
 
 /**
- * WHOSE DAMAGE — the overlay's whole scope control, and deliberately a CYCLE rather than a menu.
+ * WHOSE DAMAGE — a READOUT, not a control (JOS-115).
  *
- * The Combat tab gets the roster popover with its provenance list and its add/remove; the
- * overlay gets one word you can click. That is a scoping decision, not an omission: an overlay
- * is two inches of transparent, click-through chrome pinned over a running game, and a text
- * entry box in it would be a place to lose keystrokes. Editing the roster is a considered act
- * and it belongs on the surface with room to explain itself. Both surfaces read and filter by
- * the SAME roster off the same snapshot, so what the chip says here is what the tab would say.
+ * It used to be the overlay's whole scope control: one word you clicked to cycle You → Group →
+ * Everyone, written to a key of this overlay kind's own. The owner's ruling retired that — the
+ * selector appeared on every combat surface, each with its own answer, for a question you set
+ * once — so scope is now ONE preference living in Preferences > Combat and every meter reads it
+ * (features/combat/useCombatPrefs.useMeterScope).
+ *
+ * The WORD stays, because a meter that is filtering rows out must say so where the rows are
+ * missing, and `chipLabel`'s `Group (no roster yet)` is the sentence that explains a Group-scoped
+ * meter showing everybody (law 1's fallback). One phrasing, two renderers — the tab's readout
+ * comes out of the same helper (the healRows.ts rule).
  */
 export interface OverlayHeaderScope {
   /** Already through `chipLabel`, so the "(no roster yet)" fallback reads the same in both
    *  windows — one phrasing, two renderers (the healRows.ts rule). */
   label: string
-  /** The tooltip: what this scope means, and what one click switches to. */
+  /** The tooltip: what this scope means, and where the choice lives now. */
   title: string
-  onCycle: () => void
 }
 
 /**
  * Renders NOTHING for a meter with no source list to scope, and nothing while the overlay is
- * LOCKED — a click-through window must not show an affordance it cannot deliver.
+ * LOCKED — a pinned, click-through window is chrome-free by contract, and the word would be one
+ * more thing between the user and their game.
  *
- * Both refusals live here rather than at the call site because they are this control's own
- * rules, and because OverlayHeader is at its measured complexity ceiling: a component that can
- * decide not to exist keeps that decision out of its parent's branch count.
+ * Both refusals live here rather than at the call site because they are this readout's own rules,
+ * and because OverlayHeader is at its measured complexity ceiling: a component that can decide not
+ * to exist keeps that decision out of its parent's branch count.
  */
 function ScopeTag({
   scope,
-  locked,
-  noDrag
+  locked
 }: {
   scope: OverlayHeaderScope | undefined
   locked: boolean
-  noDrag: React.CSSProperties
 }): JSX.Element | null {
-  const [hot, setHot] = useState(false)
   if (!scope || locked) return null
   return (
     <span
-      role="button"
-      data-testid="overlay-scope-chip"
+      data-testid="overlay-scope-label"
       title={scope.title}
-      onClick={scope.onCycle}
-      onMouseEnter={() => setHot(true)}
-      onMouseLeave={() => setHot(false)}
       style={{
-        ...noDrag,
         fontSize: 8,
         letterSpacing: 0.5,
         textTransform: 'uppercase',
-        color: hot ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)',
-        background: hot ? HOVER : 'transparent',
-        borderRadius: 3,
+        color: 'rgba(255,255,255,0.4)',
         padding: '1px 3px',
-        cursor: 'pointer',
         userSelect: 'none',
         flexShrink: 0,
         whiteSpace: 'nowrap'
@@ -363,8 +356,8 @@ export function OverlayHeader({
   tailColor?: string
   iconAccentBg?: string
   select?: OverlayHeaderSelect
-  /** WHOSE damage this meter is showing (docs/plans/group-model.md §3) — a one-click cycle,
-   *  You → Group → Everyone. Absent for the kinds that have no source list to scope. */
+  /** WHOSE damage this meter is showing (docs/plans/group-model.md §3) — a readout of the app-wide
+   *  preference since JOS-115. Absent for the kinds that have no source list to scope. */
   scope?: OverlayHeaderScope
   chrome: Pick<OverlayChrome, 'locked' | 'hovering' | 'dragRegion' | 'noDrag' | 'toggleLock'> & {
     /** P3: opt in to a WORKING selector while locked. Absent ⇒ the old plain locked header. */
@@ -415,7 +408,7 @@ export function OverlayHeader({
       {/* Beside the FIGHT/ZONE tag because they answer the same shape of question — that one
           says WHICH segment, this one says WHOSE damage in it. It draws itself only when there
           is a source list to scope and the overlay is unlocked (see ScopeTag). */}
-      <ScopeTag scope={scope} locked={locked} noDrag={noDrag} />
+      <ScopeTag scope={scope} locked={locked} />
 
       {selectable ? (
         <HeaderTrigger select={selectable} rowRef={rowRef} noDrag={noDrag} capture={capture}>

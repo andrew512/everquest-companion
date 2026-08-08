@@ -29,6 +29,9 @@
 //   Game     — EverQuest install-folder discovery/override (effective path + how it
 //             resolved + a folder picker + character-log validation). Lives in
 //             ./EqFolderSetting.tsx, like Updates does — this file only names it.
+//   Combat   — the meters' two shaping choices: WHOSE damage they show (You / Group / Everyone,
+//             default Group — JOS-115 moved it here off every combat surface) and where the
+//             pet's damage sits. Lives in ./CombatSection.tsx, descriptor and all.
 //   Overlays — when the floating meters get out of the way: hide them while EverQuest isn't
 //             running (on by default) and/or while it isn't the window you're in (off).
 //             Lives in ./OverlayAutoHideSetting.tsx.
@@ -59,20 +62,9 @@
 //             drawer's footer). Feedback is not a view, so this section only opens it.
 
 import { type JSX, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
-import {
-  Box,
-  FormControlLabel,
-  List,
-  ListItemButton,
-  ListItemText,
-  Stack,
-  Switch,
-  TextField,
-  Typography
-} from '@mui/material'
+import { Box, List, ListItemButton, ListItemText, TextField, Typography } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import SportsEsportsIcon from '@mui/icons-material/SportsEsports'
-import BarChartIcon from '@mui/icons-material/BarChart'
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt'
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver'
 import IosShareIcon from '@mui/icons-material/IosShare'
@@ -81,10 +73,12 @@ import PrivacyTipIcon from '@mui/icons-material/PrivacyTip'
 import LayersIcon from '@mui/icons-material/Layers'
 import { ExportSettingsSetting, ImportSettingsSetting } from '../profiles/ProfileSharing'
 import { ClassComboSetting } from '../profiles/ClassComboPanel'
-import { useCombinePetRow } from '../combat/useCombatPrefs'
 import { UpdateSetting, VersionSetting, useUpdateStatus } from './UpdateSetting'
 import type { UpdateStatus } from '@shared/types'
 import { EqFolderSetting } from './EqFolderSetting'
+// Combat: whose damage the meters show (JOS-115) + where the pet's sits. Its own file with its own
+// descriptor, same ceiling and same answer as PerfSetting and GraphicsSetting.
+import { combatSection } from './CombatSection'
 import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
 import { VoiceSetting } from './VoiceSetting'
 import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
@@ -106,54 +100,6 @@ import { whatsNewSection } from '../whatsnew/WhatsNewPanel'
 // answer as PerfSetting's descriptor: split, don't widen the threshold.
 import PrefSectionBlock, { FILL_COLUMN_SX, FILL_ROOT_SX, FILL_ROW_SX, paneFills, useLandedSection } from './PrefSectionBlock'
 import { normalizeQuery } from '../../lib/search'
-
-// -------------------------------------------------------------- Combat section
-
-/**
- * Pet nesting (owner direction, 2026-08-03). ON by default: the game is mostly played solo, so
- * "you and your pet" is the shape of nearly every fight, and a two-row source meter is a lid on
- * the only list worth reading. Combined, the pet is ONE line item inside your breakdown —
- * labelled with its real name, drillable into its own skills, and never summed into a skill row
- * of yours (features/combat/petRows.ts). Off, it is a separate source row, as it always was.
- *
- * IT IS THE PET'S LAYOUT, NOT A ZOOM (owner ruling, 2026-08-05 — JOS-35). Every meter opens on
- * level 1 whatever this says; what it decides is WHERE the pet's damage lives. On ⇒ inside your
- * level-1 bar, and once more as a drillable line item in your breakdown — never a source row of
- * its own, so a fight's damage is never listed twice. Off ⇒ the pet keeps its own bar and
- * nothing is nested.
- *
- * ONE SWITCH, EVERY DAMAGE METER (owner ruling, 2026-08-04 — the floating overlay used to render
- * the engine's own pet fold instead, and showed a different breakdown for the same fight). The
- * Combat tab, the Overview card and the floating overlay meters all read THIS value and build
- * their rows with `petRows.meterPanel`.
- *
- * Renderer-local (localStorage, like the Fight/Overall scope), so it needs no store migration —
- * and it applies LIVE, across windows: same-window readers are notified directly, and the overlay
- * windows are same-origin, so they get the DOM's own 'storage' event (useCombatPrefs.ts).
- */
-function PetNestingSetting(): JSX.Element {
-  const [combine, setCombine] = useCombinePetRow()
-  return (
-    <Stack spacing={1}>
-      <FormControlLabel
-        control={
-          <Switch
-            size="small"
-            checked={combine}
-            data-testid="pref-combine-pet"
-            onChange={(e) => setCombine(e.target.checked)}
-          />
-        }
-        label={<Typography variant="body2">Show your pet inside your damage</Typography>}
-      />
-      <Typography variant="caption" color="text.secondary">
-        {combine
-          ? 'Your pet’s damage rides inside your bar, and appears once more as one row inside your breakdown — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
-          : 'Your pet gets its own bar beside yours, and each bar drills into its own skills.'}
-      </Typography>
-    </Stack>
-  )
-}
 
 // ------------------------------------------------------------------- the view
 
@@ -291,19 +237,7 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
         }
       ]
     },
-    {
-      id: 'combat',
-      label: 'Combat',
-      icon: <BarChartIcon fontSize="small" />,
-      items: [
-        {
-          id: 'combine-pet',
-          label: 'Show your pet inside your damage',
-          keywords: 'pet combine merge damage breakdown solo meter drill charm nest source zoom default level',
-          content: <PetNestingSetting />
-        }
-      ]
-    },
+    combatSection(),
     overlaysSection(),
     graphicsSection(),
     cursorRingSection(),

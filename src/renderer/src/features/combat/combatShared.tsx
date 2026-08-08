@@ -2,7 +2,7 @@
 // Extracted from CombatView so both surfaces render the SAME bar, the SAME category
 // colors and the SAME card chrome (one look, one source of truth).
 
-import { useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { Box, Collapse, Paper, Stack, Typography } from '@mui/material'
 import type { DamageCategory } from '@shared/combat'
 import { CATEGORY_LABEL } from '@shared/combat'
@@ -11,6 +11,7 @@ import { laneDps } from './petRows'
 import { MARKER_COLOR } from './markerStyle'
 import type { ProcAnnotation } from './procRows'
 import { landEvidence } from './landEvidence'
+import { useAbilityExpand } from './abilityExpand'
 import { abilityExpandable } from './abilityStats'
 import type { AbilityMulti } from './abilityStats'
 import type { FlatSkill, SkillRow } from './dashboardData'
@@ -405,9 +406,15 @@ export function SkillBar({
   // ONLY A STAT-BEARING ABILITY EXPANDS (JOS-113, owner): a melee/slay swing, anything that
   // multi-attacked, a spell that crit — click it and its crit/double/triple/miss open beneath it.
   // A DoT tick has none, so it is not clickable and does nothing (abilityStats.abilityExpandable).
+  //
+  // THE OPEN STATE IS NOT THIS COMPONENT'S ANY MORE (JOS-116). It was a `useState` here, which
+  // died with the view on every tab switch — the same lifecycle bug as the drill one level up. A
+  // surface that REMEMBERS (the Combat tab, the Overview card) provides the answer through
+  // `abilityExpand`; anywhere with no provider the hook falls back to exactly the local state this
+  // line used to hold, so nothing had to opt in to keep working.
   const multi = s.multi ?? null
   const expandable = abilityExpandable(s, multi)
-  const [open, setOpen] = useState(false)
+  const [open, toggle] = useAbilityExpand(s.category, s.name, expandable)
   const color = CAT_COLOR[s.category]
   const resists = s.resists ?? 0
   const a = approx ? '~' : ''
@@ -422,10 +429,11 @@ export function SkillBar({
         color={color}
         accent={color}
         pct={s.pct}
-        // `open` can only become true via the click below, which is wired only when expandable —
-        // so a non-expandable row is never outlined and never expands.
+        // `open` is already gated on `expandable` (useAbilityExpand), so a non-expandable row is
+        // never outlined and never expands — including a row that WAS expandable when its key was
+        // remembered and is not any more.
         selected={open}
-        onClick={expandable ? () => setOpen((o) => !o) : undefined}
+        onClick={expandable ? toggle : undefined}
         name={
           <>
             <SkillName name={s.name} category={s.category} plain={nested} />

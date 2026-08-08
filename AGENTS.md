@@ -1218,6 +1218,22 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `cameFrom` prop: five of those are five opinions about what Back means. A back
   affordance NAMES ITS DESTINATION ("Back to Planner"), and a breadcrumb root
   keeps meaning the place it reads. Session-lifetime only, nothing persisted.
+- **A VIEW UNMOUNTS ON EVERY TAB SWITCH, so `useState` in one is a promise you
+  cannot keep** (JOS-90, JOS-97, JOS-116 — the same bug three times).
+  `App`'s `ViewContent` mounts exactly ONE feature view at a time, so anything a
+  view is holding dies when the user glances at another tab. That is correct for
+  ephemeral things (a popover, a hover); it is a DEFECT for anything the user set
+  on purpose — a filter they ticked, a drill they opened, an ability they
+  expanded. Those go in a renderer pref (`eq.<feature>.*` in localStorage, the
+  `useCombatPrefs` idiom) or above the switch boundary. Two traps, both paid for:
+  **an effect cannot tell a click from a mount** — `useEffect(() => reset(),
+  [selection])` fires on mount, and again when an async value (the global fight
+  id) lands a frame later, wiping exactly what was just hydrated, so the reset
+  belongs on the CHANGE HANDLER (the overlay reached this first); and a stored
+  value must DEGRADE rather than error — a drill naming a source that has since
+  left the fight resolves to level 1 by itself (JOS-105). Prove it with a spec
+  that actually navigates and asserts the view was GONE first (sky-filters is the
+  template); a unit test of the read passes while the feature stays broken.
 - Search: input echoes instantly; filter on `useDeferredValue`; lowercase
   `searchKey` computed once per data change; long fixed-height lists
   windowed via `lib/useWindowedRows`, variable-height cap+paginate. These

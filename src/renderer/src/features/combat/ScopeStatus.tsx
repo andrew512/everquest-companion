@@ -1,7 +1,16 @@
-// THE SCOPE CHIP AND THE ROSTER BEHIND IT — docs/plans/group-model.md §3.
+// THE SCOPE READOUT AND THE ROSTER BEHIND IT — docs/plans/group-model.md §3.
 //
-// One control answering "whose damage am I looking at", and a popover answering the question it
+// One WORD answering "whose damage am I looking at", and a popover answering the question it
 // immediately provokes: "…and who does the app think is in my group, and why?"
+//
+// IT IS NO LONGER A CONTROL (JOS-115, owner: the You/Group/Everyone selector "is shown INLINE on
+// every combat surface and is too crowded"). Scope is now ONE persisted preference written in
+// Preferences > Combat and read by the Combat tab, the Overview card and every floating overlay
+// (features/combat/useCombatPrefs.ts). What survives here is the STATE — because a meter that is
+// filtering rows out must be able to say so on the surface where the rows are missing. `chipLabel`
+// is the whole reason: `Group (no roster yet)` is the sentence that explains why a Group-scoped
+// meter is showing everybody (law 1's fallback), and moving the control away must not take that
+// explanation with it. One word, no click, and the tooltip says where the choice lives.
 //
 // THE PROVENANCE IS THE POINT, not decoration. The roster is inferred from lines the game prints
 // once, so a member can be there because they joined (the game said so), because they hold the
@@ -38,10 +47,8 @@ import { Tooltip } from '../../lib/Tooltip'
 import { formatDate } from '../../lib/formatDate'
 import {
   SCOPE_HINT,
-  SCOPE_LABEL,
   SOURCE_LABEL,
   chipLabel,
-  nextScope,
   type MeterScope,
   type RosterMember,
   type RosterSnap
@@ -155,18 +162,16 @@ function RosterPanel({
 }
 
 /**
- * The chip itself. Clicking CYCLES the scope (You → Group → Everyone) — the frequent action, one
- * click, no menu — and the group icon beside it opens the roster. Two affordances rather than a
- * dropdown because they are two different frequencies: you change scope often and inspect the
- * roster rarely.
+ * The readout itself: the scope this meter is filtering by, stated and not offered, with the group
+ * icon beside it opening the roster. The roster button STAYS a control — it is the only place a
+ * mis-inferred group can be corrected, and correcting it is a different act from choosing a scope
+ * (JOS-115 moved the choice, not the correction).
  */
-export function ScopeChip({
+export function ScopeStatus({
   scope,
-  setScope,
   roster
 }: {
   scope: MeterScope
-  setScope: (s: MeterScope) => void
   roster: RosterSnap
 }): React.JSX.Element {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
@@ -179,12 +184,11 @@ export function ScopeChip({
 
   return (
     <>
-      <Tooltip title={`${SCOPE_HINT[scope]}. Click to switch to ${SCOPE_LABEL[nextScope(scope)]}.`}>
+      <Tooltip title={`${SCOPE_HINT[scope]}. Change it in Preferences > Combat.`}>
         <Chip
           size="small"
-          data-testid="meter-scope-chip"
+          data-testid="meter-scope-label"
           label={chipLabel(scope, roster)}
-          onClick={() => setScope(nextScope(scope))}
           // `minWidth: 0` is what lets this chip ELLIPSIZE instead of pushing the lens line past
           // its box. The label is world-state text of unbounded length — "Group" is 50px, but the
           // law-1 fallback spells itself out ("Group (no roster yet)") and measures 121px — and a

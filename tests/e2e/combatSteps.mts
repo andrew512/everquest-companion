@@ -34,6 +34,13 @@ import {
 } from './appHarness.mjs'
 import { drilled, meterRows } from './drill.mjs'
 import {
+  RETIRED_SCOPE_CHIP,
+  SCOPE_LABEL_SEL,
+  scopeFromPrefs,
+  setMeterScope,
+  type Scope
+} from './combatPrefsSteps.mjs'
+import {
   PET_BOUND_DAMAGE,
   PET_LEADER_BOUND_DAMAGE,
   PET_LEADER_LINES,
@@ -374,65 +381,92 @@ export async function stepScriptedPull(page: Page, log: FixtureLog): Promise<Sna
  * 6b. THE METER SCOPE — You / Group / Everyone (docs/plans/group-model.md §2), a different axis
  * from the Fight|Overall toggle: that one says WHICH segment, this one says WHOSE damage in it.
  *
- * THE ROSTER STATE IS NOT ASSERTED, because it belongs to whatever the live log happens to
- * contain: a log with group lines in it leaves `seen: true`, one without leaves `seen: false`,
- * and both are correct. What IS asserted is that the chip and the popover AGREE about which of
- * the two it is — the pairing is the identity, and it is the one that can actually break. They
- * are separate sentences derived from one flag, and a Group scope silently narrowing while the
- * popover says it is showing everyone is precisely the lie this surface exists to prevent.
+ * IT IS NO LONGER A CONTROL ON THIS SURFACE (JOS-115, owner: the selector "is shown INLINE on
+ * every combat surface and is too crowded"). It is ONE preference in Preferences > Combat, and
+ * the Combat tab keeps only the READOUT — because a meter that is filtering rows out has to be
+ * able to say so where the rows are missing. So this step walks the new shape: the chip is gone,
+ * the word is there, changing the preference two tabs away changes what this meter shows, and the
+ * roster popover (which was never a scope control) still opens.
+ *
+ * THE ROSTER STATE IS NOT ASSERTED, because it belongs to whatever the log happens to contain: a
+ * log with group lines in it leaves `seen: true`, one without leaves `seen: false`, and both are
+ * correct. What IS asserted is that the readout and the popover AGREE about which of the two it
+ * is — the pairing is the identity, and it is the one that can actually break. They are separate
+ * sentences derived from one flag, and a Group scope silently narrowing while the popover says it
+ * is showing everyone is precisely the lie this surface exists to prevent.
  */
 export async function stepMeterScope(page: Page): Promise<void> {
-  const chip = '[data-testid="meter-scope-chip"]'
-  check('the meter scope chip is on the combat toolbar', (await countOf(page, chip)) === 1)
+  check(
+    'the inline You/Group/Everyone control is GONE from the combat toolbar (JOS-115)',
+    (await countOf(page, RETIRED_SCOPE_CHIP)) === 0
+  )
+  check('…replaced by a readout of the preference', (await countOf(page, SCOPE_LABEL_SEL)) === 1)
 
-  const label = async (): Promise<string> => (await page.textContent(chip))?.trim() ?? ''
+  const label = async (): Promise<string> => (await page.textContent(SCOPE_LABEL_SEL))?.trim() ?? ''
 
-  // The default is Group either way — any fallback shows up in the chip's own words, never as a
-  // different scope silently selected for you.
+  // The default is Group either way — any fallback shows up in the readout's own words, never as
+  // a different scope silently selected for you.
   const first = await label()
   const noRoster = first === 'Group (no roster yet)'
   check('it defaults to Group', first === 'Group' || noRoster, first)
-  const baseline = await meterRows(page)
+  // …and the PREFERENCE agrees, on a profile that has never written the key: an absent value is
+  // Group, not You (owner ruling — "fresh install and absent key both resolve to Group").
+  const chosen = await scopeFromPrefs(page, 'nav-combat')
+  await settleCount(page, '[data-testid="combat-dashboard"]', 1, { timeoutMs: 20_000 })
+  check('an absent preference resolves to Group in the control too', chosen === 'group', chosen)
+  const baseline = await settle(() => meterRows(page), (n) => n > 0, { timeoutMs: 15_000 })
 
-  // One click per scope, all the way round. The cycle is the whole control on this surface, and
-  // the CONDITION each click produces is the chip's own next word.
-  const cycleTo = async (want: string): Promise<string> => {
-    await page.click(chip)
+  // THE PREFERENCE APPLIES. Setting it two tabs away is the whole control now, and the CONDITION
+  // each write produces is this surface's own next word.
+  //
+  // WAIT FOR THE BODY, not just for the header. Coming back from Preferences REMOUNTS this view,
+  // and its first frames render the hydrating skeleton while the first snapshot is in flight — the
+  // header (and this readout with it) is already there, so settling on the WORD alone would count
+  // the meter's rows before the meter had any. `combat-dashboard` is the body, and it exists only
+  // once there is a segment to rank.
+  const setTo = async (scope: Scope, want: string): Promise<string> => {
+    await setMeterScope(page, scope, 'nav-combat')
+    await settleCount(page, '[data-testid="combat-dashboard"]', 1, { timeoutMs: 20_000 })
     return settle(label, (t) => t === want, { timeoutMs: 8_000 })
   }
 
-  check('clicking cycles Group to Everyone', (await cycleTo('Everyone')) === 'Everyone', await label())
-  const everyone = await meterRows(page)
+  check('choosing Everyone in Preferences reaches the Combat tab', (await setTo('everyone', 'Everyone')) === 'Everyone', await label())
+  // The row count has to have STOPPED MOVING before it means anything: the panel is fed by a
+  // snapshot that arrives a beat after the remount, so a reading taken on the first frame is a
+  // reading of an empty meter (settleStable's argument, spelled with a floor).
+  const everyone = await settle(() => meterRows(page), (n) => n > 0, { timeoutMs: 15_000 })
   check('Everyone shows at least what Group did', everyone >= baseline, `${everyone} vs ${baseline}`)
 
-  check('clicking again cycles Everyone to You', (await cycleTo('You')) === 'You', await label())
-  // NO SCOPE EVER HIDES YOU OR YOUR PETS. The live log is the owner's own, so the rows here are
-  // his and his pets' — they must survive every scope, and only a member row may ever go.
-  const you = await meterRows(page)
+  check('…and so does choosing You', (await setTo('you', 'You')) === 'You', await label())
+  // NO SCOPE EVER HIDES YOU OR YOUR PETS. The rows here are yours and your pets' — they must
+  // survive every scope, and only a member row may ever go.
+  const you = await settle(() => meterRows(page), (n) => n > 0, { timeoutMs: 15_000 })
   check('You scope keeps your own rows — only a member is ever filtered', you >= 1 && you <= everyone, `${you} of ${everyone}`)
 
-  // PERSISTED PER SURFACE: the choice survives leaving the tab and coming back, because it is a
-  // stored preference and not component state.
+  // PERSISTED: the choice survives leaving the tab and coming back, because it is a stored
+  // preference and not component state.
   await page.click('[data-testid="nav-overview"]')
   await settleCount(page, '[data-testid="overview-grid"]')
   await page.click('[data-testid="nav-combat"]')
-  await settleCount(page, chip)
+  await settleCount(page, SCOPE_LABEL_SEL)
   check('the scope is remembered across a tab round trip', (await settle(label, (t) => t === 'You')) === 'You', await label())
 
-  // The roster popover (G3) — the answer to "who does the app think is with me, and why".
+  // The roster popover (G3) — the answer to "who does the app think is with me, and why". Still a
+  // control, and deliberately so: correcting a mis-inferred group is a different act from choosing
+  // a scope, and it belongs where the missing rows are.
   await page.click('[data-testid="roster-open"]')
   const opened = await settleCount(page, '[data-testid="roster-popover"]')
-  check('the roster popover opens from the chip', opened === 1)
+  check('the roster popover still opens beside the readout', opened === 1)
   const popover = (await page.textContent('[data-testid="roster-popover"]'))?.toLowerCase() ?? ''
   check('…and offers the add box for the join line the log never carried', popover.includes('add'))
   if (popover.includes('nobody on the roster') || popover.includes('no group signal')) {
     // THE PAIRING. An empty roster says which KIND of empty it is, and the sentence has to match
-    // the chip: `seen: false` falls back to Everyone (law 1), `seen: true` means the group ended
-    // and Group really is narrowing to you and your pets.
+    // the readout: `seen: false` falls back to Everyone (law 1), `seen: true` means the group
+    // ended and Group really is narrowing to you and your pets.
     check(
-      'the empty roster and the chip tell the same story',
+      'the empty roster and the readout tell the same story',
       noRoster ? popover.includes('no group signal') : popover.includes('nobody on the roster'),
-      `chip=${first} · popover=${popover.slice(0, 70)}`
+      `readout=${first} · popover=${popover.slice(0, 70)}`
     )
     check(
       '…and only the law-1 fallback claims to be showing everyone',
@@ -440,19 +474,20 @@ export async function stepMeterScope(page: Page): Promise<void> {
       popover.slice(0, 90)
     )
   } else {
-    note('the live log left real members on the roster — the empty-state wording was not exercised')
+    note('the log left real members on the roster — the empty-state wording was not exercised')
   }
 
-  // Close the popover and leave the surface on its default, so nothing downstream inherits a
-  // narrowed meter. Bounded: three clicks is a full cycle, whatever it is on now.
+  // Close the popover and put the preference back on its default, so nothing downstream inherits
+  // a narrowed meter.
   await page.keyboard.press('Escape')
   await settleGone(page, '[data-testid="roster-popover"]', { timeoutMs: 8_000 })
-  for (let i = 0; i < 3 && !(await label()).startsWith('Group'); i++) {
-    const was = await label()
-    await page.click(chip)
-    await settle(label, (t) => t !== was, { timeoutMs: 8_000 })
-  }
-  check('the meter is left on its Group default', (await label()).startsWith('Group'), await label())
+  await setMeterScope(page, 'group', 'nav-combat')
+  await settleCount(page, '[data-testid="combat-dashboard"]', 1, { timeoutMs: 20_000 })
+  check(
+    'the meter is left on its Group default',
+    (await settle(label, (t) => t.startsWith('Group'), { timeoutMs: 8_000 })).startsWith('Group'),
+    await label()
+  )
 }
 
 /**

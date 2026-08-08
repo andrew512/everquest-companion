@@ -16,12 +16,25 @@
 //
 // The card still shows DELIBERATELY LESS than the Combat tab, and that is a matter of PROPS
 // (`compact`, `maxRows`) rather than of different code: one label, one headline rate, one
-// supporting line, five rows. No scope toggle, no fight selector, no timeline, no
-// Outgoing/Incoming switch, no combat log. If you want any of those, that is what the link is
-// for (docs/plans/overview-tab.md §3.1).
+// supporting line, five rows. No fight selector, no timeline, no Outgoing/Incoming switch, no
+// combat log. If you want any of those, that is what the link is for
+// (docs/plans/overview-tab.md §3.1).
 //
-// The drill state is CARD-LOCAL and deliberately unpersisted: it must never move the Combat tab's
-// drill, and coming back to Overview always shows the glance, not wherever you had wandered.
+// IT DOES OBEY THE METER SCOPE (JOS-115). It never had a scope control and still has none — but
+// "no control" used to mean "no filter", so a user who set the meters to You still saw every
+// group-mate's bar on the glance card, which is the same two-surfaces-disagree defect JOS-105
+// opened with. Now the one persisted preference reaches here too, through the same
+// `meterScope.scopeSources`/`scopeTotals` pair the Combat tab's panel uses — including the
+// headline, because a total that counts rows the list is hiding is the "aggregates lie" failure
+// (law 5). The scope is STATED nowhere on this card: it is four rows tall, and the Combat tab
+// one click away carries the readout and the roster popover that explain it.
+//
+// The drill state is CARD-LOCAL — it must never move the Combat tab's drill — but it is no longer
+// UNPERSISTED (JOS-116). "Coming back to Overview always shows the glance" turned out to be a
+// description of the bug rather than a design: this view unmounts on every tab switch, so a drill
+// you had opened was gone the moment you looked at anything else. It now has its own remembered
+// slot (`useDrillMemory('overview')`, a different key from the tab's), so the card comes back
+// where you left it and the two surfaces still move independently.
 //
 // THE LABEL IS NOT RE-DERIVED. `fightScopeOptions(...).head.label` is the ONE place the honest
 // live/last wording is decided ("Current fight (live)" while a pull is open, "Last fight — <name>"
@@ -39,16 +52,20 @@
 // aggregate the Combat tab's panel header shows. Nesting the pet changes how the rows are laid
 // out, never what they sum to.
 
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useRef, type JSX } from 'react'
 import { Button, Stack, Typography } from '@mui/material'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
-import type { CombatSnapshot, SegmentView } from '@shared/combat'
+import type { CombatSnapshot, SegmentView, SourceView } from '@shared/combat'
 import { DashCard, QuietNote, fmtDur } from '../combat/combatShared'
 import { LIVE_SELECTION, fightScopeOptions, meterDrill, type Drill } from '../combat/dashboardData'
 import { DrillCrumb, MeterRows, crumbOf } from '../combat/MeterRows'
 import { meterPanel } from '../combat/petRows'
-import { useCombinePetRow } from '../combat/useCombatPrefs'
+import { scopeSources, scopeTotals } from '../combat/meterScope'
+import { useCombinePetRow, useMeterScope } from '../combat/useCombatPrefs'
+import { useDrillMemory } from '../combat/useDrillMemory'
+import { AbilityExpandProvider } from '../combat/abilityExpand'
 import type { CombatFocus } from '../combat/combatFocus'
+import { EMPTY_ROSTER, type MeterScope, type RosterSnap } from '@shared/roster'
 import { formatNum, formatRate } from '../../lib/formatRate'
 
 /** How many rows a GLANCE shows, at any level. The full list is one click away. */
@@ -59,9 +76,34 @@ export interface DpsCardProps {
   onOpenCombat: (f: CombatFocus) => void
 }
 
+/**
+ * The card's numbers once the METER SCOPE has had its say — the ranked rows and the three figures
+ * derived FROM those rows, never carried over from the unfiltered segment (law 5, and the same
+ * derivation `SegmentPanel.scopedDimension` makes so the two surfaces cannot disagree).
+ *
+ * The two rates ride through `scopeTotals` as well, because each shares its denominator with the
+ * total it belongs to: `outDps` divides by the segment's elapsed time and `activeDps` by its
+ * active seconds, so scaling either by the surviving fraction of the damage is exact rather than
+ * re-derived. When the scope removes nothing — every ungrouped session, which is most of them —
+ * every value comes back BY REFERENCE and by identity.
+ */
+interface ScopedView {
+  rows: SourceView[]
+  total: number
+  dps: number
+  activeDps: number
+}
+
+function scopedView(seg: SegmentView, scope: MeterScope, roster: RosterSnap): ScopedView {
+  const rows = scopeSources(seg.entities, scope, roster)
+  const { total, dps } = scopeTotals(seg.entities, rows, seg.outTotal, seg.outDps)
+  const { dps: activeDps } = scopeTotals(seg.entities, rows, seg.outTotal, seg.activeDps)
+  return { rows, total, dps, activeDps }
+}
+
 /** total · duration · active-time DPS — the secondary stat, never the headline (law 7). */
-function supportingLine(seg: SegmentView): string {
-  return `${formatNum(seg.outTotal)} total · ${fmtDur(seg.durationSec)} · ${formatRate(seg.activeDps)} active`
+function supportingLine(seg: SegmentView, v: ScopedView): string {
+  return `${formatNum(v.total)} total · ${fmtDur(seg.durationSec)} · ${formatRate(v.activeDps)} active`
 }
 
 function OpenInCombat({ onOpenCombat }: { onOpenCombat: (f: CombatFocus) => void }): JSX.Element {
@@ -93,18 +135,21 @@ function OpenInCombat({ onOpenCombat }: { onOpenCombat: (f: CombatFocus) => void
  */
 function DpsRows({
   seg,
+  rows,
   drill,
   setDrill,
   combinePetRow,
   onOpenCombat
 }: {
   seg: SegmentView
+  /** the SCOPED source list (scopedView above) — never `seg.entities` straight. */
+  rows: SourceView[]
   drill: Drill | null
   setDrill: (d: Drill | null) => void
   combinePetRow: boolean
   onOpenCombat: () => void
 }): JSX.Element {
-  const panel = meterPanel(seg.entities, combinePetRow, meterDrill(drill))
+  const panel = meterPanel(rows, combinePetRow, meterDrill(drill))
   const crumb = crumbOf(panel)
   return (
     <Stack sx={{ minWidth: 0 }}>
@@ -127,14 +172,32 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
   const head = fightScopeOptions(snap?.segments ?? []).head
   const seg = snap?.selected ?? null
   const [combinePetRow] = useCombinePetRow()
-  // Card-local, unpersisted: nothing here may move the Combat tab's drill.
+  // WHOSE damage — the app-wide preference (JOS-115), applied here exactly as it is on the Combat
+  // tab. `EMPTY_ROSTER` while the first snapshot is in flight makes Group render as Everyone for
+  // that instant, never an empty card.
+  const [meterScope] = useMeterScope()
+  const roster = snap?.roster ?? EMPTY_ROSTER
+  const view = seg ? scopedView(seg, meterScope, roster) : null
+  // Card-local but REMEMBERED (JOS-116) — its own key, so nothing here can move the Combat tab's
+  // drill and nothing there can move this one.
   //
-  // LEVEL 1 IS THE OPENING LEVEL, as it is on every other meter (JOS-35). The card used to open
-  // DRILLED whenever the pet preference was on — the last surviving `defaultDrill` in the tree —
-  // which meant a glance card and the tab it links to disagreed about what "no drill" shows.
-  // Changing the preference still resets the card, because the level-1 layout changes under it.
-  const [drill, setDrill] = useState<Drill | null>(null)
-  useEffect(() => setDrill(null), [combinePetRow])
+  // LEVEL 1 IS THE OPENING LEVEL FOR A FRESH INSTALL, as it is on every other meter (JOS-35). The
+  // card used to open DRILLED whenever the pet preference was on — the last surviving
+  // `defaultDrill` in the tree — which meant a glance card and the tab it links to disagreed about
+  // what "no drill" shows.
+  const { drill, setDrill, isOpen, setOpen } = useDrillMemory('overview')
+
+  // Changing the pet preference still resets the card, because the level-1 layout changes under
+  // it — but ONLY on an actual change. A bare `useEffect(…, [combinePetRow])` also fires on MOUNT,
+  // which is exactly when this card has just hydrated a stored drill, so it would undo the whole
+  // ticket every time you opened the Overview tab. The ref is what tells a user's flip from a
+  // mount; CombatView.undrilling is the same rule in its other shape.
+  const prevCombine = useRef(combinePetRow)
+  useEffect(() => {
+    if (prevCombine.current === combinePetRow) return
+    prevCombine.current = combinePetRow
+    setDrill(null)
+  }, [combinePetRow, setDrill])
 
   return (
     // The link down is offered even with nothing to show: "there are no fights" is a thing the
@@ -143,7 +206,7 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
     <DashCard title="Damage" testId="overview-dps" right={<OpenInCombat onOpenCombat={onOpenCombat} />}>
       {/* No fights at all ⇒ the same honest quiet state the Combat tab shows. It never borrows
           the zone aggregate to look busy — Overall is a click away and says so there. */}
-      {!head || !seg ? (
+      {!head || !seg || !view ? (
         <QuietNote>No fights yet — engage something and it’ll appear here.</QuietNote>
       ) : (
         <>
@@ -151,18 +214,24 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
             {head.label}
           </Typography>
           <Typography variant="h4" sx={{ color: 'primary.main', lineHeight: 1.15 }} data-testid="overview-dps-value">
-            {formatRate(seg.outDps)}
+            {formatRate(view.dps)}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ mb: 0.75 }}>
-            {supportingLine(seg)}
+            {supportingLine(seg, view)}
           </Typography>
-          <DpsRows
-            seg={seg}
-            drill={drill}
-            setDrill={setDrill}
-            combinePetRow={combinePetRow}
-            onOpenCombat={() => onOpenCombat({ scope: 'fight', selection: LIVE_SELECTION })}
-          />
+          {/* The inline per-ability stats a reader expanded are remembered beside the drill they
+              sit inside (JOS-116); the provider is how that answer reaches the shared SkillBar
+              without four components growing a pair of props they have no use for. */}
+          <AbilityExpandProvider value={{ isOpen, setOpen }}>
+            <DpsRows
+              seg={seg}
+              rows={view.rows}
+              drill={drill}
+              setDrill={setDrill}
+              combinePetRow={combinePetRow}
+              onOpenCombat={() => onOpenCombat({ scope: 'fight', selection: LIVE_SELECTION })}
+            />
+          </AbilityExpandProvider>
         </>
       )}
     </DashCard>
