@@ -354,3 +354,55 @@ regression run that this ticket is not the place for.
 - **2026-08-08** — first draft, written before any code, from a study of `parseCasts.ts`,
   `rulesets.ts`, `buffs.ts`/`buffsInstances.ts`/`buffsStats.ts`/`buffsView.ts`, `spells.json`
   (measured), the JOS-83 overlay conventions and the JOS-84/JOS-87/JOS-88 rulings.
+- **2026-08-08, built** — phases 1 (model) and 2 (surface) landed. Corrections the build made to
+  the draft above, each one measured rather than assumed:
+  - **`buildTimerRows` takes NO clock.** The draft gave it `nowMs`; nothing used it, because the
+    decision "is this row still worth showing" belongs to the module's own expiry sweep and the
+    reading against a clock is `timerReading`. Dropping it keeps the projection a pure fold over
+    two snapshots.
+  - **The mined-estimate branch is structurally covered, NOT observed** (the awaiting-sample law's
+    "say which"). A sweep of all 103 committed `tests/fixtures/*.log` through the DB-enabled
+    replay produced **zero** actives with `durationSource === 'observed'` — with the real
+    spells.json installed, every buff that survives own-cast gating is a spell the DB knows. So
+    that assertion is made on the projection over a typed `ActiveBuff`, and the test says so.
+  - **`CC_UNKNOWN_CAP_MS` is re-derived by a test, not computed at runtime.** Runtime derivation
+    would have needed the CC roster regex out of `rulesets.ts` and the DB inside the module; the
+    `charmCcRoster.test.mts` pattern (re-derive from `spells.json` against the parser's own
+    `ccSpell` on every run) gets the same guarantee with the constant staying a constant.
+  - **A death line for a mob we were never holding records no END.** The draft had `death` always
+    write one; that would have churned the snapshot on every kill in the zone AND been a second
+    opinion about a fact `retireEntity(key, {hostileOnly:true})` already settles.
+  - **The `module:delta` fan-out is a per-kind list, not a broadcast.** `pipeline.ts` forwarded
+    only to `'events'`, by name; it is now `MODULE_READING_OVERLAYS`. An overlay that reads no
+    module should not be woken ~10×/second.
+  - **`src/shared/types.ts` was at its 400-code-line ceiling**, so `OVERLAY_KINDS` stays on one
+    line. Noted here because the next kind added will hit it again.
+
+### What the e2e actually proved in the running app
+
+`tests/e2e/buffs-overlay.e2e.mts`, 18 checks, green:
+
+- a fresh install has it **OFF** and spawns no window for it;
+- toggling it open gives labelled `BUFFS` chrome, a close control and a lock control;
+- the first-open window is **3.4 %** of a 2560×1392 work area (invariant: < 25 %), on-screen;
+- opening mid-session **hydrates from the replay** — the fixture's own buffs render, with the
+  debuffs filed under the enemies they are on (`Your buffs` / `Lord Nagafen` /
+  `a fire giant warrior`), which is the per-target half of the reports' ask, unscripted;
+- **the chain-mez**: one `You begin casting Mesmerization III.` appended to the LIVE log, followed
+  by two `has been mesmerized.` broadcasts, produces **two rows, both named `Mesmerization`, both
+  counting down from 24 s, grouped under `a turmoil toad` and `a scareling`** — the whole real
+  path, chokidar → Tailer → parser → module → IPC → React;
+- one break line clears **only** its target and the other enemy keeps counting;
+- the ✕ closes the window and main records it closed.
+
+### Verification, final
+
+`npm run typecheck` (node+web) green · `npm run lint` green (no ratchet entries added) ·
+`npm test` **2484 pass / 0 fail / 2 skipped** (the two full-log tests, which need the real game
+log) · `npm run test:e2e` **23/23 green**.
+
+One caveat stated honestly: on the FIRST full e2e run `feedback.e2e.mts` failed its
+"owner-tools opt-in reads FALSE with nothing set" check. That is this machine's environment, not
+this branch — the owner has `EQ_OWNER_TOOLS=1` set user-wide (`setx`, exactly as AGENTS.md
+describes), so the spec's deliberately-bare launch inherits it. Re-running that spec with the
+variable cleared passes every check. Nothing in JOS-89 touches owner tools.
