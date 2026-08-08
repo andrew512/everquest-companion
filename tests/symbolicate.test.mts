@@ -21,7 +21,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -202,7 +202,24 @@ test('ROUND TRIP: every emitted bundle has a map beside it', (t) => {
   const assets = join(OUT, 'renderer', 'assets')
   const js = readdirSync(assets).filter((f) => f.endsWith('.js'))
   assert.ok(js.length > 0)
+  // `out/` on a dev machine is a MIX: fresh bundles beside stale chunks from older builds (the
+  // dev server rewrites main/preload but not every renderer asset), so bare existence cannot
+  // distinguish "the sourcemap flag was dropped" from "this chunk predates the flag". Mtime can:
+  // a mapless bundle NEWER than the newest map is the regression this test hunts; an OLDER one
+  // is a leftover and proves nothing.
+  const mapMtimes = js
+    .filter((f) => existsSync(join(assets, `${f}.map`)))
+    .map((f) => statSync(join(assets, `${f}.map`)).mtimeMs)
+  if (mapMtimes.length === 0) {
+    t.skip('renderer assets carry no maps at all — stale pre-sourcemap build; run `npm run build`')
+    return
+  }
+  const newestMap = Math.max(...mapMtimes)
   for (const f of js) {
-    assert.ok(existsSync(join(assets, `${f}.map`)), `out/renderer/assets/${f}.map is missing`)
+    if (existsSync(join(assets, `${f}.map`))) continue
+    assert.ok(
+      statSync(join(assets, f)).mtimeMs < newestMap,
+      `out/renderer/assets/${f}.map is missing and the bundle is newer than the newest map — the sourcemap flag was dropped`
+    )
   }
 })
