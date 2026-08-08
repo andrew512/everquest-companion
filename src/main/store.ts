@@ -477,7 +477,23 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // precisely the thing that would turn it ON — see migrateToV9, the one time this repo did
   // flip a stored default, whose comment says it is a one-time correction and never a policy
   // that the app may re-enable things.
-  buffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
+  buffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  // The DEBUFF/TIMER bars — the second half of the JOS-119 split.
+  //
+  // THE SPLIT NEEDS NO MIGRATION, AND THAT IS THE POINT. `overlays.buffs` KEEPS ITS KEY, so an
+  // existing install's stored buffs window — its bounds, its open flag, its alpha, its text scale
+  // — carries over byte for byte and lands on the window that still draws that user's buffs.
+  // `overlays.debuffs` has never been written by any build, so every upgrading store reads the
+  // default below and gets the new window OFF for free. A migration is precisely the thing that
+  // could turn something on (see migrateToV9, the one time this repo flipped a stored default, and
+  // its comment saying that was a one-time correction and never a policy), so there is none: the
+  // schema version is untouched at 11 and a store written by this build round-trips through the
+  // previous one unchanged.
+  //
+  // Its content moved rather than appeared: before this split the buffs window drew debuffs and
+  // mez holds too. Nobody LOSES a row — the rows are in a window that ships off, which is the same
+  // internal-validation stance JOS-89 shipped under and the owner's direction for this one.
+  debuffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.

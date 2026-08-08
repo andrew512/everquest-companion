@@ -1,20 +1,32 @@
-// BuffsOverlay (JOS-89) — the 'buffs' overlay kind: your self buffs, the debuffs you put on each
-// target, and a per-enemy crowd-control clock, so a chain-mez shows a named countdown per enemy.
-// Design record: docs/plans/buff-timer-overlay.md.
+// BuffsOverlay (JOS-89; split into TWO WINDOWS by JOS-119) — the timer-bar surface, rendered once
+// per timer kind: 'buffs' draws the beneficial spells you have running, 'debuffs' draws what you
+// have put on something else (debuffs plus the per-enemy crowd-control clocks, so a chain-mez
+// shows a named countdown per enemy). Design record: docs/plans/buff-timer-overlay.md.
 //
-// Ten user reports converge on this window. It ships DEFAULT OFF (store.ts DEFAULT_OVERLAY_CONFIG,
-// no migration) for internal validation before promotion — the owner's direction.
+// Ten user reports converge on this window; the owner then asked for the two halves to be windows
+// he could enable and place separately, because "what is on me" and "what is on them" are read at
+// different moments and belong in different corners of the screen. Both ship DEFAULT OFF (store.ts
+// DEFAULT_OVERLAY_CONFIG, no migration) — JOS-89's internal-validation stance, continued.
+//
+// ONE COMPONENT, TWO KINDS — the JOS-105 no-fork rule, and a copy of this file would be a defect.
+// Everything that differs between the two windows is DATA (`SURFACE` below): the chrome label, the
+// accent, the empty-state sentence, the heading a self row sits under, and which rows the surface
+// keeps. Everything else — the modules, the projection, the clock, the chrome, the footer — is
+// literally the same code running twice.
 //
 // A sibling of OverlayMeter and EventLogOverlay in the SAME overlay.html bundle (kind read from
-// `?kind=`), so it shares every piece of per-kind machinery: the persisted `overlays.buffs`
+// `?kind=`), so it shares every piece of per-kind machinery: the persisted `overlays.<kind>`
 // config, drag/resize, the bg-alpha slider, the text-scale stepper and the lock (pin) semantics.
 // Plain divs + inline styles, no MUI — the window has to be cheap to paint over the game.
 //
-// DATA: TWO modules, composed by ONE pure function. `buffs` owns the instances (self buffs,
-// per-target debuffs, the DB duration prior, own-cast gating, the death/zone censoring); the
-// small `buffTimers` module owns the per-target mez holds the buff model does not track. Neither
-// is re-folded here — `shared/buffTimers.ts buildTimerRows` is the projection, is pure, and is
-// what tests/buffTimers.test.mts drives over real fixture bytes. This file only draws it.
+// DATA: TWO modules, composed by ONE pure function, FOLDED ONCE — and then filtered. `buffs` owns
+// the instances (self buffs, per-target debuffs, the DB duration prior, own-cast gating, the
+// death/zone censoring); the small `buffTimers` module owns the per-target mez holds the buff
+// model does not track. Neither is re-folded here and NEITHER IS FORKED FOR THE SECOND WINDOW —
+// `shared/buffTimers.ts buildTimerRows` is the projection, `rowsForSurface` is the one-line split,
+// both are pure, and tests/buffTimers.test.mts drives them over real fixture bytes. This file only
+// draws the result. Two windows, one model: a second fold of the same events is the two-models
+// scar world-model law 4 is made of.
 //
 // THE HONESTY LAW ON SCREEN: a receding bar means spells.json STATED a duration. A row with no
 // bar and a `+` before its time is counting UP because nobody states one. The overlay never
@@ -26,7 +38,13 @@
 
 import { type JSX, useEffect, useMemo, useRef, useState } from 'react'
 import type { BuffsSnap, ModuleDelta } from '@shared/types'
-import { type BuffTimerRow, type BuffTimersSnap, buildTimerRows } from '@shared/buffTimers'
+import {
+  type BuffTimerRow,
+  type BuffTimersSnap,
+  type TimerOverlayKind,
+  buildTimerRows,
+  rowsForSurface
+} from '@shared/buffTimers'
 import { OverlayHeader } from './OverlayHeader'
 import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
@@ -34,9 +52,58 @@ import { type OverlayChrome, useOverlayChrome } from './useOverlayChrome'
 import { BuffTimerGroup } from './buffTimerBars'
 
 const GOLD = '#d9b25f'
+/** The debuff accent, and deliberately the same red `buffTimerBars.rowAccent` already gives a
+ *  debuff row — two windows that look alike at a glance would be worse than one. */
+const RED = '#e07a6a'
 
 const EMPTY_BUFFS: BuffsSnap = { active: [], stats: {} }
 const EMPTY_TIMERS: BuffTimersSnap = { holds: [], ends: [] }
+
+/**
+ * EVERYTHING THAT DIFFERS BETWEEN THE TWO WINDOWS, as data (JOS-119).
+ *
+ * If a change to one surface cannot be expressed as a row in this table, it is a change to BOTH
+ * surfaces and belongs in the component — that is the whole test for whether the no-fork rule is
+ * still holding.
+ *
+ * `dropFlash` is only on the buffs surface on purpose. The flash answers one of the ten reports —
+ * "flash/alert when a positive spell drops" — and a debuff or a mez ending is not a loss the
+ * player needs shouting at them; on the debuffs window the row simply leaves, which is the same
+ * information without the noise.
+ */
+const SURFACE: Record<
+  TimerOverlayKind,
+  {
+    tag: string
+    title: string
+    accent: string
+    tailTitle: string
+    selfLabel: string
+    empty: string
+    dropFlash: boolean
+  }
+> = {
+  buffs: {
+    tag: 'BUFFS',
+    title: 'Buffs & timers',
+    accent: GOLD,
+    tailTitle: 'Buffs you have running',
+    selfLabel: 'Your buffs',
+    empty: 'Watching for buffs you cast…',
+    dropFlash: true
+  },
+  debuffs: {
+    tag: 'DEBUFFS',
+    title: 'Debuffs & timers',
+    accent: RED,
+    tailTitle: 'Debuffs and crowd control you are holding',
+    // A debuff standing on YOU is still a target row in the model's sense of "not a buff of
+    // yours", so it needs a heading that is not the buffs window's "Your buffs".
+    selfLabel: 'On you',
+    empty: 'Watching for debuffs you land and mez you hold…',
+    dropFlash: false
+  }
+}
 
 /**
  * Hydrate one whole-snapshot module and ride its deltas. Both modules here ship their ENTIRE
@@ -139,12 +206,14 @@ function BuffsFooter({
   bgAlpha,
   textScale,
   patch,
-  noDrag
+  noDrag,
+  accent
 }: {
   bgAlpha: number
   textScale: number
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
+  accent: string
 }): JSX.Element {
   return (
     <div
@@ -172,7 +241,7 @@ function BuffsFooter({
         onChange={(e) => {
           patch({ bgAlpha: Number(e.target.value) })
         }}
-        style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 24, accentColor: GOLD, height: 4 }}
+        style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 24, accentColor: accent, height: 4 }}
       />
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
     </div>
@@ -180,8 +249,11 @@ function BuffsFooter({
 }
 
 /** Self rows first, then one block per target — the order `buildTimerRows` already produced; this
- *  only cuts it into the blocks the eye reads. */
-function groupRows(rows: BuffTimerRow[]): { key: string; label: string; inferred: boolean; rows: BuffTimerRow[] }[] {
+ *  only cuts it into the blocks the eye reads. `selfLabel` is the one per-surface word (SURFACE). */
+function groupRows(
+  rows: BuffTimerRow[],
+  selfLabel: string
+): { key: string; label: string; inferred: boolean; rows: BuffTimerRow[] }[] {
   const out: { key: string; label: string; inferred: boolean; rows: BuffTimerRow[] }[] = []
   for (const row of rows) {
     const key = row.group === 'self' ? 'self' : (row.targetKey ?? 'unknown')
@@ -193,7 +265,7 @@ function groupRows(rows: BuffTimerRow[]): { key: string; label: string; inferred
     }
     out.push({
       key,
-      label: row.group === 'self' ? 'Your buffs' : (row.target ?? 'Unknown target'),
+      label: row.group === 'self' ? selfLabel : (row.target ?? 'Unknown target'),
       inferred: row.inferredTarget === true,
       rows: [row]
     })
@@ -201,22 +273,25 @@ function groupRows(rows: BuffTimerRow[]): { key: string; label: string; inferred
   return out
 }
 
-export default function BuffsOverlay(): JSX.Element {
+export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.Element {
+  const surface = SURFACE[kind]
+  // BOTH kinds read BOTH modules. The window is a view; the model is not sliced per window, and
+  // `rowsForSurface` below is the only thing that knows these are two windows at all.
   const buffs = useWholeSnapshot<BuffsSnap>('buffs', EMPTY_BUFFS)
   const timers = useWholeSnapshot<BuffTimersSnap>('buffTimers', EMPTY_TIMERS)
   const nowMs = useSecondsClock()
   const { locked, bgAlpha, textScale, hovering, patch, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
     useOverlayChrome()
 
-  const rows = useMemo(() => buildTimerRows(buffs, timers), [buffs, timers])
-  const groups = useMemo(() => groupRows(rows), [rows])
+  const rows = useMemo(() => rowsForSurface(buildTimerRows(buffs, timers), kind), [buffs, timers, kind])
+  const groups = useMemo(() => groupRows(rows, surface.selfLabel), [rows, surface.selfLabel])
   const drops = useDropFlash(rows, nowMs)
 
   return (
     <div
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
-      data-testid="buffs-overlay"
+      data-testid={`${kind}-overlay`}
       style={{
         // 100%, NOT 100vw/100vh — a viewport unit inside the scaled content pane resolves against
         // the window and is then zoomed (overlayScale).
@@ -227,7 +302,7 @@ export default function BuffsOverlay(): JSX.Element {
         fontFamily: 'Inter, "Segoe UI", Roboto, system-ui, sans-serif',
         color: '#f2f2f2',
         background: `rgba(14,17,21,${bgAlpha})`,
-        border: locked ? '1px solid rgba(255,255,255,0.04)' : '1px solid rgba(217,178,95,0.4)',
+        border: locked ? '1px solid rgba(255,255,255,0.04)' : `1px solid ${surface.accent}66`,
         borderRadius: 8,
         boxSizing: 'border-box',
         overflow: 'hidden'
@@ -237,11 +312,11 @@ export default function BuffsOverlay(): JSX.Element {
           select — it shows what is on you and on your targets right now, which is one live set,
           not a set of segments. The lock pin and the close ✕ come from HeaderControls. */}
       <OverlayHeader
-        tag="BUFFS"
-        title="Buffs & timers"
-        titleColor={GOLD}
+        tag={surface.tag}
+        title={surface.title}
+        titleColor={surface.accent}
         tail={String(rows.length)}
-        tailTitle="Tracked buffs, debuffs and holds"
+        tailTitle={surface.tailTitle}
         tailColor="rgba(255,255,255,0.5)"
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock }}
       />
@@ -251,27 +326,30 @@ export default function BuffsOverlay(): JSX.Element {
           below stays at 1 so it cannot be pushed out of a small window. */}
       <OverlayContent textScale={textScale} testId="buff-timer-rows">
         {groups.length === 0 ? (
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', padding: '8px 2px' }}>
-            Watching for buffs you cast, debuffs you land, and mez you hold…
-          </div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', padding: '8px 2px' }}>{surface.empty}</div>
         ) : (
           groups.map((g) => (
             <BuffTimerGroup key={g.key} label={g.label} inferred={g.inferred} rows={g.rows} nowMs={nowMs} />
           ))
         )}
 
-        {drops.map((d) => (
-          <div
-            key={d.id}
-            data-testid="buff-timer-drop"
-            style={{ fontSize: 10, color: '#e07a6a', padding: '2px 4px' }}
-          >
-            {d.name} dropped
-          </div>
-        ))}
+        {surface.dropFlash &&
+          drops.map((d) => (
+            <div key={d.id} data-testid="buff-timer-drop" style={{ fontSize: 10, color: RED, padding: '2px 4px' }}>
+              {d.name} dropped
+            </div>
+          ))}
       </OverlayContent>
 
-      {!locked && <BuffsFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
+      {!locked && (
+        <BuffsFooter
+          bgAlpha={bgAlpha}
+          textScale={textScale}
+          patch={patch}
+          noDrag={noDrag}
+          accent={surface.accent}
+        />
+      )}
     </div>
   )
 }

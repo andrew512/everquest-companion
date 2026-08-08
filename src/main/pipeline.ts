@@ -62,7 +62,7 @@ export const epoch = new EpochDetector()
 export const sessionDetector = new SessionDetector()
 
 /** The overlay kinds that consume the generic module transport — see the fan-out below. */
-const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs']
+const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs', 'debuffs']
 
 // The extension framework. Modules own their slice of log-derived state and push
 // deltas to the renderer over the generic `module:delta` channel. Registration
@@ -75,8 +75,10 @@ export const registry = new ModuleRegistry({
     // registered LAST the row it appends is picked up by the same flush pass.
     feedAlertDelta(delta)
     // OVERLAYS THAT READ MODULES GET THE DELTA TOO. The 'events' overlay hydrates the eventFeed
-    // module and rides its deltas; the 'buffs' overlay (JOS-89) does the same for `buffs` +
-    // `buffTimers`. The fan-out stays an explicit per-kind list rather than a broadcast over
+    // module and rides its deltas; the 'buffs' and 'debuffs' overlays (JOS-89, split in JOS-119)
+    // do the same for `buffs` + `buffTimers` — two SURFACES over one model, so both subscribe to
+    // the same two modules and each keeps the rows that are its subject (shared/buffTimers.ts
+    // `timerRowSurface`). The fan-out stays an explicit per-kind list rather than a broadcast over
     // OVERLAY_KINDS: an overlay that reads no module has no business being woken ~10×/second,
     // and a new kind that DOES read one should have to say so here.
     for (const kind of MODULE_READING_OVERLAYS) {

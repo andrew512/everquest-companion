@@ -48,6 +48,23 @@
 // path (`buffApply` land → `buffFade` "worn off of <mob>") and DOES get the observed-first rule.
 
 import type { ActiveBuff, BuffsSnap } from './buffTypes'
+// Type-only: `shared/types.ts` is a value module (OVERLAY_KINDS) and this one is imported by the
+// node tests as a pure module, so the reference is erased at compile time and nothing follows it.
+import type { OverlayKind } from './types'
+
+// ----- the two TIMER SURFACES (JOS-119) -----
+
+/**
+ * The two overlay kinds this projection feeds. Their vocabulary lives HERE rather than in
+ * `shared/types.ts` (which is at its factoring ceiling) so that the rule deciding which window a
+ * row belongs to sits beside the function that builds the rows — one file, one answer.
+ */
+export type TimerOverlayKind = Extract<OverlayKind, 'buffs' | 'debuffs'>
+
+/** True for the two timer-bar kinds: they read the same modules and render the same component. */
+export function isTimerOverlayKind(kind: OverlayKind): kind is TimerOverlayKind {
+  return kind === 'buffs' || kind === 'debuffs'
+}
 
 // ----- the CC half's state (owned by main/modules/buffTimers.ts, rendered by the overlay) -----
 
@@ -136,6 +153,33 @@ export interface BuffTimerRow {
   mode: TimerMode
   /** ONLY on 'countdown', and ONLY a DB-stated number. */
   durationMs?: number
+}
+
+/**
+ * WHICH WINDOW A ROW BELONGS TO (JOS-119) — the whole split, as one pure function.
+ *
+ * The owner asked for two windows he can enable and place separately, NOT for two models: one
+ * source (`buildTimerRows` above) is folded once and each surface keeps the rows that are its
+ * subject. The discriminator is the row's own `kind`, which the model already carries:
+ *
+ *   'buff'            → the BUFFS window. A beneficial spell you have running. `group` is NOT the
+ *                       discriminator here: a Symbol on your pet and a Valor on the cleric you
+ *                       buffed are `group: 'target'` and are still BUFFS — routing them by target
+ *                       would file your own group buffs under "debuffs", which is a lie about what
+ *                       they are.
+ *   'debuff' | 'cc'   → the DEBUFFS window. What you have put ON something else: a slow, a snare,
+ *                       a mez hold. The owner rules mez and slow ARE debuffs, so the CC holds live
+ *                       here beside them rather than in a third place.
+ *
+ * Exhaustive over `BuffTimerRow['kind']` by construction — a new row kind has to choose a window.
+ */
+export function timerRowSurface(row: BuffTimerRow): TimerOverlayKind {
+  return row.kind === 'buff' ? 'buffs' : 'debuffs'
+}
+
+/** The rows one timer surface shows. Order is `buildTimerRows`' order, filtered — never re-sorted. */
+export function rowsForSurface(rows: readonly BuffTimerRow[], kind: TimerOverlayKind): BuffTimerRow[] {
+  return rows.filter((r) => timerRowSurface(r) === kind)
 }
 
 /** What a row reads RIGHT NOW. `fraction` is 1 at the landing and 0 at/after the stated end. */

@@ -25,22 +25,32 @@ export type { LootDisposition, ItemStatBlock }
  *   - 'toast' (docs/plans/celebration-toasts.md): the CELEBRATION strip — normally renders
  *                 nothing; a boss kill or a Sky quest completion animates a card in, holds, and
  *                 leaves. Not a meter: it has no selector, no drill and no scope.
- *   - 'buffs' (JOS-89, docs/plans/buff-timer-overlay.md): the BUFF/TIMER bars — your self buffs,
- *                 the debuffs you put on each target, and a per-enemy crowd-control clock, so a
- *                 chain-mez shows a named countdown per enemy. Ships DEFAULT OFF for internal
- *                 validation. It has no selector and no drill, and its bars obey one law: a
- *                 duration spells.json STATES counts down, a duration nobody states counts UP.
+ *   - 'buffs' / 'debuffs' (JOS-89, split in JOS-119; docs/plans/buff-timer-overlay.md): the
+ *                 BUFF/TIMER bars, as TWO windows over ONE model. 'buffs' draws the beneficial
+ *                 spells you have running (on yourself, on your pet, on whoever you buffed);
+ *                 'debuffs' draws what you have put ON something else — debuffs and the
+ *                 per-enemy crowd-control clocks (mez and slow ARE debuffs, owner ruling), so a
+ *                 chain-mez shows a named countdown per enemy. They are two SURFACES, not two
+ *                 models: both hydrate the same `buffs` + `buffTimers` modules and both project
+ *                 through `shared/buffTimers.ts buildTimerRows`; the only difference is which
+ *                 rows each one keeps (`overlayShowsRow`). Both ship DEFAULT OFF — JOS-89's
+ *                 internal-validation stance continues. Neither has a selector or a drill, and
+ *                 both obey one law: a duration spells.json STATES counts down, a duration
+ *                 nobody states counts UP.
  * Each kind has its own independently-persisted OverlayConfig (bounds/alpha/lock/text size/drill)
  * and can be open simultaneously. IPC channels + the store are keyed by this.
  *
  * APPEND NEW KINDS AT THE END. `overlayLayout.ts` derives a kind's reserved dock slot from its
  * INDEX here and `tests/overlayLayout.test.mts` pins the exact bounds of slots 0–2, so inserting
- * in the middle moves somebody's window. The wrap has room for the six meter kinds below (slot 5
- * lands in the second column on a 1366×728 laptop); a SEVENTH would clamp a third column onto the
- * second and the layout test will say so.
+ * in the middle moves somebody's window. The SEVENTH meter kind ('debuffs') is the one this note
+ * used to warn about: on a 1366×728 laptop seven uniform 380×320 slots cannot be laid out without
+ * a column landing on its neighbour. That is now answered in `overlayLayout.ts` — the uniform size
+ * SHRINKS (uniformly, all kinds together) on a display that cannot hold the full reserved grid —
+ * rather than by silently overlapping two windows. Add an eighth and the same machinery absorbs it.
  */
-export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'buffs'
-export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'buffs']
+export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'buffs' | 'debuffs'
+// prettier-ignore
+export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'buffs', 'debuffs']
 
 /** True for the two HEALING overlay kinds (they render HealMeter, not OverlayMeter). */
 export function isHealOverlayKind(kind: OverlayKind): boolean {
@@ -51,6 +61,11 @@ export function isHealOverlayKind(kind: OverlayKind): boolean {
 export function isFightOverlayKind(kind: OverlayKind): boolean {
   return kind === 'fight' || kind === 'heal-fight'
 }
+
+// The TIMER kinds' vocabulary (`TimerOverlayKind` / `isTimerOverlayKind` / `timerRowSurface`) is
+// NOT here: it lives in `shared/buffTimers.ts` beside the projection whose rows it routes, so the
+// two windows' one rule sits in one file. This module is at its factoring ceiling anyway — the
+// same argument that put `ToastOverlayConfig` in ./toast.
 
 /**
  * The overlay meter's mini drill-down (Task #54): which entity's flat ability list is on screen.

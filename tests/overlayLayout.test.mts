@@ -13,6 +13,14 @@
 // in the bottom-right stack — so the meter assertions run over METER_KINDS and the toast gets
 // its own geometry test below. Adding it must not have moved any meter's reserved slot, which
 // is what the last test in this file checks.
+//
+// JOS-119 ADDED THE SEVENTH METER KIND ('debuffs') and with it the case rule 2 could no longer
+// satisfy at a fixed size: seven 380x320 slots do not fit a 1366x728 work area under ANY column
+// arrangement (three columns and two rows is six). So the uniform size is now a function of the
+// display — it shrinks, all kinds together, until the reserved grid fits — and rule 1 is stated
+// PER WORK AREA. `uniform on this display` is the property; `always 380x320` never was one that
+// could survive a seventh window, and the alternative was two windows opening on top of each
+// other, which is the thing this file exists to forbid.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -34,7 +42,7 @@ const overlaps = (a: Bounds, b: Bounds): boolean =>
 test('every METER kind opens at ONE uniform default size', () => {
   const sizes = METER_KINDS.map((k) => overlayDefaultSize(k))
   const first = sizes[0]
-  assert.ok(METER_KINDS.length >= 5, 'all five meter kinds are still registered')
+  assert.ok(METER_KINDS.length >= 7, 'every meter kind is still registered')
   for (const [i, s] of sizes.entries()) {
     assert.deepEqual(s, first, `${METER_KINDS[i]} must use the uniform size`)
   }
@@ -44,12 +52,43 @@ test('every METER kind opens at ONE uniform default size', () => {
   assert.ok(first.height >= 300, `height ${first.height} must not be smaller than the old event log`)
 })
 
+test('…and the size stays uniform ON EVERY DISPLAY, even where it had to shrink', () => {
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const sizes = METER_KINDS.map((k) => overlayDefaultSize(k, wa))
+    for (const [i, s] of sizes.entries()) {
+      assert.deepEqual(s, sizes[0], `${name}/${METER_KINDS[i]}: not the same size as its siblings`)
+    }
+    // Never LARGER than the shipped size — the ladder only ever goes down.
+    assert.ok(sizes[0].width <= 380 && sizes[0].height <= 320, `${name}: ${JSON.stringify(sizes[0])}`)
+  }
+})
+
+test('a display big enough for the whole stack is untouched at the shipped size', () => {
+  // 1080p and up seat all seven reserved slots at 380x320, so nobody with an ordinary monitor
+  // sees a smaller first-open window because a kind was added.
+  for (const name of ['1080p', '1440p', 'offset display']) {
+    const s = overlayDefaultSize('fight', WORK_AREAS[name])
+    assert.deepEqual(s, { width: 380, height: 320 }, `${name} should not have needed to shrink`)
+  }
+})
+
+test('a small laptop SHRINKS the stack rather than stacking two windows on one spot', () => {
+  // The exact case shared/types.ts used to warn about. Seven 380x320 slots cannot be laid out on
+  // a 1366x728 work area; the answer is a smaller uniform slot, never an overlap (proven by the
+  // no-overlap test below, which runs over this work area too).
+  const wa = WORK_AREAS['small laptop']
+  const s = overlayDefaultSize('fight', wa)
+  assert.ok(s.width < 380, `expected a shrunk slot on a small laptop, got ${JSON.stringify(s)}`)
+  // …and still a readable window, not a postage stamp.
+  assert.ok(s.width >= 260 && s.height >= 220, `shrunk too far: ${JSON.stringify(s)}`)
+})
+
 test('the reserved slots never overlap and stay inside the work area', () => {
   for (const [name, wa] of Object.entries(WORK_AREAS)) {
     const placed = METER_KINDS.map((k) => defaultOverlayBounds(k, wa))
     for (const [i, b] of placed.entries()) {
-      assert.equal(b.width, overlayDefaultSize(METER_KINDS[i]).width)
-      assert.equal(b.height, overlayDefaultSize(METER_KINDS[i]).height)
+      assert.equal(b.width, overlayDefaultSize(METER_KINDS[i], wa).width)
+      assert.equal(b.height, overlayDefaultSize(METER_KINDS[i], wa).height)
       assert.ok(b.x >= wa.x, `${name}/${METER_KINDS[i]}: off the left edge`)
       assert.ok(b.y >= wa.y, `${name}/${METER_KINDS[i]}: off the top edge`)
       assert.ok(b.x + b.width <= wa.x + wa.width, `${name}/${METER_KINDS[i]}: off the right edge`)
@@ -150,4 +189,29 @@ test('the toast holds NO slot in the meter stack — adding it moved nothing', (
   assert.deepEqual(stack[0], { width: 380, height: 320, x: 1524, y: 704 })
   assert.deepEqual(stack[1], { width: 380, height: 320, x: 1524, y: 374 })
   assert.deepEqual(stack[2], { width: 380, height: 320, x: 1524, y: 44 })
+})
+
+// ---- the two timer windows (JOS-119) ----------------------------------------------------
+
+/**
+ * TWO WINDOWS, PLACED SEPARATELY — the ticket, as geometry.
+ *
+ * The owner asked for buffs and debuffs to be windows he can move independently. The half of that
+ * this file owns is the FIRST open: they must not arrive on top of one another, and neither may be
+ * the screen-filling window JOS-83's report described. Everything after the first open is the
+ * store's job — each kind persists its own bounds under `overlays.<kind>` — which
+ * tests/e2e/buffs-overlay.e2e.mts drives against the real app.
+ */
+test('buffs and debuffs are two distinct stacked kinds with two distinct slots', () => {
+  assert.ok(METER_KINDS.includes('buffs') && METER_KINDS.includes('debuffs'), 'both timer kinds stack')
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const b = defaultOverlayBounds('buffs', wa)
+    const d = defaultOverlayBounds('debuffs', wa)
+    assert.ok(b.x !== d.x || b.y !== d.y, `${name}: the two timer windows open at the same spot`)
+    assert.ok(!overlaps(b, d), `${name}: ${JSON.stringify(b)} overlaps ${JSON.stringify(d)}`)
+    for (const [label, box] of [['buffs', b] as const, ['debuffs', d] as const]) {
+      const share = (box.width * box.height) / (wa.width * wa.height)
+      assert.ok(share < 0.25, `${name}/${label}: covers ${(share * 100).toFixed(1)}% of the display`)
+    }
+  }
 })

@@ -428,7 +428,8 @@ const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   'heal-fight': 'Fight Healing Overlay',
   'heal-overall': 'Zone Healing Overlay',
   toast: 'Celebration Overlay',
-  buffs: 'Buff Timer Overlay'
+  buffs: 'Buff Timer Overlay',
+  debuffs: 'Debuff Timer Overlay'
 }
 
 /**

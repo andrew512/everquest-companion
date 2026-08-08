@@ -16,7 +16,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { FIXTURES, readFixture, replayBuffTimers, tsOf } from './harness.mts'
-import { buildTimerRows, statedDuration, timerReading, type BuffTimerRow } from '../src/shared/buffTimers.ts'
+import {
+  buildTimerRows,
+  rowsForSurface,
+  statedDuration,
+  timerReading,
+  timerRowSurface,
+  type BuffTimerRow
+} from '../src/shared/buffTimers.ts'
 import { CC_UNKNOWN_CAP_MS } from '../src/main/modules/buffTimers.ts'
 import { getParserConfig } from '../src/main/log/rulesets.ts'
 import type { ActiveBuff, SpellDbFile } from '../src/shared/types.ts'
@@ -370,5 +377,95 @@ test('every row id is stable and unique within a snapshot', () => {
     const { rows } = replayBuffTimers(readFixture(name))
     const ids = rows.map((r) => r.id)
     assert.equal(new Set(ids).size, ids.length, `${name}: duplicate row ids ${ids.join(', ')}`)
+  }
+})
+
+// ---------------------------------------------------------------------------------------------
+// TWO WINDOWS, ONE MODEL (JOS-119). The owner asked for buffs and debuffs to be separate windows
+// he can enable and place independently. The split is a FILTER over the rows this file already
+// pins — not a second fold, not a second model — so the property that matters is a PARTITION:
+// every row lands on exactly one surface and nothing is invented or lost on the way.
+// ---------------------------------------------------------------------------------------------
+
+test('the two timer surfaces PARTITION the rows — nothing lost, nothing duplicated', () => {
+  for (const name of ALL_FIXTURES) {
+    const { rows } = replayBuffTimers(readFixture(name))
+    const buffRows = rowsForSurface(rows, 'buffs')
+    const debuffRows = rowsForSurface(rows, 'debuffs')
+    assert.equal(
+      buffRows.length + debuffRows.length,
+      rows.length,
+      `${name}: ${rows.length} rows split into ${buffRows.length} + ${debuffRows.length}`
+    )
+    const ids = new Set([...buffRows, ...debuffRows].map((r) => r.id))
+    assert.equal(ids.size, rows.length, `${name}: a row reached both windows, or neither`)
+    // …and the order inside each window is the model's own order, untouched by the filter.
+    assert.deepEqual(buffRows, rows.filter((r) => buffRows.includes(r)), `${name}: buffs re-ordered`)
+    assert.deepEqual(debuffRows, rows.filter((r) => debuffRows.includes(r)), `${name}: debuffs re-ordered`)
+  }
+})
+
+test('a beneficial spell goes to the BUFFS window even when it is on somebody else', () => {
+  // g2-buff-fanout.log is the fixture that has one buff up on several entities. `group` is not the
+  // discriminator: a buff you put on your pet is `group: 'target'` and is still a BUFF, so routing
+  // by target would file your own group buffs under "debuffs".
+  const { rows } = replayBuffTimers(readFixture('g2-buff-fanout.log'))
+  const onOthers = rows.filter((r) => r.kind === 'buff' && r.group === 'target')
+  assert.ok(onOthers.length > 0, 'the fan-out fixture should leave a buff standing on somebody else')
+  for (const r of onOthers) {
+    assert.equal(timerRowSurface(r), 'buffs', `${r.name} on ${r.target ?? '?'} was filed as a debuff`)
+  }
+  assert.ok(
+    rowsForSurface(rows, 'buffs').some((r) => r.group === 'target'),
+    'the buffs window must carry the buffs you put on other people'
+  )
+})
+
+test('the chain-mez lands on the DEBUFFS window, and the buffs window never sees a mez', () => {
+  // The owner rules mez and slow ARE debuffs, so the CC holds belong beside the debuffs rather
+  // than in a third place. This is the ten-reports scenario, routed.
+  const { rows } = replayBuffTimers(W10, { until: LANDED })
+  const debuffRows = rowsForSurface(rows, 'debuffs')
+  const buffRows = rowsForSurface(rows, 'buffs')
+
+  const mez = debuffRows.filter((r) => r.kind === 'cc' && r.name === 'Mesmerization')
+  assert.equal(mez.length, 2, 'both mez holds belong to the debuffs window')
+  assert.deepEqual(
+    mez.map((r) => r.target).sort(),
+    ['a scareling', 'a turmoil toad'],
+    'per-target, on the debuffs window'
+  )
+  assert.equal(buffRows.some((r) => r.kind === 'cc' || r.kind === 'debuff'), false, 'a debuff reached the buffs window')
+  assert.equal(debuffRows.some((r) => r.kind === 'buff'), false, 'a buff reached the debuffs window')
+})
+
+test('a slow you put on a mob is a DEBUFF row on the debuffs window, not a buff', () => {
+  // The ActiveBuff path (land → "worn off of <mob>"), which is the other half of what the debuffs
+  // window is for. MEASURED on the committed fixture: the full w10 replay leaves Shiftless Deeds
+  // (the slow the owner's Plane of Fear pull opens with) and Tashani standing on their targets.
+  const { rows } = replayBuffTimers(W10)
+  const debuffs = rows.filter((r) => r.kind === 'debuff')
+  assert.ok(debuffs.length > 0, 'the Cazic pull should leave debuff rows standing')
+  assert.ok(
+    debuffs.some((r) => r.name === 'Shiftless Deeds'),
+    `the slow itself should be one of them: ${debuffs.map((r) => r.name).join(', ')}`
+  )
+  for (const r of debuffs) assert.equal(timerRowSurface(r), 'debuffs', `${r.name} was filed as a buff`)
+  // …and they arrive on the debuffs window under the enemy they are on, not under a self heading.
+  const onDebuffWindow = rowsForSurface(rows, 'debuffs')
+  for (const r of debuffs) {
+    assert.ok(onDebuffWindow.includes(r), `${r.name} never reached the debuffs window`)
+    assert.equal(r.group, 'target', `${r.name} on ${r.target ?? '?'} is not filed per target`)
+  }
+})
+
+test('a debuff row is never routed by GROUP — the row kind is the whole discriminator', () => {
+  // The regression this guards: routing by `group` would send every buff you put on your pet or
+  // your group to the debuffs window, and would send a debuff standing on YOU to the buffs one.
+  for (const name of ALL_FIXTURES) {
+    const { rows } = replayBuffTimers(readFixture(name))
+    for (const r of rows) {
+      assert.equal(timerRowSurface(r), r.kind === 'buff' ? 'buffs' : 'debuffs', `${name}: ${r.id}`)
+    }
   }
 })
