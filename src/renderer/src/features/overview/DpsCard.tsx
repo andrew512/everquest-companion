@@ -1,15 +1,27 @@
 // DpsCard — "how hard am I hitting, right now", and the way down to the Combat tab.
 //
-// It shows DELIBERATELY LESS than the Combat tab: one label, one headline rate, one supporting
-// line, a handful of rows. No scope toggle, no fight selector, no timeline, no Outgoing/Incoming
-// switch, no combat log. If you want any of those, that is what the link is for
-// (docs/plans/overview-tab.md §3.1).
+// IT IS THE COMBAT TAB'S METER, COMPACT (JOS-105, owner: "the Overview tab's damage panel behaves
+// differently from the Combat tab - bars are not clickable, drill does not work. It must use THE
+// EXACT SAME components so behavior is identical everywhere: combat overlay = combat module =
+// overview combat tab. No forked panel implementations.").
 //
-// It does now have ONE interaction of its own: the rows open on YOUR damage breakdown (the same
-// default the Combat tab drills to), with the pet nested as one line item that drills into the
-// pet's own skills, and a back chevron that steps out to the plain source list. That state is
-// CARD-LOCAL and deliberately unpersisted: it must never move the Combat tab's drill, and coming
-// back to Overview always shows the glance, not wherever you had wandered.
+// What was forked, and is now gone:
+//   * its own drill vocabulary (`sources | self | pet`) beside the app's `Drill` union;
+//   * its own row components — a bare `Bar` with no `onClick`, so a source bar that drilled on
+//     the Combat tab was INERT here, which is the defect the ticket opens with;
+//   * its own call into `ownBreakdown`/`nestedRows`, reaching past the shared row builder.
+// It now holds a `Drill` token, hands it to `petRows.meterPanel` like every other meter, and
+// renders `MeterRows` — the same components, the same clicks, the same three levels, including
+// the damage-type level where the multi-attack stats live.
+//
+// The card still shows DELIBERATELY LESS than the Combat tab, and that is a matter of PROPS
+// (`compact`, `maxRows`) rather than of different code: one label, one headline rate, one
+// supporting line, five rows. No scope toggle, no fight selector, no timeline, no
+// Outgoing/Incoming switch, no combat log. If you want any of those, that is what the link is
+// for (docs/plans/overview-tab.md §3.1).
+//
+// The drill state is CARD-LOCAL and deliberately unpersisted: it must never move the Combat tab's
+// drill, and coming back to Overview always shows the glance, not wherever you had wandered.
 //
 // THE LABEL IS NOT RE-DERIVED. `fightScopeOptions(...).head.label` is the ONE place the honest
 // live/last wording is decided ("Current fight (live)" while a pull is open, "Last fight — <name>"
@@ -28,26 +40,19 @@
 // out, never what they sum to.
 
 import { useEffect, useState, type JSX } from 'react'
-import { Box, Button, IconButton, Stack, Typography } from '@mui/material'
-import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
+import { Button, Stack, Typography } from '@mui/material'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
-import type { CombatSnapshot, SegmentView, SourceView } from '@shared/combat'
-import { Bar, CAT_COLOR, DashCard, KIND_COLOR, QuietNote, fmtDur } from '../combat/combatShared'
-import { LIVE_SELECTION, fightScopeOptions } from '../combat/dashboardData'
-import { PetBar } from '../combat/PetBar'
-import { meterSources, nestedRows, ownBreakdown, type OwnRow } from '../combat/petRows'
+import type { CombatSnapshot, SegmentView } from '@shared/combat'
+import { DashCard, QuietNote, fmtDur } from '../combat/combatShared'
+import { LIVE_SELECTION, fightScopeOptions, meterDrill, type Drill } from '../combat/dashboardData'
+import { DrillCrumb, MeterRows, crumbOf } from '../combat/MeterRows'
+import { meterPanel } from '../combat/petRows'
 import { useCombinePetRow } from '../combat/useCombatPrefs'
 import type { CombatFocus } from '../combat/combatFocus'
 import { formatNum, formatRate } from '../../lib/formatRate'
 
 /** How many rows a GLANCE shows, at any level. The full list is one click away. */
 const TOP_ROWS = 5
-
-/**
- * The card's own drill. `sources` is the plain source list (the un-drilled view, and what this
- * card showed before the default changed); `self` is your breakdown; `pet` is one pet's own.
- */
-type CardDrill = { kind: 'sources' } | { kind: 'self' } | { kind: 'pet'; id: string }
 
 export interface DpsCardProps {
   snap: CombatSnapshot | null
@@ -78,89 +83,14 @@ function OpenInCombat({ onOpenCombat }: { onOpenCombat: (f: CombatFocus) => void
   )
 }
 
-/** The one-line "you are one level down" strip: a compact chevron back plus what you're in. */
-function DrillStrip({ label, onBack }: { label: string; onBack: () => void }): JSX.Element {
-  return (
-    <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mb: 0.25, minWidth: 0 }}>
-      <IconButton size="small" data-testid="overview-dps-back" onClick={onBack} sx={{ p: 0.25 }}>
-        <ChevronLeftIcon sx={{ fontSize: 16 }} />
-      </IconButton>
-      <Typography variant="caption" color="text.secondary" noWrap>
-        {label}
-      </Typography>
-    </Stack>
-  )
-}
-
-/** The honest tail when the card's cap is truncating — and the way to the full list. */
-function MoreRows({ n, onOpenCombat }: { n: number; onOpenCombat: () => void }): JSX.Element {
-  return (
-    <Typography
-      variant="caption"
-      color="text.disabled"
-      onClick={onOpenCombat}
-      sx={{ cursor: 'pointer', '&:hover': { color: 'text.secondary' } }}
-    >
-      +{n} more
-    </Typography>
-  )
-}
-
-/** One row of a breakdown list: your skill lane, or the nested pet (which drills). */
-function BreakdownRow({ row, onDrill }: { row: OwnRow; onDrill: (id: string) => void }): JSX.Element {
-  if (row.kind === 'pet') {
-    return (
-      <Box data-testid="overview-dps-drill">
-        <PetBar pet={row.pet} pct={row.pct} onDrill={() => onDrill(row.pet.id)} />
-      </Box>
-    )
-  }
-  return (
-    <Bar
-      color={CAT_COLOR[row.skill.category]}
-      accent={CAT_COLOR[row.skill.category]}
-      pct={row.pct}
-      name={row.skill.name}
-      right={formatNum(row.skill.total)}
-    />
-  )
-}
-
 /**
- * The plain source list — the un-drilled level (one row per source, pets included). This is what
- * the card showed before the default became "drilled"; `hasSelf` offers the way back down.
+ * The rows for whatever level the card is on, plus the crumb that frames them — the SHARED body,
+ * at glance density.
+ *
+ * The proc-rate annotations are deliberately not passed: they belong to the Combat tab's wider
+ * rows, and an unlabelled `3.1 ppm` tag squeezed into a quarter-width bar is noise. Nothing else
+ * differs, and nothing here is a second implementation of anything.
  */
-function SourceLevel({
-  entities,
-  hasSelf,
-  onDrill
-}: {
-  entities: SourceView[]
-  hasSelf: boolean
-  onDrill: () => void
-}): JSX.Element {
-  if (entities.length === 0) return <QuietNote>Nothing has landed in this fight yet.</QuietNote>
-  return (
-    <>
-      {entities.slice(0, TOP_ROWS).map((e, i) => (
-        <Bar key={e.id} color={KIND_COLOR[e.kind] ?? '#888'} pct={e.pct} rank={i + 1} name={e.name} right={formatRate(e.dps)} />
-      ))}
-      {hasSelf && (
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          data-testid="overview-dps-drill"
-          onClick={onDrill}
-          sx={{ cursor: 'pointer', '&:hover': { color: 'text.secondary' } }}
-        >
-          your breakdown ›
-        </Typography>
-      )}
-    </>
-  )
-}
-
-/** The rows for whatever level the card is on, plus the strip/tail that frame them. */
 function DpsRows({
   seg,
   drill,
@@ -169,50 +99,26 @@ function DpsRows({
   onOpenCombat
 }: {
   seg: SegmentView
-  drill: CardDrill
-  setDrill: (d: CardDrill) => void
+  drill: Drill | null
+  setDrill: (d: Drill | null) => void
   combinePetRow: boolean
   onOpenCombat: () => void
 }): JSX.Element {
-  const own = ownBreakdown(seg.entities, combinePetRow)
-  // A drilled pet that is no longer in this fight falls back to your breakdown rather than to a
-  // blank list — the same "stale drill degrades to its parent" rule the Combat tab uses.
-  const pet = drill.kind === 'pet' ? seg.entities.find((e) => e.id === drill.id) ?? null : null
-  if (drill.kind === 'sources') {
-    return (
-      <Stack sx={{ minWidth: 0 }}>
-        {/* Through the SAME fold the meters rank (petRows.meterSources), so the pet is inside
-            your bar here too whenever the preference says it is — this card and the Combat tab
-            must never disagree about how many rows the fight had (JOS-35). */}
-        <SourceLevel
-          entities={meterSources(seg.entities, combinePetRow)}
-          hasSelf={!!own.self}
-          onDrill={() => setDrill({ kind: 'self' })}
-        />
-      </Stack>
-    )
-  }
-  const rows = pet ? nestedRows(pet, []) : own.rows
-  const shown = rows.slice(0, TOP_ROWS)
-
+  const panel = meterPanel(seg.entities, combinePetRow, meterDrill(drill))
+  const crumb = crumbOf(panel)
   return (
     <Stack sx={{ minWidth: 0 }}>
-      <DrillStrip
-        label={pet ? pet.name : 'your damage'}
-        onBack={() => setDrill(pet ? { kind: 'self' } : { kind: 'sources' })}
+      {crumb && <DrillCrumb crumb={crumb.crumb} parent={crumb.parent} compact setDrill={setDrill} />}
+      <MeterRows
+        panel={panel}
+        activeSec={seg.activeSec}
+        procs={[]}
+        setDrill={setDrill}
+        compact
+        maxRows={TOP_ROWS}
+        onMore={onOpenCombat}
+        empty="Nothing has landed in this fight yet."
       />
-      {shown.length === 0 ? (
-        <QuietNote>Nothing has landed in this fight yet.</QuietNote>
-      ) : (
-        shown.map((r) => (
-          <BreakdownRow
-            key={r.kind === 'pet' ? r.pet.id : `${r.skill.category}|${r.skill.name}`}
-            row={r}
-            onDrill={(id) => setDrill({ kind: 'pet', id })}
-          />
-        ))
-      )}
-      {rows.length > shown.length && <MoreRows n={rows.length - shown.length} onOpenCombat={onOpenCombat} />}
     </Stack>
   )
 }
@@ -222,11 +128,13 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
   const seg = snap?.selected ?? null
   const [combinePetRow] = useCombinePetRow()
   // Card-local, unpersisted: nothing here may move the Combat tab's drill.
-  // The level the card OPENS on follows the preference — combined, your breakdown is the
-  // interesting list; uncombined, the pet is a source of its own and hiding it behind a drill
-  // would make the glance card show strictly less than it used to.
-  const [drill, setDrill] = useState<CardDrill>(() => (combinePetRow ? { kind: 'self' } : { kind: 'sources' }))
-  useEffect(() => setDrill(combinePetRow ? { kind: 'self' } : { kind: 'sources' }), [combinePetRow])
+  //
+  // LEVEL 1 IS THE OPENING LEVEL, as it is on every other meter (JOS-35). The card used to open
+  // DRILLED whenever the pet preference was on — the last surviving `defaultDrill` in the tree —
+  // which meant a glance card and the tab it links to disagreed about what "no drill" shows.
+  // Changing the preference still resets the card, because the level-1 layout changes under it.
+  const [drill, setDrill] = useState<Drill | null>(null)
+  useEffect(() => setDrill(null), [combinePetRow])
 
   return (
     // The link down is offered even with nothing to show: "there are no fights" is a thing the

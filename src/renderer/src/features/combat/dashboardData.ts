@@ -98,13 +98,38 @@ export function groupSlay(rows: SkillRow[]): SkillRow[] {
 }
 
 /**
- * Drill-down selection (union). `entity` = the level-2 flat skill list for one source
- * (the existing meter drill). `target` = the level-2 flat skill list for everything you
- * and your pet landed on ONE mob (driven by the Damage-by-mob panel). They are mutually
- * exclusive by construction: picking either replaces the other, so the main panel always
- * has exactly one level-2 subject and one breadcrumb.
+ * Drill-down selection (union) — ONE token, one mechanic, every damage surface (JOS-105).
+ *
+ * `entity`   = level 2, the flat lane list for one source (the meter drill).
+ * `category` = level 3, ONE damage type of that source: its lanes (slash vs crush), its crit and
+ *              resist rates, and the multi-attack reading that used to be a second panel beside
+ *              the drill (`categoryDrill.ts`). It carries the entity id as well as the category
+ *              so it resolves on its own and so Back has a parent to return to.
+ * `target`   = the flat skill list for everything you and your pet landed on ONE mob (driven by
+ *              the Damage-by-mob panel; Combat tab only).
+ *
+ * They are mutually exclusive by construction: picking any replaces the other, so the panel
+ * always has exactly one subject and one breadcrumb.
  */
-export type Drill = { kind: 'entity'; entityId: string } | { kind: 'target'; target: string }
+export type Drill =
+  | { kind: 'entity'; entityId: string }
+  | { kind: 'category'; entityId: string; category: DamageCategory }
+  | { kind: 'target'; target: string }
+
+/**
+ * The drill token as the ROW BUILDER wants it (`petRows.meterPanel`). The mob arm is not a source
+ * drill at all, so it resolves to `null` — level 1 — exactly as an explicit un-drill does.
+ *
+ * This is the one translation between the Combat tab's union and the shape the overlay already
+ * persists (`OverlayDrill`), which is why the overlay hands its stored value straight to the
+ * builder and needs no translation of its own.
+ */
+export function meterDrill(drill: Drill | null): { entityId: string; category?: DamageCategory | null } | null {
+  if (!drill) return null
+  if (drill.kind === 'entity') return { entityId: drill.entityId }
+  if (drill.kind === 'category') return { entityId: drill.entityId, category: drill.category }
+  return null
+}
 
 /**
  * Flatten a source's per-category skill lists into ONE list ranked by damage desc, and

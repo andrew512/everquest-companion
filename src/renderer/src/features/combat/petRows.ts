@@ -51,7 +51,10 @@
 //     reads `outTotal`, so the two can't drift.
 
 import { flattenSkills, type SkillRow } from './dashboardData'
-import type { SourceView } from '@shared/combat'
+// The drill's third level — one damage type of one source, including the multi-attack reading
+// that used to be a panel beside the meter (JOS-105).
+import { categoryDrill, type CategoryDrillView } from './categoryDrill'
+import type { DamageCategory, SourceView } from '@shared/combat'
 
 /** The synthetic line item that stands for ONE pet inside your breakdown. */
 export interface PetRow {
@@ -282,21 +285,47 @@ export type MeterPanel =
       pets: SourceView[]
       rows: OwnRow[]
     }
+  | {
+      level: 3
+      /** the source whose damage type is open — the row Back returns to. */
+      subject: SourceView
+      detail: CategoryDrillView
+    }
 
 /**
- * THE ROW BUILDER. Both damage meters call exactly this, with exactly their own drill id: the
- * Combat tab passes `drill.kind === 'entity' ? drill.entityId : null`, the overlay passes its
- * persisted `drill?.entityId ?? null`. `null` means LEVEL 1 on both — one spelling, one level, so
- * the two surfaces cannot open on different things. Everything downstream — nesting, ranking,
- * bar widths, the pet's real name, the parent for the crumb — is decided here, once.
+ * A drill as the builder takes it: a source, and optionally ONE of its damage types. It is
+ * exactly the shape the overlay persists (`OverlayDrill`), so that surface hands its stored value
+ * straight in; the Combat tab and the Overview card translate their richer union with
+ * `dashboardData.meterDrill`.
+ */
+export interface MeterDrill {
+  entityId: string
+  category?: DamageCategory | null
+}
+
+/**
+ * THE ROW BUILDER. Every damage meter calls exactly this, with exactly its own drill token — the
+ * Combat tab and the Overview card through `dashboardData.meterDrill`, the overlay by handing
+ * over the value it persisted. `null` means LEVEL 1 on all three: one spelling, one level, so no
+ * two surfaces can open on different things. Everything downstream — nesting, ranking, bar
+ * widths, the pet's real name, the parent for the crumb, and the category detail — is decided
+ * here, once.
  *
  * The drill is resolved against the RAW entity list, never the folded one: a pet that has no
  * level-1 bar of its own while combine is on is still a perfectly good drill subject (it is a
  * line item inside your breakdown, and a persisted drill straight into it must still resolve).
+ *
+ * EVERY STALE DRILL DEGRADES ONE LEVEL, never to a blank list: an entity id that resolves to
+ * nothing renders level 1, and a category this source never dealt renders level 2. The caller's
+ * stored value is untouched either way, so the drill re-applies the moment the data is back.
  */
-export function meterPanel(entities: SourceView[], combine: boolean, entityId: string | null): MeterPanel {
-  const subject = entityId === null ? undefined : entities.find((e) => e.id === entityId)
+export function meterPanel(entities: SourceView[], combine: boolean, drill: MeterDrill | null): MeterPanel {
+  const subject = drill ? entities.find((e) => e.id === drill.entityId) : undefined
   if (!subject) return { level: 1, sources: meterSources(entities, combine) }
+  if (drill?.category) {
+    const detail = categoryDrill(subject, drill.category)
+    if (detail) return { level: 3, subject, detail }
+  }
   // Pets nest into YOUR row only: a pet inside a pet would be a fiction, and an enemy's row in
   // the Incoming direction has no pets of yours in it at all.
   const nestable = combine ? petSources(entities) : []

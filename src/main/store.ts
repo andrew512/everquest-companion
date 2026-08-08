@@ -474,8 +474,21 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   next.bgAlpha = Math.max(0, Math.min(1, next.bgAlpha))
   next.textScale = clampTextScale(next.textScale)
   // The drill is remembered UI state from the overlay renderer — normalize anything malformed
-  // (and `undefined`) down to level 1 so the stored shape stays exactly `{entityId} | null`.
-  next.drill = next.drill && typeof next.drill.entityId === 'string' ? { entityId: next.drill.entityId } : null
+  // (and `undefined`) down to level 1 so the stored shape stays exactly
+  // `{entityId, category?} | null`.
+  //
+  // THE CATEGORY IS PART OF THE SHAPE NOW (JOS-105 — the drill's third level, one damage type of
+  // that source). It is rebuilt field by field on purpose, so a renderer patch can never widen
+  // what is persisted; the cost of that discipline is that a field added upstream and not added
+  // HERE is silently dropped, which is exactly what happened while this ticket was in flight —
+  // the overlay opened level 3 optimistically and the round trip pulled it back to level 2, so
+  // the next click on the crumb fell all the way out to level 1 (the e2e caught it). An absent
+  // or malformed category is simply level 2; the value itself is not checked against the
+  // taxonomy, because an unknown one already degrades to level 2 in `petRows.meterPanel`.
+  const drilled = next.drill && typeof next.drill.entityId === 'string' ? next.drill : null
+  next.drill = drilled
+    ? { entityId: drilled.entityId, ...(typeof drilled.category === 'string' ? { category: drilled.category } : null) }
+    : null
   // The toast blob is renderer-writable too (the Preferences sound picker), so it is clamped
   // by its own normalizer rather than trusted — same rule as bgAlpha/textScale above. Only the
   // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
