@@ -1580,8 +1580,8 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   stays fully click-through but RENDERS the persisted drill read-only. The
   drill persists per kind in `overlays.<kind>.drill` (config IS the drill
   state — no renderer mirror; stale ids render level 1 without clearing).
-  SEVEN kinds now: fight/overall (damage), heal-fight/heal-overall, events,
-  buffs (JOS-89 — see below),
+  EIGHT kinds now: fight/overall (damage), heal-fight/heal-overall, events,
+  buffs + debuffs (JOS-89, split by JOS-119 — see below),
   and toast (celebration cards — docs/plans/celebration-toasts.md: transient
   top-center, hover pins, queue reducer in overlay/toastQueue.ts; producers in
   App.tsx, payloads resolved in main/toast.ts). The toast is the ONE kind that
@@ -1666,6 +1666,34 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   8 ms sampler, animation frame, last-surface-wins — and asserts on what was
   on the SCREEN; it reproduces the twitch on the old path first, so the fixed
   assertion means something.
+- **…AND IT IS TWO WINDOWS, OVER ONE MODEL (JOS-119).** The owner asked for
+  buffs and debuffs to be windows he can enable and place separately, so the
+  one 'buffs' kind became 'buffs' + 'debuffs' — two configs, two windows, two
+  toggles in the title-bar Overlay menu. **THE SPLIT IS A FILTER, NOT A
+  FORK**: `buildTimerRows` still folds the `buffs` + `buffTimers` modules
+  exactly once and `shared/buffTimers.ts timerRowSurface` routes each row by
+  its own `kind` — `buff` to the buffs window, `debuff`/`cc` to the debuffs
+  one (the owner rules mez and slow ARE debuffs). `group` is deliberately NOT
+  the discriminator: a Symbol on your pet is `group:'target'` and is still a
+  BUFF, so routing by target would file your own group buffs under debuffs.
+  ONE component (`BuffsOverlay.tsx` + a `kind` prop; everything that differs
+  is one `SURFACE` data table) — a copy would be the defect. NO MIGRATION and
+  that is the design: `overlays.buffs` keeps its key so an existing install's
+  bounds/open/alpha carry over, `overlays.debuffs` was never written by any
+  build so it reads the default and arrives OFF, schema stays at 11.
+  **THE SEVENTH METER SLOT BROKE THE FIXED SIZE, exactly as the old note in
+  shared/types.ts predicted**: seven 380×320 slots do not fit a 1366×728 work
+  area under ANY arrangement (three columns, two rows = six). So the uniform
+  first-open size is a FUNCTION OF THE DISPLAY now — a fixed shrink ladder,
+  largest rung whose grid seats every kind wins, all kinds shrinking together
+  — rather than clamping a column onto its neighbour. 1080p and larger are
+  untouched at 380×320; the laptop opens everything at 323×272.
+  Two measured gotchas from its e2e: a programmatic `setBounds` from MAIN does
+  NOT raise Electron's `moved`/`resized`, so `saveOverlayBounds` never fires
+  and a spec proving persistence must write through `overlay:setConfig` (the
+  IPC a real drag lands on); and `overlayWindow()` matched `?kind=` by
+  SUBSTRING, which `kind=debuffs` containing `kind=buffs` quietly broke — it
+  parses the query now.
 - **GRAPHICS COMPATIBILITY IS TWO SWITCHES, AND NEITHER IS INSTANT (JOS-40).**
   A player on an RTX 5080 reported the overlays black-screen artifacting; it
   cannot be reproduced here and they left no contact, so the app ships

@@ -178,12 +178,17 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
           <Checkbox size="small" edge="start" checked={overlayState.events} tabIndex={-1} disableRipple />
           <ListItemText primary="Event log" secondary="Alerts, notable loot, quest completions" />
         </MenuItem>
-        {/* JOS-89: the buff/timer bars. Same per-kind machinery again; the one thing that makes
-            it different from its neighbours is that it ships DEFAULT OFF and this menu row is
-            the only way to meet it. */}
+        {/* JOS-89, split into two windows by JOS-119: the timer bars. Same per-kind machinery
+            again, and TWO rows because they are two windows — separately enabled, separately
+            placed, so "what is on me" and "what is on them" can live in different corners. Both
+            ship DEFAULT OFF and these rows are the only way to meet them. */}
         <MenuItem dense onClick={() => { toggle('buffs') }}>
           <Checkbox size="small" edge="start" checked={overlayState.buffs} tabIndex={-1} disableRipple />
-          <ListItemText primary="Buffs & timers" secondary="Your buffs, debuffs and mez, per target" />
+          <ListItemText primary="Buffs & timers" secondary="Buffs you have running, with timers" />
+        </MenuItem>
+        <MenuItem dense onClick={() => { toggle('debuffs') }}>
+          <Checkbox size="small" edge="start" checked={overlayState.debuffs} tabIndex={-1} disableRipple />
+          <ListItemText primary="Debuffs & timers" secondary="Debuffs and mez you are holding, per target" />
         </MenuItem>
       </Menu>
     </Box>

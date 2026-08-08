@@ -1,23 +1,27 @@
 /**
- * Headless Electron smoke test for the BUFFS/TIMER OVERLAY (JOS-89,
- * docs/plans/buff-timer-overlay.md).
+ * Headless Electron smoke test for the TWO TIMER OVERLAYS (JOS-89, split into two windows by
+ * JOS-119 — docs/plans/buff-timer-overlay.md).
  *
  * WHAT ONLY THE REAL APP CAN SHOW. The entry model is pinned on real fixture bytes in
- * tests/buffTimers.test.mts (the chain-mez, the honesty law, the death clear); the ≤25 % geometry
- * over every work area is pinned in tests/overlayLayout.test.mts; the text-scale seam in
- * tests/overlayTextScale.test.mts. What no unit test can claim is that the PIECES ARE WIRED —
- * that the kind ships OFF, that toggling it spawns a window with labelled chrome and a close
- * affordance, and above all that a mez cast into the LIVE LOG travels the whole real path
- * (chokidar → Tailer → parseEvent → BuffTimersModule → registry flush → `module:delta` → the
- * overlay's own fan-out in pipeline.ts → React) and comes out as a NAMED, PER-TARGET COUNTDOWN.
+ * tests/buffTimers.test.mts (the chain-mez, the honesty law, the death clear, and — since
+ * JOS-119 — that the two surfaces PARTITION the rows); the ≤25 % geometry over every work area is
+ * pinned in tests/overlayLayout.test.mts; the text-scale seam in tests/overlayTextScale.test.mts.
+ * What no unit test can claim is that the PIECES ARE WIRED — that both kinds ship OFF, that each
+ * toggles into a window of its own with labelled chrome and a close affordance, that the two
+ * windows are genuinely INDEPENDENT (open, position and close, one without the other), and above
+ * all that a mez cast into the LIVE LOG travels the whole real path (chokidar → Tailer →
+ * parseEvent → BuffTimersModule → registry flush → `module:delta` → the overlay's own fan-out in
+ * pipeline.ts → React) and comes out as a NAMED, PER-TARGET COUNTDOWN.
  *
- * That last one is the ticket. Ten user reports asked to chain-mez four or five enemies and see a
- * countdown per enemy; this spec casts one AE mez at two mobs in the running app and reads the
- * two rows back out of the DOM.
+ * That last one is the ticket JOS-89 shipped for. Ten user reports asked to chain-mez four or five
+ * enemies and see a countdown per enemy; this spec casts one AE mez at two mobs in the running app
+ * and reads the two rows back out of the DOM. JOS-119's ticket is the one beside it: those mez rows
+ * now have to arrive on the DEBUFFS window and be ABSENT from the buffs one, which is asserted both
+ * ways — a filter that shows the right rows here and the wrong ones there is still a bug.
  *
- * IT SHIPS DEFAULT OFF, and every launch here gets a fresh userData dir — so this spec is always
- * a first run, which makes it the one place that can prove "off" is what a new install gets. That
- * is asserted BEFORE anything is toggled.
+ * BOTH SHIP DEFAULT OFF, and every launch here gets a fresh userData dir — so this spec is always
+ * a first run, which makes it the one place that can prove "off" is what a new install gets for
+ * BOTH kinds. That is asserted BEFORE anything is toggled.
  *
  * NO WINDOW IS EVER SHOWN. `EQ_E2E=1` is the whole test mode (src/main/e2e.ts): the main window
  * never shows and overlays skip `showInactive`. So this spec drives the app's own bridges rather
@@ -95,67 +99,110 @@ function castChainMez(log: FixtureLog): void {
   log.appendAt(new Date(at.getTime() + 1000), 'a turmoil toad has been mesmerized.', 'a scareling has been mesmerized.')
 }
 
-async function stepDefaultOff(page: Page, app: ElectronApplication): Promise<void> {
-  const state = await bridge(page).state()
-  check('a fresh install has the buff/timer overlay OFF (owner: validate internally first)', state.buffs === false, JSON.stringify(state))
-  // …and no window for it exists, which is the part a stored flag alone could lie about.
-  const spawned = app.windows().length
-  let found = false
-  for (const w of app.windows()) {
-    const search = await w.evaluate(() => window.location.search).catch(() => '')
-    if (search.includes('kind=buffs')) found = true
+/** The two timer kinds, and the chrome each one has to be wearing (JOS-119). */
+const SURFACES = {
+  buffs: {
+    testid: 'buffs-overlay',
+    tag: 'BUFFS',
+    title: 'Buffs & timers',
+    empty: 'Watching for buffs you cast'
+  },
+  debuffs: {
+    testid: 'debuffs-overlay',
+    tag: 'DEBUFFS',
+    title: 'Debuffs & timers',
+    empty: 'Watching for debuffs you land'
   }
-  check('…and no buffs overlay window was spawned at startup', !found, `${spawned} window(s) open`)
+} as const
+type TimerKind = keyof typeof SURFACES
+interface Bounds {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
-async function stepOpenAndChrome(page: Page, app: ElectronApplication): Promise<Page | null> {
-  const open = await bridge(page).toggle('buffs')
-  if (!check('toggling it from the overlay menu reports it OPEN', open === true)) return null
+/** How many windows the app currently has open on a given `?kind=`. */
+async function windowsOfKind(app: ElectronApplication, kind: string): Promise<number> {
+  let hit = 0
+  for (const w of app.windows()) {
+    const search = await w.evaluate(() => window.location.search).catch(() => '')
+    // Exact match on the query: `kind=buffs` is a SUBSTRING of `kind=debuffs`, so a naive
+    // `includes` would count the debuffs window as a buffs one and every independence
+    // assertion below would pass for the wrong reason.
+    if (new URLSearchParams(search).get('kind') === kind) hit++
+  }
+  return hit
+}
 
-  const overlay = await overlayWindow(app, 'buffs')
-  if (!check('…and a window for kind=buffs really exists', overlay !== null)) return null
+async function stepDefaultOff(page: Page, app: ElectronApplication): Promise<void> {
+  const state = await bridge(page).state()
+  check(
+    'a fresh install has BOTH timer overlays OFF (owner: validate internally first)',
+    state.buffs === false && state.debuffs === false,
+    JSON.stringify(state)
+  )
+  // …and no window for either exists, which is the part a stored flag alone could lie about.
+  const spawned = app.windows().length
+  const open = { buffs: await windowsOfKind(app, 'buffs'), debuffs: await windowsOfKind(app, 'debuffs') }
+  check(
+    '…and neither timer overlay window was spawned at startup',
+    open.buffs === 0 && open.debuffs === 0,
+    `${spawned} window(s) open, ${JSON.stringify(open)}`
+  )
+}
+
+async function stepOpenAndChrome(page: Page, app: ElectronApplication, kind: TimerKind): Promise<Page | null> {
+  const s = SURFACES[kind]
+  const open = await bridge(page).toggle(kind)
+  if (!check(`toggling ${kind} from the overlay menu reports it OPEN`, open === true)) return null
+
+  const overlay = await overlayWindow(app, kind)
+  if (!check(`…and a window for kind=${kind} really exists`, overlay !== null)) return null
   const o = overlay
 
-  // LABELLED CHROME + A CLOSE AFFORDANCE — the JOS-83 conventions, in the DOM.
-  const surface = await settle(() => countOf(o, '[data-testid="buffs-overlay"]'), (n) => n === 1, {
+  // LABELLED CHROME + A CLOSE AFFORDANCE — the JOS-83 conventions, in the DOM. The testid is
+  // per kind, so this also proves the right COMPONENT mounted behind the right query.
+  const surface = await settle(() => countOf(o, `[data-testid="${s.testid}"]`), (n) => n === 1, {
     timeoutMs: 20_000
   })
-  check('the surface mounts', surface === 1)
+  check(`the ${kind} surface mounts`, surface === 1)
   const tag = await o.evaluate(() => document.body.innerText)
-  check('…with the labelled BUFFS chrome', tag.includes('BUFFS'), tag.slice(0, 120))
-  check('…and its title', tag.includes('Buffs & timers'))
-  // Unlocked (this kind's default), so the header's controls are real and reachable. The close
+  check(`…with the labelled ${s.tag} chrome`, tag.includes(s.tag), tag.slice(0, 120))
+  check('…and its title', tag.includes(s.title), tag.slice(0, 120))
+  // Unlocked (both kinds' default), so the header's controls are real and reachable. The close
   // affordance is selected by the aria-label the shared IconButton already carries.
   check('…and a visible close control', (await countOf(o, 'button[aria-label="Close overlay"]')) === 1)
   check('…and the lock (click-through) control beside it', (await countOf(o, 'button[aria-label^="Lock"]')) === 1)
 
   // IT HYDRATES FROM THE REPLAY, and that is worth pinning on its own: opening the window mid
   // session must show what the model already holds, not an empty pane waiting for the next cast.
-  // (The fixture's replay leaves real buffs standing, so the quiet empty state is the OTHER
+  // (The fixture's replay leaves real rows standing, so the quiet empty state is the OTHER
   // branch here — asserted as an either/or so this step states a fact about both.)
   // settleStable, not settle: there is no single condition to wait FOR here (either branch is a
   // pass), so the honest wait is "until the reading stops changing" — wave E3's rule for
   // asserting a steady state rather than betting on a clock.
   const first = await settleStable(() => rows(o), { timeoutMs: 20_000 })
   check(
-    'the window shows what the model already holds, or says it is watching — never a blank pane',
-    first.length > 0 || tag.includes('Watching for buffs'),
+    `the ${kind} window shows what the model already holds, or says it is watching — never a blank pane`,
+    first.length > 0 || tag.includes(s.empty),
     `${first.length} row(s)`
   )
-  if (first.length > 0) {
+  if (kind === 'debuffs' && first.length > 0) {
     // PER-TARGET, out of the replay alone: the fixture's debuffs are grouped under the enemy they
-    // are on, which is the first half of what the reports asked for.
+    // are on, which is the first half of what the reports asked for — and, since JOS-119, the
+    // whole subject of this window.
     const g = await groups(o)
     check(
       '…and a debuff you landed is filed under the enemy it is on',
-      g.some((x) => x !== 'Your buffs'),
+      g.some((x) => x !== 'Your buffs' && x !== 'On you'),
       JSON.stringify(g)
     )
   }
   return o
 }
 
-async function stepGeometry(app: ElectronApplication, overlay: Page): Promise<void> {
+async function stepGeometry(app: ElectronApplication, overlay: Page, kind: TimerKind): Promise<void> {
   // Read from MAIN — the answer to "it covered my whole screen". The pure invariant is pinned per
   // work area in tests/overlayLayout.test.mts; this is the real window on the real display.
   const win = await app.browserWindow(overlay)
@@ -163,7 +210,7 @@ async function stepGeometry(app: ElectronApplication, overlay: Page): Promise<vo
   const area = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea)
   const share = (bounds.width * bounds.height) / (area.width * area.height)
   check(
-    'the first-open buff overlay is a small window, not a screen-filling one (≤25%)',
+    `the first-open ${kind} overlay is a small window, not a screen-filling one (≤25%)`,
     share < 0.25 && bounds.width < area.width && bounds.height < area.height,
     `${JSON.stringify(bounds)} on ${JSON.stringify(area)} (${(share * 100).toFixed(1)}%)`
   )
@@ -174,7 +221,96 @@ async function stepGeometry(app: ElectronApplication, overlay: Page): Promise<vo
   )
 }
 
-async function stepChainMez(overlay: Page, log: FixtureLog): Promise<void> {
+/**
+ * TWO WINDOWS, PLACED SEPARATELY — the JOS-119 ticket, against the real app.
+ *
+ * Three separate claims, because three separate things could be shared by accident: the windows
+ * do not open on top of each other (the reserved-slot layout), moving one does not move the other
+ * (two real BrowserWindows), and each PERSISTS its own bounds under its own store key
+ * (`overlays.<kind>`) rather than through a single shared config.
+ */
+async function stepIndependentBounds(
+  app: ElectronApplication,
+  buffsOverlay: Page,
+  debuffsOverlay: Page
+): Promise<void> {
+  const buffsWin = await app.browserWindow(buffsOverlay)
+  const debuffsWin = await app.browserWindow(debuffsOverlay)
+  const before = {
+    buffs: await buffsWin.evaluate((w) => w.getBounds()),
+    debuffs: await debuffsWin.evaluate((w) => w.getBounds())
+  }
+  check(
+    'the two windows open in two different places',
+    before.buffs.x !== before.debuffs.x || before.buffs.y !== before.debuffs.y,
+    JSON.stringify(before)
+  )
+
+  // Move ONLY the debuffs window, the way a user dragging it would — through the real window.
+  const moved = { ...before.debuffs, x: before.debuffs.x - 60, y: before.debuffs.y - 40 }
+  await debuffsWin.evaluate((w, b) => { w.setBounds(b) }, moved)
+
+  const after = {
+    buffs: await buffsWin.evaluate((w) => w.getBounds()),
+    debuffs: await debuffsWin.evaluate((w) => w.getBounds())
+  }
+  check('moving the debuffs window moves the debuffs window', after.debuffs.x === moved.x, JSON.stringify(after.debuffs))
+  check(
+    '…and leaves the buffs window exactly where it was',
+    after.buffs.x === before.buffs.x && after.buffs.y === before.buffs.y,
+    `${JSON.stringify(before.buffs)} → ${JSON.stringify(after.buffs)}`
+  )
+
+  // …AND EACH REMEMBERS ITS OWN BOUNDS, under its own store key.
+  //
+  // The write goes through the overlay's OWN config bridge rather than by dragging the window,
+  // and that is a measured choice, not a shortcut: `saveOverlayBounds` in windows.ts is installed
+  // on the 'moved'/'resized' events, which Electron raises for a USER drag — a programmatic
+  // `setBounds` from the main process does not raise them (measured here: the store stayed empty
+  // after the move above), and an always-on-top window that is never shown has no pointer to drag
+  // it with. `setConfig` is the same `overlay:setConfig` IPC that drag really lands on, carrying
+  // the KIND the preload read from its own `?kind=` query — which is precisely the thing under
+  // test: two windows, two keys, no shared slot.
+  const setBounds = (o: Page, b: Bounds): Promise<unknown> =>
+    o.evaluate(
+      (bounds) =>
+        (window as unknown as { eqOverlay: { setConfig: (p: unknown) => Promise<unknown> } }).eqOverlay.setConfig({
+          bounds
+        }),
+      b
+    )
+  const cfgOf = (o: Page): Promise<Bounds | undefined> =>
+    o.evaluate(() =>
+      (window as unknown as { eqOverlay: { getConfig: () => Promise<{ bounds?: Bounds }> } }).eqOverlay
+        .getConfig()
+        .then((c) => c.bounds)
+    )
+
+  const buffsWant = { ...before.buffs, x: before.buffs.x - 130, y: before.buffs.y - 20 }
+  const debuffsWant = { ...before.debuffs, x: before.debuffs.x - 240, y: before.debuffs.y - 90 }
+  await setBounds(buffsOverlay, buffsWant)
+  await setBounds(debuffsOverlay, debuffsWant)
+
+  const savedBuffs = await settle(() => cfgOf(buffsOverlay), (b) => b?.x === buffsWant.x, { timeoutMs: 15_000 })
+  const savedDebuffs = await settle(() => cfgOf(debuffsOverlay), (b) => b?.x === debuffsWant.x, { timeoutMs: 15_000 })
+  check(
+    'the buffs window persists its own bounds',
+    savedBuffs?.x === buffsWant.x && savedBuffs.y === buffsWant.y,
+    JSON.stringify(savedBuffs)
+  )
+  check(
+    '…and the debuffs window persists a DIFFERENT set of its own',
+    savedDebuffs?.x === debuffsWant.x && savedDebuffs.y === debuffsWant.y,
+    JSON.stringify(savedDebuffs)
+  )
+  check(
+    '…so neither write landed in the other kind’s slot',
+    savedBuffs?.x !== savedDebuffs?.x,
+    `${JSON.stringify(savedBuffs)} vs ${JSON.stringify(savedDebuffs)}`
+  )
+}
+
+async function stepChainMez(overlay: Page, buffsOverlay: Page | null, log: FixtureLog): Promise<void> {
   castChainMez(log)
 
   // THE WHOLE POINT: one cast, two enemies, two rows. Wait for the MEZ rows specifically — the
@@ -208,6 +344,19 @@ async function stepChainMez(overlay: Page, log: FixtureLog): Promise<void> {
     g.some((x) => x.includes('a turmoil toad')) && g.some((x) => x.includes('a scareling')),
     JSON.stringify(g)
   )
+
+  // …AND THE BUFFS WINDOW NEVER SAW IT (JOS-119). This is the half a one-sided filter would pass
+  // while still being wrong: the mez arrived where it belongs AND stayed out of the other window.
+  // settleStable, because the claim is an ABSENCE — wait for the reading to stop moving, then
+  // assert nothing mez-shaped is there (wave E3's rule).
+  if (buffsOverlay) {
+    const onBuffs = await settleStable(() => rows(buffsOverlay), { timeoutMs: 15_000 })
+    check(
+      'the mez does NOT appear on the buffs window — the two surfaces do not overlap',
+      !onBuffs.some((r) => r.name.startsWith('Mesmerization')),
+      JSON.stringify(onBuffs.map((r) => r.name))
+    )
+  }
 }
 
 async function stepBreakClearsOneTarget(overlay: Page, log: FixtureLog): Promise<void> {
@@ -240,7 +389,7 @@ async function stepBreakClearsOneTarget(overlay: Page, log: FixtureLog): Promise
  * The flash is renderer state over rows the window already holds, so it can only ever fire on a
  * removal the MODEL believed — never on a guess.
  */
-async function stepDropFlash(overlay: Page, log: FixtureLog): Promise<void> {
+async function stepDropFlash(overlay: Page, debuffsOverlay: Page | null, log: FixtureLog): Promise<void> {
   // Raise it LIVE rather than borrowing one from the replay: the first line this spec appends is
   // ~30 minutes of event time after the fixture's last, which trips the model's SESSION_GAP_MS
   // logout clear and correctly wipes every replayed active. (That is a real behaviour worth
@@ -258,6 +407,17 @@ async function stepDropFlash(overlay: Page, log: FixtureLog): Promise<void> {
   // a receding timer the reports asked for.
   check('…counting DOWN from the duration spells.json states', valor?.mode === 'countdown', JSON.stringify(valor))
   check('…under Your buffs', (await groups(overlay)).includes('Your buffs'))
+
+  // The mirror of the mez assertion: a self buff belongs on the BUFFS window and must not turn up
+  // on the debuffs one. Together the two make the split a partition rather than a coincidence.
+  if (debuffsOverlay) {
+    const onDebuffs = await settleStable(() => rows(debuffsOverlay), { timeoutMs: 15_000 })
+    check(
+      'a self buff does NOT appear on the debuffs window',
+      !onDebuffs.some((r) => r.name === 'Valor'),
+      JSON.stringify(onDebuffs.map((r) => r.name))
+    )
+  }
 
   log.append('Your valor fades.')
   const after = await settle(() => rows(overlay), (r) => !r.some((x) => x.name === 'Valor'), { timeoutMs: 30_000 })
@@ -279,31 +439,41 @@ async function stepDropFlash(overlay: Page, log: FixtureLog): Promise<void> {
   check('…the self drop naming just the spell', flashed.includes('Valor dropped'), JSON.stringify(flashed))
 }
 
-/** Close it the way a user would — its own ✕ — not by toggling the menu again. */
-async function stepClose(page: Page, app: ElectronApplication, overlay: Page | null): Promise<void> {
+/**
+ * Close ONE window the way a user would — its own ✕ — and prove the other one is still standing.
+ * That is the enable/disable half of "two windows you place separately": a shared close, or a
+ * shared open-state flag, would take both down here.
+ */
+async function stepCloseOne(
+  page: Page,
+  app: ElectronApplication,
+  overlay: Page | null,
+  { kind, other }: { kind: TimerKind; other: TimerKind }
+): Promise<void> {
   if (overlay) {
     await overlay.evaluate(() => {
       ;(document.querySelector('button[aria-label="Close overlay"]') as HTMLElement | null)?.click()
     })
   } else {
-    await bridge(page).toggle('buffs')
+    await bridge(page).toggle(kind)
   }
-  const gone = await settle(
-    async () => {
-      let hit = 0
-      for (const w of app.windows()) {
-        const search = await w.evaluate(() => window.location.search).catch(() => '')
-        if (search.includes('kind=buffs')) hit++
-      }
-      return hit
-    },
-    (n) => n === 0,
-    { timeoutMs: 20_000 }
-  )
-  check('the close affordance actually closes the window', gone === 0, `${gone} still open`)
+  const gone = await settle(() => windowsOfKind(app, kind), (n) => n === 0, { timeoutMs: 20_000 })
+  check(`the ${kind} close affordance actually closes its window`, gone === 0, `${gone} still open`)
   // …and main recorded it, so the next launch does not bring it back uninvited.
-  const state = await settle(() => bridge(page).state(), (s) => s.buffs === false, { timeoutMs: 10_000 })
-  check('…and the app records it as closed', state.buffs === false, JSON.stringify(state))
+  const state = await settle(() => bridge(page).state(), (s) => s[kind] === false, { timeoutMs: 10_000 })
+  check(`…and the app records ${kind} as closed`, state[kind] === false, JSON.stringify(state))
+  // THE INDEPENDENCE CLAIM: closing one did not close the other.
+  check(`…while the ${other} window is untouched and still open`, state[other] === true, JSON.stringify(state))
+  check(`…and its window really is still there`, (await windowsOfKind(app, other)) === 1)
+}
+
+/** Close whatever is left, so the run ends with both kinds off and both windows gone. */
+async function stepCloseRest(page: Page, app: ElectronApplication, kind: TimerKind): Promise<void> {
+  await bridge(page).toggle(kind)
+  const gone = await settle(() => windowsOfKind(app, kind), (n) => n === 0, { timeoutMs: 20_000 })
+  check(`the ${kind} window closes from the menu too`, gone === 0, `${gone} still open`)
+  const state = await settle(() => bridge(page).state(), (s) => s[kind] === false, { timeoutMs: 10_000 })
+  check('…and both timer overlays end the run closed', state.buffs === false && state.debuffs === false, JSON.stringify(state))
 }
 
 async function main(): Promise<void> {
@@ -317,19 +487,47 @@ async function main(): Promise<void> {
 
   try {
     await stepDefaultOff(page, app)
-    const overlay = await stepOpenAndChrome(page, app)
-    if (overlay) {
-      overlay.on('console', (m) => {
-        if (m.type() === 'error') consoleErrors.push(`overlay: ${m.text()}`)
+
+    // TWO SEPARATE TOGGLES, one after the other — the first must not bring the second with it.
+    const buffsOverlay = await stepOpenAndChrome(page, app, 'buffs')
+    const afterBuffs = await bridge(page).state()
+    check(
+      'opening the buffs window leaves the debuffs one closed — two switches, not one',
+      afterBuffs.debuffs === false && (await windowsOfKind(app, 'debuffs')) === 0,
+      JSON.stringify(afterBuffs)
+    )
+    const debuffsOverlay = await stepOpenAndChrome(page, app, 'debuffs')
+    const bothOpen = await bridge(page).state()
+    check(
+      '…and opening the debuffs window leaves the buffs one open beside it',
+      bothOpen.buffs === true && bothOpen.debuffs === true,
+      JSON.stringify(bothOpen)
+    )
+
+    for (const [kind, o] of [['buffs', buffsOverlay] as const, ['debuffs', debuffsOverlay] as const]) {
+      if (!o) continue
+      o.on('console', (m) => {
+        if (m.type() === 'error') consoleErrors.push(`${kind} overlay: ${m.text()}`)
       })
-      await stepGeometry(app, overlay)
-      await stepChainMez(overlay, log)
-      await stepBreakClearsOneTarget(overlay, log)
-      await stepDropFlash(overlay, log)
-    } else {
-      note('the overlay window never appeared — the render assertions could not run')
+      await stepGeometry(app, o, kind)
     }
-    await stepClose(page, app, overlay)
+
+    if (buffsOverlay && debuffsOverlay) await stepIndependentBounds(app, buffsOverlay, debuffsOverlay)
+
+    if (debuffsOverlay) {
+      await stepChainMez(debuffsOverlay, buffsOverlay, log)
+      await stepBreakClearsOneTarget(debuffsOverlay, log)
+    } else {
+      note('the debuffs overlay window never appeared — the mez assertions could not run')
+    }
+    if (buffsOverlay) {
+      await stepDropFlash(buffsOverlay, debuffsOverlay, log)
+    } else {
+      note('the buffs overlay window never appeared — the self-buff assertions could not run')
+    }
+
+    await stepCloseOne(page, app, buffsOverlay, { kind: 'buffs', other: 'debuffs' })
+    await stepCloseRest(page, app, 'debuffs')
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'buffs-overlay-FAIL')
@@ -342,6 +540,6 @@ async function main(): Promise<void> {
 
 main().catch((err: unknown) => {
   console.error('e2e: harness error —', err)
-  note('the buffs overlay spec did not complete')
+  note('the buffs/debuffs overlay spec did not complete')
   process.exitCode = 1
 })

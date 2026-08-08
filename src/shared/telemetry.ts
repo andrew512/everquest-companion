@@ -97,7 +97,12 @@ export const TELEMETRY_OVERLAY_KINDS = [
   'heal-overall',
   'events',
   'toast',
-  'buffs'
+  'buffs',
+  // JOS-119 split the one buff/timer window into two placeable windows. A CLOSED ENUM the server
+  // validates, so this member has to reach the ingest Lambda BEFORE any client that can emit it:
+  // `validateTelemetryBatch` fails the WHOLE batch on one unknown value and the endpoint answers
+  // 400, which the client classes as a permanent refusal and drops. Deploy order, not a preference.
+  'debuffs'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 

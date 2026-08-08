@@ -206,7 +206,10 @@ const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
   // `src/main/share.ts`'s KINDS list does not include it — but the map is keyed by the whole
   // union on purpose, so it is named here rather than letting a future shared field render as
   // a raw kind id.
-  buffs: 'Buff timers'
+  buffs: 'Buff timers',
+  // The debuff/CC half of the JOS-119 split. Same story as the two rows above: no shared field
+  // today, named here because the map is keyed by the whole union on purpose.
+  debuffs: 'Debuff timers'
 }
 
 /**
