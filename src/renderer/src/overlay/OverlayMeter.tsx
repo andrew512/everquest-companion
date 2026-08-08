@@ -8,7 +8,7 @@ import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { MeterBars } from './meterBars'
-import { OverlayContent } from './overlayScale'
+import { MeterPane } from './scopeFloor'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
@@ -213,10 +213,6 @@ export default function OverlayMeter(): JSX.Element {
         // is what gives a long mob name room to be read at 380px.
         tail={formatRate(totalDps)}
         select={{ rows, value: selection, onChange: selectSegment, accent: GOLD }}
-        scope={{
-          label: chipLabel(meterScope, roster),
-          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
-        }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
 
@@ -228,7 +224,16 @@ export default function OverlayMeter(): JSX.Element {
           this box to say so. */}
       {/* EVERY source, not a top-5: the pane scrolls (owner feedback 2026-08-05), and it is also
           the one place the text scale is applied — chrome above and below stays at 1. */}
-      <OverlayContent textScale={textScale} testId="overlay-bars">
+      {/* …and since JOS-121 the pane's FLOOR carries the scope word that used to sit in the title
+          bar: a low-contrast, click-through watermark in a band the bars are padded out of, still
+          able to say the long 'Group (no roster yet)' that explains a widened meter. */}
+      <MeterPane
+        textScale={textScale}
+        scope={{
+          label: chipLabel(meterScope, roster),
+          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
+        }}
+      >
         <MeterBars
           seg={seg}
           scope={meterScope}
@@ -237,7 +242,7 @@ export default function OverlayMeter(): JSX.Element {
           setDrill={locked ? null : setDrill}
           live={live}
         />
-      </OverlayContent>
+      </MeterPane>
 
       {!locked && <MeterFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
     </div>

@@ -25,8 +25,17 @@ export const SCOPE_LABEL_SEL = '[data-testid="meter-scope-label"]'
 export const RETIRED_SCOPE_CHIP = '[data-testid="meter-scope-chip"]'
 /** …and its overlay twin. */
 export const RETIRED_OVERLAY_CHIP = '[data-testid="overlay-scope-chip"]'
-/** The overlay header's read-only twin of SCOPE_LABEL_SEL. */
-export const OVERLAY_SCOPE_LABEL = '[data-testid="overlay-scope-label"]'
+/**
+ * The overlay header's read-only twin of SCOPE_LABEL_SEL, which JOS-115 kept in the TITLE BAR.
+ * JOS-121 took it out of there; asserted ABSENT now, never read.
+ */
+export const RETIRED_OVERLAY_HEADER_LABEL = '[data-testid="overlay-scope-label"]'
+/**
+ * Where the overlay's scope word lives since JOS-121: understated background text on the METER
+ * PANEL FLOOR (src/renderer/src/overlay/scopeFloor.tsx), out of the title bar so the fight
+ * selector and the drag surface can have that width. Same sentence, same `chipLabel` helper.
+ */
+export const OVERLAY_SCOPE_FLOOR = '[data-testid="overlay-scope-floor"]'
 
 /**
  * Set the meter scope through Preferences > Combat and return the app to `back`.

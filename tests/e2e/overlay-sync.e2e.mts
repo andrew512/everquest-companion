@@ -7,6 +7,12 @@
  * `disableHardwareAcceleration` is decided before Electron is ready). Both live here because
  * both are claims about the window this spec already owns.
  *
+ * SINCE JOS-121 it also owns the meter title bar's BUDGET. The scope word left that row for the
+ * panel floor, and "the freed width went to the fight selector and to the drag surface" is a
+ * geometry claim about a real window at a real width with a real mob name in its title — so
+ * `stepTitleBarRoom` MEASURES it, reconstructing the old row in place to have something to
+ * measure against.
+ *
  * WHAT ONLY THE REAL APP CAN SHOW. The pure halves are pinned elsewhere: the value model and the
  * one-seam wiring in tests/fightSelection.test.mts, the locked-selector mechanism in
  * tests/overlayLockedSelector.test.mts. What no unit test can claim is that the PIECES ARE WIRED
@@ -50,7 +56,9 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, overlayWindow, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
-import { OVERLAY_SCOPE_LABEL, RETIRED_OVERLAY_CHIP, setMeterScope } from './combatPrefsSteps.mjs'
+// The scope word's own two steps — where it lives (JOS-115/121) and what the title bar did with
+// the room it gave back — in their own module, because this file is at the max-lines budget.
+import { stepOverlayScope, stepTitleBarRoom } from './overlayScopeSteps.mjs'
 
 /** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
 interface OverlayBridge {
@@ -187,14 +195,24 @@ async function stepStaleId(app: Page, overlay: Page): Promise<void> {
 /** The selector trigger, by the ARIA contract OverlayHeader renders. */
 const TRIGGER = '[aria-haspopup="listbox"]'
 
+/**
+ * The footer's background-opacity slider — the piece of chrome that is present IFF the overlay is
+ * interactive, and therefore the observable of the lock flip.
+ *
+ * It used to be the header's scope readout, which JOS-121 moved to the panel floor and (unlike a
+ * lock/close button) deliberately does NOT hide while locked: it is a watermark you read, not
+ * chrome you reach for, and a pinned meter is exactly the one with nothing else left to explain a
+ * missing name. So the lock needed a different tell, and the footer is the honest one — it holds
+ * the controls that only an interactive window can use.
+ */
+const FOOTER_SLIDER = 'input[type="range"]'
+
 /** Set the lock and wait for the overlay's own chrome to reflect it — the observable of the flip. */
 async function setLocked(overlay: Page, locked: boolean): Promise<void> {
   await overlay.evaluate((v) => {
     ;(window as unknown as { eqOverlay: { setLocked: (b: boolean) => void } }).eqOverlay.setLocked(v)
   }, locked)
-  // The scope READOUT is the one piece of chrome that is present iff the overlay is INTERACTIVE,
-  // so its presence is exactly "the lock has taken effect in this renderer".
-  await settle(() => countOf(overlay, OVERLAY_SCOPE_LABEL), (n) => (locked ? n === 0 : n === 1), {
+  await settle(() => countOf(overlay, FOOTER_SLIDER), (n) => (locked ? n === 0 : n === 1), {
     timeoutMs: 10_000
   })
 }
@@ -247,61 +265,7 @@ async function stepLockedSelector(overlay: Page): Promise<void> {
   await setLocked(overlay, false)
 }
 
-/**
- * THE OVERLAY'S SCOPE READOUT (docs/plans/group-model.md §3) — and, since JOS-115, the cross-window
- * half of ONE preference.
- *
- * The overlay used to carry a one-click CYCLE writing a key of its own kind. The owner retired
- * every inline copy of that control ("shown INLINE on every combat surface and is too crowded"),
- * so the choice now lives in Preferences > Combat in the MAIN window and this window only reads
- * it. That makes this step the strongest assertion in the file about the mechanism useCombatPrefs
- * documents: two windows, one origin, one localStorage, and the DOM's own 'storage' event doing
- * the notifying with no IPC channel involved at all.
- *
- * The WORD still vanishes while LOCKED — a pinned, click-through window is chrome-free by
- * contract, the same discipline the bars are held to just above.
- */
-async function stepOverlayScope(page: Page, overlay: Page): Promise<void> {
-  await setLocked(overlay, false)
 
-  check('the inline scope CONTROL is gone from the overlay header (JOS-115)', (await countOf(overlay, RETIRED_OVERLAY_CHIP)) === 0)
-  check('an INTERACTIVE overlay header carries the scope readout', (await countOf(overlay, OVERLAY_SCOPE_LABEL)) === 1)
-  const label = async (): Promise<string> => (await overlay.textContent(OVERLAY_SCOPE_LABEL))?.trim() ?? ''
-  const first = await label()
-  // The SAME phrasing the Combat tab shows, because both go through `chipLabel` — one wording,
-  // two renderers. Which of the two Group states the log leaves behind is not this spec's
-  // business; that both windows would spell it identically is.
-  check(
-    'it defaults to Group, stating any fallback in the word rather than switching scope for you',
-    first === 'Group' || first === 'Group (no roster yet)',
-    first
-  )
-
-  // …and it is not a control: clicking the word does nothing at all. A dead affordance on a
-  // click-through window would be worse than none, so the readout is asserted INERT rather than
-  // merely un-wired.
-  await overlay.click(OVERLAY_SCOPE_LABEL).catch(() => undefined)
-  const stable = await settleStable(label, { timeoutMs: 4_000 })
-  check('clicking the readout changes nothing — it states the scope, it does not offer it', stable === first, `${first} → ${stable}`)
-
-  // THE CROSS-WINDOW APPLY. Written in the MAIN window through the real preferences control; this
-  // window is a second BrowserWindow of the same origin and hears it through 'storage'.
-  await setMeterScope(page, 'everyone', 'nav-combat')
-  const applied = await settle(label, (t) => t === 'Everyone', { timeoutMs: 10_000 })
-  check('a preference set in the main window reaches the floating overlay', applied === 'Everyone', applied)
-  // …and no roster editor came with it: that is the Combat tab's job.
-  check('the overlay offers no roster popover', (await countOf(overlay, '[data-testid="roster-open"]')) === 0)
-
-  await setLocked(overlay, true)
-  check('a LOCKED overlay hides the readout — no chrome it does not need', (await countOf(overlay, OVERLAY_SCOPE_LABEL)) === 0)
-
-  await setLocked(overlay, false)
-  check('the overlay still shows the stored scope after the lock round trip', (await label()) === 'Everyone', await label())
-
-  // Leave the app on its default so nothing downstream inherits a widened meter.
-  await setMeterScope(page, 'group', 'nav-combat')
-  await settle(label, (t) => t.startsWith('Group'), { timeoutMs: 10_000 })
-}
 
 // ── JOS-35: the overlay meter's levels, driven for real ────────────────────────────────
 //
@@ -630,7 +594,11 @@ async function main(): Promise<void> {
     await stepStaleId(page, ov)
     await stepOverlayDrill(ov)
     await stepLockedSelector(ov)
-    await stepOverlayScope(page, ov)
+    await stepOverlayScope(page, ov, setLocked)
+    // Unlocked is a precondition of the measurement (a locked window has no drag region at all),
+    // and stepOverlayScope leaves it that way.
+    await setLocked(ov, false)
+    await stepTitleBarRoom(ov)
     // LAST, because it closes and reopens the very window every step above holds a page for.
     await stepOpaqueOverlays(app, page)
 
