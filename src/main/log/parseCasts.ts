@@ -215,11 +215,34 @@ export function classifyWornOff({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEv
   return null
 }
 
-/** Crowd-control application (mez/root, not charm). */
-export function classifyCcApply({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+/**
+ * Crowd-control application (mez/root, not charm).
+ *
+ * THE CANDIDATE LIST (JOS-89). This classifier sits ABOVE `classifyDbBuff` in the cascade, so
+ * for the four sentences it claims the DB matcher never runs and the candidate list a `buffApply`
+ * would have carried was lost entirely — leaving `cc` naming a mob and nothing else, which is why
+ * no consumer could ever put a spell (or a duration) on a mez. It now runs the SAME cast-on-other
+ * suffix lookup `classifyDbBuff` uses and carries what it finds. Purely additive: the branch is
+ * gated on a spell DB being installed (`cfg.spellDb`), so with no DB the event is byte-identical
+ * to what it was, and `mob` — the only field anything depended on — is untouched either way.
+ *
+ * It is a LIST and never a name: `has been mesmerized.` is four spells with three different
+ * stated durations. Narrowing it is the model's job (world-model law 3).
+ */
+export function classifyCcApply({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEvent | null {
   if (text.includes('has been ')) {
     const m = CC_APPLY_RE.exec(text)
-    if (m) return { kind: 'cc', seq, ts, raw, mob: norm(m[1]) }
+    if (!m) return null
+    const db = cfg.spellDb
+    const cands = db ? matchCastOnOtherSuffix(text, db)?.entry.cands : undefined
+    return {
+      kind: 'cc',
+      seq,
+      ts,
+      raw,
+      mob: norm(m[1]),
+      ...(cands ? { candidates: cands.map((s) => ({ name: s.name, durationMs: s.durationMs })) } : {})
+    }
   }
   return null
 }

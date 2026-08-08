@@ -36,6 +36,7 @@ import { CharacterModule } from './character'
 import { ItemTiersModule } from './itemTiers'
 import { AlertsModule } from './alerts'
 import { BuffsModule } from './buffs'
+import { BuffTimersModule } from './buffTimers'
 import { ConsiderModule, type ConsiderDeps } from './consider'
 import { EventFeedModule, type EventFeedDeps } from './eventFeed'
 import type { EqModule } from './types'
@@ -77,6 +78,7 @@ export interface ModuleWiring {
   itemTiers: ItemTiersModule
   alerts: AlertsModule
   buffs: BuffsModule
+  buffTimers: BuffTimersModule
   consider: ConsiderModule
   eventFeed: EventFeedModule
   /** REGISTRATION ORDER = BUS DELIVERY ORDER. Load-bearing; see the comments below. */
@@ -141,6 +143,14 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // `buffExpired` back onto the SAME bus for the alerts module (registered after it) to match.
   const buffs = new BuffsModule(spellDb, [...overlays])
   if (deps.emitDerived) buffs.setDerivedEmitter(deps.emitDerived)
+  // The CROWD-CONTROL half of the buffs/timer overlay (JOS-89, docs/plans/buff-timer-overlay.md).
+  // Deliberately tiny: it owns ONLY the per-target mez/root holds, which are the one thing the
+  // buffs model above does not track (its landing sentence is claimed by `classifyCcApply` before
+  // the DB matcher can turn it into an instance). Everything else the overlay draws — self buffs,
+  // per-target debuffs, the DB duration prior, own-cast gating, death/zone censoring — is read
+  // off `BuffsSnap.active`, because a second fold of the same events is the two-models scar
+  // world-model law 4 is made of.
+  const buffTimers = new BuffTimersModule()
   // The consider ring (Task #63): the mobs you've recently `/con`ed. It also OWNS the shared
   // own-loot index's lifetime — it folds every loot event into `ownLoot` and resets it on
   // epoch/character switch.
@@ -168,6 +178,7 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
     itemTiers,
     alerts,
     buffs,
+    buffTimers,
     consider,
     eventFeed,
     // combo goes FIRST (design § 5.1): within one bus delivery every later module — and the combat
@@ -188,6 +199,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
       itemTiers,
       alerts,
       buffs,
+      // AFTER buffs, because the overlay's projection composes the two snapshots and the CC
+      // ledger's END is what retires an instance the buffs model left standing — reading a
+      // half-advanced pair would show a mez for one extra flush.
+      buffTimers,
       consider,
       eventFeed
     ]
