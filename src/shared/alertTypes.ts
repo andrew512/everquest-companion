@@ -346,6 +346,25 @@ export interface FiredAlert {
    * `SPELL_FIELD_BY_KIND` (main/modules/alerts.ts). Never synthesized, never guessed.
    */
   spell?: string
+  /**
+   * NAMED REGEX CAPTURES from the condition that matched (JOS-103) — the values a `custom`
+   * phrase's `{token}`s resolve to, so a spoken alert can say "Puma on Fail".
+   *
+   * ATTACKER-INFLUENCED BY CONSTRUCTION, and already defanged. The keys come from the def's own
+   * pattern (`(?<player>…)`) but the VALUES come out of a log line, which carries other players'
+   * chosen names and, for the chat families, text a stranger typed. Everything here has been
+   * through `sanitizeCapture` (shared/alertCaptures.ts): the shared sanitizers have removed ANSI
+   * sequences, control characters and the BiDi/invisible class, and each value is capped at
+   * MAX_CAPTURE_CHARS. Read shared/alertCaptures.ts's threat model before consuming this
+   * anywhere new — it is the enforcement point, and it explains why a consumer still must not
+   * treat these as trusted text.
+   *
+   * ABSENT whenever the matching condition declared no named group, or captured nothing that
+   * survived sanitization — an absent key is the honest JSON encoding of "this pattern named
+   * nothing", and it keeps the delta byte-identical for the alerts that capture nothing (which
+   * is nearly all of them).
+   */
+  captures?: Record<string, string>
 }
 
 /** One recorded fire in an alert's recent-fires ring buffer (Task #22). */

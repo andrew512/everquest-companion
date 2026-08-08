@@ -40,7 +40,12 @@ import { parseEvent } from '../src/main/log/parser'
 import { installSpellDb } from '../src/main/log/rulesets'
 import { buildSpellCatalog, loadSpellDb } from '../src/main/data/spellDb'
 import { AlertsModule } from '../src/main/modules/alerts'
-import { illusionSuggestion, suggestionsFor } from '../src/renderer/src/features/alerts/suggestions'
+import {
+  illusionSuggestion,
+  spellShortName,
+  suggestionsFor
+} from '../src/renderer/src/features/alerts/suggestions'
+import { speechTextFor } from '../src/shared/speechText'
 import type { SpellRank } from '../src/shared/spellLines'
 import type { AlertDef, FiredAlert, SpellCatalogEntry } from '../src/shared/types'
 
@@ -247,13 +252,126 @@ test('JOS-84 A6: an alert pinned to a sibling of the same sentence fires too, an
   assert.equal(fired[0].spell, 'Languid Pace', 'it names the spell the ALERT is for')
 })
 
+// ---------------------------------------------------------------------------------------------
+// JOS-103 — SPIRIT OF THE PUMA, AND THE CAPTURE TEMPLATE IT SHIPPED (report
+// 01KZH1YK7YPRC40QPV00X1Z4NX, v0.12.0: "missing from suggested alerts").
+//
+// THE LINES ARE THE OWNER'S OWN, verbatim from eqlog_Primitive_freeport.txt — lines 890466-890467,
+// the log's ONLY occurrence. Not a reporter's slice and not hand-authored: a shaman named Fail
+// cast Puma on a group in Freeport on 2026-08-01. Two client notices with no surrounding state to
+// warm, so they are quoted here rather than extracted into tests/fixtures/ (the same reasoning
+// the JOS-84 block above states).
+// ---------------------------------------------------------------------------------------------
+
+const PUMA = {
+  cast: '[Sat Aug 01 18:38:09 2026] Fail begins casting Spirit of the Puma VI.',
+  landed: '[Sat Aug 01 18:38:10 2026] Fail growls with the spirit of the puma.',
+  // The DB's own msgCastOnYou / msgWearsOff for the spell (src/main/data/spells.json). The owner
+  // never held the buff, so his log has neither; these are the game's words as the committed wiki
+  // scrape records them, which is the same provenance every DB-driven family is tested from.
+  selfLanded: '[Sat Aug 01 18:38:11 2026] You begin to snarl as your features become feline.',
+  departs: '[Sat Aug 01 18:39:10 2026] The spirit of the puma departs.'
+}
+
+test('JOS-103 P1: the landing line has NO typed event — a raw trigger is the only thing that works', () => {
+  // THE DIAGNOSIS, pinned so it cannot rot. Puma's msgCastOnOther is `Target growls with the
+  // spirit of the puma.` and the cast-on-other suffix table is keyed by what is left after the
+  // wiki's "Someone " subject is stripped — so this message is not in the table at all.
+  assert.equal(parseEvent(PUMA.landed, 0)?.kind, 'unknown', 'no buffApply is emitted for this family')
+  // The two DB-message sides DO parse, which is what the other templates rest on.
+  assert.equal(parseEvent(PUMA.selfLanded, 1)?.kind, 'buffApply')
+  const worn = parseEvent(PUMA.departs, 2)
+  assert.equal(worn?.kind, 'buffWearOff')
+  if (worn?.kind !== 'buffWearOff') return
+  assert.deepEqual(worn.candidates, ['Spirit of the Puma'], 'unambiguous — one candidate, not a family')
+  assert.equal(worn.target, 'self', 'the wears-off emote prints to the HOLDER, whoever cast it')
+})
+
+test('JOS-103 P2: the suggestion fires on the owner\'s real line and SPEAKS the captured name', () => {
+  const sugg = suggestionsFor(entryFor('spirit of the puma'))
+  const lands = sugg.find((s) => s.template === 'landsOnOther')?.def
+  assert.ok(lands, 'the wizard must offer the capture template for Spirit of the Puma')
+  assert.deepEqual(lands.trigger, {
+    type: 'raw',
+    regex: "^\\[[^\\]]*\\] (?<player>[A-Za-z' `]{1,48}) growls with the spirit of the puma\\."
+  })
+  assert.deepEqual(lands.speech, { mode: 'custom', phrase: 'Puma on {player}' })
+  // 'both', never 'speech': the pack sound is the half that is guaranteed audible on a machine
+  // with no speech voices, and `speechPlan` falls back to it only for EMPTY TEXT, never for a
+  // missing engine. An app-authored suggestion must not be able to ship silence.
+  assert.equal(lands.audio, 'both')
+
+  const fired = fire([lands], [PUMA.landed])
+  assert.equal(fired.length, 1, 'it must fire on the real line')
+  assert.equal(fired[0].matchedText, PUMA.landed)
+  assert.deepEqual(fired[0].captures, { player: 'Fail' })
+  assert.equal(speechTextFor(lands, fired[0]), 'Puma on Fail', 'THE ACCEPTANCE CRITERION')
+})
+
+test('JOS-103 P3: the wears-off suggestion covers a buff SOMEBODY ELSE cast on you', () => {
+  // WHY THE TEMPLATE WAS WIDENED. `buffExpired` is synthesized only when the buffs module resolves
+  // a wear-off against its ACTIVE set, and its own-cast gate means a groupmate's buff is never
+  // tracked — so the derived event never arrives for exactly the buffs a player most wants this
+  // alert on. The `any` composite adds the raw `buffWearOff`, which EQ prints to the HOLDER.
+  const wearsOff = suggestionsFor(entryFor('spirit of the puma')).find(
+    (s) => s.template === 'wearsOff'
+  )?.def
+  assert.ok(wearsOff, 'Puma must offer a wears-off suggestion')
+  assert.deepEqual(wearsOff.trigger, {
+    type: 'any',
+    conditions: [
+      { type: 'event', kind: 'buffExpired', where: { spell: 'Spirit of the Puma' } },
+      { type: 'event', kind: 'buffWearOff', where: { spell: 'Spirit of the Puma' } }
+    ]
+  })
+  const fired = fire([wearsOff], [PUMA.departs])
+  assert.equal(fired.length, 1, 'the fade line alone must fire it — no own-cast required')
+  assert.equal(fired[0].spell, 'Spirit of the Puma')
+})
+
+test('JOS-103 P4: the widened wears-off still fires exactly ONCE for your own buff', () => {
+  // The duplicate the composite could have introduced: a self-cast buff produces the raw
+  // buffWearOff AND the derived buffExpired the buffs module synthesizes from it. Both are stamped
+  // with the PRIMARY event's ts, so the alert's own cooldown swallows the second.
+  const wearsOff = suggestionsFor(entryFor('clarity')).find((s) => s.template === 'wearsOff')!.def
+  const mod = new AlertsModule()
+  mod.setDefs([wearsOff])
+  mod.reset()
+  const ts = Date.parse('2026-08-07T09:20:30Z')
+  const raw = '[Fri Aug 07 09:20:30 2026] Your mind fades.'
+  mod.onEvent(
+    { kind: 'buffWearOff', seq: 1, ts, raw, spell: 'Clarity', candidates: ['Clarity'], target: 'self' },
+    true
+  )
+  mod.onEvent({ kind: 'buffExpired', seq: 1, ts, raw, spell: 'Clarity', target: 'self' }, true)
+  assert.equal((mod.flushDelta()?.delta.fired ?? []).length, 1, 'one line, one alert')
+})
+
+test('JOS-103 P5: the spoken default names the spell\'s DISTINCTIVE word, not its first', () => {
+  // `spellFirstWord` would say "Spirit", which names Spirit of Wolf, Spirit of the Scorpion,
+  // Spirit of Bih`Li and a dozen more. Authoring only — it renames nothing.
+  assert.equal(spellShortName('Spirit of the Puma'), 'Puma')
+  assert.equal(spellShortName('Spirit of Wolf'), 'Wolf')
+  assert.equal(spellShortName('Ward of Calliav'), 'Calliav')
+  assert.equal(spellShortName('Shiftless Deeds'), 'Shiftless', 'no function word → the first word')
+  assert.equal(spellShortName('Clarity'), 'Clarity')
+  assert.equal(spellShortName('Mesmerization III'), 'Mesmerization', 'the rank is not a word')
+})
+
 test('JOS-84 A7: the reporter\'s cast+land pair fires the cast and the landing alerts', () => {
   // End to end on the slice's own two-line sequence, with the full suggested set installed —
   // the shape a user actually ends up with after clicking through the wizard.
   const defs = suggestedDefs('incapacitate', 'Incapacitate V')
   const fired = fire(defs, [SLICE.incapCast, SLICE.incapLanded])
+  // THREE since JOS-103, and the third is the point of that ticket rather than a regression: the
+  // capture template is not Puma-specific, so `Someone looks frail.` also authors a raw trigger
+  // that names WHO it landed on. The debuff user hears "Incapacitate on Coercer T`vala" instead
+  // of a bare sound — on the same reporter line that started JOS-84.
   assert.deepEqual(new Set(fired.map((f) => f.alertId)), new Set([
     'suggest:incapacitate:castRank:incapacitate-v',
-    'suggest:incapacitate:lands'
+    'suggest:incapacitate:lands',
+    'suggest:incapacitate:landsOnOther'
   ]))
+  const named = fired.find((f) => f.alertId === 'suggest:incapacitate:landsOnOther')
+  assert.deepEqual(named?.captures, { player: 'Coercer T`vala' }, 'the backtick name survives the class')
 })

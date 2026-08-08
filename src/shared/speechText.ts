@@ -14,6 +14,15 @@
 // spellLines.ts, whose equality with the parser helper is pinned by tests/spellLines.test.mts).
 // It is imported, not re-implemented: a second rank regex in the tree is a second answer.
 //
+// CAPTURE SUBSTITUTION LIVES NEXT DOOR (JOS-103). A 'custom' phrase may write `{player}` and the
+// firing's named regex captures fill it in — "Puma on Fail". The semantics, the caps and the
+// THREAT MODEL are all in shared/alertCaptures.ts, which this module calls into rather than
+// re-deriving: captured text is attacker-influenced (a stranger's character name, a stranger's
+// typed chat), alert defs are shareable, and there is exactly one place that decides how far such
+// a value may travel. What is enforced HERE is the part that is this module's own: substitution
+// happens inside the 'custom' branch, so the resolved sentence is still `tidy`-ed and still
+// truncated at MAX_SPEECH_CHARS. There is no path by which a token's expansion escapes the cap.
+//
 // NEVER SILENT, NEVER A GUESS (world-model law 1). A spell mode on a firing that carries no
 // spell — an app-signal alert, a raw trigger on a spell-less line, an event family that names
 // no spell — falls back to the alert's own NAME. Saying the alert's name is a true statement
@@ -34,6 +43,7 @@ import type {
   SpeechMode,
   VoicePrefs
 } from './alertTypes'
+import { applyCaptures } from './alertCaptures'
 import { parseSpellRank } from './spellLines'
 
 /**
@@ -129,7 +139,7 @@ function clampNumber(value: unknown, lo: number, hi: number, fallback: number): 
  * (that is the real caller), and so does a `{ spell }` literal in a test or an editor preview,
  * without either having to fabricate an alertId and a timestamp.
  */
-export type SpeechFiring = Pick<FiredAlert, 'spell'>
+export type SpeechFiring = Pick<FiredAlert, 'spell' | 'captures'>
 
 /** The def fields the resolver reads. Any AlertDef satisfies it. */
 export type SpeechDef = Pick<AlertDef, 'name' | 'speech'>
@@ -154,7 +164,15 @@ function spellBase(spell: string): string {
  * no spell, an empty custom phrase). Null is what the caller turns into the alertName fallback.
  */
 function resolveMode(mode: SpeechMode, speech: AlertSpeech, firing: SpeechFiring | null): string | null {
-  if (mode === 'custom') return tidy(speech.phrase ?? '') || null
+  // 'custom' is the ONLY mode a `{token}` can appear in, because it is the only one whose text
+  // the def's AUTHOR wrote — the other three resolve to values the app owns (the def's name, a
+  // name out of the committed spell DB) and have no template to substitute into. Substitution
+  // happens here, INSIDE the mode, so the whole-utterance `cap()` below still governs the result:
+  // a phrase that grew when its tokens resolved is truncated exactly like a long literal one.
+  // Ordering matters: substitute FIRST, `tidy` the result — so whitespace a captured value
+  // brought with it is collapsed into the one sentence, rather than the phrase being tidied
+  // around a token and the value smuggling a run of spaces in afterwards.
+  if (mode === 'custom') return tidy(applyCaptures(speech.phrase ?? '', firing?.captures)) || null
   if (mode === 'alertName') return null
   const spell = tidy(firing?.spell ?? '')
   if (!spell) return null
