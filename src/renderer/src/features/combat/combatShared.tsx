@@ -11,6 +11,8 @@ import { laneDps } from './petRows'
 import { MARKER_COLOR } from './markerStyle'
 import type { ProcAnnotation } from './procRows'
 import { landEvidence } from './landEvidence'
+import { abilityExpandable } from './abilityStats'
+import type { AbilityMulti } from './abilityStats'
 import type { FlatSkill, SkillRow } from './dashboardData'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -20,8 +22,8 @@ export { fmtDur } from './copyText'
 // The copy affordance moved to its own file (see its header — this one hit the line ceiling).
 // Re-exported so every panel header keeps the import it already had.
 export { CopyButton } from './CopyButton'
-// …and so did the two readout atoms, for the same reason and to the same kind of file.
-import { StatItem } from './meterBits'
+// …and so did the readout atoms, for the same reason and to the same kind of file.
+import { MultiAttackStats, StatItem } from './meterBits'
 
 // `member` (a group-mate, docs/plans/group-model.md) is a green in the same muted family as the
 // pet's blue — a friendly, clearly not you, and clearly not the enemy's red.
@@ -196,11 +198,11 @@ function DamageStats({ s, a }: { s: FlatSkill; a: string }): React.JSX.Element |
 }
 
 /**
- * The expanded per-ability readout (one level below the flat row, inline — no new nav level,
- * no breadcrumb). Everything the bar compresses, spelled out and labeled: the category, the
- * total, hit/crit counts with the crit rate, the miss rate over swings, resists over casts,
- * the damage range and the average per hit (total ÷ hits — derived, so it's labeled as an
- * average and never presented as an observed hit).
+ * The expanded per-ability readout (inline — no new nav level, no breadcrumb). Everything the bar
+ * compresses, spelled out and labeled: the category, the total, hit/crit counts with the crit
+ * rate, the miss rate over swings, resists over casts, the damage range and the average per hit
+ * (total ÷ hits — derived, so it's labeled as an average and never presented as an observed hit),
+ * and — for a stat-bearing ability — the double/triple/quad attack rates (JOS-113).
  * `a` carries the `~` sample-estimate marker through; the observed range is never prefixed
  * (a sampled max is a lower bound, a sampled min an upper bound — the panel's chip says so).
  * `after` rides INSIDE the same block, under the figures — the grouped Slay Undead row uses it
@@ -208,10 +210,13 @@ function DamageStats({ s, a }: { s: FlatSkill; a: string }): React.JSX.Element |
  */
 function SkillReadout({
   s,
+  multi,
   approx,
   after
 }: {
   s: FlatSkill
+  /** this ability's own multi-attack reading (double/triple/quad/flurry), or null when it has none. */
+  multi?: AbilityMulti | null
   approx?: boolean
   after?: ReactNode
 }): React.JSX.Element {
@@ -223,6 +228,7 @@ function SkillReadout({
   const color = CAT_COLOR[s.category]
   return (
     <Box
+      data-testid="ability-stats"
       sx={{
         mt: '-1px',
         mb: '3px',
@@ -250,7 +256,13 @@ function SkillReadout({
             first. */}
         {(s.lands ?? 0) > 0 && <StatItem label="Landed" value={`${a}${s.lands}`} />}
         {resists > 0 && <StatItem label="Resists" value={land.resistText} color={RESIST_COLOR} />}
+        {multi && <MultiAttackStats multi={multi} a={a} />}
       </Stack>
+      {multi?.flurry != null && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+          {multi.flurry}
+        </Typography>
+      )}
       {after}
     </Box>
   )
@@ -389,6 +401,12 @@ export function SkillBar({
 }): React.JSX.Element {
   // Click expands the full per-ability readout in place (the same inline-Collapse pattern the
   // incoming meter rows use) — no extra nav level, so the flat ranked list never moves.
+  //
+  // ONLY A STAT-BEARING ABILITY EXPANDS (JOS-113, owner): a melee/slay swing, anything that
+  // multi-attacked, a spell that crit — click it and its crit/double/triple/miss open beneath it.
+  // A DoT tick has none, so it is not clickable and does nothing (abilityStats.abilityExpandable).
+  const multi = s.multi ?? null
+  const expandable = abilityExpandable(s, multi)
   const [open, setOpen] = useState(false)
   const color = CAT_COLOR[s.category]
   const resists = s.resists ?? 0
@@ -399,13 +417,15 @@ export function SkillBar({
   // with no landing evidence at all has no denominator, and 100% would be a fabrication.
   const land = landEvidence(s, a)
   return (
-    <Box>
+    <Box data-testid="skill-bar">
       <Bar
         color={color}
         accent={color}
         pct={s.pct}
+        // `open` can only become true via the click below, which is wired only when expandable —
+        // so a non-expandable row is never outlined and never expands.
         selected={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={expandable ? () => setOpen((o) => !o) : undefined}
         name={
           <>
             <SkillName name={s.name} category={s.category} plain={nested} />
@@ -427,13 +447,16 @@ export function SkillBar({
         adorn={proc ? <ProcTag proc={proc} /> : undefined}
         right={skillRight(s, a, activeSec, compact)}
       />
-      <Collapse in={open} unmountOnExit>
-        <SkillReadout
-          s={s}
-          approx={approx}
-          after={s.children && s.children.length > 0 ? <SkillChildren rows={s.children} approx={approx} /> : undefined}
-        />
-      </Collapse>
+      {expandable && (
+        <Collapse in={open} unmountOnExit>
+          <SkillReadout
+            s={s}
+            multi={multi}
+            approx={approx}
+            after={s.children && s.children.length > 0 ? <SkillChildren rows={s.children} approx={approx} /> : undefined}
+          />
+        </Collapse>
+      )}
     </Box>
   )
 }

@@ -298,7 +298,7 @@ async function stepOverlayScope(overlay: Page): Promise<void> {
 
 const CRUMB = '[data-testid="overlay-crumb"]'
 const BAR = '[data-testid="overlay-bar"]'
-/** The damage-type strip, level 3's way in (JOS-105) — the MUI-free twin of `category-chip`. */
+/** The rejected JOS-105 damage-type strip — asserted ABSENT now (JOS-113: one bar per ability). */
 const CATEGORY_CHIP = '[data-testid="overlay-category"]'
 
 /** The crumb row's text — the drill subject, if any, and the fight clock. */
@@ -311,9 +311,9 @@ async function stepOverlayDrill(overlay: Page): Promise<void> {
   // Start from level 1 however the persisted drill left this window — the drill outlives a run,
   // by design (it is remembered state, like window position). Backing out with the chevron is
   // also the only way to reach level 1, so this loop is the affordance proving itself: bounded at
-  // three, because a damage type inside a nested pet (JOS-105 added that level) is the deepest
-  // the model goes — type → pet → your row → sources.
-  for (let i = 0; i < 3 && (await crumbText(overlay)).includes('‹'); i++) {
+  // two, because a nested pet (a level-2 subject inside your level-2 row) is the deepest the model
+  // goes now (JOS-113 removed the level-3 damage type) — pet → your row → sources.
+  for (let i = 0; i < 2 && (await crumbText(overlay)).includes('‹'); i++) {
     const was = await crumbText(overlay)
     await overlay.click(CRUMB)
     await settle(() => crumbText(overlay), (t) => t !== was, { timeoutMs: 8_000 })
@@ -338,23 +338,12 @@ async function stepOverlayDrill(overlay: Page): Promise<void> {
   check('…and the zoom-out chevron is offered on it (it was not, before JOS-35)', level2.includes('‹'), level2)
   check('…and the fight timer is still on the row', /\d+:\d\d/.test(level2), level2)
 
-  // LEVEL 3 IS HERE TOO (JOS-105). The whole ticket is that one drill mechanic reaches every
-  // surface, so a damage type opens in a floating meter exactly as it opens on the tab — same
-  // builder, same levels, only the chrome is this window's own.
-  const types = await countOf(overlay, CATEGORY_CHIP)
-  if (types === 0) {
-    note('the drilled source dealt nothing in this selection — there is no damage type to open')
-  } else {
-    check('…and it offers its damage types, the way the Combat tab does', types >= 1, `${types} types`)
-    await overlay.click(CATEGORY_CHIP)
-    const level3 = await settle(() => crumbText(overlay), (t) => t !== level2, { timeoutMs: 8_000 })
-    check('clicking a damage type opens it as its own level', level3 !== level2, level3)
-    // The crumb NAMES both, so a reader of a pinned overlay always knows whose damage type it is.
-    check('…and the crumb names the source AND the type', level3.includes('·'), level3)
-    await overlay.click(CRUMB)
-    const up = await settle(() => crumbText(overlay), (t) => t !== level3, { timeoutMs: 8_000 })
-    check('…and the chevron steps back to the source it belongs to, not all the way out', up === level2, up)
-  }
+  // NO CATEGORY CHIP (JOS-113). JOS-105 put a damage-type strip here and a third drill level; the
+  // owner rejected the grouping, so the drilled overlay is ONE BAR PER ABILITY with no strip. The
+  // per-ability stats live on each bar's hover title in this window (it is compact and, locked,
+  // click-through — there is no room for an inline expansion), so what is asserted here is that
+  // the rejected chip is gone rather than a new level opening.
+  check('the drilled overlay shows NO damage-type chip — one bar per ability, flat', (await countOf(overlay, CATEGORY_CHIP)) === 0)
 
   await overlay.click(CRUMB)
   const back = await settle(() => crumbText(overlay), (t) => t !== level2, { timeoutMs: 8_000 })

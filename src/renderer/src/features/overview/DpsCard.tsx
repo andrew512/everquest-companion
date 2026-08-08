@@ -11,8 +11,8 @@
 //     the Combat tab was INERT here, which is the defect the ticket opens with;
 //   * its own call into `ownBreakdown`/`nestedRows`, reaching past the shared row builder.
 // It now holds a `Drill` token, hands it to `petRows.meterPanel` like every other meter, and
-// renders `MeterRows` — the same components, the same clicks, the same three levels, including
-// the damage-type level where the multi-attack stats live.
+// renders `MeterRows` — the same components, the same clicks, the same two levels, including the
+// inline per-ability stats (crit/double/triple/miss) that expand beneath a bar (JOS-113).
 //
 // The card still shows DELIBERATELY LESS than the Combat tab, and that is a matter of PROPS
 // (`compact`, `maxRows`) rather than of different code: one label, one headline rate, one

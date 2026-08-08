@@ -219,16 +219,13 @@ test('the source split is by KIND, never by the aggregate’s key spelling', () 
 
 /** What a rendered meter LOOKS like, reduced to text: its level, its subject, its row labels. */
 interface Panel {
-  level: 1 | 2 | 3
+  level: 1 | 2
   subject: string
   rows: string[]
 }
 
 function shown(p: MeterPanel): Panel {
   if (p.level === 1) return { level: 1, subject: 'sources', rows: p.sources.map((s) => s.name) }
-  if (p.level === 3) {
-    return { level: 3, subject: `${p.subject.name}|${p.detail.category}`, rows: p.detail.rows.map((r) => r.name) }
-  }
   return { level: 2, subject: p.subject.name, rows: p.rows.map((r) => (r.kind === 'pet' ? r.pet.name : r.skill.name)) }
 }
 
@@ -440,8 +437,7 @@ test('ONE CALL: the Overview card is the same panel as the Combat tab, at every 
   const levels: (Drill | null)[] = [
     null,
     { kind: 'entity', entityId: 'you' },
-    { kind: 'entity', entityId: 'pet:7' },
-    { kind: 'category', entityId: 'you', category: 'melee' }
+    { kind: 'entity', entityId: 'pet:7' }
   ]
   for (const combine of [true, false]) {
     for (const drill of levels) {
@@ -501,22 +497,27 @@ test('NO SECOND BUILDER: all THREE meters call meterPanel, and none shapes rows 
   }
 })
 
-test('NO SECOND PANEL: the multi-attack readout lives in the drill, not beside it', () => {
-  // JOS-105, the other half of the ticket. `MultiAttackPanel.tsx` is deleted; its rows are a
-  // SECTION of the level-3 body, reached by clicking the damage type they describe. The row
-  // shaper (`multiAttackRows.ts`, and the tests over it) is untouched — only its home moved.
-  assert.throws(
-    () => src('../src/renderer/src/features/combat/MultiAttackPanel.tsx'),
-    /ENOENT/,
-    'the standalone multi-attack panel is back'
-  )
-  const body = src('../src/renderer/src/features/combat/CategoryDrillBody.tsx')
-  assert.match(body, /multiAttackRow/i, 'the level-3 body no longer renders the multi-attack rows')
+test('NO SECOND PANEL, NO CATEGORY LEVEL: the multi-attack readout is a per-ability inline expansion', () => {
+  // JOS-105 killed the standalone `MultiAttackPanel.tsx` and moved its rows one level down, under a
+  // CATEGORY drill. JOS-113 removed that level too (owner: no category grouping); the double/triple
+  // is attached PER ABILITY now (abilityStats.abilityMultiAttack) and expands inline with the
+  // ability's crit/miss (combatShared.SkillReadout). So both the panel AND its replacement level
+  // are gone, and no surface may reintroduce either.
+  for (const gone of ['MultiAttackPanel.tsx', 'CategoryDrillBody.tsx', 'categoryDrill.ts']) {
+    assert.throws(() => src(`../src/renderer/src/features/combat/${gone}`), /ENOENT/, `${gone} is back`)
+  }
+  // The per-ability reading is where the numbers live now, off the engine's own round lanes.
+  const readout = src('../src/renderer/src/features/combat/combatShared.tsx')
+  assert.match(readout, /AbilityMulti|abilityExpandable/, 'the per-ability readout no longer sources the multi-attack stats')
+  // No surface mounts the old panel, and none carries a category-chip drill any more.
   for (const [who, rel] of [
     ['the Combat tab', '../src/renderer/src/features/combat/SegmentPanel.tsx'],
-    ['the drill body', '../src/renderer/src/features/combat/MeterRows.tsx']
+    ['the drill body', '../src/renderer/src/features/combat/MeterRows.tsx'],
+    ['the overlay', '../src/renderer/src/overlay/meterBars.tsx']
   ] as const) {
-    assert.doesNotMatch(src(rel), /<MultiAttackPanel\b/, `${who} still mounts a separate panel`)
+    const text = src(rel)
+    assert.doesNotMatch(text, /<MultiAttackPanel\b/, `${who} still mounts a separate panel`)
+    assert.doesNotMatch(text, /kind:\s*'category'|category-chip|overlay-category/, `${who} still carries a category-chip drill`)
   }
 })
 
