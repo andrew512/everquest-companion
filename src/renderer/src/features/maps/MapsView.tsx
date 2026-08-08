@@ -23,9 +23,14 @@
 // DRAWING and nothing else; the sidebar is the one filter over the wiki's bestiary, this map's
 // own labels and every other installed map.
 //
-// WHAT THIS VIEW CANNOT DO, STATED ON SCREEN: there is no "you are here" marker, and there
-// cannot be — `Your Location` appears ZERO times in 86.6 MB of log. A user hunting for a dot
-// that does not exist is a worse outcome than one quiet line saying so (§10).
+// WHAT THIS VIEW CANNOT DO, AND THE HALF OF IT THE USER CAN (JOS-98). There is no AUTOMATIC "you
+// are here" marker and there cannot be: `Your Location` appears ZERO times in the log — re-measured
+// across the owner's whole 116.8 MB of it for this ticket — because /loc answers in the game window
+// and is never written to the file the app tails. What the viewer can do is take the answer from
+// you: the toolbar's `/loc marker` field accepts the line the game printed, drops a crosshair where
+// it says, and keeps it there per zone until you replace it or clear it. The caption states exactly
+// that pair, because a user hunting for a dot that does not exist is a worse outcome than one quiet
+// line saying so (§10) — and a user who does not know they can place one is the report we got.
 //
 // TWO DENSITY CONTROLS LIVE HERE AND BOTH ARE HONEST ABOUT WHAT THEY ARE. Labels declutter
 // themselves (`labelLayout.ts`) — a label that loses its space becomes a dot and hover raises the
@@ -51,6 +56,7 @@ import { useMapViewport } from './useMapViewport'
 import MapToolbar from './MapToolbar'
 import { zoneLabel } from './zoneOptions'
 import { loadPackPrefs, savePackPrefs, useMapData, useMapPacks } from './useMapData'
+import { useLocMarker } from './useLocMarker'
 import {
   loadZoneSelection,
   onCharacterZone,
@@ -185,7 +191,9 @@ function MapsHeader({
         )}
       </Stack>
       <Typography variant="caption" color="text.disabled">
-        No “you are here” marker: the log states the zone you entered and nothing else positional.
+        The log states the zone you entered and nothing else positional — so there is no automatic
+        “you are here”. Type <code>/loc</code> in game and paste the line into the toolbar to mark
+        where you are; the mark stays with this zone until you replace or clear it.
       </Typography>
     </Stack>
   )
@@ -315,6 +323,10 @@ export default function MapsView(): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const vp = useMapViewport({ bounds: data?.bounds ?? EMPTY_BOUNDS, id: data?.zone ?? '', hostRef })
   const { marker, onJump } = useSearchJump({ vp, zone: data?.zone, pick })
+  // THE POSITION YOU TOLD IT (JOS-98). Keyed on the zone actually DRAWN, never the one being
+  // fetched: a marker attributed to a map that has not loaded would be drawn against the previous
+  // zone's bounds for a frame — a dot in the wrong place, which is the one thing this must not do.
+  const loc = useLocMarker(data?.zone ?? null, vp)
 
   // THE SIDEBAR. Open by default, remembered in `eq.maps.pane`, closed from its own header. Its
   // filtered rows are derived ONCE and read by both the list and the surface's pins.
@@ -344,6 +356,10 @@ export default function MapsView(): JSX.Element {
           setPrefs(p)
           savePackPrefs(p)
         }}
+        locMarker={loc.marker}
+        onPlaceLoc={loc.place}
+        onShowLoc={loc.show}
+        onClearLoc={loc.clear}
         zoomedIn={vp.zoomedIn}
         onZoom={vp.zoomBy}
         onFit={vp.fit}
@@ -363,6 +379,7 @@ export default function MapsView(): JSX.Element {
         pane={pane}
         zoneName={zoneName}
         marker={marker}
+        locMarker={loc.marker}
         onJump={onJump}
       />
       <MapCredits data={data} />

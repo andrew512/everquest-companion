@@ -11,6 +11,12 @@
 // STATE, NEVER PROCESS (AGENTS.md UI conventions). Every control here states a fact — which
 // layers are drawn, which pack each half came from, which zone is open. Nothing narrates.
 //
+// THE ONE BOX THAT IS NOT A CONTROL OVER THE MAP FILE is the `/loc` field (JOS-98,
+// MapLocField.tsx): it states, and lets you set, the single position the app has been TOLD. It
+// earns its place on a row about the drawing because that is exactly what it is — the marker is
+// drawn on the surface, and this is the only way one gets there. It is gated on `hasMap` with the
+// rest: a coordinate typed against no map has nowhere to land.
+//
 // NOTHING HERE SEARCHES. The bar used to carry a `Search labels…` box, a This zone / All zones
 // scope toggle and a sidebar toggle called `Zone` — three controls asking the same question the
 // sidebar's one box now answers, in a hit list that lived somewhere else entirely (MapMobPane.tsx
@@ -50,8 +56,9 @@ import PushPinIcon from '@mui/icons-material/PushPin'
 import ExploreIcon from '@mui/icons-material/Explore'
 import type { MapLayer, MapPackInfo, MapPackPrefs, ZoneShort } from '@shared/maps'
 import { bandLabel, type FloorBand } from './floorSlice'
-import type { LayerMask } from './mapGeometry'
+import type { EqLoc, LayerMask } from './mapGeometry'
 import ZoneSelect from './MapZoneSelect'
+import MapLocField from './MapLocField'
 import type { ZoneMode } from './zoneFollow'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -215,6 +222,11 @@ export interface MapToolbarProps {
   packs: readonly MapPackInfo[]
   prefs: MapPackPrefs
   onPrefs: (prefs: MapPackPrefs) => void
+  /** This zone's typed-/loc marker, or null when it has none (JOS-98). */
+  locMarker: EqLoc | null
+  onPlaceLoc: (loc: EqLoc) => void
+  onShowLoc: () => void
+  onClearLoc: () => void
   /** The view is tighter than the whole zone — zoom-out and Fit have something to do. */
   zoomedIn: boolean
   /** > 1 zooms in, < 1 out, around the pane centre. */
@@ -276,6 +288,7 @@ function PackSelect({
 function DrawnControls(props: MapToolbarProps): JSX.Element {
   const { layers, onLayers, bands, floor, onFloor, packs, prefs, onPrefs } = props
   const { zoomedIn, onZoom, onFit } = props
+  const { locMarker, onPlaceLoc, onShowLoc, onClearLoc } = props
   const on = TOGGLEABLE.filter((t) => layers[t.layer]).map((t) => String(t.layer))
   return (
     <>
@@ -332,6 +345,10 @@ function DrawnControls(props: MapToolbarProps): JSX.Element {
           onPrefs({ ...prefs, ...(id == null ? { labels: undefined } : { labels: id }) })
         }}
       />
+
+      {/* The one position the app can hold, and the only way one gets in (JOS-98). It belongs on
+          this row for the row's own reason: it describes what is DRAWN on the surface. */}
+      <MapLocField marker={locMarker} onPlace={onPlaceLoc} onShow={onShowLoc} onClear={onClearLoc} />
     </>
   )
 }
