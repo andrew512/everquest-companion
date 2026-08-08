@@ -257,6 +257,80 @@ export function cursorRingActive(p: PresenceState, ring: CursorRingPrefs): boole
   return ring.enabled && p.eqFocused && p.cursorVisible && p.eqBounds !== null
 }
 
+// ------------------------------------------------------------------- the cadences
+//
+// THREE CLOCKS, AND THE ONLY ONE THAT MATTERS IS THE RATIO BETWEEN TWO OF THEM (JOS-120).
+//
+// `cursorVisible` is a GATE on an 8 ms consumer. The ring stops drawing when Windows stops
+// drawing a pointer — and EverQuest stops drawing one the instant a mouse button goes down in
+// the world view, while it re-centers the pointer every frame underneath. So the interesting
+// number is not "how fast does the watcher poll", it is HOW MANY SAMPLES THE RING CAN PAINT
+// FROM A POINTER THAT IS ALREADY GONE, and that is `gate latency / sampler period`.
+//
+// It used to be ~19. The whole loop — five user32 calls, a `Get-Process`, a string build and a
+// compare — ran on ONE 150 ms tick, and the cursor check rode along with it, so a 100 ms click
+// could pass without the gate ever looking. That is the reported twitch: for up to 150 ms the
+// ring faithfully tracked a cursor nobody could see.
+//
+// The fix is not a faster loop, it is a SPLIT one. `CursorShowing()` is a single `GetCursorInfo`
+// and costs essentially nothing, so it runs every tick at the platform's floor; the expensive
+// foreground work keeps the cadence it has always had by running every Nth tick.
+//
+// MEASURED on this machine (20-25 s windows, `Get-Process.TotalProcessorTime`): the shipped
+// single-cadence loop cost 0.06-0.16 % of one core; the split loop costs 0.19-0.31 %. That is
+// the entire price — about 1.3 ms of CPU per second — and it buys a gate that closes inside one
+// display frame instead of nine.
+
+/**
+ * The tick the watcher ASKS for, in ms. One, i.e. "the platform's floor" — the same request the
+ * cursor sampler makes for the same reason.
+ *
+ * MEASURED: a `Start-Sleep -Milliseconds 1` loop in PowerShell actually turns every ~16 ms
+ * (avg 15.96, max 31.65 over 25 s), because Windows' default timer quantum is 15.6 ms. Asking
+ * for 1 is a request for whatever the platform will give, not a claim that it gives 1.
+ */
+export const WATCHER_TICK_MS = 1
+
+/** What that request MEASURES at. Worst case is ~2x this — one missed quantum. */
+export const WATCHER_TICK_FLOOR_MS = 16
+
+/**
+ * How many ticks between foreground/running/heartbeat scans. Ten ticks x ~16 ms ~= 160 ms, which
+ * is the ~150 ms cadence this loop has always had: fine enough that alt-tab feels instant,
+ * coarse enough that the expensive half of the loop is still effectively asleep.
+ */
+export const FOREGROUND_EVERY_TICKS = 10
+
+/**
+ * The cursor sampler's period (presenceEffects.ts's `setInterval`). It lives HERE, next to the
+ * watcher's cadence, because neither number means anything without the other — see
+ * `unguardedSamplesPerHiddenCursor`.
+ *
+ * Ask for 8 ms, i.e. "as fast as the platform will give us". MEASURED (Electron, 3x 30 s windows
+ * on this machine): a `setInterval(8)` in Electron's main process actually fires ~64 times a
+ * second, not 125 — the same 15.6 ms quantum, and Chromium does not raise the system timer
+ * resolution for a main-process timer. The number stays 8: it is a request for the platform's
+ * floor, and the renderer already coalesces to `requestAnimationFrame` and drops the surplus.
+ */
+export const CURSOR_POLL_MS = 8
+
+/** Worst-case latency of the cursor-visibility gate: one tick that overran its quantum. */
+export const CURSOR_GATE_LATENCY_MS = WATCHER_TICK_FLOOR_MS * 2
+
+/**
+ * THE DEFECT, AS A NUMBER. How many cursor samples the ring can still paint from a pointer the
+ * game has already hidden and started re-centering — the gate's observation latency over the
+ * sampler's period. Pure so `tests/presence.test.mts` can pin it instead of anyone re-deriving
+ * it from two constants in two files.
+ */
+export function unguardedSamplesPerHiddenCursor(
+  gateLatencyMs: number,
+  samplerMs: number = CURSOR_POLL_MS
+): number {
+  if (samplerMs <= 0) return 0
+  return Math.ceil(gateLatencyMs / samplerMs)
+}
+
 // ------------------------------------------------------------------- watcher health
 //
 // THE STATE IS ONLY AS GOOD AS THE STREAM THAT FEEDS IT. `PresenceState` is a CACHE of the last

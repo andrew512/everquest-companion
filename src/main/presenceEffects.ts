@@ -44,7 +44,7 @@ import { screen, type BrowserWindow } from 'electron'
 import { IPC } from '../shared/ipc'
 import { logError } from './errorLog'
 import { presenceSnapshot, stopPresence, subscribePresence } from './presence'
-import { cursorRingActive, overlaysShouldHide } from './presenceProtocol'
+import { CURSOR_POLL_MS, cursorRingActive, overlaysShouldHide } from './presenceProtocol'
 import { historicalReplayRunning, ringDisposition } from './replayGate'
 import { getCursorRing, getOverlayAutoHide } from './store'
 import {
@@ -57,23 +57,6 @@ import {
 } from './windows'
 import { presenceNeeded } from '../shared/presencePrefs'
 import type { CursorPoint, PresenceState, ScreenRect } from '../shared/presencePrefs'
-
-/**
- * Cursor sampling period: ask for 8 ms, i.e. "as fast as the platform will give us".
- *
- * MEASURED (Electron 3x 30 s windows on this machine): a `setInterval(8)` in Electron's main
- * process actually fires ~64 times a second, not 125 — Windows' default 15.6 ms timer quantum
- * clamps it, and Chromium does not raise the system timer resolution for a main-process timer.
- * The number stays 8 anyway: it is a request for the platform's floor, and if a future Electron
- * (or a machine with a raised timer resolution) delivers more, the renderer already coalesces to
- * `requestAnimationFrame` and simply drops the surplus.
- *
- * ~64 Hz is at or above a 60 Hz display's frame rate, so the ring has a fresh point for every
- * composed frame there. On a 144 Hz panel some frames reuse the previous point — a sub-16 ms
- * lag on a HALO whose real cursor is drawn by Windows at full rate, which is the trade this
- * whole design makes on purpose (see the renderer file's rule 1).
- */
-const CURSOR_POLL_MS = 8
 
 /** Where a parked ring goes when the pointer leaves the EQ window (a half-ring clipped against
  *  the window edge reads as a bug; absence reads as "not over the game"). */
@@ -133,6 +116,14 @@ function sampleCursor(): void {
  * sample. Parking also settles the inside/outside question ONCE: while the ring is suppressed the
  * stream is stopped, so nothing re-evaluates the edge test against a pointer EverQuest is
  * re-centering, and a cursor sitting on the window border cannot flip the ring on and off.
+ *
+ * A PARK IS ONLY REAL ONCE IT IS COMPOSITED (JOS-120). This is one IPC message and the renderer
+ * paints it on the next animation frame — so it does nothing at all if the window is already
+ * hidden, because a hidden window produces no frames (measured: the pending frame simply waits,
+ * for as long as the window stays hidden, and runs 1 ms after it is shown again — one frame too
+ * late to keep the stale halo off the screen). Every caller therefore parks while the window is
+ * still visible, and `ringDisposition`'s 'parked' exists so that the case that happens on every
+ * click never hides the window at all.
  */
 function parkRing(): void {
   const w = getCursorRingWindow()
@@ -158,10 +149,23 @@ function stopStream(): void {
   pollTimer = null
 }
 
+/** Stop sampling and park the halo, leaving the window exactly where it is — the 'parked'
+ *  disposition. The window stays VISIBLE on purpose: that is what lets the park actually reach
+ *  the screen (see `parkRing`), and it is why a click no longer ends in a displaced ring. */
+function parkRingInPlace(): void {
+  stopStream()
+  parkRing()
+}
+
 /**
  * Stop sampling and take the ring off screen, without touching the window itself.
  *
- * Order matters: stop sampling FIRST, then park, so the park is the last word the ring hears.
+ * ORDER MATTERS, and it is not the order this had (JOS-120). Stop sampling FIRST so the park is
+ * the last word the ring hears — and park BEFORE hiding, never after. `hide()` stops the window's
+ * frames, so a park sent after it is a message the renderer records and cannot paint; the window
+ * then keeps its last composited surface, and the next `showInactive()` puts the old halo back on
+ * screen for a frame. Parking first gives the renderer a visible window to paint into.
+ *
  * Exported because session.ts needs exactly this on the way INTO a historical replay (JOS-62) —
  * and only this. `refreshPresenceEffects` would be the symmetric-looking call and is the wrong
  * one there: at cold start the replay begins before `initPresenceEffects` has run, and a full
@@ -171,8 +175,8 @@ function stopStream(): void {
  */
 export function suspendCursorStream(): void {
   stopStream()
-  setCursorRingVisible(false)
   parkRing()
+  setCursorRingVisible(false)
 }
 
 /** Fold the current presence + settings into the ring window's existence, bounds and stream. */
@@ -187,6 +191,9 @@ function applyRing(state: PresenceState): void {
     enabled: ring.enabled,
     hasBounds: bounds !== null,
     active: cursorRingActive(state, ring),
+    // Asked SEPARATELY from `active`, not derived from it: it is the difference between "the
+    // pointer is gone" (park in place) and "the game is gone" (take the window off screen).
+    focused: state.eqFocused,
     replayRunning: historicalReplayRunning()
   })
   if (disposition === 'off') {
@@ -216,6 +223,14 @@ function applyRing(state: PresenceState): void {
   if (disposition === 'run') {
     setCursorRingVisible(true)
     startStream()
+    return
+  }
+  if (disposition === 'parked') {
+    // 'parked' — EverQuest still owns the screen, there is just no pointer to ring (mouselook, or
+    // any mouse button held in the world view). The window is left VISIBLE and merely emptied:
+    // this is the transition that happens on every click, and hiding for it is what put a stale
+    // halo back on screen a frame later (JOS-120, replayGate.ts).
+    parkRingInPlace()
     return
   }
   // 'idle' — warm and positioned, but not on screen and not sampling.

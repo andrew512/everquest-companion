@@ -34,8 +34,10 @@ import { notePresenceRestart } from './telemetry'
 import { effectiveEqRoot } from './log/config'
 import {
   type PresenceRecord,
+  FOREGROUND_EVERY_TICKS,
   WATCHER_HEARTBEAT_MS,
   WATCHER_STALE_MS,
+  WATCHER_TICK_MS,
   eqRootPrefix,
   focusDebounceStep,
   isEqWindow,
@@ -58,12 +60,21 @@ import type { PresenceState, ScreenRect } from '../shared/presencePrefs'
  * `Add-Type` at startup (~1 s, paid a single time per app run) and process image paths are
  * memoized per pid. The loop itself is five user32 calls and a string compare.
  *
- * CURSOR VISIBILITY is one of those calls. `GetCursorInfo` reports the session-wide cursor, and
- * EverQuest hides it for the whole time the right button is held (mouselook) — during which it
- * also re-centers the pointer every frame, so an absolute cursor sample oscillates while nothing
- * is on screen to follow it. `CURSORINFO.flags` is a bit field, so the test is
- * `& CURSOR_SHOWING(0x1)`, not `!= 0`. A failed call answers "showing": the ring is a display
- * aid, and a watcher that cannot see the cursor must not be the reason it disappears.
+ * CURSOR VISIBILITY is one of those calls, AND IT IS THE ONE THAT RUNS EVERY TICK (JOS-120).
+ * `GetCursorInfo` reports the session-wide cursor, and EverQuest hides it for the whole time a
+ * mouse button is held in the world view — during which it also re-centers the pointer every
+ * frame, so an absolute cursor sample oscillates while nothing is on screen to follow it.
+ * `CURSORINFO.flags` is a bit field, so the test is `& CURSOR_SHOWING(0x1)`, not `!= 0`. A failed
+ * call answers "showing": the ring is a display aid, and a watcher that cannot see the cursor
+ * must not be the reason it disappears.
+ *
+ * THE LOOP IS SPLIT, AND THAT IS THE WHOLE POINT. This one call gates an 8 ms consumer, so
+ * running it on the same 150 ms tick as the expensive foreground work let a whole mouse click
+ * pass unobserved — the ring tracked a pointer nobody could see for up to nineteen samples. It is
+ * a single user32 call and costs nothing, so it runs EVERY tick at the platform's floor
+ * (~16 ms), while the foreground/running/heartbeat block keeps the cadence it always had by
+ * running every `FOREGROUND_EVERY_TICKS`th tick. Measured price: ~1.3 ms of CPU per second (see
+ * presenceProtocol.ts's cadence section).
  *
  * `$ErrorActionPreference` drops to SilentlyContinue after `Add-Type`, ON PURPOSE: reading
  * `.Path` on a protected process raises a non-terminating error every 5 s forever, and the
@@ -77,19 +88,14 @@ import type { PresenceState, ScreenRect } from '../shared/presencePrefs'
  * fallback for a client installed under a different exe name — runs only when the cheap pass
  * found nothing.
  */
-function watcherScript(
-  eqRootWithSep: string,
-  runningPollMs: number,
-  tickMs: number,
-  parentPid: number
-): string {
-  // A single-quoted PowerShell literal: the only character that needs escaping is `'`, and a
-  // Windows path cannot contain one. Doubling it keeps that true even for a pathological root.
-  const rootLiteral = eqRootWithSep.replace(/'/g, "''")
-  return `
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Add-Type -TypeDefinition @'
+/**
+ * The P/Invoke surface, as C# for `Add-Type`. Compiled ONCE per app run (~1 s) before the loop
+ * starts, which is the whole reason the loop itself can be five user32 calls.
+ *
+ * A module constant rather than part of the template below purely so the script builder stays one
+ * readable function — nothing here is parameterised.
+ */
+const WATCHER_PINVOKE = `
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -113,6 +119,33 @@ public static class EqcWin {
     return (ci.flags & 0x1) != 0 ? 1 : 0;
   }
 }
+`.trim()
+
+/** The child's three cadences. One object because they only mean anything together — see
+ *  presenceProtocol.ts's cadence section. */
+interface WatcherCadence {
+  /** ms between process-existence scans (and therefore between heartbeats). */
+  runningPollMs: number
+  /** ms the loop asks to sleep between ticks; every tick reads CURSOR_SHOWING. */
+  tickMs: number
+  /** how many ticks between the expensive foreground/running block. */
+  foregroundEveryTicks: number
+}
+
+function watcherScript(
+  eqRootWithSep: string,
+  cadence: WatcherCadence,
+  parentPid: number
+): string {
+  // A single-quoted PowerShell literal: the only character that needs escaping is `'`, and a
+  // Windows path cannot contain one. Doubling it keeps that true even for a pathological root.
+  const rootLiteral = eqRootWithSep.replace(/'/g, "''")
+  const { runningPollMs, tickMs, foregroundEveryTicks } = cadence
+  return `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -TypeDefinition @'
+${WATCHER_PINVOKE}
 '@
 $ErrorActionPreference = 'SilentlyContinue'
 $root = '${rootLiteral}'
@@ -123,7 +156,17 @@ $lastFg = ''
 $lastRun = -1
 $lastCur = -1
 $nextRun = [DateTime]::MinValue
+$fgEvery = ${foregroundEveryTicks}
+$fgCountdown = 0
 while ($true) {
+  # EVERY TICK, and deliberately alone up here: one user32 call, no allocation, no string work.
+  # This is the gate on main's 8 ms cursor sampler, so its latency is the ring's honesty (JOS-120).
+  $cur = [EqcWin]::CursorShowing()
+  if ($cur -ne $lastCur) { $lastCur = $cur; [Console]::Out.WriteLine('C|' + $cur) }
+  $fgCountdown = $fgCountdown - 1
+  if ($fgCountdown -gt 0) { Start-Sleep -Milliseconds ${tickMs}; continue }
+  $fgCountdown = $fgEvery
+  # ---- everything below runs on the ORIGINAL ~150 ms cadence, not the fast tick ----
   $h = [EqcWin]::GetForegroundWindow()
   $fgPid = [uint32]0
   [void][EqcWin]::GetWindowThreadProcessId($h, [ref]$fgPid)
@@ -138,8 +181,6 @@ while ($true) {
   }
   $line = 'F|' + $fgPid + '|' + $rect.Left + '|' + $rect.Top + '|' + ($rect.Right - $rect.Left) + '|' + ($rect.Bottom - $rect.Top) + '|' + $paths[$fgPid] + '|' + [EqcWin]::Title($h)
   if ($line -ne $lastFg) { $lastFg = $line; [Console]::Out.WriteLine($line) }
-  $cur = [EqcWin]::CursorShowing()
-  if ($cur -ne $lastCur) { $lastCur = $cur; [Console]::Out.WriteLine('C|' + $cur) }
   $now = [DateTime]::UtcNow
   if ($now -ge $nextRun) {
     $nextRun = $now.AddMilliseconds(${runningPollMs})
@@ -152,7 +193,7 @@ while ($true) {
     # 256 entries. Windows RECYCLES pids, and an entry that outlives its process is not stale
     # data, it is WRONG data: the browser that inherits a departed eqgame.exe's pid would be
     # handed eqgame's path and classified as the game. Five seconds bounds that window, and the
-    # memo still absorbs the ~33 ticks between beats, which is all it was ever for.
+    # memo still absorbs the ~31 foreground scans between beats, which is all it was ever for.
     $paths.Clear()
     $running = 0
     $procs = [System.Diagnostics.Process]::GetProcesses()
@@ -175,9 +216,6 @@ while ($true) {
 `
 }
 
-/** Foreground sampling cadence inside the child. Fine enough that alt-tab feels instant,
- *  coarse enough that a sleeping PowerShell loop rounds to zero CPU. */
-const TICK_MS = 150
 /** Process-existence cadence. "Is the game running" changes twice a session. */
 const RUNNING_POLL_MS = 5000
 
@@ -282,9 +320,11 @@ function applyRecord(rec: PresenceRecord): void {
   // what `noteSignal` already recorded; it deliberately does not set `observed`, because a beat
   // is not a look at the world and must never be the reason auto-hide starts acting.
   if (rec.t === 'beat') return
-  // ANY record means we have actually looked (the child emits an `F`, a `C` and an `R` on its
-  // very first tick, in that order). Until then `observed:false` keeps auto-hide from acting on
-  // a default that only looks like a fact — see `overlaysShouldHide`.
+  // ANY record means we have actually looked (the child emits a `C`, an `F` and an `R` on its
+  // very first tick, in that order — the cursor check leads because it is the one that runs on
+  // every tick, JOS-120; all three still land in the first tick's single write). Until then
+  // `observed:false` keeps auto-hide from acting on a default that only looks like a fact — see
+  // `overlaysShouldHide`.
   if (rec.t === 'run') {
     update({ observed: true, eqRunning: rec.running })
     return
@@ -479,8 +519,11 @@ function startWatcher(): void {
   if (child || E2E || process.platform !== 'win32') return
   const script = watcherScript(
     eqRootPrefix(effectiveEqRoot()),
-    RUNNING_POLL_MS,
-    TICK_MS,
+    {
+      runningPollMs: RUNNING_POLL_MS,
+      tickMs: WATCHER_TICK_MS,
+      foregroundEveryTicks: FOREGROUND_EVERY_TICKS
+    },
     // Baked in so the child can reap ITSELF when this process dies without running its quit path
     // (a crash, or a force-kill of the tree). Windows orphans children rather than killing them.
     process.pid
