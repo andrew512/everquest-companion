@@ -228,6 +228,57 @@ async function stepBreakClearsOneTarget(overlay: Page, log: FixtureLog): Promise
   )
 }
 
+/**
+ * "Flash/alert when a positive spell drops" — one of the ten reports' asks.
+ *
+ * `Your valor fades.` is Valor's own wears-off message and, measured against the committed
+ * spells.json, it is UNIQUE to it (the other two self buffs the fixture leaves standing are not:
+ * `The mystic symbol fades.` is six spells and `Your illusion fades.` is twenty-seven). So this
+ * is the one self buff in this window whose drop the log can name without ambiguity, which makes
+ * it the honest one to assert on.
+ *
+ * The flash is renderer state over rows the window already holds, so it can only ever fire on a
+ * removal the MODEL believed — never on a guess.
+ */
+async function stepDropFlash(overlay: Page, log: FixtureLog): Promise<void> {
+  // Raise it LIVE rather than borrowing one from the replay: the first line this spec appends is
+  // ~30 minutes of event time after the fixture's last, which trips the model's SESSION_GAP_MS
+  // logout clear and correctly wipes every replayed active. (That is a real behaviour worth
+  // knowing about, and it is why this step casts its own buff.)
+  const at = new Date()
+  log.appendAt(at, 'You begin casting Valor.')
+  log.appendAt(new Date(at.getTime() + 1000), 'You feel valorous.')
+
+  const up = await settle(() => rows(overlay), (r) => r.some((x) => x.name === 'Valor'), { timeoutMs: 30_000 })
+  const valor = up.find((r) => r.name === 'Valor')
+  if (!check('a self buff you cast raises a row of your own', valor !== undefined, JSON.stringify(up.map((r) => r.name)))) {
+    return
+  }
+  // 54 minutes is what spells.json states for Valor, so it counts DOWN — the self-buff bar with
+  // a receding timer the reports asked for.
+  check('…counting DOWN from the duration spells.json states', valor?.mode === 'countdown', JSON.stringify(valor))
+  check('…under Your buffs', (await groups(overlay)).includes('Your buffs'))
+
+  log.append('Your valor fades.')
+  const after = await settle(() => rows(overlay), (r) => !r.some((x) => x.name === 'Valor'), { timeoutMs: 30_000 })
+  check('a wears-off message clears the buff it names', !after.some((r) => r.name === 'Valor'), JSON.stringify(after.map((r) => r.name)))
+  const flashed = await settle(
+    () => overlay.evaluate(() => [...document.querySelectorAll('[data-testid="buff-timer-drop"]')].map((e) => e.textContent?.trim() ?? '')),
+    (t) => t.length > 0,
+    { timeoutMs: 10_000 }
+  )
+  check('…and the overlay FLASHES that a positive spell dropped', flashed.some((t) => t.includes('Valor')), JSON.stringify(flashed))
+  // NO TWO NOTICES READ THE SAME. The first cut printed "Valor dropped" twice — not a duplicate
+  // but two REAL drops (the fixture has Valor up on the player AND on a fire giant warrior) that
+  // the line could not tell apart, because it named the spell and not the target.
+  check(
+    '…and no two drop notices are indistinguishable',
+    new Set(flashed).size === flashed.length,
+    JSON.stringify(flashed)
+  )
+  check('…the self drop naming just the spell', flashed.includes('Valor dropped'), JSON.stringify(flashed))
+}
+
 /** Close it the way a user would — its own ✕ — not by toggling the menu again. */
 async function stepClose(page: Page, app: ElectronApplication, overlay: Page | null): Promise<void> {
   if (overlay) {
@@ -274,6 +325,7 @@ async function main(): Promise<void> {
       await stepGeometry(app, overlay)
       await stepChainMez(overlay, log)
       await stepBreakClearsOneTarget(overlay, log)
+      await stepDropFlash(overlay, log)
     } else {
       note('the overlay window never appeared — the render assertions could not run')
     }

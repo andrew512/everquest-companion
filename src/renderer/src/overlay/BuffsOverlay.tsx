@@ -104,18 +104,29 @@ function useSecondsClock(): number {
  * not state. It does not fire for the first snapshot, which would otherwise announce an empty
  * hydrate as N drops.
  */
-function useDropFlash(rows: BuffTimerRow[], nowMs: number): { name: string; at: number }[] {
+function useDropFlash(rows: BuffTimerRow[], nowMs: number): { id: string; name: string; at: number }[] {
   const prevRef = useRef<Map<string, string> | null>(null)
-  const [drops, setDrops] = useState<{ name: string; at: number }[]>([])
+  const [drops, setDrops] = useState<{ id: string; name: string; at: number }[]>([])
 
   useEffect(() => {
-    const current = new Map(rows.filter((r) => r.kind === 'buff').map((r) => [r.id, r.name]))
+    // THE LABEL CARRIES THE TARGET, and that is not decoration: the SAME buff can be up on you
+    // and on your pet at once (the e2e's fixture has Valor on both), so a notice that printed
+    // only the spell would show two identical lines for two genuinely different drops.
+    const current = new Map(
+      rows.filter((r) => r.kind === 'buff').map((r) => [r.id, r.group === 'self' ? r.name : `${r.name} · ${r.target ?? '?'}`])
+    )
     const prev = prevRef.current
     prevRef.current = current
     if (prev === null) return
-    const gone: { name: string; at: number }[] = []
-    for (const [id, name] of prev) if (!current.has(id)) gone.push({ name, at: Date.now() })
-    if (gone.length > 0) setDrops((d) => [...d, ...gone].slice(-3))
+    const gone: { id: string; name: string; at: number }[] = []
+    for (const [id, name] of prev) if (!current.has(id)) gone.push({ id, name, at: Date.now() })
+    if (gone.length === 0) return
+    // KEYED BY ROW ID, and one line per buff: a re-cast that drops again while the first notice
+    // is still up replaces it rather than stacking a second identical line. (Without this the
+    // window really did print "Valor dropped" three times — measured in the e2e.) The effect can
+    // also run more than once for one transition (two modules, two deltas, StrictMode), and
+    // deduping on the id makes that structurally harmless instead of merely unlikely.
+    setDrops((d) => [...d.filter((x) => !gone.some((g) => g.id === x.id)), ...gone].slice(-3))
   }, [rows])
 
   return drops.filter((d) => nowMs - d.at < DROP_FLASH_MS)
@@ -251,7 +262,7 @@ export default function BuffsOverlay(): JSX.Element {
 
         {drops.map((d) => (
           <div
-            key={`${d.name}-${d.at}`}
+            key={d.id}
             data-testid="buff-timer-drop"
             style={{ fontSize: 10, color: '#e07a6a', padding: '2px 4px' }}
           >

@@ -393,16 +393,35 @@ regression run that this ticket is not the place for.
   counting down from 24 s, grouped under `a turmoil toad` and `a scareling`** — the whole real
   path, chokidar → Tailer → parser → module → IPC → React;
 - one break line clears **only** its target and the other enemy keeps counting;
+- **the self-buff bar and the drop flash**: a `You begin casting Valor.` + `You feel valorous.`
+  raises a self row counting down from `54m 00s` (the duration spells.json states), and
+  `Your valor fades.` clears it and flashes `Valor dropped`;
 - the ✕ closes the window and main records it closed.
+
+Two things the e2e taught that the draft did not anticipate, both now encoded:
+
+1. **The first appended line trips the session-gap clear.** The fixture's last event is ~30 min of
+   event time before "now", so `SESSION_GAP_MS` fires and correctly wipes every replayed active —
+   which is why the drop-flash step casts its own buff instead of borrowing one from the replay.
+2. **The drop notice has to carry the target.** The fixture has `Valor` up on the player AND on
+   `a fire giant warrior`, so the first cut printed two identical `Valor dropped` lines for two
+   genuinely different drops. The label is now `Valor · a fire giant warrior` for a non-self row,
+   and the spec asserts no two notices are indistinguishable.
 
 ### Verification, final
 
-`npm run typecheck` (node+web) green · `npm run lint` green (no ratchet entries added) ·
-`npm test` **2484 pass / 0 fail / 2 skipped** (the two full-log tests, which need the real game
+Rebased onto current main (10 commits had landed under it — JOS-31 Wine, JOS-101, JOS-102,
+JOS-104; the rebase was clean) and re-verified at that tip:
+
+`npm run typecheck` (node+web) green · `npm run lint` green (**no ratchet entries added**) ·
+`npm test` **2521 pass / 0 fail / 2 skipped** (the two full-log tests, which need the real game
 log) · `npm run test:e2e` **23/23 green**.
 
-One caveat stated honestly: on the FIRST full e2e run `feedback.e2e.mts` failed its
-"owner-tools opt-in reads FALSE with nothing set" check. That is this machine's environment, not
-this branch — the owner has `EQ_OWNER_TOOLS=1` set user-wide (`setx`, exactly as AGENTS.md
-describes), so the spec's deliberately-bare launch inherits it. Re-running that spec with the
-variable cleared passes every check. Nothing in JOS-89 touches owner tools.
+Two reds seen along the way, neither this branch's:
+
+- `feedback.e2e.mts` fails its "owner-tools opt-in reads FALSE with nothing set" check on THIS
+  MACHINE, because the owner has `EQ_OWNER_TOOLS=1` set user-wide (`setx`, exactly as AGENTS.md
+  describes) and the spec's deliberately-bare launch inherits it. With the variable cleared it
+  passes every check. Nothing in JOS-89 goes near owner tools.
+- `leveling.e2e.mts` failed once under full-suite parallelism and passed solo and in three of
+  four full runs. Flake, and nothing in this branch touches the leveling path.
