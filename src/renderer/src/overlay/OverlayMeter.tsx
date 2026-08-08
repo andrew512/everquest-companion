@@ -13,7 +13,7 @@ import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
-import { EMPTY_ROSTER, SCOPE_HINT, SCOPE_LABEL, chipLabel, nextScope } from '@shared/roster'
+import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
 
 // Palette (matches the app's combat colors; the overlay has no MUI theme).
 const GOLD = '#d9b25f'
@@ -146,11 +146,11 @@ export default function OverlayMeter(): JSX.Element {
   const snap = useOverlayCombat(selection === LIVE ? undefined : selection)
   const { locked, bgAlpha, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
-  // WHOSE damage (docs/plans/group-model.md §2). Persisted PER OVERLAY KIND — a pinned fight
-  // meter and the docked Combat tab are often asked different questions, and one shared key
-  // would make them fight over one value. The roster itself is the snapshot's, so this window
-  // and the tab always filter by the same five names.
-  const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
+  // WHOSE damage (docs/plans/group-model.md §2). ONE app-wide preference since JOS-115: the
+  // Combat tab, the Overview card and every floating meter read this key, and only
+  // Preferences > Combat writes it. The roster itself is the snapshot's, so this window and the
+  // tab always filter the same names by the same rule.
+  const [meterScope] = useMeterScope()
   const roster = snap?.roster ?? EMPTY_ROSTER
 
   const { seg, live, headerName, totalDps, rows, headIsLast } = meterView(
@@ -215,8 +215,7 @@ export default function OverlayMeter(): JSX.Element {
         select={{ rows, value: selection, onChange: selectSegment, accent: GOLD }}
         scope={{
           label: chipLabel(meterScope, roster),
-          title: `${SCOPE_HINT[meterScope]}. Click for ${SCOPE_LABEL[nextScope(meterScope)]}.`,
-          onCycle: () => setMeterScope(nextScope(meterScope))
+          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
         }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />

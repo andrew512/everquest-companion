@@ -14,7 +14,7 @@ import {
 } from '@mui/material'
 import CircleIcon from '@mui/icons-material/Circle'
 import { FightPicker } from './FightPicker'
-import { ScopeChip } from './ScopeChip'
+import { ScopeStatus } from './ScopeStatus'
 import type { CombatScope, MeterMode, ScopeOptions } from './dashboardData'
 import type { MeterScope, RosterSnap } from '@shared/roster'
 import { fmtDur } from './combatShared'
@@ -473,9 +473,9 @@ export interface CombatHeaderProps {
   setMode: (m: MeterMode) => void
   /** WHOSE damage — the group model's scope, a different axis from Fight|Overall (which is
    *  WHICH segment). Sits beside the direction filter because the two together are the sentence
-   *  the meter is answering: "outgoing damage, for my group". */
+   *  the meter is answering: "outgoing damage, for my group". READ-ONLY here since JOS-115: the
+   *  choice lives in Preferences > Combat, this line only states which one is in force. */
   meterScope: MeterScope
-  setMeterScope: (s: MeterScope) => void
   roster: RosterSnap
 }
 
@@ -527,11 +527,12 @@ export function CombatHeader(p: CombatHeaderProps): React.JSX.Element {
 
         {/* WHOSE damage (docs/plans/group-model.md §2). Only the two SOURCE dimensions are
             scoped: the Incoming list is always "what is hitting You", and no roster changes
-            that. The chip stays compact because this line never wraps — its two-rank height is
-            a contract the headless harness measures. */}
-        {p.view === 'dash' && p.mode !== 'in' && (
-          <ScopeChip scope={p.meterScope} setScope={p.setMeterScope} roster={p.roster} />
-        )}
+            that. It STATES the scope and no longer offers it (JOS-115 — Preferences > Combat
+            owns the choice); the roster popover beside it is still a control, because a
+            mis-inferred group is corrected where its rows are missing. The readout stays
+            compact because this line never wraps — its two-rank height is a contract the
+            headless harness measures. */}
+        {p.view === 'dash' && p.mode !== 'in' && <ScopeStatus scope={p.meterScope} roster={p.roster} />}
 
         <Box sx={{ flexGrow: 1, minWidth: 8 }} />
 

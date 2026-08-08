@@ -266,10 +266,11 @@ export default function CombatView({
   } = useCombat()
   const [mode, setMode] = useState<MeterMode>('out')
   const [view, setView] = useState<'dash' | 'timeline'>('dash')
-  // WHOSE damage (docs/plans/group-model.md §2) — persisted per surface, so the docked tab and a
-  // pinned overlay can answer different questions. `EMPTY_ROSTER` while the first snapshot is in
-  // flight means Group renders as Everyone for that instant, never as an empty meter.
-  const [meterScope, setMeterScope] = useMeterScope('combat')
+  // WHOSE damage (docs/plans/group-model.md §2) — ONE persisted preference for every combat
+  // surface since JOS-115, read here and written only in Preferences > Combat. `EMPTY_ROSTER`
+  // while the first snapshot is in flight means Group renders as Everyone for that instant, never
+  // as an empty meter.
+  const [meterScope] = useMeterScope()
   const roster = snap?.roster ?? EMPTY_ROSTER
 
   // An inbound focus (deep link) picks the scope + selection, then is consumed. Keyed on the
@@ -333,7 +334,6 @@ export default function CombatView({
         mode={mode}
         setMode={setMode}
         meterScope={meterScope}
-        setMeterScope={setMeterScope}
         roster={roster}
       />
 

@@ -10,7 +10,7 @@ import { OverlayHeader } from './OverlayHeader'
 import { HealBars } from './healBars'
 import { healTotalTitle } from '../features/combat/healRows'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
-import { EMPTY_ROSTER, SCOPE_HINT, SCOPE_LABEL, chipLabel, nextScope } from '@shared/roster'
+import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
 import { ICON_ACCENT_GREEN } from './IconButton'
 import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
@@ -153,9 +153,10 @@ export default function HealMeter(): JSX.Element {
   const { locked, bgAlpha, textScale, drill, hovering, patch, setDrill, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
   const now = Date.now()
-  // WHOSE healing (docs/plans/group-model.md §2), persisted per overlay kind like the damage
-  // pair. The healing model already had the ally lane, so this is purely a filter over healers.
-  const [meterScope, setMeterScope] = useMeterScope(`overlay.${kind}`)
+  // WHOSE healing (docs/plans/group-model.md §2) — the app-wide preference, same key as every
+  // other meter since JOS-115 (Preferences > Combat writes it; this window only reads). The
+  // healing model already had the ally lane, so this is purely a filter over healers.
+  const [meterScope] = useMeterScope()
   const roster = snap?.roster ?? EMPTY_ROSTER
 
   const { seg, live, headerName, totalHps, totalTitle } = healView(snap, isFight)
@@ -211,8 +212,7 @@ export default function HealMeter(): JSX.Element {
         select={{ rows: selectRows, value: selection, onChange: selectSegment, accent: HEAL_GOLD }}
         scope={{
           label: chipLabel(meterScope, roster),
-          title: `${SCOPE_HINT[meterScope]}. Click for ${SCOPE_LABEL[nextScope(meterScope)]}.`,
-          onCycle: () => setMeterScope(nextScope(meterScope))
+          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
         }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
