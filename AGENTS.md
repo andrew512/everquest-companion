@@ -1616,6 +1616,40 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   Default geometry is one uniform size for every kind, docked bottom-right
   and stacking upward with column wrap (`overlayLayout.ts`); PERSISTED bounds
   always win.
+- **A HIDDEN WINDOW CANNOT PAINT, SO `hide()` IS NEVER HOW YOU CLEAR ONE
+  (JOS-120).** The owner reported the cursor ring twitching on every click —
+  a halo that jumped and then snapped back onto the pointer. The cause is a
+  general Electron fact worth knowing before the next window learns it the
+  hard way: **a hidden `BrowserWindow` produces no frames, and `show()`
+  re-presents its last composited surface.** So an IPC message that tells a
+  renderer to clear itself, sent after `hide()`, is recorded and never drawn —
+  MEASURED (Electron 43.2.0, a probe driving the shipping `cursorRing.ts`
+  logic): the pending `requestAnimationFrame` did not run for the whole 600 ms
+  the window was hidden and fired 1 ms AFTER `showInactive()`, one frame too
+  late. Everything the window is re-shown carrying is therefore whatever it
+  held when it went away. Two rules fall out. **(a) Clear BEFORE you hide**,
+  never after (`suspendCursorStream`). **(b) Better, do not hide for a state
+  you will leave in a few hundred ms**: `ringDisposition` (replayGate.ts)
+  splits the ring's inactive state into `idle` (the game no longer owns the
+  screen ⇒ the window really must come off it) and `parked` (the game owns the
+  screen, there is just no pointer to ring ⇒ empty the halo and LEAVE THE
+  WINDOW VISIBLE, where the park composites on the next frame). Hiding is
+  about which application owns the screen; parking is about whether there is
+  anything to draw. **The second half of the same bug was a CADENCE RATIO**:
+  `cursorVisible` gates an 8 ms consumer but was read on the same 150 ms tick
+  as the watcher's expensive foreground scan, so a whole mouse click could
+  pass unobserved and the ring tracked a pointer EverQuest had already hidden
+  for up to nineteen samples. The child's loop is now SPLIT — one
+  `GetCursorInfo` every tick at the platform floor (~16 ms measured; Windows'
+  15.6 ms quantum), the foreground/running/heartbeat block every tenth tick
+  (~160 ms, the cadence alt-tab always had). Measured price 0.06–0.16 % of one
+  core → 0.19–0.31 %. **Whenever a poll GATES a faster consumer, the number
+  that matters is the ratio, not either period**
+  (`unguardedSamplesPerHiddenCursor`). The synthetic repro
+  (`tests/cursorRingClick.test.mts`) models all four clocks — watcher tick,
+  8 ms sampler, animation frame, last-surface-wins — and asserts on what was
+  on the SCREEN; it reproduces the twitch on the old path first, so the fixed
+  assertion means something.
 - **GRAPHICS COMPATIBILITY IS TWO SWITCHES, AND NEITHER IS INSTANT (JOS-40).**
   A player on an RTX 5080 reported the overlays black-screen artifacting; it
   cannot be reproduced here and they left no contact, so the app ships

@@ -14,7 +14,7 @@
 //
 // ================================= THE PERFORMANCE CONTRACT =================================
 // The owner's gate was "it can't feel like it's lagging — performance thought through by
-// default". Main's half of that is four rules, all enforced here:
+// default". Main's half of that is five rules, all enforced here:
 //
 //   1. NOTHING RUNS WHEN NOTHING IS ON. `presenceNeeded()` gates the watcher itself: with the
 //      ring off and both auto-hide switches at a state that needs no watcher, no child process
@@ -22,8 +22,8 @@
 //      made. That is the default install.
 //   2. THE 8 ms POLL IS THE NARROWEST GATE IN THE APP. It runs only while the ring is ENABLED
 //      *and* EQ is FOCUSED *and* the SYSTEM CURSOR IS VISIBLE *and* the ring window exists.
-//      Alt-tab out of the game — or hold right-click for mouselook, which hides the cursor — and
-//      the interval is cleared, not skipped, cleared. The ring is parked with a single message on
+//      Alt-tab out of the game — or hold a mouse button for mouselook, which hides the cursor —
+//      and the interval is cleared, not skipped, cleared. The ring is parked with a single message on
 //      the way out and reads nothing until it is active again, so a mouselook turn costs zero
 //      `getCursorScreenPoint()` calls rather than one per tick of a pointer EverQuest is
 //      re-centering every frame. `cursorStreamStats()` exists so that can be MEASURED rather
