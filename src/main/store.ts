@@ -69,6 +69,23 @@ interface StoreShape {
    * See src/main/log/config.ts `resolveEqDir`.
    */
   eqInstallDir?: string
+  /**
+   * The install root a PREVIOUS launch's auto-discovery resolved (JOS-112), cached so subsequent
+   * launches skip the ~150 ms (and config-dependently much longer) registry + drive sweep. It is
+   * DISTINCT from `eqInstallDir`: the latter is the user's authoritative manual override, this is
+   * only a remembered auto-detection. Precedence in config.ts `resolveEqDir`/`discoverOnce`:
+   * override → this (if it still passes `rootHasLogs`) → run the sweep.
+   *
+   * ONLY a POSITIVE discovery is ever written here — a "not found" is never persisted, so a fresh
+   * user who has not run `/log on` keeps getting the cheap idle rescan rather than a sticky
+   * negative. A value that fails revalidation is dropped and re-discovered (self-heal), and it is
+   * cleared outright when the manual override changes (`invalidateEqDiscovery`).
+   *
+   * ADDITIVE + OPTIONAL ⇒ no schema bump, no migration — the `lastSeenNotesVersion` precedent
+   * above. Every reader defaults on a missing key, so an older build loads a store that has it
+   * unchanged and vice versa.
+   */
+  eqDiscoveredRoot?: string
   /** last window position + size */
   windowBounds?: WindowBounds
   /** alerts extension: the user's alert definitions (Task #18) */
@@ -398,6 +415,26 @@ export function getEqInstallDir(): string | undefined {
 export function setEqInstallDir(dir: string | undefined): void {
   if (dir?.trim()) store.set('eqInstallDir', dir)
   else store.delete('eqInstallDir')
+}
+
+/**
+ * The install root a previous launch's auto-discovery persisted (JOS-112), or undefined if none.
+ * An empty/whitespace value is treated as unset. Consumed by config.ts `discoverOnce` to skip the
+ * sweep on later launches; NEVER a substitute for the manual override, which still wins.
+ */
+export function getEqDiscoveredRoot(): string | undefined {
+  const v = store.get('eqDiscoveredRoot')
+  return v?.trim() ? v : undefined
+}
+
+/** Persist a POSITIVE auto-discovery result so the next launch can skip the sweep (JOS-112). */
+export function setEqDiscoveredRoot(root: string): void {
+  if (root.trim()) store.set('eqDiscoveredRoot', root)
+}
+
+/** Forget the persisted discovered root — self-heal, or a manual-override change invalidated it. */
+export function clearEqDiscoveredRoot(): void {
+  store.delete('eqDiscoveredRoot')
 }
 
 // ----- Floating overlay DPS meter (Task #52; per-kind in Task #54) -----
