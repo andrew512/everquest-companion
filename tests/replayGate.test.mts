@@ -27,6 +27,7 @@ import {
   setHistoricalReplayRunning
 } from '../src/main/replayGate'
 import { OVERLAY_KINDS } from '../src/shared/types'
+import { isNotifierOverlayKind } from '../src/shared/alertOverlays'
 
 test('mayShowWindows: E2E dominates, and the replay only ever removes a show', () => {
   assert.equal(mayShowWindows(false, false), true)
@@ -37,14 +38,25 @@ test('mayShowWindows: E2E dominates, and the replay only ever removes a show', (
   assert.equal(mayShowWindows(true, true), false)
 })
 
-test('overlayForwardsMouse: the toast never forwards, and nobody forwards mid-replay', () => {
+test('overlayForwardsMouse: no notifier forwards, and nobody forwards mid-replay', () => {
   for (const kind of OVERLAY_KINDS) {
     // Steady state: every meter forwards (its hover sensor is what re-enables capture over the
-    // pin); the toast is the standing exception (JOS-40 — its capture comes from its queue).
-    assert.equal(overlayForwardsMouse(kind, false), kind !== 'toast', `${kind} outside a replay`)
+    // pin); a NOTIFIER is the standing exception, because it has no hover sensor to serve. The
+    // toast was the first (JOS-40 — its capture comes from its queue); an alert text overlay is
+    // the second, and a stronger case: it never captures the mouse at all.
+    assert.equal(
+      overlayForwardsMouse(kind, false),
+      !isNotifierOverlayKind(kind),
+      `${kind} outside a replay`
+    )
     // During the fold NOTHING installs the hook — that hook is the reported jerky mouselook.
     assert.equal(overlayForwardsMouse(kind, true), false, `${kind} during a replay`)
   }
+  // Stated once more as a claim rather than as a loop invariant, so the set cannot quietly empty:
+  // both notifier kinds are real members of the union, and neither forwards.
+  assert.equal(overlayForwardsMouse('toast', false), false)
+  assert.equal(overlayForwardsMouse('alert', false), false)
+  assert.equal(overlayForwardsMouse('fight', false), true)
 })
 
 test('the gate flips and restores, leaving every kind exactly as it found it', () => {

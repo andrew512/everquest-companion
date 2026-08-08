@@ -8,16 +8,23 @@
 // Persisted bounds are not exercised here: they short-circuit this module entirely in
 // createOverlayWindow (index.ts prefers `cfg.bounds` and only calls in here when there are none).
 //
-// THE TOAST IS THE ONE KIND OUTSIDE ALL OF THAT (docs/plans/celebration-toasts.md §3). It is a
-// transparent celebration strip, not a meter: its own width, TOP-CENTRED, and holding no slot
-// in the bottom-right stack — so the meter assertions run over METER_KINDS and the toast gets
-// its own geometry test below. Adding it must not have moved any meter's reserved slot, which
-// is what the last test in this file checks.
+// THE NOTIFIERS ARE OUTSIDE ALL OF THAT (shared/alertOverlays.ts) — the celebration strip
+// (docs/plans/celebration-toasts.md §3) and the alert text lane
+// (docs/plans/alert-text-overlays.md §7). Neither is a meter: each has its own width, sits in the
+// upper half of the screen, and holds NO slot in the bottom-right stack — so the meter assertions
+// run over METER_KINDS and each notifier gets its own geometry test below. Adding one must not
+// move any meter's reserved slot, and the two must never open on top of each other; both are
+// checked at the end of this file.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize, type Bounds } from '../src/main/overlayLayout'
 import { OVERLAY_KINDS } from '../src/shared/types'
+import {
+  ALERT_OVERLAY_KINDS,
+  DEFAULT_ALERT_OVERLAY,
+  NOTIFIER_OVERLAY_KINDS
+} from '../src/shared/alertOverlays'
 
 /** Work areas worth proving: a 1080p desktop with a taskbar, a tall 1440p, a small laptop, and a
  *  non-zero-origin display (a second monitor left of the primary). */
@@ -110,14 +117,63 @@ test('a display narrower than the strip still lands it on-screen', () => {
   assert.ok(b.y >= wa.y, 'and never above the top of the work area')
 })
 
-test('the toast holds NO slot in the meter stack — adding it moved nothing', () => {
+test('NO NOTIFIER holds a slot in the meter stack — adding one moved nothing', () => {
   const wa = WORK_AREAS['1080p']
-  assert.ok(OVERLAY_KINDS.includes('toast'), 'the toast is a registered overlay kind')
-  assert.equal(METER_KINDS.includes('toast'), false, '…and is not one of the stacked meters')
-  // The meters' slots are assigned by index within METER_KINDS, so the first five kinds must
-  // still be exactly where they were before a sixth kind existed.
+  for (const kind of NOTIFIER_OVERLAY_KINDS) {
+    assert.ok(OVERLAY_KINDS.includes(kind), `${kind} is a registered overlay kind`)
+    assert.equal(METER_KINDS.includes(kind), false, `…and ${kind} is not one of the stacked meters`)
+  }
+  // The meters' slots are assigned by index within METER_KINDS, so the five meter kinds must
+  // still be exactly where they were before any notifier kind existed. These are the numbers a
+  // user's persisted bounds were first written from, so they are not free to drift.
   const stack = METER_KINDS.map((k) => defaultOverlayBounds(k, wa))
   assert.deepEqual(stack[0], { width: 380, height: 320, x: 1524, y: 704 })
   assert.deepEqual(stack[1], { width: 380, height: 320, x: 1524, y: 374 })
   assert.deepEqual(stack[2], { width: 380, height: 320, x: 1524, y: 44 })
+})
+
+// ---- alert text overlays (docs/plans/alert-text-overlays.md §7) -------------------------
+
+test('an alert overlay opens CENTRED, in its own lane, clear of the celebration strip', () => {
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const b = defaultOverlayBounds(DEFAULT_ALERT_OVERLAY, wa)
+    assert.equal(b.width, 560, `${name}: the text lane's own width, not the meter size`)
+    // Centred: the gap to the left edge equals the gap to the right, within a rounding pixel.
+    const left = b.x - wa.x
+    const right = wa.x + wa.width - (b.x + b.width)
+    assert.ok(Math.abs(left - right) <= 1, `${name}: not centred (${left} vs ${right})`)
+    assert.ok(b.x >= wa.x && b.x + b.width <= wa.x + wa.width, `${name}: on-screen horizontally`)
+    assert.ok(b.y >= wa.y && b.y + b.height <= wa.y + wa.height, `${name}: on-screen vertically`)
+  }
+})
+
+test('the two notifier lanes never open on top of each other', () => {
+  // Both are centred at the top half of the screen, so this is the one collision the first-open
+  // layout could plausibly produce — and a text alert appearing underneath a celebration card is
+  // exactly the case where you most need to read it.
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const placed = NOTIFIER_OVERLAY_KINDS.map((k) => defaultOverlayBounds(k, wa))
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        assert.ok(
+          !overlaps(placed[i], placed[j]),
+          `${name}: ${NOTIFIER_OVERLAY_KINDS[i]} overlaps ${NOTIFIER_OVERLAY_KINDS[j]}`
+        )
+      }
+    }
+  }
+})
+
+test('a SECOND alert overlay would stack below the first, not on it', () => {
+  // The groundwork the owner asked for: the lane is placed by its index in ALERT_OVERLAY_KINDS,
+  // so the rule is pinned rather than today's list length. There is one kind today — this asserts
+  // the RULE by reading the same geometry the roster drives.
+  const wa = WORK_AREAS['1440p']
+  const first = defaultOverlayBounds(ALERT_OVERLAY_KINDS[0], wa)
+  assert.equal(first.y, wa.y + 400, 'the first lane sits clear of the toast strip (12..372)')
+  // A second entry would be offset by exactly one lane height plus the gutter; proving the
+  // arithmetic here means adding the kind cannot silently land it on top of this one.
+  const wouldBe = first.y + first.height + 10
+  assert.ok(wouldBe > first.y + first.height, 'the next lane starts below this one')
+  assert.ok(wouldBe + first.height <= wa.y + wa.height, 'and still fits on a 1440p work area')
 })

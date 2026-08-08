@@ -23,94 +23,38 @@
 import { type JSX, useEffect, useReducer } from 'react'
 import type { ToastPayload } from '@shared/toast'
 import { ToastCard } from './ToastCard'
+import DragFrame from './DragFrame'
 import { ScaledContent } from './overlayScale'
 import { toastReduce, type ToastCardState } from './toastQueue'
 import { TextScaleStepper } from './TextScaleStepper'
-import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
+import { useOverlayChrome } from './useOverlayChrome'
 
 /** How often the queue's clocks advance. 100 ms is imperceptible against a 6 s hold and costs
  *  nothing: the reducer returns the SAME array when no card moved, so React re-renders only
  *  when something actually changed. */
 const TICK_MS = 100
 
-const GOLD = '#d9b25f'
-
 /**
- * The positioning frame, shown only while the overlay is unlocked.
- *
- * It is also where the TEXT SIZE lives for this kind, for the same reason the drag handle does:
- * the toast has no header and no footer to hang a control off — it renders nothing at all most of
- * the time — so this frame is the only chrome it ever shows. Preferences → Overlays → "Move it"
- * is therefore the whole route to both knobs: move it, size it, Done.
- */
-function DragFrame({
-  onDone,
-  textScale,
-  patch,
-  noDrag
-}: {
-  onDone: () => void
-  textScale: number
-  patch: OverlayChrome['patch']
-  noDrag: React.CSSProperties
-}): JSX.Element {
-  return (
-    <div
-      data-testid="toast-drag-frame"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 8,
-        marginBottom: 8,
-        padding: '6px 10px',
-        borderRadius: 8,
-        border: `1px dashed ${GOLD}`,
-        background: 'rgba(15,17,21,0.65)',
-        color: GOLD,
-        fontSize: 11
-      }}
-    >
-      {/* The PROSE is the give on a narrow strip; the two controls beside it are the whole point
-          of the frame and stay whole at every width. */}
-      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        Drag me where celebrations should appear
-      </span>
-      <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
-      <button
-        type="button"
-        onClick={onDone}
-        style={{
-          ...noDrag,
-          flexShrink: 0,
-          border: `1px solid ${GOLD}`,
-          borderRadius: 4,
-          background: 'transparent',
-          color: GOLD,
-          fontSize: 11,
-          padding: '2px 8px',
-          cursor: 'pointer'
-        }}
-      >
-        Done
-      </button>
-    </div>
-  )
-}
-
-/**
- * Keep main's click-through state in step with the queue.
+ * Keep main's click-through state in step with the queue, and tell it when this window is drawing
+ * nothing.
  *
  * PASS-THROUGH IS THE SAFE ANSWER, so it is also the answer BEFORE the persisted config
  * arrives: a transparent strip across the top of the screen that captured the mouse for even a
  * few frames at startup would eat a click aimed at the game, and the user would have no idea
  * what did it. Once the config is known: unlocked (being positioned) keeps the mouse
  * unconditionally; locked captures it only while a card is actually on screen.
+ *
+ * THE IDLE SIGNAL IS THE SAME EXPRESSION, and it is sent separately on purpose. Main used to
+ * INFER "drawing nothing" from the ignore-mouse call, because for this window the two happen to
+ * coincide. They do not coincide for an alert text overlay, which stays click-through whether or
+ * not it is drawing — so idleness is now stated rather than deduced (JOS-40's opaque-window
+ * hide reads it). This window's behaviour is unchanged: same condition, said out loud.
  */
 function useMouseCapture(ready: boolean, locked: boolean, hasCards: boolean): void {
   useEffect(() => {
-    const ignore = !ready ? true : locked ? !hasCards : false
-    window.eqOverlay.setIgnoreMouse(ignore)
+    const idle = !ready ? true : locked ? !hasCards : false
+    window.eqOverlay.setIgnoreMouse(idle)
+    window.eqOverlay.setIdle(idle)
   }, [ready, locked, hasCards])
 }
 
@@ -142,11 +86,16 @@ export default function ToastOverlay(): JSX.Element {
           — the one route to both knobs must not be the thing the scale pushes off screen. */}
       {chrome.ready && !chrome.locked && (
         <DragFrame
+          caption="Drag me where celebrations should appear"
+          testId="toast-drag-frame"
           onDone={chrome.toggleLock}
-          textScale={chrome.textScale}
-          patch={chrome.patch}
           noDrag={chrome.noDrag}
-        />
+        >
+          {/* The TEXT SIZE lives here for the same reason the drag handle does: this frame is the
+              only chrome the toast ever shows, so Preferences → Overlays → "Move it" is the whole
+              route to both knobs. Move it, size it, Done. */}
+          <TextScaleStepper textScale={chrome.textScale} patch={chrome.patch} noDrag={chrome.noDrag} />
+        </DragFrame>
       )}
       {/* The cards ARE the content — no scroll pane, because this kind renders nothing most of
           the time and a strip that could scroll would be a window, which is what it is not. */}

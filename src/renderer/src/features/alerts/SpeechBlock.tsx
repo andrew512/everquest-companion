@@ -30,7 +30,6 @@ import { type JSX, useEffect, useState } from 'react'
 import {
   Box,
   Button,
-  Chip,
   FormControlLabel,
   MenuItem,
   Select,
@@ -42,13 +41,15 @@ import {
 import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import type { AlertAudio, AlertDef, AlertSpeech, SpeechMode } from '@shared/types'
+import { ALERT_AUDIO_ACTIONS, MAX_SPEECH_CHARS, SPEECH_MODES, speechTextFor } from '@shared/speechText'
 import {
-  ALERT_AUDIO_ACTIONS,
-  MAX_SPEECH_CHARS,
-  SPEECH_MODES,
-  placeholdersIn,
-  speechTextFor
-} from '@shared/speechText'
+  NO_CAPTURES,
+  PlaceholderChips,
+  sampleCaptures,
+  unknownPlaceholderNote,
+  unknownPlaceholders as unknownIn,
+  type CaptureHints
+} from './placeholders'
 import { currentVoicePrefs, speak } from '../../lib/speech'
 import { useVoiceOptions } from '../../lib/useVoices'
 import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
@@ -57,7 +58,10 @@ import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
 const AUDIO_LABELS: Record<AlertAudio, string> = {
   sound: 'Play a sound',
   speech: 'Speak it',
-  both: 'Sound, then speak'
+  both: 'Sound, then speak',
+  // Says what the alert does, not what it lacks: the reason to pick this is that the alert shows
+  // TEXT (DisplayBlock, below it in the dialog) and should not also make a noise.
+  silent: 'Nothing (text only)'
 }
 
 /** Human labels for the mode picker, in the order SPEECH_MODES declares. */
@@ -161,41 +165,27 @@ export function speechFieldsFor(f: SpeechForm): Pick<AlertDef, 'audio' | 'speech
  *   'sound'  → the pack sound only.
  *   'speech' → the utterance only; the sound is kept on the def but never played.
  *   'both'   → the sound, then the utterance queued behind it (voice-alerts D5).
+ *   'silent' → neither (alert-text-overlays D1). The alert still FIRES — it just does so where
+ *              you can see it rather than hear it.
+ *
+ * STATED POSITIVELY, and that is load-bearing rather than style. These were `!== 'speech'` and
+ * `!== 'sound'`, which is the same answer for three members and the WRONG one for a fourth:
+ * 'silent' satisfies `!== 'speech'`, so a sound picker would have opened for an alert that makes
+ * no sound — and `formCanSave`'s `soundReady` keys off this predicate, so it would then have
+ * refused to save without one. Written as membership, an unlisted future member hides both
+ * sections instead of showing both, which is the safe way round.
  */
 export function playsSound(f: SpeechForm): boolean {
-  return f.audio !== 'speech'
+  return f.audio === 'sound' || f.audio === 'both'
 }
 export function speaks(f: SpeechForm): boolean {
-  return f.audio !== 'sound'
+  return f.audio === 'speech' || f.audio === 'both'
 }
 
-/**
- * WHICH `$<name>` PLACEHOLDERS THIS TRIGGER OFFERS — computed by AlertDialog from the condition
- * drafts the user is editing (shared/captureNames.ts) and handed down, because the trigger and
- * the phrase live in two different halves of the same dialog.
- *
- * `partial` is set when any condition is a raw regex: such a match ALSO carries the fields of
- * whatever event the line parsed to, and which event that is is unknowable until a line arrives.
- * The block says so in words rather than listing a kind it would be guessing at.
- */
-export interface CaptureHints {
-  names: string[]
-  partial: boolean
-}
-
-const NO_CAPTURES: CaptureHints = { names: [], partial: false }
-
-/**
- * Stand-in values for the editor's preview, so it shows the SENTENCE that will be spoken rather
- * than the holes a firing has not filled in yet.
- *
- * The stand-in is the NAME ITSELF, bare — not a bracketed marker. The ▶ button speaks this exact
- * string through the real engine, and a marker character would be read aloud as punctuation.
- * "attacker hit you for amount" is a sentence; "‹attacker› hit you for ‹amount›" is a noise.
- */
-function sampleCaptures(names: readonly string[]): Record<string, string> {
-  return Object.fromEntries(names.map((n) => [n, n]))
-}
+// The `$<name>` machinery moved to ./placeholders when the Show-on-screen block became the
+// second field that takes a template. `CaptureHints` is re-exported so AlertDialog and every
+// other existing importer keep their path.
+export type { CaptureHints }
 
 /**
  * The resolved sentence this alert will speak — W1's editor-preview contract, now resolved
@@ -211,14 +201,13 @@ export function previewTextFor(name: string, f: SpeechForm, hints: CaptureHints 
 }
 
 /**
- * Placeholders the phrase names that this trigger cannot fill — a typo, or a group left behind
- * after the trigger was edited. Empty for a raw trigger with `partial` hints: the event half of
- * its namespace is unknown at edit time, so calling a name "unknown" there would be a false alarm.
+ * Placeholders the phrase names that this trigger cannot fill. The general rule lives in
+ * ./placeholders; what is left here is the one part that IS about speech — only 'custom' mode
+ * takes a template at all, so in any other mode there is nothing to be wrong about.
  */
 export function unknownPlaceholders(f: SpeechForm, hints: CaptureHints): string[] {
-  if (f.mode !== 'custom' || hints.partial) return []
-  const offered = new Set(hints.names)
-  return placeholdersIn(f.phrase).filter((n) => !offered.has(n))
+  if (f.mode !== 'custom') return []
+  return unknownIn(f.phrase, hints)
 }
 
 /**
@@ -270,44 +259,6 @@ export function AudioActionSection({ form }: { form: SpeechForm }): JSX.Element 
   )
 }
 
-/**
- * The `$<name>` values this trigger offers, as chips that INSERT rather than merely inform —
- * clicking one appends it to the phrase, so the syntax never has to be typed from memory or
- * learned from a tooltip.
- *
- * Renders nothing when the trigger offers nothing AND there is no raw condition to explain: an
- * empty "you can use:" row is dead state (AGENTS.md: state, never process).
- */
-function PlaceholderChips({ form, hints }: { form: SpeechForm; hints: CaptureHints }): JSX.Element | null {
-  if (hints.names.length === 0 && !hints.partial) return null
-  const insert = (n: string): void => form.setPhrase(`${form.phrase}${form.phrase ? ' ' : ''}$<${n}>`)
-  return (
-    <Box data-testid="alert-speech-placeholders">
-      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-        This trigger can say:
-      </Typography>
-      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-        {hints.names.map((n) => (
-          <Chip
-            key={n}
-            size="small"
-            variant="outlined"
-            label={`$<${n}>`}
-            onClick={() => insert(n)}
-            sx={{ fontFamily: 'monospace' }}
-          />
-        ))}
-      </Stack>
-      {hints.partial && (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-          A raw trigger can also say any field of the event the matched line turns out to be —
-          <code> $&lt;target&gt;</code>, <code>$&lt;amount&gt;</code> and so on.
-        </Typography>
-      )}
-    </Box>
-  )
-}
-
 /** Mode picker + live preview + (custom only) the capped phrase field and its placeholders. */
 function SaysRow({
   name,
@@ -352,12 +303,16 @@ function SaysRow({
             slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
             error={unknown.length > 0}
             helperText={
-              unknown.length > 0
-                ? `${unknown.map((n) => `$<${n}>`).join(', ')} — this trigger does not offer that; it will be left out.`
-                : `${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`
+              unknownPlaceholderNote(unknown) ??
+              `${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`
             }
           />
-          <PlaceholderChips form={form} hints={hints} />
+          <PlaceholderChips
+            text={form.phrase}
+            onInsert={form.setPhrase}
+            hints={hints}
+            testId="alert-speech-placeholders"
+          />
         </>
       )}
 

@@ -35,6 +35,10 @@ import type {
   VoicePrefs
 } from './alertTypes'
 import { parseSpellRank } from './spellLines'
+// The `$<name>` primitive moved to ./captures when TEXT OVERLAYS became the second surface that
+// resolves a firing's named values (docs/plans/alert-text-overlays.md). This module is still the
+// one import site for the speech half — `placeholdersIn` is re-exported below.
+import { substitute, tidy } from './captures'
 
 /**
  * Longest utterance a single alert may speak, in characters.
@@ -53,8 +57,13 @@ export const SPEECH_MODES = [
   'custom'
 ] as const satisfies readonly SpeechMode[]
 
-/** Every audio action, for the editor's sound/speech/both selector. Exhaustive by construction. */
-export const ALERT_AUDIO_ACTIONS = ['sound', 'speech', 'both'] as const satisfies readonly AlertAudio[]
+/**
+ * Every audio action, for the editor's channel selector. Exhaustive by construction.
+ *
+ * 'silent' is LAST on purpose: the list is the picker's order, and "make no sound" is the answer
+ * you reach for after the three that do (docs/plans/alert-text-overlays.md D1).
+ */
+export const ALERT_AUDIO_ACTIONS = ['sound', 'speech', 'both', 'silent'] as const satisfies readonly AlertAudio[]
 
 /** Every engine tier, for the preferences engine picker. Exhaustive by construction. */
 export const SPEECH_ENGINES = ['system', 'kokoro'] as const satisfies readonly SpeechEngine[]
@@ -138,48 +147,20 @@ export type SpeechFiring = Pick<FiredAlert, 'spell' | 'captures'>
 // trigger's regex named groups, merged in main (modules/alerts.ts `mergeCaptures`) — so the
 // phrase does not have to know, or care, which half a name came from.
 //
-// THE SYNTAX IS JAVASCRIPT'S OWN. `$<name>` is exactly how a named group is spelled at the other
-// end (`(?<mob>.+)`), so the phrase reads like the regex that feeds it and there is one spelling
-// to learn rather than two. It also cannot collide with an existing saved phrase: `$<` is not a
-// sequence anyone typed into a sentence they wanted read aloud.
-//
-// AN UNRESOLVED NAME IS DROPPED, NOT SPOKEN (owner decision). A group that did not participate
-// in the match, or a name typed with a typo, substitutes to nothing and the surrounding
-// whitespace collapses — so `$<mob> resisted $<spell>` with no spell says "a froglok resisted"
-// rather than reading punctuation out loud. If the WHOLE phrase resolves to nothing, the caller's
-// existing alertName fallback takes over: still never silent, still never a guess.
+// THE PRIMITIVE ITSELF LIVES IN ./captures, because speech is no longer the only thing that can
+// render a captured value (text overlays are the second). What stays here is the one rule that IS
+// about speech:
 //
 // SUBSTITUTION IS 'custom' ONLY. The other three modes are fixed content by definition — the
 // alert's name, the spell's name, its first word — and a placeholder in a def's NAME would be a
 // name that reads differently in the alert list than in the history than out loud.
 
-/**
- * A placeholder occurrence. The name is restricted to what JS actually accepts as a group name's
- * leading-ASCII case (`(?<1bad>…)` is a SyntaxError), so a pattern that cannot exist on the
- * regex side cannot be written on the phrase side either.
- */
-const PLACEHOLDER_RE = /\$<([A-Za-z_$][A-Za-z0-9_$]*)>/g
-
-/** Replace every `$<name>` with its captured value, or with nothing when there is none. */
-function substitute(text: string, captures: SpeechFiring['captures']): string {
-  if (!text.includes('$<')) return text
-  return text.replace(PLACEHOLDER_RE, (_match, name: string) => captures?.[name] ?? '')
-}
-
-/** Every distinct `$<name>` a phrase references, in first-appearance order. */
-export function placeholdersIn(phrase: string): string[] {
-  const names = new Set<string>()
-  for (const m of phrase.matchAll(PLACEHOLDER_RE)) names.add(m[1])
-  return [...names]
-}
+// Re-exported EXPLICITLY (never `export *` — see the note in shared/types.ts about tsx's CJS
+// transform) so the alert editor and tests/speechText.test.mts keep their existing import.
+export { placeholdersIn } from './captures'
 
 /** The def fields the resolver reads. Any AlertDef satisfies it. */
 export type SpeechDef = Pick<AlertDef, 'name' | 'speech'>
-
-/** Trim + collapse runs of whitespace: a newline in a phrase is a pause, not a word break. */
-function tidy(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
-}
 
 /** Cap an utterance at MAX_SPEECH_CHARS, cutting mid-word rather than refusing to speak. */
 function cap(text: string): string {

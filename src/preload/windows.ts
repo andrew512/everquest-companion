@@ -13,6 +13,8 @@
 import { ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { ToastRequest } from '../shared/toast'
+import type { AlertTextDefaults, AlertTextRequest } from '../shared/alertDisplay'
+import type { AlertOverlayKind } from '../shared/alertOverlays'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
 
 export const windowsApi = {
@@ -68,6 +70,15 @@ export const windowsApi = {
    */
   showToast: (req: ToastRequest): void => ipcRenderer.send(IPC.toastShow, req),
 
+  // ---- alert text overlays (docs/plans/alert-text-overlays.md) ----
+  /**
+   * "Draw this line." Called by the always-mounted AlertPlayer, which already owns "this alert
+   * fired" for every firing path, so the live-only discipline is owned in one place — exactly as
+   * with `showToast` above. Main re-validates the request and routes it to the named overlay
+   * window; a closed overlay simply draws nothing.
+   */
+  showAlertText: (req: AlertTextRequest): void => ipcRenderer.send(IPC.alertTextShow, req),
+
   // ---- the Preferences panel's door to `overlays.toast` -------------------------------
   // The overlay windows read their own config through the overlay bridge; the MAIN window
   // needs one read for exactly one kind, so it is spelled kind-first here rather than exposing
@@ -81,5 +92,33 @@ export const windowsApi = {
    * config patch above because this one is APPLIED to the live window as well as persisted —
    * `overlay:setConfig` only stores.
    */
-  setToastLocked: (locked: boolean): void => ipcRenderer.send(IPC.overlaySetLocked, 'toast', locked)
+  setToastLocked: (locked: boolean): void => ipcRenderer.send(IPC.overlaySetLocked, 'toast', locked),
+
+  // ---- the Preferences panel's door to an ALERT TEXT overlay ---------------------------
+  // The same two calls as the toast pair above, and kind-scoped for the same reason — except
+  // that this family has more than one member on the horizon (shared/alertOverlays.ts), so the
+  // kind is a PARAMETER rather than a literal. It is still not a general per-kind config surface:
+  // main validates the kind on every overlay channel, and the panel only ever passes one from
+  // ALERT_OVERLAY_KINDS.
+  /** Read an alert overlay's persisted config (lock + bounds). */
+  getAlertOverlayConfig: (kind: AlertOverlayKind): Promise<OverlayConfig> =>
+    ipcRenderer.invoke(IPC.overlayGetConfig, kind),
+  /**
+   * Lock (click-through) / unlock (position it) an alert overlay. A separate call from a config
+   * patch because this one is APPLIED to the live window as well as persisted — and because it
+   * is the ONLY route to positioning: a locked alert overlay is empty and click-through, so it
+   * has no chrome of its own to grab.
+   */
+  setAlertOverlayLocked: (kind: AlertOverlayKind, locked: boolean): void =>
+    ipcRenderer.send(IPC.overlaySetLocked, kind, locked),
+  /**
+   * Set the LOOK this overlay gives a line that does not override it (font / size / colour /
+   * seconds). Returns the merged config, clamped by the store's own normalizer — so the panel
+   * renders what was actually stored rather than what it hoped to store.
+   *
+   * The alert editor reads these too, to show what a field will inherit; it goes through
+   * `getAlertOverlayConfig` above rather than getting a door of its own.
+   */
+  setAlertOverlayDefaults: (kind: AlertOverlayKind, alertText: AlertTextDefaults): Promise<OverlayConfig> =>
+    ipcRenderer.invoke(IPC.overlaySetConfig, kind, { alertText })
 }

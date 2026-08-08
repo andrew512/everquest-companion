@@ -154,6 +154,26 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'Loadout detection believes the swap you are playing: wizard casts under a haste focus were invisible, and a new swap could hide behind an older one. Your current classes now show within the half hour.'
+      },
+      {
+        kind: 'new',
+        text: 'Alerts can put their text on screen. Switch on the alert overlay in Preferences, drag the lane where you want it, and a triggered alert writes its line over the game and fades on its own.'
+      },
+      {
+        kind: 'new',
+        text: 'Each alert writes its own line, and it can name what the line matched — like the mob or the spell.'
+      },
+      {
+        kind: 'new',
+        text: 'Set the font, size, colour and seconds on screen once for the overlay, and any single alert can still pick its own.'
+      },
+      {
+        kind: 'new',
+        text: 'Alerts that fire together stack instead of overwriting each other, so a burst is all still readable.'
+      },
+      {
+        kind: 'new',
+        text: 'An alert can now make no sound at all, for the ones you would rather only see.'
       }
     ]
   },

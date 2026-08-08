@@ -10,6 +10,8 @@ import type { ExaltPlan } from './planner/types'
 // The toast overlay's per-kind knobs live beside its payload in ./toast (this file is at its
 // factoring ceiling); OverlayConfig names the blob, that file owns its shape + normalizer.
 import type { ToastOverlayConfig } from './toast'
+// …and the alert-text kinds' per-overlay defaults live beside theirs, for the same reason.
+import type { AlertTextDefaults } from './alertDisplay'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -25,11 +27,21 @@ export type { LootDisposition, ItemStatBlock }
  *   - 'toast' (docs/plans/celebration-toasts.md): the CELEBRATION strip — normally renders
  *                 nothing; a boss kill or a Sky quest completion animates a card in, holds, and
  *                 leaves. Not a meter: it has no selector, no drill and no scope.
+ *   - 'alert' (docs/plans/alert-text-overlays.md): ALERT TEXT — normally renders nothing; an
+ *                 alert that carries a `display` block draws its resolved line here, and
+ *                 several firing at once STACK rather than overwriting. Like the toast it is a
+ *                 notifier, not a meter; unlike the toast it never captures the mouse, because a
+ *                 combat alert must not eat the click you aimed at the mob under it. One today —
+ *                 shared/alertOverlays.ts holds the list a second would join.
  * Each kind has its own independently-persisted OverlayConfig (bounds/alpha/lock/text size/drill)
  * and can be open simultaneously. IPC channels + the store are keyed by this.
+ *
+ * ADDING A KIND is a five-line change by design, but two of those lines are non-obvious and are
+ * pinned by red tests rather than by memory: `TELEMETRY_OVERLAY_KINDS` (shared/telemetry.ts,
+ * which may import nothing and so re-declares this list) and the regenerated TELEMETRY.md.
  */
-export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast'
-export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast']
+export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'alert'
+export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'alert']
 
 /** True for the two HEALING overlay kinds (they render HealMeter, not OverlayMeter). */
 export function isHealOverlayKind(kind: OverlayKind): boolean {
@@ -88,6 +100,14 @@ export interface OverlayConfig {
    * landed round-trips untouched and `getOverlayConfig` fills it from the defaults.
    */
   toast?: ToastOverlayConfig
+  /**
+   * The ALERT TEXT kinds' own knobs — the font/size/colour/duration this overlay gives a line
+   * that does not override them (shared/alertDisplay.ts `AlertTextDefaults`). Present only on
+   * those kinds; every other kind ignores it. Optional so a store written before this landed
+   * round-trips untouched and `getOverlayConfig` fills it from the defaults, exactly as with the
+   * toast blob above.
+   */
+  alertText?: AlertTextDefaults
   /**
    * TEXT SIZE for this overlay, as a CSS `zoom` factor on its CONTENT pane (1 = as shipped;
    * owner feedback, 2026-08-05: "text size scaling for overlays. we are old folks now."). It
@@ -869,6 +889,8 @@ export type {
   SpeechMode,
   AlertAudio,
   AlertSpeech,
+  AlertFont,
+  AlertDisplay,
   SpeechEngine,
   VoicePrefs,
   SpeechVoice,

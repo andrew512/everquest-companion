@@ -30,6 +30,13 @@ import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { getGraphicsPrefs, getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
 import { TRANSPARENT_OVERLAY_BG, overlayBackgroundColor } from '../shared/graphicsPrefs'
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
+import { isNotifierOverlayKind } from '../shared/alertOverlays'
+import {
+  applyNotifierWindowVisibility,
+  noteNotifierIdle,
+  noteNotifierOpacity,
+  notifierIdleOpaque
+} from './notifierVisibility'
 // ScreenRect lives in shared/presencePrefs.ts, not shared/types.ts — see the note at the
 // bottom of types.ts (that file is at its factoring ceiling).
 import type { ScreenRect } from '../shared/presencePrefs'
@@ -43,22 +50,6 @@ const overlayWindows = Object.fromEntries(OVERLAY_KINDS.map((k) => [k, null])) a
   OverlayKind,
   BrowserWindow | null
 >
-
-/**
- * Was the LIVE toast window built OPAQUE (the JOS-40 compatibility switch)?
- *
- * Recorded at construction rather than re-read from the store, because transparency is fixed
- * when a BrowserWindow is created: a user who flips the setting while an overlay is open still
- * has a transparent window on screen, and the behavior that depends on this answer (the toast's
- * idle visibility, below) must describe the window that EXISTS, not the setting. Only the toast
- * needs it — every other kind fills its window and behaves identically either way.
- */
-let opaqueToastWindow = false
-
-/** Is that opaque toast window currently drawing nothing? Only ever consulted while
- *  `opaqueToastWindow` is true — see `applyOpaqueToastVisibility`, which owns this value.
- *  True to start, because an empty strip is the toast's resting state. */
-let opaqueToastIdle = true
 
 /** The main window while it exists (null before creation / after close). */
 export function getMainWindow(): BrowserWindow | null {
@@ -430,40 +421,32 @@ export function setOverlayIgnoreMouse(kind: OverlayKind, ignore: boolean): void 
   if (!w || w.isDestroyed()) return
   if (ignore) w.setIgnoreMouseEvents(true, { forward: overlayMouseForward(kind) })
   else w.setIgnoreMouseEvents(false)
-  applyOpaqueToastVisibility(kind, ignore)
 }
 
 /**
- * THE ONE KIND OPACITY CHANGES THE BEHAVIOR OF (JOS-40): the celebration toast.
+ * "This notifier is drawing nothing / is drawing something." The renderer's own report, over
+ * `overlay:setIdle`, and the whole of the JOS-40 opaque-window rule: an opaque notifier is SHOWN
+ * ONLY WHEN IT HAS SOMETHING TO SHOW, because an empty one would be a solid rectangle parked over
+ * the game. (Transparent windows are untouched — an empty one is already invisible, and
+ * hiding/showing it on every card would be churn for no pixel. `noteNotifierIdle` says which.)
  *
- * Every other overlay is a panel that fills its window — opaque, it looks like the same meter
- * with its see-through taken away, and nothing else about it moves. The toast is the opposite:
- * it is a mostly-EMPTY strip whose resting state is an invisible window, so building it opaque
- * would park a solid dark rectangle across the top of the game forever. That is not a
- * compatibility mode, it is a new bug.
- *
- * So an opaque toast window is SHOWN ONLY WHEN IT HAS SOMETHING TO SHOW, and this function reads
- * that state off the signal the overlay already sends: `overlay:setIgnoreMouse`. The toast
- * renderer's rule (ToastOverlay.useMouseCapture) is `ignore = !ready ? true : locked ? !hasCards
- * : false` — i.e. it asks to be ignored in exactly the states where it is drawing nothing, and to
- * capture the moment a card is on screen or the user is positioning it unlocked. One signal, one
- * meaning, no second timer in main that could disagree with the queue.
- *
- * Transparent windows are untouched: the empty transparent strip is already invisible, and
- * hiding/showing it on every card would be churn for no pixel.
+ * IT USED TO BE INFERRED, and that is why it is now stated. The toast's mouse rule
+ * (`ignore = !ready ? true : locked ? !hasCards : false`) happens to be true in exactly the
+ * states where it draws nothing, so `setOverlayIgnoreMouse` could read idleness off it for free.
+ * That coincidence does not survive a second notifier: an ALERT TEXT overlay stays click-through
+ * whether or not lines are on screen — deliberately, so it never eats a click meant for the game
+ * — so its ignore-state carries no information about what it is drawing. Who owns the mouse and
+ * what is on screen are two questions; conflating them was correct for one window and wrong for
+ * two. The toast now sends both signals and behaves exactly as it did.
  */
-function applyOpaqueToastVisibility(kind: OverlayKind, idle: boolean): void {
-  if (kind !== 'toast' || !opaqueToastWindow) return
-  opaqueToastIdle = idle
-  const w = overlayWindows.toast
+export function setOverlayIdle(kind: OverlayKind, idle: boolean): void {
+  if (!noteNotifierIdle(kind, idle)) return
+  const w = overlayWindows[kind]
   if (!w || w.isDestroyed()) return
-  if (idle && w.isVisible()) w.hide()
-  // Idle is done here; and nothing shows while a window may not be shown at all — E2E (the whole
-  // test mode, src/main/e2e.ts) or a historical replay in flight (replayGate.ts).
-  if (idle || !windowsMayShow() || w.isVisible()) return
-  w.showInactive()
-  w.setAlwaysOnTop(true, 'screen-saver')
-  raiseCursorRing()
+  // `windowsMayShow` is the E2E/replay gate (replayGate.ts) — nothing of ours appears while a
+  // historical replay is folding or under the headless harness. A window that was just shown has
+  // gone above the cursor ring, so the ring is put back on top.
+  if (applyNotifierWindowVisibility(w, idle, windowsMayShow())) raiseCursorRing()
 }
 
 /** Apply the locked/interactive mouse + focus behavior to a kind's overlay window. */
@@ -483,7 +466,8 @@ const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   events: 'Event Log Overlay',
   'heal-fight': 'Fight Healing Overlay',
   'heal-overall': 'Zone Healing Overlay',
-  toast: 'Celebration Overlay'
+  toast: 'Celebration Overlay',
+  alert: 'Alert Text Overlay'
 }
 
 /**
@@ -511,7 +495,7 @@ export function createOverlayWindow(kind: OverlayKind): void {
   // only moment a window's transparency can be decided — which is exactly why the setting is
   // documented as applying when an overlay is next opened rather than instantly.
   const opaque = getGraphicsPrefs().opaqueOverlays
-  if (kind === 'toast') opaqueToastWindow = opaque
+  noteNotifierOpacity(kind, opaque)
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
     minWidth: 200,
@@ -578,11 +562,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
     // would be showing half-parsed state over the game, and the fold's end shows it properly (with
     // its locked mode re-applied) via `applyOverlayReplayGate` + the presence pass beside it.
     if (!windowsMayShow()) return
-    // An OPAQUE toast opens HIDDEN and is brought up by its own queue (see
-    // applyOpaqueToastVisibility). Showing it here would put a solid rectangle over the game for
-    // the moment between first paint and the renderer's first capture signal — the very thing
+    // An OPAQUE notifier opens HIDDEN and is brought up by its own queue (see
+    // applyOpaqueNotifierVisibility). Showing it here would put a solid rectangle over the game
+    // for the moment between first paint and the renderer's first idle signal — the very thing
     // this mode exists to avoid.
-    if (kind === 'toast' && opaque) {
+    if (isNotifierOverlayKind(kind) && opaque) {
       applyOverlayLocked(kind, getOverlayConfig(kind).locked)
       return
     }
@@ -681,9 +665,9 @@ export function setOverlaysHidden(hidden: boolean): void {
       continue
     }
     if (!windowsMayShow() || w.isVisible()) continue
-    // An OPAQUE toast with nothing queued must not come back as a solid rectangle: its
+    // An OPAQUE notifier with nothing queued must not come back as a solid rectangle: its
     // visibility belongs to its queue, and the next card brings it up (JOS-40).
-    if (kind === 'toast' && opaqueToastWindow && opaqueToastIdle) continue
+    if (notifierIdleOpaque(kind)) continue
     w.showInactive()
     w.setAlwaysOnTop(true, 'screen-saver')
     applyOverlayLocked(kind, getOverlayConfig(kind).locked)

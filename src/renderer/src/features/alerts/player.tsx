@@ -33,6 +33,7 @@ import { playSound } from './soundCache'
 import { currentVoicePrefs, loadVoicePrefs, speak, speechPlan } from '../../lib/speech'
 import { coalesceAudio } from './audioThrottle'
 import { previewDef } from './preview'
+import { showAlertDisplay } from './displayFire'
 
 // ---- shared, module-level alert state (so fireAppSignal works outside React) ----
 
@@ -100,6 +101,9 @@ function effectiveVolume(def: AlertDef): number {
  * is already recorded upstream — this drops noise, never history.
  */
 export function playAlertNow(def: AlertDef, firing?: SpeechFiring): void {
+  // TEXT FIRST, and above every audio gate below (see displayFire.ts): mute and the cross-alert
+  // coalescer are both promises about NOISE, and neither should stop a line appearing.
+  showAlertDisplay(def, firing)
   const voice = currentVoicePrefs()
   const plan = speechPlan(def, firing ?? null, prefs.muted)
   if (!plan.sound && !plan.speak) return

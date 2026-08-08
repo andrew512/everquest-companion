@@ -96,6 +96,11 @@ export function speechPlan(
 ): SpeechPlan {
   if (muted) return SILENT
   const action: AlertAudio = def.audio ?? 'sound'
+  // 'silent' (alert-text-overlays D1) is the ONE channel that produces no audio by choice rather
+  // than by mute. It is not a bug that it looks like the muted answer — it IS that answer, asked
+  // for per alert. What such an alert does instead is DRAW (AlertDef.display), which is resolved
+  // before this function is ever called and is deliberately not routed through this plan.
+  if (action === 'silent') return SILENT
   if (action === 'sound') return SOUND_ONLY
   const text = speechTextFor(def, firing)
   if (!text) return SOUND_ONLY

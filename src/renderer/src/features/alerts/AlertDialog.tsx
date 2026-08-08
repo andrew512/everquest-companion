@@ -56,6 +56,12 @@ import SpeechBlock, {
   speechFieldsFor,
   useSpeechForm
 } from './SpeechBlock'
+import DisplayBlock, {
+  type DisplayForm,
+  displayFieldsFor,
+  useDisplayForm
+} from './DisplayBlock'
+import { useAlertOverlayDefaults } from './useAlertOverlayDefaults'
 import { captureNamesFor, hasRawCondition } from '@shared/captureNames'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { DEFAULT_PACK_ID } from './suggestions'
@@ -87,6 +93,8 @@ interface AlertForm {
   setCooldownScope: (v: CooldownScope) => void
   /** The Speech block's own sub-form (voice-alerts §4) — see SpeechBlock.tsx. */
   speech: SpeechForm
+  /** The Show-on-screen sub-form (alert-text-overlays §9) — see DisplayBlock.tsx. */
+  display: DisplayForm
 }
 
 /** Local alias for the def field, so the form and the def can never drift apart. */
@@ -101,8 +109,9 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
   const [volume, setVolume] = useState(1)
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_COOLDOWN_MS)
   const [cooldownScope, setCooldownScope] = useState<CooldownScope>('alert')
-  // The Speech block hydrates itself from the same `open`/`initial` pair.
+  // The Speech and Show-on-screen blocks hydrate themselves from the same `open`/`initial` pair.
   const speech = useSpeechForm(open, initial)
+  const display = useDisplayForm(open, initial)
 
   /**
    * WHAT HAS ALREADY BEEN HYDRATED — the guard that makes this form survive a window focus.
@@ -189,7 +198,8 @@ function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[
     setCooldownMs,
     cooldownScope,
     setCooldownScope,
-    speech
+    speech,
+    display
   }
 }
 
@@ -237,7 +247,10 @@ function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
     note: initial?.note,
     // audio / speech / alwaysPlay, each omitted at its default so a sound-only alert saves
     // byte-identically to how it always did (SpeechBlock.speechFieldsFor).
-    ...speechFieldsFor(f.speech)
+    ...speechFieldsFor(f.speech),
+    // …and `display`, on exactly the same terms: absent entirely unless the alert asks to be seen
+    // (DisplayBlock.displayFieldsFor).
+    ...displayFieldsFor(f.display)
   }
 }
 
@@ -311,6 +324,10 @@ export default function AlertDialog({
   onSave: (def: AlertDef) => void
 }): JSX.Element {
   const f = useAlertForm(open, initial, packs)
+  // What each overlay gives a style field this alert does not override. Read here rather than in
+  // DisplayBlock so the section renders the defaults of the overlay currently SELECTED in the
+  // form, which is a fact the dialog owns.
+  const overlayDefaults = useAlertOverlayDefaults()
   const editing = initial != null
 
   return (
@@ -370,6 +387,18 @@ export default function AlertDialog({
               />
             </>
           )}
+
+          {/* LAST, because it is the last decision: name → when it fires → what it sounds like →
+              what appears on screen. Unconditional, unlike the two above — showing text is not a
+              CHANNEL, it is an independent thing an alert can do, so it is available whatever the
+              alert sounds like (including "Nothing (text only)"). */}
+          <Divider />
+          <DisplayBlock
+            name={f.name}
+            form={f.display}
+            defaults={overlayDefaults[f.display.overlay]}
+            hints={captureHints(f)}
+          />
         </Stack>
       </DialogContent>
       <DialogActions>

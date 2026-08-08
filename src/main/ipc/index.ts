@@ -36,6 +36,9 @@ import { registerTelemetryIpc } from './telemetry'
 // The celebration toast's producer channel. It lives beside the window it feeds (src/main/toast.ts)
 // rather than in this folder, because everything it does is window fan-out + item resolution.
 import { registerToastIpc } from '../toast'
+// Alert text overlays, on the same terms: window fan-out, so it lives beside the window it feeds
+// (src/main/alertOverlay.ts) rather than in this folder.
+import { registerAlertOverlayIpc } from '../alertOverlay'
 import { registerWindowIpc } from './windowControls'
 import { registerWorldIpc } from './world'
 import { UNRELEASED } from '../unreleased'
@@ -60,6 +63,7 @@ export function registerIpc(): void {
   registerPresenceIpc()
   registerWindowIpc()
   registerToastIpc()
+  registerAlertOverlayIpc()
   registerClipboardIpc()
   registerFeedbackIpc()
   registerTelemetryIpc()

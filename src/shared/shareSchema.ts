@@ -22,6 +22,7 @@ import type {
   SpeechMode
 } from './types'
 import { ALERT_AUDIO_ACTIONS, MAX_SPEECH_CHARS, SPEECH_MODES } from './speechText'
+import { normalizeAlertDisplay } from './alertDisplay'
 
 /** Human-readable prefix + format generation. Bump the digit only for a BREAKING format. */
 export const SHARE_PREFIX = 'EQC1-'
@@ -359,7 +360,28 @@ export function sanitizeAlertDef(v: unknown): AlertDef | null {
   const note = clampStr(r.note, SHARE_LIMITS.maxNoteChars).trim()
   if (note) def.note = note
   applyVoiceFields(def, r)
+  applyDisplayField(def, r)
   return def
+}
+
+/**
+ * Copy the TEXT-OVERLAY block onto a def in place (docs/plans/alert-text-overlays.md).
+ *
+ * Its own function for the reason `applyVoiceFields` is: `sanitizeAlertDef` is at the factoring
+ * ceiling. And it exists AT ALL because of the lesson recorded above — a field added to AlertDef
+ * and not added here does not survive a share, which is exactly how `audio`/`speech` were lost.
+ *
+ * `normalizeAlertDisplay` is the SAME repair the store's save path runs (main/ipc/alerts.ts), so
+ * a stranger's bundle cannot install a display block this build would refuse from its own dialog
+ * — including an `overlay` naming a window that does not exist here, which coerces to the default
+ * rather than leaving the alert invisible. Written only when it survives, and each field inside
+ * omitted at its default, so a def that draws nothing sanitizes byte-identically to how it
+ * always did.
+ */
+function applyDisplayField(def: AlertDef, r: Record<string, unknown>): void {
+  if (r.display === undefined) return
+  const display = normalizeAlertDisplay(r.display)
+  if (display) def.display = display
 }
 
 /**

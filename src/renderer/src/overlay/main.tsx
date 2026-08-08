@@ -4,7 +4,9 @@ import OverlayMeter from './OverlayMeter'
 import EventLogOverlay from './EventLogOverlay'
 import HealMeter from './HealMeter'
 import ToastOverlay from './ToastOverlay'
+import AlertTextOverlay from './AlertTextOverlay'
 import { isHealOverlayKind } from '@shared/types'
+import { isAlertOverlayKind } from '@shared/alertOverlays'
 
 // The overlay renders in its OWN transparent BrowserWindow (Task #52). It is a
 // standalone React root — deliberately NOT wrapped in the app's MUI ThemeProvider
@@ -17,12 +19,14 @@ import { isHealOverlayKind } from '@shared/types'
 //   'events'                          → the event log (alerts / notable loot / quests)
 //   'heal-fight' | 'heal-overall'     → the healing meter (Task #59)
 //   'toast'                           → the celebration strip (usually renders nothing)
+//   'alert' (ALERT_OVERLAY_KINDS)     → alert text (usually renders nothing)
 //   everything else                   → the damage meter (fight / zone selection lives inside)
 const kind = window.eqOverlay?.kind ?? 'fight'
 
 function Surface(): React.JSX.Element {
   if (kind === 'events') return <EventLogOverlay />
   if (kind === 'toast') return <ToastOverlay />
+  if (isAlertOverlayKind(kind)) return <AlertTextOverlay />
   if (isHealOverlayKind(kind)) return <HealMeter />
   return <OverlayMeter />
 }

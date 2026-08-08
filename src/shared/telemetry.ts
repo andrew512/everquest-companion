@@ -84,7 +84,8 @@ export const TELEMETRY_OVERLAY_KINDS = [
   'heal-fight',
   'heal-overall',
   'events',
-  'toast'
+  'toast',
+  'alert'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 

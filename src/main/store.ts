@@ -24,6 +24,8 @@ import {
 } from '../shared/presencePrefs'
 import { normalizeTelemetryPrefs, type TelemetryPrefs } from '../shared/telemetry'
 import { DEFAULT_TOAST_CONFIG, normalizeToastConfig } from '../shared/toast'
+import { DEFAULT_ALERT_TEXT, normalizeAlertTextDefaults } from '../shared/alertDisplay'
+import { isAlertOverlayKind } from '../shared/alertOverlays'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { ComboCorrection } from '../shared/classCombo'
@@ -428,6 +430,33 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
     bounds: undefined,
     drill: null,
     toast: { ...DEFAULT_TOAST_CONFIG }
+  },
+  // ALERT TEXT (docs/plans/alert-text-overlays.md). A notifier like the toast, and locked for the
+  // same reason: locked = click-through, and this kind NEVER captures the mouse even with lines
+  // on screen — a combat alert must not eat the click you aimed at the mob under it. Positioning
+  // is therefore the one thing it cannot offer from its own window while locked, which is why
+  // Preferences → Overlays carries a "Move it" switch exactly as the toast does.
+  //
+  // `bgAlpha: 0` — FULLY TRANSPARENT, unlike every other kind. There is no panel here to see
+  // through: a line of text is the whole surface, and it carries its own legibility with a text
+  // shadow rather than by dimming the game behind it. Nothing in this kind's UI changes it (it
+  // has no footer chrome to hang a slider off), so this is the value, not a starting point.
+  //
+  // DEFAULTS OFF, and that is what keeps this migration-free: a new key in a partial record whose
+  // reader fills the defaults changes no bytes already on disk. The toast needed migration 8→9
+  // precisely because it flipped an existing default from off to ON.
+  //
+  // `alertText` is the LOOK this lane gives a line that does not override it (owner, 2026-08-07).
+  // It ships at the same constants a per-alert field defaults to, so turning the feature on
+  // changes nothing until somebody chooses otherwise — and a user who wants every alert big and
+  // yellow says it once, here, instead of on every alert.
+  alert: {
+    open: false,
+    locked: true,
+    bgAlpha: 0,
+    bounds: undefined,
+    drill: null,
+    alertText: { ...DEFAULT_ALERT_TEXT }
   }
 }
 
@@ -442,6 +471,10 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   // hand) replaces the defaults wholesale. Normalizing it here means every reader — including
   // the one that decides what sound to play — sees a complete, clamped blob.
   if (kind === 'toast') cfg.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...cfg.toast })
+  // The same shallow-spread hazard, same answer: an `alertText` blob written by an older build (or
+  // by hand) replaces the defaults wholesale, so it is completed and clamped here — which is what
+  // lets `resolveAlertTextCard` treat one read as an answer to every question.
+  if (isAlertOverlayKind(kind)) cfg.alertText = normalizeAlertTextDefaults(cfg.alertText)
   // Text scale postdates every other field, so it is ABSENT in most stores and out of range in a
   // hand-edited one — both answered here rather than repeated six times above, because the
   // default (1) does not differ per kind. Clamped on the way out as well as in: see
@@ -469,6 +502,11 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
   if (kind === 'toast') next.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...next.toast })
   else delete next.toast
+  // Renderer-writable too (the Preferences defaults controls), so clamped by its own normalizer
+  // rather than trusted — and only the alert kinds carry one, so a meter cannot grow a stray blob
+  // from a malformed patch.
+  if (isAlertOverlayKind(kind)) next.alertText = normalizeAlertTextDefaults(next.alertText)
+  else delete next.alertText
   const all = store.get('overlays') ?? {}
   all[kind] = next
   store.set('overlays', all)

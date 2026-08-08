@@ -200,8 +200,10 @@ const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
   events: 'Event feed',
   // The toast strip has no bgAlpha row to share today (src/main/share.ts's KINDS list
   // does not include it), but the label map is keyed by the whole union, so it is named here
-  // rather than letting a future shared field render as a raw kind id.
-  toast: 'Celebration toasts'
+  // rather than letting a future shared field render as a raw kind id. Alert text overlays are
+  // excluded from sharing for the same reason and named here on the same terms.
+  toast: 'Celebration toasts',
+  alert: 'Alert text'
 }
 
 /**

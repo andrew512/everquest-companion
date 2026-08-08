@@ -16,6 +16,7 @@
 // log — the only kind that is a list rather than a handful of dense bars — is not cramped.
 
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
+import { ALERT_OVERLAY_KINDS, isNotifierOverlayKind } from '../shared/alertOverlays'
 
 export interface Size {
   width: number
@@ -50,9 +51,29 @@ const TOAST_SIZE: Size = { width: 560, height: 360 }
 /** Gap from the top of the work area to the first card. */
 const TOAST_TOP = 12
 
-/** The first-open size for a kind — the same for all the meters; the toast is its own strip. */
+/**
+ * ALERT TEXT is a LANE, not a panel (docs/plans/alert-text-overlays.md §7). Wide enough for a
+ * substituted line at the default 28 px without wrapping mid-phrase, and only tall enough to hold
+ * a few stacked lines — the window is transparent, so unused height costs nothing visually, but
+ * unused height is also where a stray line would appear far from where the user is looking.
+ */
+const ALERT_SIZE: Size = { width: 560, height: 200 }
+
+/**
+ * Where the first alert overlay sits: centred, and BELOW the celebration strip.
+ *
+ * The toast occupies 12…372 from the top of the work area, so 400 clears it with a gutter and
+ * the two notifier kinds cannot open on top of each other. It is high enough to read without
+ * looking away from the fight and low enough not to sit in the toast's lane — and, like every
+ * other kind, it is only ever the FIRST open: persisted bounds always win.
+ */
+const ALERT_TOP = 400
+
+/** The first-open size for a kind — the same for all the meters; each notifier is its own shape. */
 export function overlayDefaultSize(kind: OverlayKind): Size {
-  return kind === 'toast' ? { ...TOAST_SIZE } : { ...DEFAULT_SIZE }
+  if (kind === 'toast') return { ...TOAST_SIZE }
+  if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) return { ...ALERT_SIZE }
+  return { ...DEFAULT_SIZE }
 }
 
 /**
@@ -69,12 +90,37 @@ function toastBounds(workArea: Bounds): Bounds {
   }
 }
 
+/**
+ * Where an alert overlay's window goes on its first open: horizontally CENTRED like the toast,
+ * at ALERT_TOP, and staggered DOWNWARD by its index in the roster so a second one never lands on
+ * the first. Clamped to the work area exactly like every other path here.
+ *
+ * The stagger is by roster index rather than by "how many are open", for the same reason the
+ * meter stack reserves slots: a position that depends on what else happens to be open is a
+ * position that moves under the user.
+ */
+function alertBounds(kind: OverlayKind, workArea: Bounds): Bounds {
+  const size = { ...ALERT_SIZE }
+  const idx = Math.max(0, (ALERT_OVERLAY_KINDS as readonly string[]).indexOf(kind))
+  const x = workArea.x + Math.round((workArea.width - size.width) / 2)
+  const y = workArea.y + ALERT_TOP + idx * (size.height + GUTTER)
+  return {
+    ...size,
+    x: Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - size.width)),
+    y: Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - size.height))
+  }
+}
+
 /** Gap from the screen edge and between stacked overlays. */
 const MARGIN = 16
 const GUTTER = 10
 
-/** The kinds that dock into the bottom-right stack — every kind except the toast strip. */
-export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => k !== 'toast')
+/**
+ * The kinds that dock into the bottom-right stack — every kind that is not a NOTIFIER
+ * (shared/alertOverlays.ts). A notifier has its own geometry and must hold no slot here, or
+ * adding one would shift every meter's reserved position.
+ */
+export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => !isNotifierOverlayKind(k))
 
 /**
  * Where a kind's window goes when it has no persisted bounds: docked bottom-right, offset upward
@@ -85,9 +131,10 @@ export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => k !== 'toa
  */
 export function defaultOverlayBounds(kind: OverlayKind, workArea: Bounds): Bounds {
   if (kind === 'toast') return toastBounds(workArea)
+  if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) return alertBounds(kind, workArea)
   const size = overlayDefaultSize(kind)
-  // The toast holds no slot in the meter stack (it lives at the top centre), so it must not
-  // consume an index either — otherwise adding it would shift every meter's reserved slot.
+  // A notifier holds no slot in the meter stack (each lives in its own lane), so it must not
+  // consume an index either — otherwise adding one would shift every meter's reserved slot.
   const idx = Math.max(0, METER_KINDS.indexOf(kind))
   // How many uniform slots fit between the bottom and top margins of this work area.
   const perColumn = Math.max(

@@ -31,8 +31,9 @@
 // owns every show/hide and the `forward` flag), presenceEffects.ts (which owns the ring's
 // existence and the sampler) and session.ts (which owns the replay and is therefore the only
 // thing entitled to set it). A flag living in any one of them is a flag the other two import
-// through a cycle. This module imports NOTHING but the E2E flag and a type, which is also what
-// makes the predicates below plain unit tests (tests/replayGate.test.mts) instead of claims.
+// through a cycle. This module imports only the E2E flag and two leaves of shared/ — neither of
+// which imports anything back — which is what keeps the predicates below plain unit tests
+// (tests/replayGate.test.mts) instead of claims.
 //
 // WHAT IT IS NOT. It is not a second opinion about anything persisted. The overlays' locked
 // flag, their open flag and the ring's `enabled` all stay exactly where they were; this gate
@@ -41,6 +42,7 @@
 
 import { E2E } from './e2e'
 import type { OverlayKind } from '../shared/types'
+import { isNotifierOverlayKind } from '../shared/alertOverlays'
 
 /**
  * Is a historical replay folding right now?
@@ -95,14 +97,17 @@ export function windowsMayShow(): boolean {
  * Does this kind's click-through mode install the WH_MOUSE_LL forwarding hook? PURE.
  *
  * TWO reasons not to, and they are independent:
- *   * the TOAST never forwards at all — its capture is driven by its queue, not by a hover
- *     sensor, so it would pay for a hook over a window that is empty almost all of the time
- *     (JOS-40; the rule was already here, this is just its one definition now).
+ *   * no NOTIFIER forwards at all (shared/alertOverlays.ts). A notifier is a window that is
+ *     empty almost all of the time, and forwarding exists to serve a HOVER SENSOR — the thing
+ *     that re-enables capture over a meter's pin button. The toast has none (its capture is
+ *     driven by its queue, JOS-40) and an alert text overlay has none either, because it never
+ *     captures the mouse at all: a combat alert must not eat the click you aimed at the mob
+ *     under it. Both would be paying a system-wide hook for a sensor that does not exist.
  *   * NOBODY forwards during a replay — the hook's cost lands on the user's own mouselook, and
  *     the window it exists for is not even on screen (JOS-62).
  */
 export function overlayForwardsMouse(kind: OverlayKind, replayRunning: boolean): boolean {
-  return kind !== 'toast' && !replayRunning
+  return !isNotifierOverlayKind(kind) && !replayRunning
 }
 
 /** Should this kind's ignore-mouse call forward? (Bound form of `overlayForwardsMouse`.) */
