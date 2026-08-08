@@ -47,17 +47,45 @@
 // instead of pairing with a much-later unrelated fade to yield a bogus multi-hour duration.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// MINING MODEL (byte-identical to Task #30 for the self/pet duration path):
-//   castBegin(S)   → S becomes the PENDING cast (replaces prior pending) AND is shown
-//                    OPTIMISTICALLY right away (provisional) if S is a known buff/debuff.
-//   castFizzle(S) / castInterrupted(S) → clears pending S + retracts its provisional.
-//   buffFade(S,target?) → an active instance of S expired on `target`; pairs with the
-//                    matching landed cast → duration sample; records the target disposition.
+// A TRACKED INSTANCE EXISTS ONLY ONCE THE SPELL LANDS ON A NAMED TARGET (JOS-118).
+// ONE rule, applied to buffs, debuffs and crowd control alike — mez and slow ARE debuffs, and
+// buffs land on individuals too, so none of them is a special case:
+//
+//   An instance opens ONLY on a line that CONFIRMS the landing, and is keyed to the entity that
+//   line NAMES. Never a cast, never an inferred or "current" target, never a resist.
+//
+// Each shape has a real `who` in the log, and the model uses it rather than inferring one:
+//   • DEBUFF ON A MOB    `<mob> slows down.` / `has been mesmerized.` / `has been ensnared.`
+//                        → buffApply/cc carries that mob. A RESIST prints no landing line at
+//                          all, so there is nothing to open — the JOS-118 defect, fixed by
+//                          construction rather than by detecting the resist.
+//   • BUFF ON A PERSON   a self landing (`msg_cast_on_you`) → you; a landing that NAMES a group
+//                        member → that member, never "me by default".
+//   • CC                 a subset of debuffs, same rule. The `cc` broadcast IS the landing, and
+//                        `modules/buffTimers.ts` opens its per-mob hold from `ev.mob`.
+//
+// HONEST LIMIT, stated rather than papered over: where EQ surfaces no landing line, NOTHING is
+// tracked. A buff you cast on another player is tracked only if the log actually names them
+// landing it. Silence stays silence — the same answer a resist gets.
+//
+// WHAT A CAST STILL DOES. `castBegin` records a PENDING cast and stamps `castHistory`; that is
+// the OWN-CAST ATTRIBUTION machinery (JOS-89's ownership gate, JOS-84's candidate narrowing) and
+// it is untouched. What a cast no longer does is DISPLAY anything — see BuffInstances.beginCast
+// for the defect the old optimistic `provisional` row caused and why the owner cut it whole
+// ("we should drop provisional all together. i dont want to complicate the model").
+//
+// MINING MODEL:
+//   castBegin(S)   → S becomes the PENDING cast (replaces prior pending) and stamps castHistory.
+//   castFizzle(S) / castInterrupted(S) → clears pending S.
+//   buffApply(S,target) → the landing. Opens the instance on `target` AND the open cast whose
+//                    land→fade span is the duration sample. Gated on own-cast attribution.
+//   buffFade(S,target?) → an active instance of S expired on `target`; pairs with the open cast
+//                    → duration sample; records the target disposition.
 //   playerDeath    → strips ALL self buffs; censors open SELF casts.
 //
-// LANDING (mining) APPROXIMATION: a pending cast LANDS when neither a fizzle nor interrupt
-// of S occurs before EITHER the next castBegin OR 15s of log-time elapse. A buffFade of the
-// pending spell also implies it landed. Landed ts = cast-BEGIN ts.
+// A pending cast nobody confirmed within 15s is DROPPED, not landed: no row, and no open cast,
+// so it can never pair into a duration sample (the JOS-114/117 clean-sample rule). Landed ts is
+// the LANDING line's ts — the cast-BEGIN approximation went with the optimistic row.
 
 import type { EqModule } from './types'
 import type { LogEvent, BuffExpiredEvent } from '../../shared/logEvents'
@@ -295,7 +323,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
       this.clearAllForGap()
     }
     this.lastEventTs = ev.ts
-    this.inst.maybeLandPendingByTime(ev.ts)
+    this.inst.dropUnconfirmedPending(ev.ts)
     this.inst.sweepHygiene(ev.ts)
 
     // Observed-message overlay mining (Task #36): feed the anchor cast + any candidate
@@ -396,7 +424,6 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   }
 
   private onCastBegin(ev: Ev<'castBegin'>): void {
-    this.inst.landPending(ev.ts)
     const key = spellKey(ev.spell)
     this.castHistory.set(key, ev.ts)
     this.stats.touchLastSeen(key, ev.ts)
@@ -476,7 +503,13 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     // CURRENT pet entity's key; a named mob → that mob's key; targetless → self.
     const { entityKey, disp } = this.pets.fadeTargetEntity(ev.target)
     this.stats.tallyFade(key, disp)
-    if (this.inst.pending?.key === key) this.inst.landPending(ev.ts)
+    // A FADE IS NOT A LANDING (JOS-118). This used to retro-land the pending cast so the
+    // land→fade span became a duration sample, which is unsound whenever the fade belongs to an
+    // EARLIER instance of the same spell: tests/fixtures/e2e-deep-link.log casts Pacify at
+    // 20:31:25 and prints `Your Pacify spell has worn off of a fire giant warrior.` two seconds
+    // later — a different mob's older cast — which minted a 2-second Pacify sample. The pending
+    // cast is simply dropped; only a confirmed landing opens the instance a fade can pair with.
+    this.inst.clearPendingCast(key)
     this.inst.recordFade(key, entityKey, ev.spell, ev.ts)
     // DERIVED buffExpired (Task #47): buffFade already carries a RESOLVED spell + target
     // (the possessive/named-target worn-off shapes name both). Synthesize the unified
@@ -570,7 +603,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   }
 
   onTick(nowMs: number): void {
-    this.inst.maybeLandPendingByTime(nowMs)
+    this.inst.dropUnconfirmedPending(nowMs)
     this.inst.sweepHygiene(nowMs)
   }
 

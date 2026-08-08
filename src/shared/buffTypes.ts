@@ -91,8 +91,7 @@ export interface ActiveBuff {
   self: boolean
   /**
    * The bound entity disposition (Task #32), kept for the module's own censor logic:
-   * 'self' | 'summoned' | 'charmed' | 'hostile'. Undefined only for a provisional entry
-   * cast before its target was known. The UI groups by `self`/`target`, not by this.
+   * 'self' | 'summoned' | 'charmed' | 'hostile'. The UI groups by `self`/`target`, not by this.
    */
   disposition?: 'self' | 'summoned' | 'charmed' | 'hostile'
   /** ts (ms) the cast landed / was last refreshed. */
@@ -116,14 +115,6 @@ export interface ActiveBuff {
    * target. The UI must present this as "target: inferred", never as a silent guess.
    */
   inferredTarget?: boolean
-  /**
-   * True while this is an OPTIMISTIC (not-yet-confirmed) landing (Task #30): shown
-   * the instant `castBegin` fires so a buff is visible immediately, before the 15s
-   * land timeout / next-cast / fade confirms it. A fizzle/interrupt retracts a
-   * provisional entry; confirmation clears the flag. The UI dims provisional rows
-   * and shows a subtle "casting…" hint.
-   */
-  provisional?: boolean
   /**
    * Where `estimatedMs` came from (JOS-117):
    *   'db'       — the spell-database baseline held (no logged cast beat it).
@@ -150,8 +141,9 @@ export interface ActiveBuff {
   permanent?: boolean
   /**
    * True when this active was applied by an EXACT chat MESSAGE match (Task #34) — a
-   * msg_cast_on_you / msg_cast_on_other / self-heal-by-buff line — rather than inferred
-   * from cast timing. Message-driven applies are confident (no provisional dimming).
+   * msg_cast_on_you / msg_cast_on_other / self-heal-by-buff line. Since JOS-118 this is the ONLY
+   * way an instance is opened, so it is true on every active the model produces; it is kept as
+   * the explicit statement that a row rests on a line the log actually printed.
    */
   messageDriven?: boolean
 }
