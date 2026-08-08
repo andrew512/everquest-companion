@@ -68,6 +68,13 @@ function bump(field: keyof HealthDelta, n: number): void {
  * A line was written to `<userData>/errors.log`. Called from `logError` (src/main/errorLog.ts),
  * which is the ONE funnel every main-process error append passes through — `logInfo` / `logWarn`
  * / `logConsoleError` are console-only and deliberately do not count.
+ *
+ * SO IT COUNTS ERRORS, WHICH IT DID NOT ALWAYS (JOS-99). Two mechanisms used to feed it lines that
+ * nobody could act on: every renderer `console.warn` was forwarded into the file as though it were
+ * an error (`windowErrors.ts`), and every window RELOAD re-sent the `rendererHydrated` startup mark
+ * into an accounting that refuses duplicates loudly (`ipc/perf.ts`). Both are fixed at their own
+ * source rather than by filtering here — a counter that has to second-guess its funnel is a
+ * counter nobody can reason about — and warnings still reach dev stdout, just not this file.
  */
 export function noteErrorLogLine(n = 1): void {
   bump('mainErrorLogLines', n)

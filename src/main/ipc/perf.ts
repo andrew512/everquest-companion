@@ -17,7 +17,13 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
-import { markStartupPhase, startPerfSampler, startupProfile, stopPerfSampler } from '../perf'
+import {
+  markStartupPhase,
+  startPerfSampler,
+  startupPhaseMarked,
+  startupProfile,
+  stopPerfSampler
+} from '../perf'
 import { getPerfHudPrefs, setPerfHudPrefs } from '../store'
 import type { PerfHudPrefs } from '../../shared/perf'
 
@@ -39,7 +45,23 @@ export function registerPerfIpc(): void {
   ipcMain.handle(IPC.perfGetStartup, () => startupProfile())
 
   // The one phase main cannot observe: the renderer is the only thing that knows it has mounted.
+  //
+  // A REPEAT SEND IS A RELOAD, NOT A BUG (JOS-99). The renderer's own send-once guard is module
+  // scope, so every reload resets it — and this app reloads windows on purpose: the dev watcher
+  // does it on every renderer edit, `did-fail-load` retries once, and `render-process-gone`
+  // recovers by reloading. Each of those re-mounts the hook and sends this again. Handing that to
+  // `markStartupPhase` produced "startup phase 'rendererHydrated' was marked twice" in errors.log
+  // every single time, which is a large share of the fleet's `mainErrorLogLines` for an event that
+  // means the recovery WORKED.
+  //
+  // So the ignoring happens HERE, at the one channel that can legitimately repeat, and `addMark`
+  // is left exactly as strict as it was: every other phase is marked once from a single main-side
+  // call site, where a duplicate really is a wiring bug and still earns its logged refusal. The
+  // profile keeps the FIRST hydration — the launch's own — because that is the number "how long
+  // did this app take to draw its interface" is asking for; a reload three minutes later is not
+  // part of the launch and must not overwrite it.
   ipcMain.on(IPC.perfRendererHydrated, () => {
+    if (startupPhaseMarked('rendererHydrated')) return
     markStartupPhase('rendererHydrated')
   })
 }

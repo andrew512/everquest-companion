@@ -15,9 +15,14 @@
 //
 // It is also the natural home for the renderer-crash HEALTH COUNTER (JOS-96): the crash count and
 // the crash log are the same event observed twice, and they now sit in the same handler.
+//
+// THE ONE BEHAVIOUR CHANGE SINCE THE MOVE (JOS-99): `forwardConsoleMessages` no longer writes
+// renderer WARNINGS into errors.log — see its doc comment, and `consoleForward.ts` for the rule.
 
+import { app } from 'electron'
 import { join } from 'path'
-import { logError } from './errorLog'
+import { consoleForward } from './consoleForward'
+import { logError, logWarn } from './errorLog'
 import { noteRendererCrash } from './telemetry'
 
 /** How the capture reaches the window it may need to reload. Injected rather than imported so
@@ -25,19 +30,32 @@ import { noteRendererCrash } from './telemetry'
 export type WindowRef = () => Electron.BrowserWindow | null
 
 /**
- * Forward renderer console warnings/errors (level >= 2) into main stdout +
- * errors.log so agents reading the dev task output see renderer-side errors too.
- * level: 0=verbose 1=info 2=warning 3=error.
+ * Forward renderer console messages to main, so agents reading the dev task output see
+ * renderer-side trouble too. level: 0=verbose 1=info 2=warning 3=error.
+ *
+ * ERRORS ONLY REACH errors.log (JOS-99). A renderer `console.warn` used to be written there
+ * exactly like an error, which made both of that file's readers wrong: a human greps it for what
+ * broke, and `mainErrorLogLines` counts its lines as the fleet's error rate. Warnings still print
+ * to stdout in an unpackaged build — dev visibility is unchanged, verbatim, through `logWarn` —
+ * they simply do not enter the file or the count. The rule itself is `consoleForward` (a leaf
+ * module with no imports, so it is unit-tested against the real production decision); what is here
+ * is the wiring and the two sinks.
  *
  * Electron's `console-message` listener is five positional arguments wide; the four fields
  * are taken as a rest tuple so the callback stays inside the project's max-params ceiling.
- * `tag` is the errors.log source tag ('renderer:console' / 'overlay:console').
+ * `tag` is the source tag ('renderer:console' / 'overlay:console' / 'cursorRing:console') — it
+ * labels the stdout line too, so a warning is still attributable to the window that printed it.
  */
 export function forwardConsoleMessages(wc: Electron.WebContents, tag: string): void {
   wc.on('console-message', (_e, ...rest) => {
     const [level, message, line, sourceId] = rest
-    if (level < 2) return
-    logError(tag, { level, message, source: `${sourceId}:${line}` })
+    const source = `${sourceId}:${line}`
+    // `app.isPackaged` is read PER MESSAGE rather than captured at wiring time: this function runs
+    // during window creation, and reading a flag at call time is one property fewer to argue about.
+    const where = consoleForward(level, app.isPackaged)
+    if (where === 'drop') return
+    if (where === 'stdout') logWarn('[everquest-companion:warn]', `[${tag}]`, message, source)
+    else logError(tag, { level, message, source })
   })
 }
 

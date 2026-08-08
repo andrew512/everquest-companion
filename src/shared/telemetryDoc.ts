@@ -239,7 +239,13 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
     when: 'With each session report (every few minutes, and at close): counts of things that went wrong since the last one. Sent even when they are all zero. Counts only, never messages.',
     fields: [
       { name: 'rendererCrashes', type: COUNT, note: 'Window crashes. The main window only.' },
-      { name: 'mainErrorLogLines', type: COUNT, note: 'Lines written to the local error log.' },
+      // ERRORS ONLY, said out loud (JOS-99): warnings printed by a window reach the developer
+      // console but are never written to the file, so they are not counted here either.
+      {
+        name: 'mainErrorLogLines',
+        type: COUNT,
+        note: 'Lines written to the local error log. Errors only — warnings are not counted.'
+      },
       // SAID OUT LOUD rather than left as an implied zero: nothing in the app detects a stall, so
       // this field reports 0 from every client and means "not measured". A note claiming it counts
       // stalls would be a promise the code does not keep.
