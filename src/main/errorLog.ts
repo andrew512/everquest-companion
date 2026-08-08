@@ -1,10 +1,13 @@
 import { app } from 'electron'
 import { appendFileSync, mkdirSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
-// A LEAF MODULE WITH NO IMPORTS OF ITS OWN, which is what makes this import safe on the error
-// path: `telemetry/collector.ts` imports THIS file (`logInfo`), so a counter that lived there
-// would close the cycle errorLog → collector → errorLog. See telemetry/health.ts.
+// TWO LEAF MODULES, and their leaf-ness is what makes these imports safe on the error path:
+// `telemetry/collector.ts` imports THIS file (`logInfo`), so anything that lived there would
+// close the cycle errorLog → collector → errorLog. `health.ts` imports nothing at all;
+// `errorReports.ts` imports only pure `shared/` code and its own sibling ring. See the headers
+// of both for the full argument.
 import { noteErrorLogLine } from './telemetry/health'
+import { noteError } from './telemetry/errorReports'
 
 /**
  * Tiny append-only error logger. Every captured error (main-process crashes,
@@ -74,6 +77,15 @@ export function logError(source: string, payload: unknown): void {
   const ts = new Date().toISOString()
   const body = stringifyPayload(payload)
   const line = `${ts} ${PREFIX} [${source}] ${body}\n`
+
+  // THE ERROR REPORT (JOS-100), built from the STRUCTURED payload rather than from `body` — the
+  // frames and the code are still objects here and are strings by the next line. It is taken
+  // BEFORE the file write, unlike `noteErrorLogLine` below, and the two orderings are both
+  // deliberate: that counter means "lines in this fleet's error logs" and so must not count a
+  // write that threw, while a report is about the ERROR and is worth having whether or not the
+  // disk cooperated. `noteError` cannot throw (its whole body is guarded) and cannot re-enter
+  // this function.
+  noteError(source, payload)
 
   // (b) console.error first — cheapest, always reaches dev stdout even if the
   // file write fails (e.g. app not ready yet).

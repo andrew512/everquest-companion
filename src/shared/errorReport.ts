@@ -217,17 +217,24 @@ export interface ErrorFrame {
 const STACK_LINE_RE = /^\s*at\s+(?:(.+?)\s+\()?(.+?):(\d+):(\d+)\)?\s*$/
 
 /**
- * Everything up to and including the LAST separator before an `out/` (or `out\`) segment.
+ * Everything up to and including the LAST separator before the bundle root.
  *
  * GREEDY, AND THE SEPARATOR IS MANDATORY — both halves are load-bearing, and a lazy version of
  * this regex LEAKS. `\Users\scout\app\out\main\index.js` contains the letters `out` inside a
  * user's own account name, so a lazy match with an optional separator returns
  * `out\app\out\main\index.js` and publishes a directory the user named. Greedy takes the LAST
- * `out/`, which is the bundle root by construction, and requiring the separator means the match
- * can only ever start at a path segment boundary. The prefix group is optional so an already
+ * root, which is the bundle by construction, and requiring the separator means the match can
+ * only ever start at a path segment boundary. The prefix group is optional so an already
  * relative frame (`out/main/index.js`) still parses.
+ *
+ * TWO ROOT SPELLINGS, ONE WIRE VALUE. `out/` is what `electron-vite build` emits and what ships;
+ * `out-e2e/` is what the headless harness builds into (an ABSOLUTE `--outDir`, so it never races
+ * the dev watcher's `out/` — AGENTS.md). They are the SAME FILES from the same sources, so both
+ * normalize to `out/` and the wire has exactly one root to know about. Discovered by the e2e
+ * spec, which asserted on frames and got an empty list: every renderer frame under the harness
+ * lives in `out-e2e/`, so the whole stack was being dropped and nothing said so.
  */
-const BUNDLE_ROOT_RE = /^(?:.*[\\/])?(out[\\/].*)$/
+const BUNDLE_ROOT_RE = /^(?:.*[\\/])?(?:out|out-e2e)[\\/](.*)$/
 
 /** Not an identifier, not `<anonymous>`, not a dotted method path — refused rather than sent. */
 const FUNC_ALLOWED_RE = /^[A-Za-z0-9_$.<>[\]]+$/
@@ -262,7 +269,7 @@ export function normalizeFrameFile(raw: string): string | null {
   const noScheme = raw.replace(/^file:\/{2,3}/, '').replace(/^[A-Za-z]:/, '')
   const m = BUNDLE_ROOT_RE.exec(noScheme)
   if (m === null) return null
-  const file = m[1].replace(/\\/g, '/').replace(/[?#].*$/, '')
+  const file = `out/${m[1].replace(/\\/g, '/').replace(/[?#].*$/, '')}`
   return BUNDLE_FILE_RE.test(file) ? file : null
 }
 

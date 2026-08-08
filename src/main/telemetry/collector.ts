@@ -31,6 +31,7 @@ import { logInfo } from '../errorLog'
 import { getTelemetryPrefs, setTelemetryPrefs } from '../store'
 import { telemetryCollectEnabled, telemetryEndpointConfigured } from './net'
 import { resetHealth } from './health'
+import { resetErrorReports } from './errorReports'
 import { dropRing, pushCapped, readRing, writeRing } from './ring'
 
 /** `process.platform` folded onto the closed enum — a raw platform string is still a string. */
@@ -77,6 +78,11 @@ export function beginSession(now = Date.now()): void {
   // `errorLog.ts` can bump one without a cycle), but they are SESSION state exactly like the two
   // above and are cleared on the same boundaries.
   resetHealth()
+  // Same for the error reports and the breadcrumb ring behind them (JOS-100). This call is also
+  // what STAMPS the session clock those reports bucket their age against: `errorReports.ts`
+  // cannot ask the collector for `sessionUptimeMs` without closing the errorLog cycle, so the
+  // collector tells it instead, at the one moment both agree a session has begun.
+  resetErrorReports(now)
 }
 
 /**
@@ -90,6 +96,10 @@ export function endSession(): void {
   linesPending = 0
   startupPending = null
   resetHealth()
+  // The session clock is stamped to 0 here on purpose: `resetErrorReports` takes `now` and a
+  // report built after this point would bucket its age from the LAST session's start. There is
+  // no session, so the honest answer is bucket 0 and an empty ring.
+  resetErrorReports(0)
 }
 
 /**

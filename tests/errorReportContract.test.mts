@@ -208,6 +208,12 @@ test('normalizeFrameFile keeps the bundle path and nothing above it', () => {
     // optional separator returns `out/app/out/main/index.js` and publishes a directory the user
     // named themselves. This assertion is the whole reason BUNDLE_ROOT_RE is written the way it is.
     ['C:\\Users\\scout\\app\\out\\main\\index.js', 'out/main/index.js'],
+    // THE HARNESS ROOT NORMALIZES TO THE SHIPPED ONE. `out-e2e/` is the same files from the same
+    // sources, built to a different directory so the headless suite never races the dev watcher.
+    // The e2e spec found this: it asserted on frames and got an empty list, because every
+    // renderer frame under the harness was being dropped for having the "wrong" root.
+    ['C:\\eqc\\out-e2e\\renderer\\assets\\index-a1b2.js', 'out/renderer/assets/index-a1b2.js'],
+    ['out-e2e/main/index.js', 'out/main/index.js'],
     ['node:internal/modules/cjs/loader', null],
     ['electron/js2c/browser_init', null],
     ['C:\\Users\\jmoye\\secret\\notes.txt', null]

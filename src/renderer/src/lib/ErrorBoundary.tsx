@@ -1,4 +1,8 @@
 import React from 'react'
+// The ONE app import this file allows itself, and it is import-free itself (see its header).
+// The rule is "no app code, because the app — or the theme — may be the crash source"; a module
+// holding one string and two functions cannot be that.
+import { currentViewId } from './currentView'
 
 /**
  * Last line of defense against a BLANK WINDOW. Wraps <App/> in main.tsx. When any
@@ -95,11 +99,17 @@ export class ErrorBoundary extends React.Component<Props, State> {
     // Report over the same fire-and-forget channel used by window.onerror.
     try {
       window.eq?.reportError({
+        // JOS-100: the NAME is half the error report's grouping key, and the VIEW is state only
+        // this process has. The component stack stays appended to `stack` for errors.log; the
+        // report's own frame parser ignores those lines (they carry no `out/…:line:col`), so a
+        // React component name never reaches the wire.
+        name: error?.name,
         message: error?.message ?? String(error),
         stack: `${error?.stack ?? ''}${
           info?.componentStack ? `\n\nComponent stack:${info.componentStack}` : ''
         }`,
-        source: 'ErrorBoundary'
+        source: 'ErrorBoundary',
+        view: currentViewId()
       })
     } catch {
       // Ignore — the visible fallback below is the primary user-facing signal.
