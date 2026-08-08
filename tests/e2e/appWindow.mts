@@ -198,6 +198,11 @@ export async function launchApp(
   // The other override `config.ts` honours: a bare log PATH. A staged install must not be
   // second-guessed by one left in the ambient environment.
   delete env.EQ_LOG_PATH
+  // The owner's machine sets EQ_OWNER_TOOLS=1 user-wide (their installed copy's opt-in), which
+  // made feedback.e2e's default-state assertions fail in every local full run. The suite tests
+  // the DEFAULT; the one spec that wants the opt-in names it in opts.env below, which outranks
+  // this delete.
+  delete env.EQ_OWNER_TOOLS
   // LAST, deliberately: a spec that names a variable outranks the harness's own defaults.
   Object.assign(env, opts.env ?? {})
   const app = await electron.launch({
