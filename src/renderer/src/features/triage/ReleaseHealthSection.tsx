@@ -38,6 +38,7 @@ import { Box, Typography } from '@mui/material'
 import type { TriageAnalyticsData, TriageReleaseHealthVersion } from '@shared/triage'
 import { formatNum } from '../../lib/formatRate'
 import { Section } from './AnalyticsBits'
+import { ReleaseIssues } from './ReleaseIssues'
 import { pctLabel, rateLabel } from './analyticsRows'
 import {
   CHART_W,
@@ -243,6 +244,14 @@ export function ReleaseHealthSection({ data }: { data: TriageAnalyticsData }): J
               <VersionRow key={v.version} v={v} hue={hueOf(i)} />
             ))}
           </Box>
+          {/*
+            TOP ISSUES BY VERSION (JOS-100) — the half a COUNT cannot be. Its own component
+            (ReleaseIssues.tsx) because this file is at the factoring ceiling, and it renders
+            nothing at all for a build with no issues: the reporting / not-reporting judgement
+            belongs to the table above, and restating it here would be a second place that could
+            get it wrong.
+          */}
+          <ReleaseIssues versions={health.versions} />
         </>
       )}
     </Section>

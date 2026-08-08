@@ -390,6 +390,28 @@ export const ANALYTICS_SUBCOMMANDS: Record<string, (ctx: AnalyticsCtx) => Promis
   'backfill-swap': cmdBackfillSwap,
 }
 
-export function analyticsSubcommand(name: string | undefined): ((ctx: AnalyticsCtx) => Promise<void>) | null {
+function analyticsSubcommand(name: string | undefined): ((ctx: AnalyticsCtx) => Promise<void>) | null {
   return name === undefined ? null : (ANALYTICS_SUBCOMMANDS[name] ?? null)
+}
+
+/**
+ * THE WHOLE FAMILY, dispatch and failure translation included, so `triage-feedback.mts` is one
+ * line in its command table.
+ *
+ * MOVED HERE BY JOS-100, and by that file's own line count rather than by taste: adding the
+ * error family's dispatcher put it over the repo's 400-code-line ceiling, and two nearly
+ * identical eleven-line dispatchers living in the router was exactly the shape that did it.
+ * `runErrors` (triageErrors.mts) is the twin of this function; keeping the two families
+ * symmetric is what makes "add a third family" a one-line change there.
+ */
+export async function runAnalytics(ctx: AnalyticsCtx): Promise<void> {
+  const run = analyticsSubcommand(ctx.rest[0])
+  if (run === null) {
+    throw new Error(`analytics: expected one of ${Object.keys(ANALYTICS_SUBCOMMANDS).join(', ')}`)
+  }
+  try {
+    await run(ctx)
+  } catch (err) {
+    throw analyticsFailure(err)
+  }
 }

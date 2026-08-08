@@ -31,6 +31,18 @@ export default defineConfig({
     // startup parse the day items.json (6.8 MB raw) landed.
     json: { stringify: true },
     build: {
+      // ---- SOURCEMAPS (JOS-100) --------------------------------------------------------
+      // ON FOR ALL THREE BUNDLES, so an `errorReport`'s `out/…:line:col` frames can be turned
+      // back into source terms by `scripts/symbolicate.mts`. Without them a frame names a
+      // minified file and a column, which is a fingerprint and not a diagnosis.
+      //
+      // THE MAPS DO NOT SHIP, AND THAT IS ENFORCED BY THE PACKAGER RATHER THAN BY THIS FLAG:
+      // `files:` in electron-builder.yml already excludes `**/*.map`, so they are emitted into
+      // `out/` and left behind. CI uploads them as a PRIVATE WORKFLOW ARTIFACT keyed by version
+      // (.github/workflows/build.yml) and never as a release asset — a public `.map` is the
+      // whole source tree, which for this repo is not a leak but is also not a download anyone
+      // asked for, and for a future closed dependency it would be.
+      sourcemap: true,
       externalizeDeps: {
         include: ['pg', '@aws-sdk/client-s3', '@aws-sdk/credential-providers', '@aws-sdk/dsql-signer']
       },
@@ -54,6 +66,8 @@ export default defineConfig({
     // No `externalizeDeps` line: electron-vite 5 defaults it to true, which is exactly what
     // the old bare `externalizeDepsPlugin()` did here.
     build: {
+      // Sourcemaps, for the reason spelled out on the main bundle above.
+      sourcemap: true,
       rollupOptions: {
         // Three preloads: the full app bridge (index), a minimal overlay bridge (overlay)
         // that exposes only the combat snapshot + overlay window controls (Task #52), and
@@ -95,6 +109,9 @@ export default defineConfig({
     },
     plugins: [react()],
     build: {
+      // Sourcemaps, as above — and the renderer's are the ones that matter most, because its is
+      // the bundle a minifier renames and re-lines most aggressively.
+      sourcemap: true,
       rollupOptions: {
         // Three HTML entries: the main app (index), the floating overlay meters (overlay,
         // Task #52) and the cursor ring (cursor) — one <div> and no framework.
