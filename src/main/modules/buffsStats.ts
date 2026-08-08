@@ -109,38 +109,57 @@ export class SpellStats {
     }
   }
 
-  estimateFor(key: string): { ms: number | null; source: 'db' | 'observed' | undefined } {
-    const dbMs = this.dbDurationFor(key)
-    if (dbMs != null) return { ms: dbMs, source: 'db' }
+  /**
+   * The observed candidate that competes with the DB floor: the MAX over the most recent window of
+   * clean samples, or null when there are none. Two deliberate choices (JOS-117):
+   *   • MAX, not median/p75. A beneficial buff's samples are dominated by click-offs, dispels and
+   *     early refreshes that read SHORT; those never lift the max, so the max recovers a focus/AA-
+   *     extended true duration that a central statistic stays dragged below (Swift Like the Wind:
+   *     p75 17m50 << the 36m20 that is the real timer).
+   *   • a WINDOW (the last RECENT_SAMPLE_WINDOW), not all-time. A focus effect that is later
+   *     REMOVED genuinely shortens the duration; bounding the max to recent samples lets an old
+   *     long observation age out so a real decrease recovers.
+   *
+   * Safe to trust because a sample is minted ONLY from a genuine wear-off
+   * (buffsInstances.recordFade → addSample): every censoring boundary — zone, death, offline gap,
+   * entity retirement, hygiene — clears the instance WITHOUT minting, an offline-spanned span is
+   * dropped, and a re-land RESETS the open cast's landedTs (buffsInstances line "Refresh
+   * censoring"), so a refresh mints one clean full cycle rather than an inflated land→fade span.
+   */
+  observedWindowMaxFor(key: string): number | null {
     const s = this.samples.get(key)
-    if (!s || s.samples.length === 0) return { ms: null, source: undefined }
-    const recent = s.samples.slice(-RECENT_SAMPLE_WINDOW)
-    return { ms: Math.max(...recent), source: 'observed' }
+    if (!s || s.samples.length === 0) return null
+    return Math.max(...s.samples.slice(-RECENT_SAMPLE_WINDOW))
   }
 
   /**
-   * The MOST-RECENT clean observed duration sample (ms) for a spell key, or null when none.
+   * THE ONE ESTIMATOR (JOS-117), used by the Buffs TAB estimate column AND the overlay countdown
+   * (buffsView.ts `overlayDurationOf`). The DB baseline is a FLOOR, the recent observed max is an
+   * EXTENSION over it:
    *
-   * THE OVERLAY COUNTS DOWN FROM THIS (JOS-114) — deliberately NOT `estimateFor`. The two answer
-   * different questions and must not be conflated:
-   *   • `estimateFor`  — the Buffs TAB's estimate bar: the DB duration when the DB knows one, else
-   *     the recency-weighted MAX of the last few samples. Distribution-aware, DB-first.
-   *   • `lastObservedFor` — the overlay's OBSERVED-FIRST duration input: the single NEWEST sample,
-   *     nothing averaged, nothing maxed. AAs and focus effects only lengthen a spell's real
-   *     duration (and a removed focus shortens it), so the latest full-cycle observation is this
-   *     character's CURRENT truth — a truth the DB base can never carry.
+   *   estimate = max( DB baseline , max-over-recent-window of clean observed samples )
    *
-   * "MOST RECENT" is literal: the last element of the samples array (they are appended in fade
-   * order). It is safe to count down from ONLY because a sample is minted exclusively from a
-   * genuine wear-off (buffsInstances.recordFade → addSample); every censoring boundary — zone,
-   * death, offline gap, entity retirement, hygiene — clears the instance WITHOUT minting, and an
-   * offline-spanned span is flagged and dropped. So the newest sample is a clean observation, not
-   * a truncated one. Two clean samples (older longer, newer shorter) ⇒ the NEWER wins.
+   * The distribution the owner measured is why:
+   *   • A beneficial buff's true duration is NEVER below its DB base — AA/focus only EXTEND — so a
+   *     BELOW-base observation is an early termination (click-off / break / overwrite) and the max
+   *     discards it; the floor holds. Invisibility: DB 20m, observed max only 4m24 (always broken
+   *     early) ⇒ 20m, source 'db' — the estimate must NOT collapse to 4m.
+   *   • An ABOVE-base observation is a real extension and WINS. Swift Like the Wind: DB 16m,
+   *     observed 36m20 in the window ⇒ 36m, source 'observed'.
+   * With no DB base the observed max stands alone; with neither, null.
+   *
+   * `source` names which WON — 'observed' when a sample beat the floor (the tab/overlay label it
+   * "log"), 'db' when the floor held (Invisibility legitimately stays 'db').
    */
-  lastObservedFor(key: string): number | null {
-    const s = this.samples.get(key)
-    if (!s || s.samples.length === 0) return null
-    return s.samples[s.samples.length - 1]
+  estimateFor(key: string): { ms: number | null; source: 'db' | 'observed' | undefined } {
+    const dbMs = this.dbDurationFor(key)
+    const observedMax = this.observedWindowMaxFor(key)
+    if (dbMs != null) {
+      if (observedMax != null && observedMax > dbMs) return { ms: observedMax, source: 'observed' }
+      return { ms: dbMs, source: 'db' }
+    }
+    if (observedMax != null) return { ms: observedMax, source: 'observed' }
+    return { ms: null, source: undefined }
   }
 
   /**

@@ -49,11 +49,13 @@ function resolveTargetLabel(
 }
 
 /**
- * THE OVERLAY's OBSERVED-FIRST duration (JOS-114), computed here where the samples + DB live and
- * carried on the ActiveBuff so the pure shared projection never reaches into main: the most-recent
- * clean observed sample wins, else the DB base, else nothing (the overlay counts up). A SEPARATE
- * input from `estimatedMs`/`durationSource` — the Buffs TAB is left byte-identical (DB-first,
- * distribution-aware); only the overlay reads these two fields.
+ * THE OVERLAY's countdown duration (JOS-117), computed here where the samples + DB live and carried
+ * on the ActiveBuff so the pure shared projection never reaches into main. It is now the SAME
+ * estimator the Buffs tab uses — max(DB floor, recent observed max) — so a click-off/dispel that
+ * minted a too-short sample no longer becomes the overlay's number (JOS-114's most-recent-sample
+ * rule did exactly that: an early-terminated cast trusted as "most recent" showed Swift at ~28m for
+ * a 33:36 buff), and a focus/AA-extended duration is honoured on BOTH surfaces. A permanent buff
+ * never counts down; a spell with no floor and no sample carries no number (the overlay counts up).
  */
 function overlayDurationOf(
   key: string,
@@ -61,10 +63,8 @@ function overlayDurationOf(
   stats: SpellStats
 ): { overlayDurationMs: number | null; overlaySource?: 'db' | 'observed' } {
   if (permanent) return { overlayDurationMs: null }
-  const lastObs = stats.lastObservedFor(key)
-  if (lastObs != null) return { overlayDurationMs: lastObs, overlaySource: 'observed' }
-  const dbMs = stats.dbDurationFor(key)
-  if (dbMs != null) return { overlayDurationMs: dbMs, overlaySource: 'db' }
+  const est = stats.estimateFor(key)
+  if (est.ms != null && est.source) return { overlayDurationMs: est.ms, overlaySource: est.source }
   return { overlayDurationMs: null }
 }
 
