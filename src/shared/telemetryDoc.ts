@@ -16,6 +16,11 @@
 // The rows are also the completeness check: `TELEMETRY_DOC_EVENTS` must cover
 // `TELEMETRY_EVENT_KINDS` exactly, which is what makes "adding an event means adding a doc row"
 // a test failure rather than a good intention.
+//
+// THE EVENT TABLE ITSELF LIVES IN `./telemetryDocEvents.ts` — split out when JOS-100's
+// `errorReport` row pushed this file past the repo's 400-code-line ceiling, and re-exported
+// below so the generator and the parity test import exactly what they always did. What stays
+// here is the RENDERING and the bucket tables.
 
 import {
   ALERT_COUNT_EDGES,
@@ -24,37 +29,21 @@ import {
   LOG_SIZE_BYTES_EDGES,
   MAX_TZ_OFFSET_HOURS,
   MIN_TZ_OFFSET_HOURS,
+  SESSION_AGE_MS_EDGES,
   TELEMETRY_API_VERSION,
   TELEMETRY_BUFFER_CAP,
   TELEMETRY_EVENT_KINDS,
-  TELEMETRY_FAILURE_CLASSES,
-  TELEMETRY_FEATURES,
   TELEMETRY_FUNNELS,
   TELEMETRY_FUNNEL_STEPS,
-  TELEMETRY_OUTCOMES,
-  TELEMETRY_OVERLAY_KINDS,
-  TELEMETRY_UPDATE_CHANNELS,
-  TELEMETRY_UPDATE_STEPS,
-  TELEMETRY_VIEWS,
-  TELEMETRY_VOICE_ENGINES,
   bucketRange,
   type TelemetryEventKind
 } from './telemetry'
+import { TELEMETRY_DOC_EVENTS, type DocEvent, type DocField } from './telemetryDocEvents'
+
+export { TELEMETRY_DOC_EVENTS }
+export type { DocEvent, DocField }
 
 // ------------------------------------------------------------------ the tables
-
-export interface DocField {
-  name: string
-  /** Rendered from the schema's own enums/edges — never a hand-typed list of values. */
-  type: string
-  note: string
-}
-
-export interface DocEvent {
-  t: TelemetryEventKind
-  when: string
-  fields: DocField[]
-}
 
 export interface DocBucket {
   /** The field name the bucket index appears under. */
@@ -68,206 +57,6 @@ export interface DocBucket {
 function values(list: readonly string[]): string {
   return list.map((v) => `\`${v}\``).join(' · ')
 }
-
-const COUNT = 'whole number'
-const BUCKET = 'bucket index'
-
-/**
- * The one place the log-line counter is described, shared by both events that carry it — a
- * second copy of this sentence is a second thing to keep true.
- *
- * It says "how many, including re-reads" out loud because the number is bigger than a reader
- * would expect: the app re-reads your log's history each time it starts, and every one of those
- * lines is parsed again. The count is of PARSING WORK; nothing about a line survives it.
- */
-const LINES_PARSED =
-  'How many log lines were read since the last one of these. A count of lines only — no line, ' +
-  'and no part of one, is ever sent. Starting the app re-reads your log history, so those ' +
-  'lines are counted again each launch.'
-
-/**
- * The startup-replay group, listed on BOTH events that can carry it — one array, spread twice, for
- * the same reason `LINES_PARSED` is one sentence: a second copy is a second thing to keep true.
- *
- * The rows are named `startup.x` because that is where they live in the payload the Preferences
- * viewer prints, and a reader comparing the two should find the same names.
- */
-const STARTUP_FIELDS: DocField[] = [
-  {
-    name: 'startup.replayMs',
-    type: `${COUNT} (optional)`,
-    note: 'How long the app took to read your log history when it started.'
-  },
-  {
-    name: 'startup.eventsReplayed',
-    type: COUNT,
-    note: 'How many log lines that was. A count only — no line, and no part of one, is sent.'
-  },
-  {
-    name: 'startup.dutyPct',
-    type: COUNT,
-    note: 'What share of that time was spent working rather than deliberately pausing, 0–100.'
-  },
-  {
-    name: 'startup.maxBlockMs',
-    type: COUNT,
-    note: 'The longest single moment the app was unresponsive while reading.'
-  },
-  {
-    name: 'startup.blocksOver50',
-    type: COUNT,
-    note: 'How many of those moments were longer than 50 ms.'
-  },
-  {
-    name: 'startup.logSizeBucket',
-    type: BUCKET,
-    note: 'How big the log it read is — a RANGE (see below), never the size itself.'
-  }
-]
-
-/** Why the group is optional and where it appears — said once, printed on both events. */
-const STARTUP_WHEN =
-  'Present on the first of these that follows startup, once per launch: how long reading your ' +
-  'log history took, and how smoothly. Reading a log after switching character is deliberately ' +
-  'not measured.'
-
-export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
-  {
-    t: 'sessionStart',
-    when: 'Once, when the app finishes starting up.',
-    fields: [
-      { name: 'coldStartMsBucket', type: BUCKET, note: 'How long the app took to become usable.' }
-    ]
-  },
-  {
-    t: 'sessionHeartbeat',
-    when:
-      'Every 5 minutes while the app is open — the "is anyone using it right now" signal. ' +
-      STARTUP_WHEN,
-    fields: [
-      { name: 'uptimeMs', type: COUNT, note: 'How long this session has been running.' },
-      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
-      ...STARTUP_FIELDS
-    ]
-  },
-  {
-    t: 'sessionEnd',
-    when: `Once, when the app closes. ${STARTUP_WHEN}`,
-    fields: [
-      { name: 'durationMs', type: COUNT, note: 'How long the session lasted.' },
-      { name: 'viewsVisited', type: COUNT, note: 'How many different tabs were opened.' },
-      { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
-      ...STARTUP_FIELDS
-    ]
-  },
-  {
-    t: 'viewDwell',
-    when: 'When you switch away from a tab.',
-    fields: [
-      { name: 'view', type: values(TELEMETRY_VIEWS), note: 'Which tab. A fixed list of tab names.' },
-      { name: 'ms', type: COUNT, note: 'How long it was on screen.' }
-    ]
-  },
-  {
-    t: 'overlayToggle',
-    when: 'When you open or close a floating meter.',
-    fields: [
-      { name: 'kind', type: values(TELEMETRY_OVERLAY_KINDS), note: 'Which overlay.' },
-      { name: 'open', type: 'true / false', note: 'Opened or closed.' }
-    ]
-  },
-  {
-    t: 'featureUse',
-    when: 'When you use one of the listed features.',
-    fields: [
-      { name: 'feature', type: values(TELEMETRY_FEATURES), note: 'Which one. A fixed list.' },
-      { name: 'count', type: COUNT, note: 'How many times, since the last batch.' }
-    ]
-  },
-  {
-    t: 'alertFired',
-    when: 'A rollup of how many alerts fired — never which alert, and never its text.',
-    fields: [
-      { name: 'count', type: COUNT, note: 'Alerts fired.' },
-      { name: 'spokenCount', type: COUNT, note: 'How many of those were spoken aloud.' }
-    ]
-  },
-  {
-    t: 'setupSnapshot',
-    when: 'Once per session: what a typical install looks like.',
-    fields: [
-      { name: 'charCountBucket', type: BUCKET, note: 'How many character logs the app can see.' },
-      { name: 'logSizeBucket', type: BUCKET, note: 'How big the log it reads is.' },
-      { name: 'alertCountBucket', type: BUCKET, note: 'How many alerts you keep.' },
-      {
-        name: 'overlaysEnabled',
-        type: `list of ${values(TELEMETRY_OVERLAY_KINDS)}`,
-        note: 'Which floating meters are open.'
-      },
-      { name: 'cursorRing', type: 'true / false', note: 'Is the cursor ring on.' },
-      { name: 'autoHide', type: 'true / false', note: 'Is overlay auto-hide on.' },
-      {
-        name: 'voiceEngine',
-        type: values(TELEMETRY_VOICE_ENGINES),
-        note: 'Which speech tier your spoken alerts use — off when no alert is set to speak.'
-      },
-      { name: 'soundPackCount', type: COUNT, note: 'How many sound packs are installed.' },
-      { name: 'updateChannel', type: values(TELEMETRY_UPDATE_CHANNELS), note: 'Update channel.' }
-    ]
-  },
-  {
-    t: 'funnelStep',
-    when: 'When you reach a step of one of the three flows listed below.',
-    fields: [
-      { name: 'funnel', type: values(TELEMETRY_FUNNELS), note: 'Which flow.' },
-      { name: 'step', type: 'a step of that flow (below)', note: 'Which step it reached.' },
-      { name: 'outcome', type: `${values(TELEMETRY_OUTCOMES)} (optional)`, note: 'How it ended.' },
-      {
-        name: 'failureClass',
-        type: `${values(TELEMETRY_FAILURE_CLASSES)} (optional)`,
-        note: 'A coarse category when it failed. Never an error message.'
-      }
-    ]
-  },
-  {
-    t: 'healthCounters',
-    // The cadence is stated exactly, because it is what a reader would otherwise get wrong: this
-    // rides the session reports (every 5 minutes, and again at close) rather than arriving once,
-    // and it is sent even when every count is zero. A report with nothing in it is how we know a
-    // build is reporting at all — without it, a version that is running fine and a version too old
-    // to have this code would look identical.
-    when: 'With each session report (every few minutes, and at close): counts of things that went wrong since the last one. Sent even when they are all zero. Counts only, never messages.',
-    fields: [
-      { name: 'rendererCrashes', type: COUNT, note: 'Window crashes. The main window only.' },
-      // ERRORS ONLY, said out loud (JOS-99): warnings printed by a window reach the developer
-      // console but are never written to the file, so they are not counted here either.
-      {
-        name: 'mainErrorLogLines',
-        type: COUNT,
-        note: 'Lines written to the local error log. Errors only — warnings are not counted.'
-      },
-      // SAID OUT LOUD rather than left as an implied zero: nothing in the app detects a stall, so
-      // this field reports 0 from every client and means "not measured". A note claiming it counts
-      // stalls would be a promise the code does not keep.
-      { name: 'parserStalls', type: COUNT, note: 'Times log reading stalled. Not currently measured — always 0.' },
-      { name: 'presenceRestarts', type: COUNT, note: 'Times the game-window watcher restarted.' },
-      { name: 'speechFailures', type: COUNT, note: 'Times an utterance failed to speak. Downloaded voices only.' }
-    ]
-  },
-  {
-    t: 'updateOutcome',
-    when: 'When an app update is checked for, downloaded, or applied.',
-    fields: [
-      { name: 'step', type: values(TELEMETRY_UPDATE_STEPS), note: 'Which step.' },
-      { name: 'ok', type: 'true / false', note: 'Did it succeed.' },
-      {
-        name: 'failureClass',
-        type: `${values(TELEMETRY_FAILURE_CLASSES)} (optional)`,
-        note: 'A coarse category when it failed.'
-      }
-    ]
-  }
-]
 
 export const TELEMETRY_DOC_BUCKETS: readonly DocBucket[] = [
   {
@@ -293,6 +82,12 @@ export const TELEMETRY_DOC_BUCKETS: readonly DocBucket[] = [
     edges: ALERT_COUNT_EDGES,
     format: 'count',
     what: 'How many alerts are configured.'
+  },
+  {
+    field: 'sessionAgeBucket',
+    edges: SESSION_AGE_MS_EDGES,
+    format: 'ms',
+    what: 'How long the app had been running when an error happened.'
   }
 ]
 
@@ -386,15 +181,28 @@ function headerSection(): string[] {
     '',
     '## What can never be collected',
     '',
-    'Not "what we choose not to collect" — what the schema has no room for. Every field below',
-    'is either a number or one value from a fixed list printed on this page. There is no',
-    'free-text field anywhere in it, so there is nowhere for any of this to go:',
+    'Not "what we choose not to collect" — what the schema has no room for:',
     '',
     '- your character names, your server, your guild, anyone you play with',
     '- zone, mob, spell, item or quest names',
     '- anything you typed: chat, tells, search boxes, alert names, feedback text',
-    '- any line of your log, or any file path',
+    '- any line of your log',
+    '- any path on your machine — where the app is installed, where your log lives, your',
+    '  account name',
     '- your IP address, your machine name, your account — there is no account',
+    '',
+    'Almost every field on this page is a number, or one value from a fixed list printed here,',
+    'so there is simply nowhere for any of that to go.',
+    '',
+    '**One event is different, and it is worth reading about.** `errorReport` sends the',
+    'technical details of a failure: what kind of error it was, a **redacted** version of its',
+    'message, and where in the app’s own program files it happened. It exists because an error',
+    'report nobody can act on is not worth sending. The redaction runs on your machine **and**',
+    'again on arrival — every file path, everything in quotes and every long number in the',
+    'message is replaced first, and a message that arrives unredacted is thrown away rather than',
+    'cleaned up. The file names it sends are the app’s own (they always begin `out/`), never a',
+    'location on your disk. Nothing about your game reaches it: the only thing it says about',
+    'your log is what KINDS of line the app had just read, from the fixed list of kinds.',
     '',
     '## What identifies a send',
     '',

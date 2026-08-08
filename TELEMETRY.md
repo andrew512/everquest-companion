@@ -19,15 +19,28 @@ you the last batch that actually left, in full.
 
 ## What can never be collected
 
-Not "what we choose not to collect" — what the schema has no room for. Every field below
-is either a number or one value from a fixed list printed on this page. There is no
-free-text field anywhere in it, so there is nowhere for any of this to go:
+Not "what we choose not to collect" — what the schema has no room for:
 
 - your character names, your server, your guild, anyone you play with
 - zone, mob, spell, item or quest names
 - anything you typed: chat, tells, search boxes, alert names, feedback text
-- any line of your log, or any file path
+- any line of your log
+- any path on your machine — where the app is installed, where your log lives, your
+  account name
 - your IP address, your machine name, your account — there is no account
+
+Almost every field on this page is a number, or one value from a fixed list printed here,
+so there is simply nowhere for any of that to go.
+
+**One event is different, and it is worth reading about.** `errorReport` sends the
+technical details of a failure: what kind of error it was, a **redacted** version of its
+message, and where in the app’s own program files it happened. It exists because an error
+report nobody can act on is not worth sending. The redaction runs on your machine **and**
+again on arrival — every file path, everything in quotes and every long number in the
+message is replaced first, and a message that arrives unredacted is thrown away rather than
+cleaned up. The file names it sends are the app’s own (they always begin `out/`), never a
+location on your disk. Nothing about your game reaches it: the only thing it says about
+your log is what KINDS of line the app had just read, from the fixed list of kinds.
 
 ## What identifies a send
 
@@ -173,6 +186,23 @@ When an app update is checked for, downloaded, or applied.
 | `ok` | true / false | Did it succeed. |
 | `failureClass` | `network` · `checksum` · `disk` · `timeout` · `other` (optional) | A coarse category when it failed. |
 
+### `errorReport`
+
+When the app hits an error: the technical details of the failure, so it can be fixed. Never your log contents, never your chat, and never a name from the game. The same error happening again in one session adds to a count instead of sending a second copy.
+
+| Field | Values | What it means |
+| --- | --- | --- |
+| `errorName` | e.g. `TypeError` | What kind of error it was. |
+| `code` | e.g. `ENOENT` (optional) | The short machine-readable code, when the error has one. |
+| `redactedMessage` | redacted text, at most 200 characters | The error message with the revealing parts replaced before it is stored: any file path becomes `<path>`, anything in quotes becomes `<str>`, and any long number becomes `<n>`. The replacement runs on your machine AND again on arrival, and a message that is not already redacted is thrown away rather than cleaned up. |
+| `frames` | at most 10 × (file, line, column, function) | Where in the app it happened. Files are named relative to the app’s own program files (they always begin `out/`) — the folder the app is installed in, and therefore your account name, is cut off before the value exists. |
+| `fingerprint` | 16 hex characters | A hash used to group identical errors together. |
+| `breadcrumbs` | at most 10 × (kind, offset) | What KINDS of log line the app had just read — `damage`, `loot`, `zone` and so on, from a fixed list — and how long before the error each was. The kind only: not the line, not who or what was in it. |
+| `view` | `overview` · `combat` · `mobs` · `maps` · `bosses` · `posky` · `alerts` · `leveling` · `loot` · `planner` · `buffs` · `preferences` · `triage` · `unknown` | Which tab was open. A fixed list. |
+| `sessionAgeBucket` | bucket index | How long the app had been running. |
+| `mode` | `live` · `replay` | Was it reading your log history, or following it live. |
+| `count` | whole number | How many times this same error happened since the last report. |
+
 ## Flows
 
 A `funnelStep` event says which step of one of these you reached — nothing else.
@@ -231,6 +261,16 @@ These are the exact ranges, taken from the schema:
 | 3 | 10 – 24 |
 | 4 | 25 – 49 |
 | 5 | ≥ 50 |
+
+**`sessionAgeBucket`** — How long the app had been running when an error happened.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 60 s |
+| 1 | 60 s – 300 s |
+| 2 | 300 s – 1800 s |
+| 3 | 1800 s – 7200 s |
+| 4 | ≥ 7200 s |
 
 ## Turning it off
 

@@ -6,8 +6,17 @@
 // one: the contract plus its validators is past the repo's 400-code-line factoring ceiling, and
 // the answer to that here is a split, not a widened threshold (the same call
 // `storeMigrationsPresence.test.mts` and `appHarness.mts` made). Nothing else changes — this is
-// still ONE definition of what an event may be, spelled across two files that only ever move
-// together.
+// still ONE definition of what an event may be, spelled across FOUR files that only ever move
+// together:
+//
+//   telemetry.ts               the contract: the union, the enums, the buckets, the patterns
+//   telemetryValidate.ts       THIS FILE — the dispatch table and ten of the eleven validators
+//   telemetryValidateBase.ts   the seven primitives every validator is built from
+//   telemetryValidateError.ts  the eleventh: `errorReport`, the one event whose strings are
+//                              pattern-bound rather than enum-bound (JOS-100)
+//
+// The last two were split out when `errorReport` pushed this file past the same ceiling, and
+// both are re-exported from here so no importer anywhere had to change.
 //
 // WHO RUNS THESE, AND WHY ALL THREE:
 //   * the renderer's `track()` shim — so a mistake is caught where it was made;
@@ -21,9 +30,11 @@
 // property simply never appears in the value that comes back. `tests/telemetryContract.test.mts`
 // pins exactly that.
 //
-// PURE, like the contract: zero imports beyond `./telemetry`, total (every failure is a typed
-// value), and side-effect free (nothing throws, and the same input always gives the same
-// answer).
+// PURE, like the contract: total (every failure is a typed value) and side-effect free (nothing
+// throws, and the same input always gives the same answer). The deepest import chain in the set
+// reaches `./errorReport` → `./sanitizeText`, and both are import-free-or-nearly-so on purpose:
+// this module bundles into the ingest Lambda, and the server's defense-in-depth check IS
+// re-running the client's redactor, which means the redactor has to be reachable from here.
 
 import {
   ALERT_COUNT_EDGES,
@@ -65,66 +76,26 @@ import {
   type TelemetryOverlayKind,
   type TelemetryRecord
 } from './telemetry'
+// THE PRIMITIVES live in `./telemetryValidateBase.ts` and the ERROR REPORT's validator in
+// `./telemetryValidateError.ts` — both split out of this file when JOS-100 pushed it past the
+// repo's 400-code-line ceiling, and both re-exported below so every existing importer of this
+// module keeps working unchanged. `Validated` and `TelemetryValidationFailure` are named by
+// callers across main, the renderer, the CLI and the Lambda; moving them behind a new import
+// path would have been a rename dressed up as a factoring.
+import {
+  bucket,
+  fail,
+  flag,
+  matching,
+  oneOf,
+  signedInt,
+  whole,
+  type TelemetryValidationFailure,
+  type Validated
+} from './telemetryValidateBase'
+import { validateErrorReport } from './telemetryValidateError'
 
-export interface TelemetryValidationFailure {
-  ok: false
-  error: 'invalid_event'
-  /** Safe to render verbatim: it names the field and the legal values, nothing internal. */
-  message: string
-  /** Dotted path of the offending field. */
-  field: string
-}
-
-export type Validated<T> = { ok: true; value: T } | TelemetryValidationFailure
-
-const fail = (field: string, message: string): TelemetryValidationFailure => ({
-  ok: false,
-  error: 'invalid_event',
-  message,
-  field
-})
-
-function oneOf<T extends string>(
-  raw: unknown,
-  field: string,
-  allowed: readonly T[]
-): Validated<T> {
-  if (typeof raw === 'string' && (allowed as readonly string[]).includes(raw)) {
-    return { ok: true, value: raw as T }
-  }
-  return fail(field, `${field} must be one of: ${allowed.join(', ')}.`)
-}
-
-/** A whole number in `[0, max]`. Every count and every duration in the schema goes through it. */
-function whole(raw: unknown, field: string, max: number): Validated<number> {
-  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < 0 || raw > max) {
-    return fail(field, `${field} must be a whole number between 0 and ${max}.`)
-  }
-  return { ok: true, value: raw }
-}
-
-/** A bucket INDEX for `edges` — `0 .. edges.length`. */
-function bucket(raw: unknown, field: string, edges: readonly number[]): Validated<number> {
-  return whole(raw, field, edges.length)
-}
-
-function flag(raw: unknown, field: string): Validated<boolean> {
-  if (typeof raw !== 'boolean') return fail(field, `${field} must be true or false.`)
-  return { ok: true, value: raw }
-}
-
-function matching(raw: unknown, field: string, re: RegExp, what: string): Validated<string> {
-  if (typeof raw === 'string' && re.test(raw)) return { ok: true, value: raw }
-  return fail(field, `${field} must be ${what}.`)
-}
-
-/** An integer in `[min, max]` (the one signed field: the timezone bucket). */
-function signedInt(raw: unknown, field: string, min: number, max: number): Validated<number> {
-  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < min || raw > max) {
-    return fail(field, `${field} must be a whole number between ${min} and ${max}.`)
-  }
-  return { ok: true, value: raw }
-}
+export type { TelemetryValidationFailure, Validated }
 
 // --- one validator per event kind. Small on purpose: the dispatch table below is the only
 // --- place that knows which is which, so adding an event is one interface + one entry + one
@@ -371,7 +342,8 @@ const EVENT_VALIDATORS: Record<
   setupSnapshot: vSetupSnapshot,
   funnelStep: vFunnelStep,
   healthCounters: vHealthCounters,
-  updateOutcome: vUpdateOutcome
+  updateOutcome: vUpdateOutcome,
+  errorReport: validateErrorReport
 }
 
 /**
