@@ -1,11 +1,12 @@
 // The map viewer's CONTROLS: the zone selector, zoom / fit, the layer toggles, the per-layer
 // pack choice.
 //
-// THE ZONE SELECTOR IS THE ONLY CONTROL THAT RENDERS WITH NO MAP ON SCREEN, and it renders
-// FIRST. Everything else here describes the drawing — which layers, which floor, which pack —
-// and a control that states a fact about nothing is worse than an absent one. The selector is
-// the opposite case: it is how you get a map at all, and how you leave the one you have
-// (MapZoneSelect.tsx carries why that has to be permanent).
+// THE ZONE SELECTOR AND THE MODE ARE THE ONLY CONTROLS THAT RENDER WITH NO MAP ON SCREEN, and
+// they render FIRST. Everything else here describes the drawing — which layers, which floor,
+// which pack — and a control that states a fact about nothing is worse than an absent one. Those
+// two are the opposite case: they are how you get a map at all, how you leave the one you have
+// (MapZoneSelect.tsx carries why that has to be permanent), and which of you and the log chose
+// what is on screen (JOS-97 — see ZoneModeControls).
 //
 // STATE, NEVER PROCESS (AGENTS.md UI conventions). Every control here states a fact — which
 // layers are drawn, which pack each half came from, which zone is open. Nothing narrates.
@@ -30,6 +31,7 @@
 import type { JSX, KeyboardEvent } from 'react'
 import {
   Box,
+  Button,
   Chip,
   IconButton,
   MenuItem,
@@ -43,10 +45,14 @@ import ZoomOutIcon from '@mui/icons-material/ZoomOut'
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong'
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp'
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown'
+import MyLocationIcon from '@mui/icons-material/MyLocation'
+import PushPinIcon from '@mui/icons-material/PushPin'
+import ExploreIcon from '@mui/icons-material/Explore'
 import type { MapLayer, MapPackInfo, MapPackPrefs, ZoneShort } from '@shared/maps'
 import { bandLabel, type FloorBand } from './floorSlice'
 import type { LayerMask } from './mapGeometry'
 import ZoneSelect from './MapZoneSelect'
+import type { ZoneMode } from './zoneFollow'
 import { Tooltip } from '../../lib/Tooltip'
 
 /** The three optional layers, in file order. Layer 0 (the zone's geometry) is always drawn. */
@@ -132,12 +138,70 @@ function FloorStepper({
   )
 }
 
+/**
+ * WHOSE ANSWER IS ON SCREEN — the map's mode, stated, plus the one way back (JOS-97).
+ *
+ * A SILENT MODE WOULD BE THE NEXT BUG REPORT. Once a manual pick survives zoning and navigation,
+ * "the map is not following me any more" and "the map is broken" look identical from outside, so
+ * the chip states which rule is in force at all times: `Following you` while the log wins,
+ * `Pinned` while your pick does. It states, it does not narrate (the toolbar's rule).
+ *
+ * THE WAY BACK IS A LABELLED BUTTON, NOT A SECOND CLICK ON THE CHIP. `Current zone` appears only
+ * in the mode where it does something, says what it will do, and is the ONLY thing that ends a
+ * pin — a pick is not a timeout, so the app never ends one on its own schedule (zoneFollow.ts).
+ */
+function ZoneModeControls({
+  mode,
+  onFollowCurrent
+}: {
+  mode: ZoneMode
+  onFollowCurrent: () => void
+}): JSX.Element {
+  const pinned = mode === 'pinned'
+  return (
+    <>
+      <Tooltip
+        title={
+          pinned
+            ? 'This map is the one you picked. Zoning will not change it.'
+            : 'This map follows the zone your character is in.'
+        }
+      >
+        <Chip
+          size="small"
+          data-testid="maps-zone-mode"
+          data-mode={mode}
+          variant={pinned ? 'filled' : 'outlined'}
+          icon={pinned ? <PushPinIcon /> : <ExploreIcon />}
+          label={pinned ? 'Pinned' : 'Following you'}
+        />
+      </Tooltip>
+      {pinned && (
+        <Tooltip title="Show the zone your character is in — and follow it again from now on.">
+          <Button
+            size="small"
+            data-testid="maps-zone-current"
+            startIcon={<MyLocationIcon />}
+            onClick={onFollowCurrent}
+          >
+            Current zone
+          </Button>
+        </Tooltip>
+      )}
+    </>
+  )
+}
+
 export interface MapToolbarProps {
   /** Every stem any installed pack provides, ascending — the selector's corpus. */
   zones: readonly ZoneShort[]
   /** The stem the viewer is pointed at, drawn or not. */
   zone: ZoneShort | null
   onPick: (zone: ZoneShort) => void
+  /** Is this map the log's answer or the user's? Stated beside the selector, never implied. */
+  mode: ZoneMode
+  /** Snap to the character's zone and follow it again — the only end to a pin. */
+  onFollowCurrent: () => void
   /** Is a map actually DRAWN? Everything but the selector describes the drawing, so nothing
    *  else renders without one — a floor stepper over no floors states nothing. */
   hasMap: boolean
@@ -273,7 +337,7 @@ function DrawnControls(props: MapToolbarProps): JSX.Element {
 }
 
 export default function MapToolbar(props: MapToolbarProps): JSX.Element {
-  const { zones, zone, onPick, hasMap } = props
+  const { zones, zone, onPick, mode, onFollowCurrent, hasMap } = props
   return (
     <Stack
       direction="row"
@@ -285,6 +349,9 @@ export default function MapToolbar(props: MapToolbarProps): JSX.Element {
       sx={{ flexShrink: 0 }}
     >
       <ZoneSelect zones={zones} zone={zone} onPick={onPick} />
+      {/* Beside the selector and OUTSIDE the `hasMap` gate, for the same reason the selector is:
+          "which rule is choosing the map" is exactly the question a user has when no map drew. */}
+      <ZoneModeControls mode={mode} onFollowCurrent={onFollowCurrent} />
       {hasMap && <DrawnControls {...props} />}
     </Stack>
   )
