@@ -405,11 +405,131 @@ async function stepFire(page: Page, name: string): Promise<void> {
   check('…and still without uttering a sound in this channel', last.uttered === false, `uttered=${String(last.uttered)}`)
 }
 
+// ---------------------------------------------------------------------------------------------
+// §5 — CAPTURE GROUPS IN ALERT SPEECH (JOS-103), on a LIVE-TAILED line.
+//
+// Everything else in this spec test-FIRES an alert from the row's ▶. This step is the only one
+// that makes the game say something: the harness appends a real log line to the tailed file and
+// the utterance has to come out the far end of the whole chain — chokidar → Tailer → parser →
+// AlertsModule (where the named group is harvested, sanitized and capped) → IPC → the player →
+// `speechTextFor` → the engine seam. A unit test can pin each link; only this can pin that the
+// captured text actually survives the IPC hop and reaches the resolver as a firing.
+//
+// THE LINE IS THE OWNER'S OWN, verbatim from eqlog_Primitive_freeport.txt:890467 (a shaman named
+// Fail casting Spirit of the Puma in Freeport, 2026-08-01) — with only its timestamp restamped to
+// now, because the module fires on LIVE events and the harness owns the clock.
+//
+// THE DEF IS STORED THROUGH THE APP'S OWN IPC, not typed into the dialog: `window.eq.saveAlert`
+// is the exact call AlertDialog makes on save, so this exercises the real store path without
+// driving a five-control form. The dialog's own half — that it TELLS you which tokens the pattern
+// declares — is asserted separately below, on this same def.
+// ---------------------------------------------------------------------------------------------
+
+const CAPTURE_ALERT_ID = 'e2e:capture-puma'
+const CAPTURE_PHRASE = 'Puma on {player}'
+/** What the alert must SAY once the line lands. The whole point of the feature. */
+const CAPTURE_EXPECTED = 'Puma on Fail'
+
+async function stepCaptureAlert(page: Page, log: { appendAt: (at: Date, ...m: readonly string[]) => number }): Promise<void> {
+  // Author the def exactly as the `landsOnOther` suggestion template does (suggestions.ts).
+  const saved = await page.evaluate(
+    async ({ id, phrase }) => {
+      const eq = (window as unknown as { eq: { saveAlert: (d: unknown) => Promise<unknown[]> } }).eq
+      const defs = await eq.saveAlert({
+        id,
+        name: 'Puma landed',
+        enabled: true,
+        trigger: {
+          type: 'raw',
+          regex: "^\\[[^\\]]*\\] (?<player>[A-Za-z' `]{1,48}) growls with the spirit of the puma\\."
+        },
+        sound: { packId: 'alan-rickman', soundId: 'task-acknowledge-task-acknowledge-05' },
+        cooldownMs: 0,
+        audio: 'speech',
+        speech: { mode: 'custom', phrase }
+      })
+      return defs.length
+    },
+    { id: CAPTURE_ALERT_ID, phrase: CAPTURE_PHRASE }
+  )
+  if (!check('a capture alert saves through the app’s own IPC', saved > 0, `${String(saved)} defs stored`)) return
+
+  // THE PLAYER HOLDS ITS OWN COPY OF THE DEFS. `refreshAlertStore` (player.tsx) re-reads them on
+  // mount and on window FOCUS — and a hidden e2e window is never focused, so a def stored straight
+  // through the IPC would fire in main and find no def renderer-side. Dispatching the app's own
+  // focus event is the honest way to say "re-read now": it is the same listener a returning user
+  // trips, not a test-only back door.
+  await page.click('[data-testid="nav-alerts"]', { timeout: 60_000 })
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await settle(
+    () => page.evaluate(
+      (id) => (window as unknown as { eq: { listAlerts: () => Promise<{ id: string }[]> } }).eq
+        .listAlerts().then((d) => d.some((a) => a.id === id)),
+      CAPTURE_ALERT_ID
+    ),
+    (present) => present,
+    { timeoutMs: 15_000 }
+  )
+
+  // Wait for the utterance THIS step caused, by its text — the ring is app-wide and a step that
+  // asserted "the newest entry" would be asserting against whatever spoke last.
+  const before = (await spoken(page)).length
+  log.appendAt(new Date(), 'Fail growls with the spirit of the puma.')
+  const all = await settle(
+    () => spoken(page),
+    (list) => list.slice(before).some((s) => s.text === CAPTURE_EXPECTED),
+    { timeoutMs: 20_000 }
+  ).catch(() => null)
+  const hit = all?.slice(before).find((s) => s.text === CAPTURE_EXPECTED)
+  if (
+    !check(
+      'a capture group reaches the speech seam SUBSTITUTED, from a live-tailed log line',
+      hit !== undefined,
+      hit ? `spoke "${hit.text}"` : `never spoke "${CAPTURE_EXPECTED}"`
+    )
+  ) {
+    return
+  }
+  check('…and this channel stayed mute doing it', hit.uttered === false, `uttered=${String(hit.uttered)}`)
+}
+
+/**
+ * §5b — the editor SAYS what the alert is able to say. The readable form of control 4 in
+ * shared/alertCaptures.ts: for a def that came from somebody else's share string, the token list
+ * is how you learn what it can speak without reading the regex.
+ */
+async function stepCaptureHint(page: Page): Promise<void> {
+  await page.click('[data-testid="nav-alerts"]', { timeout: 60_000 })
+  // Addressed by ID, never by list position: this def was appended to a list the earlier steps
+  // also edit, so "first-of-type" would be a bet on ordering.
+  const row = `[data-alert-id="${CAPTURE_ALERT_ID}"]`
+  await settle(() => countOf(page, row), (n) => n === 1, { timeoutMs: 15_000 })
+  await page.click(`${row} [data-testid="alert-edit"]`)
+  await page.waitForSelector('[data-testid="alert-dialog"]', { timeout: 15_000 })
+  // `innerText` is EMPTY for a node that is not laid out yet, and MUI's Dialog fades in — so the
+  // selector existing is not the condition. The TEXT arriving is (settle.mts's whole argument).
+  const hint = (
+    await settle(
+      () => textOf(page, '[data-testid="alert-speech-captures"]'),
+      (t) => t.trim().length > 0,
+      { timeoutMs: 10_000 }
+    ).catch(() => '')
+  ).replace(/\s+/g, ' ')
+  check(
+    'the editor names the capture groups this alert’s pattern declares',
+    hint.includes('{player}'),
+    hint.slice(0, 110) || '(no hint rendered)'
+  )
+  await page.keyboard.press('Escape')
+  await settleGone(page, '[data-testid="alert-dialog"]', { timeoutMs: 10_000 })
+}
+
 async function main(): Promise<void> {
   buildIfStale()
 
   console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-voice.log…')
-  const { app, close } = await launchOnFixture('e2e-voice.log')
+  // `log` is the staged copy of the fixture the app is tailing — §5 appends to it live.
+  const { app, close, log } = await launchOnFixture('e2e-voice.log')
 
   let page: Page | null = null
   try {
@@ -429,6 +549,11 @@ async function main(): Promise<void> {
       const name = await stepEditor(page)
       if (name) await stepFire(page, name)
       else note('no seeded alert to edit this run — the firing path is not asserted')
+      // §5 LAST, because it appends to the tailed log and stores a def of its own — every step
+      // above reads the seeded alert list, and a spec that mutated it first would be asserting
+      // against a world it had already changed.
+      await stepCaptureAlert(page, log)
+      await stepCaptureHint(page)
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

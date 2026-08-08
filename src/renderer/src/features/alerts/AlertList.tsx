@@ -259,8 +259,17 @@ function AlertRow({
   handlers: AlertRowHandlers
 }): JSX.Element {
   const badge = triggerBadge(def.trigger)
+  // TWO HOOKS, NOT ONE: `alert-row` is the collection every spec counts and indexes, and the
+  // id-scoped `data-alert-id` lets a spec address ONE known def without betting on list order
+  // (the capture-alert step in tests/e2e/voice-alerts.e2e.mts appends a def to a list the earlier
+  // steps also edit).
   return (
-    <Paper variant="outlined" sx={ALERT_ROW_PAPER_SX} data-testid="alert-row">
+    <Paper
+      variant="outlined"
+      sx={ALERT_ROW_PAPER_SX}
+      data-testid="alert-row"
+      data-alert-id={def.id}
+    >
       <Box sx={ALERT_ROW_GRID_SX}>
         <Switch
           size="small"
