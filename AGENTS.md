@@ -732,6 +732,46 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   melee skill and a spell. The per-CATEGORY drill separates them exactly and
   every category total is unaffected; `tests/combatSmiteLane.test.mts` W54
   pins the collision on real bytes rather than hiding it.
+  **RANGED (JOS-92) NEEDED A THIRD ARGUMENT, BECAUSE IT FAILS BOTH OF THE ABOVE.**
+  A ranger asked for the bow split out of Melee ("stance switching Ranger/Ranged
+  stance uses bow in melee. currently that is lumped into the same bar"). Same
+  shape as cleave/smite — `shoot` has been in MELEE_VERBS since the missing-verbs
+  fix, so bow damage was always COUNTED and only the ROW was missing — but run
+  JOS-81's skill-up test on it and it comes back a WEAPON verb: `better at Shoot!`
+  does not exist, `shoot` ticks under **`Archery`**, and Archery sits in the
+  weapon-type family beside 1H Slashing / 1H Blunt / Hand to Hand. Borrowing the
+  smite argument would have been a lie. THE LANE RESTS ON THE CLAUSE JOS-77
+  ALREADY WROTE AND NEVER USED: the generic row exists because those verbs "are
+  what a weapon IN A HAND prints, and four of them are ONE auto-attack lane". A
+  bow is not that lane — different slot, different skill, and none of the hand
+  lane's multipliers reach it (Dual Wield 322 skill-ups, Double Attack 395,
+  Triple Attack 100). So the rule gains a NARROW second clause: **a weapon verb
+  fired from a different SLOT than the hands is not the hand lane**, and `shoot`
+  is the only verb in MELEE_VERBS that qualifies. The label comes from the game's
+  own word for the mode (`You assume a ranged stance.`), not from a skill table.
+  NO THROWN LANE IS INVENTED BESIDE IT: `You throw` is ZERO whole-log, ` throws `
+  ZERO, `Throwing` occurs only inside item names, no `better at Throwing!` tick —
+  awaiting-sample law, so no branch. THE DISCRIMINATOR IS THE VERB AND NOTHING
+  ELSE, which is what a stance-switcher needs (a class- or stance-keyed split
+  would mis-assign both halves of his fight): all nine `shoots` damage lines in
+  the log are shape-identical to melee (`<A> shoots <B> for N point(s) of
+  damage.`) and `(Critical)` is the ONLY annotation the family has ever carried.
+  THE OWNER HAS NEVER FIRED A BOW — `You shoot` ZERO in 1,438,942 lines, `better
+  at Archery!` exactly ONCE, `You assume a ranged stance.` twice — so the lane is
+  EMPTY in every committed fixture and the law-8 gate is absolute: all 103
+  fixtures replayed before and after (per-segment out/in, per-source, per-category,
+  per-lane, per-category-drill; 1,591 rows) came out BYTE-IDENTICAL, because
+  there is no self `shoot` line in the tree to move a figure. What the log does
+  carry is OTHER PEOPLE's archery — 9 landed, 8 avoided — which `w57-ranged-lane.log`
+  (two hits + a dodged shot beside the owner's own Yarik fight) and
+  `w58-ranged-critical.log` (the `(Critical)` arm) pin; both were cut for this
+  ticket because ` shoots ` was ZERO across all 101 pre-existing fixtures. The
+  self arm is INJECTED in `tests/combatRangedLane.test.mts` (the W52/petClaim
+  precedent), conjugated from the attested third-person template with the owner's
+  own real bow amounts, and it asserts the movement is exact: Ranged 76/3 appears,
+  `you|Melee` does not budge, and the melee category grows by exactly 76.
+  A stranger's bow is still IGNORED by the meter (routing.ts `classify`) — parsing
+  a line into a new lane is not the same as admitting it, and W57 pins that too.
 - **A HEAL THE LOG ANNOUNCES BUT NEVER VALUES GETS A LANE THAT CARRIES A COUNT
   AND NO NUMBER** (JOS-86 — the monk's Mend). `You mend your wounds and heal
   some damage.` is the whole sentence: no amount, no target, no third-person
@@ -1707,8 +1747,14 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
 - **Awaiting real samples** (the outputs registry refuses them typed until
   a committed fixture graduates each): /outputfile guild, raid, spellbook,
   factions, achievements, alternateadv — one in-game `/outputfile <kind>`
-  from anyone provides it. Same law for bow combat lines (Double Bow Shot
-  annotation unobserved — no archery in any log seen).
+  from anyone provides it. Same law for the **Double Bow Shot annotation**,
+  still unobserved after JOS-92's whole-log sweep: `(Critical)` is the only
+  annotation any of the nine `shoots` lines carries, and the file's one
+  `bow shot` hit is a player bragging in General chat. The rest of that note
+  is now SUPERSEDED — archery does appear, just never the owner's: 9 landed
+  and 8 avoided bow lines from other players, all third-person, and the Ranged
+  lane (above) is built on them. `You shoot` remains ZERO, so the FIRST-PERSON
+  arm is the shape still awaiting a sample.
 - Releases this arc: v0.4.0 (planner + toasts + parity + credited kills),
   v0.5.0 (monk lanes, outputs engine, AA ladder), v0.6.0 (Rounds panel,
   log-attach fix, Wine installer) — all sandbox-gated + smoke-verified;

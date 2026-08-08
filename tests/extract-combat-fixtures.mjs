@@ -393,3 +393,39 @@ slice(1241090, 1241650, 'w51-round-flurry-era.log')
 //          so the enemy lane and the avoided-swing (`tries to cleave YOU`) path are both live.
 // The window ends on the carrier's death + its two loot lines, so the fight closes inside it.
 slice(1369065, 1369590, 'w52-cleave-lane.log')
+
+// W57 THE RANGED LANE (Mon Aug 03 16:06:51 -> 16:07:09, raw 1142851..1142980) — JOS-92, a
+// ranger's report: "Could you split Ranged (bow) into another field separate from Melee? …
+// stance switching Ranger/Ranged stance uses bow in melee. currently that is lumped into the
+// same bar as melee." `shoot` has been in MELEE_VERBS since the missing-verbs fix, so bow
+// damage was always COUNTED; `meleeSkill('shoot')` answered "Melee", so no Ranged ROW existed.
+//
+// THE OWNER HAS NEVER FIRED A BOW — `You shoot` is ZERO across all three of his logs and all
+// 101 committed fixtures, and `You have become better at Archery!` ticks exactly ONCE in
+// 1,438,942 lines (the rarest skill in the file, tied with Forage and Pick Lock). Every one of
+// the log's nine `shoots` damage lines belongs to some OTHER player. So this window pins the
+// arms his bytes DO have and the test injects the self arm, exactly as W52 does for cleave.
+//
+// Chosen because the owner is fighting HARD through the whole span while a bow user works the
+// mob beside him — which is what makes it the law-8 control. Inside it:
+//   HIS OWN FIGHT — Commander Yarik, unbroken: slash / pierce / smite / bash / backstab /
+//     frenzy / kick, the Smiting Strike proc, rune gains, a Blood Siphon Strike lifetap-heal
+//     and incoming punches. Seven melee lanes that must not move by one point.
+//   THE BOW — `Sinzar shoots a wanderer for 1 point of damage.` (16:06:59, the SINGULAR
+//     `point of` arm), `… for 15 points of damage.` (16:07:02, the plural arm) and
+//     `Sinzar tries to shoot a wanderer, but a wanderer dodges!` (16:07:05, the avoided-shot
+//     arm, which lanes through the same meleeSkill() the landed one does).
+// Sinzar is neither the owner, his pet, nor a rostered group member, so the ENGINE ignores his
+// damage by design (routing.ts classify) — his bytes are here for the PARSER arms. The window
+// ends mid-fight; Yarik is still up, which is the live case the meter has to render honestly.
+slice(1142851, 1142980, 'w57-ranged-lane.log')
+
+// W58 THE CRITICAL BOW SHOT (Fri Aug 07 16:09:42 -> 16:09:57, raw 1438572..1438700) — the one
+// arm W57 lacks. `Brakk shoots a gloomwater mermaid for 60 points of damage. (Critical)` at
+// 16:09:52 is a bow shot carrying a trailing paren modifier, and a whole-log sweep of all nine
+// `shoots` lines proves `(Critical)` is the ONLY annotation the family has ever carried — there
+// is no `(Double Bow Shot)` line anywhere (the one `bow shot` hit in the file is a player
+// bragging about a score in General chat). The owner is mid-pull on gloomstalker mermaids
+// throughout, slaying one at 16:09:42 and another at 16:09:57, so the span is a clean fight of
+// his own with a real critical bow shot landing beside it.
+slice(1438572, 1438700, 'w58-ranged-critical.log')
