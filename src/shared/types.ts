@@ -25,11 +25,22 @@ export type { LootDisposition, ItemStatBlock }
  *   - 'toast' (docs/plans/celebration-toasts.md): the CELEBRATION strip — normally renders
  *                 nothing; a boss kill or a Sky quest completion animates a card in, holds, and
  *                 leaves. Not a meter: it has no selector, no drill and no scope.
+ *   - 'buffs' (JOS-89, docs/plans/buff-timer-overlay.md): the BUFF/TIMER bars — your self buffs,
+ *                 the debuffs you put on each target, and a per-enemy crowd-control clock, so a
+ *                 chain-mez shows a named countdown per enemy. Ships DEFAULT OFF for internal
+ *                 validation. It has no selector and no drill, and its bars obey one law: a
+ *                 duration spells.json STATES counts down, a duration nobody states counts UP.
  * Each kind has its own independently-persisted OverlayConfig (bounds/alpha/lock/text size/drill)
  * and can be open simultaneously. IPC channels + the store are keyed by this.
+ *
+ * APPEND NEW KINDS AT THE END. `overlayLayout.ts` derives a kind's reserved dock slot from its
+ * INDEX here and `tests/overlayLayout.test.mts` pins the exact bounds of slots 0–2, so inserting
+ * in the middle moves somebody's window. The wrap has room for the six meter kinds below (slot 5
+ * lands in the second column on a 1366×728 laptop); a SEVENTH would clamp a third column onto the
+ * second and the layout test will say so.
  */
-export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast'
-export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast']
+export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'buffs'
+export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'buffs']
 
 /** True for the two HEALING overlay kinds (they render HealMeter, not OverlayMeter). */
 export function isHealOverlayKind(kind: OverlayKind): boolean {

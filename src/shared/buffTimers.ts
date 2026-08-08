@@ -189,15 +189,27 @@ function ccRow(h: CcHold): BuffTimerRow {
   }
 }
 
-/** The row an ActiveBuff projects to — where the countdown/count-up split is decided. */
+/**
+ * THE LAW, as one decision: a DB-STATED duration — and nothing else — earns a receding countdown.
+ *
+ * `durationSource` is the whole discriminator. `'db'` is the wiki's own number for the spell;
+ * `'observed'` is the recency-weighted MAX of the player's own land→fade samples, which the model
+ * itself calls an estimate and which a zone, an offline gap, a death or an unprinted fade can
+ * censor. Counting down from the second one is the invented remaining this surface forbids, so it
+ * counts up instead — and carries no duration at all, so nothing downstream can draw a bar from it.
+ */
+function timerModeOf(b: ActiveBuff): { mode: TimerMode; durationMs?: number } {
+  if (b.permanent === true) return { mode: 'permanent' }
+  if (b.durationSource === 'db' && b.estimatedMs != null && b.estimatedMs > 0) {
+    return { mode: 'countdown', durationMs: b.estimatedMs }
+  }
+  return { mode: 'elapsed' }
+}
+
+/** The row an ActiveBuff projects to. */
 function buffRow(b: ActiveBuff): BuffTimerRow {
   const targetKey = b.self ? undefined : b.target != null ? entityKeyOf(b.target) : 'unknown'
-  const mode: TimerMode = b.permanent === true
-    ? 'permanent'
-    : // THE LAW: a DB-STATED duration, and nothing else, earns a receding countdown.
-      b.durationSource === 'db' && b.estimatedMs != null && b.estimatedMs > 0
-      ? 'countdown'
-      : 'elapsed'
+  const timing = timerModeOf(b)
   return {
     id: `${b.self ? 'self' : 'target'}|${targetKey ?? 'self'}|${nameKey(b.spell)}`,
     kind: b.cls,
@@ -206,8 +218,7 @@ function buffRow(b: ActiveBuff): BuffTimerRow {
     ...(b.self ? {} : { target: b.target ?? 'unknown target', targetKey }),
     ...(b.inferredTarget === true ? { inferredTarget: true as const } : {}),
     startedTs: b.startedTs,
-    mode,
-    ...(mode === 'countdown' ? { durationMs: b.estimatedMs as number } : {}),
+    ...timing,
     ...(b.provisional === true ? { provisional: true as const } : {})
   }
 }
