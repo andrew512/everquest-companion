@@ -27,6 +27,7 @@ import { logError } from './errorLog'
 import { defaultOverlayBounds, overlayDefaultSize } from './overlayLayout'
 import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
+import { noteRendererCrash } from './telemetry'
 import { getGraphicsPrefs, getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
 import { TRANSPARENT_OVERLAY_BG, overlayBackgroundColor } from '../shared/graphicsPrefs'
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
@@ -260,6 +261,10 @@ function captureMainWindowErrors(wc: Electron.WebContents): void {
   // then reload the window ONCE so a transient crash doesn't strand the user.
   let renderProcessReloaded = false
   wc.on('render-process-gone', (_e, details) => {
+    // ONE CRASH IS ONE COUNT (JOS-96) — counted here rather than off `logError`, because this
+    // handler writes TWO log lines per crash (the details, then the recovery reload) and counting
+    // lines would report every crash as two. `mainErrorLogLines` still sees both, correctly.
+    noteRendererCrash()
     logError('main:render-process-gone', details)
     if (!renderProcessReloaded && mainWindow && !mainWindow.isDestroyed()) {
       renderProcessReloaded = true
