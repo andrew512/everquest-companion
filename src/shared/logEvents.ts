@@ -130,10 +130,16 @@ export interface AaPotionEvent extends LogEventBase {
 }
 
 /**
- * Unifies the two slain shapes:
+ * Unifies the three death shapes:
  *   `You have slain X!`            → bySelf:true
  *   `X has been slain by Y!`       → bySelf:false, killer:Y
+ *   `X died.`                      → bySelf:false, killer:undefined  (JOS-101)
  * Both the kills tracker and the combat engine consume this one event.
+ *
+ * The third is the KILLERLESS shape — the mob twin of the player's own `You died.` — printed
+ * when the killing blow had no attacker to name (a damage-over-time tick). `killer` is absent
+ * rather than guessed; it is the ONLY case where bySelf is false and killer is undefined, and
+ * it means "this died, the log does not say by whose hand", never "a third party killed it".
  */
 export interface DeathEvent extends LogEventBase {
   kind: 'death'
