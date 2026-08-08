@@ -23,9 +23,6 @@ import type { AlertDef, LogEventKind, SpellCatalogEntry } from '@shared/types'
 // path map, so an aliased VALUE import makes the module unloadable under tsx. That it was
 // unloadable is part of why JOS-84 shipped: no test could ever have run a real suggestion def.
 import { spellIdFragment, parseSpellRank } from '../../../../shared/spellLines'
-// The capture-group authoring rule + its threat model (JOS-103). RELATIVE, like every other value
-// import here, for the tsx reason the header states.
-import { subjectCapturePattern } from '../../../../shared/alertCaptures'
 import type { SpellRank } from '@shared/spellLines'
 
 export type TemplateKind = 'wearsOff' | 'fade' | 'lands' | 'landsOnOther'

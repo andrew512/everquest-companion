@@ -31,6 +31,7 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import type { AlertDef, AlertTrigger, SoundPack } from '@shared/types'
+import { captureNamesIn } from '@shared/alertCaptures'
 import {
   blankCondition,
   type CombineMode,
@@ -405,7 +406,15 @@ export default function AlertDialog({
           <VolumeCooldownSection f={f} />
 
           <Divider />
-          <SpeechBlock name={f.name} form={f.speech} voiceSetup={voiceSetup} />
+          {/* Recomputed from the LIVE form, not from `initial`: the user can add `(?<player>…)`
+              to the pattern and the token list has to follow them, in the same dialog, before
+              they type the phrase that uses it. */}
+          <SpeechBlock
+            name={f.name}
+            form={f.speech}
+            voiceSetup={voiceSetup}
+            captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
+          />
         </Stack>
       </DialogContent>
       <DialogActions>

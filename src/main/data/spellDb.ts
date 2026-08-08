@@ -474,6 +474,16 @@ export function searchTextFor(s: SpellEntry, rankNames: readonly string[] | unde
     .toLowerCase()
 }
 
+/**
+ * Whether a spell earns ANY suggestion at all. Its own function so `buildSpellCatalog` stays
+ * under the complexity ceiling, and so adding a template is one edit rather than two: a new flag
+ * that is not named here silently keeps its spell out of the catalog, which is the exact defect
+ * JOS-103 was filed for.
+ */
+function offersAnyTemplate(t: SpellCatalogEntry['templates']): boolean {
+  return t.wearsOff || t.fade || t.lands || t.landsOnOther
+}
+
 export function buildSpellCatalog(
   db: SpellDb,
   usage: Map<string, number>,
@@ -489,15 +499,7 @@ export function buildSpellCatalog(
     const capture = s.msgCastOnOther ? subjectCapturePattern(s.msgCastOnOther) : null
     if (s.illusion) hasIllusions = true
     // Nothing to suggest for a spell with no template and not an illusion — skip it.
-    if (
-      !templates.wearsOff &&
-      !templates.fade &&
-      !templates.lands &&
-      !templates.landsOnOther &&
-      !s.illusion
-    ) {
-      continue
-    }
+    if (!offersAnyTemplate(templates) && !s.illusion) continue
     entries.push({
       key,
       name: s.name,

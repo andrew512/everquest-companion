@@ -140,7 +140,7 @@
 // PURE, like every other module in `src/shared/**`: no `node:`, no Electron, no DOM. It compiles
 // under both tsconfigs and loads under `tsx` for node:test.
 
-import type { AlertTrigger } from './alertTypes'
+import type { AlertTrigger, AlertTriggerPrimitive } from './alertTypes'
 import { sanitizeOneLine } from './sanitizeText'
 
 /**
@@ -258,10 +258,7 @@ export function harvestCaptures(
  */
 export function applyCaptures(template: string, captures?: Record<string, string>): string {
   if (!captures || !template.includes('{')) return template
-  return template.replace(TOKEN_RE, (whole, name: string) => {
-    const value = sanitizeCapture(captures[name])
-    return value === null ? whole : value
-  })
+  return template.replace(TOKEN_RE, (whole, name: string) => sanitizeCapture(captures[name]) ?? whole)
 }
 
 /** Every `{token}` a phrase writes, in order, de-duplicated. The editor lints against this. */
@@ -284,17 +281,20 @@ export function captureNamesIn(trigger: AlertTrigger): string[] {
   const out = new Set<string>()
   const conditions = 'conditions' in trigger ? trigger.conditions : [trigger]
   for (const c of conditions) {
-    if (c.type === 'raw') {
-      for (const m of c.regex.matchAll(GROUP_DECL_RE)) out.add(m[1])
-    } else if (c.type === 'event') {
-      for (const spec of Object.values(c.where ?? {})) {
-        const body = regexSpecBody(spec)
-        if (body === null) continue
-        for (const m of body.matchAll(GROUP_DECL_RE)) out.add(m[1])
-      }
+    for (const source of conditionRegexSources(c)) {
+      for (const m of source.matchAll(GROUP_DECL_RE)) out.add(m[1])
     }
   }
   return [...out]
+}
+
+/** Every regex SOURCE one primitive condition carries: its raw pattern, or its `/regex/` matchers. */
+function conditionRegexSources(c: AlertTriggerPrimitive): string[] {
+  if (c.type === 'raw') return [c.regex]
+  if (c.type !== 'event') return [] // 'app' conditions carry no pattern at all.
+  return Object.values(c.where ?? {})
+    .map(regexSpecBody)
+    .filter((b): b is string => b !== null)
 }
 
 // ---------------------------------------------------------------- authoring a subject capture

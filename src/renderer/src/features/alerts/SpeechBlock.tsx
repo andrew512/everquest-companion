@@ -39,6 +39,7 @@ import {
   SPEECH_MODES,
   speechTextFor
 } from '@shared/speechText'
+import { tokensIn } from '@shared/alertCaptures'
 import { currentVoicePrefs, speak } from '../../lib/speech'
 import { useVoiceOptions } from '../../lib/useVoices'
 import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
@@ -184,8 +185,49 @@ function AudioActionRow({ form }: { form: SpeechForm }): JSX.Element {
   )
 }
 
+/**
+ * WHAT `{tokens}` THIS ALERT MAY WRITE, and which ones its pattern does not actually declare
+ * (JOS-103).
+ *
+ * The readable form of control 4 in shared/alertCaptures.ts's threat model: a token resolves ONLY
+ * if the def's own pattern declared a matching named group, so the set of values this alert can
+ * ever speak is a finite list that can be printed. It matters most for a def that arrived in
+ * somebody else's share string — you can see what it is able to say without reading the regex.
+ *
+ * The unknown-token line is a WARNING, never a save block: an unresolved token renders literally,
+ * which is a legible sentence rather than a broken alert, and a user mid-edit should not be
+ * stopped from typing `{pl` on the way to `{player}`.
+ */
+function CaptureHint({ phrase, captureNames }: { phrase: string; captureNames: string[] }): JSX.Element | null {
+  const used = tokensIn(phrase)
+  const unknown = used.filter((t) => !captureNames.includes(t))
+  if (captureNames.length === 0 && unknown.length === 0) return null
+  return (
+    <Box data-testid="alert-speech-captures">
+      {captureNames.length > 0 && (
+        <Typography variant="caption" color="text.secondary" display="block">
+          {`This alert’s pattern captures: ${captureNames.map((n) => `{${n}}`).join(' ')} — write one in the phrase to speak it.`}
+        </Typography>
+      )}
+      {unknown.length > 0 && (
+        <Typography variant="caption" color="warning.main" display="block">
+          {`${unknown.map((n) => `{${n}}`).join(' ')} ${unknown.length === 1 ? 'is not' : 'are not'} captured by this alert’s pattern — spoken as written.`}
+        </Typography>
+      )}
+    </Box>
+  )
+}
+
 /** Mode picker + live preview + (custom only) the capped phrase field. */
-function SaysRow({ name, form }: { name: string; form: SpeechForm }): JSX.Element {
+function SaysRow({
+  name,
+  form,
+  captureNames
+}: {
+  name: string
+  form: SpeechForm
+  captureNames: string[]
+}): JSX.Element {
   const preview = previewTextFor(name, form)
   return (
     <Stack spacing={1}>
@@ -209,17 +251,25 @@ function SaysRow({ name, form }: { name: string; form: SpeechForm }): JSX.Elemen
       </Box>
 
       {form.mode === 'custom' && (
-        <TextField
-          size="small"
-          label="Phrase"
-          data-testid="alert-speech-phrase"
-          value={form.phrase}
-          onChange={(e) => form.setPhrase(e.target.value)}
-          slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
-          helperText={`${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`}
-        />
+        <>
+          <TextField
+            size="small"
+            label="Phrase"
+            data-testid="alert-speech-phrase"
+            value={form.phrase}
+            onChange={(e) => form.setPhrase(e.target.value)}
+            slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
+            helperText={`${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`}
+          />
+          <CaptureHint phrase={form.phrase} captureNames={captureNames} />
+        </>
       )}
 
+      {/* THE PREVIEW SHOWS TOKENS UNRESOLVED, ON PURPOSE. There is no firing yet, so there is no
+          captured value, and substituting a made-up sample would put words in the alert's mouth
+          that no log line said (world-model law 1). The literal `{player}` is exactly what the
+          user will hear if the capture is ever missing, and `CaptureHint` above is where they
+          learn that the pattern really does declare it. */}
       <Typography variant="caption" color="text.secondary" data-testid="alert-speech-preview">
         {preview ? `Speaks: “${preview}”` : 'Speaks nothing — give the alert a name or a phrase.'}
       </Typography>
@@ -278,12 +328,19 @@ function VoiceRow({ name, form }: { name: string; form: SpeechForm }): JSX.Eleme
 export default function SpeechBlock({
   name,
   form,
-  voiceSetup
+  voiceSetup,
+  captureNames = []
 }: {
   name: string
   form: SpeechForm
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
+  /**
+   * The named capture groups the alert's CURRENT trigger declares (`captureNamesIn`), recomputed
+   * as the user edits the pattern. Empty for the alerts that capture nothing, which is most of
+   * them — and then the hint renders nothing at all rather than an empty label.
+   */
+  captureNames?: string[]
 }): JSX.Element {
   const speaks = form.audio !== 'sound'
   return (
@@ -300,7 +357,7 @@ export default function SpeechBlock({
             off in Preferences"): choosing 'Speak it' above IS the switch. The only thing left to
             say is that the chosen tier has nothing to speak with — and it says it with a LINK. */}
         {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />}
-        {speaks && <SaysRow name={name} form={form} />}
+        {speaks && <SaysRow name={name} form={form} captureNames={captureNames} />}
         {speaks && <VoiceRow name={name} form={form} />}
       </Stack>
     </Box>
