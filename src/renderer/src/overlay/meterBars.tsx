@@ -20,8 +20,8 @@ import type { OverlayDrill } from '@shared/types'
 import { CATEGORY_LABEL, type DamageCategory, type SegmentView, type SourceView } from '@shared/combat'
 import { formatNum as fmt, formatRate } from '../lib/formatRate'
 import { type FlatSkill, type SkillRow } from '../features/combat/dashboardData'
+import type { AbilityMulti } from '../features/combat/abilityStats'
 import { laneDps, meterPanel, type MeterPanel, type OwnRow, type PetRow } from '../features/combat/petRows'
-import type { CategoryDrillView } from '../features/combat/categoryDrill'
 import { useCombinePetRow } from '../features/combat/useCombatPrefs'
 import { scopeSources } from '../features/combat/meterScope'
 import { landEvidence } from '../features/combat/landEvidence'
@@ -165,8 +165,20 @@ function skillStat(s: FlatSkill): string {
   return parts.join(' · ')
 }
 
+/** The multi-attack facts (JOS-113) — the double/triple this ability landed, over its rounds, and
+ *  the auto-attack ability's flurry line. The overlay carries them in the hover title, where its
+ *  other per-ability stats live (it has no room for an inline expansion, and locked mode is
+ *  click-through). Empty when the ability opened no rounds. */
+function multiFacts(multi: AbilityMulti | null | undefined): string {
+  if (!multi) return ''
+  const bits: string[] = []
+  if (multi.rounds > 0 && multi.text) bits.push(`${multi.text} over ${fmt(multi.rounds)} rounds${multi.estimated ? ' (est.)' : ''}`)
+  if (multi.flurry != null) bits.push(multi.flurry)
+  return bits.join(' · ')
+}
+
 /** The labeled stat run for one row, shared by the row title and its children lines. */
-function skillFacts(s: FlatSkill): string {
+function skillFacts(s: FlatSkill, multi?: AbilityMulti | null): string {
   const land = landEvidence(s)
   // The overlay has no expansion, so the damage-less row's hover carries the BASIS too — where
   // the landings came from, or why a resist rate is being withheld.
@@ -184,20 +196,24 @@ function skillFacts(s: FlatSkill): string {
   if (resists > 0) bits.push(land.resistText)
   const min = s.min ?? 0
   bits.push(min > 0 && min !== s.max ? `damage range ${fmt(min)} - ${fmt(s.max)}` : `damage range ${fmt(s.max)}`)
+  const mult = multiFacts(multi)
+  if (mult) bits.push(mult)
   return bits.join(' · ')
 }
 
 /**
  * The overlay's stand-in for the main view's expanded per-ability readout: the same figures,
  * fully labeled, as the row's hover title (interactive mode — a locked overlay is
- * click-through, so it neither hovers nor could collapse an inline expansion).
+ * click-through, so it neither hovers nor could collapse an inline expansion). It carries this
+ * ability's own multi-attack reading (JOS-113 — double/triple/flurry), which on the tab expands
+ * inline; here it is one more labeled fact on the hover.
  * For the GROUPED Slay Undead row this title also carries what the main view puts in the
  * expansion — the per-weapon-skill split, one labeled line each. The overlay's 18px rows have
  * no room for an inline breakdown and locked mode could never collapse one, so the hover title
  * is where that detail lives here.
  */
 function skillTitle(s: SkillRow, catLabel: string): string {
-  const head = `${s.name} (${catLabel}) — ${skillFacts(s)}`
+  const head = `${s.name} (${catLabel}) — ${skillFacts(s, s.multi)}`
   if (!s.children || s.children.length === 0) return head
   const lines = s.children.map((c) => `  ${c.name} — ${skillFacts(c)}`)
   return `${head}\nBy skill:\n${lines.join('\n')}`
@@ -272,93 +288,6 @@ function PetLine({ pet, pct, onDrill }: { pet: PetRow; pct: number; onDrill?: ()
   )
 }
 
-/**
- * THE DAMAGE-TYPE STRIP — the overlay's way into (and across) the drill's third level (JOS-105).
- *
- * The Combat tab and the Overview card draw the same strip out of `MeterRows.tsx`; this is its
- * MUI-free twin, and the duplication is the same deliberate one every other row here carries (see
- * the header): shared shaping, forked pixels, because this bundle has no theme to read.
- *
- * Nothing is drawn in locked mode — a click-through overlay has nowhere to put an affordance —
- * except the chip for the type you are already inside, which is state, not an offer.
- */
-function CategoryStrip({
-  source,
-  active,
-  setDrill
-}: {
-  source: SourceView
-  active: DamageCategory | null
-  setDrill: ((d: Drill | null) => void) | null
-}): JSX.Element | null {
-  const cats = source.categories.filter((c) => setDrill !== null || c.category === active)
-  if (cats.length === 0) return null
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 3 }}>
-      {cats.map((c) => (
-        <span
-          key={c.category}
-          data-testid="overlay-category"
-          onClick={setDrill ? () => setDrill({ entityId: source.id, category: c.category }) : undefined}
-          title={`${CATEGORY_LABEL[c.category]}: ${fmt(c.total)} over ${c.hits} hits`}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '1px 6px',
-            borderRadius: 999,
-            fontSize: 10,
-            lineHeight: 1.4,
-            cursor: setDrill ? 'pointer' : 'default',
-            border: `1px solid ${c.category === active ? CAT_COLOR[c.category] : 'rgba(255,255,255,0.18)'}`,
-            background: c.category === active ? `${CAT_COLOR[c.category]}33` : 'transparent'
-          }}
-        >
-          <span style={{ width: 6, height: 6, borderRadius: 2, background: CAT_COLOR[c.category] }} />
-          {CATEGORY_LABEL[c.category]}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-/**
- * LEVEL 3, the overlay's spelling: the category's own lanes, then the multi-attack reading that
- * used to be a panel the overlay never had at all. One rate line above them, because the crit and
- * resist rates are the whole reason a reader drills a damage type rather than reading its lanes
- * off the level above.
- */
-function CategoryLines({ d, activeSec }: { d: CategoryDrillView; activeSec: number }): JSX.Element {
-  const stats = [`${fmt(d.total)} total`, `${fmt(d.hits)} hits`, `${Math.round(d.critPct)}% crit`]
-  if (d.resists > 0) stats.push(`${Math.round(d.resistPct)}% resist`)
-  return (
-    <>
-      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)', marginBottom: 3 }}>{stats.join(' · ')}</div>
-      {d.rows.map((s) => (
-        <SkillLine key={`${s.category}|${s.name}`} s={s} activeSec={activeSec} />
-      ))}
-      {d.attack.map((row) => (
-        <Bar
-          key={row.verb}
-          color={CAT_COLOR.melee}
-          pct={row.pct}
-          label={
-            <>
-              {row.label}
-              {row.estimated && <span style={{ color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' }}> est.</span>}
-              <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>{row.text}</span>
-            </>
-          }
-          right={`${fmt(row.rounds)} rounds`}
-        />
-      ))}
-      {d.flurry !== null && (
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)', marginTop: 2 }}>{d.flurry}</div>
-      )}
-    </>
-  )
-}
-
 /** Nothing to show yet — quiet, and honest about which kind of nothing it is. */
 function MeterEmpty({ live }: { live: boolean }): JSX.Element {
   return (
@@ -415,13 +344,14 @@ function ownLine(r: OwnRow, activeSec: number, setDrill: ((d: Drill | null) => v
 }
 
 /**
- * EVERY LEVEL BELOW THE FIRST: one source's lane list, or ONE damage type of it.
+ * LEVEL 2: one source's ability list — one bar per ability (JOS-113), the per-ability stats on
+ * each bar's hover title (this window has no room for an inline expansion, and locked mode is
+ * click-through).
  *
- * Back goes to the row this level was opened FROM — a damage type's own source, a nested pet's
- * owner (your breakdown), else all the way out to the source list. It is offered at EVERY level
- * there is below the first: the meter no longer opens drilled, so there is no view that is its own
- * home and no reason to withhold the way out (the `canLeave` gate this replaces is JOS-35's
- * zoom-out regression).
+ * Back goes to the row this level was opened FROM — a nested pet's owner (your breakdown), else
+ * all the way out to the source list. The zoom-out is offered here: the meter no longer opens
+ * drilled, so there is no view that is its own home and no reason to withhold the way out (the
+ * `canLeave` gate this replaces is JOS-35's zoom-out regression).
  */
 function DrilledBars({
   panel,
@@ -429,22 +359,15 @@ function DrilledBars({
   dur,
   setDrill
 }: {
-  panel: Extract<MeterPanel, { level: 2 } | { level: 3 }>
+  panel: Extract<MeterPanel, { level: 2 }>
   activeSec: number
   dur: string
   setDrill: ((d: Drill | null) => void) | null
 }): JSX.Element {
-  const subject = panel.subject
-  const level3 = panel.level === 3 ? panel.detail : null
-  const parent = level3 ? subject : panel.level === 2 ? panel.parent : null
-  const out: Drill | null = parent ? { entityId: parent.id } : null
-  const name = level3 ? `${subject.name} · ${CATEGORY_LABEL[level3.category]}` : subject.name
+  const out: Drill | null = panel.parent ? { entityId: panel.parent.id } : null
   return (
-    <MeterCrumb name={name} dur={dur} onBack={setDrill ? () => setDrill(out) : null}>
-      <CategoryStrip source={subject} active={level3?.category ?? null} setDrill={setDrill} />
-      {level3
-        ? <CategoryLines d={level3} activeSec={activeSec} />
-        : panel.level === 2 && panel.rows.map((r) => ownLine(r, activeSec, setDrill))}
+    <MeterCrumb name={panel.subject.name} dur={dur} onBack={setDrill ? () => setDrill(out) : null}>
+      {panel.rows.map((r) => ownLine(r, activeSec, setDrill))}
     </MeterCrumb>
   )
 }

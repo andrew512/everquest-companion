@@ -10,9 +10,6 @@ import type { ExaltPlan } from './planner/types'
 // The toast overlay's per-kind knobs live beside its payload in ./toast (this file is at its
 // factoring ceiling); OverlayConfig names the blob, that file owns its shape + normalizer.
 import type { ToastOverlayConfig } from './toast'
-// The damage TAXONOMY, for the overlay drill's third level (JOS-105) — a type-only borrow of the
-// combat model's own category union rather than a second spelling of five string literals.
-import type { DamageCategory } from './combat'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -56,21 +53,17 @@ export function isFightOverlayKind(kind: OverlayKind): boolean {
 }
 
 /**
- * The overlay meter's mini drill-down (Task #54): which entity's flat skill/spell list is on
- * screen. `null` (or absent) = level 1, the entity bars.
+ * The overlay meter's mini drill-down (Task #54): which entity's flat ability list is on screen.
+ * `null` (or absent) = level 1, the entity bars.
+ *
+ * JOS-105 added an optional `category` (a third drill level, one damage type of the source);
+ * JOS-113 removed that level — per-ability stats expand INLINE now, not as a level — so the field
+ * is gone. A store written by a JOS-105 build that carries a `category` needs no migration: the
+ * normalizer (`store.ts`) rebuilds the drill field by field and simply drops it, degrading to the
+ * flat ability list — the same "a stale drill degrades to the level it can still show" rule.
  */
 export interface OverlayDrill {
   entityId: string
-  /**
-   * ONE damage type of that source — the drill's third level (JOS-105). Absent/null is level 2,
-   * the source's whole lane list, which is what every store written before this carried; the
-   * field is therefore additive and needs no migration.
-   *
-   * A persisted value the running build cannot honour needs no migration either: a category this
-   * source never dealt resolves to no level-3 detail and renders level 2, exactly the way a stale
-   * `entityId` renders level 1 (`petRows.meterPanel`).
-   */
-  category?: DamageCategory | null
 }
 
 /**

@@ -2,9 +2,9 @@
 // it. Split out of CombatView.tsx; the tab is now header + body + log, and this is the body's
 // first cell.
 //
-// The drill kinds are a union, so there is always exactly one breadcrumb: an entity's flat lane
-// list, ONE damage type of that entity (level 3, JOS-105), or a MOB's list (everything you + pet
-// landed on it).
+// The drill kinds are a union, so there is always exactly one breadcrumb: an entity's flat ability
+// list (whose stat-bearing abilities expand inline, JOS-113), or a MOB's list (everything you +
+// pet landed on it).
 //
 // THE ROWS THEMSELVES ARE NOT HERE ANY MORE. Every level of the body is `MeterRows.tsx`, which
 // the Overview card renders too — this file is the panel's chrome (header, crumb, scroll box,
@@ -203,16 +203,14 @@ export function SegmentBody({
   const d = useDrillState(panel, tl, drill)
 
   // "Copy this view" means THIS view: the same choice the body below makes, so the clipboard can
-  // never hold a level the user isn't looking at. Built on click, never on render.
-  //
-  // A CATEGORY drill copies its SOURCE's list. The paste is a plain-text table of lanes and the
-  // level-3 view is that table filtered plus two rates — there is no second table to serialize,
-  // and inventing a narrower one would put a shape in the clipboard that no test pins.
+  // never hold a level the user isn't looking at. Built on click, never on render. The per-ability
+  // stats a reader expanded inline (JOS-113) are not serialized: the paste is the ranked ability
+  // table, and a single ability's crit/double/triple is a click-state, not a level to copy.
   const copyView = (): string =>
     panel.level !== 1
       ? // The SAME pets the body nests into this list — `MeterPanel.pets` IS what was nested,
         // so the clipboard can no longer drop a row the reader can see on screen.
-        formatEntityText(seg, panel.subject, panel.level === 2 ? panel.pets : [])
+        formatEntityText(seg, panel.subject, panel.pets)
       : d.targetDetail && d.targetName
         ? formatTargetText(seg, d.targetName, d.targetDetail)
         : formatSegmentText(seg, mode === 'in' ? 'in' : 'out')

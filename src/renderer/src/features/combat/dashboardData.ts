@@ -23,6 +23,7 @@
 // RELATIVE value import, like procRows.ts and mobSearch.ts: this module is imported by node
 // tests (tests/combatPerMobGhosts.test.mts), which resolve no `@shared/*` alias for values.
 import { LIVE_FIGHT } from '../../../../shared/fightSelection'
+import { abilityMultiAttack, type AbilityMulti } from './abilityStats'
 import type {
   DamageCategory,
   SegmentSummary,
@@ -37,11 +38,12 @@ export type FlatSkill = SkillView & { category: DamageCategory }
 
 /**
  * A row of the flat level-2 list. Identical to a FlatSkill except that a GROUP row also carries
- * the per-skill rows it stands for (`children`) — today only the Slay Undead aggregate does.
- * Consumers that just render a bar can ignore `children` entirely; the ones that expand a row
- * use it as the inline breakdown.
+ * the per-skill rows it stands for (`children`) — today only the Slay Undead aggregate does —
+ * and that a row may carry its own per-ability multi-attack reading (`multi`, JOS-113: the
+ * double/triple that used to live one level down, attached to the ability it belongs to). Both
+ * are optional; consumers that just render a bar ignore them, the ones that expand a row use them.
  */
-export type SkillRow = FlatSkill & { children?: FlatSkill[] }
+export type SkillRow = FlatSkill & { children?: FlatSkill[]; multi?: AbilityMulti | null }
 
 /**
  * Label for the aggregated slay row. Mirrors `CATEGORY_LABEL.slay` in @shared/combat, spelled
@@ -98,23 +100,18 @@ export function groupSlay(rows: SkillRow[]): SkillRow[] {
 }
 
 /**
- * Drill-down selection (union) — ONE token, one mechanic, every damage surface (JOS-105).
+ * Drill-down selection (union) — ONE token, one mechanic, every damage surface (JOS-105), now TWO
+ * levels (JOS-113: the owner rejected the level-3 CATEGORY drill; per-ability stats expand INLINE
+ * within the level-2 list instead — see abilityStats.ts / combatShared.SkillBar).
  *
- * `entity`   = level 2, the flat lane list for one source (the meter drill).
- * `category` = level 3, ONE damage type of that source: its lanes (slash vs crush), its crit and
- *              resist rates, and the multi-attack reading that used to be a second panel beside
- *              the drill (`categoryDrill.ts`). It carries the entity id as well as the category
- *              so it resolves on its own and so Back has a parent to return to.
+ * `entity`   = level 2, the flat ONE-BAR-PER-ABILITY list for one source (the meter drill).
  * `target`   = the flat skill list for everything you and your pet landed on ONE mob (driven by
  *              the Damage-by-mob panel; Combat tab only).
  *
- * They are mutually exclusive by construction: picking any replaces the other, so the panel
+ * They are mutually exclusive by construction: picking either replaces the other, so the panel
  * always has exactly one subject and one breadcrumb.
  */
-export type Drill =
-  | { kind: 'entity'; entityId: string }
-  | { kind: 'category'; entityId: string; category: DamageCategory }
-  | { kind: 'target'; target: string }
+export type Drill = { kind: 'entity'; entityId: string } | { kind: 'target'; target: string }
 
 /**
  * The drill token as the ROW BUILDER wants it (`petRows.meterPanel`). The mob arm is not a source
@@ -124,10 +121,9 @@ export type Drill =
  * persists (`OverlayDrill`), which is why the overlay hands its stored value straight to the
  * builder and needs no translation of its own.
  */
-export function meterDrill(drill: Drill | null): { entityId: string; category?: DamageCategory | null } | null {
+export function meterDrill(drill: Drill | null): { entityId: string } | null {
   if (!drill) return null
   if (drill.kind === 'entity') return { entityId: drill.entityId }
-  if (drill.kind === 'category') return { entityId: drill.entityId, category: drill.category }
   return null
 }
 
@@ -143,7 +139,13 @@ export function flattenSkills(e: SourceView): SkillRow[] {
   const rows: FlatSkill[] = e.categories.flatMap((c) => c.skills.map((s) => ({ ...s, category: c.category })))
   rows.sort((a, b) => b.total - a.total || b.hits - a.hits || a.name.localeCompare(b.name))
   const max = Math.max(1, ...rows.map((r) => r.total))
-  return groupSlay(rows.map((r) => ({ ...r, pct: (r.total / max) * 100 })))
+  // Each row carries its OWN multi-attack reading (JOS-113): the double/triple that used to live
+  // one drill level down, attached to the ability it belongs to. `abilityMultiAttack` reads the
+  // engine's round lanes and files each to exactly one ability (auto-attack "Melee" pools its
+  // weapon verbs; a named special is its own lane). groupSlay spreads it through onto any child.
+  return groupSlay(
+    rows.map((r) => ({ ...r, pct: (r.total / max) * 100, multi: abilityMultiAttack(e, r.name, r.category) }))
+  )
 }
 
 /**

@@ -51,10 +51,7 @@
 //     reads `outTotal`, so the two can't drift.
 
 import { flattenSkills, type SkillRow } from './dashboardData'
-// The drill's third level — one damage type of one source, including the multi-attack reading
-// that used to be a panel beside the meter (JOS-105).
-import { categoryDrill, type CategoryDrillView } from './categoryDrill'
-import type { DamageCategory, SourceView } from '@shared/combat'
+import type { SourceView } from '@shared/combat'
 
 /** The synthetic line item that stands for ONE pet inside your breakdown. */
 export interface PetRow {
@@ -273,6 +270,11 @@ export function ownBreakdown(entities: SourceView[], combine: boolean): OwnBreak
  * A drill id that resolves to nothing (a `pet:<instanceId>` from a past session, a fight that
  * moved on, a 'you' that blinks out between fights) yields LEVEL 1 for this render — the caller's
  * stored value is never touched, so the drill re-applies the moment the entity is back.
+ *
+ * TWO LEVELS ONLY (JOS-113). JOS-105 added a third — one damage TYPE of a source, reached from a
+ * category chip. The owner rejected the grouping: one bar per ability, flat, and a stat-bearing
+ * ability's crit/double/triple/miss expand INLINE within this level-2 list (abilityStats.ts /
+ * combatShared.SkillBar), never as a level of their own.
  */
 export type MeterPanel =
   | { level: 1; sources: SourceView[] }
@@ -285,22 +287,14 @@ export type MeterPanel =
       pets: SourceView[]
       rows: OwnRow[]
     }
-  | {
-      level: 3
-      /** the source whose damage type is open — the row Back returns to. */
-      subject: SourceView
-      detail: CategoryDrillView
-    }
 
 /**
- * A drill as the builder takes it: a source, and optionally ONE of its damage types. It is
- * exactly the shape the overlay persists (`OverlayDrill`), so that surface hands its stored value
- * straight in; the Combat tab and the Overview card translate their richer union with
- * `dashboardData.meterDrill`.
+ * A drill as the builder takes it: a source. It is exactly the shape the overlay persists
+ * (`OverlayDrill`), so that surface hands its stored value straight in; the Combat tab and the
+ * Overview card translate their richer union with `dashboardData.meterDrill`.
  */
 export interface MeterDrill {
   entityId: string
-  category?: DamageCategory | null
 }
 
 /**
@@ -315,17 +309,13 @@ export interface MeterDrill {
  * level-1 bar of its own while combine is on is still a perfectly good drill subject (it is a
  * line item inside your breakdown, and a persisted drill straight into it must still resolve).
  *
- * EVERY STALE DRILL DEGRADES ONE LEVEL, never to a blank list: an entity id that resolves to
- * nothing renders level 1, and a category this source never dealt renders level 2. The caller's
- * stored value is untouched either way, so the drill re-applies the moment the data is back.
+ * A STALE DRILL DEGRADES TO LEVEL 1, never to a blank list: an entity id that resolves to nothing
+ * renders the source list. The caller's stored value is untouched, so the drill re-applies the
+ * moment the data is back.
  */
 export function meterPanel(entities: SourceView[], combine: boolean, drill: MeterDrill | null): MeterPanel {
   const subject = drill ? entities.find((e) => e.id === drill.entityId) : undefined
   if (!subject) return { level: 1, sources: meterSources(entities, combine) }
-  if (drill?.category) {
-    const detail = categoryDrill(subject, drill.category)
-    if (detail) return { level: 3, subject, detail }
-  }
   // Pets nest into YOUR row only: a pet inside a pet would be a fiction, and an enemy's row in
   // the Incoming direction has no pets of yours in it at all.
   const nestable = combine ? petSources(entities) : []

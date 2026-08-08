@@ -175,92 +175,87 @@ export async function stepMeterDrill(page: Page): Promise<void> {
   check('…and Back returns to the same source list it came from', after === rows, `${rows} → ${after} rows`)
 }
 
-// ── LEVEL 3: ONE DAMAGE TYPE, AND THE MULTI-ATTACK STATS INSIDE IT (JOS-105) ──────────────
+// ── ONE BAR PER ABILITY, STATS EXPAND INLINE (JOS-113) ─────────────────────────────────────
 //
-// This step replaces `stepMultiAttackPanel`. The multi-attack readout used to be a PANEL mounted
-// beside the drilled source's lane list (JOS-37); the owner's report was that it crowded the meter
-// out, and the fix was to make it a section of a level the user asks for. So the same rows are now
-// reached by CLICKING A DAMAGE TYPE, and this step walks that path with a mouse.
+// This step replaces `stepCategoryDrill`. JOS-105 grouped a source's abilities under a CATEGORY
+// chip and put the multi-attack readout one level down; the owner rejected both — "one bar per
+// ability, flat, NO category strip; click an ability that has stats and its crit/double/triple/
+// miss appear INLINE beneath its bar; an ability with no stats (a DoT tick) does nothing." So this
+// walks that path with a mouse: drill a source, assert NO category chip, click a stat-bearing
+// ability and watch its stats open in place.
 //
-// The shaping is pinned purely in tests/categoryDrill.test.mts (which lanes, which category a
-// round is filed under, where the flurry line goes), the rows' words in
-// tests/multiAttackRows.test.mts, and the counters in tests/combatRoundStats.test.mts. What only
-// the real app can show is that the third level is REACHABLE and that nothing renders beside it.
+// The shaping is pinned purely in tests/abilityStats.test.mts (which lane belongs to which
+// ability, where flurry rides, the clickability gate) and the rows' words in
+// tests/multiAttackRows.test.mts. What only the real app can show is that the expansion is
+// REACHABLE with a click and that no category chip survives anywhere.
 //
-// FLOORS ONLY (AGENTS.md: frozen numbers rot). The live log decides which types the selected
-// fight used and whether anything swung, so this asserts "the type opened, and it states its
-// rate" and notes rather than fails where the fixture has no swings.
+// FLOORS ONLY (AGENTS.md: frozen numbers rot). The live log decides what the selected fight used,
+// so this asserts "an ability expanded, and its stats are inside" and notes on an empty selection.
 
 const CHIP = '[data-testid="category-chip"]'
-const CATEGORY = '[data-testid="category-drill"]'
-const MULTI = '[data-testid="multi-attack"]'
-const MULTI_LANE = '[data-testid="multi-attack-lane"]'
+const SKILL = '[data-testid="skill-bar"]'
+const STATS = '[data-testid="ability-stats"]'
 
 /** The visible text of the first element matching `sel`, or '' when there is none. */
 function textOf(page: Page, sel: string): Promise<string> {
   return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
 }
 
-export async function stepCategoryDrill(page: Page): Promise<void> {
-  // The dashboard opens on LEVEL 1 (JOS-35), so this step drills itself down to a source first —
-  // the damage types belong to ONE source, and that is the level where a source is the subject.
+export async function stepAbilityStats(page: Page): Promise<void> {
+  // The dashboard opens on LEVEL 1 (JOS-35), so this step drills down to a source first — the
+  // abilities belong to ONE source, and that is the level where a source is the subject.
   if (!(await drilled(page))) {
     await page.click('[data-testid="meter-row"]', { timeout: 15_000 }).catch(() => undefined)
     await settle(() => drilled(page), (d) => d, { timeoutMs: 10_000 })
   }
-  const chips = await inMeterPanel(page, CHIP)
-  if (chips === 0) {
-    note('the drilled source dealt no damage in this selection — there is no damage type to open')
+
+  // 1. NO CATEGORY CHIP. The strip the owner rejected must be gone — one bar per ability, flat.
+  check('the drilled source shows NO category chip (JOS-113 removed the grouping layer)', (await inMeterPanel(page, CHIP)) === 0)
+
+  const bars = await inMeterPanel(page, SKILL)
+  if (bars === 0) {
+    note('the drilled source dealt no damage in this selection — no ability bar to expand')
     return
   }
-  check('the drilled source offers its damage types as a strip', chips >= 1, `${chips} types`)
+  check('…just one bar per ability, flat', bars >= 1, `${bars} abilities`)
 
-  // 2. CLICKING A TYPE OPENS IT. Melee where the fixture has it (it is the type with swings, and
-  //    so the one that carries the multi-attack section); otherwise whatever the source dealt.
-  const picked = await page.evaluate((sel) => {
-    const all = [...document.querySelectorAll(sel)] as HTMLElement[]
-    const el = all.find((c) => c.innerText.startsWith('Melee')) ?? all[0]
-    el?.click()
-    return el?.innerText.split('\n')[0] ?? ''
-  }, CHIP)
-  const opened = (await settleCount(page, CATEGORY, 1, { timeoutMs: 10_000 })) >= 1
-  check('…and clicking one opens THAT type as its own level', opened, picked)
+  // 2. CLICKING A STAT-BEARING ABILITY EXPANDS IT IN PLACE. Most abilities are melee/slay swings
+  //    (crit + miss are core stats there), so click each — a positional click at the BAR row, not
+  //    a synthetic one, so React re-renders between awaits — until one opens its readout. A DoT
+  //    tick is correctly inert and simply does not respond.
+  const inPanel = page.locator(`[data-testid="dash-panel"] ${SKILL}`)
+  let picked: string | null = null
+  for (let i = 0; i < bars && picked === null; i++) {
+    const bar = inPanel.nth(i)
+    await bar.click({ position: { x: 12, y: 8 }, timeout: 5_000 }).catch(() => undefined)
+    if ((await inMeterPanel(page, STATS)) >= 1) picked = ((await bar.textContent()) ?? '').split('·')[0]?.trim() ?? ''
+  }
+  const opened = picked !== null
+  check('…and clicking a stat-bearing ability expands its stats INLINE, beneath its own bar', opened, picked ?? 'none expanded')
   if (!opened) return
 
-  // 3. THE STATS ARE IN THE DRILL. Crit rate is the figure the ticket names by hand; it is stated
-  //    for every type, because every type has one.
-  const body = await textOf(page, CATEGORY)
-  check('…whose stats live INSIDE it — crit rate among them', /crit/i.test(body), body.slice(0, 140).replace(/\s+/g, ' '))
-
-  // 4. AND THE MULTI-ATTACK ROWS ARE A SECTION OF IT, not a panel beside it.
-  const lanes = await inMeterPanel(page, MULTI_LANE)
-  if ((await inMeterPanel(page, MULTI)) === 0) {
-    note(`${picked} opened no attack rounds in this selection — the multi-attack section correctly renders nothing`)
+  // 3. THE STATS ARE THE OWNER'S: crit is stated for every weapon swing; double/triple appear on
+  //    the ability that multi-attacked (the auto-attack Melee, where the fixture has one).
+  const body = await textOf(page, STATS)
+  check('…whose figures include the crit rate', /crit/i.test(body), body.slice(0, 160).replace(/\s+/g, ' '))
+  if (/double attack|triple attack|rounds/i.test(body)) {
+    check('…and the double/triple attack it lists is over its ROUNDS (law 11)', /rounds/i.test(body))
   } else {
-    check('…and the multi-attack rows are a SECTION of that level', lanes >= 1, `${lanes} lanes`)
-    const multi = await textOf(page, MULTI)
-    // The denominator stays on screen, in rounds — law 11's spirit, and the one thing the design
-    // insists this readout can never omit.
-    check('…with its denominator visible, in ROUNDS', /\brounds\b/i.test(multi), multi.slice(0, 120).replace(/\s+/g, ' '))
-    check(
-      '…and every lane states how often it multi-attacked',
-      /%\s*doubled|never multi-attacked/i.test(multi),
-      multi.slice(0, 160).replace(/\s+/g, ' ')
-    )
-    // The whole stated-vs-inferred tier is ONE word (TOOLTIP AND CAVEAT DIET) — the old Rounds
-    // block's four hover paragraphs are gone, and so is the `inferred` chip they explained.
-    check('…and the old Rounds block’s chips are gone', !/inferred|riposte|rampage|excluded/i.test(multi))
+    note('the expanded ability opened no attack rounds — its multi-attack section correctly renders nothing')
   }
 
-  // 5. THE OLD PANEL IS GONE, everywhere on the page — the half of the ticket a unit test can
-  //    only assert against source text.
+  // 4. THE OLD PANEL AND THE OLD LEVEL ARE GONE, everywhere on the page.
   check('the standalone multi-attack panel is gone', (await countOf(page, '[data-testid="multi-attack-panel"]')) === 0)
+  check('and no category-drill level survives', (await countOf(page, '[data-testid="category-drill"]')) === 0)
 
-  // 6. AND THE WAY BACK IS ONE LEVEL, not all the way out: Back from a damage type lands on the
-  //    source's lane list, which is the row it was opened from.
-  await page.click('[data-testid="drill-back"]', { timeout: 10_000 })
-  await settleGone(page, CATEGORY, { timeoutMs: 10_000 })
-  check('…and Back from a damage type returns to the source it belongs to', await drilled(page))
+  // 5. CLICKING AGAIN COLLAPSES IT — the list never gained a nav level, so the flat list is still
+  //    right there and the SAME ability closes in place. Click the BAR row (y:8, above the now
+  //    open readout) of the skill-bar that holds the stats, not its expanded body.
+  const openBar = inPanel.filter({ has: page.locator(STATS) }).first()
+  await openBar.click({ position: { x: 12, y: 8 }, timeout: 5_000 }).catch(() => undefined)
+  await settleGone(page, STATS, { timeoutMs: 10_000 }).catch(() => undefined)
+  check('…and clicking it again collapses the stats in place', (await inMeterPanel(page, STATS)) === 0)
+  check('…while the ability list and its Back control stay put', await drilled(page))
 }
 
 // ── THE OPEN FIGHT LIST IS FROZEN (Task #61) ───────────────────────────────────────────
