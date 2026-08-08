@@ -196,9 +196,12 @@ test('an EMPTY pre-framework store migrates to a valid current store, not to jun
     // which is what makes a fresh install able to report `installed` exactly once.
     telemetry: { enabled: true, noticeShown: false, analyticsId: null, funnelsDone: [] },
     perfHud: { enabled: false },
-    // Both graphics-compatibility switches off (v10, JOS-40): software rendering and opaque
-    // overlays are workarounds for a driver, and a fresh store has no driver complaint.
-    graphics: { safeMode: false, opaqueOverlays: false },
+    // Both graphics-compatibility switches on 'auto' (v10 JOS-40, v11 JOS-31): software rendering
+    // and opaque overlays are workarounds for a driver or a compositor, and a fresh store has no
+    // complaint about either. 'auto' is not 'on' — it resolves to OFF on every machine where the
+    // Wine detection finds nothing (shared/graphicsPrefs.ts `resolveGraphics`), which is all of
+    // them here. What it buys is the ability to say 'off' and MEAN it, which a boolean could not.
+    graphics: { safeMode: 'auto', opaqueOverlays: 'auto' },
     [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION
   })
 })

@@ -352,11 +352,20 @@ async function stepOverlayDrill(overlay: Page): Promise<void> {
 // unlocks, and its open-state persists — in BOTH modes. A compatibility switch that quietly
 // broke the window it was compensating for would be worse than the artifacting.
 
+// JOS-31 made each switch THREE-STATE ('auto' | 'on' | 'off'), because the app now detects a Wine
+// prefix and takes the compatibility path by itself — and "the user refused" had to become
+// sayable. On this Windows CI box the detection must answer NO, so `auto` resolves exactly the way
+// `false` used to: that is the no-regression half, and it is asserted here rather than assumed.
 interface GraphicsPrefsBridge {
-  getGraphicsPrefs: () => Promise<{ safeMode: boolean; opaqueOverlays: boolean }>
-  setGraphicsPrefs: (patch: Record<string, boolean>) => Promise<{
-    safeMode: boolean
-    opaqueOverlays: boolean
+  getGraphicsPrefs: () => Promise<{ safeMode: string; opaqueOverlays: string }>
+  setGraphicsPrefs: (patch: Record<string, string>) => Promise<{
+    safeMode: string
+    opaqueOverlays: string
+  }>
+  getGraphicsEnvironment: () => Promise<{
+    wine: boolean
+    signals: string[]
+    auto: { safeMode: boolean; opaqueOverlays: boolean }
   }>
 }
 
@@ -404,17 +413,30 @@ async function stepOpaqueOverlays(app: ElectronApplication, page: Page): Promise
   const prefs = await page.evaluate(() =>
     (window as unknown as { eq: GraphicsPrefsBridge }).eq.getGraphicsPrefs()
   )
-  check('a fresh install carries both graphics switches OFF', prefs.safeMode === false && prefs.opaqueOverlays === false,
+  check('a fresh install carries both graphics switches on AUTO', prefs.safeMode === 'auto' && prefs.opaqueOverlays === 'auto',
     JSON.stringify(prefs))
+
+  // THE NO-REGRESSION ASSERTION FOR EVERY WINDOWS USER (JOS-31). The detection runs on this real
+  // Windows machine, through the real filesystem and the real environment, and it must find
+  // NOTHING — so `auto` means off, the overlay below is transparent, and the whole ticket is
+  // invisible here. A false positive would turn every Windows install's overlays opaque and its
+  // renderer to software, and this is the line that would go red first.
+  const environment = await page.evaluate(() =>
+    (window as unknown as { eq: GraphicsPrefsBridge }).eq.getGraphicsEnvironment()
+  )
+  check('this Windows machine is NOT detected as Wine, and recommends no compatibility path',
+    environment.wine === false && environment.signals.length === 0 &&
+      environment.auto.safeMode === false && environment.auto.opaqueOverlays === false,
+    JSON.stringify(environment))
 
   const transparentBg = await overlayBackground(app)
   note(`transparent overlay background: ${transparentBg || '(none)'}`)
 
   const written = await page.evaluate(() =>
-    (window as unknown as { eq: GraphicsPrefsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: true })
+    (window as unknown as { eq: GraphicsPrefsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: 'on' })
   )
   check('flipping the opaque-overlay switch persists it (main answers with what it stored)',
-    written.opaqueOverlays === true && written.safeMode === false, JSON.stringify(written))
+    written.opaqueOverlays === 'on' && written.safeMode === 'auto', JSON.stringify(written))
 
   const opaque = await reopenFightOverlay(app, page)
   if (!check('the fight overlay reopens in opaque mode', opaque !== null)) return
@@ -429,9 +451,12 @@ async function stepOpaqueOverlays(app: ElectronApplication, page: Page): Promise
     opaqueBg.toLowerCase() === '#0e1115' && opaqueBg !== transparentBg, `${transparentBg} → ${opaqueBg}`)
   await checkOverlayStillWorks(page, opaque as Page, 'opaque')
 
-  // …and back. The switch is a switch, not a one-way door.
+  // …and back. The switch is a switch, not a one-way door — and since JOS-31 the way back is an
+  // EXPLICIT 'off' rather than a return to 'auto', which is the same round trip a Wine user makes
+  // when they want their see-through overlays despite the detection. This machine cannot exercise
+  // the detected half, but it exercises the override that has to beat it.
   await page.evaluate(() =>
-    (window as unknown as { eq: GraphicsPrefsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: false })
+    (window as unknown as { eq: GraphicsPrefsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: 'off' })
   )
   const clear = await reopenFightOverlay(app, page)
   if (!check('the fight overlay reopens transparent again', clear !== null)) return

@@ -1547,14 +1547,15 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   A player on an RTX 5080 reported the overlays black-screen artifacting; it
   cannot be reproduced here and they left no contact, so the app ships
   self-serve mitigations rather than a guess. `shared/graphicsPrefs.ts` is the
-  pure half (store `graphics`, schema v10, both default OFF — a compatibility
-  mode shipped ON is a downgrade for every machine that never needed one).
+  pure half (store `graphics`, schema v11, both default 'auto' — a
+  compatibility mode shipped ON is a downgrade for every machine that never
+  needed one, and `auto` resolves to OFF wherever nothing is detected).
   (a) SAFE MODE — `app.disableHardwareAcceleration()`, called from index.ts
   MODULE SCOPE (`src/main/graphics.ts`), because Electron accepts it only
   before `ready`; that is why the label says "next launch" and why moving the
   call into `whenReady` would silently do nothing. `EQ_DISABLE_GPU=1` forces
   it for one launch WITHOUT the UI — the door for a user whose window is black,
-  and the one JOS-31 (Wine) reuses: NO platform detection lives here.
+  and it still outranks everything else.
   (b) OPAQUE OVERLAYS — overlay windows built `transparent:false` on
   `OPAQUE_OVERLAY_BG` (#0e1115, deliberately the same RGB the pages paint, so
   it is the bgAlpha look minus the alpha, never a second palette). A window's
@@ -1567,6 +1568,56 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   describe one machine's driver. Proven end-to-end in
   `tests/e2e/overlay-sync.e2e.mts` (both modes open/lock/persist; a third
   launch asserts `--disable-gpu` really reached Chromium).
+- **…AND UNDER WINE THE APP TAKES THAT PATH BY ITSELF (JOS-31).** A Wine user
+  reported the celebration toast becoming a STUCK BLACK BOX after a level-up
+  (01KZGQZJ2HMZGRY28A7CVRG4QT, v0.7.0) — the JOS-40 family arriving through
+  Wine's compositor rather than a driver — beside the long-standing blank-window
+  reports. A switch nobody can find is no fix when the symptom is a window you
+  cannot see, so the switches went THREE-STATE (`'auto' | 'on' | 'off'`, store
+  v11) and `shared/wineDetect.ts` decides what `auto` means.
+  **PRECEDENCE, one function, three rungs**: `EQ_DISABLE_GPU` > an explicit
+  user `'on'`/`'off'` > detection > off. `resolveGraphics` (graphicsPrefs.ts) is
+  the ONLY place that folds them, read by safe mode, by the overlay factory and
+  by the Preferences card, so a window cannot be built one way and labelled
+  another. `'off'` HAD to become sayable: without it, detection would be a
+  one-way door on a whole platform.
+  **DETECTION IS CONSERVATIVE OR IT IS NOTHING** — a false negative costs one
+  user a convenience, a false positive costs EVERY Windows user their GPU and
+  their see-through overlays. Two signals, either sufficient, both impossible on
+  real Windows: (1) Wine's own tools in `%SystemRoot%\system32` — wine.inf's
+  `[FakeDlls] 11,,*` WriteFile()s every builtin as a REAL PE, and Windows ships
+  no system32 exe starting with "wine" (`winevt` is a DIRECTORY, which is why
+  the check is exact filenames and never a `wine*` pattern); (2) the env vars
+  **Wine's own ntdll injects** (`add_dynamic_environment` runs for every hosted
+  process: WINEHOMEDIR/WINECONFIGDIR/WINELOADER/WINEDLLDIR0/WINEUSERNAME, plus
+  the renamed WINE_HOST_PATH).
+  **THE VARIABLE EVERYBODY REACHES FOR IS THE WRONG ONE**: `WINEPREFIX`
+  (and WINEDEBUG/WINEARCH/WINEDLLOVERRIDES) is set by the LAUNCHER, so it is
+  absent under bare `wine app.exe` AND present on the real-Windows box of anyone
+  cross-building for Wine — a false positive we may not have. `WINELOADERNOEXEC`
+  is impossible, not merely unreliable: `__wine_main` `unsetenv`s it before the
+  Win32 env is built. `winhlp32.exe` is likewise refused — a real XP/Vista/7
+  binary. Gated on `platform === 'win32'` — a native Linux build is not an
+  emulated Windows one. REJECTED: `wine_get_version` (needs FFI/a native addon),
+  the registry (real — `HKCU\Software\Wine\Debug` is in every stock prefix — but
+  needs a `reg.exe` spawn on every launch's startup path to answer 'no' for
+  ~everyone; the `Wine\Wine\Config` key every blog names died in 0.9), and the
+  `"Wine builtin DLL"` DOS-stub magic at offset 0x40 (definitive, and the NEXT
+  RUNG if a prefix ever defeats both signals above). `src/main/wine.ts` caches
+  the answer once per launch and logs the signals when it fires.
+  **SAFE MODE UNDER WINE IS NOT A GUESS**: WineHQ bug 48618 names Electron apps
+  showing a black client area with `--disable-gpu` as the workaround, because
+  Electron renders GL from its separate GPU PROCESS into the browser process's
+  HWND and winex11.drv has no cross-process GL. The opaque-overlay half has no
+  such bug on file — the user report is its evidence. The 10→11 migration reads a stored `false` as
+  'auto' and a `true` as 'on' — `graphics` was written on EVERY launch that ran
+  the 9→10 step, so `false` was overwhelmingly a default rather than a refusal,
+  while `true` could only ever be a choice.
+  **NOTHING HERE WAS VERIFIED UNDER WINE** — CI and this machine are Windows,
+  so the tests pin the NEGATIVE exhaustively (incl. a live probe of the real
+  filesystem, and an e2e assertion that this box detects nothing) and the
+  positive rests on Wine's documented layout. The reporter is the verification
+  path.
 
 ## Cloud (feedback backend + future web) — state as of 2026-08-04
 
