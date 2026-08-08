@@ -49,7 +49,7 @@
 //     curve at 20% coverage is a rumour, and the reader can see that it is.
 
 import { compareVersions, RELEASE_NOTES } from '../../shared/releaseNotes'
-import { USAGE_METRICS } from '../../shared/telemetryRollup'
+import { DIM_NONE, USAGE_METRICS } from '../../shared/telemetryRollup'
 import type {
   TriageAnalyticsReleaseHealth,
   TriageMixRow,
@@ -223,7 +223,16 @@ export function buildReleaseHealth(
   bugReports: readonly BugReportRow[],
   days: readonly string[]
 ): TriageAnalyticsReleaseHealth {
-  const reports = dimsOf(usage, USAGE_METRICS.healthReports)
+  // DIM_NONE IS NOT A VERSION, and dropping it is a deploy-skew guard rather than tidiness.
+  // `healthReports` used to be written with no dimension at all, so an ingest Lambda that has not
+  // yet been redeployed folds this client's reports under `-`. Left in, that row would render as
+  // a BUILD LITERALLY NAMED `-` claiming to be reporting — the one thing this section must never
+  // produce, since it would be an entirely fictional version sitting in the coverage numerator.
+  // Skipped, the same skew degrades the honest way: those reports are invisible here until the
+  // deploy lands, and the section says "not reporting", which is exactly true of what it can see.
+  const reports = new Map(
+    [...dimsOf(usage, USAGE_METRICS.healthReports)].filter(([dim]) => dim !== DIM_NONE)
+  )
   const activeByDay = byDay(usage, USAGE_METRICS.activeInstalls)
   const bugs = new Map<string, number>()
   for (const b of bugReports) bugs.set(b.appVersion, (bugs.get(b.appVersion) ?? 0) + b.n)
