@@ -130,8 +130,9 @@ interface StoreShape {
    */
   perfHud?: PerfHudPrefs
   /**
-   * Graphics compatibility (schema migration 9→10; JOS-40). Both switches OFF by default —
-   * see shared/graphicsPrefs.ts for why a compatibility switch that ships on is not one.
+   * Graphics compatibility (schema migrations 9→10 and 10→11; JOS-40, JOS-31). Both switches
+   * default to 'auto' — see shared/graphicsPrefs.ts for why a compatibility switch that ships ON
+   * is not one, and why `auto` is nevertheless not the same thing as `off`.
    */
   graphics?: GraphicsPrefs
   /**
@@ -751,7 +752,7 @@ export function setPerfHudPrefs(patch: Partial<PerfHudPrefs>): PerfHudPrefs {
   return next
 }
 
-// ----- Graphics compatibility (schema v10; shared/graphicsPrefs.ts) -----
+// ----- Graphics compatibility (schema v11; shared/graphicsPrefs.ts) -----
 //
 // The same read-through-the-normalizer / write-through-the-same-normalizer shape as every prefs
 // blob above, and it is read from an unusual place: `getGraphicsPrefs()` is called from the

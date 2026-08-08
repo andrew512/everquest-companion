@@ -472,8 +472,18 @@ export const IPC = {
   // renderer -> main: the persisted blob {safeMode, opaqueOverlays}. Returns GraphicsPrefs.
   graphicsPrefsGet: 'graphicsPrefs:get',
   // renderer -> main: merge-patch the blob. VALIDATED AT THE HANDLER through the same
-  // normalizer the store reader and the 9→10 migration use. Returns what was stored.
+  // normalizer the store reader and the 10→11 migration use. Returns what was stored.
   graphicsPrefsSet: 'graphicsPrefs:set',
+  // renderer -> main: what this MACHINE recommends, for a switch left on 'auto' (JOS-31).
+  // Returns a `GraphicsEnvironment` (shared/wineDetect.ts): whether a Wine prefix was detected,
+  // which signals said so, and the two booleans `resolveGraphics` folds against the stored prefs.
+  //
+  // A SEPARATE CHANNEL, not a fatter `graphicsPrefs:get`, because the two answer different
+  // questions with different lifetimes: the prefs change when the user flips a switch, and this is
+  // a fact about the launch that cannot change while the app is running. The renderer hydrates it
+  // once and re-folds locally through the SAME `resolveGraphics` main used, so the card can never
+  // describe a precedence the windows did not use.
+  graphicsEnvGet: 'graphicsPrefs:env',
 
   // ---- dev restart (JOS-61, JOS-63 — src/main/devRestart.ts) ----------------------------
   //

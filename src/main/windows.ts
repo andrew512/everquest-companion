@@ -28,7 +28,8 @@ import { defaultOverlayBounds, overlayDefaultSize } from './overlayLayout'
 import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
-import { getGraphicsPrefs, getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
+import { resolvedGraphics } from './graphics'
+import { getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
 import { TRANSPARENT_OVERLAY_BG, overlayBackgroundColor } from '../shared/graphicsPrefs'
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
 // ScreenRect lives in shared/presencePrefs.ts, not shared/types.ts — see the note at the
@@ -450,10 +451,13 @@ export function createOverlayWindow(kind: OverlayKind): void {
     if (windowsMayShow()) existing.show()
     return
   }
-  // OPAQUE-OVERLAY COMPATIBILITY MODE (JOS-40). Read here, at construction, because that is the
-  // only moment a window's transparency can be decided — which is exactly why the setting is
-  // documented as applying when an overlay is next opened rather than instantly.
-  const opaque = getGraphicsPrefs().opaqueOverlays
+  // OPAQUE-OVERLAY COMPATIBILITY MODE (JOS-40; automatic under Wine since JOS-31). Read here, at
+  // construction, because that is the only moment a window's transparency can be decided — which
+  // is exactly why the setting is documented as applying when an overlay is next opened rather
+  // than instantly. `resolvedGraphics()` is the switch AND the detection folded together: on a
+  // machine whose compositor turns a transparent frameless window into a black box, an untouched
+  // 'auto' arrives here as `true` without the user having found anything.
+  const opaque = resolvedGraphics().opaqueOverlays.on
   if (kind === 'toast') opaqueToastWindow = opaque
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
