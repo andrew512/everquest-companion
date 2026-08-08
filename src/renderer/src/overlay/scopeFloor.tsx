@@ -40,7 +40,7 @@ import { OverlayContent } from './overlayScale'
  * a promise about opacity. The price is this many pixels of bar room (under one 18px row), paid
  * once, in exchange for a sentence that is always legible.
  */
-const FLOOR_H = 14
+const FLOOR_H = 12
 
 /** What the floor says: the scope word (already through `chipLabel`) and the tooltip the header
  *  tag used to carry — what this scope means, and where the choice lives now. */

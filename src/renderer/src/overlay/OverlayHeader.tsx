@@ -53,11 +53,19 @@ import type { CaptureReason, OverlayChrome } from './useOverlayChrome'
  *     only the 6px flex gap between a full-width no-drag trigger and the controls. That sliver
  *     was the whole reachable drag target on the right half of the bar.
  *
- * Those two are zero-sum against each other — one row, one width — so the row also pays ONE more
- * pixel of vertical padding per edge. That is full-row-width drag surface (the trigger's height
- * is content-driven and does not follow it), which is what makes "the selector gained room AND
- * the drag hit-area grew" true at the same time rather than a swap. Measured in
- * tests/e2e/overlay-sync.e2e.mts, against this same layout with the old tag put back.
+ * Those two are zero-sum against each other — one row, one width — so THE ROW GOT TALLER: 4px of
+ * vertical padding per edge became 7. That is the only lever that is not a swap. Full-row-width
+ * drag surface, and the trigger's height is content-driven so none of it goes back to the no-drag
+ * half.
+ *
+ * IT IS ALSO THE HONEST READING OF THE ASK ("more title-bar room for the fight selector and for
+ * dragging"): a title bar you drag a window by should be tall enough to aim at. MEASURED
+ * (tests/e2e/overlayScopeSteps.mts, which rebuilds the JOS-115 row in place to have a before):
+ * at the LONG scope word — `Group (no roster yet)`, 87px of it — the selector's trigger went
+ * 155.3→242.1px and the fight name inside it 89.1→175.9px, which cost 1,649px² of drag area; the
+ * three extra padding pixels put 2,268px² back, so the drag surface still finished up at
+ * 7,171→7,790px² on a 378px-wide window. The short word (`Group`) is the easy case: it frees less
+ * width, so it takes less drag area with it. The price is 6px of the bars pane, stated not hidden.
  *
  * MUI-FREE ON PURPOSE: plain React + inline styles, like every file in this bundle.
  */
@@ -375,10 +383,10 @@ export function OverlayHeader({
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        // 5px, not 4 (JOS-121): one extra pixel per edge is FULL-ROW-WIDTH drag surface, and the
-        // trigger's height is content-driven so none of it goes back to the no-drag half. It is
-        // what pays for the drag gutter below without taking the freed width off the selector.
-        padding: '5px 8px',
+        // 7px, not 4 (JOS-121). See the file header: this is the one lever that is not a swap
+        // against the selector, and it is what makes the drag hit-area grow at the LONG scope
+        // word rather than only at the short one.
+        padding: '7px 8px',
         borderBottom: '1px solid rgba(255,255,255,0.08)',
         fontSize: 11,
         flexShrink: 0

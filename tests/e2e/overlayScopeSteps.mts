@@ -175,20 +175,34 @@ interface RoomReadings {
  * `no-drag` children are found by their INLINE style (`useOverlayChrome.noDrag` is written that
  * way). `-webkit-app-region` is not an inherited CSS property, so a computed-style sweep would be
  * answering about declarations rather than about the drag region Electron installs.
+ *
+ * IT IS ONE FLAT LOOP, WITH NO INNER FUNCTION, and that is not a style choice: tsx compiles this
+ * file with esbuild's keep-names on, which wraps every named function binding in a `__name(…)`
+ * helper. Playwright ships the callback's SOURCE to the page, where that helper does not exist —
+ * a `read()` extracted for tidiness died on `ReferenceError: __name is not defined`. Anything
+ * evaluated in the page has to be written without local function bindings.
  */
-function readRoom(overlay: Page): Promise<RoomReadings | null> {
+function readRoom(overlay: Page, word: string): Promise<RoomReadings | null> {
   return overlay.evaluate(
-    ([trigSel, gutterSel, floorSel]) => {
-      const trigger = document.querySelector(trigSel) as HTMLElement | null
-      const row = trigger?.parentElement as HTMLElement | null
+    ([trigSel, gutterSel, scopeWord]) => {
+      const trigger = document.querySelector(trigSel) as HTMLElement
+      const row = trigger?.parentElement
       const gutter = row?.querySelector(gutterSel) as HTMLElement | null
-      if (!trigger || !row || !gutter) return null
+      if (!row || !gutter) return null
 
-      const read = (): TitleBarRoom => {
+      const pad = row.style.padding
+      const gutterDisplay = gutter.style.display
+      const tag = document.createElement('span')
+      const readings: TitleBarRoom[] = []
+
+      // Pass 0 reads the layout as it ships; pass 1 reads it with JOS-115's row rebuilt around it.
+      for (let pass = 0; pass < 2; pass++) {
         const r = row.getBoundingClientRect()
         const t = trigger.getBoundingClientRect()
         // The title is the trigger's first span (name, then chevron, then the rate).
-        const title = trigger.querySelector('span')?.getBoundingClientRect()
+        const titleEl = trigger.querySelector('span')
+        let titleW = 0
+        if (titleEl) titleW = titleEl.getBoundingClientRect().width
         let noDrag = 0
         for (const el of Array.from(row.children) as HTMLElement[]) {
           if (el.style.webkitAppRegion === 'no-drag') {
@@ -196,36 +210,29 @@ function readRoom(overlay: Page): Promise<RoomReadings | null> {
             noDrag += b.width * b.height
           }
         }
-        return {
+        readings.push({
           rowW: r.width,
           rowH: r.height,
           triggerW: t.width,
-          titleW: title?.width ?? 0,
+          titleW,
           dragArea: r.width * r.height - noDrag
+        })
+        if (pass === 0) {
+          row.style.padding = '4px 8px'
+          gutter.style.display = 'none'
+          tag.style.cssText =
+            'font-size:8px;letter-spacing:0.5px;text-transform:uppercase;padding:1px 3px;white-space:nowrap;flex-shrink:0'
+          tag.textContent = scopeWord
+          row.insertBefore(tag, trigger)
         }
       }
-
-      const after = read()
-
-      // …now put JOS-115's title bar back, synchronously.
-      const pad = row.style.padding
-      const gutterDisplay = gutter.style.display
-      const word = document.querySelector(floorSel)?.textContent ?? 'Group'
-      row.style.padding = '4px 8px'
-      gutter.style.display = 'none'
-      const tag = document.createElement('span')
-      tag.style.cssText =
-        'font-size:8px;letter-spacing:0.5px;text-transform:uppercase;padding:1px 3px;white-space:nowrap;flex-shrink:0'
-      tag.textContent = word
-      row.insertBefore(tag, trigger)
-      const before = read()
 
       tag.remove()
       gutter.style.display = gutterDisplay
       row.style.padding = pad
-      return { before, after, word }
+      return { before: readings[1], after: readings[0], word: scopeWord }
     },
-    [TRIGGER, DRAG_GUTTER, OVERLAY_SCOPE_FLOOR] as const
+    [TRIGGER, DRAG_GUTTER, word] as const
   )
 }
 
@@ -237,7 +244,11 @@ function readRoom(overlay: Page): Promise<RoomReadings | null> {
 export async function stepTitleBarRoom(overlay: Page): Promise<void> {
   check('the title bar carries a real drag gutter now', (await countOf(overlay, DRAG_GUTTER)) === 1)
 
-  const room = await readRoom(overlay)
+  // The word the reconstruction puts back is the one the meter is SAYING, read from the floor —
+  // so this measures today's real sentence rather than a hard-coded guess that would rot. It is
+  // fetched out here because the page-side callback is at its complexity budget.
+  const saying = await label(overlay)
+  const room = await readRoom(overlay, saying || 'Group')
   if (!check('the title bar could be measured', room !== null)) return
   const { before, after, word } = room as RoomReadings
   note(
