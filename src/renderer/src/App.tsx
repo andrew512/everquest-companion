@@ -42,6 +42,7 @@ import { TelemetryNotice } from './features/preferences/TelemetryNotice'
 // the bottom edge, never a modal — and renders nothing unless this launch is the first one after
 // an update. See features/whatsnew/WhatsNewTeaser.tsx.
 import { WhatsNewTeaser } from './features/whatsnew/WhatsNewTeaser'
+import { setCurrentView } from './lib/currentView'
 import { dwellView, useViewDwell } from './lib/telemetry'
 import AlertPlayer, { fireAppSignal } from './features/alerts/player'
 import { getBossData } from './data'
@@ -464,6 +465,15 @@ export default function App(): JSX.Element {
   // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop
   // every counter with it (JOS-45; `dwellView` states the rule).
   useViewDwell(dwellView(view))
+
+  // …and the same fact, kept for the ERROR reporter (JOS-100). It is a separate mechanism on
+  // purpose: `useViewDwell` reports the view you LEFT, on a switch, which is exactly the wrong
+  // answer for "which tab was open when it broke". This is a plain module variable because its
+  // readers — the global error handlers in main.tsx and ErrorBoundary — run at moments when the
+  // React tree is not something to rely on. An UNRELEASED view sets it too and is folded to
+  // `unknown` by main's closed-enum check, which is the right outcome: an error there is worth
+  // reporting even though the view id is not.
+  setCurrentView(view)
 
   useEffect(() => {
     void window.eq.getCharacter().then(setCharacter)

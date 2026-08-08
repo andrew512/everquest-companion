@@ -86,6 +86,16 @@ test('EVERY string-valued field in every event is a member of a closed set', () 
   // The tripwire for the property above stated positively: take one valid instance of every
   // event kind, and assert that no string anywhere in it is free text. `t` is the union tag;
   // every other string must appear in one of the file's own exported enums.
+  //
+  // ONE EVENT IS EXEMPT, BY AN OWNER RULING, AND IT IS EXEMPT LOUDLY (JOS-100). `errorReport`
+  // carries a redacted message, a stack of bundle-relative frames and a fingerprint — none of
+  // which can be enum members, because the whole value of an error report is the part that is
+  // SPECIFIC. Its strings are PATTERN-bound instead, and the pattern bounds are pinned
+  // adversarially in `tests/errorReportContract.test.mts` (a bare path as a message, a function
+  // name with a space in it, an 11th frame, a log line, `out/../../secret.txt`) — which is a
+  // STRICTER suite than this one, not a waiver of it. The exemption is spelled as a skip of one
+  // named kind rather than a loosened predicate, so adding a TWELFTH kind with free text in it
+  // still fails here.
   const closed = new Set<string>([
     ...TELEMETRY_EVENT_KINDS,
     ...TELEMETRY_VIEWS,
@@ -111,7 +121,7 @@ test('EVERY string-valued field in every event is a member of a closed set', () 
     'other'
   ])
   // Flattened to one loop: every string anywhere in every sample, with the path that found it.
-  const strings = SAMPLES.flatMap((ev) =>
+  const strings = SAMPLES.filter((ev) => ev.t !== 'errorReport').flatMap((ev) =>
     Object.entries(ev).flatMap(([key, v]) =>
       (Array.isArray(v) ? (v as unknown[]) : [v])
         .filter((x): x is string => typeof x === 'string')
@@ -154,7 +164,23 @@ const SAMPLES: TelemetryEvent[] = [
     presenceRestarts: 1,
     speechFailures: 0
   },
-  { t: 'updateOutcome', step: 'download', ok: false, failureClass: 'network' }
+  { t: 'updateOutcome', step: 'download', ok: false, failureClass: 'network' },
+  {
+    t: 'errorReport',
+    errorName: 'TypeError',
+    code: 'ENOENT',
+    // ALREADY REDACTED — that is what makes it a legal value. The validator re-runs the
+    // redactor and refuses anything that changes under it, so an unredacted sample here would
+    // fail the round-trip below rather than quietly documenting a hole.
+    redactedMessage: 'ENOENT: no such file or directory, open <path>',
+    frames: [{ file: 'out/main/pipeline.js', line: 120, col: 15, func: 'Object.foldEvent' }],
+    fingerprint: '0123456789abcdef',
+    breadcrumbs: [{ kind: 'damage', offsetMs: 0 }],
+    view: 'combat',
+    sessionAgeBucket: 2,
+    mode: 'live',
+    count: 1
+  }
 ]
 
 test('every kind in the union has a sample, and every sample round-trips unchanged', () => {

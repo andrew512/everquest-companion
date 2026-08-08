@@ -393,13 +393,30 @@ test('the cohort is part of the counter KEY, in the handler and in schema.sql al
   assert.match(src, /writeCounters\(day, facts\.cohort, roll\)/)
 })
 
-test('THE THREE TABLES, AND NO FOURTH: the handler writes exactly the plan’s storage shape', () => {
+test('THE FOUR TABLES, AND NO FIFTH: the handler writes exactly the plan’s storage shape', () => {
+  // THIS TEST USED TO SAY "THE THREE TABLES, AND NO FOURTH", and JOS-100 added the fourth
+  // deliberately rather than sneaking a row into `usage_daily`. The rename is the honest edit:
+  // `error_report` keeps something that is not a bare count (an EXEMPLAR), which no counter
+  // table can, and pretending otherwise by widening `dim` would have hidden that fact.
+  //
+  // T6 IS STILL INTACT AND THAT IS WHAT THE ASSERTIONS BELOW CHECK. T6 refused a per-user event
+  // TRAIL; `error_report` is keyed on (day, cohort, version, FINGERPRINT) with no id in it at
+  // all, so a hundred installs hitting one bug write ONE row. There is still nothing here that
+  // could reconstruct what one install did.
   const src = readFileSync(join(ROOT, 'infra', 'lambda', 'telemetry.ts'), 'utf8')
   const tables = [...src.matchAll(/INSERT INTO (\w+)/g)].map((m) => m[1])
-  assert.deepEqual([...new Set(tables)].sort(), ['analytics_install', 'usage_daily', 'usage_funnel_daily'])
-  // NO RAW EVENT STORE (T6): nothing inserts an event row, and no id is ever logged.
+  assert.deepEqual(
+    [...new Set(tables)].sort(),
+    ['analytics_install', 'error_report', 'usage_daily', 'usage_funnel_daily']
+  )
+  // NO RAW EVENT STORE (T6): nothing inserts a per-event row, and no id is ever logged.
   assert.equal(/INSERT INTO (telemetry_event|usage_event|raw_)/.test(src), false)
   assert.equal(/log\(\{[^}]*analyticsId/.test(src), false)
+  // The error table is keyed on a FINGERPRINT, never on the sender.
+  assert.match(src, /ON CONFLICT \(day, cohort, version, fingerprint\) DO UPDATE/)
+  assert.equal(/error_report[^;]*analytics_id/.test(src), false, 'no id may reach the error store')
+  // FIRST EXEMPLAR WINS — a reader who looked at an issue yesterday sees the same example today.
+  assert.match(src, /exemplar = COALESCE\(error_report\.exemplar, EXCLUDED\.exemplar\)/)
 })
 
 test('the body cap is bigger than feedback’s, and big enough for a maximal batch', () => {
@@ -412,16 +429,28 @@ test('the body cap is bigger than feedback’s, and big enough for a maximal bat
 
 test('schema.sql declares the three tables, the kill switch and a role that cannot read reports', () => {
   const sql = readSource(join(ROOT, 'infra', 'schema.sql'))
-  for (const table of ['usage_daily', 'usage_funnel_daily', 'analytics_install']) {
+  for (const table of ['usage_daily', 'usage_funnel_daily', 'analytics_install', 'error_report']) {
     assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`))
   }
+  // The error store is BORN with its key (DSQL cannot ALTER one), cohort included for the same
+  // reason the counter tables carry theirs: nothing anywhere sums the author's rows with a user's.
+  assert.match(sql, /PRIMARY KEY \(day, cohort, version, fingerprint\)/)
+  // TEXT holding JSON, not jsonb — this file's own SHAPE NOTES (env_json / log_json made the
+  // same call, and DSQL cannot index jsonb). The JOS-100 brief asked for jsonb; the convention
+  // is older than the brief and wins, and this assertion is what keeps that decision visible.
+  assert.match(sql, /exemplar {4}text/)
   // Seeded CLOSED, and guarded so a re-run cannot re-close a switch somebody opened.
   assert.match(sql, /SET telemetry_accepting = false\n WHERE id = 'FEEDBACK' AND telemetry_accepting IS NULL/)
   assert.match(sql, /CREATE ROLE telemetry_ingest WITH LOGIN/)
   // THE GRANT LIST IS THE PROMISE (§8.5). No privilege on `report`, and no DELETE anywhere.
   const grants = [...sql.matchAll(/GRANT ([^;]+) TO telemetry_ingest/g)].map((m) => m[1])
-  assert.ok(grants.length >= 4)
+  assert.ok(grants.length >= 5)
+  // NO privilege on `report` — the feedback backlog. `\b` does the real work here since
+  // JOS-100: `error_report` IS granted and is a different table, and `\breport\b` does not
+  // match inside it because `_` is a word character. Spelled out so a future reader does not
+  // "fix" this regex into one that passes a grant on the backlog.
   assert.equal(grants.some((g) => /\breport\b/.test(g)), false)
+  assert.ok(grants.some((g) => /error_report/.test(g)), 'the error store IS granted')
   assert.equal(grants.some((g) => /DELETE/.test(g)), false)
   assert.equal(grants.some((g) => /install_profile/.test(g)), false)
 })

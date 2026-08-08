@@ -24,6 +24,7 @@ import {
   CHAR_COUNT_EDGES,
   COLD_START_MS_EDGES,
   LOG_SIZE_BYTES_EDGES,
+  SESSION_AGE_MS_EDGES,
   TELEMETRY_BUFFER_CAP,
   TELEMETRY_EVENT_KINDS,
   TELEMETRY_FEATURES,
@@ -90,7 +91,13 @@ test('SUBSTANCE: the page names every enum member the schema can emit', () => {
 
 test('SUBSTANCE: the page prints every bucket RANGE, from the schema’s own edges', () => {
   const md = committed()
-  const edgeSets = [COLD_START_MS_EDGES, CHAR_COUNT_EDGES, LOG_SIZE_BYTES_EDGES, ALERT_COUNT_EDGES]
+  const edgeSets = [
+    COLD_START_MS_EDGES,
+    CHAR_COUNT_EDGES,
+    LOG_SIZE_BYTES_EDGES,
+    ALERT_COUNT_EDGES,
+    SESSION_AGE_MS_EDGES
+  ]
   assert.equal(TELEMETRY_DOC_BUCKETS.length, edgeSets.length, 'every bucket field is documented')
   for (const b of TELEMETRY_DOC_BUCKETS) {
     assert.ok(md.includes(`\`${b.field}\``))

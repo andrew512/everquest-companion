@@ -124,6 +124,28 @@ export function readReportVersions(c: Clients, sinceMs: number): Promise<Row[]> 
 }
 
 /**
+ * THE ERROR STORE (JOS-100) — the one analytics read that returns something other than a count.
+ *
+ * `usage_daily` can say a build reported 412 errors; only this table can say WHICH, because the
+ * answer needs an EXEMPLAR and a counter has nowhere to put one. What comes back per row is
+ * (day, cohort, version, fingerprint, count, exemplar), and the exemplar is a validated
+ * `errorReport` event — a redacted message, `out/…` frames, parser event KINDS. There is no
+ * `analytics_id` on the table at all, so unlike every other read on this page there is not even
+ * an identifier to decline to select.
+ *
+ * BOUNDED THE SAME WAY the counter reads are, and by the same constant: the row count is
+ * (days × versions × distinct issues), which is small while the app is healthy and is exactly
+ * the number that stops being small on the day it is most worth reading.
+ */
+export function readErrorReports(c: Clients, sinceDay: string): Promise<Row[]> {
+  return c.query(
+    'SELECT day, cohort, version, fingerprint, count, exemplar FROM error_report' +
+      ' WHERE day >= $1 ORDER BY day LIMIT $2',
+    [sinceDay, USAGE_ROW_LIMIT],
+  )
+}
+
+/**
  * NOTE WHAT IS NOT SELECTED: `analytics_id`. The readout needs day-grained facts about the
  * population (how many, first seen when, on what version) and never the identifier itself, so
  * the id does not leave the database — not into main, not over the bridge, not into a panel.

@@ -36,6 +36,7 @@ import {
   cohortOf,
   rollupBatch,
   utcDay,
+  type ErrorReportRow,
   type UsageCohort
 } from '../src/shared/telemetryRollup'
 
@@ -65,6 +66,13 @@ export interface TelemetryState {
   /** `day|cohort|funnel|step|outcome|version` → n. */
   funnels: Map<string, number>
   installs: Map<string, Install>
+  /**
+   * `day|cohort|version|fingerprint` → the `error_report` row (JOS-100). A Map because the
+   * real table is a Map with a primary key; the FIRST-WINS rule on the exemplar is the one
+   * behaviour worth rehearsing locally, since it is the half a `DO UPDATE` clause gets wrong
+   * silently.
+   */
+  errors: Map<string, { count: number; exemplar: unknown }>
 }
 
 export function emptyTelemetryState(maxEventsPerDay = 20_000): TelemetryState {
@@ -72,7 +80,8 @@ export function emptyTelemetryState(maxEventsPerDay = 20_000): TelemetryState {
     mode: { closed: false, maxEventsPerDay },
     usage: new Map(),
     funnels: new Map(),
-    installs: new Map()
+    installs: new Map(),
+    errors: new Map()
   }
 }
 
@@ -144,6 +153,30 @@ function bump(table: Map<string, number>, key: string, n: number): void {
   table.set(key, (table.get(key) ?? 0) + n)
 }
 
+/**
+ * The `error_report` half (JOS-100), and the ONE behaviour worth rehearsing locally is the
+ * asymmetry: `count` accumulates, `exemplar` is FIRST WINS — the local mirror of the real
+ * statement's `COALESCE(error_report.exemplar, EXCLUDED.exemplar)`. That is the half a
+ * `DO UPDATE` clause gets wrong silently, and a reader of the panel would never notice the
+ * exemplar quietly changing under them.
+ *
+ * Its own function rather than a third loop inside `telemetryRoute`, which is at the repo's
+ * complexity ceiling.
+ */
+function writeErrors(
+  state: TelemetryState,
+  errors: readonly ErrorReportRow[],
+  day: string,
+  cohort: UsageCohort
+): void {
+  for (const e of errors) {
+    const key = `${day}|${cohort}|${e.appVersion}|${e.fingerprint}`
+    const held = state.errors.get(key)
+    if (held) held.count += e.n
+    else state.errors.set(key, { count: e.n, exemplar: e.exemplar })
+  }
+}
+
 /** The route. `now` is injectable so a test can drive two days without waiting for one. */
 export function telemetryRoute(state: TelemetryState, body: Buffer, now = Date.now()): TelemetryRes {
   if (body.byteLength > MAX_TELEMETRY_BODY_BYTES) {
@@ -176,6 +209,7 @@ export function telemetryRoute(state: TelemetryState, body: Buffer, now = Date.n
   for (const f of roll.funnels) {
     bump(state.funnels, `${day}|${co}|${f.funnel}|${f.step}|${f.outcome}|${f.appVersion}`, f.n)
   }
+  writeErrors(state, roll.errors, day, co)
   return {
     status: 202,
     json: { ok: true, accepted: v.value.events.length },
@@ -183,7 +217,7 @@ export function telemetryRoute(state: TelemetryState, body: Buffer, now = Date.n
   }
 }
 
-/** `GET /devstack/usage` — the three tables, in the shape the triage reader consumes. */
+/** `GET /devstack/usage` — the four tables, in the shape the triage reader consumes. */
 export function telemetryTables(state: TelemetryState): TelemetryRes {
   const split = (key: string): string[] => key.split('|')
   return {
@@ -206,7 +240,11 @@ export function telemetryTables(state: TelemetryState): TelemetryRes {
         app_version: i.appVersion,
         channel: i.channel,
         cohort: i.cohort
-      }))
+      })),
+      errorReport: [...state.errors.entries()].map(([key, row]) => {
+        const [day, cohort, version, fingerprint] = split(key)
+        return { day, cohort, version, fingerprint, count: row.count, exemplar: row.exemplar }
+      })
     },
     note: `${String(state.usage.size)} counters`
   }

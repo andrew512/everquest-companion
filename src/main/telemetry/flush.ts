@@ -50,6 +50,7 @@ import {
 } from './collector'
 import { markFunnelStep } from './funnels'
 import { takeHealth } from './health'
+import { takeErrorReports } from './errorReports'
 import { readRing, writeRing } from './ring'
 import { getTelemetryPrefs } from '../store'
 
@@ -135,6 +136,29 @@ function reportHealth(): void {
   recordEvent({ t: 'healthCounters', ...takeHealth() })
 }
 
+/**
+ * DRAIN THE ERROR REPORTS ONTO THE SAME SESSION REPORT (JOS-100), beside the health counters
+ * and on the same terms: whichever of `sessionHeartbeat` / `sessionEnd` fires first takes them,
+ * so nothing is double counted and a killed session loses at most its last window.
+ *
+ * IT EMITS NOTHING WHEN NOTHING BROKE, which is the opposite of `reportHealth` above and is the
+ * same argument read from the other side. `healthCounters` is written even when every count is
+ * zero because the report ITSELF is the per-version "a client on this build can report at all"
+ * signal, and `healthReports` is the denominator every rate is divided by. That denominator
+ * already exists — so an empty `errorReport` every five minutes would add a ring record saying
+ * something `healthReports` has already said, and would spend the 500-entry buffer doing it.
+ *
+ * `recordEvent` IS THE GATE, here as everywhere: the user's switch is checked there, once, and
+ * an install with analytics off drops these on the floor exactly as it drops every other event.
+ *
+ * UNLIKE `healthCounters`, THIS IS A NEW EVENT KIND, so it cannot ship ahead of the ingest
+ * deploy — shared/telemetry.ts says what happens if it does, and it is a fleet-wide analytics
+ * blackout rather than a missing feature.
+ */
+function reportErrors(): void {
+  for (const ev of takeErrorReports()) recordEvent(ev)
+}
+
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let flushTimer: ReturnType<typeof setInterval> | null = null
 
@@ -175,6 +199,7 @@ function startTimers(prefs: TelemetryPrefs): void {
       ...startupField()
     })
     reportHealth()
+    reportErrors()
   }, HEARTBEAT_INTERVAL_MS)
   heartbeat.unref()
   ensureFlushTimer(prefs)
@@ -276,6 +301,10 @@ export function stopTelemetry(): void {
     // report the health OF, and a bare `healthReports` row from it would inflate the denominator
     // every rate on the panel is divided by.
     reportHealth()
+    // …and the tail of the error reports. Also inside the guard, and for the SECOND half of the
+    // same reason: a process that never started collecting has no session clock, so every
+    // report it produced would carry `sessionAgeBucket: 0` — a made-up number in a real column.
+    reportErrors()
   }
   clearTimers()
   endSession()

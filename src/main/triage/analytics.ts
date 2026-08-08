@@ -61,6 +61,7 @@ import {
   sumOf,
   windowDays,
   type BugReportRow,
+  type ErrorIssueRow,
   type FunnelRow,
   type InstallRow,
   type UsageRow
@@ -77,6 +78,10 @@ export interface AnalyticsInput {
    * honest (no reports counted) rather than wrong.
    */
   bugReports?: readonly BugReportRow[]
+  /** The stored error issues (JOS-100). Optional for the same reason `bugReports` is: every
+   *  existing caller and every existing fixture compiles unchanged, and a fleet with no error
+   *  rows renders exactly as it did before this feature existed. */
+  issues?: readonly ErrorIssueRow[]
   windowDays: number
   nowMs: number
 }
@@ -496,7 +501,7 @@ export function buildAnalytics(input: AnalyticsInput): TriageAnalyticsData {
     // Beside Health and Startup, and reading the same rows from the other end: those two ask what
     // goes wrong and how launches went; this one asks WHICH BUILD, over time, against how many
     // people were on it. Its own file (./releaseHealth.ts) — this one is at the line ceiling.
-    releaseHealth: buildReleaseHealth(input.usage, input.bugReports ?? [], days),
+    releaseHealth: buildReleaseHealth(input.usage, input.bugReports ?? [], days, input.issues ?? []),
     versions: buildVersions(input.usage, input.installs),
     retention: buildRetention(input.installs, ref)
   }

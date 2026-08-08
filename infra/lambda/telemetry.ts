@@ -24,13 +24,20 @@
  *   4. empty batch     -> 202 accepted:0       (legal, and costs no round trip)
  *   5. config          -> 503 closed           (kill switch `telemetry_accepting`, seeded FALSE)
  *   6. install UPSERT  -> 429 quota_exceeded   (guarded; also mints the per-day facts)
- *   7. AGGREGATE       -> counter UPSERTs, one transaction
+ *   7. AGGREGATE       -> counter + error-report UPSERTs, ONE transaction
  *   8. EMF             -> the near-real-time view
  *   9. 202
  *
  * THERE IS NO RAW EVENT STORE (T6). The batch exists in this process for the length of one
  * invocation and is then garbage; what persists is counters. Nothing here logs an analyticsId,
  * and the function's own CloudWatch log (14 days) carries counts only.
+ *
+ * ONE BOUNDED EXCEPTION SINCE JOS-100, and it is bounded by the KEY rather than by a promise:
+ * `error_report` keeps at most one EXEMPLAR per (day, cohort, version, fingerprint), first
+ * wins. That is a per-ISSUE store, not a per-user one — the row a hundred installs write is one
+ * row — and the exemplar it holds is a validated `errorReport` event, which means a redacted
+ * message (re-redacted HERE, and refused if it changes), `out/…` frames, and parser event
+ * KINDS. No analyticsId reaches it, so no row can be traced back to an install.
  */
 
 import { Buffer } from 'node:buffer'
@@ -47,6 +54,7 @@ import {
   rollupBatch,
   utcDay,
   USAGE_METRICS,
+  type ErrorReportRow,
   type FunnelCounter,
   type RollupResult,
   type UsageCohort,
@@ -324,6 +332,24 @@ const FUNNEL_TAIL =
   ' SET n = usage_funnel_daily.n + EXCLUDED.n'
 
 /**
+ * The error store (JOS-100). Two behaviours in one statement, and they are deliberately
+ * different from each other:
+ *
+ *   * `count` ACCUMULATES, like every other counter here — additive, so a retried transaction
+ *     after a commit-time abort re-adds nothing (the aborted attempt never committed).
+ *   * `exemplar` is FIRST WINS, via `COALESCE(error_report.exemplar, EXCLUDED.exemplar)`. The
+ *     row keeps the example it already has; a later batch can only FILL a NULL. So a hundred
+ *     installs hitting one bug store one stack, and the stack that is stored is stable — a
+ *     reader who looked at this issue yesterday is looking at the same example today.
+ */
+const ERROR_HEAD =
+  'INSERT INTO error_report (day, cohort, version, fingerprint, count, exemplar) VALUES '
+const ERROR_TAIL =
+  ' ON CONFLICT (day, cohort, version, fingerprint) DO UPDATE' +
+  ' SET count = error_report.count + EXCLUDED.count,' +
+  ' exemplar = COALESCE(error_report.exemplar, EXCLUDED.exemplar)'
+
+/**
  * Every counter for this batch, in ONE transaction so a batch is counted completely or not at
  * all — a half-applied batch would put a funnel step in the table with no session beside it and
  * quietly bend a conversion rate.
@@ -335,7 +361,8 @@ const FUNNEL_TAIL =
 async function writeCounters(day: string, cohort: UsageCohort, roll: RollupResult): Promise<void> {
   const counterChunks = chunk<UsageCounter>(roll.counters, UPSERT_CHUNK)
   const funnelChunks = chunk<FunnelCounter>(roll.funnels, UPSERT_CHUNK)
-  if (counterChunks.length === 0 && funnelChunks.length === 0) return
+  const errorChunks = chunk<ErrorReportRow>(roll.errors, UPSERT_CHUNK)
+  if (counterChunks.length === 0 && funnelChunks.length === 0 && errorChunks.length === 0) return
   await withRetry('counters', () =>
     transaction(async (c) => {
       for (const rows of counterChunks) {
@@ -353,6 +380,16 @@ async function writeCounters(day: string, cohort: UsageCohort, roll: RollupResul
           `${FUNNEL_HEAD}${tuples(rows.length, 5, SHARED_PARAMS)}${FUNNEL_TAIL}`,
           params
         )
+      }
+      // IN THE SAME TRANSACTION as the counters, for the reason the header gives: a batch is
+      // counted completely or not at all, and an error row with no `errors` counter beside it
+      // would make the panel's per-build rate disagree with its own issue list.
+      for (const rows of errorChunks) {
+        const params: unknown[] = [day, cohort]
+        for (const r of rows) {
+          params.push(r.appVersion, r.fingerprint, r.n, JSON.stringify(r.exemplar))
+        }
+        await c.query(`${ERROR_HEAD}${tuples(rows.length, 4, SHARED_PARAMS)}${ERROR_TAIL}`, params)
       }
     })
   )
@@ -384,7 +421,12 @@ function emitMetrics(batch: TelemetryBatch, roll: RollupResult, now: number): vo
       // Heartbeats are the "is anyone in the app RIGHT NOW" signal: one per session per 5 min.
       { name: 'Heartbeats', value: counterOf(roll, USAGE_METRICS.heartbeats) },
       { name: 'SessionsStarted', value: counterOf(roll, USAGE_METRICS.sessions) },
-      { name: 'ActiveInstalls', value: counterOf(roll, USAGE_METRICS.activeInstalls) }
+      { name: 'ActiveInstalls', value: counterOf(roll, USAGE_METRICS.activeInstalls) },
+      // JOS-100. A NEW METRIC NAME on the dimension set that already exists — adding one is
+      // free, and it is adding a DIMENSION that would orphan the dashboard's widgets (the note
+      // below about the cohort split). It is the "is the fleet on fire right now" signal the
+      // stored per-fingerprint rows cannot be, because those are keyed on a DAY.
+      { name: 'ErrorsReported', value: counterOf(roll, USAGE_METRICS.errors) }
     ],
     now
   )
@@ -429,6 +471,9 @@ async function accept(batch: TelemetryBatch, now: number): Promise<HttpResult> {
     events: batch.events.length,
     counters: roll.counters.length,
     funnels: roll.funnels.length,
+    // A COUNT OF ISSUES, never a fingerprint: a fingerprint plus a timestamp in a log line is
+    // a join key back to one install's crash, which is the thing this log does not carry.
+    errors: roll.errors.length,
     firstOfDay: facts.firstOfDay,
     // A BOOLEAN, never the two versions: this log is counts only, and a version pair plus a
     // timestamp is a good deal more identifying than a count.

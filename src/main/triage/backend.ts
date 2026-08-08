@@ -52,6 +52,7 @@ import {
   missingColumn,
   missingTable,
   readAnalyticsInstalls,
+  readErrorReports,
   readReportVersions,
   readUsageDaily,
   readUsageFunnelDaily,
@@ -72,6 +73,7 @@ import {
   dayOf,
   ofCohort,
   toBugReportRows,
+  toErrorIssueRows,
   toFunnelRows,
   toInstallRows,
   toUsageRows
@@ -190,7 +192,7 @@ async function readAnalytics(
   const nowMs = Date.now()
   const since = addDays(dayOf(nowMs), -(days - 1))
   try {
-    const [rawUsage, rawFunnels, rawInstalls, rawBugs] = await Promise.all([
+    const [rawUsage, rawFunnels, rawInstalls, rawBugs, rawIssues] = await Promise.all([
       readUsageDaily(c, since),
       readUsageFunnelDaily(c, since),
       readAnalyticsInstalls(c),
@@ -203,18 +205,26 @@ async function readAnalytics(
       // subtracting from `nowMs`) is what keeps the two windows identical: both start at the same
       // UTC midnight, so a report and a counter from the same morning are either both in or both
       // out, and the bug overlay can never be a day out of step with the curve it sits under.
-      readReportVersions(c, Date.parse(`${since}T00:00:00Z`))
+      readReportVersions(c, Date.parse(`${since}T00:00:00Z`)),
+      // THE FIFTH READ (JOS-100): the per-fingerprint error store. Same window, same
+      // `Promise.all`, same `try` — so a cluster that has not run the migration adding
+      // `error_report` degrades through the identical `missingTable` arm and the whole tab
+      // says which table is missing, rather than this one read failing quietly and the panel
+      // simply never listing an issue.
+      readErrorReports(c, since)
     ])
     const usage = toUsageRows(rawUsage)
     const funnels = toFunnelRows(rawFunnels)
     const installs = toInstallRows(rawInstalls)
     const bugReports = toBugReportRows(rawBugs)
+    const issues = toErrorIssueRows(rawIssues)
     const build = (cohort: UsageCohort): TriageAnalyticsData =>
       buildAnalytics({
         usage: ofCohort(usage, cohort),
         funnels: ofCohort(funnels, cohort),
         installs: ofCohort(installs, cohort),
         bugReports: ofCohort(bugReports, cohort),
+        issues: ofCohort(issues, cohort),
         windowDays: days,
         nowMs
       })

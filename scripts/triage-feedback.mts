@@ -71,12 +71,11 @@ import {
   type Row,
 } from '../src/main/triage/store'
 import { rescrubNotes } from '../src/main/triage/rows'
-import {
-  analyticsFailure,
-  analyticsSubcommand,
-  ANALYTICS_SUBCOMMANDS,
-  ANALYTICS_USAGE,
-} from './triageAnalytics.mjs'
+import { analyticsFailure, runAnalytics, ANALYTICS_USAGE } from './triageAnalytics.mjs'
+// The error store's own family (JOS-100), a sibling module for the same reason the analytics
+// one is: this file is at the 400-code-line ceiling and a two-verb subcommand family with a
+// symbolication step belongs beside it, not in it.
+import { runErrors, ERRORS_USAGE } from './triageErrors.mjs'
 import {
   REPORT_STATUSES,
   SEVERITIES,
@@ -123,6 +122,7 @@ const USAGE = `triage-feedback <command> [options]
   closed  [on|off] [--message "..."]  the kill switch (instant, no deploy); bare = read state
 
 ${ANALYTICS_USAGE}
+${ERRORS_USAGE}
   Global: --profile <aws-profile> --role-arn <arn> --refresh (re-read tf outputs)`
 
 const OPTIONS = {
@@ -144,6 +144,10 @@ const OPTIONS = {
   // command line either (plan T3 — they are deliberately non-correlatable).
   id: { type: 'string' },
   days: { type: 'string' },
+  // `errors list --version` / `errors show --maps`. `--maps` names a directory of sourcemaps
+  // for THAT build (the private CI artifact); without it the frames print as bundle positions.
+  version: { type: 'string' },
+  maps: { type: 'string' },
   // `analytics digest --cohort user|owner|all`. The default is `user` — the population
   // question — and `all` prints the two digests separately, never added together.
   cohort: { type: 'string' },
@@ -434,18 +438,6 @@ async function cmdWipe(ctx: Ctx): Promise<void> {
  * an unreachable one are facts about the CLUSTER, and neither is a useful thing to print at
  * somebody as a postgres string.
  */
-async function cmdAnalytics(ctx: Ctx): Promise<void> {
-  const run = analyticsSubcommand(ctx.rest[0])
-  if (run === null) {
-    throw new Error(`analytics: expected one of ${Object.keys(ANALYTICS_SUBCOMMANDS).join(', ')}`)
-  }
-  try {
-    await run({ args: ctx.args, rest: ctx.rest, clients: ctx.clients, nowMs: NOW })
-  } catch (err) {
-    throw analyticsFailure(err)
-  }
-}
-
 async function cmdBlock(ctx: Ctx): Promise<void> {
   const [installId] = ctx.rest
   if (!installId) throw new Error('block: <installId> is required')
@@ -502,7 +494,12 @@ const COMMANDS: Record<string, (ctx: Ctx) => Promise<void>> = {
   block: cmdBlock,
   unblock: cmdUnblock,
   closed: cmdClosed,
-  analytics: cmdAnalytics,
+  // BOTH SUBCOMMAND FAMILIES OWN THEIR OWN DISPATCH, in their own modules. This file is at the
+  // 400-code-line ceiling, and two nearly identical eleven-line dispatchers living here is
+  // exactly the shape that pushed it over — so each family exports one entry point instead.
+  analytics: (ctx) => runAnalytics({ ...ctx, nowMs: NOW }),
+  // The errors family owns its own dispatch (triageErrors.mts) — see runErrors.
+  errors: (ctx) => runErrors({ ...ctx, nowMs: NOW }, analyticsFailure),
 }
 
 async function main(): Promise<void> {

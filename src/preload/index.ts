@@ -244,6 +244,23 @@ export interface RendererErrorReport {
   message: string
   stack?: string
   source: string
+  /**
+   * The error's own NAME (`TypeError`, `RangeError`), when the thrown value had one (JOS-100).
+   *
+   * It used to be folded into `message` and lost, which cost the error REPORT its most useful
+   * grouping input — `errorFingerprint` is `hash(name + top frames)`, and every renderer error
+   * arriving as `Error` would have collapsed distinct bugs in one function into one issue.
+   */
+  name?: string
+  /**
+   * Which tab was open. Main cannot know this — it is the renderer's own state — and a
+   * main-process error therefore reports the last view a window mentioned, or `unknown`.
+   *
+   * IT IS UNTRUSTED, like every renderer-supplied string: `noteCurrentView` checks it against
+   * the closed view enum before storing it, because it is kept BETWEEN calls and an unchecked
+   * value would poison every later report, including main-process ones.
+   */
+  view?: string
 }
 
 const api = {

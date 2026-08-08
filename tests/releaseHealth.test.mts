@@ -76,7 +76,6 @@ const buildWith = (o: { usage?: UsageRow[]; bugReports?: BugReportRow[]; days?: 
     nowMs: NOW
   })
 
-
 test('NOT REPORTING and ZERO ERRORS are structurally different, not two renderings of one row', () => {
   // Two builds, both with users, and the difference between them is the entire feature:
   //   0.11.0 filed 20 health reports and found NOTHING wrong  -> a true, earned zero

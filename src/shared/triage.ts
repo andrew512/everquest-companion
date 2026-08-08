@@ -522,7 +522,60 @@ export interface TriageReleaseHealthVersion {
   peakShare: number
   /** Aligned to `TriageAnalyticsData.days` — dense, so a quiet day is a zero and not a gap. */
   days: TriageReleaseHealthDay[]
+  /**
+   * TOP ISSUES ON THIS BUILD (JOS-100), most frequent first, capped at `MAX_TOP_ISSUES`.
+   *
+   * This is the half `errors` cannot be: a count says the build is broken, an issue says HOW.
+   * Empty on a build that reported and found nothing wrong — and also empty on a build too old
+   * to send error reports at all, which is why the panel keys its "not reporting" wording off
+   * `reporting` and never off this list being short.
+   */
+  topIssues: TriageReleaseIssue[]
 }
+
+/**
+ * ONE ISSUE — a fingerprint, what it cost, and one example of it.
+ *
+ * The exemplar is carried through to the renderer AS THE VALIDATED EVENT it was stored as. It
+ * crosses the bridge whole rather than being flattened into a string here for one reason: the
+ * panel offers to VIEW it, and a reader looking at a crash wants the frames and the breadcrumbs
+ * in the shape the client sent them, not a rendering of them somebody chose in advance.
+ */
+export interface TriageReleaseIssue {
+  fingerprint: string
+  /** Occurrences over the window, summed across days. */
+  count: number
+  /** First and last DAY this fingerprint was seen on this version, within the window. */
+  firstSeen: string
+  lastSeen: string
+  /** `TypeError`, and the redacted message — the two lines a list row shows. */
+  errorName: string
+  redactedMessage: string
+  /**
+   * The stored exemplar, or null when the row predates it / could not be parsed. A row with a
+   * count and no example is still worth listing: "this fires 400 times and we lost the sample"
+   * is a fact, and hiding the row would make the count disappear with it.
+   */
+  exemplar: TriageErrorExemplar | null
+}
+
+/** As much of a stored `errorReport` as the panel renders. Structurally `EvErrorReport`, spelled
+ *  here because `shared/triage.ts` is the bridge's own vocabulary and a stored row is data, not
+ *  a live event — a future schema change to the event must not silently change this contract. */
+export interface TriageErrorExemplar {
+  errorName: string
+  code?: string
+  redactedMessage: string
+  frames: { file: string; line: number; col: number; func: string }[]
+  breadcrumbs: { kind: string; offsetMs: number }[]
+  view: string
+  sessionAgeBucket: number
+  mode: string
+}
+
+/** How many issues a version's row lists. Enough to see the shape of a bad release, few enough
+ *  that the section stays a summary — the CLI is where an exhaustive list belongs. */
+export const MAX_TOP_ISSUES = 5
 
 /** One day's answer to "how much of the fleet could have told us if something was wrong". */
 export interface TriageReleaseCoverageDay {

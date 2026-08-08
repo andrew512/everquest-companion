@@ -121,6 +121,36 @@ export function toBugReportRows(rows: readonly Row[]): BugReportRow[] {
     }))
 }
 
+/**
+ * ONE STORED ERROR ISSUE (JOS-100), as `error_report` holds it.
+ *
+ * The only row shape on this page carrying something that is not a number, and the exemplar is
+ * kept as an OPAQUE STRING here rather than parsed: this module's contract is "a database row
+ * becomes a typed row, totally, with defaults" — no mapper here can throw — and `JSON.parse` on
+ * a text column is the one thing that could. `releaseHealth.ts` parses it inside a guard, where
+ * a failure has an obvious answer (list the issue with a count and no example).
+ */
+export interface ErrorIssueRow {
+  day: string
+  cohort: UsageCohort
+  version: string
+  fingerprint: string
+  n: number
+  /** The raw `exemplar` column. Empty string when the row has none. */
+  exemplar: string
+}
+
+export function toErrorIssueRows(rows: readonly Row[]): ErrorIssueRow[] {
+  return rows.map((r) => ({
+    day: str(r.day),
+    cohort: cohortOf(r.cohort),
+    version: str(r.version, '?'),
+    fingerprint: str(r.fingerprint),
+    n: num(r.count),
+    exemplar: str(r.exemplar, '')
+  }))
+}
+
 export function toInstallRows(rows: readonly Row[]): InstallRow[] {
   return rows.map((r) => ({
     firstSeenDay: str(r.first_seen_day),

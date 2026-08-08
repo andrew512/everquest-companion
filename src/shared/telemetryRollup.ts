@@ -43,6 +43,7 @@
 
 import {
   bucketOf,
+  type EvErrorReport,
   type StartupReplayStats,
   type TelemetryBatch,
   type TelemetryEvent,
@@ -225,6 +226,18 @@ export const USAGE_METRICS = {
    * (the same edges) rather than against it.
    */
   startupLogSize: 'startupLogSize',
+  /**
+   * ERROR REPORTS PER BUILD (JOS-100) — the DENOMINATOR beside `error_report`'s own counts.
+   *
+   * dim = `<version>`, n = errors reported (the sum of the events' `count` fields). The
+   * per-fingerprint detail lives in its own table, because "which issue" needs an exemplar and
+   * `usage_daily` has nowhere to put one; what lives HERE is the fleet-wide total, so a panel
+   * can say "this build reported 412 errors across 9 issues" without reading the exemplars.
+   */
+  errors: 'errors',
+  /** dim = `<version>`; n = distinct errorReport EVENTS. One event is one fingerprint-session,
+   *  so `errors / errorEvents` is the average burst size — a loop that throws is visible. */
+  errorEvents: 'errorEvents',
   /** dim = `<step>:ok` / `<step>:failed`. */
   update: 'update',
   /** dim = `<step>:<failureClass>`. */
@@ -359,9 +372,30 @@ export interface FunnelCounter {
   n: number
 }
 
+/**
+ * ONE ROW OF `error_report` (JOS-100) — the one place this pipeline keeps something that is not
+ * a bare count, and the exception is deliberate and bounded.
+ *
+ * T6 refused a raw event store and this does not reopen it: what is kept is at most ONE
+ * EXEMPLAR per (day, cohort, version, fingerprint), FIRST WINS, and the exemplar is an event
+ * that has already been through `validateTelemetryEvent` — so it is a redacted message, a stack
+ * of `out/…` frames and a list of parser event kinds, and there is no field on it a per-user
+ * trail could hide in. A hundred installs hitting one bug write one row and add to its count.
+ */
+export interface ErrorReportRow {
+  appVersion: string
+  fingerprint: string
+  /** Occurrences folded into this row by this batch. */
+  n: number
+  /** The event to store IF this (day, cohort, version, fingerprint) has none yet. */
+  exemplar: EvErrorReport
+}
+
 export interface RollupResult {
   counters: UsageCounter[]
   funnels: FunnelCounter[]
+  /** Empty for every batch that carries no `errorReport` — which is almost all of them. */
+  errors: ErrorReportRow[]
 }
 
 /**
@@ -521,6 +555,25 @@ function foldOutcome(bag: Bag, ev: TelemetryEvent): boolean {
   return true
 }
 
+/**
+ * The error rows for one batch, folded by (version, fingerprint) — FIRST EXEMPLAR WINS, which
+ * is the same rule the UPSERT applies at the row and for the same reason: two reports of one
+ * issue are one issue, and the first one to arrive is as good an example as the second.
+ *
+ * Deterministic order (the key's own sort), like `foldFunnels`, so the handler's multi-row
+ * statement is reproducible and this file stays testable without a database.
+ */
+function foldErrors(records: readonly TelemetryRecord[], appVersion: string): ErrorReportRow[] {
+  const bag = new Map<string, ErrorReportRow>()
+  for (const { ev } of records) {
+    if (ev.t !== 'errorReport') continue
+    const held = bag.get(ev.fingerprint)
+    if (held) held.n += ev.count
+    else bag.set(ev.fingerprint, { appVersion, fingerprint: ev.fingerprint, n: ev.count, exemplar: ev })
+  }
+  return [...bag.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, v]) => v)
+}
+
 /** One event's contribution. TOTAL: a kind with nothing to count simply adds nothing. */
 function foldEvent(bag: Bag, ev: TelemetryEvent, version: string): void {
   if (foldSession(bag, ev, version) || foldOutcome(bag, ev)) return
@@ -544,6 +597,12 @@ function foldEvent(bag: Bag, ev: TelemetryEvent, version: string): void {
       return
     case 'healthCounters':
       foldHealth(bag, ev, version)
+      return
+    case 'errorReport':
+      // The COUNTERS half only. The per-fingerprint rows are `foldErrors`, which needs the
+      // whole record list rather than one event at a time (first exemplar wins).
+      add(bag, USAGE_METRICS.errors, version, ev.count)
+      add(bag, USAGE_METRICS.errorEvents, version, 1)
       return
     default:
       // The session kinds and the two outcome kinds, already folded by the helpers above.
@@ -594,7 +653,11 @@ export function rollupBatch(batch: TelemetryBatch, ctx: RollupContext): RollupRe
   const counters = [...bag.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([, v]) => v)
-  return { counters, funnels: foldFunnels(batch.events, batch.env.appVersion) }
+  return {
+    counters,
+    funnels: foldFunnels(batch.events, batch.env.appVersion),
+    errors: foldErrors(batch.events, batch.env.appVersion)
+  }
 }
 
 /** The UTC day a row is keyed on. ARRIVAL day, never the client's clock (which can lie). */

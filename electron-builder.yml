@@ -12,6 +12,11 @@ files:
   - out/**
   - package.json
   - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
+  # `map` IN THIS LIST IS LOAD-BEARING SINCE JOS-100, and was incidental before it. The build
+  # now EMITS sourcemaps (electron.vite.config.ts turns `sourcemap` on for all three bundles, so
+  # `scripts/symbolicate.mts` can read an error report's frames), and this exclusion is the only
+  # thing keeping ~6 MB of them out of every installer. They are kept as a private CI artifact
+  # instead; `tests/symbolicate.test.mts` pins this line so it cannot be tidied away.
   - '!**/*.{o,obj,map,ts,tsx}'
   # onnxruntime-node ships PREBUILT binaries for every platform it supports in one npm
   # package — 184 MB on disk, of which this Windows-x64-only app can use 33 MB. Without these

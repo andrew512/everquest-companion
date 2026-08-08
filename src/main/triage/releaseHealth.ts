@@ -50,14 +50,27 @@
 
 import { compareVersions, RELEASE_NOTES } from '../../shared/releaseNotes'
 import { DIM_NONE, USAGE_METRICS } from '../../shared/telemetryRollup'
+import { MAX_TOP_ISSUES } from '../../shared/triage'
 import type {
   TriageAnalyticsReleaseHealth,
+  TriageErrorExemplar,
   TriageMixRow,
   TriageReleaseCoverageDay,
   TriageReleaseHealthDay,
-  TriageReleaseHealthVersion
+  TriageReleaseHealthVersion,
+  TriageReleaseIssue
 } from '../../shared/triage'
-import { dimsOf, mixRows, ratio, type BugReportRow, type UsageRow } from './usageRows'
+// THE SHARED VALIDATOR, run one more time on a row read back out of the database (JOS-100) —
+// defense in depth at the last boundary before a human looks at it. See `parseExemplar`.
+import { validateTelemetryEvent } from '../../shared/telemetryValidate'
+import {
+  dimsOf,
+  mixRows,
+  ratio,
+  type BugReportRow,
+  type ErrorIssueRow,
+  type UsageRow
+} from './usageRows'
 
 /** Builds shown. The funnel and startup sections' own cap, plus a little: this table deliberately
  *  includes NON-reporting builds, and those are exactly the historical ones. */
@@ -158,11 +171,113 @@ function daysOf(
   })
 }
 
+/**
+ * THE TOP ISSUES ON ONE BUILD (JOS-100), folded across the window's days.
+ *
+ * `error_report` is keyed per DAY, so one long-lived issue is several rows; this sums their
+ * counts, takes the earliest and latest day as first/last seen, and keeps the FIRST exemplar it
+ * meets in day order — the same first-wins rule the ingest UPSERT applies within a day, extended
+ * across them, so what a reader sees does not change as later days accumulate.
+ *
+ * THE PARSE IS GUARDED AND ITS FAILURE IS NOT FATAL. An exemplar that will not parse (a row from
+ * a future schema, a truncated write) yields an issue with a count and `exemplar: null` rather
+ * than no issue at all: "this fires 400 times and we lost the sample" is a fact worth seeing,
+ * and dropping the row would take the count with it.
+ */
+function topIssuesFor(version: string, issues: readonly ErrorIssueRow[]): TriageReleaseIssue[] {
+  const bag = new Map<string, TriageReleaseIssue>()
+  for (const r of [...issues].filter((i) => i.version === version).sort((a, b) => a.day.localeCompare(b.day))) {
+    const held = bag.get(r.fingerprint)
+    if (held) {
+      foldInto(held, r)
+      continue
+    }
+    const exemplar = parseExemplar(r.exemplar)
+    bag.set(r.fingerprint, {
+      fingerprint: r.fingerprint,
+      count: r.n,
+      firstSeen: r.day,
+      lastSeen: r.day,
+      ...describe(exemplar)
+    })
+  }
+  return [...bag.values()].sort((a, b) => b.count - a.count).slice(0, MAX_TOP_ISSUES)
+}
+
+/**
+ * A later day's row for an issue already held: add the count, widen the seen span, and adopt an
+ * exemplar if the one we have is missing.
+ *
+ * THE ADOPTION IS ONLY EVER NULL → SOMETHING. First-wins is what makes the panel stable — a
+ * reader who looked at an issue yesterday sees the same example today — and the one case where
+ * taking a later example is strictly better is the one where there is nothing to replace.
+ */
+function foldInto(held: TriageReleaseIssue, r: ErrorIssueRow): void {
+  held.count += r.n
+  if (r.day < held.firstSeen) held.firstSeen = r.day
+  if (r.day > held.lastSeen) held.lastSeen = r.day
+  if (held.exemplar !== null) return
+  const late = parseExemplar(r.exemplar)
+  if (late !== null) Object.assign(held, describe(late))
+}
+
+/** The two lines a list row shows, from an exemplar or from its absence. */
+function describe(exemplar: TriageErrorExemplar | null): {
+  errorName: string
+  redactedMessage: string
+  exemplar: TriageErrorExemplar | null
+} {
+  return {
+    errorName: exemplar?.errorName ?? 'Error',
+    // NOT an empty string: a blank cell reads as "the message was blank", which is a different
+    // fact from "the example did not survive". The panel shows this text verbatim.
+    redactedMessage: exemplar?.redactedMessage ?? '(no example stored)',
+    exemplar
+  }
+}
+
+/**
+ * Parse a stored exemplar, TOTALLY — this runs over rows written by a client and a server that
+ * may both be older than this reader, so every failure mode ends in `null`.
+ *
+ * IT RE-VALIDATES rather than trusting the column, and that is defense in depth at the LAST
+ * boundary before a human looks at it: the wire validated it and the ingest re-ran the redactor,
+ * but a row is data at rest in a table an operator can also write to by hand. Running the same
+ * shared validator here means the panel can only ever render a value the contract still permits.
+ */
+function parseExemplar(raw: string): TriageErrorExemplar | null {
+  if (raw === '') return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    const v = validateTelemetryEvent(parsed)
+    if (!v.ok || v.value.t !== 'errorReport') return null
+    const { errorName, code, redactedMessage, frames, breadcrumbs, view, sessionAgeBucket, mode } = v.value
+    const out: TriageErrorExemplar = {
+      errorName,
+      redactedMessage,
+      frames,
+      breadcrumbs,
+      view,
+      sessionAgeBucket,
+      mode
+    }
+    if (code !== undefined) out.code = code
+    return out
+  } catch {
+    return null
+  }
+}
+
 function versionRow(
   version: string,
   rows: readonly UsageRow[],
   bugs: Map<string, number>,
-  ctx: { days: readonly string[]; activeByDay: Map<string, number>; reports: Map<string, number> }
+  ctx: {
+    days: readonly string[]
+    activeByDay: Map<string, number>
+    reports: Map<string, number>
+    issues: readonly ErrorIssueRow[]
+  }
 ): TriageReleaseHealthVersion {
   const reports = ctx.reports.get(version) ?? 0
   const byField = fieldsOf(rows, version)
@@ -181,7 +296,8 @@ function versionRow(
     byField,
     bugReports: bugs.get(version) ?? 0,
     peakShare: perDay.reduce((max, d) => (d.share > max ? d.share : max), 0),
-    days: perDay
+    days: perDay,
+    topIssues: topIssuesFor(version, ctx.issues)
   }
 }
 
@@ -221,7 +337,10 @@ function coverageOf(
 export function buildReleaseHealth(
   usage: readonly UsageRow[],
   bugReports: readonly BugReportRow[],
-  days: readonly string[]
+  days: readonly string[],
+  /** The stored error issues (JOS-100). DEFAULTED so every existing caller and every existing
+   *  test compiles unchanged — a fleet with no error rows renders exactly as it did before. */
+  issues: readonly ErrorIssueRow[] = []
 ): TriageAnalyticsReleaseHealth {
   // DIM_NONE IS NOT A VERSION, and dropping it is a deploy-skew guard rather than tidiness.
   // `healthReports` used to be written with no dimension at all, so an ingest Lambda that has not
@@ -253,7 +372,7 @@ export function buildReleaseHealth(
     versions: [...names]
       .sort((a, b) => compareVersions(b, a))
       .slice(0, MAX_RELEASE_VERSIONS)
-      .map((version) => versionRow(version, usage, bugs, { days, activeByDay, reports })),
+      .map((version) => versionRow(version, usage, bugs, { days, activeByDay, reports, issues })),
     coverage,
     coverageShare: ratio(
       coverage.reduce((sum, c) => sum + c.covered, 0),
