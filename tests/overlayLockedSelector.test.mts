@@ -95,6 +95,41 @@ test('the drill stays READ-ONLY while locked — only the selector was opened up
   }
 })
 
+test('JOS-121: the scope word is out of the title bar and onto the panel floor', () => {
+  const header = src('../src/renderer/src/overlay/OverlayHeader.tsx')
+  // The header row is the window's ONLY drag handle and the fight selector's whole width budget.
+  // Nothing in it may render the scope again — not the tag, not its testid, not `chipLabel`.
+  assert.doesNotMatch(header, /overlay-scope-label/)
+  assert.doesNotMatch(header, /chipLabel|OverlayHeaderScope/)
+  // …and the slice of the freed width that did NOT go to the selector is a real drag target,
+  // which only works because it carries no `no-drag` (it inherits the row's drag region).
+  assert.match(header, /data-testid="overlay-drag-gutter"/)
+
+  const floor = src('../src/renderer/src/overlay/scopeFloor.tsx')
+  // NON-INTERACTIVE IS THE CONTRACT, not a styling detail: the watermark stays rendered while the
+  // overlay is LOCKED (unlike the header tag it replaced), so `pointerEvents: none` is the only
+  // thing keeping a click-through window click-through.
+  assert.match(floor, /pointerEvents: 'none'/)
+  // …and it CANNOT know about the lock, because the only things it is given are the word and the
+  // tooltip. That is the whole of "it does not vanish when pinned", stated as a signature rather
+  // than as a missing branch somebody could add back.
+  assert.match(floor, /export function ScopeFloor\(\{ label, title \}: ScopeFloorText\)/)
+  assert.match(floor, /export interface ScopeFloorText \{\s+label: string\s+title: string\s+\}/)
+
+  for (const [who, rel] of Object.entries(METERS)) {
+    const text = src(rel)
+    // Both meters say it from the floor, through the SAME helper the Combat tab uses — one
+    // phrasing, three renderers (the healRows.ts rule).
+    assert.match(text, /<MeterPane[\s\S]*?scope=\{\{/, `${who} does not put its bars in the floor-bearing pane`)
+    assert.match(text, /label: chipLabel\(meterScope, roster\)/, `${who} spells the scope itself`)
+    // …and neither hands the HEADER a scope prop any more. Read off the element itself rather
+    // than the file: both meters still say `scope=` — one line lower, to the pane.
+    const headerEl = /<OverlayHeader[\s\S]*?\/>/.exec(text)?.[0] ?? ''
+    assert.ok(headerEl.length > 0, `${who} renders no OverlayHeader`)
+    assert.doesNotMatch(headerEl, /scope=/, `${who} still passes scope to its header`)
+  }
+})
+
 test('the event log keeps the whole-window sensor it always had', () => {
   // It has no selector, so it never opted into the precise one — and it must not be dragged
   // along by a change that was about the meters.

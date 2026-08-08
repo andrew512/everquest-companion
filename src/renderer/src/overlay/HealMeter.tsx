@@ -12,7 +12,7 @@ import { healTotalTitle } from '../features/combat/healRows'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
 import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
 import { ICON_ACCENT_GREEN } from './IconButton'
-import { OverlayContent } from './overlayScale'
+import { MeterPane } from './scopeFloor'
 import { TextScaleStepper } from './TextScaleStepper'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
@@ -210,10 +210,6 @@ export default function HealMeter(): JSX.Element {
         tailTitle={totalTitle}
         iconAccentBg={ICON_ACCENT_GREEN}
         select={{ rows: selectRows, value: selection, onChange: selectSegment, accent: HEAL_GOLD }}
-        scope={{
-          label: chipLabel(meterScope, roster),
-          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
-        }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
 
@@ -222,9 +218,17 @@ export default function HealMeter(): JSX.Element {
       {/* Same testid as the damage meter's body — the click-through half of the locked contract
           (P3) is measured on exactly this box. Every healer renders and the pane scrolls, and the
           pane is also where the text scale is applied; the chrome around it stays at 1. */}
-      <OverlayContent textScale={textScale} testId="overlay-bars">
+      {/* JOS-121: the scope word is on this pane's FLOOR now, not in the title bar — same
+          watermark, same reserved band, same helper as the damage meter (overlay/scopeFloor.tsx). */}
+      <MeterPane
+        textScale={textScale}
+        scope={{
+          label: chipLabel(meterScope, roster),
+          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
+        }}
+      >
         <HealBars seg={seg} scope={meterScope} roster={roster} drill={drill} setDrill={locked ? null : setDrill} live={live} />
-      </OverlayContent>
+      </MeterPane>
 
       {!locked && <HealFooter bgAlpha={bgAlpha} textScale={textScale} patch={patch} noDrag={noDrag} />}
     </div>
