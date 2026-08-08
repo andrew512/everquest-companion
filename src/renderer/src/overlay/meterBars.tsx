@@ -300,7 +300,7 @@ function CategoryStrip({
           key={c.category}
           data-testid="overlay-category"
           onClick={setDrill ? () => setDrill({ entityId: source.id, category: c.category }) : undefined}
-          title={`${CATEGORY_LABEL[c.category]} — ${fmt(c.total)} over ${c.hits} hits`}
+          title={`${CATEGORY_LABEL[c.category]}: ${fmt(c.total)} over ${c.hits} hits`}
           style={{
             display: 'inline-flex',
             alignItems: 'center',
