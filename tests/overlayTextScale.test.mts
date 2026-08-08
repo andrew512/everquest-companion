@@ -45,7 +45,8 @@ const SURFACES = {
   'the damage meter': '../src/renderer/src/overlay/OverlayMeter.tsx',
   'the healing meter': '../src/renderer/src/overlay/HealMeter.tsx',
   'the event log': '../src/renderer/src/overlay/EventLogOverlay.tsx',
-  'the celebration toast': '../src/renderer/src/overlay/ToastOverlay.tsx'
+  'the celebration toast': '../src/renderer/src/overlay/ToastOverlay.tsx',
+  'the buff timers': '../src/renderer/src/overlay/BuffsOverlay.tsx'
 }
 
 /** The one file that applies the scale. */
@@ -150,7 +151,12 @@ test('THE CHROME IS NEVER SCALED, and cannot be pushed out of a narrow window', 
   // …and the footers themselves fit a genuinely narrow window, zoom or no zoom. ONE ROW: the
   // range input is the give (`flexBasis: 0` + a small floor), the buttons never shrink — the
   // owner's report was an A+ clipped mid-glyph, i.e. the control that fixes it, unpressable.
-  for (const path of [SURFACES['the damage meter'], SURFACES['the healing meter'], SURFACES['the event log']]) {
+  for (const path of [
+    SURFACES['the damage meter'],
+    SURFACES['the healing meter'],
+    SURFACES['the event log'],
+    SURFACES['the buff timers']
+  ]) {
     const text = code(path)
     assert.match(
       text,

@@ -394,6 +394,28 @@ export interface CcEvent extends LogEventBase {
   spell?: string
   /** True when derived from a "spell has worn off" line (keep-alive), not a fresh application. */
   refresh?: boolean
+  /**
+   * EVERY spell whose `msg_cast_on_other` produced this APPLICATION sentence (JOS-89), from the
+   * same DB suffix table `buffApply` reads — present only on the application shape, only when a
+   * spell database is installed on the parser config, and only when the sentence matched one.
+   *
+   * WHY IT IS HERE AND NOT DOWNSTREAM. `<mob> has been mesmerized.` is claimed by
+   * `classifyCcApply`, which sits ABOVE `classifyDbBuff` in the cascade, so the DB matcher never
+   * sees the line and the candidate list the buff family would have carried was simply lost. The
+   * parser is the only place that ever sees the sentence — the same argument `DamageEventE.verb`
+   * makes — so re-running a suffix matcher in a module would be a second opinion that can drift.
+   *
+   * IT IS A CANDIDATE LIST, NEVER A NAME (JOS-84). Measured over the committed spells.json, the
+   * four sentences this classifier claims resolve to sets of 4 / 2 / 1 / 1 spells whose stated
+   * durations DISAGREE in two of the four cases (`has been mesmerized.` = Dazzle 96 s /
+   * Mesmerization 24 s / Mesmerize 24 s / Sathir's Mesmerization no duration at all;
+   * `has been ensnared.` = Ensnare 660 s / Snare 180 s). So a consumer that wants a duration has
+   * to narrow this against the player's own cast history and refuse to state one when it cannot —
+   * exactly what `buffApply.candidates` already demands of its consumers.
+   *
+   * The REFRESH shape never carries it: that line names its spell outright in `spell`.
+   */
+  candidates?: { name: string; durationMs: number | null }[]
 }
 
 /**

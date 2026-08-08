@@ -429,7 +429,18 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
     bounds: undefined,
     drill: null,
     toast: { ...DEFAULT_TOAST_CONFIG }
-  }
+  },
+  // The BUFF/TIMER bars (JOS-89, docs/plans/buff-timer-overlay.md).
+  //
+  // DEFAULT OFF, AND IT SHIPS WITH NO MIGRATION — that combination is the design, not an
+  // omission. The owner's direction is to build it now and validate correctness internally
+  // before promoting it, and a default only ever supplies the value for an ABSENT key:
+  // `overlays.buffs` has never been written by any build, so every existing store reads
+  // `open: false` here and every upgrading user gets it off for free. Adding a migration is
+  // precisely the thing that would turn it ON — see migrateToV9, the one time this repo did
+  // flip a stored default, whose comment says it is a one-time correction and never a policy
+  // that the app may re-enable things.
+  buffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.

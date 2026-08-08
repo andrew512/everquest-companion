@@ -31,7 +31,7 @@ import { lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
 import { getAlerts } from './store'
 import { getOverlayWindow, sendToMain } from './windows'
-import type { AlertsDelta } from '../shared/types'
+import type { AlertsDelta, OverlayKind } from '../shared/types'
 
 /**
  * Log-derived state for the active character, rebuilt on launch + appended live.
@@ -61,6 +61,9 @@ export const epoch = new EpochDetector()
 // before the Welcome (a measured reconnect preamble makes that read a 13-hour absence as 6s).
 export const sessionDetector = new SessionDetector()
 
+/** The overlay kinds that consume the generic module transport — see the fan-out below. */
+const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs']
+
 // The extension framework. Modules own their slice of log-derived state and push
 // deltas to the renderer over the generic `module:delta` channel. Registration
 // order = bus delivery order.
@@ -71,10 +74,15 @@ export const registry = new ModuleRegistry({
     // AlertsModule about the feed) keeps the alerts module untouched, and because eventFeed is
     // registered LAST the row it appends is picked up by the same flush pass.
     feedAlertDelta(delta)
-    // The 'events' overlay is a second consumer of the module transport (it hydrates the
-    // eventFeed module and rides its deltas), so deltas must reach that window too.
-    const evOverlay = getOverlayWindow('events')
-    if (evOverlay && !evOverlay.isDestroyed()) evOverlay.webContents.send(IPC.onModuleDelta, delta)
+    // OVERLAYS THAT READ MODULES GET THE DELTA TOO. The 'events' overlay hydrates the eventFeed
+    // module and rides its deltas; the 'buffs' overlay (JOS-89) does the same for `buffs` +
+    // `buffTimers`. The fan-out stays an explicit per-kind list rather than a broadcast over
+    // OVERLAY_KINDS: an overlay that reads no module has no business being woken ~10×/second,
+    // and a new kind that DOES read one should have to say so here.
+    for (const kind of MODULE_READING_OVERLAYS) {
+      const w = getOverlayWindow(kind)
+      if (w && !w.isDestroyed()) w.webContents.send(IPC.onModuleDelta, delta)
+    }
   }
 })
 /**

@@ -1528,7 +1528,8 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   stays fully click-through but RENDERS the persisted drill read-only. The
   drill persists per kind in `overlays.<kind>.drill` (config IS the drill
   state — no renderer mirror; stale ids render level 1 without clearing).
-  SIX kinds now: fight/overall (damage), heal-fight/heal-overall, events,
+  SEVEN kinds now: fight/overall (damage), heal-fight/heal-overall, events,
+  buffs (JOS-89 — see below),
   and toast (celebration cards — docs/plans/celebration-toasts.md: transient
   top-center, hover pins, queue reducer in overlay/toastQueue.ts; producers in
   App.tsx, payloads resolved in main/toast.ts). The toast is the ONE kind that
@@ -1537,6 +1538,42 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   default) and it has NO SOUND of its own: the seeded boss/quest ALERTS speak
   on the same events, so the picker, `overlays.toast.sound|volume` and the
   `toast:sound` channel are all gone.
+- **THE BUFF/TIMER OVERLAY'S BAR IS A CLAIM, AND ITS ABSENCE IS THE HONEST HALF**
+  (JOS-89, docs/plans/buff-timer-overlay.md — ten user reports, the loudest demand
+  in the product's history; ships DEFAULT OFF for internal validation first). ONE
+  law decides every row: **a duration `spells.json` STATES becomes a receding
+  countdown; a duration nobody states becomes ELAPSED time counting UP; there is
+  no third case.** So a row draws a bar only when a duration was stated — a bar is
+  a promise about when something ends — and an unknown-duration row has NO BAR at
+  all and a `+` before its time. The corollary that costs something: the buffs
+  model's MINED `observed` estimate (recency-weighted MAX of your own land→fade
+  samples) is NOT a stated duration, so this surface counts UP where the Buffs TAB
+  counts down. `durationSource === 'db'` is the whole discriminator.
+  MEASURED: spells.json states a duration for 878 of 1,926 entries (45.6%), and a
+  stated one is the MAX component of a level formula (the scraper collapses
+  `1 ticks @L1 to 2 minutes @L40`) with focus effects absent from the data — so it
+  over-states for a low-level caster and can under-state with focus. Recorded, not
+  modelled.
+  **THE MEZ WAS INVISIBLE BECAUSE OF CASCADE ORDER**: `classifyCcApply` sits ABOVE
+  `classifyDbBuff`, so `<mob> has been mesmerized.` never became a `buffApply` and
+  `cc` reached its consumers naming a mob and nothing else. The parser now carries
+  the DB candidate list on the application shape (same suffix table, DB-gated,
+  byte-identical without one) and `modules/buffTimers.ts` owns per-target holds
+  keyed by mob — one AE mez on four enemies is four rows with four clocks.
+  Everything else the overlay draws is read off `BuffsSnap.active`; a second fold
+  of the same events is the two-models scar law 4 is made of.
+  Candidates narrow by YOUR OWN CAST HISTORY (law 3), never by taking the first:
+  `has been mesmerized.` is four spells at 96s/24s/24s/none, `has been ensnared.`
+  is 660s/180s, while enthralled/entranced are one each — so a blanket "a mez
+  counts up" would throw away the two statable families. A broadcast with no own
+  cast behind it opens NO hold (the ruling `ingestCc` already makes).
+  **A KNOWN GAP, DELIBERATELY NOT FIXED HERE**: a CC-roster spell wearing off a mob
+  routes to `cc {refresh:true}` rather than `buffFade`, so `onBuffFade` never runs
+  and such an instance is never cleared from the buffs model (it lingers to the
+  90-min hygiene cap). Fixing it in `recordFade` would also mint a land→fade
+  DURATION SAMPLE and move mined statistics across the whole golden suite — the
+  buff-system rework the owner paused — so the overlay corrects it in its own
+  projection (`endedByCc`), one rule wide, and the model change stays separate.
   Each kind's selector is SCOPE-FILTERED (`scopeOptions`) and never crosses
   over. Selectors are the custom `OverlaySelect` (no native `<select>`: its
   OS popup ignores the theme) — the overlay bundle stays MUI-free by law.

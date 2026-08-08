@@ -17,6 +17,9 @@ import { parseEvent } from '../src/main/log/parser'
 import { installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { BuffsModule } from '../src/main/modules/buffs'
+import { BuffTimersModule } from '../src/main/modules/buffTimers'
+import { buildTimerRows } from '../src/shared/buffTimers'
+import type { BuffTimerRow, BuffTimersSnap } from '../src/shared/buffTimers'
 import type { BuffsSnap } from '../src/shared/types'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -90,6 +93,44 @@ export function replayBuffsWithDb(
   }
   if (finalTickMs != null) mod.onTick(finalTickMs)
   return mod.snapshot().state
+}
+
+/**
+ * THE BUFFS/TIMER OVERLAY's replay (JOS-89). Folds the SAME event stream through the real
+ * parser, the real BuffsModule AND the real BuffTimersModule, then runs the real projection —
+ * so a test asserts the rows a user would actually see on the overlay, not an intermediate.
+ *
+ * `until` stops the fold at an instant (inclusive), which is how a per-target mez is observed
+ * BEFORE and AFTER its break line without cutting a second fixture. `tickMs` fires the wall-clock
+ * heartbeat both modules take, modelling an idle log at a chosen observation instant.
+ */
+export function replayBuffTimers(
+  lines: string[],
+  opts?: { until?: number; tickMs?: number; prime?: string[] }
+): { buffs: BuffsSnap; timers: BuffTimersSnap; rows: BuffTimerRow[] } {
+  const db = loadSpellDb()
+  installSpellDb(db)
+  const buffs = new BuffsModule(db)
+  const timers = new BuffTimersModule()
+  buffs.reset()
+  timers.reset()
+  let seq = 0
+  const feed = (raw: string): void => {
+    const ev = parseEvent(raw, seq++)
+    if (!ev) return
+    if (opts?.until != null && ev.ts > opts.until) return
+    buffs.onEvent(ev)
+    timers.onEvent(ev)
+  }
+  for (const raw of opts?.prime ?? []) feed(raw)
+  for (const raw of lines) feed(raw)
+  if (opts?.tickMs != null) {
+    buffs.onTick(opts.tickMs)
+    timers.onTick(opts.tickMs)
+  }
+  const b = buffs.snapshot().state
+  const t = timers.snapshot().state
+  return { buffs: b, timers: t, rows: buildTimerRows(b, t) }
 }
 
 /** Parse an EQ timestamp out of a raw fixture line (ms epoch), or 0. */
