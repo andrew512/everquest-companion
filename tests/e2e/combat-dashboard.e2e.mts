@@ -80,7 +80,7 @@ import {
   stepHealingDimension,
   stepMeterDrill,
   stepMeterScope,
-  stepMultiAttackPanel,
+  stepCategoryDrill,
   stepPetAnswersWhoLeads,
   stepPetNeverAsked,
   stepScriptedPull
@@ -551,7 +551,7 @@ async function main(): Promise<void> {
     snap = await stepCombatLogAndRegression(page, log)
     await stepHealingDimension(page)
     await stepMeterDrill(page)
-    await stepMultiAttackPanel(page)
+    await stepCategoryDrill(page)
     await stepPickAFight(page, snap)
     await stepFrozenList(page, log)
     await stepSearch(page, snap)

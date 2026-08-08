@@ -175,52 +175,92 @@ export async function stepMeterDrill(page: Page): Promise<void> {
   check('…and Back returns to the same source list it came from', after === rows, `${rows} → ${after} rows`)
 }
 
-// ── THE MULTI-ATTACK PANEL (JOS-37; the engine half is docs/plans/attack-round-stats.md) ──
+// ── LEVEL 3: ONE DAMAGE TYPE, AND THE MULTI-ATTACK STATS INSIDE IT (JOS-105) ──────────────
 //
-// The grouper and the tiers are pinned in tests/combatRoundStats.test.mts, and the words in
-// tests/multiAttackRows.test.mts, against real log windows. What only the real app can show is
-// that the panel MOUNTS inside the drill and states something: it lives one level down (the
-// drilled source's breakdown), so a wiring mistake would leave it invisible with every unit
-// test still green. It stays in the drill on purpose — the JOS-37 arrangement note in
-// CombatView.tsx says why — so this step is also what proves it did not drift up into a cell.
+// This step replaces `stepMultiAttackPanel`. The multi-attack readout used to be a PANEL mounted
+// beside the drilled source's lane list (JOS-37); the owner's report was that it crowded the meter
+// out, and the fix was to make it a section of a level the user asks for. So the same rows are now
+// reached by CLICKING A DAMAGE TYPE, and this step walks that path with a mouse.
 //
-// FLOORS ONLY (AGENTS.md: frozen numbers rot). The live log decides how many verbs the
-// selected fight used, so this asserts "at least one stated lane, with its denominator on
-// screen" and notes rather than fails when the selection has no swings at all.
+// The shaping is pinned purely in tests/categoryDrill.test.mts (which lanes, which category a
+// round is filed under, where the flurry line goes), the rows' words in
+// tests/multiAttackRows.test.mts, and the counters in tests/combatRoundStats.test.mts. What only
+// the real app can show is that the third level is REACHABLE and that nothing renders beside it.
+//
+// FLOORS ONLY (AGENTS.md: frozen numbers rot). The live log decides which types the selected
+// fight used and whether anything swung, so this asserts "the type opened, and it states its
+// rate" and notes rather than fails where the fixture has no swings.
 
-const MULTI = '[data-testid="multi-attack-panel"]'
+const CHIP = '[data-testid="category-chip"]'
+const CATEGORY = '[data-testid="category-drill"]'
+const MULTI = '[data-testid="multi-attack"]'
 const MULTI_LANE = '[data-testid="multi-attack-lane"]'
 
-export async function stepMultiAttackPanel(page: Page): Promise<void> {
-  // The dashboard opens on LEVEL 1 (JOS-35), so this step drills itself — `stepMeterDrill` above
-  // left it un-drilled on purpose, and the multi-attack panel lives one level down.
-  if ((await inMeterPanel(page, MULTI)) === 0 && !(await drilled(page))) {
+/** The visible text of the first element matching `sel`, or '' when there is none. */
+function textOf(page: Page, sel: string): Promise<string> {
+  return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
+}
+
+export async function stepCategoryDrill(page: Page): Promise<void> {
+  // The dashboard opens on LEVEL 1 (JOS-35), so this step drills itself down to a source first —
+  // the damage types belong to ONE source, and that is the level where a source is the subject.
+  if (!(await drilled(page))) {
     await page.click('[data-testid="meter-row"]', { timeout: 15_000 }).catch(() => undefined)
     await settle(() => drilled(page), (d) => d, { timeoutMs: 10_000 })
   }
-  const lanes = await inMeterPanel(page, MULTI_LANE)
-  if ((await inMeterPanel(page, MULTI)) === 0) {
-    note('the drilled source landed no swings in this selection — the multi-attack panel correctly renders nothing')
+  const chips = await inMeterPanel(page, CHIP)
+  if (chips === 0) {
+    note('the drilled source dealt no damage in this selection — there is no damage type to open')
     return
   }
-  check('the multi-attack panel mounts inside the combat drill', true)
-  check('…with at least one attack-type lane', lanes >= 1, `${lanes} lanes`)
-  const text = await page.evaluate((sel) => {
-    const el = document.querySelector(sel)
-    return (el as HTMLElement | null)?.innerText ?? ''
-  }, MULTI)
-  // The denominator is on screen, in rounds — law 11's spirit, and the one thing the design
-  // insists the panel can never omit.
-  check('…and its denominator is visible, in ROUNDS', /\brounds\b/i.test(text), text.slice(0, 120).replace(/\s+/g, ' '))
-  // Every lane states its multi-attack reading — a rate, or the honest "it never did".
-  check(
-    '…and every lane states how often it multi-attacked',
-    /%\s*doubled|never multi-attacked/i.test(text),
-    text.slice(0, 160).replace(/\s+/g, ' ')
-  )
-  // The whole stated-vs-inferred tier is ONE word now (TOOLTIP AND CAVEAT DIET) — the old
-  // panel's four hover paragraphs are gone, and so is the `inferred` chip they explained.
-  check('…and the old Rounds block’s chips are gone', !/inferred|riposte|rampage|excluded/i.test(text), text.slice(0, 160).replace(/\s+/g, ' '))
+  check('the drilled source offers its damage types as a strip', chips >= 1, `${chips} types`)
+
+  // 2. CLICKING A TYPE OPENS IT. Melee where the fixture has it (it is the type with swings, and
+  //    so the one that carries the multi-attack section); otherwise whatever the source dealt.
+  const picked = await page.evaluate((sel) => {
+    const all = [...document.querySelectorAll(sel)] as HTMLElement[]
+    const el = all.find((c) => c.innerText.startsWith('Melee')) ?? all[0]
+    el?.click()
+    return el?.innerText.split('\n')[0] ?? ''
+  }, CHIP)
+  const opened = (await settleCount(page, CATEGORY, 1, { timeoutMs: 10_000 })) >= 1
+  check('…and clicking one opens THAT type as its own level', opened, picked)
+  if (!opened) return
+
+  // 3. THE STATS ARE IN THE DRILL. Crit rate is the figure the ticket names by hand; it is stated
+  //    for every type, because every type has one.
+  const body = await textOf(page, CATEGORY)
+  check('…whose stats live INSIDE it — crit rate among them', /crit/i.test(body), body.slice(0, 140).replace(/\s+/g, ' '))
+
+  // 4. AND THE MULTI-ATTACK ROWS ARE A SECTION OF IT, not a panel beside it.
+  const lanes = await inMeterPanel(page, MULTI_LANE)
+  if ((await inMeterPanel(page, MULTI)) === 0) {
+    note(`${picked} opened no attack rounds in this selection — the multi-attack section correctly renders nothing`)
+  } else {
+    check('…and the multi-attack rows are a SECTION of that level', lanes >= 1, `${lanes} lanes`)
+    const multi = await textOf(page, MULTI)
+    // The denominator stays on screen, in rounds — law 11's spirit, and the one thing the design
+    // insists this readout can never omit.
+    check('…with its denominator visible, in ROUNDS', /\brounds\b/i.test(multi), multi.slice(0, 120).replace(/\s+/g, ' '))
+    check(
+      '…and every lane states how often it multi-attacked',
+      /%\s*doubled|never multi-attacked/i.test(multi),
+      multi.slice(0, 160).replace(/\s+/g, ' ')
+    )
+    // The whole stated-vs-inferred tier is ONE word (TOOLTIP AND CAVEAT DIET) — the old Rounds
+    // block's four hover paragraphs are gone, and so is the `inferred` chip they explained.
+    check('…and the old Rounds block’s chips are gone', !/inferred|riposte|rampage|excluded/i.test(multi))
+  }
+
+  // 5. THE OLD PANEL IS GONE, everywhere on the page — the half of the ticket a unit test can
+  //    only assert against source text.
+  check('the standalone multi-attack panel is gone', (await countOf(page, '[data-testid="multi-attack-panel"]')) === 0)
+
+  // 6. AND THE WAY BACK IS ONE LEVEL, not all the way out: Back from a damage type lands on the
+  //    source's lane list, which is the row it was opened from.
+  await page.click('[data-testid="drill-back"]', { timeout: 10_000 })
+  await settleGone(page, CATEGORY, { timeoutMs: 10_000 })
+  check('…and Back from a damage type returns to the source it belongs to', await drilled(page))
 }
 
 // ── THE OPEN FIGHT LIST IS FROZEN (Task #61) ───────────────────────────────────────────

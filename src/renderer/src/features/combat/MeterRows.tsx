@@ -226,7 +226,14 @@ export function DrillCrumb({
         Back
       </Button>
       <Breadcrumbs separator="›" sx={{ fontSize: 12 }}>
-        <Link component="button" underline="hover" color="inherit" onClick={() => setDrill(null)} sx={{ fontSize: 12 }}>
+        <Link
+          component="button"
+          data-testid="drill-all"
+          underline="hover"
+          color="inherit"
+          onClick={() => setDrill(null)}
+          sx={{ fontSize: 12 }}
+        >
           All
         </Link>
         {parent ? (

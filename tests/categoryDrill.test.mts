@@ -22,6 +22,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { categoryDrill, laneCategory } from '../src/renderer/src/features/combat/categoryDrill'
 import type {
   CategoryView,
@@ -207,6 +208,19 @@ test('A STALE LEVEL-3 DRILL DEGRADES ONE LEVEL, exactly like a stale entity id d
   // so a persisted drill into a damage type this fight has none of never blanks the meter.
   assert.equal(categoryDrill(PALADIN, 'dot'), null)
   assert.equal(categoryDrill(source(), 'melee'), null)
+})
+
+test('THE OVERLAY CAN PERSIST THE LEVEL IT OPENS — the store normalizer carries the category', () => {
+  // A SOURCE PIN, because `setOverlayConfig` writes through electron-store and cannot be called
+  // from a node test. It earns its place: the overlay drill is rebuilt FIELD BY FIELD on the way
+  // in (so a renderer patch can never widen what is persisted), and this ticket's level-3 field
+  // was not in that list at first. The window then opened the type optimistically, the round trip
+  // pulled it back to level 2, and the next click on the crumb fell all the way out to level 1 —
+  // caught by tests/e2e/overlay-sync.e2e.mts, which is the only place it was visible.
+  const store = readFileSync(new URL('../src/main/store.ts', import.meta.url), 'utf8')
+  const block = /next\.drill\s*=[\s\S]{0,400}/.exec(store)?.[0] ?? ''
+  assert.match(block, /entityId/, 'the drill normalizer no longer rebuilds an entityId')
+  assert.match(block, /category/, 'the drill normalizer drops the damage type again (level 3 cannot persist)')
 })
 
 test('A SOURCE WITH NO MELEE CATEGORY files its swings under the only other one a swing can land in', () => {
