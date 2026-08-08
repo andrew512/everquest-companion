@@ -53,7 +53,7 @@ function PetNestingSetting(): JSX.Element {
       />
       <Typography variant="caption" color="text.secondary">
         {combine
-          ? 'Your pet’s damage rides inside your bar, and appears once more as one row inside your breakdown — click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
+          ? 'Your pet’s damage rides inside your bar, and appears once more as one row inside your breakdown - click it for the pet’s own skills. Your per-skill numbers stay yours; the pet’s damage is never folded into them.'
           : 'Your pet gets its own bar beside yours, and each bar drills into its own skills.'}
       </Typography>
     </Stack>
