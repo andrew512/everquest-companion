@@ -512,6 +512,42 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   stated, not hidden: when one sentence is five spells, the alert is an alert on the
   FAMILY — which is also what keeps it alive across the level-up that replaces the
   spell. Nothing named `\] `-anchored or self-vs-third-person was ever the problem.
+  **CAPTURE GROUPS SPEAK THE LOG, AND THE THREAT MODEL IS IN THE CODE** (JOS-103,
+  `src/shared/alertCaptures.ts` — read its header before touching any of this). A
+  trigger's regex may declare a NAMED group and the def's `custom` phrase may write
+  `{player}`; the alert then says what that group captured ("Puma on Fail"). ALERT
+  DEFS ARE SHAREABLE, so a capture is a channel with a third party at each end: a
+  pattern the user did not write, selecting text a stranger did write, spoken aloud.
+  Five controls, each enforced at BOTH ends (main harvests, the resolver re-checks):
+  every value through the shared sanitizers (`sanitizeOneLine` — law 3 applied to a
+  new inlet); `MAX_CAPTURE_CHARS` 48, a NAME's worth not a LINE's, well under
+  MAX_SPEECH_CHARS; a value may come ONLY from the text the def's own condition just
+  tested (a `raw` condition from `ev.raw`, a `/regex/` `where` matcher from that one
+  field) — **there are no ambient tokens**, no `{C}`, no `{L}`; a token is a
+  DECLARATION, so named-only and never GINA's positional `{S1}`; and ONE
+  left-to-right pass with a FUNCTION replacer — no nesting, no recursion, no re-scan,
+  and `$&` in a captured name is text rather than a `replace()` directive. Unknown
+  tokens render LITERALLY. The divergences are argued against measured prior art: EQ
+  Log Parser runs FIVE substitution passes that each re-scan what the last wrote,
+  bounds nothing, and sanitizes only its TTS path. HONEST LIMITS, stated in the file:
+  a loose `raw` pattern can still MATCH a chat line quoting its sentence (the controls
+  bound what it can SAY, not whether it fires) — which is why `subjectCapturePattern`
+  anchors `^\[[^\]]*\] ` (never a bare `\] `, which a stranger's typed `] ` can start a
+  match inside) and captures a name-shaped class no EQ chat shape can reach; and ReDoS
+  on a hostile pattern is pre-existing and unfixed.
+  **A TEMPLATE FLAG IS A CLAIM THE ALERT CAN FIRE, AND THREE OF THEM WERE LYING**
+  (JOS-103). Spirit of the Puma was invisible to the wizard because
+  `suggestionTemplates` compared `spellType` to two string literals and its type is
+  `Proc Buff` — a spell with no template is DROPPED from the catalog. Now an exhaustive
+  table over the DB's 33 observed types. Measured while fixing it: `lands` was offered
+  to 68 Detrimental spells whose cast-on-other message yields no `castOnOtherSuffix`,
+  so no `buffApply` is ever emitted and the alert could not fire; and `wearsOff`
+  (`buffExpired`) can never fire for a buff SOMEBODY ELSE cast on you, because the buffs
+  module's own-cast gate never makes it an active instance — so it is now an `any`
+  composite over `buffExpired` + `buffWearOff` (same ts, so the cooldown eats the
+  duplicate). Puma's landing line has NO typed event at all (`Target growls…`, not
+  `Someone growls…`), which is why the shipped capture suggestion is a `raw` trigger:
+  not a shortcut, the only thing that exists for that family.
   **AND `suggestions.ts` IS NODE-TESTED NOW** — it imported a VALUE through
   `@shared/*`, so it could not load under tsx and no test had ever run a real
   suggested def end to end. That is a large part of why this shipped; the import is
