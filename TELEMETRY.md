@@ -158,7 +158,7 @@ With each session report (every few minutes, and at close): counts of things tha
 | Field | Values | What it means |
 | --- | --- | --- |
 | `rendererCrashes` | whole number | Window crashes. The main window only. |
-| `mainErrorLogLines` | whole number | Lines written to the local error log. |
+| `mainErrorLogLines` | whole number | Lines written to the local error log. Errors only — warnings are not counted. |
 | `parserStalls` | whole number | Times log reading stalled. Not currently measured — always 0. |
 | `presenceRestarts` | whole number | Times the game-window watcher restarted. |
 | `speechFailures` | whole number | Times an utterance failed to speak. Downloaded voices only. |

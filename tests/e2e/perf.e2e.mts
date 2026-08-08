@@ -46,6 +46,9 @@ const BREAKDOWN = '[data-testid="perf-startup"]'
 const SAMPLE_WAIT_MS = 6_000
 /** A full historical scan of a months-old live log takes seconds; be generous, fail loudly. */
 const REPLAY_WAIT_MS = 300_000
+/** Tags the two console messages this spec prints on purpose (JOS-99), so they can be found in
+ *  errors.log and told apart from the run's own noise. */
+const CONSOLE_MARK = 'JOS99-PROBE'
 
 /**
  * The strictly-sequential head of the boot, asserted as a LIST: a profile whose phases arrived
@@ -239,6 +242,62 @@ async function stepStartupPane(page: Page): Promise<void> {
   )
 }
 
+/**
+ * WHAT A RELOAD AND A WARNING COST IN errors.log — JOS-99, asserted against the bytes a real
+ * launch wrote.
+ *
+ * This is the half no unit test can reach. Both mechanisms are seams: one is an IPC handler
+ * answering a message that only a re-mounted renderer sends, the other is a `webContents`
+ * listener reading `app.isPackaged`. The fleet reading that produced the ticket — 3,859
+ * `mainErrorLogLines` over 3,728 reports with zero renderer crashes — was made of exactly these
+ * two, and only a real window reloading and a real `console.warn` can show they are gone.
+ *
+ * ORDERING IS WHAT MAKES THE ABSENCES SOUND, not a sleep: the reload happens first, then the
+ * warning, then the error — all on the same ordered console channel — so once the ERROR line has
+ * appeared in the file, everything before it has already been through the same code. A settle on
+ * the error line is therefore also the wait for the two absences.
+ */
+async function stepReloadIsNotAnError(page: Page, userData: string): Promise<void> {
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
+  check('the window survives a reload (the crash-recovery / dev-watch path)', true)
+
+  // A warning, then an error, from the real renderer console.
+  await page.evaluate(
+    (m) => {
+      console.warn(`${m}-WARNING a component grumbled`)
+      console.error(`${m}-ERROR something actually broke`)
+    },
+    CONSOLE_MARK
+  )
+
+  const path = join(userData, 'errors.log')
+  const readLog = (): Promise<string> => {
+    try {
+      return Promise.resolve(readFileSync(path, 'utf8'))
+    } catch {
+      return Promise.resolve('')
+    }
+  }
+  const log = await settle(readLog, (t) => t.includes(`${CONSOLE_MARK}-ERROR`), { timeoutMs: 20_000 })
+
+  check(
+    'a renderer console.error still reaches errors.log — the file has not gone quiet',
+    log.includes(`${CONSOLE_MARK}-ERROR`),
+    `${String(log.length)} bytes of log`
+  )
+  check(
+    '…but a console.warn does NOT: a warning is not an error and is not counted as one',
+    !log.includes(`${CONSOLE_MARK}-WARNING`),
+    log.split(/\r?\n/).filter((l) => l.includes(CONSOLE_MARK)).join(' | ')
+  )
+  check(
+    'and the reload costs NO error line — a re-sent rendererHydrated mark is expected, not a bug',
+    !/was marked twice/.test(log),
+    log.split(/\r?\n/).filter((l) => /marked twice/.test(l)).slice(0, 2).join(' | ')
+  )
+}
+
 /** THE FILE. Written on every launch, HUD or no HUD — this is the "the launch you wish you had
  *  profiled is the one that already happened" promise, asserted against real bytes. */
 function stepProfileFile(userData: string): void {
@@ -390,7 +449,9 @@ async function main(): Promise<void> {
   try {
     page = await mainWindow(app)
     page.on('console', (m) => {
-      if (m.type() === 'error') consoleErrors.push(m.text())
+      // The one console.error this spec prints ON PURPOSE (JOS-99's positive control) is excluded
+      // by its marker rather than by loosening the check — every other error still fails the run.
+      if (m.type() === 'error' && !m.text().includes(CONSOLE_MARK)) consoleErrors.push(m.text())
     })
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
@@ -401,6 +462,9 @@ async function main(): Promise<void> {
       await stepPopover(page)
     }
     await stepStartupPane(page)
+    // LAST, because it reloads the window: everything above measures the launch that is already
+    // running, and a reload would put those steps' subjects back through a fresh mount.
+    await stepReloadIsNotAnError(page, userData)
     if (failures.length) await dumpArtifacts(page, 'perf-FAIL')
   } finally {
     await close()

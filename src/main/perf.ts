@@ -40,6 +40,7 @@ import {
   lagStats,
   PERF_LAG_PROBE_INTERVAL_MS,
   PERF_SAMPLE_INTERVAL_MS,
+  phaseMarked,
   replayDutyOf,
   totalsOf,
   type BlockSample,
@@ -214,6 +215,22 @@ function reportStartupReplay(replayDoneAtMs: number): void {
       logBytes: replayBytes ?? 0
     })
   )
+}
+
+/**
+ * Has this phase already landed on THIS launch? (JOS-99.)
+ *
+ * For the one caller that has a legitimate reason to ask rather than mark: `rendererHydrated`
+ * arrives over IPC from a window that can RELOAD, and a reloaded window re-reporting hydration is
+ * expected rather than a wiring bug (see `phaseMarked` in shared/perf.ts). Asking is deliberately
+ * not the same as marking-and-being-refused: the refusal is what writes an error line, and the
+ * whole point is that a reload must not write one.
+ *
+ * It reads the live `marks` list, so it answers about the accounting itself and cannot drift from
+ * it the way a second boolean beside it would.
+ */
+export function startupPhaseMarked(phase: StartupPhase): boolean {
+  return phaseMarked(marks, phase)
 }
 
 /** This launch's profile so far. Complete once every phase has landed. */
