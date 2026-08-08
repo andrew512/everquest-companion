@@ -276,6 +276,23 @@ export function meleeVerbBase(verb: string): string {
  * existing figure can move, because there is no self `shoot` line anywhere to move it. What the
  * log DOES carry is nine third-person bow hits and eight avoided ones from other players, which
  * is what `w57-ranged-lane.log` and `w58-ranged-critical.log` pin (tests/combatRangedLane.test.mts).
+ *
+ * ── AND THE LANE THAT DOES *NOT* BELONG IN THIS FUNCTION AT ALL (JOS-102) ────────────────────
+ *
+ * Tail Rake — user report 01KZGADDMWEGAVPX9V95F8H4Y2, "missing from the DPS overview" — reads
+ * like the next branch to add here, and it is not one. It is a monk SKILL and it is MNK-only at
+ * level 25 in the class table, so it passes JOS-77's test on paper; the reason it gets no branch
+ * is that THE GAME NEVER PRINTS IT AS A VERB. `tail rake` is ZERO in all three owner logs and in
+ * every committed fixture, because upgraded specials in EQ Legends land as a generic verb and
+ * are named only by the state line (`You will now use Tail Rake instead of Eagle Strike while
+ * attacking.`) — exactly like Dragon Punch, whose seat in the `strike` chain Tail Rake shares as
+ * the Iksar variant. It is therefore handled by `src/main/combat/specialAttacks.ts`, which holds
+ * the evidence, and adding a `tail rake` alternation to MELEE_VERBS would invent a message shape
+ * no log has ever printed (the awaiting-sample law).
+ *
+ * The distinction this function draws is between a WEAPON verb and a SKILL verb. The one above
+ * is prior to it: a skill that prints no verb of its own is not this function's business, however
+ * plainly it is a skill.
  */
 export function meleeSkill(verb: string): string {
   const v = verb.toLowerCase()
