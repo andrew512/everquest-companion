@@ -62,12 +62,13 @@ export interface BuffStat {
    */
   dbDurationMs?: number | null
   /**
-   * The value the estimator uses for the remaining-time bar (Task #34): the DB duration
-   * when known, else the recency-weighted MAX of mined samples. Provenance in
-   * `estimatorSource`. Null when neither is available (n=0, no DB duration).
+   * The value the estimator uses for the remaining-time bar (JOS-117): max(DB baseline, recent
+   * observed max) — the DB is a FLOOR that below-base click-off samples cannot pull under, and a
+   * logged cast that beat the floor wins. Provenance in `estimatorSource`. Null when neither is
+   * available (n=0, no DB duration).
    */
   estimateMs?: number | null
-  /** Where `estimateMs` came from: 'db' | 'observed'. */
+  /** Where `estimateMs` came from: 'db' (floor held) | 'observed' (a logged cast beat it). */
   estimatorSource?: 'db' | 'observed'
   /**
    * The newest event ts (ms epoch) this spell was seen — the last castBegin / apply / fade
@@ -124,26 +125,22 @@ export interface ActiveBuff {
    */
   provisional?: boolean
   /**
-   * Where `estimatedMs` came from (Task #34):
-   *   'db'       — the authoritative wiki duration (spells.json). The prior/truth.
-   *   'observed' — the recency-weighted MAX of mined samples (no DB duration known).
+   * Where `estimatedMs` came from (JOS-117):
+   *   'db'       — the spell-database baseline held (no logged cast beat it).
+   *   'observed' — a logged cast beat the floor: max over the recent sample window.
    *   undefined  — no estimate (n=0 and no DB duration).
    */
   durationSource?: 'db' | 'observed'
   /**
-   * THE BUFFS/TIMER OVERLAY's countdown duration (ms), under the OBSERVED-FIRST precedence the
-   * overlay uses (JOS-114) — distinct from `estimatedMs`, which the Buffs TAB uses:
-   *   1. the MOST-RECENT clean observed sample for this spell (this character), else
-   *   2. the DB-stated duration, else
-   *   3. null → the overlay counts UP.
-   * OBSERVED WINS OVER DB here (the reversal JOS-89 deliberately refused, made safe by the
-   * clean-sample rule): AAs/focus make the real duration ≥ the DB base, so a full-cycle
-   * observation is the player's actual current duration, and a shorter clean sample (focus
-   * removed) is equally the truth. Null for a permanent buff. See buffsStats.ts `lastObservedFor`
-   * and shared/buffTimers.ts `timerModeOf`.
+   * THE BUFFS/TIMER OVERLAY's countdown duration (ms). Since JOS-117 this is the SAME estimator the
+   * Buffs TAB uses — max(DB floor, recent observed max) — so both surfaces agree; a below-base
+   * click-off no longer becomes the overlay number (JOS-114's most-recent-sample rule did exactly
+   * that, showing Swift at ~28m for a 33:36 buff) and a focus-extended duration is honoured. Null
+   * for a permanent buff, or when there is no floor and no sample (the overlay counts UP). See
+   * buffsStats.ts `estimateFor` and shared/buffTimers.ts `timerModeOf`.
    */
   overlayDurationMs?: number | null
-  /** Where `overlayDurationMs` came from: 'observed' (most-recent sample) | 'db' (JOS-114). */
+  /** Where `overlayDurationMs` came from: 'db' (floor held) | 'observed' (a logged cast beat it). */
   overlaySource?: 'db' | 'observed'
   /**
    * True when this buff is PERMANENT (Task #34): an illusion-flagged spell the player

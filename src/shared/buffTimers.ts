@@ -11,22 +11,25 @@
 // so a test can drive real fixture bytes through the real parser and the real modules and
 // assert the rows a user would actually see.
 //
-// OBSERVED-FIRST DURATION PRECEDENCE (JOS-114) — the reversal JOS-89 refused, now made safe.
-// This surface counts down from `overlayDurationMs`, which the buffs model fills under a strict
-// precedence (buffsView.ts `durationFields`):
-//   1. the MOST-RECENT clean observed sample for this spell (this character), else
-//   2. the DB-stated duration, else
-//   3. null → count UP.
-// OBSERVED WINS OVER DB. Swift Like the Wind IS in the DB at its ~15m base, so before this the
-// overlay showed 15m for a buff the player's own AAs/focus had extended to 33m; the newest
-// full-cycle observation is the current truth and the DB base never carries it. What makes
-// counting down from an observation SAFE — and what JOS-89 (rightly, then) did not yet have — is
-// the CLEAN-SAMPLE rule: a sample is minted ONLY from a genuine wear-off
-// (buffsInstances.recordFade → addSample); a zone, a death, an offline gap, an entity retirement
-// or a hygiene sweep clears the instance WITHOUT minting, and an offline-spanned span is dropped.
-// So "most recent" is never a truncated value. The Buffs TAB is unchanged (it keeps `estimatedMs`
-// / `durationSource`, DB-first and distribution-aware); only this surface reads the two overlay
-// fields — a deliberate, now-inverted divergence from the tab.
+// THE ESTIMATOR (JOS-117) — one definition, this surface AND the Buffs tab. This surface counts
+// down from `overlayDurationMs`, which the buffs model fills (buffsView.ts `overlayDurationOf`)
+// from the SAME estimator the tab's estimate column uses (buffsStats.ts `estimateFor`):
+//   overlayDurationMs = max( DB baseline , max-over-recent-window of clean observed samples )
+//   (permanent → null, and no-floor-no-sample → null → count UP.)
+// The DB base is a FLOOR: a beneficial buff's true duration is never below it (AA/focus only
+// EXTEND), so a below-base observation is an early termination (click-off / dispel / overwrite) and
+// the max discards it — the floor holds (Invisibility: DB 20m, observed max 4m ⇒ 20m). A sample
+// ABOVE the base is a real extension and WINS (Swift Like the Wind: DB 16m, observed 36m ⇒ 36m).
+// This REPLACES JOS-114's most-recent-sample overlay rule, which trusted whatever cast faded last:
+// a buff clicked off early minted a short "worn off" sample INDISTINGUISHABLE from a natural expiry
+// and became the overlay's number (the owner saw Swift at ~28m for a 33:36 buff). The max over the
+// window ignores the click-off; the window (not all-time) lets a removed focus age out so a genuine
+// decrease recovers. Trusting a sample is SAFE because of the CLEAN-SAMPLE rule: one is minted ONLY
+// from a genuine wear-off (buffsInstances.recordFade → addSample); a zone, death, offline gap,
+// entity retirement or hygiene sweep clears the instance WITHOUT minting, an offline-spanned span is
+// dropped, and a re-land RESETS the open cast's landedTs so a refresh mints one clean full cycle,
+// never an inflated land→fade span. `estimatedMs`/`durationSource` are the tab's own copies of the
+// same numbers; this surface reads `overlayDurationMs`/`overlaySource`.
 //
 // NOT everything the overlay draws takes this path: the per-target MEZ/ROOT holds (main/modules/
 // buffTimers.ts, projected by `ccRow` below) stay DB-STATED. Their end line — `Your <mez> spell
@@ -206,14 +209,14 @@ function ccRow(h: CcHold): BuffTimerRow {
 }
 
 /**
- * THE LAW, as one decision: the OBSERVED-FIRST duration — most-recent clean sample, else the DB
- * base — earns a receding countdown; nothing else does (JOS-114).
+ * THE LAW, as one decision: the estimator's duration — max(DB floor, recent observed max) — earns a
+ * receding countdown; nothing else does (JOS-117).
  *
- * `overlayDurationMs` is the whole discriminator, filled by buffsView.ts under the precedence in
- * this file's header (observed sample → DB → null). A permanent buff never counts down. A buff the
- * model can put no honest number on (no sample, no DB duration) counts UP instead — and carries no
- * duration at all, so nothing downstream can draw a bar from it. `estimatedMs`/`durationSource`
- * are the Buffs TAB's fields and are deliberately NOT read here.
+ * `overlayDurationMs` is the whole discriminator, filled by buffsView.ts from the shared estimator
+ * (see this file's header). A permanent buff never counts down. A buff the model can put no honest
+ * number on (no sample, no DB floor) counts UP instead — and carries no duration at all, so nothing
+ * downstream can draw a bar from it. `estimatedMs`/`durationSource` are the tab's copies of the same
+ * estimator and are read there, not here.
  */
 function timerModeOf(b: ActiveBuff): { mode: TimerMode; durationMs?: number } {
   if (b.permanent === true) return { mode: 'permanent' }

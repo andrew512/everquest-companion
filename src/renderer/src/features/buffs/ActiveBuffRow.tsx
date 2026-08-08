@@ -80,8 +80,8 @@ function EstimateBar({
   const remaining = Math.max(0, est - elapsed)
   const frac = remainingFraction(elapsed, est)
   const { overdue, spread } = state
-  // Estimate provenance (Task #34): 'db' (authoritative wiki duration) vs 'observed'
-  // (recency-weighted max of mined samples). Shown as a small chip on the bar caption.
+  // Estimate provenance (JOS-117): 'db' (the spell-database floor held) vs 'observed' (a logged
+  // cast beat the floor — shown as a "log" chip). A small chip on the bar caption.
   const source = buff.durationSource
   return (
     <>
@@ -105,11 +105,11 @@ function EstimateBar({
         <Stack direction="row" spacing={0.5} alignItems="center">
           {source && (
             <Tooltip
-              title={source === 'db' ? 'From the spell database' : 'From your observed casts'}
+              title={source === 'db' ? 'The spell-database baseline' : 'From your logged casts — longer than the baseline'}
             >
               <Chip
                 size="small"
-                label={source === 'db' ? 'db' : 'observed'}
+                label={source === 'db' ? 'db' : 'log'}
                 variant="outlined"
                 sx={{ height: 16, fontSize: 10, '& .MuiChip-label': { px: 0.5 } }}
               />

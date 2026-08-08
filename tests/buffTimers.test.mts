@@ -177,28 +177,28 @@ test('AN UNKNOWN DURATION NEVER COUNTS DOWN — over every row of every fixture'
   assert.ok(elapsedRows > 0, 'the fixtures produced no count-up rows at all — the test proves nothing')
 })
 
-test('OBSERVED WINS OVER DB — an observed duration now earns the countdown (JOS-114 reverses JOS-89)', () => {
+test('OBSERVED WINS OVER DB — an observed duration earns the countdown (JOS-117 unifies the estimator)', () => {
   // JOS-89 refused to count down from anything but a DB-stated duration, because a mined estimate
-  // could be a censored (too-short) sample. JOS-114 REVERSES that, made safe by the clean-sample
-  // rule: `overlayDurationMs` is filled from the MOST-RECENT CLEAN sample first, the DB base
-  // second, and a sample is minted only from a genuine wear-off. The overlay reads that one field;
-  // `estimatedMs`/`durationSource` are the Buffs TAB's and are not consulted here.
+  // could be a censored (too-short) sample. JOS-117's estimator makes an observation safe to trust:
+  // `overlayDurationMs` = max(DB floor, recent observed max), so a below-base click-off cannot pull
+  // it down and a focus-extended cast beats the base. The overlay reads that one field, and the
+  // Buffs TAB reads its own copy of the SAME number (`estimatedMs`/`durationSource`) — they agree.
   //
-  // SAY WHICH: asserted on the PROJECTION with typed ActiveBuffs — the model's own documented
-  // shape from buffsView.ts `durationFields` — not an invented log sentence. The end-to-end sample
-  // minting + censoring is pinned in tests/buffOverlayDuration.test.mts against the real modules.
+  // SAY WHICH: asserted on the PROJECTION with typed ActiveBuffs — the model's own documented shape
+  // from buffsView.ts `durationFields` — not an invented log sentence. The end-to-end estimator
+  // (click-off ignored, floor held, refresh reset) is pinned in tests/buffOverlayDuration.test.mts
+  // against the real modules.
   const observed: ActiveBuff = {
     spell: 'Swift Like the Wind',
     cls: 'buff',
     self: true,
     startedTs: 1_000,
-    // The Buffs TAB fields still say DB (16m) — the tab is unchanged…
-    estimatedMs: 960_000,
-    durationSource: 'db',
+    // Both surfaces now carry the player's own observed 33m — the log beat the 16m DB floor.
+    estimatedMs: 1_980_000,
+    durationSource: 'observed',
     p25: null,
     p75: null,
     n: 1,
-    // …while the OVERLAY field carries the player's own observed 33m, and that is what shows.
     overlayDurationMs: 1_980_000,
     overlaySource: 'observed'
   }
