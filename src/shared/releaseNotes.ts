@@ -125,6 +125,67 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.11.0',
+    date: '2026-08-07',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Set your loadout classes yourself when autodetection guesses wrong: the Profiles panel shows which classes are in effect and where that answer came from, and one click hands it back to auto.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Bow damage gets its own Ranged bar beside Melee, so a stance-switching ranger can compare bow and dual-wield numbers within a fight.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The Loot window can sort by last looted.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Pointing the app at your logs works wherever they are: you can pick the log file itself, the folder card names the exact folder logs are read from, and a folder the app can't read says so instead of claiming you have no logs.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Alerts created from Suggested actually fire — a landing message shared by several spells now matches whichever of them you cast, and the alert speaks the right spell name.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Bard crowd-control breaks are detected across the whole song ladder, not just the level-20 song — and a mez break is announced as a mez break, not a charm break.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Group members show up in the meters even when your group formed before the app was running: your own group buff landing on them is believed, once the log has shown party experience.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Dying to a damage-over-time now counts as dying: buffs clear and the death alert fires even when the log names no killer.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Monk Mend appears in the healing breakdown — counted every time, with the amount shown as unstated because the game never says one.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The celebration overlay introduces itself the first time it appears — named, with a close button, and a way to turn it off right on the card.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "The Sky tab's Hide completed choice sticks across tab switches and restarts.",
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.10.0',
     date: '2026-08-07',
     entries: [
