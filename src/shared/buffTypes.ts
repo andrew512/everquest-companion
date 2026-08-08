@@ -131,6 +131,21 @@ export interface ActiveBuff {
    */
   durationSource?: 'db' | 'observed'
   /**
+   * THE BUFFS/TIMER OVERLAY's countdown duration (ms), under the OBSERVED-FIRST precedence the
+   * overlay uses (JOS-114) — distinct from `estimatedMs`, which the Buffs TAB uses:
+   *   1. the MOST-RECENT clean observed sample for this spell (this character), else
+   *   2. the DB-stated duration, else
+   *   3. null → the overlay counts UP.
+   * OBSERVED WINS OVER DB here (the reversal JOS-89 deliberately refused, made safe by the
+   * clean-sample rule): AAs/focus make the real duration ≥ the DB base, so a full-cycle
+   * observation is the player's actual current duration, and a shorter clean sample (focus
+   * removed) is equally the truth. Null for a permanent buff. See buffsStats.ts `lastObservedFor`
+   * and shared/buffTimers.ts `timerModeOf`.
+   */
+  overlayDurationMs?: number | null
+  /** Where `overlayDurationMs` came from: 'observed' (most-recent sample) | 'db' (JOS-114). */
+  overlaySource?: 'db' | 'observed'
+  /**
    * True when this buff is PERMANENT (Task #34): an illusion-flagged spell the player
    * self-cast while the Permanent Illusion AA is owned (self-cast illusions last forever
    * on the player). The UI shows "permanent · illusion AA" and no countdown.

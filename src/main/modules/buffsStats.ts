@@ -119,6 +119,31 @@ export class SpellStats {
   }
 
   /**
+   * The MOST-RECENT clean observed duration sample (ms) for a spell key, or null when none.
+   *
+   * THE OVERLAY COUNTS DOWN FROM THIS (JOS-114) — deliberately NOT `estimateFor`. The two answer
+   * different questions and must not be conflated:
+   *   • `estimateFor`  — the Buffs TAB's estimate bar: the DB duration when the DB knows one, else
+   *     the recency-weighted MAX of the last few samples. Distribution-aware, DB-first.
+   *   • `lastObservedFor` — the overlay's OBSERVED-FIRST duration input: the single NEWEST sample,
+   *     nothing averaged, nothing maxed. AAs and focus effects only lengthen a spell's real
+   *     duration (and a removed focus shortens it), so the latest full-cycle observation is this
+   *     character's CURRENT truth — a truth the DB base can never carry.
+   *
+   * "MOST RECENT" is literal: the last element of the samples array (they are appended in fade
+   * order). It is safe to count down from ONLY because a sample is minted exclusively from a
+   * genuine wear-off (buffsInstances.recordFade → addSample); every censoring boundary — zone,
+   * death, offline gap, entity retirement, hygiene — clears the instance WITHOUT minting, and an
+   * offline-spanned span is flagged and dropped. So the newest sample is a clean observation, not
+   * a truncated one. Two clean samples (older longer, newer shorter) ⇒ the NEWER wins.
+   */
+  lastObservedFor(key: string): number | null {
+    const s = this.samples.get(key)
+    if (!s || s.samples.length === 0) return null
+    return s.samples[s.samples.length - 1]
+  }
+
+  /**
    * The buff/debuff class of a spell (Task #35). SPELL PROPERTY:
    *   (1) DB spellType — Detrimental → 'debuff', Beneficial → 'buff' — authoritative.
    *   (2) FALLBACK for a spell absent from the DB: plurality of fade dispositions — hostile
