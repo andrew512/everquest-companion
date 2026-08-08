@@ -64,6 +64,7 @@ import {
   StartupSection,
   VersionsSection
 } from './AnalyticsBits'
+import { CoverageSection } from './CoverageSection'
 import { ReleaseHealthSection } from './ReleaseHealthSection'
 import {
   durationLabel,
@@ -256,6 +257,13 @@ function Readout({
         ship it". Versions below then answers "who is still on that build".
       */}
       <ReleaseHealthSection data={data} />
+      {/*
+        JOS-109, directly under Release health because it is read the same way (per build) and
+        answers the question that follows it: did anyone leave, and how much of the fleet would
+        these counters see if they had. It is also the only section given `downloads` besides
+        DownloadsSection below, because the dark-cohort ESTIMATE is a comparison against them.
+      */}
+      <CoverageSection data={data} downloads={downloads} />
       <VersionsSection data={data} />
       <DownloadsSection downloads={downloads} />
       <RetentionSection data={data} />

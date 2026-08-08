@@ -294,6 +294,26 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
       { name: 'mode', type: values(TELEMETRY_ERROR_MODES), note: 'Was it reading your log history, or following it live.' },
       { name: 'count', type: COUNT, note: 'How many times this same error happened since the last report.' }
     ]
+  },
+  {
+    t: 'optOut',
+    // THE ONE EVENT THAT IS SENT AFTER YOU SAID STOP, and the row says so in its first clause
+    // rather than leaving a reader to infer it from the "Turning it off" section below. The
+    // empty field list is not an omission — `telemetryDoc.ts` prints a sentence for it — and it
+    // is the strongest form of the promise: there is no slot on this event for anything to ride.
+    when:
+      'Once, when you turn usage analytics off. It is the last thing this app ever sends, and it ' +
+      'exists so opt-outs can be counted rather than guessed at. Everything else waiting to be ' +
+      'sent is thrown away rather than sent with it, it is never retried if you are offline, and ' +
+      'nothing further is ever sent.',
+    fields: []
+  },
+  {
+    t: 'optIn',
+    when:
+      'Once, when you turn usage analytics back on. The counterpart to the notice above, under ' +
+      'the new random id. It carries nothing either.',
+    fields: []
   }
 ]
 

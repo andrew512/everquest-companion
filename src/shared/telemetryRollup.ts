@@ -238,6 +238,38 @@ export const USAGE_METRICS = {
   /** dim = `<version>`; n = distinct errorReport EVENTS. One event is one fingerprint-session,
    *  so `errors / errorEvents` is the average burst size — a loop that throws is visible. */
   errorEvents: 'errorEvents',
+  /**
+   * SWITCH FLIPS PER BUILD (JOS-109) — how many installs turned usage analytics off, and how many
+   * turned it back on. dim = `<version>`, n = flips.
+   *
+   * The JOS-96 / JOS-57 additive pattern exactly: `usage_daily` has no version COLUMN (the key is
+   * day+cohort+metric+dim and cannot grow one — infra/schema.sql), so the version lives in `dim`,
+   * which makes these new metric NAMES in a table built to hold arbitrary ones. No schema change,
+   * no migration.
+   *
+   * WHAT THESE TWO NUMBERS CAN AND CANNOT CLAIM, because a counter with a confident name is the
+   * easiest thing in this pipeline to misread:
+   *
+   *   * EXACT, over installs that ever reported. One flip is one event and one event is one
+   *     count; a user who flips off, on and off again contributes two `optOuts` and one `optIn`,
+   *     which is the truth about what they did rather than a de-duplicated guess at what they
+   *     meant. `main/telemetry/optOut.ts` is what makes "one per flip" mechanical.
+   *   * BLIND TO THE FULLY-DARK INSTALL. An install that opted out before its first batch never
+   *     sends one of these, so `optOuts` is a FLOOR on opt-outs and can never be a rate over
+   *     downloads. `shared/telemetry.ts` states that problem where the events are declared, and
+   *     the panel prints the two measurements side by side rather than dividing them.
+   *   * AN UNDERCOUNT BY ONE MORE MECHANISM, stated so nobody has to rediscover it: the notice is
+   *     ONE best-effort POST with no retry (retrying would mean keeping state after the user said
+   *     stop), so a flip made while offline is simply never counted.
+   *   * NO DENOMINATOR EXISTS, and none is invented. There is no per-session "this build can
+   *     report a flip" signal the way `healthReports` is one for errors, so a version with no row
+   *     here is genuinely ambiguous between "nobody left" and "this build predates the counter".
+   *     The panel renders absence as a dash and says so; it does not render a zero.
+   */
+  optOuts: 'optOuts',
+  /** dim = `<version>`. The counterpart, on a build that re-enabled. Never netted against
+   *  `optOuts`: "flips off minus flips on" is not a population, it is two actions subtracted. */
+  optIns: 'optIns',
   /** dim = `<step>:ok` / `<step>:failed`. */
   update: 'update',
   /** dim = `<step>:<failureClass>`. */
@@ -574,9 +606,28 @@ function foldErrors(records: readonly TelemetryRecord[], appVersion: string): Er
   return [...bag.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, v]) => v)
 }
 
+/**
+ * THE TWO SWITCH-FLIP EVENTS (JOS-109), split out for exactly the reason `foldSession` and
+ * `foldOutcome` were: `foldEvent`'s one switch would otherwise be past the repo's complexity
+ * ceiling, and the answer to that here is a helper, not a widened threshold.
+ *
+ * Both are one row and nothing else — a flip has no payload to fold — and both are dimmed by the
+ * build that was running when the user reached for the switch, which is the only version the
+ * question "did the build I shipped make people leave" can be about.
+ */
+function foldFlip(bag: Bag, ev: TelemetryEvent, version: string): boolean {
+  if (ev.t === 'optOut') {
+    add(bag, USAGE_METRICS.optOuts, version, 1)
+    return true
+  }
+  if (ev.t !== 'optIn') return false
+  add(bag, USAGE_METRICS.optIns, version, 1)
+  return true
+}
+
 /** One event's contribution. TOTAL: a kind with nothing to count simply adds nothing. */
 function foldEvent(bag: Bag, ev: TelemetryEvent, version: string): void {
-  if (foldSession(bag, ev, version) || foldOutcome(bag, ev)) return
+  if (foldSession(bag, ev, version) || foldOutcome(bag, ev) || foldFlip(bag, ev, version)) return
   switch (ev.t) {
     case 'viewDwell':
       add(bag, USAGE_METRICS.viewVisits, ev.view, 1)
@@ -605,7 +656,8 @@ function foldEvent(bag: Bag, ev: TelemetryEvent, version: string): void {
       add(bag, USAGE_METRICS.errorEvents, version, 1)
       return
     default:
-      // The session kinds and the two outcome kinds, already folded by the helpers above.
+      // The session kinds, the two outcome kinds and the two flip kinds, already folded by the
+      // three helpers above.
       return
   }
 }

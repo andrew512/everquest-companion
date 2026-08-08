@@ -328,6 +328,33 @@ function vUpdateOutcome(o: Record<string, unknown>): Validated<TelemetryEvent> {
   return { ok: true, value }
 }
 
+/**
+ * THE TWO SWITCH-FLIP EVENTS (JOS-109), and their validator is the shortest one in the file
+ * because the schema gave them nothing to check: a flip is the ENVELOPE plus the fact that it
+ * happened.
+ *
+ * "REFUSES PAYLOADS" IS SPELLED AS CONSTRUCTION, NOT AS REJECTION, and that is the same decision
+ * every other validator here makes for the same reason (`validateTelemetryEvent`'s note, and the
+ * pin in `tests/telemetryContract.test.mts`). These functions return a literal — so a client that
+ * bolted a character name, a session length or anything else onto an `optOut` does not get it
+ * stripped by a rule somebody has to remember; the property simply never appears in the value
+ * that comes back, on the client and again on the server.
+ *
+ * A HARD REJECTION WOULD BE THE WORSE ANSWER, and it is worth saying why rather than leaving it as
+ * a style choice. `validateTelemetryBatch` fails the WHOLE batch on one bad event and the endpoint
+ * answers 400, which `telemetryPermanentRefusal` classes as "these bytes will never be accepted" —
+ * so a future client that adds an optional field to a flip event would black out every counter in
+ * the fleet until the Lambda caught up. Dropping is what makes THE ADDITIVE-FIELD RULE work; the
+ * privacy property is the construction, not the refusal.
+ */
+function vOptOut(): Validated<TelemetryEvent> {
+  return { ok: true, value: { t: 'optOut' } }
+}
+
+function vOptIn(): Validated<TelemetryEvent> {
+  return { ok: true, value: { t: 'optIn' } }
+}
+
 const EVENT_VALIDATORS: Record<
   TelemetryEventKind,
   (o: Record<string, unknown>) => Validated<TelemetryEvent>
@@ -343,7 +370,9 @@ const EVENT_VALIDATORS: Record<
   funnelStep: vFunnelStep,
   healthCounters: vHealthCounters,
   updateOutcome: vUpdateOutcome,
-  errorReport: validateErrorReport
+  errorReport: validateErrorReport,
+  optOut: vOptOut,
+  optIn: vOptIn
 }
 
 /**

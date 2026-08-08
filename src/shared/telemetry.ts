@@ -616,6 +616,52 @@ export interface EvErrorReport {
   count: number
 }
 
+// ------------------------------------------------------- the switch itself (JOS-109)
+//
+// THE HONEST-MEASUREMENT PROBLEM, stated once, here, because everything downstream of these two
+// kinds is only as honest as this paragraph.
+//
+// The owner's question is "how many installs turn usage analytics OFF". It cannot be answered
+// exactly, and the reason is structural rather than a gap in the instrumentation: AN INSTALL THAT
+// GOES DARK BEFORE IT EVER REPORTS IS INVISIBLE BY DEFINITION. Somebody who opens the app, reads
+// the first-run notice and dismisses it before the flush loop's first tick has sent anything is,
+// to this pipeline, indistinguishable from somebody who never downloaded the app at all — and
+// making them distinguishable would mean sending something before they answered, which is exactly
+// the promise the notice exists to keep.
+//
+// So the ticket is TWO MEASUREMENTS, and they are labelled differently everywhere they are
+// rendered because conflating them would produce a confident wrong number:
+//
+//   1. OPT-OUT FLIPS — EXACT, over the population that ever reported. These two events. When the
+//      user turns the switch off, the app sends ONE final minimal notice and then goes quiet;
+//      turning it back on sends the counterpart. Both are exact counts of an action a user took.
+//      What they cannot count is the install that was never in the population to begin with.
+//   2. THE DARK COHORT — an ESTIMATE, and only ever a comparison. GitHub download counts beside
+//      distinct reporting installs, both printed, never subtracted. `src/main/triage/coverage.ts`
+//      argues that half; the short version is that a download is not an install (re-downloads,
+//      the auto-updater, curiosity clicks) so the difference of the two numbers is not a count of
+//      anything, and the panel refuses to print it.
+//
+// FIELDLESS ON PURPOSE. The envelope already carries everything a flip is worth knowing by —
+// version, channel, platform, timezone — and the event itself has nothing to add. It is also the
+// strongest form of the disclosure in TELEMETRY.md: "one final anonymous notice" is a claim the
+// SHAPE keeps, because there is no slot on either of these for anything else to ride along in.
+//
+// THEY ARE NEW EVENT KINDS, so THE ADDITIVE-FIELD RULE below applies in its fatal form and the
+// deploy order is part of the feature: the ingest Lambda must understand `optOut`/`optIn` BEFORE
+// any client emits one. `optOut` travels as its own single-event batch (main/telemetry/optOut.ts),
+// so under deploy skew it would only lose ITSELF — but `optIn` does not, and a 400 on a batch is a
+// dropped batch. Server first, client on the next tag. (JOS-100 is where that lesson was paid for.)
+
+/** The user turned usage analytics OFF. The last thing this install ever sends. */
+export interface EvOptOut {
+  t: 'optOut'
+}
+/** The user turned it back ON. Under a NEW analyticsId — a re-enable is a new cohort member. */
+export interface EvOptIn {
+  t: 'optIn'
+}
+
 export type TelemetryEvent =
   | EvSessionStart
   | EvSessionHeartbeat
@@ -629,6 +675,8 @@ export type TelemetryEvent =
   | EvHealthCounters
   | EvUpdateOutcome
   | EvErrorReport
+  | EvOptOut
+  | EvOptIn
 
 export type TelemetryEventKind = TelemetryEvent['t']
 
@@ -645,8 +693,17 @@ export const TELEMETRY_EVENT_KINDS = [
   'funnelStep',
   'healthCounters',
   'updateOutcome',
-  'errorReport'
+  'errorReport',
+  // Last, and they read as the coda they are: the doc's "Turning it off" section is directly
+  // below them, and a reader who has just been told what the app measures should meet the two
+  // events that say "stop" in the same breath as the sentence explaining them.
+  'optOut',
+  'optIn'
 ] as const
+
+/** The two kinds a SWITCH FLIP produces. One list, so the client, the doc and the rollup agree. */
+export const TELEMETRY_FLIP_KINDS = ['optOut', 'optIn'] as const
+export type TelemetryFlipKind = (typeof TELEMETRY_FLIP_KINDS)[number]
 
 // ---------------------------------------------------------------- envelope + batch
 //
