@@ -71,6 +71,71 @@ export const EFFECT_SAYS = '[data-testid="planner-effect-says"]'
 export const GROUP_SAYS = '[data-testid="planner-group-says"]'
 /** JOS-42 — the effect name ON a donor row (drawn on every axis but `effect`). */
 export const DONOR_EFFECT = '[data-testid="planner-donor-effect"]'
+/**
+ * JOS-104 — the effect name on a PLANNED SOCKET of the Inventory tab, and the tooltip anchor that
+ * answers "what does this exaltation do". `data-says` carries the one-liner the tooltip shows, so
+ * a spec can assert the answer EXISTS without racing MUI's popper; the hover step then proves the
+ * popper actually comes up with that text in it.
+ */
+export const SOCKET_EFFECT = '[data-testid="planner-socket-effect"]'
+export const SOCKET_EFFECT_SAYS = '[data-testid="planner-socket-effect"][data-says]'
+
+/**
+ * THE TWO PAIRS PLAYERS HAD TO REPORT MISSING, checked BY NAME on the Inventory board.
+ *
+ * JOS-67 was "only allows one finger slot focus effect" (both ring cells) and JOS-104 was "missing
+ * 2x any slots" (both any-cells). A cell COUNT would not notice one pair being swapped for the
+ * other, which is why these ask for the four `data-slot` values instead. The any-cell's LABEL is
+ * asserted too: the board renders `planSlotLabel`, and a cell reading "ANY1" would be the store key
+ * leaking onto the screen.
+ */
+export async function checkReportedPairs(page: Page): Promise<void> {
+  const rings = await countOf(page, `${BOARD_CELL}[data-slot="FINGER"], ${BOARD_CELL}[data-slot="FINGER2"]`)
+  check('both ring cells are on the board — you wear two rings', rings === 2, `${String(rings)} ring cells`)
+  const anyCells = await countOf(page, `${BOARD_CELL}[data-slot="ANY1"], ${BOARD_CELL}[data-slot="ANY2"]`)
+  check('both any-slot cells are on the board — you wear two of those too', anyCells === 2, `${String(anyCells)} any cells`)
+  const label = (await textOf(page, `${BOARD_CELL}[data-slot="ANY1"]`)).replace(/\s+/g, ' ').trim()
+  check('…and an any-cell is named in the client’s own words', label.includes('ANY SLOT 1'), `reads "${label}"`)
+}
+
+/**
+ * A PLANNED EXALTATION SAYS WHAT IT DOES, ON HOVER (JOS-104) — the fifth measurement of the
+ * effect-says machinery, and it lives here for the same reason the other four do: the spec is AT
+ * the max-lines ceiling and the rule is to split, never ratchet.
+ *
+ * The second half of one player's report — "mouseover (or click) an exaltation to see its effect".
+ * The board drew an effect NAME and a donor name, and neither answers what the thing does; the
+ * one-liner the browser has shown since V6 now rides the socket's effect name as a tooltip.
+ *
+ * ASSERTED IN TWO PARTS, because the DOM only carries one of them until the pointer arrives: the
+ * anchor states the line in `data-says` (readable without racing MUI's popper), and hovering must
+ * bring that SAME text up. Both halves matter — a `data-says` with no popper is a feature that
+ * never appears, and a popper with different text would be a second source of one fact.
+ *
+ * SKIPPED HONESTLY when the donor the browser happened to add is one of the 5.8% the spell DB
+ * never named: there is deliberately no tooltip then, and asserting one would demand a guess.
+ */
+export async function stepSocketEffect(page: Page): Promise<void> {
+  const planned = await countOf(page, SOCKET_EFFECT)
+  const answered = await countOf(page, SOCKET_EFFECT_SAYS)
+  if (planned === 0) {
+    note('no planned socket on the board — the socket-effect step is skipped this run')
+    return
+  }
+  if (answered === 0) {
+    note(`${String(planned)} planned socket(s) name effects the spell DB does not carry — no tooltip is the honest answer`)
+    return
+  }
+  const says = await page.evaluate((s) => document.querySelector(s)?.getAttribute('data-says') ?? '', SOCKET_EFFECT_SAYS)
+  check('a planned exaltation carries the one-liner the effect browser shows', says.length > 0, says)
+  await page.hover(SOCKET_EFFECT_SAYS, { timeout: 15_000 })
+  const tip = await settle(
+    () => page.evaluate(() => (document.querySelector('.MuiTooltip-tooltip') as HTMLElement | null)?.innerText ?? ''),
+    (t) => t.trim().length > 0,
+    { timeoutMs: 10_000 }
+  )
+  check('…and hovering it brings that line up, verbatim', tip.trim() === says.trim(), `tooltip "${tip.trim()}" vs "${says}"`)
+}
 
 // ---- DOM measurements ------------------------------------------------------------------
 

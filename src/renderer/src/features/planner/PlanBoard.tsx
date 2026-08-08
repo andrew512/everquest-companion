@@ -1,14 +1,17 @@
 // planner/PlanBoard.tsx — Inventory mode: the whole set on one screen, over what you are wearing.
 //
-// TWENTY-ONE CELLS IN CHARACTER-SHEET ORDER, always all of them (`PLAN_SLOTS`). A board that only
-// drew the slots you had already planned would answer "what have you done" when the question is
-// "what is left"; the empty cells are the point, and they are drawn QUIET — a slot label and one
-// muted invitation, never an error, never a warning about a decision you simply have not made.
+// EVERY CELL IN CHARACTER-SHEET ORDER, always all of them (`PLAN_SLOTS`). A board that only drew
+// the slots you had already planned would answer "what have you done" when the question is "what is
+// left"; the empty cells are the point, and they are drawn QUIET — a slot label and one muted
+// invitation, never an error, never a warning about a decision you simply have not made.
 //
-// TWENTY-ONE AND NOT EIGHTEEN because you wear two ears, two wrists and two rings (JOS-67, reported
-// as "only allows one finger slot focus effect"). A cell is a PLACE to wear something; the equip
-// SLOT is what R2 compares against, and `equipSlotOf` is the one-line bridge — the host picker and
-// the browse preset both cross it, and nothing below this file knows the pair rule exists.
+// TWENTY-THREE AND NOT EIGHTEEN, and both widenings came from players. You wear two ears, two
+// wrists and two rings (JOS-67, "only allows one finger slot focus effect"), and you wear two
+// ANY-SLOT items on top of that (JOS-104, "missing 2x any slots"). A cell is a PLACE to wear
+// something; what R2 compares against is the equip SLOT, and `equipSlotOf` / `hostSlotsOf` are the
+// one-line bridges — the host picker and the browse preset both cross them, and nothing below this
+// file knows either rule exists. The any-cells cross with `null`, which both of those consumers
+// already spell "no slot filter".
 //
 // IT FILLS ITSELF (V7). The tab was called Board and started empty, which made it eighteen
 // invitations to retype gear the game already knows about. Now each cell's host comes from the

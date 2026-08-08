@@ -16,14 +16,14 @@
 // browser already narrowed to what can legally go there (that socket, this slot, this host's
 // classes), so the second way into the planner is "open an item and fill it" rather than "find an
 // effect and place it". A cell with NO host still draws only what is planned: four empty rows on
-// twenty-one untouched cells would be noise, not an invitation.
+// twenty-three untouched cells would be noise, not an invitation.
 //
 // THE NARROWED-CLASS LINE IS R2 MADE VISIBLE. Socketing narrows the host's class list to the
 // overlap with the donor's, so a six-class sword quietly becomes a four-class sword the moment you
 // plan a Ranger-only proc into it.
 //
 // THE STATE CHIP IS THE ONLY PROGRESS THIS SURFACE SHOWS, and it is decoration (D6): a character
-// with no dumps, no loot history and no observed merges renders twenty-one cells of `planned` and is
+// with no dumps, no loot history and no observed merges renders twenty-three cells of `planned` and is
 // a completely functional planner.
 
 import { type JSX } from 'react'
@@ -39,6 +39,7 @@ import {
   type PlanSocket,
   type SocketType
 } from '@shared/planner/types'
+import { effectOneLiner } from '@shared/planner/effectText'
 import { extractionTier, narrowedClasses } from '@shared/planner/rules'
 import { Tooltip } from '../../lib/Tooltip'
 import { DonorName, EraChip, MismatchChip, NoSlotChip, StateChip } from './PlannerChips'
@@ -109,6 +110,43 @@ function unlockText(socket: SocketType, hostTier: number | undefined): string {
   return hostTier !== undefined && hostTier < at ? `+${String(at)} to unlock` : `@+${String(at)}`
 }
 
+/**
+ * WHAT THE EXALTATION DOES, ON THE EXALTATION (JOS-104, second half of the same report: "mouseover
+ * (or click) an exaltation to see its effect").
+ *
+ * A planned socket said "Nullify Undead" and a donor name, which is a NAME and not an effect — the
+ * board could tell you what you had chosen but not what you had chosen it FOR. The effect browser
+ * has answered that since V6 (`effectOneLiner` over the committed spell DB: is it good or bad, who
+ * does it hit, how long does it last), and this is the same call on the same rows — the machinery
+ * is reused, not reinvented, so a rescrape moves both surfaces at once.
+ *
+ * WHY A TOOLTIP AND NOT A LINE. A board cell is 260px and already carries the effect, the donor,
+ * up to four era/mismatch/state chips and a remove control; the browser can afford the one-liner
+ * inline because its rows are the full width of the pane. This is the caveat diet's allowed shape
+ * rather than an exception to it — it is not a footnote about where a number came from, it is the
+ * fact the user asked to see, on the thing they asked to hover. It is also non-interactive, so the
+ * popper cannot swallow a click the way JOS-17's did.
+ *
+ * SILENT WHEN THE DB IS SILENT. `effectOneLiner` returns '' for the 5.8% of effect rows the spell
+ * DB never named, and for a donor the corpus no longer carries at all. Then there is no tooltip and
+ * no hand cursor — an anchor promising an answer and delivering "unknown" is worse than a plain
+ * label (law 1).
+ */
+function EffectName({ effect, says }: { effect: string; says: string }): JSX.Element {
+  const label = (
+    <Typography
+      variant="caption"
+      noWrap
+      data-testid="planner-socket-effect"
+      data-says={says === '' ? undefined : says}
+      sx={{ display: 'block', fontWeight: 600 }}
+    >
+      {effect}
+    </Typography>
+  )
+  return says === '' ? label : <Tooltip title={says}>{label}</Tooltip>
+}
+
 /** What a FILLED socket says: the effect, its donor, and how far along that donor is. */
 function FilledSocket({
   planned,
@@ -127,9 +165,7 @@ function FilledSocket({
   return (
     <>
       <Box sx={{ minWidth: 0, flexShrink: 1 }}>
-        <Typography variant="caption" noWrap sx={{ display: 'block', fontWeight: 600 }}>
-          {planned.effect}
-        </Typography>
+        <EffectName effect={planned.effect} says={donor === null ? '' : effectOneLiner(donor)} />
         <Typography variant="caption" component="div" noWrap sx={{ color: 'text.secondary' }}>
           {donor === null ? planned.donorKey : <DonorName name={donor.name} onOpen={onOpenLoot} />}
         </Typography>
@@ -306,7 +342,7 @@ export default function PlanCell(props: PlanCellProps): JSX.Element {
   const empty = planned.length === 0 && host === null
   const narrowed = planned.length === 0 ? [] : cellNarrowing(planSlot, index, host?.key)
   // With a host, the item window: all four sockets, filled or not. Without one, only what is
-  // planned — four empty rows on twenty-one untouched cells would be noise, not an invitation.
+  // planned — four empty rows on twenty-three untouched cells would be noise, not an invitation.
   const rows = host === null ? planned : SOCKET_TYPES
 
   return (

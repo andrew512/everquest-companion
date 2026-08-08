@@ -41,9 +41,17 @@ export interface ReplaceSubject {
 }
 
 /**
- * Every board CELL this donor could be written into, in board order (JOS-67). A two-slot sword
- * gives PRIMARY and SECONDARY as before; a ring gives FINGER 1 and FINGER 2, which is the fix.
+ * Every board CELL this donor NATURALLY lands in, in board order (JOS-67). A two-slot sword gives
+ * PRIMARY and SECONDARY as before; a ring gives FINGER 1 and FINGER 2, which is the fix.
  * Deduped by construction — `cellsForSlot` reads one ordered list and a donor never repeats a slot.
+ *
+ * THE TWO ANY-CELLS ARE DELIBERATELY ABSENT (JOS-104), and the reason is that they would be legal
+ * for EVERY donor. Appending them turns the browser's blind "Add to set" into a three-item menu on
+ * the single-slot donors that are most of the corpus, which costs the one-click add AND the replace
+ * warning below (`cells.length === 1` is what implies a target at all). So the any-cells are
+ * reached the way the game reaches them — from the Inventory board, where they draw themselves,
+ * fill their host from your dump, and open the browser on one of their sockets with the slot filter
+ * off. Nothing about them is unreachable; the blind add just keeps naming the donor's own slots.
  */
 export function targetCells(donor: Pick<ReplaceSubject, 'slots'>): PlanSlotId[] {
   return donor.slots.flatMap((s) => cellsForSlot(s))

@@ -20,7 +20,7 @@
 
 import type { JSX } from 'react'
 import { Chip, MenuItem, Stack, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material'
-import { EQUIP_SLOTS, type EquipSlot, type SocketType } from '@shared/planner/types'
+import { EQUIP_SLOTS, planSlotLabel, type EquipSlot, type SocketType } from '@shared/planner/types'
 import { Tooltip } from '../../lib/Tooltip'
 import { CURRENT_ERA_LABEL, type DonorFilters } from './plannerData'
 import { AXIS_LABEL, SOCKET_LABEL, axesFor, type GroupAxis } from './plannerGroups'
@@ -114,7 +114,9 @@ export default function EffectFilterBar({
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', mb: 1 }}>
       {preset !== null && (
         <PresetChip
-          label={`${preset.slot} · ${SOCKET_LABEL[preset.socket]} · ${preset.hostName}`}
+          // `planSlotLabel`, never the raw key: the chip is what the user reads back, and the keys
+          // are not words ("FINGER2", "ANY1"). One spelling of a cell, everywhere.
+          label={`${planSlotLabel(preset.slot)} · ${SOCKET_LABEL[preset.socket]} · ${preset.hostName}`}
           onClear={() => onClearPreset?.()}
         />
       )}
@@ -150,7 +152,10 @@ export default function EffectFilterBar({
         onChange={(e) => setFilters({ ...filters, slot: e.target.value === 'ALL' ? null : (e.target.value as EquipSlot) })}
         sx={{ minWidth: 130, flexShrink: 0 }}
       >
-        <MenuItem value="ALL">Any slot</MenuItem>
+        {/* "All slots", not "Any slot" — since JOS-104 an ANY SLOT is a REAL place on the board,
+            and a filter option reading "Any slot" beside two cells called ANY SLOT 1 and 2 would
+            read as a filter FOR them. This one has always meant "do not filter by slot". */}
+        <MenuItem value="ALL">All slots</MenuItem>
         {EQUIP_SLOTS.map((s) => (
           <MenuItem key={s} value={s}>
             {s}
