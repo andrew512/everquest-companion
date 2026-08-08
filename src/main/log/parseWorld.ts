@@ -95,6 +95,24 @@ const PLAYER_DEATH_RE = /^You have been slain by (.+?)!$/
 // redundant echo whose text varies by server (JOS-88).
 const YOU_DIED = 'You died.'
 
+// The MOB twin of `You died.`: `<Name> died.` — the killerless THIRD-PERSON death, and the
+// reason a boss killed by a damage-over-time tick reads as "0 kills" (JOS-101). Same cause as
+// the player form above: with no attacker to name, the client prints this INSTEAD of a slain
+// sentence, never as well as one.
+//
+// FULL-LOG SWEEP (read-only, 2026-08-08, eqlog_Primitive_freeport.txt, 1.44M lines): 21 lines
+// end in " died." — 2 are `You died.`, claimed above by exact equality before this regex is
+// ever reached, and the other 19 are mob names ("An azarack died.", "A froglok gaz shaman
+// died.", "Soldier of V`Zher died."). NOT ONE of the 21 has a `slain` line within ±3 lines, so
+// this shape never duplicates a slain sentence and cannot double-count a kill. 15 of the 19
+// carry `You gain experience!` on the line immediately before — the join that credits them
+// (shared/kills.ts KILL_EXP_JOIN_MS). The sibling log eqlog_Primitive_halas.txt has 0.
+//
+// The pattern looks wide open but player CHAT cannot be claimed by it: a say/tell/group line
+// wraps its text in quotes, so it ends `died.'` and not `died.` — which is why a sweep this
+// broad finds zero chat lines. Anchored at both ends for the same reason EXP_RE is.
+const MOB_DIED_RE = /^(.+?) died\.$/
+
 // Turn-ins: "You offered 1 Sphinx Claw to Dason Goldblade." then
 //           "You complete the trade with Dason Goldblade."
 const OFFER_RE = /^You offered [\d,]+ (.+?) to (.+?)\.$/
@@ -278,6 +296,19 @@ export function classifyDeath({ text, ts, seq, raw }: ClassifyCtx): LogEvent | n
     if (m) return { kind: 'death', seq, ts, raw, name: norm(m[1]), bySelf: true }
     m = SLAIN_BY_RE.exec(text)
     if (m) return { kind: 'death', seq, ts, raw, name: norm(m[1]), bySelf: false, killer: m[2].trim() }
+  }
+  // The killerless MOB death, gated on a cheap suffix test so the common path pays nothing.
+  // `bySelf:false` with NO killer is the honest shape and a deliberate one: the line names no
+  // attacker, and law 1 forbids inventing one. `bySelf:true` would credit you with a stranger's
+  // kill and make the combat engine attribute the killing blow to you; a synthesized killer
+  // would be a fabricated entity. Every consumer already spells the no-killer case — combat/
+  // ingest.ts computes `killerKey: undefined`, reducers.ts `isCountedKill` short-circuits to
+  // true (it IS a kill of that mob), kills.ts credits it purely from the experience join, and
+  // progression.ts files it as NEITHER credited nor witnessed, because "somebody else killed
+  // it" is exactly the claim this line does not make.
+  if (text.endsWith(' died.')) {
+    const m = MOB_DIED_RE.exec(text)
+    if (m) return { kind: 'death', seq, ts, raw, name: norm(m[1]), bySelf: false }
   }
   return null
 }
