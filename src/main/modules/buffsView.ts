@@ -48,20 +48,51 @@ function resolveTargetLabel(
   return { target: pets.entityDisplayFor(entityKey), inferredTarget: cls === 'debuff' && !a.messageDriven }
 }
 
+/**
+ * THE OVERLAY's OBSERVED-FIRST duration (JOS-114), computed here where the samples + DB live and
+ * carried on the ActiveBuff so the pure shared projection never reaches into main: the most-recent
+ * clean observed sample wins, else the DB base, else nothing (the overlay counts up). A SEPARATE
+ * input from `estimatedMs`/`durationSource` — the Buffs TAB is left byte-identical (DB-first,
+ * distribution-aware); only the overlay reads these two fields.
+ */
+function overlayDurationOf(
+  key: string,
+  permanent: boolean,
+  stats: SpellStats
+): { overlayDurationMs: number | null; overlaySource?: 'db' | 'observed' } {
+  if (permanent) return { overlayDurationMs: null }
+  const lastObs = stats.lastObservedFor(key)
+  if (lastObs != null) return { overlayDurationMs: lastObs, overlaySource: 'observed' }
+  const dbMs = stats.dbDurationFor(key)
+  if (dbMs != null) return { overlayDurationMs: dbMs, overlaySource: 'db' }
+  return { overlayDurationMs: null }
+}
+
 /** The row's duration/estimate fields, from the per-spell mined stats + the DB prior. */
 function durationFields(
   key: string,
   permanent: boolean,
   stats: SpellStats
-): { estimatedMs: number | null; p25: number | null; p75: number | null; n: number; durationSource?: 'db' | 'observed' } {
+): {
+  estimatedMs: number | null
+  p25: number | null
+  p75: number | null
+  n: number
+  durationSource?: 'db' | 'observed'
+  overlayDurationMs: number | null
+  overlaySource?: 'db' | 'observed'
+} {
   const st = stats.statFor(key)
   const est = stats.estimateFor(key)
+  const overlay = overlayDurationOf(key, permanent, stats)
   return {
     estimatedMs: permanent ? null : est.ms,
     p25: st?.p25 ?? null,
     p75: st?.p75 ?? null,
     n: st?.n ?? 0,
-    ...(est.source && !permanent ? { durationSource: est.source } : {})
+    ...(est.source && !permanent ? { durationSource: est.source } : {}),
+    overlayDurationMs: overlay.overlayDurationMs,
+    ...(overlay.overlaySource ? { overlaySource: overlay.overlaySource } : {})
   }
 }
 
@@ -91,6 +122,8 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
     ...(inferredTarget ? { inferredTarget: true } : {}),
     ...(provisional ? { provisional: true } : {}),
     ...(d.durationSource ? { durationSource: d.durationSource } : {}),
+    overlayDurationMs: d.overlayDurationMs,
+    ...(d.overlaySource ? { overlaySource: d.overlaySource } : {}),
     ...(permanent ? { permanent: true } : {}),
     ...(messageDriven ? { messageDriven: true } : {})
   }

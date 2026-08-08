@@ -177,48 +177,79 @@ test('AN UNKNOWN DURATION NEVER COUNTS DOWN — over every row of every fixture'
   assert.ok(elapsedRows > 0, 'the fixtures produced no count-up rows at all — the test proves nothing')
 })
 
-test('A MINED ESTIMATE IS NOT A STATED DURATION — `observed` provenance never earns a countdown', () => {
-  // The buffs model computes an estimate for spells the DB has no duration for, from the
-  // recency-weighted MAX of the player's own land→fade samples, and tags it
-  // `durationSource: 'observed'`. The Buffs TAB counts down from it. THIS SURFACE MUST NOT — the
-  // model itself calls it an estimate, samples are censored by zones/gaps/deaths, and counting
-  // down from one is exactly the invented remaining this ticket forbids.
+test('OBSERVED WINS OVER DB — an observed duration now earns the countdown (JOS-114 reverses JOS-89)', () => {
+  // JOS-89 refused to count down from anything but a DB-stated duration, because a mined estimate
+  // could be a censored (too-short) sample. JOS-114 REVERSES that, made safe by the clean-sample
+  // rule: `overlayDurationMs` is filled from the MOST-RECENT CLEAN sample first, the DB base
+  // second, and a sample is minted only from a genuine wear-off. The overlay reads that one field;
+  // `estimatedMs`/`durationSource` are the Buffs TAB's and are not consulted here.
   //
-  // SAY WHICH: this is asserted on the PROJECTION, not on a fixture replay, because NO committed
-  // fixture reaches the branch. Swept all 103 `tests/fixtures/*.log` through the DB-enabled
-  // replay: not one produced an active with `durationSource === 'observed'` (nor one with no
-  // source at all). With the real spells.json installed, every buff that survives own-cast
-  // gating and reaches `active` is a spell the DB knows. So the branch is real, reachable in
-  // production the moment a player casts something the wiki scrape missed, and structurally
-  // covered here rather than observed in the owner's log. The inputs below are a typed
-  // ActiveBuff — the model's own documented shape, produced by buffsView.ts `durationFields` —
-  // not an invented log sentence.
-  const mined: ActiveBuff = {
-    spell: 'Some Unscraped Spell',
+  // SAY WHICH: asserted on the PROJECTION with typed ActiveBuffs — the model's own documented
+  // shape from buffsView.ts `durationFields` — not an invented log sentence. The end-to-end sample
+  // minting + censoring is pinned in tests/buffOverlayDuration.test.mts against the real modules.
+  const observed: ActiveBuff = {
+    spell: 'Swift Like the Wind',
+    cls: 'buff',
+    self: true,
+    startedTs: 1_000,
+    // The Buffs TAB fields still say DB (16m) — the tab is unchanged…
+    estimatedMs: 960_000,
+    durationSource: 'db',
+    p25: null,
+    p75: null,
+    n: 1,
+    // …while the OVERLAY field carries the player's own observed 33m, and that is what shows.
+    overlayDurationMs: 1_980_000,
+    overlaySource: 'observed'
+  }
+  const dbOnly: ActiveBuff = {
+    spell: 'A Spell Never Observed',
     cls: 'buff',
     self: true,
     startedTs: 1_000,
     estimatedMs: 300_000,
-    durationSource: 'observed',
-    p25: 280_000,
-    p75: 320_000,
-    n: 5
+    durationSource: 'db',
+    p25: null,
+    p75: null,
+    n: 0,
+    overlayDurationMs: 300_000,
+    overlaySource: 'db'
   }
-  const stated: ActiveBuff = { ...mined, spell: 'A Spell The DB Knows', durationSource: 'db' }
-  const rows = buildTimerRows({ active: [mined, stated], stats: {} }, { holds: [], ends: [] })
+  const rows = buildTimerRows({ active: [observed, dbOnly], stats: {} }, { holds: [], ends: [] })
 
-  const minedRow = rows.find((r) => r.name === 'Some Unscraped Spell')
-  assert.ok(minedRow)
-  assert.equal(minedRow.mode, 'elapsed', 'a mined estimate must count UP')
-  assert.equal(minedRow.durationMs, undefined, 'and must not carry the estimate as a duration')
-  assert.equal(timerReading(minedRow, 1_000 + 60_000).remainingMs, undefined)
+  const obsRow = rows.find((r) => r.name === 'Swift Like the Wind')
+  assert.ok(obsRow)
+  assert.equal(obsRow.mode, 'countdown', 'an observed duration now counts DOWN (the reversal)')
+  assert.equal(obsRow.durationMs, 1_980_000, 'and it counts down from the OBSERVED 33m, not the DB 16m')
+  assert.equal(timerReading(obsRow, 1_000 + 60_000).remainingMs, 1_920_000)
 
-  // …while the SAME numbers with `db` provenance do earn the countdown. The provenance flag is
-  // the whole discriminator; nothing else about the two rows differs.
-  const statedRow = rows.find((r) => r.name === 'A Spell The DB Knows')
-  assert.ok(statedRow)
-  assert.equal(statedRow.mode, 'countdown')
-  assert.equal(statedRow.durationMs, 300_000)
+  // A spell the player has never cleanly observed falls back to the DB base — still a countdown.
+  const dbRow = rows.find((r) => r.name === 'A Spell Never Observed')
+  assert.ok(dbRow)
+  assert.equal(dbRow.mode, 'countdown')
+  assert.equal(dbRow.durationMs, 300_000)
+})
+
+test('a buff with NO observed sample and NO DB duration still counts UP — nothing invented', () => {
+  // `overlayDurationMs` null (no sample, no DB base) is the only count-up case left. The overlay
+  // never draws a bar from a number it does not have.
+  const bare: ActiveBuff = {
+    spell: 'Some Unscraped Spell',
+    cls: 'buff',
+    self: true,
+    startedTs: 1_000,
+    estimatedMs: null,
+    p25: null,
+    p75: null,
+    n: 0,
+    overlayDurationMs: null
+  }
+  const rows = buildTimerRows({ active: [bare], stats: {} }, { holds: [], ends: [] })
+  const row = rows.find((r) => r.name === 'Some Unscraped Spell')
+  assert.ok(row)
+  assert.equal(row.mode, 'elapsed', 'no honest duration ⇒ count up')
+  assert.equal(row.durationMs, undefined, 'and carry no duration at all')
+  assert.equal(timerReading(row, 1_000 + 60_000).remainingMs, undefined)
 })
 
 test('a permanent illusion gets no timer at all, rather than a fabricated one', () => {

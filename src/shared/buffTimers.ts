@@ -11,14 +11,30 @@
 // so a test can drive real fixture bytes through the real parser and the real modules and
 // assert the rows a user would actually see.
 //
-// THE COROLLARY THAT COSTS SOMETHING. The buffs model computes an `estimatedMs` for spells the
-// DB has no duration for, from the recency-weighted MAX of the player's own land→fade samples
-// (buffsStats.ts `estimateFor`, tagged `durationSource: 'observed'`). The Buffs TAB renders that
-// as a countdown. This surface does NOT: a sample can be censored by a zone, an offline gap, a
-// death, or a fade the log never printed, and the model itself calls it an estimate. Counting
-// down from an estimate is precisely the invented remaining this ticket forbids. So
-// `durationSource === 'db'` counts down and everything else counts up — a deliberate divergence
-// from the tab, and the point of the ticket.
+// OBSERVED-FIRST DURATION PRECEDENCE (JOS-114) — the reversal JOS-89 refused, now made safe.
+// This surface counts down from `overlayDurationMs`, which the buffs model fills under a strict
+// precedence (buffsView.ts `durationFields`):
+//   1. the MOST-RECENT clean observed sample for this spell (this character), else
+//   2. the DB-stated duration, else
+//   3. null → count UP.
+// OBSERVED WINS OVER DB. Swift Like the Wind IS in the DB at its ~15m base, so before this the
+// overlay showed 15m for a buff the player's own AAs/focus had extended to 33m; the newest
+// full-cycle observation is the current truth and the DB base never carries it. What makes
+// counting down from an observation SAFE — and what JOS-89 (rightly, then) did not yet have — is
+// the CLEAN-SAMPLE rule: a sample is minted ONLY from a genuine wear-off
+// (buffsInstances.recordFade → addSample); a zone, a death, an offline gap, an entity retirement
+// or a hygiene sweep clears the instance WITHOUT minting, and an offline-spanned span is dropped.
+// So "most recent" is never a truncated value. The Buffs TAB is unchanged (it keeps `estimatedMs`
+// / `durationSource`, DB-first and distribution-aware); only this surface reads the two overlay
+// fields — a deliberate, now-inverted divergence from the tab.
+//
+// NOT everything the overlay draws takes this path: the per-target MEZ/ROOT holds (main/modules/
+// buffTimers.ts, projected by `ccRow` below) stay DB-STATED. Their end line — `Your <mez> spell
+// has worn off of <mob>.` — is printed identically whether the mez ran its full course or a nuke
+// broke it early (see tests/fixtures/w10-cazic-slow.log: 2 s and 18 s break lines under one 24 s
+// cast), so no clean sample exists to mint; counting down from one would be the censored value the
+// clean-sample rule exists to keep out. A SLOW/debuff, by contrast, flows through the ActiveBuff
+// path (`buffApply` land → `buffFade` "worn off of <mob>") and DOES get the observed-first rule.
 
 import type { ActiveBuff, BuffsSnap } from './buffTypes'
 
@@ -190,18 +206,19 @@ function ccRow(h: CcHold): BuffTimerRow {
 }
 
 /**
- * THE LAW, as one decision: a DB-STATED duration — and nothing else — earns a receding countdown.
+ * THE LAW, as one decision: the OBSERVED-FIRST duration — most-recent clean sample, else the DB
+ * base — earns a receding countdown; nothing else does (JOS-114).
  *
- * `durationSource` is the whole discriminator. `'db'` is the wiki's own number for the spell;
- * `'observed'` is the recency-weighted MAX of the player's own land→fade samples, which the model
- * itself calls an estimate and which a zone, an offline gap, a death or an unprinted fade can
- * censor. Counting down from the second one is the invented remaining this surface forbids, so it
- * counts up instead — and carries no duration at all, so nothing downstream can draw a bar from it.
+ * `overlayDurationMs` is the whole discriminator, filled by buffsView.ts under the precedence in
+ * this file's header (observed sample → DB → null). A permanent buff never counts down. A buff the
+ * model can put no honest number on (no sample, no DB duration) counts UP instead — and carries no
+ * duration at all, so nothing downstream can draw a bar from it. `estimatedMs`/`durationSource`
+ * are the Buffs TAB's fields and are deliberately NOT read here.
  */
 function timerModeOf(b: ActiveBuff): { mode: TimerMode; durationMs?: number } {
   if (b.permanent === true) return { mode: 'permanent' }
-  if (b.durationSource === 'db' && b.estimatedMs != null && b.estimatedMs > 0) {
-    return { mode: 'countdown', durationMs: b.estimatedMs }
+  if (b.overlayDurationMs != null && b.overlayDurationMs > 0) {
+    return { mode: 'countdown', durationMs: b.overlayDurationMs }
   }
   return { mode: 'elapsed' }
 }
