@@ -125,6 +125,26 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.13.0',
+    date: '2026-08-08',
+    entries: [
+      {
+        kind: 'new',
+        text: "The map you pick stays picked — it survives switching tabs and restarting, and the toolbar says whether the map is following you or pinned. 'Current zone' snaps back to where your character is and follows from there.",
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Paste a /loc into the Maps toolbar and a crosshair lands on that spot. It stays — per zone, across tabs and restarts — until you replace it or clear it.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'When something breaks, the app now reports the technical details of the failure — the error, where in the app it happened, and what kinds of log line it had just read — so bugs get diagnosed instead of guessed at. Never your log contents, your chat, or any name from the game: the message is redacted on your machine and checked again on arrival. The usage-analytics switch still turns all of it off.'
+      }
+    ]
+  },
+  {
     version: '0.12.0',
     date: '2026-08-08',
     entries: [
