@@ -704,6 +704,17 @@ export function setOverlaysHidden(hidden: boolean): void {
 //     has nothing to click, so pass-through is unconditional and permanent.
 //   * NO `-webkit-app-region` anywhere in its page — it is not draggable, and cannot become a
 //     window the user accidentally picks up while playing.
+//
+// AND ONE PROPERTY THIS FILE DELIBERATELY DOES NOT SET: ITS ZOOM (JOS-154). The ring's CSS pixels
+// have to be DIPs, because main sends it a DIP offset from this window's own origin to use as a
+// CSS translation — so the app's text size (`uiScale`, JOS-123) must not reach it. It used to,
+// and not through anything written here: `setZoomFactor` stores a zoom PER HOST, every page is
+// served from one host in development, and the ring inherited the main window's (measured on
+// Electron 43.2.0 — 1.0 to 1.25 on a main-window setZoomFactor). The pin is
+// `webFrame.setZoomLevel(0)` in `src/preload/cursor.ts`, which is a per-view TEMPORARY zoom and
+// therefore the only one that can hold this window still without moving the main window with it —
+// the full argument, and the two alternatives that were measured and rejected, are in that file's
+// header. Nothing to add to the BrowserWindow options below; the absence is the point.
 
 let cursorRingWindow: BrowserWindow | null = null
 
