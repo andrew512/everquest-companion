@@ -21,7 +21,8 @@
 // used to carry a label-search box and a This zone / All zones toggle beside the sidebar's own
 // toggle — three controls over one question, answered in two places. The bar now describes the
 // DRAWING and nothing else; the sidebar is the one filter over the wiki's bestiary, this map's
-// own labels and every other installed map.
+// own labels, every other installed map AND the bestiary of every other zone (JOS-135) — so a
+// name you half-remember is findable from wherever you happen to be standing.
 //
 // WHAT THIS VIEW CANNOT DO, AND THE HALF OF IT THE USER CAN (JOS-98). There is no AUTOMATIC "you
 // are here" marker and there cannot be: `Your Location` appears ZERO times in the log — re-measured
@@ -331,7 +332,7 @@ export default function MapsView(): JSX.Element {
   // THE SIDEBAR. Open by default, remembered in `eq.maps.pane`, closed from its own header. Its
   // filtered rows are derived ONCE and read by both the list and the surface's pins.
   const zoneName = zoneLongName(zone, raw)
-  const pane = useZonePane({ vp, data, zoneName, prefs })
+  const pane = useZonePane({ vp, data, zoneName, prefs, zones })
 
   return (
     <Stack spacing={1.5} sx={{ height: '100%' }}>
