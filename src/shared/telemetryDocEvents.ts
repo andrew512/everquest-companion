@@ -15,9 +15,12 @@
 
 import {
   MAX_BREADCRUMBS,
+  MAX_COMPONENT_DEPTH_WIRE,
   MAX_ERROR_FRAMES_WIRE,
+  MAX_EXTERNAL_FRAMES_WIRE,
   MAX_REDACTED_MESSAGE_WIRE,
   TELEMETRY_ERROR_MODES,
+  TELEMETRY_FRAME_ORIGINS,
   TELEMETRY_ERROR_VIEWS,
   TELEMETRY_FAILURE_CLASSES,
   TELEMETRY_FEATURES,
@@ -292,6 +295,29 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
           'Where in the app it happened. Files are named relative to the app’s own program ' +
           'files (they always begin `out/`) — the folder the app is installed in, and therefore ' +
           'your account name, is cut off before the value exists.'
+      },
+      {
+        name: 'frameOrigin',
+        type: values(TELEMETRY_FRAME_ORIGINS),
+        note:
+          'Whether the places listed above are where the error was thrown, or where the app ' +
+          'noticed it. Some failures arrive with no trace of their own, and the app records ' +
+          'its own position instead so two different failures do not look like one.'
+      },
+      {
+        name: 'externalFrames',
+        type: `at most ${String(MAX_EXTERNAL_FRAMES_WIRE)} × (module, line, column, function)`,
+        note:
+          'The same thing for code that is not ours: the name of the Node built-in, the Electron ' +
+          'script, or the open-source package involved — `node:fs`, `node_modules/chokidar`. ' +
+          'The name only, cut at the package: the folder it is installed in never survives.'
+      },
+      {
+        name: 'componentPath',
+        type: `at most ${String(MAX_COMPONENT_DEPTH_WIRE)} names joined with >`,
+        note:
+          'For an error in the app’s own interface, which of the app’s screen components it ' +
+          'came through — the names in this app’s source code, and nothing from the game.'
       },
       { name: 'fingerprint', type: '16 hex characters', note: 'A hash used to group identical errors together.' },
       {

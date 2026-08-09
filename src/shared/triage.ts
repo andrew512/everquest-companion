@@ -567,6 +567,13 @@ export interface TriageErrorExemplar {
   code?: string
   redactedMessage: string
   frames: { file: string; line: number; col: number; func: string }[]
+  /** `capture` when `frames` names the site that CAUGHT the error rather than the site that threw
+   *  it (JOS-111). Absent on a row stored before the field existed, which means `thrown`. */
+  frameOrigin?: string
+  /** Node/Electron/dependency frames the throw passed through, when it had any (JOS-111). */
+  externalFrames?: { file: string; line: number; col: number; func: string }[]
+  /** The React components the error came through, innermost first (JOS-111). */
+  componentPath?: string
   breadcrumbs: { kind: string; offsetMs: number }[]
   view: string
   sessionAgeBucket: number
