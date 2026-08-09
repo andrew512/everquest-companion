@@ -144,6 +144,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         fromReport: true
       },
       {
+        kind: 'new',
+        text: 'Loot and leveling can answer for a slice of time, not just all of it: pick Session, Zone, Zone + Session or a custom range and the tables, rates and drop panels all agree on the answer. All time stays the default.',
+        fromReport: true
+      },
+      {
         kind: 'fixed',
         text: 'The add-alert editor keeps your work when you switch away from the app and back - the name, trigger, cooldown and spoken phrase all survive, and an alert you were editing no longer snaps back to how it was saved.',
         fromReport: true
