@@ -34,6 +34,10 @@
  *   6. the "New at this level" panel is mounted with its stepper — and, once the combo module
  *      has resolved a loadout, draws real unlock rows for it (floors, never today's counts);
  *   7. the tab never scrolls the page, and there are no renderer console errors;
+ *   7b. (JOS-151) and at the narrowest window the app allows, the two columns STACK instead of
+ *      sharing one height: no panel draws over another, the stack absorbs the overflow rather
+ *      than the page, and both the timeslice control and the unlock stepper are still the thing
+ *      at their own centre. Steps 7/7b live in `levelingLayoutSteps.mts`;
  *   8. (JOS-78) the IN-WINDOW DROPS panel is mounted with the tab, states its empty window rather
  *      than drawing a blank box, and fills from loot the harness plays into the tailed file —
  *      ordered by observed drops, each row stating a count and a rate over a STATED active span;
@@ -62,7 +66,6 @@ import {
   failures,
   hoverAt,
   note,
-  pageOverflow,
   rectOf,
   reportRun,
   settle,
@@ -77,6 +80,9 @@ import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 // because this spec sits AT the repo max-lines budget; see that file's header.
 import { stepDrops } from './dropSteps.mjs'
 import { stepZoneSlice } from './sliceSteps.mjs'
+// The layout contract and the narrow window (JOS-151) — next door for the same reason, and see
+// that file's header for what the reporter's 1073x937 actually did to this tab.
+import { stepNarrowLayout, stepOverflow } from './levelingLayoutSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -643,16 +649,6 @@ async function stepAaLedger(page: Page): Promise<void> {
   check('…and clicking it opens its rungs', rungs > 0, `${String(rungs)} rungs`)
 }
 
-/** 7. THE LAYOUT CONTRACT: the app's content area owns the scroll; a view never grows the page. */
-async function stepOverflow(page: Page): Promise<void> {
-  const over = await pageOverflow(page)
-  check(
-    'the Leveling tab never scrolls the page (its panels scroll inside themselves)',
-    over.doc === 0 && over.content === 0,
-    `document +${String(over.doc)}px · content area +${String(over.content)}px`
-  )
-}
-
 async function main(): Promise<void> {
   buildIfStale()
 
@@ -700,6 +696,9 @@ async function main(): Promise<void> {
       // DBs, so it must be there whether or not this log has enough dings to draw a chart.
       await stepNewAtLevel(page, log)
       await stepOverflow(page)
+      // LAST, because it moves the window: it puts the size and the minimum back before it
+      // returns, but nothing after it should have to trust that.
+      await stepNarrowLayout(app, page)
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
