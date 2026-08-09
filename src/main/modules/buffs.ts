@@ -70,24 +70,35 @@
 // tracked. A buff you cast on another player is tracked only if the log actually names them
 // landing it. Silence stays silence — the same answer a resist gets.
 //
-// WHAT A CAST STILL DOES. `castBegin` records a PENDING cast and stamps `castHistory`; that is
-// the OWN-CAST ATTRIBUTION machinery (JOS-89's ownership gate, JOS-84's candidate narrowing) and
-// it is untouched. What a cast no longer does is DISPLAY anything — see BuffInstances.beginCast
-// for the defect the old optimistic `provisional` row caused and why the owner cut it whole
-// ("we should drop provisional all together. i dont want to complicate the model").
+// WHAT A CAST STILL DOES. `castBegin` records a PENDING cast and an ANCHOR (modules/buffAnchors.ts);
+// that is the CAST-ANCHORED ATTRIBUTION machinery (JOS-89's ownership gate, JOS-84's candidate
+// narrowing, JOS-140's ruling 2). What a cast no longer does is DISPLAY anything — see
+// BuffInstances.beginCast for the defect the old optimistic `provisional` row caused and why the
+// owner cut it whole ("we should drop provisional all together. i dont want to complicate the
+// model").
 //
 // MINING MODEL:
-//   castBegin(S)   → S becomes the PENDING cast (replaces prior pending) and stamps castHistory.
-//   castFizzle(S) / castInterrupted(S) → clears pending S.
-//   buffApply(S,target) → the landing. Opens the instance on `target` AND the open cast whose
-//                    land→fade span is the duration sample. Gated on own-cast attribution.
-//   buffFade(S,target?) → an active instance of S expired on `target`; pairs with the open cast
-//                    → duration sample; records the target disposition.
+//   castBegin(S)   → S becomes the PENDING cast (replaces prior pending) and stamps the anchor.
+//   otherCastBegin(caster,S) → an anchor ONLY for an allowlisted external (default: nobody).
+//   aaActivate(Quick Buff)   → a self anchor that names a WINDOW rather than a spell.
+//   castFizzle(S) / castInterrupted(S) → clears pending S and its anchor.
+//   buffApply(S,target) → the landing. Opens the instance on `target` and adds a landing to its
+//                    round group, whose land→fade span is the duration sample. Gated on the anchor.
+//   buffFade(S,target?) → an active instance of S expired on `target`; closes the OLDEST landing
+//                    → duration sample when that landing was a clean cycle.
 //   playerDeath    → strips ALL self buffs; censors open SELF casts.
 //
 // A pending cast nobody confirmed within 15s is DROPPED, not landed: no row, and no open cast,
 // so it can never pair into a duration sample (the JOS-114/117 clean-sample rule). Landed ts is
 // the LANDING line's ts — the cast-BEGIN approximation went with the optimistic row.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// JOS-140 UNIFIED THE TWO HALVES. `modules/buffTimers.ts` (the per-target crowd-control holds) is
+// still a separate EqModule — the overlay hydrates it by id and the JOS-134 pause asymmetry is
+// stated there — but it is no longer a separate MODEL: it folds through THIS module's
+// `CastAnchors` and mints into THIS module's `SpellStats`, and both halves keep their landings in
+// the same `HoldGroup` shape from modules/buffRounds.ts. One attribution rule, one learner, one
+// count-and-close rule.
 
 import type { EqModule } from './types'
 import type { LogEvent, BuffExpiredEvent } from '../../shared/logEvents'
@@ -96,7 +107,10 @@ import { idKey } from '../log/parser'
 import type { SpellDb } from '../data/spellDb'
 import { MessageOverlayMiner } from '../data/messageOverlay'
 import { charmedPetDiesOnDeathLine } from '../combat/entityRules'
+import type { BuffTrustPrefs } from '../../shared/buffTrust'
+import { admitLanding, type LandingContext } from './buffLanding'
 import { BuffInstances } from './buffsInstances'
+import { CastAnchors } from './buffAnchors'
 import { PetEntities } from './buffsEntities'
 import { SpellStats } from './buffsStats'
 import { SessionFrame } from './buffsSession'
@@ -104,23 +118,14 @@ import {
   EMOTE_MIN_OBSERVATIONS,
   EMOTE_WINDOW_MS,
   looksLandingMessage,
-  OWN_CAST_WINDOW_MS,
   PERMANENT_ILLUSION,
   QUICK_BUFF,
-  QUICK_BUFF_WINDOW_MS,
   SELF_KEY,
   spellKey
 } from './buffsShapes'
 
 /** One member of the LogEvent union, selected by its `kind` tag. */
 type Ev<K extends LogEvent['kind']> = Extract<LogEvent, { kind: K }>
-
-/** A candidate spell carried by an ambiguous landing message (Task #34). */
-interface Candidate {
-  name: string
-  durationMs: number | null
-  illusion: boolean
-}
 
 export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   readonly id = 'buffs'
@@ -133,12 +138,15 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   /** The live (spell, entity) instances + every mutation over them. */
   private readonly inst: BuffInstances
 
-  /** ts of the last `You activate Quick Buff.` — burst applies within the window are confident. */
-  private quickBuffTs = 0
   /** ts from which the Permanent Illusion AA is owned (self illusions become permanent). */
   private permanentIllusionOwnedTs?: number
-  /** Recently-cast spell keys → last cast ts (Task #34), for ambiguous-message resolution. */
-  private castHistory = new Map<string, number>()
+  /**
+   * CAST-ANCHORED ATTRIBUTION (JOS-140 ruling 2), and the ONE copy of it. The crowd-control half
+   * folds through this same object (pipeline wiring hands it over), so the two halves of the model
+   * cannot end up with two ideas of whose spell just landed — which is precisely how they drifted
+   * apart before this ticket.
+   */
+  private readonly anchors = new CastAnchors()
 
   // ── emote learning (Task #33): recognize real landing-emote TEXTS ──
   private emoteTextCount = new Map<string, number>()
@@ -192,6 +200,25 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   }
 
   /**
+   * THE SHARED HALVES (JOS-140 ruling 1). The crowd-control module folds the same events into the
+   * same learner through the same attribution gate — it is handed these rather than building its
+   * own, because two copies of an estimator and two copies of an ownership rule is the state this
+   * ticket exists to end.
+   */
+  spellStats(): SpellStats {
+    return this.stats
+  }
+
+  castAnchors(): CastAnchors {
+    return this.anchors
+  }
+
+  /** The externals allowlist (Preferences). Default is empty — you and nobody else. */
+  setTrust(prefs: BuffTrustPrefs): void {
+    this.anchors.setTrust(prefs)
+  }
+
+  /**
    * Synthesize a RESOLVED `buffExpired` derived event (Task #47) onto the bus. `target` is
    * 'self' for a player-side expiry, else the bound entity's display name. Stamped with the
    * primary event's seq/ts/live so it slots into the stream coherently and alerts respects the
@@ -223,9 +250,8 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.stats.reset()
     this.emoteTextCount = new Map()
     this.frame.reset()
-    this.quickBuffTs = 0
     this.permanentIllusionOwnedTs = undefined
-    this.castHistory = new Map()
+    this.anchors.reset()
     this.pets.reset()
   }
 
@@ -356,12 +382,22 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
       case 'spellEmote':
         this.onSpellEmote(ev)
         return true
+      case 'otherCastBegin':
+        // `<Name> begins casting <S>.` — an anchor ONLY for a caster on the externals allowlist
+        // (default: nobody). `CastAnchors` enforces that; the event itself is folded either way so
+        // the refusal lives in one place.
+        this.anchors.noteOtherCast(ev.caster, ev.spell, ev.ts)
+        return true
       case 'castFizzle':
       case 'castInterrupted':
         this.inst.clearPendingCast(spellKey(ev.spell))
+        this.anchors.clearCast(ev.spell)
         return true
       case 'aaActivate':
-        if (idKey(ev.name) === QUICK_BUFF) this.quickBuffTs = ev.ts
+        // `You activate Quick Buff.` is a SELF anchor that names no spell — a window, not a name
+        // (owner amendment, 2026-08-09). It applies many spells at once with no cast line of their
+        // own, so a rule that demanded one per spell would refuse the player's own buffs.
+        if (idKey(ev.name) === QUICK_BUFF) this.anchors.noteQuickBuff(ev.ts)
         return true
       case 'aaSpend':
         this.onAaSpend(ev)
@@ -429,7 +465,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
 
   private onCastBegin(ev: Ev<'castBegin'>): void {
     const key = spellKey(ev.spell)
-    this.castHistory.set(key, ev.ts)
+    this.anchors.noteSelfCast(ev.spell, ev.ts)
     this.stats.touchLastSeen(key, ev.ts)
     this.inst.beginCast(ev.spell, key, ev.ts)
   }
@@ -452,23 +488,22 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   }
 
   private onBuffApply(ev: Ev<'buffApply'>): void {
-    // OWN-CAST GATING (Task #45, the user's rule: "if something isn't cast by me — we
-    // shouldn't track it"). Cast-on-other landing emotes (a nearby player's Symbol
-    // landing on the mob you're fighting) don't name the caster, so without this gate a
-    // STRANGER's buff binds as ours. Require attribution to the player's OWN casting:
-    // an own castBegin of the resolved spell within the landing window, OR a Quick Buff
-    // activation burst (which applies many spells with no castBegin). No own-cast
-    // context → skip the apply entirely (never guess a stranger's buff).
-    const r = this.resolveCandidate(ev.candidates)
-    if (r && this.ownCastAttributed(spellKey(r.name), ev.ts)) {
-      this.inst.applyMessageBuff(r.name, {
-        target: ev.target,
-        ts: ev.ts,
-        illusion: r.illusion,
-        durationMs: r.durationMs,
-        permanentIllusionOwnedTs: this.permanentIllusionOwnedTs
-      })
-    }
+    // CAST-ANCHORED ATTRIBUTION (JOS-140 ruling 2/3, extending Task #45's own-cast gate). A
+    // landing emote is a BROADCAST and names no caster, so without an anchor a stranger's buff
+    // binds as ours. `admitLanding` is the whole gate; a null answer means the landing produces
+    // nothing at all, which is the honest answer and the one three field reports asked for.
+    const landing = admitLanding(ev.candidates, ev.ts, this.landingContext())
+    if (!landing) return
+    this.inst.applyMessageBuff(landing.spell, {
+      target: ev.target,
+      ts: ev.ts,
+      illusion: landing.illusion,
+      durationMs: landing.durationMs,
+      caster: landing.caster,
+      ...(landing.lineKey ? { lineKey: landing.lineKey } : {}),
+      ...(landing.candidates ? { candidates: landing.candidates } : {}),
+      permanentIllusionOwnedTs: this.permanentIllusionOwnedTs
+    })
   }
 
   private onBuffWearOff(ev: Ev<'buffWearOff'>): void {
@@ -505,8 +540,10 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.stats.everFaded.add(key)
     // Resolve the fade's target entity. A possessive 'pet' form resolves against the
     // CURRENT pet entity's key; a named mob → that mob's key; targetless → self.
-    const { entityKey, disp } = this.pets.fadeTargetEntity(ev.target)
-    this.stats.tallyFade(key, disp)
+    // (The fade's DISPOSITION used to be tallied here as a fallback CLASSIFIER for a spell the DB
+    // did not type. JOS-140 ruling 8 deletes that: buff-vs-debuff comes from the spell's nature
+    // and never from the shape of the target — see buffsStats.ts `classOf`.)
+    const { entityKey } = this.pets.fadeTargetEntity(ev.target)
     // A FADE IS NOT A LANDING (JOS-118). This used to retro-land the pending cast so the
     // land→fade span became a duration sample, which is unsound whenever the fade belongs to an
     // EARLIER instance of the same spell: tests/fixtures/e2e-deep-link.log casts Pacify at
@@ -624,43 +661,13 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.inst.sweepHygiene(nowMs, this.frame.heldBeforeTs)
   }
 
-  /**
-   * OWN-CAST attribution gate (Task #45). True when this apply can be attributed to the
-   * player's OWN casting, so it's a buff WE put up (on self, our pet, or a mob we're
-   * debuffing) — not a stranger's buff that happened to land on an entity near us:
-   *   (a) an own `castBegin` of this spell within OWN_CAST_WINDOW_MS before the emote
-   *       (castHistory records the last own cast ts per spell key), OR
-   *   (b) an active Quick Buff burst (aaActivate 'Quick Buff' within QUICK_BUFF_WINDOW_MS) —
-   *       a burst applies MANY spells with NO castBegin, so its window whitelists those.
-   * No own-cast context → false → the apply is skipped (the user's strict rule).
-   */
-  private ownCastAttributed(key: string, ts: number): boolean {
-    const lastCast = this.castHistory.get(key)
-    if (lastCast != null && ts >= lastCast && ts - lastCast <= OWN_CAST_WINDOW_MS) return true
-    if (this.quickBuffTs > 0 && ts >= this.quickBuffTs && ts - this.quickBuffTs <= QUICK_BUFF_WINDOW_MS) {
-      return true
+  /** The gate's dependencies, bound once — see modules/buffLanding.ts for the rule itself. */
+  private landingContext(): LandingContext {
+    return {
+      anchors: this.anchors,
+      ...(this.stats.db ? { db: this.stats.db } : {}),
+      hasActiveSpell: (lineKey: string) => this.inst.hasActiveSpell(lineKey)
     }
-    return false
-  }
-
-  /** Resolve an ambiguous landing-message apply (Task #34) to the candidate the player cast. */
-  private resolveCandidate(cands: Candidate[]): Candidate | null {
-    if (cands.length === 0) return null
-    if (cands.length === 1) return cands[0]
-    let best: Candidate | null = null
-    let bestTs = -1
-    for (const c of cands) {
-      const t = this.castHistory.get(spellKey(c.name))
-      if (t != null && t > bestTs) {
-        best = c
-        bestTs = t
-      }
-    }
-    if (best) return best
-    for (const c of cands) {
-      if (this.inst.hasActiveSpell(spellKey(c.name))) return c
-    }
-    return null
   }
 
   /** Session-gap clear (Task #33, finding #5): wipe live actives/opens/pending + pets. */

@@ -395,12 +395,31 @@ export interface ResistEvent extends LogEventBase {
 export interface CharmEvent extends LogEventBase {
   kind: 'charm'
   mob: string
+  /**
+   * Every charm spell `<mob> has been charmed.` could be, from the DB's cast-on-other suffix
+   * table — the same list `cc` carries, and for the same reason (JOS-84's law: the parser hands
+   * over candidates, the MODEL resolves them against the player's own casts).
+   *
+   * ADDED BY JOS-140, because charm is a DETRIMENTAL HOLD like any other and the owner wants its
+   * countdown: charm-break timing is the whole game for an enchanter, and the sentence is seven
+   * spells in the committed DB with durations from 48 s to 19 minutes, so a bar cannot be drawn
+   * from it without knowing which one you cast. Absent when no spell DB is installed, which
+   * leaves the event byte-identical to what it was.
+   */
+  candidates?: { name: string; durationMs: number | null }[]
 }
 
 /** `Your <charm spell> spell has worn off of <mob>.` — pet off (charm spells only). */
 export interface UncharmEvent extends LogEventBase {
   kind: 'uncharm'
   mob: string
+  /**
+   * The charm spell the line NAMED. The regex has always captured it and the event used to throw
+   * it away; JOS-140 carries it so the break closes the charm hold by LINE rather than closing
+   * every hold on that mob anonymously — which is also what makes the span a clean cycle the
+   * learner may mint from.
+   */
+  spell?: string
 }
 
 /**
@@ -530,6 +549,30 @@ export interface PetSayEvent extends LogEventBase {
  */
 export interface CastBeginEvent extends LogEventBase {
   kind: 'castBegin'
+  spell: string
+}
+
+/**
+ * `<Name> begins casting <Spell>.` — SOMEBODY ELSE's cast, named (JOS-140).
+ *
+ * The third-person twin of `castBegin`, and the only line in the log that says who else is
+ * casting what. It exists because the buffs model's attribution is CAST-ANCHORED: a landing
+ * sentence is a broadcast that names no caster, so a buff another player put on your group can
+ * only be admitted if something anchors it — and this is the something.
+ *
+ * IT IS NOT A LICENCE. Emitting the event says the line was printed, nothing more; the buffs model
+ * records it as an anchor ONLY for a caster on the user's externals allowlist, which ships EMPTY
+ * (shared/buffTrust.ts). The subject may equally be a MOB — `Lord Nagafen begins casting
+ * Immobilize.` is 583 lines of the committed fixtures — so a rule that trusted the shape would
+ * hand a raid boss's debuffs to your own bars.
+ *
+ * Matched AFTER the first-person cast lifecycle, so `You begin casting …` can never reach it.
+ */
+export interface OtherCastBeginEvent extends LogEventBase {
+  kind: 'otherCastBegin'
+  /** The caster's raw display name, exactly as the line spelled it. */
+  caster: string
+  /** The spell name, rank suffix intact — the only line family that carries one. */
   spell: string
 }
 
@@ -1241,6 +1284,7 @@ export type LogEvent =
   | PetClaimEvent
   | PetSayEvent
   | CastBeginEvent
+  | OtherCastBeginEvent
   | CastFizzleEvent
   | CastInterruptedEvent
   | BuffFadeEvent

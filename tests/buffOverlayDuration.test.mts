@@ -29,6 +29,9 @@ import { SpellStats } from '../src/main/modules/buffsStats.ts'
 import { PetEntities } from '../src/main/modules/buffsEntities.ts'
 import { buildActive } from '../src/main/modules/buffsView.ts'
 import { SELF_KEY, spellKey } from '../src/main/modules/buffsShapes.ts'
+// The learner is keyed on (spell LINE, CASTER) since JOS-140, so a test that drives SpellStats
+// directly has to say whose durations it is talking about. These cases are all about the player.
+import { SELF_CASTER } from '../src/shared/buffTrust.ts'
 import { buildTimerRows, type BuffTimerRow } from '../src/shared/buffTimers.ts'
 import type { LogEvent } from '../src/shared/logEvents.ts'
 import type { BuffsSnap, BuffStat, SpellEntry } from '../src/shared/types.ts'
@@ -190,7 +193,7 @@ test('growth over the DB base is captured — [16m base, then 33m] ⇒ estimate 
 test('a buff always broken early keeps its DB FLOOR — DB 20m, observed max 4m ⇒ 20m, source db', () => {
   const { stats, key } = statsWithDb('Invisibility', 1_200_000) // DB 20m
   stats.everFaded.add(key)
-  for (const s of [264_000, 180_000, 240_000, 264_000, 120_000]) stats.pushSample(key, 'Invisibility', s) // all ≤4m24
+  for (const s of [264_000, 180_000, 240_000, 264_000, 120_000]) stats.pushSample(key, SELF_CASTER, 'Invisibility', s) // all ≤4m24
 
   const est = stats.estimateFor(key)
   assert.equal(est.ms, 1_200_000, 'the DB floor holds — a below-base observation is an early break, discarded')
@@ -214,7 +217,7 @@ test('the observed MAX over the window beats the DB base — Swift DB 16m, a 36m
   const { stats, key } = statsWithDb(SWIFT, SWIFT_DB_MS) // DB 16m
   stats.everFaded.add(key)
   // The real shape: a mass of shorter samples (median ~15m53) with one focus-extended 36m20.
-  for (const s of [953_000, 954_000, 2_180_000, 951_000, 950_000]) stats.pushSample(key, SWIFT, s)
+  for (const s of [953_000, 954_000, 2_180_000, 951_000, 950_000]) stats.pushSample(key, SELF_CASTER, SWIFT, s)
 
   const est = stats.estimateFor(key)
   assert.equal(est.ms, 2_180_000, 'the 36m20 extension wins over both the DB base and the shorter mass')
@@ -235,13 +238,13 @@ test('a genuine decrease recovers as the old long sample leaves the recent windo
   const stats = new SpellStats() // no DB — the observed max IS the estimate, so the window is visible
   const key = 'faded focus spell'
   stats.everFaded.add(key)
-  stats.pushSample(key, 'Faded Focus Spell', 2_400_000) // 40m, focus-extended
+  stats.pushSample(key, SELF_CASTER, 'Faded Focus Spell', 2_400_000) // 40m, focus-extended
 
   assert.equal(stats.estimateFor(key).ms, 2_400_000, 'while the 40m sample is in the window it stands')
 
   // The focus is removed; five later casts all run the base 20m. RECENT_SAMPLE_WINDOW is 5, so the
   // 40m ages out of the window and the estimate recovers to the true shorter duration.
-  for (let i = 0; i < 5; i++) stats.pushSample(key, 'Faded Focus Spell', 1_200_000)
+  for (let i = 0; i < 5; i++) stats.pushSample(key, SELF_CASTER, 'Faded Focus Spell', 1_200_000)
   assert.equal(stats.estimateFor(key).ms, 1_200_000, 'the 40m has left the window; a real decrease is recovered')
 
   // The all-time min/max columns still remember both — only the estimate windowed.
@@ -358,7 +361,7 @@ test('the estimate windows to the recent MAX while the distribution columns keep
   const key = 'made up spell'
   stats.everFaded.add(key)
   const SAMPLES = [2_400_000, 1_980_000] // 40m then 33m
-  for (const s of SAMPLES) stats.pushSample(key, 'Made Up Spell', s)
+  for (const s of SAMPLES) stats.pushSample(key, SELF_CASTER, 'Made Up Spell', s)
 
   // The estimator is the MAX over the recent window — 40m here.
   assert.equal(stats.estimateFor(key).ms, 2_400_000, 'estimate = the recent-window MAX')

@@ -1,6 +1,6 @@
 // The buff-INSTANCE store of the buffs model (see buffs.ts for the model's contract).
 //
-// A buff INSTANCE is a pair (spell, targetEntity) keyed by (spellKey, entityKey). This
+// A buff INSTANCE is a pair (spell LINE, targetEntity) keyed by (spellKey, entityKey). This
 // module owns the three live collections — the single pending cast, the landed-and-open
 // casts awaiting their fade, and the currently-active instances — plus every mutation of
 // them: landing, message-driven application, fade pairing (the duration sample), and the
@@ -11,14 +11,27 @@
 // reads learned per-spell knowledge from SpellStats and the pet bindings from PetEntities,
 // and reports a RESOLVED expiry back through the `onExpired` callback it is constructed
 // with (Task #47's derived buffExpired) — the module stamps and emits that.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// AN INSTANCE IS A MULTISET OF LANDINGS (JOS-140 ruling 7). What used to be one `landedTs` per
+// (spell, entity) is now a {@link HoldGroup}: one landing per entity of that display name we
+// believe is holding the spell, oldest first, with the clean-cycle bookkeeping that decides
+// whether a span may be learned from. The same object serves the crowd-control holds, which is
+// what makes "one instance model" true rather than aspirational — buffRounds.ts states the round
+// rule, the refresh-newest rule and the close-oldest rule once, and both halves obey it.
+//
+// WHOSE CAST IT IS rides on the record too (`caster`), because the learner is keyed on
+// (line, caster): a duration is a fact about the caster's AAs, focus items and rank.
 
 import type { ActiveBuff } from '../../shared/types'
-import { isLeftBehindOnZone, type EntityDisposition } from '../combat/entityRules'
+import type { EntityDisposition } from '../combat/entityRules'
 import { idKey } from '../log/parser'
+import { SELF_CASTER } from '../../shared/buffTrust'
+import { HoldGroup } from './buffRounds'
 import {
-  hygieneCapMs,
   instanceEntityKey,
   instanceKey,
+  instanceSpellKey,
   LAND_TIMEOUT_MS,
   MAX_SAMPLE_MS,
   SELF_KEY,
@@ -29,29 +42,37 @@ import {
 import type { PetEntities } from './buffsEntities'
 import type { SpellStats } from './buffsStats'
 import { buildActive, type ActiveSpec } from './buffsView'
+import {
+  activeMatches,
+  hygieneCap,
+  isPermanentIllusion,
+  landingSpec,
+  openLeftBehindOnZone,
+  openMatches,
+  unwitnessedCullCap
+} from './buffsInstanceRules'
 
-/** Does this open cast belong to the entity being retired? (`hostileOnly` = a plain mob death.) */
-function openMatches(o: OpenCast, entityKey: string, hostileOnly: boolean): boolean {
-  if (!hostileOnly) return o.entityKey === entityKey
-  return o.disp === 'hostile' && (o.entityKey === entityKey || o.entityKey === 'unknown-hostile')
-}
-
-/** Does this active instance belong to the entity being retired? */
-function activeMatches(a: ActiveBuff, aKey: string, entityKey: string, hostileOnly: boolean): boolean {
-  if (!hostileOnly) return aKey === entityKey
-  return a.cls === 'debuff' && (aKey === entityKey || aKey === 'unknown-hostile' || a.inferredTarget === true)
-}
-
-/**
- * ZONE (the user's rule): the player keeps self buffs; a SUMMONED pet follows and keeps
- * its buffs; a CHARMED pet is LEFT BEHIND (retire + censor); hostile mobs are left behind
- * (censor open debuffs). Uses the SHARED isLeftBehindOnZone rule.
- */
-function openLeftBehindOnZone(o: OpenCast): boolean {
-  if (o.disp === 'self') return false
-  if (o.disp === 'summoned') return isLeftBehindOnZone('summoned') // false
-  if (o.disp === 'charmed') return isLeftBehindOnZone('charmed') // true
-  return true // hostile → left behind
+/** Everything a LANDING states about itself, as one argument (max-params is 4 in this repo). */
+export interface LandingSpec {
+  target: string
+  ts: number
+  illusion: boolean
+  durationMs: number | null
+  /** 'self' or an allowlisted external — the learner's second key (JOS-140 ruling 4). */
+  caster?: string
+  /**
+   * The spell LINE key this instance is identified by, when it differs from what the row is
+   * NAMED. A family row is named for every candidate and keyed on one of them — see
+   * `instanceSpellKey`.
+   */
+  lineKey?: string
+  /**
+   * The spells this landing sentence could be, when it is a FAMILY the anchor could not narrow
+   * (a Quick Buff burst names no spell). Present ⇒ the row shows the ~ chip and mints nothing.
+   */
+  candidates?: string[]
+  /** ts from which the Permanent Illusion AA is owned, when it is. */
+  permanentIllusionOwnedTs?: number
 }
 
 export class BuffInstances {
@@ -80,7 +101,7 @@ export class BuffInstances {
 
   /** True when any active instance is of this spell key (the ambiguous-apply tiebreak). */
   hasActiveSpell(key: string): boolean {
-    for (const a of this.active.values()) if (spellKey(a.spell) === key) return true
+    for (const ik of this.active.keys()) if (instanceSpellKey(ik) === key) return true
     return false
   }
 
@@ -92,10 +113,10 @@ export class BuffInstances {
    * to self AND pet (a pet illusion like Boon-on-pet replaces a prior pet illusion).
    */
   clearIllusionsOn(entityKey: string, keepKey: string): void {
-    for (const [ik, a] of [...this.active]) {
+    for (const ik of [...this.active.keys()]) {
       if (ik === keepKey) continue
       if (instanceEntityKey(ik) !== entityKey) continue
-      if (this.stats.isIllusion(spellKey(a.spell))) {
+      if (this.stats.isIllusion(instanceSpellKey(ik))) {
         this.active.delete(ik)
         this.open.delete(ik)
         this.dirty = true
@@ -107,7 +128,7 @@ export class BuffInstances {
   clearSelfIllusion(): void {
     for (const [ik, a] of [...this.active]) {
       if (!a.self) continue
-      if (this.stats.isIllusion(spellKey(a.spell))) {
+      if (this.stats.isIllusion(instanceSpellKey(ik))) {
         this.active.delete(ik)
         this.open.delete(ik)
         this.dirty = true
@@ -149,9 +170,9 @@ export class BuffInstances {
    * makes a resist correct by construction: there was never anything to retract.
    *
    * The pending record itself STAYS. It is the cast-in-flight bookkeeping the landing side hangs
-   * off — `applyMessageBuff` consumes it, a fizzle/interrupt clears it — and own-cast attribution
-   * (`BuffsModule.ownCastAttributed`) reads its own `castHistory` beside it. What went is the
-   * DISPLAY, not the attribution machinery.
+   * off — `applyMessageBuff` consumes it, a fizzle/interrupt clears it — and the ANCHOR the
+   * attribution gate reads lives beside it in `modules/buffAnchors.ts`. What went is the DISPLAY,
+   * not the attribution machinery.
    */
   beginCast(spell: string, key: string, ts: number): void {
     this.pending = { spell, key, beganTs: ts }
@@ -187,54 +208,79 @@ export class BuffInstances {
    * Apply a buff from an EXACT chat MESSAGE match (Task #34/#35). Confident, immediate,
    * non-provisional, messageDriven. `target` is 'self' for a cast-on-you / self-heal line,
    * else the named target (pet/player/mob) — bound to THAT entity's key.
+   *
+   * A REPEAT LANDING IS A ROUND, NOT AN OVERWRITE (JOS-140). It goes to the instance's
+   * {@link HoldGroup}, which decides whether it refreshes the newest landing or opens another —
+   * so two mobs of one name slowed in the same second are a count of two, and a re-slow of one
+   * of them is a refresh rather than a third row.
    */
-  applyMessageBuff(
-    spell: string,
-    spec: {
-      target: string
-      ts: number
-      illusion: boolean
-      durationMs: number | null
-      /** ts from which the Permanent Illusion AA is owned, when it is. */
-      permanentIllusionOwnedTs?: number
-    }
-  ): void {
+  applyMessageBuff(spell: string, spec: LandingSpec): void {
     const { target, ts, illusion, durationMs } = spec
     if (durationMs == null && !illusion) return
-    const key = spellKey(spell)
+    const key = spec.lineKey ?? spellKey(spell)
     // A SELF apply of a DETRIMENTAL spell is an incoming debuff a MOB cast on the player —
     // not the player's own buff. Skip it (the bar shows only the player's beneficial buffs).
-    if (target === 'self' && this.stats.classOf(key) === 'debuff') return
+    const self = target === 'self'
+    if (self && this.stats.classOf(key) === 'debuff') return
     this.stats.everFaded.add(key)
     this.stats.touchLastSeen(key, ts)
     if (this.pending?.key === key) this.pending = null
 
-    const self = target === 'self'
-    const disp: EntityDisposition = self ? 'self' : this.pets.dispForNamedTarget(target)
-    const eKey = self ? SELF_KEY : idKey(target)
+    const { disp, eKey, caster, permanent } = this.bindTo(key, spec)
     const iKey = instanceKey(key, eKey)
-    // Remember the target's display casing so the row's target chip reads "Cazic-Thule",
-    // not the lowercased key (Task #35).
-    if (!self) this.pets.namedEntityDisplay.set(eKey, target)
-    const permanent = isPermanentIllusion(self, illusion, ts, spec.permanentIllusionOwnedTs)
-
-    if (!permanent) {
-      this.open.set(iKey, { spell, spellKey: key, entityKey: eKey, landedTs: ts, disp })
-    } else {
-      this.open.delete(iKey)
-    }
-
-    this.active.set(
-      iKey,
-      this.build({
-        spell, key, entityKey: eKey, startedTs: ts, dispOverride: disp,
-        opts: { messageDriven: true, permanent }
-      })
-    )
+    const record = this.openRecord(iKey, { spell, spellKey: key, entityKey: eKey, caster, disp })
+    // A FAMILY never mints (we do not know which spell it was), so its landings open contaminated.
+    record.group.land(ts, spec.candidates !== undefined)
+    // A permanent self illusion has no expiry to pair with, so it keeps no open record at all.
+    if (permanent) this.open.delete(iKey)
+    this.active.set(iKey, this.build(landingSpec(spec.candidates, { key, eKey, disp, caster, permanent, record, ts })))
     // ILLUSION EXCLUSIVITY (Task #36): a new illusion apply on this entity replaces any
     // prior illusion active on it (self OR pet). Only one illusion per entity at a time.
     if (illusion) this.clearIllusionsOn(eKey, iKey)
     this.dirty = true
+  }
+
+  /**
+   * WHERE a landing binds: the entity it names, that entity's disposition, whose cast it is, and
+   * whether it is a permanent self illusion. Also the one side effect worth naming — the target's
+   * display CASING is remembered here, so the row's chip reads "Cazic-Thule" and not the
+   * lowercased key (Task #35).
+   */
+  private bindTo(
+    key: string,
+    spec: LandingSpec
+  ): { self: boolean; disp: EntityDisposition; eKey: string; caster: string; permanent: boolean } {
+    const { target, ts, illusion } = spec
+    const self = target === 'self'
+    const eKey = self ? SELF_KEY : idKey(target)
+    if (!self) this.pets.namedEntityDisplay.set(eKey, target)
+    return {
+      self,
+      disp: self ? 'self' : this.pets.dispForNamedTarget(target),
+      eKey,
+      caster: spec.caster ?? SELF_CASTER,
+      permanent: isPermanentIllusion(self, illusion, ts, spec.permanentIllusionOwnedTs)
+    }
+  }
+
+  /**
+   * The open record this landing belongs to, created on first sight — or recreated when the CASTER
+   * changed, because a different caster's durations are a different learner key and pooling one
+   * cycle across the two would be the thing ruling 4 forbids.
+   */
+  private openRecord(iKey: string, id: Omit<OpenCast, 'group'>): OpenCast {
+    const existing = this.open.get(iKey)
+    if (existing?.caster === id.caster) {
+      existing.spell = id.spell
+      existing.disp = id.disp
+      return existing
+    }
+    // SINGLETON unless the entity is a plain HOSTILE: you, your summoned pet and your charmed pet
+    // are identities this model tracks (law 4), so a re-cast on one of them is unambiguously a
+    // refresh. A mob is only ever a NAME, and the world hands out that name more than once.
+    const record: OpenCast = { ...id, group: new HoldGroup(id.disp !== 'hostile') }
+    this.open.set(iKey, record)
+    return record
   }
 
   /**
@@ -243,7 +289,8 @@ export class BuffInstances {
    */
   private removeAuthoritative(key: string, entityKey: string, ts: number): void {
     const iKey = instanceKey(key, entityKey)
-    const spell = this.active.get(iKey)?.spell ?? this.stats.samples.get(key)?.spell ?? key
+    const spell =
+      this.active.get(iKey)?.spell ?? this.stats.sampleSpellName(key, this.open.get(iKey)?.caster) ?? key
     this.stats.everFaded.add(key)
     this.recordFade(key, entityKey, spell, ts)
     // DERIVED buffExpired (Task #47): the wear-off is now RESOLVED to `spell` on `entityKey`.
@@ -265,9 +312,9 @@ export class BuffInstances {
     const cands = new Set(candidateNames.map(spellKey))
     // Find the candidates that actually have an ACTIVE instance on this entity.
     const matched: string[] = []
-    for (const [ik, a] of this.active) {
+    for (const ik of this.active.keys()) {
       if (instanceEntityKey(ik) !== entityKey) continue
-      const k = spellKey(a.spell)
+      const k = instanceSpellKey(ik)
       if (cands.has(k) && !matched.includes(k)) matched.push(k)
     }
     for (const k of matched) this.removeAuthoritative(k, entityKey, ts)
@@ -278,62 +325,88 @@ export class BuffInstances {
   /**
    * Pair a fade with its own open landed instance (a duration sample) and clear the active.
    *
-   * A SAMPLE IS MINTED ONLY FROM AN EXACT (spell, entity) CHAIN (JOS-118, owner): our own cast,
-   * landing on THAT entity, wearing off THAT entity. Only OUR modifiers — AAs, focus effects —
-   * shape a duration we are entitled to learn from, and another caster's identical spell on a
-   * different mob carries completely different ones. A fade that cannot be matched to its own
-   * exact instance mints NOTHING: an ambiguous pairing is not a clean sample.
+   * A SAMPLE IS MINTED ONLY FROM AN EXACT (spell, entity, CASTER) CHAIN (JOS-118, extended by
+   * JOS-140 ruling 4): our own cast (or an allowlisted external's), landing on THAT entity,
+   * wearing off THAT entity. Only ONE caster's modifiers — AAs, focus effects — shape a duration
+   * anyone is entitled to learn from, and another caster's identical spell carries completely
+   * different ones. A fade that cannot be matched to its own exact instance mints NOTHING.
    *
-   * THE FALLBACK THIS REPLACES paired a fade with the OLDEST OPEN CAST of the same spell on ANY
-   * entity. It existed because a CAST-TIMING open cast bound to an entity the model had merely
-   * inferred (castBegin names no target), so the fade's real target routinely disagreed with it.
-   * JOS-118 removed cast-timing instances altogether — every open cast is now message-bound to
-   * an entity the log NAMED — so the mismatch it papered over can no longer arise, and what is
-   * left of it is only the cross-entity mis-pairing itself: slow cast on mob A, then on mob B,
-   * with B's fade measured against A's older landing. That span is too LONG, which is exactly
-   * the direction of the owner's live observation (a slow reading longer on the bar than on the
-   * mob) and exactly the direction the recency-weighted MAX estimator is most sensitive to.
-   * JOS-117 flagged this and left it; the owner's ruling is what justifies moving it now.
+   * WHICH LANDING DOES IT CLOSE? The OLDEST (ruling 7). `Your <S> spell has worn off of <mob>.`
+   * names the mob but not which mob of that name, so under a fixed duration the oldest landing is
+   * the maximum-likelihood one to have just ended — and pairing newest-first instead produced, on
+   * the reporter's own bytes, spans from 42 s to 119 s out of the same lines. The row survives
+   * with one fewer on its count chip; only an empty group clears it.
    *
-   * CLOSURE is unchanged in spirit and stays honest: the fade proves THIS entity's copy is gone,
-   * so this instance closes. It never speaks for a copy on any other entity, so no other row is
-   * touched — a still-live slow on mob A survives mob B's wear-off.
+   * CLOSURE stays honest in the other direction too: the fade proves THIS entity's copy is gone,
+   * so nothing on any other entity is touched — a still-live slow on mob A survives mob B's
+   * wear-off.
    */
   recordFade(key: string, entityKey: string, spell: string, fadeTs: number): void {
     this.stats.touchLastSeen(key, fadeTs)
     const iKey = instanceKey(key, entityKey)
     const open: OpenCast | undefined = this.open.get(iKey)
     if (open !== undefined) {
-      const dur = fadeTs - open.landedTs
+      const closed = open.group.closeOldest(fadeTs)
       // CENSOR a sample whose land→fade window crossed an offline gap (world-model law 5).
       // The fade itself is still authoritative — the instance clears exactly as it always
       // did — but the SPAN is not a duration: it contains an absence whose length we know
       // only to within the reconnect window. Contributing it would poison the per-spell
       // recency-weighted MAX with a value that is guaranteed too large.
-      if (open.spannedGap !== true && dur > 0 && dur <= MAX_SAMPLE_MS) this.addSample(key, spell, dur)
-      this.open.delete(iKey)
+      const sample = closed?.sampleMs
+      if (open.spannedGap !== true && sample != null && sample > 0 && sample <= MAX_SAMPLE_MS) {
+        this.addSample(key, open.caster, spell, sample)
+      }
+      if (open.group.empty) this.open.delete(iKey)
+      else {
+        this.restat(iKey, open)
+        this.dirty = true
+        return
+      }
     }
     this.active.delete(iKey)
     this.dirty = true
   }
 
-  private addSample(key: string, spell: string, durMs: number): void {
-    this.stats.pushSample(key, spell, durMs)
-    // Restat every live instance of this spell (they share the per-spell stats).
+  /** Re-project one live instance after its group changed (count / oldest clock moved). */
+  private restat(iKey: string, open: OpenCast): void {
+    const prev = this.active.get(iKey)
+    if (!prev) return
+    this.active.set(
+      iKey,
+      this.build({
+        spell: prev.spell,
+        key: open.spellKey,
+        entityKey: open.entityKey,
+        startedTs: open.group.oldestTs,
+        dispOverride: prev.disposition,
+        caster: open.caster,
+        count: open.group.count,
+        ...(prev.candidates ? { candidates: prev.candidates } : {}),
+        opts: { messageDriven: prev.messageDriven, permanent: prev.permanent }
+      })
+    )
+  }
+
+  private addSample(key: string, caster: string, spell: string, durMs: number): void {
+    this.stats.pushSample(key, caster, spell, durMs)
+    // Restat every live instance of this spell (they share the per-(line, caster) stats).
     for (const [ik, a] of [...this.active]) {
-      if (spellKey(a.spell) === key) {
-        this.active.set(
-          ik,
-          this.build({
-            spell: a.spell,
-            key,
-            entityKey: instanceEntityKey(ik),
-            startedTs: a.startedTs,
-            dispOverride: a.disposition,
-            opts: { messageDriven: a.messageDriven, permanent: a.permanent }
-          })
-        )
-      }
+      if (instanceSpellKey(ik) !== key) continue
+      const open = this.open.get(ik)
+      this.active.set(
+        ik,
+        this.build({
+          spell: a.spell,
+          key,
+          entityKey: instanceEntityKey(ik),
+          startedTs: a.startedTs,
+          dispOverride: a.disposition,
+          caster: a.caster ?? SELF_CASTER,
+          count: open?.group.count ?? a.count ?? 1,
+          ...(a.candidates ? { candidates: a.candidates } : {}),
+          opts: { messageDriven: a.messageDriven, permanent: a.permanent }
+        })
+      )
     }
     this.dirty = true
   }
@@ -359,9 +432,10 @@ export class BuffInstances {
    * online time. If timers RAN while offline the buff would have expired unobserved around
    * 01:08 and that wears-off line could never have printed at all.
    *
-   * DEBUFFS DO NOT PAUSE, AND THAT IS DELIBERATE (owner's design, 2026-08-09). What EQ pauses
-   * is your CHARACTER; the world it stands in keeps running. A slow you landed on a mob is a
-   * timer in the world, not a timer on you, so it keeps burning down while you are gone and its
+   * DEBUFFS DO NOT PAUSE, AND THAT IS DELIBERATE (owner's design, 2026-08-09; JOS-140 leaves it
+   * standing as the one sanctioned divergence between the two halves of one model). What EQ
+   * pauses is your CHARACTER; the world it stands in keeps running. A slow you landed on a mob is
+   * a timer in the world, not a timer on you, so it keeps burning down while you are gone and its
    * `startedTs` is left exactly where it was. A debuff that outlives the absence therefore reads
    * correctly the moment you are back, and one that did not is swept by the ordinary hygiene
    * pass on its own unshifted clock — no special case, no second opinion. (Nothing else is
@@ -382,20 +456,13 @@ export class BuffInstances {
   onOfflinePause(fromTs: number, offlineMs: number): void {
     if (offlineMs <= 0) return
     let changed = false
-    for (const o of this.open.values()) {
-      if (o.landedTs > fromTs) continue
-      if (o.spannedGap !== true) {
-        o.spannedGap = true
-        changed = true
-      }
-      // The learner is censored either way; only the CLOCK is asymmetric.
-      if (this.stats.classOf(o.spellKey) !== 'debuff') {
-        o.landedTs += offlineMs
-        changed = true
-      }
+    for (const [ik, o] of this.open) {
+      if (o.group.oldestTs > fromTs) continue
+      if (this.pauseOne(ik, o, fromTs, offlineMs)) changed = true
     }
     for (const [ik, a] of this.active) {
-      if (a.cls === 'debuff' || a.startedTs > fromTs) continue
+      // An active with no open record behind it (a permanent illusion) has no group to shift.
+      if (a.cls === 'debuff' || a.startedTs > fromTs || this.open.has(ik)) continue
       this.active.set(ik, { ...a, startedTs: a.startedTs + offlineMs })
       changed = true
     }
@@ -406,6 +473,25 @@ export class BuffInstances {
       changed = true
     }
     if (changed) this.dirty = true
+  }
+
+  /**
+   * One open record across an absence: ALWAYS censored as a sample (both halves, for the two
+   * separate reasons buffsShapes.ts states), and shifted ONLY if it is a buff. Returns whether
+   * anything changed.
+   */
+  private pauseOne(ik: string, o: OpenCast, fromTs: number, offlineMs: number): boolean {
+    let changed = false
+    if (o.spannedGap !== true) {
+      o.spannedGap = true
+      changed = true
+    }
+    // The learner is censored either way; only the CLOCK is asymmetric.
+    if (this.stats.classOf(o.spellKey) !== 'debuff' && o.group.shiftBy(offlineMs, fromTs)) {
+      this.restat(ik, o)
+      changed = true
+    }
+    return changed
   }
 
   /** Session-gap clear (Task #33, finding #5): wipe live actives/opens/pending. */
@@ -434,7 +520,7 @@ export class BuffInstances {
       changed = true
     }
     for (const [ik, o] of [...this.open]) {
-      if (o.landedTs > ts) continue
+      if (o.group.oldestTs > ts) continue
       this.open.delete(ik)
       changed = true
     }
@@ -465,14 +551,24 @@ export class BuffInstances {
     for (const [ik, a] of this.active) {
       if (a.permanent) continue
       if (heldBeforeTs > 0 && a.cls !== 'debuff' && a.startedTs <= heldBeforeTs) continue
-      const sKey = spellKey(a.spell)
+      const sKey = instanceSpellKey(ik)
       const dbMs = this.stats.dbDurationFor(sKey)
-      const cap = Math.max(hygieneCapMs(a.p75, a.n), dbMs != null ? 2 * dbMs : 0)
-      if (now - a.startedTs > cap) {
-        this.active.delete(ik)
+      const cap = Math.min(hygieneCap(a, dbMs), unwitnessedCullCap(a))
+      if (now - a.startedTs <= cap) continue
+      // A MULTISET RETIRES ONE LANDING AT A TIME (JOS-140): five mobs mezzed in one round age out
+      // one after another, and the row keeps whichever landings are still inside the cap.
+      const open = this.open.get(ik)
+      if (open) {
+        open.group.dropExpired(now - cap)
+        if (!open.group.empty) {
+          this.restat(ik, open)
+          changed = true
+          continue
+        }
         this.open.delete(ik)
-        changed = true
       }
+      this.active.delete(ik)
+      changed = true
     }
     if (changed) this.dirty = true
   }
@@ -569,17 +665,4 @@ export class BuffInstances {
   private build(spec: ActiveSpec): ActiveBuff {
     return buildActive(spec, this.stats, this.pets)
   }
-}
-
-/**
- * Permanent Illusion AA (Task #34): a SELF illusion cast at or after the AA was owned never
- * expires, so it is shown with no countdown and pairs no duration sample.
- */
-function isPermanentIllusion(
-  self: boolean,
-  illusion: boolean,
-  ts: number,
-  ownedTs: number | undefined
-): boolean {
-  return self && illusion && ownedTs != null && ts >= ownedTs
 }

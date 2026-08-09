@@ -66,10 +66,16 @@ test('one AE mez cast produces a NAMED row per enemy — the chain-mez the repor
   assert.equal(timers.holds.length, 2, 'one cast, two mobs, two holds')
 
   // NAMED, not a family: "has been mesmerized." is FOUR spells in the committed DB (Dazzle,
-  // Mesmerization, Mesmerize, Sathir's Mesmerization). The player's own cast history names one,
+  // Mesmerization, Mesmerize, Sathir's Mesmerization). The player's own cast anchor names one,
   // which is JOS-84's law working — the parser hands over candidates, the MODEL resolves.
-  assert.equal(toad.name, 'Mesmerization')
-  assert.equal(scareling.name, 'Mesmerization')
+  //
+  // AND IT NAMES THE RANK (JOS-140). `You begin casting Mesmerization III.` is the ONLY line in
+  // the whole family that carries one — the landing sentence names no spell at all and the
+  // wear-off names the rank-less base — so the anchor is the one chance the row has to say which
+  // rank of yours is on that mob. This is also the field the alerts tracker was missing
+  // (JOS-126's DF5V60 note): before this, no event in the app ever carried a ranked name.
+  assert.equal(toad.name, 'Mesmerization III')
+  assert.equal(scareling.name, 'Mesmerization III')
   assert.equal(toad.ambiguous, undefined, 'a resolved row must not claim ambiguity')
   assert.equal(scareling.ambiguous, undefined)
 
@@ -428,7 +434,7 @@ test('the chain-mez lands on the DEBUFFS window, and the buffs window never sees
   const debuffRows = rowsForSurface(rows, 'debuffs')
   const buffRows = rowsForSurface(rows, 'buffs')
 
-  const mez = debuffRows.filter((r) => r.kind === 'cc' && r.name === 'Mesmerization')
+  const mez = debuffRows.filter((r) => r.kind === 'cc' && r.name === 'Mesmerization III')
   assert.equal(mez.length, 2, 'both mez holds belong to the debuffs window')
   assert.deepEqual(
     mez.map((r) => r.target).sort(),
@@ -447,7 +453,9 @@ test('a slow you put on a mob is a DEBUFF row on the debuffs window, not a buff'
   const debuffs = rows.filter((r) => r.kind === 'debuff')
   assert.ok(debuffs.length > 0, 'the Cazic pull should leave debuff rows standing')
   assert.ok(
-    debuffs.some((r) => r.name === 'Shiftless Deeds'),
+    // The RANK is on the row since JOS-140 — the cast line says `Shiftless Deeds IV` and the
+    // wear-off says `Shiftless Deeds`, and the row now shows the one you actually cast.
+    debuffs.some((r) => r.name === 'Shiftless Deeds IV'),
     `the slow itself should be one of them: ${debuffs.map((r) => r.name).join(', ')}`
   )
   for (const r of debuffs) assert.equal(timerRowSurface(r), 'debuffs', `${r.name} was filed as a buff`)

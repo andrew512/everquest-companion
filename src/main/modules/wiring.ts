@@ -153,10 +153,15 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // Deliberately tiny: it owns ONLY the per-target mez/root holds, which are the one thing the
   // buffs model above does not track (its landing sentence is claimed by `classifyCcApply` before
   // the DB matcher can turn it into an instance). Everything else the overlay draws — self buffs,
-  // per-target debuffs, the DB duration prior, own-cast gating, death/zone censoring — is read
-  // off `BuffsSnap.active`, because a second fold of the same events is the two-models scar
-  // world-model law 4 is made of.
-  const buffTimers = new BuffTimersModule()
+  // per-target debuffs, the DB duration prior, cast-anchored attribution, death/zone censoring —
+  // is read off `BuffsSnap.active`, because a second fold of the same events is the two-models
+  // scar world-model law 4 is made of.
+  //
+  // AND IT IS HANDED THE SAME ANCHORS AND THE SAME LEARNER (JOS-140 ruling 1). This is the line
+  // that makes "one model" true rather than aspirational: the CC half used to keep its own cast
+  // history and had no learner at all, so a mez could never be taught its real duration and the
+  // two halves could disagree about whose spell had just landed.
+  const buffTimers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
   // The consider ring (Task #63): the mobs you've recently `/con`ed. It also OWNS the shared
   // own-loot index's lifetime — it folds every loot event into `ownLoot` and resets it on
   // epoch/character switch.

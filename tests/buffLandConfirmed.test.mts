@@ -64,8 +64,16 @@ function script(...rows: [number, string][]): string[] {
   return rows.map(([sec, text]) => at(sec, text))
 }
 
-/** Replay a script through the real parser + the real buffs AND buffTimers modules. */
-function run(lines: string[], observeSec = 600): { buffs: BuffsSnap; rows: BuffTimerRow[] } {
+/**
+ * Replay a script through the real parser + the real buffs AND buffTimers modules.
+ *
+ * `observeSec` DEFAULTS TO 120, not 600, since JOS-140. The unwitnessed-expiry cull retires a
+ * DEBUFF row once its countdown has run out and the grace has passed (the owner's slow-a-boss-
+ * then-die case), so a test that wants to assert a bar EXISTS has to look while it is up — the
+ * old ten-minute observation is now nine minutes past a two-and-a-half-minute slow. Cases that
+ * assert an ABSENCE still pass a long instant deliberately, and say so.
+ */
+function run(lines: string[], observeSec = 120): { buffs: BuffsSnap; rows: BuffTimerRow[] } {
   const { buffs, rows } = replayBuffTimers(lines, { tickMs: new Date(at(observeSec, 'x').slice(1, 25)).getTime() })
   return { buffs, rows }
 }
@@ -143,14 +151,16 @@ test('JOS-118: a landed DEBUFF is a bar on the MOB the landing line named', () =
       [3, 'Guard Gehnus slows down.']
     )
   )
-  const deeds = buffs.active.find((a) => a.spell === 'Shiftless Deeds')
+  // The row carries the RANKED name the cast line spelled (JOS-140) - the landing sentence names
+  // no spell and the wear-off names the rank-less base, so the cast is the only line that knows.
+  const deeds = buffs.active.find((a) => a.spell === 'Shiftless Deeds IV')
   assert.ok(deeds, 'the landed slow is tracked')
   assert.equal(deeds.self, false, 'a debuff on a mob is not a self buff')
   assert.equal(deeds.target, 'Guard Gehnus', 'keyed to the entity the LANDING line named')
   assert.equal(deeds.cls, 'debuff')
   assert.equal(deeds.messageDriven, true, 'opened by the landing line')
   assert.equal(deeds.inferredTarget, undefined, 'a named target is never flagged inferred')
-  assert.deepEqual(rowNames(rows), ['debuff:Shiftless Deeds@Guard Gehnus'])
+  assert.deepEqual(rowNames(rows), ['debuff:Shiftless Deeds IV@Guard Gehnus'])
 })
 
 test('JOS-118: a landed SELF buff is a bar on you', () => {
@@ -164,7 +174,7 @@ test('JOS-118: a landed SELF buff is a bar on you', () => {
   assert.ok(swift, 'the landed self buff is tracked')
   assert.equal(swift.self, true, 'bound to the player')
   assert.equal(swift.target ?? undefined, undefined, 'a self buff has no target chip')
-  assert.deepEqual(rowNames(rows), ['buff:Swift Like The Wind@self'])
+  assert.deepEqual(rowNames(rows), ['buff:Swift Like the Wind I@self'])
 })
 
 test('JOS-118: a buff landing on a NAMED group member is keyed to that person, not to me', () => {
@@ -181,7 +191,7 @@ test('JOS-118: a buff landing on a NAMED group member is keyed to that person, n
   assert.ok(swift, 'the buff on the group member is tracked')
   assert.equal(swift.self, false, 'it is NOT on me — the line named somebody else')
   assert.equal(swift.target, 'Darmoss', 'keyed to the person the landing line named')
-  assert.deepEqual(rowNames(rows), ['buff:Swift Like The Wind@Darmoss'])
+  assert.deepEqual(rowNames(rows), ['buff:Swift Like the Wind I@Darmoss'])
 })
 
 test('JOS-118: a landed CC hold is keyed to the mob the broadcast named', () => {
@@ -257,7 +267,7 @@ test('ownership (d): our OWN cast + its landing IS tracked, keyed to the named e
   assert.equal(buffs.active[0].target, 'a greater kobold', 'on the mob the landing line named')
   assert.deepEqual(
     rowNames(rows).sort(),
-    ['cc:Mesmerization@a ghoul sentinel', 'debuff:Shiftless Deeds@a greater kobold'],
+    ['cc:Mesmerization@a ghoul sentinel', 'debuff:Shiftless Deeds IV@a greater kobold'],
     'both of our own land, each keyed to its own named mob'
   )
 })
@@ -271,22 +281,28 @@ test('sampling: a slow on two mobs measures each against its OWN landing, never 
   // THE MIS-PAIRING THIS KILLS: `recordFade` used to fall back to the OLDEST open cast of the
   // same spell on ANY entity, so mob B's wear-off was measured from mob A's older landing — a
   // span that is too LONG, in exactly the direction the recency-weighted MAX estimator trusts.
-  // Here A lands at 0s and B at 60s; B wears off at 240s. The honest sample is B's own 180s.
-  // The old fallback would have produced 240s.
+  // Here A lands at 1s and B at 61s; B wears off at 181s. The honest sample is B's own 120s.
+  // The old fallback would have produced 180s.
+  //
+  // THE SPANS ARE SHORTER THAN THEY WERE (JOS-140): the observation has to land while Gehnus's
+  // slow is still inside its life, because the unwitnessed-expiry cull now retires a debuff that
+  // is long overdue with nothing to close it — which is a different rule from this one and is
+  // pinned separately below. 200 s against a 150 s DB floor plus its grace leaves the scoping
+  // claim about a FADE where it belongs.
   const { buffs } = run(
     script(
       [0, 'You begin casting Shiftless Deeds IV.'],
       [1, 'Guard Gehnus slows down.'],
       [60, 'You begin casting Shiftless Deeds IV.'],
       [61, 'Guard Hewet slows down.'],
-      [241, 'Your Shiftless Deeds spell has worn off of Guard Hewet.']
+      [181, 'Your Shiftless Deeds spell has worn off of Guard Hewet.']
     ),
-    300
+    200
   )
   const stat = buffs.stats['shiftless deeds']
   assert.ok(stat, 'the wear-off on Hewet mints a sample')
   assert.equal(stat.n, 1, 'exactly one — only the instance that actually wore off')
-  assert.equal(stat.maxMs, 180_000, "measured from Hewet's OWN landing (61s→241s), not from Gehnus's")
+  assert.equal(stat.maxMs, 120_000, "measured from Hewet's OWN landing (61s→181s), not from Gehnus's")
   // Gehnus's slow is still up: another mob's wear-off never speaks for it.
   assert.ok(
     buffs.active.some((a) => a.target === 'Guard Gehnus'),
