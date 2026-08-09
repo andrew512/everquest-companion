@@ -163,6 +163,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
+        text: 'A Ready tab on the Sky view lists every quest you can turn in right now - it fills as last items land, empties as you hand them in, and ignores the hide boxes so your walk-the-islands list is always the whole list.'
+      },
+      {
+        kind: 'new',
         text: 'Map search now answers from every zone, mobs included: look for a name anywhere, the result says which zone it means, and picking it takes you to that map - to the exact spot when the wiki states one.',
         fromReport: true
       },
