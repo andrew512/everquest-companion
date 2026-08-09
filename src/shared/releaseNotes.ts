@@ -142,6 +142,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'The Leveling page stops piling its panels on top of each other in narrower windows - the bands stack and scroll instead, and nothing covers anything.',
         fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'The Ready tab starts on first-time turn-ins: quests you have never handed in before, with a box to bring your refarms back into the list.'
       }
     ]
   },
