@@ -132,6 +132,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'new',
         text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, the base rung outlines instead of filling when the log cannot name it, and the Bosses view remembers which tab you left it on.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Thirty-five spell messages the game words differently than the wiki are corrected - Drifting Death and the swarm family, root, stuns, runes and more now land and wear off on your timers exactly as the game prints them.',
+        fromReport: true
       }
     ]
   },
