@@ -144,6 +144,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Allure finally opens its charm countdown - the wiki carried no landing text for it at all, so an enchanter charm never started a clock. Charm breaks were always seen; now the whole hold is.'
+      },
+      {
+        kind: 'fixed',
         text: 'The Leveling page stops piling its panels on top of each other in narrower windows - the bands stack and scroll instead, and nothing covers anything.',
         fromReport: true
       },
