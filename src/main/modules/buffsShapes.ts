@@ -83,6 +83,41 @@ export function expiryGraceMs(source: 'db' | 'observed' | undefined, durationMs:
   return source === 'observed' ? 15_000 : Math.max(60_000, durationMs)
 }
 
+/**
+ * THE UNWITNESSED-EXPIRY TIMEOUT for a NON-SELF BUFF row (JOS-149, owner ruling 2026-08-09).
+ *
+ * A row on somebody else — your pet, an ally, a charmed mob — is not a row whose close you are
+ * promised. The pet fade line the game does print (`Your pet's <Spell> spell has worn off.`)
+ * resolves against the CURRENT pet, so the instant a pet despawns or is replaced, every row bound
+ * to the old one is unclosable by construction: no later line can ever name it. The owner's own
+ * screenshot is that state, and the answer is a TIMEOUT rather than a grace.
+ *
+ * IT IS DELIBERATELY NOT `expiryGraceMs`. That function's DB branch waits the duration AGAIN
+ * (floored at 60 s) so a learner that has never seen a clean cycle keeps its one chance to be
+ * corrected by a late wear-off. Applied here it produces exactly the complaint restated: a
+ * 60-minute pet buff would wait another hour at 0s before leaving. The owner's ruling is that a
+ * row nobody can witness closing does not get an hour, so the DB branch collapses to the flat
+ * floor:
+ *
+ *   'observed' ⇒ 15 s, the same number a debuff gets. The duration came from this caster's own
+ *                clean cycles, so the only thing left to be late is the line.
+ *   'db'       ⇒ 60 s. Not the duration again. A minute past a stated end is long enough for a
+ *                line that is merely late and short enough that a stale row is never a fixture of
+ *                the window.
+ *
+ * WHAT IT COSTS, stated plainly: a pet buff whose real duration runs more than a minute past the
+ * DB's stated one is culled before its wear-off arrives, and that cycle teaches the learner
+ * nothing. Measured against the owner's log that is a narrow loss — the pet fade line prints 412
+ * times across 51 spells, and the two Focus Death cycles it caught ran 57m43s and 60m38s against
+ * a 60-minute DB row — and the owner has ruled the squatting row the worse defect of the two.
+ *
+ * SELF buffs are not subject to this at all (see `unwitnessedCullCap`): their wear-offs print to
+ * you, and their clocks are the ones the offline pause rewinds.
+ */
+export function nonSelfExpiryTimeoutMs(source: 'db' | 'observed' | undefined): number {
+  return source === 'observed' ? 15_000 : 60_000
+}
+
 /** Active-buff HYGIENE cap (Task #33, finding #6). An active past this auto-retires. */
 const HYGIENE_ABSOLUTE_MS = 90 * 60_000 // 90 minutes when no/low stats
 export function hygieneCapMs(p75: number | null, n: number): number {

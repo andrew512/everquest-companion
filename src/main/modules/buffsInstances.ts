@@ -540,6 +540,12 @@ export class BuffInstances {
    * buff's clock is about to be rewound by the absence, and judging it against a `now` from the
    * far side would retire — a beat before the pause lands — exactly the buff the pause exists to
    * keep. DEBUFFS get no exemption; their clocks never stop, so the cap means what it always did.
+   *
+   * THE HOLD IS A BUFF RULE, NOT A SELF-BUFF RULE, and JOS-149 leaves it that way on purpose.
+   * The unwitnessed-expiry cull now reaches NON-SELF buff rows (see `unwitnessedCullCap`), and
+   * those clocks are shifted by the pause exactly as a self buff's are — so the cull that judges
+   * them has to wait for the same answer the countdown is waiting for, or it would cull across an
+   * absence the pause was about to undo.
    */
   sweepHygiene(now: number, heldBeforeTs = 0): void {
     // CALLED ONCE PER EVENT (buffs.ts onEvent), so its cost is paid 1.4M times on a full replay.
