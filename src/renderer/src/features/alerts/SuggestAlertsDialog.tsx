@@ -81,7 +81,13 @@ function SuggestHeader({
           </Typography>
         )}
         <Box sx={{ flexGrow: 1 }} />
-        <Button size="small" variant="outlined" startIcon={<EditNoteIcon />} onClick={onCreateManually}>
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<EditNoteIcon />}
+          data-testid="suggest-create-manually"
+          onClick={onCreateManually}
+        >
           Create manually
         </Button>
       </Stack>
@@ -104,6 +110,7 @@ function SearchBox({
       inputRef={inputRef}
       size="small"
       fullWidth
+      data-testid="suggest-search"
       placeholder="Search name, spell text, level:25, class:shm, type:debuff…"
       value={query}
       onChange={(e) => onQuery(e.target.value)}
@@ -294,6 +301,7 @@ export default function SuggestAlertsDialog({
       onClose={onClose}
       maxWidth="md"
       fullWidth
+      data-testid="suggest-dialog"
       // FIXED paper height. The result list swings between MAX_ROWS rows and none as the user
       // types; a content-sized, vertically centred paper re-sizes and re-centres on every
       // keystroke. Height here + a scrolling result list = geometry that never moves.
