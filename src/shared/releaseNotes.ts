@@ -175,11 +175,6 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
-        text: 'Reload Inventory now resets what the app thinks you are holding. An item you destroyed, sold or gave away is gone the moment you reload, and anything you have looted since the export still counts.',
-        fromReport: true
-      },
-      {
-        kind: 'fixed',
         text: 'Camp out and your buff timers wait with you: the countdowns pick up where they left off when you log back in, instead of expiring while you were gone. Debuffs you landed keep burning down in world time, because the world does not log out with you.'
       }
     ]
