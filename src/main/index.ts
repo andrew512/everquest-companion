@@ -30,7 +30,7 @@ import { CHANNEL, USER_DATA } from './channel'
 import './crashGuards'
 import { E2E } from './e2e'
 import { OWNER_TOOLS } from './ownerTools'
-import { app, BrowserWindow, protocol, session } from 'electron'
+import { app, BrowserWindow, net, protocol, session } from 'electron'
 import { IPC } from '../shared/ipc'
 import { errorLogPath, logError, logInfo } from './errorLog'
 import { saveUserOverlay } from './data/overlayPersistence'
@@ -215,8 +215,13 @@ if (!gotSingleInstanceLock) {
     // Serve `eqimg://item/<id>` from <userData>/image-cache BEFORE any window loads a page
     // that can reference an item icon. One handler on the default session covers the main
     // window and every overlay (none of them use a custom partition).
+    // `net.fetch`, NOT global fetch: wiki.project1999.com serves an incomplete certificate
+    // chain, and only Chromium's network stack chases the missing intermediate via AIA — under
+    // Node's fetch every boss portrait fails with UNABLE_TO_VERIFY_LEAF_SIGNATURE. Bound here
+    // (not defaulted inside imageCache.ts) so that module stays Electron-free and testable.
     installImageCacheProtocol(protocol, {
       userData: USER_DATA,
+      fetchImpl: (url, init) => net.fetch(url, init),
       onError: (msg, err) => logError('main:imageCache', { message: msg, err })
     })
     // …and `eqspeech://<hash>` from <userData>/speech-cache, beside it and for the same

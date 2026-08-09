@@ -46,12 +46,32 @@ function stringifyPayload(payload: unknown): string {
   }
 }
 
-/** JSON replacer that unwraps nested Error objects and drops circular refs. */
+/**
+ * JSON replacer that unwraps nested Error objects and drops circular refs.
+ *
+ * `cause` is unwrapped too, and it is the field that matters most: undici reports EVERY network
+ * failure as the same opaque `TypeError: fetch failed` and puts the real reason (a DNS error, a
+ * TLS verification failure, a timeout) in `.cause`. A log line without it says only that
+ * something went wrong — that is exactly how the p1999 certificate-chain bug (see
+ * imageCache.ts's `fetchImpl`) stayed unreadable in the error log for as long as it did. It is
+ * emitted only when present, so every other line stays as it was.
+ */
 function replacer(): (key: string, value: unknown) => unknown {
   const seen = new WeakSet()
   return (_key, value) => {
     if (value instanceof Error) {
-      return { name: value.name, message: value.message, stack: value.stack }
+      // Errors go in `seen` as well: a cause chain that loops back on itself would otherwise
+      // recurse forever here, since the unwrapped object is handed straight back to stringify.
+      if (seen.has(value)) return '[Circular]'
+      seen.add(value)
+      const out: Record<string, unknown> = { name: value.name, message: value.message, stack: value.stack }
+      // Node hangs the machine-readable reason off `code` (ENOTFOUND, ETIMEDOUT,
+      // UNABLE_TO_VERIFY_LEAF_SIGNATURE) — it is not an own enumerable field of Error, so
+      // nothing below would pick it up.
+      const code = (value as { code?: unknown }).code
+      if (typeof code === 'string') out.code = code
+      if (value.cause !== undefined) out.cause = value.cause
+      return out
     }
     if (typeof value === 'object' && value !== null) {
       if (seen.has(value)) return '[Circular]'

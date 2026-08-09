@@ -18,6 +18,8 @@
 //        └► protocol.handle('eqimg')     main process, ONE handler for every window
 //             ├► <userData>/image-cache/<name> exists ⇒ serve the bytes, no network
 //             └► else fetch upstream once (polite UA), write ATOMICALLY, then serve
+//                  …through Electron's `net.fetch`, which the composition root injects —
+//                  Node's global fetch cannot reach p1999 at all (ImageCacheOptions.fetchImpl).
 //
 // WHY A PROTOCOL and not an IPC "give me a data URL" call: `<img src>` is the natural idiom,
 // it needs no async plumbing in the renderer, and the SAME handler serves the main window
@@ -364,12 +366,36 @@ export const EQIMG_SCHEME_PRIVILEGES = {
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
 } as const
 
+/**
+ * The ONE call shape this module makes. Narrow on purpose: the real argument is Electron's
+ * `net.fetch`, whose `input` is `string | GlobalRequest` rather than `RequestInfo | URL`, so
+ * `typeof fetch` would not accept it. Node's global `fetch` still satisfies this, which keeps
+ * the fallback below (and any test stub) trivial.
+ */
+export type ImageFetch = (url: string, init: RequestInit) => Promise<GlobalResponse>
+
 /** Options for the handler (injected so tests/other callers never touch `app`). */
 export interface ImageCacheOptions {
   /** The channel's userData root — `app.getPath('userData')`. */
   readonly userData: string
-  /** Override for tests; defaults to global fetch. */
-  readonly fetchImpl?: typeof fetch
+  /**
+   * How upstream images are fetched. THE REAL APP MUST PASS `net.fetch` (see index.ts) —
+   * Node's global `fetch` cannot reach wiki.project1999.com at all.
+   *
+   * That wiki serves an INCOMPLETE certificate chain: the leaf is issued by "SSL.com TLS
+   * Issuing RSA CA R1" but the chain it sends contains only unrelated Sectigo intermediates,
+   * so the issuer has to be fetched from the leaf's AIA extension to verify it. Chromium (and
+   * schannel, hence curl on Windows) does that fetch; Node/undici does not, and every request
+   * dies as `TypeError: fetch failed` ← `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Verified against
+   * the live host under Electron 43: `net.fetch` 200s the same URL that global `fetch` throws
+   * on. This is also why the pre-cache `<img src="https://…">` worked — those loads were
+   * Chromium's all along, and moving the fetch into main quietly changed TLS stacks.
+   *
+   * REQUIRED, with no global-fetch default on purpose: a fallback that cannot reach one of the
+   * two allowlisted hosts is a trap, and "required" is the only version of this the compiler
+   * can keep true. Tests pass a stub — which is what a test wants anyway.
+   */
+  readonly fetchImpl: ImageFetch
   /** Override for tests; defaults to console.log. */
   readonly log?: (msg: string) => void
   /** Override for tests; defaults to console.error via the caller. */
@@ -411,7 +437,7 @@ const ignoreCleanupFailure = (): void => {
  */
 export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCacheOptions): void {
   const dir = imageCacheDir(opts.userData)
-  const doFetch = opts.fetchImpl ?? fetch
+  const doFetch = opts.fetchImpl
   const log = opts.log ?? ((m: string) => logInfo(m))
   const onError = opts.onError ?? ((m: string, e: unknown) => logConsoleError(m, e))
 
