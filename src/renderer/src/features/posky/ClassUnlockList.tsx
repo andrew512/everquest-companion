@@ -37,6 +37,11 @@ function unlockLabel(row: ClassUnlockRow): { text: string; color: 'success' | 'd
  * most-recently-looted order, and this tab has no such order), and this one carries NO TOOLTIP.
  * What it does is said once in the line above the list instead, where it is readable without a
  * hover — the house rule about controls, honoured by not adding a popper rather than by tuning one.
+ *
+ * SINCE JOS-157 THE ROW AROUND IT NAVIGATES, so this button stops the click travelling. A star that
+ * also opened the Quests tab would make pinning a class impossible without leaving the tab you
+ * pinned it on — the star's whole job is to change THIS list's order, which you have to stay here
+ * to see. Same for the keyboard: Enter and Space on the star are the star's, not the row's.
  */
 function ClassStarButton({
   starred,
@@ -51,7 +56,13 @@ function ClassStarButton({
     <IconButton
       size="small"
       aria-label={starred ? `Unpin ${className}` : `Pin ${className} to the top`}
-      onClick={onToggle}
+      onClick={(e) => {
+        e.stopPropagation()
+        onToggle()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+      }}
       sx={{ color: starred ? 'warning.main' : 'text.disabled', p: 0.25 }}
     >
       {starred ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
@@ -59,14 +70,29 @@ function ClassStarButton({
   )
 }
 
+/**
+ * A class row, and since JOS-157 A DOOR TO ITS QUESTS: clicking anywhere on it but the star opens
+ * the Quests tab filtered to exactly this class.
+ *
+ * THE WHOLE ROW IS THE TARGET rather than a link on the class name, because the row already reads
+ * as one object — the name, the count, the bar and the verdict are four views of a single class —
+ * and a click anywhere on it can only mean that class. It is a `role="button"` with a tab stop and
+ * Enter/Space instead of a real `<button>` so the star can keep being a button in its own right;
+ * nesting one button inside another is invalid, and the star's independence is the requirement.
+ *
+ * NO TOOLTIP SAYS SO (the standing house rule for controls, JOS-143). What a click does is stated
+ * once in SourceNote below, in the same line that already explains the ordering and the star.
+ */
 function ClassRow({
   row,
   starred,
-  onToggleStar
+  onToggleStar,
+  onOpen
 }: {
   row: ClassUnlockRow
   starred: boolean
   onToggleStar: () => void
+  onOpen: () => void
 }): JSX.Element {
   const label = unlockLabel(row)
   const pct = row.total === 0 ? 0 : (row.turnedIn / row.total) * 100
@@ -75,17 +101,38 @@ function ClassRow({
       direction="row"
       spacing={2}
       alignItems="center"
+      role="button"
+      tabIndex={0}
+      aria-label={`Show the ${row.className} quests`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        // Space scrolls the pane otherwise, and this row is inside a scrolling list.
+        e.preventDefault()
+        onOpen()
+      }}
       data-testid={`class-unlock-row-${row.className.replace(/\s+/g, '-').toLowerCase()}`}
       // The row's own numbers as ATTRIBUTES, the turn-in badge's `data-count` convention. A test
       // reading them off the rendered SENTENCE has to parse "0 of 44 tests left" and gets `0 of 44`
       // — it did, on the first run of the e2e below — because two independent numbers sit adjacent
       // with no separator a regex can trust. These are the same values the sentence is built from,
       // published once so the assertion and the reader are looking at the same thing.
+      // The class's own spelling, published for the same reason the numbers are: the testid is
+      // lowercased and hyphenated, and the JOS-157 drill-down has to assert the EXACT string that
+      // reaches the class filter and its stored key.
+      data-class={row.className}
       data-turned-in={row.turnedIn}
       data-total={row.total}
       data-remaining={row.remaining}
       data-source={row.source ?? ''}
-      sx={{ px: 1, py: 0.75, borderRadius: 1, '&:hover': { bgcolor: 'action.hover' } }}
+      sx={{
+        px: 1,
+        py: 0.75,
+        borderRadius: 1,
+        cursor: 'pointer',
+        '&:hover': { bgcolor: 'action.hover' },
+        '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+      }}
     >
       <ClassStarButton starred={starred} className={row.className} onToggle={onToggleStar} />
       <Typography variant="subtitle2" sx={{ minWidth: 130 }}>
@@ -123,15 +170,23 @@ function SourceNote({ rows }: { rows: readonly ClassUnlockRow[] }): JSX.Element 
   const derived = rows.filter((r) => r.source === 'derived').length
   return (
     <Typography variant="body2" color="text.secondary" data-testid="class-unlock-note">
-      Fewest tests left first. Star a class to pin it to the top. {observed} unlocked by a line in
-      your log, {derived} read from a complete set of turn-ins. Turning in a Sky test prints
+      Fewest tests left first. Click a class to see its quests. Star a class to pin it to the top.{' '}
+      {observed} unlocked by a line in your log, {derived} read from a complete set of turn-ins.
+      Turning in a Sky test prints
       nothing about unlocking, so a complete set is our reading and not the game saying so; a class
       can also unlock at level 11 or from a token, which is why a logged unlock outranks the count.
     </Typography>
   )
 }
 
-export default function ClassUnlockList({ quests }: { quests: QuestProgress[] }): JSX.Element {
+export default function ClassUnlockList({
+  quests,
+  onOpenClass
+}: {
+  quests: QuestProgress[]
+  /** a class name → the Quests tab filtered to it (JOS-157). PoskyView hands this to the list. */
+  onOpenClass: (className: string) => void
+}): JSX.Element {
   const observed = useModule<ClassUnlockSnap, ClassUnlockDelta>('classUnlocks', applyDelta) ?? EMPTY
   const stars = useClassFavorites()
 
@@ -165,6 +220,7 @@ export default function ClassUnlockList({ quests }: { quests: QuestProgress[] })
               row={r}
               starred={stars.has(r.className)}
               onToggleStar={() => stars.toggle(r.className)}
+              onOpen={() => onOpenClass(r.className)}
             />
           ))}
         </Stack>

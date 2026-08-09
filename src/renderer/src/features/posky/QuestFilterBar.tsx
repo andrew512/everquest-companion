@@ -67,6 +67,11 @@ function QuestPickers({ list, classes }: { list: QuestListState; classes: string
         onChange={(v) => list.setSelectedClasses(v)}
         label="Filter by class"
         placeholder="All classes"
+        // The stable handle the JOS-157 drill-down spec reads: a click on a Classes-tab row has to
+        // land as a pick VISIBLE in this control, not only in storage, or the user has a filtered
+        // list with no chip saying why. The two facet pickers below already carry one for the same
+        // reason.
+        testId="posky-class-filter"
       />
       {/* The two JOS-124 facets. Both are stored preferences, so both carry a testid the
           persistence spec reads back, and both offer `withPicked` options so a stored pick the
