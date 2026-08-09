@@ -125,6 +125,17 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.16.0',
+    date: '2026-08-09',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, the base rung outlines instead of filling when the log cannot name it, and the Bosses view remembers which tab you left it on.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.15.0',
     date: '2026-08-09',
     entries: [
