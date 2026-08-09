@@ -7,7 +7,7 @@
 // behaviour changed in the move.
 //
 // TWO KINDS OF CONTROL, and the `flexGrow` spacer between them is the whole layout argument.
-// LEFT: class / island / boss filters, search, sort and the three hide-toggles — all of them narrow
+// LEFT: class / island / boss filters, search, sort and the four hide-toggles — all of them narrow
 // the list you are looking at, and all of them live on `useQuestList`'s state, so this file owns
 // none of that storage. RIGHT: "Count items from" and "Reload inventory" — these change what the
 // tab counts you as HOLDING, which moves every progress number under the bar rather than the set of
@@ -17,7 +17,7 @@
 // boss (what am I standing in front of) — the WHERE facets sit beside the WHO facet rather than
 // beside the search box, because all three answer "which quests are mine right now".
 //
-// This row WRAPS (`flexWrap="wrap" useFlexGap`), unlike the planner's nowrap bar: there are twelve
+// This row WRAPS (`flexWrap="wrap" useFlexGap`), unlike the planner's nowrap bar: there are thirteen
 // controls here and the tab's body is a scrolling accordion list that can afford to start lower.
 
 import type { JSX } from 'react'
@@ -86,7 +86,70 @@ function QuestPickers({ list, classes }: { list: QuestListState; classes: string
   )
 }
 
-// The three pickers, search, sort, the three hide-toggles, and the inventory controls that decide
+/**
+ * The four narrowing CHECKBOXES, split out of the bar for the same reason `QuestPickers` above was:
+ * one subject, and the bar was over the measured per-function line ceiling once JOS-145 added the
+ * fourth. They are one group because each is a plain "take some rows away" bit on `useQuestList`
+ * with no options behind it, unlike the pickers and the two dropdowns.
+ *
+ * THE FIRST TWO ARE THE TWO MEANINGS OF DONE (JOS-145), side by side and independent. Each LABEL
+ * says exactly which reading it is, in the player's own terms ("I have every item for" / "I have
+ * turned in"), because that difference is the whole reason there are two — and a label that states
+ * its own rule is what lets the hover text stay one clause. The rules and the argument for keeping
+ * them apart live on `hasEveryItem` and `everTurnedIn` in questCompletion.ts. Both testids and both
+ * stored keys are stable handles for the persistence spec; the older box keeps the ones it always
+ * had, so an existing user's saved choice still applies.
+ */
+function QuestToggles({ list }: { list: QuestListState }): JSX.Element {
+  return (
+    <>
+      <Tooltip title="Hide quests you already hold every item for. A quest you turn in comes back at zero, because handing it in spends the items, so it stays on this list until you have gathered them again.">
+        <FormControlLabel
+          control={
+            <Checkbox
+              // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
+              // box's tick is a stored preference, so it is one of the two an e2e reads back.
+              data-testid="posky-hide-completed"
+              checked={list.hideCompleted}
+              onChange={(e) => list.setHideCompleted(e.target.checked)}
+            />
+          }
+          label="Hide quests I have every item for"
+        />
+      </Tooltip>
+      <Tooltip title="Hide quests you have handed in at least once, even the ones you are farming again.">
+        <FormControlLabel
+          control={
+            <Checkbox
+              data-testid="posky-hide-turned-in"
+              checked={list.hideTurnedIn}
+              onChange={(e) => list.setHideTurnedIn(e.target.checked)}
+            />
+          }
+          label="Hide quests I have turned in"
+        />
+      </Tooltip>
+      <FormControlLabel
+        control={<Checkbox checked={list.hideNoItems} onChange={(e) => list.setHideNoItems(e.target.checked)} />}
+        label="Only quests with turn-ins"
+      />
+      <FormControlLabel
+        control={
+          <Checkbox
+            checked={list.favoritesOnly}
+            onChange={(e) => list.setFavoritesOnly(e.target.checked)}
+            icon={<StarBorderIcon />}
+            checkedIcon={<StarIcon />}
+            sx={{ color: 'warning.main', '&.Mui-checked': { color: 'warning.main' } }}
+          />
+        }
+        label="Favorites only"
+      />
+    </>
+  )
+}
+
+// The three pickers, search, sort, the four toggles, and the inventory controls that decide
 // which items the whole tab counts you as holding.
 export default function QuestFilterBar({
   list,
@@ -120,39 +183,7 @@ export default function QuestFilterBar({
           <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
         ))}
       </TextField>
-      {/* The LABEL says has-every-item, because that is what the box does since JOS-131 (the
-          rule and the argument live on `hasEveryItem` in useQuestList.ts). The testid and the
-          stored key are deliberately unchanged: an existing user's saved choice still applies. */}
-      <Tooltip title="Hide quests you already hold every item for. A quest you turn in comes back at zero, because handing it in spends the items, so it stays on this list until you have gathered them again.">
-        <FormControlLabel
-          control={
-            <Checkbox
-              // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
-              // box's tick is a stored preference, so it is the one control here an e2e reads back.
-              data-testid="posky-hide-completed"
-              checked={list.hideCompleted}
-              onChange={(e) => list.setHideCompleted(e.target.checked)}
-            />
-          }
-          label="Hide quests I have every item for"
-        />
-      </Tooltip>
-      <FormControlLabel
-        control={<Checkbox checked={list.hideNoItems} onChange={(e) => list.setHideNoItems(e.target.checked)} />}
-        label="Only quests with turn-ins"
-      />
-      <FormControlLabel
-        control={
-          <Checkbox
-            checked={list.favoritesOnly}
-            onChange={(e) => list.setFavoritesOnly(e.target.checked)}
-            icon={<StarBorderIcon />}
-            checkedIcon={<StarIcon />}
-            sx={{ color: 'warning.main', '&.Mui-checked': { color: 'warning.main' } }}
-          />
-        }
-        label="Favorites only"
-      />
+      <QuestToggles list={list} />
       <Box sx={{ flexGrow: 1 }} />
       <Tooltip title="Which source decides what you have. An inventory export resets the count and loot since then adds to it, so an item you got rid of in game disappears when you reload. The log by itself counts everything you have ever looted, so it cannot see that.">
         <TextField

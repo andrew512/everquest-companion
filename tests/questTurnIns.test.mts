@@ -22,8 +22,11 @@
 //      is a record of what you ever LOOTED and still contains everything a turn-in ate, so it
 //      owes all of them; a DUMP is an observation of what you are HOLDING and already has them
 //      taken out, so it owes none. No generation instant is consulted anywhere.
-//   4. THE FILTER (features/posky/questCompletion.ts): "hide completed" means has-every-item-now,
-//      never has-ever-turned-in.
+//   4. THE FILTERS (features/posky/questCompletion.ts): "hide completed" means has-every-item-now,
+//      never has-ever-turned-in — and since JOS-145 the other reading is a SECOND, independent box
+//      (`everTurnedIn`) rather than a re-argument of the first, because a player farming each quest
+//      once wants the done ones gone and a player refarming does not. The pair is pinned here as
+//      two predicates that never read each other's input.
 //   5. THE BADGE's copy, including the count from the second turn-in on.
 //
 // Run: `npm test`.
@@ -39,7 +42,7 @@ import {
   turnInBadgeLabel,
   turnInsToPersist
 } from '../src/shared/questTurnIns'
-import { hasEveryItem } from '../src/renderer/src/features/posky/questCompletion'
+import { everTurnedIn, hasEveryItem } from '../src/renderer/src/features/posky/questCompletion'
 import { reconcile } from '../src/renderer/src/features/inventory/reconcile'
 import { questKey } from '../src/renderer/src/features/posky/keys'
 import { itemCountKey } from '../src/renderer/src/lib/itemName'
@@ -264,7 +267,7 @@ test('the combined count is MONOTONE in your own loot — one more claw never lo
 })
 
 // =============================================================================
-// 4 + 5. The filter's meaning, and the badge's copy
+// 4 + 5. The two filters' meanings, and the badge's copy
 // =============================================================================
 
 test('"hide completed" means HAS EVERY ITEM NOW, never has-ever-turned-in', () => {
@@ -298,6 +301,75 @@ test('a turned-in quest is NOT hidden once its items are spent — the refarm st
     hasEveryItem({ needCount, missing: missingItems(spent) }),
     false,
     'so it comes straight back onto the list, turn-in badge and all, by design'
+  )
+})
+
+test('"hide turned in" means HAS EVER TURNED IN, and one turn-in is as done as ten (JOS-145)', () => {
+  assert.equal(everTurnedIn({ turnIns: 0 }), false, 'never handed in is never hidden')
+  assert.equal(everTurnedIn({ turnIns: 1 }), true, 'once is the whole threshold')
+  assert.equal(everTurnedIn({ turnIns: 7 }), true, 'and there is no dial above it')
+})
+
+/**
+ * THE ACCEPTANCE CASE, and the only reason JOS-145 exists as a second box rather than a re-argued
+ * first one: ONE quest, refarmable and already handed in, which the two toggles must disagree
+ * about. The turn-in count and the held items come from the real ledger and the real reconcile, so
+ * this is the same quest state the tab would compute, not two hand-written booleans.
+ */
+test('a refarmable turned-in quest hides under the NEW box and NOT under the old one', () => {
+  const log = { 'sphinx claw': 2, 'wind rune geza': 1 }
+  const needCount = CLAW.items.reduce((s, it) => s + (it.count > 0 ? it.count : 1), 0)
+
+  // Handed in once, so the log's items are spent and the quest is back to nothing held.
+  const stored = progress({ questTurnIns: { [CLAW_KEY]: [1000] } })
+  const turnIns = resolveTurnIns(stored, {}).all[CLAW_KEY]
+  const net = reconcile({ ...LOG_ONLY, log, turnIns: { [CLAW_KEY]: turnIns } }).net
+  const quest = { needCount, missing: missingItems(net), turnIns }
+
+  assert.equal(quest.turnIns, 1)
+  assert.equal(
+    hasEveryItem(quest),
+    false,
+    'the OLD box leaves it on the list: every item it needs is gone from your bags'
+  )
+  assert.equal(
+    everTurnedIn(quest),
+    true,
+    'the NEW box takes it off: you have run this quest, which is the question it asks'
+  )
+})
+
+/**
+ * The pair is INDEPENDENT, which is what "two boxes" has to mean. Neither predicate reads the
+ * other's input, so all four tick combinations are a plain AND over two answers — the property a
+ * tri-state or a shared key would quietly lose.
+ */
+test('the two hide-boxes never read each other: all four combinations are a plain AND', () => {
+  // Holding everything AND never handed in: the pre-turn-in state, hidden only by the old box.
+  const ready = { needCount: 3, missing: [], turnIns: 0 }
+  // Handed in AND holding everything again: a full refarm, which BOTH boxes hide.
+  const refarmed = { needCount: 3, missing: [], turnIns: 2 }
+  // Handed in AND holding nothing: hidden only by the new box (the case above).
+  const spent = { needCount: 3, missing: ['Sphinx Claw'], turnIns: 1 }
+  // Neither: work in progress, which nothing hides.
+  const fresh = { needCount: 3, missing: ['Sphinx Claw'], turnIns: 0 }
+
+  const shown = (q: typeof ready, hideCompleted: boolean, hideTurnedIn: boolean): boolean =>
+    !(hideCompleted && hasEveryItem(q)) && !(hideTurnedIn && everTurnedIn(q))
+
+  assert.deepEqual(
+    [ready, refarmed, spent, fresh].map((q) => [
+      shown(q, false, false),
+      shown(q, true, false),
+      shown(q, false, true),
+      shown(q, true, true)
+    ]),
+    [
+      [true, false, true, false],
+      [true, false, false, false],
+      [true, true, false, false],
+      [true, true, true, true]
+    ]
   )
 })
 

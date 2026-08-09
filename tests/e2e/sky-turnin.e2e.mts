@@ -48,6 +48,8 @@ const NAV_SKY = '[data-testid="nav-posky"]'
 const NAV_OVERVIEW = '[data-testid="nav-overview"]'
 const SEARCH = '[data-testid="posky-search"]'
 const HIDE_COMPLETED = '[data-testid="posky-hide-completed"]'
+/** The JOS-145 box beside it: the OTHER reading of done, has-ever-turned-in. */
+const HIDE_TURNED_IN = '[data-testid="posky-hide-turned-in"]'
 const BADGE = '[data-testid="posky-turned-in"]'
 const ROW = '.MuiAccordion-root'
 const COUNTS = '[data-testid="posky-counts"]'
@@ -144,12 +146,19 @@ async function stepTurnIn(page: Page, log: FixtureLog, at: Date): Promise<void> 
 }
 
 /**
- * The filter's decided meaning (JOS-131, argued in features/posky/questCompletion.ts), asserted
- * where it is visible: "hide completed" hides the quest you hold every item for, and NOT the one
- * you have handed in and are now refarming. Read AFTER the turn-in, so the row on screen is a
- * quest that has been turned in once and holds nothing.
+ * THE TWO BOXES, ON THE ONE QUEST THEY MUST DISAGREE ABOUT (JOS-131's meaning, JOS-145's second
+ * reading — both argued in features/posky/questCompletion.ts).
+ *
+ * Read AFTER the turn-in, so the row on screen is exactly the case: a quest handed in once, whose
+ * items that turn-in spent, which the player can farm again. "Hide completed" (has every item now)
+ * must KEEP it, because every item it needs is gone from your bags and that is work left. "Hide
+ * turned in" (has ever turned in) must REMOVE it, because you have run it, which is the question
+ * that box asks. The unit suite pins the predicates; this pins that the two checkboxes on screen
+ * are wired to the ones they claim, on real app state rather than a hand-built quest.
+ *
+ * Both are left as they were found: they are stored preferences and launch 2 shares the store.
  */
-async function stepHideCompleted(page: Page): Promise<void> {
+async function stepHideBoxes(page: Page): Promise<void> {
   await page.click(HIDE_COMPLETED, { timeout: 15_000 })
   const still = await settle(() => filteredCount(page), (n) => n !== null, { timeoutMs: 8_000 })
   check(
@@ -158,9 +167,20 @@ async function stepHideCompleted(page: Page): Promise<void> {
     `filtered=${String(still)}`
   )
   check('…and its badge is still there beside it', (await badgeCount(page)) === 1)
-  // Leave it as it was found: this box is a stored preference (JOS-90) and launch 2 reads it.
   await page.click(HIDE_COMPLETED, { timeout: 15_000 })
   await settle(() => filteredCount(page), (n) => n === 1, { timeoutMs: 8_000 })
+
+  await page.click(HIDE_TURNED_IN, { timeout: 15_000 })
+  const gone = await settle(() => filteredCount(page), (n) => n === 0, { timeoutMs: 8_000 })
+  check(
+    'HIDE TURNED IN TAKES THE SAME QUEST OFF THE LIST — the other reading, on its own box',
+    gone === 0,
+    `filtered=${String(gone)}`
+  )
+  check('…so its row is gone from the list too, not merely uncounted', (await countOf(page, ROW)) === 0)
+  await page.click(HIDE_TURNED_IN, { timeout: 15_000 })
+  const back = await settle(() => filteredCount(page), (n) => n === 1, { timeoutMs: 8_000 })
+  check('…and un-ticking brings it straight back', back === 1, `filtered=${String(back)}`)
 }
 
 /** Multiple turn-ins are the default: hand it in again, and the badge counts. */
@@ -202,7 +222,7 @@ async function main(): Promise<void> {
       await stepBefore(page)
       await stepLoot(page, log, new Date(now - 120_000))
       await stepTurnIn(page, log, new Date(now - 60_000))
-      await stepHideCompleted(page)
+      await stepHideBoxes(page)
       await stepAgain(page, log, new Date(now))
       if (failures.length) await dumpArtifacts(page, 'sky-turnin-FAIL')
     } finally {
