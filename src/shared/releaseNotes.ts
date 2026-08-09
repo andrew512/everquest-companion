@@ -154,6 +154,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         fromReport: true
       },
       {
+        kind: 'new',
+        text: 'Map search now answers from every zone, mobs included: look for a name anywhere, the result says which zone it means, and picking it takes you to that map - to the exact spot when the wiki states one.',
+        fromReport: true
+      },
+      {
         kind: 'fixed',
         text: 'The add-alert editor keeps your work when you switch away from the app and back - the name, trigger, cooldown and spoken phrase all survive, and an alert you were editing no longer snaps back to how it was saved.',
         fromReport: true

@@ -184,11 +184,11 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
             ship DEFAULT OFF and these rows are the only way to meet them. */}
         <MenuItem dense onClick={() => { toggle('buffs') }}>
           <Checkbox size="small" edge="start" checked={overlayState.buffs} tabIndex={-1} disableRipple />
-          <ListItemText primary="Buffs & timers" secondary="Buffs you have running, with timers" />
+          <ListItemText primary="Buffs" secondary="Buffs you have running, with timers" />
         </MenuItem>
         <MenuItem dense onClick={() => { toggle('debuffs') }}>
           <Checkbox size="small" edge="start" checked={overlayState.debuffs} tabIndex={-1} disableRipple />
-          <ListItemText primary="Debuffs & timers" secondary="Debuffs and mez you are holding, per target" />
+          <ListItemText primary="Debuffs" secondary="Debuffs and mez you are holding, per target" />
         </MenuItem>
       </Menu>
     </Box>

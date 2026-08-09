@@ -104,13 +104,13 @@ const SURFACES = {
   buffs: {
     testid: 'buffs-overlay',
     tag: 'BUFFS',
-    title: 'Buffs & timers',
+    title: 'Buffs',
     empty: 'Watching for buffs you cast'
   },
   debuffs: {
     testid: 'debuffs-overlay',
     tag: 'DEBUFFS',
-    title: 'Debuffs & timers',
+    title: 'Debuffs',
     empty: 'Watching for debuffs you land'
   }
 } as const

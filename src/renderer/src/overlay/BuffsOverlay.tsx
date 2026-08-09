@@ -85,7 +85,7 @@ const SURFACE: Record<
 > = {
   buffs: {
     tag: 'BUFFS',
-    title: 'Buffs & timers',
+    title: 'Buffs',
     accent: GOLD,
     tailTitle: 'Buffs you have running',
     selfLabel: 'Your buffs',
@@ -94,7 +94,7 @@ const SURFACE: Record<
   },
   debuffs: {
     tag: 'DEBUFFS',
-    title: 'Debuffs & timers',
+    title: 'Debuffs',
     accent: RED,
     tailTitle: 'Debuffs and crowd control you are holding',
     // A debuff standing on YOU is still a target row in the model's sense of "not a buff of
