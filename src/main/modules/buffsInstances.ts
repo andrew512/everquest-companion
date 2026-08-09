@@ -4,7 +4,8 @@
 // module owns the three live collections — the single pending cast, the landed-and-open
 // casts awaiting their fade, and the currently-active instances — plus every mutation of
 // them: landing, message-driven application, fade pairing (the duration sample), and the
-// CENSORING paths (death / zone / session gap / hygiene / entity retirement).
+// CENSORING paths (death / zone / log hole / hygiene / entity retirement) and the offline
+// PAUSE — which is not a censor at all but the one place a live clock is rewound (JOS-134).
 //
 // It knows nothing about log events: BuffsModule translates events into these calls. It
 // reads learned per-spell knowledge from SpellStats and the pet bindings from PetEntities,
@@ -338,10 +339,12 @@ export class BuffInstances {
   }
 
   /**
-   * OFFLINE GAP — the buff-timer PAUSE. Buff timers do NOT run while the character is out of
-   * the world; the game saves each buff's REMAINING duration and resumes it at login. So an
-   * instance that survives a gap must have its clock shifted forward by the absence, or every
-   * countdown reads as long-expired and the hygiene sweep retires a buff that is still up.
+   * OFFLINE GAP — the buff-timer PAUSE, and the asymmetry that is the whole of JOS-134.
+   *
+   * YOUR BUFFS PAUSE. Buff timers do NOT run while the character is out of the world; the game
+   * saves each buff's REMAINING duration and resumes it at login. So a beneficial instance that
+   * survives a gap has its clock shifted forward by the absence, or every countdown reads as
+   * long-expired and the hygiene sweep retires a buff that is still up.
    *
    * MEASURED, not assumed (world-model law 1 — the game's semantics were verified before
    * being encoded). Real log, Swift Like the Wind (DB duration 16 min):
@@ -356,25 +359,43 @@ export class BuffInstances {
    * online time. If timers RAN while offline the buff would have expired unobserved around
    * 01:08 and that wears-off line could never have printed at all.
    *
-   * This is DISPLAY ONLY. `startedTs` feeds the countdown and the sort order and nothing else
-   * (it is never rendered as a wall clock), the wears-off line stays the authority on when a
-   * buff actually ended, and the shifted open cast is flagged so its span never becomes a
-   * mined duration sample.
+   * DEBUFFS DO NOT PAUSE, AND THAT IS DELIBERATE (owner's design, 2026-08-09). What EQ pauses
+   * is your CHARACTER; the world it stands in keeps running. A slow you landed on a mob is a
+   * timer in the world, not a timer on you, so it keeps burning down while you are gone and its
+   * `startedTs` is left exactly where it was. A debuff that outlives the absence therefore reads
+   * correctly the moment you are back, and one that did not is swept by the ordinary hygiene
+   * pass on its own unshifted clock — no special case, no second opinion. (Nothing else is
+   * needed at the boundary either: the `You have entered <zone>.` line lands 0-1 lines after
+   * every Welcome in the real log and runs the existing law-4 censor, which is what leaves
+   * hostiles and charmed pets behind on a login exactly as on any other zone.)
    *
-   * Note the interaction with SESSION_GAP_MS: an absence of 30 minutes or more has already
-   * wiped every live instance via clearForGap() by the time the gap event arrives (the
-   * reconnect preamble trips it before the Welcome line does), so in practice this shift
-   * applies to the 1-to-30-minute absences — a crash-and-relog, not an overnight camp.
+   * `fromTs` is the last instant the character is KNOWN to have been in the world. Only
+   * instances that predate it are shifted: anything raised after it was raised on THIS side of
+   * the absence and has nothing to be compensated for.
+   *
+   * This is DISPLAY ONLY. `startedTs` feeds the countdown and the sort order and nothing else
+   * (it is never rendered as a wall clock), and the wears-off line stays the authority on when a
+   * buff actually ended. EVERY open cast the gap passes over — buff and debuff alike — is
+   * flagged `spannedGap` so its span never becomes a mined duration sample; see the field's own
+   * doc in buffsShapes.ts for the two separate reasons the two halves are both refused.
    */
-  onOfflineGap(offlineMs: number): void {
+  onOfflinePause(fromTs: number, offlineMs: number): void {
     if (offlineMs <= 0) return
     let changed = false
     for (const o of this.open.values()) {
-      o.landedTs += offlineMs
-      o.spannedGap = true
-      changed = true
+      if (o.landedTs > fromTs) continue
+      if (o.spannedGap !== true) {
+        o.spannedGap = true
+        changed = true
+      }
+      // The learner is censored either way; only the CLOCK is asymmetric.
+      if (this.stats.classOf(o.spellKey) !== 'debuff') {
+        o.landedTs += offlineMs
+        changed = true
+      }
     }
     for (const [ik, a] of this.active) {
+      if (a.cls === 'debuff' || a.startedTs > fromTs) continue
       this.active.set(ik, { ...a, startedTs: a.startedTs + offlineMs })
       changed = true
     }
@@ -396,8 +417,45 @@ export class BuffInstances {
     if (changed) this.dirty = true
   }
 
-  /** Hygiene sweep (Task #33, finding #6): retire any active past its per-spell cap. */
-  sweepHygiene(now: number): void {
+  /**
+   * Drop every instance whose clock predates `ts` — the UNEXPLAINED-hole resolution (JOS-134).
+   *
+   * A log hole that no login ever explains means we lost the thread rather than that the
+   * character left, and the old blanket wipe is still the honest answer for what was standing
+   * when it opened. It is SCOPED rather than blanket only because the ruling arrives up to
+   * {@link LOGIN_CONFIRM_MS} after the hole did, and anything cast inside that window is
+   * evidence from this side of it — the hole says nothing about a buff raised after it.
+   */
+  dropPredating(ts: number): void {
+    let changed = false
+    for (const [ik, a] of [...this.active]) {
+      if (a.startedTs > ts) continue
+      this.active.delete(ik)
+      changed = true
+    }
+    for (const [ik, o] of [...this.open]) {
+      if (o.landedTs > ts) continue
+      this.open.delete(ik)
+      changed = true
+    }
+    if (this.pending != null && this.pending.beganTs <= ts) {
+      this.pending = null
+      changed = true
+    }
+    if (changed) this.dirty = true
+  }
+
+  /**
+   * Hygiene sweep (Task #33, finding #6): retire any active past its per-spell cap.
+   *
+   * `heldBeforeTs` is the last-known-online instant of a log hole whose explanation has not
+   * arrived yet (0 when there is none). A BUFF older than it is exempt for the length of that
+   * wait, and the exemption is the point of it: if the hole turns out to be a logout, that
+   * buff's clock is about to be rewound by the absence, and judging it against a `now` from the
+   * far side would retire — a beat before the pause lands — exactly the buff the pause exists to
+   * keep. DEBUFFS get no exemption; their clocks never stop, so the cap means what it always did.
+   */
+  sweepHygiene(now: number, heldBeforeTs = 0): void {
     // CALLED ONCE PER EVENT (buffs.ts onEvent), so its cost is paid 1.4M times on a full replay.
     // It used to SPREAD the active map into a fresh array first — 1.4M throwaway arrays, and the
     // copy bought nothing: deleting the entry a Map iteration is currently standing on is
@@ -406,6 +464,7 @@ export class BuffInstances {
     let changed = false
     for (const [ik, a] of this.active) {
       if (a.permanent) continue
+      if (heldBeforeTs > 0 && a.cls !== 'debuff' && a.startedTs <= heldBeforeTs) continue
       const sKey = spellKey(a.spell)
       const dbMs = this.stats.dbDurationFor(sKey)
       const cap = Math.max(hygieneCapMs(a.p75, a.n), dbMs != null ? 2 * dbMs : 0)

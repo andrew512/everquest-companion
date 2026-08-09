@@ -86,12 +86,27 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
   }
 
   onEvent(ev: LogEvent): void {
-    // A 30-minute event-time gap is a logout past any hold (the same boundary the buffs model
-    // uses), and a character epoch is a different character entirely.
+    // A 30-minute event-time hole is past any hold this module can carry (the same boundary the
+    // buffs model uses), and a character epoch is a different character entirely.
     if (ev.kind === 'epoch') {
       this.clearAll()
       return
     }
+    // AN OFFLINE GAP CHANGES NOTHING HERE, AND THAT IS THE DESIGN (JOS-134, owner 2026-08-09).
+    //
+    // `modules/buffs.ts` folds this event to PAUSE your beneficial buffs: EQ freezes them with
+    // your character, so their timers stop while you are out of the world. Everything this module
+    // holds is the other kind — a mez, a root, an ensnare, on somebody else — and the world those
+    // mobs stand in does not stop when you camp. A hold keeps burning down in world time, so its
+    // `startedTs` and its `expiresTs` are left exactly where they are and the ordinary `sweep`
+    // retires it on schedule, offline or not.
+    //
+    // This is an EXPLICIT no-op rather than an absent case for exactly one reason: the asymmetry
+    // looks like an oversight from inside this file, and the next reader to notice that the buffs
+    // model pauses and this one does not should find the answer here instead of "fixing" it. The
+    // early return also keeps the derived event out of `lastEventTs`, which the primary
+    // `sessionStart` it restates has already recorded.
+    if (ev.kind === 'offlineGap') return
     if (this.lastEventTs > 0 && ev.ts - this.lastEventTs >= SESSION_GAP_MS) this.clearAll()
     this.lastEventTs = ev.ts
     this.sweep(ev.ts)

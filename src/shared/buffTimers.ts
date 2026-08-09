@@ -145,9 +145,12 @@ export interface BuffTimerRow {
   /** True when `target` is the model's INFERENCE, never a name a sentence stated. */
   inferredTarget?: true
   /**
-   * The event ts the instance landed. NOT A WALL CLOCK: `BuffInstances.onOfflineGap` shifts it
-   * forward by an absence (EQ pauses buff timers while you are camped — measured), so elapsed
-   * and remaining are the only honest readings and this must never be printed as a time of day.
+   * The event ts the instance landed. NOT A WALL CLOCK: `BuffInstances.onOfflinePause` shifts a
+   * BUFF's forward by an absence (EQ pauses buff timers while you are camped — measured), so
+   * elapsed and remaining are the only honest readings and this must never be printed as a time
+   * of day. A DEBUFF's is never shifted (the world keeps running while you are out of it —
+   * JOS-134), which means the two kinds of row do not share one clock and a reading that
+   * compares them to each other rather than to `Date.now()` would be comparing two of them.
    */
   startedTs: number
   mode: TimerMode
