@@ -166,6 +166,24 @@ interface StoreShape {
    * here still opens in a build that predates the feature.
    */
   lastSeenNotesVersion?: string
+  /**
+   * The MAIN window's zoom factor (JOS-123; shared/uiScale.ts) — the "text size" control in
+   * Preferences. A factor, not a percentage: 1.25 is what the card labels "125%".
+   *
+   * ONE NUMBER RATHER THAN A PREFS BLOB, unlike the four objects above it, because the feature
+   * genuinely has one field and a blob would be inventing a shape to match a convention. The
+   * normalizer beside it (`normalizeUiScale`) is what the blobs' normalizers are for.
+   *
+   * ADDITIVE + OPTIONAL ⇒ no schema bump, no migration — the `lastSeenNotesVersion` /
+   * `eqDiscoveredRoot` precedent. Absent reads as 1, which is the size every store written
+   * before this key existed was already being drawn at, so an upgrade changes nothing for
+   * anybody who has not asked it to.
+   *
+   * NOT part of the shared settings profile (src/main/share.ts), for the same reason `graphics`
+   * is not: it describes the screen someone is sitting in front of and the eyes reading it, and
+   * importing a friend's answer to that is not a setting anyone wanted.
+   */
+  uiScale?: number
 }
 
 /**
@@ -214,6 +232,25 @@ if (schemaMigration.to === CURRENT_SCHEMA_VERSION && !schemaMigration.readError)
  * this really is the last thing the store's initialization does.
  */
 export const STORE_READY_MS = performance.now()
+
+/**
+ * THE OPEN, MIGRATED STORE — for the accessor modules SPLIT OUT of this file (JOS-123).
+ *
+ * This file reached the repo's 400-code-line factoring ceiling, and the answer to that is a
+ * split rather than a widened threshold (windows.ts → windowErrors.ts is the precedent). A
+ * settings accessor is four lines of read-through-a-normalizer, so what a split one needs from
+ * here is exactly this handle and nothing else: `StoreShape` still types every key, the schema
+ * migration above has still already run (it runs from module scope, before `new Store()`, so a
+ * module that imports this cannot observe a pre-migration shape), and `src/main/uiScale.ts` is
+ * the first module taking that door.
+ *
+ * IT IS NOT A LICENCE TO BYPASS THE NORMALIZERS. The discipline every accessor below follows —
+ * read through the normalizer, write through the SAME normalizer — is the whole reason a
+ * hand-edited file, an old renderer and a migration cannot end up with three ideas of what a
+ * setting is, and a split-out accessor owes it exactly as much as one written here. Reach for
+ * this only to move that pattern out of a full file; never to read a raw key from a feature.
+ */
+export const settingsStore = store
 
 export function getWindowBounds(): WindowBounds | undefined {
   return store.get('windowBounds')

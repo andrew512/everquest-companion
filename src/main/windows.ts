@@ -30,6 +30,9 @@ import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
 import { resolvedGraphics } from './graphics'
 import { getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
+// The main window's text size (JOS-123). Its own module because store.ts is at the 400-code-line
+// ceiling — see the banner there.
+import { getUiScale } from './uiScale'
 import { TRANSPARENT_OVERLAY_BG, overlayBackgroundColor } from '../shared/graphicsPrefs'
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
 // ScreenRect lives in shared/presencePrefs.ts, not shared/types.ts — see the note at the
@@ -239,6 +242,20 @@ export function hardenSession(ses: Electron.Session): void {
 // `./windowErrors.ts` when this file reached the 400-code-line ceiling — a split, not a widened
 // threshold. This file keeps what it is about: creating windows, and the trust boundary.
 
+/**
+ * Draw the main window at `scale` NOW (JOS-123 — shared/uiScale.ts). No-op when there is no
+ * window, like every other push in this file.
+ *
+ * It lives here rather than in the IPC handler for the reason stated at the top of the file:
+ * nothing outside this module reaches for a BrowserWindow, so "which window does the text size
+ * apply to" is answered in one place. The answer is the MAIN window and only the main window —
+ * the overlays scale their own content through the per-kind `textScale` and must not be zoomed
+ * out from under it.
+ */
+export function applyMainWindowScale(scale: number): void {
+  getMainWindow()?.webContents.setZoomFactor(scale)
+}
+
 export function createMainWindow(): void {
   const bounds = getWindowBounds()
   mainWindow = new BrowserWindow({
@@ -253,7 +270,16 @@ export function createMainWindow(): void {
     frame: false,
     title: 'EQ Legends Companion',
     backgroundColor: '#0f1115',
-    webPreferences: WEB_PREFERENCES(join(__dirname, '../preload/index.js'))
+    webPreferences: {
+      ...WEB_PREFERENCES(join(__dirname, '../preload/index.js')),
+      // THE TEXT SIZE, APPLIED BEFORE THE FIRST PAINT (JOS-123). Not a second opinion about the
+      // trust boundary — `zoomFactor` is a rendering preference and the security posture above is
+      // spread in whole and unedited. It is set at CONSTRUCTION because the alternative (zoom the
+      // page once it has loaded) is a window that visibly resizes its own contents on every
+      // launch. Only this window carries it: the overlays and the cursor ring take
+      // WEB_PREFERENCES() unchanged.
+      zoomFactor: getUiScale()
+    }
   })
 
   // E2E: never show (and therefore never focus) the window — the harness drives it
@@ -273,6 +299,15 @@ export function createMainWindow(): void {
   mainWindow.on('unmaximize', pushMaximized)
   // Give the renderer its initial state once the page is ready to receive it.
   mainWindow.webContents.on('did-finish-load', pushMaximized)
+
+  // …and re-state the text size on every load (JOS-123). The constructor's `zoomFactor` is what
+  // makes the FIRST paint the right size; Chromium keeps a zoom level per origin, and a reload or
+  // a dev-server navigation is exactly the moment that bookkeeping is easiest to lose. Writing the
+  // stored value again costs nothing when it already matches, and the store is the only thing
+  // either path consults.
+  mainWindow.webContents.on('did-finish-load', () => {
+    applyMainWindowScale(getUiScale())
+  })
 
   // --- webContents error capture (Task #13) ---
   // The window is passed as a GETTER: every guard inside fires long after this call returns, and

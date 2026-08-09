@@ -485,6 +485,21 @@ export const IPC = {
   // describe a precedence the windows did not use.
   graphicsEnvGet: 'graphicsPrefs:env',
 
+  // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
+  //
+  // The main window's zoom factor: the Preferences control a player asked for after reporting
+  // they could barely read the app. The floating overlays are NOT on this channel and never
+  // were — they carry their own `textScale` inside the per-kind overlay config, because an
+  // overlay scales only its reading matter and keeps its chrome laid out against a small window.
+  //
+  // renderer -> main: the persisted factor. Returns a number (1 on every store that predates it).
+  uiScaleGet: 'uiScale:get',
+  // renderer -> main: store a factor and APPLY it to the live window in the same call. Unlike the
+  // graphics switches above this one takes effect immediately, which is not a courtesy: a size
+  // control you have to relaunch to evaluate cannot be evaluated. Returns what was stored, snapped
+  // to the ladder by the same normalizer the store reader and the window factory use.
+  uiScaleSet: 'uiScale:set',
+
   // ---- dev restart (JOS-61, JOS-63 — src/main/devRestart.ts) ----------------------------
   //
   // renderer -> main: restart the app. Hand-testing startup performance means restarting it
