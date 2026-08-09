@@ -130,6 +130,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
+        text: 'A Classes tab on the Plane of Sky view tracks every class unlock: your Sky turn-ins count toward each class, the closest to done sit on top, stars pin the ones you are chasing, and a class the log declared unlocked says so - the achievement line outranks any tally.'
+      },
+      {
+        kind: 'new',
         text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, the base rung outlines instead of filling when the log cannot name it, and the Bosses view remembers which tab you left it on.',
         fromReport: true
       },
