@@ -1193,6 +1193,35 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 
 ## UI conventions
 
+- **NO EM DASHES IN USER-FACING COPY (owner, 2026-08-08 — JOS-106).** Every string
+  a player can read uses a NORMAL dash with spaces (` - `), never U+2014 (—) or
+  U+2013 (–) — renderer strings, overlay text, tooltips, preferences captions,
+  empty states, alert/group copy, and `shared/releaseNotes.ts` (its HISTORICAL
+  entries render in the What's-new panel exactly like the newest one, so they are
+  copy too, not an archive). Where a dash reads badly, RESTRUCTURE instead of
+  substituting: a parenthetical pair usually wants commas or parentheses, and a
+  dash next to a signed number ("Your Location is 1414.20, -735.55") wants
+  parentheses — locMarker.ts is that case. The GLYPH AS A DATA PLACEHOLDER (a
+  meter cell with no value) is held to the same rule: `-`, or a short label where
+  a bare mark reads as broken — which is what it did (`UNSTATED_AMOUNT`, below).
+  This is about COPY, not about the tree: code comments keep their em dashes and
+  this file's own prose does too. `tests/copyNoEmDash.test.mts` is the guard and
+  its header states exactly what it covers and what it does not; it parses with
+  the TS compiler and inspects only string/template/JSX-text nodes, because a
+  whole-source grep would drown in comments. Three files are excluded on
+  technical grounds (the Kokoro phoneme VOCABULARY, where U+2014 is a model token
+  id; an embedded PowerShell script's own `#` comments; the TELEMETRY.md
+  generator) and the exclusions are listed in the test.
+- **SAY WHAT THE LOG DID, NOT WHAT WE DID TO THE NUMBER (JOS-106).** A label
+  describing our own bookkeeping reads as a defect to the person holding it: Monk
+  Mend's healing lane was tagged `unvalued` / `amount not stated`, and a v0.12.0
+  user filed the by-design label as a BUG inside a day (report
+  01KZGFH4QDTVG7XNW4G24TZYR4). It is now `no amount` — one plain phrase, single-
+  sourced from `UNSTATED_AMOUNT` (renderer/src/features/combat/healRows.ts) so
+  the panel, the overlay and the hover title cannot drift, and said ONCE per row
+  (the lane tag carries it; the stat run beside it is just the count, because
+  repeating it is what made the row read like an error message). The long form
+  stays where long forms belong — the hover title, never a caption.
 - **State, never process**: no methodology captions, no script references,
   no how-it-works panels. Chips convey state (db/observed, permanent,
   inferred, casting…, ~ambiguous).
