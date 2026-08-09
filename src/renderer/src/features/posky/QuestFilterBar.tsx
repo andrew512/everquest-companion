@@ -7,13 +7,17 @@
 // behaviour changed in the move.
 //
 // TWO KINDS OF CONTROL, and the `flexGrow` spacer between them is the whole layout argument.
-// LEFT: class filter / search / sort / the three hide-toggles — all of them narrow the list you are
-// looking at, and all of them live on `useQuestList`'s state, so this file owns none of that
-// storage. RIGHT: "Count items from" and "Reload inventory" — these change what the tab counts you
-// as HOLDING, which moves every progress number under the bar rather than the set of rows above it.
-// Mixing the two groups would read as one undifferentiated row of knobs.
+// LEFT: class / island / boss filters, search, sort and the three hide-toggles — all of them narrow
+// the list you are looking at, and all of them live on `useQuestList`'s state, so this file owns
+// none of that storage. RIGHT: "Count items from" and "Reload inventory" — these change what the
+// tab counts you as HOLDING, which moves every progress number under the bar rather than the set of
+// rows above it. Mixing the two groups would read as one undifferentiated row of knobs.
 //
-// This row WRAPS (`flexWrap="wrap" useFlexGap`), unlike the planner's nowrap bar: there are ten
+// The three pickers lead, in the order a player narrows: class (who am I), island (where am I),
+// boss (what am I standing in front of) — the WHERE facets sit beside the WHO facet rather than
+// beside the search box, because all three answer "which quests are mine right now".
+//
+// This row WRAPS (`flexWrap="wrap" useFlexGap`), unlike the planner's nowrap bar: there are twelve
 // controls here and the tab's body is a scrolling accordion list that can afford to start lower.
 
 import type { JSX } from 'react'
@@ -33,6 +37,7 @@ import type { CountSource } from '@shared/types'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
 import { Tooltip } from '../../lib/Tooltip'
 import { SORT_OPTIONS, type SortKey } from './questSort'
+import { withPicked } from './questFacets'
 import type { QuestListState } from './useQuestList'
 
 export interface QuestFilterBarProps {
@@ -43,7 +48,45 @@ export interface QuestFilterBarProps {
   onReload: () => Promise<void>
 }
 
-// Class filter, search, sort, the three hide-toggles, and the inventory controls that decide
+// The three "which quests are mine right now" pickers, in the order a player narrows: who I am,
+// where I am, what I am standing in front of. Each is a closed list of what the data offers, and
+// each stores its picks, so this is also the group whose state survives leaving the tab.
+function QuestPickers({ list, classes }: { list: QuestListState; classes: string[] }): JSX.Element {
+  return (
+    <>
+      <ChipMultiSelect
+        options={classes}
+        value={list.selectedClasses}
+        onChange={(v) => list.setSelectedClasses(v)}
+        label="Filter by class"
+        placeholder="All classes"
+      />
+      {/* The two JOS-124 facets. Both are stored preferences, so both carry a testid the
+          persistence spec reads back, and both offer `withPicked` options so a stored pick the
+          data no longer knows still shows as a removable chip. */}
+      <ChipMultiSelect
+        options={withPicked(list.facets.islands, list.islands)}
+        value={list.islands}
+        onChange={(v) => list.setIslands(v)}
+        label="Filter by island"
+        placeholder="All islands"
+        minWidth={190}
+        testId="posky-island-filter"
+      />
+      <ChipMultiSelect
+        options={withPicked(list.facets.bosses, list.bosses)}
+        value={list.bosses}
+        onChange={(v) => list.setBosses(v)}
+        label="Filter by boss"
+        placeholder="All bosses"
+        minWidth={230}
+        testId="posky-boss-filter"
+      />
+    </>
+  )
+}
+
+// The three pickers, search, sort, the three hide-toggles, and the inventory controls that decide
 // which items the whole tab counts you as holding.
 export default function QuestFilterBar({
   list,
@@ -54,13 +97,7 @@ export default function QuestFilterBar({
 }: QuestFilterBarProps): JSX.Element {
   return (
     <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center" useFlexGap>
-      <ChipMultiSelect
-        options={classes}
-        value={list.selectedClasses}
-        onChange={(v) => list.setSelectedClasses(v)}
-        label="Filter by class"
-        placeholder="All classes"
-      />
+      <QuestPickers list={list} classes={classes} />
       <TextField
         size="small"
         label="Search item / quest / reward"

@@ -100,7 +100,9 @@ function CountsLine({
     )
   }
   return (
-    <Typography variant="body2" color="text.secondary">
+    // The stable handle for the filter specs: this line is where a narrowing filter becomes
+    // VISIBLE, so it is what an e2e reads to prove a facet pick actually removed rows.
+    <Typography variant="body2" color="text.secondary" data-testid="posky-counts">
       {filteredCount} of {totalQuests} quests · counting from{' '}
       {countSource === 'log' ? 'looted log' : countSource === 'inventory' ? 'inventory export' : 'log + inventory'}
     </Typography>
