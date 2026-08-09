@@ -506,8 +506,8 @@ async function stepFarm(page: Page): Promise<void> {
     )
   }
   check(
-    'every farm row states the merge cost in the shared vocabulary ("needs +N — ≈X D0 merges")',
-    /needs \+\d+ — ≈\d+ D0 merges/.test(text),
+    'every farm row states the merge cost in the shared vocabulary ("needs +N - ≈X D0 merges")',
+    /needs \+\d+ - ≈\d+ D0 merges/.test(text),
     text.slice(0, 140)
   )
 }
