@@ -149,6 +149,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         fromReport: true
       },
       {
+        kind: 'new',
+        text: 'Sky quests can be farmed again: handing one in spends the items and the quest starts counting from zero, with a badge remembering how many times you have turned it in. The hide box now reads Hide quests I have every item for, which is what it always meant to say.',
+        fromReport: true
+      },
+      {
         kind: 'fixed',
         text: 'The add-alert editor keeps your work when you switch away from the app and back - the name, trigger, cooldown and spoken phrase all survive, and an alert you were editing no longer snaps back to how it was saved.',
         fromReport: true
