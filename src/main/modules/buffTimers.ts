@@ -55,7 +55,7 @@ import { SELF_CASTER } from '../../shared/buffTrust'
 import { idKey } from '../log/parseCommon'
 import { CastAnchors } from './buffAnchors'
 import { HoldGroup } from './buffRounds'
-import { expiryGraceMs, MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey } from './buffsShapes'
+import { MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey, unwitnessedTimeoutMs } from './buffsShapes'
 import { SpellStats } from './buffsStats'
 import type { EqModule } from './types'
 
@@ -75,10 +75,13 @@ export const CC_END_MEMORY_MS = 60_000
  * — inside the grace by seven seconds, and outside it on a slower round. The grace has to follow
  * the estimate or it retires the very holds the learner needs to close.
  *
- * The number itself now follows the estimate's QUALITY too (`expiryGraceMs`, JOS-140): a learned
- * duration gets 15 s, a DB floor gets its own duration again (min 60 s) because the floor is the
- * base rank's and the truth routinely runs past it. The flat 30 s this used to be sat between the
- * two and was wrong at both ends. Exported still, as the number the fixture tests reason about.
+ * The number itself now follows the estimate's QUALITY too (`unwitnessedTimeoutMs`, JOS-140): a
+ * learned duration gets 15 s and a DB floor gets 60 s. The flat 30 s this used to be sat between
+ * the two and was wrong at both ends. Exported still, as the number the fixture tests reason about.
+ *
+ * JOS-156 collapsed the DB branch from "its own duration again, min 60 s" to a flat 60 s, so a CC
+ * hold now leaves on the same schedule as every other row that is not yours. The reasoning, the
+ * owner's ruling and the accepted cost are stated once in buffsShapes.ts.
  */
 export const CC_END_GRACE_MS = 30_000
 
@@ -421,9 +424,7 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
       // arrived — you died, you zoned, the mob wandered off — is dropped rather than left
       // squatting at 0s. It mints nothing and records no end, because nothing was observed.
       const life =
-        held.durationMs != null
-          ? held.durationMs + expiryGraceMs(held.source, held.durationMs)
-          : CC_UNKNOWN_CAP_MS
+        held.durationMs != null ? held.durationMs + unwitnessedTimeoutMs(held.source) : CC_UNKNOWN_CAP_MS
       if (held.group.dropExpired(nowMs - life) > 0) {
         this.dirty = true
         this.rev += 1

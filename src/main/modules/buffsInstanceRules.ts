@@ -8,7 +8,7 @@
 
 import type { ActiveBuff } from '../../shared/types'
 import { isLeftBehindOnZone, type EntityDisposition } from '../combat/entityRules'
-import { expiryGraceMs, hygieneCapMs, nonSelfExpiryTimeoutMs, type OpenCast } from './buffsShapes'
+import { hygieneCapMs, unwitnessedTimeoutMs, type OpenCast } from './buffsShapes'
 import type { ActiveSpec } from './buffsView'
 
 /**
@@ -64,7 +64,7 @@ export function hygieneCap(a: ActiveBuff, dbMs: number | null): number {
 }
 
 /**
- * THE UNWITNESSED-EXPIRY CULL (JOS-140, owner amendment 2026-08-09; widened by JOS-149).
+ * THE UNWITNESSED-EXPIRY CULL (JOS-140, widened by JOS-149, unified by JOS-156).
  *
  * The owner's first case: slow a boss, then die. The wear-off line prints to a character who is
  * not there to receive it, so it never arrives and the bar squats at 0s — for ninety minutes,
@@ -83,14 +83,14 @@ export function hygieneCap(a: ActiveBuff, dbMs: number | null): number {
  * launch.
  *
  * So: SELF buffs are exempt — Infinity means "no cull", leaving the hygiene cap as their only
- * long-stop, exactly as before. Every other row is culled at its countdown plus a wait whose
- * length is the estimate's quality:
+ * long-stop, exactly as before. EVERY OTHER ROW, debuff and non-self buff alike, is culled at its
+ * countdown plus `unwitnessedTimeoutMs` — 15 s for a learned duration, 60 s for a DB floor.
  *
- *   a DEBUFF          ⇒ `expiryGraceMs`, unchanged (its DB branch protects the learner's one
- *                       chance at a correction — the reasoning is in buffsShapes.ts).
- *   a NON-SELF BUFF   ⇒ `nonSelfExpiryTimeoutMs`, a flat 60 s (15 s once the duration is learned).
- *                       Waiting the duration AGAIN is the owner's complaint restated: an hour of
- *                       0s on a pet buff nobody can close.
+ * THERE USED TO BE A SECOND BRANCH HERE and JOS-156 deleted it: a debuff waited its DURATION AGAIN
+ * (floored at 60 s), to preserve the learner's one chance at a late correction. buffsShapes.ts
+ * carries the whole argument and the owner's ruling against it; the short form is that Tashania's
+ * DB row is eleven minutes, so the branch parked the owner's bar at 0s for eleven minutes after he
+ * died mid-cast, and a wear-off nobody can witness was never going to arrive to correct anything.
  *
  * A row with no number at all is counting UP, has nothing to be overdue against, and keeps the
  * hygiene cap. Nothing here reads a clock, so the cull is judged on the SAME `startedTs` the
@@ -103,8 +103,7 @@ export function unwitnessedCullCap(a: ActiveBuff): number {
   const dur = a.overlayDurationMs
   // No number at all ⇒ the row is counting UP and has nothing to be overdue against.
   if (dur == null || dur <= 0) return Number.POSITIVE_INFINITY
-  const wait = a.cls === 'debuff' ? expiryGraceMs(a.overlaySource, dur) : nonSelfExpiryTimeoutMs(a.overlaySource)
-  return dur + wait
+  return dur + unwitnessedTimeoutMs(a.overlaySource)
 }
 
 /** Where a fresh landing sits: its identity, whose it is, and the record it just joined. */
