@@ -39,6 +39,7 @@ import {
   killsModule,
   levelingModule,
   lootModule,
+  outputFilesModule,
   registry,
   rosterModule,
   sessionDetector,
@@ -539,12 +540,25 @@ function startInventoryWatch(ref: CharacterRef): void {
   )
 }
 
+/**
+ * THE BASELINE SEAM (JOS-128): when did the log see this dump written?
+ *
+ * Exported so the manual `inventory:reload` handler (ipc/character.ts) resolves the baseline
+ * through the SAME lookup the auto-reload does — one answer to "when was this generated", the
+ * way JOS-44 gave "which file" and "how old" one answer each. `loadInventory` takes it as a
+ * parameter rather than importing the pipeline, so the fs/parse layer stays testable without
+ * one; without this seam it falls back to the file's mtime.
+ */
+export function inventoryWrittenAt(file: string): number | null {
+  return outputFilesModule.writtenAt(file)
+}
+
 /** Re-read the dump and push it, guarded against a stale watcher firing after a switch. */
 function reloadInventoryNow(ref: CharacterRef): void {
   if (character?.logPath !== ref.logPath) return
-  const res = loadInventory(character.name, character.server)
+  const res = loadInventory(character.name, character.server, inventoryWrittenAt)
   if (!res) return
-  setInventory(activeCharId(), res.counts, { path: res.path, loadedAt: res.loadedAt })
+  setInventory(activeCharId(), res.counts, res.source)
   logInfo(`[everquest-companion] Inventory auto-reloaded: ${res.path}`)
   sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
   sendToMain(IPC.onProgress, getProgress(activeCharId()))

@@ -10,6 +10,10 @@ import type { ExaltPlan } from './planner/types'
 // The toast overlay's per-kind knobs live beside its payload in ./toast (this file is at its
 // factoring ceiling); OverlayConfig names the blob, that file owns its shape + normalizer.
 import type { ToastOverlayConfig } from './toast'
+// Same posture for the inventory dump's baseline (JOS-128): ProgressState names the blob, and
+// ./outputs/baseline owns its shape beside the rules that produce and read it. Type-only, so
+// the import is erased and this file keeps no runtime dependency on the outputs engine.
+import type { InventorySource } from './outputs/baseline'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -729,10 +733,18 @@ export interface FeedReport {
 export type HeldCounts = Record<string, number>
 
 /**
- * How the app decides which items you "have":
- * - 'log'       : count everything the character has ever looted (log parsing)
- * - 'inventory' : count only what's in the latest /outputfile inventory dump
- * - 'both'      : the higher of the two per item
+ * How the app decides which items you "have". A dump is a BASELINE (JOS-128) — loading one
+ * resets the model and log-derived loot accumulates from its generation instant forward — so
+ * two of the three read the dump and one deliberately does not:
+ * - 'log'       : count everything the character has ever looted (log parsing). Never consults
+ *                 a dump, and therefore CANNOT see an item you destroyed, sold to a vendor or
+ *                 handed to another player; "ever looted" is exactly what it says.
+ * - 'inventory' : the dump, plus everything looted SINCE the dump was generated.
+ * - 'both'      : the same as 'inventory' when a dump is loaded, and 'log' when none is. It is
+ *                 the "use the export if I have one" choice, not a maximum. It USED to be
+ *                 `max(log, dump)` per item, which is the never-resets behavior JOS-128 exists
+ *                 to remove: a user who deleted an item in game and reloaded still saw it,
+ *                 because the log's all-time count outvoted the dump that no longer listed it.
  */
 export type CountSource = 'log' | 'inventory' | 'both'
 
@@ -743,7 +755,7 @@ export interface ProgressState {
   /** quest keys (className::name) the user marked complete/turned-in */
   completedQuests: string[]
   /** metadata about the last inventory load */
-  inventorySource?: { path: string; loadedAt: string }
+  inventorySource?: InventorySource
   /**
    * Class-combo user corrections (docs/plans/class-combo-inference.md § 7). Character-scoped,
    * because a loadout is. This is the ONLY durable combo state: intervals are re-derived from

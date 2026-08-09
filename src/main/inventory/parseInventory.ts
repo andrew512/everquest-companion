@@ -22,6 +22,8 @@
 
 import { findOutputFile, inventoryHeldCounts, loadInventoryDump } from '../outputs'
 import { heldCountsFromDump } from '../../shared/outputs/inventory'
+import { resolveInventoryBaseline, storagesCoveredBy } from '../../shared/outputs/baseline'
+import type { InventorySource } from '../../shared/outputs/baseline'
 import type { HeldCounts } from '../../shared/types'
 
 /**
@@ -40,6 +42,8 @@ export interface InventoryLoadResult {
   path: string
   counts: HeldCounts
   loadedAt: string
+  /** Exactly what gets persisted as `ProgressState.inventorySource` — path, mtime, baseline. */
+  source: InventorySource
 }
 
 /** Find the newest `*-Inventory.txt` for the given character (or any). */
@@ -48,16 +52,40 @@ export function findInventoryFile(characterName?: string, server?: string): stri
 }
 
 /**
- * The active character's newest dump, as held counts.
+ * The active character's newest dump, as held counts, WITH the instant it was generated.
  *
  * ONE READ PATH (JOS-44). This used to do its own find + readFile + stat beside the engine's;
  * now it is `loadInventoryDump` (the registry's find + mtime + parse) with the compatibility
  * derivation applied on top, so "which file" and "how old" can never disagree with what the
  * Exaltations tab and the freshness line are saying. Byte-identical by construction:
  * `heldCountsFromDump` is exactly what `inventoryHeldCounts` applies to the same parsed dump.
+ *
+ * THE BASELINE (JOS-128) is resolved here, at the one place a dump becomes the model, and it is
+ * persisted beside the counts so the renderer never has to re-derive "since when". `writtenAt`
+ * is INJECTED rather than imported: the log's export receipts live in a module behind the
+ * pipeline, and this file is the fs/parse layer that tests drive without one. Omit it and the
+ * baseline falls back to mtime, which is the same answer a log with no receipt gives.
  */
-export function loadInventory(characterName?: string, server?: string): InventoryLoadResult | null {
+export function loadInventory(
+  characterName?: string,
+  server?: string,
+  writtenAt: (file: string) => number | null = () => null
+): InventoryLoadResult | null {
   const loaded = loadInventoryDump(characterName, server)
   if (!loaded) return null
-  return { path: loaded.path, counts: heldCountsFromDump(loaded.dump), loadedAt: loaded.loadedAt }
+  const baseline = resolveInventoryBaseline(loaded.path, loaded.loadedAt, writtenAt)
+  const source: InventorySource = {
+    path: loaded.path,
+    loadedAt: loaded.loadedAt,
+    ...(baseline ? { generatedAt: baseline.ts, generatedFrom: baseline.source } : {}),
+    // A baseline is an instant AND a scope: which storages this dump actually spoke about
+    // (JOS-128, on the JOS-132 spike's finding that some are written only conditionally).
+    storagesCovered: storagesCoveredBy(loaded.dump)
+  }
+  return {
+    path: loaded.path,
+    counts: heldCountsFromDump(loaded.dump),
+    loadedAt: loaded.loadedAt,
+    source
+  }
 }

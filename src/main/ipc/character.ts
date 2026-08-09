@@ -13,6 +13,7 @@ import {
   applyEqDirChange,
   buildEqConfig,
   getActiveCharacter,
+  inventoryWrittenAt,
   tailCharacter
 } from '../session'
 import { getProgress, setEqInstallDir, setInventory, setQuestComplete } from '../store'
@@ -101,9 +102,9 @@ export function registerCharacterIpc(): void {
   ipcMain.handle(IPC.getProgress, () => getProgress(activeCharId()))
   ipcMain.handle(IPC.reloadInventory, () => {
     const active = getActiveCharacter()
-    const res = loadInventory(active?.name, active?.server)
+    const res = loadInventory(active?.name, active?.server, inventoryWrittenAt)
     if (!res) return { ok: false as const, error: 'No *-Inventory.txt found in the EQ folder.' }
-    setInventory(activeCharId(), res.counts, { path: res.path, loadedAt: res.loadedAt })
+    setInventory(activeCharId(), res.counts, res.source)
     const progress = getProgress(activeCharId())
     // Keep other views consistent (Plane of Sky derives held-item counts too).
     sendToMain(IPC.onProgress, progress)
