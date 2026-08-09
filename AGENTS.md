@@ -1317,6 +1317,28 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   group-mate's blow (party exp is exp) and excludes a passer-by. TRACKING still
   counts every defeat — `bossKills` gates celebration alone.
 
+- **TWO TEXT SIZES, AND THEY ARE DIFFERENT MECHANISMS ON PURPOSE (JOS-123).**
+  The MAIN window scales with an Electron ZOOM FACTOR: `shared/uiScale.ts` holds
+  the five-stop ladder (90/100/110/125/150 — Chromium's own zoom stops around
+  100%) and the normalizer that SNAPS to it, so a stored value between two stops
+  can never leave the Preferences buttons unlit. It is persisted as the top-level
+  `uiScale` store key (additive + optional ⇒ no schema bump; absent reads as 1, so
+  an upgrade resizes nobody) and applied at window CONSTRUCTION —
+  `webPreferences.zoomFactor` in windows.ts — because the alternative is a window
+  that visibly resizes its own contents on every launch. The IPC setter zooms the
+  live window in the same call it stores, since a size control you must relaunch
+  to evaluate cannot be evaluated. The floating OVERLAYS keep their own per-kind
+  `textScale`, a CSS `zoom` on the CONTENT PANE only (chrome unscaled —
+  overlayScale.tsx), and the two must not be merged: an overlay is a small
+  always-on-top window whose header and footer have to keep laying out against the
+  real window width. So the main window is never given a `textScale` and no
+  overlay window is ever given a `zoomFactor`; `tests/uiScale.test.mts` pins both
+  halves and `tests/e2e/text-size.e2e.mts` proves the size over TWO real launches.
+  The accessors live in `src/main/uiScale.ts` rather than store.ts because
+  store.ts is AT the 400-code-line ceiling and the answer is a split: it now
+  exports the `settingsStore` handle for exactly that, which is a door for moving
+  the read-through-a-normalizer pattern OUT, never a licence to skip a normalizer.
+
 ## Shipping
 
 - CI (`.github/workflows/build.yml`) runs `npm test` — the FULL golden-window
