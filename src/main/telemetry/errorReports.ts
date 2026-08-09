@@ -31,6 +31,18 @@
 //     there and nowhere else, exactly as it is for every other event.
 //
 // ---------------------------------------------------------------------------------------
+// WHEN THE THROW WILL NOT SAY WHERE (JOS-111)
+// ---------------------------------------------------------------------------------------
+// "At which bundle position" assumes the payload HAS a bundle position, and the fleet's own
+// numbers said otherwise: the two loudest issues in the live 0.13.0 stream were both FRAMELESS,
+// so both hashed the error name alone and collapsed into one row. `locate` below is the ladder
+// that answers it anyway — the throw's own frames, else a stack `errorLog` captured at its call
+// site (labelled `capture`, never passed off as a throw site), else nothing — with external
+// frames and an unwrapped nested error riding independently, and the fingerprint falling back on
+// a shape of the already-redacted message when there is no location at all. The classification,
+// the unwrap and the skeleton are all pure and live in `shared/errorReportLocation.ts`.
+//
+// ---------------------------------------------------------------------------------------
 // ONE EXEMPLAR PER FINGERPRINT PER SESSION
 // ---------------------------------------------------------------------------------------
 // The first occurrence of a fingerprint keeps its message, frames and breadcrumbs. Every repeat
