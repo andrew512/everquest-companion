@@ -161,6 +161,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'The add-alert editor keeps your work when you switch away from the app and back - the name, trigger, cooldown and spoken phrase all survive, and an alert you were editing no longer snaps back to how it was saved.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'Playing through Wine on Linux: the app now recognises it at startup and draws the compatible way on its own, so windows stop coming up blank and a celebration card stops sticking to the screen as a black box. Preferences - Graphics says so when it happens, and either half can be turned back off.',
         fromReport: true
       },
