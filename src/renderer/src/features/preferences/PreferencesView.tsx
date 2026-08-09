@@ -29,6 +29,10 @@
 //   Game     — EverQuest install-folder discovery/override (effective path + how it
 //             resolved + a folder picker + character-log validation). Lives in
 //             ./EqFolderSetting.tsx, like Updates does — this file only names it.
+//   Text size — how big the MAIN window draws everything (JOS-123): a five-stop ladder from 90%
+//             to 150%, applied on the press and remembered. Second in the rail on purpose. Lives
+//             in ./TextSizeSetting.tsx, descriptor and all. The overlays' own text scaling is a
+//             separate control on the overlay itself.
 //   Combat   — the meters' two shaping choices: WHOSE damage they show (You / Group / Everyone,
 //             default Group — JOS-115 moved it here off every combat surface) and where the
 //             pet's damage sits. Lives in ./CombatSection.tsx, descriptor and all.
@@ -93,6 +97,9 @@ import { perfSection } from './PerfSetting'
 // Same arrangement, same reason: the two graphics-compatibility switches name their own section
 // beside the card that renders them. See ./GraphicsSetting.tsx.
 import { graphicsSection } from './GraphicsSetting'
+// Same arrangement again (JOS-123): the main window's text size names its own section beside the
+// card that renders it. See ./TextSizeSetting.tsx.
+import { textSizeSection } from './TextSizeSetting'
 // Same arrangement again (JOS-73): the release-notes panel names its own section beside the card
 // that renders it. See features/whatsnew/WhatsNewPanel.tsx for why the notes are a SECTION.
 import { whatsNewSection } from '../whatsnew/WhatsNewPanel'
@@ -237,6 +244,10 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
         }
       ]
     },
+    // SECOND IN THE RAIL, ahead of everything about the game (JOS-123). A person who opens
+    // Preferences because they can barely read the app has to find this one, and the rail is
+    // itself drawn at the size they are complaining about.
+    textSizeSection(),
     combatSection(),
     overlaysSection(),
     graphicsSection(),
