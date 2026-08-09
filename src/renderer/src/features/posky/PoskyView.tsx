@@ -432,7 +432,10 @@ export default function PoskyView({
         // The VISIBLE quests, like every other tab: a quest the user permanently ignored is not
         // shown here either, and a class's total shrinks with it rather than counting a quest the
         // app has been told to forget. `list.visible` is that set (useQuestList.useVisibleQuests).
-        <ClassUnlockList quests={list.visible} />
+        // A row is a DOOR (JOS-157): clicking a class lands on the Quests tab filtered to it. The
+        // navigation is `list.showClassQuests`, so the drill-down writes the same stored pick the
+        // class chip writes and the state it leaves behind is one a user could have set by hand.
+        <ClassUnlockList quests={list.visible} onOpenClass={list.showClassQuests} />
       ) : (
         <>
           <QuestFilterBar

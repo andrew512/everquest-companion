@@ -1,6 +1,7 @@
 /**
  * Headless Electron integration test for THE CLASSES TAB (JOS-148) — Sky class-unlock progress,
- * closest to done first, star to pin.
+ * closest to done first, star to pin, and since JOS-157 a row that is a DOOR to that class's
+ * quests (the drill-down steps at the bottom, which are the only ones that leave this tab).
  *
  * WHY THIS NEEDS A REAL APP. The arithmetic and the ordering are unit-tested against the real pure
  * code (tests/skyClassUnlocks.test.mts). What no unit test can see is the CHAIN, and this tab has
@@ -46,6 +47,14 @@ const PANE = '[data-testid="posky-classes"]'
 const NOTE = '[data-testid="class-unlock-note"]'
 const ROW = '[data-testid^="class-unlock-row-"]'
 const rowOf = (cls: string): string => `[data-testid="class-unlock-row-${cls}"]`
+
+/** The Quests tab the JOS-157 drill-down lands on, and the controls that prove where it landed. */
+const COUNTS = '[data-testid="posky-counts"]'
+const CLASS_FILTER = '[data-testid="posky-class-filter"]'
+const SEARCH = '[data-testid="posky-search"] input'
+const ISLAND_FILTER = '[data-testid="posky-island-filter"]'
+/** The stored key the class chip writes. The drill-down must write THIS one, not a private copy. */
+const SELECTED_CLASSES_KEY = 'eq.selectedClasses'
 
 /** The class whose unlock is OBSERVED here, and the verbatim line that states it. */
 const UNLOCK_LINE = 'You have completed achievement: Primary Class Unlock - Paladin'
@@ -221,6 +230,142 @@ async function stepPin(page: Page): Promise<void> {
   check('…and un-starring puts the closest-first order straight back', back[0] !== furthest, back.slice(0, 4).join(','))
 }
 
+/** What is picked in a ChipMultiSelect right now, read off the chips the user can actually see. */
+function chipsOf(page: Page, sel: string): Promise<string[]> {
+  return page.evaluate(
+    (s) => [...document.querySelectorAll(`${s} .MuiChip-label`)].map((el) => el.textContent ?? ''),
+    sel
+  )
+}
+
+/** The stored class picks, as the array the app writes (or [] when the key is absent/corrupt). */
+function storedClasses(page: Page): Promise<string[]> {
+  return page.evaluate((k) => {
+    try {
+      const v: unknown = JSON.parse(localStorage.getItem(k) ?? '[]')
+      return Array.isArray(v) ? (v as string[]) : []
+    } catch {
+      return []
+    }
+  }, SELECTED_CLASSES_KEY)
+}
+
+/** The class names the rows are for, in drawn order, off `data-class` (never off the testid). */
+function classNames(page: Page): Promise<string[]> {
+  return page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].map((el) => el.getAttribute('data-class') ?? ''),
+    ROW
+  )
+}
+
+/**
+ * Click a row's BODY, deliberately away from the star at its left edge. `position` is measured from
+ * the row's top-left, and the star occupies roughly the first 40px of it — so x=220 is over the
+ * class name and the count, which is where a user aiming at "this class" would click.
+ */
+async function openRow(page: Page, cls: string): Promise<void> {
+  await page.click(rowOf(cls), { position: { x: 220, y: 12 }, timeout: 15_000 })
+}
+
+/** Back to the Classes tab from wherever the drill-down left us. */
+async function backToClasses(page: Page): Promise<void> {
+  await page.click(TAB_CLASSES, { timeout: 15_000 })
+  await page.waitForSelector(PANE, { timeout: 15_000 })
+}
+
+/**
+ * THE STAR IS NOT THE DOOR (JOS-157). The row navigates; the button on it does not, and this is the
+ * assertion that keeps the two apart — a stopPropagation is exactly the kind of line a later edit
+ * removes without noticing, and the symptom would be that pinning a class becomes impossible
+ * because the tab you pin it on leaves the moment you click.
+ */
+async function stepStarDoesNotNavigate(page: Page): Promise<void> {
+  const before = await storedClasses(page)
+  const order = await classNames(page)
+  const cls = order[order.length - 1]
+  if (!check('there is a row to star', !!cls, order.slice(0, 4).join(','))) return
+  await star(page, cls.replace(/\s+/g, '-').toLowerCase())
+  const stillHere = await page
+    .waitForSelector(PANE, { timeout: 10_000 })
+    .then(() => true, () => false)
+  check('THE STAR NEVER NAVIGATES - the Classes tab is still the tab you are on', stillHere)
+  check(
+    '…and it wrote nothing to the class filter',
+    JSON.stringify(await storedClasses(page)) === JSON.stringify(before),
+    JSON.stringify(await storedClasses(page))
+  )
+  // Put the order back for whatever runs after this.
+  await star(page, cls.replace(/\s+/g, '-').toLowerCase())
+  await settle(() => classNames(page), (o) => o[0] !== cls, { timeoutMs: 15_000 })
+}
+
+/**
+ * THE HEADLINE FOR JOS-157: a class row is a door. Clicking it lands on the Quests tab with the
+ * class filter set to exactly that class — in the chip the user can see AND in the same stored key
+ * the chip itself writes, which is what makes arriving here indistinguishable from having picked
+ * the class by hand (and therefore undoable by removing the chip, with no back button anywhere).
+ *
+ * The second half is the part a naive implementation gets wrong: a SECOND drill-down REPLACES the
+ * first class rather than adding to it, and neither one touches any other filter. The search box is
+ * loaded with text first precisely so the click has something it could wrongly clear —
+ * `revealQuest`, the deep-link path in the same hook, clears every filter, and the whole point of
+ * these being two functions is that this one does not.
+ */
+async function stepDrillDown(page: Page): Promise<void> {
+  const order = await classNames(page)
+  const first = order[0]
+  const second = order.find((c) => c !== first)
+  if (!check('there are two classes to drill into', !!first && !!second, order.slice(0, 4).join(','))) return
+
+  await openRow(page, first.replace(/\s+/g, '-').toLowerCase())
+  const landed = await page
+    .waitForSelector(COUNTS, { timeout: 15_000 })
+    .then(() => true, () => false)
+  if (!check('CLICKING A CLASS ROW LANDS ON THE QUESTS TAB', landed)) return
+  check(
+    '…and the class filter shows exactly that class',
+    JSON.stringify(await chipsOf(page, CLASS_FILTER)) === JSON.stringify([first]),
+    JSON.stringify(await chipsOf(page, CLASS_FILTER))
+  )
+  check(
+    '…and it wrote the SAME stored pick the class chip writes',
+    JSON.stringify(await storedClasses(page)) === JSON.stringify([first]),
+    JSON.stringify(await storedClasses(page))
+  )
+
+  // Something for a careless reset to destroy. The island facet stays empty on purpose: "left
+  // alone" has to hold for a filter that is set and for one that is not.
+  await page.fill(SEARCH, 'rune', { timeout: 15_000 })
+
+  await backToClasses(page)
+  await openRow(page, second.replace(/\s+/g, '-').toLowerCase())
+  const replaced = await settle(
+    () => storedClasses(page),
+    (v) => v.length === 1 && v[0] === second,
+    { timeoutMs: 15_000 }
+  )
+  check(
+    'A SECOND DRILL-DOWN REPLACES THE CLASS RATHER THAN ADDING TO IT',
+    JSON.stringify(replaced) === JSON.stringify([second]),
+    JSON.stringify(replaced)
+  )
+  check(
+    '…and the chip agrees with the storage',
+    JSON.stringify(await chipsOf(page, CLASS_FILTER)) === JSON.stringify([second]),
+    JSON.stringify(await chipsOf(page, CLASS_FILTER))
+  )
+  check(
+    '…AND IT LEFT EVERY OTHER FILTER ALONE: the search text the user typed survives the trip',
+    (await page.inputValue(SEARCH)) === 'rune',
+    await page.inputValue(SEARCH)
+  )
+  check(
+    '…and the island facet is still unpicked rather than reset to something',
+    (await chipsOf(page, ISLAND_FILTER)).length === 0,
+    JSON.stringify(await chipsOf(page, ISLAND_FILTER))
+  )
+}
+
 async function main(): Promise<void> {
   buildIfStale()
 
@@ -241,6 +386,9 @@ async function main(): Promise<void> {
       await stepTurnInMovesCount(page, log, new Date(now - 60_000))
       await stepOrder(page)
       await stepPin(page)
+      // JOS-157 last, because it is the only step that LEAVES this tab.
+      await stepStarDoesNotNavigate(page)
+      await stepDrillDown(page)
       if (failures.length) await dumpArtifacts(page, 'sky-class-unlocks-FAIL')
     } finally {
       await launched.close()

@@ -349,6 +349,74 @@ export interface QuestListState {
    * this link is navigating away from, so it can never be what hid the quest.
    */
   revealQuest: (name: string) => void
+  /**
+   * "Show me THIS class's quests" — the Classes tab's drill-down (JOS-157): switch to the Quests
+   * tab with the class filter set to exactly this one class, replacing whatever was picked before.
+   *
+   * THE ASYMMETRY WITH `revealQuest` DIRECTLY ABOVE IS DELIBERATE, and it is the whole reason these
+   * are two functions rather than one with a flag. That path CLEARS every filter because a deep
+   * link promises one named quest and any filter could be the thing hiding it. This path SETS one
+   * on purpose: the user clicked a class, so the class filter is the answer they asked for, not an
+   * obstacle. Everything else they had set up — the search box, the island and boss facets, the
+   * hide-boxes, favorites-only — is left exactly as it was, because none of it was part of the ask
+   * and a drill-down that quietly reset a user's working filters would be spending their state to
+   * pay for a click. Replacing rather than appending the class is the same reasoning: a row is one
+   * class, so the filter after the click reads as that one class and nothing else.
+   *
+   * It writes the SAME stored state the class chip on QuestFilterBar writes (`setSelectedClasses`,
+   * persisted under `eq.selectedClasses`), so the chip shows the pick, removing the chip undoes it,
+   * and the choice survives a restart — arriving here is indistinguishable from having picked the
+   * class by hand, which is what makes it undoable without a back button.
+   */
+  showClassQuests: (className: string) => void
+}
+
+/**
+ * THE TWO WAYS INTO THE QUESTS TAB, written side by side so the asymmetry between them is one
+ * screen rather than two. The long arguments are on `QuestListState` above; the short version is
+ * that `revealQuest` CLEARS every filter (a deep link promises one named quest, so any filter is a
+ * suspect) and `showClassQuests` SETS one (a click on a class row IS a filter request, and nothing
+ * else the user set up was part of the ask).
+ *
+ * A plain function taking the setters rather than a hook: it holds no state of its own, and lifting
+ * it out of `useQuestList` keeps that hook under the measured per-function ceiling while putting
+ * the two navigations in the one place a reader can compare them.
+ */
+function questNavigation(set: {
+  setTab: (t: TabKey) => void
+  setQuery: (v: string) => void
+  setSelectedClasses: (v: string[]) => void
+  setIslands: (v: string[]) => void
+  setBosses: (v: string[]) => void
+  setHideCompleted: (v: boolean) => void
+  setHideTurnedIn: (v: boolean) => void
+  setHideNoItems: (v: boolean) => void
+  setFavoritesOnly: (v: boolean) => void
+  resetPaging: () => void
+}): Pick<QuestListState, 'revealQuest' | 'showClassQuests'> {
+  return {
+    revealQuest: (name: string) => {
+      set.setTab('quests')
+      set.setQuery(name)
+      set.setSelectedClasses([])
+      set.setIslands([])
+      set.setBosses([])
+      set.setHideCompleted(false)
+      set.setHideTurnedIn(false)
+      set.setHideNoItems(false)
+      set.setFavoritesOnly(false)
+      set.resetPaging()
+    },
+    showClassQuests: (className: string) => {
+      set.setTab('quests')
+      // REPLACES the selection rather than adding to it, and touches nothing else. The paging cap
+      // resets for the same reason `revealQuest` resets it: the filtered set just changed, so the
+      // user should be looking at the top of the new list rather than however far down the old one
+      // they had paged.
+      set.setSelectedClasses([className])
+      set.resetPaging()
+    }
+  }
 }
 
 export function useQuestList(quests: QuestProgress[]): QuestListState {
@@ -452,17 +520,10 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     toggleFavorite,
     questFavorites,
     questIgnored,
-    revealQuest: (name: string) => {
-      setTab('quests')
-      setQuery(name)
-      setSelectedClasses([])
-      setIslands([])
-      setBosses([])
-      setHideCompleted(false)
-      setHideTurnedIn(false)
-      setHideNoItems(false)
-      setFavoritesOnly(false)
-      resetPaging()
-    }
+    // Both navigations, from the one function above that states how they differ.
+    ...questNavigation({
+      setTab, setQuery, setSelectedClasses, setIslands, setBosses,
+      setHideCompleted, setHideTurnedIn, setHideNoItems, setFavoritesOnly, resetPaging
+    })
   }
 }
