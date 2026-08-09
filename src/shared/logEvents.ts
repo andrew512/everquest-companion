@@ -7,6 +7,20 @@
 
 import type { DamageType, DamageCategory } from './combat'
 import type { PoisonEffect, PoisonGroup } from './poisons'
+// The /consider LADDER (rungs, chip labels, the app's faction palette, the difficulty
+// shorthand) moved to ./considerFaction in JOS-128, when this file hit its 400-line factoring
+// ceiling. Three of the four are presentation and the fourth is the parser's phrase table, so
+// none of them was an event shape. RE-EXPORTED verbatim below: every existing import site still
+// reads them from `@shared/logEvents`, exactly as it always has.
+import type { ConsiderFaction } from './considerFaction'
+
+export type { ConsiderFaction }
+export {
+  CONSIDER_FACTION_COLOR,
+  CONSIDER_FACTION_LABEL,
+  CONSIDER_FACTION_RUNGS,
+  considerDifficultyShort
+} from './considerFaction'
 
 /** Fields present on every event: a monotonic sequence, timestamp, and the raw line. */
 export interface LogEventBase {
@@ -782,6 +796,34 @@ export interface CampStartEvent extends LogEventBase {
 }
 
 /**
+ * A `/outputfile` DUMP FINISHED WRITING — `Outputfile Complete: Primitive_freeport-Inventory.txt`
+ * (JOS-128). The ONE line that says WHEN the player produced an export, in EQ's own clock.
+ *
+ * This is the whole reason the event exists. An inventory dump is the BASELINE of the inventory
+ * model (owner, 2026-08-09): loading one RESETS what we think you hold, and log-derived loot
+ * accumulates from that instant forward. Deciding "forward" needs the generation instant, and
+ * comparing it against a loot event's `ts` is only sound inside ONE time base — this line's
+ * timestamp is parsed by the same `parseTs` every loot row's is, so the comparison never crosses
+ * a clock. The file's mtime is the fallback (`shared/outputs/baseline.ts` states its failure
+ * modes); the dump's CONTENT carries no date at all, verified against the real 295-row dump.
+ *
+ * MEASURED against the real 116 MB log (2026-08-09): `^\[…\] Outputfile Complete: ` matches
+ * exactly 2 lines (Sat Aug 01 13:33:43 and Thu Aug 06 15:39:12), both this shape. Full-log kind
+ * histogram diffed with the classifier off and on: `unknown` 270631 → 270629, `outputFile`
+ * 0 → 2, every other kind byte-identical. The `usage: /outputfile […]` line the game prints for
+ * a malformed command is NOT this shape and stays unknown — it wrote no file.
+ *
+ * `file` is the name EQ printed, with no directory: EQ writes dumps into the install root. It is
+ * carried verbatim rather than matched against a kind, because `/outputfile inventory <name>`
+ * lets the player choose the name and the only honest join is against the file we actually read.
+ */
+export interface OutputFileEvent extends LogEventBase {
+  kind: 'outputFile'
+  /** The dump's file name, exactly as the game printed it. */
+  file: string
+}
+
+/**
  * The camp was CANCELLED — `You abandon your preparations to camp.` (2× in the real log,
  * Aug 02 01:34:09 and 01:34:14, each in the SAME second as its own campStart).
  *
@@ -1094,113 +1136,6 @@ export interface ConsiderEvent extends LogEventBase {
   difficulty: string
 }
 
-/**
- * The faction (con-message) ladder, friendliest → most hostile. These are the rungs EQ prints
- * between the mob name and the ` -- `; the key is a 1:1 rename of the phrase, not an inference.
- *
- * FULL-LOG SWEEP (2026-08-03, 357 consider lines — every line accounted for, no residue):
- *   regards you indifferently        128
- *   scowls at you, ready to attack   102
- *   judges you amiably                60
- *   glowers at you dubiously          34
- *   glares at you threateningly       17
- *   looks your way apprehensively     14
- *   looks upon you warmly              2
- * The two remaining rungs of the classic ladder — `regards you as an ally` and `kindly considers
- * you` — do NOT occur in this log (this character has no maxed faction). They are matched anyway,
- * for the same reason the stance regex is name-permissive: covering a rung we haven't stood on
- * costs nothing and refusing it would silently drop the whole line. Nothing infers a rung that
- * wasn't printed.
- */
-export type ConsiderFaction =
-  | 'ally'
-  | 'warmly'
-  | 'kindly'
-  | 'amiably'
-  | 'indifferent'
-  | 'apprehensive'
-  | 'dubious'
-  | 'threatening'
-  | 'scowls'
-
-/** phrase → rung, friendliest first. The parser builds its alternation from this list. */
-export const CONSIDER_FACTION_RUNGS: readonly { phrase: string; faction: ConsiderFaction }[] = [
-  { phrase: 'regards you as an ally', faction: 'ally' },
-  { phrase: 'looks upon you warmly', faction: 'warmly' },
-  { phrase: 'kindly considers you', faction: 'kindly' },
-  { phrase: 'judges you amiably', faction: 'amiably' },
-  { phrase: 'regards you indifferently', faction: 'indifferent' },
-  { phrase: 'looks your way apprehensively', faction: 'apprehensive' },
-  { phrase: 'glowers at you dubiously', faction: 'dubious' },
-  { phrase: 'glares at you threateningly', faction: 'threatening' },
-  { phrase: 'scowls at you, ready to attack', faction: 'scowls' }
-]
-
-/** Short, glanceable rung label for a chip/badge. */
-export const CONSIDER_FACTION_LABEL: Record<ConsiderFaction, string> = {
-  ally: 'ally',
-  warmly: 'warmly',
-  kindly: 'kindly',
-  amiably: 'amiable',
-  indifferent: 'indifferent',
-  apprehensive: 'apprehensive',
-  dubious: 'dubious',
-  threatening: 'threatening',
-  scowls: 'KOS'
-}
-
-/**
- * The APP's faction palette (friendly cool → hostile warm). This is our presentation choice,
- * not a color the game states — EQ's own con COLOR encodes relative LEVEL, not faction, and the
- * log never carries a color at all. Kept beside the ladder so the overlay and the main window
- * can't drift apart.
- */
-export const CONSIDER_FACTION_COLOR: Record<ConsiderFaction, string> = {
-  ally: '#5fe08a',
-  warmly: '#7fd8a0',
-  kindly: '#6fa8f0',
-  amiably: '#7fc4e8',
-  indifferent: '#c8ccd8',
-  apprehensive: '#c9c65a',
-  dubious: '#d6a94a',
-  threatening: '#e08b45',
-  scowls: '#e05c5c'
-}
-
-/**
- * The difficulty clause → a short label for a dense row. Keys are the VERBATIM phrases observed
- * in the full-log sweep, with the gendered pronoun folded to a regex-free `he|she|it` lookup
- * below; a phrase we've never seen returns undefined and the caller shows the verbatim clause
- * (never a guessed tier — and deliberately NO numeric ordering, which the log does not state).
- */
-const CONSIDER_DIFFICULTY_SHORT: Record<string, string> = {
-  'what would you like your tombstone to say?': 'suicide',
-  'looks like it would wipe the floor with you!': 'wipes the floor',
-  'it appears to be quite formidable.': 'formidable',
-  'looks like quite a gamble.': 'a gamble',
-  'looks kind of dangerous.': 'dangerous',
-  "you would probably win this fight... it's not certain though.": 'probably win',
-  'looks quite risky, but might be worth a try.': 'worth a try',
-  'looks kind of risky, but you might win.': 'might win',
-  'looks kind of risky... you might win.': 'might win',
-  'you could probably win this fight.': 'likely win',
-  'looks like a reasonably safe opponent.': 'safe'
-}
-
-/**
- * Short label for a difficulty clause, or undefined when we've never seen the phrase.
- * Folds the gendered variants EQ emits for two of the clauses ("looks like HE/SHE/IT would wipe
- * the floor with you!", "HE/SHE/IT appears to be quite formidable.") onto the neuter key.
- */
-export function considerDifficultyShort(difficulty: string): string | undefined {
-  const key = difficulty
-    .trim()
-    .toLowerCase()
-    .replace(/\b(?:he|she)\b/g, 'it')
-    .replace(/\s+/g, ' ')
-  return CONSIDER_DIFFICULTY_SHORT[key]
-}
-
 // ---------------------------------------------------------------------------
 // ROGUE POISON events (Task #64). The catalog these describe — the roster, the coat/dry
 // message tables, the Strike proc emotes and the dispel family — lives in shared/poisons.ts;
@@ -1300,6 +1235,7 @@ export type LogEvent =
   | SessionStartEvent
   | CampStartEvent
   | CampAbortEvent
+  | OutputFileEvent
   | GroupEvent
   | OfflineGapEvent
   | StanceChangeEvent

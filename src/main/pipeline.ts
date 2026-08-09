@@ -122,6 +122,7 @@ export const killsModule = modules.kills
 export const progressionModule = modules.progression
 export const levelingModule = modules.leveling
 export const characterModule = modules.character
+export const outputFilesModule = modules.outputFiles
 export const itemTiersModule = modules.itemTiers
 export const alertsModule = modules.alerts
 export const buffsModule = modules.buffs

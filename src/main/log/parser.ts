@@ -47,7 +47,7 @@ import {
   classifyWornOff
 } from './parseCasts'
 import { classifyItemActivate, classifySelfWho, classifySkillUp, classifySpecialAttack } from './parseWho'
-import { classifyCamp, classifySessionStart } from './parseSession'
+import { classifyCamp, classifyOutputFile, classifySessionStart } from './parseSession'
 import { classifyGroup } from './parseGroup'
 import {
   classifyAa,
@@ -129,6 +129,12 @@ const CLASSIFIERS: readonly Classifier[] = [
   // position is for legibility, not disambiguation.
   classifySessionStart,
   classifyCamp,
+  // THE EXPORT RECEIPT (JOS-128) — `Outputfile Complete: <file>`. Beside the session frame
+  // because it is the same level: the player operating the CLIENT, not the world. It is
+  // anchored at the start of the message and gated on a leading `O`, and the whole log holds
+  // exactly two lines of this shape, both previously `{kind:'unknown'}` — so like its three
+  // neighbours it can neither shadow nor be shadowed, and the position is for legibility.
+  classifyOutputFile,
   // WHO YOU ARE WITH (docs/plans/group-model.md §1) — beside the session frame for the same
   // reason those two are beside the zone rule: they are the frame around the world model, one
   // level up from its contents. Every shape it claims was MEASURED to be `{kind:'unknown'}`

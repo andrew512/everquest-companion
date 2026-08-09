@@ -33,6 +33,7 @@ import { KillsModule } from './kills'
 import { LevelingModule } from './leveling'
 import { ProgressionModule } from './progression'
 import { CharacterModule } from './character'
+import { OutputFilesModule } from './outputFiles'
 import { ItemTiersModule } from './itemTiers'
 import { AlertsModule } from './alerts'
 import { BuffsModule } from './buffs'
@@ -75,6 +76,7 @@ export interface ModuleWiring {
   progression: ProgressionModule
   leveling: LevelingModule
   character: CharacterModule
+  outputFiles: OutputFilesModule
   itemTiers: ItemTiersModule
   alerts: AlertsModule
   buffs: BuffsModule
@@ -131,6 +133,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   const progression = new ProgressionModule()
   const leveling = new LevelingModule()
   const character = new CharacterModule()
+  // WHEN THE PLAYER LAST EXPORTED EACH DUMP (JOS-128) — the one fact the inventory baseline
+  // rule needs, folded from `Outputfile Complete: <file>`. Surface-free: main reads it directly
+  // when it loads a dump, nothing in the renderer subscribes.
+  const outputFiles = new OutputFilesModule()
   // Observed item levels (Task #60): character-scoped, epoch-aware per-item tier state.
   const itemTiers = new ItemTiersModule()
   // The alerts extension (Task #18): evaluates event/raw triggers on LIVE events only. Its defs
@@ -175,6 +181,7 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
     progression,
     leveling,
     character,
+    outputFiles,
     itemTiers,
     alerts,
     buffs,
@@ -196,6 +203,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
       progression,
       leveling,
       character,
+      // Beside `character` because it answers the same shape of question one level up: the
+      // client's own bookkeeping. Position is otherwise free — it folds one line kind that no
+      // other module reads and it emits no delta.
+      outputFiles,
       itemTiers,
       alerts,
       buffs,
