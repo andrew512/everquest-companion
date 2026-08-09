@@ -9,13 +9,19 @@ export interface InventoryRow {
   log: number
   /** count in the inventory export */
   inv: number
-  /** base held per the active count source */
+  /** base held per the active count source, before turn-ins */
   base: number
-  /** consumed by turned-in quests */
+  /**
+   * What the turn-ins ACTUALLY took off this row, which is `base - net` and not the gross
+   * `required x times` (JOS-141). Zero when the dump answered this row: a dump already reflects
+   * every turn-in, so nothing was taken off it. The rule is argued on `netCount` below.
+   */
   consumed: number
-  /** net available after turn-ins */
+  /** net available after turn-ins. Always `base - consumed`. */
   net: number
-  /** names of the quests whose turn-ins consumed this item, a quest run twice reading "… x2" */
+  /** names of the quests whose turn-ins consumed this item, a quest run twice reading "… x2".
+   *  Empty whenever `consumed` is 0, so it never blames a quest for a subtraction that did not
+   *  happen. */
   consumedBy: string[]
 }
 
