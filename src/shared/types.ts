@@ -592,6 +592,10 @@ export interface TurnInDelta {
   appended: TurnInEvent[]
 }
 
+// classUnlocks module (JOS-148). Defined in ./classUnlocks beside the record itself and the
+// argument for its shape, on the `kills.ts` precedent — this file is at its line budget.
+export type { ClassUnlockDelta, ClassUnlockRecord, ClassUnlockSnap } from './classUnlocks'
+
 // kills module. Snapshot = the map + its shape version; delta = the per-mob entries that
 // changed, each REPLACING its mob wholesale. Defined in ./kills beside the record itself.
 export type { KillsSnap, KillsDelta } from './kills'

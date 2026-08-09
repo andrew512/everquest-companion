@@ -46,7 +46,13 @@ import {
   classifyStance,
   classifyWornOff
 } from './parseCasts'
-import { classifyItemActivate, classifySelfWho, classifySkillUp, classifySpecialAttack } from './parseWho'
+import {
+  classifyClassUnlock,
+  classifyItemActivate,
+  classifySelfWho,
+  classifySkillUp,
+  classifySpecialAttack
+} from './parseWho'
 import { classifyAcquire } from './parseAcquire'
 import { classifyCamp, classifyOutputFile, classifySessionStart } from './parseSession'
 import { classifyGroup } from './parseGroup'
@@ -178,6 +184,12 @@ const CLASSIFIERS: readonly Classifier[] = [
   // statements about the CHARACTER — and, like them, MEASURED to claim only lines that were
   // `{kind:'unknown'}` before it existed (all 21).
   classifySpecialAttack,
+  // WHAT THE CHARACTER IS ALLOWED TO BE (JOS-148) — the fourth statement-about-the-character,
+  // beside the three above for that reason. Anchored on the full `You have completed
+  // achievement: Primary Class Unlock - ` prefix and gated on the leading `Y`; a full-log sweep
+  // measured all 155 lines of the achievement family as `{kind:'unknown'}` before it existed, so
+  // like its neighbours it can neither shadow nor be shadowed and the position is legibility.
+  classifyClassUnlock,
   classifyIllusionFade,
   classifyPoisonCoat,
   classifyPoisonProc,

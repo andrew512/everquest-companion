@@ -26,8 +26,13 @@ import { everTurnedIn, firstTimeReady, hasEveryItem, readyQuests } from './quest
 
 export type { SortKey }
 
-/** Quests · Ready · Ignored. `ready` is JOS-147's turn-in list; its rule lives in questCompletion. */
-export type TabKey = 'quests' | 'ready' | 'ignored'
+/**
+ * Quests · Ready · Classes · Ignored. `ready` is JOS-147's turn-in list (rule in questCompletion);
+ * `classes` is JOS-148's per-class unlock progress (rule in classUnlocks.ts). Neither reads any of
+ * the filter state below — they are derivations over the same quests, which is why the tab key is
+ * the only thing either of them adds to this hook.
+ */
+export type TabKey = 'quests' | 'ready' | 'classes' | 'ignored'
 
 // How many Accordions to render before the "show more" cap kicks in.
 const PAGE = 40

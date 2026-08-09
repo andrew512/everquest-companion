@@ -23,6 +23,7 @@ import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
 import { TurnInBadge } from './TurnInControls'
 import QuestFilterBar from './QuestFilterBar'
+import ClassUnlockList from './ClassUnlockList'
 import { useQuestList, type QuestListState, type TabKey } from './useQuestList'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
@@ -277,9 +278,14 @@ function ReadyList(props: QuestListProps): JSX.Element {
 }
 
 /**
- * The three tabs, in the order the work happens: what you are farming, what you can hand in, what
- * you told the app to forget. Each of the last two carries its own count, because the number IS
- * the reason to look.
+ * The four tabs, in the order the work happens: what you are farming, what you can hand in, what
+ * all that grinding is FOR, and what you told the app to forget. Ready and Ignored carry their own
+ * count, because the number IS the reason to look.
+ *
+ * Classes deliberately does not (JOS-148). Its number would be "how many classes are unlocked",
+ * which needs the classUnlocks module — and subscribing to it HERE, just to letter a tab, would
+ * put a second copy of the tab's own model in the container that mounts it. The count is the first
+ * thing the tab says when you open it, one line above the rows.
  */
 function PoskyTabs({ list }: { list: QuestListState }): JSX.Element {
   return (
@@ -299,6 +305,9 @@ function PoskyTabs({ list }: { list: QuestListState }): JSX.Element {
         label={list.ready.length ? `Ready (${list.ready.length})` : 'Ready'}
         data-testid="posky-tab-ready"
       />
+      {/* "Classes" - what the tests are for. The word is the class, not the unlock, because a row
+          is a class whether or not it is unlocked and the tab is as much a progress list. */}
+      <Tab value="classes" label="Classes" data-testid="posky-tab-classes" />
       <Tab
         value="ignored"
         label={list.ignored.length ? `Ignored (${list.ignored.length})` : 'Ignored'}
@@ -419,6 +428,11 @@ export default function PoskyView({
         <IgnoredList quests={list.ignored} onUnignore={list.questIgnored.toggle} />
       ) : list.tab === 'ready' ? (
         <ReadyList quests={list.ready} {...rows} />
+      ) : list.tab === 'classes' ? (
+        // The VISIBLE quests, like every other tab: a quest the user permanently ignored is not
+        // shown here either, and a class's total shrinks with it rather than counting a quest the
+        // app has been told to forget. `list.visible` is that set (useQuestList.useVisibleQuests).
+        <ClassUnlockList quests={list.visible} />
       ) : (
         <>
           <QuestFilterBar
