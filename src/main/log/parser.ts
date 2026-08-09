@@ -148,10 +148,9 @@ const CLASSIFIERS: readonly Classifier[] = [
   // corpse, a merchant buy or sell, a destroy payout, a marketplace delivery, a tradeskill
   // combine. It sits directly beneath the two corpse families because it is the rest of the
   // same question, and BENEATH rather than above so a loot sentence is never offered to it
-  // first. It cannot shadow anything regardless: a full-log replay measured all 5,404 lines it
-  // claims as `{kind:'unknown'}` beforehand, and the histogram of the other 49 kinds is
+  // first. It cannot shadow anything regardless: a full-log replay measured all 5,002 lines it
+  // claims as `{kind:'unknown'}` beforehand, and the histogram of the 46 pre-existing kinds is
   // byte-identical across the change.
-
   classifyAcquire,
   classifyTurnIn,
   classifyLevel,
