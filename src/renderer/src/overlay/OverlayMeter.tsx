@@ -68,23 +68,23 @@ interface MeterView {
   seg: SegmentView | undefined
   live: boolean
   headerName: string
-  totalDps: number
   rows: OverlaySelectRow[]
   /** on the head row, but the head row is the LAST (finished) fight — never dress it up as live */
   headIsLast: boolean
 }
 
-/** Header title + live dot + rate/duration for the selected segment. */
+/** Header title + live dot for the selected segment. The RATE is not here any more — since
+ *  JOS-158 the aggregate is stated, labelled, on the panel's own header row (overlay/meterCrumb).
+ */
 function headerFor(
   snap: CombatSnapshot | null,
   seg: SegmentView | undefined,
   isFight: boolean,
   hydrating: boolean
-): Pick<MeterView, 'live' | 'headerName' | 'totalDps'> {
+): Pick<MeterView, 'live' | 'headerName'> {
   return {
     live: !hydrating && !!snap?.inCombat,
-    headerName: hydrating ? 'Reading log…' : seg?.name ?? (isFight ? 'No fight' : 'No zone'),
-    totalDps: seg?.outDps ?? 0
+    headerName: hydrating ? 'Reading log…' : seg?.name ?? (isFight ? 'No fight' : 'No zone')
   }
 }
 
@@ -153,7 +153,7 @@ export default function OverlayMeter(): JSX.Element {
   const [meterScope] = useMeterScope()
   const roster = snap?.roster ?? EMPTY_ROSTER
 
-  const { seg, live, headerName, totalDps, rows, headIsLast } = meterView(
+  const { seg, live, headerName, rows, headIsLast } = meterView(
     snap,
     isFight,
     selection,
@@ -207,11 +207,11 @@ export default function OverlayMeter(): JSX.Element {
         last={headIsLast}
         title={headerName}
         titleColor={GOLD}
-        // THE SEGMENT'S RATE, AND NOTHING ELSE (owner ruling 2026-08-05 — JOS-35). The header is
-        // the selector: it states which fight you are watching and how hard it is going. The
-        // fight CLOCK moved down to the crumb row above the bars (overlay/meterCrumb.tsx), which
-        // is what gives a long mob name room to be read at 380px.
-        tail={formatRate(totalDps)}
+        // THE FIGHT'S NAME, AND NOTHING ELSE (owner direction 2026-08-09 — JOS-158). JOS-35 had
+        // already sent the fight CLOCK down to the crumb row above the bars; the RATE has now
+        // followed it (overlay/meterCrumb.tsx), where it can be labelled for what it covers
+        // instead of floating unlabelled beside a mob name. So this header passes NO tail at all,
+        // and every pixel it was holding is width a long mob name gets to use at 380px.
         select={{ rows, value: selection, onChange: selectSegment, accent: GOLD }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
