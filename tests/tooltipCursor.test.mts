@@ -98,17 +98,23 @@ test('the theme states the hand cursor AND the disabled exception', () => {
  * their `db`/`observed` provenance chips are two-word labels that cannot sit over any control.
  */
 const LOOT_LEDGER = [
-  'LootView.tsx',
-  'LootTables.tsx',
-  'lootRows.tsx',
-  'KnowledgeBadge.tsx',
-  'NotablePickupsStrip.tsx',
-  'ItemDetailPane.tsx'
+  'loot/LootView.tsx',
+  'loot/LootTables.tsx',
+  'loot/lootRows.tsx',
+  'loot/KnowledgeBadge.tsx',
+  'loot/NotablePickupsStrip.tsx',
+  'loot/ItemDetailPane.tsx',
+  // The timeslice control (JOS-130) draws on this surface too, and it is the WORST place left for
+  // a popper: it is a row of small toggle buttons sitting directly above the toolbar it governs,
+  // so a `placement="top"` card anchored on any of them would open across the ledger's own
+  // controls — and one anchored on a button would cover the button beside it. Same rule, same
+  // reason, one surface wider.
+  'timeslice/SliceBar.tsx'
 ]
 
 test('the Loot ledger mounts NO tooltip popper over its own controls (JOS-127)', () => {
   for (const name of LOOT_LEDGER) {
-    const src = readFileSync(join(RENDERER, 'features', 'loot', name), 'utf8')
+    const src = readFileSync(join(RENDERER, 'features', name), 'utf8')
     assert.equal(importsMuiTooltip(src), false, `${name} must not import MUI’s Tooltip`)
     assert.ok(!/from '.*lib\/Tooltip'/.test(src), `${name} must not import the shared Tooltip`)
     // KnownItemTooltip is the WORST of them here: interactive, `placement="top"`, up to 380px
@@ -124,7 +130,7 @@ test('the Loot ledger does not smuggle the hover text back in as a native title'
   // A native `title` cannot eat a click (no hit area), so it is not the defect — but the owner's
   // direction was FEWER tooltips on this surface, not a quieter spelling of the same ones.
   for (const name of LOOT_LEDGER) {
-    const src = readFileSync(join(RENDERER, 'features', 'loot', name), 'utf8')
+    const src = readFileSync(join(RENDERER, 'features', name), 'utf8')
     assert.ok(!/\btitle=/.test(src), `${name} should carry no hover text at all`)
   }
 })

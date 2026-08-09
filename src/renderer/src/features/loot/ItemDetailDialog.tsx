@@ -14,6 +14,7 @@ import {
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import type { ItemKnowledge, LootEvent } from '@shared/types'
+import type { Timeslice } from '@shared/timeslice'
 import { formatDate } from '../../lib/formatDate'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
 import { ObservedItemWindow } from '../../lib/ObservedItemWindow'
@@ -303,6 +304,14 @@ export interface ItemDetailProps {
   events: LootEvent[]
   stats?: string
   isQuestItem: boolean
+  /**
+   * The timeslice the caller's `events` were already cut to (JOS-130), so the per-zone rates
+   * divide by the SAME stretch those drops were counted over. Absent ⇒ the whole record, which is
+   * what this drill-down has always measured and what the Mobs tab's dialog still wants: it opens
+   * over a page that has no slice control, and a rate quietly measured over somebody else's
+   * window is worse than a rate over all of it.
+   */
+  slice?: Timeslice
 }
 
 /**
@@ -321,14 +330,15 @@ export function ItemDetailContent({
   item,
   events,
   stats,
-  active
+  active,
+  slice
 }: Omit<ItemDetailProps, 'isQuestItem'> & { active: boolean }): JSX.Element {
   const agg = useMemo(() => aggregateLoot(events), [events])
   const knowledge = useItemKnowledge(item, active)
   // The per-zone RATES (JOS-78). Its own hook because it joins a SECOND module — the progression
   // snapshot, for the active-time denominators — and that join is the one thing on this surface
   // that is not simply a fold of `events`.
-  const zoneRates = useItemZoneRates(events)
+  const zoneRates = useItemZoneRates(events, slice)
   return (
     <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems="flex-start">
       <ItemWindowColumn item={item} stats={stats} knowledge={knowledge} />

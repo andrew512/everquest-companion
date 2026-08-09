@@ -173,6 +173,15 @@ export interface WindowItemArgs {
    * derivation is precisely what windowScope.ts exists to prevent.
    */
   activeMs: number
+  /**
+   * The slice's zone restriction (JOS-130) — a `zoneIdKey` fold, or null/absent for every zone.
+   *
+   * It must be applied HERE and not by the caller, because `activeMs` above already is the zone's
+   * own active time when the slice carries one: counting every zone's drops against one zone's
+   * hours is the exact mismatch rule 2 exists to prevent. A row with NO zone belongs to the
+   * `unknown` stretch and so matches only a filter for `unknown`.
+   */
+  zoneKey?: string | null
 }
 
 /**
@@ -188,10 +197,11 @@ export interface WindowItemArgs {
  * past the newest event so the live edge is inside every scope).
  */
 export function windowItemRows(args: WindowItemArgs): WindowItemRow[] {
-  const { events, t0, t1, activeMs } = args
+  const { events, t0, t1, activeMs, zoneKey } = args
   const rows = new Map<string, WindowItemRow>()
   for (const e of events) {
     if (e.ts < t0 || e.ts >= t1) continue
+    if (zoneKey != null && zoneIdKey(e.zone ?? UNKNOWN_ZONE) !== zoneKey) continue
     const key = e.item.toLowerCase()
     let row = rows.get(key)
     if (!row) {
