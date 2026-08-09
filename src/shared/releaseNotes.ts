@@ -153,6 +153,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         fromReport: true
       },
       {
+        kind: 'new',
+        text: 'The cursor ring can be any color you want. Preferences - Cursor ring has a color picker beside the size and thickness sliders, and the ring changes as you pick. It starts white, exactly as it was.',
+        fromReport: true
+      },
+      {
         kind: 'changed',
         text: 'The combat meters are one surface now: Overview, the Combat tab and the overlay share the same clickable bars, and clicking an ability that has stats (crit, double and triple attack, misses) opens them right under its bar.'
       },
