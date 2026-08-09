@@ -59,6 +59,8 @@ import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs
 // The scope word's own two steps — where it lives (JOS-115/121) and what the title bar did with
 // the room it gave back — in their own module, because this file is at the max-lines budget.
 import { stepOverlayScope, stepTitleBarRoom } from './overlayScopeSteps.mjs'
+// …and the pinned pane's scroll grip (JOS-138), in its own module for the same reason.
+import { stepPinnedScroll } from './overlayScrollSteps.mjs'
 
 /** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
 interface OverlayBridge {
@@ -261,6 +263,17 @@ async function stepLockedSelector(overlay: Page): Promise<void> {
     before === 0 && after > 0,
     `${before} → ${after} control(s)`
   )
+
+  // AND IT GIVES THE MOUSE BACK. The release is half the sensor — a reason left behind would keep
+  // this window capturing for every step below it, which is exactly what a `mouseover` with no
+  // matching `mouseout` used to do here (JOS-138 found it: the scroll step read a captured window
+  // and blamed its own grip).
+  await overlay.evaluate(() => {
+    const row = document.querySelector('[aria-haspopup="listbox"]')?.parentElement
+    row?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+  })
+  const released = await settle(countButtons, (n) => n === 0, { timeoutMs: 8_000 })
+  check('…and moving off the row gives it back', released === 0, `${released} control(s)`)
 
   await setLocked(overlay, false)
 }
@@ -594,6 +607,7 @@ async function main(): Promise<void> {
     await stepStaleId(page, ov)
     await stepOverlayDrill(ov)
     await stepLockedSelector(ov)
+    await stepPinnedScroll(app, ov, setLocked)
     await stepOverlayScope(page, ov, setLocked)
     // Unlocked is a precondition of the measurement (a locked window has no drag region at all),
     // and stepOverlayScope leaves it that way.
