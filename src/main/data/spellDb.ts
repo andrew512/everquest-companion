@@ -35,6 +35,11 @@ import { POISON_PROCS } from '../../shared/poisons'
 // the name class it produces are security-relevant, and a second copy would drift out of the
 // threat model that argues for them.
 import { subjectCapturePattern } from '../../shared/alertCaptures'
+// OUR corrections to the scrape (JOS-150). They are applied to the ENTRIES, before any table is
+// derived, so the suffix index, the wears-off map, the suggestion catalog and every search string
+// all see one corrected text. Read that file's header before adding one: it carries the evidence
+// bar, and the reason the fixes live beside the scrape instead of inside it.
+import { applySpellCorrections, type CorrectionsReport } from './spellCorrections'
 // Import the committed catalog directly so it's BUNDLED into the main build (electron-vite
 // inlines JSON imports). A readFileSync from a path relative to import.meta.url would look
 // beside out/main/index.js in production, where the JSON isn't copied — so import it.
@@ -568,13 +573,33 @@ export function buildSpellCatalog(
 }
 
 let cached: SpellDb | null = null
+let cachedCorrections: CorrectionsReport | null = null
 
-/** Load + build the spell DB (cached) from the bundled spells.json. */
+/**
+ * Load + build the spell DB (cached) from the bundled spells.json, with our corrections applied to
+ * the ENTRIES first (JOS-150).
+ *
+ * THE ORDER IS THE WHOLE POINT. A correction patches `SpellEntry.msgCastOnYou/Other/WearsOff`
+ * BEFORE `buildSpellDb` reads them, so there is exactly one corrected text and every derived
+ * structure agrees with it: the cast-on-you map, the wears-off map, the cast-on-other suffix table
+ * AND its last-word index, `buildSpellCatalog`'s template flags, and the wizard's `searchText`.
+ * Patching the derived tables instead — the shape `applyOverlayCorrections` uses for the per-user
+ * learned overlay, which only ever needs to reach `castOnYou` — would have left the suffix index
+ * and the catalog still holding the wiki's text, which is how a spell ends up matching in the
+ * parser and missing from the search box.
+ */
 export function loadSpellDb(): SpellDb {
   if (cached) return cached
   const file = spellsJson as SpellDbFile
-  cached = buildSpellDb(file.spells)
+  const { spells, report } = applySpellCorrections(file.spells)
+  cachedCorrections = report
+  cached = buildSpellDb(spells)
   return cached
+}
+
+/** What the committed corrections overlay did on this load (startup line + the audit test). */
+export function spellCorrectionsReport(): CorrectionsReport | null {
+  return cachedCorrections
 }
 
 /**

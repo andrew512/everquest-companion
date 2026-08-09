@@ -23,6 +23,7 @@ import { LogBus } from './log/bus'
 import { EpochDetector } from './log/epochDetector'
 import { SessionDetector } from './log/sessionDetector'
 import { baselineOverlay, loadUserOverlay } from './data/overlayPersistence'
+import { spellCorrectionsReport } from './data/spellDb'
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
 import { createModules } from './modules/wiring'
@@ -135,6 +136,17 @@ export const eventFeedModule = modules.eventFeed
 logInfo(
   `[everquest-companion] Message overlay: applied ${modules.overlayCorrections} cast-message corrections over the wiki DB.`
 )
+// The COMMITTED half of the same idea (JOS-150): our corrections to the scrape, applied at load.
+// `stale` is the one number worth watching in a boot log — it means a re-scrape moved a message
+// out from under a correction, and the correction now describes nothing.
+{
+  const c = spellCorrectionsReport()
+  if (c) {
+    logInfo(
+      `[everquest-companion] Spell corrections: ${c.applied} applied, ${c.satisfied} already correct upstream, ${c.stale.length} stale.`
+    )
+  }
+}
 logInfo(`[everquest-companion] Spell DB: ${spellDb.spells.length} spells (${spellDb.castOnYou.size} unique cast-on-you msgs).`)
 logInfo(
   `[everquest-companion] Mob catalog: ${MOB_CATALOG_SIZE} mobs (scraped drop tables; the live wiki lookup is the fallback).`
