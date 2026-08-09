@@ -375,8 +375,10 @@ function useExtraTs(levels: readonly LevelPoint[], aas: readonly AaPoint[]): num
  * every surface in it describes the SAME stretch of time, and keeping them in one place is what
  * makes that reviewable (it also keeps the view inside its measured line budget).
  *
- * It OWNS ITS SCROLL (the standing list law): the papers are intrinsically tall, and without
- * this the column grew the app's content area instead — the one thing a view may never do.
+ * It OWNS ITS SCROLL (the standing list law) WHILE IT IS A COLUMN: the papers are intrinsically
+ * tall, and without this the column grew the app's content area instead — the one thing a view
+ * may never do. Below `lg` there are no columns to share a height, so it hands the scroll up to
+ * the stack that holds it (JOS-151) and takes its natural height instead.
  */
 function ChartsColumn(p: {
   chrome: ChartChrome
@@ -394,7 +396,19 @@ function ChartsColumn(p: {
 }): JSX.Element {
   const { chrome, scope, charts } = p
   return (
-    <Stack spacing={2} sx={{ flex: 2, minWidth: 320, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
+    <Stack
+      spacing={2}
+      sx={{
+        // Two thirds of the height while there are two columns to share one; below `lg` it is
+        // simply the first band of a single column, so it takes its natural height, hands the
+        // scroll up, and drops the 320px floor that would otherwise push the page sideways.
+        flex: { xs: '0 0 auto', lg: 2 },
+        minWidth: { lg: 320 },
+        minHeight: 0,
+        overflow: { xs: 'visible', lg: 'auto' },
+        pr: { lg: 0.5 }
+      }}
+    >
       {p.pace && <AaPacePanel pace={p.pace} windowLabel={scope.label} />}
       {/* Directly above the plots it governs, and ABOVE BOTH of them: the two charts draw one
           time base, so there is one control for it — and since JOS-75 one scope under it. Since
@@ -536,7 +550,19 @@ export default function LevelingView({
           No level-ups or AA gains found in this character&apos;s log yet. They&apos;ll appear here live as you play.
         </Typography>
       ) : (
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} sx={{ flexGrow: 1, minHeight: 0 }}>
+        // THE COLUMNS ONLY SHARE A HEIGHT WHILE THEY ARE SIDE BY SIDE (JOS-151, GitHub issue 14).
+        // Below `lg` the row becomes a column, and a 2:1 split of a FIXED height then crushed the
+        // second band until its papers overflowed and drew straight over "New at this level" —
+        // measured at 1073x937, the reporter's window: the ledger squeezed to 89px and the feed to
+        // 34px, both spilling. Stacked, the bands take their natural heights and THIS becomes the
+        // scroller, which keeps the standing layout law (the view never grows the content area)
+        // and matches what the combat dashboard already does when it collapses to one column.
+        <Stack
+          direction={{ xs: 'column', lg: 'row' }}
+          spacing={2}
+          data-testid="leveling-columns"
+          sx={{ flexGrow: 1, minHeight: 0, overflowY: { xs: 'auto', lg: 'visible' }, pr: { xs: 0.5, lg: 0 } }}
+        >
           <ChartsColumn
             chrome={chrome}
             scope={scope}
@@ -552,7 +578,7 @@ export default function LevelingView({
             onCustom={setCustom}
           />
 
-          <Stack spacing={2} sx={{ flex: 1, minWidth: 260, minHeight: 0 }}>
+          <Stack spacing={2} sx={{ flex: { xs: '0 0 auto', lg: 1 }, minWidth: { lg: 260 }, minHeight: 0 }}>
             {/* The AA LEDGER stays full-history on purpose: it is an ACCOUNT of what you have
                 bought, and its footer must equal the AA-points-spent hero card. "AA allocated
                 in the last hour" is not a thing anyone owns. */}
