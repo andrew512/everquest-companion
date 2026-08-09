@@ -45,7 +45,6 @@ import ConditionEditor from './ConditionEditor'
 import SoundPicker from './SoundPicker'
 import SpeechBlock from './SpeechBlock'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
-import { Tooltip } from '../../lib/Tooltip'
 
 /** "Fire when…" — the single/any/all combine-mode picker plus the same-event caveat. */
 function CombineModeSection({
@@ -102,13 +101,20 @@ function ConditionRow({
           Condition {index + 1}
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
-        <Tooltip title="Remove condition">
-          <span>
-            <IconButton size="small" color="error" disabled={!canRemove} onClick={onRemove}>
-              <DeleteOutlineIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
+        {/* No popper (JOS-143): this button sits on the card's header line, directly above the
+            ConditionEditor's three Selects, and a default-placement tooltip opens DOWNWARD — onto
+            them. The span outlives it because a disabled button swallows mouse events. */}
+        <span title="Remove condition">
+          <IconButton
+            size="small"
+            aria-label="Remove condition"
+            color="error"
+            disabled={!canRemove}
+            onClick={onRemove}
+          >
+            <DeleteOutlineIcon fontSize="small" />
+          </IconButton>
+        </span>
       </Stack>
       <ConditionEditor draft={draft} onChange={onChange} />
     </Paper>
