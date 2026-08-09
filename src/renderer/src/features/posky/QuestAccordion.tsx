@@ -261,6 +261,10 @@ function QuestItemChips({
             <Chip
               key={it.name}
               size="small"
+              // The anchor tests/e2e/sky-dropdowns.e2e.mts hovers: this is the chip whose card
+              // used to open onto the toolbar, so the spec that proves it no longer can needs to
+              // be able to name it.
+              data-testid="posky-item-chip"
               variant={fav ? 'filled' : 'outlined'}
               color={fav ? 'warning' : done ? 'success' : 'default'}
               title={it.where}

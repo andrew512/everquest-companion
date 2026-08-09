@@ -184,6 +184,9 @@ export default function QuestFilterBar({
         select
         size="small"
         label="Sort"
+        // The handle tests/e2e/sky-dropdowns.e2e.mts opens: that spec's whole subject is whether a
+        // click on this control reaches it, so the control needs a name a spec can say.
+        data-testid="posky-sort"
         value={list.sort}
         onChange={(e) => list.setSort(e.target.value as SortKey)}
         sx={{ minWidth: 180 }}
@@ -205,6 +208,7 @@ export default function QuestFilterBar({
         select
         size="small"
         label="Count items from"
+        data-testid="posky-count-source"
         value={countSource}
         onChange={(e) => onCountSource(e.target.value as CountSource)}
         sx={{ minWidth: 190 }}
