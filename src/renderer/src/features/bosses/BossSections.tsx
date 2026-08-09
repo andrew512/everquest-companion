@@ -28,7 +28,8 @@ import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
 import CheckIcon from '@mui/icons-material/Check'
 import type { RaidTarget } from '@shared/types'
 import type { TargetStatus } from './bossStatus'
-import type { TierLock } from './lockout'
+import { tierLadder, type LadderRung, type TierLock } from './lockout'
+import DifficultyLadder from './DifficultyLadder'
 import { loadoutGroups, type LoadoutCard, type LoadoutGrouping } from './loadoutGroups'
 import type { MobTarget } from '../mobs/mobTarget'
 import { tierStyle, type TierStyle } from '../../lib/tierChip'
@@ -245,11 +246,13 @@ function LockLine({ lock }: { lock: TierLock[] }): JSX.Element {
 function TargetCardCaption({
   s,
   compact,
-  lock
+  lock,
+  ladder
 }: {
   s: TargetStatus
   compact: boolean
   lock?: TierLock[]
+  ladder?: LadderRung[]
 }): JSX.Element {
   return (
     <Box sx={{ p: compact ? 0.75 : 1 }}>
@@ -267,7 +270,13 @@ function TargetCardCaption({
         </Typography>
       )}
       {lock ? (
-        <LockLine lock={lock} />
+        <>
+          {/* The five difficulties, every week, whether or not any of them is taken (JOS-152).
+              Drawn ABOVE the date line because it is the thing a coordinator scans for; the line
+              under it dates the most recent of this CARD's locks. */}
+          {ladder && <DifficultyLadder rungs={ladder} compact={compact} />}
+          <LockLine lock={lock} />
+        </>
       ) : s.killed ? (
         <TargetKillDate s={s} compact={compact} />
       ) : (
@@ -302,6 +311,7 @@ function TargetCard({
   compact,
   flash,
   lock,
+  ladder,
   onOpen
 }: {
   s: TargetStatus
@@ -309,6 +319,11 @@ function TargetCard({
   flash?: boolean
   /** present ⇒ THIS WEEK view; the difficulties this card is locked at (empty = open). */
   lock?: TierLock[]
+  /**
+   * The five-rung difficulty ladder (JOS-152), derived from the WHOLE target rather than from
+   * this card's slice — see `Section`, which is where the two inputs part company.
+   */
+  ladder?: LadderRung[]
   onOpen: () => void
 }): JSX.Element {
   const imgH = compact ? 70 : 120
@@ -339,7 +354,7 @@ function TargetCard({
     >
       {chip.on && <TargetKilledBadge tier={tier} />}
       <TargetCardMedia s={s} chip={chip} height={imgH} />
-      <TargetCardCaption s={s} compact={compact} lock={lock} />
+      <TargetCardCaption s={s} compact={compact} lock={lock} ladder={ladder} />
     </Paper>
   )
 }
@@ -397,6 +412,13 @@ function Section({ header, rows, compact, minCol, flashing, onOpenMob, lockOf }:
             compact={compact}
             flash={flashing.has(row.s.target.name)}
             lock={lockOf?.(row.s)}
+            // THE LADDER READS `whole`, NOT `s` (JOS-152). The chip and the date line are claims
+            // about THIS CARD's kills, which under the loadout grouping is one tier run — right
+            // for them, wrong for a ladder. "Which of this boss's difficulties has my week taken"
+            // is a question about the BOSS, and answering it from a d4-only slice would grey out
+            // four rungs a d0 card two sections down is showing green. Under the category
+            // grouping (the default) `whole` IS `s`, so nothing moves there.
+            ladder={lockOf && tierLadder(lockOf(row.whole))}
             onOpen={() => onOpenMob(mobTargetForStatus(row.whole))}
           />
         ))}
