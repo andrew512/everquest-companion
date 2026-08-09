@@ -16,7 +16,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { QuestProgress } from './useProgress'
 import { useFavorites } from '../favorites/useFavorites'
 import { useQuestFavorites, useQuestIgnored, type QuestFlagSet } from '../favorites/useQuestFlags'
-import { DEFAULT_SORT, isSortKey, sortQuests, type SortKey } from './questSort'
+import { DEFAULT_SORT, isSortKey, orderQuests, type SortKey } from './questSort'
 import { facetOptions, filterByFacets, type FacetOptions } from './questFacets'
 // The two readings of "done" this tab offers, and the argument for keeping them apart (JOS-131 for
 // has-every-item-now, JOS-145 for has-ever-turned-in). Two lines of code, a page of reasoning, and
@@ -176,16 +176,19 @@ function selectQuests(sel: QuestSelection): QuestProgress[] {
         x.items.some((i) => i.name.toLowerCase().includes(q))
     )
   }
-  const sorted = sortQuests(list, sel.sort)
-  // Pin to the top (stable sort, so ties keep the sort above). A quest the user
-  // STARRED outright outranks one that merely contains a favorited item — the star is
-  // an explicit "I'm working on this", so it pins even once turned in; the item-level
-  // pin stays what it always was (only while the quest still needs something, which since
-  // JOS-131 is `hasEveryItem` rather than the turn-in flag).
+  // A quest the user STARRED outright outranks one that merely contains a favorited item — the
+  // star is an explicit "I'm working on this", so it pins even once turned in; the item-level pin
+  // stays what it always was (only while the quest still needs something, which since JOS-131 is
+  // `hasEveryItem` rather than the turn-in flag).
+  //
+  // WHETHER THE PIN IS APPLIED AT ALL IS THE SORT'S CALL NOW (JOS-146, questSort.pinsFavorites).
+  // It used to be an unconditional second `sort()` right here, which meant a star silently beat
+  // every order the user could pick — including "most recently looted", whose whole answer is
+  // which quest your last loot belonged to. `orderQuests` owns both passes so the rule is stated
+  // in one place and testable without a browser.
   const rank = (x: QuestProgress): number =>
     isQuestFavorite(x.key) ? 2 : !hasEveryItem(x) && questHasFavorite(x, isFavorite) ? 1 : 0
-  sorted.sort((a, b) => rank(b) - rank(a))
-  return sorted
+  return orderQuests(list, sel.sort, rank)
 }
 
 export interface QuestListState {
