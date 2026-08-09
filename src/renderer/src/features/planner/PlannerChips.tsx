@@ -5,12 +5,18 @@
 // the Farm row show the same four states in the same colours, so a socket you looked at on the
 // Inventory tab is recognisable in the rollup without re-reading it.
 //
-// THE DONOR NAME HOVERS *AND* CLICKS (owner, 2026-08-04). The hover is unchanged:
-// `KnownItemTooltip` (lib/) is what every other item name in this app opens — the EQ-style item
-// window over `window.eq.lookupItem`, plus the quests and recipes the item is part of — and it
-// fetches only while it is open, so a Farm list of forty donors costs zero lookups until one is
-// pointed at. The CLICK is new, and it is the app's standing link idiom (`openLoot`, appRouting):
-// it takes the Loot tab over with that item's drill-down.
+// THE DONOR NAME CLICKS (owner, 2026-08-04) — it is the app's standing link idiom (`openLoot`,
+// appRouting): it takes the Loot tab over with that item's drill-down.
+//
+// IT NO LONGER HOVERS (JOS-143), and that is the same removal JOS-127 made on the Loot ledger.
+// The name used to anchor `KnownItemTooltip` (lib/): a `placement="top"`, up-to-380px, INTERACTIVE
+// card that holds `pointer-events: auto` for as long as it is up. Donor names are ROWS, and on
+// both planner surfaces the rows sit directly under a toolbar full of dropdowns — the Effects
+// browser's Slot and Group by selects (EffectFilterBar) and the board's Classes chip-select
+// (PlannerView). A card opened from the first row of either list lands on those controls and eats
+// the clicks aimed at them. `placement="top"` is what aims it there; removal, not a flip, is the
+// owner's direction. The click survives, and it goes somewhere strictly better: the drill-down
+// states the item window AND what the committed DBs know (ItemDbSources, below).
 //
 // WHY THE DRILL-DOWN IS NOW A FAIR DESTINATION. It used to be exactly the wrong one — its "Dropped
 // by / Zones" columns were built from OBSERVED loot events alone, so a donor you have never looted
@@ -22,7 +28,6 @@
 import type { JSX } from 'react'
 import { Box, Chip } from '@mui/material'
 import { EQ_ITEM_COLORS } from '../../lib/ItemWindow'
-import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
 import { Tooltip } from '../../lib/Tooltip'
 import { eraChip, type EraSubject } from './plannerData'
 import type { DonorProgress, DonorState } from './plannerProgress'
@@ -163,12 +168,14 @@ export function NoSlotChip(): JSX.Element {
 }
 
 /**
- * An item name: the app's item window on HOVER, the Loot drill-down on CLICK.
+ * An item name: the Loot drill-down on CLICK.
  *
  * `onOpen` is optional and the cursor follows it exactly — a hand only ever appears where a click
- * actually goes somewhere (the complaint behind e8d0fd0's cursor fix). Without it the name is a
- * pure hover surface and keeps the default cursor, which is what a name inside a tooltip card or
- * any other non-routed context should be.
+ * actually goes somewhere (the complaint behind e8d0fd0's cursor fix). Without it the name is
+ * plain text and keeps the default cursor, which is what a name in a non-routed context should be.
+ *
+ * The name ELLIPSIZES, so it carries a native `title` — the full name with no DOM node and no hit
+ * area, which is the one thing the removed card did that nothing else on the row does.
  */
 export function DonorName({
   name,
@@ -181,26 +188,25 @@ export function DonorName({
 }): JSX.Element {
   const linked = onOpen !== undefined
   return (
-    <KnownItemTooltip name={name}>
-      <Box
-        component="span"
-        data-testid="planner-donor-name"
-        onClick={linked ? () => onOpen(name) : undefined}
-        sx={{
-          color: EQ_ITEM_COLORS.name,
-          fontWeight: bold === true ? 600 : 400,
-          textDecoration: 'underline dotted',
-          textUnderlineOffset: 2,
-          cursor: linked ? 'pointer' : 'default',
-          ...(linked ? { '&:hover': { textDecoration: 'underline' } } : {}),
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
-        }}
-      >
-        {name}
-      </Box>
-    </KnownItemTooltip>
+    <Box
+      component="span"
+      data-testid="planner-donor-name"
+      title={name}
+      onClick={linked ? () => onOpen(name) : undefined}
+      sx={{
+        color: EQ_ITEM_COLORS.name,
+        fontWeight: bold === true ? 600 : 400,
+        textDecoration: 'underline dotted',
+        textUnderlineOffset: 2,
+        cursor: linked ? 'pointer' : 'default',
+        ...(linked ? { '&:hover': { textDecoration: 'underline' } } : {}),
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }}
+    >
+      {name}
+    </Box>
   )
 }
