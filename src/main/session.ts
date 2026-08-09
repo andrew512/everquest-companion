@@ -336,6 +336,14 @@ function stopHeartbeat(): void {
 function startHeartbeat(): void {
   stopHeartbeat()
   let overlaySaveTick = 0
+  // ONE TICK BEFORE THE INTERVAL (JOS-149). The fold judges every clock against the LOG's own
+  // last instant, so a row cast a few minutes before the log went quiet survives it — correctly,
+  // for the fold. Then the renderer re-hydrates (`registry.flushNow()` below) and draws that row
+  // against WALL time, where it may be hours past its end. The interval would have retired it,
+  // one second later; doing it here means the first snapshot the renderer ever sees is already
+  // judged against now, and a row whose expiry and timeout are long gone never materializes at
+  // all. Same call, same arguments, strictly earlier.
+  registry.tick(Date.now())
   tickTimer = setInterval(() => {
     registry.tick(Date.now())
     // Debounced overlay persistence (Task #36): the miner accretes from the live tail; snap
