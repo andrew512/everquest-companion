@@ -46,75 +46,50 @@ export const SESSION_GAP_MS = 30 * 60_000 // 30 minutes
 export const LOGIN_CONFIRM_MS = RECONNECT_WINDOW_MS
 
 /**
- * THE UNWITNESSED-EXPIRY CULL (JOS-140, owner amendment 2026-08-09 from live testing).
+ * THE UNWITNESSED-EXPIRY TIMEOUT — ONE RULE FOR EVERY ROW THAT IS NOT YOURS.
+ * (JOS-140 → JOS-149 → JOS-156, owner ruling 2026-08-09 from live testing.)
  *
- * THE CASE: you slow a boss and then die. The wear-off line is printed to a character who is not
- * there to receive it — the same shape as zoning out, or the mob wandering out of range — so it
- * never arrives, and the bar sits at 0s indefinitely. Before this the only thing that would ever
- * remove it was the 90-minute hygiene cap.
+ * THE CASE, in the three forms the owner has now hit it in: you slow a boss and then die; a pet
+ * despawns wearing a buff you cast on it; you cast Tashania on a mob and are killed eleven
+ * seconds later. In every one the wear-off line is printed to somebody who is not there to
+ * receive it — the same shape as zoning out, or the mob wandering off — so it never arrives and
+ * the bar sits at 0s. Before any of this the only thing that would ever remove it was the
+ * 90-minute hygiene cap.
  *
- * THE GRACE COMES FROM THE ESTIMATE'S QUALITY, not from a constant per row kind (JOS-126's A6
- * direction, generalized):
+ * THE TIMEOUT COMES FROM THE ESTIMATE'S QUALITY, and from nothing else:
  *
  *   'observed' ⇒ 15 s. The number came from this caster's own clean cycles, so the only thing
  *                left to be late is the LINE.
- *   'db'       ⇒ the duration itself, floored at 60 s. The DB row is the BASE rank's stated
- *                duration and the real one routinely runs far past it — a rank VII mez runs 44 s
- *                against a 24 s row, and the owner's own Shiftless Deeds IV runs 234 s against a
- *                150 s row — so a DB-sourced grace has to absorb being wrong about the DURATION,
- *                not just about the line's arrival.
+ *   'db'       ⇒ 60 s. A minute past a stated end is long enough for a line that is merely late
+ *                and short enough that a stale row is never a fixture of the window.
  *
- * THAT SECOND RULE IS LOAD-BEARING AND WAS MEASURED, not chosen for symmetry. A flat grace culls
- * the row before its wear-off arrives, which means the ONE cycle that would have taught the model
- * the true duration is deleted by the cull — and it is deleted again next time, forever. A cull
- * that locks the learner out of its own correction is worse than a bar that squats. Doubling the
- * floor clears every span the owner's log actually contains, and the moment a real duration is
- * learned the grace collapses to 15 s.
+ * IT USED TO BE TWO RULES, AND THE SECOND ONE DIED HERE (JOS-156). Debuff and CC rows had their
+ * own DB branch that waited THE DURATION AGAIN (floored at 60 s), on the argument that the DB row
+ * is the base rank's and the real duration routinely runs past it, so a learner that has never
+ * seen a clean cycle needed to keep its one chance at a late correction. JOS-149 already refused
+ * that reasoning for non-self BUFFS — an hour of 0s on a pet buff was the reported defect — and
+ * left the debuff branch standing. The owner's 2026-08-09 session settled the rest of it: he cast
+ * Tashania at 15:41:44 and died at 15:41:55, and Tashania's DB row is ELEVEN MINUTES, so a
+ * duration-again grace parks that bar at 0s until 15:53. The row he is looking at is the defect;
+ * the correction it was being preserved for is one the log has already ruled out delivering.
+ *
+ * THE ACCEPTED COST, on the record and unchanged from JOS-149's: a spell whose real duration runs
+ * more than a minute past the DB's stated one is culled before its wear-off arrives, and that
+ * cycle teaches the learner nothing. An unwitnessably-late wear-off teaches nothing ANYWAY — the
+ * cases this fires on are the ones where the line is not coming at all — so what is given up is
+ * the subset where the line WAS coming, merely very late, and the owner has ruled the squatting
+ * row the worse of the two defects.
  *
  * A row with no number at all is counting UP, has nothing to be overdue against, and is governed
- * by the unknown-duration cap instead.
+ * by the unknown-duration cap instead. SELF buffs are exempt altogether (see `unwitnessedCullCap`):
+ * their wear-offs print to you, and their clocks are the ones the offline pause rewinds.
  *
  * It is deliberately NOT instant-at-zero (the owner's word was "eventually"): a visibly overdue
  * row for a beat is information — it says the app is waiting for a line, rather than pretending
  * it arrived. And a cull is NOT EVIDENCE: it mints no duration sample and counts as no break,
  * because nothing was observed. That is the whole difference between it and a wear-off.
  */
-export function expiryGraceMs(source: 'db' | 'observed' | undefined, durationMs: number): number {
-  return source === 'observed' ? 15_000 : Math.max(60_000, durationMs)
-}
-
-/**
- * THE UNWITNESSED-EXPIRY TIMEOUT for a NON-SELF BUFF row (JOS-149, owner ruling 2026-08-09).
- *
- * A row on somebody else — your pet, an ally, a charmed mob — is not a row whose close you are
- * promised. The pet fade line the game does print (`Your pet's <Spell> spell has worn off.`)
- * resolves against the CURRENT pet, so the instant a pet despawns or is replaced, every row bound
- * to the old one is unclosable by construction: no later line can ever name it. The owner's own
- * screenshot is that state, and the answer is a TIMEOUT rather than a grace.
- *
- * IT IS DELIBERATELY NOT `expiryGraceMs`. That function's DB branch waits the duration AGAIN
- * (floored at 60 s) so a learner that has never seen a clean cycle keeps its one chance to be
- * corrected by a late wear-off. Applied here it produces exactly the complaint restated: a
- * 60-minute pet buff would wait another hour at 0s before leaving. The owner's ruling is that a
- * row nobody can witness closing does not get an hour, so the DB branch collapses to the flat
- * floor:
- *
- *   'observed' ⇒ 15 s, the same number a debuff gets. The duration came from this caster's own
- *                clean cycles, so the only thing left to be late is the line.
- *   'db'       ⇒ 60 s. Not the duration again. A minute past a stated end is long enough for a
- *                line that is merely late and short enough that a stale row is never a fixture of
- *                the window.
- *
- * WHAT IT COSTS, stated plainly: a pet buff whose real duration runs more than a minute past the
- * DB's stated one is culled before its wear-off arrives, and that cycle teaches the learner
- * nothing. Measured against the owner's log that is a narrow loss — the pet fade line prints 412
- * times across 51 spells, and the two Focus Death cycles it caught ran 57m43s and 60m38s against
- * a 60-minute DB row — and the owner has ruled the squatting row the worse defect of the two.
- *
- * SELF buffs are not subject to this at all (see `unwitnessedCullCap`): their wear-offs print to
- * you, and their clocks are the ones the offline pause rewinds.
- */
-export function nonSelfExpiryTimeoutMs(source: 'db' | 'observed' | undefined): number {
+export function unwitnessedTimeoutMs(source: 'db' | 'observed' | undefined): number {
   return source === 'observed' ? 15_000 : 60_000
 }
 

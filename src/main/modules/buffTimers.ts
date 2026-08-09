@@ -55,7 +55,7 @@ import { SELF_CASTER } from '../../shared/buffTrust'
 import { idKey } from '../log/parseCommon'
 import { CastAnchors } from './buffAnchors'
 import { HoldGroup } from './buffRounds'
-import { expiryGraceMs, MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey } from './buffsShapes'
+import { MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey, unwitnessedTimeoutMs } from './buffsShapes'
 import { SpellStats } from './buffsStats'
 import type { EqModule } from './types'
 
@@ -75,10 +75,13 @@ export const CC_END_MEMORY_MS = 60_000
  * — inside the grace by seven seconds, and outside it on a slower round. The grace has to follow
  * the estimate or it retires the very holds the learner needs to close.
  *
- * The number itself now follows the estimate's QUALITY too (`expiryGraceMs`, JOS-140): a learned
- * duration gets 15 s, a DB floor gets its own duration again (min 60 s) because the floor is the
- * base rank's and the truth routinely runs past it. The flat 30 s this used to be sat between the
- * two and was wrong at both ends. Exported still, as the number the fixture tests reason about.
+ * The number itself now follows the estimate's QUALITY too (`unwitnessedTimeoutMs`, JOS-140): a
+ * learned duration gets 15 s and a DB floor gets 60 s. The flat 30 s this used to be sat between
+ * the two and was wrong at both ends. Exported still, as the number the fixture tests reason about.
+ *
+ * JOS-156 collapsed the DB branch from "its own duration again, min 60 s" to a flat 60 s, so a CC
+ * hold now leaves on the same schedule as every other row that is not yours. The reasoning, the
+ * owner's ruling and the accepted cost are stated once in buffsShapes.ts.
  */
 export const CC_END_GRACE_MS = 30_000
 
@@ -237,7 +240,10 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
         this.end(idKey(ev.mob), ev.ts, ev.spell)
         break
       case 'death':
-        this.end(idKey(ev.name), ev.ts)
+        // EVERY death shape, on the name that DIED and never on the killer (JOS-156). The
+        // parser already unified `You have slain <X>!`, `<X> has been slain by <Y>!` and the
+        // killerless `<X> died.` into one event, so there is nothing to branch on here.
+        this.end(idKey(ev.name), ev.ts, undefined, false)
         break
       case 'zone':
         // You left them behind (world-model law 4's censor).
@@ -351,8 +357,13 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
    * It closes the OLDEST landing of that (mob, spell) — see buffRounds.ts for why oldest-first is
    * the only honest choice — and MINTS a duration sample when that landing was a clean cycle. The
    * row survives with one fewer on its count chip; only an empty group removes it.
+   *
+   * `mint` is false for a DEATH (JOS-156). A break line is the hold ending on its own schedule and
+   * is worth learning from; a corpse is the hold being cut short, and the land-to-death span is
+   * not a duration at all. buffRounds.ts's ruling 5 already listed a death among the contaminating
+   * events — this is that sentence enforced on the one path that was quietly ignoring it.
    */
-  private end(entityKey: string, ts: number, spell?: string): void {
+  private end(entityKey: string, ts: number, spell?: string, mint = true): void {
     const line = spell != null ? spellKey(spell) : null
     let closedAny = false
     for (const [key, held] of [...this.holds]) {
@@ -360,15 +371,15 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
       // A named break line closes only the matching LINE; an anonymous one (a death, a charm
       // break) closes every hold on that mob, because the mob itself is gone.
       if (line != null && held.lineKey !== '' && held.lineKey !== line) continue
-      this.closeOne(held, ts)
+      this.closeOne(held, ts, mint)
       closedAny = true
       if (held.group.empty) this.holds.delete(key)
       this.dirty = true
       this.rev += 1
     }
     // A death line for a mob we were never holding ends nothing and is not recorded: the buffs
-    // model already censors that mob's debuff instances itself (`retireEntity(key,
-    // {hostileOnly:true})`), so an end here would be a second opinion about a fact already
+    // model already censors that mob's debuff instances itself (`onEntityDeath`), so an end
+    // here would be a second opinion about a fact already
     // settled — and one that would churn the snapshot on every kill in the zone.
     if (!closedAny && spell == null) return
     // Recorded even when we held nothing, IF the line named a spell: that is a real CC break,
@@ -379,8 +390,15 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
     this.rev += 1
   }
 
-  /** Close this hold's OLDEST landing, minting a sample when that landing was a clean cycle. */
-  private closeOne(held: Held, ts: number): void {
+  /**
+   * Close this hold's OLDEST landing, minting a sample when that landing was a clean cycle — and
+   * when the line that ended it is one a duration may be learned from at all. `mint: false` (a
+   * death) contaminates the whole group first, so neither this landing nor the ones still standing
+   * behind it can ever be measured: the group has just lost track of which mob of that name is
+   * which, which is the state buffRounds.ts's ruling 5 refuses to learn from.
+   */
+  private closeOne(held: Held, ts: number, mint: boolean): void {
+    if (!mint) held.group.contaminateAll()
     const closed = held.group.closeOldest(ts)
     const sample = closed?.sampleMs
     if (sample == null || sample <= 0 || sample > MAX_SAMPLE_MS) return
@@ -406,9 +424,7 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
       // arrived — you died, you zoned, the mob wandered off — is dropped rather than left
       // squatting at 0s. It mints nothing and records no end, because nothing was observed.
       const life =
-        held.durationMs != null
-          ? held.durationMs + expiryGraceMs(held.source, held.durationMs)
-          : CC_UNKNOWN_CAP_MS
+        held.durationMs != null ? held.durationMs + unwitnessedTimeoutMs(held.source) : CC_UNKNOWN_CAP_MS
       if (held.group.dropExpired(nowMs - life) > 0) {
         this.dirty = true
         this.rev += 1

@@ -43,12 +43,12 @@ import type { PetEntities } from './buffsEntities'
 import type { SpellStats } from './buffsStats'
 import { buildActive, type ActiveSpec } from './buffsView'
 import {
-  activeMatches,
+  deathCensorsActive,
+  deathCensorsOpen,
   hygieneCap,
   isPermanentIllusion,
   landingSpec,
   openLeftBehindOnZone,
-  openMatches,
   unwitnessedCullCap
 } from './buffsInstanceRules'
 
@@ -557,26 +557,61 @@ export class BuffInstances {
     for (const [ik, a] of this.active) {
       if (a.permanent) continue
       if (heldBeforeTs > 0 && a.cls !== 'debuff' && a.startedTs <= heldBeforeTs) continue
-      const sKey = instanceSpellKey(ik)
-      const dbMs = this.stats.dbDurationFor(sKey)
-      const cap = Math.min(hygieneCap(a, dbMs), unwitnessedCullCap(a))
-      if (now - a.startedTs <= cap) continue
+      const dbMs = this.stats.dbDurationFor(instanceSpellKey(ik))
+      // THE LONG STOP goes first, because it is the one that means "we lost the thread" — and it
+      // is the only one that takes the PAIRING RECORD with it.
+      //
       // A MULTISET RETIRES ONE LANDING AT A TIME (JOS-140): five mobs mezzed in one round age out
       // one after another, and the row keeps whichever landings are still inside the cap.
-      const open = this.open.get(ik)
-      if (open) {
-        open.group.dropExpired(now - cap)
-        if (!open.group.empty) {
-          this.restat(ik, open)
-          changed = true
-          continue
-        }
-        this.open.delete(ik)
+      const longCap = hygieneCap(a, dbMs)
+      if (now - a.startedTs > longCap) {
+        if (this.retireExpired(ik, now - longCap)) changed = true
+        continue
       }
-      this.active.delete(ik)
-      changed = true
+      // THE UNWITNESSED-EXPIRY CULL TAKES THE ROW AND LEAVES THE PAIRING RECORD (JOS-156).
+      //
+      // The owner's ruling is about a BAR SQUATTING AT 0s: a Tashania cast eleven seconds before
+      // he died must not sit there for the eleven minutes its DB row states. That is what this
+      // line does — the row is gone at `unwitnessedCullCap`, 15 s past a learned duration or 60 s
+      // past a DB floor.
+      //
+      // IT DOES NOT DELETE THE OPEN CAST, and that half is deliberate. MEASURED before it was
+      // written: with the record deleted too, twenty consecutive real-length Shiftless Deeds IV
+      // cycles (234 s each, against a 150 s DB row) mint ZERO samples and the estimate stays
+      // pinned to the DB floor forever — because the first cycle that would teach the true
+      // duration is the first one culled, and the learner can never ratchet past DB + 60 s. The
+      // bar would then draw 150 s for a 237 s slow, go overdue at 150 s, and be culled on every
+      // cast, permanently. THE ONE-LINE REVERT if the owner overrules the refinement is
+      // `this.open.delete(ik)` beside the delete below; four tests fail when you add it, three of
+      // them cut from the owner's own bytes.
+      //
+      // It costs nothing where the ruling actually bites: when the line is never coming — you
+      // died, the pet despawned — nothing ever pairs with the surviving record and the long stop
+      // above collects it minting nothing, exactly as before. `unwitnessedCullCap` governs what is
+      // SHOWN; `hygieneCap` governs what is REMEMBERED.
+      //
+      // The one thing given up against the old tight-cap path: a row whose landings straddle the
+      // timeout leaves whole rather than shedding the overdue ones and staying up on a smaller
+      // count. The long stop still sheds one at a time, and a group's landings are same-second
+      // rounds or refreshes of one another, so straddling the timeout is not a shape the round
+      // rule produces.
+      if (now - a.startedTs > unwitnessedCullCap(a) && this.active.delete(ik)) changed = true
     }
     if (changed) this.dirty = true
+  }
+
+  /** The long-stop path: shed the landings older than `cutoffTs`, and drop the record when empty. */
+  private retireExpired(ik: string, cutoffTs: number): boolean {
+    const open = this.open.get(ik)
+    if (open) {
+      open.group.dropExpired(cutoffTs)
+      if (!open.group.empty) {
+        this.restat(ik, open)
+        return true
+      }
+      this.open.delete(ik)
+    }
+    return this.active.delete(ik)
   }
 
   /** playerDeath strips SELF buffs: censor open SELF casts + clear their actives. */
@@ -606,26 +641,68 @@ export class BuffInstances {
   }
 
   /**
-   * Retire an ENTITY (Task #35, generalized — NO pet-specific branches). Censors every open
-   * cast + active instance bound to `entityKey`. Used on uncharm / summoned-pet death /
-   * hostile death / zone-left-behind / single-pet succession — the pet is just the entity
-   * currently claimed. Buffs on other players / arbitrary entities are censored the same way.
+   * A MOB OF THIS NAME DIED — the death censor, and since JOS-156 the ONE path every death
+   * SHAPE reaches. `modules/buffs.ts onDeath` calls it for `You have slain <X>!`, for
+   * `<X> has been slain by <Y>!` whoever Y is, and for the killerless `<X> died.` alike; the
+   * separate question of whether the ENTITY behind the name is retired stays there.
    *
-   * `hostileOnly` guards a plain-mob death: only DEBUFF instances on that mob are censored
-   * (a friendly buff can't be on a hostile), and an unknown-hostile debuff bucket is swept
-   * too (its inferred target just died).
+   * IT CLOSES ONE LANDING, NOT THE ROW (JOS-140 ruling 7). A group is a multiset of same-named
+   * mobs we believe are holding the spell, and one death is evidence about ONE of them. The
+   * OLDEST is closed for the identical reason a wear-off closes the oldest — the line names the
+   * mob but not WHICH mob of that name, so under a fixed duration the oldest is the
+   * maximum-likelihood one to have just ended. The row survives with one fewer on its count chip;
+   * only an empty group removes it. This used to be `retireEntity(key, {hostileOnly:true})`,
+   * which deleted the whole row, so killing one of four slowed mobs cleared all four.
+   *
+   * AND IT MINTS NOTHING. A land-to-death span is not a duration — the spell was cut short by the
+   * corpse, not observed running out. That refusal is STRUCTURAL: unlike `recordFade`, this method
+   * discards what `closeOldest` hands back and never reaches `addSample` at all, exactly as
+   * `sweepHygiene` never has. `contaminateAll` is the separate half — it is about the landings
+   * that SURVIVE the close, which are now landings of a group that has lost track of which mob is
+   * which, and it is buffRounds.ts ruling 5's own sentence (a death contaminates) written where
+   * the death happens rather than left as an accident of how rounds are counted.
+   *
+   * An ACTIVE with no open record behind it has no group to count down and no landing to close,
+   * so it clears outright.
    */
-  retireEntity(entityKey: string, opts?: { hostileOnly?: boolean }): void {
-    const hostileOnly = opts?.hostileOnly === true
+  onEntityDeath(entityKey: string, ts: number): void {
     let changed = false
     for (const [ik, o] of [...this.open]) {
-      if (openMatches(o, entityKey, hostileOnly)) {
+      if (!deathCensorsOpen(o, entityKey, this.stats.classOf(o.spellKey) === 'debuff')) continue
+      o.group.contaminateAll()
+      o.group.closeOldest(ts)
+      if (!o.group.empty) this.restat(ik, o)
+      else if (this.open.delete(ik)) this.active.delete(ik)
+      changed = true
+    }
+    for (const [ik, a] of [...this.active]) {
+      if (this.open.has(ik) || !deathCensorsActive(a, instanceEntityKey(ik), entityKey)) continue
+      this.active.delete(ik)
+      changed = true
+    }
+    if (changed) this.dirty = true
+  }
+
+  /**
+   * Retire an ENTITY (Task #35, generalized — NO pet-specific branches). Censors every open
+   * cast + active instance bound to `entityKey`, buff and debuff alike. Used on uncharm /
+   * summoned-pet death / broken-charm death / zone-left-behind / single-pet succession — the pet
+   * is just the entity currently claimed. Buffs on other players / arbitrary entities are
+   * censored the same way.
+   *
+   * The plain-mob death no longer comes here (JOS-156): a death is about one mob of a name, not
+   * about an identity, so it goes to `onEntityDeath` above.
+   */
+  retireEntity(entityKey: string): void {
+    let changed = false
+    for (const [ik, o] of [...this.open]) {
+      if (o.entityKey === entityKey) {
         this.open.delete(ik)
         changed = true
       }
     }
-    for (const [ik, a] of [...this.active]) {
-      if (activeMatches(a, instanceEntityKey(ik), entityKey, hostileOnly)) {
+    for (const ik of [...this.active.keys()]) {
+      if (instanceEntityKey(ik) === entityKey) {
         this.active.delete(ik)
         changed = true
       }

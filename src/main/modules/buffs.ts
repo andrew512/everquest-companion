@@ -615,32 +615,47 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     }
   }
 
+  /**
+   * A DEATH IS TWO QUESTIONS, AND THEY HAVE DIFFERENT ANSWERS (JOS-156).
+   *
+   * The first is "did something of that name just die?", and the log answers it the same way in
+   * all three shapes — `You have slain <X>!`, `<X> has been slain by <Y>!` for any Y, and the
+   * killerless `<X> died.` — because `parseWorld` unified them into one `death` event naming the
+   * DEAD one. So the debuff censor runs unconditionally, on `ev.name` and never on the killer.
+   * (The killer is a name too, and in the owner's Plane of Sky bee fight it was the SAME name:
+   * `Bzzazzt has been slain by Bzzazzt!` is a charmed bee killing its twin.)
+   *
+   * The second is "is the ENTITY behind that name retired?", which is about identity and is the
+   * only place the pet bindings get a vote. That is what used to swallow the first question
+   * whole: a death naming the charmed pet went into the conservative never-censor-a-live-pet
+   * branch and nothing at all happened — not even to the slow on the corpse.
+   */
   private onDeath(ev: Ev<'death'>): void {
     const key = idKey(ev.name)
     const pets = this.pets
-    const killerIsYou = ev.bySelf || idKey(ev.killer ?? '') === 'you'
-    if (key === pets.summonedKey) {
-      if (!killerIsYou) this.inst.retireEntity(key)
-    } else if (key === pets.charmedKey) {
-      const killerSameName = !ev.bySelf && ev.killer != null && idKey(ev.killer) === key
-      if (charmedPetDiesOnDeathLine({ killerIsYou, killerSameName })) {
-        this.inst.retireEntity(key)
-      }
-    } else if (key === pets.brokenCharmKey) {
-      // A death naming the broken-charm entity (Task #37): the ex-pet is now a hostile mob
-      // you're likely killing, so THIS death genuinely retires it — censoring its buffs so
-      // the next charm of that name binds a fresh entity (rule #3). It's fully retired now,
-      // not conservatively kept: charm no longer protects it (the twin-ambiguity that made
-      // us keep a LIVE charmed pet doesn't apply once the charm has broken).
-      this.inst.retireEntity(key)
-    } else {
-      // A plain hostile death censors any open/active instance bound to it.
-      this.inst.retireEntity(key, { hostileOnly: true })
-    }
+    this.inst.onEntityDeath(key, ev.ts)
+    if (this.deathRetiresEntity(ev, key)) this.inst.retireEntity(key)
     if (key === pets.petTargetKey) {
       pets.petTargetKey = undefined
       pets.petTargetDisplay = undefined
     }
+  }
+
+  /** Whether this death retires the ENTITY (its identity + every buff on it), not just its debuffs. */
+  private deathRetiresEntity(ev: Ev<'death'>, key: string): boolean {
+    const pets = this.pets
+    const killerIsYou = ev.bySelf || idKey(ev.killer ?? '') === 'you'
+    if (key === pets.summonedKey) return !killerIsYou
+    if (key === pets.charmedKey) {
+      const killerSameName = !ev.bySelf && ev.killer != null && idKey(ev.killer) === key
+      return charmedPetDiesOnDeathLine({ killerIsYou, killerSameName })
+    }
+    // A death naming the broken-charm entity (Task #37): the ex-pet is now a hostile mob you're
+    // likely killing, so THIS death genuinely retires it — censoring its buffs so the next charm
+    // of that name binds a fresh entity (rule #3). It's fully retired now, not conservatively
+    // kept: charm no longer protects it (the twin-ambiguity that made us keep a LIVE charmed pet
+    // doesn't apply once the charm has broken).
+    return key === pets.brokenCharmKey
   }
 
   /**

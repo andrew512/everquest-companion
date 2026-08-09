@@ -345,11 +345,62 @@ test('a debuff whose close nobody witnessed is culled, and mints nothing', () =>
   const live = replay(script, { observeSec: 60 })
   assert.ok(rowFor(live, 'Shiftless Deeds IV'), 'the slow is up while it is up')
 
-  // Past its duration plus the DB-sourced grace (150 s + 150 s): gone, rather than squatting at 0s
-  // for the ninety minutes the hygiene cap used to allow.
-  const later = replay(script, { observeSec: 400 })
+  // THE BOUND TIGHTENED (JOS-156): this used to be the duration AGAIN — 150 s + 150 s, so the row
+  // sat at 0s until 300 s — and it is now the flat DB timeout, 150 s + 60 s. The old assertion
+  // observed at 400 s and so passed either way; it pins the boundary now, because the boundary is
+  // the thing the owner ruled on.
+  const beat = replay(script, { observeSec: 200 })
+  assert.ok(rowFor(beat, 'Shiftless Deeds IV'), 'visibly overdue for a beat is by design, not a bug')
+
+  const later = replay(script, { observeSec: 220 })
   assert.equal(rowFor(later, 'Shiftless Deeds IV'), undefined, 'no wear-off ever arrived, so it is not held')
   assert.equal(statFor(later, 'shiftless deeds')?.n ?? 0, 0, 'an absence of evidence is not a measurement')
+})
+
+test('JOS-156: the owner`s Tashania leaves a minute past its countdown, not eleven', () => {
+  // THE RULING'S OWN CASE (owner, 2026-08-09 live testing): he cast Tashania on Bzzazzt at
+  // 15:41:44 and was killed at 15:41:55. The wear-off prints to a character who is not there, so
+  // it never arrives. Tashania's committed DB row is ELEVEN MINUTES, and under the duration-again
+  // grace that debuffs used to get, the bar sat at 0s for another eleven — until 15:53 for a spell
+  // cast eleven seconds before he died. It now goes 60 s past the countdown, the same bound a
+  // non-self buff has had since JOS-149.
+  const script: [number, string][] = [
+    [0, 'You begin casting Tashania.'],
+    [2, 'Bzzazzt glances nervously about.']
+  ]
+  const row = rowFor(replay(script, { observeSec: 60 }), 'Tashania')
+  assert.ok(row, 'the debuff is up while it is up')
+  assert.equal(row.durationMs, 660_000, 'and its clock is the eleven-minute DB row')
+
+  assert.ok(rowFor(replay(script, { observeSec: 700 }), 'Tashania'), 'a beat past zero is still information')
+  assert.equal(
+    rowFor(replay(script, { observeSec: 730 }), 'Tashania'),
+    undefined,
+    'and then it goes — 60 s, not another 660 s'
+  )
+})
+
+test('JOS-156: …and the cull takes the ROW without locking the learner out', () => {
+  // THE REFINEMENT, and the measurement that earned it. The tight timeout removes what is SHOWN;
+  // it does not remove the (spell, entity) pairing record, which keeps the hygiene cap as its own
+  // bound. Deleting both — the literal reading of the ruling — is a permanent lockout: the owner's
+  // Shiftless Deeds IV really runs 234 s against a 150 s DB row, so EVERY cycle is culled at 210 s,
+  // 24 s before its own wear-off arrives, nothing ever mints, and the estimate can never ratchet
+  // past DB + 60 s. Twenty consecutive real-length cycles measured n=0 that way.
+  //
+  // Where the ruling actually bites — the Tashania above, a despawned pet — nothing ever pairs with
+  // the surviving record and the hygiene cap collects it minting nothing, exactly as before.
+  const cycles: [number, string][] = []
+  for (let i = 0; i < 5; i++) {
+    const t = i * 300
+    cycles.push([t, 'You begin casting Shiftless Deeds IV.'], [t + 1, 'a gnoll pup slows down.'])
+    cycles.push([t + 235, 'Your Shiftless Deeds spell has worn off of a gnoll pup.'])
+  }
+  const r = replay(cycles, { observeSec: 1_500 })
+  const stat = statFor(r, 'shiftless deeds')
+  assert.equal(stat?.n, 5, 'a wear-off that arrives 24 s past the cull still mints its own span')
+  assert.equal(stat?.maxMs, 234_000, 'and it is the real 234 s, not the 150 s the DB states')
+  assert.equal(stat?.estimatorSource, 'observed', 'so the learner climbs off the floor instead of being pinned to it')
 })
 
 test('…and a BUFF of yours is not culled, because your clock is the one that pauses', () => {
