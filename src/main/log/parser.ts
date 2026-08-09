@@ -47,6 +47,7 @@ import {
   classifyWornOff
 } from './parseCasts'
 import { classifyItemActivate, classifySelfWho, classifySkillUp, classifySpecialAttack } from './parseWho'
+import { classifyAcquire } from './parseAcquire'
 import { classifyCamp, classifyOutputFile, classifySessionStart } from './parseSession'
 import { classifyGroup } from './parseGroup'
 import {
@@ -143,6 +144,15 @@ const CLASSIFIERS: readonly Classifier[] = [
   classifyGroup,
   classifyLoot,
   classifyItemMerge,
+  // EVERY OTHER WAY AN ITEM OR A COIN REACHES YOU (JOS-144, parseAcquire.ts) — coin off a
+  // corpse, a merchant buy or sell, a destroy payout, a marketplace delivery, a tradeskill
+  // combine. It sits directly beneath the two corpse families because it is the rest of the
+  // same question, and BENEATH rather than above so a loot sentence is never offered to it
+  // first. It cannot shadow anything regardless: a full-log replay measured all 5,404 lines it
+  // claims as `{kind:'unknown'}` beforehand, and the histogram of the other 49 kinds is
+  // byte-identical across the change.
+
+  classifyAcquire,
   classifyTurnIn,
   classifyLevel,
   // Experience: gated on a `You gain ` prefix and END-anchored, so it can only ever claim the
