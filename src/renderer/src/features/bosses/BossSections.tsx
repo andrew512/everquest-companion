@@ -332,6 +332,7 @@ function TargetCard({
   const tierColor = tier.bg
   return (
     <Paper
+      data-testid="boss-card"
       variant="outlined"
       // A raid target IS a mob, so it opens the same mob PAGE everything else does (Task #64).
       onClick={onOpen}
