@@ -170,6 +170,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Pinned overlays scroll again: the wheel and the scrollbar both work along the right edge of a pinned meter, while clicks everywhere else still pass through to the game.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'Reload Inventory now resets what the app thinks you are holding. An item you destroyed, sold or gave away is gone the moment you reload, and anything you have looted since the export still counts.',
         fromReport: true
       },
