@@ -390,17 +390,28 @@ async function stepBreakClearsOneTarget(overlay: Page, log: FixtureLog): Promise
  * removal the MODEL believed — never on a guess.
  */
 async function stepDropFlash(overlay: Page, debuffsOverlay: Page | null, log: FixtureLog): Promise<void> {
-  // Raise it LIVE rather than borrowing one from the replay: the first line this spec appends is
-  // ~30 minutes of event time after the fixture's last, which trips the model's SESSION_GAP_MS
-  // logout clear and correctly wipes every replayed active. (That is a real behaviour worth
-  // knowing about, and it is why this step casts its own buff.)
+  // Raise it LIVE rather than borrowing one from the replay: every line this spec appends is
+  // ~30 minutes of event time after the fixture's last, so the replayed actives are all long
+  // past their duration and none of them can stand in for a buff you just cast.
+  //
+  // THEY ARE STILL ON SCREEN WHILE THIS RUNS, and that is the JOS-134 behaviour rather than a
+  // leak: a log hole no longer wipes the model on sight. It waits (LOGIN_CONFIRM_MS) for a login
+  // to explain it, because the wipe used to beat the `offlineGap` that pauses the buffs EQ froze
+  // with your character. Nothing here appends a `Welcome to EverQuest Legends!`, so the hole is
+  // eventually ruled unexplained and they go — but not before this step reads the rows.
+  //
+  // Which means the fixture's OWN long-dead Valor is sitting in the list beside the one we are
+  // about to cast, under the same name, and `find(name === 'Valor')` would happily return it (it
+  // did, and asserted "counts down" about a row reading 0s). A remaining time is the thing that
+  // tells them apart, so it is what selects the row.
   const at = new Date()
   log.appendAt(at, 'You begin casting Valor.')
   log.appendAt(new Date(at.getTime() + 1000), 'You feel valorous.')
 
-  const up = await settle(() => rows(overlay), (r) => r.some((x) => x.name === 'Valor'), { timeoutMs: 30_000 })
-  const valor = up.find((r) => r.name === 'Valor')
-  if (!check('a self buff you cast raises a row of your own', valor !== undefined, JSON.stringify(up.map((r) => r.name)))) {
+  const fresh = (r: { name: string; time: string }): boolean => r.name === 'Valor' && r.time !== '0s'
+  const up = await settle(() => rows(overlay), (r) => r.some(fresh), { timeoutMs: 30_000 })
+  const valor = up.find(fresh)
+  if (!check('a self buff you cast raises a row of your own', valor !== undefined, JSON.stringify(up))) {
     return
   }
   // 54 minutes is what spells.json states for Valor, so it counts DOWN — the self-buff bar with

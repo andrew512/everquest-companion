@@ -484,6 +484,31 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   shared this log file pre-launch). Do NOT use level regression (loadout
   swaps legitimately change level). Game-knowledge (mined durations,
   message overlay) persists across epochs.
+- **A LOGOUT PAUSES YOUR CHARACTER, NOT THE WORLD — SO BUFFS FREEZE AND
+  DEBUFFS DO NOT** (JOS-134, owner's design 2026-08-09). EQ saves each buff's
+  REMAINING duration across a camp and resumes it at login, so a surviving
+  beneficial instance has its clock shifted forward by the absence
+  (`BuffInstances.onOfflinePause`; the S5 fixture proves it to the second — a
+  16-minute haste that wears off 13h58m of wall clock after it landed can only
+  exist if the timer stopped). A debuff you left on a mob is a timer in the
+  WORLD, which kept running, so its clock is never shifted and the ordinary
+  hygiene pass retires it on schedule; `modules/buffTimers.ts` takes an
+  EXPLICIT no-op on `offlineGap` so the asymmetry reads as design rather than
+  omission. **The boundary is evidence, not a timeout**: a log hole
+  (`SESSION_GAP_MS`) no longer decides anything by itself, because it is
+  ALWAYS observed before the thing that explains it — every login prints a
+  0-22 s reconnect preamble first, so the old on-sight wipe ran and the
+  derived `offlineGap` arrived to pause an empty model. `modules/buffsSession.ts`
+  holds the question open for `LOGIN_CONFIRM_MS` (deliberately the detector's
+  own `RECONNECT_WINDOW_MS` — same question from opposite ends) and drops the
+  pre-hole instances only if no login ever turns up. **And the learner refuses
+  BOTH halves of a cycle that spans an absence** (`spannedGap`): a buff's span
+  contains frozen time that is not duration, and a debuff's span is world time
+  whose fade LINE could only print once you were back to see it — so it dates
+  your return, not the expiry. Both err LONG, which is the direction law 5's
+  recency-weighted MAX is most sensitive to, and `fromTs` is a documented lower
+  bound, so subtracting the gap would leave residue pointing the same way.
+  Censor, never correct. Zoning is not a logout; death still clears (JOS-88).
 - **Spell DB**: `src/main/data/spells.json` (~1.9k spells from eqlwiki
   `Template:Spellpage`: durations, cast/wear-off messages, illusion flag,
   Beneficial/Detrimental) + `messageOverlay.baseline.json` + per-user
