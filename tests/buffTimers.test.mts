@@ -63,7 +63,20 @@ test('one AE mez cast produces a NAMED row per enemy — the chain-mez the repor
   const scareling = ccRowFor(rows, 'a scareling')
   assert.ok(toad, 'no crowd-control row for a turmoil toad')
   assert.ok(scareling, 'no crowd-control row for a scareling')
-  assert.equal(timers.holds.length, 2, 'one cast, two mobs, two holds')
+
+  // THREE HOLDS, NOT TWO, SINCE JOS-159 — and the extra one is this fixture reporting a defect it
+  // has carried all along. Its first two lines are `You begin casting Allure VI.` /
+  // `phoboplasm has been charmed.` at 20:46:21, a 16-minute charm still running at 20:50:34, and
+  // it used to open NOTHING because the scraped DB left Allure's cast-on-other message empty and
+  // the charm broadcast therefore resolved to seven candidates none of which the player had cast.
+  // The corrections overlay supplies the sentence, so the charm now holds like any other. The AE
+  // mez this test is about is still exactly two of the three.
+  assert.equal(timers.holds.length, 3, 'the AE mez`s two, plus the Allure charm that was already live')
+  assert.equal(
+    timers.holds.filter((h) => h.target !== 'phoboplasm').length,
+    2,
+    'one cast, two mobs, two holds'
+  )
 
   // NAMED, not a family: "has been mesmerized." is FOUR spells in the committed DB (Dazzle,
   // Mesmerization, Mesmerize, Sathir's Mesmerization). The player's own cast anchor names one,

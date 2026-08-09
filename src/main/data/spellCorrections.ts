@@ -39,6 +39,16 @@
 // (Pacify/Soothe/Calm/Lull) are all in that state and NONE of them is corrected here. Absence of
 // evidence is not evidence of drift.
 //
+// THE ABSENT FIELD is the fourth drift class, and it is why `from` may be `null` (JOS-159). Almost
+// everything here swaps one sentence for another, but the wiki can also state NOTHING where the
+// game states something: `Allure`, the enchanter charm at 46, carries a cast time and a duration
+// and no messages at all, so `Someone has been charmed.` named seven spells and not the one an
+// enchanter actually casts. `from: null` says "the DB states nothing for this field" and is held
+// to the same bar in both directions — it applies only while the field is genuinely ABSENT, it
+// reports `satisfied` once a re-scrape supplies the same text, and it reports `stale` the moment a
+// re-scrape supplies a DIFFERENT one. An empty field is not a licence to invent a sentence: the
+// text still has to clear rules 2, 3 and 4 like every other line in this file.
+//
 // IDEMPOTENCE, IN BOTH DIRECTIONS. Every correction states the text it REPLACES. If a re-scrape
 // leaves the wiki text unchanged the correction applies; if the wiki is fixed upstream the entry
 // is already correct and the correction reports `satisfied` and does nothing; if the wiki changes
@@ -58,8 +68,12 @@ export interface SpellCorrection {
   /** Exact `SpellEntry.name`s this applies to. A name absent from the DB fails the audit test. */
   spells: readonly string[]
   field: SpellMessageField
-  /** The wiki text being replaced. The correction is a no-op unless the entry still says this. */
-  from: string
+  /**
+   * The wiki text being replaced, or `null` when the DB states NOTHING for this field. The
+   * correction is a no-op unless the entry still says exactly this (or, for `null`, still says
+   * nothing at all) — see THE ABSENT FIELD above.
+   */
+  from: string | null
   /** What the live game prints, verbatim. */
   to: string
   attribution: CorrectionAttribution
@@ -422,6 +436,40 @@ export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
     to: 'The symbol of Pinzarn flashes before your eyes.',
     attribution: 'cast',
     evidence: '1/3 casts; owner log 50 lines of the sentence, 0 of the wiki form.'
+  },
+  // --- the absent field: the wiki states nothing, so the sentence had one owner too few ---------
+  //
+  // THE GAP THE OWNER LIVED IN (JOS-159). `<mob> has been charmed.` is the enchanter charm
+  // ladder's landing line, and the DB gave it seven owners with Allure not among them — so
+  // JOS-140's charm countdown, which opens a hold only for the candidate whose own cast is
+  // anchored, had NOTHING to narrow to for the one charm this enchanter actually casts. Not a
+  // wrong word this time: the entry carries a cast time and a 16-minute duration and all three
+  // message fields are simply empty.
+  //
+  // THE LOG CASTS IT BY RANK and the DB knows only the base line, which is fine and is exactly
+  // what `spellCanonKey` folding is for: `You begin casting Allure VI.` and the candidate `Allure`
+  // meet at the key `allure`, so the anchor matches and the row still prints the ranked name the
+  // cast line carried. The BREAK half already worked — `Your Allure spell has worn off of <mob>.`
+  // names the spell and `CHARM_STEMS` has always matched it (161 such lines in the owner's log).
+  // The landing half was the only one missing, and it was missing because the field is EMPTY.
+  //
+  // ONLY `msgCastOnOther` IS SUPPLIED, and the other two stay empty on purpose. A charm is
+  // detrimental and lands on a MOB, so `You have been charmed.` and `You are no longer charmed.`
+  // print to the mob: both occur 0 times. That is the unobservable-detrimental case the header
+  // names, and a DB sibling is not a licence to copy text this log can never witness into fields
+  // nothing reads.
+  //
+  // THE COUNTS BELOW ARE THE SAME LOG, ONE SESSION LONGER: 1,473,035 lines against the header's
+  // 1,460,978, because the owner kept playing on 2026-08-09 while this was being measured. Same
+  // file, same whole-log method.
+  {
+    spells: ['Allure'],
+    field: 'msgCastOnOther',
+    from: null,
+    to: 'Someone has been charmed.',
+    attribution: 'cast',
+    evidence:
+      'Allure VI 108/111 casts, Allure IV 59/65, Allure III 48/51 (215/227, 1-12 s, p50 4 s). 201 of the log`s 423 `<T> has been charmed.` lines have an Allure rank as their nearest preceding own cast, against 95 Charm, 59 Cajoling Whispers and 53 Beguile; 161 `Your Allure spell has worn off of <T>.` lines close the same lifecycle. The five ladder siblings (Charm 11, Beguile 23, Cajoling Whispers 37, Boltran`s Agacerie 53, Dictate 60) already carry this exact sentence, and Allure is the ONLY enchanter detrimental in the DB with no cast-on-other message at all.'
   }
 ]
 
@@ -477,7 +525,12 @@ export function applySpellCorrections(
         report.satisfied++
         continue
       }
-      if (current !== c.from) {
+      // `from: null` describes an ABSENT field, so its match test is "the DB still says nothing"
+      // rather than a string compare. Everything downstream is unchanged: a re-scrape that fills
+      // the field with our text reports satisfied above, and one that fills it with anything else
+      // falls through to stale exactly as a moved sentence does.
+      const describes = c.from === null ? current === undefined : current === c.from
+      if (!describes) {
         report.stale.push({ spell: name, field: c.field, found: current })
         continue
       }
