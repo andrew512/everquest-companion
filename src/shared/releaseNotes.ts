@@ -152,6 +152,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'The Loot page sort control can always be clicked - the item cards that used to open over the toolbar are gone, and the page carries far fewer hover cards overall.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Reload Inventory now resets what the app thinks you are holding. An item you destroyed, sold or gave away is gone the moment you reload, and anything you have looted since the export still counts.',
+        fromReport: true
       }
     ]
   },
