@@ -1,5 +1,5 @@
 /**
- * Headless Electron integration test for THE SKY TAB'S STICKY FILTERS (JOS-90, JOS-124).
+ * Headless Electron integration test for THE SKY TAB'S STICKY FILTERS (JOS-90, JOS-124, JOS-145).
  *
  * THE BUG, in the reporter's words: tick "Hide completed" on the Plane of Sky tab to see exactly
  * what is left, click away to any other tab, come back — and every quest you have already turned
@@ -25,6 +25,11 @@
  * `selectQuests`'s filter, pinned without a browser in tests/questSort.test.mts, and repeating it
  * here would only make this spec depend on the committed quest data staying the shape it is.
  * The subject here is the STATE, and the state is what the box says.
+ *
+ * JOS-145 ADDS A SECOND HIDE-BOX beside the first ("hide quests I have turned in"), and with it the
+ * one promise a per-control spec cannot make: that the two are INDEPENDENT. See
+ * `stepBoxesAreIndependent` for why that is the assertion worth having and where the two boxes'
+ * EFFECTS are pinned instead.
  *
  * JOS-124 ADDS THE BOSS AND ISLAND FACETS to the same subject, because they make the same promise
  * for a control with more to lose: a pick is a chip in a picker, and a picker that comes back empty
@@ -59,6 +64,9 @@ const BOX = '[data-testid="posky-hide-completed"]'
 /** The preference itself, as `useQuestList` stores it. Read back so the spec pins the KEY too:
  *  a rename that kept the round trip working would still break an existing user's saved choice. */
 const KEY = 'eq.posky.hideCompleted'
+/** JOS-145's second box and its own key: the other reading of done, stored separately on purpose. */
+const TURNED_IN_BOX = '[data-testid="posky-hide-turned-in"]'
+const TURNED_IN_KEY = 'eq.posky.hideTurnedIn'
 /** The two JOS-124 pickers, and the keys their picks are stored under. */
 const ISLAND = '[data-testid="posky-island-filter"]'
 const BOSS = '[data-testid="posky-boss-filter"]'
@@ -68,10 +76,10 @@ const BOSSES_KEY = 'eq.posky.bosses'
 const COUNTS = '[data-testid="posky-counts"]'
 
 /** Is the box ticked? `null` when it is not mounted — never confused with "unticked". */
-function boxState(page: Page): Promise<boolean | null> {
+function boxState(page: Page, box: string = BOX): Promise<boolean | null> {
   return page.evaluate(
     (sel) => (document.querySelector(`${sel} input`) as HTMLInputElement | null)?.checked ?? null,
-    BOX
+    box
   )
 }
 
@@ -140,9 +148,9 @@ async function leaveSky(page: Page): Promise<boolean> {
 }
 
 /** Click the box and wait for the tick to reach the state we asked for. */
-async function setBox(page: Page, want: boolean): Promise<boolean | null> {
-  await page.click(BOX, { timeout: 15_000 })
-  return settle(() => boxState(page), (v) => v === want, { timeoutMs: 8_000 })
+async function setBox(page: Page, want: boolean, box: string = BOX): Promise<boolean | null> {
+  await page.click(box, { timeout: 15_000 })
+  return settle(() => boxState(page, box), (v) => v === want, { timeoutMs: 8_000 })
 }
 
 /** Away to the Overview and back to Sky, with the unmount actually asserted in between. */
@@ -163,6 +171,11 @@ async function roundTrip(page: Page): Promise<boolean | null> {
 async function stepDefault(page: Page): Promise<void> {
   check('a fresh install opens the Sky tab with "Hide completed" UNTICKED', (await boxState(page)) === false)
   check('…and mounts exactly one such box', (await countOf(page, BOX)) === 1)
+  check(
+    '…and JOS-145\'s "Hide turned in" is beside it, also unticked on a fresh install',
+    (await boxState(page, TURNED_IN_BOX)) === false
+  )
+  check('…exactly one of it too', (await countOf(page, TURNED_IN_BOX)) === 1)
 }
 
 /** THE HEADLINE: tick it, leave the tab, come back — it is still ticked. */
@@ -190,6 +203,62 @@ async function stepUntickSticksToo(page: Page): Promise<void> {
 
   const after = await roundTrip(page)
   check('…so the box comes back UNTICKED, the way it was left', after === false, String(after))
+}
+
+/**
+ * THE JOS-145 PAIR: two hide-boxes, two keys, two answers that never move together.
+ *
+ * The owner asked for the OTHER reading of done ("hide quests I have ever turned in") as an
+ * OPTION beside the one JOS-131 chose, not instead of it. That makes independence the promise
+ * worth a spec: what would silently break the ask is a shared key or a shared bit, and both would
+ * pass every assertion in this file that looks at one box at a time. So every step below reads
+ * BOTH boxes and BOTH stored values — ticking one leaves the other exactly where it was, and the
+ * round trip returns the pair rather than one of them.
+ *
+ * WHICH QUESTS EACH BOX REMOVES is not asserted here; that needs a quest with a turn-in on it,
+ * which means a log, which is tests/e2e/sky-turnin.e2e.mts (it hands one in and watches the two
+ * boxes disagree about it). The subject here is the STATE, as everywhere else in this file.
+ *
+ * Leaves BOTH boxes explicitly unticked, which is what the facet steps and `stepArmRestart` below
+ * expect to start from.
+ */
+async function stepBoxesAreIndependent(page: Page): Promise<void> {
+  const ticked = await setBox(page, true, TURNED_IN_BOX)
+  if (!check('"Hide turned in" ticks when clicked', ticked === true, String(ticked))) return
+  const stored = await settle(() => storedValue(page, TURNED_IN_KEY), (v) => v === '1', { timeoutMs: 8_000 })
+  check(`the tick is stored under ${TURNED_IN_KEY}`, stored === '1', `stored ${String(stored)}`)
+  check(
+    'TICKING ONE BOX DOES NOT TICK THE OTHER — two readings, two bits',
+    (await boxState(page)) === false && (await storedValue(page)) === '0',
+    `completed box ${String(await boxState(page))} / stored ${String(await storedValue(page))}`
+  )
+
+  if (!(await awayAndBack(page))) return
+  check(
+    'HIDE TURNED IN SURVIVES LEAVING AND RETURNING TO THE SKY TAB',
+    (await settle(() => boxState(page, TURNED_IN_BOX), (v) => v !== null, { timeoutMs: 8_000 })) === true
+  )
+  check('…and the box beside it is still the way it was left', (await boxState(page)) === false)
+
+  // Both at once, because "independent" has to survive them being on together.
+  if (!check('the older box ticks alongside it', (await setBox(page, true)) === true)) return
+  const pair = await settle(
+    () => Promise.all([storedValue(page), storedValue(page, TURNED_IN_KEY)]),
+    ([a, b]) => a === '1' && b === '1',
+    { timeoutMs: 8_000 }
+  )
+  check('both preferences are stored, separately', pair.join('|') === '1|1', pair.join('|'))
+  if (!(await awayAndBack(page))) return
+  const both = await settle(
+    () => Promise.all([boxState(page), boxState(page, TURNED_IN_BOX)]),
+    ([a, b]) => a !== null && b !== null,
+    { timeoutMs: 8_000 }
+  )
+  check('BOTH BOXES COME BACK TICKED, TOGETHER', both.join('|') === 'true|true', both.join('|'))
+
+  // Hand the rest of the launch the unticked pair it expects.
+  check('the pair un-ticks again', (await setBox(page, false)) === false)
+  check('…both of them', (await setBox(page, false, TURNED_IN_BOX)) === false)
 }
 
 /**
@@ -253,11 +322,21 @@ async function stepFacetsClear(page: Page, all: number): Promise<void> {
   check('CLEARING RESTORES EVERY QUEST THE OTHER FILTERS ALLOW', back === all, `${String(all)} -> ${String(back)}`)
 }
 
-/** Leave the box ticked and an island picked for launch 2 — the restart half reads what this
- *  launch wrote, and both kinds of preference (a bit, a list) make the same promise. */
+/**
+ * Leave the box ticked and an island picked for launch 2 — the restart half reads what this
+ * launch wrote, and both kinds of preference (a bit, a list) make the same promise.
+ *
+ * The JOS-145 box is deliberately left UNTICKED, so the pair crosses the process boundary in
+ * DIFFERENT states: one shared key or one shared bit would come back as two ticks, and the
+ * restart is the last place that could still be hiding.
+ */
 async function stepArmRestart(page: Page): Promise<boolean> {
   const ticked = await setBox(page, true)
   await pick(page, ISLAND, 'Island 3')
+  check(
+    'the two boxes are left in DIFFERENT states for the restart check',
+    ticked === true && (await boxState(page, TURNED_IN_BOX)) === false
+  )
   return check('the box is left ticked for the restart check', ticked === true, String(ticked))
 }
 
@@ -267,6 +346,11 @@ async function stepSurvivesRestart(page: Page): Promise<void> {
   const after = await settle(() => boxState(page), (v) => v !== null, { timeoutMs: 8_000 })
   check('HIDE COMPLETED SURVIVES A FULL RESTART', after === true, String(after))
   check('…and the stored pref crossed the process boundary intact', (await storedValue(page)) === '1')
+  check(
+    'THE TWO BOXES CROSS A RESTART SEPARATELY — one ticked, one not, exactly as left',
+    (await boxState(page, TURNED_IN_BOX)) === false && (await storedValue(page, TURNED_IN_KEY)) === '0',
+    `${String(await boxState(page, TURNED_IN_BOX))} / ${String(await storedValue(page, TURNED_IN_KEY))}`
+  )
   const chips = await settle(() => chipsIn(page, ISLAND), (c) => c.length > 0, { timeoutMs: 8_000 })
   check('THE ISLAND FILTER SURVIVES A FULL RESTART, chip and all', chips.join() === 'Island 3', chips.join())
 }
@@ -278,7 +362,7 @@ async function main(): Promise<void> {
   // process, so `launchApp` must not delete what it did not create.
   const userData = makeUserData()
   try {
-    console.log('launch 1: a fresh install — default, tab round trip, the un-tick, and the facets…')
+    console.log('launch 1: a fresh install — default, tab round trip, the un-tick, the pair, and the facets…')
     const first = await launchApp({ userData })
     let page: Page | null = null
     try {
@@ -290,6 +374,7 @@ async function main(): Promise<void> {
       await stepDefault(page)
       await stepSticksAcrossTabs(page)
       await stepUntickSticksToo(page)
+      await stepBoxesAreIndependent(page)
       const all = await stepFacetsNarrow(page)
       if (all !== null) await stepFacetsClear(page, all)
       await stepArmRestart(page)

@@ -7,10 +7,10 @@
 // container calls, not inside the Quests tab's markup) so flipping to Ignored and back does not
 // reset the filters you had set up.
 //
-// FIVE of those choices outlive the hook entirely, in localStorage: the class filter, the sort
-// order, "hide completed" (JOS-90 — see loadHideCompleted) and the island/boss facets (JOS-124).
-// Living above the Quests/Ignored switch was never enough for them, because leaving the Sky tab
-// for another VIEW unmounts this hook outright.
+// SIX of those choices outlive the hook entirely, in localStorage: the class filter, the sort
+// order, the two hide-boxes ("hide completed", JOS-90; "hide turned in", JOS-145 — see
+// useStoredFlag) and the island/boss facets (JOS-124). Living above the Quests/Ignored switch was
+// never enough for them, because leaving the Sky tab for another VIEW unmounts this hook outright.
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { QuestProgress } from './useProgress'
@@ -18,9 +18,10 @@ import { useFavorites } from '../favorites/useFavorites'
 import { useQuestFavorites, useQuestIgnored, type QuestFlagSet } from '../favorites/useQuestFlags'
 import { DEFAULT_SORT, isSortKey, sortQuests, type SortKey } from './questSort'
 import { facetOptions, filterByFacets, type FacetOptions } from './questFacets'
-// What "completed" means on this tab since JOS-131, and the argument for it. One line of code,
-// a page of reasoning, and a node test — so it lives in its own pure module.
-import { hasEveryItem } from './questCompletion'
+// The two readings of "done" this tab offers, and the argument for keeping them apart (JOS-131 for
+// has-every-item-now, JOS-145 for has-ever-turned-in). Two lines of code, a page of reasoning, and
+// a node test — so they live in their own pure module.
+import { everTurnedIn, hasEveryItem } from './questCompletion'
 
 export type { SortKey }
 
@@ -32,6 +33,7 @@ const PAGE = 40
 const SELECTED_CLASSES_KEY = 'eq.selectedClasses'
 const SORT_KEY = 'eq.questSort'
 const HIDE_COMPLETED_KEY = 'eq.posky.hideCompleted'
+const HIDE_TURNED_IN_KEY = 'eq.posky.hideTurnedIn'
 const ISLANDS_KEY = 'eq.posky.islands'
 const BOSSES_KEY = 'eq.posky.bosses'
 
@@ -92,7 +94,13 @@ function useStoredSort(): [SortKey, (v: SortKey) => void] {
  *
  * NOT WHITELISTED for share bundles (shared/shareSchema.ts UI_PREF_SPECS), deliberately: a new
  * key is private by default, and where one player is in Sky is not a setting worth exporting.
- * The two JOS-124 facet keys inherit that decision.
+ * The two JOS-124 facet keys inherit that decision, and so does JOS-145's.
+ *
+ * JOS-145's "hide turned in" is the SAME nine lines under `eq.posky.hideTurnedIn`, and a SEPARATE
+ * key on purpose. One key holding two meanings would either silently change what an existing
+ * user's tick does, or need a migration to invent a preference nobody expressed; two independent
+ * bits let each box mean only itself, and the default for the new one is the same absent-means-
+ * false a fresh install gets for the old one.
  */
 function useStoredFlag(key: string): [boolean, (v: boolean) => void] {
   const [value, setValue] = useState(() => localStorage.getItem(key) === '1')
@@ -134,6 +142,7 @@ interface QuestSelection {
   query: string
   sort: SortKey
   hideCompleted: boolean
+  hideTurnedIn: boolean
   hideNoItems: boolean
   favoritesOnly: boolean
   isFavorite: (name: string) => boolean
@@ -148,8 +157,11 @@ function selectQuests(sel: QuestSelection): QuestProgress[] {
   if (sel.selectedClasses.length) list = list.filter((x) => sel.selectedClasses.includes(x.className))
   // The island/boss facets, both dimensions in one pass (questFacets.ts owns the semantics).
   list = filterByFacets(list, sel)
-  // JOS-131: "completed" here is has-every-item-now, never has-ever-turned-in (hasEveryItem).
+  // The two readings of "done", as two independent narrowings applied one after the other, which
+  // is what makes them AND (JOS-131 for has-every-item-now, JOS-145 for has-ever-turned-in).
+  // Neither reads the other's state, so ticking one can never change what the other does.
   if (sel.hideCompleted) list = list.filter((x) => !hasEveryItem(x))
+  if (sel.hideTurnedIn) list = list.filter((x) => !everTurnedIn(x))
   if (sel.hideNoItems) list = list.filter((x) => x.needCount > 0)
   // "Favorites only" = the quest itself is starred OR it needs a starred item.
   if (sel.favoritesOnly)
@@ -201,6 +213,9 @@ export interface QuestListState {
   setSort: (v: SortKey) => void
   hideCompleted: boolean
   setHideCompleted: (v: boolean) => void
+  /** "Hide quests I have turned in" — has-EVER-turned-in, the other reading (JOS-145). Stored. */
+  hideTurnedIn: boolean
+  setHideTurnedIn: (v: boolean) => void
   hideNoItems: boolean
   setHideNoItems: (v: boolean) => void
   favoritesOnly: boolean
@@ -217,8 +232,11 @@ export interface QuestListState {
    * could be hiding it, then let PoskyView expand and scroll to it.
    *
    * It has to reset the filters, not merely search: the quest a celebration toast links to has
-   * just been handed in, and "hide completed", a class filter, an island/boss facet or
-   * "favorites only" would each leave the user staring at a list the link promised something in.
+   * just been handed in, and "hide completed", "hide turned in", a class filter, an island/boss
+   * facet or "favorites only" would each leave the user staring at a list the link promised
+   * something in. JOS-145's box is the sharpest case of it — the toast fires ON the turn-in that
+   * makes the quest match, so the link would hide its own subject every single time — which is
+   * why the reset is a list of every filter and not a judgement about which ones matter.
    * The search box is set to the quest's name so the reset is visible and undoable rather than
    * mysterious.
    */
@@ -238,6 +256,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
   const [query, setQuery] = useState('')
   const [sort, setSort] = useStoredSort()
   const [hideCompleted, setHideCompleted] = useStoredFlag(HIDE_COMPLETED_KEY)
+  const [hideTurnedIn, setHideTurnedIn] = useStoredFlag(HIDE_TURNED_IN_KEY)
   const [hideNoItems, setHideNoItems] = useState(true)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   // Accordions are variable-height so we cap+paginate rather than window them; a
@@ -264,6 +283,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
         query: deferredQuery,
         sort,
         hideCompleted,
+        hideTurnedIn,
         hideNoItems,
         favoritesOnly,
         isFavorite,
@@ -278,6 +298,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
       deferredQuery,
       sort,
       hideCompleted,
+      hideTurnedIn,
       hideNoItems,
       favoritesOnly,
       favorites,
@@ -309,6 +330,8 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     setSort,
     hideCompleted,
     setHideCompleted,
+    hideTurnedIn,
+    setHideTurnedIn,
     hideNoItems,
     setHideNoItems,
     favoritesOnly,
@@ -328,6 +351,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
       setIslands([])
       setBosses([])
       setHideCompleted(false)
+      setHideTurnedIn(false)
       setHideNoItems(false)
       setFavoritesOnly(false)
       setVisibleCount(PAGE)

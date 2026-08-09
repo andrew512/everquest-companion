@@ -2,8 +2,18 @@
 // questCompletion.ts — what "completed" means on the Sky tab, now that it is two things.
 // ============================================================================
 //
-// A pure module with no React and no data bundle, so the decision below is pinned by a plain
+// A pure module with no React and no data bundle, so the decisions below are pinned by a plain
 // node test (tests/questTurnIns.test.mts) rather than only by a browser.
+//
+// JOS-145 SETTLED THE ARGUMENT BY SHIPPING BOTH READINGS AS TWO SEPARATE BOXES. JOS-131 (below)
+// chose has-every-item-now for the one box that existed, and the reasoning still holds for THAT
+// box — but the owner wants the other meaning available too, because a player farming each quest
+// once wants the done ones gone even though the app now knows they are refarmable. So there are
+// two predicates here and two independent toggles above them, never a tri-state or a dropdown:
+// they answer different questions ("what is left to gather" vs "what have I not run yet"), a
+// player can want either, both, or neither, and AND-ing two checkboxes is the only combination
+// rule that needs no explaining. Neither predicate reads the other's input, which is what makes
+// "both ticked" mean exactly what it looks like.
 //
 // WHAT "HIDE COMPLETED" HIDES, DECIDED (JOS-131): a quest you are HOLDING EVERY ITEM FOR right
 // now — NOT a quest you have ever turned in.
@@ -31,7 +41,9 @@
 // '1'/'0' one-bit idiom, an absent key still means the DEFAULT rather than `false`, the box and
 // the pref are still one thing (so `revealQuest`'s un-tick still persists), and it is still not
 // whitelisted for share bundles. A user who had it ticked keeps it ticked and gets the new
-// reading, which is the same promise they ticked it for.
+// reading, which is the same promise they ticked it for. JOS-145's second box takes the same
+// deal under its own key (`eq.posky.hideTurnedIn`) rather than sharing one, so a user who wants
+// one reading is never handed the other by an upgrade.
 
 /** The part of a quest's progress this rule reads. Structural, so a test needs no whole quest. */
 export interface CompletableQuest {
@@ -44,4 +56,27 @@ export interface CompletableQuest {
 /** Are you holding everything this quest asks for, right now? */
 export function hasEveryItem(q: CompletableQuest): boolean {
   return q.needCount > 0 && q.missing.length === 0
+}
+
+/** The part of a quest's progress the turn-in rule reads — the JOS-131 ledger's count, nothing else. */
+export interface TurnedInQuest {
+  /** how many times this quest has been handed in; 0 is never (useProgress.QuestProgress.turnIns) */
+  turnIns: number
+}
+
+/**
+ * Have you EVER handed this quest in? (JOS-145.)
+ *
+ * The count, not the holdings: this is the reading `hasEveryItem` deliberately is not. It stays
+ * true for a quest you are refarming — that is the entire point, because the player this box is
+ * for runs each quest once and wants the finished ones off the screen whether or not the app
+ * thinks they could go again. A count of 2 is no more turned-in than a count of 1, so the
+ * threshold is >= 1 and there is no "hide only the ones I did twice"; nobody asked for a dial.
+ *
+ * Zero required items is irrelevant here, unlike above: a turn-in is an EVENT that was observed
+ * (or stated), so it is a fact about the player rather than an inference from the item data, and
+ * a quest with a turn-in on it has been run no matter what the scrape knows about its items.
+ */
+export function everTurnedIn(q: TurnedInQuest): boolean {
+  return q.turnIns >= 1
 }
