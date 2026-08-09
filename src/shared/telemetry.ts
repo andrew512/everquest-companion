@@ -250,6 +250,24 @@ export const MAX_REDACTED_MESSAGE_WIRE = 200
 export const MAX_ERROR_FRAMES_WIRE = 10
 export const MAX_FRAME_POSITION_WIRE = 1_000_000
 export const MAX_FRAME_FUNC_WIRE = 80
+/** External (non-bundle) frames per report — JOS-111, `MAX_EXTERNAL_FRAMES` in errorReportLocation.ts. */
+export const MAX_EXTERNAL_FRAMES_WIRE = 5
+/** Component names in a `componentPath` — JOS-111, and the `{0,7}` inside `COMPONENT_PATH_RE`. */
+export const MAX_COMPONENT_DEPTH_WIRE = 8
+
+/**
+ * WHERE `frames` CAME FROM (JOS-111). `thrown` is the throw's own stack, which is what every
+ * frame on this event meant before the field existed. `capture` is the site that CAUGHT it,
+ * synthesised because the payload had no stack of its own — a forwarded renderer console error,
+ * a failed load, a rejected string.
+ *
+ * THE FIELD IS OPTIONAL AND ABSENT MEANS `thrown`, which is how an exemplar stored by an older
+ * client still reads correctly. It exists so that a capture-site frame is never silently
+ * presented as a throw site: the two answer different questions, and a reader who cannot tell
+ * them apart would go looking for a bug in the console forwarder.
+ */
+export const TELEMETRY_FRAME_ORIGINS = ['thrown', 'capture'] as const
+export type TelemetryFrameOrigin = (typeof TELEMETRY_FRAME_ORIGINS)[number]
 
 /** `TypeError`, `Error`, `EqError`. An identifier — a sentence cannot be one. */
 export const ERROR_NAME_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/
@@ -270,6 +288,33 @@ export const FINGERPRINT_RE = /^[0-9a-f]{16}$/
  */
 export const FRAME_FILE_RE =
   /^out\/[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$/
+/**
+ * AN EXTERNAL FRAME'S FILE (JOS-111): a PUBLIC module name, and nothing that is not one.
+ *
+ * `node:fs`, `node:internal/fs/promises`, `electron/js2c/renderer_init`, `node_modules/chokidar`,
+ * `node_modules/@scope/pkg` — three arms, each naming an artefact that is identical on every
+ * install in the fleet. The privacy property is the same one `FRAME_FILE_RE` has and is held the
+ * same way: an absolute path cannot satisfy this pattern, so the install directory (and therefore
+ * the user's account name) is not a value this field can hold however it was constructed. Every
+ * segment must start with a non-dot, which refuses `node_modules/../../secret`. At most three
+ * segments on the two path-shaped arms, each at most 40 characters.
+ *
+ * `EXTERNAL_FILE_PATTERN` in `./errorReportLocation.ts` is the producer's copy; the contract test
+ * pins the two source strings equal.
+ */
+export const EXTERNAL_FRAME_FILE_RE =
+  /^(?:node:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,39}(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,39}){0,2}|electron\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,39}(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,39}){0,2}|node_modules\/(?:@[A-Za-z0-9_-][A-Za-z0-9_.-]{0,39}\/)?[A-Za-z0-9_-][A-Za-z0-9_.-]{0,39})$/
+/**
+ * A REACT COMPONENT PATH (JOS-111): up to eight identifier-shaped component names, innermost
+ * first, joined with `>`. `Tooltip>InventoryRow>InventoryPanel`.
+ *
+ * Component names are OUR OWN identifiers — they come out of this repo's `.tsx` files, not out of
+ * the game — but the field is still bound by shape rather than by that argument: no spaces, no
+ * punctuation beyond the dot a namespaced component uses, forty characters per name and eight
+ * names. A sentence cannot be one, and neither can a zone, a mob or a character.
+ */
+export const COMPONENT_PATH_RE =
+  /^[A-Za-z_$][A-Za-z0-9_$.]{0,39}(?:>[A-Za-z_$][A-Za-z0-9_$.]{0,39}){0,7}$/
 /** A frame's function: identifier-shaped, dotted method paths and `<anonymous>` allowed.
  *  A NAME WITH A SPACE IN IT IS REFUSED — that is prose wearing a function's clothes. */
 export const FRAME_FUNC_RE = /^[A-Za-z0-9_$.<>[\]]{1,80}$/
@@ -624,6 +669,29 @@ export interface EvErrorReport {
   redactedMessage: string
   /** At most `MAX_ERROR_FRAMES_WIRE`, newest first, every file `^out/`. */
   frames: TelemetryFrame[]
+  /**
+   * WHETHER `frames` IS THE THROW SITE OR THE CATCH SITE (JOS-111). Absent means `thrown`, which
+   * is what every frame meant before this field existed and is what an older client's stored
+   * exemplar still means. See `TELEMETRY_FRAME_ORIGINS`.
+   */
+  frameOrigin?: TelemetryFrameOrigin
+  /**
+   * THE FRAMES THAT ARE NOT OURS (JOS-111): at most `MAX_EXTERNAL_FRAMES_WIRE`, newest first,
+   * each a public module name matching `EXTERNAL_FRAME_FILE_RE` — `node:internal/fs/promises`,
+   * `node_modules/chokidar`, `electron/js2c/renderer_init`.
+   *
+   * A SEPARATE FIELD RATHER THAN A WIDER `frames`, and the reason is the deploy-skew law above:
+   * widening `FRAME_FILE_RE` would make every new client's report ILLEGAL to the deployed
+   * validator, which 400s the whole batch and drops every counter the client was carrying. A new
+   * optional field is free — the validators construct their result field by field, so an older
+   * server simply does not copy it across.
+   */
+  externalFrames?: TelemetryFrame[]
+  /**
+   * WHICH REACT COMPONENTS IT CAME THROUGH (JOS-111), innermost first, `>`-joined —
+   * `COMPONENT_PATH_RE`. Present only for a renderer error our ErrorBoundary caught.
+   */
+  componentPath?: string
   /** `hash(errorName + top app frames)` — the grouping key, 16 hex characters. */
   fingerprint: string
   /** At most `MAX_BREADCRUMBS` parser event KINDS, newest first. */

@@ -31,6 +31,18 @@
 //     there and nowhere else, exactly as it is for every other event.
 //
 // ---------------------------------------------------------------------------------------
+// WHEN THE THROW WILL NOT SAY WHERE (JOS-111)
+// ---------------------------------------------------------------------------------------
+// "At which bundle position" assumes the payload HAS a bundle position, and the fleet's own
+// numbers said otherwise: the two loudest issues in the live 0.13.0 stream were both FRAMELESS,
+// so both hashed the error name alone and collapsed into one row. `locate` below is the ladder
+// that answers it anyway — the throw's own frames, else a stack `errorLog` captured at its call
+// site (labelled `capture`, never passed off as a throw site), else nothing — with external
+// frames and an unwrapped nested error riding independently, and the fingerprint falling back on
+// a shape of the already-redacted message when there is no location at all. The classification,
+// the unwrap and the skeleton are all pure and live in `shared/errorReportLocation.ts`.
+//
+// ---------------------------------------------------------------------------------------
 // ONE EXEMPLAR PER FINGERPRINT PER SESSION
 // ---------------------------------------------------------------------------------------
 // The first occurrence of a fingerprint keeps its message, frames and breadcrumbs. Every repeat
@@ -49,8 +61,16 @@ import {
   errorFingerprint,
   errorNameOf,
   parseStackFrames,
-  redactMessage
+  redactMessage,
+  type ErrorFrame
 } from '../../shared/errorReport'
+import {
+  caughtFields,
+  fingerprintFallback,
+  parseComponentPath,
+  parseExternalFrames,
+  type CaughtFields
+} from '../../shared/errorReportLocation'
 import {
   bucketOf,
   MAX_SESSION_FINGERPRINTS,
@@ -115,28 +135,43 @@ export function noteCurrentView(view: unknown): void {
  * What `logError` hands over. Deliberately NOT `Error`: the renderer's IPC report is a plain
  * object, `unhandledRejection` can carry anything at all, and `throw 42` is legal JavaScript.
  * Every field is read defensively and every one has an honest fallback.
+ *
+ * The read itself lives in `shared/errorReportLocation.ts` (`caughtFields`), because since
+ * JOS-111 it also FOLLOWS NESTED ERRORS — `logError('main:preload-error', { preloadPath, error })`
+ * carries a real stack one property down — and that unwrap is pure, adversarial, and worth
+ * driving from a test with no Electron in the process.
  */
-export interface CaughtError {
-  name?: unknown
-  message?: unknown
-  stack?: unknown
-  code?: unknown
+export type CaughtError = CaughtFields
+
+/**
+ * WHERE THIS ERROR HAPPENED, in the order that prefers the truest answer (JOS-111).
+ *
+ * 1. THE THROW'S OWN BUNDLE FRAMES. Everything below is only reached when there are none.
+ * 2. THE CAPTURE SITE, synthesised from a stack `logError` took at its own call site. A forwarded
+ *    renderer console error is `{ level, message, source }` and never had a stack; the app still
+ *    knows which of its eighty-odd `logError` calls the report came out of, and those are
+ *    different issues. It is labelled `capture` so it is never read as a throw site.
+ * 3. NOTHING, and the fingerprint's fallback (below) is what stops that colliding.
+ *
+ * `externalFrames` is independent of all three: a stack can carry Node/Electron/dependency frames
+ * whether or not it carries ours, and they are worth having either way.
+ */
+interface Location {
+  frames: ErrorFrame[]
+  external: ErrorFrame[]
+  origin: 'thrown' | 'capture'
 }
 
-/** Pull the four fields out of whatever was actually thrown. */
-function fieldsOf(payload: unknown): CaughtError {
-  if (payload instanceof Error) {
-    return {
-      name: payload.name,
-      message: payload.message,
-      stack: payload.stack,
-      // Node hangs `code` off the error object; it is not on the `Error` type.
-      code: (payload as unknown as { code?: unknown }).code
-    }
+function locate(stack: unknown, captureSite: (() => string) | undefined): Location {
+  const external = parseExternalFrames(stack)
+  const frames = parseStackFrames(stack)
+  if (frames.length > 0 || captureSite === undefined) {
+    return { frames, external, origin: 'thrown' }
   }
-  if (typeof payload === 'object' && payload !== null) return payload
-  // A thrown string or number is its own message and has nothing else.
-  return { message: typeof payload === 'string' ? payload : String(payload) }
+  const site = parseStackFrames(captureSite())
+  return site.length > 0
+    ? { frames: site, external, origin: 'capture' }
+    : { frames, external, origin: 'thrown' }
 }
 
 /**
@@ -147,16 +182,35 @@ function fieldsOf(payload: unknown): CaughtError {
  * `source` is the tag `logError` already uses (`main:uncaughtException`, `renderer:ErrorBoundary`,
  * …). It is NOT sent: it is free text by nature, and the frames say where far better. It is
  * taken only so this function can refuse the one source that would be circular.
+ *
+ * `captureSite` IS A THUNK AND IS CALLED AT MOST ONCE, only when the payload turned out to carry
+ * no bundle frames of its own. Capturing a stack is the expensive part of this function and the
+ * overwhelming majority of errors do not need it, so the cost is paid by the reports that would
+ * otherwise have had no location at all. `errorLog.ts` supplies it; a direct caller (the tests,
+ * and nothing else) may leave it out, in which case step 2 above simply does not happen.
  */
-export function noteError(source: string, payload: unknown, now = Date.now()): void {
+export function noteError(
+  source: string,
+  payload: unknown,
+  now = Date.now(),
+  captureSite?: () => string
+): void {
   try {
     // A failure INSIDE the error-log writer must not mint a report about the error-log writer,
     // on the path that is already failing to write. `errorLog.ts` tags that line `[errorLog]`.
     if (source.includes('errorLog')) return
-    const f = fieldsOf(payload)
-    const frames = parseStackFrames(f.stack)
+    const f = caughtFields(payload)
+    const where = locate(f.stack, captureSite)
     const errorName = errorNameOf(f.name)
-    const fingerprint = errorFingerprint(errorName, frames)
+    const redactedMessage = redactMessage(f.message)
+    // The fallback is read only when `where.frames` is empty (errorFingerprint says why), so a
+    // report that HAS frames hashes exactly what it hashed before this ticket and keeps the
+    // identity the error store already knows it by.
+    const fingerprint = errorFingerprint(
+      errorName,
+      where.frames,
+      fingerprintFallback(where.external, redactedMessage)
+    )
     const held = pending.get(fingerprint)
     if (held) {
       held.n += 1
@@ -167,23 +221,58 @@ export function noteError(source: string, payload: unknown, now = Date.now()): v
     // that explains it. Repeats of a fingerprint already held still count (the branch above),
     // so the cap limits distinct exemplars and never the totals of what is already tracked.
     if (pending.size >= MAX_SESSION_FINGERPRINTS) return
-    const code = errorCodeOf(f.code)
-    const exemplar: Omit<EvErrorReport, 'count'> = {
-      t: 'errorReport',
-      errorName,
-      redactedMessage: redactMessage(f.message),
-      frames,
-      fingerprint,
-      breadcrumbs: wireCrumbs(),
-      view: currentView,
-      sessionAgeBucket: bucketOf(sessionAgeMs(now), SESSION_AGE_MS_EDGES),
-      mode: currentMode()
-    }
-    if (code !== undefined) exemplar.code = code
-    pending.set(fingerprint, { exemplar, n: 1 })
+    pending.set(fingerprint, {
+      exemplar: exemplarOf({ errorName, redactedMessage, fingerprint }, where, f, now),
+      n: 1
+    })
   } catch {
     // A telemetry producer is never worth an app failure, and this one runs on the error path.
   }
+}
+
+/** The three values `noteError` has already computed and would otherwise pass one by one — the
+ *  parameter that keeps `exemplarOf` inside the repo's four. */
+interface Identity {
+  errorName: string
+  redactedMessage: string
+  fingerprint: string
+}
+
+/**
+ * THE EXEMPLAR. Every OPTIONAL field is set only when it has something to say, which is the wire
+ * contract read from the producer's side: a field that is absent costs an older server nothing,
+ * and a field that is present is one the reader can trust to mean something.
+ */
+function exemplarOf(
+  id: Identity,
+  where: Location,
+  f: CaughtFields,
+  now: number
+): Omit<EvErrorReport, 'count'> {
+  const exemplar: Omit<EvErrorReport, 'count'> = {
+    t: 'errorReport',
+    errorName: id.errorName,
+    redactedMessage: id.redactedMessage,
+    frames: where.frames,
+    fingerprint: id.fingerprint,
+    breadcrumbs: wireCrumbs(),
+    view: currentView,
+    sessionAgeBucket: bucketOf(sessionAgeMs(now), SESSION_AGE_MS_EDGES),
+    mode: currentMode()
+  }
+  const code = errorCodeOf(f.code)
+  if (code !== undefined) exemplar.code = code
+  // Stated whenever there are frames to describe. A report with none says nothing about their
+  // origin rather than claiming one, which is also what an exemplar from an older client means.
+  if (where.frames.length > 0) exemplar.frameOrigin = where.origin
+  if (where.external.length > 0) exemplar.externalFrames = where.external
+  // BOTH CARRIERS, because the ErrorBoundary reports itself twice by design: over the `error:report`
+  // IPC, where the marked component stack is appended to `stack`, and through `console.error`,
+  // where the console forwarder's payload has no `stack` field at all and the whole line arrives
+  // as `message`. Same marker, same parser, so neither path is the one that quietly does not work.
+  const componentPath = parseComponentPath(f.stack) ?? parseComponentPath(f.message)
+  if (componentPath !== undefined) exemplar.componentPath = componentPath
+  return exemplar
 }
 
 function sessionAgeMs(now: number): number {

@@ -262,17 +262,23 @@ function parseExemplar(raw: string): TriageErrorExemplar | null {
     const parsed: unknown = JSON.parse(raw)
     const v = validateTelemetryEvent(parsed)
     if (!v.ok || v.value.t !== 'errorReport') return null
-    const { errorName, code, redactedMessage, frames, breadcrumbs, view, sessionAgeBucket, mode } = v.value
+    const e = v.value
     const out: TriageErrorExemplar = {
-      errorName,
-      redactedMessage,
-      frames,
-      breadcrumbs,
-      view,
-      sessionAgeBucket,
-      mode
+      errorName: e.errorName,
+      redactedMessage: e.redactedMessage,
+      frames: e.frames,
+      breadcrumbs: e.breadcrumbs,
+      view: e.view,
+      sessionAgeBucket: e.sessionAgeBucket,
+      mode: e.mode
     }
-    if (code !== undefined) out.code = code
+    // The optional four are copied only when the validated event HAS them, so the panel can read
+    // "absent" as the fact it is (an older client, or nothing to say) rather than as a default
+    // somebody chose here.
+    if (e.code !== undefined) out.code = e.code
+    if (e.frameOrigin !== undefined) out.frameOrigin = e.frameOrigin
+    if (e.externalFrames !== undefined) out.externalFrames = e.externalFrames
+    if (e.componentPath !== undefined) out.componentPath = e.componentPath
     return out
   } catch {
     return null
