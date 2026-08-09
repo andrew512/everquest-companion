@@ -646,7 +646,7 @@ export function fightScopeOptions(segments: SegmentSummary[]): ScopeOptions {
     value: LIVE_SELECTION,
     // State, not process: while a fight is open this row IS the current fight; between pulls it
     // is plainly the last one. It must never read "live" for a finished encounter.
-    label: open ? 'Current fight (live)' : `Last fight — ${headSeg.name}`,
+    label: open ? 'Current fight (live)' : `Last fight - ${headSeg.name}`,
     name: headSeg.name,
     dps: headSeg.dps,
     startTs: headSeg.startTs,
@@ -669,8 +669,8 @@ export function fightScopeOptions(segments: SegmentSummary[]): ScopeOptions {
 export function overallScopeOptions(zoneSessions: ZoneSessionSummary[]): ScopeOptions {
   const toRow = (z: ZoneSessionSummary): ScopeOption => ({
     value: z.id,
-    label: `${z.zone} — overall`,
-    name: `${z.zone} — overall`,
+    label: `${z.zone} - overall`,
+    name: `${z.zone} - overall`,
     dps: z.dps,
     startTs: z.startTs,
     durationSec: z.live ? 0 : Math.max(1, (z.endTs - z.startTs) / 1000),

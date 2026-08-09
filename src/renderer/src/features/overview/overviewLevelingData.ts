@@ -272,7 +272,7 @@ function etaText(eta: LevelEta): string | null {
 /** The reason there is no estimate — one clause per `EtaBlocked` (AGENTS.md tooltip diet). */
 const ETA_BLOCKED_TITLE: Record<EtaBlocked, string> = {
   'no-ding': 'No level-up has been recorded yet, so your place in the bar is unknown.',
-  unstated: 'Experience lines since your last level-up stated no percentage — unknown, not zero.',
+  unstated: 'Experience lines since your last level-up stated no percentage - unknown, not zero.',
   clipped: 'The retained record no longer reaches back to your last level-up.',
   overfull: 'The percentages since your last level-up already exceed a full level.',
   offline: 'Most of the last hour is time you were logged out.',

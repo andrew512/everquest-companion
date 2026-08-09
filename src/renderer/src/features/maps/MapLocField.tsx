@@ -62,7 +62,7 @@ export default function MapLocField({ marker, onPlace, onShow, onClear }: MapLoc
 
   return (
     <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap data-testid="maps-loc">
-      <Tooltip title="Type /loc in game and paste the line here — north/south, west/east, elevation.">
+      <Tooltip title="Type /loc in game and paste the line here - north/south, west/east, elevation.">
         <TextField
           size="small"
           label="/loc marker"

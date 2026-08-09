@@ -28,7 +28,7 @@ function IgnoredList({
   if (quests.length === 0) {
     return (
       <Typography color="text.secondary">
-        No ignored quests — hide one with the eye icon on its row and it lands here.
+        No ignored quests - hide one with the eye icon on its row and it lands here.
       </Typography>
     )
   }
@@ -95,7 +95,7 @@ function CountsLine({
     // Data exists, it is all ignored — say so, and point at the tab that undoes it.
     return (
       <Typography color="text.secondary">
-        Every quest is ignored — the Ignored tab can bring them back.
+        Every quest is ignored - the Ignored tab can bring them back.
       </Typography>
     )
   }

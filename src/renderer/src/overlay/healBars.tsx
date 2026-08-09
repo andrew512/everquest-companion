@@ -23,6 +23,7 @@ import { fmtDur } from '../features/combat/copyTable'
 import { formatNum as fmt } from '../lib/formatRate'
 import {
   ABSORB_NOTE,
+  UNSTATED_AMOUNT,
   hasAbsorbCounts,
   healPanel,
   healerAmount,
@@ -237,7 +238,7 @@ function SpellBar({ s, healerKind }: { s: HealSpellView; healerKind: string }): 
               The suffix is what stops the zero-length bar beside it reading as a heal that did
               nothing. */}
           {isUnstatedLane(s) && (
-            <span style={{ color: 'rgba(255,255,255,0.5)', fontWeight: 400 }}> ·unvalued</span>
+            <span style={{ color: 'rgba(255,255,255,0.5)', fontWeight: 400 }}> ·{UNSTATED_AMOUNT}</span>
           )}
           <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.62)', fontWeight: 400 }}>
             {spellStat(s)}

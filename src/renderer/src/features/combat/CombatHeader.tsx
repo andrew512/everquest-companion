@@ -49,7 +49,7 @@ function ModifierSlot({
   tip?: string
 }): React.JSX.Element {
   return (
-    <Tooltip title={tip ?? `Modifier ${slot} — ${slot === 1 ? 'combat stance' : 'invocation'}: ${value}`}>
+    <Tooltip title={tip ?? `Modifier ${slot} - ${slot === 1 ? 'combat stance' : 'invocation'}: ${value}`}>
       {/* A subtle pill, so the two slots read as one passive readout at the end of the lens line
           rather than as two more bits of loose text competing with the controls. The TEXT is
           unchanged ('1: Berserker') — it is asserted verbatim by the headless e2e harness. */}
@@ -126,7 +126,7 @@ function CoatSlotPill({ coat }: { coat: BladeCoatState }): React.JSX.Element | n
       slot={3}
       value={all.map((c) => coatShortName(c.slot.poison)).join(' · ')}
       color="#c46fd2"
-      tip={`Modifier 3 — blade coats, ${all.length} of a possible 4 (one utility poison plus one venom from each of the three combat lines): ${detail}`}
+      tip={`Modifier 3 - blade coats, ${all.length} of a possible 4 (one utility poison plus one venom from each of the three combat lines): ${detail}`}
     />
   )
 }
@@ -343,7 +343,7 @@ function ViewSwitch({
     <Tooltip
       title={
         noTimeline
-          ? "Timeline follows a single fight — it's kept for the live and recent encounters. The zone aggregate and older fights have no event ring."
+          ? "Timeline follows a single fight - it's kept for the live and recent encounters. The zone aggregate and older fights have no event ring."
           : ''
       }
     >
@@ -387,7 +387,7 @@ function DirectionFilter({
   return (
     <>
       <Divider orientation="vertical" flexItem sx={{ my: 0.25 }} />
-      <Tooltip title="Which dimension the meter lists — damage out, damage in, or healing">
+      <Tooltip title="Which dimension the meter lists - damage out, damage in, or healing">
         <ToggleButtonGroup
           size="small"
           exclusive

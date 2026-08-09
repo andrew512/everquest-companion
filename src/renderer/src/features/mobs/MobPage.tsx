@@ -166,7 +166,7 @@ function MobConsiderLine({ con }: { con?: MobConsiderContext }): JSX.Element | n
   return (
     <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25, mb: 1.5 }}>
       {considerDifficultyShort(con.difficulty) ?? con.difficulty}
-      {con.difficulty && ` — “${con.difficulty}”`}
+      {con.difficulty && ` - “${con.difficulty}”`}
       {con.zone && ` · ${con.zone}`}
     </Typography>
   )
@@ -235,7 +235,7 @@ function DropsEmptyState({
         </Stack>
       )}
       {data?.notFound && <Quiet>No wiki page for this mob.</Quiet>}
-      {data?.offline && <Quiet>Offline — showing only what&apos;s known locally.</Quiet>}
+      {data?.offline && <Quiet>Offline - showing only what&apos;s known locally.</Quiet>}
       {data && !data.notFound && !data.offline && data.page && (
         <Quiet>The wiki page for this mob lists no loot.</Quiet>
       )}

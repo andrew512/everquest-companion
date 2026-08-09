@@ -288,7 +288,7 @@ export function zoneSummary(st: EngineState): SegmentSummary {
   return {
     id: 'zone',
     kind: 'zone',
-    name: `${st.zone ?? 'Session'} — overall`,
+    name: `${st.zone ?? 'Session'} - overall`,
     zone: st.zone,
     durationSec: dur,
     total,

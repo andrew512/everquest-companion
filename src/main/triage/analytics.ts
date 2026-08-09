@@ -381,7 +381,7 @@ function buildStartup(usage: readonly UsageRow[]): TriageAnalyticsStartup {
 function logSizeBucketLabel(i: number): string {
   const { lo, hi } = bucketRange(LOG_SIZE_BYTES_EDGES, Number.isInteger(i) ? i : 0)
   const mb = (bytes: number): string => `${String(Math.round(bytes / 1_048_576))} MB`
-  return hi === null ? `≥ ${mb(lo)}` : i === 0 ? `< ${mb(hi)}` : `${mb(lo)}–${mb(hi)}`
+  return hi === null ? `≥ ${mb(lo)}` : i === 0 ? `< ${mb(hi)}` : `${mb(lo)}-${mb(hi)}`
 }
 
 // ---- versions ------------------------------------------------------------------------

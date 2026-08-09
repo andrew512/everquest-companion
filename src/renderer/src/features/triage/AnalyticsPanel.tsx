@@ -199,15 +199,15 @@ function FunnelCard({ view }: { view: TriageFunnelView }): JSX.Element {
       ))}
       {view.byVersion.length > 1 && (
         <Typography variant="caption" color="text.secondary">
-          by version —{' '}
+          by version -{' '}
           {view.byVersion
-            .map((v) => `${v.version}: ${funnelBars(v.steps).at(-1)?.conversion ?? '—'} end-to-end`)
+            .map((v) => `${v.version}: ${funnelBars(v.steps).at(-1)?.conversion ?? '-'} end-to-end`)
             .join(' · ')}
         </Typography>
       )}
       {view.failures.length > 0 && (
         <Typography variant="caption" color="warning.main">
-          failures — {view.failures.map((f) => `${f.id} ${String(f.n)}`).join(' · ')}
+          failures - {view.failures.map((f) => `${f.id} ${String(f.n)}`).join(' · ')}
         </Typography>
       )}
     </Stack>
@@ -233,7 +233,7 @@ function Readout({
       {windowIsEmpty(data) && (
         <Alert severity="info" data-testid="analytics-empty">
           <AlertTitle>No data yet</AlertTitle>
-          The tables are there and empty — every number below is a true zero, not a missing
+          The tables are there and empty - every number below is a true zero, not a missing
           reading. The client is lit; if this stays empty, check whether{' '}
           <code>telemetry_accepting</code> is still closed (<code>analytics open</code>).
         </Alert>
@@ -285,12 +285,12 @@ function OwnerReadout({ data }: { data: TriageAnalyticsData }): JSX.Element {
     <Stack spacing={2} data-testid="analytics-owner" sx={{ pt: 2 }}>
       <Divider />
       <Alert severity="info" icon={false}>
-        <AlertTitle>Mine — the owner cohort, shown separately</AlertTitle>
+        <AlertTitle>Mine - the owner cohort, shown separately</AlertTitle>
         Your dev builds (tagged automatically from <code>env.channel</code>) and any install
-        marked with <code>triage-feedback analytics owner-add &lt;analyticsId&gt;</code> — the id
+        marked with <code>triage-feedback analytics owner-add &lt;analyticsId&gt;</code> - the id
         is in Preferences → Usage analytics → &ldquo;Anonymous id&rdquo;. These numbers are NOT
         included in the readout above and are never added to it. Counters aggregated before an
-        install was marked stay in the user cohort — the split is from-marking-onward.
+        install was marked stay in the user cohort - the split is from-marking-onward.
       </Alert>
       <Readout data={data} />
     </Stack>
@@ -346,7 +346,7 @@ export default function AnalyticsPanel(): JSX.Element {
         label={
           <Typography variant="caption">
             Include mine (split)
-            {ready !== null && !ready.ownerPresent && ' — nothing marked yet'}
+            {ready !== null && !ready.ownerPresent && ' - nothing marked yet'}
           </Typography>
         }
       />

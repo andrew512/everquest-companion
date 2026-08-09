@@ -64,7 +64,7 @@ import type {
  */
 function ingestCc(st: EngineState, ev: CcEvent): void {
   if (!ev.refresh && !st.charm.ccBroadcast(ev.ts)) {
-    st.log(ev.ts, 'cc', 'dropped', `✜ CC on ${ev.mob} — not ours (no own cast to resolve)`)
+    st.log(ev.ts, 'cc', 'dropped', `✜ CC on ${ev.mob} - not ours (no own cast to resolve)`)
     return
   }
   evalClosure(st, ev.ts)
@@ -89,7 +89,7 @@ function ingestCc(st: EngineState, ev: CcEvent): void {
 function ingestCharm(st: EngineState, ev: CharmEvent): void {
   const key = idKey(ev.mob)
   if (st.charm.charmBroadcast(key, ev.mob, ev.ts) === 'foreign') {
-    st.log(ev.ts, 'charm', 'dropped', `⚡ ${ev.mob} charmed by someone else — not your pet`)
+    st.log(ev.ts, 'charm', 'dropped', `⚡ ${ev.mob} charmed by someone else - not your pet`)
     return
   }
   const inst = st.world.charm(ev.mob, ev.ts)
@@ -134,7 +134,7 @@ function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
   // world model decides, `petNames` and the charm model are told.
   for (const gone of st.syncPetNames()) {
     st.charm.release(gone)
-    st.log(ev.ts, 'pet', 'info', `✕ ${gone} retired — one pet at a time; ${ev.name} is yours now`)
+    st.log(ev.ts, 'pet', 'info', `✕ ${gone} retired - one pet at a time; ${ev.name} is yours now`)
   }
 }
 
@@ -170,7 +170,7 @@ function ingestDeath(st: EngineState, ev: DeathEvent): void {
   if (res.retired) st.current?.ccActiveUntil.delete(res.retired.instanceId)
   const petNote = res.wasPet ? ' (pet)' : ''
   const ambNote = res.ambiguous ? ' ~ambiguous' : ''
-  st.log(ev.ts, 'death', 'info', `☠ ${ev.name} died${petNote}${ambNote} — ${res.reason}`)
+  st.log(ev.ts, 'death', 'info', `☠ ${ev.name} died${petNote}${ambNote} - ${res.reason}`)
 }
 
 /** epoch / zone / charm / petClaim / uncharm / cc / death. Returns true if consumed. */
@@ -507,7 +507,7 @@ function ingestSpecialAttack(st: EngineState, ev: SpecialAttackEvent): void {
   // verb and need no attribution; Slam — whose evidence refuses the claim, see specialAttacks.ts)
   // is still SEEN and still logged. Saying so is the honest report: the line was read and
   // deliberately not acted on.
-  const note = lane === undefined ? ' (no verb lane — label unchanged)' : ` (${lane} lane)`
+  const note = lane === undefined ? ' (no verb lane - label unchanged)' : ` (${lane} lane)`
   const from = ev.replaces === undefined ? '' : ` instead of ${ev.replaces}`
   st.log(ev.ts, 'special', 'info', `▸ special attack: ${ev.skill}${from}${note}`)
 }

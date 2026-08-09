@@ -100,7 +100,7 @@ function AaOverTimePanel({
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Typography variant="subtitle2">AA gained over time</Typography>
       <Typography variant="caption" color="text.secondary" gutterBottom display="block">
-        cumulative gain lines — includes points re-gained after a respec, so the final
+        cumulative gain lines - includes points re-gained after a respec, so the final
         value runs ahead of the {aaEarned.toLocaleString()} earned headline
       </Typography>
       <AreaChart points={drawn} color="#6fb3d2" chrome={chrome} />
@@ -140,7 +140,7 @@ function LevelOverTimePanel({
             <Box component="span" sx={{ color: SWAP_COLOR }}>
               dashed break
             </Box>{' '}
-            is a class swap — the level is re-reported for the new loadout, not lost
+            is a class swap - the level is re-reported for the new loadout, not lost
           </>
         ) : (
           'steps hold until the next ding'
@@ -302,7 +302,7 @@ function buildFeed(levels: readonly LevelPoint[], aas: readonly AAEvent[]): Feed
       ts: e.ts,
       kind: e.afterSwap ? 'swap' : 'level',
       label: e.afterSwap ? `Level ${e.level} (class swap)` : `Level ${e.level}`,
-      detail: e.afterSwap ? 'new loadout — level re-reported' : e.sinceMs != null ? `+${fmtDelta(e.sinceMs)}` : ''
+      detail: e.afterSwap ? 'new loadout - level re-reported' : e.sinceMs != null ? `+${fmtDelta(e.sinceMs)}` : ''
     })
   }
   for (const a of aas) {

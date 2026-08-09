@@ -213,9 +213,9 @@ function skillFacts(s: FlatSkill, multi?: AbilityMulti | null): string {
  * is where that detail lives here.
  */
 function skillTitle(s: SkillRow, catLabel: string): string {
-  const head = `${s.name} (${catLabel}) — ${skillFacts(s, s.multi)}`
+  const head = `${s.name} (${catLabel}) - ${skillFacts(s, s.multi)}`
   if (!s.children || s.children.length === 0) return head
-  const lines = s.children.map((c) => `  ${c.name} — ${skillFacts(c)}`)
+  const lines = s.children.map((c) => `  ${c.name} - ${skillFacts(c)}`)
   return `${head}\nBy skill:\n${lines.join('\n')}`
 }
 
@@ -283,7 +283,7 @@ function PetLine({ pet, pct, onDrill }: { pet: PetRow; pct: number; onDrill?: ()
       }
       right={`${formatRate(pet.dps)} · ${fmt(pet.total)}`}
       onClick={onDrill}
-      title={`${pet.name} (your pet) — ${facts.join(' · ')}`}
+      title={`${pet.name} (your pet) - ${facts.join(' · ')}`}
     />
   )
 }

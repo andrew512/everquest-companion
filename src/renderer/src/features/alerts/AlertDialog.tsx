@@ -372,7 +372,7 @@ export default function AlertDialog({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth data-testid="alert-dialog">
-      <DialogTitle>{editing ? `Edit alert — ${initial?.name}` : 'Add alert'}</DialogTitle>
+      <DialogTitle>{editing ? `Edit alert - ${initial?.name}` : 'Add alert'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField

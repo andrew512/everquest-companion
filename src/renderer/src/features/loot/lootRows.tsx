@@ -43,12 +43,12 @@ function DispositionChip({ disposition }: { disposition?: LootDisposition }): JS
  * so a `Sphinx Claw` row and a `Sphinx Claw +1` row show the same pooled estimate.
  */
 const InventoryEstimate = memo(function InventoryEstimate({ inv }: { inv?: InventoryRow }): JSX.Element {
-  if (!inv || inv.net <= 0) return <Box component="span" sx={{ color: 'text.disabled' }}>—</Box>
+  if (!inv || inv.net <= 0) return <Box component="span" sx={{ color: 'text.disabled' }}>-</Box>
   const parts: string[] = [`${inv.log} looted`]
   if (inv.inv > 0) parts.push(`${inv.inv} in the inventory export`)
   if (inv.consumed > 0) parts.push(`${inv.consumed} turned in (${inv.consumedBy.join(', ')})`)
   return (
-    <Tooltip title={`Estimate — ${parts.join(' · ')}`}>
+    <Tooltip title={`Estimate - ${parts.join(' · ')}`}>
       <Chip
         size="small"
         variant="outlined"
@@ -103,16 +103,16 @@ export const GroupedRow = memo(function GroupedRow({
         </Stack>
       </TableCell>
       <TableCell align="right" sx={g.invOnly ? { color: 'text.disabled' } : undefined}>
-        {g.invOnly ? '—' : g.count}
+        {g.invOnly ? '-' : g.count}
       </TableCell>
       <TableCell align="right">
         <InventoryEstimate inv={inv} />
       </TableCell>
-      <TableCell sx={{ color: 'text.secondary' }}>{g.topSource ?? '—'}</TableCell>
+      <TableCell sx={{ color: 'text.secondary' }}>{g.topSource ?? '-'}</TableCell>
       <TableCell align="right" sx={{ color: 'text.secondary' }}>
-        {g.zoneCount || '—'}
+        {g.zoneCount || '-'}
       </TableCell>
-      <TableCell sx={{ color: 'text.secondary' }}>{g.invOnly ? '—' : fmtTime(g.last)}</TableCell>
+      <TableCell sx={{ color: 'text.secondary' }}>{g.invOnly ? '-' : fmtTime(g.last)}</TableCell>
     </TableRow>
   )
 })
@@ -159,8 +159,8 @@ export const FlatRow = memo(function FlatRow({
           )}
         </Stack>
       </TableCell>
-      <TableCell sx={{ color: 'text.secondary' }}>{e.source ?? '—'}</TableCell>
-      <TableCell sx={{ color: 'text.secondary' }}>{e.zone ?? '—'}</TableCell>
+      <TableCell sx={{ color: 'text.secondary' }}>{e.source ?? '-'}</TableCell>
+      <TableCell sx={{ color: 'text.secondary' }}>{e.zone ?? '-'}</TableCell>
     </TableRow>
   )
 })

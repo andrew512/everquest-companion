@@ -65,8 +65,8 @@ function StatsTable({ stats, cls }: { stats: Record<string, BuffStat>; cls: Buff
           <TableCell align="right">estimate</TableCell>
           <TableCell align="right">n</TableCell>
           <TableCell align="right">median</TableCell>
-          <TableCell align="right">IQR (p25–p75)</TableCell>
-          <TableCell align="right">min–max</TableCell>
+          <TableCell align="right">IQR (p25-p75)</TableCell>
+          <TableCell align="right">min-max</TableCell>
         </TableRow>
       </TableHead>
       <TableBody>
@@ -93,10 +93,10 @@ function rowEstimate(s: BuffStat): { ms?: number | null; src?: string } {
 
 /** The estimate cell: the figure plus a chip naming where it came from. */
 function EstimateCell({ ms, src }: { ms?: number | null; src?: string }): JSX.Element {
-  if (ms == null) return <>—</>
+  if (ms == null) return <>-</>
   return (
     <Tooltip
-      title={src === 'db' ? 'The spell-database baseline' : 'From your logged casts — longer than the baseline'}
+      title={src === 'db' ? 'The spell-database baseline' : 'From your logged casts - longer than the baseline'}
     >
       <span>
         {fmtDuration(ms)}
@@ -133,10 +133,10 @@ function StatsRow({ s }: { s: BuffStat }): JSX.Element {
       </TableCell>
       <TableCell align="right">{fmtDuration(s.medianMs)}</TableCell>
       <TableCell align="right" style={{ opacity: 0.8 }}>
-        {s.p25 != null && s.p75 != null ? `${fmtDuration(s.p25)} – ${fmtDuration(s.p75)}` : '—'}
+        {s.p25 != null && s.p75 != null ? `${fmtDuration(s.p25)} - ${fmtDuration(s.p75)}` : '-'}
       </TableCell>
       <TableCell align="right" style={{ opacity: 0.65 }}>
-        {s.minMs != null && s.maxMs != null ? `${fmtDuration(s.minMs)} – ${fmtDuration(s.maxMs)}` : '—'}
+        {s.minMs != null && s.maxMs != null ? `${fmtDuration(s.minMs)} - ${fmtDuration(s.maxMs)}` : '-'}
       </TableCell>
     </TableRow>
   )

@@ -190,7 +190,7 @@ function DetectedChip({ offer, onApply }: { offer: ClassAbbr[]; onApply: () => v
         color="warning"
         variant="outlined"
         data-testid="planner-detected-chip"
-        label={`detected: ${offer.join(' ')} — apply`}
+        label={`detected: ${offer.join(' ')} - apply`}
         onClick={onApply}
         sx={{ flexShrink: 0 }}
       />

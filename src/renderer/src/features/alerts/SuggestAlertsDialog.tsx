@@ -136,7 +136,7 @@ function CreatedSnackbar({
       autoHideDuration={6000}
       onClose={onClose}
       anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      message={snack ? `Alert created — ${snack.name}` : ''}
+      message={snack ? `Alert created - ${snack.name}` : ''}
       action={
         <Button color="secondary" size="small" onClick={onUndo}>
           Undo

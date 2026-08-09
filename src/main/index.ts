@@ -201,7 +201,7 @@ if (!gotSingleInstanceLock) {
   void app.whenReady().then(() => {
     markStartupPhase('appReady')
     logInfo(
-      `[everquest-companion] Channel '${CHANNEL}' — userData ${USER_DATA}, error log ${errorLogPath()}`
+      `[everquest-companion] Channel '${CHANNEL}' - userData ${USER_DATA}, error log ${errorLogPath()}`
     )
     registerIpc()
     registerDevTriageIpc()
