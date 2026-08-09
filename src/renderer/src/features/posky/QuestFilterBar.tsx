@@ -100,6 +100,9 @@ export default function QuestFilterBar({
       <QuestPickers list={list} classes={classes} />
       <TextField
         size="small"
+        // The handle tests/e2e/sky-turnin.e2e.mts narrows the list with — the same
+        // `[data-testid="…"] input` idiom the two facet pickers already carry.
+        data-testid="posky-search"
         label="Search item / quest / reward"
         value={list.query}
         onChange={(e) => list.setQuery(e.target.value)}
