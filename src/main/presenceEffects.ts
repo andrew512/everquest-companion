@@ -94,8 +94,17 @@ function sendPoint(w: BrowserWindow, next: CursorPoint): void {
   w.webContents.send(IPC.onCursorPoint, next)
 }
 
-/** One cursor sample: read the pointer, convert to the ring window's own CSS px, send if it
- *  moved. Kept tiny on purpose — this is the only code in the app that runs at 125 Hz. */
+/**
+ * One cursor sample: read the pointer, convert to the ring window's own CSS px, send if it moved.
+ * Kept tiny on purpose — this is the only code in the app that runs at 125 Hz.
+ *
+ * BOTH READINGS ARE DIP — `screen.getCursorScreenPoint()` and the cached `getBounds()` origin —
+ * so the difference is a DIP offset, and it is a CSS pixel offset only while the ring window is
+ * drawn at zoom 1. That is not an assumption, it is pinned at the far end
+ * (`webFrame.setZoomLevel(0)` in src/preload/cursor.ts, JOS-154, with the measurement). No zoom
+ * arithmetic belongs in this function: it runs 125 times a second, and a division here would be
+ * paying per sample for a constant that is fixed at 1 for the life of the window.
+ */
 function sampleCursor(): void {
   const w = getCursorRingWindow()
   const origin = ringOrigin

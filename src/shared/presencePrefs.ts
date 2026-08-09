@@ -92,7 +92,8 @@ export interface CursorPoint {
 export interface CursorRingPrefs {
   /** Master switch. False ⇒ no ring window, no cursor poll, no presence watcher on its behalf. */
   enabled: boolean
-  /** Outer diameter of the ring, in CSS px (= DIP; the page and the window share one scale). */
+  /** Outer diameter of the ring, in CSS px (= DIP — the ring window is pinned at zoom 1 so that
+   *  identity holds; src/preload/cursor.ts, JOS-154). */
   sizePx: number
   /** Stroke width of the ring, in CSS px. Drawn INSIDE the diameter (border-box). */
   thicknessPx: number

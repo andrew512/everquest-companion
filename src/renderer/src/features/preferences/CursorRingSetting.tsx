@@ -53,8 +53,18 @@ function useCursorRing(): [CursorRingPrefs, (patch: Partial<CursorRingPrefs>) =>
   return [prefs, update]
 }
 
-/** A small live sample of the ring, so the sliders describe something you can see without
- *  alt-tabbing into the game. Same three shadows as the real thing (cursor.html). */
+/**
+ * A small live sample of the ring, so the sliders describe something you can see without
+ * alt-tabbing into the game. Same three shadows as the real thing (cursor.html).
+ *
+ * IT IS A SAMPLE, NOT A RULER, and one divergence is worth stating rather than rediscovering
+ * (JOS-154). This card is drawn in the MAIN window, which carries the app's text size
+ * (`uiScale`), while the ring window is pinned at zoom 1 so its CSS pixels stay DIPs — so at 125%
+ * this circle is 25% wider on screen than the halo the game gets. Left alone on purpose: a
+ * preview that shrank while the labels beside it grew would read as broken, and the number the
+ * player is actually choosing is on the slider's own label. The ring's POSITION, which is what
+ * the ticket was about, is fixed at the window that draws it.
+ */
 function RingPreview({ prefs }: { prefs: CursorRingPrefs }): JSX.Element {
   return (
     <div
