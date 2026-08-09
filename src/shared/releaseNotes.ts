@@ -125,6 +125,37 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.15.0',
+    date: '2026-08-09',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Text too small to read? Preferences - Text size scales the whole app window, from 90% up to 150%, and it stays that way the next time you open it. Your floating overlays keep their own size control.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The cursor ring can be any color you want. Preferences - Cursor ring has a color picker beside the size and thickness sliders, and the ring changes as you pick. It starts white, exactly as it was.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The Plane of Sky tab filters by island and by boss, right beside the class filter - pick Island 7 and see only what is left to do there. Your picks stick around like the other filters.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The add-alert editor keeps your work when you switch away from the app and back - the name, trigger, cooldown and spoken phrase all survive, and an alert you were editing no longer snaps back to how it was saved.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Loot page sort control can always be clicked - the item cards that used to open over the toolbar are gone, and the page carries far fewer hover cards overall.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.14.0',
     date: '2026-08-08',
     entries: [
@@ -148,16 +179,6 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         fromReport: true
       },
       {
-        kind: 'new',
-        text: 'Text too small to read? Preferences - Text size scales the whole app window, from 90% up to 150%, and it stays that way the next time you open it. Your floating overlays keep their own size control.',
-        fromReport: true
-      },
-      {
-        kind: 'new',
-        text: 'The cursor ring can be any color you want. Preferences - Cursor ring has a color picker beside the size and thickness sliders, and the ring changes as you pick. It starts white, exactly as it was.',
-        fromReport: true
-      },
-      {
         kind: 'changed',
         text: 'The combat meters are one surface now: Overview, the Combat tab and the overlay share the same clickable bars, and clicking an ability that has stats (crit, double and triple attack, misses) opens them right under its bar.'
       },
@@ -168,11 +189,6 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'changed',
         text: 'Turning usage analytics off now sends one final anonymous notice so opt-outs can be counted honestly; nothing further is ever sent after it.'
-      },
-      {
-        kind: 'fixed',
-        text: 'The add-alert editor keeps your work when you switch away from the app and back - the name, trigger, cooldown and spoken phrase all survive, and an alert you were editing no longer snaps back to how it was saved.',
-        fromReport: true
       },
       {
         kind: 'fixed',
