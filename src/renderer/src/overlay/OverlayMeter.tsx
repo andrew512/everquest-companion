@@ -227,8 +227,13 @@ export default function OverlayMeter(): JSX.Element {
       {/* …and since JOS-121 the pane's FLOOR carries the scope word that used to sit in the title
           bar: a low-contrast, click-through watermark in a band the bars are padded out of, still
           able to say the long 'Group (no roster yet)' that explains a widened meter. */}
+      {/* …and since JOS-138 the pane also carries the SCROLL GRIP: pinned, the strip along its
+          right edge takes the mouse while the rows overflow, so the wheel and the scrollbar both
+          work there and the rest of the body stays click-through (overlayScale.tsx). */}
       <MeterPane
         textScale={textScale}
+        locked={locked}
+        capture={capture}
         scope={{
           label: chipLabel(meterScope, roster),
           title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`

@@ -220,8 +220,13 @@ export default function HealMeter(): JSX.Element {
           pane is also where the text scale is applied; the chrome around it stays at 1. */}
       {/* JOS-121: the scope word is on this pane's FLOOR now, not in the title bar — same
           watermark, same reserved band, same helper as the damage meter (overlay/scopeFloor.tsx). */}
+      {/* JOS-138: pinned, the strip along the pane's right edge takes the mouse while the rows
+          overflow, so the wheel and the scrollbar work there and the rest of the body stays
+          click-through — the same grip the damage meter has (overlay/overlayScale.tsx). */}
       <MeterPane
         textScale={textScale}
+        locked={locked}
+        capture={capture}
         scope={{
           label: chipLabel(meterScope, roster),
           title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`

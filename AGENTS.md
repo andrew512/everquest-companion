@@ -1685,6 +1685,36 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   default) and it has NO SOUND of its own: the seeded boss/quest ALERTS speak
   on the same events, so the picker, `overlays.toast.sound|volume` and the
   `toast:sound` channel are all gone.
+- **SCROLLING AND CLICK-THROUGH CANNOT BOTH BE TRUE OF THE SAME PIXEL (JOS-138).**
+  A 0.14.0 report: pin an overlay and its scrollbar stops working. That was true
+  by construction. Pinned is `setIgnoreMouseEvents(true, {forward:true})`, and
+  `forward` forwards mouse MOVES and nothing else (Electron posts WM_MOUSEMOVE
+  from its WH_MOUSE_LL hook — there is no wheel in it); a wheel notch goes to
+  whatever the OS hit test finds under the cursor, which for a click-through
+  window is the game. So the wheel cannot arrive unless the window stops ignoring
+  the mouse for as long as it takes, and the owner's disposition (2026-08-09,
+  "we should allow scroll") is paid for in pixels: the **SCROLL GRIP**
+  (`SCROLL_GRIP_W`, overlay/overlayScale.tsx) is a 22px strip along the right
+  edge of a content pane — where the scrollbar is already drawn, so the
+  affordance is the bar the user is reaching for anyway. While the window is
+  LOCKED *and* the rows genuinely overflow, a forwarded move inside that strip
+  raises the P3 named-reason sensor (`capture('scroll', …)`, the fourth
+  CaptureReason) and the window takes the mouse for exactly the time the pointer
+  spends there. BOTH interactions come with it — the wheel, and DRAGGING THE BAR
+  — because the grip hands the real scrollbar real events instead of
+  re-implementing scrolling. NO new IPC and NO new mouse hook: it rides the
+  forwarding the meters already pay for. The rest of the body is untouched and
+  stays genuinely click-through, which is the whole point of pinning and is
+  asserted beside the scroll in `tests/e2e/overlayScrollSteps.mts` (the pointer
+  parked mid-pane must leave the grip idle and reveal no chrome). Honest limits,
+  stated: a pointer arriving at the bar from OUTSIDE the window's right border
+  can miss the strip, because the sensor is made of mouse-moves; and Windows
+  routes a wheel to the hovered window only while "scroll inactive windows when I
+  hover over them" is on (its default) — a pinned overlay is deliberately
+  non-focusable, so that setting is what carries the notch. The event log and the
+  buffs/debuffs windows need no grip: they hold capture over their WHOLE window
+  while hovered, which already carries the wheel and is the same trade taken at
+  the other extreme.
 - **THE BUFF/TIMER OVERLAY'S BAR IS A CLAIM, AND ITS ABSENCE IS THE HONEST HALF**
   (JOS-89, docs/plans/buff-timer-overlay.md — ten user reports, the loudest demand
   in the product's history; ships DEFAULT OFF for internal validation first). ONE

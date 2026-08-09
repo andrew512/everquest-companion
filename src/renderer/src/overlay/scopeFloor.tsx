@@ -30,6 +30,7 @@
 
 import type { JSX } from 'react'
 import { OverlayContent } from './overlayScale'
+import type { CaptureReason } from './useOverlayChrome'
 
 /**
  * The reserved strip at the bottom of the bars pane, in unscaled chrome pixels.
@@ -98,14 +99,24 @@ export function ScopeFloor({ label, title }: ScopeFloorText): JSX.Element {
  * reserved band, the testid the e2e measures the click-through contract on, and the watermark's
  * position are one decision, and JOS-115 already paid for the version of this where two files
  * each held their own copy of the scope readout.
+ *
+ * It also forwards the SCROLL GRIP (JOS-138) for the same reason: "a pinned meter scrolls at its
+ * right edge and passes clicks through everywhere else" is one contract, and the two meters may
+ * not hold two opinions about where that edge is.
  */
 export function MeterPane({
   textScale,
   scope,
+  locked,
+  capture,
   children
 }: {
   textScale: number
   scope: ScopeFloorText
+  /** pinned: the mode the grip exists in (overlayScale.OverlayContent) */
+  locked?: boolean
+  /** the named-reason sensor from useOverlayChrome */
+  capture?: (reason: CaptureReason, active: boolean) => void
   children: React.ReactNode
 }): JSX.Element {
   return (
@@ -121,7 +132,7 @@ export function MeterPane({
         paddingBottom: FLOOR_H
       }}
     >
-      <OverlayContent textScale={textScale} testId="overlay-bars">
+      <OverlayContent textScale={textScale} testId="overlay-bars" locked={locked} capture={capture}>
         {children}
       </OverlayContent>
       <ScopeFloor {...scope} />
