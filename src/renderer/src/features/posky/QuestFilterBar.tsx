@@ -146,18 +146,18 @@ export default function QuestFilterBar({
         label="Favorites only"
       />
       <Box sx={{ flexGrow: 1 }} />
-      <Tooltip title="Which source decides what you have.">
+      <Tooltip title="Which source decides what you have. An inventory export resets the count and loot since then adds to it, so an item you got rid of in game disappears when you reload. The log by itself counts everything you have ever looted, so it cannot see that.">
         <TextField
           select
           size="small"
           label="Count items from"
           value={countSource}
           onChange={(e) => onCountSource(e.target.value as CountSource)}
-          sx={{ minWidth: 170 }}
+          sx={{ minWidth: 190 }}
         >
-          <MenuItem value="log">Log (looted)</MenuItem>
-          <MenuItem value="inventory">Inventory export</MenuItem>
-          <MenuItem value="both">Both (max)</MenuItem>
+          <MenuItem value="log">Log (ever looted)</MenuItem>
+          <MenuItem value="inventory">Export, plus loot since</MenuItem>
+          <MenuItem value="both">Export if any, else log</MenuItem>
         </TextField>
       </Tooltip>
       <Tooltip title="Run /outputfile inventory in-game, then reload">

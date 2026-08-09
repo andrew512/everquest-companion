@@ -182,6 +182,62 @@ export interface UseProgressOptions {
   onQuestComplete?: (quest: PoskyQuest) => void
 }
 
+/** What the held-item fold hands back: the reconciled counts, the table rows, and recency. */
+interface HeldItems {
+  net: Record<string, number>
+  inventoryRows: InventoryRow[]
+  lastLootedAt: Record<string, number>
+}
+
+/**
+ * Everything derived from the loot ledger plus the loaded dump — the four folds and the
+ * reconcile, kept together because they are one derivation and split out of `useProgress`
+ * because that hook was at its factoring ceiling.
+ *
+ * The disposition → held-vs-gone rule lives in computeHeldCounts (heldCounts.ts, the ONE place
+ * counts derive — Tasks #40/#47): sold and combined rows are excluded, everything else
+ * (kept/currency/hoard/depot) counts, stacked loots count their stack size. Turn-in subtraction
+ * downstream (reconcile) operates on these held counts, so excluding sold there also keeps it
+ * from ever subtracting an item that was never held.
+ *
+ * THE ACCUMULATE HALF (JOS-128) is `logSince`: the same fold, narrowed to loot that happened
+ * AFTER the loaded dump was generated. `generatedAt` is written by main when it loads the dump
+ * (the log's own `Outputfile Complete:` receipt, else the file's mtime); undefined means no
+ * baseline is known, and reconcile then keeps its pre-JOS-128 behavior rather than guessing one.
+ */
+function useHeldItems(
+  lootHistory: LootEvent[],
+  progress: ProgressState | null,
+  countSource: CountSource
+): HeldItems {
+  const logCounts = useMemo(() => computeHeldCounts(lootHistory), [lootHistory])
+  const baselineTs = progress?.inventorySource?.generatedAt
+  const logSince = useMemo(
+    () => (baselineTs === undefined ? undefined : computeHeldCounts(lootHistory, baselineTs)),
+    [lootHistory, baselineTs]
+  )
+  const lootNames = useMemo(() => deriveLootNames(lootHistory), [lootHistory])
+  // Per-item drop recency, same counting key as the held counts — the whole plumbing the
+  // "most recent drop" sort needs, folded from the loot history that is already here.
+  const lastLootedAt = useMemo(() => computeLastLootedAt(lootHistory), [lootHistory])
+  // Reconcile held items (log + inventory), subtracting anything consumed by quests that have
+  // been turned in.
+  const { net, rows: inventoryRows } = useMemo(
+    () =>
+      reconcile({
+        log: logCounts,
+        inv: progress?.inventory ?? {},
+        ...(logSince ? { logSince } : {}),
+        lootNames,
+        countSource,
+        completedKeys: progress?.completedQuests ?? [],
+        quests: posky.quests
+      }),
+    [logCounts, logSince, lootNames, progress, countSource]
+  )
+  return { net, inventoryRows, lastLootedAt }
+}
+
 export function useProgress(opts?: UseProgressOptions): UseProgress {
   const [progress, setProgress] = useState<ProgressState | null>(null)
   const [character, setCharacter] = useState<string | null>(null)
@@ -272,34 +328,7 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
     setProgress(next)
   }, [])
 
-  // Counts + display names derived from the log (everything still HELD from looting).
-  // The disposition → held-vs-gone rule lives in computeHeldCounts (heldCounts.ts, the ONE
-  // place counts derive — Tasks #40/#47): sold and combined rows are excluded, everything
-  // else (kept/currency/hoard/depot) counts, stacked loots count their stack size. Turn-in
-  // subtraction downstream (reconcile) operates on these held counts, so excluding sold
-  // there also keeps it from ever subtracting an item that was never held.
-  const logCounts = useMemo<Record<string, number>>(() => computeHeldCounts(lootHistory), [lootHistory])
-
-  const lootNames = useMemo(() => deriveLootNames(lootHistory), [lootHistory])
-
-  // Per-item drop recency, same counting key as the held counts — the whole plumbing the
-  // "most recent drop" sort needs, folded from the loot history that is already here.
-  const lastLootedAt = useMemo(() => computeLastLootedAt(lootHistory), [lootHistory])
-
-  // Reconcile held items (log + inventory), subtracting anything consumed by
-  // quests that have been turned in.
-  const { net, rows: inventoryRows } = useMemo(
-    () =>
-      reconcile({
-        log: logCounts,
-        inv: progress?.inventory ?? {},
-        lootNames,
-        countSource,
-        completedKeys: progress?.completedQuests ?? [],
-        quests: posky.quests
-      }),
-    [logCounts, lootNames, progress, countSource]
-  )
+  const { net, inventoryRows, lastLootedAt } = useHeldItems(lootHistory, progress, countSource)
 
   const quests = useMemo<QuestProgress[]>(() => {
     if (!progress) return []

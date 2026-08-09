@@ -15,6 +15,7 @@ import type {
   VoicePrefs
 } from '../shared/types'
 import { clampTextScale } from '../shared/types'
+import type { InventorySource } from '../shared/outputs/baseline'
 import { normalizeVoicePrefs } from '../shared/speechText'
 import {
   normalizeCursorRing,
@@ -278,7 +279,7 @@ function setProgress(charId: string, next: ProgressState): ProgressState {
 export function setInventory(
   charId: string,
   counts: HeldCounts,
-  source: { path: string; loadedAt: string }
+  source: InventorySource
 ): ProgressState {
   return setProgress(charId, { ...getProgress(charId), inventory: counts, inventorySource: source })
 }
