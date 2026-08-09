@@ -16,6 +16,18 @@
 // `openLoot` (the Overview's drop rows). Keyed on the NONCE, exactly like the Mobs tab's target:
 // this view is remounted per character rebuild and unmounted whenever you leave the tab, so the
 // effect runs on arrival, and asking for the same item twice must open it twice.
+//
+// THIS LEDGER MOUNTS NO TOOLTIP POPPER (JOS-127, owner direction 2026-08-09). A 0.14.0 user could
+// not change the sort off "Last looted": the Sort select sits in the toolbar, and the surfaces
+// stacked directly under it — the notable-pickups chips and the first table rows — wore
+// `placement="top"`, INTERACTIVE hover cards (`lib/KnownItemTooltip`, up to 380px wide) that open
+// upward across the toolbar and, being interactive, hold `pointer-events: auto` while they are up.
+// The card was over the control and ate the click aimed at it. The fix is REMOVAL, not a timeout
+// or a placement flip: the app wants fewer tooltips, and none that can sit over an interactive
+// control. Same precedent, same reasoning as the nav's UpdateChip; `tests/tooltipCursor.test.mts`
+// pins both structurally, because "the popper cannot mount" is what "it cannot eat the click"
+// means. What the hover used to say is not lost — clicking a row (or a pickup chip) opens the
+// drill-down, which is where the item window and its quest/recipe knowledge live anyway.
 
 import { type JSX, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
@@ -51,7 +63,6 @@ import {
 } from './lootSort'
 import { NotablePickupsStrip, useNotableStrip } from './NotablePickupsStrip'
 import { useLootRows } from './useLootRows'
-import { Tooltip } from '../../lib/Tooltip'
 
 // The grouped table's order picker (JOS-91). Its own component so LootToolbar stays inside the
 // measured lines-per-function ceiling.
@@ -59,6 +70,9 @@ import { Tooltip } from '../../lib/Tooltip'
 // It is rendered ONLY when grouping is on, and that is a claim about honesty rather than about
 // clutter: ungrouped, the ledger is already a chronological one — newest first — so an order
 // picker there would be a control that either does nothing or lies about what it changed.
+//
+// It wears no tooltip (JOS-127): its "Sort" label and its own option names say everything the
+// removed sentence did, and this is the control the poppers above it were covering.
 function LootSortSelect({
   sort,
   setSort
@@ -67,23 +81,21 @@ function LootSortSelect({
   setSort: (v: LootSortKey) => void
 }): JSX.Element {
   return (
-    <Tooltip title="How the grouped rows are ordered. Favorites stay pinned on top.">
-      <TextField
-        select
-        size="small"
-        label="Sort"
-        value={sort}
-        onChange={(e) => setSort(e.target.value as LootSortKey)}
-        sx={{ minWidth: 160 }}
-        data-testid="loot-sort"
-      >
-        {LOOT_SORT_OPTIONS.map((o) => (
-          <MenuItem key={o.value} value={o.value}>
-            {o.label}
-          </MenuItem>
-        ))}
-      </TextField>
-    </Tooltip>
+    <TextField
+      select
+      size="small"
+      label="Sort"
+      value={sort}
+      onChange={(e) => setSort(e.target.value as LootSortKey)}
+      sx={{ minWidth: 160 }}
+      data-testid="loot-sort"
+    >
+      {LOOT_SORT_OPTIONS.map((o) => (
+        <MenuItem key={o.value} value={o.value}>
+          {o.label}
+        </MenuItem>
+      ))}
+    </TextField>
   )
 }
 
@@ -139,36 +151,32 @@ function LootToolbar({
       />
       {groupByItem && <LootSortSelect sort={sort} setSort={setSort} />}
       {groupByItem && invOnlyCount > 0 && (
-        <Tooltip title="Items your inventory export holds that you haven’t looted this epoch.">
-          <Chip
-            size="small"
-            variant={showInventoryOnly ? 'filled' : 'outlined'}
-            color={showInventoryOnly ? 'primary' : 'default'}
-            label={`+${invOnlyCount.toLocaleString()} in inventory only`}
-            onClick={onToggleInventoryOnly}
-          />
-        </Tooltip>
+        <Chip
+          size="small"
+          variant={showInventoryOnly ? 'filled' : 'outlined'}
+          color={showInventoryOnly ? 'primary' : 'default'}
+          label={`+${invOnlyCount.toLocaleString()} in inventory only`}
+          onClick={onToggleInventoryOnly}
+        />
       )}
       <Box sx={{ flexGrow: 1 }} />
-      <Tooltip title="Which source feeds the ‘In inventory’ estimate.">
-        <TextField
-          select
-          size="small"
-          label="Count from"
-          value={countSource}
-          onChange={(e) => setCountSource(e.target.value as CountSource)}
-          sx={{ minWidth: 150 }}
-        >
-          <MenuItem value="log">Log (looted)</MenuItem>
-          <MenuItem value="inventory">Inventory export</MenuItem>
-          <MenuItem value="both">Both (max)</MenuItem>
-        </TextField>
-      </Tooltip>
-      <Tooltip title="Run /outputfile inventory in-game, then reload">
-        <IconButton size="small" onClick={onReload}>
-          <RefreshIcon fontSize="small" />
-        </IconButton>
-      </Tooltip>
+      <TextField
+        select
+        size="small"
+        label="Count from"
+        value={countSource}
+        onChange={(e) => setCountSource(e.target.value as CountSource)}
+        sx={{ minWidth: 150 }}
+      >
+        <MenuItem value="log">Log (looted)</MenuItem>
+        <MenuItem value="inventory">Inventory export</MenuItem>
+        <MenuItem value="both">Both (max)</MenuItem>
+      </TextField>
+      {/* No tooltip (JOS-127) — the ACCESSIBLE name still says what it does, and an aria-label
+          mounts nothing that can cover the two selects it sits beside. */}
+      <IconButton size="small" aria-label="Reload inventory export" onClick={onReload}>
+        <RefreshIcon fontSize="small" />
+      </IconButton>
     </Stack>
   )
 }

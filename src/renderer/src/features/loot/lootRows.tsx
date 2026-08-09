@@ -2,13 +2,11 @@ import { type JSX, memo } from 'react'
 import { Box, Chip, Stack, TableCell, TableRow, Typography } from '@mui/material'
 import type { ItemKnowledge, LootDisposition, LootEvent } from '@shared/types'
 import { formatDateTime } from '../../lib/formatDate'
-import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
 import { FavoriteStar } from '../favorites/FavoriteStar'
 import type { InventoryRow } from '../inventory/reconcile'
 import { isQuestItem } from './lootItemData'
 import { KnowledgeBadge } from './KnowledgeBadge'
 import type { GroupRow } from './lootGrouping'
-import { Tooltip } from '../../lib/Tooltip'
 
 // Fixed dense-row height (px) for the windowed tables (MUI Table size="small").
 export const ROW_HEIGHT = 37
@@ -38,24 +36,25 @@ function DispositionChip({ disposition }: { disposition?: LootDisposition }): JS
  * the reconciled net held count (inventory/reconcile.ts): the active count source (looted
  * log and/or the last `/outputfile inventory` export) minus everything consumed by a
  * turned-in quest. The log cannot see bank deposits, destroys, trades or vendor sales that
- * happen off-camera, so it renders as a `~` chip like every other inferred value, with the
- * inputs spelled out in the tooltip. `+N` upgrade variants pool onto the base counting key,
- * so a `Sphinx Claw` row and a `Sphinx Claw +1` row show the same pooled estimate.
+ * happen off-camera, so it renders as a `~` chip like every other inferred value. `+N`
+ * upgrade variants pool onto the base counting key, so a `Sphinx Claw` row and a
+ * `Sphinx Claw +1` row show the same pooled estimate.
+ *
+ * IT USED TO SPELL THE INPUTS OUT IN A TOOLTIP, and does not any more (JOS-127). A popper on a
+ * table row opens over the NEXT row, and every row here is a control (clicking one takes the
+ * pane). The house convention already had the answer: one word, `est.`, beats a sentence — it
+ * is in the column header, and the toolbar's "Count from" select names the source. Which
+ * quests consumed how many still has a home, at full width, in the drill-down.
  */
 const InventoryEstimate = memo(function InventoryEstimate({ inv }: { inv?: InventoryRow }): JSX.Element {
   if (!inv || inv.net <= 0) return <Box component="span" sx={{ color: 'text.disabled' }}>-</Box>
-  const parts: string[] = [`${inv.log} looted`]
-  if (inv.inv > 0) parts.push(`${inv.inv} in the inventory export`)
-  if (inv.consumed > 0) parts.push(`${inv.consumed} turned in (${inv.consumedBy.join(', ')})`)
   return (
-    <Tooltip title={`Estimate - ${parts.join(' · ')}`}>
-      <Chip
-        size="small"
-        variant="outlined"
-        label={`~${inv.net}`}
-        sx={{ height: 18, fontSize: 11, color: 'text.secondary' }}
-      />
-    </Tooltip>
+    <Chip
+      size="small"
+      variant="outlined"
+      label={`~${inv.net}`}
+      sx={{ height: 18, fontSize: 11, color: 'text.secondary' }}
+    />
   )
 })
 
@@ -91,12 +90,14 @@ export const GroupedRow = memo(function GroupedRow({
       </TableCell>
       <TableCell>
         <Stack direction="row" spacing={1} alignItems="center">
-          {/* Hover = what it is + what it's for (fetched on open); click (the row) = deep dive. */}
-          <KnownItemTooltip name={g.item} knowledge={knowledge}>
-            <Box component="span">
-              {g.item}
-            </Box>
-          </KnownItemTooltip>
+          {/* The NAME is plain text (JOS-127). It used to anchor a `placement="top"`, interactive
+              item card, which on the rows nearest the top of the ledger opened straight across
+              the toolbar and held the pointer there. Click the row: the drill-down says all of
+              it, and is the surface that was always meant to. The testid is the handle
+              `loot-sort.e2e.mts` hovers to prove nothing opens there any more. */}
+          <Box component="span" data-testid="loot-item-name">
+            {g.item}
+          </Box>
           {posky && <Chip size="small" color="primary" variant="outlined" label="PoSky" />}
           <KnowledgeBadge knowledge={knowledge} isPosky={posky} />
           <DispositionChip disposition={g.disposition} />
@@ -144,11 +145,10 @@ export const FlatRow = memo(function FlatRow({
       <TableCell sx={{ color: 'text.secondary' }}>{fmtTime(e.ts)}</TableCell>
       <TableCell>
         <Stack direction="row" spacing={1} alignItems="center">
-          <KnownItemTooltip name={e.item} knowledge={knowledge}>
-            <Box component="span">
-              {e.count && e.count > 1 ? `${e.count} × ${e.item}` : e.item}
-            </Box>
-          </KnownItemTooltip>
+          {/* Plain text, same reason as GroupedRow above (JOS-127). */}
+          <Box component="span" data-testid="loot-item-name">
+            {e.count && e.count > 1 ? `${e.count} × ${e.item}` : e.item}
+          </Box>
           {posky && <Chip size="small" color="primary" variant="outlined" label="PoSky" />}
           <KnowledgeBadge knowledge={knowledge} isPosky={posky} />
           <DispositionChip disposition={e.disposition} />
