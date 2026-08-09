@@ -175,6 +175,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Cazic-Thule and Innoruuk keep their loot: the gods the log spells differently than the wiki now land on one page, with your drops and the wiki table together no matter how you got there.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'Camp out and your buff timers wait with you: the countdowns pick up where they left off when you log back in, instead of expiring while you were gone. Debuffs you landed keep burning down in world time, because the world does not log out with you.'
       }
     ]
