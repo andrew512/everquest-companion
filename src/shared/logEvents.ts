@@ -1064,6 +1064,50 @@ export interface SpecialAttackEvent extends LogEventBase {
 }
 
 /**
+ * A CLASS BECAME AVAILABLE AS A PRIMARY — `You have completed achievement: Primary Class Unlock
+ * - Paladin` (JOS-148). The one line the game prints that states an unlock outright, and
+ * therefore the only thing in this repo that can OBSERVE one rather than derive it.
+ *
+ * WHY IT EXISTS AT ALL, measured rather than assumed. The Sky class tests are supposed to unlock
+ * their class (external claim, eqlwiki Plane_of_Sky), so the obvious model is "all M turn-ins
+ * therefore unlocked". That model is INCOMPLETE, and the owner's own log is the counterexample:
+ * a full Sky turn-in circuit on 2026-08-09 (26 completed trades across 14 of the 16 givers)
+ * printed NOTHING but `You gain experience!` — no achievement, no reward line — while the ONE
+ * first-person unlock line in all 1,461,881 lines fired at `Welcome to level 11!` in a dungeon,
+ * for Paladin, on a character that had never handed a Sky giver anything. A class unlocks from
+ * the level-11 primary pick, from the free level-50 token and from a bought token, and none of
+ * those leaves a turn-in behind. So turn-ins are evidence of PROGRESS and this line is evidence
+ * of the ANSWER, and a tab that had only the first would call an unlocked class locked.
+ *
+ * SELF ONLY, and that is a choice rather than a limitation of the grammar. The third-person
+ * `<Name> has completed achievement: Primary Class Unlock - <Class>` does exist (3 lines,
+ * strangers) and stays `{kind:'unknown'}` deliberately: a stranger's unlock is not a fact about
+ * this character, and the only consumer asks what THIS character can play. Anchoring on
+ * `You have completed achievement: ` is also what makes the rule safe, because the classifier
+ * sees the message with its `[timestamp] ` prefix already stripped, so a chat line quoting the
+ * sentence begins with the speaker's name and can never reach it.
+ *
+ * THE CLASS NAME IS CARRIED VERBATIM (law 2: canonicalize at boundaries, display raw). Matching
+ * it to the bundled Sky data's spelling is the RENDERER's job, case-insensitively, because the
+ * parser has no business importing a quest catalog and a pre-translated name would put the
+ * alias in two places.
+ *
+ * MEASURED before it existed: all 155 lines of the achievement family (113 `You have completed
+ * achievement:` plus the reward/token siblings) parsed as `{kind:'unknown'}`, so this rule can
+ * neither shadow nor be shadowed by anything already in the cascade.
+ *
+ * WHAT THIS LINE CANNOT SAY, stated rather than papered over: no class in the owner's log is
+ * anywhere near a complete Sky set (best is 3 of 7), so nothing here witnesses a Sky-DRIVEN
+ * unlock. That the last turn-in prints this same line is a wiki claim, and the tab is written
+ * so it never has to be true.
+ */
+export interface ClassUnlockEvent extends LogEventBase {
+  kind: 'classUnlock'
+  /** the class as the client spelled it ('Paladin', 'Shadow Knight'), untranslated. */
+  className: string
+}
+
+/**
  * A WORN ITEM EFFECT ANNOUNCED ITSELF. TWO verified shapes, and a full-log sweep found no third
  * `Your <item> …` activation family:
  *
@@ -1307,6 +1351,9 @@ export type LogEvent =
   | SelfWhoEvent
   | SkillUpEvent
   | SpecialAttackEvent
+  // Beside the three statements-about-the-character above, because it is a fourth one: what
+  // this character is allowed to BE (JOS-148). Measured `{kind:'unknown'}` before it existed.
+  | ClassUnlockEvent
   | ItemActivateEvent
   | ItemMergeEvent
   | ItemMergeFailedEvent

@@ -29,6 +29,7 @@ import { ComboModule } from './combo'
 import { RosterModule } from './roster'
 import { LootModule } from './loot'
 import { TurnInsModule } from './turnins'
+import { ClassUnlocksModule } from './classUnlocks'
 import { KillsModule } from './kills'
 import { LevelingModule } from './leveling'
 import { ProgressionModule } from './progression'
@@ -79,6 +80,7 @@ export interface ModuleWiring {
   roster: RosterModule
   loot: LootModule
   turnIns: TurnInsModule
+  classUnlocks: ClassUnlocksModule
   kills: KillsModule
   progression: ProgressionModule
   leveling: LevelingModule
@@ -133,6 +135,11 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   const roster = new RosterModule()
   const loot = new LootModule()
   const turnIns = new TurnInsModule()
+  // WHICH CLASSES THIS CHARACTER MAY RUN AS A PRIMARY (JOS-148) — the observed half of the Sky
+  // tab's class-unlock reading, folded from the one line that states an unlock outright. Beside
+  // the turn-in ledger because the two are read together and neither is derivable from the other:
+  // a class unlocks from the level-11 pick or a token with no turn-in behind it at all.
+  const classUnlocks = new ClassUnlocksModule()
   const kills = new KillsModule()
   // Leveling analytics (docs/plans/leveling-analytics.md): the capped, range-queryable series
   // behind the drag-select stats panel. A SEPARATE module from leveling on purpose — LevelingSnap
@@ -190,6 +197,7 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
     roster,
     loot,
     turnIns,
+    classUnlocks,
     kills,
     progression,
     leveling,
@@ -212,6 +220,9 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
       roster,
       loot,
       turnIns,
+      // Position is free: it folds one line kind no other module reads, and nothing reads its
+      // state within a delivery. Beside turnIns because that is where a reader looks for it.
+      classUnlocks,
       kills,
       progression,
       leveling,
