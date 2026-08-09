@@ -28,6 +28,29 @@ import { errorRepeat } from './errorRepeat'
 const MAX_LOG_BYTES = 1_000_000 // ~1MB — rotate by truncation past this.
 const PREFIX = '[everquest-companion:error]'
 
+/**
+ * THE CAPTURE SITE, as a stack (JOS-111) — a location for the reports that have none.
+ *
+ * Most of what reaches this function has a stack of its own. A good deal does not and never did:
+ * a forwarded renderer console message is `{ level, message, source }`, a failed load is four
+ * fields about a URL, a rejected string is a string. Those used to reach the error report with an
+ * empty frame list, which made every one of them the SAME fingerprint — `hash('Error')` — so the
+ * loudest issues in the fleet were a single row nobody could act on.
+ *
+ * `Error.captureStackTrace(holder, logError)` is what makes this honest AND cheap to reason about:
+ * V8 drops every frame up to and INCLUDING `logError`, so the top frame is the caller — the real
+ * capture site — with no fixed depth to count and nothing to re-tune when a helper is inserted.
+ * It is not the throw site and the report never says it is (`frameOrigin: 'capture'`).
+ *
+ * It is a THUNK because `noteError` calls it only when the payload turned out to have no bundle
+ * frames of its own. Capturing a stack is the expensive part; the common error pays nothing.
+ */
+function captureSite(): string {
+  const holder: { stack?: string } = {}
+  Error.captureStackTrace(holder, logError)
+  return holder.stack ?? ''
+}
+
 let cachedPath: string | null = null
 
 /** Resolve (and memoize) `<userData>/errors.log`, creating userData if needed. */
@@ -91,7 +114,11 @@ export function logError(source: string, payload: unknown): void {
   // write that threw, while a report is about the ERROR and is worth having whether or not the
   // disk cooperated. `noteError` cannot throw (its whole body is guarded) and cannot re-enter
   // this function.
-  noteError(source, payload)
+  //
+  // THE CAPTURE SITE RIDES ALONG AS A THUNK (JOS-111): a payload with no stack of its own gets one
+  // synthesised from THIS call site, which is the difference between eighty-odd frameless sources
+  // sharing one fingerprint and each of them being its own issue. See `captureSite` above.
+  noteError(source, payload, Date.now(), captureSite)
 
   // THE REPEAT CAP (JOS-133), between the report and the sinks, and in that order for a reason:
   // the ERROR REPORT above is unaffected — it has its own per-fingerprint dedupe with an honest
