@@ -184,6 +184,20 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Mez, charm and slow timers learn your real durations: cast, let it run, and the bar uses what your log measured instead of a book number - upgraded ranks included, and each row now names the rank you cast. Charm itself finally has a countdown.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The overlays stopped guessing: a friendly spell on a groupmate or your pet never lands on the debuffs window, phantom buffs no longer appear on pets from spells someone else cast, and a bar that expired unseen quietly leaves instead of squatting at 0s.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The debuffs window puts whatever runs out soonest at the top, in one list across all your targets; a footer button groups by target instead if that is how you read it. Quick Buff casts are tracked too, and a charmed pet shows its buffs and its debuffs each in the right window.'
+      },
+      {
+        kind: 'fixed',
         text: 'Camp out and your buff timers wait with you: the countdowns pick up where they left off when you log back in, instead of expiring while you were gone. Debuffs you landed keep burning down in world time, because the world does not log out with you.'
       }
     ]
