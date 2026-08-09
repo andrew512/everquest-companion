@@ -16,23 +16,27 @@
 // `rangeStats`, and comes back to `All` with every rendered number byte for byte.
 
 import type { Page } from 'playwright-core'
-import { check, note, settle } from './appHarness.mjs'
+import { check, countOf, note, settle } from './appHarness.mjs'
 
 const TS_WINDOW = '[data-testid="leveling-slice-window"]'
+const LOOT_SLICE = '[data-testid="loot-slice"]'
+const LOOT_SUMMARY = '[data-testid="loot-summary"]'
+/** Narrowest first. Any of these is a real cut of the ledger; `custom` is not one until somebody
+ *  types two instants into it, so it is deliberately never a candidate. */
+const NARROW_ORDER = ['h1', 'h6', 'h24', 'd7', 'session', 'zone'] as const
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
   return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
 }
 
-/** The slice ids the control is offering. No SliceId carries a hyphen, which is what lets this
- *  drop the caption (`-window`) and the custom range's two inputs from the same prefix. */
-function offeredSlices(page: Page): Promise<string[]> {
-  return page.evaluate(() =>
-    Array.from(document.querySelectorAll('[data-testid^="leveling-slice-"]'))
-      .map((e) => (e.getAttribute('data-testid') ?? '').replace('leveling-slice-', ''))
-      .filter((id) => id.length > 0 && id !== 'window' && !id.includes('-'))
-  )
+/** The slice ids one surface's control is offering. No SliceId carries a hyphen, which is what
+ *  lets this drop the caption (`-window`) and the custom range's two inputs from the same prefix. */
+function offeredSlices(page: Page, prefix: string): Promise<string[]> {
+  return page.evaluate((p) =>
+    Array.from(document.querySelectorAll(`[data-testid^="${p}-"]`))
+      .map((e) => (e.getAttribute('data-testid') ?? '').replace(`${p}-`, ''))
+      .filter((id) => id.length > 0 && id !== 'window' && !id.includes('-')), prefix)
 }
 
 /**
@@ -42,7 +46,7 @@ function offeredSlices(page: Page): Promise<string[]> {
  * than re-implemented, so "byte for byte" means the same bytes here as it does over there.
  */
 export async function stepZoneSlice(page: Page, readDashboard: () => Promise<string>): Promise<void> {
-  if (!(await offeredSlices(page)).includes('zone')) {
+  if (!(await offeredSlices(page, 'leveling-slice')).includes('zone')) {
     note('this log has no zone line, so there is no current zone and the Zone preset is not offered')
     return
   }
@@ -65,4 +69,37 @@ export async function stepZoneSlice(page: Page, readDashboard: () => Promise<str
   await page.click('[data-testid="leveling-slice-all"]', { timeout: 10_000 })
   const restored = await settle(() => readDashboard(), (t) => t === allReadout, { timeoutMs: 8000 })
   check('returning to All restores every number, byte for byte', restored === allReadout)
+}
+
+/**
+ * THE SAME CONTROL ON THE LOOT LEDGER (JOS-130) — where it was asked for.
+ *
+ * Two claims, and the first is the owner's standing direction rather than a nicety: the ledger
+ * comes up on ALL TIME, so a reader who never touches this sees their whole history and the
+ * summary makes no claim about a slice. The second is the report itself — "what did I gain in
+ * totality vs this session" — which is why the sliced count is stated BESIDE the all-time one
+ * rather than replacing it, and why coming back to `All` has to restore the caption exactly.
+ */
+export async function stepLootSlice(page: Page): Promise<void> {
+  if (!check('the timeslice control is mounted on the Loot tab', (await countOf(page, LOOT_SLICE)) === 1)) return
+  const all = await textOf(page, LOOT_SUMMARY)
+  check('…and the ledger comes up on ALL TIME, hiding nothing', !all.includes('all time'), all.replace(/\s+/g, ' '))
+
+  const offered = await offeredSlices(page, 'loot-slice')
+  const narrow = NARROW_ORDER.find((id) => offered.includes(id))
+  if (!narrow) {
+    note(`this log defines no slice narrower than All — the ledger offers only [${offered.join(', ')}]`)
+    return
+  }
+  await page.click(`[data-testid="loot-slice-${narrow}"]`, { timeout: 10_000 })
+  const cut = await settle(() => textOf(page, LOOT_SUMMARY), (t) => t !== all, { timeoutMs: 8000 })
+  check(
+    `picking "${narrow}" states the sliced count BESIDE the all-time one`,
+    cut.includes('all time'),
+    cut.replace(/\s+/g, ' ')
+  )
+
+  await page.click('[data-testid="loot-slice-all"]', { timeout: 10_000 })
+  const back = await settle(() => textOf(page, LOOT_SUMMARY), (t) => t === all, { timeoutMs: 8000 })
+  check('…and All restores the whole ledger, caption and all', back === all, back.replace(/\s+/g, ' '))
 }

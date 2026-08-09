@@ -43,6 +43,10 @@
 // Imported from the transport module directly (types.ts re-exports the same names) — a shared
 // file importing the barrel it is part of would be a needless cycle.
 import type { ProgressionSnap } from './progressionTypes'
+// The MEMBERSHIP fold for the optional zone filter (JOS-130) — instance noise stripped, leading
+// article folded, separators normalized. It is NOT the row-grouping fold; see `RangeStatsArgs.
+// zoneKey` for why this file deliberately carries both.
+import { zoneKey } from './zones'
 
 /**
  * No exp / credited-kill / loot event for LONGER than this ⇒ idle.
@@ -230,8 +234,19 @@ export interface RangeStatsArgs {
   /** OPTIONAL seam. Absent ⇒ `combos: []`. */
   combo?: ComboSource
   /**
-   * RESTRICT EVERY NUMBER TO ONE ZONE (JOS-130) — a `zoneIdKey` fold, or null/absent for every
-   * zone, which is byte-identical to what this function has always done.
+   * RESTRICT EVERY NUMBER TO ONE ZONE (JOS-130) — a `shared/zones.zoneKey` fold, or null/absent
+   * for every zone, which is byte-identical to what this function has always done.
+   *
+   * TWO FOLDS, ON PURPOSE, AND THEY DO DIFFERENT JOBS. The `zones` ROWS are still grouped by
+   * `zoneIdKey` (trim + lowercase), because that is the identity `lootRates.ts` joins drops onto
+   * and a second answer there would orphan rows (rule 2). MEMBERSHIP is the coarser
+   * `zones.zoneKey`, which additionally strips the instance noise EQ Legends spells into the zone
+   * name (`Najena 4 (Refined)`, `The Ruins of Old Paineel - Solo 4`). That is not a loosening: a
+   * player asking for "this zone" means the PLACE, and a re-entry that changes the instance
+   * ordinal is the same camp — the leveling tab's band strip has merged exactly those bounces
+   * since JOS-71 for the same reason. So a filtered range can still hand back MORE THAN ONE row
+   * when the log spelled the place two ways, and each of those rows still joins by its own
+   * spelling, which is what keeps both contracts true at once.
    *
    * It is a filter on the range's zone SEGMENTS, applied before anything is folded, so the answer
    * is the same shape of answer over a smaller, non-contiguous stretch of the same instants:
@@ -268,8 +283,10 @@ interface Span {
  * them: `lootRates.ts` matches this character's loot events to the zone row whose ACTIVE TIME is
  * their rate's denominator, and a second "same zone?" answer there would silently orphan every
  * drop whose spelling the two folds disagreed about (world-model law 12's drift, in miniature).
- * Deliberately NOT the renderer's `mobZone.zoneKey`, which additionally strips instance noise:
- * these rows are keyed with THIS fold, so the join must use THIS fold.
+ * Deliberately NOT `zones.zoneKey`, which additionally strips instance noise: these rows are keyed
+ * with THIS fold, so the join must use THIS fold. That other fold is not absent from this file —
+ * since JOS-130 it decides MEMBERSHIP for the optional zone filter, which is a different question
+ * asked at a different moment (`RangeStatsArgs.zoneKey` states the whole argument).
  */
 export function zoneIdKey(name: string): string {
   return name.trim().toLowerCase()
@@ -323,16 +340,17 @@ function zoneSegments(snap: ProgressionSnap, t0: number, t1: number, only?: stri
   const headEnd = Math.min(n > 0 ? snap.zoneStart[0] : t1, t1)
   // The pre-first-zone remainder is a NAMED row (`unknown`) and a zone filter judges it like any
   // other: asking for one zone never quietly re-admits the stretch the log could not place.
-  if (headEnd > t0 && (only == null || only === UNKNOWN_ZONE)) {
+  if (headEnd > t0 && (only == null || only === zoneKey(UNKNOWN_ZONE))) {
     segs.push({ key: UNKNOWN_ZONE, name: UNKNOWN_ZONE, start: t0, end: headEnd })
   }
   // The last interval starting at/before t0 is the one we are inside when the range opens.
   for (let i = Math.max(0, upperBound(snap.zoneStart, t0) - 1); i < n && snap.zoneStart[i] < t1; i++) {
     const start = Math.max(snap.zoneStart[i], t0)
     const end = Math.min(snap.zoneEnd[i] === 0 ? t1 : snap.zoneEnd[i], t1)
-    const key = zoneIdKey(snap.zoneName[i])
-    if (end > start && (only == null || only === key)) {
-      segs.push({ key, name: snap.zoneName[i], start, end })
+    const name = snap.zoneName[i]
+    // Grouped by the ROW fold, admitted by the MEMBERSHIP fold — see `RangeStatsArgs.zoneKey`.
+    if (end > start && (only == null || only === zoneKey(name))) {
+      segs.push({ key: zoneIdKey(name), name, start, end })
     }
   }
   return segs

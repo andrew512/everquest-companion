@@ -60,7 +60,8 @@ export interface ScopedStats {
    *  need the range without the whole answer (the progress feed filters on it). */
   range: ScopeRange
   /**
-   * The ZONE half of the slice (JOS-130) — a `zoneIdKey` fold, or null for every zone. It rides
+   * The ZONE half of the slice (JOS-130) — a `shared/zones.zoneKey` fold, or null for every zone.
+   * It rides
    * on the scope for the same reason the range does: a consumer that filters its own rows (the
    * in-window drops panel, the progress feed) has to apply BOTH halves or it will describe a
    * different stretch of play than the numbers beside it.
@@ -139,7 +140,7 @@ export interface ScopeArgs {
    */
   range?: ScopeRange
   /**
-   * The slice's zone restriction — a `zoneIdKey` fold, or null for every zone. Handed straight to
+   * The slice's zone restriction — a `shared/zones.zoneKey` fold, or null. Handed straight to
    * `rangeStats`; nothing here interprets it, which is what keeps "one derivation" true.
    */
   zoneKey?: string | null

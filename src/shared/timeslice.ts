@@ -54,16 +54,30 @@
 //     `availableTimescales` is the authority; this module quotes its lengths).
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────
-// THE ZONE FOLD IS `zoneIdKey`, AND THAT IS NOT A FREE CHOICE. `rangeStats` groups its zone rows
-// with it and `lootRates.ts` rule 2 already joins on it; a slice that folded differently would
-// bucket drops under one key and their active time under another, which is world-model law 12's
-// drift in miniature. The consequence is STATED rather than hidden: EQ Legends spells instance
-// difficulty into the zone name ("Najena 4 (Refined)"), so an instance re-entry under a different
-// suffix is a DIFFERENT slice here — this control means the zone AS THE LOG NAMED IT, which is
-// also the only thing every denominator on these surfaces is bucketed by.
+// THE ZONE FOLD IS `shared/zones.zoneKey`, THE ONE THAT STRIPS INSTANCE NOISE — and this app now
+// carries TWO zone folds on purpose, doing two different jobs.
+//
+//   • MEMBERSHIP (this one): "is this the place I am standing in?" EQ Legends spells instance
+//     difficulty and selection into the zone name — `Najena 4 (Refined)`,
+//     `The Ruins of Old Paineel - Solo 4 (Refined)` — and 81 of the 344 real post-epoch zone
+//     intervals are bounces of the SAME camp. A player asking for "this zone" means the PLACE, so
+//     a re-entry that changed the ordinal has to stay in the slice. The leveling tab's band strip
+//     has merged exactly those bounces since JOS-71; this is the same rule applied to the numbers.
+//     MEASURED while writing the e2e: the deep-link fixture's current zone is literally
+//     `Nagafen's Lair - Solo 4 (Refined)`, so a trim-only fold is not a hypothetical here.
+//
+//   • JOINING (`zoneIdKey`, trim + lowercase): "which row does this drop belong to?"
+//     `rangeStats` groups its zone rows with it and `lootRates.ts` rule 2 joins drops onto them;
+//     a second answer THERE would bucket drops under one key and their active time under another,
+//     which is world-model law 12's drift in miniature. Untouched.
+//
+// The two coexist without drifting because they are applied at different moments: membership
+// admits a zone INTERVAL, the join then groups whatever was admitted by its own spelling. So a
+// zone-filtered range can hand back two rows when the log spelled the camp two ways, and each row
+// is still exactly the row its drops join onto.
 
 import type { ProgressionSnap } from './progressionTypes'
-import { zoneIdKey } from './progressionStats'
+import { zoneKey } from './zones'
 // The one spelling of "the stretch the log could not place" — `zoneSegments` names that row, and
 // `lootRates` joins onto it. Imported rather than re-spelled, for the same reason as the fold.
 import { UNKNOWN_ZONE } from './lootRates'
@@ -122,7 +136,8 @@ export interface Timeslice {
   /** How it is worded INSIDE a sentence ("no drops in ___"). One spelling per slice. */
   caption: string
   range: SliceRange
-  /** `zoneIdKey` fold of the zone this slice is restricted to, or null for every zone. */
+  /** The MEMBERSHIP fold (`shared/zones.zoneKey`) of the zone this slice is restricted to, or
+   *  null for every zone. See the header for why it is not the row-grouping fold. */
   zoneKey: string | null
   /** RAW display name of that zone (law 2: canonicalize at boundaries, display raw). */
   zoneName: string | null
@@ -167,7 +182,7 @@ export function currentZoneOf(snap: ProgressionSnap): { key: string; name: strin
   const n = snap.zoneName.length
   if (n === 0) return null
   const name = snap.zoneName[n - 1]
-  const key = zoneIdKey(name)
+  const key = zoneKey(name)
   return key === '' ? null : { key, name }
 }
 
@@ -300,5 +315,5 @@ export function resolveSlice(args: ResolveSliceArgs): Timeslice {
 export function inSlice(slice: Timeslice, ts: number, zone?: string): boolean {
   if (ts < slice.range.t0 || ts >= slice.range.t1) return false
   if (slice.zoneKey === null) return true
-  return zoneIdKey(zone ?? UNKNOWN_ZONE) === slice.zoneKey
+  return zoneKey(zone ?? UNKNOWN_ZONE) === slice.zoneKey
 }

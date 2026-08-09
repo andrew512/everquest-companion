@@ -52,6 +52,8 @@ import {
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+// The app-wide timeslice's loot half (JOS-130) — next door, like every other step module here.
+import { stepLootSlice } from './sliceSteps.mjs'
 
 const GRID = '[data-testid="overview-grid"]'
 const LOOT_LIST = '[data-testid="loot-list"]'
@@ -200,6 +202,9 @@ async function main(): Promise<void> {
     await stepNothingCoversSort(page, LOOT_NAME, 'first row’s item name')
     await stepNothingCoversSort(page, PICKUP, 'notable-pickups chip')
     await stepSortChanges(page)
+    // BEFORE the drill: that step takes the pane over and the ledger unmounts with it. The slice
+    // control is a ledger surface, and it must be read in the state a user first sees.
+    await stepLootSlice(page)
     await stepRowStillDrills(page)
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

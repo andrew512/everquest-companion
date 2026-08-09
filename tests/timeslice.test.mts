@@ -32,6 +32,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { rangeStats } from '../src/shared/progressionStats'
 import { windowItemRows } from '../src/shared/lootRates'
+import { zoneKey } from '../src/shared/zones'
 import type { LootEvent } from '../src/shared/types'
 import type { ProgressionSnap } from '../src/shared/progressionTypes'
 import {
@@ -262,7 +263,9 @@ test('the zone filter PARTITIONS the range — Σ over the zones is the whole of
   const { snap, lo, hi } = twoSessionSnap()
   const range = { t0: lo, t1: hi + TAIL_MS }
   const all = rangeStats({ snap, range })
-  const parts = all.zones.map((z) => rangeStats({ snap, range, zoneKey: z.zone.toLowerCase() }))
+  // Over the MEMBERSHIP fold's classes, which is what the control partitions the record into.
+  const keys = [...new Set(all.zones.map((z) => zoneKey(z.zone)))]
+  const parts = keys.map((k) => rangeStats({ snap, range, zoneKey: k }))
 
   const sum = (pick: (s: (typeof parts)[number]) => number): number => parts.reduce((n, p) => n + pick(p), 0)
   assert.equal(sum((p) => p.durationMs), all.durationMs, 'every millisecond of the range is in exactly one zone')
@@ -308,6 +311,44 @@ test('a zone-filtered rate divides by that ZONE own active time, never by the ra
   assert.equal(guk.zones.length, 1, 'one zone asked for, one row back')
   assert.equal(guk.zones[0].zone, 'Lower Guk', 'raw display name, first-seen casing')
   assert.equal(guk.zones[0].activeMs, guk.activeMs, 'the row and the range agree, by construction')
+})
+
+test('an INSTANCE RE-ENTRY is the same camp — the slice folds the tier and the selector away', () => {
+  // The shape EQ Legends really prints, and the reason the membership fold is not `zoneIdKey`:
+  // three spellings of one place, and a fourth zone in between that must NOT be swept in.
+  const snap = emptySnap()
+  addZone(snap, T0, "Nagafen's Lair - Solo 4 (Refined)")
+  for (let m = 0; m < 60; m++) addPull(snap, T0 + m * MIN, 1)
+  addZone(snap, T0 + HOUR, 'Befallen')
+  for (let m = 0; m < 60; m++) addPull(snap, T0 + HOUR + m * MIN, 1)
+  addZone(snap, T0 + 2 * HOUR, "The Nagafen's Lair - Solo 7 (Awakened)")
+  for (let m = 0; m < 60; m++) addPull(snap, T0 + 2 * HOUR + m * MIN, 1)
+  const bounds = { lo: T0, hi: snap.lastTs }
+
+  const slice = resolveSlice({ snap, bounds, id: 'zone' })
+  assert.equal(slice.zoneKey, "nagafen's lair", 'the ordinal, the tier and the article all fold away')
+  assert.equal(slice.zoneName, "The Nagafen's Lair - Solo 7 (Awakened)", 'but the CAPTION shows the raw name (law 2)')
+
+  const s = rangeStats({ snap, range: slice.range, zoneKey: slice.zoneKey })
+  assert.equal(s.kills, 120, 'both instances of the camp are counted, and Befallen is not')
+  // The first visit is a full hour; the second is still OPEN, so it runs to the end of the slice
+  // (the last pull at +2h59m, plus the tail millisecond) rather than to a fabricated exit.
+  assert.equal(s.durationMs, HOUR + 59 * MIN + TAIL_MS, 'and so is the time spent in each of them')
+  // The JOIN fold is untouched, so the two spellings stay two ROWS — each one still exactly the
+  // row `lootRates.itemZoneRows` joins that visit's drops onto (rule 2).
+  assert.equal(s.zones.length, 2, 'two spellings, two rows — membership is coarser than the join')
+
+  // …and the loot side folds identically, which is the whole point of one membership test.
+  const events: LootEvent[] = [
+    { ts: T0 + 10 * MIN, item: 'Mote', zone: "Nagafen's Lair - Solo 4 (Refined)" },
+    { ts: T0 + HOUR + 10 * MIN, item: 'Mote', zone: 'Befallen' },
+    { ts: T0 + 2 * HOUR + 10 * MIN, item: 'Mote', zone: "The Nagafen's Lair - Solo 7 (Awakened)" }
+  ]
+  assert.deepEqual(
+    events.filter((e) => inSlice(slice, e.ts, e.zone)).length,
+    2,
+    'the ledger admits both instances of the camp and neither of the neighbours'
+  )
 })
 
 test('a filter for a zone the range never held is empty rather than clamped onto its neighbour', () => {
