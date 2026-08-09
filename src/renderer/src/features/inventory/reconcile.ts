@@ -24,14 +24,6 @@ export interface ReconcileInput {
   log: Record<string, number>
   /** inventory-export counts keyed by lowercased item name */
   inv: Record<string, number>
-  /**
-   * Loot counts for everything looted AFTER the export was generated (JOS-128) — the same
-   * fold as `log`, narrowed by the dump's baseline instant. UNDEFINED means no baseline is
-   * known: either no dump has ever been loaded, or the store predates JOS-128 and has not
-   * been reloaded since. Its presence is what switches the dump-reading sources onto
-   * baseline-then-accumulate; absent, they behave exactly as they did before.
-   */
-  logSince?: Record<string, number>
   /** display names keyed by lowercased item name (from loot events) */
   lootNames: Record<string, string>
   countSource: CountSource
@@ -41,14 +33,6 @@ export interface ReconcileInput {
    * ate its items twice. Absent/0 means never turned in.
    */
   turnIns: Record<string, number>
-  /**
-   * The same counts, narrowed to turn-ins that happened strictly AFTER the loaded dump was
-   * generated (JOS-131 over JOS-128). It is consumed in exactly the branch that consumes
-   * `logSince`, and for the same reason: the dump already reflects every turn-in made before it
-   * was written, so subtracting those again would eat the copy you refarmed afterwards.
-   * UNDEFINED means no baseline is known and nothing is windowed.
-   */
-  turnInsSince?: Record<string, number>
   quests: PoskyQuest[]
 }
 
@@ -84,43 +68,45 @@ function foldInventoryByKey(
 /**
  * Base held count per key, per the active count source.
  *
- * THE DUMP IS A BASELINE (JOS-128, owner design). A loaded export RESETS what we think you
- * hold; log-derived loot then accumulates on top of it from the instant it was generated. So
- * the two dump-reading sources answer `export + looted since export`, and the deleted item a
- * 0.14.0 user reported is gone the moment they reload, because the dump no longer lists it and
- * nothing since re-added it.
+ * ============================================================================
+ * A DUMP ADDS, IT NEVER SUBTRACTS (JOS-141, owner ruling 2026-08-09).
+ * ============================================================================
  *
- * What each source means, and why 'both' changed:
- *   'log'       all-time looted, never consults the dump. Unchanged. It CANNOT see a deletion;
- *               that is what "ever looted" means, not a defect to paper over here.
- *   'inventory' the dump, plus loot since the dump.
- *   'both'      the same, when a dump is loaded; the all-time log when none is. It used to be
- *               `max(log, dump)` per item, and that maximum was precisely the never-resets
- *               behavior: the all-time log count outvoted the dump that no longer listed the
- *               item, so no reload could ever lower it. With accumulation there is nothing
- *               left for a maximum to rescue — a dump that lists the item plus everything
- *               looted since IS the higher, truer number.
+ * JOS-128 made a loaded dump the BASELINE: it reset the model to what the dump said and let the
+ * log accumulate from the generation instant forward. Field-testing Plane of Sky the same day
+ * killed it. An `/outputfile inventory` dump only covers WHAT WAS OPEN WHEN IT WAS GENERATED —
+ * the bank only if the bank window was up, the hoard likewise (the JOS-132 spike measured this,
+ * and shared/outputs/baseline.ts carries the evidence) — and the file never says which storages
+ * it spoke for. A reset reads all that silence as zero, so a routine reload made banked Sky items
+ * disappear from quests the player was actually ready to hand in.
  *
- * `logSince` undefined means no baseline is known, and then both dump-reading sources fall
- * back to their pre-JOS-128 behavior rather than guessing a start instant.
+ * So the combination is FULLY ADDITIVE again, and this is the whole rule:
+ *   'log'       all-time looted. Never consults the dump.
+ *   'inventory' the dump, exactly as written. Never consults the log.
+ *   'both'      `max(log, dump)` per item — whichever source can vouch for more copies.
+ *
+ * A maximum rather than a sum because the two sources OVERLAP: an item you looted and still have
+ * is in both, and adding them would double it. Max is the additive answer for overlapping
+ * witnesses — each source is a lower bound on what you hold, and the count is the best lower
+ * bound anyone can prove.
+ *
+ * THE ACCEPTED COST, stated rather than hidden (report P1EY74): a deletion is INVISIBLE. Destroy
+ * an item in game and no count goes down, because the log records the loot and never records the
+ * destruction (there is no such line — world-model law 6), and a dump that omits it cannot be
+ * told apart from a dump that never looked. The owner weighed that against banked items vanishing
+ * and chose this one: a count that is too high is a wrong number the user can see and reason
+ * about, and a count that is too low is work the user redoes for nothing.
  */
 function baseCounts(
   log: Record<string, number>,
   invByKey: Record<string, number>,
-  countSource: CountSource,
-  logSince?: Record<string, number>
+  countSource: CountSource
 ): Record<string, number> {
   const base: Record<string, number> = {}
-  for (const k of new Set([...Object.keys(log), ...Object.keys(invByKey), ...Object.keys(logSince ?? {})])) {
+  for (const k of new Set([...Object.keys(log), ...Object.keys(invByKey)])) {
     const l = log[k] ?? 0
     const i = invByKey[k] ?? 0
-    if (countSource === 'log') {
-      base[k] = l
-    } else if (logSince === undefined) {
-      base[k] = countSource === 'inventory' ? i : Math.max(l, i)
-    } else {
-      base[k] = i + (logSince[k] ?? 0)
-    }
+    base[k] = countSource === 'log' ? l : countSource === 'inventory' ? i : Math.max(l, i)
   }
   return base
 }
@@ -155,16 +141,96 @@ function questConsumption(
 }
 
 /**
- * Which turn-in counts this count source may subtract.
+ * ============================================================================
+ * THE TURN-IN WINDOW, RE-DECIDED UNDER ADDITIVE SEMANTICS (JOS-141).
+ * ============================================================================
  *
- * The rule is one line and it is the symmetry that makes the ledger add up: consumption is
- * windowed EXACTLY when the base is. A base of `dump + loot since the dump` already has every
- * pre-dump turn-in taken out of it (the items are simply not in the file), so only the turn-ins
- * since the baseline are still owed. A base of "everything ever looted" owes all of them.
+ * JOS-131 subtracted only the turn-ins made SINCE the dump was generated, whenever the count
+ * source read a dump. That window was a consequence of JOS-128's reset and nothing else: a base of
+ * `dump + loot since the dump` already had every pre-dump turn-in taken out of it, so subtracting
+ * them again would eat the copy you refarmed afterwards. With the reset gone the window has no
+ * argument left, and the generation instant it needed is no longer consulted anywhere.
+ *
+ * THE WINDOW MOVES FROM TIME TO SOURCE, and JOS-131's own argument is what moves it:
+ *
+ *   THE LOG is a record of what you have ever LOOTED. It still contains every item any turn-in
+ *   ever ate, because nothing removes a line from it. So a log-derived count owes EVERY turn-in,
+ *   all time. This is the default count source and the one the Sky refarm story runs on: loot the
+ *   claws, hand them in, the count drops back, and the next claw you farm shows.
+ *
+ *   THE DUMP is an observation of what you are HOLDING. Anything a turn-in ate is already not in
+ *   it, whenever that turn-in happened, because the file was written after all of them. So a
+ *   dump-derived count owes NOTHING. Subtracting there is double-subtraction, and it fails in the
+ *   exact direction this ticket exists to stop: items the player still owns, quietly gone.
+ *
+ * So each witness is discounted on its own terms and the sources combine as they always do:
+ *
+ *   'log'        max(0, log - consumed)
+ *   'inventory'  dump, untouched
+ *   'both'       max(dump, max(0, log - consumed))
+ *
+ * WHY DISCOUNT-THEN-MAX RATHER THAN MAX-THEN-DISCOUNT: the second is not monotone in your own
+ * loot. With a dump of 5, a quest that ate 2 and a log of 4, `max(4,5) - 2` reads 3; loot one more
+ * claw and the log wins the max, so the same expression reads 3 again but a further one drops the
+ * answer BELOW where it sat. A count that falls when you loot something is indefensible on a
+ * screen whose whole job is "how close am I". Discounting first cannot do that: each witness is
+ * monotone, and a maximum of monotone witnesses is monotone.
+ *
+ * The row's `consumed` is therefore what the turn-ins ACTUALLY took off this row (`base - net`),
+ * not the gross `required x times`. Those differ exactly when a witness had less than the
+ * turn-ins ate, or when the dump floor rescued the row, and reporting the gross figure there
+ * would describe a subtraction that did not happen. `net === base - consumed` always.
  */
-function turnInCounts(input: ReconcileInput): Record<string, number> {
-  const windowed = input.countSource !== 'log' && input.logSince !== undefined
-  return (windowed ? input.turnInsSince : undefined) ?? input.turnIns
+function netCount(
+  countSource: CountSource,
+  log: number,
+  inv: number,
+  consumed: number
+): number {
+  const fromLog = Math.max(0, log - consumed)
+  if (countSource === 'log') return fromLog
+  if (countSource === 'inventory') return inv
+  return Math.max(inv, fromLog)
+}
+
+/** Everything the row build reads, gathered so it travels as one argument. */
+interface RowInputs {
+  log: Record<string, number>
+  invByKey: Record<string, number>
+  base: Record<string, number>
+  consumed: Record<string, number>
+  consumedBy: Record<string, string[]>
+  nameByKey: Record<string, string>
+  countSource: CountSource
+}
+
+/** Apply `netCount` per key and emit the table rows, sorted by what you actually hold. */
+function buildRows(x: RowInputs): ReconcileResult {
+  const net: Record<string, number> = {}
+  const rows: InventoryRow[] = []
+  for (const k of new Set([...Object.keys(x.base), ...Object.keys(x.consumed)])) {
+    const l = x.log[k] ?? 0
+    const i = x.invByKey[k] ?? 0
+    const b = x.base[k] ?? 0
+    const n = netCount(x.countSource, l, i, x.consumed[k] ?? 0)
+    // What the turn-ins actually cost this row. Zero under a dump-reading source the dump itself
+    // answered, which is the whole point of the rule above.
+    const spent = b - n
+    net[k] = n
+    if (b === 0 && spent === 0) continue
+    rows.push({
+      key: k,
+      name: x.nameByKey[k] ?? k,
+      log: l,
+      inv: i,
+      base: b,
+      consumed: spent,
+      net: n,
+      consumedBy: spent > 0 ? (x.consumedBy[k] ?? []) : []
+    })
+  }
+  rows.sort((a, b) => b.net - a.net || a.name.localeCompare(b.name))
+  return { rows, net }
 }
 
 /**
@@ -174,33 +240,12 @@ function turnInCounts(input: ReconcileInput): Record<string, number> {
  * items twice.
  */
 export function reconcile(input: ReconcileInput): ReconcileResult {
-  const { log, inv, logSince, lootNames, countSource, quests } = input
+  const { log, inv, lootNames, countSource, quests } = input
 
   const nameByKey: Record<string, string> = { ...lootNames }
   const invByKey = foldInventoryByKey(inv, nameByKey)
-  const base = baseCounts(log, invByKey, countSource, logSince)
-  const { consumed, consumedBy } = questConsumption(quests, turnInCounts(input), nameByKey)
+  const base = baseCounts(log, invByKey, countSource)
+  const { consumed, consumedBy } = questConsumption(quests, input.turnIns, nameByKey)
 
-  const net: Record<string, number> = {}
-  const allKeys = new Set([...Object.keys(base), ...Object.keys(consumed)])
-  const rows: InventoryRow[] = []
-  for (const k of allKeys) {
-    const b = base[k] ?? 0
-    const c = consumed[k] ?? 0
-    const n = Math.max(0, b - c)
-    net[k] = n
-    if (b === 0 && c === 0) continue
-    rows.push({
-      key: k,
-      name: nameByKey[k] ?? k,
-      log: log[k] ?? 0,
-      inv: invByKey[k] ?? 0,
-      base: b,
-      consumed: c,
-      net: n,
-      consumedBy: consumedBy[k] ?? []
-    })
-  }
-  rows.sort((a, b) => b.net - a.net || a.name.localeCompare(b.name))
-  return { rows, net }
+  return buildRows({ log, invByKey, base, consumed, consumedBy, nameByKey, countSource })
 }

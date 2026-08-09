@@ -27,19 +27,19 @@
 // shape; it is stated rather than hidden.
 //
 // THE LEGACY FLOOR. A store written before JOS-131 has `completedQuests` and no instants. Such a
-// completion is real but UNDATED, so it contributes a FLOOR OF ONE to the all-time count and
-// NOTHING to the since-the-dump count — an undated event cannot be placed after a baseline, and
-// placing it there anyway is the invention law 1 forbids. `completedQuests` keeps being written
-// as the downgrade mirror (see shared/types.ts).
+// completion is real but UNDATED, so it contributes a FLOOR OF ONE to the count and nothing else.
+// `completedQuests` keeps being written as the downgrade mirror (see shared/types.ts).
 //
-// WHY "SINCE" EXISTS AT ALL — the refarm case, and it is the ticket's own scenario. Under a
-// count source that reads the dump, the base is `dump + loot since the dump` (JOS-128). The dump
-// ALREADY reflects every turn-in made before it was generated: those items are simply not in it.
-// Subtracting them again eats the copy you refarmed afterwards, so the quest you just re-ran
-// reads 0/5 with the new claw in your bag. So consumption is windowed exactly when the base is:
-// same instant, same `isSinceBaseline` rule, one ledger on each side.
+// THERE IS NO "SINCE THE DUMP" COUNT ANY MORE (JOS-141). This file used to report a second count
+// — how many turn-ins landed after the loaded dump was generated — because JOS-128 made a dump
+// load RESET the held-count model, and a base of `dump + loot since the dump` already had every
+// pre-dump turn-in taken out of it. The owner reverted the reset on 2026-08-09 after field-testing
+// (a dump only covers what was open when it was written, so resetting to it ate banked Sky items),
+// and the window went with it. Consumption is now windowed by SOURCE instead of by instant: the
+// log owes every turn-in, a dump owes none, and the whole argument lives at the one place that
+// applies it (renderer/features/inventory/reconcile.ts). One count, all time, is all this ledger
+// has to answer.
 
-import { isSinceBaseline } from './outputs/baseline'
 import type { ProgressState } from './types'
 
 /** Quest key → the epoch-ms instants that quest was turned in, ascending and deduped. */
@@ -94,25 +94,17 @@ export interface QuestTurnIns {
   instants: TurnInInstants
   /** key → how many times it has been turned in, all time (a legacy completion floors this at 1) */
   all: Record<string, number>
-  /**
-   * key → how many of those happened strictly after the inventory dump was generated. UNDEFINED
-   * when no baseline is known, exactly like `computeHeldCounts`'s `since`: no baseline means no
-   * window, not a window starting at zero.
-   */
-  since?: Record<string, number>
 }
 
 /**
  * THE one place a turn-in count is decided. Merges the log's detected instants with the persisted
- * ones, floors the count at 1 for a legacy `completedQuests` entry, and (when a baseline is known)
- * states how many of them land after it.
+ * ones and floors the count at 1 for a legacy `completedQuests` entry.
  *
  * `detected` is keyed the same way everything else here is: the canonical `Class::Name` quest key.
  */
 export function resolveTurnIns(
   progress: Pick<ProgressState, 'questTurnIns' | 'completedQuests'> | null,
-  detected: TurnInInstants,
-  baselineTs?: number
+  detected: TurnInInstants
 ): QuestTurnIns {
   const stored = storedTurnIns(progress)
   const legacy = new Set(progress?.completedQuests ?? [])
@@ -122,14 +114,11 @@ export function resolveTurnIns(
   }
 
   const all: Record<string, number> = {}
-  const since: Record<string, number> = {}
   for (const key of new Set([...Object.keys(instants), ...legacy])) {
-    const list = instants[key] ?? []
     // The legacy floor: a pre-JOS-131 completion is one real turn-in with no instant attached.
-    all[key] = Math.max(list.length, legacy.has(key) ? 1 : 0)
-    since[key] = list.filter((ts) => isSinceBaseline(ts, baselineTs)).length
+    all[key] = Math.max((instants[key] ?? []).length, legacy.has(key) ? 1 : 0)
   }
-  return baselineTs === undefined ? { instants, all } : { instants, all, since }
+  return { instants, all }
 }
 
 /**
