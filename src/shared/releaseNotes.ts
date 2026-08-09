@@ -154,6 +154,14 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'The cursor ring stays centered on your pointer at every text size - the app window zoom no longer leans on the ring.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A mob that dies takes its debuff bars with it no matter who landed the kill - your charm pet, a damage-over-time, or another player - even when the killer and the killed share a name.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A debuff whose end you never saw - you died, you zoned, the fight dissolved - leaves within a minute of running out instead of squatting at 0s for its whole stated duration again.'
       }
     ]
   },
