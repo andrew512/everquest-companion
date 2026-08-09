@@ -4,6 +4,7 @@
 // here holds state, so it is safe to import from any of the buffs modules.
 
 import { spellCanonKey } from '../log/parser'
+import { RECONNECT_WINDOW_MS } from '../log/sessionDetector'
 import type { EntityDisposition } from '../combat/entityRules'
 
 /** Land a pending cast this many ms after castBegin if nothing cleared it first. */
@@ -16,10 +17,32 @@ export const LAND_TIMEOUT_MS = 15_000
 export const MAX_SAMPLE_MS = 3 * 60 * 60_000 // 3 hours
 
 /**
- * Session-gap boundary (Task #33, finding #5). An event-time gap ≥ this = logout/AFK past
- * any buff duration → ALL actives cleared + open casts censored + pets retired.
+ * LOG-HOLE boundary (Task #33, finding #5; re-read by JOS-134). An event-time gap ≥ this means
+ * the character stopped producing log lines for half an hour, which is a claim about the LOG and
+ * not yet a claim about the world.
+ *
+ * It used to be read as "logout/AFK past any buff duration" and wiped every live instance on the
+ * spot. That is what made the ticket's defect: a hole is followed, 0-22 s later, by the reconnect
+ * preamble and then `Welcome to EverQuest Legends!`, so the wipe always ran BEFORE the derived
+ * `offlineGap` that explains it — and the buff EQ had frozen with your character was gone by the
+ * time anything could pause it. So the hole now only OPENS a question (`BuffsModule` holds the
+ * pre-hole buffs, unswept, and stops there); {@link LOGIN_CONFIRM_MS} is how long it waits for the
+ * answer.
  */
 export const SESSION_GAP_MS = 30 * 60_000 // 30 minutes
+
+/**
+ * How long a log hole waits to be explained by a login before it is ruled UNEXPLAINED and the
+ * pre-hole buffs are dropped after all (JOS-134).
+ *
+ * It is deliberately the detector's OWN {@link RECONNECT_WINDOW_MS} rather than a second number:
+ * that window is the measured span of the reconnect preamble (longest observed 22 s over all 19
+ * logins in the real log — see sessionDetector.ts), and the two constants are answering the same
+ * question from opposite ends. The detector looks BACK from the Welcome to find the last instant
+ * the character was in the world; this looks FORWARD from the hole for the Welcome. Sharing the
+ * constant is what makes it impossible for them to disagree about how long a preamble can be.
+ */
+export const LOGIN_CONFIRM_MS = RECONNECT_WINDOW_MS
 
 /** Active-buff HYGIENE cap (Task #33, finding #6). An active past this auto-retires. */
 const HYGIENE_ABSOLUTE_MS = 90 * 60_000 // 90 minutes when no/low stats
@@ -80,13 +103,26 @@ export interface OpenCast {
   /** The entity disposition this cast is bound to (for censoring on zone/death). */
   disp: EntityDisposition
   /**
-   * True once an `offlineGap` has passed over this open cast. The instance SURVIVES (EQ
-   * saves buffs across a camp and resumes their timers on login — measured, see
-   * BuffInstances.onOfflineGap), but its eventual land→fade span is no longer a clean
-   * observation of the spell's duration: it is stretched by an absence we only know to
-   * within ~30s. Such a sample is CENSORED rather than corrected — world-model law 5's
-   * recency-weighted MAX is chosen precisely because it is sensitive to over-long samples,
-   * and our offline estimate is a lower bound, so any correction would bias the MAX upward.
+   * True once an `offlineGap` has passed over this open cast — set for a BUFF and a DEBUFF
+   * alike, which is the whole of JOS-134's learner rule. The instance itself survives; what is
+   * refused is the SAMPLE, because neither half of the pair is a clean observation of a
+   * duration once an absence sits inside it:
+   *
+   *   • A BUFF's clock was PAUSED (EQ freezes buffs with your character and resumes them at
+   *     login — measured, see BuffInstances.onOfflinePause). Its land→fade span therefore
+   *     contains frozen time that is not duration at all.
+   *   • A DEBUFF's clock was NOT paused (the world kept running), so arithmetically its span
+   *     IS world time. It is still refused, for a different reason stated separately because
+   *     it is a different reason: the wear-off LINE only exists while you are logged in, so a
+   *     fade that prints after an absence dates the moment you were there to SEE it, not the
+   *     moment the spell ended. It is an upper bound on the expiry, not the expiry.
+   *
+   * Both errors point the same way — too LONG — and world-model law 5's estimator is a
+   * recency-weighted MAX, chosen precisely because it is sensitive to over-long samples. And
+   * neither is correctable: `offlineGap.fromTs` is documented as a LOWER bound on the absence
+   * (up to 30 s of real in-world time is discarded with the reconnect preamble), so subtracting
+   * the gap exactly is not something we are in a position to do — the subtraction would leave a
+   * residue of up to 30 s in the same upward direction. CENSOR, never correct.
    */
   spannedGap?: boolean
 }

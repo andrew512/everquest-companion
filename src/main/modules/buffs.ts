@@ -10,6 +10,8 @@
 //     and every mutation + censoring path over them.
 //   • buffsStats.ts     — per-SPELL learned knowledge: duration samples, class, recency, DB.
 //   • buffsEntities.ts  — the pet/charm/target identity slots (the who/what).
+//   • buffsSession.ts   — the last-seen clock and the LOG-HOLE question: did the character log
+//     out (their buffs freeze) or did we lose the thread (their buffs are stale)?
 //   • buffsView.ts / buffsShapes.ts — the ActiveBuff projection and the shared constants.
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,6 +99,7 @@ import { charmedPetDiesOnDeathLine } from '../combat/entityRules'
 import { BuffInstances } from './buffsInstances'
 import { PetEntities } from './buffsEntities'
 import { SpellStats } from './buffsStats'
+import { SessionFrame } from './buffsSession'
 import {
   EMOTE_MIN_OBSERVATIONS,
   EMOTE_WINDOW_MS,
@@ -106,7 +109,6 @@ import {
   QUICK_BUFF,
   QUICK_BUFF_WINDOW_MS,
   SELF_KEY,
-  SESSION_GAP_MS,
   spellKey
 } from './buffsShapes'
 
@@ -141,8 +143,8 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
   // ── emote learning (Task #33): recognize real landing-emote TEXTS ──
   private emoteTextCount = new Map<string, number>()
 
-  // ── session-gap tracking (Task #33, finding #5) ──
-  private lastEventTs = 0
+  /** Last-seen clock + the log-hole question (Task #33, finding #5; deferred by JOS-134). */
+  private readonly frame = new SessionFrame()
 
   /**
    * The observed-message overlay miner (Task #36). Mines (message, spell) associations from
@@ -220,7 +222,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.inst.reset()
     this.stats.reset()
     this.emoteTextCount = new Map()
-    this.lastEventTs = 0
+    this.frame.reset()
     this.quickBuffTs = 0
     this.permanentIllusionOwnedTs = undefined
     this.castHistory = new Map()
@@ -291,14 +293,15 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     // duration and its cast messages are identical across a rebirth, so re-learning them from
     // zero would needlessly cold-start the model. Only the live who/what/when clears.
     if (ev.kind === 'epoch') {
+      this.frame.closeHole()
       this.clearAllForGap()
       return
     }
     // OFFLINE GAP (login/logout): the character was out of the world, and EQ PAUSES buff
-    // timers while it is — verified against the real log, see BuffInstances.onOfflineGap for
-    // the evidence lines. Shift every surviving instance's clock by the absence so countdowns
-    // resume where they stopped instead of reading as long-expired, and mark their open casts
-    // so the stretched land→fade span never becomes a duration sample (law 5).
+    // timers while it is — verified against the real log, see BuffInstances.onOfflinePause for
+    // the evidence lines and for why DEBUFF clocks are pointedly NOT paused. This is also the
+    // event that ANSWERS an open log hole (JOS-134): the hole asked "did the character leave?",
+    // and a derived gap is the log saying yes.
     //
     // It is a DERIVED event (sessionDetector.ts), so the bus drains it immediately after its
     // `sessionStart` has finished reaching every listener — and therefore BEFORE the
@@ -311,7 +314,11 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     // `lastEventTs` is NOT advanced: the gap restates the Welcome's instant, which the
     // Welcome itself already recorded as a primary event.
     if (ev.kind === 'offlineGap') {
-      this.inst.onOfflineGap(ev.toTs - ev.fromTs)
+      this.frame.closeHole()
+      this.inst.onOfflinePause(ev.fromTs, ev.toTs - ev.fromTs)
+      // A logout despawns your pet, so the bindings go even though the buffs on YOU stay. The
+      // instances bound to those entities are censored by the zone line that follows the login.
+      this.pets.clearForGap()
       return
     }
     // Record the primary event's identity so any buffExpired we synthesize while folding it is
@@ -319,12 +326,9 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.curSeq = ev.seq
     this.curTs = ev.ts
     this.curLive = live
-    if (this.lastEventTs > 0 && ev.ts - this.lastEventTs >= SESSION_GAP_MS) {
-      this.clearAllForGap()
-    }
-    this.lastEventTs = ev.ts
+    this.holeRuling(this.frame.observe(ev))
     this.inst.dropUnconfirmedPending(ev.ts)
-    this.inst.sweepHygiene(ev.ts)
+    this.inst.sweepHygiene(ev.ts, this.frame.heldBeforeTs)
 
     // Observed-message overlay mining (Task #36): feed the anchor cast + any candidate
     // message line so the miner accretes (message, spell) associations across replay + live.
@@ -602,9 +606,22 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     }
   }
 
+  /**
+   * A log hole that no login ever explained (SessionFrame has the whole argument). We lost the
+   * thread rather than the character having left, so what was standing when it opened goes, and
+   * the pet bindings with it — the same blanket clear this used to do the moment a hole appeared.
+   * `null` is the ordinary case: no hole, or one still waiting for its answer.
+   */
+  private holeRuling(unexplainedBefore: number | null): void {
+    if (unexplainedBefore === null) return
+    this.inst.dropPredating(unexplainedBefore)
+    this.pets.clearForGap()
+  }
+
   onTick(nowMs: number): void {
+    this.holeRuling(this.frame.tick(nowMs))
     this.inst.dropUnconfirmedPending(nowMs)
-    this.inst.sweepHygiene(nowMs)
+    this.inst.sweepHygiene(nowMs, this.frame.heldBeforeTs)
   }
 
   /**
