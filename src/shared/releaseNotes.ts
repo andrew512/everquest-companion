@@ -166,6 +166,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'A debuff whose end you never saw - you died, you zoned, the fight dissolved - leaves within a minute of running out instead of squatting at 0s for its whole stated duration again.'
+      },
+      {
+        kind: 'changed',
+        text: 'The meter overlays put the total where the numbers live: the all figure sits on the You row inside the panel, and the title bar spends its room on the fight name - ten more characters of mob before anything truncates.'
       }
     ]
   },
