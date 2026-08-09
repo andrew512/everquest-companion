@@ -29,10 +29,13 @@ import { parseEvent, parseEqTimestamp } from '../src/main/log/parser'
 import { KillsModule } from '../src/main/modules/kills'
 import { allStatuses, type TargetStatus } from '../src/renderer/src/features/bosses/bossStatus'
 import {
+  DIFFICULTY_TIERS,
   LOCKOUT_RESET_HOUR,
   LOCKOUT_RESET_WEEKDAY,
   LOCKOUT_TIMEZONE,
   lockoutWindow,
+  rungTitle,
+  tierLadder,
   tierLocks,
   untilReset,
   type LockoutWindow
@@ -311,4 +314,101 @@ test('golden: two Tuesdays later everything is open again', () => {
   const list = history()
   for (const s of list) assert.deepEqual(tierLocks(s.tiers, w), [], `${s.target.name} is open`)
   assert.equal(list.every((s) => s.killed), true, 'and every one of them is still defeated')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. THE DIFFICULTY LADDER (JOS-152) — the same locks, with the OPEN rungs drawn
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The reporter's ask is a rung per difficulty, grey until this week's kill turns it green, so a
+// coordinator can read what is LEFT rather than only what is spent. Everything below is a
+// statement about that presentation and about the ONE thing it must not overclaim: d1..d4 are
+// each NAMED by an adjective the zone line printed, and d0 is the absence of one. The argument,
+// with the measured line shapes behind it, is in the header of lockout.ts.
+
+test('the ladder is one rung per difficulty, base first, always five of them', () => {
+  assert.deepEqual(DIFFICULTY_TIERS, [0, 1, 2, 3, 4])
+  const rungs = tierLadder([])
+  assert.deepEqual(rungs.map((r) => r.tier), [0, 1, 2, 3, 4])
+  assert.equal(
+    rungs.every((r) => !r.cleared && r.ts === 0),
+    true,
+    'no locks means five OPEN rungs - never an empty row, which would state nothing'
+  )
+})
+
+test('a lock turns its own rung green and leaves the others alone', () => {
+  const rungs = tierLadder([
+    { tier: 2, ts: WEEK.start + HOUR },
+    { tier: 4, ts: WEEK.start + 3 * 24 * HOUR }
+  ])
+  assert.deepEqual(rungs.map((r) => r.cleared), [false, false, true, false, true])
+  assert.equal(rungs[2].ts, WEEK.start + HOUR, 'each green rung is dated by ITS OWN kill')
+  assert.equal(rungs[4].ts, WEEK.start + 3 * 24 * HOUR)
+  assert.equal(rungs[1].ts, 0, 'and an open rung carries no timestamp to render')
+})
+
+test('only the BASE rung is unstated - the log names the other four', () => {
+  // This is the whole honesty claim, so it is pinned as a shape rather than as prose. d1..d4 come
+  // from "You have entered <zone> N (Awakened|Adaptive|Fused|Refined)."; d0 is what is left when
+  // no adjective was printed, which is also the open world and also a kill folded before any zone
+  // line was seen.
+  assert.deepEqual(tierLadder([]).map((r) => r.stated), [false, true, true, true, true])
+})
+
+test('an unknown difficulty invents no sixth rung', () => {
+  // A zone adjective this app has never decoded would arrive as a tier outside the five. It is
+  // ignored rather than grown into a rung nobody can label (tierStyle clamps the same way).
+  const rungs = tierLadder([{ tier: 7, ts: WEEK.start + HOUR }])
+  assert.equal(rungs.length, 5)
+  assert.equal(rungs.some((r) => r.cleared), false)
+})
+
+test('the base rung says its own limit out loud, and the others do not', () => {
+  const [base, awakened] = tierLadder([
+    { tier: 0, ts: WEEK.start + HOUR },
+    { tier: 1, ts: WEEK.start + HOUR }
+  ])
+  assert.match(rungTitle(base), /^D0 · base - cleared /)
+  assert.match(rungTitle(base), /never the base one, so an open world kill reads the same here\.$/)
+  assert.equal(
+    /open world/.test(rungTitle(awakened)),
+    false,
+    'a NAMED difficulty claims exactly what it says and no caveat'
+  )
+  assert.match(rungTitle(awakened), /^D1 · Awakened - cleared /)
+  assert.equal(rungTitle(tierLadder([])[3]), 'D3 · Fused - open this week')
+})
+
+test('golden: standing before the reset, Lord of Ire has two green rungs and three grey', () => {
+  // Mon Aug 03 2026, 23:30 Pacific - the same instant section 3 uses, so this is the same real
+  // record (a d4 kill on Sat Aug 01, a d0 kill on Mon Aug 03) read as a ladder.
+  const w = lockoutWindow(parseEqTimestamp('Mon Aug 03 23:30:00 2026'))
+  const ire = byName(history(), 'Lord of Ire')
+  const rungs = tierLadder(tierLocks(ire.tiers, w))
+  assert.deepEqual(rungs.map((r) => r.cleared), [true, false, false, false, true])
+  assert.equal(rungs[0].ts, IRE_D0)
+  assert.equal(rungs[4].ts, IRE_D4)
+  // …and the green base rung is exactly the one that cannot promise a lockout: the Aug 03 kill
+  // was in "The Plane of Hate", the open world, whose zone line carries no difficulty word.
+  assert.equal(rungs[0].stated, false)
+  assert.equal(rungs[4].stated, true)
+})
+
+test('golden: one Tuesday later the whole ladder is grey again', () => {
+  const w = lockoutWindow(parseEqTimestamp('Wed Aug 05 12:00:00 2026'))
+  const ire = byName(history(), 'Lord of Ire')
+  const rungs = tierLadder(tierLocks(ire.tiers, w))
+  assert.equal(rungs.every((r) => !r.cleared), true, 'last week bought this week nothing')
+  assert.equal(ire.killed, true, 'and the OVERALL roster still has him defeated')
+})
+
+test('golden: a kill you merely witnessed greens no rung', () => {
+  // Pesmerga killed the princess 98 minutes after the player's own kill, inside the same week.
+  // Her d0 rung is green because of the PLAYER's kill; nothing else in her record can green one.
+  const w = lockoutWindow(parseEqTimestamp('Wed Aug 05 12:00:00 2026'))
+  const princess = byName(history(), 'Thunder Spirit Princess')
+  const rungs = tierLadder(tierLocks(princess.tiers, w))
+  assert.deepEqual(rungs.map((r) => r.cleared), [true, false, false, false, false])
+  assert.equal(rungs[0].ts, PRINCESS_MINE, 'dated by YOUR kill, not by the later one')
 })
