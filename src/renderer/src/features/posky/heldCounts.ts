@@ -21,12 +21,25 @@
 // rows add `count`, not 1.
 
 import type { LootEvent } from '@shared/types'
+import { isSinceBaseline } from '../../../../shared/outputs/baseline'
 import { itemCountKey } from '../../lib/itemName'
 
-/** Fold loot history into held counts keyed by the normalized counting key. */
-export function computeHeldCounts(lootHistory: readonly LootEvent[]): Record<string, number> {
+/**
+ * Fold loot history into held counts keyed by the normalized counting key.
+ *
+ * `since` (JOS-128) narrows the fold to loot that happened AFTER an inventory dump was
+ * generated — the accumulate half of baseline-then-accumulate. Omitted, the fold is the
+ * all-time one it has always been, which is exactly what the 'log' count source means.
+ * The strictly-later-by-the-second rule (and the tie going to the dump) is
+ * `shared/outputs/baseline.ts`, so the ordering has ONE definition.
+ */
+export function computeHeldCounts(
+  lootHistory: readonly LootEvent[],
+  since?: number
+): Record<string, number> {
   const c: Record<string, number> = {}
   for (const e of lootHistory) {
+    if (since !== undefined && !isSinceBaseline(e.ts, since)) continue
     if (e.disposition === 'sold' || e.disposition === 'combined') continue
     // Fold +N variants onto the base counting key (Task #42): `Sphinx Claw` and
     // `Sphinx Claw +1` are two of the same held item for quest purposes.

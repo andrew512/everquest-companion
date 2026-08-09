@@ -160,17 +160,20 @@ function LootToolbar({
         />
       )}
       <Box sx={{ flexGrow: 1 }} />
+      {/* Still NO tooltip (JOS-127): this select is one of the controls the removed poppers were
+          covering, so JOS-128 says what the options do IN THE OPTIONS instead of in a hover card
+          that cannot mount here. */}
       <TextField
         select
         size="small"
         label="Count from"
         value={countSource}
         onChange={(e) => setCountSource(e.target.value as CountSource)}
-        sx={{ minWidth: 150 }}
+        sx={{ minWidth: 190 }}
       >
-        <MenuItem value="log">Log (looted)</MenuItem>
-        <MenuItem value="inventory">Inventory export</MenuItem>
-        <MenuItem value="both">Both (max)</MenuItem>
+        <MenuItem value="log">Log (ever looted)</MenuItem>
+        <MenuItem value="inventory">Export, plus loot since</MenuItem>
+        <MenuItem value="both">Export if any, else log</MenuItem>
       </TextField>
       {/* No tooltip (JOS-127) — the ACCESSIBLE name still says what it does, and an aria-label
           mounts nothing that can cover the two selects it sits beside. */}

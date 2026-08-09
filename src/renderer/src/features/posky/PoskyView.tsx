@@ -104,7 +104,11 @@ function CountsLine({
     // VISIBLE, so it is what an e2e reads to prove a facet pick actually removed rows.
     <Typography variant="body2" color="text.secondary" data-testid="posky-counts">
       {filteredCount} of {totalQuests} quests · counting from{' '}
-      {countSource === 'log' ? 'looted log' : countSource === 'inventory' ? 'inventory export' : 'log + inventory'}
+      {countSource === 'log'
+        ? 'looted log'
+        : countSource === 'inventory'
+          ? 'inventory export plus loot since'
+          : 'inventory export if any, else the looted log'}
     </Typography>
   )
 }

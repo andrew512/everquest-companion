@@ -24,6 +24,14 @@ export interface ReconcileInput {
   log: Record<string, number>
   /** inventory-export counts keyed by lowercased item name */
   inv: Record<string, number>
+  /**
+   * Loot counts for everything looted AFTER the export was generated (JOS-128) — the same
+   * fold as `log`, narrowed by the dump's baseline instant. UNDEFINED means no baseline is
+   * known: either no dump has ever been loaded, or the store predates JOS-128 and has not
+   * been reloaded since. Its presence is what switches the dump-reading sources onto
+   * baseline-then-accumulate; absent, they behave exactly as they did before.
+   */
+  logSince?: Record<string, number>
   /** display names keyed by lowercased item name (from loot events) */
   lootNames: Record<string, string>
   countSource: CountSource
@@ -60,17 +68,46 @@ function foldInventoryByKey(
   return invByKey
 }
 
-/** Base held count per key, per the active count source. */
+/**
+ * Base held count per key, per the active count source.
+ *
+ * THE DUMP IS A BASELINE (JOS-128, owner design). A loaded export RESETS what we think you
+ * hold; log-derived loot then accumulates on top of it from the instant it was generated. So
+ * the two dump-reading sources answer `export + looted since export`, and the deleted item a
+ * 0.14.0 user reported is gone the moment they reload, because the dump no longer lists it and
+ * nothing since re-added it.
+ *
+ * What each source means, and why 'both' changed:
+ *   'log'       all-time looted, never consults the dump. Unchanged. It CANNOT see a deletion;
+ *               that is what "ever looted" means, not a defect to paper over here.
+ *   'inventory' the dump, plus loot since the dump.
+ *   'both'      the same, when a dump is loaded; the all-time log when none is. It used to be
+ *               `max(log, dump)` per item, and that maximum was precisely the never-resets
+ *               behavior: the all-time log count outvoted the dump that no longer listed the
+ *               item, so no reload could ever lower it. With accumulation there is nothing
+ *               left for a maximum to rescue — a dump that lists the item plus everything
+ *               looted since IS the higher, truer number.
+ *
+ * `logSince` undefined means no baseline is known, and then both dump-reading sources fall
+ * back to their pre-JOS-128 behavior rather than guessing a start instant.
+ */
 function baseCounts(
   log: Record<string, number>,
   invByKey: Record<string, number>,
-  countSource: CountSource
+  countSource: CountSource,
+  logSince?: Record<string, number>
 ): Record<string, number> {
   const base: Record<string, number> = {}
-  for (const k of new Set([...Object.keys(log), ...Object.keys(invByKey)])) {
+  for (const k of new Set([...Object.keys(log), ...Object.keys(invByKey), ...Object.keys(logSince ?? {})])) {
     const l = log[k] ?? 0
     const i = invByKey[k] ?? 0
-    base[k] = countSource === 'log' ? l : countSource === 'inventory' ? i : Math.max(l, i)
+    if (countSource === 'log') {
+      base[k] = l
+    } else if (logSince === undefined) {
+      base[k] = countSource === 'inventory' ? i : Math.max(l, i)
+    } else {
+      base[k] = i + (logSince[k] ?? 0)
+    }
   }
   return base
 }
@@ -102,12 +139,12 @@ function questConsumption(
  * was handed in for one quest no longer counts toward another quest that needs it.
  */
 export function reconcile(input: ReconcileInput): ReconcileResult {
-  const { log, inv, lootNames, countSource, completedKeys, quests } = input
+  const { log, inv, logSince, lootNames, countSource, completedKeys, quests } = input
   const completed = new Set(completedKeys)
 
   const nameByKey: Record<string, string> = { ...lootNames }
   const invByKey = foldInventoryByKey(inv, nameByKey)
-  const base = baseCounts(log, invByKey, countSource)
+  const base = baseCounts(log, invByKey, countSource, logSince)
   const { consumed, consumedBy } = questConsumption(quests, completed, nameByKey)
 
   const net: Record<string, number> = {}
