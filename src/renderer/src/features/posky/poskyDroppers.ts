@@ -225,18 +225,20 @@ export function islandOf(where: string | undefined): string | undefined {
   return m ? `Island ${m[1]}` : undefined
 }
 
-/** Ascending by island NUMBER (so 10 would sort after 9, which a string sort gets wrong). */
-function islandNo(island: string): number {
+/** The NUMBER inside an "Island N" label, for ordering (a string sort puts 10 before 9).
+ *  Exported so the facet filter (questFacets.ts) orders islands by the same arithmetic rather
+ *  than growing a third copy of this regex. 0 for anything that is not an island label. */
+export function islandNumber(island: string): number {
   return Number(ISLAND_RE.exec(island)?.[1] ?? 0)
 }
 
 /** "Island 3" / "Islands 3, 5" — a LIST, never a range: a quest whose items sit on islands 3 and
  *  6 must not read as though island 4 and 5 were involved. Empty string for none stated. */
 export function islandLabel(islands: readonly string[]): string {
-  const sorted = [...new Set(islands)].sort((a, b) => islandNo(a) - islandNo(b))
+  const sorted = [...new Set(islands)].sort((a, b) => islandNumber(a) - islandNumber(b))
   if (sorted.length === 0) return ''
   if (sorted.length === 1) return sorted[0]
-  return `Islands ${sorted.map((i) => String(islandNo(i))).join(', ')}`
+  return `Islands ${sorted.map((i) => String(islandNumber(i))).join(', ')}`
 }
 
 // ---- the QUEST-level kill set (the collapsed summary row's "Kill: <boss>" caption) ----
@@ -295,7 +297,7 @@ export function questKillTargets(items: readonly KillTargetItem[]): KillTarget[]
   }
   return [...byPage.values()]
     .sort((a, b) => (a.covers === b.covers ? byName(a.mob, b.mob) : b.covers - a.covers))
-    .map((e) => ({ mob: e.mob, covers: e.covers, islands: [...e.islands].sort((a, b) => islandNo(a) - islandNo(b)) }))
+    .map((e) => ({ mob: e.mob, covers: e.covers, islands: [...e.islands].sort((a, b) => islandNumber(a) - islandNumber(b)) }))
 }
 
 /**
