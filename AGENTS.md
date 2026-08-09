@@ -1339,6 +1339,25 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   exports the `settingsStore` handle for exactly that, which is a door for moving
   the read-through-a-normalizer pattern OUT, never a licence to skip a normalizer.
 
+- **A COLOUR A USER PICKS IS A VALUE THAT REACHES A STYLE PROPERTY (JOS-125).**
+  The cursor ring's colour is stored as `cursorRing.colorHex` — one more field on
+  the EXISTING blob, so store.ts gained nothing, the 4→5 migration needed no bump
+  (the same normalizer defaults it, and an absent key reads as white) and the
+  live-push that already resizes a running ring recolours it for free. Two rules
+  make the field safe and honest. FIRST, `normalizeRingColor` accepts `#rgb` /
+  `#rrggbb` AND NOTHING ELSE, because the value ends up in
+  `element.style.borderColor` in the ring window: `red`, `rgb()`, `var(--x)` and
+  anything carrying a `;` are refused, which costs nothing because
+  `<input type="color">` cannot produce them and buys the guarantee that a store
+  file can never write a CSS declaration. SECOND, ONE function turns the hex into
+  the drawn colour (`ringStrokeColor` = the hue at the fixed 0.9 stroke alpha),
+  and all three drawings read it — the ring window, the live sample in
+  Preferences, and cursor.html's pre-config rule, which is asserted against it by
+  `tests/cursorRingColor.test.mts` so the two cannot drift. The alpha and the
+  three shadows are NOT settings: they are what makes the ring readable over a
+  snowfield, and a player asking for a colour is not asking for less contrast.
+  The default is white exactly, so an upgrade recolours nobody.
+
 ## Shipping
 
 - CI (`.github/workflows/build.yml`) runs `npm test` — the FULL golden-window
