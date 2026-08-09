@@ -21,11 +21,19 @@
 //   4. THE ACCEPTANCE: the reported defect, end to end. A Drifting Death cast plus the landing
 //      sentence the LIVE GAME prints yields a HOLD under the unified model. It could not before,
 //      by one preposition.
+//   5. THE ABSENT FIELD (JOS-159). A correction may state `from: null` for a field the DB leaves
+//      EMPTY, which is how `Allure` joined the `Someone has been charmed.` family and how the
+//      owner's charm countdown started firing at all. It gets the same anti-rot treatment as
+//      every other entry, which is what tests 1 and 2 above are re-run for here: it applies only
+//      while the field is genuinely absent, a re-scrape that supplies the same text makes it
+//      satisfied, and one that supplies a DIFFERENT text makes it stale.
 //
 // THE SHAPES BELOW ARE REAL. `<target> is engulfed by a swarm.` is in the owner's own log (12
 // occurrences whole-log, against 0 of the wiki's `in a swarm` form), so no reporter-slice bytes
 // enter the tree — the AGENTS.md rule. `You begin casting <Spell>.` is the shape every combat
-// fixture carries.
+// fixture carries; `You begin casting Allure VI.` and `<mob> has been charmed.` are the owner's
+// own (227 ranked Allure casts, 423 charm broadcasts), and the charm sentence is committed in
+// `tests/fixtures/w13-charm-break-recharm.log` besides.
 //
 // Run: `npm test`.
 
@@ -70,6 +78,33 @@ test('no two corrections claim the same spell and field', () => {
       seen.add(key)
     }
   }
+})
+
+test('an ABSENT field is filled, and only while it is absent', () => {
+  // JOS-159. `Allure` is the only enchanter detrimental in the scrape with no cast-on-other
+  // message, so the charm broadcast named seven spells and not the one the owner casts.
+  const before = RAW.find((s) => s.name === 'Allure')
+  assert.ok(before, 'the DB must still carry the enchanter charm at 46')
+  assert.equal(before.msgCastOnOther, undefined, 'and the committed scrape still states nothing')
+
+  const { spells, report } = applySpellCorrections(RAW)
+  assert.equal(
+    spells.find((s) => s.name === 'Allure')?.msgCastOnOther,
+    'Someone has been charmed.',
+    'the overlay supplies what the wiki left empty'
+  )
+  assert.deepEqual(report.stale, [], 'an absent field is a MATCH for `from: null`, never a stale correction')
+
+  // Both re-scrape directions, on the absent-field entry specifically.
+  const filledSame = RAW.map((s) => (s.name === 'Allure' ? { ...s, msgCastOnOther: 'Someone has been charmed.' } : s))
+  const same = applySpellCorrections(filledSame).report
+  assert.deepEqual(same.stale, [], 'a wiki that fills the field with our text is not a conflict')
+
+  const filledOther = RAW.map((s) => (s.name === 'Allure' ? { ...s, msgCastOnOther: 'Someone looks smitten.' } : s))
+  const other = applySpellCorrections(filledOther).report
+  const hit = other.stale.find((x) => x.spell === 'Allure')
+  assert.ok(hit, 'a wiki that fills it with something ELSE must fail this suite, not be overwritten')
+  assert.equal(hit.found, 'Someone looks smitten.')
 })
 
 test('every correction states evidence and an attribution route', () => {
@@ -184,7 +219,10 @@ function replay(lines: [number, string][], observeSec: number) {
   timers.onTick(tick)
   const b = buffs.snapshot().state
   const t = timers.snapshot().state
-  return { rows: buildTimerRows(b, t), active: b.active }
+  // `active` is the BUFFS half (self and named-target landings); `holds` is the CC half (mez,
+  // root, charm — the detrimental holds on somebody else). A row can come from either, so both
+  // are returned and each acceptance below asserts against the one its defect lives in.
+  return { rows: buildTimerRows(b, t), active: b.active, holds: t.holds }
 }
 
 test('THE REPORTED DEFECT: a Drifting Death cast plus the live landing yields a HOLD', () => {
@@ -240,4 +278,38 @@ test('the root line lands too: `<mob> adheres to the ground.` is 493 lines the D
   assert.ok(row, `no Immobilize row: ${r.rows.map((x) => x.name).join(', ') || '(none)'}`)
   assert.equal(row.target, 'a fire giant warrior')
   assert.equal(row.kind, 'debuff')
+})
+
+test('JOS-159: an Allure cast plus the charm broadcast opens a charm hold with a countdown', () => {
+  // The owner is an enchanter who charms all day, and the countdown JOS-140 built never fired for
+  // him: the DB's candidate list for this sentence held seven spells and none of them was his.
+  // The cast line is RANKED and the DB entry is not, which `spellCanonKey` folds — the anchor and
+  // the candidate meet at `allure`, and the row prints the rank the cast line carried.
+  const r = replay(
+    [
+      [0, 'You begin casting Allure VI.'],
+      [4, 'Bzzazzt has been charmed.']
+    ],
+    30
+  )
+  const row = r.rows.find((x) => x.target === 'Bzzazzt')
+  assert.ok(row, `no charm row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
+  assert.equal(row.name, 'Allure VI', 'the ranked cast line names the row')
+  assert.equal(row.kind, 'cc', 'a charm is a HOLD, in the same shape as a mez')
+  assert.ok(rowsForSurface(r.rows, 'debuffs').includes(row), 'and it belongs to the DEBUFFS window')
+  assert.equal(row.mode, 'countdown', 'charm-break timing is the whole point')
+  assert.equal(row.durationMs, 960_000, 'the DB states 16 minutes for the Allure line')
+  // The HOLD itself, one level under the row: before the correction the broadcast resolved to a
+  // candidate list with no anchored member in it, so there was no instance to render at all.
+  assert.equal(r.holds.length, 1, 'one cast, one charmed mob, one hold')
+  assert.equal(r.holds[0].target, 'Bzzazzt')
+})
+
+test('…and with the wiki`s empty field the same sequence still opens nothing', () => {
+  // The defect stated. `applySpellCorrections` is the only thing standing between these two tests.
+  const bare = applySpellCorrections(RAW, SPELL_CORRECTIONS.filter((c) => !c.spells.includes('Allure')))
+  assert.equal(bare.spells.find((s) => s.name === 'Allure')?.msgCastOnOther, undefined)
+  const cands = bare.spells.filter((s) => s.msgCastOnOther === 'Someone has been charmed.').map((s) => s.name)
+  assert.equal(cands.length, 7, `the seven the ticket counted: ${cands.join(', ')}`)
+  assert.ok(!cands.includes('Allure'), 'and the owner`s own charm was not one of them')
 })
