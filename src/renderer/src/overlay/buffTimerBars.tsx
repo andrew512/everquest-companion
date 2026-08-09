@@ -42,7 +42,21 @@ export function timeLabel(row: BuffTimerRow, nowMs: number): string {
   return r.overdue ? '0s' : fmtDuration(r.remainingMs ?? 0)
 }
 
-export function BuffTimerBar({ row, nowMs }: { row: BuffTimerRow; nowMs: number }): JSX.Element {
+export function BuffTimerBar({
+  row,
+  nowMs,
+  showTarget = false
+}: {
+  row: BuffTimerRow
+  nowMs: number
+  /**
+   * Print the target ON the row. True in the FLAT soonest-first arrangement (JOS-140), where there
+   * is no per-target heading above it — the owner's ask was a queue of things running out, and
+   * which mob a row is on is then a detail on the row rather than a section it lives under.
+   * Without this a flat list of five mez bars would be five rows that cannot be told apart.
+   */
+  showTarget?: boolean
+}): JSX.Element {
   const r = timerReading(row, nowMs)
   const accent = rowAccent(row.kind)
   const countdown = row.mode === 'countdown'
@@ -50,6 +64,11 @@ export function BuffTimerBar({ row, nowMs }: { row: BuffTimerRow; nowMs: number 
     <div
       data-testid="buff-timer-row"
       data-timer-mode={row.mode}
+      // The row's own facts as ATTRIBUTES, so a test reads what the model decided rather than
+      // re-deriving it from rendered text: the name span also carries the ~ chip, the count and
+      // the caster, and the target is a chip here but a block heading in the other arrangement.
+      data-spell={row.name}
+      data-target={row.target ?? ''}
       title={row.candidates ? `Shared landing message - one of: ${row.candidates.join(', ')}` : undefined}
       style={{
         display: 'flex',
@@ -100,6 +119,11 @@ export function BuffTimerBar({ row, nowMs }: { row: BuffTimerRow; nowMs: number 
           {row.caster != null && (
             <span data-testid="buff-timer-caster" style={{ color: 'rgba(255,255,255,0.4)', marginLeft: 4 }}>
               {row.caster}
+            </span>
+          )}
+          {showTarget && row.target != null && (
+            <span data-testid="buff-timer-target" style={{ color: 'rgba(255,255,255,0.45)', marginLeft: 6 }}>
+              {row.target}
             </span>
           )}
         </span>
@@ -163,7 +187,7 @@ export function BuffTimerGroup({
         </div>
       )}
       {rows.map((r) => (
-        <BuffTimerBar key={r.id} row={r} nowMs={nowMs} />
+        <BuffTimerBar key={r.id} row={r} nowMs={nowMs} showTarget={label === ''} />
       ))}
     </div>
   )

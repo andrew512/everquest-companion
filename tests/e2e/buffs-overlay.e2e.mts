@@ -46,6 +46,14 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, overlayWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+// Reading a timer window's rows in EITHER arrangement (flat or per-target) lives beside the other
+// e2e readers - see ./buffTimerSteps.mts.
+import {
+  setTimerGrouping as setGrouping,
+  timerGroups as groups,
+  timerRows as rows,
+  timerTargets as targets
+} from './buffTimerSteps.mjs'
 import type { FixtureLog } from './logFixture.mjs'
 
 /** The main window's overlay bridge — the same one the title-bar menu calls. */
@@ -62,26 +70,6 @@ function bridge(page: Page): {
     toggle: (k: string) =>
       page.evaluate((kind) => (window as unknown as { eq: OverlayBridge }).eq.toggleOverlay(kind), k)
   }
-}
-
-/** The rows currently on the overlay: name + the time column + the mode the row is in. */
-async function rows(overlay: Page): Promise<{ name: string; time: string; mode: string }[]> {
-  return overlay.evaluate(() =>
-    [...document.querySelectorAll('[data-testid="buff-timer-row"]')].map((el) => ({
-      name: el.querySelector('[data-testid="buff-timer-name"]')?.textContent?.trim() ?? '',
-      time: el.querySelector('[data-testid="buff-timer-time"]')?.textContent?.trim() ?? '',
-      mode: el.getAttribute('data-timer-mode') ?? ''
-    }))
-  )
-}
-
-/** The target headings currently on the overlay (one block per entity). */
-async function groups(overlay: Page): Promise<string[]> {
-  return overlay.evaluate(() =>
-    [...document.querySelectorAll('[data-testid="buff-timer-group"]')].map(
-      (el) => el.firstElementChild?.textContent?.trim() ?? ''
-    )
-  )
 }
 
 /**
@@ -189,13 +177,15 @@ async function stepOpenAndChrome(page: Page, app: ElectronApplication, kind: Tim
     `${first.length} row(s)`
   )
   if (kind === 'debuffs' && first.length > 0) {
-    // PER-TARGET, out of the replay alone: the fixture's debuffs are grouped under the enemy they
-    // are on, which is the first half of what the reports asked for — and, since JOS-119, the
-    // whole subject of this window.
-    const g = await groups(o)
+    // PER-TARGET, out of the replay alone: a debuff you landed NAMES the enemy it is on, which is
+    // the first half of what the reports asked for and, since JOS-119, the whole subject of this
+    // window. Since JOS-140 the window opens FLAT (soonest to expire first, across every target),
+    // so the enemy is a chip on the row rather than a heading above it — `targets` reads either,
+    // which is what keeps this claim independent of the arrangement the user has chosen.
+    const g = await targets(o)
     check(
-      '…and a debuff you landed is filed under the enemy it is on',
-      g.some((x) => x !== 'Your buffs' && x !== 'On you'),
+      '…and a debuff you landed names the enemy it is on',
+      g.some((x) => x !== 'Your buffs' && x !== 'On you' && x !== ''),
       JSON.stringify(g)
     )
   }
@@ -326,7 +316,14 @@ async function stepChainMez(overlay: Page, buffsOverlay: Page | null, log: Fixtu
 
   // NAMED, not a family: "has been mesmerized." is four spells in the DB and the player's own
   // cast is what narrows it (JOS-84's law, end to end through the real parser).
-  check('…each row NAMES the spell rather than the family', cc.every((r) => r.name === 'Mesmerization'), JSON.stringify(cc))
+  // NAMED, AND RANKED (JOS-140): the cast line is the only line in the family that carries a rank
+  // — the landing sentence names no spell at all and the wear-off names the rank-less base — so
+  // `Mesmerization III` on the row is the app saying which of your mezzes is on that mob.
+  check(
+    '…each row NAMES the spell, with the RANK the cast line spelled',
+    cc.every((r) => r.name === 'Mesmerization III'),
+    JSON.stringify(cc)
+  )
 
   // COUNTING DOWN, because spells.json states Mesmerization at 24s.
   check('…and each counts DOWN from the stated duration', cc.every((r) => r.mode === 'countdown'), JSON.stringify(cc))
@@ -337,13 +334,28 @@ async function stepChainMez(overlay: Page, buffsOverlay: Page | null, log: Fixtu
   )
   check('…with a receding bar beside it', (await countOf(overlay, '[data-testid="buff-timer-fill"]')) >= 2)
 
-  // PER-TARGET, and the targets are named — the reports asked to see WHICH enemy.
-  const g = await groups(overlay)
+  // PER-TARGET, and the targets are NAMED — the reports asked to see WHICH enemy. In the flat
+  // arrangement this window now opens on, that name is a chip on the row.
+  const named = await targets(overlay)
   check(
-    '…grouped under each enemy by name',
-    g.some((x) => x.includes('a turmoil toad')) && g.some((x) => x.includes('a scareling')),
-    JSON.stringify(g)
+    '…each naming the enemy it is on',
+    named.some((x) => x.includes('a turmoil toad')) && named.some((x) => x.includes('a scareling')),
+    JSON.stringify(named)
   )
+
+  // THE ARRANGEMENT IS A PREFERENCE (JOS-140, owner amendment). The default is the flat
+  // soonest-first list above; switching to per-target blocks has to raise a HEADING per enemy over
+  // exactly the same rows — a preference sorts, it never filters — and switching back removes them.
+  await setGrouping(overlay, 'target')
+  const blocked = await settle(() => groups(overlay), (g) => g.some((x) => x.includes('a turmoil toad')), {
+    timeoutMs: 15_000
+  })
+  check('grouping by target raises a heading per enemy', blocked.some((x) => x.includes('a scareling')), JSON.stringify(blocked))
+  const still = (await rows(overlay)).filter((r) => r.name.startsWith('Mesmerization'))
+  check('…over exactly the same two rows', still.length === 2, JSON.stringify(still))
+  await setGrouping(overlay, 'none')
+  const flat = await settle(() => groups(overlay), (g) => g.length === 0, { timeoutMs: 15_000 })
+  check('…and switching back takes the headings away again', flat.length === 0, JSON.stringify(flat))
 
   // …AND THE BUFFS WINDOW NEVER SAW IT (JOS-119). This is the half a one-sided filter would pass
   // while still being wrong: the mez arrived where it belongs AND stayed out of the other window.
@@ -368,11 +380,11 @@ async function stepBreakClearsOneTarget(overlay: Page, log: FixtureLog): Promise
     (r) => r.filter((x) => x.name.startsWith('Mesmerization')).length === 1,
     { timeoutMs: 30_000 }
   )
-  const g = await groups(overlay)
-  check('a break line clears ONLY its own target', !g.some((x) => x.includes('a scareling')), JSON.stringify(g))
+  const named = await targets(overlay)
+  check('a break line clears ONLY its own target', !named.some((x) => x.includes('a scareling')), JSON.stringify(named))
   check(
     '…and the other enemy keeps its countdown',
-    after.some((r) => r.name === 'Mesmerization' && r.mode === 'countdown'),
+    after.some((r) => r.name === 'Mesmerization III' && r.mode === 'countdown'),
     JSON.stringify(after)
   )
 }
