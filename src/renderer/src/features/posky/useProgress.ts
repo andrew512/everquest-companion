@@ -235,7 +235,7 @@ interface HeldItems {
 }
 
 /**
- * Everything derived from the loot ledger plus the loaded dump — the four folds and the
+ * Everything derived from the loot ledger plus the loaded dump — the three folds and the
  * reconcile, kept together because they are one derivation and split out of `useProgress`
  * because that hook was at its factoring ceiling.
  *

@@ -733,18 +733,20 @@ export interface FeedReport {
 export type HeldCounts = Record<string, number>
 
 /**
- * How the app decides which items you "have". A dump is a BASELINE (JOS-128) — loading one
- * resets the model and log-derived loot accumulates from its generation instant forward — so
- * two of the three read the dump and one deliberately does not:
+ * How the app decides which items you "have". A DUMP ADDS AND NEVER SUBTRACTS (JOS-141, owner
+ * ruling 2026-08-09): loading one cannot lower any count, because a dump only covers what was
+ * OPEN when it was generated and reading its silence as zero deleted banked Sky items. JOS-128
+ * briefly made a dump load a BASELINE that reset the model; that is reverted.
  * - 'log'       : count everything the character has ever looted (log parsing). Never consults
  *                 a dump, and therefore CANNOT see an item you destroyed, sold to a vendor or
  *                 handed to another player; "ever looted" is exactly what it says.
- * - 'inventory' : the dump, plus everything looted SINCE the dump was generated.
- * - 'both'      : the same as 'inventory' when a dump is loaded, and 'log' when none is. It is
- *                 the "use the export if I have one" choice, not a maximum. It USED to be
- *                 `max(log, dump)` per item, which is the never-resets behavior JOS-128 exists
- *                 to remove: a user who deleted an item in game and reloaded still saw it,
- *                 because the log's all-time count outvoted the dump that no longer listed it.
+ * - 'inventory' : the dump, exactly as written. Never consults the log. The only source that can
+ *                 show a deletion, and it does so by ignoring the log rather than by resetting.
+ * - 'both'      : `max(log, dump)` per item — whichever witness can vouch for more copies. A
+ *                 maximum and not a sum, because the two OVERLAP: an item you looted and still
+ *                 hold is in both.
+ * The combination and the turn-in consumption that follows it live in ONE place,
+ * renderer/features/inventory/reconcile.ts, which argues both.
  */
 export type CountSource = 'log' | 'inventory' | 'both'
 
@@ -778,8 +780,8 @@ export interface ProgressState {
    * show is still a thing that happened.
    *
    * ADDITIVE and OPTIONAL — no schema bump and no migration (the `exaltPlans` precedent). A store
-   * without this key reads its counts from `completedQuests` (one turn-in, undated), and an
-   * undated turn-in never counts as "since the dump" because nothing can place it there (law 1).
+   * without this key reads its counts from `completedQuests`: one turn-in, undated, which is all
+   * any reader needs now that consumption is windowed by SOURCE rather than by instant (JOS-141).
    */
   questTurnIns?: Record<string, number[]>
   /** metadata about the last inventory load */
