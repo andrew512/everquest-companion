@@ -1,5 +1,6 @@
 /**
- * Headless Electron integration test for THE SKY TURN-IN, END TO END (JOS-131).
+ * Headless Electron integration test for THE SKY TURN-IN, END TO END (JOS-131) — and, since
+ * JOS-147, for THE READY TAB, whose membership rule is that same arc read as a set.
  *
  * THE ASK, in the owner's words (2026-08-09): a Sky farmer wants to run quests more than once, and
  * today a completed quest stays 5/5 forever, so refarming a second copy is invisible. A turn-in
@@ -53,6 +54,10 @@ const HIDE_TURNED_IN = '[data-testid="posky-hide-turned-in"]'
 const BADGE = '[data-testid="posky-turned-in"]'
 const ROW = '.MuiAccordion-root'
 const COUNTS = '[data-testid="posky-counts"]'
+/** JOS-147's Ready tab and its pane: the list of quests you are holding every item for. */
+const TAB_QUESTS = '[data-testid="posky-tab-quests"]'
+const TAB_READY = '[data-testid="posky-tab-ready"]'
+const READY = '[data-testid="posky-ready"]'
 
 /** The quest under test, and the two lines that put its items in your bags. */
 const QUEST = 'Beastlord Test of Azarack'
@@ -95,6 +100,28 @@ function filteredCount(page: Page): Promise<number | null> {
   }, COUNTS)
 }
 
+/**
+ * Is THIS quest on the Ready tab right now? `null` when the Ready pane is not mounted at all —
+ * never confused with "mounted and does not list it", which is the answer half these checks want.
+ *
+ * The quest's own `name` in the committed data carries its class ("Beastlord Test of Azarack"), so
+ * one substring identifies exactly one of the 95 rows.
+ */
+function readyHasQuest(page: Page): Promise<boolean | null> {
+  return page.evaluate(
+    ([sel, quest]) => {
+      const el = document.querySelector(sel)
+      return el ? (el.textContent ?? '').includes(quest) : null
+    },
+    [READY, QUEST] as const
+  )
+}
+
+/** The Ready pane's whole text, for the copy assertions. Empty when it is not mounted. */
+function readyText(page: Page): Promise<string> {
+  return page.evaluate((sel) => document.querySelector(sel)?.textContent ?? '', READY)
+}
+
 /** Open the Sky tab and narrow the list to the one quest this spec is about. */
 async function openQuest(page: Page): Promise<boolean> {
   await page.click(NAV_SKY, { timeout: 30_000 })
@@ -126,6 +153,74 @@ async function stepLoot(page: Page, log: FixtureLog, at: Date): Promise<void> {
       'Ready to turn in'
     )
   )
+}
+
+// ── THE READY TAB (JOS-147) ─────────────────────────────────────────────────────────────────
+//
+// The turn-in arc this spec already drives IS the Ready tab's membership rule, which is why the
+// checks live here rather than in a spec of their own: the set is `hasEveryItem` and nothing else,
+// so looting the last item must ADD the quest, handing it in must REMOVE it, and refarming must
+// bring it back — all read off the real tab, on real app state, with no filter typed anywhere.
+// tests/questTurnIns.test.mts pins the predicate; only a running app can prove the tab is wired
+// to it, that the wiring survives a live turn-in, and that the two hide-boxes cannot reach it.
+
+/** Before any loot: the tab is mounted, this quest is not on it, and it says something either way. */
+async function stepReadyBefore(page: Page): Promise<void> {
+  await page.click(TAB_READY, { timeout: 15_000 })
+  const has = await settle(() => readyHasQuest(page), (v) => v !== null, { timeoutMs: 20_000 })
+  check('a quest holding none of its items is NOT on the Ready tab', has === false, `has=${String(has)}`)
+  // The empty state is COPY, so it is asserted where it can actually appear — and the fixture's own
+  // loot decides which of the two states that is, so both are stated rather than guessed at.
+  const text = await readyText(page)
+  const counted = /\d+ quests? you are holding every item for/.test(text)
+  check(
+    counted ? 'a non-empty Ready tab counts what is on it' : 'an empty Ready tab says what would put a quest on it',
+    counted || text.includes('Nothing is ready to turn in'),
+    text.slice(0, 200)
+  )
+  await page.click(TAB_QUESTS, { timeout: 15_000 })
+}
+
+/**
+ * Holding everything: the quest joins the tab, and NEITHER hide-box can take it off.
+ *
+ * "Hide completed" hides exactly `hasEveryItem` — the same predicate the Ready tab is made of — so
+ * this is the one that matters: ticked, the Quests tab drops the row to zero and the Ready tab must
+ * still be holding it. A tab that honoured that box could only ever be empty.
+ */
+async function stepReadyHolding(page: Page): Promise<void> {
+  await page.click(TAB_READY, { timeout: 15_000 })
+  const on = await settle(() => readyHasQuest(page), (v) => v === true, { timeoutMs: 20_000 })
+  if (!check('COLLECTING THE LAST ITEM PUTS THE QUEST ON THE READY TAB', on === true, `has=${String(on)}`)) return
+
+  await page.click(TAB_QUESTS, { timeout: 15_000 })
+  await page.click(HIDE_COMPLETED, { timeout: 15_000 })
+  const gone = await settle(() => filteredCount(page), (n) => n === 0, { timeoutMs: 8_000 })
+  check('"hide completed" empties the QUESTS tab of it, as it always has', gone === 0, `filtered=${String(gone)}`)
+  await page.click(TAB_READY, { timeout: 15_000 })
+  const kept = await settle(() => readyHasQuest(page), (v) => v !== null, { timeoutMs: 8_000 })
+  check('…AND THE READY TAB KEEPS IT: the hide-boxes do not reach this tab', kept === true, `has=${String(kept)}`)
+
+  await page.click(TAB_QUESTS, { timeout: 15_000 })
+  await page.click(HIDE_COMPLETED, { timeout: 15_000 })
+  await settle(() => filteredCount(page), (n) => n === 1, { timeoutMs: 8_000 })
+}
+
+/** Handed over: the items are spent, so the quest leaves the tab. Nothing else had to happen. */
+async function stepReadyAfterTurnIn(page: Page): Promise<void> {
+  await page.click(TAB_READY, { timeout: 15_000 })
+  const off = await settle(() => readyHasQuest(page), (v) => v === false, { timeoutMs: 20_000 })
+  check('A TURN-IN TAKES THE QUEST OFF THE READY TAB — the items it needed are gone', off === false, `has=${String(off)}`)
+  await page.click(TAB_QUESTS, { timeout: 15_000 })
+}
+
+/** …and refarming the same two drops puts it straight back, turn-in badge and all. */
+async function stepReadyRefarm(page: Page, log: FixtureLog, at: Date): Promise<void> {
+  log.appendAt(at, ...LOOT)
+  await page.click(TAB_READY, { timeout: 15_000 })
+  const back = await settle(() => readyHasQuest(page), (v) => v === true, { timeoutMs: 30_000 })
+  check('REFARMING TO FULL PUTS IT BACK — membership is the predicate, not a one-way flag', back === true, `has=${String(back)}`)
+  await page.click(TAB_QUESTS, { timeout: 15_000 })
 }
 
 /**
@@ -220,9 +315,13 @@ async function main(): Promise<void> {
         throw new Error('never reached the quest row — nothing below can be asserted')
       }
       await stepBefore(page)
+      await stepReadyBefore(page)
       await stepLoot(page, log, new Date(now - 120_000))
+      await stepReadyHolding(page)
       await stepTurnIn(page, log, new Date(now - 60_000))
+      await stepReadyAfterTurnIn(page)
       await stepHideBoxes(page)
+      await stepReadyRefarm(page, log, new Date(now - 30_000))
       await stepAgain(page, log, new Date(now))
       if (failures.length) await dumpArtifacts(page, 'sky-turnin-FAIL')
     } finally {

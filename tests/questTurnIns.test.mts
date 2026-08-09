@@ -28,6 +28,9 @@
 //      once wants the done ones gone and a player refarming does not. The pair is pinned here as
 //      two predicates that never read each other's input.
 //   5. THE BADGE's copy, including the count from the second turn-in on.
+//   6. THE READY TAB's membership (JOS-147, `readyQuests`): the same `hasEveryItem` predicate read
+//      as a SET, which no filter and neither hide-box can reach - collecting the last item joins
+//      it, a turn-in leaves it, refarming to full rejoins it.
 //
 // Run: `npm test`.
 
@@ -42,7 +45,12 @@ import {
   turnInBadgeLabel,
   turnInsToPersist
 } from '../src/shared/questTurnIns'
-import { everTurnedIn, hasEveryItem } from '../src/renderer/src/features/posky/questCompletion'
+import {
+  everTurnedIn,
+  hasEveryItem,
+  readyQuests
+} from '../src/renderer/src/features/posky/questCompletion'
+import type { QuestProgress } from '../src/renderer/src/features/posky/useProgress'
 import { reconcile } from '../src/renderer/src/features/inventory/reconcile'
 import { questKey } from '../src/renderer/src/features/posky/keys'
 import { itemCountKey } from '../src/renderer/src/lib/itemName'
@@ -370,6 +378,95 @@ test('the two hide-boxes never read each other: all four combinations are a plai
       [true, true, false, false],
       [true, true, true, true]
     ]
+  )
+})
+
+// =============================================================================
+// 6. The Ready tab's membership (JOS-147)
+// =============================================================================
+
+/**
+ * A whole `QuestProgress`, built from the four fields the Ready rule and its order actually read
+ * (class, name, how much is needed, what is missing). The rest is filled with the neutral values a
+ * quest nobody has touched would carry — stated here rather than cast away, so a field that starts
+ * mattering to this rule shows up as a compile error instead of as `undefined` at runtime.
+ */
+function questRow(p: {
+  className: string
+  name: string
+  needCount: number
+  missing: string[]
+  turnIns?: number
+}): QuestProgress {
+  return {
+    key: `${p.className}::${p.name}`,
+    className: p.className,
+    name: p.name,
+    items: [],
+    haveCount: p.needCount - p.missing.length,
+    needCount: p.needCount,
+    ratio: p.needCount === 0 ? 0 : (p.needCount - p.missing.length) / p.needCount,
+    missing: p.missing,
+    turnIns: p.turnIns ?? 0,
+    logTurnIns: 0,
+    completed: (p.turnIns ?? 0) >= 1
+  }
+}
+
+const READY_SET = [
+  // Ready: holding everything, never handed in.
+  questRow({ className: 'Warrior', name: 'Test of Blood', needCount: 3, missing: [] }),
+  // Ready AND handed in twice already — a full refarm, which is the row this tab exists for.
+  questRow({ className: 'Beastlord', name: 'Test of Claw', needCount: 2, missing: [], turnIns: 2 }),
+  // Handed in, items spent: work left, not work ready.
+  questRow({ className: 'Bard', name: 'Test of Pitch', needCount: 2, missing: ['Caza'], turnIns: 1 }),
+  // Halfway there.
+  questRow({ className: 'Magician', name: 'Test of Wind', needCount: 4, missing: ['Hazy Opal'] }),
+  // Requires nothing at all: missing DATA, not a finished quest (the hasEveryItem rule above).
+  questRow({ className: 'Cleric', name: 'Test of Nothing', needCount: 0, missing: [] })
+]
+
+test('THE READY TAB IS THE PREDICATE: exactly the quests you hold every item for', () => {
+  assert.deepEqual(
+    readyQuests(READY_SET).map((q) => q.name),
+    ['Test of Claw', 'Test of Blood'],
+    'class then name, and nothing else in the list'
+  )
+  // Stated as an identity rather than as a list, because the identity is the actual promise: the
+  // tab can never disagree with the predicate the "hide completed" box is made of.
+  assert.deepEqual(
+    readyQuests(READY_SET),
+    READY_SET.filter(hasEveryItem).sort((a, b) => a.className.localeCompare(b.className))
+  )
+})
+
+test('…a turn-in takes a quest OFF it and refarming puts it back, with no state in between', () => {
+  const claw = (missing: string[], turnIns: number): QuestProgress =>
+    questRow({ className: 'Beastlord', name: 'Test of Claw', needCount: 2, missing, turnIns })
+  // The arc from tests/e2e/sky-turnin.e2e.mts, as a set-membership question.
+  assert.deepEqual(readyQuests([claw(['Sphinx Claw'], 0)]), [], 'still farming')
+  assert.equal(readyQuests([claw([], 0)]).length, 1, 'the last item lands: ready')
+  assert.deepEqual(readyQuests([claw(['Sphinx Claw', 'Wind Rune Geza'], 1)]), [], 'handed over: gone')
+  assert.equal(readyQuests([claw([], 1)]).length, 1, 'refarmed to full: back, turn-in and all')
+})
+
+test('the two hide-boxes cannot reach the Ready tab, which is the point of it', () => {
+  // "Hide completed" IS `hasEveryItem`, so applying it to this list would empty it every time —
+  // and "hide turned in" would drop the refarmed quest, the likeliest row on the tab. Both are
+  // asserted against the same predicates the boxes use, not against a copy of them.
+  const ready = readyQuests(READY_SET)
+  assert.deepEqual(ready.filter((q) => !hasEveryItem(q)), [], 'hide-completed would leave nothing')
+  assert.ok(ready.some(everTurnedIn), 'hide-turned-in would remove a quest that is ready right now')
+})
+
+test('an ignored quest never reaches it: the caller passes the shown half', () => {
+  // The hook derives from `visible` (useQuestList), so the rule is a fact about the INPUT rather
+  // than a filter inside `readyQuests`. Pinned as the property it is: the output is a subset.
+  const shown = READY_SET.filter((q) => q.className !== 'Beastlord')
+  assert.deepEqual(
+    readyQuests(shown).map((q) => q.name),
+    ['Test of Blood'],
+    'the ignored quest is simply not in the input, so it cannot be in the output'
   )
 })
 
