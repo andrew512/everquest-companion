@@ -59,6 +59,9 @@ import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs
 // The scope word's own two steps — where it lives (JOS-115/121) and what the title bar did with
 // the room it gave back — in their own module, because this file is at the max-lines budget.
 import { stepOverlayScope, stepTitleBarRoom } from './overlayScopeSteps.mjs'
+// …and JOS-158's: the aggregate left that row too, for the panel's own header row, and what the
+// fight NAME did with the pixels is measured in characters there.
+import { stepTotalOnPanel } from './overlayTotalSteps.mjs'
 // …and the pinned pane's scroll grip (JOS-138), in its own module for the same reason.
 import { stepPinnedScroll } from './overlayScrollSteps.mjs'
 
@@ -125,6 +128,17 @@ async function writeAndSync(
 async function someFinalizedFight(page: Page): Promise<string | null> {
   const snap = await snapshot(page)
   return snap.segments.find((s) => s.kind === 'fight')?.id ?? null
+}
+
+/**
+ * The LONGEST fight name the staged fixture produced — the hardest title this window will ever be
+ * asked to print, and the subject of JOS-158's measurement. A real name from a real replay rather
+ * than a hand-authored one, so what is measured is a title bar doing its actual job.
+ */
+async function longestFightName(page: Page): Promise<string> {
+  const snap = await snapshot(page)
+  const names = snap.segments.filter((s) => s.kind === 'fight').map((s) => s.name)
+  return names.sort((a, b) => b.length - a.length)[0] ?? ''
 }
 
 // ── P4/P5/P6: the selection crosses windows ─────────────────────────────────────────────
@@ -613,6 +627,7 @@ async function main(): Promise<void> {
     // and stepOverlayScope leaves it that way.
     await setLocked(ov, false)
     await stepTitleBarRoom(ov)
+    await stepTotalOnPanel(ov, await longestFightName(page))
     // LAST, because it closes and reopens the very window every step above holds a page for.
     await stepOpaqueOverlays(app, page)
 
