@@ -158,6 +158,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         text: 'A second Sky hide box, Hide quests I have turned in, tucks away everything you consider done - independent of the every-item box, so once-and-done farmers and refarmers each get their view.'
       },
       {
+        kind: 'fixed',
+        text: 'Most recently looted on the Sky tab means exactly that now: a starred quest no longer squats above the loot you just made. Stars still pin every other sort order.'
+      },
+      {
         kind: 'new',
         text: 'Map search now answers from every zone, mobs included: look for a name anywhere, the result says which zone it means, and picking it takes you to that map - to the exact spot when the wiki states one.',
         fromReport: true
