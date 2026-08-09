@@ -467,6 +467,9 @@ test('a slow you put on a mob is a DEBUFF row on the debuffs window, not a buff'
   }
 })
 
+// The CC half's DEATH path (JOS-156 — it closes the right hold and mints nothing) lives in
+// tests/deathClearsDebuffs.test.mts beside the buffs half's, so the ticket's evidence is in one
+// place and this file stays under the 400-code-line ceiling.
 test('a debuff row is never routed by GROUP — the row kind is the whole discriminator', () => {
   // The regression this guards: routing by `group` would send every buff you put on your pet or
   // your group to the debuffs window, and would send a debuff standing on YOU to the buffs one.

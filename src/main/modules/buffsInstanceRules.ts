@@ -11,16 +11,38 @@ import { isLeftBehindOnZone, type EntityDisposition } from '../combat/entityRule
 import { expiryGraceMs, hygieneCapMs, nonSelfExpiryTimeoutMs, type OpenCast } from './buffsShapes'
 import type { ActiveSpec } from './buffsView'
 
-/** Does this open cast belong to the entity being retired? (`hostileOnly` = a plain mob death.) */
-export function openMatches(o: OpenCast, entityKey: string, hostileOnly: boolean): boolean {
-  if (!hostileOnly) return o.entityKey === entityKey
-  return o.disp === 'hostile' && (o.entityKey === entityKey || o.entityKey === 'unknown-hostile')
+/**
+ * THE DEATH CENSOR'S REACH (JOS-156). A mob died — which of the things we are holding did it take
+ * with it? The answer is "anything that was on an ENEMY", and it takes TWO tests to say that,
+ * because neither one alone covers the log:
+ *
+ *   • the SPELL'S CLASS. This is the half the ticket needed. The owner's charm pet and the bees it
+ *     was killing all answered to "Bzzazzt", so a slow landed on one of the bees was filed with
+ *     `disp: 'charmed'` — the name matched the live pet — even though the spell on it is
+ *     detrimental. A disposition test alone let that row outlive four deaths.
+ *   • the RECORD'S DISPOSITION. This is the half that was already there, and dropping it costs
+ *     real ground: the PACIFY family (Calm, Lull, Pacify) is `Beneficial` in the committed
+ *     spells.json and is cast at enemies, so it is a `cls: 'buff'` standing on a hostile. MEASURED
+ *     over the full 1.47M-line log: reading class alone left those open records behind, and they
+ *     later paired with a wear-off into duration samples the old code refused (Calm 33 → 35,
+ *     Lull 3 → 4).
+ *
+ * So the reach is the UNION, applied identically to open records and active rows — which is the
+ * other half of the fix, since before JOS-156 the two halves tested different things and a row
+ * could be censored on one side and left standing on the other.
+ *
+ * `unknown-hostile` is swept alongside the named key because its inferred target is exactly the
+ * mob that just died.
+ */
+export function deathCensorsOpen(o: OpenCast, entityKey: string, isDebuff: boolean): boolean {
+  if (!isDebuff && o.disp !== 'hostile') return false
+  return o.entityKey === entityKey || o.entityKey === 'unknown-hostile'
 }
 
-/** Does this active instance belong to the entity being retired? */
-export function activeMatches(a: ActiveBuff, aKey: string, entityKey: string, hostileOnly: boolean): boolean {
-  if (!hostileOnly) return aKey === entityKey
-  return a.cls === 'debuff' && (aKey === entityKey || aKey === 'unknown-hostile' || a.inferredTarget === true)
+/** …and the same union for an ACTIVE row. Nothing friendly can be on the thing you just killed. */
+export function deathCensorsActive(a: ActiveBuff, aKey: string, entityKey: string): boolean {
+  if (a.cls !== 'debuff' && a.disposition !== 'hostile') return false
+  return aKey === entityKey || aKey === 'unknown-hostile' || a.inferredTarget === true
 }
 
 /**

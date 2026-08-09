@@ -43,12 +43,12 @@ import type { PetEntities } from './buffsEntities'
 import type { SpellStats } from './buffsStats'
 import { buildActive, type ActiveSpec } from './buffsView'
 import {
-  activeMatches,
+  deathCensorsActive,
+  deathCensorsOpen,
   hygieneCap,
   isPermanentIllusion,
   landingSpec,
   openLeftBehindOnZone,
-  openMatches,
   unwitnessedCullCap
 } from './buffsInstanceRules'
 
@@ -606,26 +606,73 @@ export class BuffInstances {
   }
 
   /**
-   * Retire an ENTITY (Task #35, generalized — NO pet-specific branches). Censors every open
-   * cast + active instance bound to `entityKey`. Used on uncharm / summoned-pet death /
-   * hostile death / zone-left-behind / single-pet succession — the pet is just the entity
-   * currently claimed. Buffs on other players / arbitrary entities are censored the same way.
+   * A MOB OF THIS NAME DIED — the death censor, and since JOS-156 the ONE path every death
+   * SHAPE reaches. `modules/buffs.ts onDeath` calls it for `You have slain <X>!`, for
+   * `<X> has been slain by <Y>!` whoever Y is, and for the killerless `<X> died.` alike; the
+   * separate question of whether the ENTITY behind the name is retired stays there.
    *
-   * `hostileOnly` guards a plain-mob death: only DEBUFF instances on that mob are censored
-   * (a friendly buff can't be on a hostile), and an unknown-hostile debuff bucket is swept
-   * too (its inferred target just died).
+   * IT CLOSES ONE LANDING, NOT THE ROW (JOS-140 ruling 7). A group is a multiset of same-named
+   * mobs we believe are holding the spell, and one death is evidence about ONE of them. The
+   * OLDEST is closed for the identical reason a wear-off closes the oldest — the line names the
+   * mob but not WHICH mob of that name, so under a fixed duration the oldest is the
+   * maximum-likelihood one to have just ended. The row survives with one fewer on its count chip;
+   * only an empty group removes it. This used to be `retireEntity(key, {hostileOnly:true})`,
+   * which deleted the whole row, so killing one of four slowed mobs cleared all four.
+   *
+   * AND IT MINTS NOTHING. A land-to-death span is not a duration — the spell was cut short by the
+   * corpse, not observed running out. That refusal is STRUCTURAL: unlike `recordFade`, this method
+   * discards what `closeOldest` hands back and never reaches `addSample` at all, exactly as
+   * `sweepHygiene` never has. `contaminateAll` is the separate half — it is about the landings
+   * that SURVIVE the close, which are now landings of a group that has lost track of which mob is
+   * which, and it is buffRounds.ts ruling 5's own sentence (a death contaminates) written where
+   * the death happens rather than left as an accident of how rounds are counted.
+   *
+   * An ACTIVE with no open record behind it has no group to count down and no landing to close,
+   * so it clears outright.
    */
-  retireEntity(entityKey: string, opts?: { hostileOnly?: boolean }): void {
-    const hostileOnly = opts?.hostileOnly === true
+  onEntityDeath(entityKey: string, ts: number): void {
     let changed = false
     for (const [ik, o] of [...this.open]) {
-      if (openMatches(o, entityKey, hostileOnly)) {
+      if (!deathCensorsOpen(o, entityKey, this.stats.classOf(o.spellKey) === 'debuff')) continue
+      o.group.contaminateAll()
+      o.group.closeOldest(ts)
+      if (o.group.empty) {
+        this.open.delete(ik)
+        this.active.delete(ik)
+      } else {
+        this.restat(ik, o)
+      }
+      changed = true
+    }
+    for (const [ik, a] of [...this.active]) {
+      if (this.open.has(ik)) continue
+      if (!deathCensorsActive(a, instanceEntityKey(ik), entityKey)) continue
+      this.active.delete(ik)
+      changed = true
+    }
+    if (changed) this.dirty = true
+  }
+
+  /**
+   * Retire an ENTITY (Task #35, generalized — NO pet-specific branches). Censors every open
+   * cast + active instance bound to `entityKey`, buff and debuff alike. Used on uncharm /
+   * summoned-pet death / broken-charm death / zone-left-behind / single-pet succession — the pet
+   * is just the entity currently claimed. Buffs on other players / arbitrary entities are
+   * censored the same way.
+   *
+   * The plain-mob death no longer comes here (JOS-156): a death is about one mob of a name, not
+   * about an identity, so it goes to `onEntityDeath` above.
+   */
+  retireEntity(entityKey: string): void {
+    let changed = false
+    for (const [ik, o] of [...this.open]) {
+      if (o.entityKey === entityKey) {
         this.open.delete(ik)
         changed = true
       }
     }
-    for (const [ik, a] of [...this.active]) {
-      if (activeMatches(a, instanceEntityKey(ik), entityKey, hostileOnly)) {
+    for (const ik of [...this.active.keys()]) {
+      if (instanceEntityKey(ik) === entityKey) {
         this.active.delete(ik)
         changed = true
       }

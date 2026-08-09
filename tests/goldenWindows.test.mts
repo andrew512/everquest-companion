@@ -22,6 +22,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFixture, replayBuffs, findActive, activeNames, tsOf } from './harness.mts'
+import type { BuffsSnap } from '../src/shared/types.ts'
 
 const MIN = 60_000
 
@@ -210,25 +211,57 @@ test('W4 logout gap: a buff cast before a ≥30-min gap is cleared after relog',
 // the charmed pet" row was the cast-timing guess, and asserting it is asserting the guess.
 // The only Boon here is a SELF one that really did land, at 15:32:16.
 //
-// What the window DOES confirm, and what this now pins, is the same law by a named instance:
-// `Tashani` lands on `an imp protector` at 15:40:52 (a message that NAMES the mob), is active
-// right up to the zone, and is censored by it — while the player's self buffs ride through.
-test('W5 mob zoned away: its named debuff is censored + gone after the zone, self buffs ride', () => {
+// What the window DOES confirm is the same law by a named instance: `Tashani` lands on `an imp
+// protector` at 15:40:52 (a message that NAMES the mob) and a zone censors it, while the player's
+// self buffs ride through.
+//
+// …AND THE 15:45:30 SLAIN LINE GETS THERE FIRST NOW (JOS-156). `An imp protector has been slain
+// by an imp protector!` — the charmed imp killing a same-named imp, the identical shape as the
+// owner's Plane of Sky bee fight nine days later. That line used to do NOTHING: the name matched
+// the live charmed pet, so the death went into the branch that refuses to censor a live pet on an
+// ambiguous death and the two debuffs standing on that name (Tashani, and the Tepid Deeds landed
+// at 15:44:42) rode on to the zone. They are censored by the death now, five minutes earlier,
+// which is why the zone half of this window is asserted against a control with that ONE line
+// removed. Both halves are real bytes and both laws are pinned; what changed is which of them
+// this window's Tashani actually meets.
+test('W5 a same-named third-party kill censors the debuffs on that name (JOS-156)', () => {
   const prime = readFixture('w5-priming.log')
   const lines = readFixture('w5-charm-zone.log')
-  const zoneTs = tsOf('[Thu Jul 30 15:50:54 2026] x')
+  const upTo = (ts: number): BuffsSnap =>
+    replayBuffs(lines.filter((l) => tsOf(l) > 0 && tsOf(l) <= ts), ts, { prime })
 
-  const before = lines.filter((l) => tsOf(l) > 0 && tsOf(l) < zoneTs)
-  const snapBefore = replayBuffs(before, zoneTs - 1000, { prime })
-  const tashBefore = findActive(snapBefore, 'tashani')
-  assert.ok(tashBefore, 'Tashani should be active on the imp before the zone')
+  const before = upTo(tsOf('[Thu Jul 30 15:45:29 2026] x'))
+  const tashBefore = findActive(before, 'tashani')
+  assert.ok(tashBefore, 'Tashani is active on the imp a second before the slain line')
   assert.equal(tashBefore!.cls, 'debuff', 'Tashani is a detrimental spell (spell property)')
   assert.equal(tashBefore!.self, false, 'this instance is on the mob, not the player')
   assert.equal(tashBefore!.target, 'an imp protector', 'keyed to the entity the landing line NAMED')
   assert.equal(tashBefore!.messageDriven, true, 'opened by that landing line, never by the cast')
+  assert.ok(findActive(before, 'tepid deeds'), 'and so is the slow landed on that name at 15:44:42')
   // The cast the log never confirmed landing tracks nothing at all — no invented pet row.
-  const boonBefore = findActive(snapBefore, 'boon of the garou')
-  assert.equal(boonBefore?.self, true, 'the only Boon instance is the SELF one that really landed')
+  assert.equal(findActive(before, 'boon of the garou')?.self, true, 'the only Boon is the SELF one that landed')
+
+  const after = upTo(tsOf('[Thu Jul 30 15:45:31 2026] x'))
+  for (const spell of ['tashani', 'tepid deeds']) {
+    assert.equal(findActive(after, spell), undefined, `${spell} goes with the corpse the pet made`)
+  }
+  assert.equal(after.active.every((a) => a.self), true, 'nothing but the player own buffs is left')
+})
+
+// The ZONE half of W5, on a control with the 15:45:30 slain line removed — the one line, and the
+// whole diff. Without it the imp's Tashani survives to 15:50:54 exactly as it always did, and the
+// zone is what censors it: a mob cannot follow you through a zone, so a debuff open on it can
+// never be observed fading.
+test('W5 mob zoned away: its named debuff is censored + gone after the zone, self buffs ride', () => {
+  const prime = readFixture('w5-priming.log')
+  const slain = '[Thu Jul 30 15:45:30 2026] An imp protector has been slain by an imp protector!'
+  const lines = readFixture('w5-charm-zone.log').filter((l) => l !== slain)
+  const zoneTs = tsOf('[Thu Jul 30 15:50:54 2026] x')
+
+  const before = lines.filter((l) => tsOf(l) > 0 && tsOf(l) < zoneTs)
+  const tashBefore = findActive(replayBuffs(before, zoneTs - 1000, { prime }), 'tashani')
+  assert.ok(tashBefore, 'Tashani should be active on the imp before the zone')
+  assert.equal(tashBefore!.target, 'an imp protector', 'still keyed to the entity the landing line NAMED')
 
   const snapAfter = replayBuffs(lines, tsOf(lines[lines.length - 1]), { prime })
   assert.ok(!findActive(snapAfter, 'tashani'), 'the mob debuff is censored + gone after the zone')
