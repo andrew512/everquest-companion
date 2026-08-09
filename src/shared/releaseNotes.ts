@@ -148,6 +148,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         fromReport: true
       },
       {
+        kind: 'new',
+        text: 'Text too small to read? Preferences - Text size scales the whole app window, from 90% up to 150%, and it stays that way the next time you open it. Your floating overlays keep their own size control.',
+        fromReport: true
+      },
+      {
         kind: 'changed',
         text: 'The combat meters are one surface now: Overview, the Combat tab and the overlay share the same clickable bars, and clicking an ability that has stats (crit, double and triple attack, misses) opens them right under its bar.'
       },
