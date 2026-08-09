@@ -137,6 +137,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'Thirty-five spell messages the game words differently than the wiki are corrected - Drifting Death and the swarm family, root, stuns, runes and more now land and wear off on your timers exactly as the game prints them.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Leveling page stops piling its panels on top of each other in narrower windows - the bands stack and scroll instead, and nothing covers anything.',
+        fromReport: true
       }
     ]
   },
