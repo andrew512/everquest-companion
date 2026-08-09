@@ -86,6 +86,22 @@ export function BuffTimerBar({ row, nowMs }: { row: BuffTimerRow; nowMs: number 
               ~
             </span>
           )}
+          {/* THE COUNT CHIP (JOS-140 ruling 7). EQ prints no instance identifier and stamps to the
+              second, so five mobs of one name mezzed in one round are five identical lines: this
+              row stands for all of them, and the chip is how it says so instead of pretending to
+              be one. The clock is the OLDEST of them, which is the one the next wear-off closes. */}
+          {row.count != null && row.count > 1 && (
+            <span data-testid="buff-timer-count" style={{ color: 'rgba(255,255,255,0.55)', marginLeft: 4 }}>
+              {`x${row.count}`}
+            </span>
+          )}
+          {/* Whose spell this is, when it is not yours (the externals allowlist). Absent for your
+              own, which is nearly every row — a caster chip on all of them would be noise. */}
+          {row.caster != null && (
+            <span data-testid="buff-timer-caster" style={{ color: 'rgba(255,255,255,0.4)', marginLeft: 4 }}>
+              {row.caster}
+            </span>
+          )}
         </span>
         <span
           data-testid="buff-timer-time"
@@ -128,20 +144,24 @@ export function BuffTimerGroup({
 }): JSX.Element {
   return (
     <div data-testid="buff-timer-group" style={{ marginBottom: 6 }}>
-      <div
-        style={{
-          fontSize: 9,
-          letterSpacing: 0.6,
-          textTransform: 'uppercase',
-          color: 'rgba(255,255,255,0.45)',
-          padding: '0 4px 2px'
-        }}
-      >
-        {label}
-        {/* `inferred` is not decoration: the model marks a target it INFERRED rather than read
-            out of a sentence, and law 1 says an inference is labelled, never silently shown. */}
-        {inferred && <span style={{ marginLeft: 4, opacity: 0.8 }}>· inferred</span>}
-      </div>
+      {/* NO HEADING when there is no label — the flat soonest-first arrangement (JOS-140) is one
+          block covering every target, and a heading over the whole list would name nothing. */}
+      {label !== '' && (
+        <div
+          style={{
+            fontSize: 9,
+            letterSpacing: 0.6,
+            textTransform: 'uppercase',
+            color: 'rgba(255,255,255,0.45)',
+            padding: '0 4px 2px'
+          }}
+        >
+          {label}
+          {/* `inferred` is not decoration: the model marks a target it INFERRED rather than read
+              out of a sentence, and law 1 says an inference is labelled, never silently shown. */}
+          {inferred && <span style={{ marginLeft: 4, opacity: 0.8 }}>· inferred</span>}
+        </div>
+      )}
       {rows.map((r) => (
         <BuffTimerBar key={r.id} row={r} nowMs={nowMs} />
       ))}

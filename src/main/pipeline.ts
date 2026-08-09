@@ -29,7 +29,7 @@ import { createModules } from './modules/wiring'
 import type { ModuleDelta } from './modules/types'
 import { lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
-import { getAlerts } from './store'
+import { getAlerts, getBuffTrustPrefs } from './store'
 import { getOverlayWindow, sendToMain } from './windows'
 import type { AlertsDelta, OverlayKind } from '../shared/types'
 
@@ -103,6 +103,9 @@ export const registry = new ModuleRegistry({
  */
 const modules = createModules({
   alertDefs: getAlerts(),
+  // WHOSE casts may anchor a landing besides your own (JOS-140). Empty unless the user named
+  // somebody in Preferences; ipc/buffTrust.ts keeps it in sync while the app runs.
+  buffTrust: getBuffTrustPrefs(),
   // The committed baseline first, then what this user's own log has taught since install.
   overlays: [baselineOverlay(), loadUserOverlay()],
   lookupItem,

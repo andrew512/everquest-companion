@@ -117,7 +117,9 @@ test('the store normalizes the scale on the way OUT as well as in', () => {
     /const next = normalizeUiScale\(value\)\s*\n\s*settingsStore\.set\('uiScale', next\)/
   )
   // Multiline-anchored rather than newline-wrapped: this tree is checked out with CRLF endings.
-  assert.match(src('../src/main/store.ts'), /^ {2}uiScale\?: number$/m, 'the key must be in StoreShape')
+  // `StoreShape` moved to its own module in JOS-140 (store.ts hit the 400-code-line ceiling); the
+  // claim is unchanged — the key has to be DECLARED somewhere, or nothing would type it.
+  assert.match(src('../src/main/storeShape.ts'), /^ {2}uiScale\?: number$/m, 'the key must be in StoreShape')
 })
 
 test('NO SCHEMA BUMP: an additive optional key needs no migration, and must not get one', () => {

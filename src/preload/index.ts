@@ -84,6 +84,9 @@ import { perfBridge } from './perf'
 // The two graphics-compatibility switches (JOS-40), spread in below for the same file-size
 // reason as perfBridge. Shapes live beside their normalizer in shared/graphicsPrefs.ts.
 import { graphicsBridge } from './graphics'
+// The buff externals allowlist (JOS-140), spread in below for the same file-size reason. Shape
+// and normalizer live together in shared/buffTrust.ts.
+import { buffTrustBridge } from './buffTrust'
 // The main window's text size (JOS-123), split out for the same file-mass reason. Its shapes are
 // a single number; the ladder and the normalizer live in shared/uiScale.ts.
 import { uiScaleBridge } from './uiScale'
@@ -272,6 +275,8 @@ const api = {
   ...perfBridge,
   // …and the two graphics-compatibility switches (./graphics.ts), for the same reason.
   ...graphicsBridge,
+  // …and the buff externals allowlist (./buffTrust.ts), likewise.
+  ...buffTrustBridge,
   // …and the main window's text size (./uiScale.ts), likewise.
   ...uiScaleBridge,
   // …and `restartApp` (./dev.ts), whose handler refuses in a packaged build.

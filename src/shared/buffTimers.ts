@@ -70,6 +70,27 @@ export function isTimerOverlayKind(kind: OverlayKind): kind is TimerOverlayKind 
   return kind === 'buffs' || kind === 'debuffs'
 }
 
+/**
+ * HOW A TIMER WINDOW ARRANGES ITS ROWS (JOS-140, owner amendment 2026-08-09 from live testing).
+ *
+ *   'none'   — ONE FLAT LIST, soonest to expire at the top, across every target. This is what a
+ *              player watching a chain-mez actually reads: the next thing to break is the next
+ *              thing they must act on, and which mob it is on is a detail on the row.
+ *   'target' — self rows first, then one contiguous block per target (world-model law 4's
+ *              presentation order). What both windows did before this.
+ *
+ * The DEFAULT differs per window and is deliberate: the DEBUFFS window opens flat, because it is
+ * a queue of things running out; the BUFFS window keeps its blocks, because "what is on me" and
+ * "what is on my pet" are separate questions read at separate moments and the owner did not ask
+ * for that to change. Either window can be set to either, per kind, in its own footer.
+ */
+export type TimerGrouping = 'none' | 'target'
+
+/** A stored/patched grouping, or null when it is absent and the surface's own default applies. */
+export function normalizeTimerGrouping(raw: unknown): TimerGrouping | null {
+  return raw === 'none' || raw === 'target' ? raw : null
+}
+
 // ----- the CC half's state (owned by main/modules/buffTimers.ts, rendered by the overlay) -----
 
 /**
@@ -355,7 +376,15 @@ function endedByCc(b: ActiveBuff, ends: readonly CcEnd[]): boolean {
   return ends.some((e) => e.key === key && e.ts >= b.startedTs && (e.spell == null || nameKey(e.spell) === spell))
 }
 
-/** Soonest-to-expire first within a group; countdowns ahead of count-ups; then oldest first. */
+/**
+ * Soonest-to-expire first; countdowns ahead of count-ups; then oldest first, then by name.
+ *
+ * THE RANK IS THE ANSWER TO "where do the rows with no number go" (JOS-140): AFTER the timed
+ * ones. A row that states no duration is counting UP and cannot be placed on a
+ * soonest-to-expire axis at all, so putting it above a bar that is about to break would be
+ * sorting by a number it does not have. Permanent rows come last for the same reason, one step
+ * further: they are never going to expire.
+ */
 function compareRows(a: BuffTimerRow, b: BuffTimerRow): number {
   const rank = (r: BuffTimerRow): number => (r.mode === 'countdown' ? 0 : r.mode === 'elapsed' ? 1 : 2)
   if (rank(a) !== rank(b)) return rank(a) - rank(b)
@@ -406,4 +435,18 @@ export function buildTimerRows(buffs: BuffsSnap, timers: BuffTimersSnap): BuffTi
   const groups = [...byTarget.values()].map((g) => g.sort(compareRows))
   groups.sort((a, b) => compareRows(a[0], b[0]))
   return [...self, ...groups.flat()]
+}
+
+/**
+ * THE ROW ORDER ONE WINDOW DRAWS (JOS-140). `buildTimerRows` is the MODEL's order — self first,
+ * then per-target blocks — and stays exactly that, because both windows are folded from it and
+ * every fixture test reads it. This is the presentation choice on top, and it is per window.
+ *
+ * 'target' hands back the projection untouched. 'none' re-sorts the same rows into ONE flat list,
+ * soonest to expire first, which is what the debuffs window opens on: a player chain-mezzing
+ * reads the next thing to break, not the roster of mobs. Nothing is added, removed or renamed by
+ * either — it is a sort, and `rowsForSurface` has already decided membership.
+ */
+export function orderTimerRows(rows: readonly BuffTimerRow[], grouping: TimerGrouping): BuffTimerRow[] {
+  return grouping === 'target' ? [...rows] : [...rows].sort(compareRows)
 }
