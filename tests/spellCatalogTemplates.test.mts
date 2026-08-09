@@ -87,16 +87,25 @@ test('NO DEAD `lands`: every lands template names a message the parser can match
   }
 })
 
-test('the dead-lands gate actually removed something — 68 of them', () => {
+test('the dead-lands gate actually removed something — 59 of them', () => {
   // Provenance for the claim in spellDb.ts's comment: a count, measured here rather than asserted
   // in prose. These were Detrimental spells with a cast-on-other message the suffix table cannot
   // key, every one of which was being offered a suggestion that could not fire.
+  //
+  // IT WAS 68 AND IT IS 59 (JOS-150). `db` is the EFFECTIVE DB — `loadSpellDb()` now applies the
+  // committed corrections overlay (src/main/data/spellCorrections.ts) to the entries before
+  // deriving anything — and nine of those 68 were dead for the ONE reason a correction can fix
+  // outright: the scrape lost the wiki's `Someone` subject, so the message yielded no suffix at
+  // all. Restoring the subject is not a rewrite of the sentence; it is the sentence the wiki
+  // already had, with the placeholder the parser keys on put back. The nine are Garrison's Mighty
+  // Mana Shock, Cease, Desist, Sacred Word, Cancelling/Cessation/Negation of Life, Force Snap and
+  // Thunder of Karana, each of them evidenced against the owner's log in that file.
   let dead = 0
   for (const s of db.spells) {
     if (s.spellType !== 'Detrimental' || !s.msgCastOnOther) continue
     if (castOnOtherSuffix(s.msgCastOnOther) === null) dead += 1
   }
-  assert.equal(dead, 68, 'the measured population the `lands` gate now excludes')
+  assert.equal(dead, 59, 'the measured population the `lands` gate now excludes')
 })
 
 test('`landsOnOther` always travels with the pattern it needs', () => {
