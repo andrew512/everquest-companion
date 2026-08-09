@@ -14,6 +14,13 @@
 //      Preferences, and a `placement="top"` popper there is an overlay across the row the user was
 //      aiming at (the owner's report). Structural, because "the popper cannot mount" is exactly
 //      what "it can't eat the click" means.
+//   5. the LOOT LEDGER mounts none either (JOS-127) — same defect, one surface wider. A 0.14.0
+//      user could not change the Loot sort off "Last looted": the notable-pickups chips and the
+//      item names in the first table rows anchored `placement="top"`, INTERACTIVE
+//      `KnownItemTooltip` cards, which open upward across the toolbar the Sort select lives in
+//      and hold `pointer-events: auto` for as long as they are up. Owner direction was removal,
+//      not a timeout or a placement flip, so the guard is the same structural one: no file that
+//      draws the ledger may mount a popper of any kind.
 //
 // No DOM, no fixture — it never skips.
 
@@ -82,6 +89,49 @@ test('the theme states the hand cursor AND the disabled exception', () => {
   assert.ok(/cursor: 'not-allowed'/.test(block[1]), 'disabled controls keep not-allowed')
   assert.ok(/:has\(\.Mui-disabled\)/.test(block[1]), 'the disabled rule reaches the wrapping span')
   assert.ok(theme.includes('...tooltipAnchors'), 'and the block is actually applied by CssBaseline')
+})
+
+/**
+ * The files that draw the Loot LEDGER — the toolbar (with the Sort select), the strip under it,
+ * the table, its rows and their badges, and the drill-down's own chrome. Not the drill-down BODY:
+ * `ItemDetailDialog` and the sections it composes also render inside the Mobs tab's dialog, and
+ * their `db`/`observed` provenance chips are two-word labels that cannot sit over any control.
+ */
+const LOOT_LEDGER = [
+  'LootView.tsx',
+  'LootTables.tsx',
+  'lootRows.tsx',
+  'KnowledgeBadge.tsx',
+  'NotablePickupsStrip.tsx',
+  'ItemDetailPane.tsx'
+]
+
+test('the Loot ledger mounts NO tooltip popper over its own controls (JOS-127)', () => {
+  for (const name of LOOT_LEDGER) {
+    const src = readFileSync(join(RENDERER, 'features', 'loot', name), 'utf8')
+    assert.equal(importsMuiTooltip(src), false, `${name} must not import MUI’s Tooltip`)
+    assert.ok(!/from '.*lib\/Tooltip'/.test(src), `${name} must not import the shared Tooltip`)
+    // KnownItemTooltip is the WORST of them here: interactive, `placement="top"`, up to 380px
+    // wide, and anchored on rows that sit directly beneath the toolbar. Matched as an IMPORT and
+    // as an ELEMENT, never as a bare word — these files explain in prose why it left.
+    assert.ok(!/from '.*KnownItemTooltip'/.test(src), `${name} must not import the item hover card`)
+    assert.ok(!/<KnownItemTooltip/.test(src), `${name} must not mount the item hover card`)
+    assert.ok(!/<Tooltip/.test(src), `no Tooltip element may survive in ${name}`)
+  }
+})
+
+test('the Loot ledger does not smuggle the hover text back in as a native title', () => {
+  // A native `title` cannot eat a click (no hit area), so it is not the defect — but the owner's
+  // direction was FEWER tooltips on this surface, not a quieter spelling of the same ones.
+  for (const name of LOOT_LEDGER) {
+    const src = readFileSync(join(RENDERER, 'features', 'loot', name), 'utf8')
+    assert.ok(!/\btitle=/.test(src), `${name} should carry no hover text at all`)
+  }
+})
+
+test('the estimate caveat survives as a WORD in the header, not a sentence in a popper', () => {
+  const tables = readFileSync(join(RENDERER, 'features', 'loot', 'LootTables.tsx'), 'utf8')
+  assert.ok(tables.includes('In inventory (est.)'), 'the column header says est. out loud')
 })
 
 test('the nav’s update indicator mounts NO tooltip popper over Preferences', () => {
