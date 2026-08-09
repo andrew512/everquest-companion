@@ -371,6 +371,7 @@ export default function AlertList({
         <Button
           startIcon={<AddIcon />}
           variant="outlined"
+          data-testid="alerts-add-suggestion"
           onClick={onAddSuggestion}
           sx={{ alignSelf: 'flex-start', mt: 0.5 }}
         >
