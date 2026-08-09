@@ -6,9 +6,18 @@
 // filtering, sorting and paging; everything below owns the drawing of a single quest.
 //
 // ITEM NAMES LINK TO THE LOOT DRILL-DOWN (owner, 2026-08-04): "clicking on a sky item while you
-// are hovering should take you to the item drill-down page." The hover card is unchanged — it is
-// still `ItemTooltip`, the compact game-window popover — and the click is the app's standing link
-// idiom (`openLoot`, appRouting.ts), the same one the Planner's donor names now use.
+// are hovering should take you to the item drill-down page." The click is the app's standing link
+// idiom (`openLoot`, appRouting.ts), the same one the Planner's donor names use.
+//
+// AND THE HOVER CARD IS GONE (JOS-143). Every item name and every required-item chip in this file
+// used to anchor `ItemTooltip` — a `placement="top"`, up-to-380px, pointer-events-taking card. The
+// chips live in the ACCORDION SUMMARY, i.e. the first row under QuestFilterBar, so those cards
+// opened straight across the tab's five dropdowns and ate the clicks aimed at them; that is what
+// the owner reported, and it is the Loot ledger's defect (JOS-127) on a second surface. The
+// direction was removal, not a placement flip or a delay. Nothing is lost that this tab does not
+// already say out loud: the expanded panel's table states Dropped by and Where for every item, the
+// reward's stat block is printed under the toolbar, and the CLICK still opens the drill-down,
+// which is the deep dive the hover was only ever a preview of.
 //
 // WHICH NAMES, AND WHY NOT ALL OF THEM. The two names that had NO click before become links: the
 // item name in the expanded table, and the reward caption in the summary row. The required-item
@@ -34,12 +43,10 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked'
 import StarIcon from '@mui/icons-material/Star'
 import LinkIcon from '@mui/icons-material/Link'
-import { Tooltip } from '../../lib/Tooltip'
 import { skyQuestPage, wikiPageUrl } from '@shared/wiki'
 // The turn-in badge and the manual counter (JOS-131), in their own file.
 import { TurnInBadge, TurnInCounter } from './TurnInControls'
 import type { QuestProgress } from './useProgress'
-import { ItemTooltip } from './ItemTooltip'
 import { ItemNameLink, QuestItemsTable } from './QuestItemsTable'
 import { KillTargetCaption } from './DropperCell'
 import { questKillTargets, type KillTarget } from './poskyDroppers'
@@ -74,16 +81,17 @@ function ProgressBar({ q }: { q: QuestProgress }): JSX.Element {
 }
 
 /**
- * One contending quest, as a chip you can hover for ITS reward (2026-08-04).
+ * One contending quest, as a chip that names ITS reward (2026-08-04).
  *
- * The section answers "who else wants this drop"; the hover answers "and what do they get for
- * it" — the other half of deciding where a single looted claw should go. Same surface as every
- * other item hover in this tab (ItemTooltip → the game's item-window language), so a reward and
- * a turn-in item read identically.
+ * The section answers "who else wants this drop"; the reward answers "and what do they get for
+ * it" — the other half of deciding where a single looted claw should go.
  *
- * A quest the wiki lists no reward for gets NO tooltip — a bare chip, not an empty card. The
+ * A quest the wiki lists no reward for says nothing extra — a bare chip, not an empty card. The
  * `data-reward` attribute is that decision, readable: it states what the chip believes it pays,
- * so "no reward ⇒ no tooltip" can be asserted from outside instead of inferred.
+ * so "no reward ⇒ nothing to say" can be asserted from outside instead of inferred.
+ *
+ * The reward used to be an `ItemTooltip` card; since JOS-143 it is a native `title` (no DOM node,
+ * no hit area). The stat block it also drew is a click away in the Loot drill-down.
  */
 function SharingQuestChip({
   sq,
@@ -94,23 +102,18 @@ function SharingQuestChip({
   ambiguousNames: Set<string>
   onSelectQuest: (name: string) => void
 }): JSX.Element {
-  const chip = (
+  return (
     <Chip
       size="small"
       variant="outlined"
       color="info"
       data-testid="posky-shared-quest"
       data-reward={sq.reward ?? ''}
+      title={sq.reward ? `Reward for ${sq.className} · ${sq.name}: ${sq.reward}` : undefined}
       label={sharingQuestLabel(sq, ambiguousNames)}
       onClick={() => onSelectQuest(sq.name)}
       sx={{ height: 20, fontSize: 11 }}
     />
-  )
-  if (!sq.reward) return chip
-  return (
-    <ItemTooltip name={sq.reward} stats={sq.rewardStats} where={`Reward for ${sq.className} · ${sq.name}`}>
-      {chip}
-    </ItemTooltip>
   )
 }
 
@@ -188,11 +191,9 @@ function QuestSummaryRow({
       <Box sx={{ minWidth: 220 }}>
         <Typography variant="subtitle2">{q.name}</Typography>
         {q.reward && (
-          <ItemTooltip name={q.reward} stats={q.rewardStats}>
-            <Typography variant="caption" color="primary.main">
-              → <ItemNameLink name={q.reward} onOpenLoot={onOpenLoot} inSummary />
-            </Typography>
-          </ItemTooltip>
+          <Typography variant="caption" color="primary.main">
+            → <ItemNameLink name={q.reward} onOpenLoot={onOpenLoot} inSummary />
+          </Typography>
         )}
         {q.giver && (
           <Typography variant="caption" color="text.secondary" display="block">
@@ -205,18 +206,15 @@ function QuestSummaryRow({
       </Box>
       <Box sx={{ flexGrow: 1 }} />
       {sharedCount > 0 && (
-        <Tooltip
+        <Chip
+          size="small"
+          variant="outlined"
+          color="info"
+          icon={<LinkIcon />}
+          label={sharedCount}
           title={`Shares ${sharedCount} item${sharedCount === 1 ? '' : 's'} with other Sky quests - expand for details`}
-        >
-          <Chip
-            size="small"
-            variant="outlined"
-            color="info"
-            icon={<LinkIcon />}
-            label={sharedCount}
-            sx={{ height: 20, fontSize: 11, '& .MuiChip-icon': { fontSize: 14 } }}
-          />
-        </Tooltip>
+          sx={{ height: 20, fontSize: 11, '& .MuiChip-icon': { fontSize: 14 } }}
+        />
       )}
       {/* BOTH, since JOS-131. The turn-in badge is history ("you have done this, twice"); the
           chip beside it is the present ("and right now you are three items short of doing it
@@ -255,35 +253,33 @@ function QuestItemChips({
           const done = it.have >= it.need
           const fav = isFavorite(it.name)
           return (
-            <ItemTooltip
+            // These are the chips whose `placement="top"` cards landed on the toolbar (JOS-143):
+            // this Stack is the second line of the collapsed summary, so for the top quest in the
+            // list the card opened over QuestFilterBar itself. The card's facts are in the
+            // expanded panel's table one click below, and `where` rides a native title here so
+            // the collapsed row still answers "which island" without a popper.
+            <Chip
               key={it.name}
-              name={it.name}
-              stats={it.stats}
-              who={it.who}
-              where={it.where}
-              droppers={it.droppers}
-            >
-              <Chip
-                size="small"
-                variant={fav ? 'filled' : 'outlined'}
-                color={fav ? 'warning' : done ? 'success' : 'default'}
-                icon={
-                  fav ? (
-                    <StarIcon />
-                  ) : done ? (
-                    <CheckCircleIcon />
-                  ) : (
-                    <RadioButtonUncheckedIcon />
-                  )
-                }
-                onClick={(e) => {
-                  e.stopPropagation()
-                  toggleFavorite(it.name)
-                }}
-                label={it.need > 1 ? `${it.name} ${it.have}/${it.need}` : it.name}
-                sx={{ opacity: done && !fav ? 0.65 : 1 }}
-              />
-            </ItemTooltip>
+              size="small"
+              variant={fav ? 'filled' : 'outlined'}
+              color={fav ? 'warning' : done ? 'success' : 'default'}
+              title={it.where}
+              icon={
+                fav ? (
+                  <StarIcon />
+                ) : done ? (
+                  <CheckCircleIcon />
+                ) : (
+                  <RadioButtonUncheckedIcon />
+                )
+              }
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleFavorite(it.name)
+              }}
+              label={it.need > 1 ? `${it.name} ${it.have}/${it.need}` : it.name}
+              sx={{ opacity: done && !fav ? 0.65 : 1 }}
+            />
           )
         })}
     </Stack>

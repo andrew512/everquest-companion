@@ -5,12 +5,17 @@
 // these two controls are the only things that remember you did it. They live in their own file
 // because they are read in two places (the quest row and the Ignored list) and because
 // QuestAccordion.tsx was at its measured 400-line ceiling.
+//
+// NO POPPER (JOS-143). The badge sits in the collapsed summary row and the counter in the expanded
+// panel's own toolbar, so both are candidates to open a card over the tab's dropdowns; the whole
+// Sky tracker is popper-free now rather than file-by-file, which is the only version of the rule a
+// guard can hold. Every sentence below survives verbatim as a native `title` — an OS tooltip that
+// is not in the DOM and has no hit area, so it cannot intercept a click.
 
 import type { JSX } from 'react'
 import { Chip, IconButton, Stack, Typography } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import RemoveIcon from '@mui/icons-material/Remove'
-import { Tooltip } from '../../lib/Tooltip'
 import { turnInBadgeLabel } from '@shared/questTurnIns'
 import type { QuestProgress } from './useProgress'
 
@@ -25,22 +30,19 @@ import type { QuestProgress } from './useProgress'
 export function TurnInBadge({ count }: { count: number }): JSX.Element | null {
   if (count <= 0) return null
   return (
-    <Tooltip
+    <Chip
+      size="small"
+      color="success"
+      variant="outlined"
+      data-testid="posky-turned-in"
+      data-count={count}
       title={
         count > 1
           ? `Turned in ${String(count)} times. Each turn-in spends the items it required, so the progress beside this is what you hold toward doing it again.`
           : 'Turned in once. The items it required were spent, so the progress beside this is what you hold toward doing it again.'
       }
-    >
-      <Chip
-        size="small"
-        color="success"
-        variant="outlined"
-        data-testid="posky-turned-in"
-        data-count={count}
-        label={turnInBadgeLabel(count)}
-      />
-    </Tooltip>
+      label={turnInBadgeLabel(count)}
+    />
   )
 }
 
@@ -48,7 +50,9 @@ export function TurnInBadge({ count }: { count: number }): JSX.Element | null {
 function UndoTurnIn({ q, onUndo }: { q: QuestProgress; onUndo: () => void }): JSX.Element {
   const canUndo = q.turnIns > q.logTurnIns
   return (
-    <Tooltip
+    // The span outlives the tooltip that needed it, for the same reason: a DISABLED button
+    // swallows no mouse events, and "why is this dead" is exactly the question the words answer.
+    <span
       title={
         canUndo
           ? 'Take back the most recent turn-in you recorded by hand'
@@ -57,13 +61,10 @@ function UndoTurnIn({ q, onUndo }: { q: QuestProgress; onUndo: () => void }): JS
             : 'This count comes from your log, so it cannot be taken back here'
       }
     >
-      {/* The span is what lets a DISABLED button still carry a tooltip. */}
-      <span>
-        <IconButton size="small" data-testid="posky-undo-turnin" disabled={!canUndo} onClick={onUndo}>
-          <RemoveIcon fontSize="inherit" />
-        </IconButton>
-      </span>
-    </Tooltip>
+      <IconButton size="small" data-testid="posky-undo-turnin" disabled={!canUndo} onClick={onUndo}>
+        <RemoveIcon fontSize="inherit" />
+      </IconButton>
+    </span>
   )
 }
 
@@ -73,7 +74,7 @@ function UndoTurnIn({ q, onUndo }: { q: QuestProgress; onUndo: () => void }): JS
  *
  * "+1" records one, dated now. "-1" takes back the most recent turn-in THIS APP DID NOT READ OUT
  * OF THE LOG, and is disabled when there is no such turn-in — the log is evidence, and the next
- * snapshot would simply re-assert whatever the log still says. The tooltip says that outright
+ * snapshot would simply re-assert whatever the log still says. The hover text says that outright
  * rather than leaving a dead-looking button to be discovered.
  */
 export function TurnInCounter({
@@ -91,11 +92,14 @@ export function TurnInCounter({
         {q.turnIns > 0 ? turnInBadgeLabel(q.turnIns) : 'Not turned in yet'}
       </Typography>
       <UndoTurnIn q={q} onUndo={onUndoTurnIn} />
-      <Tooltip title="Record another turn-in. The items it required are subtracted, so the quest goes back to what you hold toward running it again.">
-        <IconButton size="small" data-testid="posky-record-turnin" onClick={onRecordTurnIn}>
-          <AddIcon fontSize="inherit" />
-        </IconButton>
-      </Tooltip>
+      <IconButton
+        size="small"
+        data-testid="posky-record-turnin"
+        title="Record another turn-in. The items it required are subtracted, so the quest goes back to what you hold toward running it again."
+        onClick={onRecordTurnIn}
+      >
+        <AddIcon fontSize="inherit" />
+      </IconButton>
     </Stack>
   )
 }

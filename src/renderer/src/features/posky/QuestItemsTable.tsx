@@ -7,17 +7,21 @@
 // summary row and the accordion chrome around it. No behaviour changed in the move.
 //
 // THE ITEM NAME IS A LINK (owner, 2026-08-04): "clicking on a sky item while you are hovering
-// should take you to the item drill-down page." The hover card is unchanged — still `ItemTooltip`,
-// the compact game-window popover — and the click is the app's standing link idiom (`openLoot`,
-// appRouting.ts), the same one the Planner's donor names use. `ItemNameLink` is exported because
-// the summary row's REWARD caption is the accordion's other clickless item name and gets the same
-// affordance; the required-item chips beside it do NOT, because their click already toggles the
-// favorite star and swapping that would trade a feature for a link.
+// should take you to the item drill-down page." The click is the app's standing link idiom
+// (`openLoot`, appRouting.ts), the same one the Planner's donor names use. `ItemNameLink` is
+// exported because the summary row's REWARD caption is the accordion's other clickless item name
+// and gets the same affordance; the required-item chips beside it do NOT, because their click
+// already toggles the favorite star and swapping that would trade a feature for a link.
+//
+// THE HOVER CARD IS GONE (JOS-143). The name used to also anchor `ItemTooltip`, a `placement="top"`
+// card that opened UPWARD — out of this table, through the accordion summary, and onto the tab's
+// dropdown toolbar, where it ate the clicks aimed at them (the owner's report; JOS-127 is the same
+// defect on the Loot ledger). This table already prints what the card added: Have, Dropped by and
+// Where are columns here, and the stat block is one click away in the drill-down the name opens.
 
 import type { JSX, MouseEvent } from 'react'
 import { Box, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
 import type { QuestProgress } from './useProgress'
-import { ItemTooltip } from './ItemTooltip'
 import { DropperCell } from './DropperCell'
 import type { MobTarget } from '../mobs/mobTarget'
 import { FavoriteStar } from '../favorites/FavoriteStar'
@@ -104,9 +108,7 @@ export function QuestItemsTable({
                 <FavoriteStar name={it.name} favorited={isFavorite(it.name)} onToggle={toggleFavorite} />
               </TableCell>
               <TableCell sx={{ color: done ? 'success.main' : 'text.primary' }}>
-                <ItemTooltip name={it.name} stats={it.stats} who={it.who} where={it.where} droppers={it.droppers}>
-                  <ItemNameLink name={it.name} onOpenLoot={onOpenLoot} />
-                </ItemTooltip>
+                <ItemNameLink name={it.name} onOpenLoot={onOpenLoot} />
               </TableCell>
               <TableCell>
                 {it.have}/{it.need}

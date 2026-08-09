@@ -19,6 +19,14 @@
 //
 // This row WRAPS (`flexWrap="wrap" useFlexGap`), unlike the planner's nowrap bar: there are thirteen
 // controls here and the tab's body is a scrolling accordion list that can afford to start lower.
+//
+// AND IT MOUNTS NO POPPER (JOS-143). This bar is five dropdowns — three chip-selects, Sort, and
+// "Count items from" — and the owner could not work them: the quest rows immediately below open
+// `placement="top"` hover cards that land ON this row and hold `pointer-events: auto` while they
+// are up, so the click aimed at a select was eaten by a card belonging to a row underneath. That
+// is the same defect JOS-127 removed from the Loot ledger, one surface wider, and the direction
+// was the same: the poppers go, here and in every file that draws this tab. Hover text that
+// survives is a native `title` — an OS tooltip is not in the DOM and has no hit area at all.
 
 import type { JSX } from 'react'
 import {
@@ -35,7 +43,6 @@ import StarIcon from '@mui/icons-material/Star'
 import StarBorderIcon from '@mui/icons-material/StarBorder'
 import type { CountSource } from '@shared/types'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
-import { Tooltip } from '../../lib/Tooltip'
 import { SORT_OPTIONS, type SortKey } from './questSort'
 import { withPicked } from './questFacets'
 import type { QuestListState } from './useQuestList'
@@ -99,36 +106,38 @@ function QuestPickers({ list, classes }: { list: QuestListState; classes: string
  * them apart live on `hasEveryItem` and `everTurnedIn` in questCompletion.ts. Both testids and both
  * stored keys are stable handles for the persistence spec; the older box keeps the ones it always
  * had, so an existing user's saved choice still applies.
+ *
+ * Both clauses ride a native `title` rather than a popper (JOS-143), like everything else on this
+ * bar: these boxes sit between the Sort select and "Count items from", so a card centred on one of
+ * them opens into the band a neighbouring option list uses.
  */
 function QuestToggles({ list }: { list: QuestListState }): JSX.Element {
   return (
     <>
-      <Tooltip title="Hide quests you already hold every item for. A quest you turn in comes back at zero, because handing it in spends the items, so it stays on this list until you have gathered them again.">
-        <FormControlLabel
-          control={
-            <Checkbox
-              // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
-              // box's tick is a stored preference, so it is one of the two an e2e reads back.
-              data-testid="posky-hide-completed"
-              checked={list.hideCompleted}
-              onChange={(e) => list.setHideCompleted(e.target.checked)}
-            />
-          }
-          label="Hide quests I have every item for"
-        />
-      </Tooltip>
-      <Tooltip title="Hide quests you have handed in at least once, even the ones you are farming again.">
-        <FormControlLabel
-          control={
-            <Checkbox
-              data-testid="posky-hide-turned-in"
-              checked={list.hideTurnedIn}
-              onChange={(e) => list.setHideTurnedIn(e.target.checked)}
-            />
-          }
-          label="Hide quests I have turned in"
-        />
-      </Tooltip>
+      <FormControlLabel
+        title="Hide quests you already hold every item for. A quest you turn in comes back at zero, because handing it in spends the items, so it stays on this list until you have gathered them again."
+        control={
+          <Checkbox
+            // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
+            // box's tick is a stored preference, so it is one of the two an e2e reads back.
+            data-testid="posky-hide-completed"
+            checked={list.hideCompleted}
+            onChange={(e) => list.setHideCompleted(e.target.checked)}
+          />
+        }
+        label="Hide quests I have every item for"
+      />
+      <FormControlLabel
+        title="Hide quests you have handed in at least once, even the ones you are farming again."
+        control={
+          <Checkbox
+            data-testid="posky-hide-turned-in"
+            checked={list.hideTurnedIn}
+            onChange={(e) => list.setHideTurnedIn(e.target.checked)}
+          />
+        }
+        label="Hide quests I have turned in"
+      />
       <FormControlLabel
         control={<Checkbox checked={list.hideNoItems} onChange={(e) => list.setHideNoItems(e.target.checked)} />}
         label="Only quests with turn-ins"
@@ -185,32 +194,38 @@ export default function QuestFilterBar({
       </TextField>
       <QuestToggles list={list} />
       <Box sx={{ flexGrow: 1 }} />
-      <Tooltip title="Which source decides what you have. An inventory export resets the count and loot since then adds to it, so an item you got rid of in game disappears when you reload. The log by itself counts everything you have ever looted, so it cannot see that.">
-        <TextField
-          select
-          size="small"
-          label="Count items from"
-          value={countSource}
-          onChange={(e) => onCountSource(e.target.value as CountSource)}
-          sx={{ minWidth: 190 }}
+      {/* This one carried a three-sentence popper explaining what each source counted, and it
+          was the WORST anchor on the row: the widest control, at the wrapping end of the bar,
+          directly over the accordion. It is gone rather than restated, and deliberately not
+          replaced with a shorter spelling of the same claim — the sentence described the
+          JOS-128 reset semantics, which JOS-141 reverted. The one place that states what a
+          source means is the `CountSource` doc in shared/types.ts; the three option labels are
+          what the user reads here. */}
+      <TextField
+        select
+        size="small"
+        label="Count items from"
+        value={countSource}
+        onChange={(e) => onCountSource(e.target.value as CountSource)}
+        sx={{ minWidth: 190 }}
+      >
+        <MenuItem value="log">Log (ever looted)</MenuItem>
+        <MenuItem value="inventory">Export, plus loot since</MenuItem>
+        <MenuItem value="both">Export if any, else log</MenuItem>
+      </TextField>
+      {/* The span survives the tooltip that needed it: a DISABLED button swallows no mouse
+          events, so the hint has to hang on the wrapper to be readable in the state where the
+          user most wants it (Reload is disabled precisely while the source is Log). */}
+      <span title="Run /outputfile inventory in-game, then reload">
+        <Button
+          variant="outlined"
+          startIcon={<RefreshIcon />}
+          onClick={() => void onReload()}
+          disabled={countSource === 'log'}
         >
-          <MenuItem value="log">Log (ever looted)</MenuItem>
-          <MenuItem value="inventory">Export, plus loot since</MenuItem>
-          <MenuItem value="both">Export if any, else log</MenuItem>
-        </TextField>
-      </Tooltip>
-      <Tooltip title="Run /outputfile inventory in-game, then reload">
-        <span>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={() => void onReload()}
-            disabled={countSource === 'log'}
-          >
-            Reload inventory
-          </Button>
-        </span>
-      </Tooltip>
+          Reload inventory
+        </Button>
+      </span>
     </Stack>
   )
 }
