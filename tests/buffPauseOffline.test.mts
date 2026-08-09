@@ -255,6 +255,55 @@ test('…and over a LONG absence the unshifted debuff is culled, while the froze
   assert.equal(samplesFor(snap, SLOW), 0, 'an unwitnessed expiry mints no duration sample')
 })
 
+const HASTE = 'Alacrity'
+const HASTE_DB_MS = 11 * MIN
+const PET = 'Giber'
+
+test('a PET buff freezes with you too — its timeout is judged in ONLINE time, never wall clock', () => {
+  // JOS-149 widened the unwitnessed-expiry cull to rows that are NOT yours: a buff on a pet or an
+  // ally has no wear-off line you are promised (the pet fade the game does print resolves against
+  // the CURRENT pet, so a despawned pet's rows can never be named again), and the owner's
+  // screenshot was two of them squatting at 0s for weeks.
+  //
+  // WHICH PUTS THE CULL ON THE PAUSED SIDE OF THE ASYMMETRY, and that is what this test pins. The
+  // haste below is 11 minutes and its timeout is 60 s, so 45 minutes of ABSENCE is four times the
+  // budget: if the sweep judged it against a `now` from the far side of the hole it would be gone
+  // at login. It is not, twice over — the sweep HOLDS every buff row while a hole is unexplained,
+  // and the pause then rewinds the clock the cull reads. The debuff test above is the same
+  // sentence from the other end.
+  const mod = dbBuffsModule()
+  const send = busTo(mod)
+
+  const OFFLINE = 45 * MIN
+  const t0 = at('Sat Aug 01 22:00:00 2026')
+  castAndLand(send, { spell: SWIFT, target: 'self', durationMs: SWIFT_DB_MS, landTs: t0 })
+  castAndLand(send, { spell: HASTE, target: PET, durationMs: HASTE_DB_MS, landTs: t0 })
+
+  const lastSeen = t0 + 60 * SEC
+  send({ kind: 'unknown', ts: lastSeen } as LogEvent)
+  const welcome = lastSeen + OFFLINE
+  send({ kind: 'sessionStart', ts: welcome } as LogEvent)
+
+  const back = rowOf(mod.snapshot().state, HASTE)
+  assert.ok(back, 'the pet buff EQ froze with the character is up when the character is back')
+  assert.equal(back.self, false, 'and it really is one of the rows the cull now reaches')
+  assert.equal(back.startedTs, t0 + OFFLINE, 'shifted by the absence, exactly like the self buff beside it')
+  assert.equal(welcome - back.startedTs, 60 * SEC, 'so it reads 60 s old, not 46 minutes')
+  assert.ok(rowOf(mod.snapshot().state, SWIFT), 'the self buff is untouched by any of this')
+
+  // ELEVEN MINUTES OF ONLINE TIME LATER it is exactly at zero, and still drawn: an overdue row for
+  // a beat says the app is waiting for a line rather than pretending one arrived.
+  send({ kind: 'unknown', ts: welcome + 10 * MIN } as LogEvent)
+  assert.ok(rowOf(mod.snapshot().state, HASTE), 'at its stated end it is still there')
+
+  // A MINUTE PAST THAT, nothing can close it and it stops being waited for.
+  send({ kind: 'unknown', ts: welcome + 11 * MIN + 40 * SEC } as LogEvent)
+  const after = mod.snapshot().state
+  assert.equal(rowOf(after, HASTE), undefined, 'the pet buff nobody could see expire times out')
+  assert.ok(rowOf(after, SWIFT), 'and a SELF buff at the same age is NOT culled — the exemption is `self`')
+  assert.equal(samplesFor(after, HASTE), 0, 'a timeout is not evidence: no duration sample, ever')
+})
+
 test('a crowd-control hold is a timer in the world, and never pauses', () => {
   // The two modules on ONE bus, one absence, two answers — the whole design in a single stream.
   // Ensnare is 660 s, comfortably longer than the absence, so the hold is still live at login and

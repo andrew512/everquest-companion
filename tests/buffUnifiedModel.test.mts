@@ -364,6 +364,52 @@ test('…and a BUFF of yours is not culled, because your clock is the one that p
 })
 
 // ---------------------------------------------------------------------------------------------
+// ACCEPTANCE 5 — THE SAME CULL ON A BUFF THAT IS NOT YOURS (JOS-149, owner ruling 2026-08-09).
+//
+// The owner's screenshot: `Focus Death` at 0s on two pets that had been gone for weeks, raised
+// again by every startup replay. The cast anchor behind those rows is GENUINE — `You begin
+// casting Focus Death.` appears five times in the owner's log on Jul 19 — so this is not the
+// third-person refusal above. It is the exemption in acceptance 4 being too wide: JOS-140 spared
+// the whole buffs window on the argument that a wear-off prints to you, which is a statement
+// about YOUR buffs. The game does print `Your pet's <Spell> spell has worn off.` (412 times
+// across 51 spells in the owner's log, twice for Focus Death), but it resolves against the
+// CURRENT pet — so the instant a pet despawns, every row bound to it is unclosable by
+// construction, and no later line can name it.
+// ---------------------------------------------------------------------------------------------
+
+/** The owner's own two lines, verbatim shapes: the named cast, then the six-spell gleam sentence. */
+const PET_BUFF: [number, string][] = [
+  [0, 'You begin casting Focus Death.'],
+  [7, "Giber's eyes gleam with madness."]
+]
+
+test('a PET buff mid-duration tracks exactly as before — the cull changes nothing about it', () => {
+  const live = replay(PET_BUFF, { observeSec: 1_800 })
+  const row = rowFor(live, 'Focus Death')
+  assert.ok(row, `the pet buff is up while it is up: ${live.rows.map((x) => x.name).join(', ')}`)
+  assert.equal(row.kind, 'buff', 'a beneficial spell on a pet is a BUFF row, whoever it is on')
+  assert.equal(row.target, 'Giber')
+  assert.equal(row.mode, 'countdown')
+  assert.equal(row.durationMs, 3_600_000, 'the DB floor is its clock, untouched')
+  // AND THE NAME IS THE ANCHOR'S DOING: `Someone 's eyes gleam with madness.` is Augment Death,
+  // Augmentation of Death, Focus Death, Intensify Death, Savage Spirit and Strengthen Death. The
+  // named cast in window narrows the six to the one the player actually cast.
+  assert.equal(row.ambiguous ?? false, false, 'a named anchor resolves the family outright')
+})
+
+test('a PET buff nobody can see expire times out a minute past its countdown', () => {
+  // A beat past zero is still information — the row says the app is waiting for a line.
+  const overdue = replay(PET_BUFF, { observeSec: 3_650 })
+  assert.ok(rowFor(overdue, 'Focus Death'), 'visibly overdue for a beat is by design')
+
+  // And then it goes. The owner's ruling is that it does NOT get the debuff rule's DB grace here
+  // (which would wait the duration again): an hour of 0s on a pet buff IS the reported defect.
+  const gone = replay(PET_BUFF, { observeSec: 3_700 })
+  assert.equal(rowFor(gone, 'Focus Death'), undefined, 'a close nobody can witness stops being waited for')
+  assert.equal(statFor(gone, 'focus death')?.n ?? 0, 0, 'and a timeout mints nothing, exactly like the debuff cull')
+})
+
+// ---------------------------------------------------------------------------------------------
 // THE WINDOW ORDER (owner amendment): the debuffs surface reads soonest-first, flat.
 // ---------------------------------------------------------------------------------------------
 
