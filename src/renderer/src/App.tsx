@@ -327,14 +327,16 @@ function useAppCelebrations(
   })
 
   useProgress({
-    onQuestComplete: (q) => {
+    onQuestComplete: (q, count) => {
       onQuestComplete(q.name)
       fireAppSignal('questComplete', q.name)
       // The celebration toast (docs/plans/celebration-toasts.md T4) rides the SAME detector as
       // the sound and the snackbar — one live-only gate, three surfaces. The reward is sent by
       // NAME; main resolves the item card, because the overlay fetches nothing.
+      // THE COUNT IS IN THE ID (JOS-131): a Sky quest can be run again, and the overlay keys its
+      // cards by id, so the second turn-in of one quest has to be a second card.
       window.eq.showToast({
-        id: `quest:${q.className}::${q.name}`,
+        id: `quest:${q.className}::${q.name}#${String(count)}`,
         kind: 'skyQuestComplete',
         title: `Quest complete: ${q.name}`,
         subtitle: q.giver ? `${q.className} · turned in to ${q.giver}` : q.className,

@@ -16,7 +16,7 @@ import {
   inventoryWrittenAt,
   tailCharacter
 } from '../session'
-import { getProgress, setEqInstallDir, setInventory, setQuestComplete } from '../store'
+import { getProgress, setEqInstallDir, setInventory, setQuestTurnIns } from '../store'
 import { getMainWindow, sendToMain } from '../windows'
 
 export function registerCharacterIpc(): void {
@@ -110,10 +110,10 @@ export function registerCharacterIpc(): void {
     sendToMain(IPC.onProgress, progress)
     return { ok: true as const, path: res.path, loadedAt: res.loadedAt, progress }
   })
-  ipcMain.handle(IPC.setQuestComplete, (_e, questKey: string, complete: boolean) => {
-    const progress = setQuestComplete(activeCharId(), questKey, complete)
-    // Push so a completion made in one view (or auto-completed from a turn-in)
-    // reaches every other view without a refetch race.
+  ipcMain.handle(IPC.setQuestTurnIns, (_e, questKey: string, instants: number[]) => {
+    const progress = setQuestTurnIns(activeCharId(), questKey, instants)
+    // Push so a turn-in recorded in one view (or detected from the log) reaches every other
+    // view without a refetch race.
     sendToMain(IPC.onProgress, progress)
     return progress
   })

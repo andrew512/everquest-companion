@@ -51,6 +51,10 @@ function quest(name: string, opts: Partial<QuestProgress> = {}): QuestProgress {
     needCount: 1,
     ratio: 0,
     missing: [],
+    // JOS-131: completion is a COUNT (`turnIns`), and `completed` is its one-bit reading. The
+    // sorts below never read either — they are here because a QuestProgress has them.
+    turnIns: 0,
+    logTurnIns: 0,
     completed: false,
     ...opts
   }
@@ -129,7 +133,7 @@ test('class: grouped by class, name-ordered inside a class', () => {
 test('closest: highest ratio first, completed quests included and on top', () => {
   const list = [
     quest('Barely started', { ratio: 0.1, missing: ['a', 'b'] }),
-    quest('Turned in', { ratio: 1, completed: true }),
+    quest('Turned in', { ratio: 1, turnIns: 1, completed: true }),
     quest('Nearly there', { ratio: 0.9, missing: ['a'] })
   ]
   // Completion is not a filter here — 'hide completed' is a separate toggle and is untouched.

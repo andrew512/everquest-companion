@@ -327,8 +327,13 @@ const api = {
    * and null means the command has never been run here.
    */
   outputsStatus: (): Promise<OutputFileStatus[]> => ipcRenderer.invoke(IPC.outputsStatus),
-  setQuestComplete: (questKey: string, complete: boolean): Promise<ProgressState> =>
-    ipcRenderer.invoke(IPC.setQuestComplete, questKey, complete),
+  /**
+   * State this quest's turn-ins: the epoch-ms instants it was handed in, ascending (JOS-131).
+   * An empty list means "never turned in" and clears a pre-JOS-131 completion too. Main
+   * sanitizes the list before it is persisted.
+   */
+  setQuestTurnIns: (questKey: string, instants: number[]): Promise<ProgressState> =>
+    ipcRenderer.invoke(IPC.setQuestTurnIns, questKey, instants),
   getCombatSnapshot: (opts: SnapshotOpts): Promise<CombatSnapshot> =>
     ipcRenderer.invoke(IPC.getCombatSnapshot, opts),
   /** Fuzzy-search the whole fight history + the live fight by name/zone (Task #61). An

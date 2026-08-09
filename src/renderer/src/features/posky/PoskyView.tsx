@@ -9,6 +9,7 @@ import OutputKindLine from '../../components/OutputKindLine'
 import type { SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
+import { TurnInBadge } from './TurnInControls'
 import QuestFilterBar from './QuestFilterBar'
 import { useQuestList, type QuestListState, type TabKey } from './useQuestList'
 import type { MobTarget } from '../mobs/mobTarget'
@@ -57,7 +58,7 @@ function IgnoredList({
               </Typography>
             )}
             <Box sx={{ flexGrow: 1 }} />
-            {q.completed && <Chip size="small" color="success" variant="outlined" label="Turned in" />}
+            <TurnInBadge count={q.turnIns} />
           </Stack>
         ))}
       </Stack>
@@ -125,7 +126,8 @@ function QuestList({
   sharedItems,
   ambiguousNames,
   anchor,
-  setQuestComplete,
+  recordTurnIn,
+  undoTurnIn,
   onOpenMob,
   onOpenLoot
 }: {
@@ -134,7 +136,8 @@ function QuestList({
   ambiguousNames: Set<string>
   /** the anchored quest, or null. Its accordion mounts EXPANDED and scrolls itself into view. */
   anchor: QuestAnchor | null
-  setQuestComplete: (key: string, complete: boolean) => Promise<void>
+  recordTurnIn: (key: string) => Promise<void>
+  undoTurnIn: (key: string) => Promise<void>
   onOpenMob: (t: MobTarget) => void
   onOpenLoot?: (item: string) => void
 }): JSX.Element {
@@ -156,7 +159,8 @@ function QuestList({
           onToggleIgnore={() => list.questIgnored.toggle(q.key)}
           isFavorite={list.isFavorite}
           toggleFavorite={list.toggleFavorite}
-          onSetComplete={(complete) => void setQuestComplete(q.key, complete)}
+          onRecordTurnIn={() => void recordTurnIn(q.key)}
+          onUndoTurnIn={() => void undoTurnIn(q.key)}
           onSelectQuest={(name) => list.setQuery(name)}
           onOpenMob={onOpenMob}
           onOpenLoot={onOpenLoot}
@@ -245,7 +249,8 @@ export default function PoskyView({
     countSource,
     setCountSource,
     reloadInventory,
-    setQuestComplete,
+    recordTurnIn,
+    undoTurnIn,
     sharedItems,
     ambiguousQuestNames
   } = useProgress({ onQuestComplete })
@@ -301,7 +306,8 @@ export default function PoskyView({
             sharedItems={sharedItems}
             ambiguousNames={ambiguousQuestNames}
             anchor={anchor}
-            setQuestComplete={setQuestComplete}
+            recordTurnIn={recordTurnIn}
+            undoTurnIn={undoTurnIn}
             onOpenMob={onOpenMob}
             onOpenLoot={onOpenLoot}
           />
