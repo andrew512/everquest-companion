@@ -146,6 +146,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'changed',
         text: 'The Ready tab starts on first-time turn-ins: quests you have never handed in before, with a box to bring your refarms back into the list.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The cursor ring stays centered on your pointer at every text size - the app window zoom no longer leans on the ring.'
       }
     ]
   },
