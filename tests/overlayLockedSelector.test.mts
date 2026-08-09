@@ -1,6 +1,7 @@
-// A LOCKED OVERLAY KEEPS ITS SELECTOR — and nothing else (P3 of
+// A LOCKED OVERLAY KEEPS ITS SELECTOR — and, since JOS-138, a scroll grip (P3 of
 // docs/plans/combat-overlay-parity.md; owner ruling 3: "a LOCKED overlay keeps its top dropdown
-// usable; click-through everywhere else").
+// usable; click-through everywhere else", plus the owner's 2026-08-09 disposition that a pinned
+// overlay must still scroll).
 //
 // This is a SOURCE pin rather than a behaviour test on purpose: the thing being protected is a
 // wiring decision across three files plus a main-process hazard note, and none of it can be
@@ -52,7 +53,7 @@ test('NO NEW CHANNEL: the capture flip rides the existing fine-grained pass-thro
 
 test('CAPTURE IS A SET OF NAMED REASONS, released independently', () => {
   const chrome = src('../src/renderer/src/overlay/useOverlayChrome.ts')
-  assert.match(chrome, /export type CaptureReason = 'window' \| 'selector' \| 'popup'/)
+  assert.match(chrome, /export type CaptureReason = 'window' \| 'selector' \| 'popup' \| 'scroll'/)
   // The union, not a boolean: the popup is `position: fixed` and therefore not inside the header
   // row, so moving into the open list fires the row's mouseleave. A single boolean would drop
   // capture out from under the list the user is reaching for.
@@ -82,6 +83,37 @@ test('…and the meters no longer capture the WHOLE window on hover', () => {
     assert.doesNotMatch(text, /onMouseLeave=\{onLeave\}/, `${who} still captures its whole window`)
     // It hands the header the precise sensor instead.
     assert.match(text, /toggleLock, capture \}/, `${who} does not give its header the sensor`)
+  }
+})
+
+test('JOS-138: a pinned pane scrolls at its RIGHT EDGE, and nowhere else', () => {
+  const scale = src('../src/renderer/src/overlay/overlayScale.tsx')
+  // The strip is a NUMBER with a name, not a literal buried in a comparison: the e2e aims at it
+  // and the comment above it is where the trade is argued.
+  assert.match(scale, /export const SCROLL_GRIP_W = \d+/)
+  // The grip exists only while PINNED and only with a sensor to raise — an unlocked pane already
+  // owns the mouse, and a pane whose caller passes no `capture` must behave exactly as before.
+  assert.match(scale, /const grip = locked && capture !== undefined/)
+  // …and only while the rows genuinely overflow. Taking a click-through window's mouse for a pane
+  // with nothing to scroll would be the pin's whole point spent on nothing.
+  assert.match(scale, /el\.scrollHeight - el\.clientHeight > 1/)
+  // The region test itself: right edge minus the strip, against the pointer's own x.
+  assert.match(scale, /ev\.clientX >= el\.getBoundingClientRect\(\)\.right - SCROLL_GRIP_W/)
+  // NO NEW CHANNEL AND NO NEW HOOK (the two pins above): it raises the P3 named reason over the
+  // forwarding the meters already pay for.
+  assert.match(scale, /capture\?\.\('scroll', want\)/)
+  // The observable the hidden-window e2e reads, because `setIgnoreMouseEvents` cannot be seen
+  // from inside the page.
+  assert.match(scale, /data-scroll-grip=/)
+
+  // BOTH METERS, THROUGH ONE PANE. The grip is forwarded by MeterPane so the damage and healing
+  // meters cannot drift on where the edge is.
+  const floor = src('../src/renderer/src/overlay/scopeFloor.tsx')
+  assert.match(floor, /<OverlayContent[^>]*locked=\{locked\}[^>]*capture=\{capture\}/)
+  for (const [who, rel] of Object.entries(METERS)) {
+    const pane = /<MeterPane[\s\S]*?>/.exec(src(rel))?.[0] ?? ''
+    assert.match(pane, /locked=\{locked\}/, `${who} does not arm the scroll grip`)
+    assert.match(pane, /capture=\{capture\}/, `${who} gives the pane no sensor to raise`)
   }
 })
 
