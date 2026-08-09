@@ -19,7 +19,7 @@ export const SORT_OPTIONS: readonly { value: SortKey; label: string }[] = [
   { value: 'recent', label: 'Most recent drop' },
   { value: 'closest', label: 'Closest to done' },
   { value: 'least-missing', label: 'Fewest missing' },
-  { value: 'name', label: 'Quest name (A–Z)' },
+  { value: 'name', label: 'Quest name (A-Z)' },
   { value: 'class', label: 'By class' },
   { value: 'island', label: 'By island' }
 ]

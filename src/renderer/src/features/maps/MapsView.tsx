@@ -191,7 +191,7 @@ function MapsHeader({
         )}
       </Stack>
       <Typography variant="caption" color="text.disabled">
-        The log states the zone you entered and nothing else positional — so there is no automatic
+        The log states the zone you entered and nothing else positional - so there is no automatic
         “you are here”. Type <code>/loc</code> in game and paste the line into the toolbar to mark
         where you are; the mark stays with this zone until you replace or clear it.
       </Typography>
@@ -232,9 +232,9 @@ function MapsEmpty({
       <Stack spacing={1.5} alignItems="flex-start">
         <Typography variant="body2" color="text.secondary">
           {zones.length === 0
-            ? 'No map files were found in your EverQuest folder. The game ships them under maps\\ — set your install folder in Preferences if this looks wrong.'
+            ? 'No map files were found in your EverQuest folder. The game ships them under maps\\ - set your install folder in Preferences if this looks wrong.'
             : unmapped
-              ? `We don’t have a map name for “${raw}” yet — pick one above.`
+              ? `We don’t have a map name for “${raw}” yet - pick one above.`
               : 'Pick a zone above to open its map.'}
         </Typography>
         {zone != null && error != null && (

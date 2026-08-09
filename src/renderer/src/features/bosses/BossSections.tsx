@@ -320,7 +320,7 @@ function TargetCard({
       variant="outlined"
       // A raid target IS a mob, so it opens the same mob PAGE everything else does (Task #64).
       onClick={onOpen}
-      title={`${s.target.name} — drops, quests, your kills`}
+      title={`${s.target.name} - drops, quests, your kills`}
       sx={{
         overflow: 'hidden',
         position: 'relative',

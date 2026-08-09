@@ -56,7 +56,7 @@ function StatBadges({ e }: { e: SourceView }): React.JSX.Element {
   return (
     <>
       {e.misses > 0 && (
-        <Tooltip title={`${e.hits} landed / ${swings} swings — avoided: ${missSummary(e.missBreakdown)}`}>
+        <Tooltip title={`${e.hits} landed / ${swings} swings - avoided: ${missSummary(e.missBreakdown)}`}>
           <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
             {Math.round(e.hitPct)}% hit
           </Typography>
@@ -64,7 +64,7 @@ function StatBadges({ e }: { e: SourceView }): React.JSX.Element {
       )}
       {/* Spell-resist rate (Task #51 v2) — resists / (spell+dot casts + resists). */}
       {e.resists > 0 && (
-        <Tooltip title={`${e.resists} of your detrimental spells were resisted — ${Math.round(e.resistPct)}% resist rate (resists ÷ spell casts).`}>
+        <Tooltip title={`${e.resists} of your detrimental spells were resisted - ${Math.round(e.resistPct)}% resist rate (resists ÷ spell casts).`}>
           <Typography component="span" variant="caption" sx={{ ml: 0.5, color: RESIST_COLOR }}>
             {Math.round(e.resistPct)}% resist
           </Typography>

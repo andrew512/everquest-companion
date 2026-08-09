@@ -256,7 +256,7 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind): AlertDef {
     trigger: buildTrigger(entry, template),
     sound: { packId: DEFAULT_PACK_ID, soundId: t.sound },
     cooldownMs: DEFAULT_COOLDOWN_MS,
-    note: `Suggested alert (Task #38/#47) — ${template} for ${entry.name}.`
+    note: `Suggested alert (Task #38/#47) - ${template} for ${entry.name}.`
   }
   if (template === 'landsOnOther') {
     // The shipped demonstration of capture substitution (JOS-103): the phrase names the group the
@@ -287,7 +287,7 @@ function buildRankDef(entry: SpellCatalogEntry, rank: string, template: RankTemp
     trigger: { type: 'event', kind: t.kind, where },
     sound: { packId: DEFAULT_PACK_ID, soundId: t.sound },
     cooldownMs: DEFAULT_COOLDOWN_MS,
-    note: `Suggested alert — ${template} for ${rank}.`
+    note: `Suggested alert - ${template} for ${rank}.`
   }
 }
 
@@ -332,7 +332,7 @@ export function illusionSuggestion(): Suggestion {
       // "It has all gone rather pear-shaped."
       sound: { packId: DEFAULT_PACK_ID, soundId: 'task-error-task-error-08' },
       cooldownMs: DEFAULT_COOLDOWN_MS,
-      note: 'Suggested alert (Task #38) — fires when your illusion clicks/wears off.'
+      note: 'Suggested alert (Task #38) - fires when your illusion clicks/wears off.'
     }
   }
 }

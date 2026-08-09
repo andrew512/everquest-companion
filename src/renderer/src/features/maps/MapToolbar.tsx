@@ -184,7 +184,7 @@ function ZoneModeControls({
         />
       </Tooltip>
       {pinned && (
-        <Tooltip title="Show the zone your character is in — and follow it again from now on.">
+        <Tooltip title="Show the zone your character is in - and follow it again from now on.">
           <Button
             size="small"
             data-testid="maps-zone-current"

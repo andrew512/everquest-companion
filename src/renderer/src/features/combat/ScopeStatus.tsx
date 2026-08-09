@@ -68,7 +68,7 @@ function MemberRow({ m, onRemove }: { m: RosterMember; onRemove: (name: string) 
           this group since you were last offline", and EQ drops groups silently on camp. The row
           is still counted — hiding a real member is the worse error. */}
       {m.stale && (
-        <Tooltip title="No signal since you were last offline. Still counted — EQ never says when a group breaks.">
+        <Tooltip title="No signal since you were last offline. Still counted - EQ never says when a group breaks.">
           <Typography variant="caption" sx={{ color: 'text.disabled' }}>
             stale
           </Typography>
@@ -146,8 +146,8 @@ function RosterPanel({
         //                it is genuinely filtering.
         <Typography variant="caption" sx={{ display: 'block', color: 'text.disabled', mt: 0.5 }}>
           {roster.seen
-            ? 'Nobody on the roster right now — the Group scope is showing you and your pets.'
-            : 'No group signal yet this session — the Group scope is showing everyone.'}
+            ? 'Nobody on the roster right now - the Group scope is showing you and your pets.'
+            : 'No group signal yet this session - the Group scope is showing everyone.'}
         </Typography>
       ) : (
         <Box sx={{ mt: 0.5 }}>

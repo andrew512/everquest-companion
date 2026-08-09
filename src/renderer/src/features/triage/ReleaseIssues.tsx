@@ -43,7 +43,7 @@ function Frames({ exemplar }: { exemplar: TriageErrorExemplar }): JSX.Element {
   if (exemplar.frames.length === 0) {
     return (
       <Typography variant="caption" color="text.secondary">
-        No stack frames — the throw carried none (a rejected non-Error, or a stack with nothing
+        No stack frames - the throw carried none (a rejected non-Error, or a stack with nothing
         inside the app bundle in it).
       </Typography>
     )
@@ -57,7 +57,7 @@ function Frames({ exemplar }: { exemplar: TriageErrorExemplar }): JSX.Element {
           key={`${f.file}:${String(f.line)}:${String(f.col)}:${String(i)}`}
           sx={MONO}
         >
-          {f.file}:{f.line}:{f.col} — {f.func}
+          {f.file}:{f.line}:{f.col} - {f.func}
         </Typography>
       ))}
     </Box>
@@ -94,7 +94,7 @@ function Exemplar({ issue }: { issue: TriageReleaseIssue }): JSX.Element {
   if (e === null) {
     return (
       <Typography variant="caption" color="warning.main" data-testid="release-issue-noexemplar">
-        No example was stored for this fingerprint — the count is still real.
+        No example was stored for this fingerprint - the count is still real.
       </Typography>
     )
   }
@@ -193,7 +193,7 @@ export function ReleaseIssues({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }} data-testid="release-issues">
       <Typography variant="caption" color="text.secondary">
-        Top issues by build — grouped by a hash of the error and its top frames, so one bug is one
+        Top issues by build - grouped by a hash of the error and its top frames, so one bug is one
         row however many installs hit it. Expand for the example the first report carried.
       </Typography>
       {withIssues.map((v) => (

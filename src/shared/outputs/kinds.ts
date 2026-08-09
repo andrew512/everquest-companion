@@ -71,7 +71,7 @@ export const OUTPUT_KINDS: readonly OutputKindDef[] = [
   {
     id: 'inventory',
     command: '/outputfile inventory',
-    why: 'Re-type it in game whenever your gear or bags change — everything here reads that dump.',
+    why: 'Re-type it in game whenever your gear or bags change - everything here reads that dump.',
     fileKind: 'Inventory',
     fileKindVerified: true,
     status: 'supported',
@@ -84,7 +84,7 @@ export const OUTPUT_KINDS: readonly OutputKindDef[] = [
     fileKind: 'Guild',
     fileKindVerified: false,
     status: 'awaiting-sample',
-    note: 'Guild roster dump — no verified sample; run /outputfile guild and commit a fixture.'
+    note: 'Guild roster dump - no verified sample; run /outputfile guild and commit a fixture.'
   },
   {
     id: 'raid',
@@ -93,7 +93,7 @@ export const OUTPUT_KINDS: readonly OutputKindDef[] = [
     fileKind: 'Raid',
     fileKindVerified: false,
     status: 'awaiting-sample',
-    note: 'Raid roster dump — no verified sample; run /outputfile raid and commit a fixture.'
+    note: 'Raid roster dump - no verified sample; run /outputfile raid and commit a fixture.'
   },
   {
     id: 'spellbook',
@@ -102,7 +102,7 @@ export const OUTPUT_KINDS: readonly OutputKindDef[] = [
     fileKind: 'Spellbook',
     fileKindVerified: false,
     status: 'awaiting-sample',
-    note: 'Spellbook dump — no verified sample; run /outputfile spellbook and commit a fixture.'
+    note: 'Spellbook dump - no verified sample; run /outputfile spellbook and commit a fixture.'
   },
   {
     id: 'factions',
@@ -111,7 +111,7 @@ export const OUTPUT_KINDS: readonly OutputKindDef[] = [
     fileKind: 'Factions',
     fileKindVerified: false,
     status: 'awaiting-sample',
-    note: 'Faction standings dump — no verified sample; run /outputfile factions and commit a fixture.'
+    note: 'Faction standings dump - no verified sample; run /outputfile factions and commit a fixture.'
   },
   {
     id: 'achievements',
@@ -120,7 +120,7 @@ export const OUTPUT_KINDS: readonly OutputKindDef[] = [
     fileKind: 'Achievements',
     fileKindVerified: false,
     status: 'awaiting-sample',
-    note: 'Achievements dump — no verified sample; run /outputfile achievements and commit a fixture.'
+    note: 'Achievements dump - no verified sample; run /outputfile achievements and commit a fixture.'
   },
   {
     id: 'alternateadv',
@@ -129,7 +129,7 @@ export const OUTPUT_KINDS: readonly OutputKindDef[] = [
     fileKind: 'AlternateAdv',
     fileKindVerified: false,
     status: 'awaiting-sample',
-    note: 'Alternate-advancement dump — no verified sample; run /outputfile alternateadv and commit a fixture.'
+    note: 'Alternate-advancement dump - no verified sample; run /outputfile alternateadv and commit a fixture.'
   }
 ]
 

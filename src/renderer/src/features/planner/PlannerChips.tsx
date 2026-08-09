@@ -40,7 +40,7 @@ const STATE_COLOR: Record<DonorState, ChipColor> = {
 
 /** What each state MEANS, in the tooltip — the chip itself stays one word. */
 const STATE_HINT: Record<DonorState, string> = {
-  planned: 'Nothing observed yet — no copy held, looted or merged.',
+  planned: 'Nothing observed yet - no copy held, looted or merged.',
   have: 'You hold a copy, not yet merged.',
   partial: 'Merged to the tier shown, short of the extraction tier.',
   ready: 'The log saw this item merged to at least the tier its effect extracts at.'
@@ -51,7 +51,7 @@ function evidence(progress: DonorProgress): string {
   const parts: string[] = []
   if (progress.held > 0) parts.push(`${String(progress.held)} in your last inventory dump`)
   if (progress.looted > 0) parts.push(`looted ${String(progress.looted)}×`)
-  return parts.length === 0 ? '' : ` — ${parts.join(', ')}.`
+  return parts.length === 0 ? '' : ` - ${parts.join(', ')}.`
 }
 
 /** The ONE state chip a planned socket carries. */

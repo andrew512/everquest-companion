@@ -46,7 +46,7 @@ function EnemyHealNote({ seg, mode }: { seg: SegmentView; mode: MeterMode }): Re
     <Tooltip
       title={`Enemies healed for ${fmt(
         seg.enemyHealTotal
-      )} during this fight — that much of your damage was undone (effective DPS is lower).`}
+      )} during this fight - that much of your damage was undone (effective DPS is lower).`}
     >
       <Typography component="span" variant="caption" sx={{ color: '#5fbf7f', ml: 0.5 }}>
         · +{fmt(seg.enemyHealTotal)} enemy heal

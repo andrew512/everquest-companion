@@ -62,7 +62,7 @@ function DropsEmpty({ state }: { state: CurrentMobState }): JSX.Element {
     )
   }
   if (knowledge?.notFound) return <QuietNote>No wiki page for this mob.</QuietNote>
-  if (knowledge?.offline) return <QuietNote>Offline — showing only what’s known locally.</QuietNote>
+  if (knowledge?.offline) return <QuietNote>Offline - showing only what’s known locally.</QuietNote>
   if (knowledge?.page) return <QuietNote>The wiki page for this mob lists no loot.</QuietNote>
   return <QuietNote>Nothing known about this one yet.</QuietNote>
 }
@@ -127,14 +127,14 @@ export function CurrentMobCard({ state, onOpenMob }: CurrentMobCardProps): JSX.E
     <DashCard title="Target" testId="overview-mob">
       {!target ? (
         <QuietNote>
-          Nothing engaged — the mob you swing at appears here as soon as a hit lands.
+          Nothing engaged - the mob you swing at appears here as soon as a hit lands.
         </QuietNote>
       ) : (
         <>
           <Stack direction="row" spacing={0.75} alignItems="baseline" flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
             {!live && (
               <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-                Last target —
+                Last target -
               </Typography>
             )}
             <Typography

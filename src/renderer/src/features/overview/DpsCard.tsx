@@ -207,7 +207,7 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
       {/* No fights at all ⇒ the same honest quiet state the Combat tab shows. It never borrows
           the zone aggregate to look busy — Overall is a click away and says so there. */}
       {!head || !seg || !view ? (
-        <QuietNote>No fights yet — engage something and it’ll appear here.</QuietNote>
+        <QuietNote>No fights yet - engage something and it’ll appear here.</QuietNote>
       ) : (
         <>
           <Typography variant="caption" color="text.secondary" data-testid="overview-dps-label" noWrap>

@@ -247,7 +247,7 @@ function undrilling(nav: Navigation, setDrill: (d: Drill | null) => void): Navig
 function NoTimelinePane(): React.JSX.Element {
   return (
     <Paper variant="outlined" sx={{ p: 2, flexGrow: 1 }}>
-      <Typography color="text.secondary">No timeline for this selection — pick a recent fight.</Typography>
+      <Typography color="text.secondary">No timeline for this selection - pick a recent fight.</Typography>
     </Paper>
   )
 }
@@ -261,8 +261,8 @@ function ScopeEmptyPane({ scope }: { scope: 'fight' | 'overall' }): React.JSX.El
     <Paper variant="outlined" data-testid="scope-empty" sx={{ p: 2, flexGrow: 1 }}>
       <Typography color="text.secondary">
         {scope === 'fight'
-          ? 'No fights yet — engage something and it’ll appear here live. Switch to Overall for this zone’s totals.'
-          : 'No zone session yet — it starts with your first damage in a zone.'}
+          ? 'No fights yet - engage something and it’ll appear here live. Switch to Overall for this zone’s totals.'
+          : 'No zone session yet - it starts with your first damage in a zone.'}
       </Typography>
     </Paper>
   )

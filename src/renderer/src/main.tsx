@@ -25,7 +25,7 @@ if (import.meta.env.DEV) {
       `OWNER_TOOLS=${String(OWNER_TOOLS)}${OWNER_TOOLS ? '' : ' (set EQ_OWNER_TOOLS=1 and relaunch for the owner-only surfaces)'}` +
       ', __EQ_DEV_TOOLS__ define ' +
       (DEV_TOOLS_DEFINE === undefined
-        ? 'ABSENT — this dev server booted before the define existed; restart `npm run dev` if a dev-only surface misbehaves'
+        ? 'ABSENT - this dev server booted before the define existed; restart `npm run dev` if a dev-only surface misbehaves'
         : `= ${String(DEV_TOOLS_DEFINE)}`)
   )
 }

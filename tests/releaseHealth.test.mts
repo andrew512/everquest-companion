@@ -101,7 +101,7 @@ test('NOT REPORTING and ZERO ERRORS are structurally different, not two renderin
   assert.equal(quiet?.rate, null)
   // And the panel's own honesty rules turn those into different glyphs: `0%` vs `—`.
   assert.equal(rateLabel(clean?.rate ?? null), '0%')
-  assert.equal(rateLabel(quiet?.rate ?? null), '—')
+  assert.equal(rateLabel(quiet?.rate ?? null), '-')
 })
 
 test('the rate is SELF-NORMALIZING — a build with more users cannot look buggier for it', () => {

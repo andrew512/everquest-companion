@@ -225,7 +225,7 @@ function useLootSort(): [LootSortKey, (v: LootSortKey) => void] {
 function NoLootYet(): JSX.Element {
   return (
     <Alert severity="info">
-      No loot parsed yet. Loot something in-game (or check your log path) — every{' '}
+      No loot parsed yet. Loot something in-game (or check your log path) - every{' '}
       <code>--You have looted …--</code> line shows up here in real time, and the full history is read
       from your log on launch.
     </Alert>

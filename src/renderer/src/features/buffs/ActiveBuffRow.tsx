@@ -105,7 +105,7 @@ function EstimateBar({
         <Stack direction="row" spacing={0.5} alignItems="center">
           {source && (
             <Tooltip
-              title={source === 'db' ? 'The spell-database baseline' : 'From your logged casts — longer than the baseline'}
+              title={source === 'db' ? 'The spell-database baseline' : 'From your logged casts - longer than the baseline'}
             >
               <Chip
                 size="small"

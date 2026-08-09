@@ -24,7 +24,7 @@ export function QuestStarButton({
   onToggle: () => void
 }): JSX.Element {
   return (
-    <Tooltip title={favorited ? 'Unfavorite this quest' : 'Favorite this quest — pins it to the top'}>
+    <Tooltip title={favorited ? 'Unfavorite this quest' : 'Favorite this quest - pins it to the top'}>
       <IconButton
         size="small"
         component="span"
@@ -49,7 +49,7 @@ export function QuestIgnoreButton({
   onToggle: () => void
 }): JSX.Element {
   return (
-    <Tooltip title={ignored ? 'Stop ignoring — show this quest again' : 'Ignore this quest permanently'}>
+    <Tooltip title={ignored ? 'Stop ignoring - show this quest again' : 'Ignore this quest permanently'}>
       <IconButton
         size="small"
         component="span"

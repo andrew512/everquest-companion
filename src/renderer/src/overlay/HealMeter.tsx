@@ -130,7 +130,7 @@ function healSelectRows(snap: CombatSnapshot | null, isFight: boolean, now: numb
     value: o.value,
     label: o.label,
     rate: '',
-    timing: [o.startTs ? formatTime(o.startTs) : '', relativeAge(o.startTs, now), o.durationSec > 0 ? fmtDur(o.durationSec) : o.live ? 'live' : '—']
+    timing: [o.startTs ? formatTime(o.startTs) : '', relativeAge(o.startTs, now), o.durationSec > 0 ? fmtDur(o.durationSec) : o.live ? 'live' : '-']
       .filter(Boolean)
       .join(' · '),
     live: o.live

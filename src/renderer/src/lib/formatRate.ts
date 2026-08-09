@@ -38,7 +38,7 @@ export function formatHealRate(n: number): string {
  * "ONE source" rule (AGENTS.md, Formatting) is about the file, not about the algorithm.
  */
 function formatSmall(n: number): string {
-  if (!Number.isFinite(n)) return '—'
+  if (!Number.isFinite(n)) return '-'
   const v = Math.abs(n)
   if (v >= 100) return n.toFixed(0)
   if (v >= 10) return n.toFixed(1)

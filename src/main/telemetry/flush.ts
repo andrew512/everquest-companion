@@ -288,7 +288,7 @@ export async function sendFlipNotice(
   const accepted = status >= 200 && status < 300
   logInfo(
     `[everquest-companion] telemetry: ${kind} notice ${accepted ? 'sent' : 'not delivered'}` +
-      (accepted ? '' : ' (not retried — see telemetry/optOut.ts)')
+      (accepted ? '' : ' (not retried - see telemetry/optOut.ts)')
   )
   return accepted
 }

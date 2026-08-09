@@ -438,7 +438,7 @@ export function SkillBar({
           <>
             <SkillName name={s.name} category={s.category} plain={nested} />
             {land.resistPct !== undefined && (
-              <Tooltip title={`${resists} resisted, ${land.landed} landed — ${Math.round(100 - land.resistPct)}% landed. ${land.hint}`}>
+              <Tooltip title={`${resists} resisted, ${land.landed} landed - ${Math.round(100 - land.resistPct)}% landed. ${land.hint}`}>
                 <Typography component="span" variant="caption" sx={{ ml: 0.75, color: RESIST_COLOR }}>
                   {Math.round(land.resistPct)}% resist
                 </Typography>
@@ -579,7 +579,7 @@ export function ApproxChip({
   truncated?: boolean
 }): React.JSX.Element {
   const why = truncated
-    ? `This fight outgrew its event ring, so its OLDEST instants were dropped: ${shown} of ${raw} instants are still held. Numbers below (marked ~) cover only that retained window — read them as LOWER BOUNDS on the fight, not as its totals.`
+    ? `This fight outgrew its event ring, so its OLDEST instants were dropped: ${shown} of ${raw} instants are still held. Numbers below (marked ~) cover only that retained window - read them as LOWER BOUNDS on the fight, not as its totals.`
     : `This fight's event ring was downsampled: ${shown} of ${raw} instants were kept. Numbers below are scaled sample estimates (marked ~).`
   return (
     <Tooltip

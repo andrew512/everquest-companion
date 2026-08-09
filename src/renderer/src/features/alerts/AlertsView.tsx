@@ -56,7 +56,7 @@ interface Toast {
 function shareToast(ok: boolean, ids: string[] | undefined, len: number): Toast {
   const what = ids?.length === 1 ? 'Alert' : 'All alerts'
   return ok
-    ? { severity: 'success', text: `${what} copied — paste it to share (${len} chars).` }
+    ? { severity: 'success', text: `${what} copied - paste it to share (${len} chars).` }
     : { severity: 'warning', text: 'Could not reach the clipboard.' }
 }
 
@@ -67,7 +67,7 @@ function importToast(res: ShareApplyResult): Toast {
     text: res.ok
       ? res.added
         ? `Added ${res.added} alert${res.added === 1 ? '' : 's'}${res.skipped ? `, skipped ${res.skipped} you already had` : ''}.`
-        : 'Nothing to add — you already have every alert in that string.'
+        : 'Nothing to add - you already have every alert in that string.'
       : res.error ?? 'Import failed.'
   }
 }
@@ -128,7 +128,7 @@ function ConfirmResetDialog({
       <DialogTitle>Reset alerts to defaults?</DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary">
-          This replaces all alerts — including any you added or edited — with the
+          This replaces all alerts, including any you added or edited, with the
           seeded built-in set (Charm break + Raid target defeated). This can&apos;t be undone.
         </Typography>
       </DialogContent>

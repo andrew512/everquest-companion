@@ -135,7 +135,7 @@ export function CursorRingSetting(): JSX.Element {
         />
         <Typography variant="caption" color="text.secondary">
           {prefs.enabled
-            ? 'A white ring follows your pointer so you can find it on a busy screen. Your real cursor is untouched — the ring never gets in the way of a click.'
+            ? 'A white ring follows your pointer so you can find it on a busy screen. Your real cursor is untouched - the ring never gets in the way of a click.'
             : 'Off. Nothing is drawn and nothing is tracked.'}
         </Typography>
       </Stack>

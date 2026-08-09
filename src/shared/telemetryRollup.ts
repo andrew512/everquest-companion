@@ -330,7 +330,7 @@ function msBucketLabel(edges: readonly number[], i: number): string {
   const clamped = Math.max(0, Math.min(i, edges.length))
   if (clamped >= edges.length) return `${msSpan(edges[edges.length - 1])}+`
   if (clamped === 0) return `<${msSpan(edges[0])}`
-  return `${msSpan(edges[clamped - 1])}–${msSpan(edges[clamped])}`
+  return `${msSpan(edges[clamped - 1])}-${msSpan(edges[clamped])}`
 }
 
 /** Human range for a `startupReplayMs` bucket index. */
@@ -355,7 +355,7 @@ export function sessionBucketLabel(i: number): string {
   const clamped = Math.max(0, Math.min(i, SESSION_MS_EDGES.length))
   const lo = clamped === 0 ? 0 : SESSION_MS_EDGES[clamped - 1]
   if (clamped >= SESSION_MS_EDGES.length) return `${span(lo)}+`
-  return `${clamped === 0 ? '0' : span(lo)}–${span(SESSION_MS_EDGES[clamped])}`
+  return `${clamped === 0 ? '0' : span(lo)}-${span(SESSION_MS_EDGES[clamped])}`
 }
 
 /**

@@ -48,7 +48,7 @@ function overlayTiming(o: ScopeOption, now: number): string {
   if (o.startTs) bits.push(formatTime(o.startTs))
   const age = relativeAge(o.startTs, now)
   if (age) bits.push(age)
-  bits.push(o.durationSec > 0 ? fmtDur(o.durationSec) : o.live ? 'live' : '—')
+  bits.push(o.durationSec > 0 ? fmtDur(o.durationSec) : o.live ? 'live' : '-')
   return bits.join(' · ')
 }
 

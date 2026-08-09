@@ -508,7 +508,7 @@ export class EngineState {
     for (const d of this.charm.sweep(now)) {
       this.world.uncharm(d.display, now)
       this.petNames.delete(d.nameKey)
-      this.log(now, 'charm', 'dropped', `✕ ${d.display}: charm bind never corroborated — unbound`)
+      this.log(now, 'charm', 'dropped', `✕ ${d.display}: charm bind never corroborated - unbound`)
     }
   }
 

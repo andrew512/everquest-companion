@@ -37,7 +37,7 @@ export function timeLabel(row: BuffTimerRow, nowMs: number): string {
     // fmtDuration renders a 0 as an em-dash (it is the app's "no value" spelling); a buff that
     // landed this second has a real elapsed time of zero, so spell it as one.
     const elapsed = fmtDuration(r.elapsedMs)
-    return `+${elapsed === '—' ? '0s' : elapsed}`
+    return `+${elapsed === '-' ? '0s' : elapsed}`
   }
   return r.overdue ? '0s' : fmtDuration(r.remainingMs ?? 0)
 }
@@ -50,7 +50,7 @@ export function BuffTimerBar({ row, nowMs }: { row: BuffTimerRow; nowMs: number 
     <div
       data-testid="buff-timer-row"
       data-timer-mode={row.mode}
-      title={row.candidates ? `Shared landing message — one of: ${row.candidates.join(', ')}` : undefined}
+      title={row.candidates ? `Shared landing message - one of: ${row.candidates.join(', ')}` : undefined}
       style={{
         display: 'flex',
         flexDirection: 'column',

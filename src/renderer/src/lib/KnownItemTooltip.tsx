@@ -232,7 +232,7 @@ function KnownItemCard({
       {data && <WhatItsFor data={data} depth={depth} />}
       {data?.offline && (
         <Typography sx={{ color: EQ_ITEM_COLORS.label, fontSize: 10, mt: 0.4 }}>
-          offline — showing what&apos;s known locally
+          offline - showing what&apos;s known locally
         </Typography>
       )}
     </Box>

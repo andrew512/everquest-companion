@@ -184,7 +184,7 @@ function ZoneRoster({
         In {zone}{' '}
         {rows.length > 0 && (
           <Typography component="span" variant="caption" color="text.secondary">
-            — {rows.length} in the catalog
+            - {rows.length} in the catalog
           </Typography>
         )}
       </Typography>
@@ -233,7 +233,7 @@ function NoZoneYet({ hasConsidered }: { hasConsidered: boolean }): JSX.Element {
       <Typography variant="body2" sx={{ maxWidth: 460 }}>
         {hasConsidered
           ? 'Zone into somewhere and this becomes an overview of what lives there. Until then, search the catalog by name or zone.'
-          : `Your zone, cons and kills show up here as you play — a roster of whatever you're standing in. Meanwhile, search ${MOB_CATALOG.length.toLocaleString()} creatures by name or zone: levels, zones and full drop tables, all offline.`}
+          : `Your zone, cons and kills show up here as you play - a roster of whatever you're standing in. Meanwhile, search ${MOB_CATALOG.length.toLocaleString()} creatures by name or zone: levels, zones and full drop tables, all offline.`}
       </Typography>
       <Typography variant="caption" color="text.disabled">
         Anything you <code>/con</code> in game shows up here too.

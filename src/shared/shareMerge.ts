@@ -109,7 +109,7 @@ export function planAlertMerge(
         action: 'skip',
         finalId: twin.id,
         finalName: twin.name,
-        reason: `Already have this — “${twin.name}”`,
+        reason: `Already have this - “${twin.name}”`,
         missingPackId,
         behaviorKey
       })
@@ -122,7 +122,7 @@ export function planAlertMerge(
     if (byId.has(finalId)) {
       finalId = `${def.id}~${behaviorKey.slice(0, 4)}`
       action = 'rekey'
-      reason = `Id “${def.id}” is taken by a different alert — imported alongside it`
+      reason = `Id “${def.id}” is taken by a different alert - imported alongside it`
     }
 
     let finalName = def.name
@@ -261,7 +261,7 @@ function pushOverlayRows(out: ScalarChange[], body: SettingsBundleBody, ctx: Sca
     const cur = ctx.overlays?.[kind]
     pushScalar(out, {
       id: `overlay.${kind}.bgAlpha`,
-      label: `${OVERLAY_KIND_LABEL[kind]} — background opacity`,
+      label: `${OVERLAY_KIND_LABEL[kind]} - background opacity`,
       current: cur?.bgAlpha,
       incoming: inc.bgAlpha,
       merge: 'replace'

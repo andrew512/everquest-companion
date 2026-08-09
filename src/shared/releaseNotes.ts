@@ -130,17 +130,17 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
-        text: "The map you pick stays picked — it survives switching tabs and restarting, and the toolbar says whether the map is following you or pinned. 'Current zone' snaps back to where your character is and follows from there.",
+        text: "The map you pick stays picked - it survives switching tabs and restarting, and the toolbar says whether the map is following you or pinned. 'Current zone' snaps back to where your character is and follows from there.",
         fromReport: true
       },
       {
         kind: 'new',
-        text: 'Paste a /loc into the Maps toolbar and a crosshair lands on that spot. It stays — per zone, across tabs and restarts — until you replace it or clear it.',
+        text: 'Paste a /loc into the Maps toolbar and a crosshair lands on that spot. It stays - per zone, across tabs and restarts - until you replace it or clear it.',
         fromReport: true
       },
       {
         kind: 'changed',
-        text: 'When something breaks, the app now reports the technical details of the failure — the error, where in the app it happened, and what kinds of log line it had just read — so bugs get diagnosed instead of guessed at. Never your log contents, your chat, or any name from the game: the message is redacted on your machine and checked again on arrival. The usage-analytics switch still turns all of it off.'
+        text: 'When something breaks, the app now reports the technical details of the failure - the error, where in the app it happened, and what kinds of log line it had just read - so bugs get diagnosed instead of guessed at. Never your log contents, your chat, or any name from the game: the message is redacted on your machine and checked again on arrival. The usage-analytics switch still turns all of it off.'
       }
     ]
   },
@@ -150,7 +150,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'changed',
-        text: 'Anonymous usage reporting (if you have it on) now includes error counts — how many errors happened, never what they said — so a buggy release gets noticed and fixed faster.'
+        text: 'Anonymous usage reporting (if you have it on) now includes error counts - how many errors happened, never what they said - so a buggy release gets noticed and fixed faster.'
       }
     ]
   },
@@ -191,12 +191,12 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
-        text: 'Alerts created from Suggested actually fire — a landing message shared by several spells now matches whichever of them you cast, and the alert speaks the right spell name.',
+        text: 'Alerts created from Suggested actually fire - a landing message shared by several spells now matches whichever of them you cast, and the alert speaks the right spell name.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: "Bard crowd-control breaks are detected across the whole song ladder, not just the level-20 song — and a mez break is announced as a mez break, not a charm break.",
+        text: "Bard crowd-control breaks are detected across the whole song ladder, not just the level-20 song - and a mez break is announced as a mez break, not a charm break.",
         fromReport: true
       },
       {
@@ -211,12 +211,12 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
-        text: "Monk Mend appears in the healing breakdown — counted every time, with the amount shown as unstated because the game never says one.",
+        text: 'Monk Mend appears in the healing breakdown - counted every time, and tagged "no amount" because the game never says how much it healed.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'The celebration overlay introduces itself the first time it appears — named, with a close button, and a way to turn it off right on the card.',
+        text: 'The celebration overlay introduces itself the first time it appears - named, with a close button, and a way to turn it off right on the card.',
         fromReport: true
       },
       {
@@ -237,7 +237,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: 'The leveling tab highlights what has been dropping in your selected time window — motes and farm targets float to the top — and clicking an item jumps to its detail.',
+        text: 'The leveling tab highlights what has been dropping in your selected time window - motes and farm targets float to the top - and clicking an item jumps to its detail.',
         fromReport: true
       },
       {
@@ -251,7 +251,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
-        text: 'Smite has its own row too — the skill swings split out from the Smiting Strike spell.'
+        text: 'Smite has its own row too - the skill swings split out from the Smiting Strike spell.'
       },
       {
         kind: 'fixed',
@@ -282,15 +282,15 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: 'The exp graph has a timescale picker — and the whole leveling dashboard follows it: rates, AA pace and zone stats all read the window you chose.'
+        text: 'The exp graph has a timescale picker - and the whole leveling dashboard follows it: rates, AA pace and zone stats all read the window you chose.'
       },
       {
         kind: 'new',
-        text: "What's new: this panel — every release, newest first, with a strip along the bottom the first time you launch after an update."
+        text: "What's new: this panel - every release, newest first, with a strip along the bottom the first time you launch after an update."
       },
       {
         kind: 'new',
-        text: 'The app updates itself quietly in the background, so releases were arriving with nothing to say they had — no way to know what was different, or that a fix was there because somebody asked for it.'
+        text: 'The app updates itself quietly in the background, so releases were arriving with nothing to say they had - no way to know what was different, or that a fix was there because somebody asked for it.'
       },
       {
         kind: 'new',
@@ -313,7 +313,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: 'The exaltation planner has ear, wrist and finger slots — plan two ring effects at once.',
+        text: 'The exaltation planner has ear, wrist and finger slots - plan two ring effects at once.',
         fromReport: true
       },
       {
@@ -340,7 +340,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'changed',
-        text: 'The meter no longer asks “your pet?” — order your pet once (/pet attack) or use /pet who leader and it is yours from that moment; re-summoning retires the old pet.',
+        text: 'The meter no longer asks “your pet?” - order your pet once (/pet attack) or use /pet who leader and it is yours from that moment; re-summoning retires the old pet.',
         fromReport: true
       },
       {
@@ -350,7 +350,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
-        text: 'Loading no longer pegs a CPU core, and the overlays and cursor ring stay out of the way — and off your mouse — until parsing finishes.'
+        text: 'Loading no longer pegs a CPU core, and the overlays and cursor ring stay out of the way (and off your mouse) until parsing finishes.'
       },
       { kind: 'fixed', text: 'Switching characters no longer replays old alerts and celebrations.' },
       {
@@ -392,7 +392,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-05',
     entries: [
       {
-        text: 'Closing the app really closes it — a failed teardown could leave it running with no window, and block the next launch.',
+        text: 'Closing the app really closes it - a failed teardown could leave it running with no window, and block the next launch.',
         fromReport: true
       }
     ]
@@ -403,7 +403,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       { text: 'Attack-round stats, honest about what the log states and what it infers.' },
       {
-        text: 'Picking your EverQuest folder attaches right away — and so does typing /log on, without a restart.',
+        text: 'Picking your EverQuest folder attaches right away - and so does typing /log on, without a restart.',
         fromReport: true
       },
       { text: 'The installer runs under Wine and CrossOver instead of dead-ending.', fromReport: true }
@@ -414,7 +414,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-05',
     entries: [
       {
-        text: 'Monk special attacks get their real names — Dragon Punch and Flying Kick stop being counted as anonymous swings.',
+        text: 'Monk special attacks get their real names - Dragon Punch and Flying Kick stop being counted as anonymous swings.',
         fromReport: true
       },
       { text: 'Your /outputfile dumps are read the moment you write them.' },
@@ -440,7 +440,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         text: 'A card names what you just did, fades on its own, and takes you to the tab with the details if you click it.'
       },
       { text: 'Healing joins the meters, in the panel and in a floating overlay of its own.' },
-      { text: 'Only kills credited to you celebrate — a boss a stranger killed nearby no longer does.' }
+      { text: 'Only kills credited to you celebrate - a boss a stranger killed nearby no longer does.' }
     ]
   },
   {
@@ -448,7 +448,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-04',
     entries: [
       { text: 'Maps gain a zone pane that says what lives there, pinned where the wiki says.' },
-      { text: 'Overview tiles link where you would click — a drop opens its item, a fight opens the meter.' },
+      { text: 'Overview tiles link where you would click - a drop opens its item, a fight opens the meter.' },
       { text: 'Kill records go per instance tier, so a d4 badge no longer stands under a d0 loadout.' }
     ]
   },
@@ -482,7 +482,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         text: 'When something looked wrong there was nowhere to say so, and a problem nobody can see is a problem nobody fixes.'
       },
       {
-        text: 'The attached window carries combat, casts and loot — never chat, and never anyone else’s words — so a defect can be diagnosed from what actually happened instead of from a description of it.'
+        text: 'The attached window carries combat, casts and loot - never chat, and never anyone else’s words - so a defect can be diagnosed from what actually happened instead of from a description of it.'
       }
     ]
   },
@@ -653,12 +653,12 @@ export function releaseNotesProblems(notes: readonly ReleaseNote[] = RELEASE_NOT
       // stored `false` would read as "we checked and it wasn't a report", which is a claim this
       // file has no way to make. Present means true.
       if (e.fromReport !== undefined && !e.fromReport) {
-        problems.push(`${n.version}: fromReport is a flag — set it to true or leave it out`)
+        problems.push(`${n.version}: fromReport is a flag - set it to true or leave it out`)
       }
     }
     const prev = notes[i - 1]
     if (prev && compareVersions(prev.version, n.version) <= 0) {
-      problems.push(`${n.version} must sort strictly below ${prev.version} — the list is newest first`)
+      problems.push(`${n.version} must sort strictly below ${prev.version} - the list is newest first`)
     }
   })
   return problems

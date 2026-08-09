@@ -129,7 +129,7 @@ function SharedItemsSection({
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5 }}>
         <LinkIcon sx={{ fontSize: 15, color: 'text.secondary' }} />
         <Typography variant="caption" color="text.secondary">
-          Shared items — other Sky quests contending for these drops
+          Shared items - other Sky quests contending for these drops
         </Typography>
       </Stack>
       <Stack spacing={0.5}>
@@ -203,7 +203,7 @@ function QuestSummaryRow({
       <Box sx={{ flexGrow: 1 }} />
       {sharedCount > 0 && (
         <Tooltip
-          title={`Shares ${sharedCount} item${sharedCount === 1 ? '' : 's'} with other Sky quests — expand for details`}
+          title={`Shares ${sharedCount} item${sharedCount === 1 ? '' : 's'} with other Sky quests - expand for details`}
         >
           <Chip
             size="small"

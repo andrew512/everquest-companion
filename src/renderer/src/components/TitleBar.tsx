@@ -220,7 +220,7 @@ function CharacterPicker({
             return c ? `${c.name} · ${c.server}` : 'Select character'
           }}
         >
-          <ListSubheader>Characters — most recently played</ListSubheader>
+          <ListSubheader>Characters - most recently played</ListSubheader>
           {characters.map((c) => (
             <MenuItem key={c.logPath} value={c.logPath}>
               <Box>

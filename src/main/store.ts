@@ -593,7 +593,7 @@ const SEED_ALERTS: AlertDef[] = [
     // "I find myself... requiring your attention." — the calm-but-pointed read lands
     // better than a joke sting for suddenly losing your charmed pet (Task #21).
     sound: { packId: DEFAULT_ALERT_PACK_ID, soundId: DEFAULT_ALERT_SOUNDS.charmBreak },
-    note: 'Seeded default — fires when a charm spell wears off (you lose your pet).'
+    note: 'Seeded default - fires when a charm spell wears off (you lose your pet).'
   },
   {
     id: 'boss-defeat',
@@ -602,7 +602,7 @@ const SEED_ALERTS: AlertDef[] = [
     trigger: { type: 'app', signal: 'bossDefeat' },
     // "The matter is settled."
     sound: { packId: DEFAULT_ALERT_PACK_ID, soundId: DEFAULT_ALERT_SOUNDS.bossDefeat },
-    note: 'Seeded default — fires the same moment boss confetti does.'
+    note: 'Seeded default - fires the same moment boss confetti does.'
   },
   {
     id: 'quest-complete',
@@ -615,7 +615,7 @@ const SEED_ALERTS: AlertDef[] = [
     trigger: { type: 'app', signal: 'questComplete' },
     // "It is done."
     sound: { packId: DEFAULT_ALERT_PACK_ID, soundId: DEFAULT_ALERT_SOUNDS.questComplete },
-    note: 'Seeded default — fires the same moment a Sky quest turn-in celebration does.'
+    note: 'Seeded default - fires the same moment a Sky quest turn-in celebration does.'
   }
 ]
 
