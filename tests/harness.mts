@@ -120,7 +120,11 @@ export function replayBuffTimers(
   const db = loadSpellDb()
   installSpellDb(db)
   const buffs = new BuffsModule(db)
-  const timers = new BuffTimersModule()
+  // ONE MODEL, TWO MODULES (JOS-140): the CC half folds through the buffs module's own cast
+  // anchors and mints into its own learner, exactly as `modules/wiring.ts` wires it in production.
+  // Constructing it bare would give it a private (and permanently empty) cast history, so no
+  // landing would ever be anchored and every hold in this harness would silently vanish.
+  const timers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
   buffs.reset()
   timers.reset()
   let seq = 0

@@ -97,6 +97,9 @@ import { perfSection } from './PerfSetting'
 // Same arrangement, same reason: the two graphics-compatibility switches name their own section
 // beside the card that renders them. See ./GraphicsSetting.tsx.
 import { graphicsSection } from './GraphicsSetting'
+// Same arrangement (JOS-140): the buff externals allowlist names its own section beside the card
+// that renders it. See ./BuffTrustSetting.tsx.
+import { buffTrustSection } from './BuffTrustSetting'
 // Same arrangement again (JOS-123): the main window's text size names its own section beside the
 // card that renders it. See ./TextSizeSetting.tsx.
 import { textSizeSection } from './TextSizeSetting'
@@ -251,6 +254,7 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
     combatSection(),
     overlaysSection(),
     graphicsSection(),
+    buffTrustSection(),
     cursorRingSection(),
     voiceSection(),
     {

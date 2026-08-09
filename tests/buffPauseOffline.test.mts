@@ -162,17 +162,22 @@ test('a buff camped overnight is still up at login, resumed where it stopped', (
   assert.equal(samplesFor(snap, SWIFT), 0, 'no duration sample may be mined across an absence')
 })
 
+const SLOW = 'Shiftless Deeds'
+const SLOW_DB_MS = 150 * SEC
+const MOB = 'a fire giant warrior'
+
 test('the world does not pause with you: a debuff keeps burning while a buff freezes', () => {
   const mod = dbBuffsModule()
   const send = busTo(mod)
-  const SLOW = 'Shiftless Deeds'
-  const SLOW_DB_MS = 150 * SEC
-  const MOB = 'a fire giant warrior'
 
-  // 45 minutes: past the log-hole boundary (so this is the case sessionWindows could not reach)
-  // but well inside the 90-minute hygiene cap, so BOTH instances are still in the model at login
-  // and the only thing that can differ between them is the clock.
-  const OFFLINE = 45 * MIN
+  // TWO MINUTES, and the length is the experiment. It is long enough that a paused clock and a
+  // running one give visibly different readings, and short enough that BOTH instances are still
+  // in the model at login — which is the only condition under which the two clocks can be read
+  // side by side and compared. (It used to be 45 minutes. JOS-140's unwitnessed-expiry cull, the
+  // owner's third amendment, retires an overdue DEBUFF after its own grace rather than leaving it
+  // squatting at 0s for ninety minutes, so at 45 minutes there is no debuff left to read. The
+  // test below is that case, and it turns the disappearance itself into the assertion.)
+  const OFFLINE = 2 * MIN
   const t0 = at('Sat Aug 01 20:00:00 2026')
   castAndLand(send, { spell: SWIFT, target: 'self', durationMs: SWIFT_DB_MS, landTs: t0 })
   castAndLand(send, { spell: SLOW, target: MOB, durationMs: SLOW_DB_MS, landTs: t0 + 30 * SEC })
@@ -192,10 +197,10 @@ test('the world does not pause with you: a debuff keeps burning while a buff fre
   // THE ASYMMETRY, one line each. Your character was paused, so your haste is 60 seconds old.
   assert.equal(buff.startedTs, t0 + OFFLINE)
   assert.equal(welcome - buff.startedTs, 60 * SEC)
-  // The mob was not, so the slow you left on it is three quarters of an hour old — which is to
-  // say it is long over, and the model says so rather than pretending you were there watching.
+  // The mob was not, so the slow you left on it is 150 seconds old — its whole stated duration,
+  // spent while you were not there. The model says so rather than pretending you were watching.
   assert.equal(debuff.startedTs, t0 + 30 * SEC, 'a debuff clock is never shifted')
-  assert.ok(welcome - debuff.startedTs > SLOW_DB_MS)
+  assert.equal(welcome - debuff.startedTs, SLOW_DB_MS, 'and it ran out exactly while you were gone')
 
   // THE LEARNER IS CENSORED ON BOTH SIDES, for two different reasons (buffsShapes.ts states them
   // separately). The debuff's span is arithmetically world time — but the wear-off LINE only
@@ -216,6 +221,40 @@ test('the world does not pause with you: a debuff keeps burning while a buff fre
   assert.equal(samplesFor(after, SWIFT), 0)
 })
 
+test('…and over a LONG absence the unshifted debuff is culled, while the frozen buff is not', () => {
+  // THE ASYMMETRY READ FROM THE OTHER END, and the owner's own case (JOS-140, third amendment):
+  // slow a boss, then die — or camp, or zone — and the wear-off line is printed to a character
+  // who is not there to receive it. Nothing witnesses the close, so the bar used to sit at 0s
+  // until the ninety-minute hygiene cap noticed.
+  //
+  // Why it belongs in THIS file: the cull only fires because the debuff's clock was NEVER
+  // SHIFTED. Had it been paused like the buff beside it, it would read 60 seconds old at login
+  // and stay. So the disappearance is the same one-sentence design as the test above, observed
+  // where reading `startedTs` no longer can: your character is paused, the world is not.
+  const mod = dbBuffsModule()
+  const send = busTo(mod)
+
+  const OFFLINE = 45 * MIN
+  const t0 = at('Sat Aug 01 21:00:00 2026')
+  castAndLand(send, { spell: SWIFT, target: 'self', durationMs: SWIFT_DB_MS, landTs: t0 })
+  castAndLand(send, { spell: SLOW, target: MOB, durationMs: SLOW_DB_MS, landTs: t0 + 30 * SEC })
+
+  const lastSeen = t0 + 60 * SEC
+  send({ kind: 'unknown', ts: lastSeen } as LogEvent)
+  const welcome = lastSeen + OFFLINE
+  send({ kind: 'sessionStart', ts: welcome } as LogEvent)
+
+  const snap = mod.snapshot().state
+  const buff = rowOf(snap, SWIFT)
+  assert.ok(buff, 'your own buff is still up — EQ froze it with you and the pause gave it back')
+  assert.equal(welcome - buff.startedTs, 60 * SEC, 'and it reads its true remaining, not the wall clock')
+  assert.equal(rowOf(snap, SLOW), undefined, 'the slow you could not see expire is gone, not squatting at 0s')
+
+  // A CULL IS NOT EVIDENCE. Nothing was observed, so nothing may be learned from it — the whole
+  // difference between a cull and a wear-off.
+  assert.equal(samplesFor(snap, SLOW), 0, 'an unwitnessed expiry mints no duration sample')
+})
+
 test('a crowd-control hold is a timer in the world, and never pauses', () => {
   // The two modules on ONE bus, one absence, two answers — the whole design in a single stream.
   // Ensnare is 660 s, comfortably longer than the absence, so the hold is still live at login and
@@ -224,7 +263,9 @@ test('a crowd-control hold is a timer in the world, and never pauses', () => {
   installSpellDb(db)
   const buffs = new BuffsModule(db)
   buffs.reset()
-  const timers = new BuffTimersModule()
+  // ONE MODEL, TWO MODULES (JOS-140): the CC half folds through the buffs module's own cast
+  // anchors and mints into its own learner, exactly as modules/wiring.ts wires it.
+  const timers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
   timers.reset()
   const send = busTo(buffs, timers)
   const MOB = 'a scareling'

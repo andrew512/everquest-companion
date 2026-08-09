@@ -39,13 +39,17 @@
 // cast of the same spell on a DIFFERENT entity, which used to measure a slow on mob B against the
 // older landing on mob A and hand the MAX estimator a span that is too long.
 //
-// NOT everything the overlay draws takes this path: the per-target MEZ/ROOT holds (main/modules/
-// buffTimers.ts, projected by `ccRow` below) stay DB-STATED. Their end line — `Your <mez> spell
-// has worn off of <mob>.` — is printed identically whether the mez ran its full course or a nuke
-// broke it early (see tests/fixtures/w10-cazic-slow.log: 2 s and 18 s break lines under one 24 s
-// cast), so no clean sample exists to mint; counting down from one would be the censored value the
-// clean-sample rule exists to keep out. A SLOW/debuff, by contrast, flows through the ActiveBuff
-// path (`buffApply` land → `buffFade` "worn off of <mob>") and DOES get the observed-first rule.
+// JOS-140 FINISHED THE JOB: THE MEZ HOLDS TAKE THIS PATH TOO. Until then the per-target mez/root
+// holds (main/modules/buffTimers.ts, projected by `ccRow` below) stayed DB-STATED, on the argument
+// that their end line — `Your <mez> spell has worn off of <mob>.` — prints identically whether the
+// mez ran its course or a nuke broke it early (tests/fixtures/w10-cazic-slow.log: 2 s and 18 s
+// break lines under one 24 s cast), so no sample could be trusted. That argument was right about
+// the censoring and wrong about the conclusion: the MAX estimator is chosen precisely because
+// early terminations read SHORT and never lift it. What was actually missing was a rule for
+// deciding WHICH landing a wear-off closed, and the count-and-close rule (main/modules/
+// buffRounds.ts) is it. So the CC holds now mint into the same learner and read the same
+// estimator, keyed on (spell line, caster) — which is what took a reporter's Mesmerization VII bar
+// from the base rank's 24 s to the 44 s their own log proves.
 
 import type { ActiveBuff, BuffsSnap } from './buffTypes'
 // Type-only: `shared/types.ts` is a value module (OVERLAY_KINDS) and this one is imported by the
@@ -66,6 +70,27 @@ export function isTimerOverlayKind(kind: OverlayKind): kind is TimerOverlayKind 
   return kind === 'buffs' || kind === 'debuffs'
 }
 
+/**
+ * HOW A TIMER WINDOW ARRANGES ITS ROWS (JOS-140, owner amendment 2026-08-09 from live testing).
+ *
+ *   'none'   — ONE FLAT LIST, soonest to expire at the top, across every target. This is what a
+ *              player watching a chain-mez actually reads: the next thing to break is the next
+ *              thing they must act on, and which mob it is on is a detail on the row.
+ *   'target' — self rows first, then one contiguous block per target (world-model law 4's
+ *              presentation order). What both windows did before this.
+ *
+ * The DEFAULT differs per window and is deliberate: the DEBUFFS window opens flat, because it is
+ * a queue of things running out; the BUFFS window keeps its blocks, because "what is on me" and
+ * "what is on my pet" are separate questions read at separate moments and the owner did not ask
+ * for that to change. Either window can be set to either, per kind, in its own footer.
+ */
+export type TimerGrouping = 'none' | 'target'
+
+/** A stored/patched grouping, or null when it is absent and the surface's own default applies. */
+export function normalizeTimerGrouping(raw: unknown): TimerGrouping | null {
+  return raw === 'none' || raw === 'target' ? raw : null
+}
+
 // ----- the CC half's state (owned by main/modules/buffTimers.ts, rendered by the overlay) -----
 
 /**
@@ -73,16 +98,20 @@ export function isTimerOverlayKind(kind: OverlayKind): kind is TimerOverlayKind 
  * for. Keyed by mob, so casting one AE mez that lands on four enemies produces four of these.
  */
 export interface CcHold {
-  /** Canonical mob key (idKey) — the identity. */
+  /** Canonical mob key (idKey) — the entity half of the identity. */
   key: string
   /** The mob's display name, raw from the log (world-model law 2: canonicalize at boundaries). */
   target: string
-  /** Event ts (ms) the hold landed. NOT a wall clock — see the note on BuffTimerRow.startedTs. */
+  /**
+   * Event ts (ms) of the OLDEST landing in this hold — the one the next anonymous wear-off will
+   * close, and therefore the honest clock for a row that stands for `count` of them. NOT a wall
+   * clock — see the note on BuffTimerRow.startedTs.
+   */
   startedTs: number
   /**
-   * The spell, when the player's own cast history narrowed the landing sentence's candidates to
-   * exactly ONE. Absent when it did not — in which case `candidates` is the honest answer and
-   * this row is a family, not a name (JOS-84).
+   * The spell — the RANKED name from the cast line (`Mesmerization VII`) — when the anchors
+   * narrowed the landing sentence's candidates to exactly ONE. Absent when they did not, in which
+   * case `candidates` is the honest answer and this row is a family, not a name (JOS-84).
    */
   spell?: string
   /**
@@ -92,11 +121,26 @@ export interface CcHold {
    */
   candidates: string[]
   /**
-   * The DB-STATED duration in ms, or null when none can be stated. Non-null in exactly two
-   * cases: the candidates narrowed to one spell that states a duration, or every candidate
-   * states the SAME duration (so the ambiguity does not reach the number). Never a mined value.
+   * The duration in ms the bar draws, or null when none can be stated.
+   *
+   * SINCE JOS-140 THIS IS THE SHARED ESTIMATOR, not a DB row: max(DB floor, this caster's recent
+   * observed max) — the same number the buff rows have counted down from since JOS-117. A
+   * resolved hold reads it under (spell line, caster); an unresolved FAMILY still states a number
+   * only when every candidate agrees on one, because there is no line to look a learned value up
+   * under. `source` says which won.
    */
   durationMs: number | null
+  /** Where `durationMs` came from: 'db' (the floor held) | 'observed' (a logged cycle beat it). */
+  source?: 'db' | 'observed'
+  /**
+   * HOW MANY MOBS OF THAT NAME are holding this spell (ruling 7). Absent for the ordinary one.
+   * EQ prints no instance identifier and stamps to the second, so an AE round landing on five
+   * mobs called `a wan ghoul knight` is five byte-identical lines: the model keeps a landing each
+   * and draws ONE row with a chip, rather than five rows with five identical clocks.
+   */
+  count?: number
+  /** The allowlisted external who cast it; absent for your own (shared/buffTrust.ts). */
+  caster?: string
 }
 
 /**
@@ -154,8 +198,15 @@ export interface BuffTimerRow {
    */
   startedTs: number
   mode: TimerMode
-  /** ONLY on 'countdown', and ONLY a DB-stated number. */
+  /** ONLY on 'countdown', and ONLY a number the shared estimator stated (JOS-117/JOS-140). */
   durationMs?: number
+  /**
+   * How many entities of this row's display name are holding it (JOS-140 ruling 7). Absent for
+   * the ordinary one; 2+ draws the count chip. `startedTs` is then the OLDEST of them.
+   */
+  count?: number
+  /** The allowlisted external who cast it; absent for your own (shared/buffTrust.ts). */
+  caster?: string
 }
 
 /**
@@ -255,6 +306,8 @@ function ccRow(h: CcHold): BuffTimerRow {
     targetKey: h.key,
     startedTs: h.startedTs,
     ...(spell != null ? {} : { candidates: [...h.candidates], ambiguous: true as const }),
+    ...(h.count != null && h.count > 1 ? { count: h.count } : {}),
+    ...(h.caster != null ? { caster: h.caster } : {}),
     ...(h.durationMs != null
       ? { mode: 'countdown' as const, durationMs: h.durationMs }
       : { mode: 'elapsed' as const })
@@ -279,19 +332,31 @@ function timerModeOf(b: ActiveBuff): { mode: TimerMode; durationMs?: number } {
   return { mode: 'elapsed' }
 }
 
+/**
+ * The fields a row carries only when it has something to say — see `ActiveBuff.count` / `.caster`
+ * / `.candidates`. Split out so `buffRow` stays under the factoring ceiling.
+ */
+function buffRowExtras(b: ActiveBuff): Partial<BuffTimerRow> {
+  return {
+    ...(b.inferredTarget === true ? { inferredTarget: true as const } : {}),
+    ...(b.count != null && b.count > 1 ? { count: b.count } : {}),
+    ...(b.caster != null ? { caster: b.caster } : {}),
+    ...(b.candidates ? { candidates: [...b.candidates], ambiguous: true as const } : {})
+  }
+}
+
 /** The row an ActiveBuff projects to. */
 function buffRow(b: ActiveBuff): BuffTimerRow {
   const targetKey = b.self ? undefined : b.target != null ? entityKeyOf(b.target) : 'unknown'
-  const timing = timerModeOf(b)
   return {
     id: `${b.self ? 'self' : 'target'}|${targetKey ?? 'self'}|${nameKey(b.spell)}`,
     kind: b.cls,
     name: b.spell,
     group: b.self ? 'self' : 'target',
     ...(b.self ? {} : { target: b.target ?? 'unknown target', targetKey }),
-    ...(b.inferredTarget === true ? { inferredTarget: true as const } : {}),
     startedTs: b.startedTs,
-    ...timing
+    ...buffRowExtras(b),
+    ...timerModeOf(b)
   }
 }
 
@@ -311,7 +376,15 @@ function endedByCc(b: ActiveBuff, ends: readonly CcEnd[]): boolean {
   return ends.some((e) => e.key === key && e.ts >= b.startedTs && (e.spell == null || nameKey(e.spell) === spell))
 }
 
-/** Soonest-to-expire first within a group; countdowns ahead of count-ups; then oldest first. */
+/**
+ * Soonest-to-expire first; countdowns ahead of count-ups; then oldest first, then by name.
+ *
+ * THE RANK IS THE ANSWER TO "where do the rows with no number go" (JOS-140): AFTER the timed
+ * ones. A row that states no duration is counting UP and cannot be placed on a
+ * soonest-to-expire axis at all, so putting it above a bar that is about to break would be
+ * sorting by a number it does not have. Permanent rows come last for the same reason, one step
+ * further: they are never going to expire.
+ */
 function compareRows(a: BuffTimerRow, b: BuffTimerRow): number {
   const rank = (r: BuffTimerRow): number => (r.mode === 'countdown' ? 0 : r.mode === 'elapsed' ? 1 : 2)
   if (rank(a) !== rank(b)) return rank(a) - rank(b)
@@ -362,4 +435,18 @@ export function buildTimerRows(buffs: BuffsSnap, timers: BuffTimersSnap): BuffTi
   const groups = [...byTarget.values()].map((g) => g.sort(compareRows))
   groups.sort((a, b) => compareRows(a[0], b[0]))
   return [...self, ...groups.flat()]
+}
+
+/**
+ * THE ROW ORDER ONE WINDOW DRAWS (JOS-140). `buildTimerRows` is the MODEL's order — self first,
+ * then per-target blocks — and stays exactly that, because both windows are folded from it and
+ * every fixture test reads it. This is the presentation choice on top, and it is per window.
+ *
+ * 'target' hands back the projection untouched. 'none' re-sorts the same rows into ONE flat list,
+ * soonest to expire first, which is what the debuffs window opens on: a player chain-mezzing
+ * reads the next thing to break, not the roster of mobs. Nothing is added, removed or renamed by
+ * either — it is a sort, and `rowsForSurface` has already decided membership.
+ */
+export function orderTimerRows(rows: readonly BuffTimerRow[], grouping: TimerGrouping): BuffTimerRow[] {
+  return grouping === 'target' ? [...rows] : [...rows].sort(compareRows)
 }

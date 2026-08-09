@@ -41,8 +41,10 @@ import type { BuffsSnap, ModuleDelta } from '@shared/types'
 import {
   type BuffTimerRow,
   type BuffTimersSnap,
+  type TimerGrouping,
   type TimerOverlayKind,
   buildTimerRows,
+  orderTimerRows,
   rowsForSurface
 } from '@shared/buffTimers'
 import { OverlayHeader } from './OverlayHeader'
@@ -81,6 +83,13 @@ const SURFACE: Record<
     selfLabel: string
     empty: string
     dropFlash: boolean
+    /**
+     * How this window arranges its rows when the user has not said (JOS-140, owner amendment).
+     * The two differ on purpose: the DEBUFFS window is a queue of things running out, so it opens
+     * FLAT with the soonest at the top; the BUFFS window answers "what is on me" and "what is on
+     * my pet" separately, so it keeps its per-target blocks. Either can be set to either.
+     */
+    grouping: TimerGrouping
   }
 > = {
   buffs: {
@@ -90,7 +99,8 @@ const SURFACE: Record<
     tailTitle: 'Buffs you have running',
     selfLabel: 'Your buffs',
     empty: 'Watching for buffs you cast…',
-    dropFlash: true
+    dropFlash: true,
+    grouping: 'target'
   },
   debuffs: {
     tag: 'DEBUFFS',
@@ -101,7 +111,8 @@ const SURFACE: Record<
     // yours", so it needs a heading that is not the buffs window's "Your buffs".
     selfLabel: 'On you',
     empty: 'Watching for debuffs you land and mez you hold…',
-    dropFlash: false
+    dropFlash: false,
+    grouping: 'none'
   }
 }
 
@@ -205,12 +216,14 @@ const DROP_FLASH_MS = 6_000
 function BuffsFooter({
   bgAlpha,
   textScale,
+  grouping,
   patch,
   noDrag,
   accent
 }: {
   bgAlpha: number
   textScale: number
+  grouping: TimerGrouping
   patch: OverlayChrome['patch']
   noDrag: React.CSSProperties
   accent: string
@@ -243,17 +256,59 @@ function BuffsFooter({
         }}
         style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 24, accentColor: accent, height: 4 }}
       />
+      {/* THE ROW ARRANGEMENT (JOS-140), a two-state button rather than a select: there are exactly
+          two answers and the label states the one you would get by pressing it, which is the same
+          shape the lock pin already uses. It writes through the SAME persisted per-kind config as
+          the alpha slider beside it, so each window remembers its own answer. */}
+      <button
+        type="button"
+        data-testid="buff-timer-grouping"
+        data-grouping={grouping}
+        title={
+          grouping === 'none'
+            ? 'Sorted by time left. Press to group by target instead.'
+            : 'Grouped by target. Press to sort by time left instead.'
+        }
+        onClick={() => {
+          patch({ grouping: grouping === 'none' ? 'target' : 'none' })
+        }}
+        style={{
+          ...noDrag,
+          flexShrink: 0,
+          background: 'transparent',
+          border: '1px solid rgba(255,255,255,0.14)',
+          borderRadius: 4,
+          color: 'rgba(255,255,255,0.7)',
+          fontSize: 9,
+          letterSpacing: 0.4,
+          textTransform: 'uppercase',
+          padding: '1px 5px',
+          cursor: 'pointer'
+        }}
+      >
+        {grouping === 'none' ? 'time left' : 'by target'}
+      </button>
       <TextScaleStepper textScale={textScale} patch={patch} noDrag={noDrag} />
     </div>
   )
 }
 
-/** Self rows first, then one block per target — the order `buildTimerRows` already produced; this
- *  only cuts it into the blocks the eye reads. `selfLabel` is the one per-surface word (SURFACE). */
+/**
+ * Cut the ordered rows into the blocks the eye reads.
+ *
+ * 'none' is ONE block with NO heading (JOS-140, the debuffs window's default): a flat list sorted
+ * soonest-to-expire, where the target is a detail on the row rather than a section it lives under.
+ * 'target' is the original: self rows first, then one contiguous block per target, labelled.
+ * `selfLabel` is the one per-surface word (SURFACE).
+ */
 function groupRows(
   rows: BuffTimerRow[],
-  selfLabel: string
+  selfLabel: string,
+  grouping: TimerGrouping
 ): { key: string; label: string; inferred: boolean; rows: BuffTimerRow[] }[] {
+  if (grouping === 'none') {
+    return rows.length === 0 ? [] : [{ key: 'all', label: '', inferred: false, rows }]
+  }
   const out: { key: string; label: string; inferred: boolean; rows: BuffTimerRow[] }[] = []
   for (const row of rows) {
     const key = row.group === 'self' ? 'self' : (row.targetKey ?? 'unknown')
@@ -280,11 +335,16 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
   const buffs = useWholeSnapshot<BuffsSnap>('buffs', EMPTY_BUFFS)
   const timers = useWholeSnapshot<BuffTimersSnap>('buffTimers', EMPTY_TIMERS)
   const nowMs = useSecondsClock()
-  const { locked, bgAlpha, textScale, hovering, patch, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
+  const { locked, bgAlpha, textScale, hovering, config, patch, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
     useOverlayChrome()
 
-  const rows = useMemo(() => rowsForSurface(buildTimerRows(buffs, timers), kind), [buffs, timers, kind])
-  const groups = useMemo(() => groupRows(rows, surface.selfLabel), [rows, surface.selfLabel])
+  // ABSENT means "this window's default", which is not the same for both — see SURFACE.
+  const grouping = config?.grouping ?? surface.grouping
+  const rows = useMemo(
+    () => orderTimerRows(rowsForSurface(buildTimerRows(buffs, timers), kind), grouping),
+    [buffs, timers, kind, grouping]
+  )
+  const groups = useMemo(() => groupRows(rows, surface.selfLabel, grouping), [rows, surface.selfLabel, grouping])
   const drops = useDropFlash(rows, nowMs)
 
   return (
@@ -345,6 +405,7 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
         <BuffsFooter
           bgAlpha={bgAlpha}
           textScale={textScale}
+          grouping={grouping}
           patch={patch}
           noDrag={noDrag}
           accent={surface.accent}

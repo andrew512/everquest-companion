@@ -419,6 +419,36 @@ export const CLASSIFIED_SPELL_TYPES: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * A spell's NATURE — the one answer to "is this a good thing or a bad thing" (JOS-140 ruling 8).
+ *
+ * The two tables above already existed for the suggestion catalog; this exports the same fold for
+ * the BUFFS MODEL, which had its own two-string-literal version of the question and was wrong in
+ * the same 134 rows. The owner's ruling is that buff-vs-debuff comes from HERE and from nowhere
+ * else — never from the shape of the target.
+ *
+ * THE DEFECT THAT NAMES THE RULING (JOS-136, folded into JOS-140). `Resist Magic` is spellType
+ * `Resist Buff`, which matched neither literal, so `SpellStats.classOf` fell through to a tally of
+ * the ENTITY DISPOSITIONS its fades had landed on — and a buff you put on somebody the model does
+ * not currently hold as a pet tallies 'hostile'. A friendly resist buff on an ally therefore
+ * classified as a debuff and walked onto the DEBUFFS overlay. The reporter's slice
+ * (01KZKVA30Y4QW0DW22ZAK1XR6Z) is a Quick Buff burst landing eleven beneficial spells on a charmed
+ * pet; `Resist Magic` and `Resist Cold`/`Resist Disease` are the ones that had no nature at all.
+ *
+ * 'unknown' is a real answer and is returned rather than guessed: an unlisted type (a re-scrape
+ * that grows the vocabulary) and a spell absent from the DB both land here, and the caller decides
+ * what to do with a spell whose nature nobody states. It must never be resolved by looking at who
+ * it landed on.
+ */
+export type SpellNature = 'beneficial' | 'detrimental' | 'unknown'
+
+export function spellNature(spellType: string | undefined): SpellNature {
+  if (spellType === undefined) return 'unknown'
+  if (BENEFICIAL_TYPES.has(spellType)) return 'beneficial'
+  if (DETRIMENTAL_TYPES.has(spellType)) return 'detrimental'
+  return 'unknown'
+}
+
+/**
  * Which one-click suggestion templates a spell can offer (see SpellCatalogEntry.templates).
  *
  * EVERY FLAG IS A CLAIM THAT THE ALERT CAN ACTUALLY FIRE — the law shared/alertGroups.ts states

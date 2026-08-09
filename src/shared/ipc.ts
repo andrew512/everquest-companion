@@ -487,6 +487,22 @@ export const IPC = {
   // describe a precedence the windows did not use.
   graphicsEnvGet: 'graphicsPrefs:env',
 
+  // ---- the buff externals allowlist (JOS-140 — shared/buffTrust.ts) ----------------------
+  //
+  // WHOSE spells the buff/debuff model is allowed to track. It ships EMPTY — you and nobody else
+  // — because a landing sentence names no caster, so in a crowded zone the only thing separating
+  // your work from a stranger's is that you have a cast line and they do not. An allowlisted name
+  // gets the IDENTICAL rule, anchored on `<Name> begins casting <Spell>.`; it is never a looser
+  // one, and never something the app infers from proximity or from the group roster.
+  //
+  // renderer -> main: the persisted `{externals: string[]}`. Returns BuffTrustPrefs.
+  buffTrustGet: 'buffTrust:get',
+  // renderer -> main: replace the list. VALIDATED AT THE HANDLER through the same normalizer the
+  // store reader uses (the `graphicsPrefs:set` rule), and applied to the live model on the way
+  // through so a name added mid-session anchors the next cast rather than the next launch.
+  // Returns what was stored.
+  buffTrustSet: 'buffTrust:set',
+
   // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
   //
   // The main window's zoom factor: the Preferences control a player asked for after reporting

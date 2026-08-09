@@ -6,6 +6,7 @@
 import { spellCanonKey } from '../log/parser'
 import { RECONNECT_WINDOW_MS } from '../log/sessionDetector'
 import type { EntityDisposition } from '../combat/entityRules'
+import type { HoldGroup } from './buffRounds'
 
 /** Land a pending cast this many ms after castBegin if nothing cleared it first. */
 export const LAND_TIMEOUT_MS = 15_000
@@ -43,6 +44,44 @@ export const SESSION_GAP_MS = 30 * 60_000 // 30 minutes
  * constant is what makes it impossible for them to disagree about how long a preamble can be.
  */
 export const LOGIN_CONFIRM_MS = RECONNECT_WINDOW_MS
+
+/**
+ * THE UNWITNESSED-EXPIRY CULL (JOS-140, owner amendment 2026-08-09 from live testing).
+ *
+ * THE CASE: you slow a boss and then die. The wear-off line is printed to a character who is not
+ * there to receive it — the same shape as zoning out, or the mob wandering out of range — so it
+ * never arrives, and the bar sits at 0s indefinitely. Before this the only thing that would ever
+ * remove it was the 90-minute hygiene cap.
+ *
+ * THE GRACE COMES FROM THE ESTIMATE'S QUALITY, not from a constant per row kind (JOS-126's A6
+ * direction, generalized):
+ *
+ *   'observed' ⇒ 15 s. The number came from this caster's own clean cycles, so the only thing
+ *                left to be late is the LINE.
+ *   'db'       ⇒ the duration itself, floored at 60 s. The DB row is the BASE rank's stated
+ *                duration and the real one routinely runs far past it — a rank VII mez runs 44 s
+ *                against a 24 s row, and the owner's own Shiftless Deeds IV runs 234 s against a
+ *                150 s row — so a DB-sourced grace has to absorb being wrong about the DURATION,
+ *                not just about the line's arrival.
+ *
+ * THAT SECOND RULE IS LOAD-BEARING AND WAS MEASURED, not chosen for symmetry. A flat grace culls
+ * the row before its wear-off arrives, which means the ONE cycle that would have taught the model
+ * the true duration is deleted by the cull — and it is deleted again next time, forever. A cull
+ * that locks the learner out of its own correction is worse than a bar that squats. Doubling the
+ * floor clears every span the owner's log actually contains, and the moment a real duration is
+ * learned the grace collapses to 15 s.
+ *
+ * A row with no number at all is counting UP, has nothing to be overdue against, and is governed
+ * by the unknown-duration cap instead.
+ *
+ * It is deliberately NOT instant-at-zero (the owner's word was "eventually"): a visibly overdue
+ * row for a beat is information — it says the app is waiting for a line, rather than pretending
+ * it arrived. And a cull is NOT EVIDENCE: it mints no duration sample and counts as no break,
+ * because nothing was observed. That is the whole difference between it and a wear-off.
+ */
+export function expiryGraceMs(source: 'db' | 'observed' | undefined, durationMs: number): number {
+  return source === 'observed' ? 15_000 : Math.max(60_000, durationMs)
+}
 
 /** Active-buff HYGIENE cap (Task #33, finding #6). An active past this auto-retires. */
 const HYGIENE_ABSOLUTE_MS = 90 * 60_000 // 90 minutes when no/low stats
@@ -92,14 +131,40 @@ export function instanceEntityKey(iKey: string): string {
   return i >= 0 ? iKey.slice(i + 1) : SELF_KEY
 }
 
-/** A cast that has landed (produced a buff instance) and is awaiting its next fade. */
+/**
+ * Extract the SPELL LINE key from an instance key — the identity, as opposed to the display name.
+ *
+ * These two are no longer the same string (JOS-140). A landing a Quick Buff burst admits but
+ * cannot narrow is a FAMILY, and its row NAME is the joined candidate list
+ * (`Group Resist Magic / Resist Magic`), which `spellCanonKey` would fold into gibberish. The
+ * instance is keyed on one candidate's real line — the family agrees on nature and duration, which
+ * is the only reason it was admitted at all — so anything asking "which spell is this row" must
+ * ask the KEY and never re-derive it from what the row says.
+ */
+export function instanceSpellKey(iKey: string): string {
+  const i = iKey.indexOf(SEP)
+  return i >= 0 ? iKey.slice(0, i) : iKey
+}
+
+/**
+ * A landed instance awaiting its next fade — the record behind one row.
+ *
+ * IT IS A MULTISET NOW (JOS-140 ruling 7). `group` is the {@link HoldGroup} of landings for this
+ * (spell line, entity NAME): one per mob of that name we believe is holding this spell, oldest
+ * first. Two mobs called `a wan ghoul knight` slowed in one round are two landings in one group
+ * and ONE row with a count chip, not one row whose clock the second landing silently overwrote.
+ * The clean-cycle bookkeeping that decides whether a span may be learned from lives there too.
+ */
 export interface OpenCast {
   spell: string
-  /** rank-stripped spell key. */
+  /** rank-stripped spell key — the LINE, and half of the learner's key. */
   spellKey: string
   /** the entity this instance is on ('self' or a canonical name key). */
   entityKey: string
-  landedTs: number
+  /** The landings, oldest first (JOS-140). `group.oldestTs` is the row's clock. */
+  group: HoldGroup
+  /** WHOSE cast this is: 'self' or an allowlisted external (shared/buffTrust.ts). */
+  caster: string
   /** The entity disposition this cast is bound to (for censoring on zone/death). */
   disp: EntityDisposition
   /**
@@ -142,10 +207,34 @@ export interface Pending {
   emoteSubjectKey?: string
 }
 
-/** Per-spell accumulated duration samples + display name. */
+/** Per-(line, caster) accumulated duration samples + display name. */
 export interface SpellSamples {
   spell: string
   samples: number[]
+}
+
+/**
+ * ONE CAST LINE, remembered — the ANCHOR that admits a landing sentence (JOS-140 ruling 2).
+ *
+ * Shared by both halves of the model so they cannot disagree about what an anchor is. Three log
+ * shapes produce one:
+ *   `You begin casting <S>.` / `You begin singing <S>.`  — self, and it NAMES the spell.
+ *   `<Name> begins casting <S>.`                          — an allowlisted external, same shape.
+ *   `You activate Quick Buff.`                            — self, and it names NO spell at all.
+ *
+ * `display` is the RANKED name exactly as the log spelled it (`Mesmerization VII`) — the only line
+ * in the whole family that carries a rank, which is why the row can print one at all. The map is
+ * keyed by the rank-STRIPPED line, so a rank upgrade replaces its predecessor rather than
+ * accumulating beside it, and `rankChanged` records that two different ranks of one line were cast
+ * inside the same window — a landing under that condition cannot say which rank it is and is
+ * refused as a sample (ruling 5).
+ */
+export interface CastAnchor {
+  display: string
+  ts: number
+  caster: string
+  /** True when a DIFFERENT rank of this line was anchored within the landing window before it. */
+  rankChanged: boolean
 }
 
 /** Canonical spell key (case-stable, RANK-STRIPPED). */

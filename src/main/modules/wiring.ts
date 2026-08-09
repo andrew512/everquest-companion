@@ -43,6 +43,7 @@ import { EventFeedModule, type EventFeedDeps } from './eventFeed'
 import type { EqModule } from './types'
 import type { LogEvent } from '../../shared/logEvents'
 import type { AlertDef, MessageOverlay } from '../../shared/types'
+import type { BuffTrustPrefs } from '../../shared/buffTrust'
 
 /** Everything the module set needs from outside itself. Every field is a seam pipeline.ts fills
  *  from Electron and the bench fills with a stub or an empty list. */
@@ -60,6 +61,12 @@ export interface ModuleWiringDeps extends ConsiderDeps, EventFeedDeps {
    * both callers, but the bus is the caller's, so the function is injected rather than the bus.
    */
   emitDerived?: (ev: LogEvent, live: boolean) => void
+  /**
+   * WHOSE casts may anchor a landing besides your own (JOS-140, shared/buffTrust.ts). Absent ⇒
+   * you and nobody else, which is the shipped default and what every caller but the composition
+   * root passes.
+   */
+  buffTrust?: BuffTrustPrefs
 }
 
 /** The constructed world's modules: each one by name (pipeline.ts re-exports them under the names
@@ -149,14 +156,20 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // `buffExpired` back onto the SAME bus for the alerts module (registered after it) to match.
   const buffs = new BuffsModule(spellDb, [...overlays])
   if (deps.emitDerived) buffs.setDerivedEmitter(deps.emitDerived)
+  if (deps.buffTrust) buffs.setTrust(deps.buffTrust)
   // The CROWD-CONTROL half of the buffs/timer overlay (JOS-89, docs/plans/buff-timer-overlay.md).
   // Deliberately tiny: it owns ONLY the per-target mez/root holds, which are the one thing the
   // buffs model above does not track (its landing sentence is claimed by `classifyCcApply` before
   // the DB matcher can turn it into an instance). Everything else the overlay draws — self buffs,
-  // per-target debuffs, the DB duration prior, own-cast gating, death/zone censoring — is read
-  // off `BuffsSnap.active`, because a second fold of the same events is the two-models scar
-  // world-model law 4 is made of.
-  const buffTimers = new BuffTimersModule()
+  // per-target debuffs, the DB duration prior, cast-anchored attribution, death/zone censoring —
+  // is read off `BuffsSnap.active`, because a second fold of the same events is the two-models
+  // scar world-model law 4 is made of.
+  //
+  // AND IT IS HANDED THE SAME ANCHORS AND THE SAME LEARNER (JOS-140 ruling 1). This is the line
+  // that makes "one model" true rather than aspirational: the CC half used to keep its own cast
+  // history and had no learner at all, so a mez could never be taught its real duration and the
+  // two halves could disagree about whose spell had just landed.
+  const buffTimers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
   // The consider ring (Task #63): the mobs you've recently `/con`ed. It also OWNS the shared
   // own-loot index's lifetime — it folds every loot event into `ownLoot` and resets it on
   // epoch/character switch.

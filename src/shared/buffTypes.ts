@@ -146,6 +146,31 @@ export interface ActiveBuff {
    * the explicit statement that a row rests on a line the log actually printed.
    */
   messageDriven?: boolean
+  /**
+   * HOW MANY OF THAT NAME ARE HOLDING THIS SPELL (JOS-140 ruling 7). Absent or 1 for the ordinary
+   * case; 2+ when a round landed on several entities that share a display name.
+   *
+   * EQ stamps are second-resolution and print no instance identifier, so one AE cast landing on
+   * five mobs called `a wan ghoul knight` is five byte-identical lines in one second — the model
+   * cannot separate them and does not pretend to. It keeps a landing each and draws ONE row with a
+   * count chip, because five identical rows with five identical clocks is noise. `startedTs` is
+   * the OLDEST of them, which is the one the next anonymous wear-off will close.
+   */
+  count?: number
+  /**
+   * WHOSE cast this is: absent for your own (the overwhelming case), else the allowlisted external
+   * caster's name (shared/buffTrust.ts). It is what the row's countdown is keyed on — a duration
+   * is a fact about a caster's AAs and focus, so their estimate is theirs and never pooled with
+   * yours (JOS-140 ruling 4).
+   */
+  caster?: string
+  /**
+   * Present only when the landing sentence is shared by several spells and the anchor could not
+   * narrow it — a Quick Buff burst names no spell, so its landings can be admitted as YOURS
+   * without being resolvable to one (JOS-140). `spell` then reads as the joined family and the UI
+   * shows the ~ chip; a family instance mints nothing into the learner.
+   */
+  candidates?: string[]
 }
 
 // ----- Observed-message overlay (Task #36) -----
