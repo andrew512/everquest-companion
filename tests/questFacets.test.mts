@@ -66,6 +66,54 @@ test('a real quest names the island it states and the boss its item resolves', (
   assert.deepEqual(questBosses(tone), ['Gorgalosk'])
 })
 
+// JOS-129 — a bard reported the Bard Test of Brass turn-in MISSING from the Sky data. It is not:
+// the committed posky.json carries the row in full, all three item names resolve in the item DB
+// with era Sky, and the facets below already file the quest under its island and its bosses. So
+// there was nothing to add, and what the ticket earns instead is this guard: the row a reporter
+// went looking for is now pinned by NAME, so a re-scrape cannot drop it silently the way the
+// report claimed one had.
+//
+// It also records the one place the repo's own data DISAGREES with the report, which is why the
+// app says what it says. The report names the Glowing Diamond dropper "Spiroc of the Skies"; no
+// mob by that name exists in the 7,872-row catalog. The catalog says Sister of the Spire, and so
+// does posky's own "SotS" abbreviation (poskyDroppers.ts measures SotS -> Sister of the Spire
+// across 17 rows). Two independent sources agree, the reported name is in neither, and the
+// assertion below is written against the sources rather than the report.
+//
+// Efreeti War Horn is the second half of the shape and is deliberately NOT an oversight: posky
+// states no island and no dropper for it, and the reverse index over the catalog answers with the
+// three efreeti-loot bosses anyway. That is the two layers working, and it is why the quest's
+// boss list is longer than its island list.
+test('JOS-129 — Bard Test of Brass is in the data, and the facets file it under Island 7', () => {
+  const brass = QUESTS.find((q) => q.className === 'Bard' && q.name === 'Bard Test of Brass')
+  assert.ok(brass, 'Bard Test of Brass is missing from posky.json')
+  assert.equal(brass.reward, "Denon's Horn of Disaster")
+  const required = brass.items.map((it) => it.name)
+  assert.ok(required.includes('Glowing Diamond'), `items: ${required.join(', ')}`)
+  assert.ok(required.includes('Efreeti War Horn'), `items: ${required.join(', ')}`)
+
+  // Island 7 comes from Glowing Diamond's STATED where; Efreeti War Horn states none and the
+  // wind rune's "Plane of Sky" is not an island, so exactly one island is right.
+  const facets = facetQuest(brass)
+  assert.deepEqual(questIslands(facets), ['Island 7'])
+  // The catalog's answer, not the report's. Sister of the Spire drops the diamond; the other
+  // three are the Efreeti War Horn droppers the reverse index resolves.
+  assert.deepEqual(questBosses(facets), [
+    'Noble Dojorn',
+    'Overseer of Air',
+    'Sister of the Spire',
+    'the Hand of Veeshan'
+  ])
+  assert.equal(questBosses(facets).includes('Spiroc of the Skies'), false)
+
+  // And the filter a player standing on island 7 would actually set keeps it.
+  assert.equal(matchesFacets(facets, { islands: ['Island 7'], bosses: ['Sister of the Spire'] }), true)
+  // Both pickers OFFER what this quest is filed under, so the chips exist to be clicked.
+  const opts = facetOptions(ALL)
+  assert.ok(opts.islands.includes('Island 7'))
+  assert.ok(opts.bosses.includes('Sister of the Spire'))
+})
+
 test('LAW 1 — a quest with no resolvable dropper names NO boss, and keeps the island it states', () => {
   // MEASURED over the committed files: exactly two quests resolve no boss at all — the Azarack
   // pair, whose non-rune item (Azarack Skin / Azarack Blood) is one of the three names no catalog
