@@ -471,7 +471,15 @@ test('RESTART BACKOFF: fast when it might be a hiccup, CAPPED when it is not', (
 // ------------------------------------------------------------- prefs: defaults + clamps
 
 test('the shipped defaults are the zero-cost posture', () => {
-  assert.deepEqual(DEFAULT_CURSOR_RING, { enabled: false, sizePx: 44, thicknessPx: 4 })
+  // The colour is part of the posture too: white is what every ring drawn before JOS-125 was, so
+  // the default cannot move without changing a screen somebody already has. The colour rules
+  // themselves live in tests/cursorRingColor.test.mts.
+  assert.deepEqual(DEFAULT_CURSOR_RING, {
+    enabled: false,
+    sizePx: 44,
+    thicknessPx: 4,
+    colorHex: '#ffffff'
+  })
   assert.deepEqual(DEFAULT_OVERLAY_AUTO_HIDE, { hideWhenNotRunning: true, hideWhenUnfocused: false })
 })
 
@@ -493,7 +501,8 @@ test('ring prefs are clamped, rounded, and never silently re-intended', () => {
   assert.deepEqual(normalizeCursorRing({ enabled: true, sizePx: 43.6, thicknessPx: 3.2 }), {
     enabled: true,
     sizePx: 44,
-    thicknessPx: 3
+    thicknessPx: 3,
+    colorHex: '#ffffff'
   })
   assert.equal(normalizeCursorRing({ sizePx: 5 }).sizePx, 20, 'below the floor clamps up')
   assert.equal(normalizeCursorRing({ sizePx: 5000 }).sizePx, 200, 'above the cap clamps down')
