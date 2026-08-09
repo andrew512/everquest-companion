@@ -181,16 +181,12 @@ function mountsPopper(src: string): boolean {
 }
 
 /**
- * The ONE file still allowed to break the rule, and it is a dated debt rather than an exception.
- *
- * `triage/ReportsPanel.tsx` mounts `<Tooltip title="Re-run the query">` on the refresh button
- * beside its four `TextField select` filters. It was left alone on 2026-08-09 because the triage
- * surface was owned by a concurrent worker (JOS-111, error-report location) and this is the
- * owner-only tab behind `EQ_OWNER_TOOLS` — nobody who is not the owner can reach it. DELETE THIS
- * ENTRY, and that tooltip, once JOS-111 has landed; do not add a second line to this array
+ * Files still allowed to break the rule — EMPTY, and it should stay that way. The one debt it
+ * ever held (`triage/ReportsPanel.tsx`, skipped 2026-08-09 while JOS-111 owned the triage
+ * surface) was cleaned by the integrator the same day JOS-111 landed. Do not add an entry
  * without a ticket that says why.
  */
-const DROPDOWN_POPPER_DEBT = ['features/triage/ReportsPanel.tsx']
+const DROPDOWN_POPPER_DEBT: string[] = []
 
 test('no file that renders a DROPDOWN mounts a tooltip popper (JOS-143)', () => {
   const offenders = sources(RENDERER)
