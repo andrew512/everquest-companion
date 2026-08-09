@@ -67,6 +67,18 @@ import type { CaptureReason, OverlayChrome } from './useOverlayChrome'
  * 7,171→7,790px² on a 378px-wide window. The short word (`Group`) is the easy case: it frees less
  * width, so it takes less drag area with it. The price is 6px of the bars pane, stated not hidden.
  *
+ * WHAT JOS-158 TOOK OUT, AND WHERE THAT ROOM WENT TOO. The row's third fixed item is now gone as
+ * well: the METERS' numeric tail, the aggregate `21.7k dps` / `1.2k hps` that sat hard right of the
+ * fight name. The owner's ruling (2026-08-09, with a screenshot) is that the aggregate belongs in
+ * the panel content, on the header row above the bars, where it can be LABELED for what it covers
+ * instead of floating unlabelled beside a mob name (overlay/meterCrumb.tsx). So `tail` is OPTIONAL
+ * here now, and a header given none draws no tail span at all - the title's `flexGrow` swallows
+ * every pixel it was holding, which is the whole point: a long mob name truncates later.
+ *
+ * The tail did NOT go away for every kind. The buffs/debuffs and event-log headers still pass one,
+ * and theirs is a COUNT of what the list below holds rather than an aggregate of it - there is no
+ * second place in those windows for it to live, and nothing about them is crowding a mob name.
+ *
  * MUI-FREE ON PURPOSE: plain React + inline styles, like every file in this bundle.
  */
 
@@ -122,7 +134,8 @@ function HeaderControls({
   )
 }
 
-/** Name + (interactive) chevron + the numeric tail. Identical content in both modes. */
+/** Name + (interactive) chevron + the numeric tail, when the kind still has one. Identical
+ *  content in both modes. */
 function HeaderBody({
   title,
   titleColor,
@@ -133,7 +146,8 @@ function HeaderBody({
 }: {
   title: string
   titleColor: string
-  tail: string
+  /** absent on the METERS since JOS-158 — their aggregate is on the panel's own header row. */
+  tail?: string
   tailTitle?: string
   tailColor: string
   /** null when this header has nothing to open — then no chevron is drawn at all. */
@@ -158,12 +172,17 @@ function HeaderBody({
           {open ? '▲' : '▼'}
         </span>
       )}
-      <span
-        title={tailTitle}
-        style={{ color: tailColor, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
-      >
-        {tail}
-      </span>
+      {/* A kind that passes no tail draws NO span here — not an empty one. An empty flex child
+          still costs the row its `gap`, and this row's whole business is the pixels a mob name
+          gets to use (JOS-158). */}
+      {tail !== undefined && tail !== '' && (
+        <span
+          title={tailTitle}
+          style={{ color: tailColor, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+        >
+          {tail}
+        </span>
+      )}
     </>
   )
 }
@@ -340,7 +359,8 @@ export function OverlayHeader({
   last?: boolean
   title: string
   titleColor: string
-  tail: string
+  /** OPTIONAL since JOS-158: the meters draw no tail, and the width goes to the title. */
+  tail?: string
   tailTitle?: string
   tailColor?: string
   iconAccentBg?: string

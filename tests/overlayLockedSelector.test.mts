@@ -162,6 +162,62 @@ test('JOS-121: the scope word is out of the title bar and onto the panel floor',
   }
 })
 
+/**
+ * JOS-158 — the aggregate is out of the title bar and on the panel's own header row.
+ *
+ * A SOURCE PIN for the same reason as its neighbours: what is being protected is a wiring
+ * decision spread over five files, and the layout half of it is measured for real against a
+ * running window (tests/e2e/overlayTotalSteps.mts counts characters of a long fixture mob name in
+ * the title before and after). What a unit test can hold still is that the four meter kinds share
+ * ONE row, ONE label and ONE treatment — the JOS-119 no-fork rule — and that neither meter can
+ * quietly put its number back in the title bar.
+ */
+test('JOS-158: the meters state their aggregate in the panel, not in the title bar', () => {
+  const header = src('../src/renderer/src/overlay/OverlayHeader.tsx')
+  // The tail is OPTIONAL now (the buffs/debuffs and event-log kinds still pass a COUNT), and a
+  // header given none draws no span at all — an empty flex child would still cost the row its
+  // gap, which is the width this ticket exists to hand to a mob name.
+  assert.match(header, /tail\?: string/)
+  assert.match(header, /tail !== undefined && tail !== ''/)
+
+  const crumb = src('../src/renderer/src/overlay/meterCrumb.tsx')
+  // ONE word, exported, so neither meter can grow a second opinion about what the number covers.
+  assert.match(crumb, /export const TOTAL_LABEL = 'all'/)
+  // …and it is a WORD in the row, not a hover: the label element carries the text itself.
+  assert.match(crumb, /\{TOTAL_LABEL\}/)
+  // VISUALLY DISTINCT FROM THE PERSONAL FIGURE (the other half of the ruling): the meter's accent
+  // at full weight, where every bar's own number is plain white inside a bar.
+  assert.match(crumb, /color: total\.accent, fontWeight: 700/)
+  assert.match(crumb, /data-testid="overlay-total-value"/)
+  // THE BACK CONTROL IS ITS OWN ELEMENT NOW. The aggregate beside it carries a hover note (the
+  // healing split), and a note on a click target is exactly what the tooltip rule forbids — so
+  // the row's `onClick` may not be on the row.
+  assert.doesNotMatch(crumb, /data-testid="overlay-crumb"[\s\S]{0,80}onClick/)
+  assert.match(crumb, /flexGrow: 1,\s+minWidth: 0,\s+cursor: onBack \? 'pointer' : 'default'/)
+
+  for (const [who, rel] of Object.entries(METERS)) {
+    const headerEl = /<OverlayHeader[\s\S]*?\/>/.exec(src(rel))?.[0] ?? ''
+    assert.ok(headerEl.length > 0, `${who} renders no OverlayHeader`)
+    assert.doesNotMatch(headerEl, /tail=/, `${who} still puts its aggregate in the title bar`)
+  }
+
+  // BOTH BAR BODIES, THROUGH THE ONE CRUMB. Neither may state the aggregate its own way.
+  const BARS = {
+    'the damage bars': '../src/renderer/src/overlay/meterBars.tsx',
+    'the healing bars': '../src/renderer/src/overlay/healBars.tsx'
+  }
+  for (const [who, rel] of Object.entries(BARS)) {
+    const text = src(rel)
+    assert.match(text, /total=\{total\}/, `${who} does not state the aggregate on the crumb row`)
+    // The SAME figure the header used to print — moved, never recomputed, so the number a pinned
+    // meter shows did not change on the day its label appeared.
+    assert.match(text, /formatRate\(seg\.outDps\)|formatHealRate\(seg\?\.healing\.hps \?\? 0\)/, `${who} recomputed it`)
+  }
+  // …and the healing meter's restored/absorbed sentence survived the move rather than being
+  // dropped with the header tail it used to hang off.
+  assert.match(src('../src/renderer/src/overlay/healBars.tsx'), /title: healTotalTitle\(seg\?\.healing\)/)
+})
+
 test('the event log keeps the whole-window sensor it always had', () => {
   // It has no selector, so it never opted into the precise one — and it must not be dragged
   // along by a change that was about the meters.

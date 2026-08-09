@@ -25,7 +25,7 @@ import { laneDps, meterPanel, type MeterPanel, type OwnRow, type PetRow } from '
 import { useCombinePetRow } from '../features/combat/useCombatPrefs'
 import { scopeSources } from '../features/combat/meterScope'
 import { landEvidence } from '../features/combat/landEvidence'
-import { MeterCrumb } from './meterCrumb'
+import { MeterCrumb, type CrumbTotal } from './meterCrumb'
 // The app's ONE `m:ss` spelling, out of the MUI-free primitives module every plain-text and
 // plain-React surface already reads it from. The overlay does not get a second one.
 import { fmtDur } from '../features/combat/copyTable'
@@ -34,6 +34,14 @@ import type { MeterScope, RosterSnap } from '@shared/roster'
 // Kept in step with the Combat tab's KIND_COLOR (features/combat/combatShared.tsx) — the overlay
 // is MUI-free and cannot import the theme, so the two lists are written out and must move
 // together. `member` is a group-mate (docs/plans/group-model.md).
+/**
+ * The damage meter's accent — the gold the window border and the header title already wear, and
+ * since JOS-158 the colour of the aggregate on the crumb row. Spelled out rather than borrowed
+ * from `KIND_COLOR.you` below: the two happen to be the same hue and mean different things, and
+ * the aggregate is the one number on this surface that is emphatically NOT yours.
+ */
+const ACCENT = '#d9b25f'
+
 const KIND_COLOR: Record<string, string> = {
   you: '#d9b25f',
   pet: '#6fb3d2',
@@ -357,16 +365,25 @@ function DrilledBars({
   panel,
   activeSec,
   dur,
+  total,
   setDrill
 }: {
   panel: Extract<MeterPanel, { level: 2 }>
   activeSec: number
   dur: string
+  /** the SEGMENT's aggregate, unchanged by the drill: it is the fight's number, not the
+   *  subject's, which is exactly why it is labelled `all` (JOS-158). */
+  total: CrumbTotal
   setDrill: ((d: Drill | null) => void) | null
 }): JSX.Element {
   const out: Drill | null = panel.parent ? { entityId: panel.parent.id } : null
   return (
-    <MeterCrumb name={panel.subject.name} dur={dur} onBack={setDrill ? () => setDrill(out) : null}>
+    <MeterCrumb
+      name={panel.subject.name}
+      dur={dur}
+      total={total}
+      onBack={setDrill ? () => setDrill(out) : null}
+    >
       {panel.rows.map((r) => ownLine(r, activeSec, setDrill))}
     </MeterCrumb>
   )
@@ -412,11 +429,16 @@ export function MeterBars({
 
   if (!seg || (panel.level === 1 && panel.sources.length === 0)) return <MeterEmpty live={live} />
 
-  if (panel.level !== 1) return <DrilledBars panel={panel} activeSec={seg.activeSec} dur={dur} setDrill={setDrill} />
+  // THE AGGREGATE THE TITLE BAR USED TO CARRY (JOS-158) — the same `SegmentView.outDps`, moved
+  // rather than recomputed, so the number a pinned meter shows did not change on the day its
+  // label appeared. The crumb states what it covers; see overlay/meterCrumb.tsx.
+  const total: CrumbTotal = { text: formatRate(seg.outDps), accent: ACCENT }
 
+  if (panel.level !== 1)
+    return <DrilledBars panel={panel} activeSec={seg.activeSec} dur={dur} total={total} setDrill={setDrill} />
 
   return (
-    <MeterCrumb name={null} dur={dur} onBack={null}>
+    <MeterCrumb name={null} dur={dur} total={total} onBack={null}>
       <SourceLines sources={panel.sources} setDrill={setDrill} />
     </MeterCrumb>
   )

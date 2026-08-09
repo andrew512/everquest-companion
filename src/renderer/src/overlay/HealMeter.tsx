@@ -1,14 +1,12 @@
 import { type JSX, useMemo, useState } from 'react'
 import type { OverlayKind } from '@shared/types'
 import type { CombatSnapshot, SegmentView } from '@shared/combat'
-import { formatHealRate } from '../lib/formatRate'
 import { formatTime } from '../lib/formatDate'
 import { scopeOptions } from '../features/combat/dashboardData'
 import { useGlobalFight } from '../features/combat/useGlobalFight'
 import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { HealBars } from './healBars'
-import { healTotalTitle } from '../features/combat/healRows'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
 import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
 import { ICON_ACCENT_GREEN } from './IconButton'
@@ -77,8 +75,6 @@ interface HealView {
   seg: SegmentView | undefined
   live: boolean
   headerName: string
-  totalHps: number
-  totalTitle: string
 }
 
 /**
@@ -99,12 +95,11 @@ function selectedSeg(snap: CombatSnapshot | null): {
 
 function healView(snap: CombatSnapshot | null, isFight: boolean): HealView {
   const { hydrating, seg } = selectedSeg(snap)
-  const healing = seg?.healing
-  const totalHps = healing?.hps ?? 0
-  // The restored/absorbed split, phrased once (healRows) and printed by both healing surfaces.
-  const totalTitle = healTotalTitle(healing)
   const live = !hydrating && !!snap?.inCombat
-  return { seg, live, headerName: headerNameFor(hydrating, seg, isFight), totalHps, totalTitle }
+  // The RATE is not resolved here any more (JOS-158): the aggregate — and the restored/absorbed
+  // sentence that used to ride its hover — are stated from the panel's own header row, off the
+  // same segment, by overlay/healBars.tsx.
+  return { seg, live, headerName: headerNameFor(hydrating, seg, isFight) }
 }
 
 /** "Reading log…" during hydration, then the segment's name — never a borrowed one. */
@@ -159,7 +154,7 @@ export default function HealMeter(): JSX.Element {
   const [meterScope] = useMeterScope()
   const roster = snap?.roster ?? EMPTY_ROSTER
 
-  const { seg, live, headerName, totalHps, totalTitle } = healView(snap, isFight)
+  const { seg, live, headerName } = healView(snap, isFight)
   const selectRows = useMemo(
     () => healSelectRows(snap, isFight, now),
     // Same deps as before the extraction: the two lists the rows are built from, plus the
@@ -204,10 +199,9 @@ export default function HealMeter(): JSX.Element {
         tag={isFight ? 'HEAL · FIGHT' : 'HEAL · ZONE'}
         title={headerName}
         titleColor={HEAL_GOLD}
-        // The rate alone — the fight clock lives on the crumb row above the bars now, exactly as
-        // it does on the damage pair (overlay/meterCrumb.tsx; JOS-35).
-        tail={formatHealRate(totalHps)}
-        tailTitle={totalTitle}
+        // The NAME alone. The fight clock went to the crumb row with JOS-35 and the aggregate
+        // followed it with JOS-158 — same move, same row, same reasoning as the damage pair, and
+        // the same freed width for a long mob name (overlay/meterCrumb.tsx).
         iconAccentBg={ICON_ACCENT_GREEN}
         select={{ rows: selectRows, value: selection, onChange: selectSegment, accent: HEAL_GOLD }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
