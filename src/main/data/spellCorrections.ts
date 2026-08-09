@@ -455,9 +455,13 @@ export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
   //
   // ONLY `msgCastOnOther` IS SUPPLIED, and the other two stay empty on purpose. A charm is
   // detrimental and lands on a MOB, so `You have been charmed.` and `You are no longer charmed.`
-  // print to the mob: both occur 0 times in 1,473,035 lines. That is the unobservable-detrimental
-  // case the header names, and a DB sibling is not a licence to copy text this log can never
-  // witness into fields nothing reads.
+  // print to the mob: both occur 0 times. That is the unobservable-detrimental case the header
+  // names, and a DB sibling is not a licence to copy text this log can never witness into fields
+  // nothing reads.
+  //
+  // THE COUNTS BELOW ARE THE SAME LOG, ONE SESSION LONGER: 1,473,035 lines against the header's
+  // 1,460,978, because the owner kept playing on 2026-08-09 while this was being measured. Same
+  // file, same whole-log method.
   {
     spells: ['Allure'],
     field: 'msgCastOnOther',
