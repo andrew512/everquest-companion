@@ -175,6 +175,8 @@ With each session report (every few minutes, and at close): counts of things tha
 | `parserStalls` | whole number | Times log reading stalled. Not currently measured — always 0. |
 | `presenceRestarts` | whole number | Times the game-window watcher restarted. |
 | `speechFailures` | whole number | Times an utterance failed to speak. Downloaded voices only. |
+| `imageFetchFailures` | whole number (optional) | Times an item icon or portrait could not be downloaded, usually because the wiki was unreachable. The picture is hidden and the app carries on. Never which picture. |
+| `suppressedErrorLines` | whole number (optional) | The same error line repeating: after the first few, further copies are counted here instead of being written to the local error log again. A count only. |
 
 ### `updateOutcome`
 

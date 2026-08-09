@@ -231,7 +231,20 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
       // stalls would be a promise the code does not keep.
       { name: 'parserStalls', type: COUNT, note: 'Times log reading stalled. Not currently measured — always 0.' },
       { name: 'presenceRestarts', type: COUNT, note: 'Times the game-window watcher restarted.' },
-      { name: 'speechFailures', type: COUNT, note: 'Times an utterance failed to speak. Downloaded voices only.' }
+      { name: 'speechFailures', type: COUNT, note: 'Times an utterance failed to speak. Downloaded voices only.' },
+      // JOS-133. SAID AS A CONDITION, NOT AS A FAULT, because that is what it is: the picture is
+      // simply not shown and the app carries on. The note names the wiki rather than the app so a
+      // reader is not left thinking their install is broken.
+      {
+        name: 'imageFetchFailures',
+        type: `${COUNT} (optional)`,
+        note: 'Times an item icon or portrait could not be downloaded, usually because the wiki was unreachable. The picture is hidden and the app carries on. Never which picture.'
+      },
+      {
+        name: 'suppressedErrorLines',
+        type: `${COUNT} (optional)`,
+        note: 'The same error line repeating: after the first few, further copies are counted here instead of being written to the local error log again. A count only.'
+      }
     ]
   },
   {

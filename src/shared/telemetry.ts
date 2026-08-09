@@ -543,6 +543,27 @@ export interface EvHealthCounters {
   parserStalls: number
   presenceRestarts: number
   speechFailures: number
+  /**
+   * Image fetches that failed at the NETWORK leg (JOS-133). OPTIONAL under the additive-field
+   * rule above: this rides an event kind that has shipped, so a deployed ingest that has never
+   * heard of the field ignores it and keeps counting everything else, and a client too old to
+   * send it must not fail validation on the day the field lands. The producer always sends it.
+   *
+   * NOT AN ERROR, and the rollup keeps that promise structurally: the field is listed in
+   * `HEALTH_NON_ERROR_FIELDS` (./telemetryRollup.ts) and so is excluded from the release-health
+   * error rate, while still being counted, reported and rendered in the health mix.
+   */
+  imageFetchFailures?: number
+  /**
+   * Error lines withheld from `<userData>/errors.log` because the identical line had already been
+   * written `MAX_IDENTICAL_ERROR_LINES` times this session (src/main/errorRepeat.ts). Optional for
+   * the same reason as the field above.
+   *
+   * IT IS AN ERROR — it counts occurrences of something that really went wrong and really would
+   * have been logged — so unlike `imageFetchFailures` it IS summed into the error rate. That is
+   * the whole point of having it: the cap must not be able to make a looping build look healthy.
+   */
+  suppressedErrorLines?: number
 }
 export interface EvUpdateOutcome {
   t: 'updateOutcome'

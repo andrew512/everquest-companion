@@ -197,6 +197,9 @@ export const USAGE_METRICS = {
    * denominator the two would be the same absent row.
    */
   healthReports: 'healthReports',
+  // (`HEALTH_NON_ERROR_FIELDS`, below this object, says which of the `health` dims may be summed
+  //  into an error RATE and which may not. It lives outside `USAGE_METRICS` because it names
+  //  fields of the event, not metrics of the table.)
   /**
    * THE STARTUP REPLAY (JOS-57), and every one of these is dimensioned BY VERSION because that is
    * the only question worth asking of it: "did the throttle we shipped make launches better" is a
@@ -279,6 +282,36 @@ export const USAGE_METRICS = {
 } as const
 
 export type UsageMetric = (typeof USAGE_METRICS)[keyof typeof USAGE_METRICS]
+
+/**
+ * HEALTH FIELDS THAT ARE COUNTED BUT ARE NOT ERRORS (JOS-133).
+ *
+ * `USAGE_METRICS.health` holds one row per field per build, and two readers add those rows up:
+ * the fleet-wide Health mix (which wants every field, and shows them by name), and the RELEASE
+ * HEALTH error rate (`errors / healthReports` per build — main/triage/releaseHealth.ts), which
+ * wants only the fields that mean something went wrong with THIS APP. The two are not the same
+ * list, and this is where the difference is written down once.
+ *
+ * `imageFetchFailures` is the case that forced it. It counts a fully handled condition — a
+ * volunteer wiki was unreachable, the image was hidden, the app carried on — and it is the single
+ * largest number this app has ever counted (17,632 occurrences in 14 days, roughly two thirds of
+ * every error line the fleet reported). Summed into the rate it would swamp every real signal and
+ * make "did I release buggy code" unanswerable, and it would move with somebody else's uptime
+ * rather than with anything a release could change.
+ *
+ * IT IS A DENY LIST RATHER THAN AN ALLOW LIST on purpose. A field added later and forgotten here
+ * counts as an error — noisy, visible, and fixed by adding a line. The other way round, a
+ * forgotten field would silently vanish from the rate, which is the failure this whole section
+ * exists to prevent. `suppressedErrorLines` is deliberately NOT here: it counts error lines that
+ * a cap withheld from the local file, so leaving it out of the rate would let the cap flatter a
+ * build that had started looping.
+ */
+export const HEALTH_NON_ERROR_FIELDS: readonly string[] = ['imageFetchFailures']
+
+/** Whether a `health` dim's field name is an ERROR for rate purposes. See the list above. */
+export function isErrorHealthField(field: string): boolean {
+  return !HEALTH_NON_ERROR_FIELDS.includes(field)
+}
 
 /**
  * Session-length histogram edges: 1m / 5m / 15m / 30m / 1h / 2h / 4h ⇒ eight buckets.
@@ -511,6 +544,11 @@ function foldHealth(
   add(bag, USAGE_METRICS.health, `${version}:parserStalls`, ev.parserStalls)
   add(bag, USAGE_METRICS.health, `${version}:presenceRestarts`, ev.presenceRestarts)
   add(bag, USAGE_METRICS.health, `${version}:speechFailures`, ev.speechFailures)
+  // JOS-133's two, OPTIONAL on the wire (the additive-field rule) and so read through `?? 0` —
+  // which needs no special case downstream, because `add()` already refuses a non-positive value
+  // and an absent row reads identically to a zero row TO A SUM.
+  add(bag, USAGE_METRICS.health, `${version}:imageFetchFailures`, ev.imageFetchFailures ?? 0)
+  add(bag, USAGE_METRICS.health, `${version}:suppressedErrorLines`, ev.suppressedErrorLines ?? 0)
 }
 
 /**
