@@ -1,6 +1,7 @@
 /**
  * Headless Electron integration test for THE SKY TURN-IN, END TO END (JOS-131) — and, since
- * JOS-147, for THE READY TAB, whose membership rule is that same arc read as a set.
+ * JOS-147, for THE READY TAB, whose membership rule is that same arc read as a set, and since
+ * JOS-155 for that tab's first-time-only toggle, which is the arc read as a set once more.
  *
  * THE ASK, in the owner's words (2026-08-09): a Sky farmer wants to run quests more than once, and
  * today a completed quest stays 5/5 forever, so refarming a second copy is invisible. A turn-in
@@ -58,6 +59,8 @@ const COUNTS = '[data-testid="posky-counts"]'
 const TAB_QUESTS = '[data-testid="posky-tab-quests"]'
 const TAB_READY = '[data-testid="posky-tab-ready"]'
 const READY = '[data-testid="posky-ready"]'
+/** JOS-155's toggle on that tab: "only quests I have never turned in", ticked on a fresh install. */
+const READY_FIRST_TIME = '[data-testid="posky-ready-first-time"]'
 
 /** The quest under test, and the two lines that put its items in your bags. */
 const QUEST = 'Beastlord Test of Azarack'
@@ -122,6 +125,28 @@ function readyText(page: Page): Promise<string> {
   return page.evaluate((sel) => document.querySelector(sel)?.textContent ?? '', READY)
 }
 
+/**
+ * The number ON the Ready tab itself. A bare "Ready" is the tab saying ZERO (the label drops the
+ * parenthesis when the list is empty), which is a real reading and not a missing one; `null` is
+ * only ever "the tab is not there at all".
+ */
+function readyTabCount(page: Page): Promise<number | null> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel)
+    if (!el) return null
+    const m = /Ready \((\d+)\)/.exec(el.textContent ?? '')
+    return m ? Number(m[1]) : 0
+  }, TAB_READY)
+}
+
+/** Is JOS-155's toggle ticked? Reads the checkbox itself, never the class on its wrapper. */
+function firstTimeTicked(page: Page): Promise<boolean | null> {
+  return page.evaluate((sel) => {
+    const input = document.querySelector(sel)?.querySelector('input')
+    return input instanceof HTMLInputElement ? input.checked : null
+  }, READY_FIRST_TIME)
+}
+
 /** Open the Sky tab and narrow the list to the one quest this spec is about. */
 async function openQuest(page: Page): Promise<boolean> {
   await page.click(NAV_SKY, { timeout: 30_000 })
@@ -155,7 +180,7 @@ async function stepLoot(page: Page, log: FixtureLog, at: Date): Promise<void> {
   )
 }
 
-// ── THE READY TAB (JOS-147) ─────────────────────────────────────────────────────────────────
+// ── THE READY TAB (JOS-147), AND ITS FIRST-TIME TOGGLE (JOS-155) ─────────────────────────────
 //
 // The turn-in arc this spec already drives IS the Ready tab's membership rule, which is why the
 // checks live here rather than in a spec of their own: the set is `hasEveryItem` and nothing else,
@@ -163,12 +188,26 @@ async function stepLoot(page: Page, log: FixtureLog, at: Date): Promise<void> {
 // bring it back — all read off the real tab, on real app state, with no filter typed anywhere.
 // tests/questTurnIns.test.mts pins the predicate; only a running app can prove the tab is wired
 // to it, that the wiring survives a live turn-in, and that the two hide-boxes cannot reach it.
+//
+// JOS-155 hangs off the SAME arc for the same reason. Its toggle asks "have you ever handed this
+// in", and this spec is the only place that walks a quest from never-run to run-and-refarmed on a
+// real app — so the refarm step now reads the tab from BOTH sides of the box (absent ticked, which
+// is how the tab arrives; present unticked) and watches the tab's own count follow. The default
+// itself is checked before anything is stored, because "absent key means ON" is a claim about a
+// userData dir nobody has written to yet.
 
 /** Before any loot: the tab is mounted, this quest is not on it, and it says something either way. */
 async function stepReadyBefore(page: Page): Promise<void> {
   await page.click(TAB_READY, { timeout: 15_000 })
   const has = await settle(() => readyHasQuest(page), (v) => v !== null, { timeoutMs: 20_000 })
   check('a quest holding none of its items is NOT on the Ready tab', has === false, `has=${String(has)}`)
+  // JOS-155's default, read off a userData dir that has never held the key: an ABSENT stored value
+  // means ON here, which is the one inverted flag on this tab, so a fresh install must show it
+  // ticked without anybody having ticked it.
+  check(
+    'the first-time-only box is TICKED on a fresh install, with nothing stored',
+    (await firstTimeTicked(page)) === true
+  )
   // The empty state is COPY, so it is asserted where it can actually appear — and the fixture's own
   // loot decides which of the two states that is, so both are stated rather than guessed at.
   const text = await readyText(page)
@@ -187,6 +226,10 @@ async function stepReadyBefore(page: Page): Promise<void> {
  * "Hide completed" hides exactly `hasEveryItem` — the same predicate the Ready tab is made of — so
  * this is the one that matters: ticked, the Quests tab drops the row to zero and the Ready tab must
  * still be holding it. A tab that honoured that box could only ever be empty.
+ *
+ * Nothing has been handed in yet at this point in the arc, so JOS-155's toggle has no opinion about
+ * this quest and the row is there whatever the box says. That is deliberate ordering: the toggle is
+ * exercised where it can actually disagree, after the turn-in and the refarm.
  */
 async function stepReadyHolding(page: Page): Promise<void> {
   await page.click(TAB_READY, { timeout: 15_000 })
@@ -206,7 +249,13 @@ async function stepReadyHolding(page: Page): Promise<void> {
   await settle(() => filteredCount(page), (n) => n === 1, { timeoutMs: 8_000 })
 }
 
-/** Handed over: the items are spent, so the quest leaves the tab. Nothing else had to happen. */
+/**
+ * Handed over: the items are spent, so the quest leaves the tab. Nothing else had to happen.
+ *
+ * Both readings agree here — it is out of the membership rule AND out of the first-time reading —
+ * so this step proves the subtraction rather than the toggle. The step that separates them is the
+ * refarm below, where the items come back and the turn-in does not go away.
+ */
 async function stepReadyAfterTurnIn(page: Page): Promise<void> {
   await page.click(TAB_READY, { timeout: 15_000 })
   const off = await settle(() => readyHasQuest(page), (v) => v === false, { timeoutMs: 20_000 })
@@ -214,12 +263,60 @@ async function stepReadyAfterTurnIn(page: Page): Promise<void> {
   await page.click(TAB_QUESTS, { timeout: 15_000 })
 }
 
-/** …and refarming the same two drops puts it straight back, turn-in badge and all. */
+/**
+ * …and refarming the same two drops puts it back — BUT NOT UNDER THE DEFAULT (JOS-155).
+ *
+ * This is the one row in the whole arc where the tab's toggle and its membership rule disagree, and
+ * it is exactly the case the owner asked for: the quest is holding every item again (so
+ * `readyQuests` has it) and it has been handed in once (so the first-time reading does not). Ticked
+ * — which is how the tab arrives — it is absent; unticked, it is there. Both directions are driven,
+ * because a filter that only ever hides is indistinguishable from a broken list.
+ *
+ * The TAB'S COUNT is read on both sides of the toggle too. It is `list.ready.length`, the same
+ * array the pane draws, so the number and the rows cannot disagree — but that is a claim about the
+ * code, and this is the test that says it is true on screen.
+ *
+ * The box is left TICKED, the way it was found: it is a stored preference and launch 2 shares the
+ * store, so leaving it off would hand the restart assertion a tab it did not set up.
+ */
 async function stepReadyRefarm(page: Page, log: FixtureLog, at: Date): Promise<void> {
   log.appendAt(at, ...LOOT)
+  // The Quests tab is what is mounted here, and its row is the evidence the refarm actually
+  // landed — wait for THAT, so an absence on the Ready tab below can only mean the toggle.
+  const held = await settle(() => itemsHeld(page), (v) => v === '2/2', { timeoutMs: 30_000 })
+  if (!check('refarming both items fills the quest to 2/2 again', held === '2/2', `held=${String(held)}`)) return
+
   await page.click(TAB_READY, { timeout: 15_000 })
-  const back = await settle(() => readyHasQuest(page), (v) => v === true, { timeoutMs: 30_000 })
-  check('REFARMING TO FULL PUTS IT BACK — membership is the predicate, not a one-way flag', back === true, `has=${String(back)}`)
+  const hidden = await settle(() => readyHasQuest(page), (v) => v === false, { timeoutMs: 20_000 })
+  check(
+    'A REFARMED QUEST IS ABSENT UNDER THE DEFAULT — first-time turn-ins is what the tab shows',
+    hidden === false,
+    `has=${String(hidden)}`
+  )
+  const hiddenCount = await readyTabCount(page)
+
+  await page.click(READY_FIRST_TIME, { timeout: 15_000 })
+  const back = await settle(() => readyHasQuest(page), (v) => v === true, { timeoutMs: 20_000 })
+  check(
+    '…AND PRESENT THE MOMENT THE BOX IS UNTICKED — membership is the predicate, not a one-way flag',
+    back === true,
+    `has=${String(back)}`
+  )
+  const shownCount = await settle(
+    () => readyTabCount(page),
+    (n) => n !== null && hiddenCount !== null && n > hiddenCount,
+    { timeoutMs: 8_000 }
+  )
+  check(
+    'THE TAB COUNT FOLLOWS THE TOGGLE: the refarm is in the number as well as in the list',
+    shownCount !== null && hiddenCount !== null && shownCount === hiddenCount + 1,
+    `ticked=${String(hiddenCount)} unticked=${String(shownCount)}`
+  )
+
+  await page.click(READY_FIRST_TIME, { timeout: 15_000 })
+  const again = await settle(() => readyHasQuest(page), (v) => v === false, { timeoutMs: 8_000 })
+  check('…and re-ticking hides it again, so the box is a toggle and not a one-shot', again === false)
+  check('…leaving the stored preference as this spec found it', (await firstTimeTicked(page)) === true)
   await page.click(TAB_QUESTS, { timeout: 15_000 })
 }
 

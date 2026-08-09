@@ -5,7 +5,8 @@
 // A pure module with no React and no data bundle, so the decisions below are pinned by a plain
 // node test (tests/questTurnIns.test.mts) rather than only by a browser. JOS-147 added a third
 // export, `readyQuests` — the Ready tab's whole membership rule — for the same reason: it is one
-// predicate and an order, and it belongs where the predicate is argued.
+// predicate and an order, and it belongs where the predicate is argued. JOS-155 added the fourth,
+// `firstTimeReady`, which is that set with the quests you have already run taken out.
 //
 // JOS-145 SETTLED THE ARGUMENT BY SHIPPING BOTH READINGS AS TWO SEPARATE BOXES. JOS-131 (below)
 // chose has-every-item-now for the one box that existed, and the reasoning still holds for THAT
@@ -115,4 +116,24 @@ export function everTurnedIn(q: TurnedInQuest): boolean {
  */
 export function readyQuests(quests: readonly QuestProgress[]): QuestProgress[] {
   return sortQuests(quests.filter(hasEveryItem), 'class')
+}
+
+/**
+ * THE FIRST-TIME READING OF THAT SET (JOS-155) — the ready quests you have NEVER handed in.
+ *
+ * The owner's ask, 2026-08-09: the default walk-the-islands list is first-time turn-ins, and the
+ * refarms you have already completed are what you untick to see. So this is a SECOND narrowing
+ * applied on top of `readyQuests`, not a rewrite of its membership: the set above stays exactly
+ * `hasEveryItem`, and this is `everTurnedIn` removed from it. Composing rather than parameterising
+ * keeps each predicate answering one question, the same way the two hide-boxes do.
+ *
+ * IT IS NOT THE QUESTS TAB'S "hide turned in" BOX WEARING A NEW HAT. That box reads the same
+ * predicate, but it is a different control over a different list under a different stored key, and
+ * the Ready tab still ignores it (`readyQuests` above says why at length). What changed is that
+ * this tab now draws a toggle of its OWN, which is the only thing that can narrow it.
+ *
+ * The order is inherited: this filters an already-ordered list, so class-then-name survives.
+ */
+export function firstTimeReady(quests: readonly QuestProgress[]): QuestProgress[] {
+  return quests.filter((q) => !everTurnedIn(q))
 }

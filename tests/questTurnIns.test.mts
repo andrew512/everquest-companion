@@ -31,6 +31,10 @@
 //   6. THE READY TAB's membership (JOS-147, `readyQuests`): the same `hasEveryItem` predicate read
 //      as a SET, which no filter and neither hide-box can reach - collecting the last item joins
 //      it, a turn-in leaves it, refarming to full rejoins it.
+//   7. THE READY TAB's ONE control (JOS-155, `firstTimeReady`): that set with the quests you have
+//      already run taken out, which is what the tab shows by DEFAULT. Pinned as a composition -
+//      it narrows the membership rule, it never replaces it - and as the identity that makes the
+//      toggle honest: unticked, the tab is exactly `readyQuests` again.
 //
 // Run: `npm test`.
 
@@ -47,6 +51,7 @@ import {
 } from '../src/shared/questTurnIns'
 import {
   everTurnedIn,
+  firstTimeReady,
   hasEveryItem,
   readyQuests
 } from '../src/renderer/src/features/posky/questCompletion'
@@ -452,11 +457,43 @@ test('…a turn-in takes a quest OFF it and refarming puts it back, with no stat
 
 test('the two hide-boxes cannot reach the Ready tab, which is the point of it', () => {
   // "Hide completed" IS `hasEveryItem`, so applying it to this list would empty it every time —
-  // and "hide turned in" would drop the refarmed quest, the likeliest row on the tab. Both are
-  // asserted against the same predicates the boxes use, not against a copy of them.
+  // and "hide turned in" would drop the refarmed quest without the user having asked this tab for
+  // anything. Both are asserted against the same predicates the boxes use, not against a copy.
+  //
+  // JOS-155 DID NOT REVERSE THIS. The Ready tab now hides that same refarmed quest by default, but
+  // it does it from its OWN toggle under its own key, which the user can see and untick on the tab
+  // it acts on; the Quests tab's two boxes still reach nothing here. A control's reach is the
+  // claim being pinned, never the predicate it happens to share.
   const ready = readyQuests(READY_SET)
   assert.deepEqual(ready.filter((q) => !hasEveryItem(q)), [], 'hide-completed would leave nothing')
   assert.ok(ready.some(everTurnedIn), 'hide-turned-in would remove a quest that is ready right now')
+})
+
+test('THE FIRST-TIME READING (JOS-155): the ready set minus everything you have run', () => {
+  const ready = readyQuests(READY_SET)
+  assert.deepEqual(
+    firstTimeReady(ready).map((q) => q.name),
+    ['Test of Blood'],
+    'the refarmed Beastlord quest is exactly what the default hides'
+  )
+  // The composition, as the identity the toggle rests on: this NARROWS the membership rule, so
+  // every quest it keeps is still one you are holding every item for, and unticking the box gets
+  // the whole set back untouched. A filter that could add a row would be a second membership rule.
+  assert.deepEqual(firstTimeReady(ready), ready.filter((q) => !everTurnedIn(q)))
+  assert.deepEqual(firstTimeReady(ready).filter((q) => !hasEveryItem(q)), [], 'still every item held')
+  assert.deepEqual(readyQuests(READY_SET), ready, 'unticked, the tab is the membership rule again')
+})
+
+test('…and it is the SET the arc moves through: ready, handed in, refarmed, hidden', () => {
+  const claw = (missing: string[], turnIns: number): QuestProgress =>
+    questRow({ className: 'Beastlord', name: 'Test of Claw', needCount: 2, missing, turnIns })
+  // The same arc tests/e2e/sky-turnin.e2e.mts drives, read through the default toggle. The last
+  // line is the whole ticket: a quest you have run and refarmed to full is ON the tab unticked and
+  // OFF it under the default, which is the only case where the two readings disagree.
+  assert.equal(firstTimeReady(readyQuests([claw([], 0)])).length, 1, 'never run: on the tab')
+  assert.deepEqual(firstTimeReady(readyQuests([claw(['Sphinx Claw'], 1)])), [], 'handed over: gone')
+  assert.equal(readyQuests([claw([], 1)]).length, 1, 'refarmed to full: on the tab unticked')
+  assert.deepEqual(firstTimeReady(readyQuests([claw([], 1)])), [], '…and off it under the default')
 })
 
 test('an ignored quest never reaches it: the caller passes the shown half', () => {
