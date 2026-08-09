@@ -125,6 +125,76 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.14.0',
+    date: '2026-08-08',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Two new overlays track buffs and debuffs with live timers - one window for what is on you, one for what you have landed on your targets, each enabled and placed separately. Both start off; turn them on from the Overlay menu.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Chain-mez or slow across a whole pull and each target shows its own named countdown; when a spell breaks, wears off, or the mob dies, its bar goes with it. Only your own casts are tracked, and a resist shows nothing.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The countdowns learn from your log: the app uses the durations your casts actually run - your AAs and focus effects included - and never invents a number it has not seen or the spell data does not state.'
+      },
+      {
+        kind: 'new',
+        text: "Alerts can speak what the log said: name a capture in your pattern and use it in the spoken text - 'Puma on {player}' says who it landed on. Spirit of the Puma is back in the suggested list too.",
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'The combat meters are one surface now: Overview, the Combat tab and the overlay share the same clickable bars, and clicking an ability that has stats (crit, double and triple attack, misses) opens them right under its bar.'
+      },
+      {
+        kind: 'changed',
+        text: 'The You / Group / Everyone choice moved to Preferences - Combat (default: Group), the meters remember where you drilled when you switch tabs, and the scope word sits as a quiet watermark at the bottom of each overlay instead of crowding the title bar.'
+      },
+      {
+        kind: 'changed',
+        text: 'Turning usage analytics off now sends one final anonymous notice so opt-outs can be counted honestly; nothing further is ever sent after it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Playing through Wine on Linux: the app now recognises it at startup and draws the compatible way on its own, so windows stop coming up blank and a celebration card stops sticking to the screen as a black box. Preferences - Graphics says so when it happens, and either half can be turned back off.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Security: the sound-pack installer is hardened against a path traversal in pack names and registry source fields, and malformed registry entries are dropped on fetch and on cache read. Reported by an outside review; no user data was ever at risk in normal use.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A raid boss finished by a damage-over-time now counts as your kill, and Phinigel Autropos joined the raid targets.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Iksar monks' Tail Rake shows up in the combat breakdown, in Dragon Punch's seat.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The exaltation planner has the two Any slots, filled from your inventory dump, and a planned exaltation shows what it does on hover.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Finding your EverQuest install no longer re-scans every launch: the found path is remembered, and a slow or offline network drive can no longer stall startup.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The cursor ring no longer twitches on clicks.'
+      }
+    ]
+  },
+  {
     version: '0.13.0',
     date: '2026-08-08',
     entries: [
