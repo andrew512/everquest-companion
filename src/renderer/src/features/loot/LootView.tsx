@@ -29,7 +29,7 @@
 // means. What the hover used to say is not lost — clicking a row (or a pickup chip) opens the
 // drill-down, which is where the item window and its quest/recipe knowledge live anyway.
 
-import { type JSX, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type JSX, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -44,7 +44,7 @@ import {
   Typography
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
-import type { CountSource } from '@shared/types'
+import type { CountSource, LootEvent } from '@shared/types'
 import type { NavBack } from '../../appRouting'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import { itemCountKey } from '../../lib/itemName'
@@ -63,6 +63,13 @@ import {
 } from './lootSort'
 import { NotablePickupsStrip, useNotableStrip } from './NotablePickupsStrip'
 import { useLootRows } from './useLootRows'
+// THE TIMESLICE (JOS-130): the app's one "which stretch of play is this about" control. The ledger
+// is where it was asked for — "what did I gain in totality vs this session" — and it is the SAME
+// control and the SAME pick the Leveling tab reads, so the drops and the xp behind them can never
+// describe different stretches.
+import { SliceBar } from '../timeslice/SliceBar'
+import { useTimeslice } from '../timeslice/useTimeslice'
+import { inSlice, type Timeslice } from '@shared/timeslice'
 
 // The grouped table's order picker (JOS-91). Its own component so LootToolbar stays inside the
 // measured lines-per-function ceiling.
@@ -190,17 +197,26 @@ function LootSummary({
   eventCount,
   uniqueCount,
   inventoryInfo,
-  autoUpdatedAt
+  autoUpdatedAt,
+  slice,
+  totalCount
 }: {
   eventCount: number
   uniqueCount: number
   inventoryInfo?: { path: string; loadedAt: string }
   autoUpdatedAt: number | null
+  /** The slice in force. It words the counts, and it is the reason the total is also stated. */
+  slice: Timeslice
+  /** Loot lines in the WHOLE record. Stated beside the sliced count because "in totality vs this
+   *  session" is the literal question this control was asked for — a ledger that silently showed
+   *  a third of its rows would answer half of it. Omitted under `All`, where the two are equal. */
+  totalCount: number
 }): JSX.Element {
   return (
-    <Typography variant="body2" color="text.secondary">
-      {eventCount.toLocaleString()} loot events · {uniqueCount.toLocaleString()} unique items · click a
-      row for mob/zone/drop-rate breakdown ·{' '}
+    <Typography variant="body2" color="text.secondary" data-testid="loot-summary">
+      {eventCount.toLocaleString()} loot events
+      {slice.id === 'all' ? '' : ` in ${slice.caption} of ${totalCount.toLocaleString()} all time`} ·{' '}
+      {uniqueCount.toLocaleString()} unique items · click a row for mob/zone/drop-rate breakdown ·{' '}
       {inventoryInfo
         ? `inventory export ${formatDateTime(new Date(inventoryInfo.loadedAt).getTime())}`
         : 'no inventory export loaded'}
@@ -312,6 +328,40 @@ function useLootDetail(
   }
 }
 
+/**
+ * THE TAKEOVER, as one element. Its own component so the swap reads as a single line where it
+ * happens and the view stays inside its measured line budget — the same reason `useLootDetail`
+ * lives beside it rather than inline.
+ */
+function LootDetailTakeover(p: {
+  item: string
+  events: LootEvent[]
+  slice: Timeslice
+  detail: LootDetail
+  nav?: NavBack
+}): JSX.Element {
+  const { item, events, slice, detail, nav } = p
+  return (
+    <ItemDetailPane
+      item={item}
+      // SLICED, like the ledger it came from: the drill-down's counts, its mob table and its
+      // per-zone rates all describe the stretch the control says they do.
+      events={events.filter((e) => e.item.toLowerCase() === item.toLowerCase())}
+      slice={slice}
+      stats={itemStats[itemCountKey(item)]}
+      isQuestItem={questItemNames.has(itemCountKey(item))}
+      // Back consults the origin stack FIRST and falls back to closing the pane — the whole
+      // JOS-43 contract in one line. `back()` reports whether it navigated, so a natively
+      // opened drill (nothing parked) behaves exactly as it did before.
+      onBack={() => {
+        if (!nav?.back()) detail.close()
+      }}
+      onList={detail.close}
+      origin={nav?.origin?.label ?? null}
+    />
+  )
+}
+
 export default function LootView(props: LootViewProps = {}): JSX.Element {
   const { isFavorite, toggle: toggleFavorite } = useFavorites()
   // ONE subscription to the loot module: useProgress already owns it (and needs it for the
@@ -333,9 +383,16 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
   const [toast, setToast] = useState<string | null>(null)
   // When main auto-reloads the *-Inventory.txt (chokidar watch), surface it quietly.
   const [autoUpdatedAt, setAutoUpdatedAt] = useState<number | null>(null)
-  const { knowledgeByKey, strip } = useNotableStrip(history)
+  const { available, slice, setId, setCustom } = useTimeslice()
+  // THE SLICE IS APPLIED ONCE, HERE, and everything below reads the result — the ledger, the
+  // grouped counts, the notable strip and the drill-down's events. `inSlice` is the shared
+  // membership test (`shared/timeslice.ts`), half-open exactly like `rangeStats`, so a row is in
+  // this table if and only if the same instant is inside the range the xp numbers were measured
+  // over. Under `All` it keeps every row, so this costs one pass and changes nothing.
+  const sliced = useMemo(() => history.filter((e) => inSlice(slice, e.ts, e.zone)), [history, slice])
+  const { knowledgeByKey, strip } = useNotableStrip(sliced)
   const { events, grouped, groupRows, invOnlySource, invByKey } = useLootRows({
-    history,
+    history: sliced,
     inventoryRows,
     query,
     questOnly,
@@ -360,26 +417,16 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
 
   const selected = detail.selected
   if (selected !== null) {
-    return (
-      <ItemDetailPane
-        item={selected}
-        events={history.filter((e) => e.item.toLowerCase() === selected.toLowerCase())}
-        stats={itemStats[itemCountKey(selected)]}
-        isQuestItem={questItemNames.has(itemCountKey(selected))}
-        // Back consults the origin stack FIRST and falls back to closing the pane — the whole
-        // JOS-43 contract in one line. `back()` reports whether it navigated, so a natively
-        // opened drill (nothing parked) behaves exactly as it did before.
-        onBack={() => {
-          if (!props.nav?.back()) detail.close()
-        }}
-        onList={detail.close}
-        origin={props.nav?.origin?.label ?? null}
-      />
-    )
+    return <LootDetailTakeover item={selected} events={sliced} slice={slice} detail={detail} nav={props.nav} />
   }
 
   return (
     <Stack spacing={2} data-testid="loot-list" sx={{ height: '100%' }}>
+      {/* ABOVE the toolbar and on its own row: it governs everything below it, including the
+          filters, and it must never be crowded into the same line as the search box (the
+          compact-bar contract — controls never shrink). */}
+      <SliceBar available={available} slice={slice} onPick={setId} onCustom={setCustom} testId="loot-slice" />
+
       <LootToolbar
         query={query}
         setQuery={setQuery}
@@ -398,7 +445,9 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
       />
 
       <LootSummary
-        eventCount={history.length}
+        eventCount={sliced.length}
+        totalCount={history.length}
+        slice={slice}
         uniqueCount={grouped.length}
         inventoryInfo={inventoryInfo}
         autoUpdatedAt={autoUpdatedAt}
@@ -407,6 +456,13 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
       <NotablePickupsStrip {...strip} onSelect={detail.open} />
 
       {history.length === 0 && <NoLootYet />}
+      {/* A slice that holds nothing is a STATE, and it says WHICH slice — distinguishable from
+          "nothing parsed yet" above, which is about the log rather than about the control. */}
+      {history.length > 0 && sliced.length === 0 && (
+        <Alert severity="info" data-testid="loot-slice-empty">
+          No loot in {slice.caption}. Widen the slice to see the rest of this character&apos;s history.
+        </Alert>
+      )}
 
       {/* The scroll container owns the ref the windowing hook reads. Spacer rows
           (top/bottom) reserve the full scroll height so only the visible slice of
