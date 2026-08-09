@@ -295,6 +295,12 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
 
 - Node/git/gh NOT on PATH in fresh shells: prepend `C:\Program Files\nodejs`,
   `C:\Program Files\git\bin`, `C:\Program Files\GitHub CLI`.
+- NO RAW CONTROL BYTES IN SOURCE FILES — spell escapes out (`\u0000`, not a
+  literal NUL). A NUL as a "collision-proof key separator" is a fine idea and
+  has now been written as a raw byte twice (JOS-133, JOS-150); git classifies
+  the file as binary, diffs/blame/grep go dark, and the integrator has to
+  respell it. Same runtime value either way, so there is no reason to ever
+  emit the byte.
 - Backticked EQ names (`Innoruuk\`s Chosen`) break inline `node -e` — use
   temp script files.
 - Errors harness: main+renderer errors append to `<userData>/errors.log` AND
