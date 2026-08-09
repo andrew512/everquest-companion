@@ -14,7 +14,21 @@ import type { PoisonEffect, PoisonGroup } from './poisons'
 // reads them from `@shared/logEvents`, exactly as it always has.
 import type { ConsiderFaction } from './considerFaction'
 
+// The ACQUISITION event shapes (coin / itemReceived / purchase — JOS-144) live in
+// ./acquireEvents for the same reason the consider ladder moved out: this file is long past its
+// factoring ceiling. RE-EXPORTED verbatim, so every consumer still reads them from
+// `@shared/logEvents`, and the union below carries the three new members.
+import type { CoinEvent, ItemReceivedEvent, PurchaseEvent } from './acquireEvents'
+
 export type { ConsiderFaction }
+export type {
+  Coins,
+  CoinEvent,
+  CoinSource,
+  ItemReceivedEvent,
+  ItemReceivedVia,
+  PurchaseEvent
+} from './acquireEvents'
 export {
   CONSIDER_FACTION_COLOR,
   CONSIDER_FACTION_LABEL,
@@ -1201,6 +1215,12 @@ export interface UnknownEvent extends LogEventBase {
 export type LogEvent =
   | ZoneEvent
   | LootEventE
+  // The three acquisition families that carry no corpse (JOS-144, ./acquireEvents). They sit
+  // beside loot because they answer the same question — how did this reach me — and every line
+  // any of them claims was MEASURED `{kind:'unknown'}` before they existed.
+  | CoinEvent
+  | ItemReceivedEvent
+  | PurchaseEvent
   | OfferEvent
   | TradeEvent
   | LevelEventE
