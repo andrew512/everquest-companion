@@ -83,7 +83,8 @@ export interface CursorPoint {
 
 /**
  * The "ultimate mouse cursor" ring (owner request: "I lose my mouse on EQ screens"). A thick
- * white circle that follows the pointer, drawn ONLY over the EverQuest window.
+ * circle that follows the pointer, drawn ONLY over the EverQuest window — white, until the
+ * player picks another colour (JOS-125).
  *
  * OFF BY DEFAULT and it stays that way: it costs a window, a watcher and an 8 ms poll, and a
  * user who has never lost their cursor should pay none of it.
@@ -93,8 +94,15 @@ export interface CursorRingPrefs {
   enabled: boolean
   /** Outer diameter of the ring, in CSS px (= DIP; the page and the window share one scale). */
   sizePx: number
-  /** Stroke width of the white ring, in CSS px. Drawn INSIDE the diameter (border-box). */
+  /** Stroke width of the ring, in CSS px. Drawn INSIDE the diameter (border-box). */
   thicknessPx: number
+  /**
+   * The stroke's colour, as the `#rrggbb` an `<input type="color">` speaks (JOS-125).
+   *
+   * WHITE by default, which is the colour the ring has always been drawn in — so an upgrade
+   * moves nobody's ring. `ringStrokeColor()` is the ONE place it becomes a CSS value.
+   */
+  colorHex: string
 }
 
 /**
@@ -121,10 +129,64 @@ export const MIN_RING_THICKNESS_PX = 1
 export const MAX_RING_THICKNESS_PX = 12
 export const DEFAULT_RING_THICKNESS_PX = 4
 
+/**
+ * The default stroke colour: WHITE, because that is the colour every ring drawn before JOS-125
+ * was. The picker exists so somebody who plays in a snowy zone can move off it, not to change
+ * what anybody already has — an upgrading user must see exactly the ring they saw yesterday, and
+ * `tests/cursorRingColor.test.mts` pins that against the CSS in cursor.html.
+ */
+export const DEFAULT_RING_COLOR = '#ffffff'
+
+/**
+ * The alpha the stroke has ALWAYS been drawn at, and it is not a setting.
+ *
+ * Readability comes from three shadows around ONE slightly-transparent stroke (cursor.html says
+ * why): a dark contour outside, a dark contour inside, and a wide soft glow. Those are tuned
+ * against 0.9, so the colour picker changes the hue and leaves the tuning alone. A user asking
+ * for a colour is not asking for a different amount of contrast.
+ */
+export const RING_STROKE_ALPHA = 0.9
+
+/** `#rgb` or `#rrggbb`, and nothing else. */
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i
+
+/**
+ * A ring colour, as a lower-case `#rrggbb`, or `fallback` if the value is not a hex colour.
+ *
+ * STRICT ON PURPOSE, and it is the only reason this value may be assigned to a style property.
+ * The string arrives from a renderer, from the store file, or from a share import, and it ends
+ * up in `element.style.borderColor` in the ring window; a normalizer that passed CSS through
+ * would make that a place where somebody else's text becomes a declaration. Named colours
+ * (`red`), `rgb()` and `var(--x)` are all refused for that reason, not for a spelling one —
+ * `<input type="color">` cannot produce any of them.
+ *
+ * The short form is expanded here so every consumer sees ONE shape: the picker only ever emits
+ * six digits, but a hand-edited store file may carry three.
+ */
+export function normalizeRingColor(value: unknown, fallback = DEFAULT_RING_COLOR): string {
+  if (typeof value !== 'string') return fallback
+  const hex = value.trim().toLowerCase()
+  if (!HEX_COLOR.test(hex)) return fallback
+  return hex.length === 7 ? hex : `#${hex.slice(1).replace(/./g, (d) => d + d)}`
+}
+
+/**
+ * The ring's stroke as a CSS colour: the chosen hue at the fixed stroke alpha.
+ *
+ * ONE seam, three drawings — the ring window (renderer/src/overlay/cursorRing.ts), the live
+ * sample in Preferences, and the static rule cursor.html paints with before its config arrives.
+ * Two copies of this arithmetic is how the preview and the real ring come to disagree.
+ */
+export function ringStrokeColor(colorHex: string): string {
+  const n = parseInt(normalizeRingColor(colorHex).slice(1), 16)
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${RING_STROKE_ALPHA})`
+}
+
 export const DEFAULT_CURSOR_RING: CursorRingPrefs = {
   enabled: false,
   sizePx: DEFAULT_RING_SIZE_PX,
-  thicknessPx: DEFAULT_RING_THICKNESS_PX
+  thicknessPx: DEFAULT_RING_THICKNESS_PX,
+  colorHex: DEFAULT_RING_COLOR
 }
 
 export const DEFAULT_OVERLAY_AUTO_HIDE: OverlayAutoHidePrefs = {
@@ -163,7 +225,8 @@ export function normalizeCursorRing(value: unknown): CursorRingPrefs {
   return {
     enabled: bool(v.enabled, DEFAULT_CURSOR_RING.enabled),
     sizePx,
-    thicknessPx: Math.max(MIN_RING_THICKNESS_PX, Math.min(thickness, Math.floor(sizePx / 2)))
+    thicknessPx: Math.max(MIN_RING_THICKNESS_PX, Math.min(thickness, Math.floor(sizePx / 2))),
+    colorHex: normalizeRingColor(v.colorHex)
   }
 }
 
