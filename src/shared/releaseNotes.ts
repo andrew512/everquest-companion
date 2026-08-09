@@ -130,7 +130,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
-        text: 'A Classes tab on the Plane of Sky view tracks every class unlock: your Sky turn-ins count toward each class, the closest to done sit on top, stars pin the ones you are chasing, and a class the log declared unlocked says so - the achievement line outranks any tally.'
+        text: 'A Classes tab on the Plane of Sky view tracks every class unlock: your Sky turn-ins count toward each class, the closest to done sit on top, stars pin the ones you are chasing, and a class the log declared unlocked says so - the achievement line outranks any tally. Click a class to jump to its quests, filtered to just that class.'
       },
       {
         kind: 'new',
