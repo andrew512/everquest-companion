@@ -1,5 +1,17 @@
 import { type JSX, useCallback, useEffect, useState } from 'react'
-import { Alert, Box, Button, Chip, Snackbar, Stack, Tab, Tabs, Typography } from '@mui/material'
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Chip,
+  FormControlLabel,
+  Snackbar,
+  Stack,
+  Tab,
+  Tabs,
+  Typography
+} from '@mui/material'
 import type { CountSource } from '@shared/types'
 import { useProgress, type QuestProgress } from './useProgress'
 // The `/outputfile` freshness line (JOS-44), wired to the registry: this tab's have/need chips
@@ -188,6 +200,37 @@ function QuestList({
 }
 
 /**
+ * The Ready tab's ONE control (JOS-155): show only the quests you have never handed in.
+ *
+ * It ships TICKED, which is the owner's direction rather than a guess - the default
+ * walk-the-islands list is first-time turn-ins, and untickng it is how you ask for the refarms you
+ * have already completed. The stored sense is inverted to match (useQuestList's `useStoredFlag`
+ * argues it); nothing about that is visible here, where the box is simply on until you turn it off.
+ *
+ * The LABEL is the whole explanation, deliberately, and there is no hover text on it: this tab sits
+ * directly above the same accordion rows QuestFilterBar's controls do, and JOS-143 is the standing
+ * answer to putting anything hoverable over a control here. It is worded to mirror the Quests tab's
+ * "Hide quests I have turned in" from the other side, because it is the same predicate read as a
+ * keep rather than a hide.
+ */
+function ReadyFirstTimeToggle({ list }: { list: QuestListState }): JSX.Element {
+  return (
+    <FormControlLabel
+      control={
+        <Checkbox
+          // The stable handle for tests/e2e/sky-turnin.e2e.mts, which drives the whole arc: a
+          // refarmed quest is absent under the default and present the moment this is unticked.
+          data-testid="posky-ready-first-time"
+          checked={list.readyFirstTimeOnly}
+          onChange={(e) => list.setReadyFirstTimeOnly(e.target.checked)}
+        />
+      }
+      label="Only quests I have never turned in"
+    />
+  )
+}
+
+/**
  * The Ready tab (JOS-147): what you can hand in RIGHT NOW, in the order you would walk it if the
  * data said where the givers stood (it does not - see questCompletion.readyQuests).
  *
@@ -195,26 +238,36 @@ function QuestList({
  * same ignore button, the same item chips and the same expandable panel with the turn-in counter
  * in it. A second, thinner row rendering would be a second thing to keep in step with the first.
  *
- * The set itself is `list.ready`, which no filter and neither hide-box can reach. The tab draws no
- * filter bar for the same reason the Ignored tab draws none: there is nothing to narrow here, the
- * list IS the answer.
+ * The set itself is `list.ready`, which no filter and neither of the QUESTS tab's hide-boxes can
+ * reach. Since JOS-155 the tab has one control of its own, drawn above BOTH states rather than only
+ * above the list: a toggle that can empty the tab has to stay reachable when it has, or the user is
+ * left staring at an empty pane with no way to ask for the rest.
  */
 function ReadyList(props: QuestListProps): JSX.Element {
   const n = props.quests.length
+  const { readyFirstTimeOnly, readyRefarmCount } = props.list
   return (
     <Box
       data-testid="posky-ready"
       sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
     >
+      <ReadyFirstTimeToggle list={props.list} />
       {n === 0 ? (
         <Typography color="text.secondary">
           Nothing is ready to turn in - a quest lands here the moment you are holding every item it
           needs, and leaves when you hand them over.
+          {readyFirstTimeOnly && readyRefarmCount > 0
+            ? ` ${String(readyRefarmCount)} you have run before ${readyRefarmCount === 1 ? 'is' : 'are'} ready now - untick the box to see ${readyRefarmCount === 1 ? 'it' : 'them'}.`
+            : ''}
         </Typography>
       ) : (
         <>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} data-testid="posky-ready-count">
-            {n} quest{n === 1 ? '' : 's'} you are holding every item for.
+            {n} quest{n === 1 ? '' : 's'} you are holding every item for
+            {readyFirstTimeOnly ? ' and have never turned in' : ''}.
+            {readyFirstTimeOnly && readyRefarmCount > 0
+              ? ` ${String(readyRefarmCount)} more you have run before ${readyRefarmCount === 1 ? 'is' : 'are'} ready too.`
+              : ''}
           </Typography>
           <QuestList {...props} />
         </>
@@ -237,7 +290,10 @@ function PoskyTabs({ list }: { list: QuestListState }): JSX.Element {
     >
       <Tab value="quests" label="Quests" data-testid="posky-tab-quests" />
       {/* "Ready" - the shortest true name for it, and the same word the row's own chip already
-          uses ("Ready to turn in"). Anything longer would be a sentence on a tab. */}
+          uses ("Ready to turn in"). Anything longer would be a sentence on a tab. The COUNT is
+          `list.ready.length`, the same array the tab draws, so it follows JOS-155's first-time
+          toggle without knowing the toggle exists - a number that disagreed with the rows under
+          it would be worse than no number. */}
       <Tab
         value="ready"
         label={list.ready.length ? `Ready (${list.ready.length})` : 'Ready'}

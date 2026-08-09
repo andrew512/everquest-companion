@@ -7,10 +7,11 @@
 // container calls, not inside the Quests tab's markup) so flipping to Ignored and back does not
 // reset the filters you had set up.
 //
-// SIX of those choices outlive the hook entirely, in localStorage: the class filter, the sort
+// SEVEN of those choices outlive the hook entirely, in localStorage: the class filter, the sort
 // order, the two hide-boxes ("hide completed", JOS-90; "hide turned in", JOS-145 — see
-// useStoredFlag) and the island/boss facets (JOS-124). Living above the Quests/Ignored switch was
-// never enough for them, because leaving the Sky tab for another VIEW unmounts this hook outright.
+// useStoredFlag), the island/boss facets (JOS-124) and the Ready tab's first-time toggle
+// (JOS-155, the only one that ships ticked). Living above the Quests/Ignored switch was never
+// enough for them, because leaving the Sky tab for another VIEW unmounts this hook outright.
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { QuestProgress } from './useProgress'
@@ -21,7 +22,7 @@ import { facetOptions, filterByFacets, type FacetOptions } from './questFacets'
 // The two readings of "done" this tab offers, and the argument for keeping them apart (JOS-131 for
 // has-every-item-now, JOS-145 for has-ever-turned-in). Two lines of code, a page of reasoning, and
 // a node test — so they live in their own pure module.
-import { everTurnedIn, hasEveryItem, readyQuests } from './questCompletion'
+import { everTurnedIn, firstTimeReady, hasEveryItem, readyQuests } from './questCompletion'
 
 export type { SortKey }
 
@@ -37,6 +38,8 @@ const HIDE_COMPLETED_KEY = 'eq.posky.hideCompleted'
 const HIDE_TURNED_IN_KEY = 'eq.posky.hideTurnedIn'
 const ISLANDS_KEY = 'eq.posky.islands'
 const BOSSES_KEY = 'eq.posky.bosses'
+/** JOS-155's Ready-tab toggle. Absent means ON — see the `useStoredFlag` default below. */
+const READY_FIRST_TIME_KEY = 'eq.posky.readyFirstTimeOnly'
 
 /** A stored list of picked names. Anything that is not an array of strings reads as no picks —
  *  a corrupt or hand-edited value degrades to the default rather than throwing the tab away. */
@@ -102,9 +105,19 @@ function useStoredSort(): [SortKey, (v: SortKey) => void] {
  * user's tick does, or need a migration to invent a preference nobody expressed; two independent
  * bits let each box mean only itself, and the default for the new one is the same absent-means-
  * false a fresh install gets for the old one.
+ *
+ * JOS-155 GENERALISED THE ABSENT KEY, because its box is the first one here that ships TICKED.
+ * `whenAbsent` is what a key nobody has written yet reads as, so the Ready tab's toggle passes
+ * `true` and its stored sense is INVERTED relative to every other flag in this file: '0' is the
+ * user having turned it OFF, and an absent key is ON rather than off. The invariant is unchanged
+ * and is the one that matters — a stored value is only ever a choice the user MADE, and the
+ * default is what we do until they make one. Nothing is migrated and no existing key moves.
  */
-function useStoredFlag(key: string): [boolean, (v: boolean) => void] {
-  const [value, setValue] = useState(() => localStorage.getItem(key) === '1')
+function useStoredFlag(key: string, whenAbsent = false): [boolean, (v: boolean) => void] {
+  const [value, setValue] = useState(() => {
+    const raw = localStorage.getItem(key)
+    return raw === null ? whenAbsent : raw === '1'
+  })
   useEffect(() => {
     localStorage.setItem(key, value ? '1' : '0')
   }, [key, value])
@@ -128,13 +141,73 @@ function useVisibleQuests(
     hidden.sort((a, b) => a.className.localeCompare(b.className) || a.name.localeCompare(b.name))
     // The THIRD list, from the same one pass (JOS-147): the quests you are holding every item for.
     // It is derived here, beside the split, because that is the code saying out loud what the tab
-    // depends on — the ignore flag and the item counts, and no filter state whatsoever.
+    // depends on — the ignore flag and the item counts, and no filter state whatsoever. JOS-155's
+    // first-time toggle narrows this OUTSIDE the memo, so flipping the box re-filters an already
+    // built list instead of re-splitting every quest.
     return [shown, hidden, readyQuests(shown)]
   }, [quests, ignoredKeys])
 }
 
 function questHasFavorite(q: QuestProgress, isFavorite: (name: string) => boolean): boolean {
   return q.items.some((it) => isFavorite(it.name))
+}
+
+/**
+ * The page cap, and the two things that move it: a new filtered set shows from the top, and "show
+ * more" adds a page.
+ *
+ * Its own hook because it is the one piece of list state that is about RENDERING COST rather than
+ * about what the user asked to see — accordions are variable-height, so this list caps and
+ * paginates instead of windowing, and the cap is what keeps a keystroke from re-rendering more
+ * than PAGE quests at once. `reset` is exported beside `showMore` because `revealQuest` has to
+ * put the user back at the top of a list it just re-filtered.
+ */
+function usePaging(filtered: QuestProgress[]): {
+  visibleCount: number
+  showMore: () => void
+  reset: () => void
+} {
+  const [visibleCount, setVisibleCount] = useState(PAGE)
+  useEffect(() => {
+    setVisibleCount(PAGE)
+  }, [filtered])
+  return {
+    visibleCount,
+    showMore: () => {
+      setVisibleCount((n) => n + PAGE)
+    },
+    reset: () => {
+      setVisibleCount(PAGE)
+    }
+  }
+}
+
+/**
+ * The Ready tab's list and the ONE control that narrows it (JOS-155).
+ *
+ * Its own hook because it is the only state on this tab: the toggle, the list it produces, and how
+ * many rows the toggle is holding back, which is the number the empty state needs to be able to say
+ * "there are refarms behind this box". `allReady` is the membership rule (useVisibleQuests), so the
+ * narrowing happens here and the split above never re-runs when the box is clicked.
+ */
+function useReadySet(allReady: QuestProgress[]): {
+  ready: QuestProgress[]
+  readyFirstTimeOnly: boolean
+  setReadyFirstTimeOnly: (v: boolean) => void
+  readyRefarmCount: number
+} {
+  // The one flag in this file whose default is ON, hence the `true` (argued on useStoredFlag).
+  const [readyFirstTimeOnly, setReadyFirstTimeOnly] = useStoredFlag(READY_FIRST_TIME_KEY, true)
+  const ready = useMemo(
+    () => (readyFirstTimeOnly ? firstTimeReady(allReady) : allReady),
+    [allReady, readyFirstTimeOnly]
+  )
+  return {
+    ready,
+    readyFirstTimeOnly,
+    setReadyFirstTimeOnly,
+    readyRefarmCount: allReady.length - ready.length
+  }
 }
 
 
@@ -210,6 +283,10 @@ export interface QuestListState {
    * search box, not the two hide-boxes. `questCompletion.readyQuests` states why at length; the
    * short version is that "hide completed" is the same predicate, so obeying it could only empty
    * the tab. None of those controls is drawn on this tab either.
+   *
+   * The ONE thing it does obey is the tab's own toggle (JOS-155): with `readyFirstTimeOnly` set —
+   * which is the default — the quests you have handed in before are out of this list, and so out
+   * of the tab's count, because the count IS this array's length.
    */
   ready: QuestProgress[]
   /** `visible` after the filters, the sort and the favorite pinning */
@@ -233,6 +310,14 @@ export interface QuestListState {
   /** "Hide quests I have turned in" — has-EVER-turned-in, the other reading (JOS-145). Stored. */
   hideTurnedIn: boolean
   setHideTurnedIn: (v: boolean) => void
+  /**
+   * "Only quests I have never turned in", the Ready tab's own toggle (JOS-155). Stored, and TICKED
+   * on a fresh install: the default walk-the-islands list is first-time turn-ins.
+   */
+  readyFirstTimeOnly: boolean
+  setReadyFirstTimeOnly: (v: boolean) => void
+  /** how many ready quests that toggle is currently holding back, so the tab can say so */
+  readyRefarmCount: number
   hideNoItems: boolean
   setHideNoItems: (v: boolean) => void
   favoritesOnly: boolean
@@ -255,7 +340,8 @@ export interface QuestListState {
    * makes the quest match, so the link would hide its own subject every single time — which is
    * why the reset is a list of every filter and not a judgement about which ones matter.
    * The search box is set to the quest's name so the reset is visible and undoable rather than
-   * mysterious.
+   * mysterious. The Ready tab's own toggle is deliberately NOT in the reset: it narrows a list
+   * this link is navigating away from, so it can never be what hid the quest.
    */
   revealQuest: (name: string) => void
 }
@@ -276,11 +362,12 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
   const [hideTurnedIn, setHideTurnedIn] = useStoredFlag(HIDE_TURNED_IN_KEY)
   const [hideNoItems, setHideNoItems] = useState(true)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
-  // Accordions are variable-height so we cap+paginate rather than window them; a
-  // keystroke never re-renders more than PAGE quests at once.
-  const [visibleCount, setVisibleCount] = useState(PAGE)
 
-  const [visible, ignored, ready] = useVisibleQuests(quests, questIgnored.keys)
+  const [visible, ignored, allReady] = useVisibleQuests(quests, questIgnored.keys)
+  // The Ready tab, whole: its list after its own toggle, the toggle, and what the toggle is
+  // holding back. The tab's COUNT reads the same array the pane draws, so the number on the tab
+  // and the rows under it can never disagree.
+  const readySet = useReadySet(allReady)
 
   // What the two facet pickers can offer. Derived from the VISIBLE quests, so an ignored quest
   // takes its island and its boss out of the pickers along with itself.
@@ -323,17 +410,17 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     ]
   )
 
-  // Reset the page cap whenever the filtered set changes (a new search shows from top).
-  useEffect(() => {
-    setVisibleCount(PAGE)
-  }, [filtered])
+  // The page cap, which resets itself whenever the filtered set changes (a new search shows
+  // from the top).
+  const { visibleCount, showMore, reset: resetPaging } = usePaging(filtered)
 
   return {
     tab,
     setTab,
     visible,
     ignored,
-    ready,
+    // `ready`, the toggle and its setter, and the held-back count, all from the one hook above.
+    ...readySet,
     filtered,
     selectedClasses,
     setSelectedClasses,
@@ -355,9 +442,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     favoritesOnly,
     setFavoritesOnly,
     visibleCount,
-    showMore: () => {
-      setVisibleCount((n) => n + PAGE)
-    },
+    showMore,
     isFavorite,
     toggleFavorite,
     questFavorites,
@@ -372,7 +457,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
       setHideTurnedIn(false)
       setHideNoItems(false)
       setFavoritesOnly(false)
-      setVisibleCount(PAGE)
+      resetPaging()
     }
   }
 }
