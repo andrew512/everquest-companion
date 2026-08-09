@@ -23,9 +23,7 @@ import {
   AccordionDetails,
   AccordionSummary,
   Box,
-  Checkbox,
   Chip,
-  FormControlLabel,
   LinearProgress,
   Link,
   Stack,
@@ -38,6 +36,8 @@ import StarIcon from '@mui/icons-material/Star'
 import LinkIcon from '@mui/icons-material/Link'
 import { Tooltip } from '../../lib/Tooltip'
 import { skyQuestPage, wikiPageUrl } from '@shared/wiki'
+// The turn-in badge and the manual counter (JOS-131), in their own file.
+import { TurnInBadge, TurnInCounter } from './TurnInControls'
 import type { QuestProgress } from './useProgress'
 import { ItemTooltip } from './ItemTooltip'
 import { ItemNameLink, QuestItemsTable } from './QuestItemsTable'
@@ -52,14 +52,17 @@ function wikiClassPage(className: string): string | undefined {
   return wikiPageUrl(skyQuestPage(className))
 }
 
+// The bar states what you are HOLDING, always — since JOS-131 a turn-in spends those items, so a
+// quest you just handed in is honestly back at 0/N and the badge beside it is what remembers the
+// turn-in. Before this the bar read "Turned in" and sat pinned at 100% forever.
 function ProgressBar({ q }: { q: QuestProgress }): JSX.Element {
   const pct = Math.round(q.ratio * 100)
-  const color = q.completed ? 'success' : pct === 0 ? 'inherit' : pct >= 100 ? 'success' : 'primary'
+  const color = pct === 0 ? 'inherit' : pct >= 100 ? 'success' : 'primary'
   return (
     <Box sx={{ minWidth: 160 }}>
       <Stack direction="row" justifyContent="space-between">
         <Typography variant="caption" color="text.secondary">
-          {q.completed ? 'Turned in' : `${q.haveCount}/${q.needCount} items`}
+          {q.haveCount}/{q.needCount} items
         </Typography>
         <Typography variant="caption" color="text.secondary">
           {pct}%
@@ -215,16 +218,16 @@ function QuestSummaryRow({
           />
         </Tooltip>
       )}
-      {q.completed ? (
-        <Chip size="small" color="success" variant="outlined" label="Turned in" />
-      ) : (
-        <Chip
-          size="small"
-          variant="outlined"
-          color={q.missing.length === 0 ? 'success' : 'default'}
-          label={q.missing.length === 0 ? 'Ready to turn in' : `${q.missing.length} of ${q.items.length} missing`}
-        />
-      )}
+      {/* BOTH, since JOS-131. The turn-in badge is history ("you have done this, twice"); the
+          chip beside it is the present ("and right now you are three items short of doing it
+          again"). Collapsing them into one chip is what used to make a re-run invisible. */}
+      <TurnInBadge count={q.turnIns} />
+      <Chip
+        size="small"
+        variant="outlined"
+        color={q.missing.length === 0 ? 'success' : 'default'}
+        label={q.missing.length === 0 ? 'Ready to turn in' : `${q.missing.length} of ${q.items.length} missing`}
+      />
       <ProgressBar q={q} />
     </Stack>
   )
@@ -247,7 +250,9 @@ function QuestItemChips({
       {[...q.items]
         .sort((a, b) => Number(isFavorite(b.name)) - Number(isFavorite(a.name)))
         .map((it) => {
-          const done = it.have >= it.need || q.completed
+          // Held, right now. It used to also be true for any turned-in quest, which since
+          // JOS-131 would be a lie: the turn-in is exactly what spent the item.
+          const done = it.have >= it.need
           const fav = isFavorite(it.name)
           return (
             <ItemTooltip
@@ -285,15 +290,17 @@ function QuestItemChips({
   )
 }
 
-// The expanded panel's top strip: rune / giver / wiki link, and the manual "turned in" checkbox.
+// The expanded panel's top strip: rune / giver / wiki link, and the manual turn-in counter.
 function QuestDetailsToolbar({
   q,
   wikiHref,
-  onSetComplete
+  onRecordTurnIn,
+  onUndoTurnIn
 }: {
   q: QuestProgress
   wikiHref?: string
-  onSetComplete: (complete: boolean) => void
+  onRecordTurnIn: () => void
+  onUndoTurnIn: () => void
 }): JSX.Element {
   return (
     <Stack direction="row" spacing={2} sx={{ mb: 1 }} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -305,10 +312,7 @@ function QuestDetailsToolbar({
         </Link>
       )}
       <Box sx={{ flexGrow: 1 }} />
-      <FormControlLabel
-        control={<Checkbox checked={q.completed} onChange={(e) => onSetComplete(e.target.checked)} />}
-        label="Turned in / complete"
-      />
+      <TurnInCounter q={q} onRecordTurnIn={onRecordTurnIn} onUndoTurnIn={onUndoTurnIn} />
     </Stack>
   )
 }
@@ -322,7 +326,8 @@ export function QuestAccordion({
   onToggleIgnore,
   isFavorite,
   toggleFavorite,
-  onSetComplete,
+  onRecordTurnIn,
+  onUndoTurnIn,
   onSelectQuest,
   onOpenMob,
   onOpenLoot,
@@ -336,7 +341,10 @@ export function QuestAccordion({
   onToggleIgnore: () => void
   isFavorite: (name: string) => boolean
   toggleFavorite: (name: string) => void
-  onSetComplete: (complete: boolean) => void
+  /** record one more turn-in of this quest (JOS-131) */
+  onRecordTurnIn: () => void
+  /** take back the most recent hand-recorded turn-in */
+  onUndoTurnIn: () => void
   onSelectQuest: (name: string) => void
   /** a dropper name → the Mobs tab's page for that catalog row (App-level routing) */
   onOpenMob: (t: MobTarget) => void
@@ -353,8 +361,10 @@ export function QuestAccordion({
   anchored?: boolean
 }): JSX.Element {
   const wikiHref = wikiClassPage(q.className)
-  // A turned-in quest has nothing left to kill for, whatever its item counts say.
-  const killTargets = q.completed ? [] : questKillTargets(q.items)
+  // Nothing MISSING is what silences the kill-target caption (JOS-131). It used to be "turned
+  // in", which is now the opposite of the truth: handing the quest in spends its items, so a
+  // re-run needs every one of those mobs again.
+  const killTargets = q.missing.length === 0 ? [] : questKillTargets(q.items)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     // `block: 'nearest'` scrolls the enclosing list only as far as it must, so a quest already on
@@ -378,7 +388,12 @@ export function QuestAccordion({
         </Stack>
       </AccordionSummary>
       <AccordionDetails>
-        <QuestDetailsToolbar q={q} wikiHref={wikiHref} onSetComplete={onSetComplete} />
+        <QuestDetailsToolbar
+          q={q}
+          wikiHref={wikiHref}
+          onRecordTurnIn={onRecordTurnIn}
+          onUndoTurnIn={onUndoTurnIn}
+        />
         {q.rewardStats && (
           <Typography variant="caption" color="text.secondary" component="pre" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
             {q.rewardStats}

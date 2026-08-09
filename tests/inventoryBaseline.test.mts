@@ -184,7 +184,7 @@ function netFor(
     ...(baselineTs === undefined ? {} : { logSince: computeHeldCounts(ledger, baselineTs) }),
     lootNames: {},
     countSource,
-    completedKeys: [],
+    turnIns: {},
     quests: []
   }).net
 }

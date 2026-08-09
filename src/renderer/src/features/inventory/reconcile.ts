@@ -15,7 +15,7 @@ export interface InventoryRow {
   consumed: number
   /** net available after turn-ins */
   net: number
-  /** names of completed quests that consumed this item */
+  /** names of the quests whose turn-ins consumed this item, a quest run twice reading "… x2" */
   consumedBy: string[]
 }
 
@@ -35,7 +35,20 @@ export interface ReconcileInput {
   /** display names keyed by lowercased item name (from loot events) */
   lootNames: Record<string, string>
   countSource: CountSource
-  completedKeys: string[]
+  /**
+   * HOW MANY TIMES each quest has been turned in, all time (JOS-131) — quest key → count. A Sky
+   * quest can be run again, so this is a count and not a completed-set: a quest handed in twice
+   * ate its items twice. Absent/0 means never turned in.
+   */
+  turnIns: Record<string, number>
+  /**
+   * The same counts, narrowed to turn-ins that happened strictly AFTER the loaded dump was
+   * generated (JOS-131 over JOS-128). It is consumed in exactly the branch that consumes
+   * `logSince`, and for the same reason: the dump already reflects every turn-in made before it
+   * was written, so subtracting those again would eat the copy you refarmed afterwards.
+   * UNDEFINED means no baseline is known and nothing is windowed.
+   */
+  turnInsSince?: Record<string, number>
   quests: PoskyQuest[]
 }
 
@@ -112,21 +125,29 @@ function baseCounts(
   return base
 }
 
-/** What the turned-in quests ate: counts per item key, plus the quest names that ate it. */
+/**
+ * What the turn-ins ate: counts per item key, plus the quest names that ate it.
+ *
+ * A quest turned in N times consumed N of everything it requires (JOS-131) — that is the whole
+ * mechanism behind "hand it in and the quest drops back to 0/5, ready to farm again". The
+ * `consumedBy` caption says the count too, so a row reading `-10 Sphinx Claw` can be traced to
+ * one quest run twice rather than looking like a bug.
+ */
 function questConsumption(
   quests: PoskyQuest[],
-  completed: Set<string>,
+  turnIns: Record<string, number>,
   nameByKey: Record<string, string>
 ): { consumed: Record<string, number>; consumedBy: Record<string, string[]> } {
   const consumed: Record<string, number> = {}
   const consumedBy: Record<string, string[]> = {}
   for (const q of quests) {
-    if (!completed.has(questKey(q))) continue
+    const times = turnIns[questKey(q)] ?? 0
+    if (times <= 0) continue
     for (const it of q.items) {
       const k = itemCountKey(it.name)
       const need = it.count > 0 ? it.count : 1
-      consumed[k] = (consumed[k] ?? 0) + need
-      ;(consumedBy[k] ??= []).push(q.name)
+      consumed[k] = (consumed[k] ?? 0) + need * times
+      ;(consumedBy[k] ??= []).push(times > 1 ? `${q.name} x${String(times)}` : q.name)
       nameByKey[k] ??= it.name
     }
   }
@@ -134,18 +155,31 @@ function questConsumption(
 }
 
 /**
+ * Which turn-in counts this count source may subtract.
+ *
+ * The rule is one line and it is the symmetry that makes the ledger add up: consumption is
+ * windowed EXACTLY when the base is. A base of `dump + loot since the dump` already has every
+ * pre-dump turn-in taken out of it (the items are simply not in the file), so only the turn-ins
+ * since the baseline are still owed. A base of "everything ever looted" owes all of them.
+ */
+function turnInCounts(input: ReconcileInput): Record<string, number> {
+  const windowed = input.countSource !== 'log' && input.logSince !== undefined
+  return (windowed ? input.turnInsSince : undefined) ?? input.turnIns
+}
+
+/**
  * Reconcile held items from the loot log and the inventory export, then subtract
- * everything consumed by quests the user has marked as turned in — so a drop that
- * was handed in for one quest no longer counts toward another quest that needs it.
+ * everything consumed by the quest turn-ins — so a drop that was handed in for one quest no
+ * longer counts toward another quest that needs it, and a quest handed in twice has eaten its
+ * items twice.
  */
 export function reconcile(input: ReconcileInput): ReconcileResult {
-  const { log, inv, logSince, lootNames, countSource, completedKeys, quests } = input
-  const completed = new Set(completedKeys)
+  const { log, inv, logSince, lootNames, countSource, quests } = input
 
   const nameByKey: Record<string, string> = { ...lootNames }
   const invByKey = foldInventoryByKey(inv, nameByKey)
   const base = baseCounts(log, invByKey, countSource, logSince)
-  const { consumed, consumedBy } = questConsumption(quests, completed, nameByKey)
+  const { consumed, consumedBy } = questConsumption(quests, turnInCounts(input), nameByKey)
 
   const net: Record<string, number> = {}
   const allKeys = new Set([...Object.keys(base), ...Object.keys(consumed)])

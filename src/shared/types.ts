@@ -752,8 +752,36 @@ export type CountSource = 'log' | 'inventory' | 'both'
 export interface ProgressState {
   /** counts from the last inventory dump, keyed lowercased name */
   inventory: HeldCounts
-  /** quest keys (className::name) the user marked complete/turned-in */
+  /**
+   * Quest keys (className::name) turned in AT LEAST ONCE. Since JOS-131 this is the DOWNGRADE
+   * MIRROR of `questTurnIns` rather than the record itself: it is written whenever the ledger is,
+   * carries no count and no instant, and a build that predates JOS-131 still reads it and still
+   * shows those quests as turned in. `questTurnIns` is what this build reads.
+   */
   completedQuests: string[]
+  /**
+   * EVERY TURN-IN, AS AN EVENT (JOS-131): quest key → the epoch-ms instants it was turned in,
+   * ascending. A Sky quest can be run again, so completion is a count, not a terminal flag, and
+   * the count is the length of this list.
+   *
+   * WHY INSTANTS AND NOT A TALLY. Turn-ins have to be subtractable against an inventory dump,
+   * and the dump already reflects every turn-in made BEFORE it was generated (JOS-128's
+   * baseline). Only a dated turn-in can be placed on the right side of that line, and only exact
+   * instants let the log-detected turn-ins and the persisted ones be MERGED without
+   * double-counting the same event (the detected `ts` is stored verbatim, so the union dedupes
+   * itself).
+   *
+   * WHAT IS IN IT. Both kinds: turn-ins detected in the log (`TurnInEvent.ts`, EQ's own clock)
+   * and turn-ins the user recorded by hand (`Date.now()` at the click). Detected ones are
+   * persisted deliberately, the way the old auto-complete persisted a completion: the log is
+   * re-scanned per character epoch and truncated logs happen, and a turn-in the log can no longer
+   * show is still a thing that happened.
+   *
+   * ADDITIVE and OPTIONAL — no schema bump and no migration (the `exaltPlans` precedent). A store
+   * without this key reads its counts from `completedQuests` (one turn-in, undated), and an
+   * undated turn-in never counts as "since the dump" because nothing can place it there (law 1).
+   */
+  questTurnIns?: Record<string, number[]>
   /** metadata about the last inventory load */
   inventorySource?: InventorySource
   /**

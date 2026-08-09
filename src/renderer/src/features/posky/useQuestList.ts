@@ -18,6 +18,9 @@ import { useFavorites } from '../favorites/useFavorites'
 import { useQuestFavorites, useQuestIgnored, type QuestFlagSet } from '../favorites/useQuestFlags'
 import { DEFAULT_SORT, isSortKey, sortQuests, type SortKey } from './questSort'
 import { facetOptions, filterByFacets, type FacetOptions } from './questFacets'
+// What "completed" means on this tab since JOS-131, and the argument for it. One line of code,
+// a page of reasoning, and a node test — so it lives in its own pure module.
+import { hasEveryItem } from './questCompletion'
 
 export type { SortKey }
 
@@ -72,7 +75,7 @@ function useStoredSort(): [SortKey, (v: SortKey) => void] {
 
 /**
  * "Hide completed" is a PLACE IN THE GRIND, not a momentary filter (JOS-90). Hiding the quests
- * you have turned in is how a user says "show me what is left", and that answer is true until
+ * you are done with is how a user says "show me what is left", and that answer is true until
  * they say otherwise — but the state lived in plain `useState`, and `App`'s `ViewContent` mounts
  * exactly ONE feature view at a time, so every trip to another tab unmounted the hook and handed
  * the list back with completed quests in it. Same storage as the class filter and the sort order
@@ -121,6 +124,7 @@ function questHasFavorite(q: QuestProgress, isFavorite: (name: string) => boolea
   return q.items.some((it) => isFavorite(it.name))
 }
 
+
 interface QuestSelection {
   quests: QuestProgress[]
   selectedClasses: string[]
@@ -144,7 +148,8 @@ function selectQuests(sel: QuestSelection): QuestProgress[] {
   if (sel.selectedClasses.length) list = list.filter((x) => sel.selectedClasses.includes(x.className))
   // The island/boss facets, both dimensions in one pass (questFacets.ts owns the semantics).
   list = filterByFacets(list, sel)
-  if (sel.hideCompleted) list = list.filter((x) => !x.completed)
+  // JOS-131: "completed" here is has-every-item-now, never has-ever-turned-in (hasEveryItem).
+  if (sel.hideCompleted) list = list.filter((x) => !hasEveryItem(x))
   if (sel.hideNoItems) list = list.filter((x) => x.needCount > 0)
   // "Favorites only" = the quest itself is starred OR it needs a starred item.
   if (sel.favoritesOnly)
@@ -163,9 +168,10 @@ function selectQuests(sel: QuestSelection): QuestProgress[] {
   // Pin to the top (stable sort, so ties keep the sort above). A quest the user
   // STARRED outright outranks one that merely contains a favorited item — the star is
   // an explicit "I'm working on this", so it pins even once turned in; the item-level
-  // pin stays what it always was (only while the quest still needs something).
+  // pin stays what it always was (only while the quest still needs something, which since
+  // JOS-131 is `hasEveryItem` rather than the turn-in flag).
   const rank = (x: QuestProgress): number =>
-    isQuestFavorite(x.key) ? 2 : !x.completed && questHasFavorite(x, isFavorite) ? 1 : 0
+    isQuestFavorite(x.key) ? 2 : !hasEveryItem(x) && questHasFavorite(x, isFavorite) ? 1 : 0
   sorted.sort((a, b) => rank(b) - rank(a))
   return sorted
 }
@@ -210,11 +216,11 @@ export interface QuestListState {
    * (docs/plans/celebration-toasts.md T6): switch to the Quests tab and clear every filter that
    * could be hiding it, then let PoskyView expand and scroll to it.
    *
-   * It has to reset the filters, not merely search: a Sky quest completes by TURN-IN, so the
-   * quest a celebration toast links to is by definition a completed one — and "hide completed",
-   * a class filter, an island/boss facet or "favorites only" would each leave the user staring at
-   * a list the link promised something in. The search box is set to the quest's name so the reset
-   * is visible and undoable rather than mysterious.
+   * It has to reset the filters, not merely search: the quest a celebration toast links to has
+   * just been handed in, and "hide completed", a class filter, an island/boss facet or
+   * "favorites only" would each leave the user staring at a list the link promised something in.
+   * The search box is set to the quest's name so the reset is visible and undoable rather than
+   * mysterious.
    */
   revealQuest: (name: string) => void
 }

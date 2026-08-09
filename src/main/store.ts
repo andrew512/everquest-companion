@@ -16,6 +16,9 @@ import type {
 } from '../shared/types'
 import { clampTextScale } from '../shared/types'
 import type { InventorySource } from '../shared/outputs/baseline'
+// The turn-in ledger's write rule (JOS-131). Shared with the renderer so "what a stored turn-in
+// list may contain" has ONE definition on both sides of the IPC.
+import { applyTurnIns } from '../shared/questTurnIns'
 import { normalizeVoicePrefs } from '../shared/speechText'
 import {
   normalizeCursorRing,
@@ -284,12 +287,17 @@ export function setInventory(
   return setProgress(charId, { ...getProgress(charId), inventory: counts, inventorySource: source })
 }
 
-export function setQuestComplete(charId: string, questKey: string, complete: boolean): ProgressState {
+/**
+ * Record what we know about ONE quest's turn-ins (JOS-131): the epoch-ms instants it was handed
+ * in, which is a COUNT and not a flag because a Sky quest can be run again.
+ *
+ * The renderer states the whole list (the `setQuestComplete` shape this replaces did the same),
+ * so the list is sanitized and the downgrade mirror is written — both in `applyTurnIns`, shared
+ * with the renderer so the rule has one definition on either side of the IPC.
+ */
+export function setQuestTurnIns(charId: string, questKey: string, instants: number[]): ProgressState {
   const p = getProgress(charId)
-  const set = new Set(p.completedQuests)
-  if (complete) set.add(questKey)
-  else set.delete(questKey)
-  return setProgress(charId, { ...p, completedQuests: [...set] })
+  return setProgress(charId, { ...p, ...applyTurnIns(p, questKey, instants) })
 }
 
 // ----- Class-combo user corrections (docs/plans/class-combo-inference.md § 7) -----

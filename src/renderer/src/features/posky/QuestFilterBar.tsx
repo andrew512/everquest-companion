@@ -117,18 +117,23 @@ export default function QuestFilterBar({
           <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
         ))}
       </TextField>
-      <FormControlLabel
-        control={
-          <Checkbox
-            // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
-            // box's tick is a stored preference, so it is the one control here an e2e reads back.
-            data-testid="posky-hide-completed"
-            checked={list.hideCompleted}
-            onChange={(e) => list.setHideCompleted(e.target.checked)}
-          />
-        }
-        label="Hide completed"
-      />
+      {/* The LABEL says has-every-item, because that is what the box does since JOS-131 (the
+          rule and the argument live on `hasEveryItem` in useQuestList.ts). The testid and the
+          stored key are deliberately unchanged: an existing user's saved choice still applies. */}
+      <Tooltip title="Hide quests you already hold every item for. A quest you turn in comes back at zero, because handing it in spends the items, so it stays on this list until you have gathered them again.">
+        <FormControlLabel
+          control={
+            <Checkbox
+              // The stable handle for the persistence spec (tests/e2e/sky-filters.e2e.mts): this
+              // box's tick is a stored preference, so it is the one control here an e2e reads back.
+              data-testid="posky-hide-completed"
+              checked={list.hideCompleted}
+              onChange={(e) => list.setHideCompleted(e.target.checked)}
+            />
+          }
+          label="Hide quests I have every item for"
+        />
+      </Tooltip>
       <FormControlLabel
         control={<Checkbox checked={list.hideNoItems} onChange={(e) => list.setHideNoItems(e.target.checked)} />}
         label="Only quests with turn-ins"

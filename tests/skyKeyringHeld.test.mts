@@ -58,7 +58,7 @@ function have(questName: string, itemName: string, net: Record<string, number>):
 
 function netFor(text: string, countSource: CountSource): Record<string, number> {
   const inv = heldCountsFromDump(parseInventoryDump(text))
-  return reconcile({ log: {}, inv, lootNames: {}, countSource, completedKeys: [], quests }).net
+  return reconcile({ log: {}, inv, lootNames: {}, countSource, turnIns: {}, quests }).net
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ test('JOS-66: the Sky view finds both items — the suffixed one and the unsuffi
   // THE SYMPTOM, reproduced: with the keyring dropped (the pre-fix rule), both read zero.
   const dropped = heldCountsFromDump({ ...parseInventoryDump(REPORT_DUMP), keyRing: [] })
   const before = reconcile({
-    log: {}, inv: dropped, lootNames: {}, countSource: 'inventory', completedKeys: [], quests
+    log: {}, inv: dropped, lootNames: {}, countSource: 'inventory', turnIns: {}, quests
   }).net
   assert.equal(have('Bard Test of Tone', 'Light Woolen Mask', before), 0, 'the report, exactly')
   assert.equal(have('Bard Test of Voice', 'Light Woolen Mantle', before), 0)
@@ -144,7 +144,7 @@ test('the keyring never invents a count: one row is one copy, and the item table
   })
   // Keys stay RAW here (law 2): `+N` folds downstream at the counting boundary, not before.
   const rows = reconcile({
-    log: {}, inv: counts, lootNames: {}, countSource: 'inventory', completedKeys: [], quests
+    log: {}, inv: counts, lootNames: {}, countSource: 'inventory', turnIns: {}, quests
   }).rows
   const mantle = rows.find((r) => r.key === 'light woolen mantle')
   assert.ok(mantle)
