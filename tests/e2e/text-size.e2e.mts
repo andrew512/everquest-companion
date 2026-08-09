@@ -190,6 +190,27 @@ async function stepPersisted(page: Page, base: Zoom): Promise<void> {
   )
 }
 
+/**
+ * A RELOAD KEEPS THE SIZE — the assertion that decides whether main needs a `did-finish-load`
+ * listener re-stating the zoom, and the reason it does not have one.
+ *
+ * Chromium keeps a zoom LEVEL per origin, so "a reload resets it" is a plausible enough worry
+ * that the first cut of this feature carried a re-apply against it. Measured here instead: the
+ * window is reloaded, and the size has to still be there. (The re-apply was also not free — a
+ * post-load setZoomFactor wedged Playwright's stability check in a never-composited window and
+ * took loadout-override.e2e.mts from green to a hard timeout. See windows.ts.)
+ */
+async function stepSurvivesReload(page: Page, base: Zoom): Promise<void> {
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
+  const after = await zoomOf(page)
+  check(
+    'a reload keeps the size, with nothing in main re-stating it',
+    Math.abs(after.dpr / base.dpr - CHOSEN) < TOLERANCE,
+    `devicePixelRatio ${String(base.dpr)} at 100% -> ${String(after.dpr)} after reload`
+  )
+}
+
 /** Every way in is a way out: 100% must be reachable from anywhere on the ladder. */
 async function stepBackTo100(page: Page, base: Zoom): Promise<void> {
   await page.click(stopSelector(UI_SCALE_DEFAULT), { timeout: 15_000 })
@@ -249,6 +270,11 @@ async function main(): Promise<void> {
     const page = await mainWindow(second.app)
     watch(page)
     await stepPersisted(page, base)
+    // The reload lands between the two on purpose: it needs a window that is already at the
+    // chosen size, and it puts the view back to the app's default, so the last step re-opens
+    // the section like any arriving user would.
+    await stepSurvivesReload(page, base)
+    await openTextSize(page)
     await stepBackTo100(page, base)
     if (failures.length) await dumpArtifacts(page, 'text-size-FAIL-restart')
   } finally {

@@ -300,14 +300,20 @@ export function createMainWindow(): void {
   // Give the renderer its initial state once the page is ready to receive it.
   mainWindow.webContents.on('did-finish-load', pushMaximized)
 
-  // …and re-state the text size on every load (JOS-123). The constructor's `zoomFactor` is what
-  // makes the FIRST paint the right size; Chromium keeps a zoom level per origin, and a reload or
-  // a dev-server navigation is exactly the moment that bookkeeping is easiest to lose. Writing the
-  // stored value again costs nothing when it already matches, and the store is the only thing
-  // either path consults.
-  mainWindow.webContents.on('did-finish-load', () => {
-    applyMainWindowScale(getUiScale())
-  })
+  // NO SECOND `did-finish-load` LISTENER RE-STATING THE TEXT SIZE, AND THAT IS MEASURED (JOS-123).
+  // The first cut had one, on the theory that Chromium keeps zoom per ORIGIN and a reload or a
+  // dev-server navigation is where that bookkeeping is easiest to lose. Both halves of the theory
+  // turned out to be wrong, in opposite directions:
+  //   * IT WAS NOT NEEDED. The constructor's `zoomFactor` survives a reload of this window —
+  //     asserted in tests/e2e/text-size.e2e.mts, which reloads and re-measures rather than
+  //     assuming either way.
+  //   * IT WAS NOT FREE. A `setZoomFactor` call AFTER the page has loaded left this window in a
+  //     state where Playwright's actionability check ("visible, enabled and stable") never
+  //     completed: loadout-override.e2e.mts went from 30 s green to a 60 s timeout on its next
+  //     click, deterministically, with no other change in the tree. That is a hidden, never
+  //     composited window (EQ_E2E) whose rAF is already throttled to nothing — but a call that
+  //     buys nothing and can wedge a frame loop does not get to stay on the strength of a maybe.
+  // The setter still zooms the live window, because there the call is the whole point.
 
   // --- webContents error capture (Task #13) ---
   // The window is passed as a GETTER: every guard inside fires long after this call returns, and
