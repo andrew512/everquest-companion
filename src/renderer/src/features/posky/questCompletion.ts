@@ -3,7 +3,9 @@
 // ============================================================================
 //
 // A pure module with no React and no data bundle, so the decisions below are pinned by a plain
-// node test (tests/questTurnIns.test.mts) rather than only by a browser.
+// node test (tests/questTurnIns.test.mts) rather than only by a browser. JOS-147 added a third
+// export, `readyQuests` — the Ready tab's whole membership rule — for the same reason: it is one
+// predicate and an order, and it belongs where the predicate is argued.
 //
 // JOS-145 SETTLED THE ARGUMENT BY SHIPPING BOTH READINGS AS TWO SEPARATE BOXES. JOS-131 (below)
 // chose has-every-item-now for the one box that existed, and the reasoning still holds for THAT
@@ -45,6 +47,9 @@
 // deal under its own key (`eq.posky.hideTurnedIn`) rather than sharing one, so a user who wants
 // one reading is never handed the other by an upgrade.
 
+import type { QuestProgress } from './useProgress'
+import { sortQuests } from './questSort'
+
 /** The part of a quest's progress this rule reads. Structural, so a test needs no whole quest. */
 export interface CompletableQuest {
   /** total items required, summed over the required counts */
@@ -79,4 +84,35 @@ export interface TurnedInQuest {
  */
 export function everTurnedIn(q: TurnedInQuest): boolean {
   return q.turnIns >= 1
+}
+
+/**
+ * THE READY SET (JOS-147) — every quest you are holding every required item for, right now.
+ *
+ * MEMBERSHIP IS THE PREDICATE, and nothing else. This is `hasEveryItem` over the quests the tab
+ * can see, so the set moves with your bags and with nothing else: looting the last item a quest
+ * needs ADDS it, a turn-in spends those items and REMOVES it (JOS-131 made a turn-in subtract
+ * rather than pin), and refarming the set brings it straight back. There is deliberately no
+ * "I marked this one ready" state to drift out of sync with the ledger, and no dismiss button:
+ * the only way off this list is to stop holding the items, which is what handing them in does.
+ *
+ * IT IGNORES THE TWO HIDE-BOXES, and that is not an oversight. "Hide completed" hides EXACTLY
+ * `hasEveryItem` (see above) — the same predicate this list is made of — so honouring it would
+ * empty the list every time the box is ticked, which is a control that can only break the
+ * feature. "Hide turned in" would drop a quest you have run before and have just refarmed to
+ * full, which is the single most likely row here on a Sky farmer's screen. Both boxes narrow
+ * "what is left to work on"; this list answers "what can I hand in", and the boxes are not drawn
+ * on the tab at all (like Ignored, it has no filter bar), so there is no visible control whose
+ * state is being disregarded.
+ *
+ * The ORDER is class then name — the same stable order the Ignored tab uses, via the shared
+ * comparator. It is not sorted into a walking route: `where` on a required item is where that
+ * item DROPS, not where the quest's giver stands, so this tab has no route to sort by and one
+ * would have to be invented (law 1).
+ *
+ * The caller passes the quests the user can see — i.e. NOT the ignored ones. A quest the user
+ * permanently hid must not come back through a side door; the Ignored tab is where that is undone.
+ */
+export function readyQuests(quests: readonly QuestProgress[]): QuestProgress[] {
+  return sortQuests(quests.filter(hasEveryItem), 'class')
 }

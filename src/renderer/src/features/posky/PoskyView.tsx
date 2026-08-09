@@ -120,17 +120,14 @@ interface QuestAnchor {
   nonce: number
 }
 
-// The scrolling body: one accordion per quest up to the page cap, then the "show more" button.
-function QuestList({
-  list,
-  sharedItems,
-  ambiguousNames,
-  anchor,
-  recordTurnIn,
-  undoTurnIn,
-  onOpenMob,
-  onOpenLoot
-}: {
+/**
+ * Everything it takes to draw a list of quest rows. One interface because the Quests tab and the
+ * Ready tab draw the SAME row (JOS-147's requirement) — the only thing that differs between them
+ * is which quests go in, so `quests` is a parameter and the rest is shared verbatim.
+ */
+interface QuestListProps {
+  /** the rows to draw, already filtered and ordered by the caller */
+  quests: QuestProgress[]
   list: QuestListState
   sharedItems: SharedItemsMap
   ambiguousNames: Set<string>
@@ -140,10 +137,23 @@ function QuestList({
   undoTurnIn: (key: string) => Promise<void>
   onOpenMob: (t: MobTarget) => void
   onOpenLoot?: (item: string) => void
-}): JSX.Element {
+}
+
+// The scrolling body: one accordion per quest up to the page cap, then the "show more" button.
+function QuestList({
+  quests,
+  list,
+  sharedItems,
+  ambiguousNames,
+  anchor,
+  recordTurnIn,
+  undoTurnIn,
+  onOpenMob,
+  onOpenLoot
+}: QuestListProps): JSX.Element {
   return (
     <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-      {list.filtered.slice(0, list.visibleCount).map((q) => (
+      {quests.slice(0, list.visibleCount).map((q) => (
         <QuestAccordion
           // The NONCE rides the key for the anchored quest alone: the accordion is uncontrolled
           // (each one opens and closes independently, and lifting that into one "which is open"
@@ -166,14 +176,79 @@ function QuestList({
           onOpenLoot={onOpenLoot}
         />
       ))}
-      {list.filtered.length > list.visibleCount && (
+      {quests.length > list.visibleCount && (
         <Box sx={{ textAlign: 'center', py: 1.5 }}>
           <Button variant="outlined" size="small" onClick={list.showMore}>
-            Show more ({list.filtered.length - list.visibleCount} more)
+            Show more ({quests.length - list.visibleCount} more)
           </Button>
         </Box>
       )}
     </Box>
+  )
+}
+
+/**
+ * The Ready tab (JOS-147): what you can hand in RIGHT NOW, in the order you would walk it if the
+ * data said where the givers stood (it does not - see questCompletion.readyQuests).
+ *
+ * Same rows as the main list, deliberately: this is the same quest, so it gets the same star, the
+ * same ignore button, the same item chips and the same expandable panel with the turn-in counter
+ * in it. A second, thinner row rendering would be a second thing to keep in step with the first.
+ *
+ * The set itself is `list.ready`, which no filter and neither hide-box can reach. The tab draws no
+ * filter bar for the same reason the Ignored tab draws none: there is nothing to narrow here, the
+ * list IS the answer.
+ */
+function ReadyList(props: QuestListProps): JSX.Element {
+  const n = props.quests.length
+  return (
+    <Box
+      data-testid="posky-ready"
+      sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+    >
+      {n === 0 ? (
+        <Typography color="text.secondary">
+          Nothing is ready to turn in - a quest lands here the moment you are holding every item it
+          needs, and leaves when you hand them over.
+        </Typography>
+      ) : (
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} data-testid="posky-ready-count">
+            {n} quest{n === 1 ? '' : 's'} you are holding every item for.
+          </Typography>
+          <QuestList {...props} />
+        </>
+      )}
+    </Box>
+  )
+}
+
+/**
+ * The three tabs, in the order the work happens: what you are farming, what you can hand in, what
+ * you told the app to forget. Each of the last two carries its own count, because the number IS
+ * the reason to look.
+ */
+function PoskyTabs({ list }: { list: QuestListState }): JSX.Element {
+  return (
+    <Tabs
+      value={list.tab}
+      onChange={(_e, v: TabKey) => list.setTab(v)}
+      sx={{ minHeight: 36, mb: -1, '& .MuiTab-root': { minHeight: 36, py: 0 } }}
+    >
+      <Tab value="quests" label="Quests" data-testid="posky-tab-quests" />
+      {/* "Ready" - the shortest true name for it, and the same word the row's own chip already
+          uses ("Ready to turn in"). Anything longer would be a sentence on a tab. */}
+      <Tab
+        value="ready"
+        label={list.ready.length ? `Ready (${list.ready.length})` : 'Ready'}
+        data-testid="posky-tab-ready"
+      />
+      <Tab
+        value="ignored"
+        label={list.ignored.length ? `Ignored (${list.ignored.length})` : 'Ignored'}
+        data-testid="posky-tab-ignored"
+      />
+    </Tabs>
   )
 }
 
@@ -267,19 +342,27 @@ export default function PoskyView({
   // Counts describe the list you are looking at, so ignored quests are not in them.
   const totalQuests = list.visible.length
 
+  // Everything a quest ROW needs except which quests to draw. Both tabs that draw rows pass the
+  // identical bundle, which is what "same row rendering" means in code rather than in prose.
+  const rows: Omit<QuestListProps, 'quests'> = {
+    list,
+    sharedItems,
+    ambiguousNames: ambiguousQuestNames,
+    anchor,
+    recordTurnIn,
+    undoTurnIn,
+    onOpenMob,
+    onOpenLoot
+  }
+
   return (
     <Stack spacing={2} sx={{ height: '100%', position: 'relative' }}>
       {burst != null && <Confetti key={burst} onDone={() => setBurst(null)} />}
-      <Tabs
-        value={list.tab}
-        onChange={(_e, v: TabKey) => list.setTab(v)}
-        sx={{ minHeight: 36, mb: -1, '& .MuiTab-root': { minHeight: 36, py: 0 } }}
-      >
-        <Tab value="quests" label="Quests" />
-        <Tab value="ignored" label={list.ignored.length ? `Ignored (${list.ignored.length})` : 'Ignored'} />
-      </Tabs>
+      <PoskyTabs list={list} />
       {list.tab === 'ignored' ? (
         <IgnoredList quests={list.ignored} onUnignore={list.questIgnored.toggle} />
+      ) : list.tab === 'ready' ? (
+        <ReadyList quests={list.ready} {...rows} />
       ) : (
         <>
           <QuestFilterBar
@@ -301,16 +384,7 @@ export default function PoskyView({
             filteredCount={list.filtered.length}
             countSource={countSource}
           />
-          <QuestList
-            list={list}
-            sharedItems={sharedItems}
-            ambiguousNames={ambiguousQuestNames}
-            anchor={anchor}
-            recordTurnIn={recordTurnIn}
-            undoTurnIn={undoTurnIn}
-            onOpenMob={onOpenMob}
-            onOpenLoot={onOpenLoot}
-          />
+          <QuestList quests={list.filtered} {...rows} />
         </>
       )}
 

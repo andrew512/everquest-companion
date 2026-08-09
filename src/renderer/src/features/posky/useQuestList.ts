@@ -21,11 +21,12 @@ import { facetOptions, filterByFacets, type FacetOptions } from './questFacets'
 // The two readings of "done" this tab offers, and the argument for keeping them apart (JOS-131 for
 // has-every-item-now, JOS-145 for has-ever-turned-in). Two lines of code, a page of reasoning, and
 // a node test — so they live in their own pure module.
-import { everTurnedIn, hasEveryItem } from './questCompletion'
+import { everTurnedIn, hasEveryItem, readyQuests } from './questCompletion'
 
 export type { SortKey }
 
-export type TabKey = 'quests' | 'ignored'
+/** Quests · Ready · Ignored. `ready` is JOS-147's turn-in list; its rule lives in questCompletion. */
+export type TabKey = 'quests' | 'ready' | 'ignored'
 
 // How many Accordions to render before the "show more" cap kicks in.
 const PAGE = 40
@@ -113,18 +114,22 @@ function useStoredFlag(key: string): [boolean, (v: boolean) => void] {
 /**
  * The Quests/Ignored split. Ignored quests are gone from the main list, its filters, its facet
  * options and its counts — they exist only under the Ignored tab, where the same button
- * un-ignores them.
+ * un-ignores them. JOS-147's Ready tab reads the SHOWN half too: ignoring a quest is the one flag
+ * that means "never show me this", so it holds on every tab that is not the Ignored tab itself.
  */
 function useVisibleQuests(
   quests: QuestProgress[],
   ignoredKeys: ReadonlySet<string>
-): [QuestProgress[], QuestProgress[]] {
+): [QuestProgress[], QuestProgress[], QuestProgress[]] {
   return useMemo(() => {
     const shown: QuestProgress[] = []
     const hidden: QuestProgress[] = []
     for (const q of quests) (ignoredKeys.has(q.key.toLowerCase()) ? hidden : shown).push(q)
     hidden.sort((a, b) => a.className.localeCompare(b.className) || a.name.localeCompare(b.name))
-    return [shown, hidden]
+    // The THIRD list, from the same one pass (JOS-147): the quests you are holding every item for.
+    // It is derived here, beside the split, because that is the code saying out loud what the tab
+    // depends on — the ignore flag and the item counts, and no filter state whatsoever.
+    return [shown, hidden, readyQuests(shown)]
   }, [quests, ignoredKeys])
 }
 
@@ -198,6 +203,15 @@ export interface QuestListState {
   visible: QuestProgress[]
   /** the ignored ones, class-then-name sorted, for the Ignored tab */
   ignored: QuestProgress[]
+  /**
+   * The Ready tab (JOS-147): the quests you are holding every required item for, right now.
+   *
+   * Derived from `visible` and from NOTHING ELSE — not the class filter, not the facets, not the
+   * search box, not the two hide-boxes. `questCompletion.readyQuests` states why at length; the
+   * short version is that "hide completed" is the same predicate, so obeying it could only empty
+   * the tab. None of those controls is drawn on this tab either.
+   */
+  ready: QuestProgress[]
   /** `visible` after the filters, the sort and the favorite pinning */
   filtered: QuestProgress[]
   selectedClasses: string[]
@@ -266,7 +280,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
   // keystroke never re-renders more than PAGE quests at once.
   const [visibleCount, setVisibleCount] = useState(PAGE)
 
-  const [visible, ignored] = useVisibleQuests(quests, questIgnored.keys)
+  const [visible, ignored, ready] = useVisibleQuests(quests, questIgnored.keys)
 
   // What the two facet pickers can offer. Derived from the VISIBLE quests, so an ignored quest
   // takes its island and its boss out of the pickers along with itself.
@@ -319,6 +333,7 @@ export function useQuestList(quests: QuestProgress[]): QuestListState {
     setTab,
     visible,
     ignored,
+    ready,
     filtered,
     selectedClasses,
     setSelectedClasses,
