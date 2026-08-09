@@ -125,6 +125,35 @@ function funnelLines(d: TriageAnalyticsData): string[] {
   return out
 }
 
+/**
+ * THE TWO SENTENCES THE MIX ABOVE CANNOT SAY (JOS-133), printed under it because both are about
+ * how a number in it should be READ rather than about its size:
+ *
+ *   * `mainErrorLogLines` is no longer the number of times something went wrong. The local error
+ *     log caps identical repeats (src/main/errorRepeat.ts) and counts the rest under
+ *     `suppressedErrorLines`, so the honest occurrence total is the SUM. Printed even when the
+ *     suppressed count is zero — "nothing was suppressed" is the fact that makes the written
+ *     number trustworthy, and it is only worth anything if it is always there to read.
+ *   * `imageFetchFailures` is counted but is NOT an error, so it is excluded from the release
+ *     health rate (`HEALTH_NON_ERROR_FIELDS`). It is right there in the mix, which is precisely
+ *     why the exclusion has to be stated: an operator reading a large number and a small error
+ *     rate on the same screen deserves to be told they are not the same question.
+ */
+function errorHonestyLines(h: TriageAnalyticsData['health']): string[] {
+  const n = (id: string): number => h.errors.find((r) => r.id === id)?.n ?? 0
+  const written = n('mainErrorLogLines')
+  const suppressed = n('suppressedErrorLines')
+  const images = n('imageFetchFailures')
+  const out = [
+    `  error log lines: ${String(written)} written · ${String(suppressed)} suppressed as repeats` +
+      ` · ${String(written + suppressed)} occurrences`
+  ]
+  if (images > 0) {
+    out.push(`  (imageFetchFailures is a handled condition, excluded from the release health rate)`)
+  }
+  return out
+}
+
 function healthLines(d: TriageAnalyticsData): string[] {
   const h = d.health
   return [
@@ -132,6 +161,7 @@ function healthLines(d: TriageAnalyticsData): string[] {
     'HEALTH',
     `  health rollups received: ${String(h.reports)}`,
     ...mixBlock(h.errors),
+    ...errorHonestyLines(h),
     '  update outcomes',
     ...h.update.map(
       (u) =>

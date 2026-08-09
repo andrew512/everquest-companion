@@ -65,6 +65,7 @@ import {
   TELEMETRY_VOICE_ENGINES,
   UUID_V4_RE,
   type EvFunnelStep,
+  type EvHealthCounters,
   type EvSessionEnd,
   type EvSessionHeartbeat,
   type EvUpdateOutcome,
@@ -294,6 +295,19 @@ const HEALTH_FIELDS = [
   'speechFailures'
 ] as const
 
+/**
+ * The fields JOS-133 added, which are OPTIONAL for the additive-field rule's reason (see
+ * `EvHealthCounters`): this validator also runs in the ingest Lambda, which is deployed by hand
+ * and therefore reads events from clients both newer AND older than itself. Required here, a
+ * client predating the field would fail the whole batch and be told 400 — which
+ * `telemetryPermanentRefusal` classes as permanent, so it would DROP every counter it holds.
+ *
+ * Absent and null both mean "this client does not measure it", exactly as they do for
+ * `linesParsed`. The field is then not copied across at all rather than defaulted to 0, which is
+ * what keeps `tests/telemetryContract.test.mts`'s round-trip assertion meaningful.
+ */
+const HEALTH_OPTIONAL_FIELDS = ['imageFetchFailures', 'suppressedErrorLines'] as const
+
 function vHealthCounters(o: Record<string, unknown>): Validated<TelemetryEvent> {
   const counts: number[] = []
   for (const field of HEALTH_FIELDS) {
@@ -301,17 +315,22 @@ function vHealthCounters(o: Record<string, unknown>): Validated<TelemetryEvent> 
     if (!n.ok) return n
     counts.push(n.value)
   }
-  return {
-    ok: true,
-    value: {
-      t: 'healthCounters',
-      rendererCrashes: counts[0],
-      mainErrorLogLines: counts[1],
-      parserStalls: counts[2],
-      presenceRestarts: counts[3],
-      speechFailures: counts[4]
-    }
+  const value: EvHealthCounters = {
+    t: 'healthCounters',
+    rendererCrashes: counts[0],
+    mainErrorLogLines: counts[1],
+    parserStalls: counts[2],
+    presenceRestarts: counts[3],
+    speechFailures: counts[4]
   }
+  for (const field of HEALTH_OPTIONAL_FIELDS) {
+    const raw = o[field]
+    if (raw === undefined || raw === null) continue
+    const n = whole(raw, field, MAX_COUNT)
+    if (!n.ok) return n
+    value[field] = n.value
+  }
+  return { ok: true, value }
 }
 
 function vUpdateOutcome(o: Record<string, unknown>): Validated<TelemetryEvent> {

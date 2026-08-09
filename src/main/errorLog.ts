@@ -6,8 +6,11 @@ import { join } from 'path'
 // close the cycle errorLog → collector → errorLog. `health.ts` imports nothing at all;
 // `errorReports.ts` imports only pure `shared/` code and its own sibling ring. See the headers
 // of both for the full argument.
-import { noteErrorLogLine } from './telemetry/health'
+import { noteErrorLogLine, noteSuppressedErrorLine } from './telemetry/health'
 import { noteError } from './telemetry/errorReports'
+// A THIRD LEAF, same argument (JOS-133): `errorRepeat.ts` imports nothing at all, so the repeat
+// cap cannot close a cycle on the error path. Its header carries the whole rule.
+import { errorRepeat } from './errorRepeat'
 
 /**
  * Tiny append-only error logger. Every captured error (main-process crashes,
@@ -72,11 +75,14 @@ function replacer(): (key: string, value: unknown) => unknown {
  * Log an error to the file + console. `source` is a short tag (e.g.
  * `main:uncaughtException`, `renderer:onerror`, `renderer:console`) so lines are
  * greppable by origin. Never throws — logging must not itself crash the app.
+ *
+ * REPEATS ARE CAPPED (JOS-133): the first `MAX_IDENTICAL_ERROR_LINES` copies of one identical
+ * line are written as always, then one notice replaces the next, and everything after it is a
+ * count on the health rollup rather than a line. See `./errorRepeat.ts`.
  */
 export function logError(source: string, payload: unknown): void {
   const ts = new Date().toISOString()
   const body = stringifyPayload(payload)
-  const line = `${ts} ${PREFIX} [${source}] ${body}\n`
 
   // THE ERROR REPORT (JOS-100), built from the STRUCTURED payload rather than from `body` — the
   // frames and the code are still objects here and are strings by the next line. It is taken
@@ -87,10 +93,32 @@ export function logError(source: string, payload: unknown): void {
   // this function.
   noteError(source, payload)
 
+  // THE REPEAT CAP (JOS-133), between the report and the sinks, and in that order for a reason:
+  // the ERROR REPORT above is unaffected — it has its own per-fingerprint dedupe with an honest
+  // `count` — so capping what the disk holds never costs the fleet a single observation. What is
+  // capped is the two SINKS, together: a dev watching stdout is reading the same flood a reader
+  // of errors.log is, and one rule for both is what keeps them describing the same file.
+  //
+  // A suppressed occurrence is COUNTED (`suppressedErrorLines`), so
+  // `mainErrorLogLines + suppressedErrorLines` is still exactly how many times this happened.
+  // `errorRepeat` imports nothing and cannot throw; see its header for the whole rule.
+  const repeat = errorRepeat(source, body)
+  if (repeat.suppressed) noteSuppressedErrorLine()
+  if (!repeat.write && repeat.notice === null) return
+  // The notice names its own source, so it is written WITHOUT the `[source]` tag the payload
+  // lines carry — the tag would say the same thing twice on the one line that already explains
+  // itself. Everything else about the line (timestamp, prefix, grep-ability) is identical.
+  const line = repeat.write ? `${ts} ${PREFIX} [${source}] ${body}\n` : `${ts} ${PREFIX} ${repeat.notice}\n`
+
   // (b) console.error first — cheapest, always reaches dev stdout even if the
   // file write fails (e.g. app not ready yet).
-  // eslint-disable-next-line no-console
-  console.error(PREFIX, `[${source}]`, body)
+  if (repeat.write) {
+    // eslint-disable-next-line no-console
+    console.error(PREFIX, `[${source}]`, body)
+  } else {
+    // eslint-disable-next-line no-console
+    console.error(PREFIX, repeat.notice)
+  }
 
   // (a) durable file, with lazy truncation-based rotation.
   try {
@@ -107,7 +135,8 @@ export function logError(source: string, payload: unknown): void {
     // `mainErrorLogLines` is meant to be readable as "lines in this fleet's error logs", so a
     // write that threw must not be counted as one. `noteErrorLogLine` is a plain integer add in a
     // module that imports nothing (telemetry/health.ts says why), so it cannot throw and cannot
-    // re-enter this function.
+    // re-enter this function. The one-off repeat NOTICE is counted too, and correctly: it is a
+    // line that really was written, and there is at most one per distinct failure per session.
     noteErrorLogLine()
   } catch (err) {
     // Last resort: don't let a logging failure become a new uncaught error.
