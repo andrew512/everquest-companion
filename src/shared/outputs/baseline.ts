@@ -1,16 +1,26 @@
 // ============================================================================
-// outputs/baseline.ts — WHEN a dump was generated, WHAT it covered, and what "since" means.
+// outputs/baseline.ts — WHEN a dump was generated, and WHAT it covered. RECORDED, NOT A RESET.
 // ============================================================================
 //
-// JOS-128. A 0.14.0 user deleted an item in game, hit Reload Inventory, and the Companion still
-// said they had it. The mechanism was not double-counting: it was that NOTHING ever reset. The
-// log-derived count is "everything this character has ever looted", and no reload could lower
-// it, so `max(log, dump)` re-asserted the deleted item every time.
+// JOS-128 built this file to answer "since when", because that ticket made a dump load the
+// BASELINE: it reset the model to exactly what the dump said and let log-derived loot accumulate
+// from the generation instant forward.
 //
-// OWNER DESIGN (2026-08-09): an inventory outputfile load is the BASELINE. It RESETS the model
-// to exactly what the dump says, and log-derived inventory events accumulate FROM THAT POINT
-// FORWARD. This file owns the one question that makes "that point" knowable, and it is pure:
-// no fs, no Electron, so tests/inventoryBaseline.test.mts drives it under plain node.
+// JOS-141 TOOK THE RESET BACK, and it is the owner's explicit ruling after field-testing Plane of
+// Sky on 2026-08-09. A dump only covers WHAT WAS OPEN WHEN IT WAS GENERATED — the bank only if the
+// bank window was up, the hoard likewise — and the file never says which. So resetting to the dump
+// deleted banked Sky items the player still owned, every reload, which is a worse and quieter
+// failure than the one JOS-128 set out to fix. The combination rule is FULLY ADDITIVE again
+// (features/inventory/reconcile.ts owns it): the log accumulates, a dump only ever applies ON TOP,
+// and nothing a reload does can lower a count. The accepted cost is stated there, not hidden.
+//
+// SO WHAT IS THIS FILE FOR NOW? Everything except the reset. The generation instant and the
+// coverage set are still RECORDED on `ProgressState.inventorySource` and still worth knowing: they
+// are what a freshness line reads, what a storage-scoped rule would need if the owner ever revives
+// one, and the honest answer to "how old is this dump". What is GONE is the `isSinceBaseline`
+// predicate and every windowed fold that consumed it — an instant nobody compares against is not a
+// reset. Still pure (no fs, no Electron), so tests/inventoryBaseline.test.mts drives it under
+// plain node.
 //
 // WHERE THE GENERATION INSTANT COMES FROM — two sources, measured, in this order:
 //
@@ -25,27 +35,23 @@
 //   2. THE FILE'S MTIME, as fallback — already carried end to end as `inventorySource.loadedAt`.
 //      Measured on the owner's machine (2026-08-09) against the log line for the SAME dump:
 //      mtime lands 767 ms after the log stamp, same second, same wall clock. Its failure modes
-//      are stated rather than hidden, because a wrong baseline is silent:
+//      are stated rather than hidden, because a recorded instant that is wrong is silent:
 //        * A dump COPIED between machines, restored from a backup, or touched by cloud sync
-//          carries the copy time. That baseline is too LATE, so real loot after the true
-//          generation is wrongly ignored and the model under-counts.
+//          carries the copy time, so the recorded instant is too LATE.
 //        * A hand-edited dump gets the same treatment.
 //        * mtime is an OS wall clock; a loot `ts` is parsed from a log timestamp that carries
 //          no zone, so a DST boundary can slide the two an hour apart in either direction.
-//      A fallback baseline is still enormously better than no baseline: without one there is no
-//      reset at all, which is the bug.
+//      Under JOS-141 none of these can cost the user an item, because nothing subtracts on the
+//      strength of this instant any more. They are the reason it is reported WITH its source
+//      (`generatedFrom`) rather than presented as a fact.
 //
 //   3. THE FILE'S CONTENT: there is no third source. The dump is a header row (Location, Name,
 //      ID, Count, Slots), then rows, then the KeyRing table. It carries no date anywhere,
 //      verified against the real 295-row dump.
 //
-// SECOND RESOLUTION, AND THE `>` THAT FOLLOWS FROM IT. EQ log timestamps have one-second
-// resolution, so both sources are floored to the second and an event counts as "since the
-// baseline" only when it is STRICTLY LATER. The tie is broken toward the dump on purpose: an
-// item looted in the same second the dump was written is already IN the dump, and counting it
-// again re-creates the over-count this ticket is about. The cost is the mirror case — an item
-// looted in that same second but just AFTER the write is missed until the next reload, one
-// item for at most one second, and the next dump states the truth.
+// SECOND RESOLUTION. EQ log timestamps have one-second resolution, so both sources are floored to
+// the second: an instant carried at higher precision than either clock has would be a false claim,
+// and it lets the two sources land on the same number for the same dump (measured above).
 
 import type { ContainerKind, InventoryDump } from './inventory'
 
@@ -70,15 +76,19 @@ export interface InventoryBaseline {
  * What we know about the dump the persisted held counts came from — `ProgressState.inventorySource`.
  *
  * Everything past `loadedAt` is ADDITIVE and OPTIONAL (the `exaltPlans` precedent): a store
- * written before JOS-128 has none of it, every reader defaults, and a missing baseline simply
- * means the accumulate rule cannot apply until the next reload writes one. No schema bump and
- * no migration step.
+ * written before JOS-128 has none of it and every reader defaults. No schema bump and no
+ * migration step. Since JOS-141 nothing in the counting path READS these fields — they are a
+ * record of the dump we loaded, kept because they are true and cheap, not because a rule needs
+ * them.
  */
 export interface InventorySource {
   path: string
   /** The file's mtime, ISO. What the freshness line renders. */
   loadedAt: string
-  /** Epoch ms the dump was GENERATED, floored to the second. Absent on a pre-JOS-128 store. */
+  /**
+   * Epoch ms the dump was GENERATED, floored to the second. Absent on a pre-JOS-128 store.
+   * RECORDED ONLY (JOS-141): no fold is narrowed by it.
+   */
   generatedAt?: number
   /** Which of the two sources answered. Absent whenever `generatedAt` is. */
   generatedFrom?: InventoryBaselineSource
@@ -124,24 +134,20 @@ export function baseName(path: string): string {
   return cut === -1 ? path : path.slice(cut + 1)
 }
 
-/**
- * Did this event happen AFTER the baseline, i.e. does it accumulate on top of the dump?
- *
- * STRICTLY later, by the second (see the header). `baselineTs` undefined means no baseline is
- * known — a store written before JOS-128, or a dump whose mtime would not parse — and then
- * nothing accumulates, because "since when" has no answer and inventing one would be a guess.
- */
-export function isSinceBaseline(ts: number, baselineTs: number | undefined): boolean {
-  return baselineTs !== undefined && floorToSecond(ts) > baselineTs
-}
-
-// ----- WHAT the baseline covers (the other half of "reset the model") -----
+// ----- WHAT the dump covers, AND WHY THE RESET HAD TO GO -----
 //
-// A baseline is an instant AND a scope. The JOS-132 spike found that the inventory dump is an
+// A dump is an instant AND a scope. The JOS-132 spike found that the inventory dump is an
 // everything-dump only in principle: some storages are written only when the game happens to
 // have them loaded (the depot when it has been opened, the hoard when its window is), and the
 // file says nothing about the difference. So a storage absent from a dump is UNKNOWN, not
 // empty, and a viewer that renders absence as "you have none there" is inventing an answer.
+//
+// THIS IS EXACTLY WHAT SANK THE RESET (JOS-141). A reset reads every absence as a zero, so a dump
+// generated with the bank closed told the model the player's banked Sky items were gone. Coverage
+// was recorded and could in principle have scoped the reset per storage; the owner was offered
+// that and ruled against it, because a rule that resets some storages and not others still turns
+// on a distinction the file never states. Additive needs no such distinction: a dump that says
+// nothing about the bank simply adds nothing there.
 //
 // EVIDENCE IS THE ROW, NOT THE ITEM. A bank slot holding `Empty` still proves the bank was
 // dumped; an item is not required and would be the wrong test (an empty bank is a real state

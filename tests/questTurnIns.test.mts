@@ -11,13 +11,17 @@
 // What this suite pins, all of it against the REAL pure production code:
 //   1. THE LEDGER (shared/questTurnIns.ts): the log's turn-ins merged with the persisted ones by
 //      INSTANT, so re-detecting a stored turn-in is one event and not two; a pre-JOS-131
-//      `completedQuests` entry floors the count at one and never counts as since-the-dump.
+//      `completedQuests` entry floors the count at one.
 //   2. THE SUBTRACTION (features/inventory/reconcile.ts): N turn-ins eat N of everything the
 //      quest required, the quest reads 0/N afterwards, and the copy you refarm afterwards SHOWS.
-//   3. THE WINDOW (JOS-128's baseline, applied to consumption): a dump already reflects the
-//      turn-ins made before it was written, so under a dump-reading count source only the
-//      turn-ins since the baseline are still owed. This is the case that decides whether the
-//      refarm is visible at all under 'inventory'/'both'.
+//   3. THE WINDOW, RE-DECIDED (JOS-141). JOS-131 windowed consumption by TIME: under a
+//      dump-reading count source it subtracted only the turn-ins made after the dump was
+//      generated, because JOS-128's reset had already taken the earlier ones out of the base.
+//      The owner reverted that reset on 2026-08-09 (a dump only covers what was open when it was
+//      written, so resetting to it ate banked Sky items), so the window is now by SOURCE: the LOG
+//      is a record of what you ever LOOTED and still contains everything a turn-in ate, so it
+//      owes all of them; a DUMP is an observation of what you are HOLDING and already has them
+//      taken out, so it owes none. No generation instant is consulted anywhere.
 //   4. THE FILTER (features/posky/questCompletion.ts): "hide completed" means has-every-item-now,
 //      never has-ever-turned-in.
 //   5. THE BADGE's copy, including the count from the second turn-in on.
@@ -103,26 +107,20 @@ test('a SECOND turn-in of a quest already stored counts twice', () => {
   assert.deepEqual(resolved.instants[CLAW_KEY], [1000, 2000])
 })
 
-test('a pre-JOS-131 store floors at one turn-in, and contributes NOTHING to the since count', () => {
+test('a pre-JOS-131 store floors at one turn-in', () => {
   const legacy = progress({ completedQuests: [CLAW_KEY] })
-  const resolved = resolveTurnIns(legacy, {}, 5000)
-  assert.equal(resolved.all[CLAW_KEY], 1, 'the old flag is one real, undated turn-in')
-  assert.equal(
-    resolved.since?.[CLAW_KEY],
-    0,
-    'undated cannot be placed after a baseline, and inventing a date would be law 1 all over'
-  )
+  assert.equal(resolveTurnIns(legacy, {}).all[CLAW_KEY], 1, 'the old flag is one real, undated turn-in')
 })
 
-test('since-the-baseline counts only the strictly later instants (JOS-128 rule, one definition)', () => {
+test('the ledger answers ONE count, all time — there is no since-the-dump count (JOS-141)', () => {
   const stored = progress({ questTurnIns: { [CLAW_KEY]: [4000, 5000, 6000] } })
-  const resolved = resolveTurnIns(stored, {}, 5000)
+  const resolved = resolveTurnIns(stored, {})
   assert.equal(resolved.all[CLAW_KEY], 3)
-  assert.equal(resolved.since?.[CLAW_KEY], 1, 'the tie at the baseline goes to the dump')
+  assert.deepEqual(Object.keys(resolved).sort(), ['all', 'instants'])
   assert.equal(
-    resolveTurnIns(stored, {}).since,
-    undefined,
-    'no baseline means no window at all, never a window starting at zero'
+    resolveTurnIns.length,
+    2,
+    'and no baseline instant is passed in: the window is by source now, not by time'
   )
 })
 
@@ -205,58 +203,64 @@ test('consumption never drives a count negative', () => {
   assert.equal(net['sphinx claw'], 0)
 })
 
-test('THE WINDOW: a dump-reading source does NOT re-subtract a turn-in the dump already saw', () => {
-  // The story, in order: two claws looted and handed in at t=1000. `/outputfile inventory` at
-  // t=5000 — the dump does not list them, because they are gone. One claw refarmed at t=6000.
-  const BASELINE = 5000
+test('THE WINDOW IS BY SOURCE: a DUMP already reflects every turn-in, so it is never discounted', () => {
+  // The story, in order: two claws looted and handed in. `/outputfile inventory` afterwards, with
+  // the bank open this time, and the dump lists the ONE claw you refarmed since. Subtracting the
+  // turn-in from that observation would be double-subtraction: the two it ate are already not in
+  // the file, and the answer would be zero for a claw sitting in the player's bag.
   const shared = {
     log: { 'sphinx claw': 3, 'wind rune geza': 1 },
-    logSince: { 'sphinx claw': 1 },
-    inv: {},
+    inv: { 'sphinx claw': 1 },
     lootNames: { 'sphinx claw': 'Sphinx Claw' },
     quests: QUESTS,
-    turnIns: { [CLAW_KEY]: 1 },
-    turnInsSince: { [CLAW_KEY]: 0 }
+    turnIns: { [CLAW_KEY]: 1 }
   }
-  for (const countSource of ['inventory', 'both'] as const) {
+  for (const countSource of ['inventory', 'both', 'log'] as const) {
     const { net } = reconcile({ ...shared, countSource })
-    assert.equal(
-      net['sphinx claw'],
-      1,
-      `${countSource}: the refarmed claw survives — subtracting the pre-dump turn-in again would eat it`
-    )
+    assert.equal(net['sphinx claw'], 1, `${countSource}: the refarmed claw shows`)
   }
-  // The all-time log source owes all of them, because its base is all-time too. Same ledger,
-  // opposite window, and both add up.
-  const { net } = reconcile({ ...shared, countSource: 'log' })
-  assert.equal(net['sphinx claw'], 1, 'log: 3 ever looted minus the 2 handed in')
-  assert.equal(BASELINE, 5000)
+  // The row says what it actually cost, and under the dump-only source that is nothing.
+  const rows = reconcile({ ...shared, countSource: 'inventory' }).rows
+  const claw = rows.find((r) => r.key === 'sphinx claw')
+  assert.ok(claw)
+  assert.deepEqual([claw.base, claw.consumed, claw.net], [1, 0, 1])
+  assert.deepEqual(claw.consumedBy, [], 'nothing was taken off this row, so nothing is blamed for it')
 })
 
-test('a turn-in made SINCE the dump is still subtracted under a dump-reading source', () => {
-  const { net } = reconcile({
+test("…and a DUMP is a floor under 'both' that the log's turn-ins cannot dig through", () => {
+  // The dump saw four claws; the log only ever saw two of them looted, and a turn-in ate two. A
+  // max-then-subtract rule would answer 2 and delete two claws the game itself just listed.
+  const { net, rows } = reconcile({
     log: { 'sphinx claw': 2 },
-    logSince: { 'sphinx claw': 2 },
-    inv: {},
-    lootNames: {},
-    countSource: 'inventory',
-    quests: QUESTS,
-    turnIns: { [CLAW_KEY]: 1 },
-    turnInsSince: { [CLAW_KEY]: 1 }
-  })
-  assert.equal(net['sphinx claw'], 0, 'looted after the dump, handed in after the dump')
-})
-
-test('with no baseline at all, nothing is windowed and the all-time counts apply', () => {
-  const { net } = reconcile({
-    log: { 'sphinx claw': 2 },
-    inv: { 'sphinx claw': 2 },
+    inv: { 'sphinx claw': 4 },
     lootNames: {},
     countSource: 'both',
     quests: QUESTS,
     turnIns: { [CLAW_KEY]: 1 }
   })
-  assert.equal(net['sphinx claw'], 0, 'pre-JOS-128 behaviour, unchanged by this ticket')
+  assert.equal(net['sphinx claw'], 4)
+  const claw = rows.find((r) => r.key === 'sphinx claw')
+  assert.ok(claw)
+  assert.equal(claw.consumed, 0, 'the dump answered, so the turn-in cost this row nothing')
+})
+
+test('the combined count is MONOTONE in your own loot — one more claw never lowers it', () => {
+  const base = {
+    inv: { 'sphinx claw': 5 },
+    lootNames: {},
+    countSource: 'both' as const,
+    quests: QUESTS,
+    turnIns: { [CLAW_KEY]: 1 }
+  }
+  // This is why the log witness is discounted BEFORE the maximum rather than after: with
+  // max-then-subtract, the answer here walks 5, 5, then 3 as the log passes the dump.
+  const seen = [2, 4, 5, 6, 8].map(
+    (looted) => reconcile({ ...base, log: { 'sphinx claw': looted } }).net['sphinx claw'] ?? 0
+  )
+  assert.deepEqual(seen, [5, 5, 5, 5, 6])
+  for (let i = 1; i < seen.length; i++) {
+    assert.ok(seen[i] >= seen[i - 1], 'a count that falls when you loot something is indefensible')
+  }
 })
 
 // =============================================================================

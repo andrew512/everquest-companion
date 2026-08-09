@@ -235,7 +235,7 @@ interface HeldItems {
 }
 
 /**
- * Everything derived from the loot ledger plus the loaded dump — the four folds and the
+ * Everything derived from the loot ledger plus the loaded dump — the three folds and the
  * reconcile, kept together because they are one derivation and split out of `useProgress`
  * because that hook was at its factoring ceiling.
  *
@@ -245,10 +245,11 @@ interface HeldItems {
  * downstream (reconcile) operates on these held counts, so excluding sold there also keeps it
  * from ever subtracting an item that was never held.
  *
- * THE ACCUMULATE HALF (JOS-128) is `logSince`: the same fold, narrowed to loot that happened
- * AFTER the loaded dump was generated. `generatedAt` is written by main when it loads the dump
- * (the log's own `Outputfile Complete:` receipt, else the file's mtime); undefined means no
- * baseline is known, and reconcile then keeps its pre-JOS-128 behavior rather than guessing one.
+ * NOTHING IS WINDOWED BY THE DUMP ANY MORE (JOS-141). JOS-128 folded a SECOND held-count map here,
+ * narrowed to loot after `inventorySource.generatedAt`, because a dump load reset the model and
+ * the log accumulated from that instant. The owner reverted that after field-testing: a dump only
+ * covers what was open when it was written, so the reset was eating banked Sky items. The fold is
+ * the all-time one again, and the combination rule (reconcile.ts) is fully additive.
  */
 function useHeldItems(
   lootHistory: LootEvent[],
@@ -257,11 +258,6 @@ function useHeldItems(
   turnIns: QuestTurnIns
 ): HeldItems {
   const logCounts = useMemo(() => computeHeldCounts(lootHistory), [lootHistory])
-  const baselineTs = progress?.inventorySource?.generatedAt
-  const logSince = useMemo(
-    () => (baselineTs === undefined ? undefined : computeHeldCounts(lootHistory, baselineTs)),
-    [lootHistory, baselineTs]
-  )
   const lootNames = useMemo(() => deriveLootNames(lootHistory), [lootHistory])
   // Per-item drop recency, same counting key as the held counts — the whole plumbing the
   // "most recent drop" sort needs, folded from the loot history that is already here.
@@ -273,14 +269,12 @@ function useHeldItems(
       reconcile({
         log: logCounts,
         inv: progress?.inventory ?? {},
-        ...(logSince ? { logSince } : {}),
         lootNames,
         countSource,
         turnIns: turnIns.all,
-        ...(turnIns.since ? { turnInsSince: turnIns.since } : {}),
         quests: posky.quests
       }),
-    [logCounts, logSince, lootNames, progress, countSource, turnIns]
+    [logCounts, lootNames, progress, countSource, turnIns]
   )
   return { net, inventoryRows, lastLootedAt }
 }
@@ -331,12 +325,10 @@ function useTurnInLedger(
     () => countTurnIns(turnInsRaw ?? [], posky.quests),
     [turnInsRaw]
   )
-  // The log's turn-ins merged with the persisted ones, plus the two counts the rest of the tab
-  // reads: all time, and since the loaded dump was generated.
-  const turnIns = useMemo(
-    () => resolveTurnIns(progress, detected, progress?.inventorySource?.generatedAt),
-    [progress, detected]
-  )
+  // The log's turn-ins merged with the persisted ones, as the all-time count the rest of the tab
+  // reads. No since-the-dump count any more (JOS-141): consumption is windowed by SOURCE rather
+  // than by instant now, and reconcile.ts argues why.
+  const turnIns = useMemo(() => resolveTurnIns(progress, detected), [progress, detected])
   // The log's share of each count, for the "can this be undone" question (see UseProgress).
   const logCounts = useMemo<Record<string, number>>(() => {
     const out: Record<string, number> = {}
@@ -375,7 +367,8 @@ function useTurnInLedger(
   }, [turnInsRaw, progress, turnIns, setProgress])
 
   /** One more turn-in, dated NOW. `Date.now()` is the honest instant for a statement the user is
-   *  making right now, and it is what lets a manual turn-in sit on the right side of a dump. */
+   *  making right now, and dating it is what keeps the ledger a list of events rather than a tally
+   *  (an instant is what dedupes a detected turn-in against the stored one). */
   const recordTurnIn = useCallback(
     async (key: string): Promise<void> => {
       setProgress(

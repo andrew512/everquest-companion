@@ -60,11 +60,18 @@ export function findInventoryFile(characterName?: string, server?: string): stri
  * Exaltations tab and the freshness line are saying. Byte-identical by construction:
  * `heldCountsFromDump` is exactly what `inventoryHeldCounts` applies to the same parsed dump.
  *
- * THE BASELINE (JOS-128) is resolved here, at the one place a dump becomes the model, and it is
- * persisted beside the counts so the renderer never has to re-derive "since when". `writtenAt`
- * is INJECTED rather than imported: the log's export receipts live in a module behind the
- * pipeline, and this file is the fs/parse layer that tests drive without one. Omit it and the
- * baseline falls back to mtime, which is the same answer a log with no receipt gives.
+ * THE GENERATION INSTANT (JOS-128) is resolved here, at the one place a dump becomes the model,
+ * and persisted beside the counts. `writtenAt` is INJECTED rather than imported: the log's export
+ * receipts live in a module behind the pipeline, and this file is the fs/parse layer that tests
+ * drive without one. Omit it and it falls back to mtime, which is the same answer a log with no
+ * receipt gives.
+ *
+ * IT IS A RECORD, NOT A RESET (JOS-141). The instant used to be the point the held-count model
+ * reset to and accumulated from; the owner reverted that on 2026-08-09, because a dump only
+ * covers what was open when it was written and the reset was eating banked Sky items. Nothing in
+ * the counting path reads `generatedAt` or `storagesCovered` any more (the combination rule is
+ * renderer/features/inventory/reconcile.ts, and it is fully additive). They are still written
+ * because they are true, cheap, and the honest answer to how old this dump is.
  */
 export function loadInventory(
   characterName?: string,
@@ -78,8 +85,9 @@ export function loadInventory(
     path: loaded.path,
     loadedAt: loaded.loadedAt,
     ...(baseline ? { generatedAt: baseline.ts, generatedFrom: baseline.source } : {}),
-    // A baseline is an instant AND a scope: which storages this dump actually spoke about
-    // (JOS-128, on the JOS-132 spike's finding that some are written only conditionally).
+    // A dump is an instant AND a scope: which storages it actually spoke about (JOS-128, on the
+    // JOS-132 spike's finding that some are written only conditionally — which is the evidence
+    // that later sank the reset, JOS-141).
     storagesCovered: storagesCoveredBy(loaded.dump)
   }
   return {
