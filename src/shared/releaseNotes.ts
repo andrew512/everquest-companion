@@ -125,6 +125,61 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.17.0',
+    date: '2026-08-09',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Base difficulty is a real clear now. Killing a boss in a base instance greens its D0 rung like any other difficulty, and killing one out in the open world - where there is no lockout to take - greens nothing and no longer reads as a D0 you already spent.'
+      },
+      {
+        kind: 'changed',
+        text: 'The raid card ends in its ladder: the Locked line under it is gone, resting on a green rung tells you the day that clear landed, and the corner chip says the tier and nothing else.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The raid-kill celebration card names the kill you just made: the difficulty of the instance that boss died in, and which instance it was, instead of the highest difficulty you have ever beaten it at and the zone off the roster. Clear a boss at d1 on Sunday and the card says d1, however many times you beat it at d4. The boss cards still badge your best.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Drilled into your own damage, the total above the bars answers the pet setting the moment you change it. Fold your pet into your damage and the line covers you both; move it out and the line is yours alone. It used to keep the combined number until you picked another fight, so the figure at the top described one thing while the rows under it described another.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Monk strikes get a bar of their own instead of disappearing into Melee. Tiger Claw, Eagle Strike, Dragon Punch and Tail Rake all land as a plain strike, and the game names the one you use only once, at the level-up - so a log that started after that line lumped every strike in with your weapon swings forever. They now read Strike on their own row, and still carry the real ability name whenever your log did catch that line.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A spell you cast and a weapon proc that fires the same effect stop sharing one row. Your casts keep the spell name; the firings that arrive with no casting line of yours get their own row, marked proc - so a cleric whose weapon procs Banish Undead can read the proc rate straight off the meter instead of putting the spell away for a fight to measure it. Casting the same spell over and over no longer hides every proc behind it either, and a cast that fizzled or was interrupted for good stops claiming the next proc as its own.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Two bard songs the wiki words wrongly now answer to what the game actually prints: Sionachie\'s Dreams lands on your timers and offers its alerts, and the level-39 charm-song page the wiki calls Solon\'s Bravura is known by the name your log sings, Solon\'s Bewitching Bravura. Both hold like the mez they are - and a new per-song mez-break alert can name exactly which song just shattered.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Searching the Loot page now finds items you own but never looted - anything your inventory export knows about turns up by name, spelled the way the game spells it, and its page states how many you hold beside how many times you looted it. The Loot page and the Plane of Sky view can no longer disagree about whether you have an item.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Restart the app with a buff or debuff overlay open and it comes back holding what is actually running. A long hold that survived the restart - a charm, an Ensnare, anything still ticking - used to appear in the app and never in the floating window, which sat on whatever it happened to catch while the log was still being read. Both windows now refill the moment that read finishes, and no spell is announced as dropped just because the window asked again.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Overlay auto-hide and the cursor ring keep working for a whole session on machines where they used to go quietly dead a second after launch. The little watcher behind them asked Windows a process question that some machines - ones with damaged performance counters, or security software that blocks process listings - answer wrongly for programs that are plainly running, and it read that wrong answer as its cue to shut down. It now asks the system directly, so the overlays hide when you leave the game and the ring only ever draws over it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Forty-seven community sound packs are back in the browser. The safety check on pack sources was stricter than the real world: one longtime creator\'s account name and two packs\' plain spelling of their folder were being refused as unsafe, so their packs silently never appeared. The check now accepts what actually exists while refusing everything it was built to refuse.'
+      }
+    ]
+  },
+  {
     version: '0.16.0',
     date: '2026-08-09',
     entries: [
@@ -134,12 +189,8 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, all five difficulties count the same, and resting on a green rung tells you the day that clear landed. The card ends in the ladder - the chips are the whole answer now - and the Bosses view remembers which tab you left it on.',
+        text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, the base rung outlines instead of filling when the log cannot name it, and the Bosses view remembers which tab you left it on.',
         fromReport: true
-      },
-      {
-        kind: 'fixed',
-        text: 'Base difficulty is a real clear now. Killing a boss in a base instance greens its D0 rung like any other difficulty, and killing one out in the open world - where there is no lockout to take - greens nothing and no longer reads as a D0 you already spent.'
       },
       {
         kind: 'fixed',
@@ -174,43 +225,6 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'changed',
         text: 'The meter overlays put the total where the numbers live: the all figure sits on the You row inside the panel, and the title bar spends its room on the fight name - ten more characters of mob before anything truncates.'
-      },
-      {
-        kind: 'fixed',
-        text: 'Drilled into your own damage, the total above the bars answers the pet setting the moment you change it. Fold your pet into your damage and the line covers you both; move it out and the line is yours alone. It used to keep the combined number until you picked another fight, so the figure at the top described one thing while the rows under it described another.'
-      },
-      {
-        kind: 'fixed',
-        text: 'Monk strikes get a bar of their own instead of disappearing into Melee. Tiger Claw, Eagle Strike, Dragon Punch and Tail Rake all land as a plain strike, and the game names the one you use only once, at the level-up - so a log that started after that line lumped every strike in with your weapon swings forever. They now read Strike on their own row, and still carry the real ability name whenever your log did catch that line.',
-        fromReport: true
-      },
-      {
-        kind: 'fixed',
-        text: 'The raid-kill celebration card names the kill you just made: the difficulty of the instance that boss died in, and which instance it was, instead of the highest difficulty you have ever beaten it at and the zone off the roster. Clear a boss at d1 on Sunday and the card says d1, however many times you beat it at d4. The boss cards still badge your best.',
-        fromReport: true
-      },
-      {
-        kind: 'fixed',
-        text: 'Overlay auto-hide and the cursor ring keep working for a whole session on machines where they used to go quietly dead a second after launch. The little watcher behind them asked Windows a process question that some machines - ones with damaged performance counters, or security software that blocks process listings - answer wrongly for programs that are plainly running, and it read that wrong answer as its cue to shut down. It now asks the system directly, so the overlays hide when you leave the game and the ring only ever draws over it.'
-      },
-      {
-        kind: 'fixed',
-        text: 'Searching the Loot page now finds items you own but never looted - anything your inventory export knows about turns up by name, spelled the way the game spells it, and its page states how many you hold beside how many times you looted it. The Loot page and the Plane of Sky view can no longer disagree about whether you have an item.',
-        fromReport: true
-      },
-      {
-        kind: 'fixed',
-        text: 'Two bard songs the wiki words wrongly now answer to what the game actually prints: Sionachie\'s Dreams lands on your timers and offers its alerts, and the level-39 charm-song page the wiki calls Solon\'s Bravura is known by the name your log sings, Solon\'s Bewitching Bravura. Both hold like the mez they are - and a new per-song mez-break alert can name exactly which song just shattered.',
-        fromReport: true
-      },
-      {
-        kind: 'fixed',
-        text: 'A spell you cast and a weapon proc that fires the same effect stop sharing one row. Your casts keep the spell name; the firings that arrive with no casting line of yours get their own row, marked proc - so a cleric whose weapon procs Banish Undead can read the proc rate straight off the meter instead of putting the spell away for a fight to measure it. Casting the same spell over and over no longer hides every proc behind it either, and a cast that fizzled or was interrupted for good stops claiming the next proc as its own.',
-        fromReport: true
-      },
-      {
-        kind: 'fixed',
-        text: 'Restart the app with a buff or debuff overlay open and it comes back holding what is actually running. A long hold that survived the restart - a charm, an Ensnare, anything still ticking - used to appear in the app and never in the floating window, which sat on whatever it happened to catch while the log was still being read. Both windows now refill the moment that read finishes, and no spell is announced as dropped just because the window asked again.'
       }
     ]
   },
