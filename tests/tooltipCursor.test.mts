@@ -23,14 +23,24 @@
 //      draws the ledger may mount a popper of any kind.
 //   6. NO DROPDOWN ANYWHERE WEARS ONE (JOS-143) — the owner hit the same blocked control a second
 //      time, on the Sky tab, and the direction became universal: tooltips come off dropdown and
-//      select controls app-wide. The two guards below are that rule, and the FIRST of them is
-//      derived rather than listed: it finds every renderer file that renders a dropdown (a MUI
-//      `Select`, an `Autocomplete`, a `TextField select`, a `Menu`, a `ChipMultiSelect`) and
-//      insists none of them mounts a popper. Derived, because a hardcoded list is precisely what
-//      let this ship twice — a new select dropped into a file that already had a tooltip passes
-//      any list and fails this. The second guard is the LIST the derivation cannot see: rows and
-//      cells that render no control of their own but open `placement="top"` cards UP onto the
-//      toolbar above them, which was the real mechanism in both reports.
+//      select controls app-wide. The guard below is that rule, and it is derived rather than
+//      listed: it finds every renderer file that renders a dropdown (a MUI `Select`, an
+//      `Autocomplete`, a `TextField select`, a `Menu`, a `ChipMultiSelect`) and insists none of
+//      them mounts a popper. Derived, because a hardcoded list is precisely what let this ship
+//      twice — a new select dropped into a file that already had a tooltip passes any list and
+//      fails this. This rule is UNCHANGED by JOS-181: a card belongs to a row, never to a control.
+//   7. …AND THE ROWS UNDER A TOOLBAR MOUNT ONLY A CARD THAT CANNOT REACH IT (JOS-181, the rule
+//      that replaced JOS-143's second guard). The mechanism in both reports was never "a tooltip
+//      existed" — it was a `placement="top"`, INTERACTIVE card belonging to a row BELOW the
+//      toolbar, opening upward across it and holding `pointer-events: auto` for as long as it was
+//      up. JOS-143 answered by banning the popper outright on those rows, which cost the Sky tab
+//      its item cards; the owner has now ruled the trade the other way, so the ban narrows to what
+//      it was always about. The rows may mount the item card, through ONE wrapper
+//      (`features/posky/SkyItemCard.tsx`) that always passes `clickThrough` — the mode that opens
+//      downward, disables `flip` so it cannot go up, holds no pointer events, and closes on
+//      pointerdown. The guards below pin all three halves: the wrapper never stops passing the
+//      mode, the mode never stops meaning those things, and no row file mounts a card any other
+//      way. The files that still mount NOTHING are still listed, and still checked.
 //
 // No DOM, no fixture — it never skips.
 
@@ -169,13 +179,20 @@ function rendersDropdown(src: string): boolean {
   )
 }
 
-/** Does this file MOUNT a popper — the shared wrapper, or either of the two item hover cards? */
+/**
+ * Does this file MOUNT a popper — the shared wrapper, or any of the item hover cards?
+ *
+ * `SkyItemCard` counts (JOS-181) even though its card cannot cover a toolbar: a card belongs to a
+ * ROW, and a file that renders the control has no row to hang one on. The narrowing JOS-181 made is
+ * about where a card may live, never about putting one on a dropdown.
+ */
 function mountsPopper(src: string): boolean {
   return (
     importsMuiTooltip(src) ||
     /from '.*lib\/Tooltip'/.test(src) ||
     /<Tooltip[\s>]/.test(src) ||
     /<KnownItemTooltip[\s>]/.test(src) ||
+    /<SkyItemCard[\s>]/.test(src) ||
     /<ItemTooltip[\s>]/.test(src)
   )
 }
@@ -226,11 +243,14 @@ test('the dropdown-popper debt list stays a debt (it names files that still exis
  * dropper cells and the expanded table's item names. `PlannerChips` is the same shape on a third
  * surface: donor names are rows under the Effects browser's Slot/Group-by selects and under the
  * board's Classes chip-select. A `title` attribute is fine on all of these and several carry one;
- * what may not come back is a node in the DOM that takes pointer events.
+ * what may not come back is a node in the DOM that takes pointer events AND can open upward.
+ *
+ * These are the files where the answer is still NOTHING AT ALL — the ones whose hover text is a
+ * sentence a native title carries perfectly well, so there is no card to weigh against the risk.
+ * The Sky tab's two item-name files moved to `CLICK_THROUGH_ONLY` below when the owner ruled the
+ * card back (JOS-181); nothing else did, and adding a file here is still free.
  */
 const NO_UPWARD_CARD = [
-  'features/posky/QuestAccordion.tsx',
-  'features/posky/QuestItemsTable.tsx',
   'features/posky/DropperCell.tsx',
   'features/posky/TurnInControls.tsx',
   'features/planner/PlannerChips.tsx',
@@ -246,14 +266,72 @@ test('the rows under a dropdown toolbar mount NO popper of any kind (JOS-143)', 
     // Matched as an ELEMENT, never as a bare word — every one of these files explains in prose
     // why the card left, and the prose names it.
     assert.ok(!/<KnownItemTooltip[\s>]/.test(src), `${rel} must not mount the item hover card`)
-    assert.ok(!/<ItemTooltip[\s>]/.test(src), `${rel} must not mount the posky item hover card`)
+    assert.ok(!/<SkyItemCard[\s>]/.test(src), `${rel} must not mount the Sky item card either`)
   }
 })
 
-test('the Sky tracker’s own hover card is GONE, not merely unmounted (JOS-143)', () => {
-  // features/posky/ItemTooltip.tsx was the `placement="top"`, 380px-wide card that landed on the
-  // Sky toolbar. Deleting the file is what makes "no mount" hold against a future re-add by
-  // reflex: there is nothing left to import.
+// ── JOS-181: the Sky tab's cards are back, and they are the kind that cannot eat a click ────────
+
+/** The ONE component the Sky tab's rows may mount a card through. */
+const SKY_CARD = join(RENDERER, 'features', 'posky', 'SkyItemCard.tsx')
+
+/**
+ * Sky files that DO draw item cards. They may mount `SkyItemCard` and nothing else: not the shared
+ * `Tooltip`, not `KnownItemTooltip` directly (which would let a call site forget the mode), and
+ * certainly not MUI's Tooltip. That is what keeps "the Sky tab's cards are click-through" a
+ * property of one file rather than of whoever edits these next.
+ */
+const CLICK_THROUGH_ONLY = ['features/posky/QuestAccordion.tsx', 'features/posky/QuestItemsTable.tsx']
+
+test('the Sky tab draws its cards ONLY through SkyItemCard (JOS-181)', () => {
+  for (const rel of CLICK_THROUGH_ONLY) {
+    const src = readFileSync(join(RENDERER, rel), 'utf8')
+    assert.equal(importsMuiTooltip(src), false, `${rel} must not import MUI’s Tooltip`)
+    assert.ok(!/from '.*lib\/Tooltip'/.test(src), `${rel} must not import the shared Tooltip`)
+    assert.ok(!/<Tooltip[\s>]/.test(src), `no bare Tooltip element may appear in ${rel}`)
+    assert.ok(
+      !/<KnownItemTooltip[\s>]/.test(src),
+      `${rel} must go through SkyItemCard, not straight to the generic card`
+    )
+    assert.ok(/<SkyItemCard[\s>]/.test(src), `${rel} should still mount the Sky item card`)
+  }
+})
+
+test('SkyItemCard always passes clickThrough — the mode is never a call-site decision (JOS-181)', () => {
+  const src = readFileSync(SKY_CARD, 'utf8')
+  // ONE mount, and the flag is on it as a bare boolean attribute (never `clickThrough={x}`, which
+  // would make it conditional on something).
+  const mounts = src.match(/<KnownItemTooltip\b/g) ?? []
+  assert.equal(mounts.length, 1, 'SkyItemCard mounts the generic card exactly once')
+  // Its own line, bare — `\s*$` rather than `\n` because a checkout may hand this file CRLF.
+  assert.ok(/^\s*clickThrough\s*$/m.test(src), 'and passes clickThrough unconditionally')
+  assert.equal(importsMuiTooltip(src), false, 'it reaches MUI only through the generic card')
+})
+
+test('clickThrough still MEANS all three things it was introduced to mean (JOS-181)', () => {
+  // The prose in KnownItemTooltip.tsx numbers them; these are the three lines that implement them.
+  // A regex on source is a weak proof of behaviour on its own — tests/e2e/sky-dropdowns.e2e.mts is
+  // where the browser is asked — but it is what stops a refactor quietly dropping one of the three.
+  const src = readFileSync(join(RENDERER, 'lib', 'KnownItemTooltip.tsx'), 'utf8')
+  // 1. downward, and unable to flip back up.
+  assert.ok(/clickThrough \? 'bottom-start'/.test(src), 'a click-through card opens downward')
+  assert.ok(/name: 'flip', enabled: false/.test(src), 'flip is disabled, so it cannot go up')
+  assert.ok(/mainAxis: false/.test(src), 'preventOverflow may not slide it up either')
+  // 2. no pointer events — stated, not inherited from MUI's disableInteractive default.
+  assert.ok(/pointerEvents: 'none'/.test(src), 'the popper takes no pointer events')
+  assert.ok(/disableInteractive=\{nested \|\| clickThrough\}/.test(src), '…and is non-interactive')
+  // 3. gone before the control it floated near opens its own list.
+  assert.ok(
+    /addEventListener\('pointerdown', close, true\)/.test(src),
+    'it closes on a capture-phase pointerdown'
+  )
+})
+
+test('the Sky tracker’s OLD hover card is still gone (JOS-143, and it stays gone)', () => {
+  // features/posky/ItemTooltip.tsx was the `placement="top"`, 380px-wide, INTERACTIVE card that
+  // landed on the Sky toolbar. JOS-181 brings the CARD back but not THAT card: the tab's hover is
+  // the app's one shared item card in click-through mode, so there is still nothing here to import
+  // and no second opinion about how an item hover behaves.
   assert.throws(
     () => readFileSync(join(RENDERER, 'features', 'posky', 'ItemTooltip.tsx'), 'utf8'),
     /ENOENT/,
