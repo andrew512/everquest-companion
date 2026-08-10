@@ -6,9 +6,10 @@
 // keystroke — which is the same "lowercase key computed once" rule, spelled as tokens because
 // the matcher is the house tokenizer rather than a substring test (alertSearch.ts).
 //
-// `filtering` READS THE DEFERRED QUERY, not the typed one, and that matters: it is what turns
-// reorder off, and reorder must be off for exactly as long as the list on screen is a SUBSET.
-// While React is still catching up, the full list is showing and dragging it is still honest.
+// `filtering` READS THE DEFERRED QUERY, not the typed one, and that matters: it is what an empty
+// list says about itself ("nothing matches that search" vs "you have no alerts yet"), and while
+// React is still catching up the full list is what is on screen — so the deferred answer is the
+// one that describes what the user is actually looking at.
 
 import { useDeferredValue, useMemo, useState } from 'react'
 import type { AlertDef, SoundPack } from '@shared/types'
@@ -19,9 +20,9 @@ export interface AlertFilter {
   /** What is in the box right now (echoes every keystroke). */
   query: string
   setQuery: (q: string) => void
-  /** True while the list on screen is narrowed — the one flag that turns reorder off. */
+  /** True while the list on screen is narrowed — what an empty list says about itself. */
   filtering: boolean
-  /** The alerts to render, in the user's stored order with non-matches removed. */
+  /** The alerts to render, in the stored order with non-matches removed. */
   visible: AlertDef[]
 }
 

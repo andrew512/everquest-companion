@@ -25,7 +25,6 @@ import {
   Typography
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
-import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import EditIcon from '@mui/icons-material/Edit'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
@@ -36,7 +35,6 @@ import { formatTime } from '../../lib/formatDate'
 import AudioPicker from './AudioPicker'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { triggerBadge } from './conditionDraft'
-import { useAlertReorder, type AlertReorder } from './useAlertReorder'
 
 /** The expandable "recent fires" panel for one alert. */
 function RecentFires({ fires }: { fires: AlertFireRecord[] }): JSX.Element {
@@ -131,88 +129,8 @@ const ALERT_ROW_PAPER_SX = {
   // Establishes the container the row's grid queries above (see ALERT_ROW_GRID_SX).
   containerType: 'inline-size',
   '& .alertRowActions': { opacity: 0.62, transition: 'opacity 120ms ease' },
-  '&:hover .alertRowActions, &:focus-within .alertRowActions': { opacity: 1 },
-  // The grip rests with the action cluster and comes up with it (JOS-175) — it is a control the
-  // row offers, not a decoration it wears.
-  '& .alertRowGrip': { opacity: 0.45, transition: 'opacity 120ms ease' },
-  '&:hover .alertRowGrip, &:focus-within .alertRowGrip': { opacity: 1 },
-  // …and while a search is narrowing the list it rests LOWER and never comes up (JOS-178). Greyed
-  // rather than gone: a control that vanishes reads as a bug, and the row would change shape under
-  // the first keystroke.
-  '& .alertRowGripOff': { opacity: 0.22 }
+  '&:hover .alertRowActions, &:focus-within .alertRowActions': { opacity: 1 }
 } as const
-
-/**
- * The DRAG STATE, as style: the row being carried dims, and that is all a ROW says now. Where it
- * would land is the LINE below (JOS-177) — a highlighted target row could only ever mean "onto
- * this one", which cannot express "below the last row" and never said which side of the row the
- * drop was on. Nothing moves under the pointer until the drop, so the list never re-flows
- * mid-gesture.
- */
-function dragSx(isDragging: boolean): Record<string, unknown> {
-  return { opacity: isDragging ? 0.4 : 1 }
-}
-
-/**
- * THE INSERTION LINE — the whole point of the gesture, and the only thing on screen that says
- * where the row will land.
- *
- * Absolutely positioned inside the scrolling list, so it occupies no space and moves no row: the
- * hook measured the row midpoints to decide this y, and a line that pushed the rows apart would
- * invalidate that measurement on the next pointer move. `pointerEvents: none` keeps it out of hit
- * testing entirely.
- */
-function DropIndicator({ index, y }: { index: number; y: number }): JSX.Element {
-  return (
-    <Box
-      data-testid="alert-drop-indicator"
-      data-drop-index={String(index)}
-      aria-hidden
-      sx={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: y,
-        height: 2,
-        mt: '-1px',
-        borderRadius: 1,
-        bgcolor: 'primary.main',
-        boxShadow: (t) => `0 0 0 1px ${t.palette.background.paper}`,
-        pointerEvents: 'none',
-        zIndex: 2
-      }}
-    />
-  )
-}
-
-/**
- * The grip: drag it, or focus it and press the arrow keys (useAlertReorder.ts).
- *
- * WHEN A SEARCH IS ON, IT IS GREY AND SAYS SO IN SIX WORDS (JOS-178). The hint is a native `title`
- * — no popper may live in this file (JOS-143, and tests/tooltipCursor.test.mts enforces it) — and
- * `aria-disabled` rather than `disabled`, because MUI's disabled button takes no pointer events at
- * all and a hint nobody can hover is not a hint. Nothing is wired behind it either way: the hook
- * has already withdrawn the drag source and the arrow keys.
- */
-function AlertRowGrip({ name, id, reorder }: { name: string; id: string; reorder: AlertReorder }): JSX.Element {
-  const on = reorder.canReorder
-  return (
-    <IconButton
-      size="small"
-      className={on ? 'alertRowGrip' : 'alertRowGripOff'}
-      data-testid="alert-reorder-grip"
-      // The title says the pointer gesture; the aria-label says BOTH, because the keyboard path is
-      // the only one a screen-reader user has.
-      title={on ? 'Drag to reorder' : 'Clear the search to reorder'}
-      aria-label={`Reorder ${name}: ${on ? 'drag, or press the up and down arrow keys' : 'clear the search to reorder'}`}
-      aria-disabled={!on}
-      sx={{ cursor: on ? 'grab' : 'default', '&:active': { cursor: on ? 'grabbing' : 'default' }, ml: -0.75, mr: -0.25 }}
-      {...reorder.gripProps(id)}
-    >
-      <DragIndicatorIcon fontSize="small" />
-    </IconButton>
-  )
-}
 
 /**
  * Identity. Both lines are single-line + ellipsis: a long trigger badge
@@ -322,8 +240,6 @@ function AlertRowActions({
 /** Callbacks the list forwards to every row (all fire-and-forget from the view). */
 interface AlertRowHandlers {
   onPersist: (def: AlertDef) => void
-  /** The whole list's new id sequence after a drag or an arrow-key nudge (JOS-175). */
-  onReorder: (orderedIds: string[]) => void
   onVolumeDrag: (id: string, volume: number) => void
   onTest: (def: AlertDef) => void
   onCopyShare: (ids?: string[]) => void
@@ -338,7 +254,6 @@ function AlertRow({
   packs,
   voiceSetup,
   onToggle,
-  reorder,
   handlers
 }: {
   def: AlertDef
@@ -347,7 +262,6 @@ function AlertRow({
   packs: SoundPack[]
   voiceSetup: VoiceSetupNotice
   onToggle: (id: string) => void
-  reorder: AlertReorder
   handlers: AlertRowHandlers
 }): JSX.Element {
   const badge = triggerBadge(def.trigger)
@@ -358,21 +272,17 @@ function AlertRow({
   return (
     <Paper
       variant="outlined"
-      sx={{ ...ALERT_ROW_PAPER_SX, ...dragSx(reorder.draggingId === def.id) }}
+      sx={ALERT_ROW_PAPER_SX}
       data-testid="alert-row"
       data-alert-id={def.id}
     >
       <Box sx={ALERT_ROW_GRID_SX}>
-        {/* The grip travels with the enable switch: one 'toggle' cell, so both row shapes (wide
-            and tight, above) keep their column edges exactly as they were. */}
-        <Box sx={{ gridArea: 'toggle', display: 'flex', alignItems: 'center' }}>
-          <AlertRowGrip name={def.name} id={def.id} reorder={reorder} />
-          <Switch
-            size="small"
-            checked={def.enabled}
-            onChange={(e) => handlers.onPersist({ ...def, enabled: e.target.checked })}
-          />
-        </Box>
+        <Switch
+          size="small"
+          checked={def.enabled}
+          onChange={(e) => handlers.onPersist({ ...def, enabled: e.target.checked })}
+          sx={{ gridArea: 'toggle' }}
+        />
 
         <AlertRowIdentity def={def} badge={badge} />
 
@@ -423,19 +333,22 @@ export default function AlertList({
   onAddSuggestion,
   handlers
 }: {
-  /** The rows to show — already narrowed by the search box, in the user's stored order. */
+  /** The rows to show — already narrowed by the search box, in the stored order. */
   alerts: AlertDef[]
   history: Record<string, AlertFireRecord[]>
   packs: SoundPack[]
   /** One answer for the whole list: is there a voice to speak with, and how to go fix it. */
   voiceSetup: VoiceSetupNotice
-  /** Is a search narrowing this list right now (JOS-178)? It is what turns reorder off. */
+  /**
+   * Is a search narrowing this list right now (JOS-178)? The list itself does nothing differently;
+   * it is the EMPTY state that changes — "nothing matches" and "you have no alerts" are two
+   * different sentences, and only the caller knows which one is true.
+   */
   filtering: boolean
   onAddSuggestion: () => void
   handlers: AlertRowHandlers
 }): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const reorder = useAlertReorder(alerts, handlers.onReorder, !filtering)
 
   const toggleExpanded = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -447,17 +360,7 @@ export default function AlertList({
   }, [])
 
   return (
-    // ONE drop target for the whole list (JOS-177): the gaps between rows and the padding around
-    // them are inside it, so the drag is accepted everywhere the pointer can be and the cursor
-    // never flickers. `position: relative` is what the insertion line is positioned against.
-    <Box
-      data-testid="alerts-list"
-      sx={{ flexGrow: 1, overflow: 'auto', position: 'relative' }}
-      {...reorder.containerProps}
-    >
-      {reorder.mark !== null && (
-        <DropIndicator index={reorder.mark.index} y={reorder.mark.y} />
-      )}
+    <Box data-testid="alerts-list" sx={{ flexGrow: 1, overflow: 'auto' }}>
       <Stack spacing={1}>
         {alerts.length === 0 && (
           <Typography variant="body2" color="text.secondary" data-testid="alerts-empty">
@@ -475,7 +378,6 @@ export default function AlertList({
             packs={packs}
             voiceSetup={voiceSetup}
             onToggle={toggleExpanded}
-            reorder={reorder}
             handlers={handlers}
           />
         ))}
