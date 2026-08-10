@@ -704,8 +704,20 @@ export interface EvErrorReport {
    * HOW MANY TIMES THIS FINGERPRINT FIRED since the last report, and it is the field that makes
    * the client-side dedupe expressible. One exemplar per fingerprint per SESSION: the first
    * occurrence keeps its message, frames and breadcrumbs, and every repeat afterwards adds to
-   * this number instead of minting a second copy of the same stack. A loop that throws ten
-   * thousand times is one row with `count: 10000`, not ten thousand rows.
+   * this number instead of minting a second copy of the same stack.
+   *
+   * IT IS A FLOOR, NOT A TOTAL (JOS-197). This used to say "a loop that throws ten thousand times
+   * is one row with `count: 10000`" — which was written as a boast about how cheap a repeat is,
+   * and is exactly why nothing bounded it: an install then filed 7,272,196 occurrences of one
+   * fingerprint in a day, and the store was unreadable around the row. The client now stops
+   * counting a fingerprint at `MAX_REPORTS_PER_FINGERPRINT` per session (src/main/errorBudget.ts),
+   * so a looping issue reports that number and goes quiet.
+   *
+   * THE TOTAL IS STILL KNOWABLE, from the other side: `mainErrorLogLines + suppressedErrorLines`
+   * on `healthCounters` counts every occurrence whether it was reported or silenced, which is the
+   * ledger JOS-133 built for precisely this. So a build that starts looping still shows up in the
+   * error RATE; what the cap takes away is only the ability of one issue to say it ten thousand
+   * times over in the exemplar table.
    */
   count: number
 }

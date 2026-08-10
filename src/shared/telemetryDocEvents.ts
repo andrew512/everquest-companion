@@ -331,7 +331,7 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
       { name: 'view', type: values(TELEMETRY_ERROR_VIEWS), note: 'Which tab was open. A fixed list.' },
       { name: 'sessionAgeBucket', type: BUCKET, note: 'How long the app had been running.' },
       { name: 'mode', type: values(TELEMETRY_ERROR_MODES), note: 'Was it reading your log history, or following it live.' },
-      { name: 'count', type: COUNT, note: 'How many times this same error happened since the last report.' }
+      { name: 'count', type: COUNT, note: 'How many times this same error happened since the last report. It stops at a hundred per error per run of the app: something that goes wrong over and over reports itself a hundred times and then goes quiet, so one repeating fault cannot bury everything else.' }
     ]
   },
   {
