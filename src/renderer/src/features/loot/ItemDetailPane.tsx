@@ -81,7 +81,7 @@ function Breadcrumb({
 }
 
 export function ItemDetailPane(props: ItemDetailPaneProps): JSX.Element {
-  const { item, events, stats, isQuestItem, onBack, onList, origin, slice } = props
+  const { item, events, stats, isQuestItem, onBack, onList, origin, slice, owned } = props
   // The arrow's ACCESSIBLE NAME, which the e2e reads to prove it knows where it is going.
   const backLabel = origin ? `Back to ${origin}` : 'Back to the loot list'
   return (
@@ -95,7 +95,7 @@ export function ItemDetailPane(props: ItemDetailPaneProps): JSX.Element {
       {/* The pane owns its own scroll for the same reason every panel in this app does: the
           content area must never grow the document (AGENTS.md's fixed-height law). */}
       <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', pr: 0.5 }}>
-        <ItemDetailContent item={item} events={events} stats={stats} active slice={slice} />
+        <ItemDetailContent item={item} events={events} stats={stats} active slice={slice} owned={owned} />
       </Box>
     </Stack>
   )
