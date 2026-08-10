@@ -137,6 +137,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'Hovering an item on a Plane of Sky quest names the mob that drops it again, not just the island. Every boss the catalog knows for that item is listed with its level and zone, and the island rides the same line as the item name - so you can read who to kill and where to stand without expanding the quest. Since 0.15.0 that hover had answered with the island alone.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A boss pull starts when you pull the boss. A mez you cast on something else used to keep the previous skirmish open long after everything in it was dead, so the next fight opened as much as a minute early and its meter carried a scrap of the fight before it. A hold now lasts only as long as the mob it was cast on - it ends the moment that mob dies or leaves - and it is never claimed by your own charmed pet, which happens more than you would think when your pet and the things you are killing share a name. Mezzing one mob and taking your time with the other still holds the pull open exactly as before.'
       }
     ]
   },
