@@ -23,7 +23,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { applyAlertOrder, moveId, nudgeId, orderChanged } from '../src/shared/alertOrder'
+import { applyAlertOrder, moveId, moveIdToIndex, nudgeId, orderChanged } from '../src/shared/alertOrder'
+import {
+  dropChangesOrder,
+  insertionIndexAt,
+  insertionLineY,
+  type RowBox
+} from '../src/renderer/src/features/alerts/dropTarget'
 import { parseEvent } from '../src/main/log/parser'
 import { AlertsModule } from '../src/main/modules/alerts'
 import type { AlertDef } from '../src/shared/types'
@@ -77,6 +83,140 @@ test('the arrow keys nudge one place and stop at the ends', () => {
   assert.deepEqual(nudgeId(ids, 'a', -1), ids, 'off the top is a no-op')
   assert.deepEqual(nudgeId(ids, 'c', 1), ids, 'off the bottom is a no-op')
   assert.deepEqual(nudgeId(ids, 'zz', 1), ids)
+})
+
+// ------------------------------------------- 1b. where the drag lands, and the line that says so
+//
+// JOS-177. The cursor flickered because JOS-175 made every ROW a drop target and nothing else:
+// native drag paints the do-not-proceed cursor for every `dragover` nobody CANCELS, so the 8px
+// between two rows, the container padding and the strip beside the add button all refused the
+// drag. The list container is the target now, which has no holes — and that makes "where would
+// this land" arithmetic rather than a lookup. It is the arithmetic that is testable here; the
+// cursor and the line itself are `tests/e2e/alerts-reorder.e2e.mts`.
+
+/** Three rows, 20 tall, 10 apart: midpoints at 10, 40 and 70. */
+const BOXES: RowBox[] = [
+  { top: 0, bottom: 20 },
+  { top: 30, bottom: 50 },
+  { top: 60, bottom: 80 }
+]
+
+test('the slot is how many rows the pointer is past — the gaps included', () => {
+  assert.equal(insertionIndexAt(BOXES, -40), 0, 'above the list entirely')
+  assert.equal(insertionIndexAt(BOXES, 0), 0)
+  assert.equal(insertionIndexAt(BOXES, 9), 0, 'top half of the first row')
+  assert.equal(insertionIndexAt(BOXES, 10), 1, 'the midpoint itself belongs to the slot below')
+  assert.equal(insertionIndexAt(BOXES, 25), 1, 'IN THE GAP — the case the old code had no answer for')
+  assert.equal(insertionIndexAt(BOXES, 39), 1)
+  assert.equal(insertionIndexAt(BOXES, 40), 2)
+  assert.equal(insertionIndexAt(BOXES, 55), 2, 'the second gap')
+  assert.equal(insertionIndexAt(BOXES, 80), 3, 'below the last row')
+  assert.equal(insertionIndexAt(BOXES, 9_000), 3, 'the padding under the add button')
+  // Total by construction: every y in the container yields a slot in range, so there is no
+  // coordinate at which the gesture has nothing to say.
+  for (let y = -100; y <= 200; y += 1) {
+    const i = insertionIndexAt(BOXES, y)
+    assert.ok(i >= 0 && i <= BOXES.length, `y=${String(y)} → ${String(i)}`)
+  }
+})
+
+test('…and it survives an empty list and a zero-height row', () => {
+  assert.equal(insertionIndexAt([], 42), 0)
+  // A row mid-collapse has top === bottom; counting midpoints cannot divide by its height.
+  assert.equal(insertionIndexAt([{ top: 10, bottom: 10 }], 9), 0)
+  assert.equal(insertionIndexAt([{ top: 10, bottom: 10 }], 10), 1)
+})
+
+test('the line is drawn in the gap it names, and on the list’s own edges at the ends', () => {
+  assert.equal(insertionLineY(BOXES, 0), 0, 'the top edge of the first row, not the margin above it')
+  assert.equal(insertionLineY(BOXES, 1), 25, 'centred in the first gap')
+  assert.equal(insertionLineY(BOXES, 2), 55, 'centred in the second gap')
+  assert.equal(insertionLineY(BOXES, 3), 80, 'the bottom edge of the last row')
+  assert.equal(insertionLineY(BOXES, 99), 80, 'clamped rather than undefined')
+  assert.equal(insertionLineY(BOXES, -3), 0)
+  assert.equal(insertionLineY([], 0), 0)
+})
+
+test('the two slots either side of the dragged row are “leave it alone”', () => {
+  assert.equal(dropChangesOrder(1, 1), false, 'the gap above it')
+  assert.equal(dropChangesOrder(1, 2), false, 'the gap below it')
+  assert.equal(dropChangesOrder(1, 0), true)
+  assert.equal(dropChangesOrder(1, 3), true)
+  assert.equal(dropChangesOrder(-1, 2), false, 'a row this list does not have moves nothing')
+})
+
+test('a drop into a slot puts the row in that gap, in either direction', () => {
+  const ids = ['a', 'b', 'c', 'd']
+  assert.deepEqual(moveIdToIndex(ids, 'd', 0), ['d', 'a', 'b', 'c'], 'dragged to the very top')
+  assert.deepEqual(moveIdToIndex(ids, 'a', 4), ['b', 'c', 'd', 'a'], 'dragged BELOW THE LAST ROW')
+  assert.deepEqual(moveIdToIndex(ids, 'a', 2), ['b', 'a', 'c', 'd'], 'down into the b/c gap')
+  assert.deepEqual(moveIdToIndex(ids, 'd', 1), ['a', 'd', 'b', 'c'], 'up into the a/b gap')
+  // Slot 4 is a reading the row-target gesture had no way to ASK for — there is no row below the
+  // last one to drop onto — even though the answer, once asked, is the one `moveId` gives.
+  assert.deepEqual(moveIdToIndex(ids, 'a', 4), moveId(ids, 'a', 'd'))
+  // Above the first row is the same story from the other end, and there the two differ: slot 0
+  // means "before b", which as a row target would have to be aimed at b and land ON it.
+  assert.deepEqual(moveIdToIndex(ids, 'd', 0), ['d', 'a', 'b', 'c'])
+  assert.deepEqual(moveIdToIndex(ids, 'd', 1), moveId(ids, 'd', 'b'), 'slot 1 is “take b’s place”')
+
+  // No-ops, all reachable from a real gesture: a drag that wanders and comes home, a drag off a
+  // stale list, a slot off either end.
+  assert.deepEqual(moveIdToIndex(ids, 'b', 1), ids)
+  assert.deepEqual(moveIdToIndex(ids, 'b', 2), ids)
+  assert.deepEqual(moveIdToIndex(ids, 'zz', 0), ids)
+  assert.deepEqual(moveIdToIndex(ids, 'a', -9), ids)
+  assert.deepEqual(moveIdToIndex(ids, 'd', 99), ids)
+  assert.notEqual(moveIdToIndex(ids, 'a', 3), ids, 'the input array is never mutated')
+  assert.deepEqual(ids, ['a', 'b', 'c', 'd'])
+})
+
+test('THE DROP LANDS WHERE THE LINE WAS — every pointer position in the list', () => {
+  const ids = ['a', 'b', 'c']
+  // Sweep the pointer down the container and check, for each y, that the row ends up between
+  // exactly the two ids the line was drawn between. This is the ticket's acceptance stated as
+  // arithmetic: the reading that draws the line is the reading that moves the row.
+  for (const moved of ids) {
+    for (let y = -20; y <= 120; y += 1) {
+      const slot = insertionIndexAt(BOXES, y)
+      const next = moveIdToIndex(ids, moved, slot)
+      assert.equal(next.length, ids.length)
+      assert.deepEqual([...next].sort(), [...ids].sort(), 'nothing is lost by a drop')
+      if (!dropChangesOrder(ids.indexOf(moved), slot)) {
+        assert.deepEqual(next, ids, `slot ${String(slot)} is where ${moved} already is`)
+        continue
+      }
+      // The ids the line sat between, in the list as the user is looking at it right now.
+      const above = slot > 0 ? ids[slot - 1] : null
+      const below = slot < ids.length ? ids[slot] : null
+      const at = next.indexOf(moved)
+      if (above !== null) assert.equal(next[at - 1], above, `y=${String(y)}: landed under ${above}`)
+      if (below !== null) assert.equal(next[at + 1], below, `y=${String(y)}: landed over ${below}`)
+    }
+  }
+})
+
+test('SOURCE PIN: the drop target is the CONTAINER, and no row is one', () => {
+  const hook = src('renderer/src/features/alerts/useAlertReorder.ts')
+  assert.match(hook, /containerProps/, 'the container carries the handlers')
+  assert.doesNotMatch(hook, /\browProps\b/, 'a per-row drop target is the flicker itself (JOS-177)')
+  // The cancel must be unconditional for our own drag: every `dragover` this handler declines to
+  // preventDefault is one frame of the do-not-proceed cursor, so ONE guard is allowed before it
+  // and it is the "is this even our drag" one.
+  const dragOver = hook.slice(hook.indexOf('const onDragOver'), hook.indexOf('const onDragLeave'))
+  const beforeCancel = dragOver.slice(0, dragOver.indexOf('e.preventDefault()'))
+  assert.ok(beforeCancel.length > 0 && beforeCancel.length < dragOver.length, 'onDragOver cancels')
+  assert.match(beforeCancel, /!isOurDrag\(e, draggingId\)/)
+  assert.equal(
+    (beforeCancel.match(/\bif \(/g) ?? []).length,
+    1,
+    'no second condition may stand between a dragover and its preventDefault'
+  )
+  assert.match(hook, /dropEffect = 'move'/)
+
+  const list = src('renderer/src/features/alerts/AlertList.tsx')
+  assert.match(list, /\{\.\.\.reorder\.containerProps\}/, 'spread on the scrolling list container')
+  assert.match(list, /data-testid="alert-drop-indicator"/, 'the line the e2e reads')
+  assert.match(list, /position: 'absolute'/, 'out of flow, so no row moves mid-drag')
 })
 
 // ------------------------------------------------------------------ 2. persistence

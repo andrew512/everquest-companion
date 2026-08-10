@@ -139,15 +139,46 @@ const ALERT_ROW_PAPER_SX = {
 } as const
 
 /**
- * The DRAG STATE, as style. The row being carried dims; the row it would land on shows an inset
- * edge on the side it would arrive from. Nothing moves under the pointer until the drop, so the
- * list never re-flows mid-gesture.
+ * The DRAG STATE, as style: the row being carried dims, and that is all a ROW says now. Where it
+ * would land is the LINE below (JOS-177) — a highlighted target row could only ever mean "onto
+ * this one", which cannot express "below the last row" and never said which side of the row the
+ * drop was on. Nothing moves under the pointer until the drop, so the list never re-flows
+ * mid-gesture.
  */
-function dragSx(isDragging: boolean, isOver: boolean): Record<string, unknown> {
-  return {
-    opacity: isDragging ? 0.4 : 1,
-    ...(isOver && !isDragging ? { borderColor: 'primary.main', boxShadow: 2 } : {})
-  }
+function dragSx(isDragging: boolean): Record<string, unknown> {
+  return { opacity: isDragging ? 0.4 : 1 }
+}
+
+/**
+ * THE INSERTION LINE — the whole point of the gesture, and the only thing on screen that says
+ * where the row will land.
+ *
+ * Absolutely positioned inside the scrolling list, so it occupies no space and moves no row: the
+ * hook measured the row midpoints to decide this y, and a line that pushed the rows apart would
+ * invalidate that measurement on the next pointer move. `pointerEvents: none` keeps it out of hit
+ * testing entirely.
+ */
+function DropIndicator({ index, y }: { index: number; y: number }): JSX.Element {
+  return (
+    <Box
+      data-testid="alert-drop-indicator"
+      data-drop-index={String(index)}
+      aria-hidden
+      sx={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: y,
+        height: 2,
+        mt: '-1px',
+        borderRadius: 1,
+        bgcolor: 'primary.main',
+        boxShadow: (t) => `0 0 0 1px ${t.palette.background.paper}`,
+        pointerEvents: 'none',
+        zIndex: 2
+      }}
+    />
+  )
 }
 
 /** The grip: drag it, or focus it and press the arrow keys (useAlertReorder.ts). */
@@ -319,10 +350,9 @@ function AlertRow({
   return (
     <Paper
       variant="outlined"
-      sx={{ ...ALERT_ROW_PAPER_SX, ...dragSx(reorder.draggingId === def.id, reorder.overId === def.id) }}
+      sx={{ ...ALERT_ROW_PAPER_SX, ...dragSx(reorder.draggingId === def.id) }}
       data-testid="alert-row"
       data-alert-id={def.id}
-      {...reorder.rowProps(def.id)}
     >
       <Box sx={ALERT_ROW_GRID_SX}>
         {/* The grip travels with the enable switch: one 'toggle' cell, so both row shapes (wide
@@ -405,7 +435,13 @@ export default function AlertList({
   }, [])
 
   return (
-    <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+    // ONE drop target for the whole list (JOS-177): the gaps between rows and the padding around
+    // them are inside it, so the drag is accepted everywhere the pointer can be and the cursor
+    // never flickers. `position: relative` is what the insertion line is positioned against.
+    <Box sx={{ flexGrow: 1, overflow: 'auto', position: 'relative' }} {...reorder.containerProps}>
+      {reorder.mark !== null && (
+        <DropIndicator index={reorder.mark.index} y={reorder.mark.y} />
+      )}
       <Stack spacing={1}>
         {alerts.length === 0 && (
           <Typography variant="body2" color="text.secondary">

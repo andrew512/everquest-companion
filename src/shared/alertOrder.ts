@@ -70,6 +70,28 @@ export function moveId(ids: readonly string[], movedId: string, targetId: string
 }
 
 /**
+ * The id sequence produced by dropping `movedId` into SLOT `index` — the gap-counting twin of
+ * `moveId`, and what a pointer drag uses (JOS-177).
+ *
+ * A slot is a GAP, not a row: `index` runs 0…ids.length, where 0 is above the first row and
+ * `ids.length` is below the last. Slots are read in the list's CURRENT coordinates — the one the
+ * user is looking at, with the dragged row still in place — so the two slots either side of the
+ * dragged row (`from` and `from + 1`) both mean "leave it where it is" and answer with a copy.
+ * That is the difference from `moveId`, which cannot express "below the last row" at all.
+ */
+export function moveIdToIndex(ids: readonly string[], movedId: string, index: number): string[] {
+  const from = ids.indexOf(movedId)
+  if (from < 0) return [...ids]
+  const slot = Math.max(0, Math.min(Math.trunc(index), ids.length))
+  if (slot === from || slot === from + 1) return [...ids]
+  const next = [...ids]
+  next.splice(from, 1)
+  // Removing the row shifts every slot below it up by one; slots above it are unaffected.
+  next.splice(slot > from ? slot - 1 : slot, 0, movedId)
+  return next
+}
+
+/**
  * The id sequence produced by nudging `movedId` one place up (`delta` -1) or down (+1) — the
  * keyboard half of the same gesture, so the list can be reordered without a pointer at all.
  * A nudge off either end is a no-op.
