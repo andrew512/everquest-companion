@@ -4,9 +4,9 @@
 //
 //   ingestWorld    — epoch / zone / charm / petClaim / uncharm / cc / death: the
 //                    entity and segmentation lifecycle.
-//   ingestCombat   — damage / heal / mitigation / miss / resist: the meter itself.
-//   ingestCast     — castBegin / fizzle / interrupt: the own-cast lifecycle both ownership
-//                    inferences (cast-less procs, charm/CC binding) run off.
+//   ingestCombat   — damage / heal / healUnstated / mitigation / miss / resist: the meter itself.
+//   ingestCast     — castBegin / fizzle / interrupt / resume: the own-cast lifecycle both
+//                    ownership inferences (cast-less procs, charm/CC binding) run off.
 //   ingestChoice   — stance / invocation / active special attack: the character's STANDING
 //                    choices, which persist across pulls and zones until the game prints a
 //                    different one. Not events in a fight; they change what a swing MEANS.
@@ -18,7 +18,7 @@
 import { idKey } from '../log/parser'
 import { damageCategory } from './taxonomy'
 import { evalClosure, ensureEncounter, finalizeCurrent, finalizeZoneSession } from './lifecycle'
-import { route, routeHeal, routeMiss, routeMitigation, routeResist } from './routing'
+import { route, routeHeal, routeHealUnstated, routeMiss, routeMitigation, routeResist, verdict } from './routing'
 import { SEC_ANALYTICS, SEC_DISPATCH } from './foldProbe'
 import {
   applyStance,
@@ -29,7 +29,13 @@ import {
   routeProcBuffApply,
   routeProcBuffWearOff
 } from './procRouting'
-import { QUICK_BUFF_AA, isCastless, isCastlessHeal, noteCast, procEligibleDamage } from './procDetect'
+import {
+  QUICK_BUFF_AA,
+  isCastlessHeal,
+  laneNameFor,
+  procEligibleDamage,
+  type SpellOrigin
+} from './procDetect'
 import { CC_HOLD_MS } from './encounter'
 import { Agg, type DamageEvent } from './aggregate'
 import type { WindowFold } from './procWindows'
@@ -64,7 +70,7 @@ import type {
  */
 function ingestCc(st: EngineState, ev: CcEvent): void {
   if (!ev.refresh && !st.charm.ccBroadcast(ev.ts)) {
-    st.log(ev.ts, 'cc', 'dropped', `✜ CC on ${ev.mob} — not ours (no own cast to resolve)`)
+    st.log(ev.ts, 'cc', 'dropped', `✜ CC on ${ev.mob} - not ours (no own cast to resolve)`)
     return
   }
   evalClosure(st, ev.ts)
@@ -89,7 +95,7 @@ function ingestCc(st: EngineState, ev: CcEvent): void {
 function ingestCharm(st: EngineState, ev: CharmEvent): void {
   const key = idKey(ev.mob)
   if (st.charm.charmBroadcast(key, ev.mob, ev.ts) === 'foreign') {
-    st.log(ev.ts, 'charm', 'dropped', `⚡ ${ev.mob} charmed by someone else — not your pet`)
+    st.log(ev.ts, 'charm', 'dropped', `⚡ ${ev.mob} charmed by someone else - not your pet`)
     return
   }
   const inst = st.world.charm(ev.mob, ev.ts)
@@ -134,7 +140,7 @@ function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
   // world model decides, `petNames` and the charm model are told.
   for (const gone of st.syncPetNames()) {
     st.charm.release(gone)
-    st.log(ev.ts, 'pet', 'info', `✕ ${gone} retired — one pet at a time; ${ev.name} is yours now`)
+    st.log(ev.ts, 'pet', 'info', `✕ ${gone} retired - one pet at a time; ${ev.name} is yours now`)
   }
 }
 
@@ -166,11 +172,12 @@ function ingestDeath(st: EngineState, ev: DeathEvent): void {
   }
   // The retired instance stays in `engaged` (so an in-fight heal on the corpse
   // still counts) — closure consults world.isRetired(), not set membership.
-  // Clear any CC hold on the dead instance so it can't keep the fight open.
-  if (res.retired) st.current?.ccActiveUntil.delete(res.retired.instanceId)
+  // The dead instance's CC hold is cleared by the world model's own retirement hook
+  // (EngineState's `world.onRetire`, JOS-176) — this used to be a delete right here, which
+  // meant DEATH was the only retirement that cleaned up after itself and staleness was not.
   const petNote = res.wasPet ? ' (pet)' : ''
   const ambNote = res.ambiguous ? ' ~ambiguous' : ''
-  st.log(ev.ts, 'death', 'info', `☠ ${ev.name} died${petNote}${ambNote} — ${res.reason}`)
+  st.log(ev.ts, 'death', 'info', `☠ ${ev.name} died${petNote}${ambNote} - ${res.reason}`)
 }
 
 /** epoch / zone / charm / petClaim / uncharm / cc / death. Returns true if consumed. */
@@ -300,6 +307,27 @@ interface DamageAnalytics {
 }
 
 /**
+ * WHERE ONE OF YOUR SPELL EFFECTS CAME FROM (JOS-167), decided BEFORE the line is routed
+ * because the answer names the meter LANE it lands in.
+ *
+ * It CONSUMES the cast claim (see procDetect's header), so it must be asked exactly once per
+ * damage line, in log order. `null` = the question does not arise: not a spell effect, not
+ * yours, or a line the meter drops anyway.
+ *
+ * The attribution is re-derived here rather than taken from `route()`'s return (JOS-59's
+ * sharing) for the plain reason that the lane name has to exist before `route()` is called. The
+ * two eligibility gates run FIRST and in that order, so only a `dtype: 'spell'` line of the
+ * player's ever pays for the extra `classify` — a few hundredths of the fold's damage lines.
+ */
+function damageOrigin(st: EngineState, ev: DamageEvent): SpellOrigin | null {
+  if (ev.amount <= 0) return null
+  if (!procEligibleDamage(ev.dtype)) return null
+  if (idKey(ev.attacker) !== 'you') return null
+  if (verdict(st, ev).kind !== 'out-you') return null
+  return st.recentCasts.origin(ev.skill, ev.ts)
+}
+
+/**
  * The three judgements, separated from the accumulation so each stays readable. `null` means
  * "the meter ignored this line", in which case the ledgers must ignore it too.
  *
@@ -307,8 +335,11 @@ interface DamageAnalytics {
  * re-derived here, which cost a second pair of `idKey` calls, a second roster pull and a second
  * result object per damage line for a decision that cannot have changed in between — nothing on
  * the routing path writes `petNames`, `knownPlayers` or the roster.
+ *
+ * `origin` is likewise ALREADY decided (`damageOrigin`, above) and is never recomputed: asking
+ * twice would take two claims off one cast line and count the second landing as a proc.
  */
-function damageAnalytics(st: EngineState, ev: DamageEvent, at: Attribution): DamageAnalytics | null {
+function damageAnalytics(ev: DamageEvent, at: Attribution, origin: SpellOrigin | null): DamageAnalytics | null {
   if (ev.amount <= 0) return null
   if (at.kind === 'ignore') return null
   // A GROUP MEMBER's hit is not yours, exactly like a pet's: it is not your swing, not your
@@ -317,8 +348,7 @@ function damageAnalytics(st: EngineState, ev: DamageEvent, at: Attribution): Dam
   // the same `mine: false` branch the pet does and moves no proc counter.
   if (at.kind !== 'out-you') return { mine: false, swing: 0, proc: false }
   const swing = ev.category === 'melee' || ev.category === 'slay' ? 1 : 0
-  const proc = procEligibleDamage(ev.dtype) && isCastless(st.recentCasts, ev.skill, ev.ts)
-  return { mine: true, swing, proc }
+  return { mine: true, swing, proc: origin === 'proc' }
 }
 
 /**
@@ -337,8 +367,23 @@ function foldBoth(st: EngineState, ts: number, fold: (agg: Agg, active: Readonly
   if (enc) fold(enc.agg, active)
 }
 
-function foldDamageAnalytics(st: EngineState, ev: DamageEvent, activeDeltaMs: number, at: Attribution): void {
-  const a = damageAnalytics(st, ev, at)
+/** Everything the analytics fold needs about one already-routed damage line. An args object
+ *  because the four values arrive from three different steps of `ingestDamage` and a positional
+ *  fifth parameter would blow `max-params`. */
+interface DamageFold {
+  /** The line as the LEDGER sees it: `skill` is the SPELL, never the split lane name, so the
+   *  proc ledger keeps keying on the spell and its join to the meter rows is unchanged. */
+  ev: DamageEvent
+  /** The engine's own per-hit active-time accrual, measured by the caller. */
+  activeDeltaMs: number
+  at: Attribution
+  /** `damageOrigin`'s already-consumed verdict; `null` when the question did not arise. */
+  origin: SpellOrigin | null
+}
+
+function foldDamageAnalytics(st: EngineState, f: DamageFold): void {
+  const { ev, activeDeltaMs, at } = f
+  const a = damageAnalytics(ev, at, f.origin)
   if (!a) return
   const p = st.probe
   if (p) p.enter(SEC_ANALYTICS)
@@ -420,18 +465,27 @@ function ingestDamage(st: EngineState, ev: DamageEventE): void {
   // after a closure starts a fresh encounter rather than reviving the old one.
   evalClosure(st, ev.ts)
   const dmgEv = nameSpecialLane(st, toDamageEvent(ev, ev.attacker))
+  // WHERE IT CAME FROM, BEFORE IT IS FILED (JOS-167). The verdict names the lane, so it has to
+  // be reached before route() folds the hit — and it is reached exactly once, here.
+  const origin = damageOrigin(st, dmgEv)
+  // The lane a cast-less firing lands in. A fresh object, never a mutation: the canonical
+  // LogEvent is shared with every other module on the bus (same rule nameSpecialLane states).
+  const laned = origin === null ? dmgEv : { ...dmgEv, skill: laneNameFor(dmgEv.skill, origin) }
   // Read the engine's active-time clock either side of route(): the DIFFERENCE is the exact
   // capped-gap delta it accrued for this hit. A fresh encounter (route() opened one)
   // contributes 0, which is precisely what routing.ts does for a first hit.
   const encBefore = st.current
   const activeBefore = encBefore?.activeMs ?? 0
-  const at = route(st, dmgEv)
+  const at = route(st, laned)
   if (at === null) return
   const delta = st.current === encBefore ? (st.current?.activeMs ?? 0) - activeBefore : 0
-  foldDamageAnalytics(st, dmgEv, delta, at)
+  // The LEDGER gets the un-split event: `agg.procs.spellProcs` is keyed by the SPELL, so the
+  // ledger row, its PPM and its `proc · N ppm` tag stay one lane however many meter rows the
+  // spell now occupies.
+  foldDamageAnalytics(st, { ev: dmgEv, activeDeltaMs: delta, at, origin })
 }
 
-/** damage / heal / mitigation / miss / resist. Returns true if consumed. */
+/** damage / heal / healUnstated / mitigation / miss / resist. Returns true if consumed. */
 function ingestCombat(st: EngineState, ev: LogEvent): boolean {
   switch (ev.kind) {
     case 'damage':
@@ -441,6 +495,12 @@ function ingestCombat(st: EngineState, ev: LogEvent): boolean {
       routeHeal(st, ev)
       foldHealAnalytics(st, ev)
       st.log(ev.ts, 'heal', 'info', `+ ${ev.healer ?? '?'} → ${ev.target} ${ev.amount}${ev.spell ? ` (${ev.spell})` : ''}`)
+      return true
+    case 'healUnstated':
+      // No analytics fold: a heal with no amount cannot enter the proc model, and the processing
+      // log says so out loud rather than printing a 0 that reads like a measurement (JOS-86).
+      routeHealUnstated(st, ev)
+      st.log(ev.ts, 'heal', 'info', `+ ${ev.target} ${ev.skill} (amount not stated)`)
       return true
     case 'mitigation':
       routeMitigation(st, ev)
@@ -454,7 +514,14 @@ function ingestCombat(st: EngineState, ev: LogEvent): boolean {
       // `<mob> resisted your <Charm>!` is the third way an armed cast fails to land (Task #65).
       // Only OUR OWN outgoing resist counts; an incoming one (we shrugged off a mob's spell)
       // says nothing about what we were casting.
-      if (!ev.incoming && idKey(ev.caster) === 'you') st.charm.noteCastFailed(ev.spell, ev.ts)
+      if (!ev.incoming && idKey(ev.caster) === 'you') {
+        // A fully-resisted cast landed NOTHING, so like a fizzle it must not stay in the window
+        // to claim the next proc of the same name (JOS-167). `forget` drops only an UNCLAIMED
+        // record, which is what keeps a partially-resisted AoE honest: if a target of the same
+        // firing already took damage, the cast is spent and the rest of that instant still joins.
+        st.recentCasts.forget(ev.spell)
+        st.charm.noteCastFailed(ev.spell, ev.ts)
+      }
       routeResist(st, ev)
       return true
     default:
@@ -463,8 +530,8 @@ function ingestCombat(st: EngineState, ev: LogEvent): boolean {
 }
 
 /**
- * THE OWN-CAST LIFECYCLE — begin / fizzle / interrupt. Its own family because BOTH of the
- * engine's ownership inferences run off it, and they must see the same three lines:
+ * THE OWN-CAST LIFECYCLE — begin / fizzle / interrupt / resume. Its own family because BOTH of
+ * the engine's ownership inferences run off it, and they must see the same lines:
  *   - the cast-less PROC detector (proc-analytics §4.1): a spell effect with no cast behind it
  *     is a proc, and only the PLAYER prints `You begin casting <Spell>.` — a mob's or another
  *     player's cast is never in this map.
@@ -478,12 +545,23 @@ function ingestCombat(st: EngineState, ev: LogEvent): boolean {
 function ingestCast(st: EngineState, ev: LogEvent): boolean {
   switch (ev.kind) {
     case 'castBegin':
-      noteCast(st.recentCasts, ev.spell, ev.ts)
+      st.recentCasts.note(ev.spell, ev.ts)
       st.charm.noteCastBegin(ev.spell, ev.ts)
       return true
     case 'castFizzle':
     case 'castInterrupted':
+      // A cast that resolved to nothing explains no landing (JOS-167), so its record goes —
+      // otherwise it sits in the window waiting to claim the next PROC of the same name as if
+      // it were the cast. An interrupt can still RECOVER, which is what `castResumed` is for.
+      st.recentCasts.forget(ev.spell)
       st.charm.noteCastFailed(ev.spell, ev.ts)
+      return true
+    case 'castResumed':
+      // `You regain your concentration and continue your casting.` — the interrupted cast is
+      // back on and will land, so give it back its claim. Deliberately does NOT re-arm the
+      // charm/CC model: that model's own evidence rules are a separate question and were not
+      // measured here (charmModel.ts holds them).
+      st.recentCasts.resume()
       return true
     default:
       return false
@@ -501,7 +579,7 @@ function ingestSpecialAttack(st: EngineState, ev: SpecialAttackEvent): void {
   // verb and need no attribution; Slam — whose evidence refuses the claim, see specialAttacks.ts)
   // is still SEEN and still logged. Saying so is the honest report: the line was read and
   // deliberately not acted on.
-  const note = lane === undefined ? ' (no verb lane — label unchanged)' : ` (${lane} lane)`
+  const note = lane === undefined ? ' (no verb lane - label unchanged)' : ` (${lane} lane)`
   const from = ev.replaces === undefined ? '' : ` instead of ${ev.replaces}`
   st.log(ev.ts, 'special', 'info', `▸ special attack: ${ev.skill}${from}${note}`)
 }

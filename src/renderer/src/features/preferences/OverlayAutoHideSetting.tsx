@@ -65,7 +65,7 @@ export function OverlayAutoHideSetting(): JSX.Element {
         />
         <Typography variant="caption" color="text.secondary">
           {prefs.hideWhenNotRunning
-            ? 'Your open overlays disappear while the game is closed and come back when it starts. They keep their position, size and lock — nothing is closed.'
+            ? 'Your open overlays disappear while the game is closed and come back when it starts. They keep their position, size and lock - nothing is closed.'
             : 'Off. Open overlays stay on screen whether or not the game is running.'}
         </Typography>
       </Stack>
@@ -84,7 +84,7 @@ export function OverlayAutoHideSetting(): JSX.Element {
         />
         <Typography variant="caption" color="text.secondary">
           {prefs.hideWhenUnfocused
-            ? 'Your open overlays disappear while another app is in front. This app’s own windows don’t count — clicking an overlay, or the main window, keeps them up.'
+            ? 'Your open overlays disappear while another app is in front. This app’s own windows don’t count - clicking an overlay, or the main window, keeps them up.'
             : 'Off. Open overlays stay on screen while you work in other apps.'}
         </Typography>
       </Stack>

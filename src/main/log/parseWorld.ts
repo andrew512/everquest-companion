@@ -6,23 +6,66 @@
 import type { ConsiderFaction, LogEvent, LootDisposition } from '../../shared/logEvents'
 import { CONSIDER_FACTION_RUNGS } from '../../shared/logEvents'
 import { itemTierFromName } from '../../shared/itemStats'
+import { TIER_OPEN_WORLD, TIER_UNKNOWN } from '../../shared/kills'
 import { cleanMob, norm, type ClassifyCtx } from './parseCommon'
 
-// EQ Legends encodes instance difficulty in the zone name:
-//   base (no suffix) = d0, "(Awakened)" = d1, "(Adaptive)" = d2,
-//   "(Fused)" = d3, "(Refined)" = d4. Also strips "- Solo"/"- Group N".
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ZONE NAME IS THE ONLY THING THAT STATES A DIFFICULTY (JOS-166)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// EQ Legends encodes instance difficulty in the zone name, and nowhere else: no kill line, no
+// lockout line and no instance-creation notice carries one (the sweep is quoted in the header of
+// renderer/features/bosses/lockout.ts). So `zoneTier` is where the app decides what a kill's
+// difficulty was, and everything downstream inherits whatever it decides here.
+//
+// THE THREE WORLDS. A full-log sweep of every `You have entered <X>.` in the owner's 1.4M-line
+// log (2026-08-09, read-only) yields exactly these shapes, and they fall into three kinds:
+//
+//   INSTANCED, DIFFICULTY NAMED — the adjective is the whole rule (d1..d4):
+//     You have entered The Plane of Hate - Solo 4 (Refined).
+//     You have entered Nagafen's Lair - Group 3 (Fused).
+//     You have entered Najena 4 (Refined).                  ← no Solo/Group word, still instanced
+//     You have entered The Plane of Sky 1 (Awakened).
+//
+//   INSTANCED, NO ADJECTIVE — the BASE difficulty, d0, and a real one (7 in the log):
+//     You have entered The Plane of Hate - Solo.
+//     You have entered Nagafen's Lair - Solo.
+//     You have entered The Permafrost Caverns - Solo.
+//
+//   NOT INSTANCED — the open world, which carries no lockout of any kind:
+//     You have entered The Plane of Hate.
+//     You have entered Innothule Swamp.
+//
+// WHY d0 IS NOW ITS OWN ANSWER (owner decision, 2026-08-09, corroborated by the community wiki):
+// a raid target has FIVE weekly lockouts, d0 through d4, and the owner clears all five most
+// weeks. The base instance is a difficulty like any other; what it is NOT is the open world, and
+// the suffix is what tells them apart. Until this ticket all three kinds decoded to 0, so an
+// open-world kill and a base-instance clear were the same fact to every consumer.
+//
+// FOUR ANSWERS, NOT FIVE. `TIER_UNKNOWN` covers both "no zone line has been seen yet" (an empty
+// string — the kills module's state before the scan reaches one) and "an instance whose
+// adjective this app has never decoded". The second used to fall through to 0; a parenthetical
+// the table does not know is still unmistakably an INSTANCE (the base difficulty never prints
+// one), so calling it d0 would be inventing the one fact the line failed to state (law 1).
 const TIER_ADJ: Record<string, number> = { awakened: 1, adaptive: 2, fused: 3, refined: 4 }
+
+/** Difficulty names, indexed by the five DIFFICULTY tier keys; the two non-difficulties have
+ *  no entry here (the renderer spells them in lib/tierChip.ts, where the chips live). */
 export const TIER_LABELS = ['d0', 'd1 · Awakened', 'd2 · Adaptive', 'd3 · Fused', 'd4 · Refined']
 
+/** A `- Solo` / `- Group N` suffix: the word that makes a zone an INSTANCE of itself. */
+const INSTANCE_SUFFIX_RE = /\s-\s*(Solo|Group)\b/i
+
 export function zoneTier(zone: string): { base: string; tier: number } {
-  const adj = /\(([A-Za-z]+)\)\s*$/.exec(zone)
-  const tier = adj ? TIER_ADJ[adj[1].toLowerCase()] ?? 0 : 0
   const base = zone
     .replace(/\s*-\s*(Solo|Group)\b.*$/i, '')
     .replace(/\s+\d+\s*\([^)]*\)\s*$/, '')
     .replace(/\s+\([^)]*\)\s*$/, '')
     .trim()
-  return { base, tier }
+  const adj = /\(([A-Za-z]+)\)\s*$/.exec(zone)
+  if (adj) return { base, tier: TIER_ADJ[adj[1].toLowerCase()] ?? TIER_UNKNOWN }
+  if (INSTANCE_SUFFIX_RE.test(zone)) return { base, tier: 0 }
+  return { base, tier: base ? TIER_OPEN_WORLD : TIER_UNKNOWN }
 }
 
 // ----- content matchers (verbatim regexes from the two old parsers) -----
@@ -86,6 +129,32 @@ const SLAIN_BY_RE = /^(.+?) has been slain by (.+?)!$/
 // Player's own death: "You have been slain by <killer>!" (distinct from the
 // third-person "<mob> has been slain by <x>!" SLAIN_BY_RE, which needs "has").
 const PLAYER_DEATH_RE = /^You have been slain by (.+?)!$/
+// …and the KILLERLESS form. When the killing blow is a DoT tick (or anything else with no
+// attacker to name), the client prints this instead of the slain sentence — same death,
+// no killer. Measured over the 1.11M-line sweep log: 23 player deaths, 22 slain sentences
+// and this one line, so the two shapes together are the whole set. Deliberately NOT
+// widened further: "You have been knocked unconscious!" precedes 23/23 deaths but also
+// fires once where the player survived, and "Returning to <bind>. Please wait..." is a
+// redundant echo whose text varies by server (JOS-88).
+const YOU_DIED = 'You died.'
+
+// The MOB twin of `You died.`: `<Name> died.` — the killerless THIRD-PERSON death, and the
+// reason a boss killed by a damage-over-time tick reads as "0 kills" (JOS-101). Same cause as
+// the player form above: with no attacker to name, the client prints this INSTEAD of a slain
+// sentence, never as well as one.
+//
+// FULL-LOG SWEEP (read-only, 2026-08-08, eqlog_Primitive_freeport.txt, 1.44M lines): 21 lines
+// end in " died." — 2 are `You died.`, claimed above by exact equality before this regex is
+// ever reached, and the other 19 are mob names ("An azarack died.", "A froglok gaz shaman
+// died.", "Soldier of V`Zher died."). NOT ONE of the 21 has a `slain` line within ±3 lines, so
+// this shape never duplicates a slain sentence and cannot double-count a kill. 15 of the 19
+// carry `You gain experience!` on the line immediately before — the join that credits them
+// (shared/kills.ts KILL_EXP_JOIN_MS). The sibling log eqlog_Primitive_halas.txt has 0.
+//
+// The pattern looks wide open but player CHAT cannot be claimed by it: a say/tell/group line
+// wraps its text in quotes, so it ends `died.'` and not `died.` — which is why a sweep this
+// broad finds zero chat lines. Anchored at both ends for the same reason EXP_RE is.
+const MOB_DIED_RE = /^(.+?) died\.$/
 
 // Turn-ins: "You offered 1 Sphinx Claw to Dason Goldblade." then
 //           "You complete the trade with Dason Goldblade."
@@ -254,6 +323,11 @@ export function classifyConsider({ text, ts, seq, raw }: ClassifyCtx): LogEvent 
 
 /** Deaths (unifies self-slain and slain-by). */
 export function classifyDeath({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  // The killerless player death, checked first and by exact equality so the common path
+  // pays one length-guarded string compare. Emits the SAME `playerDeath` kind as the slain
+  // sentence — one death detector, one event — just without a killer (the field is already
+  // optional, and no consumer reads it: buffs strip, combat censors, the alert fires).
+  if (text === YOU_DIED) return { kind: 'playerDeath', seq, ts, raw }
   if (text.includes('slain')) {
     // Player's OWN death (Task #19): "You have been slain by <killer>!" — strips all
     // buffs. Matched before the third-person SLAIN_BY_RE (which needs "has been",
@@ -265,6 +339,19 @@ export function classifyDeath({ text, ts, seq, raw }: ClassifyCtx): LogEvent | n
     if (m) return { kind: 'death', seq, ts, raw, name: norm(m[1]), bySelf: true }
     m = SLAIN_BY_RE.exec(text)
     if (m) return { kind: 'death', seq, ts, raw, name: norm(m[1]), bySelf: false, killer: m[2].trim() }
+  }
+  // The killerless MOB death, gated on a cheap suffix test so the common path pays nothing.
+  // `bySelf:false` with NO killer is the honest shape and a deliberate one: the line names no
+  // attacker, and law 1 forbids inventing one. `bySelf:true` would credit you with a stranger's
+  // kill and make the combat engine attribute the killing blow to you; a synthesized killer
+  // would be a fabricated entity. Every consumer already spells the no-killer case — combat/
+  // ingest.ts computes `killerKey: undefined`, reducers.ts `isCountedKill` short-circuits to
+  // true (it IS a kill of that mob), kills.ts credits it purely from the experience join, and
+  // progression.ts files it as NEITHER credited nor witnessed, because "somebody else killed
+  // it" is exactly the claim this line does not make.
+  if (text.endsWith(' died.')) {
+    const m = MOB_DIED_RE.exec(text)
+    if (m) return { kind: 'death', seq, ts, raw, name: norm(m[1]), bySelf: false }
   }
   return null
 }

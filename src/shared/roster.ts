@@ -31,12 +31,25 @@
  *   'stated'    `<Name> is now the leader of your group.` — the game named them in a role that
  *               only a member can hold. A fact, but about the role, not the join.
  *   'confirmed' `<Name> tells the group, '…'` — they are talking to your group, so they are in
- *               it. The RECOVERY path: EQ prints the join line once, so a group formed before
- *               the app opened has no join line left to replay.
+ *               it. The FIRST recovery path: EQ prints the join line once, so a group formed
+ *               before the app opened has no join line left to replay.
+ *   'buffed'    your one Quick Buff burst landed on them while the log was paying you PARTY
+ *               experience (JOS-85). THE SECOND RECOVERY PATH, and the weakest rung on purpose:
+ *               `confirmed` needs somebody to TALK, which a quiet group never does and which
+ *               shared/logScrub.ts strips from every artifact anyway, so a session could carry
+ *               a whole group and name nobody. See src/main/modules/buffFanOut.ts for what is
+ *               measured and src/main/modules/roster.ts for the party-experience gate that
+ *               makes it precise. Any real membership line outranks it instantly.
  */
-export type RosterSource = 'user' | 'joined' | 'stated' | 'confirmed'
+export type RosterSource = 'user' | 'joined' | 'stated' | 'confirmed' | 'buffed'
 
-const SOURCE_RANK: Record<RosterSource, number> = { user: 3, joined: 2, stated: 1, confirmed: 0 }
+const SOURCE_RANK: Record<RosterSource, number> = {
+  user: 4,
+  joined: 3,
+  stated: 2,
+  confirmed: 1,
+  buffed: 0
+}
 
 /** True when `next` is at least as authoritative as `cur` (see RosterSource). */
 export function outranks(next: RosterSource, cur: RosterSource): boolean {
@@ -48,7 +61,8 @@ export const SOURCE_LABEL: Record<RosterSource, string> = {
   user: 'added by you',
   joined: 'joined',
   stated: 'group leader',
-  confirmed: 'confirmed'
+  confirmed: 'confirmed',
+  buffed: 'group buff'
 }
 
 export interface RosterMember {

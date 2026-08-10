@@ -37,7 +37,7 @@ function InstructionsCard(): JSX.Element {
         <Typography variant="subtitle2">Fill this in from the game</Typography>
         <Typography variant="body2" color="text.secondary">
           Type <b>/outputfile inventory</b> in EverQuest. Every slot below fills with what you are
-          wearing, straight away — leave this tab open and watch it happen.
+          wearing, straight away - leave this tab open and watch it happen.
         </Typography>
       </Stack>
     </Paper>
@@ -75,7 +75,7 @@ export default function CharacterView(): JSX.Element {
       {sheet && (
         <OutputFileLine
           command="/outputfile inventory"
-          why="Re-type it in game whenever your gear changes — this sheet follows the dump."
+          why="Re-type it in game whenever your gear changes - this sheet follows the dump."
           updatedAt={sheet.loadedAt}
           testId="character-outputfile"
         />

@@ -457,6 +457,23 @@ export type StartupMarkResult =
 
 const phaseIndex = (phase: StartupPhase): number => STARTUP_PHASES.indexOf(phase)
 
+/**
+ * Has `phase` already landed? The question `addMark` asks itself before refusing a duplicate —
+ * exported so a caller that has a LEGITIMATE reason to expect a repeat can ASK instead of marking
+ * and being refused (JOS-99).
+ *
+ * There is exactly one such caller today, and it is a fact about the app rather than a loophole:
+ * `rendererHydrated` is sent by the renderer, and a renderer can RELOAD (the dev watcher, the
+ * did-fail-load retry, the render-process-gone recovery). Every one of those re-mounts the hook
+ * that sends it, so the second send is the expected consequence of a reload — not a wiring bug,
+ * and not something errors.log should carry. The refusal itself is untouched and stays LOUD for
+ * every other phase, all of which are marked once from a single main-side call site where a
+ * duplicate really would mean the wiring is wrong.
+ */
+export function phaseMarked(marks: readonly StartupMark[], phase: StartupPhase): boolean {
+  return marks.some((m) => m.phase === phase)
+}
+
 /** Are these two phases allowed to arrive in either order? (See CONCURRENT_PHASES.) */
 const race = (a: StartupPhase, b: StartupPhase): boolean =>
   CONCURRENT_PHASES.includes(a) && CONCURRENT_PHASES.includes(b)
@@ -483,7 +500,7 @@ export function addMark(
   atMs: number
 ): StartupMarkResult {
   const kept = [...marks]
-  if (kept.some((m) => m.phase === phase)) {
+  if (phaseMarked(kept, phase)) {
     return { ok: false, error: { code: 'duplicate', phase }, marks: kept }
   }
   const last = kept[kept.length - 1]

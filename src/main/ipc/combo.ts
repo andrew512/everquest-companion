@@ -14,7 +14,7 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import { isClassAbbr, MAX_COMBO_SLOTS, type ClassAbbr, type ComboCorrection } from '../../shared/classCombo'
 import { LAUNCH_MS } from '../log/epochDetector'
-import { comboModule } from '../pipeline'
+import { comboModule, registry } from '../pipeline'
 import { activeCharId } from '../session'
 import { clearComboCorrections, getComboCorrections, setComboCorrection } from '../store'
 
@@ -37,6 +37,25 @@ function classes(raw: unknown): ClassAbbr[] | null {
   return deduped.every(isClassAbbr) ? deduped : null
 }
 
+/**
+ * A correction has been written: rebuild and PUSH, now.
+ *
+ * `invalidate()` alone only marks the fold dirty and leaves the delta to the next flush the
+ * registry happens to run — which, on an idle log, is the 1 s heartbeat, and a user editing
+ * their loadout in Preferences is by definition not generating log lines. `flushNow()` is the
+ * registry's existing "push immediately" path (it is what a character switch uses), so the write
+ * a user just confirmed is on screen before their hand leaves the mouse.
+ *
+ * The other half of that fix is in ComboModule: the delta's `seq` had to become the module's own
+ * revision, because the renderer dedupes on it and a correction advances no log seq at all.
+ * Flushing promptly is useless if the push is then dropped as a duplicate — both are needed, and
+ * the second one is what `tests/e2e/loadout-override.e2e.mts` caught in the running app.
+ */
+function republish(): void {
+  comboModule.invalidate()
+  registry.flushNow()
+}
+
 export function registerComboIpc(): void {
   // Character-scoped, PULLED rather than pushed: `reset()` on a character switch marks the
   // module stale and the next recompute asks this provider again. See ComboModule.
@@ -48,7 +67,7 @@ export function registerComboIpc(): void {
     if (!range || !picked) return { ok: false as const, error: 'Invalid combo correction.' }
     const correction: ComboCorrection = { ...range, classes: picked, setAt: Date.now() }
     setComboCorrection(activeCharId(), correction)
-    comboModule.invalidate()
+    republish()
     return { ok: true as const }
   })
 
@@ -56,7 +75,7 @@ export function registerComboIpc(): void {
     const range = span(payload)
     if (!range) return { ok: false as const, error: 'Invalid combo range.' }
     clearComboCorrections(activeCharId(), range.startTs, range.endTs)
-    comboModule.invalidate()
+    republish()
     return { ok: true as const }
   })
 }

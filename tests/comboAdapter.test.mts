@@ -9,7 +9,8 @@
 //       1. an AMBIGUOUS slot prints its candidate SET (`CLR|PAL`) and never picks a member —
 //          the real log has spans where CLR is never exclusively evidenced, so "PAL" there
 //          would be fabricated;
-//       2. an UNKNOWN slot prints an em-dash — not a class, not a blank, not a zero;
+//       2. an UNKNOWN slot prints a dash (JOS-106: a normal one) — not a class, not a blank,
+//          not a zero;
 //       3. a fuzzy boundary prints a WINDOW, because a loadout swap writes nothing to the log
 //          and the events bracketing it can be a day and a half apart.
 //
@@ -32,6 +33,8 @@ import {
   hasInferredSlot,
   intervalProvenance,
   levelRangeText,
+  loadoutSourceText,
+  overruledText,
   slotKind,
   slotLabel,
   startFuzzMs,
@@ -96,7 +99,7 @@ test('an ambiguous slot prints the SET and never picks a member', () => {
   assert.ok(!/^PAL$/.test(slotLabel(s)))
 })
 
-test('an unknown slot prints an em-dash — empty and whole-roster both', () => {
+test('an unknown slot prints a dash — empty and whole-roster both', () => {
   assert.equal(slotKind(slot([])), 'unknown')
   assert.equal(slotLabel(slot([])), NONE)
   assert.equal(slotKind(slot([...CLASS_ABBRS])), 'unknown')
@@ -115,6 +118,40 @@ test('provenance takes the strongest slot, and any inferred slot is reported', (
   const corrected = interval({ id: 'ci2', slots: [slot(['PAL'], 'user'), slot(['ROG'], 'who')] })
   assert.equal(intervalProvenance(corrected), 'user')
   assert.equal(hasInferredSlot(corrected), false)
+})
+
+test('the override control names the two sources a user can act on (JOS-87)', () => {
+  // `provenanceLabel` is chip-sized and written from the interval's side; this is the sentence
+  // a user reads while deciding whether to correct the thing, so it has to name AUTODETECTION
+  // (which they can override) and THEIR OWN SETTING (which they can undo) in those words. The
+  // report this shipped for said there was no way to correct a wrong loadout.
+  const detected = interval({ id: 'ci1' })
+  assert.match(loadoutSourceText(detected), /[Aa]utodetected/)
+
+  const mine = interval({ id: 'ci2', slots: [slot(['SHD'], 'user')], userLocked: true })
+  assert.match(loadoutSourceText(mine), /Set by you/)
+  assert.match(loadoutSourceText(mine), /will not change it/)
+
+  // A /who row is neither: the game stated it, and nothing needs correcting.
+  const stated = interval({ id: 'ci3', slots: [slot(['PAL'], 'who')] })
+  assert.match(loadoutSourceText(stated), /\/who/)
+})
+
+test('an overruled override says what happened; an ordinary interval says nothing', () => {
+  // The one path by which an explicit override still loses (§ 4.4). Silence here is what the
+  // ticket forbids, so the absence of the flag and the presence of the sentence are both pinned.
+  assert.equal(overruledText(interval({ id: 'ci1' })), null)
+  assert.equal(overruledText(interval({ id: 'ci2', userLocked: true })), null)
+
+  const overruled = interval({
+    id: 'ci3',
+    slots: [slot(['PAL'], 'who'), slot(['MNK'], 'who'), slot(['ENC'], 'who')],
+    userOverruled: true
+  })
+  const text = overruledText(overruled)
+  assert.ok(text)
+  assert.match(text, /PAL \/ MNK \/ ENC/, 'it names what the log said, not just that it differed')
+  assert.match(text, /not in effect/)
 })
 
 test('an exact boundary has no ~ annotation; a fuzzy one states its window', () => {
@@ -151,7 +188,7 @@ test('confidence and level range read as the panel prints them', () => {
   assert.equal(confidenceText(0), '0%')
   assert.equal(levelRangeText(interval({ id: 'ci1' })), null)
   assert.equal(levelRangeText(interval({ id: 'ci2', levelLo: 50, levelHi: 50 })), 'level 50')
-  assert.equal(levelRangeText(interval({ id: 'ci3', levelLo: 11, levelHi: 24 })), 'levels 11–24')
+  assert.equal(levelRangeText(interval({ id: 'ci3', levelLo: 11, levelHi: 24 })), 'levels 11-24')
 })
 
 // ---------------------------------------------------------------------------

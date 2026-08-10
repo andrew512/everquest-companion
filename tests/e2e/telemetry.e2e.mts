@@ -40,6 +40,9 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
+// The error-report steps (JOS-100) live next door: adding them here put this spec past the
+// repo's 400-code-line ceiling, and the split follows a real seam. See errorReportSteps.mts.
+import { DELIBERATE, stepErrorReport, stepThrowRendererError } from './errorReportSteps.mjs'
 
 const NOTICE = '[data-testid="telemetry-notice"]'
 const TEXT = '[data-testid="telemetry-notice-text"]'
@@ -480,9 +483,11 @@ async function stepCollects(page: Page): Promise<void> {
 /** Every launch collects renderer errors the same way — a missing IPC handler surfaces here. */
 function watch(page: Page, consoleErrors: string[]): void {
   page.on('console', (m) => {
-    if (m.type() === 'error') consoleErrors.push(m.text())
+    if (m.type() === 'error' && !m.text().includes(DELIBERATE)) consoleErrors.push(m.text())
   })
-  page.on('pageerror', (e) => consoleErrors.push(String(e)))
+  page.on('pageerror', (e) => {
+    if (!String(e).includes(DELIBERATE)) consoleErrors.push(String(e))
+  })
 }
 
 /**
@@ -571,11 +576,17 @@ async function main(): Promise<void> {
       await stepBarShape(page)
       await stepDismissKeepsOn(page)
       await stepFirstRunFunnel(page)
+      // LAST in this launch, deliberately: it throws a real uncaught error into the renderer,
+      // and every step above wants a window that has not been shouted at. The ErrorBoundary is
+      // untouched (this is a `window.onerror`, not a render throw), so the app stays usable —
+      // but there is nothing after it here that needs it to be.
+      await stepThrowRendererError(page, log)
     }
   })
   // …and now that launch is gone, what it left behind. It is the one launch that ends with
   // collection ON (dismissal is not an opt-out), so it is the one whose ring holds a reading.
   stepStartupReading(firstRunData)
+  stepErrorReport(firstRunData, log)
   await firstRun({ label: 'launch 2: fresh userData — the Details link…', errors: consoleErrors, log, step: stepDetailsOpensPane })
   await firstRun({ label: 'launch 3: fresh userData — opting out…', errors: consoleErrors, log, step: stepOptOut, userData: restartData })
 

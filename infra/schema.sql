@@ -250,6 +250,52 @@ CREATE TABLE IF NOT EXISTS analytics_install (
   PRIMARY KEY (analytics_id)
 );
 
+-- ---- error reports (JOS-100) -------------------------------------------------
+--
+-- ADDITIVE, AND `usage_daily` IS UNTOUCHED. The counters keep answering "how many
+-- errors did this build report"; this table answers "WHICH ones", which a counter
+-- cannot, because the answer needs an example and `usage_daily` has no column an
+-- example could live in.
+--
+-- ONE ROW PER (day, cohort, version, fingerprint), AND IT IS THE UNIQUENESS RULE:
+-- the ingest path's `ON CONFLICT (day, cohort, version, fingerprint) DO UPDATE`
+-- needs those four columns to BE the key. `cohort` is in the key for exactly the
+-- reason it is in `usage_daily`'s (the long note above that table) — the author
+-- runs this app too, and a merged total is the number the split exists to stop
+-- reporting. `version` is in the key rather than in `dim` because THIS table has
+-- room for a real column and the question is per-release: "did the build I just
+-- shipped introduce this".
+--
+-- THIS TABLE IS BORN WITH ITS KEY. There is no `ALTER` path to a primary key in
+-- Aurora DSQL, so a cluster that gets the CREATE below gets the final shape; a
+-- future re-shape would need the copy-first staging runbook in infra/README.md,
+-- exactly as the cohort migration did.
+--
+-- `exemplar` IS TEXT HOLDING JSON, NOT jsonb — and this file's own SHAPE NOTES are
+-- why (env_json / log_json made the same call): nothing ever queries INTO it (both
+-- readers parse it in JS), DSQL cannot index jsonb, and its jsonb support is young.
+-- The JOS-100 brief asked for jsonb; the conventions this file states are older
+-- than the brief and they win. Switching later is an ADD-a-column migration, which
+-- is the one shape DSQL does support.
+--
+-- WHAT IS IN AN EXEMPLAR, so a reader of this file does not have to trust a comment
+-- in another one: a validated `errorReport` event and nothing else — an error name,
+-- a machine-readable code, a REDACTED message (the ingest Lambda re-runs the
+-- redactor and refuses anything that changes under it), stack frames whose files
+-- are all `out/…` bundle paths, and a list of parser event KINDS. No log line, no
+-- chat, no character name, no filesystem path, no analyticsId. FIRST WINS: the
+-- UPSERT writes the exemplar only when the row has none, so a hundred installs
+-- hitting one bug store one example and add to one count.
+CREATE TABLE IF NOT EXISTS error_report (
+  day         text   NOT NULL,
+  cohort      text   NOT NULL,
+  version     text   NOT NULL,
+  fingerprint text   NOT NULL,
+  count       bigint NOT NULL,
+  exemplar    text,
+  PRIMARY KEY (day, cohort, version, fingerprint)
+);
+
 -- The kill switch and the cap for the TELEMETRY route, added to the existing
 -- config row rather than a second table: one row is where an operator already
 -- looks, and `triage-feedback` already reads and writes it.
@@ -378,3 +424,10 @@ GRANT SELECT, INSERT, UPDATE ON usage_daily TO telemetry_ingest;
 GRANT SELECT, INSERT, UPDATE ON usage_funnel_daily TO telemetry_ingest;
 
 GRANT SELECT, INSERT, UPDATE ON analytics_install TO telemetry_ingest;
+
+-- The error store (JOS-100). SELECT rides along with INSERT/UPDATE for the same
+-- reason it does on the three tables above: `ON CONFLICT DO UPDATE` reads the
+-- existing row to evaluate `COALESCE(error_report.exemplar, EXCLUDED.exemplar)`.
+-- Still NO DELETE — a compromised telemetry Lambda can add rows to this table and
+-- can neither read the feedback backlog nor destroy an error history.
+GRANT SELECT, INSERT, UPDATE ON error_report TO telemetry_ingest;

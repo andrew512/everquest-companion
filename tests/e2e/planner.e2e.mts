@@ -27,6 +27,8 @@
  * committed spell DB (V6 — a count, never today's wording); the
  * Inventory tab either fills its hosts from a real `/outputfile inventory` dump or teaches the
  * command, never both (V7 — whether this machine has a dump is not something a spec may assume);
+ * the board draws both any-slot cells, named in the client's own words, and a planned exaltation
+ * says what it DOES when you hover it (JOS-104, both halves of one player's report);
  * clicking one of a host's sockets lands in the effect browser filtered to that socket, that slot
  * and that host, with a chip that can be cleared (V8); and the exaltation rules card is NOT up on a
  * first visit, comes up only from the toolbar's `?`, and closes for good when dismissed (V10 as
@@ -56,7 +58,8 @@ import {
 
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
-// The cell list itself, so the board's own count is never restated here (JOS-67 moved it 18 → 21).
+// The cell list itself, so the board's own count is never restated here (JOS-67 moved it 18 → 21,
+// JOS-104 moved it 21 → 23).
 import { PLAN_SLOTS } from '../../src/shared/planner/types'
 // Every `planner-*` selector, the DOM measurements, and the four steps that measure the EFFECT
 // LIST live next door — this spec sits at the repo's max-lines budget and the rule is to split,
@@ -94,10 +97,12 @@ import {
   STATE_CHIP,
   VIEW,
   boxOf,
+  checkReportedPairs,
   stepEra,
   stepFocusFamilies,
   stepNonEquip,
   stepOutputsRegistry,
+  stepSocketEffect,
   textOf,
   until
 } from './plannerSteps.mjs'
@@ -248,8 +253,11 @@ async function stepEffectSays(page: Page): Promise<void> {
  * 5. ADDING A DONOR WRITES A SOCKET THE INVENTORY TAB DRAWS.
  *
  * The tab is called Inventory since V7 — it fills its cells from the character's own
- * `/outputfile inventory` dump — but what is asserted here is unchanged: eighteen cells whatever
- * the dump says, and the socket the browser just wrote drawn in one of them. Nothing here can
+ * `/outputfile inventory` dump — but what is asserted here is unchanged in kind: every cell
+ * `PLAN_SLOTS` names whatever the dump says (twenty-three of them, since JOS-67 added the second
+ * ring and JOS-104 the two any-slots), and the socket the browser just wrote drawn in one of them.
+ * The two player-reported pairs are checked BY NAME, because both were reported as missing and a
+ * count alone would not notice one being swapped for the other. Nothing here can
  * assume a dump exists (a fresh e2e userData has no gear knowledge at all), so the auto-fill is
  * checked by `stepInventoryFill` as an identity: either it filled cells or it says how to.
  */
@@ -272,9 +280,7 @@ async function stepAddAndInventory(page: Page): Promise<boolean> {
   const drawn = await until(async () => (await countOf(page, SOCKET_LINE)) > 0, 15_000)
   const cells = await countOf(page, BOARD_CELL)
   check('the Inventory tab draws every equipment cell, planned or not', cells >= PLAN_SLOTS.length, `${String(cells)} cells`)
-  // JOS-67 — reported as "only allows one finger slot focus effect": BOTH ring cells must be here.
-  const rings = await countOf(page, `${BOARD_CELL}[data-slot="FINGER"], ${BOARD_CELL}[data-slot="FINGER2"]`)
-  check('both ring cells are on the board — you wear two rings', rings === 2, `${String(rings)} ring cells`)
+  await checkReportedPairs(page)
   check('adding a donor from the browser writes a socket the Inventory tab draws', drawn, `${String(await countOf(page, SOCKET_LINE))} socket lines`)
   check(
     'each planned socket carries exactly one state chip',
@@ -500,8 +506,8 @@ async function stepFarm(page: Page): Promise<void> {
     )
   }
   check(
-    'every farm row states the merge cost in the shared vocabulary ("needs +N — ≈X D0 merges")',
-    /needs \+\d+ — ≈\d+ D0 merges/.test(text),
+    'every farm row states the merge cost in the shared vocabulary ("needs +N - ≈X D0 merges")',
+    /needs \+\d+ - ≈\d+ D0 merges/.test(text),
     text.slice(0, 140)
   )
 }
@@ -565,6 +571,7 @@ async function steps(page: Page): Promise<void> {
     await stepNonEquip(page)
     await stepFocusFamilies(page)
     if (await stepAddAndInventory(page)) {
+      await stepSocketEffect(page)
       await stepInventoryFill(page)
       await stepHostPicker(page)
       await stepSocketView(page)

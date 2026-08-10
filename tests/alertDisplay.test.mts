@@ -92,34 +92,36 @@ const def = (name: string, text?: string): { name: string; display: { text?: str
   display: text === undefined ? {} : { text }
 })
 
-test('a display template substitutes $<name> from the firing, exactly as a spoken phrase does', () => {
+test('a display template substitutes {tokens} from the firing, exactly as a spoken phrase does', () => {
   const firing = { captures: { mob: 'a fire giant', spell: 'Ancient Breath' } }
   assert.equal(
-    displayTextFor(def('Breath', '$<mob> is casting $<spell>'), firing),
+    displayTextFor(def('Breath', '{mob} is casting {spell}'), firing),
     'a fire giant is casting Ancient Breath'
   )
 })
 
-test('an unresolved name is dropped and the gap closes', () => {
-  // The whitespace rule is half the feature: `$<mob> resisted $<spell>` with no spell must read
-  // "a froglok resisted", not "a froglok resisted " with a hole in it.
+test('AN UNDECLARED TOKEN RENDERS LITERALLY — nothing is ever silently deleted', () => {
+  // JOS-103's rule, and it is the opposite of what this branch's retired `$<name>` did (it
+  // dropped the token and closed the gap). Literal is the better answer for the same reason the
+  // preview shows tokens unresolved: a line that says `{spell}` tells the user their pattern
+  // does not capture that, where a line with a hole in it just looks like the alert is broken.
   const firing = { captures: { mob: 'a froglok' } }
-  assert.equal(displayTextFor(def('Resist', '$<mob> resisted $<spell>'), firing), 'a froglok resisted')
-  assert.equal(displayTextFor(def('Resist', '$<a> $<b> $<c>'), firing), 'Resist', 'nothing left ⇒ the name')
+  assert.equal(displayTextFor(def('Resist', '{mob} resisted {spell}'), firing), 'a froglok resisted {spell}')
 })
 
-test('THE TWO SURFACES AGREE: the same phrase and captures draw and speak the same words', () => {
-  // This is why `substitute` lives in shared/captures.ts rather than inside the speech resolver.
-  // A second implementation would drift the moment either side grew a rule.
+test('THE TWO SURFACES AGREE: the same template and captures draw and speak the same words', () => {
+  // This is why `displayTextFor` calls `applyCaptures` rather than carrying its own substitution.
+  // A second implementation would drift the moment either side grew a rule — and only one of them
+  // would have the threat model in shared/alertCaptures.ts.
   const firing = { captures: { attacker: 'a gnoll', amount: '212' } }
-  const phrase = '$<attacker> hit you for $<amount>'
+  const phrase = '{attacker} hit you for {amount}'
   const spoken = speechTextFor({ name: 'Big hit', speech: { mode: 'custom', phrase } }, firing)
   const drawn = displayTextFor(def('Big hit', phrase), firing)
   assert.equal(drawn, spoken)
   assert.equal(drawn, 'a gnoll hit you for 212')
 })
 
-test('no template, or nothing left after substitution, falls back to the alert’s own NAME', () => {
+test('no template at all falls back to the alert’s own NAME', () => {
   // The `speechTextFor` rule, deliberately identical: saying nothing is a broken alert the user
   // cannot see, and inventing content is worse than both.
   assert.equal(displayTextFor(def('Charm broke')), 'Charm broke')

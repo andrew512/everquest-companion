@@ -484,10 +484,18 @@ export type HealSourceKind = 'you' | 'pet' | 'other' | 'enemy'
  *   - 'absorbed' — absorption GRANTED by a rune. Counted as effective sustain on the assumption
  *     that the shield gets consumed; the log records the grant, never the consumption. That
  *     assumption is why this classification exists and why it is never silently merged away.
+ *   - 'unstated' — a heal the log ANNOUNCED and never VALUED (JOS-86; the monk's Mend, whose
+ *     whole sentence is `You mend your wounds and heal some damage.`). Hit points really went
+ *     back on the bar; the game does not say how many. So the lane's `total` is 0 and that 0 is
+ *     NOT a measurement — it is the absence of one, which is precisely why the lane needs a
+ *     classification of its own rather than a `restored` row reading zero. An 'unstated' lane
+ *     contributes nothing to any sum anywhere (row total, view total, hps, overheal) and its
+ *     `count` is the only real figure it carries. The UI must say "amount not stated"; it must
+ *     never print "0 healing", and no average may be derived from it.
  * Keeping it on the wire is deliberate: a future UI can split the meter apart again — and a
  * future model could split ABSORPTION ITSELF by source — without any change here.
  */
-export type HealClassification = 'restored' | 'absorbed'
+export type HealClassification = 'restored' | 'absorbed' | 'unstated'
 
 /**
  * One lane inside a healer's drill-down — a heal spell, or the absorption lane. They share one
@@ -497,9 +505,11 @@ export type HealClassification = 'restored' | 'absorbed'
  * (not position) telling the two kinds apart.
  */
 export interface HealSpellView {
-  /** Display spell name, 'Unspecified' when the line named no spell, or 'Rune' for absorption. */
+  /** Display spell name, 'Unspecified' when the line named no spell, 'Rune' for absorption, or
+   *  the SKILL name ('Mend') on an 'unstated' lane. */
   name: string
-  /** Effective healing (what actually landed on a health bar). */
+  /** Effective healing (what actually landed on a health bar). Always 0 on an 'unstated' lane,
+   *  where it means "no amount exists", not "no healing happened" — see HealClassification. */
   total: number
   /** pct of the healer's largest spell lane (drives the bar fill). */
   pct: number
@@ -518,8 +528,10 @@ export interface HealSpellView {
   overheal: number
   /** Ticks that landed entirely on a full health bar (effective 0). */
   fullOverheal: number
-  /** 'restored' on every real heal lane; 'absorbed' on the rune lane. Absorption has no overheal
-   *  by construction — a rune that is never consumed simply expires, and the log does not say. */
+  /** 'restored' on every valued heal lane; 'absorbed' on the rune lane; 'unstated' on a lane
+   *  whose lines announced a heal without an amount (Mend). Neither of the latter two has an
+   *  overheal by construction — a rune that is never consumed simply expires, and a heal with no
+   *  amount cannot have a waste — and the log does not say, so none is invented. */
   classification: HealClassification
 }
 
@@ -545,8 +557,16 @@ export interface HealSourceView {
   hps: number
   /** pct of the largest row's total (bar fill). */
   pct: number
-  /** Heal LINES only — a rune grant is not a heal and is never counted here. */
+  /** VALUED heal lines only — a rune grant is not a heal, and an amount-less heal has no figure
+   *  to average or bound, so neither is counted here (see `unstatedCount`). Every other headline
+   *  stat on this row (crits, max, min, overheal) shares this denominator, which is the whole
+   *  reason the split exists: folding a Mend in would deflate critPct against a line that could
+   *  not have been a crit. */
   count: number
+  /** Lines on this row's 'unstated' lanes — heals the log announced without an amount (Mend).
+   *  A COUNT and nothing more: it enters `total`, `hps`, `max`, `min` and `overheal` nowhere.
+   *  0 on every row that has none, which today is every row but your own. */
+  unstatedCount: number
   crits: number
   critPct: number
   /** Largest / smallest single EFFECTIVE heal. Absorption never enters these. */

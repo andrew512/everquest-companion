@@ -109,7 +109,7 @@ export function planAlertMerge(
         action: 'skip',
         finalId: twin.id,
         finalName: twin.name,
-        reason: `Already have this — “${twin.name}”`,
+        reason: `Already have this - “${twin.name}”`,
         missingPackId,
         behaviorKey
       })
@@ -122,7 +122,7 @@ export function planAlertMerge(
     if (byId.has(finalId)) {
       finalId = `${def.id}~${behaviorKey.slice(0, 4)}`
       action = 'rekey'
-      reason = `Id “${def.id}” is taken by a different alert — imported alongside it`
+      reason = `Id “${def.id}” is taken by a different alert - imported alongside it`
     }
 
     let finalName = def.name
@@ -200,9 +200,18 @@ const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
   events: 'Event feed',
   // The toast strip has no bgAlpha row to share today (src/main/share.ts's KINDS list
   // does not include it), but the label map is keyed by the whole union, so it is named here
-  // rather than letting a future shared field render as a raw kind id. Alert text overlays are
-  // excluded from sharing for the same reason and named here on the same terms.
+  // rather than letting a future shared field render as a raw kind id.
   toast: 'Celebration toasts',
+  // Same as the toast row above: the buff/timer overlay (JOS-89) has no shared field today —
+  // `src/main/share.ts`'s KINDS list does not include it — but the map is keyed by the whole
+  // union on purpose, so it is named here rather than letting a future shared field render as
+  // a raw kind id.
+  buffs: 'Buff timers',
+  // The debuff/CC half of the JOS-119 split. Same story as the two rows above: no shared field
+  // today, named here because the map is keyed by the whole union on purpose.
+  debuffs: 'Debuff timers',
+  // …and the alert-text lane, excluded from sharing on the same terms and named for the same
+  // reason (a notifier's bgAlpha is a per-machine legibility call, not shared taste).
   alert: 'Alert text'
 }
 
@@ -255,7 +264,7 @@ function pushOverlayRows(out: ScalarChange[], body: SettingsBundleBody, ctx: Sca
     const cur = ctx.overlays?.[kind]
     pushScalar(out, {
       id: `overlay.${kind}.bgAlpha`,
-      label: `${OVERLAY_KIND_LABEL[kind]} — background opacity`,
+      label: `${OVERLAY_KIND_LABEL[kind]} - background opacity`,
       current: cur?.bgAlpha,
       incoming: inc.bgAlpha,
       merge: 'replace'

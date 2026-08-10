@@ -184,7 +184,31 @@ const EVENTS: TelemetryEvent[] = [
     presenceRestarts: 1,
     speechFailures: 0
   },
-  { t: 'updateOutcome', step: 'download', ok: false, failureClass: 'network' }
+  { t: 'updateOutcome', step: 'download', ok: false, failureClass: 'network' },
+  // THE ONE EVENT WITH TEXT IN IT (JOS-100), and it belongs in this list more than any other:
+  // the pin below poisons every string slot and requires a refusal, so `errorReport`'s
+  // pattern-bound fields have to earn the same "cannot speak to the terminal that prints it"
+  // property the enum-bound ones get for free. `redactedMessage` is bounded to printable ASCII
+  // precisely so this assertion holds for it.
+  {
+    t: 'errorReport',
+    errorName: 'TypeError',
+    code: 'ENOENT',
+    redactedMessage: 'ENOENT: no such file or directory, open <path>',
+    frames: [{ file: 'out/main/pipeline.js', line: 120, col: 15, func: 'Object.foldEvent' }],
+    fingerprint: '0123456789abcdef',
+    breadcrumbs: [{ kind: 'damage', offsetMs: 0 }],
+    view: 'combat',
+    sessionAgeBucket: 2,
+    mode: 'live',
+    count: 1
+  },
+  // THE TWO FIELDLESS KINDS (JOS-109). They contribute exactly one string slot each — their own
+  // `t` — and the poison walk below therefore proves the only thing there is to prove about
+  // them: that `optOut[2J` is not an event kind. An event with no fields cannot smuggle
+  // text because it has nowhere to put any, which is the entire design.
+  { t: 'optOut' },
+  { t: 'optIn' }
 ]
 
 const ENVELOPE = {

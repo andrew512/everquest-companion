@@ -4,22 +4,13 @@
 // `initial` is null for "add", or an existing def for "edit" (including a seeded
 // built-in — no special casing beyond keeping its id stable).
 //
-// THE ORDER OF THE SECTIONS IS THE ORDER OF THE DECISIONS: name → when it fires → what it does
-// when it fires → the settings of whichever channel that turned out to be. The channel selector
-// used to sit BELOW the sound picker, inside the Voice block, which meant a user choosing "Speak
-// it" had already been asked to pick a sound that would never play. Sound and Voice are now
-// shown only when the channel uses them (`playsSound`/`speaks`), so every control on screen is
-// one that does something — and `formCanSave` stops requiring a sound the dialog is not asking
-// for, because a hidden field must never be the reason a save is refused.
+// THIS FILE IS THE RENDERING. The form model it drives — which fields exist, how they are
+// hydrated from `initial`, and how they turn back into an `AlertDef` — lives in alertForm.ts,
+// which is where JOS-122's hydration rule is stated: hydration answers an OPENING, never a prop
+// identity, because `packs` is re-listed on every window focus and re-hydrating on it wiped
+// whatever the user had typed. Read that header before touching either half.
 
-import {
-  type Dispatch,
-  type JSX,
-  type SetStateAction,
-  useEffect,
-  useRef,
-  useState
-} from 'react'
+import { type Dispatch, type JSX, type SetStateAction } from 'react'
 import {
   Box,
   Button,
@@ -28,230 +19,146 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  IconButton,
   MenuItem,
+  Paper,
   Select,
   Slider,
   Stack,
   TextField,
   Typography
 } from '@mui/material'
-import type { AlertDef, AlertTrigger, SoundPack } from '@shared/types'
+import AddIcon from '@mui/icons-material/Add'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import type { AlertDef, SoundPack } from '@shared/types'
+import { captureNamesIn } from '@shared/alertCaptures'
+import { blankCondition, type CombineMode, type ConditionDraft } from './conditionDraft'
 import {
-  blankCondition,
-  type CombineMode,
-  type ConditionDraft,
-  conditionFieldValErr,
-  conditionRawErr,
-  draftFromPrimitive,
-  primitiveFromDraft
-} from './conditionDraft'
-import TriggerSection from './TriggerSection'
-import SoundPicker, { fallbackPack, firstSoundId } from './SoundPicker'
-import SpeechBlock, {
-  AudioActionSection,
-  type CaptureHints,
-  type SpeechForm,
-  playsSound,
-  speaks,
-  speechFieldsFor,
-  useSpeechForm
-} from './SpeechBlock'
-import DisplayBlock, {
-  type DisplayForm,
-  displayFieldsFor,
-  useDisplayForm
-} from './DisplayBlock'
+  type AlertForm,
+  type CooldownScope,
+  defFromForm,
+  formCanSave,
+  triggerFromForm,
+  useAlertForm
+} from './alertForm'
+import ConditionEditor from './ConditionEditor'
+import SoundPicker from './SoundPicker'
+import SpeechBlock, { playsSound } from './SpeechBlock'
+import DisplayBlock from './DisplayBlock'
 import { useAlertOverlayDefaults } from './useAlertOverlayDefaults'
-import { captureNamesFor, hasRawCondition } from '@shared/captureNames'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
-import { DEFAULT_PACK_ID } from './suggestions'
 
-const DEFAULT_COOLDOWN_MS = 2000
-
-function newId(name: string): string {
-  const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'alert'
-  return `${base}-${Math.random().toString(36).slice(2, 6)}`
+/** "Fire when…" — the single/any/all combine-mode picker plus the same-event caveat. */
+function CombineModeSection({
+  mode,
+  onChange
+}: {
+  mode: CombineMode
+  onChange: (next: CombineMode) => void
+}): JSX.Element {
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary">
+        Fire when…
+      </Typography>
+      <Select
+        size="small"
+        fullWidth
+        data-testid="alert-combine-mode"
+        value={mode}
+        onChange={(e) => onChange(e.target.value as CombineMode)}
+      >
+        <MenuItem value="single">a single condition matches</MenuItem>
+        <MenuItem value="any">ANY of these conditions matches (or)</MenuItem>
+        <MenuItem value="all">ALL of these match the same event (and)</MenuItem>
+      </Select>
+      {mode === 'all' && (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+          “All” requires every condition to match the SAME incoming log event (same-event,
+          not a correlation window).
+        </Typography>
+      )}
+    </Box>
+  )
 }
 
-/** Everything the dialog's form owns; `useAlertForm` hydrates it from `initial`. */
-interface AlertForm {
-  name: string
-  setName: (v: string) => void
+/** One numbered condition card inside a composite trigger. */
+function ConditionRow({
+  index,
+  draft,
+  canRemove,
+  onChange,
+  onRemove
+}: {
+  index: number
+  draft: ConditionDraft
+  canRemove: boolean
+  onChange: (next: ConditionDraft) => void
+  onRemove: () => void
+}): JSX.Element {
+  return (
+    <Paper variant="outlined" sx={{ p: 1.25, position: 'relative' }}>
+      <Stack direction="row" alignItems="center" sx={{ mb: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+          Condition {index + 1}
+        </Typography>
+        <Box sx={{ flexGrow: 1 }} />
+        {/* No popper (JOS-143): this button sits on the card's header line, directly above the
+            ConditionEditor's three Selects, and a default-placement tooltip opens DOWNWARD — onto
+            them. The span outlives it because a disabled button swallows mouse events. */}
+        <span title="Remove condition">
+          <IconButton
+            size="small"
+            aria-label="Remove condition"
+            color="error"
+            disabled={!canRemove}
+            onClick={onRemove}
+          >
+            <DeleteOutlineIcon fontSize="small" />
+          </IconButton>
+        </span>
+      </Stack>
+      <ConditionEditor draft={draft} onChange={onChange} />
+    </Paper>
+  )
+}
+
+/** Single mode renders one bare editor; composite modes render the add/remove list. */
+function ConditionsSection({
+  mode,
+  conditions,
+  setConditions
+}: {
   mode: CombineMode
-  changeMode: (next: CombineMode) => void
   conditions: ConditionDraft[]
   setConditions: Dispatch<SetStateAction<ConditionDraft[]>>
-  packId: string
-  soundId: string
-  setSound: (packId: string, soundId: string) => void
-  volume: number
-  setVolume: (v: number) => void
-  cooldownMs: number
-  setCooldownMs: (v: number) => void
-  /** What the cooldown is measured per — one clock for the alert, or one per mob. */
-  cooldownScope: CooldownScope
-  setCooldownScope: (v: CooldownScope) => void
-  /** The Speech block's own sub-form (voice-alerts §4) — see SpeechBlock.tsx. */
-  speech: SpeechForm
-  /** The Show-on-screen sub-form (alert-text-overlays §9) — see DisplayBlock.tsx. */
-  display: DisplayForm
-}
+}): JSX.Element {
+  const setCondition = (i: number, next: ConditionDraft): void =>
+    setConditions((prev) => prev.map((c, j) => (j === i ? next : c)))
+  const addCondition = (): void => setConditions((prev) => [...prev, blankCondition()])
+  const removeCondition = (i: number): void =>
+    setConditions((prev) => (prev.length <= 1 ? prev : prev.filter((_, j) => j !== i)))
 
-/** Local alias for the def field, so the form and the def can never drift apart. */
-type CooldownScope = NonNullable<AlertDef['cooldownScope']>
-
-function useAlertForm(open: boolean, initial: AlertDef | null, packs: SoundPack[]): AlertForm {
-  const [name, setName] = useState('')
-  const [mode, setMode] = useState<CombineMode>('single')
-  const [conditions, setConditions] = useState<ConditionDraft[]>([blankCondition()])
-  const [packId, setPackId] = useState(fallbackPack(packs)?.id ?? DEFAULT_PACK_ID)
-  const [soundId, setSoundId] = useState(firstSoundId(fallbackPack(packs)))
-  const [volume, setVolume] = useState(1)
-  const [cooldownMs, setCooldownMs] = useState(DEFAULT_COOLDOWN_MS)
-  const [cooldownScope, setCooldownScope] = useState<CooldownScope>('alert')
-  // The Speech and Show-on-screen blocks hydrate themselves from the same `open`/`initial` pair.
-  const speech = useSpeechForm(open, initial)
-  const display = useDisplayForm(open, initial)
-
-  /**
-   * WHAT HAS ALREADY BEEN HYDRATED — the guard that makes this form survive a window focus.
-   *
-   * The effect below hydrates from props, so anything that re-runs it OVERWRITES what the user
-   * has typed. It used to re-run on `packs`, and `packs` changes identity on every store reload:
-   * the always-mounted AlertPlayer refreshes the shared store on window FOCUS (player.tsx), the
-   * view re-`reload()`s, and `listSoundPacks()` returns a fresh array over IPC even when the pack
-   * set is identical. Alt-tab out and back with the dialog open and every field went blank —
-   * except the Speech sub-form, which does not depend on `packs`, so the form was left in a
-   * half-reset state that a Save would then persist.
-   *
-   * So hydration is keyed on the thing it actually means: ONE hydrate per opening. `undefined`
-   * is "nothing hydrated yet" and is deliberately distinct from `null`, which is a live "add"
-   * (re-opening Add after Cancel must blank the form again, and `null === null` would skip it).
-   * The dep array can safely keep every value the effect reads — this guard, not the deps, is
-   * what pins the behavior, so a future prop cannot quietly reintroduce the reset.
-   */
-  const hydratedFor = useRef<AlertDef | null | undefined>(undefined)
-
-  // Hydrate the form from `initial` (edit) or blanks (add) once per opening — never again while
-  // it stays open, however often the props are refreshed underneath it.
-  useEffect(() => {
-    if (!open) {
-      hydratedFor.current = undefined
-      return
-    }
-    if (hydratedFor.current === initial) return
-    hydratedFor.current = initial
-    if (initial) {
-      setName(initial.name)
-      const t = initial.trigger
-      if ('conditions' in t) {
-        setMode(t.type)
-        setConditions(t.conditions.length ? t.conditions.map(draftFromPrimitive) : [blankCondition()])
-      } else {
-        setMode('single')
-        setConditions([draftFromPrimitive(t)])
-      }
-      setPackId(initial.sound.packId)
-      setSoundId(initial.sound.soundId)
-      setVolume(initial.volume ?? 1)
-      setCooldownMs(initial.cooldownMs ?? DEFAULT_COOLDOWN_MS)
-      setCooldownScope(initial.cooldownScope ?? 'alert')
-    } else {
-      setName('')
-      setMode('single')
-      setConditions([blankCondition()])
-      const preset = fallbackPack(packs)
-      setPackId(preset?.id ?? DEFAULT_PACK_ID)
-      setSoundId(firstSoundId(preset))
-      setVolume(1)
-      setCooldownMs(DEFAULT_COOLDOWN_MS)
-      setCooldownScope('alert')
-    }
-  }, [open, initial, packs])
-
-  // Switching INTO a composite from single keeps the existing condition and adds a second so
-  // the OR/AND is meaningful; switching back to single collapses to the first condition.
-  const changeMode = (next: CombineMode): void => {
-    setMode(next)
-    if (next === 'single') setConditions((prev) => prev.slice(0, 1))
-    else setConditions((prev) => (prev.length >= 2 ? prev : [...prev, blankCondition()]))
+  if (mode === 'single') {
+    return <ConditionEditor draft={conditions[0]} onChange={(next) => setCondition(0, next)} />
   }
-
-  const setSound = (p: string, s: string): void => {
-    setPackId(p)
-    setSoundId(s)
-  }
-
-  return {
-    name,
-    setName,
-    mode,
-    changeMode,
-    conditions,
-    setConditions,
-    packId,
-    soundId,
-    setSound,
-    volume,
-    setVolume,
-    cooldownMs,
-    setCooldownMs,
-    cooldownScope,
-    setCooldownScope,
-    speech,
-    display
-  }
-}
-
-function triggerFromForm(mode: CombineMode, conditions: ConditionDraft[]): AlertTrigger {
-  if (mode === 'single') return primitiveFromDraft(conditions[0])
-  return { type: mode, conditions: conditions.map(primitiveFromDraft) }
-}
-
-/**
- * The `$<name>` values the trigger BEING EDITED offers, recomputed on every keystroke from the
- * same drafts that will be saved — so the chips under the phrase field always describe the
- * trigger actually in the form, not the one the def was opened with.
- */
-function captureHints(f: AlertForm): CaptureHints {
-  const trigger = triggerFromForm(f.mode, f.conditions)
-  return { names: captureNamesFor(trigger), partial: hasRawCondition(trigger) }
-}
-
-function formCanSave(f: AlertForm): boolean {
-  const conditionsValid = f.conditions.every(
-    (c) => conditionRawErr(c) == null && conditionFieldValErr(c) == null
+  return (
+    <Stack spacing={1.5}>
+      {conditions.map((c, i) => (
+        <ConditionRow
+          key={i}
+          index={i}
+          draft={c}
+          canRemove={conditions.length > 1}
+          onChange={(next) => setCondition(i, next)}
+          onRemove={() => removeCondition(i)}
+        />
+      ))}
+      <Button startIcon={<AddIcon />} size="small" onClick={addCondition} sx={{ alignSelf: 'flex-start' }}>
+        Add condition
+      </Button>
+    </Stack>
   )
-  // A HIDDEN FIELD MAY NEVER BE THE REASON A DIALOG WILL NOT SAVE. The sound is required only
-  // when the alert actually plays one — otherwise a speech-only alert authored before the
-  // default pack has self-provisioned (a first run, the e2e channel) would sit behind a disabled
-  // Add button with nothing on screen saying why. The def still CARRIES whatever sound it had:
-  // `defFromForm` always writes the pair, so switching back to "Play a sound" finds it intact.
-  const soundReady = !playsSound(f.speech) || (f.packId.length > 0 && f.soundId.length > 0)
-  return f.name.trim().length > 0 && f.conditions.length > 0 && conditionsValid && soundReady
-}
-
-function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
-  return {
-    // Preserve id + note on edit (stable ids for built-ins); mint on add.
-    id: initial?.id ?? newId(f.name),
-    name: f.name.trim(),
-    enabled: initial?.enabled ?? true,
-    trigger: triggerFromForm(f.mode, f.conditions),
-    sound: { packId: f.packId, soundId: f.soundId },
-    volume: f.volume,
-    cooldownMs: f.cooldownMs,
-    // Omitted at its default, like the speech fields below: a def that never asked for per-mob
-    // scope saves byte-identically to how it always did, so import dedupe keeps matching it.
-    ...(f.cooldownScope === 'target' ? { cooldownScope: 'target' as const } : {}),
-    note: initial?.note,
-    // audio / speech / alwaysPlay, each omitted at its default so a sound-only alert saves
-    // byte-identically to how it always did (SpeechBlock.speechFieldsFor).
-    ...speechFieldsFor(f.speech),
-    // …and `display`, on exactly the same terms: absent entirely unless the alert asks to be seen
-    // (DisplayBlock.displayFieldsFor).
-    ...displayFieldsFor(f.display)
-  }
 }
 
 /** The per-alert volume slider + cooldown field + what that cooldown is counted per. */
@@ -332,7 +239,7 @@ export default function AlertDialog({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth data-testid="alert-dialog">
-      <DialogTitle>{editing ? `Edit alert — ${initial?.name}` : 'Add alert'}</DialogTitle>
+      <DialogTitle>{editing ? `Edit alert - ${initial?.name}` : 'Add alert'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField
@@ -343,20 +250,18 @@ export default function AlertDialog({
             onChange={(e) => f.setName(e.target.value)}
             autoFocus
           />
-          <TriggerSection
+          <CombineModeSection mode={f.mode} onChange={f.changeMode} />
+
+          <ConditionsSection
             mode={f.mode}
-            onModeChange={f.changeMode}
             conditions={f.conditions}
             setConditions={f.setConditions}
           />
 
           <Divider />
-
-          {/* THE CHANNEL FIRST, then only the sections it actually governs. Sound used to sit
-              above this choice, so a speech-only alert made you scroll past a picker it would
-              never use to reach the one it would. */}
-          <AudioActionSection form={f.speech} />
-
+          {/* Shown only when the alert actually plays one. A picker for a sound that will never
+              play is a control that does nothing — and `formCanSave` stops requiring a sound at
+              the same time, because a hidden field may never be the reason a save is refused. */}
           {playsSound(f.speech) && (
             <Box data-testid="alert-sound-section">
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
@@ -371,33 +276,30 @@ export default function AlertDialog({
             </Box>
           )}
 
-          {/* NOT conditional, and not an oversight: the per-alert volume scales the utterance as
-              well as the sound (player.tsx hands `effectiveVolume` to `speak` as its gain), and
-              the cooldown governs the firing rather than either channel. */}
           <VolumeCooldownSection f={f} />
 
-          {speaks(f.speech) && (
-            <>
-              <Divider />
-              <SpeechBlock
-                name={f.name}
-                form={f.speech}
-                voiceSetup={voiceSetup}
-                hints={captureHints(f)}
-              />
-            </>
-          )}
+          <Divider />
+          {/* Recomputed from the LIVE form, not from `initial`: the user can add `(?<player>…)`
+              to the pattern and the token list has to follow them, in the same dialog, before
+              they type the phrase that uses it. */}
+          <SpeechBlock
+            name={f.name}
+            form={f.speech}
+            voiceSetup={voiceSetup}
+            captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
+          />
 
           {/* LAST, because it is the last decision: name → when it fires → what it sounds like →
-              what appears on screen. Unconditional, unlike the two above — showing text is not a
+              what appears on screen. Unconditional, unlike Sound above — showing text is not a
               CHANNEL, it is an independent thing an alert can do, so it is available whatever the
-              alert sounds like (including "Nothing (text only)"). */}
+              alert sounds like (including "Nothing (text only)"). Same live token list as the
+              phrase field: one namespace, one syntax, both halves of the dialog. */}
           <Divider />
           <DisplayBlock
             name={f.name}
             form={f.display}
             defaults={overlayDefaults[f.display.overlay]}
-            hints={captureHints(f)}
+            captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
           />
         </Stack>
       </DialogContent>

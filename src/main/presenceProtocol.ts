@@ -27,6 +27,7 @@ import type {
 //   R|<0|1>                                      EQ process existence changed (5 s cadence)
 //   C|<0|1>                                      system cursor visibility changed
 //   H                                            heartbeat — "still looping" (5 s cadence)
+//   X|<reason>                                   the LAST line: why the loop is about to stop
 //
 // `title` is last because it is the only field that may contain anything (including `|`); a
 // Windows path cannot contain `|`, so every field before it is unambiguous.
@@ -38,6 +39,16 @@ import type {
 // will ever happen again", and the second one FREEZES the presence state: `eqFocused:true`
 // outlives the alt-tab that should have cleared it and the ring keeps drawing over whatever the
 // user switched to. One 1-byte line per 5 s on an otherwise idle pipe buys that distinction.
+//
+// THE EXIT LINE IS THE CHILD'S LAST WORD (JOS-164). A watcher child can end itself — it self-reaps
+// when its parent is gone, because Windows orphans children rather than killing them — and from
+// the parent side that was indistinguishable from every other way a process can stop existing:
+// `'exit'`, code 0, no explanation. That mattered exactly once and then mattered a great deal, when
+// a machine whose `Get-Process` could not see a LIVE parent made the child reap itself a second
+// after every spawn, forever, and the parent's only evidence was 245 identical "exited
+// unexpectedly" lines. `X|<reason>` costs one line on a pipe that is about to close and turns that
+// into a sentence. It is advisory by construction: a child that is killed, crashes, or is starved
+// prints nothing, and the parent must still handle the exit.
 
 /** One decoded watcher record. */
 export type PresenceRecord =
@@ -45,6 +56,7 @@ export type PresenceRecord =
   | { t: 'run'; running: boolean }
   | { t: 'cursor'; visible: boolean }
   | { t: 'beat' }
+  | { t: 'exit'; reason: string }
 
 /** A finite integer from one protocol field, or null when the field is not one. */
 function intField(s: string | undefined): number | null {
@@ -75,6 +87,18 @@ function parseForeground(parts: string[]): PresenceRecord | null {
 }
 
 /**
+ * The shape of an exit REASON: a lowercase kebab token, capped.
+ *
+ * Narrow on purpose, and narrow enough that `X|1|2` is still junk rather than a reason of `1|2`
+ * (the malformed-line suite has always asserted that line decodes to nothing, and it still must).
+ * The child writes these strings itself so the field is not hostile input in the way a window
+ * title is — but it lands in the parent's error log, which is a place text goes to be read by a
+ * person, so it is bounded by SHAPE here rather than trusted by provenance. The one reason the
+ * watcher prints today is `parent-gone`.
+ */
+const EXIT_REASON_RE = /^[a-z][a-z0-9-]{0,62}$/
+
+/**
  * Decode one stdout line. Returns null for anything that is not a well-formed record, which is
  * the only correct answer for a stream that can also carry a PowerShell warning, a stray blank
  * line, or a partially-flushed write — a malformed line must never move the state.
@@ -84,6 +108,10 @@ export function parsePresenceLine(line: string): PresenceRecord | null {
   if (trimmed === '') return null
   const parts = trimmed.split('|')
   if (parts[0] === 'F') return parseForeground(parts)
+  if (parts[0] === 'X') {
+    const reason = parts[1] ?? ''
+    return parts.length === 2 && EXIT_REASON_RE.test(reason) ? { t: 'exit', reason } : null
+  }
   // The heartbeat carries no payload, so it is the whole line or it is not a heartbeat.
   if (trimmed === 'H') return { t: 'beat' }
   const flag = boolField(parts[1])
@@ -257,6 +285,80 @@ export function cursorRingActive(p: PresenceState, ring: CursorRingPrefs): boole
   return ring.enabled && p.eqFocused && p.cursorVisible && p.eqBounds !== null
 }
 
+// ------------------------------------------------------------------- the cadences
+//
+// THREE CLOCKS, AND THE ONLY ONE THAT MATTERS IS THE RATIO BETWEEN TWO OF THEM (JOS-120).
+//
+// `cursorVisible` is a GATE on an 8 ms consumer. The ring stops drawing when Windows stops
+// drawing a pointer — and EverQuest stops drawing one the instant a mouse button goes down in
+// the world view, while it re-centers the pointer every frame underneath. So the interesting
+// number is not "how fast does the watcher poll", it is HOW MANY SAMPLES THE RING CAN PAINT
+// FROM A POINTER THAT IS ALREADY GONE, and that is `gate latency / sampler period`.
+//
+// It used to be ~19. The whole loop — five user32 calls, a `Get-Process`, a string build and a
+// compare — ran on ONE 150 ms tick, and the cursor check rode along with it, so a 100 ms click
+// could pass without the gate ever looking. That is the reported twitch: for up to 150 ms the
+// ring faithfully tracked a cursor nobody could see.
+//
+// The fix is not a faster loop, it is a SPLIT one. `CursorShowing()` is a single `GetCursorInfo`
+// and costs essentially nothing, so it runs every tick at the platform's floor; the expensive
+// foreground work keeps the cadence it has always had by running every Nth tick.
+//
+// MEASURED on this machine (20-25 s windows, `Get-Process.TotalProcessorTime`): the shipped
+// single-cadence loop cost 0.06-0.16 % of one core; the split loop costs 0.19-0.31 %. That is
+// the entire price — about 1.3 ms of CPU per second — and it buys a gate that closes inside one
+// display frame instead of nine.
+
+/**
+ * The tick the watcher ASKS for, in ms. One, i.e. "the platform's floor" — the same request the
+ * cursor sampler makes for the same reason.
+ *
+ * MEASURED: a `Start-Sleep -Milliseconds 1` loop in PowerShell actually turns every ~16 ms
+ * (avg 15.96, max 31.65 over 25 s), because Windows' default timer quantum is 15.6 ms. Asking
+ * for 1 is a request for whatever the platform will give, not a claim that it gives 1.
+ */
+export const WATCHER_TICK_MS = 1
+
+/** What that request MEASURES at. Worst case is ~2x this — one missed quantum. */
+export const WATCHER_TICK_FLOOR_MS = 16
+
+/**
+ * How many ticks between foreground/running/heartbeat scans. Ten ticks x ~16 ms ~= 160 ms, which
+ * is the ~150 ms cadence this loop has always had: fine enough that alt-tab feels instant,
+ * coarse enough that the expensive half of the loop is still effectively asleep.
+ */
+export const FOREGROUND_EVERY_TICKS = 10
+
+/**
+ * The cursor sampler's period (presenceEffects.ts's `setInterval`). It lives HERE, next to the
+ * watcher's cadence, because neither number means anything without the other — see
+ * `unguardedSamplesPerHiddenCursor`.
+ *
+ * Ask for 8 ms, i.e. "as fast as the platform will give us". MEASURED (Electron, 3x 30 s windows
+ * on this machine): a `setInterval(8)` in Electron's main process actually fires ~64 times a
+ * second, not 125 — the same 15.6 ms quantum, and Chromium does not raise the system timer
+ * resolution for a main-process timer. The number stays 8: it is a request for the platform's
+ * floor, and the renderer already coalesces to `requestAnimationFrame` and drops the surplus.
+ */
+export const CURSOR_POLL_MS = 8
+
+/** Worst-case latency of the cursor-visibility gate: one tick that overran its quantum. */
+export const CURSOR_GATE_LATENCY_MS = WATCHER_TICK_FLOOR_MS * 2
+
+/**
+ * THE DEFECT, AS A NUMBER. How many cursor samples the ring can still paint from a pointer the
+ * game has already hidden and started re-centering — the gate's observation latency over the
+ * sampler's period. Pure so `tests/presence.test.mts` can pin it instead of anyone re-deriving
+ * it from two constants in two files.
+ */
+export function unguardedSamplesPerHiddenCursor(
+  gateLatencyMs: number,
+  samplerMs: number = CURSOR_POLL_MS
+): number {
+  if (samplerMs <= 0) return 0
+  return Math.ceil(gateLatencyMs / samplerMs)
+}
+
 // ------------------------------------------------------------------- watcher health
 //
 // THE STATE IS ONLY AS GOOD AS THE STREAM THAT FEEDS IT. `PresenceState` is a CACHE of the last
@@ -321,4 +423,138 @@ export function watcherRestartDelayMs(consecutiveFailures: number): number {
   const last = WATCHER_RESTART_BACKOFF_MS.length - 1
   const i = Number.isFinite(consecutiveFailures) ? Math.floor(consecutiveFailures) - 1 : 0
   return WATCHER_RESTART_BACKOFF_MS[Math.min(Math.max(i, 0), last)]
+}
+
+// ------------------------------------------------------------- the self-reap loop (JOS-164)
+//
+// A LOOP IS ONE FACT, AND IT WAS BEING REPORTED AS N FACTS. The error store's evidence for this
+// ticket was 245+ copies of `presence watcher exited unexpectedly` from ONE install over two days,
+// still climbing — one every ~32 s, forever, because the child was reaping itself about a second
+// after each spawn and the backoff was sitting on its 30 s ceiling. Every one of those entries said
+// the same thing, none of them said the interesting thing, and the interesting thing is only
+// visible from the SHAPE of the sequence: a clean exit (code 0) that keeps happening far inside the
+// staleness window is not a watcher that keeps failing, it is a watcher that keeps DECIDING to
+// stop.
+//
+// So the parent recognizes the pattern and says it once. The first `WATCHER_SELF_REAP_STREAK - 1`
+// exits are reported as they always were — a single fast clean exit really can be a one-off, and
+// silencing it would trade this bug for a quieter one. The exit that completes the streak carries a
+// DIFFERENT error name, which is what makes it a distinct fingerprint in the error store
+// (`errorFingerprint` hashes the name and the frames, never the message), and every later exit in
+// the same run is not logged at all until something breaks the pattern.
+//
+// Pure, and folded rather than counted in place, so `tests/presence.test.mts` drives the whole
+// sequence — including the part that must NOT fire — without a child process anywhere.
+
+/**
+ * How many consecutive clean, sub-staleness-window exits it takes to call it a loop.
+ *
+ * THREE. It has to be more than one (a single fast exit is a one-off — PowerShell losing a race
+ * with an antivirus scan, a machine mid-suspend — and reporting it is right) and more than two (two
+ * in a row is a bad minute; the backoff's own first two steps are 1 s and 2 s, so two failures can
+ * be inside three seconds of one hiccup). Three consecutive is the first count that can only be
+ * produced by a condition that is not clearing, and it costs the store two ordinary entries before
+ * the diagnosis instead of one — cheap, and those two are the exemplars a reader wants anyway. It
+ * is deliberately NOT tuned against the observed 245: any N in this range collapses that to one.
+ */
+export const WATCHER_SELF_REAP_STREAK = 3
+
+/**
+ * The `name` the collapsed entry carries, and the whole reason it is a separate row in the error
+ * store rather than a 246th copy of the old one. `shared/errorReport.ts errorFingerprint` hashes
+ * the error NAME plus the top frames — never the message — so a distinct diagnosis needs a distinct
+ * name, and `errorNameOf` accepts exactly this shape (identifier, ≤64 chars).
+ */
+export const SELF_REAP_LOOP_ERROR_NAME = 'PresenceSelfReapLoop'
+
+/** What the watcher's exit trail knows: how long the current streak of self-reap-shaped exits is,
+ *  and whether the one collapsed diagnosis has already been written for it. */
+export interface WatcherExitTrail {
+  readonly streak: number
+  readonly collapsed: boolean
+}
+
+export const NEW_WATCHER_EXIT_TRAIL: WatcherExitTrail = { streak: 0, collapsed: false }
+
+/** What the parent observed about one dead child. `reason` is the child's own last word
+ *  (`X|parent-gone`) when it managed to say one, and null when it did not. */
+export interface WatcherExitFacts {
+  readonly code: number | null
+  readonly lifetimeMs: number
+  readonly reason: string | null
+}
+
+/** The payload `presence.ts` hands to `logError`, or null when this exit is inside a run that has
+ *  already been diagnosed. Every field is here because a reader of errors.log asked for it. */
+export interface WatcherExitLog {
+  readonly message: string
+  readonly code: number | null
+  /** How long the child lived. The number that turns "it exited" into "it exited immediately". */
+  readonly lifetimeMs: number
+  readonly reason: string | null
+  /** Set only on the collapsed entry — see `SELF_REAP_LOOP_ERROR_NAME`. */
+  readonly name?: string
+  /** Set only on the collapsed entry: how many exits in a row got us here. */
+  readonly exits?: number
+}
+
+export interface WatcherExitStep {
+  readonly trail: WatcherExitTrail
+  readonly log: WatcherExitLog | null
+}
+
+/**
+ * Is this exit SHAPED like a self-reap? Clean (code 0) and gone well inside the window a healthy
+ * child is expected to be talking for. A non-zero code is PowerShell failing, which is a different
+ * story and gets the ordinary report; an exit after a long healthy run is a watcher that was
+ * running fine until it wasn't.
+ */
+function selfReapShaped(facts: WatcherExitFacts, staleMs: number): boolean {
+  return facts.code === 0 && facts.lifetimeMs >= 0 && facts.lifetimeMs < staleMs
+}
+
+/**
+ * Fold one dead child into the trail and say what to log.
+ *
+ * ANY exit that is not self-reap-shaped RESETS the trail — including a healthy child that finally
+ * outlived the window — so a machine that hiccups once an hour never accumulates its way into the
+ * collapsed state, and a machine that is fixed starts reporting normally again from the next
+ * failure.
+ */
+export function watcherExitStep(
+  trail: WatcherExitTrail,
+  facts: WatcherExitFacts,
+  streakToCollapse: number = WATCHER_SELF_REAP_STREAK,
+  staleMs: number = WATCHER_STALE_MS
+): WatcherExitStep {
+  const base = { code: facts.code, lifetimeMs: facts.lifetimeMs, reason: facts.reason }
+  if (!selfReapShaped(facts, staleMs)) {
+    return {
+      trail: NEW_WATCHER_EXIT_TRAIL,
+      log: { message: 'presence watcher exited unexpectedly', ...base }
+    }
+  }
+  // Already diagnosed: the pattern is unchanged, so there is nothing new to say. The streak is
+  // held (not incremented) so the number can never run away on a session that lasts all day.
+  if (trail.collapsed) return { trail, log: null }
+  const streak = trail.streak + 1
+  if (streak < streakToCollapse) {
+    return {
+      trail: { streak, collapsed: false },
+      log: { message: 'presence watcher exited unexpectedly', ...base }
+    }
+  }
+  return {
+    trail: { streak, collapsed: true },
+    log: {
+      name: SELF_REAP_LOOP_ERROR_NAME,
+      message:
+        `presence watcher self-reap loop: ${String(streak)} consecutive clean exits inside the ` +
+        `${String(staleMs)} ms staleness window. The child is deciding its parent is gone while ` +
+        'this process is alive; overlay auto-hide and the cursor ring are dead for this session. ' +
+        'Further identical exits are counted by the restart backoff, not logged.',
+      exits: streak,
+      ...base
+    }
+  }
 }

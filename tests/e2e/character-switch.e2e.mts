@@ -136,9 +136,17 @@ function alertFires(page: Page): Promise<Fires> {
  * A card lives for seconds and then leaves, so "how many are on screen" answers a different
  * question than the one this spec asks. The observer is installed once, before anything is driven,
  * and only ever increments.
+ *
+ * IT COUNTS CELEBRATIONS, NOT CARDS (JOS-83). Every launch here is a first run on a fresh userData
+ * dir, so the overlay also shows its own INTRODUCTION card — a card in the same queue that
+ * celebrates nothing. It is excluded by its `data-toast-kind`, not by its prose, and the race that
+ * exclusion retires is real: whether the introduction mounts before or after this observer is
+ * installed decides nothing about what this spec is measuring.
  */
+const CELEBRATION_CARD = '[data-testid="toast-card"]:not([data-toast-kind="intro"])'
+
 function watchToasts(page: Page): Promise<void> {
-  return page.evaluate(() => {
+  return page.evaluate((sel) => {
     const w = window as unknown as { __eqToastSeen?: number }
     if (typeof w.__eqToastSeen === 'number') return
     w.__eqToastSeen = 0
@@ -147,15 +155,12 @@ function watchToasts(page: Page): Promise<void> {
         for (const node of record.addedNodes) {
           if (node.nodeType !== 1) continue
           const el = node as HTMLElement
-          if (el.matches('[data-testid="toast-card"]')) w.__eqToastSeen = (w.__eqToastSeen ?? 0) + 1
-          else {
-            w.__eqToastSeen =
-              (w.__eqToastSeen ?? 0) + el.querySelectorAll('[data-testid="toast-card"]').length
-          }
+          if (el.matches(sel)) w.__eqToastSeen = (w.__eqToastSeen ?? 0) + 1
+          else w.__eqToastSeen = (w.__eqToastSeen ?? 0) + el.querySelectorAll(sel).length
         }
       }
     }).observe(document.body, { childList: true, subtree: true })
-  })
+  }, CELEBRATION_CARD)
 }
 
 function toastsSeen(page: Page): Promise<number> {

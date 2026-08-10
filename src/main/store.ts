@@ -15,6 +15,10 @@ import type {
   VoicePrefs
 } from '../shared/types'
 import { clampTextScale } from '../shared/types'
+import type { InventorySource } from '../shared/outputs/baseline'
+// The turn-in ledger's write rule (JOS-131). Shared with the renderer so "what a stored turn-in
+// list may contain" has ONE definition on both sides of the IPC.
+import { applyTurnIns } from '../shared/questTurnIns'
 import { normalizeVoicePrefs } from '../shared/speechText'
 import {
   normalizeCursorRing,
@@ -28,6 +32,8 @@ import { DEFAULT_ALERT_TEXT, normalizeAlertTextDefaults } from '../shared/alertD
 import { isAlertOverlayKind } from '../shared/alertOverlays'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
+import { normalizeBuffTrustPrefs, type BuffTrustPrefs } from '../shared/buffTrust'
+import { isTimerOverlayKind, normalizeTimerGrouping } from '../shared/buffTimers'
 import type { ComboCorrection } from '../shared/classCombo'
 // The exaltation planner's sets. The validator is main-side and pure; it runs on the way OUT as
 // well as in (see the accessors below), so a hand-edited store cannot poison the renderer.
@@ -40,6 +46,9 @@ import {
   migrateAlertSounds
 } from './data/defaultPacks'
 import { ALERT_TRIGGER_MIGRATION_VERSION, migrateAlertTriggers } from './data/alertDefMigrations'
+// The persisted SHAPE lives in ./storeShape.ts (this file is at its factoring ceiling). Nothing
+// moved but the declaration; every accessor below is still written against it.
+import type { StoreShape } from './storeShape'
 
 const emptyProgress: ProgressState = {
   inventory: {},
@@ -54,103 +63,6 @@ export interface WindowBounds {
   height: number
 }
 
-interface StoreShape {
-  /**
-   * Schema version of THIS file (src/main/storeMigrations.ts). Absent ⇒ pre-framework ⇒ 1.
-   * Every persisted-shape change bumps CURRENT_SCHEMA_VERSION and ships a migration in the
-   * same commit — that is the whole contract behind "upgrades are clean, indefinitely".
-   */
-  schemaVersion?: number
-  /** progress keyed by character id (name_server) */
-  byCharacter: Record<string, ProgressState>
-  /** last selected character's log path */
-  activeLogPath?: string
-  /**
-   * Manual EQ install-dir override (Settings gear). When set + non-empty it wins
-   * over auto-discovery; cleared/undefined ⇒ the app auto-detects the install.
-   * See src/main/log/config.ts `resolveEqDir`.
-   */
-  eqInstallDir?: string
-  /** last window position + size */
-  windowBounds?: WindowBounds
-  /** alerts extension: the user's alert definitions (Task #18) */
-  alerts?: AlertDef[]
-  /** alerts extension: global sound preferences */
-  alertPrefs?: AlertPrefs
-  /**
-   * Version stamp of the retired-pack → shipped-pack alert sound migration
-   * (Task #57). Absent ⇒ never migrated; see migrateStoredAlertSounds().
-   */
-  alertSoundMigration?: number
-  /**
-   * Version stamp of the shipped-alert-def TRIGGER migration (src/main/data/
-   * alertDefMigrations.ts) — today, the rogue-slow def gaining the second slow effect and a
-   * per-mob cooldown. Absent ⇒ never migrated; see migrateStoredAlertTriggers().
-   */
-  alertTriggerMigration?: number
-  /** auto-update release channel (Task #27): 'main' (bleeding edge) | 'stable' */
-  updateChannel?: UpdateChannel
-  /**
-   * Epoch millis of the last COMPLETED update check (Task #60). Persisted so the
-   * left-nav "checked 2h ago" line is TRUTHFUL after a relaunch instead of
-   * resetting to "never" — with a 4h cadence, an in-memory-only stamp would read
-   * "never" for the first minute of every single launch.
-   */
-  updateLastCheckedAt?: number
-  /**
-   * RETIRED flat overlay config (Task #52). Task #54 made the overlay per-kind; schema
-   * migration 1→2 folds this into `overlays.fight` and deletes it. Declared, never read —
-   * the name stays reserved so nothing reuses it with different meaning.
-   */
-  overlay?: OverlayConfig
-  /** per-kind floating overlay configs (Task #54): 'fight' + 'overall' windows. */
-  overlays?: Partial<Record<OverlayKind, OverlayConfig>>
-  /**
-   * Voice alerts / TTS preferences (docs/plans/voice-alerts.md §2). Written by schema
-   * migration 3→4, so a v4 store always has it; the reader still defaults, because a
-   * downgrade-then-upgrade can leave any key in any state.
-   */
-  voice?: VoicePrefs
-  /**
-   * The opt-in cursor ring (schema migration 4→5). Off by default — see shared/presencePrefs.ts.
-   */
-  cursorRing?: CursorRingPrefs
-  /**
-   * Overlay auto-hide (schema migration 4→5): hide the floating overlays when EverQuest is not
-   * running / not focused. Two independent switches, defaults {true, false}.
-   */
-  overlayAutoHide?: OverlayAutoHidePrefs
-  /**
-   * Usage-analytics prefs (schema migration 5→6; docs/plans/usage-analytics.md). Opt-OUT
-   * (`enabled:true`) but `noticeShown:false` — the network gate requires BOTH — and no
-   * `analyticsId` until the collector mints one on its first start.
-   */
-  telemetry?: TelemetryPrefs
-  /**
-   * The performance HUD switch (schema migration 6→7; docs/plans/perf-profiling.md). OFF by
-   * default — an enabled HUD is the only thing that creates the metrics poll and the lag probe.
-   */
-  perfHud?: PerfHudPrefs
-  /**
-   * Graphics compatibility (schema migration 9→10; JOS-40). Both switches OFF by default —
-   * see shared/graphicsPrefs.ts for why a compatibility switch that ships on is not one.
-   */
-  graphics?: GraphicsPrefs
-  /**
-   * The newest release whose notes this install has been SHOWN (JOS-73; shared/releaseNotes.ts).
-   *
-   * ABSENT MEANS FRESH INSTALL, and that is the whole reason it is an optional key rather than a
-   * defaulted one: a person who installed twenty minutes ago has no news, so the teaser strip
-   * stays away and nothing is marked new. Everything above this value is "new" — which is what
-   * makes a 0.6.3 → 0.8.0 jump mark TWO releases without anybody bookkeeping per release.
-   *
-   * ADDITIVE + OPTIONAL ⇒ no schema bump, no migration — the `exaltPlans` / `rosterEdits`
-   * precedent above. Every reader defaults on a missing key and electron-store rewrites the
-   * whole parsed object, so a store written by an older build loads unchanged and one written
-   * here still opens in a build that predates the feature.
-   */
-  lastSeenNotesVersion?: string
-}
 
 /**
  * SCHEMA MIGRATION, before anything reads the store — and before electron-store is even
@@ -199,6 +111,25 @@ if (schemaMigration.to === CURRENT_SCHEMA_VERSION && !schemaMigration.readError)
  */
 export const STORE_READY_MS = performance.now()
 
+/**
+ * THE OPEN, MIGRATED STORE — for the accessor modules SPLIT OUT of this file (JOS-123).
+ *
+ * This file reached the repo's 400-code-line factoring ceiling, and the answer to that is a
+ * split rather than a widened threshold (windows.ts → windowErrors.ts is the precedent). A
+ * settings accessor is four lines of read-through-a-normalizer, so what a split one needs from
+ * here is exactly this handle and nothing else: `StoreShape` still types every key, the schema
+ * migration above has still already run (it runs from module scope, before `new Store()`, so a
+ * module that imports this cannot observe a pre-migration shape), and `src/main/uiScale.ts` is
+ * the first module taking that door.
+ *
+ * IT IS NOT A LICENCE TO BYPASS THE NORMALIZERS. The discipline every accessor below follows —
+ * read through the normalizer, write through the SAME normalizer — is the whole reason a
+ * hand-edited file, an old renderer and a migration cannot end up with three ideas of what a
+ * setting is, and a split-out accessor owes it exactly as much as one written here. Reach for
+ * this only to move that pattern out of a full file; never to read a raw key from a feature.
+ */
+export const settingsStore = store
+
 export function getWindowBounds(): WindowBounds | undefined {
   return store.get('windowBounds')
 }
@@ -225,17 +156,22 @@ function setProgress(charId: string, next: ProgressState): ProgressState {
 export function setInventory(
   charId: string,
   counts: HeldCounts,
-  source: { path: string; loadedAt: string }
+  source: InventorySource
 ): ProgressState {
   return setProgress(charId, { ...getProgress(charId), inventory: counts, inventorySource: source })
 }
 
-export function setQuestComplete(charId: string, questKey: string, complete: boolean): ProgressState {
+/**
+ * Record what we know about ONE quest's turn-ins (JOS-131): the epoch-ms instants it was handed
+ * in, which is a COUNT and not a flag because a Sky quest can be run again.
+ *
+ * The renderer states the whole list (the `setQuestComplete` shape this replaces did the same),
+ * so the list is sanitized and the downgrade mirror is written — both in `applyTurnIns`, shared
+ * with the renderer so the rule has one definition on either side of the IPC.
+ */
+export function setQuestTurnIns(charId: string, questKey: string, instants: number[]): ProgressState {
   const p = getProgress(charId)
-  const set = new Set(p.completedQuests)
-  if (complete) set.add(questKey)
-  else set.delete(questKey)
-  return setProgress(charId, { ...p, completedQuests: [...set] })
+  return setProgress(charId, { ...p, ...applyTurnIns(p, questKey, instants) })
 }
 
 // ----- Class-combo user corrections (docs/plans/class-combo-inference.md § 7) -----
@@ -401,6 +337,26 @@ export function setEqInstallDir(dir: string | undefined): void {
   else store.delete('eqInstallDir')
 }
 
+/**
+ * The install root a previous launch's auto-discovery persisted (JOS-112), or undefined if none.
+ * An empty/whitespace value is treated as unset. Consumed by config.ts `discoverOnce` to skip the
+ * sweep on later launches; NEVER a substitute for the manual override, which still wins.
+ */
+export function getEqDiscoveredRoot(): string | undefined {
+  const v = store.get('eqDiscoveredRoot')
+  return v?.trim() ? v : undefined
+}
+
+/** Persist a POSITIVE auto-discovery result so the next launch can skip the sweep (JOS-112). */
+export function setEqDiscoveredRoot(root: string): void {
+  if (root.trim()) store.set('eqDiscoveredRoot', root)
+}
+
+/** Forget the persisted discovered root — self-heal, or a manual-override change invalidated it. */
+export function clearEqDiscoveredRoot(): void {
+  store.delete('eqDiscoveredRoot')
+}
+
 // ----- Floating overlay DPS meter (Task #52; per-kind in Task #54) -----
 
 /** Per-kind defaults. Sizes/positions live in overlayLayout.ts; `bounds` stays undefined here so
@@ -457,7 +413,34 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
     bounds: undefined,
     drill: null,
     alertText: { ...DEFAULT_ALERT_TEXT }
-  }
+  },
+  // The BUFF/TIMER bars (JOS-89, docs/plans/buff-timer-overlay.md).
+  //
+  // DEFAULT OFF, AND IT SHIPS WITH NO MIGRATION — that combination is the design, not an
+  // omission. The owner's direction is to build it now and validate correctness internally
+  // before promoting it, and a default only ever supplies the value for an ABSENT key:
+  // `overlays.buffs` has never been written by any build, so every existing store reads
+  // `open: false` here and every upgrading user gets it off for free. Adding a migration is
+  // precisely the thing that would turn it ON — see migrateToV9, the one time this repo did
+  // flip a stored default, whose comment says it is a one-time correction and never a policy
+  // that the app may re-enable things.
+  buffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  // The DEBUFF/TIMER bars — the second half of the JOS-119 split.
+  //
+  // THE SPLIT NEEDS NO MIGRATION, AND THAT IS THE POINT. `overlays.buffs` KEEPS ITS KEY, so an
+  // existing install's stored buffs window — its bounds, its open flag, its alpha, its text scale
+  // — carries over byte for byte and lands on the window that still draws that user's buffs.
+  // `overlays.debuffs` has never been written by any build, so every upgrading store reads the
+  // default below and gets the new window OFF for free. A migration is precisely the thing that
+  // could turn something on (see migrateToV9, the one time this repo flipped a stored default, and
+  // its comment saying that was a one-time correction and never a policy), so there is none: the
+  // schema version is untouched at 11 and a store written by this build round-trips through the
+  // previous one unchanged.
+  //
+  // Its content moved rather than appeared: before this split the buffs window drew debuffs and
+  // mez holds too. Nobody LOSES a row — the rows are in a window that ships off, which is the same
+  // internal-validation stance JOS-89 shipped under and the owner's direction for this one.
+  debuffs: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.
@@ -496,7 +479,14 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   next.textScale = clampTextScale(next.textScale)
   // The drill is remembered UI state from the overlay renderer — normalize anything malformed
   // (and `undefined`) down to level 1 so the stored shape stays exactly `{entityId} | null`.
-  next.drill = next.drill && typeof next.drill.entityId === 'string' ? { entityId: next.drill.entityId } : null
+  //
+  // It is rebuilt field by field on purpose, so a renderer patch can never widen what is
+  // persisted. THAT IS ALSO THE DEGRADE PATH (JOS-113): JOS-105 briefly persisted an optional
+  // `category` (a third drill level); rebuilding to `{entityId}` here DROPS it, so a store written
+  // by that build degrades to the flat ability list — the drill's two-level shape now — with no
+  // migration, exactly as a stale `entityId` degrades to the source list in `petRows.meterPanel`.
+  const drilled = next.drill && typeof next.drill.entityId === 'string' ? next.drill : null
+  next.drill = drilled ? { entityId: drilled.entityId } : null
   // The toast blob is renderer-writable too (the Preferences sound picker), so it is clamped
   // by its own normalizer rather than trusted — same rule as bgAlpha/textScale above. Only the
   // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
@@ -507,6 +497,13 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // from a malformed patch.
   if (isAlertOverlayKind(kind)) next.alertText = normalizeAlertTextDefaults(next.alertText)
   else delete next.alertText
+  // The row ARRANGEMENT belongs to the two timer windows and to nothing else (JOS-140). It is
+  // rebuilt rather than trusted, on the same argument as the drill above: a renderer patch must
+  // not be able to widen what is persisted, and an absent value is a real answer — it means "the
+  // window's own default", which differs between buffs and debuffs.
+  const grouping = normalizeTimerGrouping(next.grouping)
+  if (grouping && isTimerOverlayKind(kind)) next.grouping = grouping
+  else delete next.grouping
   const all = store.get('overlays') ?? {}
   all[kind] = next
   store.set('overlays', all)
@@ -559,7 +556,7 @@ const SEED_ALERTS: AlertDef[] = [
     // "I find myself... requiring your attention." — the calm-but-pointed read lands
     // better than a joke sting for suddenly losing your charmed pet (Task #21).
     sound: { packId: DEFAULT_ALERT_PACK_ID, soundId: DEFAULT_ALERT_SOUNDS.charmBreak },
-    note: 'Seeded default — fires when a charm spell wears off (you lose your pet).'
+    note: 'Seeded default - fires when a charm spell wears off (you lose your pet).'
   },
   {
     id: 'boss-defeat',
@@ -568,7 +565,7 @@ const SEED_ALERTS: AlertDef[] = [
     trigger: { type: 'app', signal: 'bossDefeat' },
     // "The matter is settled."
     sound: { packId: DEFAULT_ALERT_PACK_ID, soundId: DEFAULT_ALERT_SOUNDS.bossDefeat },
-    note: 'Seeded default — fires the same moment boss confetti does.'
+    note: 'Seeded default - fires the same moment boss confetti does.'
   },
   {
     id: 'quest-complete',
@@ -581,7 +578,7 @@ const SEED_ALERTS: AlertDef[] = [
     trigger: { type: 'app', signal: 'questComplete' },
     // "It is done."
     sound: { packId: DEFAULT_ALERT_PACK_ID, soundId: DEFAULT_ALERT_SOUNDS.questComplete },
-    note: 'Seeded default — fires the same moment a Sky quest turn-in celebration does.'
+    note: 'Seeded default - fires the same moment a Sky quest turn-in celebration does.'
   }
 ]
 
@@ -789,7 +786,7 @@ export function setPerfHudPrefs(patch: Partial<PerfHudPrefs>): PerfHudPrefs {
   return next
 }
 
-// ----- Graphics compatibility (schema v10; shared/graphicsPrefs.ts) -----
+// ----- Graphics compatibility (schema v11; shared/graphicsPrefs.ts) -----
 //
 // The same read-through-the-normalizer / write-through-the-same-normalizer shape as every prefs
 // blob above, and it is read from an unusual place: `getGraphicsPrefs()` is called from the
@@ -812,6 +809,30 @@ export function setGraphicsPrefs(patch: Partial<GraphicsPrefs>): GraphicsPrefs {
   const next = normalizeGraphicsPrefs({ ...getGraphicsPrefs(), ...patch })
   store.set('graphics', next)
   return next
+}
+
+// ----- the buff externals allowlist (JOS-140; shared/buffTrust.ts) -----
+//
+// WHOSE casts may anchor a landing on your bars. Empty by default and empty for almost everybody:
+// it exists so a player who duos with the same enchanter every night can see that enchanter's mez
+// timers, and for nothing else. NO MIGRATION — an absent key normalizes to the empty list, which
+// is exactly the shipped behaviour.
+//
+// It IS part of what a shared settings profile would carry, unlike the graphics switches: a
+// friend's allowlist describes people, not a graphics driver, so importing one is at worst a list
+// of names you then edit. (Nothing imports it today; stated so the next reader does not have to
+// re-derive the argument.)
+
+/** The buff-trust prefs, defaulted. Never throws, never returns a partial. */
+export function getBuffTrustPrefs(): BuffTrustPrefs {
+  return normalizeBuffTrustPrefs(store.get('buffTrust'))
+}
+
+/** Replace the allowlist; returns the stored (re-normalized) value. */
+export function setBuffTrustPrefs(next: unknown): BuffTrustPrefs {
+  const clean = normalizeBuffTrustPrefs(next)
+  store.set('buffTrust', clean)
+  return clean
 }
 
 // ----- What's new (JOS-73; shared/releaseNotes.ts) -----

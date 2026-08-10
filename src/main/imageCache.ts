@@ -71,7 +71,10 @@ import { join } from 'node:path'
 // Console passthroughs (no prefix, no reformatting) — the ONE module in src/main that owns
 // the console. The default sinks below stay byte-identical to the console.* calls they were.
 import { E2E } from './e2e'
-import { logConsoleError, logInfo } from './errorLog'
+import { logConsoleError, logInfo, logWarn } from './errorLog'
+// The health counter a failed network fetch bumps instead of logging an error (JOS-133).
+// `telemetry/health.ts` imports nothing at all, so this cannot close a cycle; see its header.
+import { noteImageFetchFailure } from './telemetry/health'
 
 /** The scheme the renderer asks for. */
 export const EQIMG_SCHEME = 'eqimg'
@@ -400,6 +403,12 @@ export interface ImageCacheOptions {
   readonly log?: (msg: string) => void
   /** Override for tests; defaults to console.error via the caller. */
   readonly onError?: (msg: string, err: unknown) => void
+  /**
+   * A condition worth noticing that is NOT a failure (JOS-133) — today, an unreachable host, once
+   * per host per session. Defaults to `console.warn`, and the default is the whole point: a warn
+   * reaches dev stdout and NEVER `<userData>/errors.log`, so it cannot become an error count.
+   */
+  readonly warn?: (msg: string) => void
 }
 
 const NOT_FOUND = (): GlobalResponse => new Response(null, { status: 404, statusText: 'Not Found' })
@@ -430,6 +439,63 @@ const ignoreCleanupFailure = (): void => {
   /* silence on purpose — see above */
 }
 
+// ---- a failed network fetch is a COUNTER, not an error (JOS-133) -------------------------
+//
+// It used to call `onError`, which in the composition root is `logError` — so every unreachable
+// icon spent a line of `<userData>/errors.log` and a `mainErrorLogLines` tick. The fleet's answer
+// after 14 days: ONE fingerprint, 17,632 occurrences across 0.13.0 and 0.14.0, roughly two thirds
+// of every error line this app has ever counted, and not one of them actionable. The condition is
+// handled at every layer it touches — nothing is cached (negatives never are), the handler answers
+// 404, the renderer's `onError` hides the image, and the next request retries.
+//
+// WHAT REPLACES IT IS NOT SILENCE. Three things survive the demotion:
+//   * `imageFetchFailures` on the health rollup — so "how often is the wiki unreachable for the
+//     fleet" is still answerable, just not as an error (telemetry/health.ts).
+//   * ONE WARN LINE PER HOST PER SESSION, below — console only, so it reaches a dev watching
+//     `npm run dev` and never reaches errors.log or the wire. Per HOST because that is the
+//     resolution the fact has: when eqlwiki is down, it is down for every icon, and the second
+//     line would say nothing the first did not.
+//   * THE HTTP-STATUS BRANCH STAYS AN ERROR. A host that ANSWERED with a 404 or a 500 is telling
+//     us we asked for the wrong thing — a wrong item id, a moved portrait, a scrape gone stale —
+//     and that is ours to fix. The two branches were one log line and are now two decisions.
+
+/** Hosts already warned about this session. Bounded by `IMAGE_URL_ALLOWLIST` plus the one item
+ *  host — every URL that reaches a fetch has already passed the allowlist — so it cannot grow. */
+const warnedFetchHosts = new Set<string>()
+
+/** The host part of an upstream URL, or the whole string when it will not parse (it always will:
+ *  every caller passes a URL this module built). Total, because this runs inside a catch. */
+export function imageFetchHost(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
+
+/** True the FIRST time this session a fetch to `host` has failed, false every time after. The
+ *  session cap is the point: a per-request line is the noise this ticket removed. */
+export function takeImageFetchWarning(host: string): boolean {
+  if (warnedFetchHosts.has(host)) return false
+  warnedFetchHosts.add(host)
+  return true
+}
+
+/** Forget the warned hosts. Tests only — a real session warns once and means it. */
+export function resetImageFetchWarnings(): void {
+  warnedFetchHosts.clear()
+}
+
+/**
+ * The one-word reason a fetch threw, for the one warn line. `AbortError` (our timeout),
+ * `TypeError` (offline / DNS / TLS) — Node puts the useful detail in `cause`, which is exactly the
+ * sort of nested object that turns a diagnostic into a paragraph, so it is deliberately not read.
+ * Total: this runs inside a catch and must never become the throw it is describing.
+ */
+export function describeFetchFailure(err: unknown): string {
+  return err instanceof Error && err.name !== '' ? err.name : 'unknown'
+}
+
 /**
  * Install the `eqimg://` handler on the default session. Call ONCE, after `app.whenReady()`
  * and before any window loads a page that references an icon (creating the window in the
@@ -440,6 +506,7 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
   const doFetch = opts.fetchImpl
   const log = opts.log ?? ((m: string) => logInfo(m))
   const onError = opts.onError ?? ((m: string, e: unknown) => logConsoleError(m, e))
+  const warn = opts.warn ?? ((m: string) => logWarn(m))
 
   try {
     mkdirSync(dir, { recursive: true })
@@ -466,10 +533,21 @@ export function installImageCacheProtocol(protocol: ProtocolLike, opts: ImageCac
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
       })
     } catch (err) {
-      onError(`[everquest-companion:error] image cache: fetch failed for ${url}`, err)
+      // NETWORK LEG: no response at all (offline, DNS, TLS, the 10 s timeout). A counter and, the
+      // first time this session for this host, one warn line. See the section above `warnedFetchHosts`.
+      noteImageFetchFailure()
+      const host = imageFetchHost(url)
+      if (takeImageFetchWarning(host)) {
+        warn(
+          `[everquest-companion] image cache: cannot reach ${host} (${describeFetchFailure(err)}); ` +
+            `those images will be hidden. Further failures this session are counted, not logged.`
+        )
+      }
       return null
     }
     if (!res.ok) {
+      // THE HOST ANSWERED, AND SAID NO. Still an error, deliberately (JOS-133): a status means we
+      // asked for something that is not there, which is a fact about this app's own data.
       onError(`[everquest-companion:error] image cache: ${res.status} for ${url}`, res.statusText)
       return null
     }

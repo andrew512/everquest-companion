@@ -35,7 +35,7 @@ test('an alert with no display block sends NOTHING', () => {
 
 test('an alert that draws sends its resolved line, styled as it asked', () => {
   const req = alertTextRequest(
-    def({ display: { text: '$<mob> is casting', font: 'display', fontSize: 40, color: '#ff0000', durationMs: 9000 } }),
+    def({ display: { text: '{mob} is casting', font: 'display', fontSize: 40, color: '#ff0000', durationMs: 9000 } }),
     { captures: { mob: 'a fire giant' } },
     0
   )
@@ -79,18 +79,13 @@ test('TWO FIRINGS OF ONE ALERT GET TWO IDS — this is what makes lines stack', 
   assert.equal(second?.id, 'charm-break:1')
 })
 
-test('a firing with no captures drops the placeholders and keeps the words around them', () => {
+test('a firing with no captures draws its tokens LITERALLY, inventing nothing', () => {
   // A ▶ Test and an app-signal fire both arrive with no matched event. Speech already behaves
-  // exactly this way — `$<mob> resisted $<spell>` with no spell says "a froglok resisted" — and
-  // drawing must not invent values where speech would not, nor throw away the words that DID
-  // resolve. The whitespace closes up rather than leaving a hole.
-  const d = def({ display: { text: '$<mob> incoming' } })
-  assert.equal(alertTextRequest(d, null, 0)?.text, 'incoming')
-})
-
-test('…and falls back to the alert’s NAME only when nothing at all resolved', () => {
-  const d = def({ display: { text: '$<mob> $<spell>' } })
-  assert.equal(alertTextRequest(d, null, 0)?.text, 'Charm broke')
+  // exactly this way (JOS-103), and drawing must not invent values where speech would not: an
+  // unresolved `{mob}` is rendered as written, which tells the user their pattern captures no
+  // such group, where a silently-deleted token would just look like a broken alert.
+  const d = def({ display: { text: '{mob} incoming' } })
+  assert.equal(alertTextRequest(d, null, 0)?.text, '{mob} incoming')
 })
 
 test('an alert that would draw nothing at all sends nothing', () => {

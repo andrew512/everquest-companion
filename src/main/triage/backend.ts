@@ -52,6 +52,8 @@ import {
   missingColumn,
   missingTable,
   readAnalyticsInstalls,
+  readErrorReports,
+  readReportVersions,
   readUsageDaily,
   readUsageFunnelDaily,
   setAccepting,
@@ -70,6 +72,8 @@ import {
   anyOwner,
   dayOf,
   ofCohort,
+  toBugReportRows,
+  toErrorIssueRows,
   toFunnelRows,
   toInstallRows,
   toUsageRows
@@ -188,19 +192,39 @@ async function readAnalytics(
   const nowMs = Date.now()
   const since = addDays(dayOf(nowMs), -(days - 1))
   try {
-    const [rawUsage, rawFunnels, rawInstalls] = await Promise.all([
+    const [rawUsage, rawFunnels, rawInstalls, rawBugs, rawIssues] = await Promise.all([
       readUsageDaily(c, since),
       readUsageFunnelDaily(c, since),
-      readAnalyticsInstalls(c)
+      readAnalyticsInstalls(c),
+      // THE FOURTH READ (JOS-96), and the only one that touches the `report` table. It is in the
+      // same `Promise.all` and inside the same try, so a cluster missing that table degrades
+      // through the identical `missingTable` arm rather than through a second, drifting one.
+      //
+      // `report.received_at` is epoch MILLISECONDS while the counter tables are keyed on a day
+      // string, so the same window has to be expressed twice. Converting the day key (rather than
+      // subtracting from `nowMs`) is what keeps the two windows identical: both start at the same
+      // UTC midnight, so a report and a counter from the same morning are either both in or both
+      // out, and the bug overlay can never be a day out of step with the curve it sits under.
+      readReportVersions(c, Date.parse(`${since}T00:00:00Z`)),
+      // THE FIFTH READ (JOS-100): the per-fingerprint error store. Same window, same
+      // `Promise.all`, same `try` — so a cluster that has not run the migration adding
+      // `error_report` degrades through the identical `missingTable` arm and the whole tab
+      // says which table is missing, rather than this one read failing quietly and the panel
+      // simply never listing an issue.
+      readErrorReports(c, since)
     ])
     const usage = toUsageRows(rawUsage)
     const funnels = toFunnelRows(rawFunnels)
     const installs = toInstallRows(rawInstalls)
+    const bugReports = toBugReportRows(rawBugs)
+    const issues = toErrorIssueRows(rawIssues)
     const build = (cohort: UsageCohort): TriageAnalyticsData =>
       buildAnalytics({
         usage: ofCohort(usage, cohort),
         funnels: ofCohort(funnels, cohort),
         installs: ofCohort(installs, cohort),
+        bugReports: ofCohort(bugReports, cohort),
+        issues: ofCohort(issues, cohort),
         windowDays: days,
         nowMs
       })
@@ -219,7 +243,7 @@ async function readAnalytics(
         missing,
         reason:
           `This cluster does not have '${missing}', which the usage-analytics readout selects. ` +
-          'The tables and the user/owner `cohort` column both ship in infra/schema.sql — run ' +
+          'The tables and the user/owner `cohort` column both ship in infra/schema.sql - run ' +
           '`npx tsx scripts/triage-feedback.mts migrate --refresh` after the apply that ' +
           'carries them.'
       }
@@ -230,7 +254,7 @@ async function readAnalytics(
       state: 'unreachable',
       reason:
         'The DSQL cluster stopped answering while the readout was reading it (the connection ' +
-        'dropped). Nothing is wrong with the schema and nothing needs migrating — the next ' +
+        'dropped). Nothing is wrong with the schema and nothing needs migrating - the next ' +
         'attempt opens a fresh connection. If it keeps happening, check that this shell still ' +
         'holds valid credentials for the triage role.'
     }

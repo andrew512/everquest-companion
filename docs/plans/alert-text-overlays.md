@@ -5,7 +5,7 @@ Design, 2026-08-07. Shipped in the same wave.
 An alert could only ever be **heard** — a pack sound, a spoken phrase, or both. This adds the
 third thing an alert can do: write its line over the game, in a transparent lane you position
 once. It is the feature GINA users mean by "text triggers", built on two things the app already
-had and had never joined: the overlay windows, and the `$<name>` capture namespace a spoken
+had and had never joined: the overlay windows, and the `{token}` capture namespace a spoken
 phrase already resolves against.
 
 ## 0. Decisions
@@ -29,7 +29,7 @@ written before this meant.
 
 ```ts
 interface AlertDisplay {
-  text?: string             // template, `$<name>` supported; absent/empty ⇒ the alert's NAME
+  text?: string             // template, `{token}` supported; absent/empty ⇒ the alert's NAME
   font?: AlertFont          // 'sans' | 'serif' | 'mono' | 'display'; absent ⇒ 'sans'
   fontSize?: number         // px, 10..96; absent ⇒ 28
   color?: string            // '#rgb' | '#rrggbb' ONLY; absent ⇒ '#ffcc33'
@@ -60,18 +60,30 @@ a def-field normalizer.
 shape and one regex is what makes it impossible to smuggle a second declaration, a `url()` or a
 trailing `;` into another window's inline style — the `isSafePackId` rule, applied to CSS.
 
-## 2. `$<name>` is now an alerts-wide primitive
+## 2. Text is the SECOND consumer of the capture namespace, not a second namespace
 
-`substitute` / `placeholdersIn` / `tidy` **moved verbatim** from `shared/speechText.ts` into
-`shared/captures.ts`. Speech was never what made the syntax work: a firing's named values are an
-alerts-wide namespace with two sources (the matched event's scalar fields and the trigger's regex
-named groups, merged in `main/modules/alerts.ts`), and any surface rendering what an alert matched
-resolves against the same one. `displayTextFor` mirrors `speechTextFor` exactly — substitute →
-tidy → fall back to the alert's name → cap — and calls the same primitive. A test asserts the two
-produce identical output for identical input, so the claim is checked rather than commented.
+`display.text` is the same `{token}` template a spoken phrase is: resolved by the same
+`applyCaptures` (`shared/alertCaptures.ts`, JOS-103), against the same values, already through the
+same `sanitizeCapture`, under the same 48-char cap, with the same **unknown token renders
+literally** rule and the same editor token list (`captureNamesIn` / `tokensIn`). `displayTextFor`
+mirrors `speechTextFor` exactly — apply → tidy → fall back to the alert's name → cap — and a test
+asserts the two produce identical output for identical input, so "one implementation" is checked
+rather than commented.
 
-The editor's chip machinery moved with it (`features/alerts/placeholders.tsx`), decoupled from
-`SpeechForm`: both the phrase field and the display field drive one `PlaceholderChips`.
+**This is not how it was first written.** This branch shipped its own `$<name>` syntax before
+upstream's `{token}` existed: substitution in `shared/captures.ts`, unresolved names DROPPED with
+the whitespace closing up, an editor chip row that inserted placeholders, and a preview that
+filled tokens with fabricated sample values. Upstream arrived at the same feature independently
+and better — a written threat model, sanitization of every captured value, a cap sized to a NAME
+rather than a LINE, and a preview that deliberately shows tokens unresolved because substituting a
+made-up sample puts words in the alert's mouth that no log line said (law 1). On the 2026-08-10
+merge the branch's version was **retired into upstream's** rather than kept beside it:
+`shared/captures.ts`, `shared/captureNames.ts` and `features/alerts/placeholders.tsx` are gone.
+Two spellings of one idea is how a threat model comes to be enforced in only one of them.
+
+The user-visible consequence, stated rather than hidden: a phrase written as `$<mob>` on this
+branch before the merge must be retyped as `{mob}`. Nothing migrates it, because nothing can tell
+a stale placeholder from text somebody meant literally.
 
 ## 3. The notifier predicate
 

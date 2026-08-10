@@ -217,7 +217,7 @@ function emptyText(ready: boolean, hidden: HiddenByView): string {
   if (hidden.era > 0) parts.push(`${String(hidden.era)} outside ${CURRENT_ERA_LABEL}`)
   if (hidden.nonEquip > 0) parts.push(`${String(hidden.nonEquip)} with no equipment slot`)
   if (parts.length === 0) return 'No effects match these filters.'
-  return `No effects match these filters — but ${parts.join(' and ')} are hidden by the toggles above.`
+  return `No effects match these filters - but ${parts.join(' and ')} are hidden by the toggles above.`
 }
 
 /** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
@@ -323,7 +323,10 @@ export default function EffectBrowser({
   // you came from, not preferences. Touching any control clears it (`change` below), because
   // changing the socket tab while filtered to a Proc socket would be asking two things at once.
   // The preset names a CELL; the donor filter is about the equipment SLOT that cell occupies, so
-  // browsing FINGER 2 shows the same ring donors as browsing FINGER 1 (JOS-67).
+  // browsing FINGER 2 shows the same ring donors as browsing FINGER 1 (JOS-67). An ANY cell
+  // occupies none, and `equipSlotOf` returns null there — which is already this filter's word for
+  // "every slot" (JOS-104), so browsing an any-slot's socket narrows by socket and host classes
+  // and leaves the slot alone, which is exactly what that place allows.
   const filters: DonorFilters = useMemo(
     () => (preset === null ? own : { ...own, socket: preset.socket, slot: equipSlotOf(preset.slot) }),
     [own, preset]

@@ -36,6 +36,8 @@ interface EqConfig {
   source: string
   characterCount: number
   overridden: boolean
+  readable: 'ok' | 'missing' | 'unreadable'
+  readError?: string
 }
 
 /** One separator style, no trailing slash, case-folded — the way `logIsUnderLogsDir` compares. */
@@ -102,6 +104,11 @@ async function checkShape(
     config.characterCount === 1,
     `characterCount=${String(config.characterCount)}`
   )
+  check(
+    `${label}: …and the read itself is reported as having SUCCEEDED (JOS-82)`,
+    config.readable === 'ok',
+    `readable=${config.readable}`
+  )
   const listed = await settle(() => characterCount(page), (n) => n === 1)
   check(`${label}: …the character selector lists it`, listed === 1, `listed=${String(listed)}`)
   const tailing = await settle(() => attachedCharacter(page), (n) => n === 'Primitive')
@@ -112,17 +119,30 @@ async function checkShape(
   )
 }
 
-/** The Preferences → Game card's verdict line — the sentence the reporters were reading. */
-async function readFolderCard(page: Page): Promise<{ path: string; verdict: string }> {
+/** Navigate to Preferences → Game and wait for the folder card to be on screen. */
+async function openFolderCard(page: Page): Promise<void> {
   await page.click('[data-testid="nav-preferences"]', { timeout: 60_000 })
   await page.waitForSelector('[data-testid="prefs-rail-game"]', { timeout: 20_000 })
   await page.click('[data-testid="prefs-rail-game"]')
   await page.waitForSelector('[data-testid="eq-folder-check"]', { timeout: 20_000 })
+}
+
+/**
+ * The Preferences → Game card, as the reporters read it: the install folder, the folder logs
+ * are actually READ from (JOS-82 — its absence is what made a normalized pick look refused),
+ * the verdict sentence, and whether the log-FILE picker is offered at all.
+ */
+async function readFolderCard(
+  page: Page
+): Promise<{ path: string; logsPath: string; verdict: string; hasFilePicker: boolean }> {
   // No local function declarations inside `evaluate`: tsx compiles the spec with esbuild, which
   // injects a `__name` helper around named arrows — and that helper does not exist in the page.
   return page.evaluate(() => ({
     path: document.querySelector('[data-testid="eq-folder-path"]')?.textContent?.trim() ?? '',
-    verdict: document.querySelector('[data-testid="eq-folder-check"]')?.textContent?.trim() ?? ''
+    logsPath:
+      document.querySelector('[data-testid="eq-folder-logs-path"]')?.textContent?.trim() ?? '',
+    verdict: document.querySelector('[data-testid="eq-folder-check"]')?.textContent?.trim() ?? '',
+    hasFilePicker: document.querySelector('[data-testid="eq-folder-pick-file"]') !== null
   }))
 }
 
@@ -149,6 +169,7 @@ async function main(): Promise<void> {
     await checkShape(page, 'the LOGS folder + a trailing slash', `${install.logsDir}\\`, install)
 
     // 5. …and the Settings card says so on screen, which is where the reporters were reading.
+    await openFolderCard(page)
     const card = await readFolderCard(page)
     check(
       'the Game card stops saying "no logs" and states the find',
@@ -160,6 +181,25 @@ async function main(): Promise<void> {
       samePath(card.path, install.root),
       `shown=${card.path}`
     )
+    // JOS-82. The card used to print the install ROOT alone. Pick `…\Logs` and normalization
+    // correctly answers with its PARENT — so the one path on screen was not the path the user
+    // picked, and nothing said why. "Wont let me change the Everquest Legends folder" is what
+    // that looks like from the outside. Naming the folder logs are READ from makes the pick
+    // visible, and it is the line that actually matters.
+    check(
+      'THE CARD NAMES THE FOLDER IT READS, not just the install root (JOS-82)',
+      samePath(card.logsPath, install.logsDir),
+      `logsShown=${card.logsPath} want=${install.logsDir}`
+    )
+    // The affordance whose absence is the other half of the report: Windows' folder dialog
+    // lists ONLY folders, and a real Logs dir has no subfolders — so the user hunting for the
+    // `eqlog_*.txt` the card names is shown an empty pane. There must be a dialog that can
+    // show files. (The native dialog itself is unautomatable; that it is OFFERED is not.)
+    check(
+      'a log-FILE picker is offered, not only a folder picker (JOS-82)',
+      card.hasFilePicker,
+      `eq-folder-pick-file present=${String(card.hasFilePicker)}`
+    )
 
     // 6. HONEST FAILURE SURVIVES. Normalizing must not turn a wrong path into a hopeful guess:
     //    a folder that is not an install still reports zero, exactly as it always did.
@@ -169,6 +209,28 @@ async function main(): Promise<void> {
       bogus.characterCount === 0 && bogus.source === 'manual',
       `count=${String(bogus.characterCount)} source=${bogus.source}`
     )
+    // …and it says WHICH kind of nothing. `characterCount === 0` used to be the whole story,
+    // so the card told a user whose folder could not be read to go turn `/log on` — advice
+    // that cannot work. A path that is not there reads 'missing', never 'ok'.
+    check(
+      'a nonexistent folder is reported as MISSING, not as an empty one (JOS-82)',
+      bogus.readable === 'missing',
+      `readable=${bogus.readable}`
+    )
+    // The card is push-updated (`eqconfig:changed`), so wait for the verdict to arrive rather
+    // than race it.
+    const bogusVerdict = await settle(
+      async () => (await readFolderCard(page)).verdict,
+      (v) => /doesn.t exist/i.test(v)
+    )
+    check(
+      '…and the card stops telling that user to enable logging',
+      /doesn.t exist/i.test(bogusVerdict) && !/log on/.test(bogusVerdict),
+      `verdict=${bogusVerdict}`
+    )
+
+    // 7. Back to a good install, so the run ends on the state the app should be in.
+    await setEqDir(page, install.root)
 
     if (failures.length) await dumpArtifacts(page, 'eq-folder-FAIL')
   } finally {

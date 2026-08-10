@@ -43,6 +43,7 @@
 
 import {
   bucketOf,
+  type EvErrorReport,
   type StartupReplayStats,
   type TelemetryBatch,
   type TelemetryEvent,
@@ -171,9 +172,34 @@ export const USAGE_METRICS = {
   setupVoice: 'setupVoice',
   setupPacks: 'setupPacks',
   setupUpdateChannel: 'setupUpdateChannel',
-  /** dim = the healthCounters field name; n = the count reported. */
+  /**
+   * ERRORS PER BUILD (JOS-96) — "did I release buggy code", which is a question about a RELEASE
+   * and so cannot be answered by a counter that only knows a field name.
+   *
+   * dim = `<version>:<field>`, n = the count reported. The JOS-57 startup precedent exactly:
+   * `usage_daily` has no version COLUMN (the key is day+cohort+metric+dim and cannot grow one —
+   * infra/schema.sql), so the version lives in `dim`, and that makes this additive with NO schema
+   * change and NO migration. It is also free to redesign right now precisely because NO CLIENT HAS
+   * EVER EMITTED `healthCounters`: there are zero rows in the live table to be re-encoded, so the
+   * old field-name-only encoding has no history to preserve.
+   */
   health: 'health',
+  /**
+   * dim = `<version>`. THE DENOMINATOR, and it is per-version for the same reason
+   * `startupReplays` is: `health / healthReports` at the same version is a self-normalizing RATE
+   * (errors per reporting session on that build), so a build that simply has more users cannot
+   * look buggier than one that has fewer.
+   *
+   * It is also the CAPABILITY SIGNAL, which is the half that keeps the readout honest. A version
+   * that predates the emitting client reports nothing at all — no `healthReports` row — and that
+   * is visibly different from a version that reported sessions and found no errors. The panel
+   * renders the first as "not reporting" and the second as a true zero; without a per-version
+   * denominator the two would be the same absent row.
+   */
   healthReports: 'healthReports',
+  // (`HEALTH_NON_ERROR_FIELDS`, below this object, says which of the `health` dims may be summed
+  //  into an error RATE and which may not. It lives outside `USAGE_METRICS` because it names
+  //  fields of the event, not metrics of the table.)
   /**
    * THE STARTUP REPLAY (JOS-57), and every one of these is dimensioned BY VERSION because that is
    * the only question worth asking of it: "did the throttle we shipped make launches better" is a
@@ -203,6 +229,50 @@ export const USAGE_METRICS = {
    * (the same edges) rather than against it.
    */
   startupLogSize: 'startupLogSize',
+  /**
+   * ERROR REPORTS PER BUILD (JOS-100) — the DENOMINATOR beside `error_report`'s own counts.
+   *
+   * dim = `<version>`, n = errors reported (the sum of the events' `count` fields). The
+   * per-fingerprint detail lives in its own table, because "which issue" needs an exemplar and
+   * `usage_daily` has nowhere to put one; what lives HERE is the fleet-wide total, so a panel
+   * can say "this build reported 412 errors across 9 issues" without reading the exemplars.
+   */
+  errors: 'errors',
+  /** dim = `<version>`; n = distinct errorReport EVENTS. One event is one fingerprint-session,
+   *  so `errors / errorEvents` is the average burst size — a loop that throws is visible. */
+  errorEvents: 'errorEvents',
+  /**
+   * SWITCH FLIPS PER BUILD (JOS-109) — how many installs turned usage analytics off, and how many
+   * turned it back on. dim = `<version>`, n = flips.
+   *
+   * The JOS-96 / JOS-57 additive pattern exactly: `usage_daily` has no version COLUMN (the key is
+   * day+cohort+metric+dim and cannot grow one — infra/schema.sql), so the version lives in `dim`,
+   * which makes these new metric NAMES in a table built to hold arbitrary ones. No schema change,
+   * no migration.
+   *
+   * WHAT THESE TWO NUMBERS CAN AND CANNOT CLAIM, because a counter with a confident name is the
+   * easiest thing in this pipeline to misread:
+   *
+   *   * EXACT, over installs that ever reported. One flip is one event and one event is one
+   *     count; a user who flips off, on and off again contributes two `optOuts` and one `optIn`,
+   *     which is the truth about what they did rather than a de-duplicated guess at what they
+   *     meant. `main/telemetry/optOut.ts` is what makes "one per flip" mechanical.
+   *   * BLIND TO THE FULLY-DARK INSTALL. An install that opted out before its first batch never
+   *     sends one of these, so `optOuts` is a FLOOR on opt-outs and can never be a rate over
+   *     downloads. `shared/telemetry.ts` states that problem where the events are declared, and
+   *     the panel prints the two measurements side by side rather than dividing them.
+   *   * AN UNDERCOUNT BY ONE MORE MECHANISM, stated so nobody has to rediscover it: the notice is
+   *     ONE best-effort POST with no retry (retrying would mean keeping state after the user said
+   *     stop), so a flip made while offline is simply never counted.
+   *   * NO DENOMINATOR EXISTS, and none is invented. There is no per-session "this build can
+   *     report a flip" signal the way `healthReports` is one for errors, so a version with no row
+   *     here is genuinely ambiguous between "nobody left" and "this build predates the counter".
+   *     The panel renders absence as a dash and says so; it does not render a zero.
+   */
+  optOuts: 'optOuts',
+  /** dim = `<version>`. The counterpart, on a build that re-enabled. Never netted against
+   *  `optOuts`: "flips off minus flips on" is not a population, it is two actions subtracted. */
+  optIns: 'optIns',
   /** dim = `<step>:ok` / `<step>:failed`. */
   update: 'update',
   /** dim = `<step>:<failureClass>`. */
@@ -212,6 +282,36 @@ export const USAGE_METRICS = {
 } as const
 
 export type UsageMetric = (typeof USAGE_METRICS)[keyof typeof USAGE_METRICS]
+
+/**
+ * HEALTH FIELDS THAT ARE COUNTED BUT ARE NOT ERRORS (JOS-133).
+ *
+ * `USAGE_METRICS.health` holds one row per field per build, and two readers add those rows up:
+ * the fleet-wide Health mix (which wants every field, and shows them by name), and the RELEASE
+ * HEALTH error rate (`errors / healthReports` per build — main/triage/releaseHealth.ts), which
+ * wants only the fields that mean something went wrong with THIS APP. The two are not the same
+ * list, and this is where the difference is written down once.
+ *
+ * `imageFetchFailures` is the case that forced it. It counts a fully handled condition — a
+ * volunteer wiki was unreachable, the image was hidden, the app carried on — and it is the single
+ * largest number this app has ever counted (17,632 occurrences in 14 days, roughly two thirds of
+ * every error line the fleet reported). Summed into the rate it would swamp every real signal and
+ * make "did I release buggy code" unanswerable, and it would move with somebody else's uptime
+ * rather than with anything a release could change.
+ *
+ * IT IS A DENY LIST RATHER THAN AN ALLOW LIST on purpose. A field added later and forgotten here
+ * counts as an error — noisy, visible, and fixed by adding a line. The other way round, a
+ * forgotten field would silently vanish from the rate, which is the failure this whole section
+ * exists to prevent. `suppressedErrorLines` is deliberately NOT here: it counts error lines that
+ * a cap withheld from the local file, so leaving it out of the rate would let the cap flatter a
+ * build that had started looping.
+ */
+export const HEALTH_NON_ERROR_FIELDS: readonly string[] = ['imageFetchFailures']
+
+/** Whether a `health` dim's field name is an ERROR for rate purposes. See the list above. */
+export function isErrorHealthField(field: string): boolean {
+  return !HEALTH_NON_ERROR_FIELDS.includes(field)
+}
 
 /**
  * Session-length histogram edges: 1m / 5m / 15m / 30m / 1h / 2h / 4h ⇒ eight buckets.
@@ -263,7 +363,7 @@ function msBucketLabel(edges: readonly number[], i: number): string {
   const clamped = Math.max(0, Math.min(i, edges.length))
   if (clamped >= edges.length) return `${msSpan(edges[edges.length - 1])}+`
   if (clamped === 0) return `<${msSpan(edges[0])}`
-  return `${msSpan(edges[clamped - 1])}–${msSpan(edges[clamped])}`
+  return `${msSpan(edges[clamped - 1])}-${msSpan(edges[clamped])}`
 }
 
 /** Human range for a `startupReplayMs` bucket index. */
@@ -288,7 +388,7 @@ export function sessionBucketLabel(i: number): string {
   const clamped = Math.max(0, Math.min(i, SESSION_MS_EDGES.length))
   const lo = clamped === 0 ? 0 : SESSION_MS_EDGES[clamped - 1]
   if (clamped >= SESSION_MS_EDGES.length) return `${span(lo)}+`
-  return `${clamped === 0 ? '0' : span(lo)}–${span(SESSION_MS_EDGES[clamped])}`
+  return `${clamped === 0 ? '0' : span(lo)}-${span(SESSION_MS_EDGES[clamped])}`
 }
 
 /**
@@ -337,9 +437,30 @@ export interface FunnelCounter {
   n: number
 }
 
+/**
+ * ONE ROW OF `error_report` (JOS-100) — the one place this pipeline keeps something that is not
+ * a bare count, and the exception is deliberate and bounded.
+ *
+ * T6 refused a raw event store and this does not reopen it: what is kept is at most ONE
+ * EXEMPLAR per (day, cohort, version, fingerprint), FIRST WINS, and the exemplar is an event
+ * that has already been through `validateTelemetryEvent` — so it is a redacted message, a stack
+ * of `out/…` frames and a list of parser event kinds, and there is no field on it a per-user
+ * trail could hide in. A hundred installs hitting one bug write one row and add to its count.
+ */
+export interface ErrorReportRow {
+  appVersion: string
+  fingerprint: string
+  /** Occurrences folded into this row by this batch. */
+  n: number
+  /** The event to store IF this (day, cohort, version, fingerprint) has none yet. */
+  exemplar: EvErrorReport
+}
+
 export interface RollupResult {
   counters: UsageCounter[]
   funnels: FunnelCounter[]
+  /** Empty for every batch that carries no `errorReport` — which is almost all of them. */
+  errors: ErrorReportRow[]
 }
 
 /**
@@ -399,13 +520,35 @@ function foldSetup(bag: Bag, ev: Extract<TelemetryEvent, { t: 'setupSnapshot' }>
   add(bag, USAGE_METRICS.setupUpdateChannel, ev.updateChannel, 1)
 }
 
-function foldHealth(bag: Bag, ev: Extract<TelemetryEvent, { t: 'healthCounters' }>): void {
-  add(bag, USAGE_METRICS.healthReports, DIM_NONE, 1)
-  add(bag, USAGE_METRICS.health, 'rendererCrashes', ev.rendererCrashes)
-  add(bag, USAGE_METRICS.health, 'mainErrorLogLines', ev.mainErrorLogLines)
-  add(bag, USAGE_METRICS.health, 'parserStalls', ev.parserStalls)
-  add(bag, USAGE_METRICS.health, 'presenceRestarts', ev.presenceRestarts)
-  add(bag, USAGE_METRICS.health, 'speechFailures', ev.speechFailures)
+/**
+ * ONE SESSION'S HEALTH ROLLUP, DIMENSIONED BY BUILD (JOS-96).
+ *
+ * `healthReports` is written UNCONDITIONALLY and is the denominator; the five field rows are
+ * written only when non-zero, because `add()` refuses non-positive values and an absent row reads
+ * identically to a zero row TO A SUM. That refusal is what makes a clean session cost one row
+ * instead of six — and it is safe here for the same reason it is safe in `foldStartup`: the
+ * denominator is always present, so "no error rows on a version that reported" is unambiguously
+ * zero errors rather than missing data.
+ *
+ * The version is an ENVELOPE fact — no event carries its own — so it is threaded in exactly the
+ * way `foldSession` threads it for the startup reading.
+ */
+function foldHealth(
+  bag: Bag,
+  ev: Extract<TelemetryEvent, { t: 'healthCounters' }>,
+  version: string
+): void {
+  add(bag, USAGE_METRICS.healthReports, version, 1)
+  add(bag, USAGE_METRICS.health, `${version}:rendererCrashes`, ev.rendererCrashes)
+  add(bag, USAGE_METRICS.health, `${version}:mainErrorLogLines`, ev.mainErrorLogLines)
+  add(bag, USAGE_METRICS.health, `${version}:parserStalls`, ev.parserStalls)
+  add(bag, USAGE_METRICS.health, `${version}:presenceRestarts`, ev.presenceRestarts)
+  add(bag, USAGE_METRICS.health, `${version}:speechFailures`, ev.speechFailures)
+  // JOS-133's two, OPTIONAL on the wire (the additive-field rule) and so read through `?? 0` —
+  // which needs no special case downstream, because `add()` already refuses a non-positive value
+  // and an absent row reads identically to a zero row TO A SUM.
+  add(bag, USAGE_METRICS.health, `${version}:imageFetchFailures`, ev.imageFetchFailures ?? 0)
+  add(bag, USAGE_METRICS.health, `${version}:suppressedErrorLines`, ev.suppressedErrorLines ?? 0)
 }
 
 /**
@@ -482,9 +625,47 @@ function foldOutcome(bag: Bag, ev: TelemetryEvent): boolean {
   return true
 }
 
+/**
+ * The error rows for one batch, folded by (version, fingerprint) — FIRST EXEMPLAR WINS, which
+ * is the same rule the UPSERT applies at the row and for the same reason: two reports of one
+ * issue are one issue, and the first one to arrive is as good an example as the second.
+ *
+ * Deterministic order (the key's own sort), like `foldFunnels`, so the handler's multi-row
+ * statement is reproducible and this file stays testable without a database.
+ */
+function foldErrors(records: readonly TelemetryRecord[], appVersion: string): ErrorReportRow[] {
+  const bag = new Map<string, ErrorReportRow>()
+  for (const { ev } of records) {
+    if (ev.t !== 'errorReport') continue
+    const held = bag.get(ev.fingerprint)
+    if (held) held.n += ev.count
+    else bag.set(ev.fingerprint, { appVersion, fingerprint: ev.fingerprint, n: ev.count, exemplar: ev })
+  }
+  return [...bag.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, v]) => v)
+}
+
+/**
+ * THE TWO SWITCH-FLIP EVENTS (JOS-109), split out for exactly the reason `foldSession` and
+ * `foldOutcome` were: `foldEvent`'s one switch would otherwise be past the repo's complexity
+ * ceiling, and the answer to that here is a helper, not a widened threshold.
+ *
+ * Both are one row and nothing else — a flip has no payload to fold — and both are dimmed by the
+ * build that was running when the user reached for the switch, which is the only version the
+ * question "did the build I shipped make people leave" can be about.
+ */
+function foldFlip(bag: Bag, ev: TelemetryEvent, version: string): boolean {
+  if (ev.t === 'optOut') {
+    add(bag, USAGE_METRICS.optOuts, version, 1)
+    return true
+  }
+  if (ev.t !== 'optIn') return false
+  add(bag, USAGE_METRICS.optIns, version, 1)
+  return true
+}
+
 /** One event's contribution. TOTAL: a kind with nothing to count simply adds nothing. */
 function foldEvent(bag: Bag, ev: TelemetryEvent, version: string): void {
-  if (foldSession(bag, ev, version) || foldOutcome(bag, ev)) return
+  if (foldSession(bag, ev, version) || foldOutcome(bag, ev) || foldFlip(bag, ev, version)) return
   switch (ev.t) {
     case 'viewDwell':
       add(bag, USAGE_METRICS.viewVisits, ev.view, 1)
@@ -504,10 +685,17 @@ function foldEvent(bag: Bag, ev: TelemetryEvent, version: string): void {
       foldSetup(bag, ev)
       return
     case 'healthCounters':
-      foldHealth(bag, ev)
+      foldHealth(bag, ev, version)
+      return
+    case 'errorReport':
+      // The COUNTERS half only. The per-fingerprint rows are `foldErrors`, which needs the
+      // whole record list rather than one event at a time (first exemplar wins).
+      add(bag, USAGE_METRICS.errors, version, ev.count)
+      add(bag, USAGE_METRICS.errorEvents, version, 1)
       return
     default:
-      // The session kinds and the two outcome kinds, already folded by the helpers above.
+      // The session kinds, the two outcome kinds and the two flip kinds, already folded by the
+      // three helpers above.
       return
   }
 }
@@ -555,7 +743,11 @@ export function rollupBatch(batch: TelemetryBatch, ctx: RollupContext): RollupRe
   const counters = [...bag.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([, v]) => v)
-  return { counters, funnels: foldFunnels(batch.events, batch.env.appVersion) }
+  return {
+    counters,
+    funnels: foldFunnels(batch.events, batch.env.appVersion),
+    errors: foldErrors(batch.events, batch.env.appVersion)
+  }
 }
 
 /** The UTC day a row is keyed on. ARRIVAL day, never the client's clock (which can lie). */

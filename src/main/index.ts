@@ -41,7 +41,7 @@ import { applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
 import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
-import { DATA_READY_MS, bus, buffsModule, epoch, sessionDetector } from './pipeline'
+import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
@@ -118,7 +118,10 @@ bus.subscribe((ev, live) => {
     // derived epoch event finishes draining to the modules (they reset) BEFORE the renderer
     // re-fetches their snapshots. During a rescan (live:false) the post-scan onCharacter send
     // in tailCharacter already covers this, so we only do it live.
-    if (live) queueMicrotask(() => sendToMain(IPC.onCharacter, getActiveCharacter()))
+    // …and to the module-reading OVERLAYS as well as the main window (JOS-172): they fold the
+    // same modules and have the same nothing-but-deltas problem, so one signal, one list
+    // (pipeline.ts `sendWorldRebuilt`).
+    if (live) queueMicrotask(() => { sendWorldRebuilt(getActiveCharacter()) })
   }
 })
 
@@ -201,7 +204,7 @@ if (!gotSingleInstanceLock) {
   void app.whenReady().then(() => {
     markStartupPhase('appReady')
     logInfo(
-      `[everquest-companion] Channel '${CHANNEL}' — userData ${USER_DATA}, error log ${errorLogPath()}`
+      `[everquest-companion] Channel '${CHANNEL}' - userData ${USER_DATA}, error log ${errorLogPath()}`
     )
     registerIpc()
     registerDevTriageIpc()

@@ -156,7 +156,7 @@ export function loadStack(refresh = false): Stack {
   for (const key of STACK_KEYS) {
     const value = outputs[key]?.value
     if (typeof value !== 'string') {
-      throw new Error(`terraform output is missing "${key}" — has the stack been applied?`)
+      throw new Error(`terraform output is missing "${key}" - has the stack been applied?`)
     }
     stack[key] = value
   }
@@ -481,23 +481,28 @@ export function listInstallProfiles(c: Clients, limit = 200): Promise<Row[]> {
 // ---- usage analytics (docs/plans/usage-analytics.md §4) -----------------------------
 //
 // The analytics half lives in usageStore.ts — split out when two independent waves composed
-// this file past the 400-line ceiling. Re-exported here so every consumer keeps importing
-// from the one store module; the split moved code, not import paths.
+// this file past the 400-line ceiling. Re-exported here so every consumer keeps importing from
+// the one store module; the split moved code, not import paths.
+//
+// IT HAS TO BE AN EXPLICIT LIST, AND THAT IS MEASURED, NOT STYLE. JOS-100 tried
+// `export * from './usageStore'` here — one line instead of eighteen, when adding
+// `readErrorReports` pushed this file back over the ceiling the split existed to get it under —
+// and `tests/triageConnection.test.mts` went red with
+// `does not provide an export named 'unreachable'`. Under tsx these modules link through CJS
+// interop, and a star re-export becomes a RUNTIME property copy that cjs-module-lexer cannot
+// see, so every named import through this file stops resolving. The names are therefore
+// GROUPED rather than one-per-line: same explicitness, and the grouping says which half of the
+// analytics store each name belongs to.
 export {
-  missingTable,
-  missingColumn,
-  unreachable,
-  USAGE_ROW_LIMIT,
-  INSTALL_ROW_LIMIT,
-  OWNER_ROW_LIMIT,
-  readUsageDaily,
-  readUsageFunnelDaily,
-  readAnalyticsInstalls,
-  readAnalyticsInstall,
-  readOwnerInstalls,
-  setInstallCohort,
-  deleteAnalyticsInstall,
-  setTelemetryAccepting,
+  // failure classifiers, shared with the backend's degradation arms
+  missingTable, missingColumn, unreachable,
+  // read caps
+  USAGE_ROW_LIMIT, INSTALL_ROW_LIMIT, OWNER_ROW_LIMIT,
+  // reads
+  readUsageDaily, readUsageFunnelDaily, readAnalyticsInstalls, readAnalyticsInstall,
+  readReportVersions, readErrorReports, readOwnerInstalls,
+  // writes
+  setInstallCohort, deleteAnalyticsInstall, setTelemetryAccepting,
 } from './usageStore'
 
 // ---- writes ------------------------------------------------------------------------

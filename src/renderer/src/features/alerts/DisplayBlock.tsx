@@ -55,25 +55,53 @@ import {
   ALERT_OVERLAY_LABELS,
   type AlertOverlayKind
 } from '@shared/alertOverlays'
-import {
-  NO_CAPTURES,
-  PlaceholderChips,
-  sampleCaptures,
-  unknownPlaceholderNote,
-  unknownPlaceholders,
-  type CaptureHints
-} from './placeholders'
+import { tokensIn } from '@shared/alertCaptures'
 import { displayFieldsFor, type DisplayForm } from './displayForm'
 
 export { displayFieldsFor, showsText, useDisplayForm, type DisplayForm } from './displayForm'
 
 /**
- * The line this alert will draw, resolved against stand-in capture values — the same contract the
- * Voice section's preview has, through the same pure resolver the firing path uses.
+ * The line this alert will draw, through the same pure resolver the firing path uses.
+ *
+ * TOKENS PREVIEW UNRESOLVED, deliberately (JOS-103's rule, and the same one the Voice section's
+ * preview follows). There is no firing yet, so there is no captured value, and substituting a
+ * made-up sample would put words in the alert's mouth that no log line said (world-model law 1).
+ * An unresolved `{token}` renders literally here for the same reason it does at fire time.
  */
-export function previewDisplayFor(name: string, f: DisplayForm, hints: CaptureHints): string | null {
+export function previewDisplayFor(name: string, f: DisplayForm): string | null {
   const fields = displayFieldsFor({ ...f, on: true })
-  return displayTextFor({ name, ...fields }, { captures: sampleCaptures(hints.names) })
+  return displayTextFor({ name, ...fields })
+}
+
+/**
+ * WHAT `{tokens}` THIS ALERT MAY WRITE on screen, and which ones its pattern does not declare.
+ *
+ * The same list the Voice section prints, for the same reason (control 4 of the threat model in
+ * shared/alertCaptures.ts): the values a shared def can ever draw are a finite, printable set, so
+ * you can see what it will say without reading its regex. The unknown line is a WARNING and never
+ * a save block — an unresolved token renders literally, which is a legible line rather than a
+ * broken alert, and a user mid-edit should not be stopped from typing `{pl` on the way to
+ * `{player}`.
+ */
+function CaptureHint({ text, captureNames }: { text: string; captureNames: string[] }): JSX.Element | null {
+  const used = tokensIn(text)
+  const unknown = used.filter((t) => !captureNames.includes(t))
+  if (captureNames.length === 0 && unknown.length === 0) return null
+  return (
+    <Box data-testid="alert-display-captures">
+      {captureNames.length > 0 && (
+        <Typography variant="caption" color="text.secondary" display="block">
+          This alert’s pattern captures: {captureNames.map((n) => `{${n}}`).join(' ')}
+        </Typography>
+      )}
+      {unknown.length > 0 && (
+        <Typography variant="caption" color="warning.main" display="block">
+          {unknown.map((n) => `{${n}}`).join(' ')} - the pattern does not capture that; it will be
+          drawn as written.
+        </Typography>
+      )}
+    </Box>
+  )
 }
 
 /**
@@ -135,9 +163,8 @@ function Field({
   )
 }
 
-/** The text field + its insert chips. */
-function TextRow({ form, hints }: { form: DisplayForm; hints: CaptureHints }): JSX.Element {
-  const unknown = unknownPlaceholders(form.text, hints)
+/** The text field + the tokens its trigger declares. */
+function TextRow({ form, captureNames }: { form: DisplayForm; captureNames: string[] }): JSX.Element {
   return (
     <>
       <TextField
@@ -148,17 +175,9 @@ function TextRow({ form, hints }: { form: DisplayForm; hints: CaptureHints }): J
         value={form.text}
         onChange={(e) => form.setText(e.target.value)}
         slotProps={{ htmlInput: { maxLength: MAX_DISPLAY_CHARS } }}
-        error={unknown.length > 0}
-        helperText={
-          unknownPlaceholderNote(unknown) ?? `${String(form.text.length)} / ${String(MAX_DISPLAY_CHARS)}`
-        }
+        helperText={`${String(form.text.length)} / ${String(MAX_DISPLAY_CHARS)}`}
       />
-      <PlaceholderChips
-        text={form.text}
-        onInsert={form.setText}
-        hints={hints}
-        testId="alert-display-placeholders"
-      />
+      <CaptureHint text={form.text} captureNames={captureNames} />
     </>
   )
 }
@@ -270,15 +289,13 @@ function StyleRow({ form, defaults }: { form: DisplayForm; defaults: AlertTextDe
 function DisplayPreview({
   name,
   form,
-  hints,
   defaults
 }: {
   name: string
   form: DisplayForm
-  hints: CaptureHints
   defaults: AlertTextDefaults
 }): JSX.Element {
-  const preview = previewDisplayFor(name, form, hints)
+  const preview = previewDisplayFor(name, form)
   return (
     <Box
       data-testid="alert-display-preview"
@@ -312,7 +329,7 @@ function DisplayPreview({
         </Box>
       ) : (
         <Typography variant="caption" color="text.secondary">
-          Shows nothing — give the alert a name or some text.
+          Shows nothing - give the alert a name or some text.
         </Typography>
       )}
     </Box>
@@ -328,14 +345,19 @@ export default function DisplayBlock({
   name,
   form,
   defaults,
-  hints = NO_CAPTURES
+  captureNames = []
 }: {
   name: string
   form: DisplayForm
   /** What the TARGET overlay gives a field this alert does not override (useAlertOverlayDefaults). */
   defaults: AlertTextDefaults
-  /** The `$<name>` values the trigger being edited offers (AlertDialog computes them). */
-  hints?: CaptureHints
+  /**
+   * The named capture groups the alert's CURRENT trigger declares (`captureNamesIn`), recomputed
+   * as the user edits the pattern — the same list the Voice section gets, because it is the same
+   * namespace. Empty for the alerts that capture nothing, which is most of them, and then the
+   * hint renders nothing at all rather than an empty label.
+   */
+  captureNames?: string[]
 }): JSX.Element {
   return (
     <Box data-testid="alert-display-block">
@@ -352,10 +374,10 @@ export default function DisplayBlock({
       />
       {form.on && (
         <Stack spacing={1.5} sx={{ mt: 1 }}>
-          <TextRow form={form} hints={hints} />
+          <TextRow form={form} captureNames={captureNames} />
           <TargetRow form={form} defaults={defaults} />
           <StyleRow form={form} defaults={defaults} />
-          <DisplayPreview name={name} form={form} hints={hints} defaults={defaults} />
+          <DisplayPreview name={name} form={form} defaults={defaults} />
         </Stack>
       )}
     </Box>

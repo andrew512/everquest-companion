@@ -5,8 +5,10 @@ import EventLogOverlay from './EventLogOverlay'
 import HealMeter from './HealMeter'
 import ToastOverlay from './ToastOverlay'
 import AlertTextOverlay from './AlertTextOverlay'
+import BuffsOverlay from './BuffsOverlay'
 import { isHealOverlayKind } from '@shared/types'
 import { isAlertOverlayKind } from '@shared/alertOverlays'
+import { isTimerOverlayKind } from '@shared/buffTimers'
 
 // The overlay renders in its OWN transparent BrowserWindow (Task #52). It is a
 // standalone React root — deliberately NOT wrapped in the app's MUI ThemeProvider
@@ -19,6 +21,11 @@ import { isAlertOverlayKind } from '@shared/alertOverlays'
 //   'events'                          → the event log (alerts / notable loot / quests)
 //   'heal-fight' | 'heal-overall'     → the healing meter (Task #59)
 //   'toast'                           → the celebration strip (usually renders nothing)
+//   'buffs' | 'debuffs'               → the timer bars (JOS-89, split in two by JOS-119): ONE
+//                                       component with a `kind` prop, never two copies — the
+//                                       buffs window keeps the beneficial rows, the debuffs
+//                                       window keeps the debuff + crowd-control rows, and both
+//                                       read the same two modules
 //   'alert' (ALERT_OVERLAY_KINDS)     → alert text (usually renders nothing)
 //   everything else                   → the damage meter (fight / zone selection lives inside)
 const kind = window.eqOverlay?.kind ?? 'fight'
@@ -27,6 +34,7 @@ function Surface(): React.JSX.Element {
   if (kind === 'events') return <EventLogOverlay />
   if (kind === 'toast') return <ToastOverlay />
   if (isAlertOverlayKind(kind)) return <AlertTextOverlay />
+  if (isTimerOverlayKind(kind)) return <BuffsOverlay kind={kind} />
   if (isHealOverlayKind(kind)) return <HealMeter />
   return <OverlayMeter />
 }

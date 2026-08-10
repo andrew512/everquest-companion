@@ -6,6 +6,7 @@ import { theme } from './theme/theme'
 import App from './App'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import { DEV_TOOLS, DEV_TOOLS_DEFINE, OWNER_TOOLS } from './devFlags'
+import { currentViewId } from './lib/currentView'
 
 // --- The dev-tools flags, stated out loud (dev only) ---
 // "The Triage tab is missing" has twice been a stale `npm run dev` whose bundle predates the
@@ -24,7 +25,7 @@ if (import.meta.env.DEV) {
       `OWNER_TOOLS=${String(OWNER_TOOLS)}${OWNER_TOOLS ? '' : ' (set EQ_OWNER_TOOLS=1 and relaunch for the owner-only surfaces)'}` +
       ', __EQ_DEV_TOOLS__ define ' +
       (DEV_TOOLS_DEFINE === undefined
-        ? 'ABSENT — this dev server booted before the define existed; restart `npm run dev` if a dev-only surface misbehaves'
+        ? 'ABSENT - this dev server booted before the define existed; restart `npm run dev` if a dev-only surface misbehaves'
         : `= ${String(DEV_TOOLS_DEFINE)}`)
   )
 }
@@ -33,9 +34,13 @@ if (import.meta.env.DEV) {
 // Install global handlers BEFORE React mounts so even a failure during the very
 // first render (or a bad theme) is reported to main → errors.log + dev stdout.
 // Fire-and-forget over the `error:report` IPC channel via the preload bridge.
-function report(source: string, message: string, stack?: string): void {
+// `name` and `view` ride along since JOS-100. The NAME is half the error report's grouping key
+// (`hash(name + top frames)`), and folding it into the message — as this did — collapsed every
+// distinct bug in one function into one issue. The VIEW is state only this process has; main
+// checks it against the closed enum before it is stored (renderer input is untrusted, always).
+function report(source: string, err: { name?: string; message: string; stack?: string }): void {
   try {
-    window.eq?.reportError({ message, stack, source })
+    window.eq?.reportError({ ...err, source, view: currentViewId() })
   } catch {
     // Preload bridge missing (itself an error already logged in main) — ignore.
   }
@@ -43,13 +48,19 @@ function report(source: string, message: string, stack?: string): void {
 
 window.addEventListener('error', (e) => {
   const err = e.error as Error | undefined
-  report('onerror', err?.message ?? e.message, err?.stack)
+  report('onerror', { name: err?.name, message: err?.message ?? e.message, stack: err?.stack })
 })
 
 window.addEventListener('unhandledrejection', (e) => {
   const reason = e.reason as unknown
-  if (reason instanceof Error) report('unhandledrejection', reason.message, reason.stack)
-  else report('unhandledrejection', String(reason))
+  if (reason instanceof Error) {
+    report('unhandledrejection', { name: reason.name, message: reason.message, stack: reason.stack })
+  } else {
+    // A rejection with a non-Error reason has no name and no stack. It still reports: the
+    // fingerprint degrades to `Error` with no frames, which groups every one of them together —
+    // coarse, and honest about being coarse, rather than silently dropped.
+    report('unhandledrejection', { message: String(reason) })
+  }
 })
 
 // index.html always carries #root; if it ever does not, fail loudly here rather

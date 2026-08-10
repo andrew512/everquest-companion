@@ -26,7 +26,13 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import type { SpellCatalogEntry } from '@shared/types'
 import type { ClassAbbr } from '@shared/classCombo'
 import { preferredRank, type SpellLine } from '@shared/spellLines'
-import { RANK_TEMPLATES, SUGGEST_TEMPLATES, suggestionsFor, type Suggestion } from './suggestions'
+import {
+  RANK_TEMPLATES,
+  SUGGEST_TEMPLATES,
+  suggestionsFor,
+  type Suggestion,
+  type TemplateKind
+} from './suggestions'
 import { classLevelChips, type ClassLevelChip } from './lineIntel'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -80,7 +86,7 @@ export function relativeTime(ms: number): string {
 
 /** "ENC 16" — one class's entry level for this LINE. Yours is coloured; the DB fact is the same. */
 function LevelChip({ chip }: { chip: ClassLevelChip }): JSX.Element {
-  const title = `${chip.cls} learns this spell line at level ${chip.level}${chip.yours ? ' — one of your classes' : ''}`
+  const title = `${chip.cls} learns this spell line at level ${chip.level}${chip.yours ? ' - one of your classes' : ''}`
   return (
     <Tooltip title={title}>
       <Chip
@@ -132,8 +138,11 @@ function chipLabel(s: Suggestion): string {
   if (s.rank !== undefined && (s.template === 'castRank' || s.template === 'resistRank')) {
     return RANK_TEMPLATES[s.template].chip(s.rank)
   }
-  return s.template === 'wearsOff' || s.template === 'fade' || s.template === 'lands'
-    ? SUGGEST_TEMPLATES[s.template].chip
+  // Keyed off the RECORD rather than a hand-written union of its keys: the union went stale the
+  // moment JOS-103 added `landsOnOther`, and a stale one here does not fail to compile — it
+  // falls through and renders the template's internal id as the user-facing chip label.
+  return s.template in SUGGEST_TEMPLATES
+    ? SUGGEST_TEMPLATES[s.template as TemplateKind].chip
     : s.template
 }
 

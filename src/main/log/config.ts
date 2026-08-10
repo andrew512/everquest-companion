@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'fs'
 import { basename, join } from 'path'
 import type { CharacterRef } from '../../shared/types'
-import { getEqInstallDir } from '../store'
+import { clearEqDiscoveredRoot, getEqDiscoveredRoot, getEqInstallDir, setEqDiscoveredRoot } from '../store'
 import {
   EQ_ROOT,
   countCharacterLogs,
@@ -10,11 +10,14 @@ import {
   fixedDrives,
   logIsUnderLogsDir,
   normalizeEqDirOverride,
+  readLogsDir,
   realOverrideProbes,
   registryInstallCandidates,
+  resolveDiscoveredRoot,
   rootHasLogs,
   tailSurvivesRootChange,
   type DiscoveryProbes,
+  type LogsDirRead,
   type NormalizedEqDir,
   type OverrideProbes
 } from './discovery'
@@ -38,8 +41,10 @@ export {
   countCharacterLogs,
   logIsUnderLogsDir,
   normalizeEqDirOverride,
+  readLogsDir,
   tailSurvivesRootChange,
   type DiscoveryProbes,
+  type LogsDirRead,
   type NormalizedEqDir,
   type OverrideProbes
 }
@@ -68,12 +73,25 @@ function envCandidates(): string[] {
   return out
 }
 
-/** The real-environment discovery probes (env → registry → drive sweep). */
+/**
+ * The wall-clock CEILING on one discovery sweep (JOS-112). Measured normal cost is ~150 ms; this
+ * bounds the config-dependent pathological case (a huge Uninstall hive, an offline mapped network
+ * drive) so a miss falls back to "user picks manually" instead of hanging boot. Generous on
+ * purpose — it is a hang guard, not a latency target, and a real slow-but-present install must
+ * still be found. The registry phase carries the same deadline so it stops issuing subprocesses.
+ */
+const DISCOVERY_BUDGET_MS = 6000
+
+/** The real-environment discovery probes (env → registry → drive sweep), ceiling-bounded. */
 function realProbes(): DiscoveryProbes {
   return {
     hasLogs: rootHasLogs,
-    extraCandidates: () => [...envCandidates(), ...registryInstallCandidates()],
-    fixedDrives
+    extraCandidates: () => [
+      ...envCandidates(),
+      ...registryInstallCandidates(Date.now() + DISCOVERY_BUDGET_MS)
+    ],
+    fixedDrives,
+    budgetMs: DISCOVERY_BUDGET_MS
   }
 }
 
@@ -83,20 +101,25 @@ function realProbes(): DiscoveryProbes {
  *
  * `discoverEqRoot(realProbes())` spawns EIGHT synchronous `reg query … /s` subprocesses over the
  * whole Uninstall hive and then stats six candidate paths on every fixed drive. MEASURED at
- * ~150 ms, synchronously, on the main process — and `resolveEqDir()` is not a startup-only call:
- * the `character:list` IPC runs it while the renderer is hydrating (it was the ONE main-loop stall
- * left in an otherwise chunked replay — 77/90/106/160 ms across four boots, always at ~1.1 s,
- * always inside `character:list`), the Settings pane runs it, and `presence.ts` runs it on every
- * watcher tick.
+ * ~150 ms, synchronously, on the main process — and it SCALES with the machine: a large Uninstall
+ * hive makes the reg queries slow, and an offline mapped network drive makes the drive walk block
+ * on the SMB timeout (the config-dependent 30 s boot hang a user reported). `resolveEqDir()` is
+ * not a startup-only call either: `character:list` runs it while the renderer hydrates (the ONE
+ * main-loop stall left in an otherwise chunked replay), the Settings pane runs it, and
+ * `presence.ts` runs it on every watcher tick.
  *
- * So the ANSWER is cached for the process, with the two escape hatches that keep it honest:
- *   * a cached hit is RE-VALIDATED with `rootHasLogs` — one readdir — so an install that moves or
- *     is uninstalled under us re-probes immediately rather than serving a dead path forever;
- *   * `invalidateEqDiscovery()` drops it outright, and is called when the user changes the manual
- *     override (session.ts's `applyEqDirChange`) — the one moment a person can tell us that where
- *     EQ lives has changed.
- * Nothing else is cached: `countCharacterLogs` still reads the directory on every call, because
- * "how many characters are there" changes while the app runs and is one cheap readdir.
+ * TWO CACHE LAYERS (JOS-112), each with a self-heal:
+ *   * IN-PROCESS: `discoveredRoot` memoizes the answer for this process. A cached hit is
+ *     RE-VALIDATED with `rootHasLogs` — one readdir — so an install that moves or is uninstalled
+ *     under us re-probes immediately rather than serving a dead path forever.
+ *   * ACROSS LAUNCHES: a POSITIVE result is persisted (`eqDiscoveredRoot` in the store) so the very
+ *     next launch skips the whole sweep — `resolveDiscoveredRoot` (discovery.ts) revalidates it
+ *     with the same one readdir, drops it if it no longer holds, and NEVER persists a null.
+ *
+ * `invalidateEqDiscovery()` drops BOTH layers, and is called when the user changes the manual
+ * override (session.ts's `applyEqDirChange`) — the one moment a person can tell us that where EQ
+ * lives has changed. Nothing else is cached: `countCharacterLogs` still reads the directory on
+ * every call, because "how many characters are there" changes while the app runs.
  */
 let discoveredRoot: string | null | undefined
 
@@ -105,13 +128,23 @@ function discoverOnce(): string | null {
     if (discoveredRoot === null) return null
     if (rootHasLogs(discoveredRoot)) return discoveredRoot
   }
-  discoveredRoot = discoverEqRoot(realProbes())
+  // Cross-launch layer: prefer a persisted positive hit that still validates (skips the sweep);
+  // else run the ceiling-bounded sweep and persist only a positive result.
+  discoveredRoot = resolveDiscoveredRoot({
+    persisted: getEqDiscoveredRoot() ?? null,
+    hasLogs: rootHasLogs,
+    sweep: () => discoverEqRoot(realProbes()),
+    persist: setEqDiscoveredRoot,
+    dropPersisted: clearEqDiscoveredRoot
+  })
   return discoveredRoot
 }
 
-/** Forget the discovered root, so the next resolution probes the machine again. */
+/** Forget the discovered root — BOTH the in-process memo and the persisted value — so the next
+ *  resolution probes the machine again. Called when the manual override changes. */
 export function invalidateEqDiscovery(): void {
   discoveredRoot = undefined
+  clearEqDiscoveredRoot()
 }
 
 /**
@@ -129,8 +162,18 @@ export function invalidateEqDiscovery(): void {
 export function refreshEqDiscoveryCheaply(): void {
   if (getEqInstallDir()?.trim()) return
   if (discoveredRoot && rootHasLogs(discoveredRoot)) return
-  const found = discoverEqRoot({ hasLogs: rootHasLogs, extraCandidates: envCandidates, fixedDrives })
-  if (found) discoveredRoot = found
+  const found = discoverEqRoot({
+    hasLogs: rootHasLogs,
+    extraCandidates: envCandidates,
+    fixedDrives,
+    budgetMs: DISCOVERY_BUDGET_MS
+  })
+  // A positive find is persisted too (JOS-112), so the install this rescan finally caught is
+  // skipped-to directly on the next launch rather than re-swept.
+  if (found) {
+    discoveredRoot = found
+    setEqDiscoveredRoot(found)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -146,8 +189,23 @@ export interface ResolvedEqDir {
   logsDir: string
   /** How `root` was chosen: a saved override, auto-discovery, or the fallback. */
   source: EqDirSource
-  /** Number of `eqlog_*.txt` character logs found under `logsDir` (0 = none). */
+  /** Number of `eqlog_*.txt` character logs found under `logsDir` (0 = none, or unread). */
   characterCount: number
+  /** How reading `logsDir` went — a FAILED read is not "no logs" (JOS-82). */
+  readable: 'ok' | 'missing' | 'unreadable'
+  /** The OS errno when `readable === 'unreadable'` (e.g. 'EPERM'). Undefined otherwise. */
+  readError?: string
+}
+
+/** Fold one `readLogsDir` answer into the count + verdict every consumer reads. */
+function describeLogsDir(logsDir: string): Pick<
+  ResolvedEqDir,
+  'characterCount' | 'readable' | 'readError'
+> {
+  const read = readLogsDir(logsDir)
+  if (read.ok) return { characterCount: read.count, readable: 'ok' }
+  if (read.reason === 'missing') return { characterCount: 0, readable: 'missing' }
+  return { characterCount: 0, readable: 'unreadable', readError: read.code }
 }
 
 /**
@@ -171,13 +229,13 @@ export function resolveEqDir(): ResolvedEqDir {
   const override = getEqInstallDir()?.trim()
   if (override) {
     const { root, logsDir } = normalizeEqDirOverride(override, realOverrideProbes())
-    return { root, logsDir, source: 'manual', characterCount: countCharacterLogs(logsDir) }
+    return { root, logsDir, source: 'manual', ...describeLogsDir(logsDir) }
   }
   const discovered = discoverOnce()
   const root = discovered ?? EQ_ROOT
   const source: EqDirSource = discovered ? 'auto' : 'default'
   const logsDir = join(root, 'Logs')
-  return { root, logsDir, source, characterCount: countCharacterLogs(logsDir) }
+  return { root, logsDir, source, ...describeLogsDir(logsDir) }
 }
 
 /** The effective install root (override ?? discovery ?? default). */

@@ -26,6 +26,8 @@ import {
   COLD_START_MS_EDGES,
   type StartupReplayStats,
   type TelemetryBatch,
+  type TelemetryEnvelope,
+  type TelemetryFlipKind,
   type TelemetryPrefs
 } from '../../shared/telemetry'
 import {
@@ -35,10 +37,12 @@ import {
   telemetryFlushEnabled,
   telemetryPermanentRefusal
 } from './net'
+import { flipNoticeBatch, flipNoticeKind, telemetryFlipNoticeEnabled } from './optOut'
 import {
   beginSession,
   endSession,
   ensureAnalyticsId,
+  envelope,
   markNoticeShown,
   pendingBatch,
   recordEvent,
@@ -49,6 +53,8 @@ import {
   viewsVisited
 } from './collector'
 import { markFunnelStep } from './funnels'
+import { takeHealth } from './health'
+import { takeErrorReports } from './errorReports'
 import { readRing, writeRing } from './ring'
 import { getTelemetryPrefs } from '../store'
 
@@ -111,6 +117,52 @@ function startupField(): { startup?: StartupReplayStats } {
   return startup === undefined ? {} : { startup }
 }
 
+/**
+ * DRAIN THE HEALTH COUNTERS ONTO A SESSION REPORT (JOS-96), beside the two drains above and for
+ * the same reason: whichever of `sessionHeartbeat` / `sessionEnd` fires first takes them, so a
+ * session that does both reports each error exactly once and a killed session loses at most its
+ * last window.
+ *
+ * IT IS RECORDED EVEN WHEN EVERYTHING IS ZERO, and that is the decision the whole readout rests
+ * on. `healthCounters` is dimmed by VERSION in the rollup, so the report itself — not the errors
+ * in it — is what says "a client on this build is capable of reporting". Emitting only on a bad
+ * session would make a healthy build look exactly like a build that predates this code, and the
+ * panel could never honestly separate "no errors" from "no data". The cost is one extra ring
+ * record per five minutes, which is nothing; the alternative costs the question its answer.
+ *
+ * It is a SEPARATE `recordEvent` rather than a field on the session event because `healthCounters`
+ * is an existing kind in the shipped contract — the ingest Lambda already validates it — so this
+ * needs no wire change at all, and the deploy-skew rule (shared/telemetry.ts) is satisfied without
+ * an additive field. An older Lambda accepts the batch and folds it under the OLD dims; it never
+ * 400s, so nothing is ever dropped while the deploys are out of step.
+ */
+function reportHealth(): void {
+  recordEvent({ t: 'healthCounters', ...takeHealth() })
+}
+
+/**
+ * DRAIN THE ERROR REPORTS ONTO THE SAME SESSION REPORT (JOS-100), beside the health counters
+ * and on the same terms: whichever of `sessionHeartbeat` / `sessionEnd` fires first takes them,
+ * so nothing is double counted and a killed session loses at most its last window.
+ *
+ * IT EMITS NOTHING WHEN NOTHING BROKE, which is the opposite of `reportHealth` above and is the
+ * same argument read from the other side. `healthCounters` is written even when every count is
+ * zero because the report ITSELF is the per-version "a client on this build can report at all"
+ * signal, and `healthReports` is the denominator every rate is divided by. That denominator
+ * already exists — so an empty `errorReport` every five minutes would add a ring record saying
+ * something `healthReports` has already said, and would spend the 500-entry buffer doing it.
+ *
+ * `recordEvent` IS THE GATE, here as everywhere: the user's switch is checked there, once, and
+ * an install with analytics off drops these on the floor exactly as it drops every other event.
+ *
+ * UNLIKE `healthCounters`, THIS IS A NEW EVENT KIND, so it cannot ship ahead of the ingest
+ * deploy — shared/telemetry.ts says what happens if it does, and it is a fleet-wide analytics
+ * blackout rather than a missing feature.
+ */
+function reportErrors(): void {
+  for (const ev of takeErrorReports()) recordEvent(ev)
+}
+
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let flushTimer: ReturnType<typeof setInterval> | null = null
 
@@ -150,6 +202,8 @@ function startTimers(prefs: TelemetryPrefs): void {
       // Drained, so exactly one report carries it: one launch is one reading.
       ...startupField()
     })
+    reportHealth()
+    reportErrors()
   }, HEARTBEAT_INTERVAL_MS)
   heartbeat.unref()
   ensureFlushTimer(prefs)
@@ -215,13 +269,53 @@ export function pauseTelemetry(): void {
 }
 
 /**
+ * SEND ONE FLIP NOTICE (JOS-109). Best effort, exactly once, never retried — `./optOut.ts` holds
+ * the whole argument for why this bypasses `telemetryFlushEnabled`'s `enabled` term and why it
+ * may not keep anything to try again with.
+ *
+ * It does NOT touch the ring, in either direction: it neither reads it (the batch is built from
+ * the envelope alone) nor writes it back on success (`retireBatch`'s resurrection hazard, which
+ * for an opted-out install would recreate the very file the switch just deleted). The return
+ * value exists for the tests and for the log line; no caller acts on it.
+ */
+export async function sendFlipNotice(
+  kind: TelemetryFlipKind,
+  env: TelemetryEnvelope,
+  prefs: TelemetryPrefs
+): Promise<boolean> {
+  if (!telemetryFlipNoticeEnabled(E2E, TELEMETRY_API_URL, prefs)) return false
+  const { status } = await postTelemetryBatch(flipNoticeBatch(kind, env, Date.now()))
+  const accepted = status >= 200 && status < 300
+  logInfo(
+    `[everquest-companion] telemetry: ${kind} notice ${accepted ? 'sent' : 'not delivered'}` +
+      (accepted ? '' : ' (not retried - see telemetry/optOut.ts)')
+  )
+  return accepted
+}
+
+/**
  * Apply the switch AND bring this session's timers into line with it. The one place both the
  * Preferences toggle and the first-run notice go through, so the two can never diverge.
+ *
+ * THE ORDER OF THE FOUR STEPS BELOW IS THE FEATURE (JOS-109), not house style:
+ *
+ *   1. read the switch as it stands, so a write that changes nothing emits nothing;
+ *   2. for an OPT-OUT, build the notice BEFORE applying — `setTelemetryEnabled(false)` discards
+ *      the analyticsId, and an envelope is the only thing that makes the notice countable;
+ *   3. apply, which is what makes "off" mean off immediately: ring gone, id gone, timers stopped.
+ *      Nothing waits on the network for that;
+ *   4. for an OPT-IN, build the notice AFTER — the id it needs was minted by step 3 — and fire
+ *      whichever notice step 2 or 4 produced, unawaited. The switch is a synchronous IPC answer
+ *      and must not sit behind a 15 s POST budget.
  */
 export function applyTelemetryEnabled(enabled: boolean): TelemetryPrefs {
+  const kind = flipNoticeKind(getTelemetryPrefs().enabled, enabled)
+  const farewell = kind === 'optOut' ? envelope() : null
   const next = setTelemetryEnabled(enabled)
   if (next.enabled) resumeTelemetry()
   else pauseTelemetry()
+  const env = farewell ?? (kind === 'optIn' ? envelope(next) : null)
+  if (kind !== null && env !== null) void sendFlipNotice(kind, env, next)
   return next
 }
 
@@ -246,6 +340,15 @@ export function stopTelemetry(): void {
       // since most sessions end before the five-minute mark.
       ...startupField()
     })
+    // The tail of the health deltas, on the same terms as the line delta beside it. Inside the
+    // `uptime > 0` guard deliberately: a process that never started collecting has no session to
+    // report the health OF, and a bare `healthReports` row from it would inflate the denominator
+    // every rate on the panel is divided by.
+    reportHealth()
+    // …and the tail of the error reports. Also inside the guard, and for the SECOND half of the
+    // same reason: a process that never started collecting has no session clock, so every
+    // report it produced would carry `sessionAgeBucket: 0` — a made-up number in a real column.
+    reportErrors()
   }
   clearTimers()
   endSession()

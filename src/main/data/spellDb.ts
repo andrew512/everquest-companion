@@ -31,6 +31,20 @@ import { parseSpellClassLevels, parseSpellRank } from '../../shared/spellLines'
 // THE source of truth for which cast-on-other emotes are rogue-poison Strike procs. Imported,
 // never copied: the suffix list belongs to shared/poisons.ts and a second copy would drift.
 import { POISON_PROCS } from '../../shared/poisons'
+// The subject→named-capture authoring rule (JOS-103). Imported, never re-derived: the anchor and
+// the name class it produces are security-relevant, and a second copy would drift out of the
+// threat model that argues for them.
+import { subjectCapturePattern } from '../../shared/alertCaptures'
+// THE crowd-control roster, imported rather than restated (JOS-161). It is what decides whether a
+// `Your <X> spell has worn off of <mob>.` line becomes a `cc` event at all, so it is also what
+// decides whether the `breaks` template can fire. rulesets.ts's only reference back here is an
+// `import type`, so this edge is one-way at runtime.
+import { CC_STEMS } from '../log/rulesets'
+// OUR corrections to the scrape (JOS-150). They are applied to the ENTRIES, before any table is
+// derived, so the suffix index, the wears-off map, the suggestion catalog and every search string
+// all see one corrected text. Read that file's header before adding one: it carries the evidence
+// bar, and the reason the fixes live beside the scrape instead of inside it.
+import { applySpellCorrections, type CorrectionsReport } from './spellCorrections'
 // Import the committed catalog directly so it's BUNDLED into the main build (electron-vite
 // inlines JSON imports). A readFileSync from a path relative to import.meta.url would look
 // beside out/main/index.js in production, where the JSON isn't copied — so import it.
@@ -351,16 +365,141 @@ function rankNamesByLine(db: SpellDb): Map<string, string[]> {
  */
 const POISON_PROC_MSGS: ReadonlySet<string> = new Set(POISON_PROCS.map((p) => p.suffix))
 
-/** Which one-click suggestion templates a spell can offer (see SpellCatalogEntry.templates). */
+/**
+ * THE DB'S `spellType` VOCABULARY, folded into the two dispositions the templates care about
+ * (JOS-103).
+ *
+ * WHY THIS IS A TABLE. It used to be two string literals — `=== 'Beneficial'` and
+ * `=== 'Detrimental'` — which is right for 1,792 of the 1,926 spells and silently wrong for the
+ * other 134. The wiki's Template:Spellpage uses a longer vocabulary than two words, and a spell
+ * that matched neither literal earned NO template, and a spell with no template and no illusion
+ * flag is DROPPED from the catalog entirely (`buildSpellCatalog` below) — so it could not be
+ * found in the suggestion wizard's search at all. That is the reported defect: Spirit of the Puma
+ * is `Proc Buff`, and searching "puma" in Suggested returned nothing (feedback report
+ * 01KZH1YK7YPRC40QPV00X1Z4NX, v0.12.0).
+ *
+ * EXHAUSTIVE OVER THE COMMITTED DB, with the measured count beside each so a re-scrape that adds
+ * a value is visible: an unlisted type folds to 'unknown', which earns the same templates a bare
+ * `spellType` always did — none of the disposition-gated ones — rather than being guessed into a
+ * disposition. `tests/spellCatalogTemplates.test.mts` fails if spells.json grows a type this
+ * table does not name.
+ */
+const BENEFICIAL_TYPES: ReadonlySet<string> = new Set([
+  'Beneficial', // 1079
+  'Statistic Buff', // 34
+  'Resist Buff', // 11
+  'Pet', // 9  — the pet SUMMONS (Companion Spirit); a friendly cast either way
+  'Utility Beneficial', // 6
+  'Heal', // 6
+  'Heal Over Time', // 6
+  'Pet Buff', // 6
+  'Pet Heal', // 5
+  'Haste', // 3
+  'Cure', // 3
+  'Movement Buff', // 3
+  'Remove Curse', // 2
+  'Vision', // 2
+  'Summon Item', // 2
+  'Beneficial (Group only)', // 1
+  'Invisibility', // 1
+  'Buff', // 1
+  'Proc Buff', // 1  — Spirit of the Puma, the reported case
+  'Regen', // 1
+  'Damage Shield', // 1  — cast on you/your pet, not on the mob
+  'Block' // 1
+])
+
+const DETRIMENTAL_TYPES: ReadonlySet<string> = new Set([
+  'Detrimental', // 713
+  'Direct Damage', // 8
+  'Damage Over Time', // 4
+  'Utility Detrimental', // 2  — Cancel Magic, Flash of Light
+  'Curse', // 2
+  'Slow', // 2
+  'Stun', // 1
+  'Root', // 1
+  'Statistic Debuff', // 1
+  'DD' // 1
+])
+
+/** Every type this table names, for the audit test that pins it against spells.json. */
+export const CLASSIFIED_SPELL_TYPES: ReadonlySet<string> = new Set([
+  ...BENEFICIAL_TYPES,
+  ...DETRIMENTAL_TYPES
+])
+
+/**
+ * A spell's NATURE — the one answer to "is this a good thing or a bad thing" (JOS-140 ruling 8).
+ *
+ * The two tables above already existed for the suggestion catalog; this exports the same fold for
+ * the BUFFS MODEL, which had its own two-string-literal version of the question and was wrong in
+ * the same 134 rows. The owner's ruling is that buff-vs-debuff comes from HERE and from nowhere
+ * else — never from the shape of the target.
+ *
+ * THE DEFECT THAT NAMES THE RULING (JOS-136, folded into JOS-140). `Resist Magic` is spellType
+ * `Resist Buff`, which matched neither literal, so `SpellStats.classOf` fell through to a tally of
+ * the ENTITY DISPOSITIONS its fades had landed on — and a buff you put on somebody the model does
+ * not currently hold as a pet tallies 'hostile'. A friendly resist buff on an ally therefore
+ * classified as a debuff and walked onto the DEBUFFS overlay. The reporter's slice
+ * (01KZKVA30Y4QW0DW22ZAK1XR6Z) is a Quick Buff burst landing eleven beneficial spells on a charmed
+ * pet; `Resist Magic` and `Resist Cold`/`Resist Disease` are the ones that had no nature at all.
+ *
+ * 'unknown' is a real answer and is returned rather than guessed: an unlisted type (a re-scrape
+ * that grows the vocabulary) and a spell absent from the DB both land here, and the caller decides
+ * what to do with a spell whose nature nobody states. It must never be resolved by looking at who
+ * it landed on.
+ */
+export type SpellNature = 'beneficial' | 'detrimental' | 'unknown'
+
+export function spellNature(spellType: string | undefined): SpellNature {
+  if (spellType === undefined) return 'unknown'
+  if (BENEFICIAL_TYPES.has(spellType)) return 'beneficial'
+  if (DETRIMENTAL_TYPES.has(spellType)) return 'detrimental'
+  return 'unknown'
+}
+
+/**
+ * Which one-click suggestion templates a spell can offer (see SpellCatalogEntry.templates).
+ *
+ * EVERY FLAG IS A CLAIM THAT THE ALERT CAN ACTUALLY FIRE — the law shared/alertGroups.ts states
+ * and JOS-84 was written to enforce: a guessed trigger that never fires is worse than an absent
+ * one, because the user believes they are covered. So each gate below names the parser fact it
+ * depends on, and two of them were MEASURED for this ticket against the real parser:
+ *
+ *   * `lands` now also requires `castOnOtherSuffix(msg) !== null`. The suffix table is keyed by
+ *     the tail left after stripping the wiki's "Someone " subject, so a message written with any
+ *     OTHER subject ("Target growls…", "Player's eyes glow…", "Soandso screams…") or with no
+ *     subject at all is NOT IN THE TABLE, and no `buffApply` is ever emitted for that spell.
+ *     MEASURED: 68 of the 685 Detrimental spells with a cast-on-other message are in exactly that
+ *     state, and every one of them was being offered a `lands` suggestion that could not fire.
+ *
+ *   * `landsOnOther` is the new capture template and needs no event at all — it is a `raw`
+ *     trigger, which is the only thing that can work here. MEASURED: `Fail growls with the spirit
+ *     of the puma.` (the owner's own log, 2026-08-01 18:38:10) parses to kind `unknown`, because
+ *     of the same missing suffix. A raw pattern is not a shortcut around the typed path; for this
+ *     family there is no typed path.
+ */
 function suggestionTemplates(s: SpellEntry): SpellCatalogEntry['templates'] {
-  const beneficial = s.spellType === 'Beneficial'
+  const beneficial = BENEFICIAL_TYPES.has(s.spellType ?? '')
+  const detrimental = DETRIMENTAL_TYPES.has(s.spellType ?? '')
   return {
     wearsOff: beneficial && !!s.msgWearsOff,
     fade: beneficial,
     lands:
-      s.spellType === 'Detrimental' &&
+      detrimental &&
       !!s.msgCastOnOther &&
-      !POISON_PROC_MSGS.has(s.msgCastOnOther)
+      !POISON_PROC_MSGS.has(s.msgCastOnOther) &&
+      castOnOtherSuffix(s.msgCastOnOther) !== null,
+    landsOnOther:
+      !!s.msgCastOnOther &&
+      !POISON_PROC_MSGS.has(s.msgCastOnOther) &&
+      subjectCapturePattern(s.msgCastOnOther) !== null,
+    // THE HOLD BREAKING (JOS-161). Gated on the parser's own crowd-control roster and on nothing
+    // else: `Your <X> spell has worn off of <mob>.` becomes a `cc {refresh:true}` for exactly the
+    // spells `ccSpell` matches, and a plain `buffFade` for every other spell — so the roster IS
+    // the "can this fire" question. Not gated on disposition: the roster is already all
+    // detrimental, and the flag would then be making a second, weaker claim about the same thing.
+    breaks: CC_STEMS.test(s.name)
   }
 }
 
@@ -381,6 +520,16 @@ export function searchTextFor(s: SpellEntry, rankNames: readonly string[] | unde
     .toLowerCase()
 }
 
+/**
+ * Whether a spell earns ANY suggestion at all. Its own function so `buildSpellCatalog` stays
+ * under the complexity ceiling, and so adding a template is one edit rather than two: a new flag
+ * that is not named here silently keeps its spell out of the catalog, which is the exact defect
+ * JOS-103 was filed for.
+ */
+function offersAnyTemplate(t: SpellCatalogEntry['templates']): boolean {
+  return t.wearsOff || t.fade || t.lands || t.landsOnOther || t.breaks
+}
+
 export function buildSpellCatalog(
   db: SpellDb,
   usage: Map<string, number>,
@@ -391,15 +540,19 @@ export function buildSpellCatalog(
   let hasIllusions = false
   for (const [key, s] of db.byKey) {
     const templates = suggestionTemplates(s)
+    // Derived HERE, once, beside the DB — see SpellCatalogEntry.castOnOtherCapture for why the
+    // renderer is never allowed to rebuild it.
+    const capture = s.msgCastOnOther ? subjectCapturePattern(s.msgCastOnOther) : null
     if (s.illusion) hasIllusions = true
     // Nothing to suggest for a spell with no template and not an illusion — skip it.
-    if (!templates.wearsOff && !templates.fade && !templates.lands && !s.illusion) continue
+    if (!offersAnyTemplate(templates) && !s.illusion) continue
     entries.push({
       key,
       name: s.name,
       spellType: s.spellType,
       illusion: s.illusion,
       templates,
+      ...(templates.landsOnOther && capture ? { castOnOtherCapture: capture } : {}),
       usageCount: usage.get(key) ?? 0,
       lastSeenMs: lastSeen?.get(key) ?? null,
       classLevels: parseSpellClassLevels(s.classes),
@@ -431,13 +584,33 @@ export function buildSpellCatalog(
 }
 
 let cached: SpellDb | null = null
+let cachedCorrections: CorrectionsReport | null = null
 
-/** Load + build the spell DB (cached) from the bundled spells.json. */
+/**
+ * Load + build the spell DB (cached) from the bundled spells.json, with our corrections applied to
+ * the ENTRIES first (JOS-150).
+ *
+ * THE ORDER IS THE WHOLE POINT. A correction patches `SpellEntry.msgCastOnYou/Other/WearsOff`
+ * BEFORE `buildSpellDb` reads them, so there is exactly one corrected text and every derived
+ * structure agrees with it: the cast-on-you map, the wears-off map, the cast-on-other suffix table
+ * AND its last-word index, `buildSpellCatalog`'s template flags, and the wizard's `searchText`.
+ * Patching the derived tables instead — the shape `applyOverlayCorrections` uses for the per-user
+ * learned overlay, which only ever needs to reach `castOnYou` — would have left the suffix index
+ * and the catalog still holding the wiki's text, which is how a spell ends up matching in the
+ * parser and missing from the search box.
+ */
 export function loadSpellDb(): SpellDb {
   if (cached) return cached
   const file = spellsJson as SpellDbFile
-  cached = buildSpellDb(file.spells)
+  const { spells, report } = applySpellCorrections(file.spells)
+  cachedCorrections = report
+  cached = buildSpellDb(spells)
   return cached
+}
+
+/** What the committed corrections overlay did on this load (startup line + the audit test). */
+export function spellCorrectionsReport(): CorrectionsReport | null {
+  return cachedCorrections
 }
 
 /**

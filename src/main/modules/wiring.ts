@@ -29,18 +29,22 @@ import { ComboModule } from './combo'
 import { RosterModule } from './roster'
 import { LootModule } from './loot'
 import { TurnInsModule } from './turnins'
+import { ClassUnlocksModule } from './classUnlocks'
 import { KillsModule } from './kills'
 import { LevelingModule } from './leveling'
 import { ProgressionModule } from './progression'
 import { CharacterModule } from './character'
+import { OutputFilesModule } from './outputFiles'
 import { ItemTiersModule } from './itemTiers'
 import { AlertsModule } from './alerts'
 import { BuffsModule } from './buffs'
+import { BuffTimersModule } from './buffTimers'
 import { ConsiderModule, type ConsiderDeps } from './consider'
 import { EventFeedModule, type EventFeedDeps } from './eventFeed'
 import type { EqModule } from './types'
 import type { LogEvent } from '../../shared/logEvents'
 import type { AlertDef, MessageOverlay } from '../../shared/types'
+import type { BuffTrustPrefs } from '../../shared/buffTrust'
 
 /** Everything the module set needs from outside itself. Every field is a seam pipeline.ts fills
  *  from Electron and the bench fills with a stub or an empty list. */
@@ -58,6 +62,12 @@ export interface ModuleWiringDeps extends ConsiderDeps, EventFeedDeps {
    * both callers, but the bus is the caller's, so the function is injected rather than the bus.
    */
   emitDerived?: (ev: LogEvent, live: boolean) => void
+  /**
+   * WHOSE casts may anchor a landing besides your own (JOS-140, shared/buffTrust.ts). Absent ⇒
+   * you and nobody else, which is the shipped default and what every caller but the composition
+   * root passes.
+   */
+  buffTrust?: BuffTrustPrefs
 }
 
 /** The constructed world's modules: each one by name (pipeline.ts re-exports them under the names
@@ -70,13 +80,16 @@ export interface ModuleWiring {
   roster: RosterModule
   loot: LootModule
   turnIns: TurnInsModule
+  classUnlocks: ClassUnlocksModule
   kills: KillsModule
   progression: ProgressionModule
   leveling: LevelingModule
   character: CharacterModule
+  outputFiles: OutputFilesModule
   itemTiers: ItemTiersModule
   alerts: AlertsModule
   buffs: BuffsModule
+  buffTimers: BuffTimersModule
   consider: ConsiderModule
   eventFeed: EventFeedModule
   /** REGISTRATION ORDER = BUS DELIVERY ORDER. Load-bearing; see the comments below. */
@@ -122,6 +135,11 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   const roster = new RosterModule()
   const loot = new LootModule()
   const turnIns = new TurnInsModule()
+  // WHICH CLASSES THIS CHARACTER MAY RUN AS A PRIMARY (JOS-148) — the observed half of the Sky
+  // tab's class-unlock reading, folded from the one line that states an unlock outright. Beside
+  // the turn-in ledger because the two are read together and neither is derivable from the other:
+  // a class unlocks from the level-11 pick or a token with no turn-in behind it at all.
+  const classUnlocks = new ClassUnlocksModule()
   const kills = new KillsModule()
   // Leveling analytics (docs/plans/leveling-analytics.md): the capped, range-queryable series
   // behind the drag-select stats panel. A SEPARATE module from leveling on purpose — LevelingSnap
@@ -129,6 +147,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   const progression = new ProgressionModule()
   const leveling = new LevelingModule()
   const character = new CharacterModule()
+  // WHEN THE PLAYER LAST EXPORTED EACH DUMP (JOS-128) — the one fact the inventory baseline
+  // rule needs, folded from `Outputfile Complete: <file>`. Surface-free: main reads it directly
+  // when it loads a dump, nothing in the renderer subscribes.
+  const outputFiles = new OutputFilesModule()
   // Observed item levels (Task #60): character-scoped, epoch-aware per-item tier state.
   const itemTiers = new ItemTiersModule()
   // The alerts extension (Task #18): evaluates event/raw triggers on LIVE events only. Its defs
@@ -141,6 +163,20 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // `buffExpired` back onto the SAME bus for the alerts module (registered after it) to match.
   const buffs = new BuffsModule(spellDb, [...overlays])
   if (deps.emitDerived) buffs.setDerivedEmitter(deps.emitDerived)
+  if (deps.buffTrust) buffs.setTrust(deps.buffTrust)
+  // The CROWD-CONTROL half of the buffs/timer overlay (JOS-89, docs/plans/buff-timer-overlay.md).
+  // Deliberately tiny: it owns ONLY the per-target mez/root holds, which are the one thing the
+  // buffs model above does not track (its landing sentence is claimed by `classifyCcApply` before
+  // the DB matcher can turn it into an instance). Everything else the overlay draws — self buffs,
+  // per-target debuffs, the DB duration prior, cast-anchored attribution, death/zone censoring —
+  // is read off `BuffsSnap.active`, because a second fold of the same events is the two-models
+  // scar world-model law 4 is made of.
+  //
+  // AND IT IS HANDED THE SAME ANCHORS AND THE SAME LEARNER (JOS-140 ruling 1). This is the line
+  // that makes "one model" true rather than aspirational: the CC half used to keep its own cast
+  // history and had no learner at all, so a mez could never be taught its real duration and the
+  // two halves could disagree about whose spell had just landed.
+  const buffTimers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
   // The consider ring (Task #63): the mobs you've recently `/con`ed. It also OWNS the shared
   // own-loot index's lifetime — it folds every loot event into `ownLoot` and resets it on
   // epoch/character switch.
@@ -161,13 +197,16 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
     roster,
     loot,
     turnIns,
+    classUnlocks,
     kills,
     progression,
     leveling,
     character,
+    outputFiles,
     itemTiers,
     alerts,
     buffs,
+    buffTimers,
     consider,
     eventFeed,
     // combo goes FIRST (design § 5.1): within one bus delivery every later module — and the combat
@@ -181,13 +220,24 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
       roster,
       loot,
       turnIns,
+      // Position is free: it folds one line kind no other module reads, and nothing reads its
+      // state within a delivery. Beside turnIns because that is where a reader looks for it.
+      classUnlocks,
       kills,
       progression,
       leveling,
       character,
+      // Beside `character` because it answers the same shape of question one level up: the
+      // client's own bookkeeping. Position is otherwise free — it folds one line kind that no
+      // other module reads and it emits no delta.
+      outputFiles,
       itemTiers,
       alerts,
       buffs,
+      // AFTER buffs, because the overlay's projection composes the two snapshots and the CC
+      // ledger's END is what retires an instance the buffs model left standing — reading a
+      // half-advanced pair would show a mez for one extra flush.
+      buffTimers,
       consider,
       eventFeed
     ]

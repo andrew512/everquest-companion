@@ -19,6 +19,7 @@ import { intervalConfidence, type ComboInterval, type ComboSlot } from '@shared/
 import {
   confidenceText,
   intervalProvenance,
+  overruledText,
   provenanceLabel,
   slotKind,
   slotLabel
@@ -30,9 +31,9 @@ const CHIP_SX = { height: 20 } as const
 /** Tooltip for one slot, stated as a fact about what the log did or did not name. */
 function slotTitle(slot: ComboSlot): string {
   const kind = slotKind(slot)
-  if (kind === 'resolved') return `${slot.candidates[0]} — ${provenanceLabel(slot.provenance)}.`
+  if (kind === 'resolved') return `${slot.candidates[0]} - ${provenanceLabel(slot.provenance)}.`
   if (kind === 'unknown') return 'Nothing in this range named a class for this slot.'
-  return `One of ${slot.candidates.join(', ')} — the log never named which.`
+  return `One of ${slot.candidates.join(', ')} - the log never named which.`
 }
 
 /** One slot. Colour carries the kind; the label carries the content. */
@@ -109,6 +110,21 @@ export function LockedChip(): JSX.Element {
   return (
     <Tooltip title="You set this range.">
       <Chip size="small" variant="outlined" color="info" label="locked" sx={CHIP_SX} />
+    </Tooltip>
+  )
+}
+
+/**
+ * Shown only where a manual setting LOST — a `/who` row inside the span named something else
+ * (§ 4.4). It is the one way an explicit override stops being in effect, so it is a chip on the
+ * row rather than a silent substitution (JOS-87).
+ */
+export function OverruledChip({ interval }: { interval: ComboInterval }): JSX.Element | null {
+  const text = overruledText(interval)
+  if (!text) return null
+  return (
+    <Tooltip title={text}>
+      <Chip size="small" variant="outlined" color="warning" label="/who overrode you" sx={CHIP_SX} />
     </Tooltip>
   )
 }

@@ -15,6 +15,15 @@
 // run over METER_KINDS and each notifier gets its own geometry test below. Adding one must not
 // move any meter's reserved slot, and the two must never open on top of each other; both are
 // checked at the end of this file.
+//
+// JOS-119 ADDED THE SEVENTH METER KIND ('debuffs') and with it the case rule 2 could no longer
+// satisfy at a fixed size: seven 380x320 slots do not fit a 1366x728 work area under ANY column
+// arrangement (three columns and two rows is six). So the uniform size is now a function of the
+// display — it shrinks, all kinds together, until the reserved grid fits — and rule 1 is stated
+// PER WORK AREA. `uniform on this display` is the property; `always 380x320` never was one that
+// could survive a seventh window, and the alternative was two windows opening on top of each
+// other, which is the thing this file exists to forbid. A NOTIFIER never joins that grid, so
+// however many alert lanes arrive they cannot crowd it and they do not shrink with it.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -41,7 +50,7 @@ const overlaps = (a: Bounds, b: Bounds): boolean =>
 test('every METER kind opens at ONE uniform default size', () => {
   const sizes = METER_KINDS.map((k) => overlayDefaultSize(k))
   const first = sizes[0]
-  assert.ok(METER_KINDS.length >= 5, 'all five meter kinds are still registered')
+  assert.ok(METER_KINDS.length >= 7, 'every meter kind is still registered')
   for (const [i, s] of sizes.entries()) {
     assert.deepEqual(s, first, `${METER_KINDS[i]} must use the uniform size`)
   }
@@ -51,12 +60,43 @@ test('every METER kind opens at ONE uniform default size', () => {
   assert.ok(first.height >= 300, `height ${first.height} must not be smaller than the old event log`)
 })
 
+test('…and the size stays uniform ON EVERY DISPLAY, even where it had to shrink', () => {
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const sizes = METER_KINDS.map((k) => overlayDefaultSize(k, wa))
+    for (const [i, s] of sizes.entries()) {
+      assert.deepEqual(s, sizes[0], `${name}/${METER_KINDS[i]}: not the same size as its siblings`)
+    }
+    // Never LARGER than the shipped size — the ladder only ever goes down.
+    assert.ok(sizes[0].width <= 380 && sizes[0].height <= 320, `${name}: ${JSON.stringify(sizes[0])}`)
+  }
+})
+
+test('a display big enough for the whole stack is untouched at the shipped size', () => {
+  // 1080p and up seat all seven reserved slots at 380x320, so nobody with an ordinary monitor
+  // sees a smaller first-open window because a kind was added.
+  for (const name of ['1080p', '1440p', 'offset display']) {
+    const s = overlayDefaultSize('fight', WORK_AREAS[name])
+    assert.deepEqual(s, { width: 380, height: 320 }, `${name} should not have needed to shrink`)
+  }
+})
+
+test('a small laptop SHRINKS the stack rather than stacking two windows on one spot', () => {
+  // The exact case shared/types.ts used to warn about. Seven 380x320 slots cannot be laid out on
+  // a 1366x728 work area; the answer is a smaller uniform slot, never an overlap (proven by the
+  // no-overlap test below, which runs over this work area too).
+  const wa = WORK_AREAS['small laptop']
+  const s = overlayDefaultSize('fight', wa)
+  assert.ok(s.width < 380, `expected a shrunk slot on a small laptop, got ${JSON.stringify(s)}`)
+  // …and still a readable window, not a postage stamp.
+  assert.ok(s.width >= 260 && s.height >= 220, `shrunk too far: ${JSON.stringify(s)}`)
+})
+
 test('the reserved slots never overlap and stay inside the work area', () => {
   for (const [name, wa] of Object.entries(WORK_AREAS)) {
     const placed = METER_KINDS.map((k) => defaultOverlayBounds(k, wa))
     for (const [i, b] of placed.entries()) {
-      assert.equal(b.width, overlayDefaultSize(METER_KINDS[i]).width)
-      assert.equal(b.height, overlayDefaultSize(METER_KINDS[i]).height)
+      assert.equal(b.width, overlayDefaultSize(METER_KINDS[i], wa).width)
+      assert.equal(b.height, overlayDefaultSize(METER_KINDS[i], wa).height)
       assert.ok(b.x >= wa.x, `${name}/${METER_KINDS[i]}: off the left edge`)
       assert.ok(b.y >= wa.y, `${name}/${METER_KINDS[i]}: off the top edge`)
       assert.ok(b.x + b.width <= wa.x + wa.width, `${name}/${METER_KINDS[i]}: off the right edge`)
@@ -115,6 +155,36 @@ test('a display narrower than the strip still lands it on-screen', () => {
   const b = defaultOverlayBounds('toast', wa)
   assert.equal(b.x, wa.x, 'clamped to the left edge rather than hanging off it')
   assert.ok(b.y >= wa.y, 'and never above the top of the work area')
+})
+
+/**
+ * NO OVERLAY EVER OPENS OVER THE WHOLE SCREEN (JOS-83).
+ *
+ * A new user reported the celebration overlay as having "covered the entire screen" on their first
+ * install. Nothing in this module has ever placed a window that could — the toast is a 560x360
+ * strip and the meters are 380x320 — but the claim is cheap to make structurally impossible, and a
+ * first-open window is the ONE geometry a user cannot have chosen for themselves. So every kind's
+ * default bounds are pinned as a small fraction of any display it could land on.
+ *
+ * This says nothing about a window that PAINTS wrong (a driver that cannot composite a transparent
+ * window shows the strip as a black rectangle — the JOS-40 report, and shared/graphicsPrefs.ts is
+ * the answer to it). It pins the size, which is the half that lives here.
+ */
+test('a first-open overlay is a small window on any display — never a screen-filling one', () => {
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    for (const kind of OVERLAY_KINDS) {
+      const b = defaultOverlayBounds(kind, wa)
+      assert.ok(b.width < wa.width, `${name}/${kind}: as wide as the whole work area`)
+      assert.ok(b.height < wa.height, `${name}/${kind}: as tall as the whole work area`)
+      const share = (b.width * b.height) / (wa.width * wa.height)
+      assert.ok(share < 0.25, `${name}/${kind}: covers ${(share * 100).toFixed(1)}% of the display`)
+      assert.ok(b.x >= wa.x && b.y >= wa.y, `${name}/${kind}: starts off-screen`)
+      assert.ok(
+        b.x + b.width <= wa.x + wa.width && b.y + b.height <= wa.y + wa.height,
+        `${name}/${kind}: runs past the work area`
+      )
+    }
+  }
 })
 
 test('NO NOTIFIER holds a slot in the meter stack — adding one moved nothing', () => {
@@ -176,4 +246,29 @@ test('a SECOND alert overlay would stack below the first, not on it', () => {
   const wouldBe = first.y + first.height + 10
   assert.ok(wouldBe > first.y + first.height, 'the next lane starts below this one')
   assert.ok(wouldBe + first.height <= wa.y + wa.height, 'and still fits on a 1440p work area')
+})
+
+// ---- the two timer windows (JOS-119) ----------------------------------------------------
+
+/**
+ * TWO WINDOWS, PLACED SEPARATELY — the ticket, as geometry.
+ *
+ * The owner asked for buffs and debuffs to be windows he can move independently. The half of that
+ * this file owns is the FIRST open: they must not arrive on top of one another, and neither may be
+ * the screen-filling window JOS-83's report described. Everything after the first open is the
+ * store's job — each kind persists its own bounds under `overlays.<kind>` — which
+ * tests/e2e/buffs-overlay.e2e.mts drives against the real app.
+ */
+test('buffs and debuffs are two distinct stacked kinds with two distinct slots', () => {
+  assert.ok(METER_KINDS.includes('buffs') && METER_KINDS.includes('debuffs'), 'both timer kinds stack')
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const b = defaultOverlayBounds('buffs', wa)
+    const d = defaultOverlayBounds('debuffs', wa)
+    assert.ok(b.x !== d.x || b.y !== d.y, `${name}: the two timer windows open at the same spot`)
+    assert.ok(!overlaps(b, d), `${name}: ${JSON.stringify(b)} overlaps ${JSON.stringify(d)}`)
+    for (const [label, box] of [['buffs', b] as const, ['debuffs', d] as const]) {
+      const share = (box.width * box.height) / (wa.width * wa.height)
+      assert.ok(share < 0.25, `${name}/${label}: covers ${(share * 100).toFixed(1)}% of the display`)
+    }
+  }
 })

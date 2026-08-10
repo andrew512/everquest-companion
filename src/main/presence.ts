@@ -30,153 +30,33 @@ import { spawn, type ChildProcessByStdio } from 'child_process'
 import type { Readable } from 'stream'
 import { E2E } from './e2e'
 import { logError, logInfo } from './errorLog'
+import { notePresenceRestart } from './telemetry'
 import { effectiveEqRoot } from './log/config'
 import {
   type PresenceRecord,
+  type WatcherExitTrail,
+  FOREGROUND_EVERY_TICKS,
+  NEW_WATCHER_EXIT_TRAIL,
   WATCHER_HEARTBEAT_MS,
   WATCHER_STALE_MS,
+  WATCHER_TICK_MS,
   eqRootPrefix,
   focusDebounceStep,
   isEqWindow,
   newFocusDebounce,
   parsePresenceLine,
+  watcherExitStep,
   watcherIsStale,
   watcherRestartDelayMs
 } from './presenceProtocol'
+// The child's whole program lives in its own module so a node test can compile and run it; see
+// that file's header for why (JOS-164).
+import { watcherScript } from './presenceWatcherScript'
 import { INITIAL_PRESENCE } from '../shared/presencePrefs'
 import type { PresenceState, ScreenRect } from '../shared/presencePrefs'
 
 // ------------------------------------------------------------------ the watcher child itself
 
-/**
- * The polling loop, as PowerShell. Sent to `powershell.exe -EncodedCommand` (base64 UTF-16LE)
- * rather than through a shell or stdin: no quoting rules apply to base64, so the script below
- * is the script that runs, byte for byte.
- *
- * Everything expensive happens once, before the loop: the P/Invoke surface is compiled by
- * `Add-Type` at startup (~1 s, paid a single time per app run) and process image paths are
- * memoized per pid. The loop itself is five user32 calls and a string compare.
- *
- * CURSOR VISIBILITY is one of those calls. `GetCursorInfo` reports the session-wide cursor, and
- * EverQuest hides it for the whole time the right button is held (mouselook) — during which it
- * also re-centers the pointer every frame, so an absolute cursor sample oscillates while nothing
- * is on screen to follow it. `CURSORINFO.flags` is a bit field, so the test is
- * `& CURSOR_SHOWING(0x1)`, not `!= 0`. A failed call answers "showing": the ring is a display
- * aid, and a watcher that cannot see the cursor must not be the reason it disappears.
- *
- * `$ErrorActionPreference` drops to SilentlyContinue after `Add-Type`, ON PURPOSE: reading
- * `.Path` on a protected process raises a non-terminating error every 5 s forever, and the
- * watcher's job is to answer best-effort, not to be right about processes it may not inspect.
- *
- * THE RUNNING POLL IS NAME-FIRST, PATH-SECOND — measured, not stylistic. `ProcessName` is
- * already in the snapshot `GetProcesses()` returns, while `MainModule.FileName` OPENS the
- * process and THROWS for every protected one; interleaving them meant a few hundred .NET
- * exceptions per poll on a normal desktop. Two separate passes make the common case (the game
- * is running, under its own name) cost one string compare per process, and the path scan — the
- * fallback for a client installed under a different exe name — runs only when the cheap pass
- * found nothing.
- */
-function watcherScript(
-  eqRootWithSep: string,
-  runningPollMs: number,
-  tickMs: number,
-  parentPid: number
-): string {
-  // A single-quoted PowerShell literal: the only character that needs escaping is `'`, and a
-  // Windows path cannot contain one. Doubling it keeps that true even for a pathological root.
-  const rootLiteral = eqRootWithSep.replace(/'/g, "''")
-  return `
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-public static class EqcWin {
-  [StructLayout(LayoutKind.Sequential)]
-  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int max);
-  public static string Title(IntPtr h) { StringBuilder sb = new StringBuilder(512); GetWindowTextW(h, sb, 512); return sb.ToString(); }
-  [StructLayout(LayoutKind.Sequential)]
-  public struct POINT { public int X; public int Y; }
-  [StructLayout(LayoutKind.Sequential)]
-  public struct CURSORINFO { public int cbSize; public int flags; public IntPtr hCursor; public POINT ptScreenPos; }
-  [DllImport("user32.dll")] public static extern bool GetCursorInfo(ref CURSORINFO pci);
-  public static int CursorShowing() {
-    CURSORINFO ci = new CURSORINFO();
-    ci.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
-    if (!GetCursorInfo(ref ci)) return 1;
-    return (ci.flags & 0x1) != 0 ? 1 : 0;
-  }
-}
-'@
-$ErrorActionPreference = 'SilentlyContinue'
-$root = '${rootLiteral}'
-$parentPid = ${parentPid}
-$cmp = [System.StringComparison]::OrdinalIgnoreCase
-$paths = @{}
-$lastFg = ''
-$lastRun = -1
-$lastCur = -1
-$nextRun = [DateTime]::MinValue
-while ($true) {
-  $h = [EqcWin]::GetForegroundWindow()
-  $fgPid = [uint32]0
-  [void][EqcWin]::GetWindowThreadProcessId($h, [ref]$fgPid)
-  $rect = New-Object EqcWin+RECT
-  [void][EqcWin]::GetWindowRect($h, [ref]$rect)
-  if (-not $paths.ContainsKey($fgPid)) {
-    if ($paths.Count -gt 256) { $paths.Clear() }
-    $proc = Get-Process -Id $fgPid
-    $p = ''
-    if ($proc -and $proc.Path) { $p = $proc.Path }
-    $paths[$fgPid] = $p
-  }
-  $line = 'F|' + $fgPid + '|' + $rect.Left + '|' + $rect.Top + '|' + ($rect.Right - $rect.Left) + '|' + ($rect.Bottom - $rect.Top) + '|' + $paths[$fgPid] + '|' + [EqcWin]::Title($h)
-  if ($line -ne $lastFg) { $lastFg = $line; [Console]::Out.WriteLine($line) }
-  $cur = [EqcWin]::CursorShowing()
-  if ($cur -ne $lastCur) { $lastCur = $cur; [Console]::Out.WriteLine('C|' + $cur) }
-  $now = [DateTime]::UtcNow
-  if ($now -ge $nextRun) {
-    $nextRun = $now.AddMilliseconds(${runningPollMs})
-    # SELF-REAP. Windows does not kill a child when its parent dies, so a main process that goes
-    # away without running its quit path — a crash, or the Stop-Process -Force an integrator
-    # reaches for — leaves this loop polling user32 forever with nobody reading the pipe. The
-    # parent pid is baked in at spawn; when it stops existing, so do we.
-    if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { break }
-    # The pid -> image-path memo is dropped on every beat rather than only when it grows past
-    # 256 entries. Windows RECYCLES pids, and an entry that outlives its process is not stale
-    # data, it is WRONG data: the browser that inherits a departed eqgame.exe's pid would be
-    # handed eqgame's path and classified as the game. Five seconds bounds that window, and the
-    # memo still absorbs the ~33 ticks between beats, which is all it was ever for.
-    $paths.Clear()
-    $running = 0
-    $procs = [System.Diagnostics.Process]::GetProcesses()
-    foreach ($p in $procs) { if ($p.ProcessName -eq 'eqgame') { $running = 1; break } }
-    if ($running -eq 0 -and $root -ne '') {
-      foreach ($p in $procs) {
-        $ip = $p.MainModule.FileName
-        if ($ip -and $ip.StartsWith($root, $cmp)) { $running = 1; break }
-      }
-    }
-    foreach ($p in $procs) { $p.Dispose() }
-    if ($running -ne $lastRun) { $lastRun = $running; [Console]::Out.WriteLine('R|' + $running) }
-    # THE HEARTBEAT, and the only line printed unconditionally. Everything else is change-driven,
-    # so a healthy idle watcher is indistinguishable from a wedged one on the pipe alone — see
-    # presenceProtocol.ts's note. One byte per beat is what buys the parent that distinction.
-    [Console]::Out.WriteLine('H')
-  }
-  Start-Sleep -Milliseconds ${tickMs}
-}
-`
-}
-
-/** Foreground sampling cadence inside the child. Fine enough that alt-tab feels instant,
- *  coarse enough that a sleeping PowerShell loop rounds to zero CPU. */
-const TICK_MS = 150
 /** Process-existence cadence. "Is the game running" changes twice a session. */
 const RUNNING_POLL_MS = 5000
 
@@ -203,6 +83,12 @@ let childStartedAt = 0
 let restartFailures = 0
 let restartTimer: NodeJS.Timeout | null = null
 let staleTimer: NodeJS.Timeout | null = null
+/** The current child's last word, if it managed one (`X|parent-gone`). Cleared at every spawn, so
+ *  it can only ever describe the child whose exit is being handled. */
+let lastExitReason: string | null = null
+/** How many self-reap-shaped exits in a row, and whether the diagnosis has been written — the
+ *  whole reason 245 identical error reports become three (presenceProtocol.ts, JOS-164). */
+let exitTrail: WatcherExitTrail = NEW_WATCHER_EXIT_TRAIL
 
 let state: PresenceState = INITIAL_PRESENCE
 
@@ -281,9 +167,14 @@ function applyRecord(rec: PresenceRecord): void {
   // what `noteSignal` already recorded; it deliberately does not set `observed`, because a beat
   // is not a look at the world and must never be the reason auto-hide starts acting.
   if (rec.t === 'beat') return
-  // ANY record means we have actually looked (the child emits an `F`, a `C` and an `R` on its
-  // very first tick, in that order). Until then `observed:false` keeps auto-hide from acting on
-  // a default that only looks like a fact — see `overlaysShouldHide`.
+  // Neither is the exit line: it is a note for the log the `'exit'` handler is about to write
+  // (`pumpStdout` has already kept it) and says nothing about the world.
+  if (rec.t === 'exit') return
+  // ANY record means we have actually looked (the child emits a `C`, an `F` and an `R` on its
+  // very first tick, in that order — the cursor check leads because it is the one that runs on
+  // every tick, JOS-120; all three still land in the first tick's single write). Until then
+  // `observed:false` keeps auto-hide from acting on a default that only looks like a fact — see
+  // `overlaysShouldHide`.
   if (rec.t === 'run') {
     update({ observed: true, eqRunning: rec.running })
     return
@@ -321,6 +212,9 @@ function pumpStdout(chunk: string): void {
   for (const line of lines) {
     const rec = parsePresenceLine(line)
     if (!rec) continue
+    // KEPT, NOT LOGGED HERE. The pipe closes a moment later and the `'exit'` handler is the one
+    // place that knows the code and the lifetime, so the reason waits there for its sentence.
+    if (rec.t === 'exit') lastExitReason = rec.reason
     noteSignal()
     applyRecord(rec)
   }
@@ -421,6 +315,13 @@ function armStaleWatchdog(): void {
  */
 function scheduleRestart(): void {
   if (restartTimer || listeners.size === 0) return
+  // COUNTED WHERE THE RESTART IS COMMITTED TO (JOS-96), after the guard rather than before it: a
+  // call that is refused because a restart is already pending, or because nobody is listening any
+  // more, did not restart anything and must not read as a health event. All three restart causes
+  // (the stale-child watchdog, the child-gone handler, a failed spawn) funnel through here, so
+  // this is the one increment site. `restartFailures` cannot serve — it is a backoff index that
+  // resets to 0 on a healthy child.
+  notePresenceRestart()
   restartTimer = setTimeout(() => {
     restartTimer = null
     if (listeners.size === 0 || child) return
@@ -434,16 +335,29 @@ function scheduleRestart(): void {
  * never happened, and the watchdog's kill. Idempotent by identity — `child !== proc` means this
  * one has already been retired (or replaced), so a late `'exit'` after an `'error'` is a no-op
  * rather than a second restart.
+ *
+ * WHAT IT SAYS ABOUT THE EXIT IS `watcherExitStep`'S CALL (JOS-164), and both halves of that
+ * matter. The LIFETIME rides along with the code, because "exited with 0" and "exited with 0 after
+ * 900 ms, again" are different facts and only the second one is a diagnosis; and a run of those is
+ * collapsed into ONE distinctly-named error rather than one entry per restart forever. The
+ * fold is pure and lives beside the protocol, so the whole sequence is a unit test.
  */
 function handleChildGone(proc: WatcherChild, code: number | null): void {
   if (child !== proc) return
   child = null
   clearStaleWatchdog()
   detach(proc)
-  // An exit while consumers remain is a real failure (the script threw, or PowerShell is
-  // missing). Report it, fall back to "nothing known", and try again on the backoff.
+  const lifetimeMs = Date.now() - childStartedAt
+  const reason = lastExitReason
+  lastExitReason = null
+  // An exit while consumers remain is a real failure (the script threw, PowerShell is missing, or
+  // the child decided we were gone). Report it, fall back to "nothing known", and try again on
+  // the backoff. With no consumers left there is nothing to report and nothing to restart, and
+  // the trail is deliberately left alone: a teardown is not evidence either way.
   if (listeners.size === 0) return
-  logError('main:presence', { message: 'presence watcher exited unexpectedly', code })
+  const step = watcherExitStep(exitTrail, { code, lifetimeMs, reason })
+  exitTrail = step.trail
+  if (step.log) logError('main:presence', step.log)
   resetPresence()
   restartFailures++
   scheduleRestart()
@@ -471,8 +385,11 @@ function startWatcher(): void {
   if (child || E2E || process.platform !== 'win32') return
   const script = watcherScript(
     eqRootPrefix(effectiveEqRoot()),
-    RUNNING_POLL_MS,
-    TICK_MS,
+    {
+      runningPollMs: RUNNING_POLL_MS,
+      tickMs: WATCHER_TICK_MS,
+      foregroundEveryTicks: FOREGROUND_EVERY_TICKS
+    },
     // Baked in so the child can reap ITSELF when this process dies without running its quit path
     // (a crash, or a force-kill of the tree). Windows orphans children rather than killing them.
     process.pid
@@ -506,6 +423,7 @@ function startWatcher(): void {
   lastSignalAt = childStartedAt
   logInfo('[everquest-companion] presence watcher started')
   stdoutTail = ''
+  lastExitReason = null
   proc.stdout.setEncoding('utf8')
   proc.stdout.on('data', pumpStdout)
   proc.stderr.setEncoding('utf8')
@@ -531,8 +449,11 @@ function stopWatcher(): void {
     clearTimeout(restartTimer)
     restartTimer = null
   }
-  // A deliberate stop is not a failure — the next start deserves a clean slate.
+  // A deliberate stop is not a failure — the next start deserves a clean slate, including the
+  // self-reap trail: whatever the last run was doing, the next one gets to report it fresh.
   restartFailures = 0
+  exitTrail = NEW_WATCHER_EXIT_TRAIL
+  lastExitReason = null
   const c = child
   child = null
   if (!c) return

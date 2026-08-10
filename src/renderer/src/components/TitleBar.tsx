@@ -12,7 +12,6 @@ import type { CharacterRef, OverlayKind } from '@shared/types'
 import { OVERLAY_KINDS } from '@shared/types'
 import { track } from '../lib/telemetry'
 import PerfChip from './PerfChip'
-import { Tooltip } from '../lib/Tooltip'
 
 /**
  * Frameless window title bar (Task #23). Replaces BOTH the OS chrome and the old
@@ -111,41 +110,45 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
 
   return (
     <Box data-no-drag sx={{ WebkitAppRegion: 'no-drag', display: 'flex', alignItems: 'center' }}>
-      <Tooltip title="Floating DPS overlays">
-        <Box
-          component="button"
-          type="button"
-          ref={btnRef}
-          aria-label="Floating DPS overlays"
-          aria-haspopup="true"
-          aria-expanded={anchor != null}
-          onClick={() => setAnchor(btnRef.current)}
-          sx={{
-            WebkitAppRegion: 'no-drag',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.25,
-            height: 26,
-            px: 1,
-            borderRadius: 1,
-            border: '1px solid',
-            borderColor: anyOverlayOpen ? 'primary.main' : 'divider',
-            bgcolor: anyOverlayOpen ? 'rgba(217,178,95,0.14)' : 'transparent',
-            color: anyOverlayOpen ? 'primary.main' : 'text.secondary',
-            cursor: 'pointer',
-            outline: 'none',
-            transition: 'background-color 120ms, color 120ms, border-color 120ms',
-            '& svg': { fontSize: 16 },
-            '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: 'text.primary' }
-          }}
-        >
-          <PictureInPictureAltIcon />
-          <Typography variant="caption" sx={{ fontWeight: 600 }}>
-            Overlay
-          </Typography>
-          <ArrowDropDownIcon />
-        </Box>
-      </Tooltip>
+      {/* NO POPPER (JOS-143). This is a dropdown TRIGGER — `aria-haspopup`, a caret, and a Menu
+          anchored on it — and the tooltip's default placement is `bottom`, i.e. the exact
+          rectangle the Menu opens into. A MUI tooltip takes pointer events, so the hover that
+          preceded the click laid the explanation over the list being aimed at. The words are a
+          native `title` now, beside the `aria-label` that was already carrying the name. */}
+      <Box
+        component="button"
+        type="button"
+        ref={btnRef}
+        aria-label="Floating DPS overlays"
+        title="Floating DPS overlays"
+        aria-haspopup="true"
+        aria-expanded={anchor != null}
+        onClick={() => setAnchor(btnRef.current)}
+        sx={{
+          WebkitAppRegion: 'no-drag',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.25,
+          height: 26,
+          px: 1,
+          borderRadius: 1,
+          border: '1px solid',
+          borderColor: anyOverlayOpen ? 'primary.main' : 'divider',
+          bgcolor: anyOverlayOpen ? 'rgba(217,178,95,0.14)' : 'transparent',
+          color: anyOverlayOpen ? 'primary.main' : 'text.secondary',
+          cursor: 'pointer',
+          outline: 'none',
+          transition: 'background-color 120ms, color 120ms, border-color 120ms',
+          '& svg': { fontSize: 16 },
+          '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: 'text.primary' }
+        }}
+      >
+        <PictureInPictureAltIcon />
+        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+          Overlay
+        </Typography>
+        <ArrowDropDownIcon />
+      </Box>
       <Menu
         anchorEl={anchor}
         open={anchor != null}
@@ -178,6 +181,18 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
           <Checkbox size="small" edge="start" checked={overlayState.events} tabIndex={-1} disableRipple />
           <ListItemText primary="Event log" secondary="Alerts, notable loot, quest completions" />
         </MenuItem>
+        {/* JOS-89, split into two windows by JOS-119: the timer bars. Same per-kind machinery
+            again, and TWO rows because they are two windows — separately enabled, separately
+            placed, so "what is on me" and "what is on them" can live in different corners. Both
+            ship DEFAULT OFF and these rows are the only way to meet them. */}
+        <MenuItem dense onClick={() => { toggle('buffs') }}>
+          <Checkbox size="small" edge="start" checked={overlayState.buffs} tabIndex={-1} disableRipple />
+          <ListItemText primary="Buffs" secondary="Buffs you have running, with timers" />
+        </MenuItem>
+        <MenuItem dense onClick={() => { toggle('debuffs') }}>
+          <Checkbox size="small" edge="start" checked={overlayState.debuffs} tabIndex={-1} disableRipple />
+          <ListItemText primary="Debuffs" secondary="Debuffs and mez you are holding, per target" />
+        </MenuItem>
       </Menu>
     </Box>
   )
@@ -208,7 +223,7 @@ function CharacterPicker({
             return c ? `${c.name} · ${c.server}` : 'Select character'
           }}
         >
-          <ListSubheader>Characters — most recently played</ListSubheader>
+          <ListSubheader>Characters - most recently played</ListSubheader>
           {characters.map((c) => (
             <MenuItem key={c.logPath} value={c.logPath}>
               <Box>
@@ -233,34 +248,36 @@ function CharacterPicker({
 function PreferencesButton({ onOpen }: { onOpen: () => void }): JSX.Element {
   return (
     <Box data-no-drag sx={{ WebkitAppRegion: 'no-drag', display: 'flex', alignItems: 'center', pr: 0.5 }}>
-      <Tooltip title="Preferences">
-        <Box
-          component="button"
-          type="button"
-          aria-label="Open preferences"
-          onClick={onOpen}
-          sx={{
-            WebkitAppRegion: 'no-drag',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 28,
-            width: 28,
-            p: 0,
-            borderRadius: 1,
-            border: 'none',
-            background: 'transparent',
-            color: 'text.secondary',
-            cursor: 'pointer',
-            outline: 'none',
-            transition: 'background-color 120ms, color 120ms',
-            '& svg': { fontSize: 18 },
-            '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: 'text.primary' }
-          }}
-        >
-          <SettingsIcon />
-        </Box>
-      </Tooltip>
+      {/* Popper-free with the rest of the bar (JOS-143). The gear shares this row with the
+          character Select, and the UpdateChip beside it lost its popper for exactly this reason
+          in JOS-127 — a title bar whose controls are one rank apart is not a place for cards. */}
+      <Box
+        component="button"
+        type="button"
+        aria-label="Open preferences"
+        title="Preferences"
+        onClick={onOpen}
+        sx={{
+          WebkitAppRegion: 'no-drag',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: 28,
+          width: 28,
+          p: 0,
+          borderRadius: 1,
+          border: 'none',
+          background: 'transparent',
+          color: 'text.secondary',
+          cursor: 'pointer',
+          outline: 'none',
+          transition: 'background-color 120ms, color 120ms',
+          '& svg': { fontSize: 18 },
+          '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: 'text.primary' }
+        }}
+      >
+        <SettingsIcon />
+      </Box>
     </Box>
   )
 }

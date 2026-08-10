@@ -21,6 +21,14 @@
 //     is still byte-identical in shape to a direct heal.)
 //   - the two `magical skin absorbs` families carry NO amount. They are counted, never valued —
 //     they enter no sum anywhere, because there is nothing to sum.
+//   - a heal the log ANNOUNCES but never VALUES (JOS-86 — the monk's Mend, whose whole sentence
+//     is `You mend your wounds and heal some damage.`) gets a lane of its own, classified
+//     'unstated', carrying a COUNT and a total of 0. That 0 is the absence of a measurement, not
+//     a measurement of zero, so it enters no sum and touches none of the row's headline stats —
+//     the same treatment the rune lane gets for the opposite reason, and the same treatment the
+//     `magical skin absorbs` families get for the identical one. What it must NOT be is a
+//     `restored` lane reading 0: that is the one shape a reader would take as "Mend healed you
+//     for nothing", and it is exactly the reading the log cannot support.
 //   - a rune's amount is absorption GRANTED, not damage consumed. It DOES count toward the
 //     healing total (a shield is sustain), but it is carried as a `classification: 'absorbed'`
 //     LANE for its whole life so the assumption is never laundered into "hit points restored",
@@ -123,9 +131,21 @@ export class HealAccum {
   friendly = new Map<string, HealSourceStat>()
   hostile = new Map<string, HealSourceStat>()
   mit = newMit()
+  /**
+   * Amount-less heals BY SKILL NAME → how many landed. A Map rather than a single Mend counter
+   * because the ledger should not have to change shape the day a second amount-less family
+   * graduates — but nothing invents one: today the log prints exactly one (see MEND_RE).
+   * Keyed on the skill name itself, which the parser owns; there is no case-folding to do
+   * because the name is a constant in the parser, never a capture off a dirty line.
+   */
+  unstated = new Map<string, number>()
 
   addFriendly(key: string, name: string, kind: HealSourceKind, h: HealInput): void {
     add(this.friendly, key, { name, kind }, h)
+  }
+  /** One `You mend your wounds…` line. A count, and deliberately nothing else. */
+  addUnstated(skill: string): void {
+    this.unstated.set(skill, (this.unstated.get(skill) ?? 0) + 1)
   }
   addHostile(key: string, name: string, h: HealInput): void {
     add(this.hostile, key, { name, kind: 'enemy' }, h)
@@ -231,6 +251,31 @@ function runeLane(m: MitAccum): HealSpellView | null {
   }
 }
 
+/**
+ * The amount-less heal lanes (JOS-86). Every field that would be a claim about SIZE is 0 and
+ * stays 0: no max, no min (absent, not zero — `min: 0` would read as "the smallest Mend healed
+ * nothing"), no crits, no overheal. `count` is the entire content of the lane, which is the
+ * entire content of the log line.
+ *
+ * Sorted by count then name so the order is stable; they rank LAST in the flat list by
+ * construction, since `rankLanes` sorts on total and theirs is 0.
+ */
+function unstatedLanes(m: Map<string, number>): HealSpellView[] {
+  return [...m.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, count]) => ({
+      name,
+      total: 0,
+      pct: 0,
+      count,
+      crits: 0,
+      max: 0,
+      overheal: 0,
+      fullOverheal: 0,
+      classification: 'unstated' as const
+    }))
+}
+
 /** ONE flat ranked list — heals and absorption together, biggest first, each lane keeping its
  *  classification so the two are never confused. Deliberately NOT grouped into sections: a
  *  grouping level is exactly what hid the flat breakdown in the damage drill-down. */
@@ -256,6 +301,12 @@ function toView(key: string, s: HealSourceStat, extraLanes: HealSpellView[] = []
     (t, l) => (l.classification === 'absorbed' ? t + l.total : t),
     0
   )
+  // Summed off the LANES rather than tracked a second time on the row, so the two can never
+  // disagree. It joins no total: an unstated lane's `total` is 0 by construction.
+  const unstatedCount = extraLanes.reduce(
+    (t, l) => (l.classification === 'unstated' ? t + l.count : t),
+    0
+  )
   return {
     id: key,
     name: s.name,
@@ -265,6 +316,7 @@ function toView(key: string, s: HealSourceStat, extraLanes: HealSpellView[] = []
     hps: 0,
     pct: 0,
     count: s.count,
+    unstatedCount,
     crits: s.crits,
     critPct: s.count > 0 ? (s.crits / s.count) * 100 : 0,
     max: s.max,
@@ -352,15 +404,23 @@ function mitigationView(m: MitAccum): MitigationView {
  */
 export function buildHealingView(acc: HealAccum, durationSec: number): HealingView {
   const rune = runeLane(acc.mit)
+  // Both extras hang off the SELF row for the same reason: a rune is addressed to you and a Mend
+  // is something you did to yourself, so "what kept me alive" is the row both belong on. They are
+  // appended AFTER the SPELL_CAP for the same reason too — a long tail of small heals must not be
+  // able to push either off the drill.
+  const extras = [...(rune ? [rune] : []), ...unstatedLanes(acc.unstated)]
   const rows: HealSourceView[] = []
   let selfSeen = false
   for (const [key, s] of acc.friendly.entries()) {
     const isSelf = key === SELF_ROW_ID
     if (isSelf) selfSeen = true
-    rows.push(toView(key, s, isSelf && rune ? [rune] : []))
+    rows.push(toView(key, s, isSelf ? extras : []))
   }
-  if (rune && !selfSeen) {
-    rows.push(toView(SELF_ROW_ID, newSource('You', 'you'), [rune]))
+  // A segment can hold NOTHING but extras — a rune ticking out of combat (the W28 window), or a
+  // Mend with no valued heal beside it (the W55 window). The self row is synthesized so the lane
+  // has somewhere to be; its headline stats stay honestly empty.
+  if (extras.length > 0 && !selfSeen) {
+    rows.push(toView(SELF_ROW_ID, newSource('You', 'you'), extras))
   }
   const healers = rankRows(rows, durationSec)
   const enemyHealers = sourceViews(acc.hostile, durationSec)

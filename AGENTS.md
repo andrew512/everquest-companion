@@ -11,7 +11,8 @@ view — DPS w/ inline drill, live curve, current mob, zone, leveling rate +
 next-level ETA, class loadout, recent drops/kills), Plane of Sky quest
 tracking, loot, inventory reconcile, leveling/AA analytics (zone bands,
 drag-select range stats), a Maps tab (Brewall/default rendering, POI
-search, label declutter, floor slicing), class-combo inference with user
+search, label declutter, floor slicing, pinned zone, typed-/loc marker),
+class-combo inference with user
 corrections, proc analytics (PPM + state attribution), raid targets, buffs
 simulation, alerts with sounds + rank-upgrade intelligence, a Details-style
 DPS meter with drill-down/timeline (drilled by default, pet nested), and
@@ -294,6 +295,12 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
 
 - Node/git/gh NOT on PATH in fresh shells: prepend `C:\Program Files\nodejs`,
   `C:\Program Files\git\bin`, `C:\Program Files\GitHub CLI`.
+- NO RAW CONTROL BYTES IN SOURCE FILES — spell escapes out (`\u0000`, not a
+  literal NUL). A NUL as a "collision-proof key separator" is a fine idea and
+  has now been written as a raw byte twice (JOS-133, JOS-150); git classifies
+  the file as binary, diffs/blame/grep go dark, and the integrator has to
+  respell it. Same runtime value either way, so there is no reason to ever
+  emit the byte.
 - Backticked EQ names (`Innoruuk\`s Chosen`) break inline `node -e` — use
   temp script files.
 - Errors harness: main+renderer errors append to `<userData>/errors.log` AND
@@ -449,17 +456,93 @@ Maps: src/main/maps (pack discovery/per-layer cross-pack merge/LRU/search,
 Electron-free w/ injected roots) over shared/maps types + shared/zones
 (THE zone-knowledge table); renderer features/maps (canvas geometry, DOM
 labels w/ collision declutter, floor slicing). Pure fns + goldens all over.
+  **`mapFromLoc` IS THE ONE `/loc`→map SEAM** (`mapX=-ew, mapY=-ns`, y grows
+  SOUTH — JOS-65). Wiki mob pins and the user's typed-/loc marker (JOS-98,
+  `eq.maps.loc`, per zone) both go through it and then through `project`;
+  a second copy of those negations is the bug this repo already shipped once.
 Renderer: useModule(id, applyDelta) — hydrate, seq-dedupe deltas, re-hydrate
 on `log:character`. Overlay = second renderer entry (overlay.html) with a
 minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 ```
 
+- **A WINDOW THAT FOLDS A MODULE NEEDS BOTH HALVES OF THE TRANSPORT — THE DELTAS
+  AND THE REBUILD** (JOS-172). `module:delta` is an INCREMENT, and a historical
+  fold emits none: `endReplay()` DISCARDS what it accumulated (JOS-60's rule, and
+  it stays). So "hydrate once, then ride deltas" is only complete if something
+  says *ask again* — which is `log:character`, and which the main window's
+  `useModule` has always re-hydrated on. The OVERLAYS did not: they are created in
+  the same `whenReady` turn that started the fold (index.ts restores open kinds
+  right after `startTailing`), so an overlay that was ALREADY OPEN at launch
+  hydrates at a random instant PART-WAY through months of log and then rides
+  increments describing none of it. A charm or an Ensnare that genuinely survived
+  a restart was in the model, on screen in the app, and absent from the floating
+  window whose whole job is to show it — until some later live event happened to
+  touch that module, which on an idle log is never. `sendWorldRebuilt`
+  (pipeline.ts) is now the ONE answer to "who is told the world was rebuilt": the
+  main window and `MODULE_READING_OVERLAYS`, and every `IPC.onCharacter` send goes
+  through it. The fix is the DELIVERY, never the discard — exempting a module from
+  `endReplay` would ship its whole history as an increment again, which is exactly
+  the shape that made every celebration detector re-fire on a character switch.
+  **And re-hydration is a SECOND reason a row can vanish**, so anything watching a
+  row set for removals has to be told which kind of change it is looking at: the
+  buffs overlay's drop flash takes a `rebuilt` flag (`timerDrops`,
+  shared/buffTimers.ts) and says nothing across a re-fold, or it would greet the
+  user by announcing four spells that dropped months ago. **Measuring this in e2e
+  needs a SLOW fold**: a committed 1.6k-line fixture folds faster than a second
+  BrowserWindow loads its bundle, so the first cut of the restart step passed with
+  the bug still in the tree and said so (`hydrating:false` at the moment the
+  overlay bridge came up). `tests/e2e/buffRestartSteps.mts` pads the log with 400k
+  real lines (~4 s) and CHECKS that the fold was still running.
+- **A MODULE WITH A SECOND INPUT MUST REPORT ITS OWN REVISION AS `seq`, NOT
+  THE LAST EVENT'S** (JOS-87, measured in the running app). `useModule` dedupes
+  with `if (d.seq <= knownSeq) return`, and `knownSeq` comes from the hydration
+  snapshot — so "the last LogEvent seq folded in" only works as a revision
+  counter for a module whose state moves ONLY when an event moves it. The combo
+  module has a second input (a user correction, which re-labels every interval
+  and advances no log seq at all), and a correction written while the log was
+  idle produced a delta the renderer dropped as a duplicate: the store had it,
+  the model had it, and the screen kept showing the wrong answer until the next
+  log line happened to arrive. On an idle log — which is exactly when a user is
+  in Preferences fixing something — that is forever. The fix is a private
+  counter bumped by anything that can change the state (`ComboModule.markStale`,
+  reported by BOTH `snapshot()` and `flushDelta()` so hydrate and delta share
+  one clock); `seq`'s only consumer is that dedupe, which asks for nothing but
+  "strictly increasing when the state changed". The other half is the PUSH:
+  `invalidate()` alone waits for the 1 s heartbeat, so an out-of-band write
+  calls `registry.flushNow()` (ipc/combo.ts `republish()`). Both are needed —
+  flushing promptly is useless if the push is then dropped. A unit test cannot
+  see either half; `tests/e2e/loadout-override.e2e.mts` is what caught it.
 - **Character epochs**: character-scoped state (leveling/AA, loot, kills,
   turnins, buffs live-state) resets at the epoch boundary — anchored at
   OFFICIAL LAUNCH 2026-07-28 (`epochDetector.ts`; the user's beta character
   shared this log file pre-launch). Do NOT use level regression (loadout
   swaps legitimately change level). Game-knowledge (mined durations,
   message overlay) persists across epochs.
+- **A LOGOUT PAUSES YOUR CHARACTER, NOT THE WORLD — SO BUFFS FREEZE AND
+  DEBUFFS DO NOT** (JOS-134, owner's design 2026-08-09). EQ saves each buff's
+  REMAINING duration across a camp and resumes it at login, so a surviving
+  beneficial instance has its clock shifted forward by the absence
+  (`BuffInstances.onOfflinePause`; the S5 fixture proves it to the second — a
+  16-minute haste that wears off 13h58m of wall clock after it landed can only
+  exist if the timer stopped). A debuff you left on a mob is a timer in the
+  WORLD, which kept running, so its clock is never shifted and the ordinary
+  hygiene pass retires it on schedule; `modules/buffTimers.ts` takes an
+  EXPLICIT no-op on `offlineGap` so the asymmetry reads as design rather than
+  omission. **The boundary is evidence, not a timeout**: a log hole
+  (`SESSION_GAP_MS`) no longer decides anything by itself, because it is
+  ALWAYS observed before the thing that explains it — every login prints a
+  0-22 s reconnect preamble first, so the old on-sight wipe ran and the
+  derived `offlineGap` arrived to pause an empty model. `modules/buffsSession.ts`
+  holds the question open for `LOGIN_CONFIRM_MS` (deliberately the detector's
+  own `RECONNECT_WINDOW_MS` — same question from opposite ends) and drops the
+  pre-hole instances only if no login ever turns up. **And the learner refuses
+  BOTH halves of a cycle that spans an absence** (`spannedGap`): a buff's span
+  contains frozen time that is not duration, and a debuff's span is world time
+  whose fade LINE could only print once you were back to see it — so it dates
+  your return, not the expiry. Both err LONG, which is the direction law 5's
+  recency-weighted MAX is most sensitive to, and `fromTs` is a documented lower
+  bound, so subtracting the gap would leave residue pointing the same way.
+  Censor, never correct. Zoning is not a logout; death still clears (JOS-88).
 - **Spell DB**: `src/main/data/spells.json` (~1.9k spells from eqlwiki
   `Template:Spellpage`: durations, cast/wear-off messages, illusion flag,
   Beneficial/Detrimental) + `messageOverlay.baseline.json` + per-user
@@ -474,41 +557,104 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   at startup from its pinned registry tag — seeded + suggested alert defs
   reference its derived soundIds. App signals (bossDefeat, questComplete)
   fire from single always-mounted detectors.
-- **`$<name>` IN A SPOKEN PHRASE — ONE NAMESPACE, TWO SOURCES.** A custom
-  speech phrase can say what the line said (`$<attacker> hit you for
-  $<amount>`). `FiredAlert.captures` carries the values; `speechTextFor`
-  substitutes them, in the `custom` mode ONLY (the other modes are fixed
-  content, and a placeholder in a def's NAME would read differently in the
-  list than out loud). The syntax is JS's own named-group spelling, so the
-  phrase reads like the regex feeding it and `$<` can collide with no phrase
-  anyone already saved. Filled from:
-  1. the matched EVENT's own scalar fields, read REFLECTIVELY off the object
-     (`eventCaptures`) — so a parser change that adds a field makes it
-     speakable with no edit, and no list can go stale into a broken alert.
-     This reaches 'raw' triggers too: every line is parsed before any alert
-     sees it, so `kind:'damage'` already offers `$<attacker>`/`$<amount>`
-     with no regex written at all.
-  2. the trigger's REGEX NAMED GROUPS (`(?<mob>.+)`), which WIN a collision —
-     a group written by hand is the more specific statement of intent. Only
-     'raw' conditions capture; a `where` matcher's `/regex/` does NOT, because
-     a condition may carry several and two defining one name has no honest
-     winner. 'any' takes the matching condition's groups, 'all' merges with
-     EARLIER conditions winning.
-  ARRAYS AND OBJECTS ARE OMITTED, not stringified — `fieldText` reproduces JS
-  coercion for `where` MATCHING (that is what existing defs are matched
-  against), but nothing wants '[object Object]' spoken. Bounded at
-  MAX_CAPTURES/MAX_CAPTURE_CHARS: this rides every fire over IPC. AN
-  UNRESOLVED NAME IS DROPPED and the whitespace closes up; if the WHOLE phrase
-  resolves to nothing the existing alertName fallback takes over — still never
-  silent, never a guess. NO STORE MIGRATION: the phrase field already existed,
-  so this is a new reading of old data, not a new shape.
-  `shared/captureNames.ts` is the EDITOR's hint list (chips that insert a
-  placeholder) and is the one piece allowed to be incomplete — it is
-  `satisfies`-checked per kind against the real `LogEvent` interfaces, so it
-  can never PROMISE a name that does not resolve, and a kind added to the union
-  without an entry fails the build. A field added to an existing shape is the
-  drift it does not catch, which is exactly the drift the reflective runtime
-  already covers. Pinned by `tests/alertCaptures.test.mts`.
+  **A `where.spell` MATCHER TESTS THE WHOLE CANDIDATE LIST, NEVER THE FIRST PICK**
+  (JOS-84). EQ prints ONE landing/wears-off sentence per spell FAMILY, so
+  `buffApply.spell` / `buffWearOff.spell` are a documented best-effort first
+  candidate — alphabetical, and never the spell you cast — while `candidates`
+  carries the truth. The suggestion wizard's `lands` template pinned
+  `where:{spell:'<your spell>'}` to that pick and so could never fire: a v0.10.0
+  enchanter's Shiftless Deeds alert was compared to the string "Forlorn Deeds", and
+  Incapacitate's to "Disempower". Now `spellCandidateNames` widens the `spell` key
+  (and ONLY that key, and only when the event carries candidates) to every name the
+  line could be, and `matchedSpellName` reports the one that satisfied the def so a
+  spoken alert says your spell rather than the coin flip's. The consequence is
+  stated, not hidden: when one sentence is five spells, the alert is an alert on the
+  FAMILY — which is also what keeps it alive across the level-up that replaces the
+  spell. Nothing named `\] `-anchored or self-vs-third-person was ever the problem.
+  **CAPTURE GROUPS SPEAK THE LOG, AND THE THREAT MODEL IS IN THE CODE** (JOS-103,
+  `src/shared/alertCaptures.ts` — read its header before touching any of this). A
+  trigger's regex may declare a NAMED group and the def's `custom` phrase may write
+  `{player}`; the alert then says what that group captured ("Puma on Fail"). ALERT
+  DEFS ARE SHAREABLE, so a capture is a channel with a third party at each end: a
+  pattern the user did not write, selecting text a stranger did write, spoken aloud.
+  Five controls, each enforced at BOTH ends (main harvests, the resolver re-checks):
+  every value through the shared sanitizers (`sanitizeOneLine` — law 3 applied to a
+  new inlet); `MAX_CAPTURE_CHARS` 48, a NAME's worth not a LINE's, well under
+  MAX_SPEECH_CHARS; a value may come ONLY from the text the def's own condition just
+  tested (a `raw` condition from `ev.raw`, a `/regex/` `where` matcher from that one
+  field) — **there are no ambient tokens**, no `{C}`, no `{L}`; a token is a
+  DECLARATION, so named-only and never GINA's positional `{S1}`; and ONE
+  left-to-right pass with a FUNCTION replacer — no nesting, no recursion, no re-scan,
+  and `$&` in a captured name is text rather than a `replace()` directive. Unknown
+  tokens render LITERALLY. The divergences are argued against measured prior art: EQ
+  Log Parser runs FIVE substitution passes that each re-scan what the last wrote,
+  bounds nothing, and sanitizes only its TTS path. HONEST LIMITS, stated in the file:
+  a loose `raw` pattern can still MATCH a chat line quoting its sentence (the controls
+  bound what it can SAY, not whether it fires) — which is why `subjectCapturePattern`
+  anchors `^\[[^\]]*\] ` (never a bare `\] `, which a stranger's typed `] ` can start a
+  match inside) and captures a name-shaped class no EQ chat shape can reach; and ReDoS
+  on a hostile pattern is pre-existing and unfixed.
+  **A TEMPLATE FLAG IS A CLAIM THE ALERT CAN FIRE, AND THREE OF THEM WERE LYING**
+  (JOS-103). Spirit of the Puma was invisible to the wizard because
+  `suggestionTemplates` compared `spellType` to two string literals and its type is
+  `Proc Buff` — a spell with no template is DROPPED from the catalog. Now an exhaustive
+  table over the DB's 33 observed types. Measured while fixing it: `lands` was offered
+  to 68 Detrimental spells whose cast-on-other message yields no `castOnOtherSuffix`,
+  so no `buffApply` is ever emitted and the alert could not fire; and `wearsOff`
+  (`buffExpired`) can never fire for a buff SOMEBODY ELSE cast on you, because the buffs
+  module's own-cast gate never makes it an active instance — so it is now an `any`
+  composite over `buffExpired` + `buffWearOff` (same ts, so the cooldown eats the
+  duplicate). Puma's landing line has NO typed event at all (`Target growls…`, not
+  `Someone growls…`), which is why the shipped capture suggestion is a `raw` trigger:
+  not a shortcut, the only thing that exists for that family.
+  **AND `suggestions.ts` IS NODE-TESTED NOW** — it imported a VALUE through
+  `@shared/*`, so it could not load under tsx and no test had ever run a real
+  suggested def end to end. That is a large part of why this shipped; the import is
+  relative (repo law) and `tests/suggestedAlertsFire.test.mts` drives the real
+  wizard path through the real parser into the real module.
+  **A MEZ HAS NO `buffExpired`, SO IT GETS THE EVENT IT ACTUALLY HAS** (JOS-161).
+  `wearsOff` is beneficial-only and rests on the DERIVED `buffExpired`, which the
+  buffs module synthesizes only from an AUTHORITATIVE wear-off message. A hold on a
+  mob has none — `Your <X> spell has worn off of <mob>.` is claimed by
+  `classifyWornOff` and becomes `cc {refresh:true}`, and the hygiene cull that
+  retires an unwitnessed hold is deliberately silent — so a bard reaching for
+  "alert me when my mez expires" found no template that could fire and no trigger
+  they could hand-write that would. The `breaks` template is the per-spell twin of
+  the "Mez / root broke" GROUP: `{cc, where:{spell, refresh:'true'}}`, gated on the
+  parser's own `ccSpell` roster (exported from rulesets.ts for exactly this
+  reader), because a spell the roster misses parses to `buffFade` where the trigger
+  never sees it. Same honest limit as the group: "it ended", never "it ended early".
+
+- **THE CORRECTIONS OVERLAY CAN RENAME, AND A NAME IS A JOIN KEY** (JOS-161,
+  `src/main/data/spellCorrectionsList.ts` — the evidence bar and the five drift
+  classes live in that header; `spellCorrections.ts` is the mechanism beside it).
+  The first four drift classes assume the wiki and the game agree about WHICH spell
+  is described and differ only in the words it prints. The fifth is the name itself:
+  the level-39 bard song is `Solon's Bravura` on the wiki page and
+  `Solon's Bewitching Bravura` in every line the game has ever printed. That is not
+  cosmetic — the name is what `SpellDb.byKey` folds a cast line to, what
+  `SpellCatalogEntry.name/key` is, what `where.spell` is compared against, and what
+  `spellClasses.ts`/`levelUnlocks.ts` index by; so the song anchored nothing, the
+  wizard listed a spell no bard has, and no single string could satisfy both a
+  landing alert and a break alert. TWO RULES come with it: a name correction writes
+  EVERY row of that name (the scrape carries era/rank duplicates whose MESSAGES may
+  legitimately differ — `Shock of Frost` is two rows saying two different things —
+  but whose NAME cannot, and a half-rename puts a phantom line in the catalog), and
+  it reports `unknownSpells` rather than `stale` when it rots, because a renamed row
+  is not findable by the name the correction states. The audit test fails on either
+  list. **And every index keyed by spell name must read the CORRECTED entries** —
+  `spellClasses.ts` and `levelUnlocks.ts` now do; a raw-`spells.json` importer that
+  looks a spell up BY NAME is a silent miss waiting to happen.
+
+- **TEXT ON SCREEN IS THE SECOND CONSUMER OF THE CAPTURE NAMESPACE, NOT A SECOND
+  NAMESPACE** (docs/plans/alert-text-overlays.md). An alert's `display.text` is the
+  same `{token}` template its spoken phrase is, resolved by the same `applyCaptures`
+  against the same already-sanitized values, with the same unknown-renders-literally
+  rule and the same editor token list. This fork's `audio-alert-enhancements` branch
+  briefly carried a SECOND spelling (`$<name>`, unresolved names dropped rather than
+  drawn, preview filled with fabricated sample values) and it was retired into
+  JOS-103's on the merge rather than kept beside it: two syntaxes for one idea is how
+  a threat model comes to be enforced in only one of them.
 
 ### Electron trust boundary (do not weaken)
 
@@ -729,6 +875,114 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   melee skill and a spell. The per-CATEGORY drill separates them exactly and
   every category total is unaffected; `tests/combatSmiteLane.test.mts` W54
   pins the collision on real bytes rather than hiding it.
+  **RANGED (JOS-92) NEEDED A THIRD ARGUMENT, BECAUSE IT FAILS BOTH OF THE ABOVE.**
+  A ranger asked for the bow split out of Melee ("stance switching Ranger/Ranged
+  stance uses bow in melee. currently that is lumped into the same bar"). Same
+  shape as cleave/smite — `shoot` has been in MELEE_VERBS since the missing-verbs
+  fix, so bow damage was always COUNTED and only the ROW was missing — but run
+  JOS-81's skill-up test on it and it comes back a WEAPON verb: `better at Shoot!`
+  does not exist, `shoot` ticks under **`Archery`**, and Archery sits in the
+  weapon-type family beside 1H Slashing / 1H Blunt / Hand to Hand. Borrowing the
+  smite argument would have been a lie. THE LANE RESTS ON THE CLAUSE JOS-77
+  ALREADY WROTE AND NEVER USED: the generic row exists because those verbs "are
+  what a weapon IN A HAND prints, and four of them are ONE auto-attack lane". A
+  bow is not that lane — different slot, different skill, and none of the hand
+  lane's multipliers reach it (Dual Wield 322 skill-ups, Double Attack 395,
+  Triple Attack 100). So the rule gains a NARROW second clause: **a weapon verb
+  fired from a different SLOT than the hands is not the hand lane**, and `shoot`
+  is the only verb in MELEE_VERBS that qualifies. The label comes from the game's
+  own word for the mode (`You assume a ranged stance.`), not from a skill table.
+  NO THROWN LANE IS INVENTED BESIDE IT: `You throw` is ZERO whole-log, ` throws `
+  ZERO, `Throwing` occurs only inside item names, no `better at Throwing!` tick —
+  awaiting-sample law, so no branch. THE DISCRIMINATOR IS THE VERB AND NOTHING
+  ELSE, which is what a stance-switcher needs (a class- or stance-keyed split
+  would mis-assign both halves of his fight): all nine `shoots` damage lines in
+  the log are shape-identical to melee (`<A> shoots <B> for N point(s) of
+  damage.`) and `(Critical)` is the ONLY annotation the family has ever carried.
+  THE OWNER HAS NEVER FIRED A BOW — `You shoot` ZERO in 1,438,942 lines, `better
+  at Archery!` exactly ONCE, `You assume a ranged stance.` twice — so the lane is
+  EMPTY in every committed fixture and the law-8 gate is absolute: all 103
+  fixtures replayed before and after (per-segment out/in, per-source, per-category,
+  per-lane, per-category-drill; 1,591 rows) came out BYTE-IDENTICAL, because
+  there is no self `shoot` line in the tree to move a figure. What the log does
+  carry is OTHER PEOPLE's archery — 9 landed, 8 avoided — which `w57-ranged-lane.log`
+  (two hits + a dodged shot beside the owner's own Yarik fight) and
+  `w58-ranged-critical.log` (the `(Critical)` arm) pin; both were cut for this
+  ticket because ` shoots ` was ZERO across all 101 pre-existing fixtures. The
+  self arm is INJECTED in `tests/combatRangedLane.test.mts` (the W52/petClaim
+  precedent), conjugated from the attested third-person template with the owner's
+  own real bow amounts, and it asserts the movement is exact: Ranged 76/3 appears,
+  `you|Melee` does not budge, and the melee category grows by exactly 76.
+  A stranger's bow is still IGNORED by the meter (routing.ts `classify`) — parsing
+  a line into a new lane is not the same as admitting it, and W57 pins that too.
+  **STRIKE (JOS-163) IS A FOURTH ARGUMENT AGAIN, AND IT IS THE ONLY LANE WHOSE
+  NAME IS DELIBERATELY ANONYMOUS.** A monk on 0.16.0: strikes lumped into Melee
+  while kicks show up fine. `strike` is not a class skill (fails JOS-77) and not
+  a different equipment slot (fails JOS-92) — it is the GENERIC VERB every monk
+  special prints as, and specialAttacks.ts already proved it EXCLUSIVE to that
+  chain (the owner's first-ever `You strike` is 3 s after his Tiger Claw grant;
+  unarmed autos print `hit`/`claw`/`punch`). So an unnamed strike is not a weapon
+  swing that wandered in, it is a special whose NAME is unknown, and the row it
+  earns is called **`Strike`** — the verb, never a name from the chain. THE BUG
+  WAS THE PRE-STATE FLOOR, NOT THE RENAME: the `You will now use <X> …` line
+  prints ONCE, at the level-up, so a log file that BEGINS after it (fresh
+  install, rotation, `/log on` enabled later) never carries it and 100% of that
+  player's strikes read "Melee" forever — v0.5.0 fixed only the case where the
+  line exists. The loadout-swap re-announce burst does not include the strike
+  lane (`w48-special-lane-reset.log`: six state lines, none a strike) and an
+  epoch reset wipes the lane with nothing to re-seed from. THE TWO HALVES STAY
+  SEPARATE: the verb earns the ROW (`meleeSkill`), the state line earns the NAME
+  (`nameSpecialLane`/`missFold` consult `specials.laneSkill(verb)` FIRST), and
+  **no lane is ever seeded from the chain's first entry** — specialAttacks.ts's
+  stated law, and the reason an Iksar's unlaned strikes can never read "Dragon
+  Punch". Person-agnostic like every other branch (a mob's `strikes` reads
+  "Strike", as its `kicks` always read "Kick"); the stateful rename above it
+  stays first-person-only. Law 8 holds by construction — a rename INSIDE the
+  melee category, so no total can move. 21 of the 104 committed fixtures carry a
+  strike line; the five with a pinned lane total each shed exactly its own
+  hand-tallied strike arm out of "Melee" and nothing else (each figure tallied
+  off the raw fixture text before the engine was asked): w46 102/10 beside
+  Eagle Strike 89/7 after its state line, w47 77/6 beside Dragon Punch 128/6,
+  `w52-cleave-lane.log` 340/16, `p2-pet-arc-bound.log` 795/12,
+  `w58-ranged-critical.log` 257/4 — every category total unchanged, and the
+  34-spec e2e suite (whose combat fixture carries 87 strikes) green.
+- **A HEAL THE LOG ANNOUNCES BUT NEVER VALUES GETS A LANE THAT CARRIES A COUNT
+  AND NO NUMBER** (JOS-86 — the monk's Mend). `You mend your wounds and heal
+  some damage.` is the whole sentence: no amount, no target, no third-person
+  twin. The user report ("Mend does not appear in the healing logs", v0.10.0)
+  reads like the Cleave/Smite shape and is its INVERSE — those were always
+  counted and merely lacked a row; Mend was never parsed at all, because every
+  heal path in the model is built around a number. WHOLE-LOG PARTITION, and it
+  is exact: of 1,178 case-insensitive `mend` lines, **876** are that sentence,
+  200 are `You have become better at Mend! (N)`, 1 is the ability grant, 2 are a
+  mob named `a Nisch Mas Mender`, and 99 are third-party chat. So FIRST PERSON
+  ONLY, no failure shape, no refusal shape, no amount anywhere — do not invent
+  an arm the game has never printed. THE FIX IS A KIND, NOT A FLAG: a `heal`
+  with `amount: 0` would have been a lie with a long tail (the ledger files a
+  tick that "landed on a full health bar", the row's `min` collapses to 0, and
+  `foldHealAnalytics` enters a 0-damage "Mend proc"), so it is `healUnstated`
+  with **no amount field at all** and a third `HealClassification`, `'unstated'`,
+  whose 0 means "no measurement exists" and never "the measurement was zero".
+  It enters NO sum — row total, view total, hps, overheal, `count` — and rides
+  its own `HealSourceView.unstatedCount` so the crit and overheal rates beside
+  it keep their VALUED denominator. Every string that would render that 0 as a
+  figure is replaced by the reason there isn't one (`laneAmount`/`healerAmount`
+  print an em dash, never `fmt(0)`); a genuinely 0-total *restored* lane still
+  prints 0, because that one really did measure zero. This is the rune lane's
+  treatment for the opposite reason — a rune is an amount attached to something
+  that never touched a health bar, a Mend is a health bar with no amount — and
+  the `magical skin absorbs` families' treatment for the identical one. THE
+  GOLDEN IS THE OWNER'S OWN BYTES, nothing injected: he mended 876 times, so
+  the reporter's slice never had to become a fixture (W55
+  `w39-spellblade-switch.log`, the lane beside three valued lanes; W56
+  `w47-special-dragon-punch.log`, a Mend alone SYNTHESIZING the self row the
+  way an out-of-combat rune already did). LAW 8 GATE over every committed
+  fixture, healing view diffed line-for-line: **every difference was an
+  ADDITION** — not one total, count, min/max, overheal, pct, hps, enemy row or
+  damage figure moved. A 0-total lane cannot move `rankLanes`' denominator
+  (`Math.max(1, …totals)`), which is why the existing bar fills are identical
+  too. One fixture (`e2e-combat.log`) shows no lane and that is correct: its
+  Mend precedes two zone lines, so it lands in a FINALIZED zone session (law 7).
 - **SPECIAL ATTACKS PRINT NO VERB OF THEIR OWN.** A Dragon Punch, an Eagle
   Strike and a Tiger Claw ALL land as `You strike …`; Round Kick and Flying
   Kick land as `You kick …`. The game names the live one exactly once, in
@@ -747,8 +1001,21 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   SKILL-UPS ARE NOT AN INPUT anywhere here: Tiger Claw keeps ticking 111
   times after it was replaced, on a drip with no swing beside it.
 - Zone: `You have entered X.` — REJECT pseudo-zones ("an area where
-  levitation…"); instance tier suffix `(Awakened|Adaptive|Fused|Refined)`
-  = d1–d4, `- Solo/Group N` noise stripped.
+  levitation…"). **The zone name is the ONLY thing that ever states a
+  difficulty** (no kill line, lockout line or instance-creation notice
+  carries one), so `zoneTier()` decides what every kill's difficulty was
+  and it answers FOUR kinds of thing, not one number in five (JOS-166):
+  a trailing `(Awakened|Adaptive|Fused|Refined)` = **d1–d4**; a
+  `- Solo` / `- Group N` suffix with no adjective = **d0, the base
+  INSTANCE, a real difficulty with a real weekly lockout**; a bare zone
+  name = **open world** (`TIER_OPEN_WORLD`, no lockout of any kind); an
+  empty zone or an adjective the table does not know = **unknown**
+  (`TIER_UNKNOWN`). The name itself is stripped of all three markers.
+  All four are kill-record keys (`src/shared/kills.ts`), and only the
+  five difficulties can green a weekly ladder rung. Before JOS-166 the
+  last three all decoded to 0, so an open-world kill and a base clear
+  were the same fact — a raid target has FIVE lockouts a week and the
+  base one was being spent by kills that never took it.
 - Loot family (sole item-into-inventory lines): dashed
   `--You have looted X from Y's corpse.--`; currency (`…stored it in your
   currency`, NO period); sold (`…sold it for <money|free>.`). Dragon
@@ -788,6 +1055,24 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   cast lines. Permanent Illusion AA (ownership learned from its purchase
   line): illusion self-buffs permanent; ONE illusion per entity;
   `Your illusion fades.` is the shared remover.
+  **THE BURST IS ALSO THE ONLY LINE THAT ENUMERATES YOUR GROUP BY NAME**
+  (JOS-85). One cast of it prints two or more
+  `You healed <X> … by <Spell>.` lines in the SAME second — the only shape in
+  this log where the game lists who your buffs reached. MEASURED: 83 such
+  fan-out casts in the owner's 900,562-line log and **all 83** are within 15 s
+  of a Quick Buff line, so it is a fact about the ABILITY, not about spell
+  target types — spells.json calls `Skin Like Nature` / `Symbol of Pinzarn`
+  "Single Friendly (or Self)" while the log lands each on three entities in one
+  second, because the wiki describes a different server. It proves RECIPIENTS,
+  not membership (a burst hits your own pets, and two of the owner's 67 bursts
+  reached a player he was demonstrably not grouped with), so the roster admits
+  a name only in conjunction with `You gain party experience!` earlier in the
+  session — measured 2/2 correct, 0 false positives, identical at every backward
+  window from 2 min to 6 h. It is the roster's SECOND recovery path and exists
+  because the first (`<Name> tells the group, '…'`) needs somebody to talk: a
+  reporter's 12,376-line session held two group-mates and ZERO group events.
+  Weakest provenance rung (`buffed`); self / charmed / claimed-pet names refused.
+  src/main/modules/buffFanOut.ts, docs/plans/group-model.md §1 G4.
 - Summoned pets have random proper names (Vebarn, Garer…); bind via
   owner-only tells `<Name> told you, '… Master.'`; they persist across
   zones (charmed pets do not). A pet-claim tell from a name EVER seen
@@ -914,6 +1199,32 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   feel less drowsy.` (62) — that name no spell and resolve to all-slow candidate
   lists, so the alert reports the family and never which one. Its tripwire is one
   word away: `Your speed returns to normal.` is NINE HASTES (law 3).
+- **CHARM AND MEZ ARE ROSTERS TOO — AND THE SPELL DB IS THE ORACLE** (JOS-84).
+  `Your <spell> spell has worn off of <mob>.` is ONE sentence for three facts, and
+  `rulesets.ts` decides which by matching the spell NAME: `charmSpell` ⇒ `uncharm`,
+  `ccSpell` ⇒ `cc {refresh:true}`, neither ⇒ an ordinary `buffFade`. Both were
+  hand-audited against an ENCHANTER's log, so `ccSpell` held exactly one bard song
+  — Largo's Melodic Binding, level 20 — and nothing a bard casts after it. Every
+  bard past the mid-twenties therefore held a crowd-control break the parser filed
+  as a buff fade: no event, no alert, no way to tell ("Hey, for bard the charm
+  break doesnt work? :D"). The completion is DB knowledge, not a guess:
+  spells.json groups spells by LANDING MESSAGE, so "every castable spell sharing a
+  message with a member the roster already classifies" is enumerable, and
+  `tests/charmCcRoster.test.mts` RE-DERIVES both families from spells.json every
+  run — a future scrape that adds a member fails the suite instead of going mute.
+  Added: the bard holds (Kelin's Lucid Lullaby 15, Song of the Sirens 27,
+  Crission's Pixie Strike 28, Solon's Bewitching Bravura 39, Sionachie's Dreams 40,
+  Largo's **Assonant** Binding 51 — the direct upgrade of the one song that was
+  covered, one word apart) and the Necromancer charm-undead tail (Thrall of Bones
+  54, Enslave Death 60; the ladder's first three were covered by accident).
+  **THE BARD'S BRAVURA IS A MEZ, NOT A CHARM**, measured on the reporter's slice:
+  each own `You begin singing Solon's Bewitching Bravura IX.` is followed ~2 s
+  later by `<mob>'s eyes glaze over.` (Bravura's own landing message), while every
+  `<mob> has been charmed.` in that slice trails ANOTHER player's `begins casting
+  Allure X.` by one second. So it fires "Mez / root broke", not charm break.
+  **THE DB AND THE LOG DISAGREE ABOUT ITS NAME**: spells.json says `Solon's
+  Bravura`, the log prints `Solon's Bewitching Bravura` (the scrape lost the middle
+  word), so the stem answers to both — the oracle found that, not a reviewer.
 - **THE FRIEND SYSTEM ANNOUNCES NOTHING** (JOS-69, same sweep). It prints exactly
   two things: `Friends currently on EverQuest Legends:` (43× — the `/friends`
   command's own output, a header + dashed rule + a /who-style roster row, printed
@@ -1028,6 +1339,35 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 
 ## UI conventions
 
+- **NO EM DASHES IN USER-FACING COPY (owner, 2026-08-08 — JOS-106).** Every string
+  a player can read uses a NORMAL dash with spaces (` - `), never U+2014 (—) or
+  U+2013 (–) — renderer strings, overlay text, tooltips, preferences captions,
+  empty states, alert/group copy, and `shared/releaseNotes.ts` (its HISTORICAL
+  entries render in the What's-new panel exactly like the newest one, so they are
+  copy too, not an archive). Where a dash reads badly, RESTRUCTURE instead of
+  substituting: a parenthetical pair usually wants commas or parentheses, and a
+  dash next to a signed number ("Your Location is 1414.20, -735.55") wants
+  parentheses — locMarker.ts is that case. The GLYPH AS A DATA PLACEHOLDER (a
+  meter cell with no value) is held to the same rule: `-`, or a short label where
+  a bare mark reads as broken — which is what it did (`UNSTATED_AMOUNT`, below).
+  This is about COPY, not about the tree: code comments keep their em dashes and
+  this file's own prose does too. `tests/copyNoEmDash.test.mts` is the guard and
+  its header states exactly what it covers and what it does not; it parses with
+  the TS compiler and inspects only string/template/JSX-text nodes, because a
+  whole-source grep would drown in comments. Three files are excluded on
+  technical grounds (the Kokoro phoneme VOCABULARY, where U+2014 is a model token
+  id; an embedded PowerShell script's own `#` comments; the TELEMETRY.md
+  generator) and the exclusions are listed in the test.
+- **SAY WHAT THE LOG DID, NOT WHAT WE DID TO THE NUMBER (JOS-106).** A label
+  describing our own bookkeeping reads as a defect to the person holding it: Monk
+  Mend's healing lane was tagged `unvalued` / `amount not stated`, and a v0.12.0
+  user filed the by-design label as a BUG inside a day (report
+  01KZGFH4QDTVG7XNW4G24TZYR4). It is now `no amount` — one plain phrase, single-
+  sourced from `UNSTATED_AMOUNT` (renderer/src/features/combat/healRows.ts) so
+  the panel, the overlay and the hover title cannot drift, and said ONCE per row
+  (the lane tag carries it; the stat run beside it is just the count, because
+  repeating it is what made the row read like an error message). The long form
+  stays where long forms belong — the hover title, never a caption.
 - **State, never process**: no methodology captions, no script references,
   no how-it-works panels. Chips convey state (db/observed, permanent,
   inferred, casting…, ~ambiguous).
@@ -1053,6 +1393,22 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `cameFrom` prop: five of those are five opinions about what Back means. A back
   affordance NAMES ITS DESTINATION ("Back to Planner"), and a breadcrumb root
   keeps meaning the place it reads. Session-lifetime only, nothing persisted.
+- **A VIEW UNMOUNTS ON EVERY TAB SWITCH, so `useState` in one is a promise you
+  cannot keep** (JOS-90, JOS-97, JOS-116 — the same bug three times).
+  `App`'s `ViewContent` mounts exactly ONE feature view at a time, so anything a
+  view is holding dies when the user glances at another tab. That is correct for
+  ephemeral things (a popover, a hover); it is a DEFECT for anything the user set
+  on purpose — a filter they ticked, a drill they opened, an ability they
+  expanded. Those go in a renderer pref (`eq.<feature>.*` in localStorage, the
+  `useCombatPrefs` idiom) or above the switch boundary. Two traps, both paid for:
+  **an effect cannot tell a click from a mount** — `useEffect(() => reset(),
+  [selection])` fires on mount, and again when an async value (the global fight
+  id) lands a frame later, wiping exactly what was just hydrated, so the reset
+  belongs on the CHANGE HANDLER (the overlay reached this first); and a stored
+  value must DEGRADE rather than error — a drill naming a source that has since
+  left the fight resolves to level 1 by itself (JOS-105). Prove it with a spec
+  that actually navigates and asserts the view was GONE first (sky-filters is the
+  template); a unit test of the read passes while the feature stays broken.
 - Search: input echoes instantly; filter on `useDeferredValue`; lowercase
   `searchKey` computed once per data change; long fixed-height lists
   windowed via `lib/useWindowedRows`, variable-height cap+paginate. These
@@ -1106,6 +1462,47 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   main/modules/kills.ts on shared/kills.ts `KILL_EXP_JOIN_MS`), which includes a
   group-mate's blow (party exp is exp) and excludes a passer-by. TRACKING still
   counts every defeat — `bossKills` gates celebration alone.
+
+- **TWO TEXT SIZES, AND THEY ARE DIFFERENT MECHANISMS ON PURPOSE (JOS-123).**
+  The MAIN window scales with an Electron ZOOM FACTOR: `shared/uiScale.ts` holds
+  the five-stop ladder (90/100/110/125/150 — Chromium's own zoom stops around
+  100%) and the normalizer that SNAPS to it, so a stored value between two stops
+  can never leave the Preferences buttons unlit. It is persisted as the top-level
+  `uiScale` store key (additive + optional ⇒ no schema bump; absent reads as 1, so
+  an upgrade resizes nobody) and applied at window CONSTRUCTION —
+  `webPreferences.zoomFactor` in windows.ts — because the alternative is a window
+  that visibly resizes its own contents on every launch. The IPC setter zooms the
+  live window in the same call it stores, since a size control you must relaunch
+  to evaluate cannot be evaluated. The floating OVERLAYS keep their own per-kind
+  `textScale`, a CSS `zoom` on the CONTENT PANE only (chrome unscaled —
+  overlayScale.tsx), and the two must not be merged: an overlay is a small
+  always-on-top window whose header and footer have to keep laying out against the
+  real window width. So the main window is never given a `textScale` and no
+  overlay window is ever given a `zoomFactor`; `tests/uiScale.test.mts` pins both
+  halves and `tests/e2e/text-size.e2e.mts` proves the size over TWO real launches.
+  The accessors live in `src/main/uiScale.ts` rather than store.ts because
+  store.ts is AT the 400-code-line ceiling and the answer is a split: it now
+  exports the `settingsStore` handle for exactly that, which is a door for moving
+  the read-through-a-normalizer pattern OUT, never a licence to skip a normalizer.
+
+- **A COLOUR A USER PICKS IS A VALUE THAT REACHES A STYLE PROPERTY (JOS-125).**
+  The cursor ring's colour is stored as `cursorRing.colorHex` — one more field on
+  the EXISTING blob, so store.ts gained nothing, the 4→5 migration needed no bump
+  (the same normalizer defaults it, and an absent key reads as white) and the
+  live-push that already resizes a running ring recolours it for free. Two rules
+  make the field safe and honest. FIRST, `normalizeRingColor` accepts `#rgb` /
+  `#rrggbb` AND NOTHING ELSE, because the value ends up in
+  `element.style.borderColor` in the ring window: `red`, `rgb()`, `var(--x)` and
+  anything carrying a `;` are refused, which costs nothing because
+  `<input type="color">` cannot produce them and buys the guarantee that a store
+  file can never write a CSS declaration. SECOND, ONE function turns the hex into
+  the drawn colour (`ringStrokeColor` = the hue at the fixed 0.9 stroke alpha),
+  and all three drawings read it — the ring window, the live sample in
+  Preferences, and cursor.html's pre-config rule, which is asserted against it by
+  `tests/cursorRingColor.test.mts` so the two cannot drift. The alpha and the
+  three shadows are NOT settings: they are what makes the ring readable over a
+  snowfield, and a player asking for a colour is not asking for less contrast.
+  The default is white exactly, so an upgrade recolours nobody.
 
 ## Shipping
 
@@ -1399,7 +1796,8 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   stays fully click-through but RENDERS the persisted drill read-only. The
   drill persists per kind in `overlays.<kind>.drill` (config IS the drill
   state — no renderer mirror; stale ids render level 1 without clearing).
-  SIX kinds now: fight/overall (damage), heal-fight/heal-overall, events,
+  EIGHT kinds now: fight/overall (damage), heal-fight/heal-overall, events,
+  buffs + debuffs (JOS-89, split by JOS-119 — see below),
   and toast (celebration cards — docs/plans/celebration-toasts.md: transient
   top-center, hover pins, queue reducer in overlay/toastQueue.ts; producers in
   App.tsx, payloads resolved in main/toast.ts). The toast is the ONE kind that
@@ -1408,24 +1806,153 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   default) and it has NO SOUND of its own: the seeded boss/quest ALERTS speak
   on the same events, so the picker, `overlays.toast.sound|volume` and the
   `toast:sound` channel are all gone.
+- **SCROLLING AND CLICK-THROUGH CANNOT BOTH BE TRUE OF THE SAME PIXEL (JOS-138).**
+  A 0.14.0 report: pin an overlay and its scrollbar stops working. That was true
+  by construction. Pinned is `setIgnoreMouseEvents(true, {forward:true})`, and
+  `forward` forwards mouse MOVES and nothing else (Electron posts WM_MOUSEMOVE
+  from its WH_MOUSE_LL hook — there is no wheel in it); a wheel notch goes to
+  whatever the OS hit test finds under the cursor, which for a click-through
+  window is the game. So the wheel cannot arrive unless the window stops ignoring
+  the mouse for as long as it takes, and the owner's disposition (2026-08-09,
+  "we should allow scroll") is paid for in pixels: the **SCROLL GRIP**
+  (`SCROLL_GRIP_W`, overlay/overlayScale.tsx) is a 22px strip along the right
+  edge of a content pane — where the scrollbar is already drawn, so the
+  affordance is the bar the user is reaching for anyway. While the window is
+  LOCKED *and* the rows genuinely overflow, a forwarded move inside that strip
+  raises the P3 named-reason sensor (`capture('scroll', …)`, the fourth
+  CaptureReason) and the window takes the mouse for exactly the time the pointer
+  spends there. BOTH interactions come with it — the wheel, and DRAGGING THE BAR
+  — because the grip hands the real scrollbar real events instead of
+  re-implementing scrolling. NO new IPC and NO new mouse hook: it rides the
+  forwarding the meters already pay for. The rest of the body is untouched and
+  stays genuinely click-through, which is the whole point of pinning and is
+  asserted beside the scroll in `tests/e2e/overlayScrollSteps.mts` (the pointer
+  parked mid-pane must leave the grip idle and reveal no chrome). Honest limits,
+  stated: a pointer arriving at the bar from OUTSIDE the window's right border
+  can miss the strip, because the sensor is made of mouse-moves; and Windows
+  routes a wheel to the hovered window only while "scroll inactive windows when I
+  hover over them" is on (its default) — a pinned overlay is deliberately
+  non-focusable, so that setting is what carries the notch. The event log and the
+  buffs/debuffs windows need no grip: they hold capture over their WHOLE window
+  while hovered, which already carries the wheel and is the same trade taken at
+  the other extreme.
+- **THE BUFF/TIMER OVERLAY'S BAR IS A CLAIM, AND ITS ABSENCE IS THE HONEST HALF**
+  (JOS-89, docs/plans/buff-timer-overlay.md — ten user reports, the loudest demand
+  in the product's history; ships DEFAULT OFF for internal validation first). ONE
+  law decides every row: **a duration `spells.json` STATES becomes a receding
+  countdown; a duration nobody states becomes ELAPSED time counting UP; there is
+  no third case.** So a row draws a bar only when a duration was stated — a bar is
+  a promise about when something ends — and an unknown-duration row has NO BAR at
+  all and a `+` before its time. The corollary that costs something: the buffs
+  model's MINED `observed` estimate (recency-weighted MAX of your own land→fade
+  samples) is NOT a stated duration, so this surface counts UP where the Buffs TAB
+  counts down. `durationSource === 'db'` is the whole discriminator.
+  MEASURED: spells.json states a duration for 878 of 1,926 entries (45.6%), and a
+  stated one is the MAX component of a level formula (the scraper collapses
+  `1 ticks @L1 to 2 minutes @L40`) with focus effects absent from the data — so it
+  over-states for a low-level caster and can under-state with focus. Recorded, not
+  modelled.
+  **THE MEZ WAS INVISIBLE BECAUSE OF CASCADE ORDER**: `classifyCcApply` sits ABOVE
+  `classifyDbBuff`, so `<mob> has been mesmerized.` never became a `buffApply` and
+  `cc` reached its consumers naming a mob and nothing else. The parser now carries
+  the DB candidate list on the application shape (same suffix table, DB-gated,
+  byte-identical without one) and `modules/buffTimers.ts` owns per-target holds
+  keyed by mob — one AE mez on four enemies is four rows with four clocks.
+  Everything else the overlay draws is read off `BuffsSnap.active`; a second fold
+  of the same events is the two-models scar law 4 is made of.
+  Candidates narrow by YOUR OWN CAST HISTORY (law 3), never by taking the first:
+  `has been mesmerized.` is four spells at 96s/24s/24s/none, `has been ensnared.`
+  is 660s/180s, while enthralled/entranced are one each — so a blanket "a mez
+  counts up" would throw away the two statable families. A broadcast with no own
+  cast behind it opens NO hold (the ruling `ingestCc` already makes).
+  **A KNOWN GAP, DELIBERATELY NOT FIXED HERE**: a CC-roster spell wearing off a mob
+  routes to `cc {refresh:true}` rather than `buffFade`, so `onBuffFade` never runs
+  and such an instance is never cleared from the buffs model (it lingers to the
+  90-min hygiene cap). Fixing it in `recordFade` would also mint a land→fade
+  DURATION SAMPLE and move mined statistics across the whole golden suite — the
+  buff-system rework the owner paused — so the overlay corrects it in its own
+  projection (`endedByCc`), one rule wide, and the model change stays separate.
   Each kind's selector is SCOPE-FILTERED (`scopeOptions`) and never crosses
   over. Selectors are the custom `OverlaySelect` (no native `<select>`: its
   OS popup ignores the theme) — the overlay bundle stays MUI-free by law.
   Default geometry is one uniform size for every kind, docked bottom-right
   and stacking upward with column wrap (`overlayLayout.ts`); PERSISTED bounds
   always win.
+- **A HIDDEN WINDOW CANNOT PAINT, SO `hide()` IS NEVER HOW YOU CLEAR ONE
+  (JOS-120).** The owner reported the cursor ring twitching on every click —
+  a halo that jumped and then snapped back onto the pointer. The cause is a
+  general Electron fact worth knowing before the next window learns it the
+  hard way: **a hidden `BrowserWindow` produces no frames, and `show()`
+  re-presents its last composited surface.** So an IPC message that tells a
+  renderer to clear itself, sent after `hide()`, is recorded and never drawn —
+  MEASURED (Electron 43.2.0, a probe driving the shipping `cursorRing.ts`
+  logic): the pending `requestAnimationFrame` did not run for the whole 600 ms
+  the window was hidden and fired 1 ms AFTER `showInactive()`, one frame too
+  late. Everything the window is re-shown carrying is therefore whatever it
+  held when it went away. Two rules fall out. **(a) Clear BEFORE you hide**,
+  never after (`suspendCursorStream`). **(b) Better, do not hide for a state
+  you will leave in a few hundred ms**: `ringDisposition` (replayGate.ts)
+  splits the ring's inactive state into `idle` (the game no longer owns the
+  screen ⇒ the window really must come off it) and `parked` (the game owns the
+  screen, there is just no pointer to ring ⇒ empty the halo and LEAVE THE
+  WINDOW VISIBLE, where the park composites on the next frame). Hiding is
+  about which application owns the screen; parking is about whether there is
+  anything to draw. **The second half of the same bug was a CADENCE RATIO**:
+  `cursorVisible` gates an 8 ms consumer but was read on the same 150 ms tick
+  as the watcher's expensive foreground scan, so a whole mouse click could
+  pass unobserved and the ring tracked a pointer EverQuest had already hidden
+  for up to nineteen samples. The child's loop is now SPLIT — one
+  `GetCursorInfo` every tick at the platform floor (~16 ms measured; Windows'
+  15.6 ms quantum), the foreground/running/heartbeat block every tenth tick
+  (~160 ms, the cadence alt-tab always had). Measured price 0.06–0.16 % of one
+  core → 0.19–0.31 %. **Whenever a poll GATES a faster consumer, the number
+  that matters is the ratio, not either period**
+  (`unguardedSamplesPerHiddenCursor`). The synthetic repro
+  (`tests/cursorRingClick.test.mts`) models all four clocks — watcher tick,
+  8 ms sampler, animation frame, last-surface-wins — and asserts on what was
+  on the SCREEN; it reproduces the twitch on the old path first, so the fixed
+  assertion means something.
+- **…AND IT IS TWO WINDOWS, OVER ONE MODEL (JOS-119).** The owner asked for
+  buffs and debuffs to be windows he can enable and place separately, so the
+  one 'buffs' kind became 'buffs' + 'debuffs' — two configs, two windows, two
+  toggles in the title-bar Overlay menu. **THE SPLIT IS A FILTER, NOT A
+  FORK**: `buildTimerRows` still folds the `buffs` + `buffTimers` modules
+  exactly once and `shared/buffTimers.ts timerRowSurface` routes each row by
+  its own `kind` — `buff` to the buffs window, `debuff`/`cc` to the debuffs
+  one (the owner rules mez and slow ARE debuffs). `group` is deliberately NOT
+  the discriminator: a Symbol on your pet is `group:'target'` and is still a
+  BUFF, so routing by target would file your own group buffs under debuffs.
+  ONE component (`BuffsOverlay.tsx` + a `kind` prop; everything that differs
+  is one `SURFACE` data table) — a copy would be the defect. NO MIGRATION and
+  that is the design: `overlays.buffs` keeps its key so an existing install's
+  bounds/open/alpha carry over, `overlays.debuffs` was never written by any
+  build so it reads the default and arrives OFF, schema stays at 11.
+  **THE SEVENTH METER SLOT BROKE THE FIXED SIZE, exactly as the old note in
+  shared/types.ts predicted**: seven 380×320 slots do not fit a 1366×728 work
+  area under ANY arrangement (three columns, two rows = six). So the uniform
+  first-open size is a FUNCTION OF THE DISPLAY now — a fixed shrink ladder,
+  largest rung whose grid seats every kind wins, all kinds shrinking together
+  — rather than clamping a column onto its neighbour. 1080p and larger are
+  untouched at 380×320; the laptop opens everything at 323×272.
+  Two measured gotchas from its e2e: a programmatic `setBounds` from MAIN does
+  NOT raise Electron's `moved`/`resized`, so `saveOverlayBounds` never fires
+  and a spec proving persistence must write through `overlay:setConfig` (the
+  IPC a real drag lands on); and `overlayWindow()` matched `?kind=` by
+  SUBSTRING, which `kind=debuffs` containing `kind=buffs` quietly broke — it
+  parses the query now.
 - **GRAPHICS COMPATIBILITY IS TWO SWITCHES, AND NEITHER IS INSTANT (JOS-40).**
   A player on an RTX 5080 reported the overlays black-screen artifacting; it
   cannot be reproduced here and they left no contact, so the app ships
   self-serve mitigations rather than a guess. `shared/graphicsPrefs.ts` is the
-  pure half (store `graphics`, schema v10, both default OFF — a compatibility
-  mode shipped ON is a downgrade for every machine that never needed one).
+  pure half (store `graphics`, schema v11, both default 'auto' — a
+  compatibility mode shipped ON is a downgrade for every machine that never
+  needed one, and `auto` resolves to OFF wherever nothing is detected).
   (a) SAFE MODE — `app.disableHardwareAcceleration()`, called from index.ts
   MODULE SCOPE (`src/main/graphics.ts`), because Electron accepts it only
   before `ready`; that is why the label says "next launch" and why moving the
   call into `whenReady` would silently do nothing. `EQ_DISABLE_GPU=1` forces
   it for one launch WITHOUT the UI — the door for a user whose window is black,
-  and the one JOS-31 (Wine) reuses: NO platform detection lives here.
+  and it still outranks everything else.
   (b) OPAQUE OVERLAYS — overlay windows built `transparent:false` on
   `OPAQUE_OVERLAY_BG` (#0e1115, deliberately the same RGB the pages paint, so
   it is the bgAlpha look minus the alpha, never a second palette). A window's
@@ -1438,6 +1965,56 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   describe one machine's driver. Proven end-to-end in
   `tests/e2e/overlay-sync.e2e.mts` (both modes open/lock/persist; a third
   launch asserts `--disable-gpu` really reached Chromium).
+- **…AND UNDER WINE THE APP TAKES THAT PATH BY ITSELF (JOS-31).** A Wine user
+  reported the celebration toast becoming a STUCK BLACK BOX after a level-up
+  (01KZGQZJ2HMZGRY28A7CVRG4QT, v0.7.0) — the JOS-40 family arriving through
+  Wine's compositor rather than a driver — beside the long-standing blank-window
+  reports. A switch nobody can find is no fix when the symptom is a window you
+  cannot see, so the switches went THREE-STATE (`'auto' | 'on' | 'off'`, store
+  v11) and `shared/wineDetect.ts` decides what `auto` means.
+  **PRECEDENCE, one function, three rungs**: `EQ_DISABLE_GPU` > an explicit
+  user `'on'`/`'off'` > detection > off. `resolveGraphics` (graphicsPrefs.ts) is
+  the ONLY place that folds them, read by safe mode, by the overlay factory and
+  by the Preferences card, so a window cannot be built one way and labelled
+  another. `'off'` HAD to become sayable: without it, detection would be a
+  one-way door on a whole platform.
+  **DETECTION IS CONSERVATIVE OR IT IS NOTHING** — a false negative costs one
+  user a convenience, a false positive costs EVERY Windows user their GPU and
+  their see-through overlays. Two signals, either sufficient, both impossible on
+  real Windows: (1) Wine's own tools in `%SystemRoot%\system32` — wine.inf's
+  `[FakeDlls] 11,,*` WriteFile()s every builtin as a REAL PE, and Windows ships
+  no system32 exe starting with "wine" (`winevt` is a DIRECTORY, which is why
+  the check is exact filenames and never a `wine*` pattern); (2) the env vars
+  **Wine's own ntdll injects** (`add_dynamic_environment` runs for every hosted
+  process: WINEHOMEDIR/WINECONFIGDIR/WINELOADER/WINEDLLDIR0/WINEUSERNAME, plus
+  the renamed WINE_HOST_PATH).
+  **THE VARIABLE EVERYBODY REACHES FOR IS THE WRONG ONE**: `WINEPREFIX`
+  (and WINEDEBUG/WINEARCH/WINEDLLOVERRIDES) is set by the LAUNCHER, so it is
+  absent under bare `wine app.exe` AND present on the real-Windows box of anyone
+  cross-building for Wine — a false positive we may not have. `WINELOADERNOEXEC`
+  is impossible, not merely unreliable: `__wine_main` `unsetenv`s it before the
+  Win32 env is built. `winhlp32.exe` is likewise refused — a real XP/Vista/7
+  binary. Gated on `platform === 'win32'` — a native Linux build is not an
+  emulated Windows one. REJECTED: `wine_get_version` (needs FFI/a native addon),
+  the registry (real — `HKCU\Software\Wine\Debug` is in every stock prefix — but
+  needs a `reg.exe` spawn on every launch's startup path to answer 'no' for
+  ~everyone; the `Wine\Wine\Config` key every blog names died in 0.9), and the
+  `"Wine builtin DLL"` DOS-stub magic at offset 0x40 (definitive, and the NEXT
+  RUNG if a prefix ever defeats both signals above). `src/main/wine.ts` caches
+  the answer once per launch and logs the signals when it fires.
+  **SAFE MODE UNDER WINE IS NOT A GUESS**: WineHQ bug 48618 names Electron apps
+  showing a black client area with `--disable-gpu` as the workaround, because
+  Electron renders GL from its separate GPU PROCESS into the browser process's
+  HWND and winex11.drv has no cross-process GL. The opaque-overlay half has no
+  such bug on file — the user report is its evidence. The 10→11 migration reads a stored `false` as
+  'auto' and a `true` as 'on' — `graphics` was written on EVERY launch that ran
+  the 9→10 step, so `false` was overwhelmingly a default rather than a refusal,
+  while `true` could only ever be a choice.
+  **NOTHING HERE WAS VERIFIED UNDER WINE** — CI and this machine are Windows,
+  so the tests pin the NEGATIVE exhaustively (incl. a live probe of the real
+  filesystem, and an e2e assertion that this box detects nothing) and the
+  positive rests on Wine's documented layout. The reporter is the verification
+  path.
 
 ## Cloud (feedback backend + future web) — state as of 2026-08-04
 
@@ -1623,8 +2200,14 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
 - **Awaiting real samples** (the outputs registry refuses them typed until
   a committed fixture graduates each): /outputfile guild, raid, spellbook,
   factions, achievements, alternateadv — one in-game `/outputfile <kind>`
-  from anyone provides it. Same law for bow combat lines (Double Bow Shot
-  annotation unobserved — no archery in any log seen).
+  from anyone provides it. Same law for the **Double Bow Shot annotation**,
+  still unobserved after JOS-92's whole-log sweep: `(Critical)` is the only
+  annotation any of the nine `shoots` lines carries, and the file's one
+  `bow shot` hit is a player bragging in General chat. The rest of that note
+  is now SUPERSEDED — archery does appear, just never the owner's: 9 landed
+  and 8 avoided bow lines from other players, all third-person, and the Ranged
+  lane (above) is built on them. `You shoot` remains ZERO, so the FIRST-PERSON
+  arm is the shape still awaiting a sample.
 - Releases this arc: v0.4.0 (planner + toasts + parity + credited kills),
   v0.5.0 (monk lanes, outputs engine, AA ladder), v0.6.0 (Rounds panel,
   log-attach fix, Wine installer) — all sandbox-gated + smoke-verified;

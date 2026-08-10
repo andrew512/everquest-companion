@@ -30,6 +30,8 @@ import { CHANNEL } from '../channel'
 import { logInfo } from '../errorLog'
 import { getTelemetryPrefs, setTelemetryPrefs } from '../store'
 import { telemetryCollectEnabled, telemetryEndpointConfigured } from './net'
+import { resetHealth } from './health'
+import { resetErrorReports } from './errorReports'
 import { dropRing, pushCapped, readRing, writeRing } from './ring'
 
 /** `process.platform` folded onto the closed enum — a raw platform string is still a string. */
@@ -72,6 +74,15 @@ export function beginSession(now = Date.now()): void {
   viewsSeen.clear()
   linesPending = 0
   startupPending = null
+  // The health deltas live in their own leaf module (telemetry/health.ts — it has to, so
+  // `errorLog.ts` can bump one without a cycle), but they are SESSION state exactly like the two
+  // above and are cleared on the same boundaries.
+  resetHealth()
+  // Same for the error reports and the breadcrumb ring behind them (JOS-100). This call is also
+  // what STAMPS the session clock those reports bucket their age against: `errorReports.ts`
+  // cannot ask the collector for `sessionUptimeMs` without closing the errorLog cycle, so the
+  // collector tells it instead, at the one moment both agree a session has begun.
+  resetErrorReports(now)
 }
 
 /**
@@ -84,6 +95,11 @@ export function endSession(): void {
   viewsSeen.clear()
   linesPending = 0
   startupPending = null
+  resetHealth()
+  // The session clock is stamped to 0 here on purpose: `resetErrorReports` takes `now` and a
+  // report built after this point would bucket its age from the LAST session's start. There is
+  // no session, so the honest answer is bucket 0 and an empty ring.
+  resetErrorReports(0)
 }
 
 /**
@@ -156,6 +172,15 @@ export function ensureAnalyticsId(): string | null {
  * Record one ALREADY-VALIDATED event. The IPC handler validates renderer input at the boundary
  * and main-side callers construct typed values, so this function's job is the gate and the ring,
  * not the shape.
+ *
+ * THERE IS EXACTLY ONE CARVE-OUT FROM THIS GATE IN THE WHOLE FEATURE, and it is named here so a
+ * reader auditing "nothing is collected when the switch is off" finds it at the gate rather than
+ * by accident: the OPT-OUT NOTICE (JOS-109, `./optOut.ts`). It is authored AT the flip and sent
+ * as its own single-event batch, so it never enters this ring and never passes through this
+ * function — which is why the gate below needs no exception written into it. The carve-out is
+ * real all the same: one fieldless event leaves the machine after the switch reads false, it is
+ * disclosed in TELEMETRY.md, and `./optOut.ts` argues every term of it. Nothing else may ever
+ * take that route; everything else in this app goes through the line below.
  */
 export function recordEvent(ev: TelemetryEvent): void {
   if (!telemetryCollectEnabled(getTelemetryPrefs())) return

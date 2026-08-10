@@ -333,6 +333,19 @@ export default tseslint.config(
     },
   },
 
+  // ---- carve-out: release notes ------------------------------------------
+  {
+    files: ['src/shared/releaseNotes.ts'],
+    rules: {
+      // The notes are committed DATA that grows by one release entry per tag,
+      // forever (a tag may not ship without one — AGENTS.md, Shipping). A line
+      // ceiling on an append-only ledger is a deadline, not a design pressure:
+      // it would fail some future release on the size of its changelog. Split
+      // files would only relocate the growth.
+      'max-lines': 'off',
+    },
+  },
+
   // ---- 3. the ratchet (LAST — it must win) --------------------------------
   // Skippable for measurement: EQ_LINT_NO_RATCHET=1 shows the true state.
   ...(process.env.EQ_LINT_NO_RATCHET ? [] : ratchet),

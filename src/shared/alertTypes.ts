@@ -8,8 +8,7 @@
 
 // TYPE-ONLY, and the cycle is deliberate + precedented: ./alertOverlays imports OverlayKind from
 // ./types, which re-exports this module. Type imports are erased, so there is no runtime edge —
-// the same arrangement types.ts already has with ./toast (it imports ToastOverlayConfig from
-// there while toast.ts imports ItemKnowledge back).
+// the same arrangement types.ts already has with ./toast.
 import type { AlertOverlayKind } from './alertOverlays'
 
 // ----- Alerts extension (Task #18) -----
@@ -35,6 +34,9 @@ export type LogEventKind =
   | 'death'
   | 'damage'
   | 'heal'
+  // A heal the log ANNOUNCED without an amount — the monk's Mend (JOS-86). Its own kind, not a
+  // zero-amount 'heal', so an alert can fire on "I mended" while nothing downstream can sum it.
+  | 'healUnstated'
   | 'mitigation'
   | 'miss'
   | 'resist'
@@ -167,56 +169,6 @@ export interface AlertSpeech {
   phrase?: string
   /** Voice override for this alert; absent ⇒ the global default voice (VoicePrefs.voiceId). */
   voiceId?: string
-}
-
-// ----- Text overlays (docs/plans/alert-text-overlays.md) -----
-//
-// The TYPES only; their values (the font stacks, the caps, the normalizer, the resolver) live in
-// shared/alertDisplay.ts — the arrangement AlertSpeech/speechText.ts already uses, and for the
-// same reason: this file is the shared type surface and must stay importable by everything.
-
-/**
- * WHICH FONT a text alert draws in. A CLOSED union of KEYS, never a free-text family name
- * (owner decision, 2026-08-07). Two reasons and they are independent: the overlay bundle loads
- * no webfonts, so a family it does not have renders as a silent fallback with nothing on screen
- * saying why; and a def field is renderer input that ends up in a `font-family` IN ANOTHER
- * WINDOW, which is the one place this repo does not pass strings through. The keys map to CSS
- * stacks in shared/alertDisplay.ts, and an unknown key resolves to the default rather than to
- * nothing.
- */
-export type AlertFont = 'sans' | 'serif' | 'mono' | 'display'
-
-/**
- * TEXT THIS ALERT PUTS ON SCREEN when it fires.
- *
- * ABSENT ⇒ THE ALERT DRAWS NOTHING, and that is the whole enable. There is no `enabled` flag
- * beside these fields: the presence of the block IS the alert asking to be seen, exactly as the
- * toast overlay's open-state is the celebration feature being on. Two switches for one state is
- * how they drift.
- *
- * Additive and optional, like `alwaysPlay` and `cooldownScope` above — every reader defaults on
- * absence and electron-store round-trips the key untouched, so this needs no store migration.
- * EVERY FIELD IS OPTIONAL AT A DOCUMENTED DEFAULT for the same reason `speechFieldsFor` omits
- * its keys: a def that took the defaults saves byte-identically, which is what keeps share
- * strings stable.
- */
-export interface AlertDisplay {
-  /**
-   * What to draw. A template: `$<name>` placeholders resolve against the firing's captures
-   * (shared/captures.ts), exactly as a spoken custom phrase does. Absent or empty ⇒ the alert's
-   * own NAME — the same never-silent-never-a-guess fallback `speechTextFor` makes.
-   */
-  text?: string
-  /** Absent ⇒ DEFAULT_ALERT_FONT. */
-  font?: AlertFont
-  /** Pixels, clamped to MIN/MAX_ALERT_FONT_PX. Absent ⇒ DEFAULT_ALERT_FONT_PX. */
-  fontSize?: number
-  /** `#rgb` or `#rrggbb` ONLY (see alertDisplay.ts). Absent ⇒ DEFAULT_ALERT_COLOR. */
-  color?: string
-  /** Which overlay window it lands in (shared/alertOverlays.ts). Absent ⇒ DEFAULT_ALERT_OVERLAY. */
-  overlay?: AlertOverlayKind
-  /** How long the line holds before it leaves. Absent ⇒ DEFAULT_ALERT_DISPLAY_MS. */
-  durationMs?: number
 }
 
 /**
@@ -391,6 +343,55 @@ export interface AlertDef {
   display?: AlertDisplay
 }
 
+// ----- Text overlays (docs/plans/alert-text-overlays.md) -----
+//
+// The TYPES only; their values (the font stacks, the caps, the normalizer, the resolver) live in
+// shared/alertDisplay.ts — the arrangement AlertSpeech/speechText.ts already uses, and for the
+// same reason: this file is the shared type surface and must stay importable by everything.
+
+/**
+ * WHICH FONT a text alert draws in. A CLOSED union of KEYS, never a free-text family name
+ * (owner decision, 2026-08-07). Two reasons and they are independent: the overlay bundle loads
+ * no webfonts, so a family it does not have renders as a silent fallback with nothing on screen
+ * saying why; and a def field is renderer input that ends up in a `font-family` IN ANOTHER
+ * WINDOW, which is the one place this repo does not pass strings through. The keys map to CSS
+ * stacks in shared/alertDisplay.ts, and an unknown key resolves to the default rather than to
+ * nothing.
+ */
+export type AlertFont = 'sans' | 'serif' | 'mono' | 'display'
+
+/**
+ * TEXT THIS ALERT PUTS ON SCREEN when it fires.
+ *
+ * ABSENT ⇒ THE ALERT DRAWS NOTHING, and that is the whole enable. There is no `enabled` flag
+ * beside these fields: the presence of the block IS the alert asking to be seen, exactly as the
+ * toast overlay's open-state is the celebration feature being on. Two switches for one state is
+ * how they drift.
+ *
+ * Additive and optional, like `alwaysPlay` and `cooldownScope` above — every reader defaults on
+ * absence and electron-store round-trips the key untouched, so this needs no store migration.
+ * AN OMITTED STYLE FIELD MEANS INHERIT, not "the shipped constant": the target overlay carries
+ * its own font/size/colour/seconds and fills in whatever this block does not override.
+ */
+export interface AlertDisplay {
+  /**
+   * What to draw. A template: `{token}` placeholders resolve against the firing's captures
+   * (shared/alertCaptures.ts), exactly as a spoken custom phrase does — same syntax, same rules,
+   * same threat model. Absent or empty ⇒ the alert's own NAME.
+   */
+  text?: string
+  /** Absent ⇒ the target overlay's default. */
+  font?: AlertFont
+  /** Pixels, clamped to MIN/MAX_ALERT_FONT_PX. Absent ⇒ the target overlay's default. */
+  fontSize?: number
+  /** `#rgb` or `#rrggbb` ONLY (see alertDisplay.ts). Absent ⇒ the target overlay's default. */
+  color?: string
+  /** Which overlay window it lands in (shared/alertOverlays.ts). Absent ⇒ DEFAULT_ALERT_OVERLAY. */
+  overlay?: AlertOverlayKind
+  /** How long the line holds before it leaves. Absent ⇒ the target overlay's default. */
+  durationMs?: number
+}
+
 /** Global sound preferences (main-owned, persisted). */
 export interface AlertPrefs {
   /** 0..1 master volume applied on top of each alert's own volume. */
@@ -418,24 +419,22 @@ export interface FiredAlert {
    */
   spell?: string
   /**
-   * NAMED VALUES THIS FIRING CAN SPEAK — what a `$<name>` placeholder in a custom phrase
-   * resolves against (`speechTextFor`, shared/speechText.ts).
+   * NAMED REGEX CAPTURES from the condition that matched (JOS-103) — the values a `custom`
+   * phrase's `{token}`s resolve to, so a spoken alert can say "Puma on Fail".
    *
-   * ONE NAMESPACE, TWO SOURCES, one stated precedence (main/modules/alerts.ts `firingCaptures`):
-   *   1. the matched EVENT's own scalar fields — `attacker`, `target`, `amount`, `mob`, `item`,
-   *      … whatever the parser put on the shape it produced. Free, already canonicalized, and
-   *      available to a 'raw' trigger too: every line is parsed before any alert sees it, so a
-   *      raw match still has a typed event behind it.
-   *   2. the trigger's own REGEX NAMED GROUPS — `(?<mob>.+)` — which OVERRIDE an event field of
-   *      the same name, because a group the user wrote by hand is the more specific statement of
-   *      intent. Only 'raw' conditions capture; a `where` matcher's `/regex/` does not (its
-   *      groups would have no unambiguous owner when several fields each define one).
+   * ATTACKER-INFLUENCED BY CONSTRUCTION, and already defanged. The keys come from the def's own
+   * pattern (`(?<player>…)`) but the VALUES come out of a log line, which carries other players'
+   * chosen names and, for the chat families, text a stranger typed. Everything here has been
+   * through `sanitizeCapture` (shared/alertCaptures.ts): the shared sanitizers have removed ANSI
+   * sequences, control characters and the BiDi/invisible class, and each value is capped at
+   * MAX_CAPTURE_CHARS. Read shared/alertCaptures.ts's threat model before consuming this
+   * anywhere new — it is the enforcement point, and it explains why a consumer still must not
+   * treat these as trusted text.
    *
-   * ABSENT when neither source offered anything — a payload-free event family matched by a
-   * capture-less regex, and every renderer-evaluated 'app' signal. Values are strings because
-   * that is what gets spoken; a number/boolean field is stringified, and array/object fields are
-   * omitted entirely rather than spoken as '[object Object]'. Bounded (see MAX_CAPTURES /
-   * MAX_CAPTURE_CHARS) — this rides every firing over IPC.
+   * ABSENT whenever the matching condition declared no named group, or captured nothing that
+   * survived sanitization — an absent key is the honest JSON encoding of "this pattern named
+   * nothing", and it keeps the delta byte-identical for the alerts that capture nothing (which
+   * is nearly all of them).
    */
   captures?: Record<string, string>
 }

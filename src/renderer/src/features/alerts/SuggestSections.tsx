@@ -120,7 +120,7 @@ export function SpellRows({
       ))}
       {total > rows.length && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1, py: 0.5 }}>
-          +{total - rows.length} more — keep typing to narrow it down.
+          +{total - rows.length} more - keep typing to narrow it down.
         </Typography>
       )}
     </>
@@ -182,7 +182,7 @@ export function PoisonSlowRow({
         </Typography>
       </Box>
       <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
-        <Tooltip title="Weakening Strike — the rogue utility-poison slow, 3:30">
+        <Tooltip title="Weakening Strike - the rogue utility-poison slow, 3:30">
           {/* The SAME wording the per-spell `lands` template uses, from the same constant: this
               row creates the same kind of alert, so it must not invent a second phrasing. */}
           <span>
@@ -195,7 +195,7 @@ export function PoisonSlowRow({
             />
           </span>
         </Tooltip>
-        <Tooltip title="Dismiss — don’t offer this again">
+        <Tooltip title="Dismiss - don’t offer this again">
           <IconButton size="small" sx={{ p: 0.25 }} onClick={() => onDismiss(offer.id)}>
             <CloseIcon sx={{ fontSize: 15 }} />
           </IconButton>

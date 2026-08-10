@@ -14,6 +14,16 @@
 // SIZE IS UNIFORM across kinds (user decision): every overlay opens at the same width x height,
 // whatever it renders. It is erring on the large side of the old per-kind values so the event
 // log — the only kind that is a list rather than a handful of dense bars — is not cramped.
+//
+// …AND THE UNIFORM SIZE IS NOW A FUNCTION OF THE DISPLAY (JOS-119). Splitting the buff/timer
+// overlay in two made a SEVENTH meter kind, which is exactly the case the old note in
+// shared/types.ts warned about: seven 380x320 slots do not fit a 1366x728 laptop's work area
+// under any column arrangement (three columns fit, two rows fit, that is six slots), so the wrap
+// would have clamped a fourth column on top of the third and two windows would have opened
+// exactly over each other. The answer is NOT to let them overlap and it is NOT a per-kind size:
+// on a display that cannot hold the whole reserved grid, EVERY kind shrinks TOGETHER by the same
+// factor until the grid fits. Uniformity survives, the no-overlap guarantee survives, and a
+// display big enough for the full grid (anything 1080p or larger) is untouched at 380x320.
 
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
 import { ALERT_OVERLAY_KINDS, isNotifierOverlayKind } from '../shared/alertOverlays'
@@ -69,11 +79,21 @@ const ALERT_SIZE: Size = { width: 560, height: 200 }
  */
 const ALERT_TOP = 400
 
-/** The first-open size for a kind — the same for all the meters; each notifier is its own shape. */
-export function overlayDefaultSize(kind: OverlayKind): Size {
+/**
+ * The first-open size for a kind — the same for all the meters; each NOTIFIER is its own shape.
+ *
+ * `workArea` is optional because one caller genuinely has no display to ask about (windows.ts's
+ * headless/e2e path sizes a window before any screen info exists). Without it the answer is the
+ * full uniform size, which is what every display large enough for the reserved grid gets anyway.
+ *
+ * A notifier ignores `workArea` entirely: it holds no slot in the reserved grid, so the shrink
+ * that keeps seven meters from overlapping has nothing to do with it — and shrinking a text lane
+ * would shrink the one thing on screen the user asked to be able to read.
+ */
+export function overlayDefaultSize(kind: OverlayKind, workArea?: Bounds): Size {
   if (kind === 'toast') return { ...TOAST_SIZE }
   if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) return { ...ALERT_SIZE }
-  return { ...DEFAULT_SIZE }
+  return workArea ? meterSize(workArea) : { ...DEFAULT_SIZE }
 }
 
 /**
@@ -123,6 +143,51 @@ const GUTTER = 10
 export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => !isNotifierOverlayKind(k))
 
 /**
+ * How many uniform slots of this height stack between the bottom and top margins of a work area.
+ * Always at least one — a display shorter than a single overlay still has to place it somewhere,
+ * and the final clamp in `defaultOverlayBounds` keeps it on-screen.
+ */
+function rowsThatFit(height: number, workArea: Bounds): number {
+  return Math.max(1, Math.floor((workArea.height - 2 * MARGIN + GUTTER) / (height + GUTTER)))
+}
+
+/**
+ * How many columns of this width fit walking LEFT from the right margin. Column `c` starts at
+ * `workArea.width - width - MARGIN - c * (width + GUTTER)` measured from the work area's left
+ * edge, so it fits while that expression is >= 0. Always at least one, for the same reason as above.
+ */
+function colsThatFit(width: number, workArea: Bounds): number {
+  return Math.max(1, Math.floor((workArea.width - MARGIN - width) / (width + GUTTER)) + 1)
+}
+
+/**
+ * THE SHRINK LADDER. Rungs are tried largest-first and the first one whose grid holds every meter
+ * kind wins, so a display that can seat the full stack never leaves the top rung.
+ *
+ * It is a fixed ladder rather than a solved equation because the fit is a step function of both
+ * dimensions (floor() twice) and a two-variable search would answer with sizes nobody chose. Five
+ * rungs down to 70 % is enough for every display this app can be opened on: at 0.7 the slot is
+ * 266x224 and a 1366x728 work area seats 4 columns x 3 rows = 12 of them. The bottom rung is
+ * returned even if it still does not fit — an overlay that is slightly too big is a better answer
+ * than a postage stamp, and `defaultOverlayBounds` clamps every window on-screen regardless.
+ */
+const SHRINK_LADDER = [1, 0.85, 0.8, 0.75, 0.7] as const
+
+/** The uniform meter size for one display: the largest ladder rung whose grid seats every kind. */
+function meterSize(workArea: Bounds): Size {
+  const needed = METER_KINDS.length
+  for (const scale of SHRINK_LADDER) {
+    const size = {
+      width: Math.round(DEFAULT_SIZE.width * scale),
+      height: Math.round(DEFAULT_SIZE.height * scale)
+    }
+    if (colsThatFit(size.width, workArea) * rowsThatFit(size.height, workArea) >= needed) return size
+  }
+  const last = SHRINK_LADDER[SHRINK_LADDER.length - 1]
+  return { width: Math.round(DEFAULT_SIZE.width * last), height: Math.round(DEFAULT_SIZE.height * last) }
+}
+
+/**
  * Where a kind's window goes when it has no persisted bounds: docked bottom-right, offset upward
  * past every kind stacked below it (whether or not those are currently open — the slot is
  * RESERVED so positions stay stable and predictable), wrapping into a fresh column to the left
@@ -132,15 +197,12 @@ export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => !isNotifie
 export function defaultOverlayBounds(kind: OverlayKind, workArea: Bounds): Bounds {
   if (kind === 'toast') return toastBounds(workArea)
   if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) return alertBounds(kind, workArea)
-  const size = overlayDefaultSize(kind)
-  // A notifier holds no slot in the meter stack (each lives in its own lane), so it must not
+  const size = overlayDefaultSize(kind, workArea)
+  // A NOTIFIER holds no slot in the meter stack (each lives in its own lane), so it must not
   // consume an index either — otherwise adding one would shift every meter's reserved slot.
   const idx = Math.max(0, METER_KINDS.indexOf(kind))
   // How many uniform slots fit between the bottom and top margins of this work area.
-  const perColumn = Math.max(
-    1,
-    Math.floor((workArea.height - 2 * MARGIN + GUTTER) / (size.height + GUTTER))
-  )
+  const perColumn = rowsThatFit(size.height, workArea)
   const col = Math.floor(idx / perColumn)
   const row = idx % perColumn
   const x = workArea.x + workArea.width - size.width - MARGIN - col * (size.width + GUTTER)

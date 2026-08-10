@@ -27,7 +27,12 @@ import { logError } from './errorLog'
 import { defaultOverlayBounds, overlayDefaultSize } from './overlayLayout'
 import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
-import { getGraphicsPrefs, getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
+import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
+import { resolvedGraphics } from './graphics'
+import { getOverlayConfig, getWindowBounds, setOverlayConfig, setWindowBounds } from './store'
+// The main window's text size (JOS-123). Its own module because store.ts is at the 400-code-line
+// ceiling — see the banner there.
+import { getUiScale } from './uiScale'
 import { TRANSPARENT_OVERLAY_BG, overlayBackgroundColor } from '../shared/graphicsPrefs'
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
 import { isNotifierOverlayKind } from '../shared/alertOverlays'
@@ -224,68 +229,22 @@ export function hardenSession(ses: Electron.Session): void {
   ses.setDevicePermissionHandler(() => false)
 }
 
+// The webContents error capture (Task #13) and the console forwarder moved to
+// `./windowErrors.ts` when this file reached the 400-code-line ceiling — a split, not a widened
+// threshold. This file keeps what it is about: creating windows, and the trust boundary.
+
 /**
- * Forward renderer console warnings/errors (level >= 2) into main stdout +
- * errors.log so agents reading the dev task output see renderer-side errors too.
- * level: 0=verbose 1=info 2=warning 3=error.
+ * Draw the main window at `scale` NOW (JOS-123 — shared/uiScale.ts). No-op when there is no
+ * window, like every other push in this file.
  *
- * Electron's `console-message` listener is five positional arguments wide; the four fields
- * are taken as a rest tuple so the callback stays inside the project's max-params ceiling.
- * `tag` is the errors.log source tag ('renderer:console' / 'overlay:console').
+ * It lives here rather than in the IPC handler for the reason stated at the top of the file:
+ * nothing outside this module reaches for a BrowserWindow, so "which window does the text size
+ * apply to" is answered in one place. The answer is the MAIN window and only the main window —
+ * the overlays scale their own content through the per-kind `textScale` and must not be zoomed
+ * out from under it.
  */
-function forwardConsoleMessages(wc: Electron.WebContents, tag: string): void {
-  wc.on('console-message', (_e, ...rest) => {
-    const [level, message, line, sourceId] = rest
-    if (level < 2) return
-    logError(tag, { level, message, source: `${sourceId}:${line}` })
-  })
-}
-
-/**
- * webContents error capture for the MAIN window (Task #13). Each of these would otherwise
- * leave a blank window with no console trace. Log everything to errors.log + dev stdout, and
- * self-heal once where it's safe.
- */
-function captureMainWindowErrors(wc: Electron.WebContents): void {
-  // The renderer process died/crashed (OOM, GPU crash, killed). Log the reason,
-  // then reload the window ONCE so a transient crash doesn't strand the user.
-  let renderProcessReloaded = false
-  wc.on('render-process-gone', (_e, details) => {
-    logError('main:render-process-gone', details)
-    if (!renderProcessReloaded && mainWindow && !mainWindow.isDestroyed()) {
-      renderProcessReloaded = true
-      logError('main:render-process-gone', 'reloading window once to recover')
-      mainWindow.reload()
-    }
-  })
-
-  // The page (or dev server) failed to load. Retry ONCE — most common in dev when
-  // the window opens a beat before electron-vite's renderer server is ready.
-  // (Rest tuple for the same max-params reason as forwardConsoleMessages.)
-  let didFailReloaded = false
-  wc.on('did-fail-load', (_e, ...rest) => {
-    const [errorCode, errorDescription, validatedURL, isMainFrame] = rest
-    // errorCode -3 (ABORTED) is a benign navigation cancel; don't spam or retry.
-    if (errorCode === -3) return
-    logError('main:did-fail-load', { errorCode, errorDescription, validatedURL, isMainFrame })
-    if (isMainFrame && !didFailReloaded && mainWindow && !mainWindow.isDestroyed()) {
-      didFailReloaded = true
-      setTimeout(() => {
-        if (!mainWindow || mainWindow.isDestroyed()) return
-        const url = process.env.ELECTRON_RENDERER_URL
-        if (url) void mainWindow.loadURL(url)
-        else void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-      }, 300)
-    }
-  })
-
-  // A preload script threw while initializing (the contextBridge/api is then
-  // missing — a classic invisible cause of a broken renderer).
-  wc.on('preload-error', (_e, preloadPath, error) => {
-    logError('main:preload-error', { preloadPath, error })
-  })
-
-  forwardConsoleMessages(wc, 'renderer:console')
+export function applyMainWindowScale(scale: number): void {
+  getMainWindow()?.webContents.setZoomFactor(scale)
 }
 
 export function createMainWindow(): void {
@@ -302,7 +261,16 @@ export function createMainWindow(): void {
     frame: false,
     title: 'EQ Legends Companion',
     backgroundColor: '#0f1115',
-    webPreferences: WEB_PREFERENCES(join(__dirname, '../preload/index.js'))
+    webPreferences: {
+      ...WEB_PREFERENCES(join(__dirname, '../preload/index.js')),
+      // THE TEXT SIZE, APPLIED BEFORE THE FIRST PAINT (JOS-123). Not a second opinion about the
+      // trust boundary — `zoomFactor` is a rendering preference and the security posture above is
+      // spread in whole and unedited. It is set at CONSTRUCTION because the alternative (zoom the
+      // page once it has loaded) is a window that visibly resizes its own contents on every
+      // launch. Only this window carries it: the overlays and the cursor ring take
+      // WEB_PREFERENCES() unchanged.
+      zoomFactor: getUiScale()
+    }
   })
 
   // E2E: never show (and therefore never focus) the window — the harness drives it
@@ -323,8 +291,25 @@ export function createMainWindow(): void {
   // Give the renderer its initial state once the page is ready to receive it.
   mainWindow.webContents.on('did-finish-load', pushMaximized)
 
+  // NO SECOND `did-finish-load` LISTENER RE-STATING THE TEXT SIZE, AND THAT IS MEASURED (JOS-123).
+  // The first cut had one, on the theory that Chromium keeps zoom per ORIGIN and a reload or a
+  // dev-server navigation is where that bookkeeping is easiest to lose. Both halves of the theory
+  // turned out to be wrong, in opposite directions:
+  //   * IT WAS NOT NEEDED. The constructor's `zoomFactor` survives a reload of this window —
+  //     asserted in tests/e2e/text-size.e2e.mts, which reloads and re-measures rather than
+  //     assuming either way.
+  //   * IT WAS NOT FREE. A `setZoomFactor` call AFTER the page has loaded left this window in a
+  //     state where Playwright's actionability check ("visible, enabled and stable") never
+  //     completed: loadout-override.e2e.mts went from 30 s green to a 60 s timeout on its next
+  //     click, deterministically, with no other change in the tree. That is a hidden, never
+  //     composited window (EQ_E2E) whose rAF is already throttled to nothing — but a call that
+  //     buys nothing and can wedge a frame loop does not get to stay on the strength of a maybe.
+  // The setter still zooms the live window, because there the call is the whole point.
+
   // --- webContents error capture (Task #13) ---
-  captureMainWindowErrors(mainWindow.webContents)
+  // The window is passed as a GETTER: every guard inside fires long after this call returns, and
+  // must see the module's current `mainWindow` rather than the one that existed at wiring time.
+  captureMainWindowErrors(mainWindow.webContents, () => mainWindow)
 
   // Remember window position + size across restarts.
   const saveBounds = (): void => {
@@ -467,6 +452,8 @@ const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   'heal-fight': 'Fight Healing Overlay',
   'heal-overall': 'Zone Healing Overlay',
   toast: 'Celebration Overlay',
+  buffs: 'Buff Timer Overlay',
+  debuffs: 'Debuff Timer Overlay',
   alert: 'Alert Text Overlay'
 }
 
@@ -491,10 +478,16 @@ export function createOverlayWindow(kind: OverlayKind): void {
     if (windowsMayShow()) existing.show()
     return
   }
-  // OPAQUE-OVERLAY COMPATIBILITY MODE (JOS-40). Read here, at construction, because that is the
-  // only moment a window's transparency can be decided — which is exactly why the setting is
-  // documented as applying when an overlay is next opened rather than instantly.
-  const opaque = getGraphicsPrefs().opaqueOverlays
+  // OPAQUE-OVERLAY COMPATIBILITY MODE (JOS-40; automatic under Wine since JOS-31). Read here, at
+  // construction, because that is the only moment a window's transparency can be decided — which
+  // is exactly why the setting is documented as applying when an overlay is next opened rather
+  // than instantly. `resolvedGraphics()` is the switch AND the detection folded together: on a
+  // machine whose compositor turns a transparent frameless window into a black box, an untouched
+  // 'auto' arrives here as `true` without the user having found anything.
+  const opaque = resolvedGraphics().opaqueOverlays.on
+  // Recorded per NOTIFIER kind rather than in a toast-only boolean: the alert text lane is the
+  // second window that is empty at rest and has the same problem with an opaque build
+  // (src/main/notifierVisibility.ts).
   noteNotifierOpacity(kind, opaque)
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
@@ -698,6 +691,17 @@ export function setOverlaysHidden(hidden: boolean): void {
 //     has nothing to click, so pass-through is unconditional and permanent.
 //   * NO `-webkit-app-region` anywhere in its page — it is not draggable, and cannot become a
 //     window the user accidentally picks up while playing.
+//
+// AND ONE PROPERTY THIS FILE DELIBERATELY DOES NOT SET: ITS ZOOM (JOS-154). The ring's CSS pixels
+// have to be DIPs, because main sends it a DIP offset from this window's own origin to use as a
+// CSS translation — so the app's text size (`uiScale`, JOS-123) must not reach it. It used to,
+// and not through anything written here: `setZoomFactor` stores a zoom PER HOST, every page is
+// served from one host in development, and the ring inherited the main window's (measured on
+// Electron 43.2.0 — 1.0 to 1.25 on a main-window setZoomFactor). The pin is
+// `webFrame.setZoomLevel(0)` in `src/preload/cursor.ts`, which is a per-view TEMPORARY zoom and
+// therefore the only one that can hold this window still without moving the main window with it —
+// the full argument, and the two alternatives that were measured and rejected, are in that file's
+// header. Nothing to add to the BrowserWindow options below; the absence is the point.
 
 let cursorRingWindow: BrowserWindow | null = null
 

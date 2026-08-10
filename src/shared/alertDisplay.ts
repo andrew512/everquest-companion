@@ -28,7 +28,22 @@
 
 import type { AlertDef, AlertDisplay, AlertFont } from './alertTypes'
 import type { SpeechFiring } from './speechText'
-import { substitute, tidy } from './captures'
+// THE SAME TEMPLATE LANGUAGE THE SPOKEN PHRASE USES (JOS-103). `{token}` resolves against the
+// firing's captures, an undeclared token renders LITERALLY, and every captured value has already
+// been through `sanitizeCapture` — the threat model, the caps and the one-pass grammar all live
+// in alertCaptures.ts and are not re-derived here. Text on screen is a second consumer of that
+// namespace, not a second namespace: one syntax to learn, one place where its rules are written.
+import { applyCaptures } from './alertCaptures'
+
+/**
+ * Trim + collapse runs of whitespace. A local twin of speechText.ts's `tidy` rather than an import
+ * of it, because that one is module-private there and this module deliberately does not depend on
+ * the speech half — the two surfaces share a CAPTURE namespace (alertCaptures.ts), not a resolver.
+ * Two lines of identical whitespace policy is a smaller cost than that coupling.
+ */
+function tidy(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
 import { ALERT_OVERLAY_KINDS, isAlertOverlayKind, type AlertOverlayKind } from './alertOverlays'
 import type { OverlayKind } from './types'
 
@@ -254,7 +269,7 @@ export type DisplayDef = Pick<AlertDef, 'name' | 'display'>
 export function displayTextFor(def: DisplayDef, firing?: SpeechFiring | null): string | null {
   // Substitute BEFORE tidying, so the gap a dropped placeholder leaves collapses with the rest
   // rather than becoming a double space in the middle of the line.
-  const resolved = tidy(substitute(def.display?.text ?? '', firing?.captures))
+  const resolved = tidy(applyCaptures(def.display?.text ?? '', firing?.captures))
   const text = resolved || tidy(def.name)
   return text ? text.slice(0, MAX_DISPLAY_CHARS) : null
 }

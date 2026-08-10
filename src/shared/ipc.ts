@@ -10,7 +10,9 @@ export const IPC = {
   // ---- progress / inventory (per-character persisted state) ----
   getProgress: 'progress:get',
   reloadInventory: 'inventory:reload',
-  setQuestComplete: 'progress:setQuestComplete',
+  // renderer -> main: this quest's turn-ins, as the instants they happened at (JOS-131). It
+  // replaced `progress:setQuestComplete` when completion became a COUNT rather than a flag.
+  setQuestTurnIns: 'progress:setQuestTurnIns',
   // main -> renderer: progress changed (quest completion / inventory), so every
   // view that shows progress stays consistent without re-fetching on a timer.
   onProgress: 'progress:changed',
@@ -35,6 +37,10 @@ export const IPC = {
   getEqConfig: 'eqconfig:get',
   // renderer -> main: open the OS folder-picker; on pick, persist the override + re-list.
   pickEqDir: 'eqconfig:pick',
+  // renderer -> main: open the OS FILE-picker on `eqlog_*.txt` (JOS-82). Windows' folder
+  // picker shows no files at all, so the folder button alone cannot answer "I can see the
+  // log right there in Explorer". Same persist + re-list tail as pickEqDir.
+  pickEqLogFile: 'eqconfig:pickFile',
   // renderer -> main: set the override to an explicit dir (undefined/'' ⇒ auto-detect).
   setEqDir: 'eqconfig:set',
   // renderer -> main: clear the override (revert to auto-discovery).
@@ -488,8 +494,49 @@ export const IPC = {
   // renderer -> main: the persisted blob {safeMode, opaqueOverlays}. Returns GraphicsPrefs.
   graphicsPrefsGet: 'graphicsPrefs:get',
   // renderer -> main: merge-patch the blob. VALIDATED AT THE HANDLER through the same
-  // normalizer the store reader and the 9→10 migration use. Returns what was stored.
+  // normalizer the store reader and the 10→11 migration use. Returns what was stored.
   graphicsPrefsSet: 'graphicsPrefs:set',
+  // renderer -> main: what this MACHINE recommends, for a switch left on 'auto' (JOS-31).
+  // Returns a `GraphicsEnvironment` (shared/wineDetect.ts): whether a Wine prefix was detected,
+  // which signals said so, and the two booleans `resolveGraphics` folds against the stored prefs.
+  //
+  // A SEPARATE CHANNEL, not a fatter `graphicsPrefs:get`, because the two answer different
+  // questions with different lifetimes: the prefs change when the user flips a switch, and this is
+  // a fact about the launch that cannot change while the app is running. The renderer hydrates it
+  // once and re-folds locally through the SAME `resolveGraphics` main used, so the card can never
+  // describe a precedence the windows did not use.
+  graphicsEnvGet: 'graphicsPrefs:env',
+
+  // ---- the buff externals allowlist (JOS-140 — shared/buffTrust.ts) ----------------------
+  //
+  // WHOSE spells the buff/debuff model is allowed to track. It ships EMPTY — you and nobody else
+  // — because a landing sentence names no caster, so in a crowded zone the only thing separating
+  // your work from a stranger's is that you have a cast line and they do not. An allowlisted name
+  // gets the IDENTICAL rule, anchored on `<Name> begins casting <Spell>.`; it is never a looser
+  // one, and never something the app infers from proximity or from the group roster.
+  //
+  // renderer -> main: the persisted `{externals: string[]}`. Returns BuffTrustPrefs.
+  buffTrustGet: 'buffTrust:get',
+  // renderer -> main: replace the list. VALIDATED AT THE HANDLER through the same normalizer the
+  // store reader uses (the `graphicsPrefs:set` rule), and applied to the live model on the way
+  // through so a name added mid-session anchors the next cast rather than the next launch.
+  // Returns what was stored.
+  buffTrustSet: 'buffTrust:set',
+
+  // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
+  //
+  // The main window's zoom factor: the Preferences control a player asked for after reporting
+  // they could barely read the app. The floating overlays are NOT on this channel and never
+  // were — they carry their own `textScale` inside the per-kind overlay config, because an
+  // overlay scales only its reading matter and keeps its chrome laid out against a small window.
+  //
+  // renderer -> main: the persisted factor. Returns a number (1 on every store that predates it).
+  uiScaleGet: 'uiScale:get',
+  // renderer -> main: store a factor and APPLY it to the live window in the same call. Unlike the
+  // graphics switches above this one takes effect immediately, which is not a courtesy: a size
+  // control you have to relaunch to evaluate cannot be evaluated. Returns what was stored, snapped
+  // to the ladder by the same normalizer the store reader and the window factory use.
+  uiScaleSet: 'uiScale:set',
 
   // ---- dev restart (JOS-61, JOS-63 — src/main/devRestart.ts) ----------------------------
   //

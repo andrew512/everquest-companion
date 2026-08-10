@@ -15,9 +15,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DEFAULT_TOAST_CONFIG,
+  TOAST_INTRO_BODY,
+  TOAST_INTRO_ID,
+  TOAST_INTRO_MS,
   TOAST_MAX_DURATION_MS,
   TOAST_MAX_LINES,
   TOAST_MAX_TEXT,
+  TOAST_MIN_DURATION_MS,
+  introToastPayload,
   normalizeToastConfig,
   toastItemCard,
   validateToastRequest
@@ -208,8 +213,10 @@ test('an item we know nothing about still draws — as its NAME, with no invente
 test('the toast config is TIMING ONLY — a card has no voice of its own', () => {
   // Owner, 2026-08-05: "remove the sound controls from preferences, they are already covered by
   // Alerts module." The config shipped with {sound, volume, durationMs} and a Silent default,
-  // which made the picker a way to hear the same boss kill twice. One knob is left.
-  assert.deepEqual(DEFAULT_TOAST_CONFIG, { durationMs: 6000 })
+  // which made the picker a way to hear the same boss kill twice. One knob is left — plus the
+  // introduction's own remembered bit (JOS-83), which is state and not a preference: it is never
+  // shown in Preferences and the only thing that writes it is the overlay showing the card.
+  assert.deepEqual(DEFAULT_TOAST_CONFIG, { durationMs: 6000, introduced: false })
 })
 
 test('a stored config is normalized: the duration is clamped, retired keys are dropped', () => {
@@ -225,5 +232,54 @@ test('a stored config is normalized: the duration is clamped, retired keys are d
     volume: 0.4,
     durationMs: 7000
   })
-  assert.deepEqual(stored, { durationMs: 7000 })
+  assert.deepEqual(stored, { durationMs: 7000, introduced: false })
+})
+
+// ---- the introduction card (JOS-83) ---------------------------------------------------
+//
+// A brand-new user met the celebration strip as an unlabelled rectangle, took the app for broken
+// and uninstalled it. The overlay now introduces itself once, and what that card must SAY is a
+// contract rather than a matter of taste: it names the program, it says the window is not the
+// game's, and it points at the switch.
+
+test('the introduction card NAMES THE APP and points at the way out', () => {
+  const p = introToastPayload()
+  assert.equal(p.id, TOAST_INTRO_ID)
+  assert.equal(p.kind, 'intro')
+  // The report is "I could not tell what this window was", so the app's name in the title is the
+  // literal fix — not a decoration to be reworded away.
+  assert.match(p.title, /EQ Legends Companion/)
+  assert.match(p.subtitle ?? '', /appear here/)
+  // …and the body says whose window it is, and both exits: the × on the card, and Preferences.
+  assert.match(TOAST_INTRO_BODY, /EQ Legends Companion/)
+  assert.match(TOAST_INTRO_BODY, /not to EverQuest/)
+  assert.match(TOAST_INTRO_BODY, /Preferences/)
+})
+
+test('the introduction holds LONGER than a celebration, but is still bounded', () => {
+  const p = introToastPayload()
+  // A card on screen captures the mouse over the strip (ToastOverlay.useMouseCapture), so an
+  // introduction that waited forever for a click would be a permanent hole in the game's input.
+  assert.equal(p.durationMs, TOAST_INTRO_MS)
+  assert.ok(TOAST_INTRO_MS > DEFAULT_TOAST_CONFIG.durationMs, 'longer than an ordinary card')
+  assert.ok(TOAST_INTRO_MS <= TOAST_MAX_DURATION_MS, 'never longer than a card may ever hold')
+  assert.ok(TOAST_INTRO_MS >= TOAST_MIN_DURATION_MS)
+})
+
+test('the introduction is RENDERER-LOCAL: `intro` is not a kind the wire accepts', () => {
+  // The overlay builds this card for itself out of its own persisted config; it never crosses
+  // `toast:show`. Admitting the kind at the handler would only widen what a renderer can ask
+  // main to draw, so the validator must keep refusing it.
+  const p = introToastPayload()
+  assert.equal(validateToastRequest({ ...p }), null)
+})
+
+test('`introduced` reads false for every store written before it existed — only a literal true counts', () => {
+  // The whole point of the field is that a store which has never heard of it OWES the user the
+  // introduction: those installs are exactly the population that has been living with an
+  // unlabelled strip. Nothing but `true` may cancel that debt.
+  assert.equal(normalizeToastConfig({ durationMs: 6000 }).introduced, false)
+  assert.equal(normalizeToastConfig({ introduced: 'yes' }).introduced, false)
+  assert.equal(normalizeToastConfig({ introduced: 1 }).introduced, false)
+  assert.equal(normalizeToastConfig({ introduced: true }).introduced, true)
 })

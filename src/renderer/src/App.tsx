@@ -2,7 +2,7 @@ import { type JSX, useEffect, useState } from 'react'
 import { Box, CssBaseline, Snackbar, Alert } from '@mui/material'
 import ShieldMoonIcon from '@mui/icons-material/ShieldMoon'
 import EmojiEventsIcon2 from '@mui/icons-material/EmojiEvents'
-import type { AppFocus, CharacterRef } from '@shared/types'
+import type { AppFocus, CharacterDelta, CharacterRef, CharacterSnap } from '@shared/types'
 import TitleBar from './components/TitleBar'
 import NavDrawer from './components/NavDrawer'
 import NoLogsEmptyState from './components/NoLogsEmptyState'
@@ -42,6 +42,8 @@ import { TelemetryNotice } from './features/preferences/TelemetryNotice'
 // the bottom edge, never a modal — and renders nothing unless this launch is the first one after
 // an update. See features/whatsnew/WhatsNewTeaser.tsx.
 import { WhatsNewTeaser } from './features/whatsnew/WhatsNewTeaser'
+import { setCurrentView } from './lib/currentView'
+import { useModule } from './lib/useModule'
 import { dwellView, useViewDwell } from './lib/telemetry'
 import AlertPlayer, { fireAppSignal } from './features/alerts/player'
 import { getBossData } from './data'
@@ -312,28 +314,45 @@ function useAppCelebrations(
   // every level the character ever gained) and joins its counts to the combo at the ding's ts.
   useLevelUpToast()
 
+  // WHERE YOU ARE, from the module that owns that question (the ZoneStrip precedent). Read as a
+  // plain value, not a ref: `useBossKills` refreshes its callback from every render before its
+  // effect runs, so the closure below always holds the zone of the render the kill arrived in.
+  const zone = useModule<CharacterSnap, CharacterDelta>('character', (s, d) => ({ ...s, ...d }))?.zone
+
   useBossKills(bossData.targets, {
-    onKill: (s) => {
+    // THE TIER OF THIS KILL, AND THE INSTANCE IT HAPPENED IN (JOS-165). This block used to print
+    // `tierStyle(s.bestTier)` and the roster's static zone — the target's ALL-TIME summary, which
+    // is the right thing for the boss card and a false sentence on a per-event toast: the owner
+    // clears d0 through d4 every week, so a Sunday d1 kill announced itself "D4 · Refined" all
+    // the way back to the first Saturday he beat it at d4. The tier now comes off the KILL
+    // (bossStatus.BossKill) and the zone off the CHARACTER module, so the toast says the instance
+    // you were standing in — raw, as the game spells it (law 2), which is also the only way to
+    // tell "- Solo 1 (Awakened)" from "- Group 2 (Awakened)". Only the toast changed: the card
+    // badge still means highest-ever, because a card is a summary.
+    onKill: ({ status: s, tier }) => {
       onDefeat(s)
       fireAppSignal('bossDefeat', s.target.name)
       window.eq.showToast({
         id: `boss:${s.target.name}:${String(s.lastTs)}`,
         kind: 'bossKill',
         title: `${s.target.name} defeated`,
-        subtitle: [tierStyle(s.bestTier).long, s.target.zone].filter(Boolean).join(' · ')
+        // A zone we have never seen a line for falls back to the roster's — never invented.
+        subtitle: [tierStyle(tier).long, zone ?? s.target.zone].filter(Boolean).join(' · ')
       })
     }
   })
 
   useProgress({
-    onQuestComplete: (q) => {
+    onQuestComplete: (q, count) => {
       onQuestComplete(q.name)
       fireAppSignal('questComplete', q.name)
       // The celebration toast (docs/plans/celebration-toasts.md T4) rides the SAME detector as
       // the sound and the snackbar — one live-only gate, three surfaces. The reward is sent by
       // NAME; main resolves the item card, because the overlay fetches nothing.
+      // THE COUNT IS IN THE ID (JOS-131): a Sky quest can be run again, and the overlay keys its
+      // cards by id, so the second turn-in of one quest has to be a second card.
       window.eq.showToast({
-        id: `quest:${q.className}::${q.name}`,
+        id: `quest:${q.className}::${q.name}#${String(count)}`,
         kind: 'skyQuestComplete',
         title: `Quest complete: ${q.name}`,
         subtitle: q.giver ? `${q.className} · turned in to ${q.giver}` : q.className,
@@ -464,6 +483,15 @@ export default function App(): JSX.Element {
   // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop
   // every counter with it (JOS-45; `dwellView` states the rule).
   useViewDwell(dwellView(view))
+
+  // …and the same fact, kept for the ERROR reporter (JOS-100). It is a separate mechanism on
+  // purpose: `useViewDwell` reports the view you LEFT, on a switch, which is exactly the wrong
+  // answer for "which tab was open when it broke". This is a plain module variable because its
+  // readers — the global error handlers in main.tsx and ErrorBoundary — run at moments when the
+  // React tree is not something to rely on. An UNRELEASED view sets it too and is folded to
+  // `unknown` by main's closed-enum check, which is the right outcome: an error there is worth
+  // reporting even though the view id is not.
+  setCurrentView(view)
 
   useEffect(() => {
     void window.eq.getCharacter().then(setCharacter)

@@ -81,7 +81,7 @@ export const SCHEMA_VERSION_KEY = 'schemaVersion'
  * The schema the code running right now expects. Bump by exactly one whenever a persisted
  * shape changes, and add the matching MIGRATIONS entry in the same commit.
  */
-export const CURRENT_SCHEMA_VERSION = 10
+export const CURRENT_SCHEMA_VERSION = 11
 
 export interface Migration {
   /** Version this step produces. Steps run in ascending `to` order, contiguously. */
@@ -492,11 +492,60 @@ const migrateToV9: Migration = {
 // Same treatment as 4→5, 5→6 and 6→7: every reader defaults, so a v9 store boots fine without
 // this step — it ships so a v10 store is a PROMISE that whatever is in the key is a complete
 // block. A malformed value is replaced by the documented default, never coerced.
+//
+// IT NORMALIZES LOCALLY RATHER THAN THROUGH `normalizeGraphicsPrefs`, AND THAT IS THE APPEND-ONLY
+// LAW, NOT A DUPLICATION SLIP (JOS-31). This step used to call the shared normalizer, which was
+// correct for exactly as long as the shared normalizer produced the v10 shape. JOS-31 changed that
+// shape (booleans → 'auto' | 'on' | 'off'), so a step that kept calling it would silently start
+// emitting a v11 block while claiming to have produced a v10 one — and the 10 → 11 step below,
+// whose whole job is to read the v10 booleans and decide what they MEANT, would find strings.
+// A shipped step's output is frozen; these two lines are what freezing it costs. (`=== true` is
+// the original `typeof x === 'boolean' ? x : false` exactly — every non-`true` value, readable or
+// not, was and is `false` here.)
 const migrateToV10: Migration = {
   to: 10,
   describe: 'add the graphics prefs blob (software rendering + opaque overlays, both off)',
   migrate(data) {
-    data.graphics = normalizeGraphicsPrefs(data.graphics)
+    const v = isPlainObject(data.graphics) ? data.graphics : {}
+    data.graphics = { safeMode: v.safeMode === true, opaqueOverlays: v.opaqueOverlays === true }
+    return data
+  }
+}
+
+// ------------------------------- 10 → 11: the graphics switches gain an `auto` state (JOS-31)
+//
+// A Wine user reported the celebration overlay becoming a stuck black box after a level-up
+// (01KZGQZJ2HMZGRY28A7CVRG4QT, v0.7.0), which is the JOS-40 family arriving through Wine's
+// compositor rather than through a driver. The fix is that the app DETECTS the prefix and takes
+// the compatibility path by itself — and a two-state switch cannot express that, because it has
+// no way to say "the user refused". So each switch becomes 'auto' | 'on' | 'off'
+// (shared/graphicsPrefs.ts) and this step decides what each stored boolean MEANT.
+//
+// `false` BECOMES 'auto', AND THAT IS THE ONE JUDGEMENT IN THIS FILE WORTH ARGUING ABOUT. It is
+// the same argument the 8 → 9 step made about the toast: `graphics` was WRITTEN ON EVERY LAUNCH
+// that ran the 9 → 10 step, not when somebody reached for a switch, so a stored `false` is
+// overwhelmingly yesterday's default written down rather than a person declining anything. Reading
+// all of them as an explicit refusal would mean every Wine install that ever ran a v10 build is
+// permanently excluded from the fix this ticket exists to deliver — a fix they cannot discover,
+// because the symptom is that they cannot see the window that holds the switch.
+//
+// `true` STAYS 'on'. Nothing but a deliberate act ever wrote it, and detection must never be able
+// to take a switch away from somebody who asked for it. That asymmetry is the whole step: the
+// value that could only be a choice is preserved as a choice, and the value that was equally a
+// choice and a default is handed to the thing that can tell them apart at runtime.
+//
+// WHAT THIS WILL NEVER DO AGAIN, in the 8 → 9 step's words: it is a one-time reinterpretation of a
+// shape, pinned to this one version step. A user who turns a switch off tomorrow writes 'off' into
+// a v11 store, and no future step gets to decide that they did not mean it.
+const migrateToV11: Migration = {
+  to: 11,
+  describe: "graphics switches become 'auto'|'on'|'off' (a stored false was the default, so: auto)",
+  migrate(data) {
+    const v = isPlainObject(data.graphics) ? data.graphics : {}
+    data.graphics = normalizeGraphicsPrefs({
+      safeMode: v.safeMode === true ? 'on' : 'auto',
+      opaqueOverlays: v.opaqueOverlays === true ? 'on' : 'auto'
+    })
     return data
   }
 }
@@ -515,7 +564,8 @@ export const MIGRATIONS: readonly Migration[] = [
   migrateToV7,
   migrateToV8,
   migrateToV9,
-  migrateToV10
+  migrateToV10,
+  migrateToV11
 ]
 
 /** Version recorded in `data`; anything absent, non-integer or < 1 means "pre-framework" ⇒ 1. */
@@ -685,7 +735,7 @@ function quarantineStore(storePath: string, hooks: MigrationHooks): StoreFileMig
   try {
     renameSync(storePath, quarantine)
     hooks.error?.(
-      `store schema: ${storePath} is not valid JSON — moved to ${quarantine} and starting from defaults`
+      `store schema: ${storePath} is not valid JSON - moved to ${quarantine} and starting from defaults`
     )
     return { ...startsCurrent(), path: storePath, wrote: false, fileMissing: true, quarantinedPath: quarantine }
   } catch (err) {
@@ -769,7 +819,7 @@ export function migrateStoreFile(storePath: string, hooks: MigrationHooks = {}):
   if (outcome.status === 'future') {
     hooks.error?.(
       `store schema: ${storePath} is at v${outcome.from} but this build only knows v${CURRENT_SCHEMA_VERSION}. ` +
-        'Leaving it untouched and running best-effort — a downgrade never rewrites a newer store.'
+        'Leaving it untouched and running best-effort - a downgrade never rewrites a newer store.'
     )
     return result
   }

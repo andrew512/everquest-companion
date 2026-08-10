@@ -31,6 +31,8 @@
 
 import type { EqModule, ModuleDelta } from './types'
 import type { LogBus, LogEventListener } from '../log/bus'
+// A leaf with no imports of its own (see its header), so this cannot participate in a cycle.
+import { noteReplaying } from '../telemetry/breadcrumbs'
 
 const FLUSH_THROTTLE_MS = 100
 
@@ -160,6 +162,10 @@ export class ModuleRegistry {
       this.flushTimer = null
     }
     this.replaying = true
+    // AN ERROR REPORT'S `mode` READS FROM THIS BRACKET (JOS-100), not from a per-event `live`
+    // flag — the JOS-60 rule that a replay is a STATE, applied to one more consumer. Two
+    // sources of truth for "are we replaying" is how one of them ends up wrong.
+    noteReplaying(true)
   }
 
   /**
@@ -173,6 +179,7 @@ export class ModuleRegistry {
   endReplay(): void {
     if (!this.replaying) return
     this.replaying = false
+    noteReplaying(false)
     for (const mod of this.modules) mod.flushDelta()
   }
 

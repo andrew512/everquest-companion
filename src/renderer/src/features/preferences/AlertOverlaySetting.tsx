@@ -198,7 +198,7 @@ export function AlertOverlaySetting(): JSX.Element {
         <Typography variant="caption" color="text.secondary">
           {state.open
             ? 'Alerts set to “Show it on screen” put their line here and it fades on its own. Several at once stack rather than replacing each other. Clicks always pass straight through to the game.'
-            : 'Off. Alerts still fire and still make whatever sound they make — nothing appears over the game.'}
+            : 'Off. Alerts still fire and still make whatever sound they make - nothing appears over the game.'}
         </Typography>
       </Stack>
 
@@ -218,7 +218,7 @@ export function AlertOverlaySetting(): JSX.Element {
         <Typography variant="caption" color="text.secondary">
           {state.locked
             ? 'The lane sits where you left it and clicks pass straight through to the game.'
-            : 'The lane is showing its outline — drag it anywhere. Turn this off (or press Done) when it sits where you want it.'}
+            : 'The lane is showing its outline - drag it anywhere. Turn this off (or press Done) when it sits where you want it.'}
         </Typography>
       </Stack>
 

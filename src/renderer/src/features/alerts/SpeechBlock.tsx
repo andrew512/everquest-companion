@@ -1,19 +1,11 @@
-// SpeechBlock — the alert editor's SPEECH half (docs/plans/voice-alerts.md §4): what a speaking
-// alert says and in whose voice, plus the CHANNEL CHOICE that decides whether it speaks at all.
+// SpeechBlock — the alert editor's SPEECH half (docs/plans/voice-alerts.md §4): which audio
+// channel this alert uses, what it says, in whose voice, and whether it may be swallowed by the
+// cross-alert audio throttle.
 //
 // Its own file because AlertDialog.tsx is already at the factoring ceiling, and because this
 // block is a self-contained sub-form: `useSpeechForm` owns its four fields, `speechFieldsFor`
 // turns them back into the def's optional keys, and the component is the rendering. AlertDialog
 // composes the three.
-//
-// TWO EXPORTED PIECES, DELIBERATELY SPLIT, because the dialog interleaves them with a section
-// this file knows nothing about:
-//   `AudioActionSection` — the channel (sound | speech | both) + the throttle opt-out. The dialog
-//     renders it ABOVE both the Sound picker and this block, because it is the question that
-//     decides which of the two is relevant.
-//   `SpeechBlock` (default) — the Voice section proper, rendered only when the channel speaks.
-// `playsSound`/`speaks` are the mapping between them, so the dialog's show/hide and the firing
-// path's own reading of `audio` can never drift apart.
 //
 // THE PREVIEW IS LIVE AND NEEDS NO FIRING. `speechTextFor(def, firing?)` is pure and takes an
 // OPTIONAL firing precisely so this line can be resolved while the user types (W1's contract) —
@@ -41,18 +33,29 @@ import {
 import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import type { AlertAudio, AlertDef, AlertSpeech, SpeechMode } from '@shared/types'
-import { ALERT_AUDIO_ACTIONS, MAX_SPEECH_CHARS, SPEECH_MODES, speechTextFor } from '@shared/speechText'
 import {
-  NO_CAPTURES,
-  PlaceholderChips,
-  sampleCaptures,
-  unknownPlaceholderNote,
-  unknownPlaceholders as unknownIn,
-  type CaptureHints
-} from './placeholders'
+  ALERT_AUDIO_ACTIONS,
+  MAX_SPEECH_CHARS,
+  SPEECH_MODES,
+  speechTextFor
+} from '@shared/speechText'
+import { tokensIn } from '@shared/alertCaptures'
 import { currentVoicePrefs, speak } from '../../lib/speech'
 import { useVoiceOptions } from '../../lib/useVoices'
 import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
+
+/**
+ * DOES THIS ALERT PLAY ITS PACK SOUND? The dialog asks, because it owns the Sound picker and must
+ * not offer one to an alert that will never play it — nor refuse a save for want of it
+ * (alert-text-overlays D1; the rule 8622f2b established for the 'speech' channel, which 'silent'
+ * makes matter again).
+ *
+ * Membership rather than `!== 'speech'`, for the reason `speaks` gives below: an unlisted future
+ * channel hides the section instead of showing one that does nothing.
+ */
+export function playsSound(f: Pick<SpeechForm, 'audio'>): boolean {
+  return f.audio === 'sound' || f.audio === 'both'
+}
 
 /** Human labels for the audio-action selector. Keyed off the closed union, never free text. */
 const AUDIO_LABELS: Record<AlertAudio, string> = {
@@ -155,75 +158,14 @@ export function speechFieldsFor(f: SpeechForm): Pick<AlertDef, 'audio' | 'speech
   }
 }
 
-/**
- * WHICH SECTIONS THE CHANNEL GOVERNS — the whole of "the Sound options may not be relevant",
- * as two predicates rather than as two `!==` scattered through a JSX tree.
- *
- * They are the same reading `speechPlan` (lib/speech.ts) makes at FIRE time, which is the point:
- * the dialog shows exactly the sections that will be used, so a control on screen is a control
- * that does something and a control that does something is on screen.
- *   'sound'  → the pack sound only.
- *   'speech' → the utterance only; the sound is kept on the def but never played.
- *   'both'   → the sound, then the utterance queued behind it (voice-alerts D5).
- *   'silent' → neither (alert-text-overlays D1). The alert still FIRES — it just does so where
- *              you can see it rather than hear it.
- *
- * STATED POSITIVELY, and that is load-bearing rather than style. These were `!== 'speech'` and
- * `!== 'sound'`, which is the same answer for three members and the WRONG one for a fourth:
- * 'silent' satisfies `!== 'speech'`, so a sound picker would have opened for an alert that makes
- * no sound — and `formCanSave`'s `soundReady` keys off this predicate, so it would then have
- * refused to save without one. Written as membership, an unlisted future member hides both
- * sections instead of showing both, which is the safe way round.
- */
-export function playsSound(f: SpeechForm): boolean {
-  return f.audio === 'sound' || f.audio === 'both'
-}
-export function speaks(f: SpeechForm): boolean {
-  return f.audio === 'speech' || f.audio === 'both'
-}
-
-// The `$<name>` machinery moved to ./placeholders when the Show-on-screen block became the
-// second field that takes a template. `CaptureHints` is re-exported so AlertDialog and every
-// other existing importer keep their path.
-export type { CaptureHints }
-
-/**
- * The resolved sentence this alert will speak — W1's editor-preview contract, now resolved
- * against `hints` so a phrase with placeholders previews as prose.
- *
- * A placeholder the trigger does NOT offer resolves to nothing here, exactly as it would at fire
- * time. That is deliberate feedback, and `unknownPlaceholders` below names it out loud.
- */
-export function previewTextFor(name: string, f: SpeechForm, hints: CaptureHints = NO_CAPTURES): string | null {
+/** The resolved sentence this alert will speak, with no firing — W1's editor-preview contract. */
+export function previewTextFor(name: string, f: SpeechForm): string | null {
   const fields = speechFieldsFor(f)
-  const def = { name, ...(fields.speech ? { speech: fields.speech } : {}) }
-  return speechTextFor(def, { captures: sampleCaptures(hints.names) })
+  return speechTextFor({ name, ...(fields.speech ? { speech: fields.speech } : {}) }, null)
 }
 
-/**
- * Placeholders the phrase names that this trigger cannot fill. The general rule lives in
- * ./placeholders; what is left here is the one part that IS about speech — only 'custom' mode
- * takes a template at all, so in any other mode there is nothing to be wrong about.
- */
-export function unknownPlaceholders(f: SpeechForm, hints: CaptureHints): string[] {
-  if (f.mode !== 'custom') return []
-  return unknownIn(f.phrase, hints)
-}
-
-/**
- * THE CHANNEL CHOICE — audio-channel selector + the always-play opt-out.
- *
- * EXPORTED, and rendered by AlertDialog ABOVE the two sections it governs rather than buried in
- * the Voice block below them. It is the question that decides whether Sound and Voice are
- * relevant at all, so it has to be asked first; a user who picks "Speak it" should never have
- * scrolled past a sound picker that will not be used to find out.
- *
- * BOTH CONTROLS BELONG TO EVERY ALERT, which is why they are here and not in either dependent
- * section: the channel is the choice itself, and `alwaysPlay` opts out of the cross-alert audio
- * throttle whichever channel it comes out of (audioThrottle.ts — one occupancy, not one per
- * channel).
- */
-export function AudioActionSection({ form }: { form: SpeechForm }): JSX.Element {
+/** Audio-channel selector + the always-play opt-out. Both apply whether or not speech is on. */
+function AudioActionRow({ form }: { form: SpeechForm }): JSX.Element {
   return (
     <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
       <Box sx={{ minWidth: 200 }}>
@@ -259,18 +201,50 @@ export function AudioActionSection({ form }: { form: SpeechForm }): JSX.Element 
   )
 }
 
-/** Mode picker + live preview + (custom only) the capped phrase field and its placeholders. */
+/**
+ * WHAT `{tokens}` THIS ALERT MAY WRITE, and which ones its pattern does not actually declare
+ * (JOS-103).
+ *
+ * The readable form of control 4 in shared/alertCaptures.ts's threat model: a token resolves ONLY
+ * if the def's own pattern declared a matching named group, so the set of values this alert can
+ * ever speak is a finite list that can be printed. It matters most for a def that arrived in
+ * somebody else's share string — you can see what it is able to say without reading the regex.
+ *
+ * The unknown-token line is a WARNING, never a save block: an unresolved token renders literally,
+ * which is a legible sentence rather than a broken alert, and a user mid-edit should not be
+ * stopped from typing `{pl` on the way to `{player}`.
+ */
+function CaptureHint({ phrase, captureNames }: { phrase: string; captureNames: string[] }): JSX.Element | null {
+  const used = tokensIn(phrase)
+  const unknown = used.filter((t) => !captureNames.includes(t))
+  if (captureNames.length === 0 && unknown.length === 0) return null
+  return (
+    <Box data-testid="alert-speech-captures">
+      {captureNames.length > 0 && (
+        <Typography variant="caption" color="text.secondary" display="block">
+          {`This alert’s pattern captures: ${captureNames.map((n) => `{${n}}`).join(' ')} - write one in the phrase to speak it.`}
+        </Typography>
+      )}
+      {unknown.length > 0 && (
+        <Typography variant="caption" color="warning.main" display="block">
+          {`${unknown.map((n) => `{${n}}`).join(' ')} ${unknown.length === 1 ? 'is not' : 'are not'} captured by this alert’s pattern - spoken as written.`}
+        </Typography>
+      )}
+    </Box>
+  )
+}
+
+/** Mode picker + live preview + (custom only) the capped phrase field. */
 function SaysRow({
   name,
   form,
-  hints
+  captureNames
 }: {
   name: string
   form: SpeechForm
-  hints: CaptureHints
+  captureNames: string[]
 }): JSX.Element {
-  const preview = previewTextFor(name, form, hints)
-  const unknown = unknownPlaceholders(form, hints)
+  const preview = previewTextFor(name, form)
   return (
     <Stack spacing={1}>
       <Box>
@@ -301,41 +275,29 @@ function SaysRow({
             value={form.phrase}
             onChange={(e) => form.setPhrase(e.target.value)}
             slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
-            error={unknown.length > 0}
-            helperText={
-              unknownPlaceholderNote(unknown) ??
-              `${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`
-            }
+            helperText={`${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`}
           />
-          <PlaceholderChips
-            text={form.phrase}
-            onInsert={form.setPhrase}
-            hints={hints}
-            testId="alert-speech-placeholders"
-          />
+          <CaptureHint phrase={form.phrase} captureNames={captureNames} />
         </>
       )}
 
+      {/* THE PREVIEW SHOWS TOKENS UNRESOLVED, ON PURPOSE. There is no firing yet, so there is no
+          captured value, and substituting a made-up sample would put words in the alert's mouth
+          that no log line said (world-model law 1). The literal `{player}` is exactly what the
+          user will hear if the capture is ever missing, and `CaptureHint` above is where they
+          learn that the pattern really does declare it. */}
       <Typography variant="caption" color="text.secondary" data-testid="alert-speech-preview">
-        {preview ? `Speaks: “${preview}”` : 'Speaks nothing — give the alert a name or a phrase.'}
+        {preview ? `Speaks: “${preview}”` : 'Speaks nothing - give the alert a name or a phrase.'}
       </Typography>
     </Stack>
   )
 }
 
 /** Per-alert voice override + the ▶ that speaks the preview through the real engine. */
-function VoiceRow({
-  name,
-  form,
-  hints
-}: {
-  name: string
-  form: SpeechForm
-  hints: CaptureHints
-}): JSX.Element {
+function VoiceRow({ name, form }: { name: string; form: SpeechForm }): JSX.Element {
   const prefs = currentVoicePrefs()
   const voices = useVoiceOptions(prefs.engine)
-  const preview = previewTextFor(name, form, hints)
+  const preview = previewTextFor(name, form)
   return (
     <Stack direction="row" spacing={1.5} alignItems="flex-end" flexWrap="wrap" useFlexGap>
       <Box sx={{ minWidth: 240, flexGrow: 1 }}>
@@ -374,34 +336,34 @@ function VoiceRow({
 }
 
 /**
- * THE VOICE SECTION — what a speaking alert says, and in whose voice.
- *
- * IT RENDERS ONLY WHEN THE ALERT SPEAKS, and the CALLER decides that (`speaks()` below, used by
- * AlertDialog) rather than this component returning null. The dialog owns the layout — which
- * section follows which, and which divider goes between them — so a section that is absent must
- * be absent to the thing doing the arranging, not merely invisible inside its own box. A
- * self-hiding block would leave the dialog rendering a separator above nothing.
- *
- * The channel selector that governs this is `AudioActionSection` above, rendered by the dialog
- * ahead of both dependent sections. What is left here is speech-only by construction.
+ * The block. The speech controls are shown only when the alert actually speaks — a sound-only
+ * alert has nothing to say, and offering it a phrase field would be offering dead state — but
+ * the audio-action row and the throttle opt-out are always there, because both are true of every
+ * alert.
  */
 export default function SpeechBlock({
   name,
   form,
   voiceSetup,
-  hints = NO_CAPTURES
+  captureNames = []
 }: {
   name: string
   form: SpeechForm
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
   /**
-   * The `$<name>` values the trigger being edited offers. Defaults to none so a caller with no
-   * trigger in hand (and every test that mounts this block bare) still compiles — the phrase
-   * field simply offers no chips, which is what an app-signal alert genuinely has.
+   * The named capture groups the alert's CURRENT trigger declares (`captureNamesIn`), recomputed
+   * as the user edits the pattern. Empty for the alerts that capture nothing, which is most of
+   * them — and then the hint renders nothing at all rather than an empty label.
    */
-  hints?: CaptureHints
+  captureNames?: string[]
 }): JSX.Element {
+  // STATED POSITIVELY, and that is load-bearing rather than style. This was `!== 'sound'`, which
+  // is the right answer for three members and the WRONG one for the fourth: 'silent'
+  // (alert-text-overlays D1) satisfies it, so the Voice section would have opened for an alert
+  // that makes no sound. Written as membership, an unlisted future member hides the section
+  // instead of showing it, which is the safe way round.
+  const speaks = form.audio === 'speech' || form.audio === 'both'
   return (
     <Box data-testid="alert-speech-block">
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5 }}>
@@ -411,12 +373,13 @@ export default function SpeechBlock({
         </Typography>
       </Stack>
       <Stack spacing={1.5}>
+        <AudioActionRow form={form} />
         {/* No master switch to warn about any more (this used to say "spoken alerts are switched
             off in Preferences"): choosing 'Speak it' above IS the switch. The only thing left to
             say is that the chosen tier has nothing to speak with — and it says it with a LINK. */}
-        <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />
-        <SaysRow name={name} form={form} hints={hints} />
-        <VoiceRow name={name} form={form} hints={hints} />
+        {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />}
+        {speaks && <SaysRow name={name} form={form} captureNames={captureNames} />}
+        {speaks && <VoiceRow name={name} form={form} />}
       </Stack>
     </Box>
   )

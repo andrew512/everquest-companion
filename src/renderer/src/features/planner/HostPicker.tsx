@@ -26,13 +26,19 @@ import { itemIconUrl } from '../../lib/ItemWindow'
 const MIN_QUERY = 2
 const LIST_MAX_H = 260
 
-/** R2, client side: this item can host in this cell for this set. Unknown classes stay in. */
+/**
+ * R2, client side: this item can host in this cell for this set. Unknown classes stay in.
+ *
+ * `slot` is NULL for the two any-cells (JOS-104), and the slot half is then simply not asked —
+ * the place accepts any item type, so filtering the search by a slot it does not have would hide
+ * exactly the gear the player is standing there wearing. The class half still applies.
+ */
 export function hostFits(
   hit: PlannerItemHit,
-  slot: EquipSlot,
+  slot: EquipSlot | null,
   planClasses: readonly ClassAbbr[]
 ): boolean {
-  if (!hit.slots.includes(slot)) return false
+  if (slot !== null && !hit.slots.includes(slot)) return false
   if (planClasses.length === 0 || hit.classes.length === 0) return true
   return hit.classes.some((c) => planClasses.includes(c))
 }
@@ -69,8 +75,11 @@ function useHostSearch(query: string, open: boolean): HitsState {
 }
 
 export interface HostPickerProps {
-  /** the equip SLOT a candidate must occupy (R2). Which CELL is being filled is `label`. */
-  slot: EquipSlot
+  /**
+   * The equip SLOT a candidate must occupy (R2), or `null` for an any-cell, which requires none.
+   * Which CELL is being filled is `label`.
+   */
+  slot: EquipSlot | null
   /** what that cell is CALLED — "FINGER 2" rather than "FINGER", for the two sentences (JOS-67) */
   label: string
   planClasses: readonly ClassAbbr[]
