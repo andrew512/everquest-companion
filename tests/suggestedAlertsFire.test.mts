@@ -273,11 +273,22 @@ const PUMA = {
   departs: '[Sat Aug 01 18:39:10 2026] The spirit of the puma departs.'
 }
 
-test('JOS-103 P1: the landing line has NO typed event — a raw trigger is the only thing that works', () => {
-  // THE DIAGNOSIS, pinned so it cannot rot. Puma's msgCastOnOther is `Target growls with the
-  // spirit of the puma.` and the cast-on-other suffix table is keyed by what is left after the
-  // wiki's "Someone " subject is stripped — so this message is not in the table at all.
-  assert.equal(parseEvent(PUMA.landed, 0)?.kind, 'unknown', 'no buffApply is emitted for this family')
+test('JOS-103 P1: the landing line has a typed event SINCE JOS-174, and the raw trigger is still why', () => {
+  // THE DIAGNOSIS, PINNED — AND THEN FIXED, which is why this assertion inverted.
+  //
+  // JOS-103 measured this line as `{kind:'unknown'}`: Puma's msgCastOnOther is `Target growls with
+  // the spirit of the puma.` and the cast-on-other suffix table is keyed by what is left after the
+  // wiki's "Someone " subject is stripped, so the message was not in the table at all. That is why
+  // the shipped suggestion for this family is a `raw` capture trigger — there was no typed path.
+  //
+  // JOS-174 swept that drift class (`spellCorrectionsSubjects.ts`): the subject is restored, the
+  // suffix keys, and the line is a `buffApply` now. NOTHING ELSE CHANGES HERE. The capture template
+  // still ships and still fires, because a `raw` condition tests `ev.raw` whatever the event's kind
+  // turns out to be (P2 below drives exactly that), and it is still the only thing that can SAY who
+  // the buff landed on — a typed `buffApply` carries the target but the `lands` template is
+  // disposition-gated and Puma is a `Proc Buff`. The assertion is inverted rather than deleted so
+  // the reason the raw trigger exists stays legible after the fact.
+  assert.equal(parseEvent(PUMA.landed, 0)?.kind, 'buffApply', 'the subject restoration gave the family a typed event')
   // The two DB-message sides DO parse, which is what the other templates rest on.
   assert.equal(parseEvent(PUMA.selfLanded, 1)?.kind, 'buffApply')
   const worn = parseEvent(PUMA.departs, 2)

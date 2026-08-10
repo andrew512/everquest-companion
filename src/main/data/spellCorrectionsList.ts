@@ -83,16 +83,22 @@
 // above beside the entries it governs is the whole point of the split.
 
 import type { SpellCorrection } from './spellCorrections'
+// THE SUBJECT-PLACEHOLDER SWEEP (JOS-174), appended below. It is one of the drift classes this
+// header governs and is held to this file's evidence bar; it lives next door only because it is
+// the one class that arrives in bulk (33 entries over 44 spell rows) and the repo's max-lines
+// ceiling is about code mass. Its own header states why the sweep is a LIST rather than a wider
+// subject stripper, and which two sentences it refuses.
+import { SUBJECT_PLACEHOLDER_CORRECTIONS } from './spellCorrectionsSubjects'
 
 /**
- * THE COMMITTED OVERLAY. Ordered by the drift it fixes, not by spell name, because the drifts come
- * in families and a reader checking one is checking all of them.
+ * The hand-derived overlay. Ordered by the drift it fixes, not by spell name, because the drifts
+ * come in families and a reader checking one is checking all of them.
  *
  * All counts below are whole-log over the owner's `eqlog_Primitive_freeport.txt` (1,460,978 lines,
  * measured 2026-08-09). "N/M casts" means N of the M `You begin casting <Spell>.` lines in that log
  * are followed by the replacement shape within 12 s.
  */
-export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
+const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
   // --- the reported defect, and its family: `in a swarm` -> `by a swarm` -------------------------
   {
     spells: ['Creeping Crud', 'Drifting Death', 'Drones of Doom', 'Stinging Swarm'],
@@ -504,4 +510,18 @@ export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
     evidence:
       'The wiki page`s `spellname` is `Solon`s Bravura`; the game has never printed it. Owner log: 20 lines naming `Solon`s Bewitching Bravura` (5 own-guild casts by the bard Enzee, 14 sung AT the player by fire giants, 1 resist) and 0 naming `Solon`s Bravura`. Reporter slice 01KZAG2QAW885YJNRTDDND8BF2 adds `You begin singing Solon`s Bewitching Bravura IX.` x5 and `Your Solon`s Bewitching Bravura spell has worn off of a fire giant warrior.` x5; slice 01KZM7F36JD12WYF15DHCCWNEE ends on `You have finished memorizing Solon`s Bewitching Bravura.`. A dropped word, never a different spell: nothing else in the DB is named Bravura (src/main/log/rulesets.ts says so too), the level, class, cast time, duration and all three messages are untouched, and the entry`s own `You are captivated by the bewitching tune.` carries the missing word already. Both level-39 rows (18 s and the April-2000 1 Min) are renamed together.'
   }
+]
+
+/**
+ * THE COMMITTED OVERLAY: the hand-derived entries above, then the subject-placeholder sweep.
+ *
+ * ORDER IS NOT SIGNIFICANT HERE and the suite proves it: `applySpellCorrections` matches each
+ * entry against the CURRENT text of the spell it names, and `tests/spellCorrections.test.mts`
+ * refuses two entries that claim the same spell and field — so no entry can ever be reading what
+ * another one wrote. The sweep goes last because it is the newer, bulkier half and a diff of it
+ * should not push the hand-derived families around.
+ */
+export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
+  ...HAND_DERIVED_CORRECTIONS,
+  ...SUBJECT_PLACEHOLDER_CORRECTIONS
 ]
