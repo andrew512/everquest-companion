@@ -130,6 +130,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'fixed',
+        text: 'The Plane of Sky list stays where you put it. Loading the rest of the quests used to last until you touched anything - one star, one favorited item, or simply a drop landing while you had the tab open, and the list snapped back to the first forty rows with every quest you had expanded shut again. Nothing about that was you asking to start over: the page only ever needed to go back to the top when you changed a filter, the sort or the search, and now that is the only thing that does it. There is also a "Show all" button beside "Show more" for the whole list in one click, and it is remembered - leave the tab, close the app, come back, and the list is still open. "Show fewer" at the bottom puts the paging back.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
     ]
