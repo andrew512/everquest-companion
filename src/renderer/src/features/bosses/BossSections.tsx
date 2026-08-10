@@ -138,26 +138,20 @@ function chipFacts(
   s: TargetStatus,
   tier: TierStyle,
   lock?: TierLock[]
-): { on: boolean; label: string; title: string; style: TierStyle } {
+): { on: boolean; label: string; style: TierStyle } {
   if (!lock) {
     return {
       on: s.killed,
       label: s.killed ? tier.label : 'not defeated',
-      title: s.killed ? tier.long : 'Not defeated',
       style: tier
     }
   }
   const top = lock[lock.length - 1]
-  if (!top) return { on: false, label: 'open', title: 'Open this week', style: tier }
+  if (!top) return { on: false, label: 'open', style: tier }
   const style = tierStyle(top.tier)
-  return {
-    on: true,
-    // The chip is 20px tall on a 116px card, so it names the highest difficulty and COUNTS the
-    // rest rather than spelling three labels into a space that fits one; the tooltip has them.
-    label: lock.length > 1 ? `${style.label} +${lock.length - 1}` : style.label,
-    title: lock.map((l) => tierStyle(l.tier).long).join(' · '),
-    style
-  }
+  // The chip states the highest tier and nothing else (owner ruling 2026-08-09) — the
+  // difficulty ladder on the weekly card already carries the full per-tier picture.
+  return { on: true, label: style.label, style }
 }
 
 type ChipFacts = ReturnType<typeof chipFacts>
@@ -176,23 +170,21 @@ function TargetCardMedia({
   return (
     <Box sx={{ position: 'relative' }}>
       <BossImage target={s.target} height={height} dim={!chip.on} />
-      <Tooltip title={chip.title}>
-        <Chip
-          size="small"
-          label={chip.label}
-          sx={{
-            position: 'absolute',
-            top: 4,
-            right: 4,
-            height: 20,
-            bgcolor: chip.on ? chip.style.bg : 'rgba(0,0,0,0.65)',
-            color: chip.on ? chip.style.fg : '#fff',
-            fontWeight: 700,
-            fontSize: 11,
-            '& .MuiChip-label': { px: 0.75 }
-          }}
-        />
-      </Tooltip>
+      <Chip
+        size="small"
+        label={chip.label}
+        sx={{
+          position: 'absolute',
+          top: 4,
+          right: 4,
+          height: 20,
+          bgcolor: chip.on ? chip.style.bg : 'rgba(0,0,0,0.65)',
+          color: chip.on ? chip.style.fg : '#fff',
+          fontWeight: 700,
+          fontSize: 11,
+          '& .MuiChip-label': { px: 0.75 }
+        }}
+      />
     </Box>
   )
 }
