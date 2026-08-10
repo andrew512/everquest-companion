@@ -1250,9 +1250,41 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 - Item knowledge: `itemLookup.ts` — local-first (posky) → wiki
   `{{Itempage}}` (`statsblock` flags / `relatedquests` / `notes`), userData
   cache with negative caching, live-loot background prefetch.
+- **THE WIKI ART SHIPS IN THE BOX, AND THE FETCH IS THE FALLBACK** (JOS-198,
+  `src/main/bundledImages.ts` + `resources/wiki-images/`). MEASURED: 780 files,
+  3.75 MB — every DISTINCT `iconId` across the 11,341 items in items.json (751,
+  1.21 MB, eqlwiki) and all 29 boss portraits in bosses.json (2.54 MB, p1999) —
+  against a ~25 MB budget, so the whole set ships and there is no
+  most-requested subset. They are COMMITTED, not fetched at build time: a
+  build-time fetch would move the two volunteer wikis out of the startup path
+  and into the RELEASE path and make `npm run dist` depend on someone else's
+  uptime. `npm run fetch:images` (scripts/fetch-wiki-images.mts) regenerates
+  them + `manifest.json`, which records the exact upstream URL, byte length and
+  sha256 per file; `--seed <eqimg cache dir>` imports bytes already downloaded
+  once (the politest request is the one never sent). Files are named by the
+  cache's OWN `cacheFileName()`, so the bundle and `<userData>/image-cache` are
+  ONE namespace with one naming function and cannot drift. The dir has three
+  addresses over the app's life (project root in dev + e2e, inside `app.asar`,
+  `app.asar.unpacked` after `asarUnpack`) and `bundledImageRoots` probes them in
+  order — same problem and same answer as `sounds.ts`. electron-builder names
+  `resources/wiki-images/**` EXPLICITLY, never `resources/**`: the gitignored
+  soundpack dirs beside it would otherwise ship whatever a dev had downloaded.
+  Null (a source build that skipped `fetch:images`) is a SUPPORTED state that
+  falls back to the runtime cache. `tests/bundledImages.test.mts` holds the
+  manifest against both data files and re-hashes all 780, so a re-scrape that
+  adds a raid target or an icon id and forgets `fetch:images` goes RED instead
+  of silently restoring a network dependency. The e2e proof is
+  `bosses-week.e2e.mts`: under `EQ_E2E` a cache miss is a 1×1 blank, so
+  `naturalWidth > 1` on a cold userData with no network can ONLY mean the bytes
+  came from the bundle (measured 29/29 at 300×319 over `eqimg://`).
+  CREDIT IS PART OF THE FEATURE, not decoration: Preferences → Thanks
+  (`ThanksSetting.tsx`), a README Thanks section, and the 0.19.0 note all name
+  both wikis — redistributing someone's art inside an installer without saying
+  so is the thing this ticket refused to do.
 - **Downloaded images are cached PERMANENTLY** (`src/main/imageCache.ts`):
-  no image the app fetches may ever be fetched twice. Item icons are served
-  from `eqimg://item/<id>` — a `protocol.handle` on the DEFAULT session
+  no image the app fetches may ever be fetched twice — and since JOS-198 above,
+  a normal install fetches NONE, because the bundle is probed first. Item icons
+  are served from `eqimg://item/<id>` — a `protocol.handle` on the DEFAULT session
   (registered in whenReady; `registerSchemesAsPrivileged` runs at index.ts
   module scope, before ready), backed by `<userData>/image-cache/item-<id>.png`.
   No window uses a custom `partition`, so the one handler covers the main
@@ -1260,9 +1292,20 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   (shared UA, in-flight dedupe so N windows can't double-request), written
   ATOMICALLY (temp file + rename — a torn PNG under a no-TTL cache would be
   permanent) and only if the bytes actually sniff as an image. NEGATIVES ARE
-  NEVER CACHED: a 404/offline/timeout responds 404, the `<img onError>` hides
-  the icon, and the next load retries. No TTL, no eviction — wiki file ids are
-  immutable. `itemIconUrl()` (ItemWindow.tsx) is the single renderer entry
+  NEVER CACHED **ON DISK** — a failure writes nothing, so nothing permanent can
+  be wrong — but since JOS-198 a refusal IS remembered IN MEMORY for the
+  session, and only when the HOST SPOKE: a status (404/415/500) or a body that
+  is not an image. Nothing ever retried on a timer; the RENDERER re-asked, because
+  an `<img>` that 404s is re-created on every scroll-back, tooltip reopen and
+  overlay re-mount — each one a fresh 10 s fetch to a wiki that had already said
+  no, plus a fresh errors.log line. A NETWORK failure (offline, DNS, TLS, our own
+  timeout) is DELIBERATELY NOT remembered: it is the one failure plausibly on our
+  side and plausibly gone a second later, and a just-woken laptop must not be
+  locked out of every icon until restart — the same seam JOS-133 drew between the
+  counter branch and the error branch. Bounded at 512, degrading past the cap to
+  the old behaviour rather than evicting; session-scoped, so a wiki that fixes its
+  500 is picked up next launch with no TTL or eviction policy to get wrong. On
+  disk: no TTL, no eviction — wiki file ids are immutable. `itemIconUrl()` (ItemWindow.tsx) is the single renderer entry
   point; the upstream eqlwiki URL is spelled out only in imageCache.ts.
   A SECOND route on the same handler, `eqimg://url/<encodeURIComponent(url)>`,
   covers images the renderer holds as absolute URLs — today the 29 boss
