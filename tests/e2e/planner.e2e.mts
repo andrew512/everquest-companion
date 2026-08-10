@@ -595,7 +595,10 @@ async function main(): Promise<void> {
   // vacuous — this launch's userData dir has never held either.
 
   console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-planner.log…')
-  const { app, close } = await launchOnFixture('e2e-planner.log')
+  // …and a real `/outputfile inventory` dump in the install root beside it (JOS-185). Without one,
+  // every dump-fed surface takes its never-run branch, which is how the freshness line, the filled
+  // hosts and the capture steps went unmeasured for the whole life of this suite.
+  const { app, close } = await launchOnFixture('e2e-planner.log', { inventory: 'Primitive_freeport-Inventory.txt' })
 
   let page: Page | null = null
   try {
