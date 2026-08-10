@@ -130,7 +130,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
-        text: 'Drag your alerts into the order you want them in. Grab the handle at the left of any alert and drop it where it belongs - or select the handle and use the up and down arrow keys - and the list stays that way, this session and every one after it. Which alert fires, and when, is untouched by where it sits.',
+        text: 'Drag your alerts into the order you want them in. Grab the handle at the left of any alert and a line follows your pointer showing the gap it will drop into - between two alerts, above the first, or below the last - and the alert lands exactly there when you let go. Or select the handle and use the up and down arrow keys. Either way the list stays as you left it, this session and every one after it, and which alert fires, and when, is untouched by where it sits.',
         fromReport: true
       },
       {
