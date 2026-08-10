@@ -39,6 +39,9 @@ import { startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
 import { applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
+// The wiki art this build SHIPS (JOS-198). Pure path probing — Electron's three path facts are
+// passed in below, so the module itself imports nothing from electron.
+import { bundledImageRoots, findBundledImagesDir } from './bundledImages'
 import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
 import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
@@ -217,11 +220,26 @@ if (!gotSingleInstanceLock) {
     // Permissions are a SESSION property; every window here uses the default session (no
     // custom `partition` anywhere — the same fact that lets one eqimg:// handler serve them all).
     hardenSession(session.defaultSession)
-    // Serve `eqimg://item/<id>` from <userData>/image-cache BEFORE any window loads a page
-    // that can reference an item icon. One handler on the default session covers the main
-    // window and every overlay (none of them use a custom partition).
+    // Serve `eqimg://item/<id>` BEFORE any window loads a page that can reference an item icon.
+    // One handler on the default session covers the main window and every overlay (none of them
+    // use a custom partition). Since JOS-198 the FIRST place it looks is the art this build
+    // ships — `resources/wiki-images/`, whose three possible addresses (project root in dev and
+    // e2e, inside the asar, beside it once unpacked) are probed here rather than guessed at in
+    // the cache. A build without it resolves to null and falls back to the runtime cache,
+    // exactly as before.
+    const bundledDir = findBundledImagesDir(
+      bundledImageRoots({
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath ?? '',
+        cwd: process.cwd()
+      })
+    )
+    logInfo(
+      `[everquest-companion] Bundled wiki images: ${bundledDir ?? 'none (falling back to the runtime cache)'}`
+    )
     installImageCacheProtocol(protocol, {
       userData: USER_DATA,
+      bundledDir,
       onError: (msg, err) => logError('main:imageCache', { message: msg, err })
     })
     // …and `eqspeech://<hash>` from <userData>/speech-cache, beside it and for the same

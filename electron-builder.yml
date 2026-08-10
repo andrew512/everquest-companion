@@ -11,6 +11,14 @@ directories:
 files:
   - out/**
   - package.json
+  # THE WIKI ART SHIPS (JOS-198). 780 files, 3.75 MB — 751 item icons and 29 boss portraits,
+  # committed to the repo so this list is all that is needed and no build step touches a wiki.
+  # Named EXPLICITLY rather than `resources/**`: the soundpack directories beside it are
+  # gitignored, self-provisioned at runtime, and up to hundreds of MB on a dev machine, so a
+  # broad glob would put whatever a developer happened to have downloaded into the installer.
+  # `asarUnpack: resources/**` below then moves this out of the archive; src/main/bundledImages.ts
+  # probes both addresses.
+  - resources/wiki-images/**
   - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
   # `map` IN THIS LIST IS LOAD-BEARING SINCE JOS-100, and was incidental before it. The build
   # now EMITS sourcemaps (electron.vite.config.ts turns `sourcemap` on for all three bundles, so
