@@ -48,17 +48,16 @@ import {
   type PresenceRecord,
   type PresenceWorkerInit,
   type WatcherExitTrail,
-  FOREGROUND_EVERY_TICKS,
   NEW_WATCHER_EXIT_TRAIL,
   WATCHER_HEARTBEAT_MS,
   WATCHER_STALE_MS,
   WATCHER_STOP_MESSAGE,
-  WATCHER_TICK_MS,
   eqRootPrefix,
   focusDebounceStep,
   isEqWindow,
   newFocusDebounce,
   parsePresenceLine,
+  watcherCadence,
   watcherExitStep,
   watcherIsStale,
   watcherRestartDelayMs
@@ -86,6 +85,15 @@ let watcher: Worker | null = null
 let focus = newFocusDebounce(false)
 let focusTimer: NodeJS.Timeout | null = null
 let lastObservedFocus = false
+
+/**
+ * May the watcher look at the cursor at all? (JOS-193 — see `setCursorWatch`.)
+ *
+ * FALSE by default, which is the default install: the ring ships off, and this flag is only ever
+ * raised by `presenceEffects.refreshPresenceEffects` reading a stored `cursorRing.enabled` of true.
+ * A watcher started before anybody said otherwise therefore never calls `GetCursorInfo`.
+ */
+let watchCursor = false
 
 // ---- watcher health (see presenceProtocol.ts's "watcher health" section for the WHY) --------
 /** When the current watcher last said ANYTHING — seeded at start, so the library loading it does
@@ -454,8 +462,10 @@ function startWatcher(): void {
   const init: PresenceWorkerInit = {
     eqRootWithSep: eqRootPrefix(effectiveEqRoot()),
     runningPollMs: RUNNING_POLL_MS,
-    tickMs: WATCHER_TICK_MS,
-    foregroundEveryTicks: FOREGROUND_EVERY_TICKS
+    // Both clocks are DERIVED from the cursor gate (JOS-193): the fast tick exists for the cursor
+    // call, so a watcher that will not make it asks for the coarse cadence instead.
+    ...watcherCadence(watchCursor),
+    watchCursor
   }
   let w: Worker
   try {
@@ -463,7 +473,10 @@ function startWatcher(): void {
   } catch (err) {
     logError('main:presence', { message: 'could not start the presence watcher', err })
     // A start that throws is as much a failure as an exit, and it is the one most likely to be
-    // transient (a machine momentarily out of thread handles). Back off and try again.
+    // transient (a machine momentarily out of thread handles). Back off and try again — and fall
+    // back to "nothing known" on the way, for the same reason an exit does: whatever is on screen
+    // was decided by a watcher that no longer exists.
+    resetPresence()
     restartFailures++
     scheduleRestart()
     return
@@ -511,6 +524,46 @@ function stopWatcher(): void {
   state = INITIAL_PRESENCE
   focus = newFocusDebounce(false)
   lastObservedFocus = false
+}
+
+/**
+ * Say whether anything still needs the CURSOR looked at — the JOS-193 gate, and the owner's rule
+ * in one call: with the ring off, this app does not touch the cursor.
+ *
+ * `presenceEffects.refreshPresenceEffects` is the only caller, because it is the only thing that
+ * reads the prefs (`cursorWatchNeeded(getCursorRing())`), and it runs at startup and after every
+ * settings write — which is the ONLY way `cursorRing.enabled` can change. That keeps the
+ * store out of this file, exactly as `presenceNeeded` already does for the watcher's existence.
+ *
+ * A LIVE CHANGE REPLACES THE THREAD, and it has to. The flag is `workerData`, baked in when the
+ * worker starts, and it is baked in rather than messaged because a `false` delivered one tick late
+ * is still a tick spent in a cursor call the user switched off. A thread is a `LoadLibrary` x3 and
+ * a `postMessage`; the ring's toggle is not a hot path.
+ *
+ * IT DOES NOT RESET THE PRESENCE STATE, and that is the difference between this and every other
+ * path that ends a watcher. `resetPresence()` exists for a source that stopped being TRUSTWORTHY —
+ * a thread that died or wedged, whose last words might describe a world from thirty seconds ago.
+ * Here the outgoing watcher was right up to the moment it was retired and its replacement starts
+ * in the same turn, re-announcing everything on its first ticks (the successor's change-detection
+ * starts empty). Resetting would blink every auto-hidden overlay back on for ~160 ms because
+ * somebody moved a slider in Preferences.
+ */
+export function setCursorWatch(enabled: boolean): void {
+  if (enabled === watchCursor) return
+  watchCursor = enabled
+  const w = watcher
+  if (!w) return
+  // Take the old thread out of circulation FIRST: `handleWatcherGone` is keyed on identity, so a
+  // `watcher` that is already null makes this retirement invisible to the exit handler — no error
+  // entry, no backoff, no restart race with the start below.
+  watcher = null
+  clearStaleWatchdog()
+  retire(w)
+  // A deliberate replacement is not a failure and must not be counted as one.
+  restartFailures = 0
+  exitTrail = NEW_WATCHER_EXIT_TRAIL
+  lastExitReason = null
+  startWatcher()
 }
 
 /**

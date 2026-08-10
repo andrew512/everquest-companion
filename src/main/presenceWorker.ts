@@ -20,7 +20,10 @@
 //
 //   * EVERY TICK (~14 ms): the cursor check, alone. One `GetCursorInfo`, no allocation, no
 //     string work. This gates main's 8 ms cursor sampler, so its latency is the ring's honesty
-//     (JOS-120) — see that ticket's note on why it does not ride the slower block.
+//     (JOS-120) — see that ticket's note on why it does not ride the slower block. IT IS ALSO
+//     CONDITIONAL (JOS-193): with `watchCursor:false` there is no cursor block at all, and this
+//     loop then runs on ONE coarse cadence (`watcherCadence`) because the fast tick existed for
+//     that call and nothing else.
 //   * EVERY `foregroundEveryTicks` TICKS (~150 ms): the foreground window, with its image path
 //     memoized per pid.
 //   * EVERY `runningPollMs` (5 s): the process scan, and the heartbeat.
@@ -59,7 +62,7 @@ function say(line: string): void {
 
 /** The whole loop, once the surface is known to work. */
 function run(native: PresenceNative): void {
-  const { eqRootWithSep, runningPollMs, tickMs, foregroundEveryTicks } = init
+  const { eqRootWithSep, runningPollMs, tickMs, foregroundEveryTicks, watchCursor } = init
   /** pid -> image path, for the ~31 foreground scans between beats. */
   let paths = new Map<number, string>()
   let lastFg = ''
@@ -120,14 +123,26 @@ function run(native: PresenceNative): void {
     say('H')
   }
 
+  /**
+   * The cursor block. EVERY TICK, and deliberately alone up at the top of `tick` (JOS-120).
+   *
+   * THE ONE `GetCursorInfo` IN THE APPLICATION, and therefore the one place the guard has to be
+   * (JOS-193). `watchCursor` is a constant for the life of this thread, so the branch is decided
+   * once by the caller rather than re-asked 69 times a second — with the ring off there is no
+   * cursor block in the loop at all, which is a stronger statement than "the call is skipped": the
+   * app is not in the cursor's message flow, and a tool like Yolomouse has nothing to share it
+   * with. `presence.ts` replaces the whole thread when the setting moves.
+   */
+  function cursorBlock(): void {
+    const cur = native.cursorShowing() ? 1 : 0
+    if (cur === lastCur) return
+    lastCur = cur
+    say(`C|${String(cur)}`)
+  }
+
   function tick(): void {
     try {
-      // EVERY TICK, and deliberately alone up here (JOS-120).
-      const cur = native.cursorShowing() ? 1 : 0
-      if (cur !== lastCur) {
-        lastCur = cur
-        say(`C|${String(cur)}`)
-      }
+      if (watchCursor) cursorBlock()
       fgCountdown -= 1
       if (fgCountdown <= 0) {
         fgCountdown = foregroundEveryTicks

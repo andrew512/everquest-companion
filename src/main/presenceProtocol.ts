@@ -648,8 +648,45 @@ export interface PresenceWorkerInit {
   readonly eqRootWithSep: string
   /** ms between process-existence scans (and therefore between heartbeats). */
   readonly runningPollMs: number
-  /** ms the loop asks to sleep between ticks; every tick reads the cursor. */
+  /** ms the loop asks to sleep between ticks. */
   readonly tickMs: number
   /** how many ticks between the expensive foreground/running block. */
   readonly foregroundEveryTicks: number
+  /**
+   * May this watcher call `GetCursorInfo` AT ALL? (JOS-193.)
+   *
+   * FALSE MEANS NEVER, not "poll it more slowly": the worker's cursor block is skipped entirely,
+   * so no `C` line is ever emitted and the one Win32 cursor call in the application is never
+   * reached. It is baked in at start rather than sent as a message because a `false` that arrives
+   * one tick late is still a tick in which the app touched a cursor it had been told to leave
+   * alone — `presence.ts` replaces the thread when the setting changes instead.
+   */
+  readonly watchCursor: boolean
+}
+
+/**
+ * The two clock settings, DERIVED from whether the cursor is being watched (JOS-193).
+ *
+ * The fast tick exists for ONE call. Everything above is the split-cadence argument: `cursorShowing`
+ * is 0.43 us and gates an 8 ms consumer, so it runs at the platform's floor while the expensive
+ * foreground/running block rides every tenth tick. Take the cursor call away and the fast tick is
+ * a timer that fires 69 times a second to decrement a counter — the loop has nothing to do 9 ticks
+ * out of 10, and the tenth is work that was always on a ~160 ms clock.
+ *
+ * So a cursor-free watcher asks for the coarse cadence DIRECTLY: one tick per foreground block, at
+ * the period ten floor-ticks measured at anyway. That is the single-cadence loop this file records
+ * at 0.06-0.16 % of one core, against 0.19-0.31 % for the split one — i.e. the default install
+ * (auto-hide on, ring off) gets the cheaper loop back, and the split cadence is paid for only by
+ * the feature that asked for it.
+ *
+ * Pure, so `tests/presence.test.mts` pins it rather than anyone re-deriving it from three constants.
+ */
+export function watcherCadence(watchCursor: boolean): {
+  tickMs: number
+  foregroundEveryTicks: number
+} {
+  if (watchCursor) {
+    return { tickMs: WATCHER_TICK_MS, foregroundEveryTicks: FOREGROUND_EVERY_TICKS }
+  }
+  return { tickMs: WATCHER_TICK_FLOOR_MS * FOREGROUND_EVERY_TICKS, foregroundEveryTicks: 1 }
 }

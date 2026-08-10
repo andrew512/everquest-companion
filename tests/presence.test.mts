@@ -11,7 +11,9 @@
 // THE GATING MATRIX IS THE PERFORMANCE CONTRACT, in test form. "Nothing runs when nothing is
 // on" and "the stream stops when EQ is unfocused" are the owner's explicit requirements; they
 // are decided by two exported predicates, so they are pinned here rather than measured by hand
-// on every change.
+// on every change. The THIRD rule — "with the ring off we never touch the cursor at all"
+// (JOS-193) — spans a predicate, a worker init and three assignments, so it lives together in
+// tests/cursorRingOff.test.mts rather than being scattered through this one.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
