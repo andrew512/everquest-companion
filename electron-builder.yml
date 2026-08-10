@@ -32,6 +32,11 @@ files:
   # the list in sync with `win.target.arch` above; a future arm64 target needs its line back.
   - '!node_modules/onnxruntime-node/bin/napi-v3/{darwin,linux}/**'
   - '!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**'
+  # native-reg (JOS-184, the in-process registry reads that replaced `reg.exe`/`wmic` in
+  # discovery) ships prebuilt N-API binaries for all three Windows architectures in one tarball.
+  # Same reasoning as onnxruntime above: this build is win/x64 only, so the other two are ~1 MB
+  # of binary the app can never load. A future arm64 target needs the ia32 line only.
+  - '!node_modules/native-reg/prebuilds/win32-{arm64,ia32}/**'
   # DirectML.dll (18.5 MB) is NOT excludable, and that was MEASURED, not assumed. This app
   # never asks for the DirectML execution provider — Kokoro runs on CPU on purpose, because it
   # is a background alert reader on a machine that is also running EverQuest — so dropping the
@@ -48,19 +53,30 @@ asarUnpack:
   # whole bin/ dir is the only arrangement that works. electron-builder auto-unpacks *.node
   # but NOT the sibling .dll, which is exactly the failure this line exists to prevent.
   - node_modules/onnxruntime-node/bin/**
+  # native-reg's prebuilt binding (JOS-184). electron-builder auto-unpacks `*.node`, so this line
+  # is belt and braces rather than load-bearing — but node-gyp-build READS this directory
+  # (readdirSync) to choose a build before requiring it, and an explicit entry keeps the whole
+  # directory on disk rather than relying on that one auto-rule. Nothing sits beside the binding.
+  - node_modules/native-reg/prebuilds/**
 
 # npmRebuild defaults to TRUE, which makes electron-builder shell out to
 # @electron/rebuild -> node-gyp against the whole production tree at package
 # time — a compile-and-execute path wired into every build, which is exactly the
 # kind of step `.npmrc`'s ignore-scripts is there to close.
 #
-# THE TREE NOW HAS ONE NATIVE MODULE (onnxruntime-node, voice alerts W3), and this
-# still stays false. It is the ABI question that decides, not the presence of a
-# .node file: onnxruntime-node ships PREBUILT binaries under bin/napi-v3, i.e. it
-# targets N-API version 3, which is ABI-STABLE ACROSS NODE AND ELECTRON VERSIONS
+# THE TREE NOW HAS TWO NATIVE MODULES (onnxruntime-node, voice alerts W3; and
+# native-reg, JOS-184's in-process registry reads), and this still stays false. It
+# is the ABI question that decides, not the presence of a .node file: onnxruntime-node
+# ships PREBUILT binaries under bin/napi-v3 and native-reg under prebuilds/win32-x64,
+# i.e. both target N-API, which is ABI-STABLE ACROSS NODE AND ELECTRON VERSIONS
 # by definition. There is nothing to rebuild — the shipped binary is the binary
 # Electron loads. (Verified end to end: `npm run dist:dir` + launching the packed
 # app + a real synthesis, with ignore-scripts on and npmRebuild off.)
+#
+# native-reg DOES carry a binding.gyp and a .cc, which is not a contradiction: they
+# are the SOURCE its maintainer prebuilds from, reached only by the `install` hook
+# (`node-gyp-build-optional`) that `.npmrc`'s ignore-scripts never runs. At require
+# time `node-gyp-build` picks the prebuilt binary out of prebuilds/ and never compiles.
 #
 # Its `postinstall` is likewise a non-issue under `.npmrc ignore-scripts=true`:
 # that script's ONLY job is downloading the Linux/x64 CUDA execution-provider

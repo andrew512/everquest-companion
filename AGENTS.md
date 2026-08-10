@@ -1668,6 +1668,36 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   DB/overlay baseline are inlined in the main bundle; EQ dir resolves via
   env → registry → drive-sweep with the Settings-gear override; zero logs
   anywhere → quiet empty state, never an error.
+- **DISCOVERY SPAWNS NOTHING, AND THAT IS AN AV DECISION AS MUCH AS A SPEED ONE
+  (JOS-184).** `src/main/log/discovery.ts` used to answer its two Windows
+  questions by shelling out: EIGHT `reg.exe query <hive> /s /f EverQuest
+  /t REG_SZ` subprocesses whose stdout was regex-grepped, plus `wmic
+  logicaldisk get DeviceID,DriveType` for the drive letters. Both now read
+  in-process through `native-reg`. The old shape was ~150 ms of blocked main
+  thread that SCALED with the user's Uninstall hive (the reason the JOS-112
+  ceiling exists) — and, more to the point, "unsigned exe sweeps the uninstall
+  registry and enumerates disks, seconds after install" is precisely the
+  behavioural signature a heuristic engine scores, on the one app that cannot
+  answer with an Authenticode publisher yet. Measured replacement: ~6 ms.
+  Two invariants, both pinned by tests in `tests/eqDiscovery.test.mts`:
+  * `eqInstallPathValue` reproduces the OLD command's contract exactly —
+    an `InstallLocation`/`InstallPath`/`InstallDir` whose DATA contains
+    "everquest". That was verified against the real `reg.exe`, not read off
+    the docs: with `/t REG_SZ` present a KEY-NAME match prints NOTHING (so the
+    old line regex could only ever fire on a data match), and a key-name match
+    without `/t` prints the key line alone and none of its values.
+  * `fixedDrives` reads `\DosDevices\<letter>:` out of
+    `HKLM\SYSTEM\MountedDevices` (user-readable, verified non-elevated). A
+    mapped NETWORK drive is never in that key, which is the property that
+    replaces the DriveType-4 filter and the whole reason the offline-share hang
+    stays fixed. Removable local volumes now ARE included (DriveType 3 excluded
+    them) — a superset, costing instant `existsSync` calls on local devices.
+  `native-reg` and not `registry-js` because `.npmrc`'s `ignore-scripts=true`
+  is load-bearing: native-reg ships its N-API prebuild INSIDE the tarball
+  (node-gyp-build resolves it at require time), registry-js DOWNLOADS one from
+  an install script. It is `require`d LAZILY inside `discovery.ts` and its
+  failure is swallowed — this module is on the startup path, and a bad `.node`
+  must cost one of three ways to find the install, not the whole launch.
 
 ### Product identity + channel isolation (Task #58)
 
@@ -2029,9 +2059,12 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   Win32 env is built. `winhlp32.exe` is likewise refused — a real XP/Vista/7
   binary. Gated on `platform === 'win32'` — a native Linux build is not an
   emulated Windows one. REJECTED: `wine_get_version` (needs FFI/a native addon),
-  the registry (real — `HKCU\Software\Wine\Debug` is in every stock prefix — but
-  needs a `reg.exe` spawn on every launch's startup path to answer 'no' for
-  ~everyone; the `Wine\Wine\Config` key every blog names died in 0.9), and the
+  the registry (real — `HKCU\Software\Wine\Debug` is in every stock prefix — and
+  its ORIGINAL objection, a `reg.exe` spawn on every launch's startup path to
+  answer 'no' for ~everyone, EXPIRED WITH JOS-184: `native-reg` is in the tree
+  and reads a key in-process in well under a millisecond, so this is now a live
+  next-rung option, not an impossible one; the `Wine\Wine\Config` key every blog
+  names died in 0.9), and the
   `"Wine builtin DLL"` DOS-stub magic at offset 0x40 (definitive, and the NEXT
   RUNG if a prefix ever defeats both signals above). `src/main/wine.ts` caches
   the answer once per launch and logs the signals when it fires.
