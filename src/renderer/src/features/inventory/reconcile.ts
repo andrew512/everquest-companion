@@ -127,8 +127,7 @@ function baseCounts(
  */
 function questConsumption(
   quests: PoskyQuest[],
-  turnIns: Record<string, number>,
-  nameByKey: Record<string, string>
+  turnIns: Record<string, number>
 ): { consumed: Record<string, number>; consumedBy: Record<string, string[]> } {
   const consumed: Record<string, number> = {}
   const consumedBy: Record<string, string[]> = {}
@@ -140,10 +139,35 @@ function questConsumption(
       const need = it.count > 0 ? it.count : 1
       consumed[k] = (consumed[k] ?? 0) + need * times
       ;(consumedBy[k] ??= []).push(times > 1 ? `${q.name} x${String(times)}` : q.name)
-      nameByKey[k] ??= it.name
     }
   }
   return { consumed, consumedBy }
+}
+
+/**
+ * The game's own spelling for every Sky quest item, keyed by counting key — the display name of
+ * LAST resort before the export's key, and the reason a dump-only row reads `Ivory Sky Diamond`
+ * rather than `ivory sky diamond` (JOS-160).
+ *
+ * AN EXPORT KEY IS A KEY, NOT A SPELLING. `heldCountsFromDump` lowercases every name it folds
+ * (shared/outputs/inventory.ts — the key is documented as the raw name LOWERCASED), so the
+ * `nameByKey[k] ??= rawK` fallback below was never showing "the export spelling" it reads like: it
+ * was showing a lookup key with the capitals rubbed off. That went unnoticed while inventory-only
+ * rows were an opt-in tail nobody could search; JOS-160 puts one in a search result and on the item
+ * page's breadcrumb, where a lowercased name is simply wrong.
+ *
+ * It sits BELOW loot names (a loot line carries the game's spelling verbatim, and it is the
+ * spelling of the copy this character actually handled) and ABOVE the export key. Scope is
+ * deliberately the Sky quest set and nothing wider: it is the data this module already receives,
+ * and the committed 11.2k item DB lives in main, behind an exact-name IPC — inventing a renderer
+ * copy of it to case-correct a table cell is not a trade this ticket makes.
+ */
+function questItemNames(quests: PoskyQuest[]): Record<string, string> {
+  const names: Record<string, string> = {}
+  for (const q of quests) {
+    for (const it of q.items) names[itemCountKey(it.name)] ??= it.name
+  }
+  return names
 }
 
 /**
@@ -223,7 +247,23 @@ function buildRows(x: RowInputs): ReconcileResult {
     // answered, which is the whole point of the rule above.
     const spent = b - n
     net[k] = n
-    if (b === 0 && spent === 0) continue
+    // A ROW EXISTS WHENEVER ANY WITNESS VOUCHES FOR THE ITEM (JOS-160), not when the ACTIVE
+    // source's base happens to be non-zero.
+    //
+    // The old test was `b === 0 && spent === 0`, and under the default count source `log` that
+    // silently DELETED every item known only to the dump: base is 0 because `log` never consults
+    // the export, so the row never reached `rows` at all. The Loot page is the only consumer of
+    // `rows`, and its "in inventory only" tail filters them — so a reporter's three Ivory Sky
+    // Diamonds, sitting in his `/outputfile inventory` and counted by the Sky tracker, could not be
+    // found on the Loot page under any toggle. Two surfaces, one reconcile, opposite answers.
+    //
+    // `net` IS UNTOUCHED BY THIS — it is written on the line above, before the skip, so the map the
+    // quest counting reads is byte-identical whatever this test says. That is exactly why the Sky
+    // tracker was right while the Loot page was blind, and it is the regression gate the test pins.
+    // What changes is only which rows the TABLE can see, and each row already reports its witnesses
+    // separately (`log`, `inv`, `base`, `net`), so a `log`-source row for a dump-only item reads
+    // `log: 0, inv: 3, net: 0` — every number honest to its own source.
+    if (l === 0 && i === 0 && spent === 0) continue
     rows.push({
       key: k,
       name: x.nameByKey[k] ?? k,
@@ -248,10 +288,12 @@ function buildRows(x: RowInputs): ReconcileResult {
 export function reconcile(input: ReconcileInput): ReconcileResult {
   const { log, inv, lootNames, countSource, quests } = input
 
-  const nameByKey: Record<string, string> = { ...lootNames }
+  // Display-name precedence, highest first: what a loot line called it, then what the quest data
+  // calls it, then the export's lowercased key (JOS-160 — see questItemNames).
+  const nameByKey: Record<string, string> = { ...questItemNames(quests), ...lootNames }
   const invByKey = foldInventoryByKey(inv, nameByKey)
   const base = baseCounts(log, invByKey, countSource)
-  const { consumed, consumedBy } = questConsumption(quests, input.turnIns, nameByKey)
+  const { consumed, consumedBy } = questConsumption(quests, input.turnIns)
 
   return buildRows({ log, invByKey, base, consumed, consumedBy, nameByKey, countSource })
 }
