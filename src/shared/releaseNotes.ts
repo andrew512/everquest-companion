@@ -198,6 +198,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'Two bard songs the wiki words wrongly now answer to what the game actually prints: Sionachie\'s Dreams lands on your timers and offers its alerts, and the level-39 charm-song page the wiki calls Solon\'s Bravura is known by the name your log sings, Solon\'s Bewitching Bravura. Both hold like the mez they are - and a new per-song mez-break alert can name exactly which song just shattered.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A spell you cast and a weapon proc that fires the same effect stop sharing one row. Your casts keep the spell name; the firings that arrive with no casting line of yours get their own row, marked proc - so a cleric whose weapon procs Banish Undead can read the proc rate straight off the meter instead of putting the spell away for a fight to measure it. Casting the same spell over and over no longer hides every proc behind it either, and a cast that fizzled or was interrupted for good stops claiming the next proc as its own.',
+        fromReport: true
       }
     ]
   },
