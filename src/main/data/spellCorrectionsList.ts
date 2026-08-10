@@ -110,16 +110,20 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
       'Reported by a 0.14.0 druid and slice-proven for Drifting Death itself. Owner log: 12 lines of `<T> is engulfed by a swarm.` with no DB owner, 0 of the wiki form. The other three are the same druid DoT ladder (Stinging Swarm 10 → Creeping Crud 24 → Drones of Doom 32 → Drifting Death 40) sharing ONE wiki sentence, so whatever that sentence is it is the same for all four; Winged Death 53 writes a different one and is untouched.'
   },
   // --- the same preposition, three more families ------------------------------------------------
-  // ONE spell, contradicting ITSELF, is the only darkness entry that earns a correction.
+  // THE DARKNESS LINE, IN TWO PASSES — and the second one is why the first was written carefully.
   //
   // The whole family (Cascading 47, Dooming 27/44, Engulfing 11/20) writes `in darkness` for the
-  // third-person landing, and the owner's log has 123 lines of `by` and 0 of `in`. That looks like
-  // a family-wide drift and it is NOT SAFE to treat it as one: the bard root pair below proved
-  // that this game really does change the preposition between ranks of one line, so a zero count
-  // may only mean nobody in this log ever cast the OTHER rank. What separates Engulfing Darkness
-  // is that its own `msgCastOnYou` already says `by` — the wiki disagrees with itself inside a
-  // single entry, and 78 first-person `by` lines say which half is right. Cascading and Dooming
-  // say `in` in BOTH fields and are left alone; see the unverifiable list in the ticket.
+  // third-person landing, and the log has 124 lines of `by` and 0 of `in`. JOS-150 corrected ONLY
+  // Engulfing Darkness, because its own `msgCastOnYou` already says `by` — the wiki disagreeing
+  // with itself inside one entry, with 84 first-person `by` lines saying which half is right — and
+  // it deliberately left the other two alone: the bard root pair below proves this game really does
+  // change the preposition between ranks of one line, so a zero count may only mean nobody in this
+  // log ever cast the OTHER rank.
+  //
+  // JOS-189 CLOSED THAT DOUBT with the thing it was waiting for: evidence that the other ranks ARE
+  // cast in this log. They are, hundreds of times, and the sentence the wiki gives them has still
+  // never once been printed. The report that asked is 01KZNWX8Y6YWXQ8YRM8KGWN48E (v0.18.0): "Debuff
+  // tracker does not track Dooming Darkness (the darkness line for SK/Necro)."
   {
     spells: ['Engulfing Darkness'],
     field: 'msgCastOnOther',
@@ -128,6 +132,15 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
     attribution: 'db',
     evidence:
       'Owner log: 123 lines of `<T> is engulfed by darkness.` with no DB owner, 0 of the wiki form, and 78 first-person `You are engulfed by darkness.` matching this same entry`s own msgCastOnYou.'
+  },
+  {
+    spells: ['Cascading Darkness', 'Dooming Darkness'],
+    field: 'msgCastOnOther',
+    from: 'Someone is engulfed in darkness.',
+    to: 'Someone is engulfed by darkness.',
+    attribution: 'cast',
+    evidence:
+      'THE REPORTED DEFECT (01KZNWX8Y6YWXQ8YRM8KGWN48E, v0.18.0, an SK/necro). Owner log, 1,557,569 lines: `<T> is engulfed in darkness.` occurs ZERO times while `<Name> begins casting Dooming Darkness.` occurs 159 times and `Cascading Darkness` 36 — so both ranks ARE cast here, which is precisely what JOS-150 could not establish and why it left them alone. 17 of the 159 Dooming casts and 1 of the 36 Cascading casts are followed within 12 s (p50 3 s) by `<T> is engulfed by darkness.`; the rate is low because that sentence is SHARED with Engulfing Darkness (249 casts, 106 matched) and only the nearest cast can claim each of the 124 landings. Purely additive to the table: the suffix already exists, so this adds two candidates to a sentence the cast anchor already resolves and creates no new tail.'
   },
   // NOT CORRECTED, and the reason is worth keeping: Largo's Melodic Binding (bard 20) says `bound
   // IN strands of solid music.` while its direct upgrade Largo's Assonant Binding (bard 51) says
