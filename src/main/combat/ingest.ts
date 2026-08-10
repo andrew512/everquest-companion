@@ -172,8 +172,9 @@ function ingestDeath(st: EngineState, ev: DeathEvent): void {
   }
   // The retired instance stays in `engaged` (so an in-fight heal on the corpse
   // still counts) — closure consults world.isRetired(), not set membership.
-  // Clear any CC hold on the dead instance so it can't keep the fight open.
-  if (res.retired) st.current?.ccActiveUntil.delete(res.retired.instanceId)
+  // The dead instance's CC hold is cleared by the world model's own retirement hook
+  // (EngineState's `world.onRetire`, JOS-176) — this used to be a delete right here, which
+  // meant DEATH was the only retirement that cleaned up after itself and staleness was not.
   const petNote = res.wasPet ? ' (pet)' : ''
   const ambNote = res.ambiguous ? ' ~ambiguous' : ''
   st.log(ev.ts, 'death', 'info', `☠ ${ev.name} died${petNote}${ambNote} - ${res.reason}`)

@@ -37,6 +37,19 @@ export class EngineState {
    *  distinction lives on WorldModel Instance.petKind — see world.charmedInstances(). */
   petNames = new Set<string>()
   world = new WorldModel()
+
+  constructor() {
+    // A RETIRED INSTANCE CANNOT REDEEM ITS CC HOLD (JOS-176). The hold in
+    // `Encounter.ccActiveUntil` is a claim that a mez'd mob is still alive and still in this
+    // fight; the moment the world model retires that instance the claim is false forever,
+    // because a later sighting of the name spawns a fresh `nameKey#gen` (world.ts spawn). Wired
+    // here rather than at each call site so DEATH, STALENESS, zone, pet succession and the
+    // foreign-killer ghost all agree — before this only ingestDeath cleaned up, and a mez'd mob
+    // aged out by staleness went on vetoing the death-close for the rest of its 120 seconds.
+    this.world.onRetire = (inst): void => {
+      this.current?.ccActiveUntil.delete(inst.instanceId)
+    }
+  }
   /**
    * OWNERSHIP for the two caster-less broadcasts (`<mob> has been charmed.` /
    * `<mob> has been mesmerized.`) — see charmModel.ts for the state table and the
