@@ -144,6 +144,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'A mez that runs longer than the app expects finally teaches the timer instead of being thrown away. Your mez bar learns from the mezzes you cast, but a mez you break early is shorter than the real one - so a run of quick breaks taught the app a number below the truth, and every full-length mez after that had its bar taken away seconds before it actually wore off. The one cast that could have corrected the number was the one cast the wrong number destroyed. Now the app remembers a mez the bar has given up on for long enough to still learn from it when it does wear off, and it reads the game\'s own "has been awakened by" line to tell a mez somebody broke from a mez that ran its course - so a broken one can never push the full-length reading out of what it has learned. On the log this came from, a 136-second hold that taught nothing for weeks now sets the bar the first time it happens. The bar itself still disappears on exactly the same schedule as before.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'A boss pull starts when you pull the boss. A mez you cast on something else used to keep the previous skirmish open long after everything in it was dead, so the next fight opened as much as a minute early and its meter carried a scrap of the fight before it. A hold now lasts only as long as the mob it was cast on - it ends the moment that mob dies or leaves - and it is never claimed by your own charmed pet, which happens more than you would think when your pet and the things you are killing share a name. Mezzing one mob and taking your time with the other still holds the pull open exactly as before.'
       }
     ]
