@@ -137,6 +137,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'Hovering an item on a Plane of Sky quest names the mob that drops it again, not just the island. Every boss the catalog knows for that item is listed with its level and zone, and the island rides the same line as the item name - so you can read who to kill and where to stand without expanding the quest. Since 0.15.0 that hover had answered with the island alone.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Dozens of spells the wiki describes with a placeholder name - Odium, Tangling Weeds, Elnerick\'s Entombment of Ice, the ward and blessing lines, the healing echoes - now open a timer bar when they land. The game says "a rock golem staggers under a dark curse" and the wiki page says "Target staggers under a dark curse", and that one word was the difference between a bar and nothing at all. Forty-four spells were checked against real logs and fixed together, so this is not one spell learning to work.',
+        fromReport: true
       }
     ]
   },
