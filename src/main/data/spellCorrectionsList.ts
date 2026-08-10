@@ -39,6 +39,37 @@
 // (Pacify/Soothe/Calm/Lull) are all in that state and NONE of them is corrected here. Absence of
 // evidence is not evidence of drift.
 //
+// AND NEITHER IS A WRONG NUMBER — WHAT THIS FILE IS NOT FOR (JOS-189). Two reports in the same wave
+// looked like corrections and are not, because nothing about the wiki's SENTENCES is wrong in
+// either. They are recorded here rather than forced into the table above, because the shape of the
+// answer is what a reader of this file most needs to be able to tell apart.
+//
+//   `Short duration buffs don't show correct timers on the buffs window. Like Shield of Thistles,
+//   and Sprouting Heal` (01KZNB36R74HF3A8BJ9N67R19Y), and `the timer for the spell Blooming Heal
+//   keep reseting` (01KZPHASSS7R1E1Y6VTFSTJ9RV, with a slice). ONE defect, from both directions:
+//   the DB duration is the wiki's figure for ONE level of a spell whose real duration scales with
+//   the caster, and `SpellStats.estimateFor` treats it as a hard FLOOR that a clean observed cycle
+//   may raise and can never lower (JOS-117 ruling 6, and rightly — it is what stops Invisibility's
+//   20 minutes collapsing to the 4 m 24 of a run of early breaks).
+//
+//     * SHIELD OF THISTLES states 15 Min. Measured over the owner's whole log through the DB's own
+//       pair (`You are surrounded by a thorny barrier.` -> `The brambles fall away.`): 6 self
+//       cycles, 385 s / p50 551 s / 655 s. Every one of them BELOW the stated figure, so the floor
+//       holds forever and the bar over-runs by four to eight minutes with no path to correcting
+//       itself.
+//     * THE SEEDED-HEAL FAMILY (Sprouting, Blooming, Blossoming, Budding, Efflorescing, Flowering)
+//       states 24 seconds. On the reporter's own slice three Blooming Heal IV casts land and tick
+//       for 27, 28 and 30 s — so the bar expires three to six seconds before the heal stops
+//       healing, every cast. It cannot learn its way out either: not one of the six carries a
+//       `msgWearsOff`, and the owner's whole log holds ZERO `Your <X> spell has worn off.` lines
+//       for any of them, so no cycle can ever be paired and no sample can ever be minted.
+//
+//   Neither is a message this file could correct. `You feel a heal blooming within you.` really is
+//   the self landing — the slice's own `Player Kallil creating instance` line names the reporter,
+//   and the heal lines carry that same name — and the third-person half was already fixed by
+//   JOS-174. What is wrong is a NUMBER and the rule that reads it, which is a change to the model
+//   with its own burden of proof and its own ticket, not an entry in a table of sentences.
+//
 // THE ABSENT FIELD is the fourth drift class, and it is why `from` may be `null` (JOS-159). Almost
 // everything here swaps one sentence for another, but the wiki can also state NOTHING where the
 // game states something: `Allure`, the enchanter charm at 46, carries a cast time and a duration
