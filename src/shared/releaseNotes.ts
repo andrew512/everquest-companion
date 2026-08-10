@@ -173,6 +173,21 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Spirit of the Puma gets a timer bar. Everything the app needed to track it was already there - the cast line, the "you begin to snarl" landing, the "spirit of the puma departs" fade - except the length, and the wiki writes that one as "60s". The app could read "60 seconds" and "1 minute" and a dozen other spellings but not that one, and a spell with no length is a spell the buffs window will not draw at all. It can read it now, along with 86 other spells whose length was written the same short way or as a plain clock like 6:00:00 - the familiars, Form of the Bear, Blessing of Faith, the cleric healing echoes, Instill, the shaman heal-over-time line. Sicken was wrong rather than missing: its length is written "1 min 24s" and only the first half was being counted, so a 1 minute 24 second debuff was showing as one minute.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A bard chaining Tuyen\'s chants sees all four of them, each on its own bar. Every chant in that family prints the same "begins to chant" line when it lands, and the app only knew two of the four - so a chant of disease landing was drawn as a chant of frost, a frost that had just been resisted, while the poison and the disease had no bar at all. Replayed against the reporting bard\'s own fight, the overlay now shows flame, disease and poison counting down on the mob and no frost, which is exactly what was on the mob.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Two more debuffs turn up on the debuff window: Dooming Darkness, the shadow knight and necromancer darkness, and Sha\'s Lethargy, the level 50 beastlord slow. Both were cases where the wiki writes the landing line slightly differently from the game - one preposition for the darkness, a missing name for the slow - so the app was watching for a sentence that never arrives. Cascading Darkness was fixed alongside its own line-mate.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
     ]
