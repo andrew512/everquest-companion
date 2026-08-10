@@ -153,6 +153,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'The "Add an alert" suggestion list stops printing on top of itself. A spell the app has watched you cast wears the most chips - buff or debuff, the levels each of your classes learns it at, "recently cast", how often it has been seen, and one chip per alert it can build for you - and past a certain point those simply ran out of room and drew straight through each other, so "When it wears off (you or your pet)" had a class level stamped across the middle of it. Now the row keeps everything on one line while one line will hold it, shortens a long spell name before anything else, and drops the one-click chips onto a second line rather than over the top of the row when even that is not enough. Rows that already fitted are exactly where they were.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
     ]
