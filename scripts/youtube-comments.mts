@@ -13,21 +13,34 @@ const context = {
   client: { clientName: "WEB", clientVersion: "2.20250101.00.00", hl: "en", gl: "US" },
 };
 
-async function call(body: object): Promise<any> {
+interface CommentPayload {
+  author?: { displayName?: string };
+  properties?: { content?: { content?: string }; publishedTime?: string; commentId?: string };
+}
+
+interface InnertubeResponse {
+  frameworkUpdates?: {
+    entityBatchUpdate?: {
+      mutations?: { payload?: { commentEntityPayload?: CommentPayload } }[];
+    };
+  };
+}
+
+async function call(body: object): Promise<InnertubeResponse> {
   const res = await fetch(ENDPOINT, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ context, ...body }),
   });
   if (!res.ok) throw new Error(`innertube ${res.status}`);
-  return res.json();
+  return (await res.json()) as InnertubeResponse;
 }
 
-function findCommentToken(json: any): string | null {
+function findCommentToken(json: InnertubeResponse): string | null {
   const s = JSON.stringify(json);
   const m =
-    s.match(/"sectionIdentifier":"comment-item-section".{0,2000}?"token":"([^"]+)"/) ??
-    s.match(/"targetId":"engagement-panel-comments-section".{0,3000}?"token":"([^"]+)"/);
+    /"sectionIdentifier":"comment-item-section".{0,2000}?"token":"([^"]+)"/.exec(s) ??
+    /"targetId":"engagement-panel-comments-section".{0,3000}?"token":"([^"]+)"/.exec(s);
   return m ? m[1] : null;
 }
 
@@ -38,7 +51,12 @@ if (!token) {
   process.exit(2);
 }
 
-type Comment = { author: string; published: string; text: string; id: string };
+interface Comment {
+  author: string;
+  published: string;
+  text: string;
+  id: string;
+}
 const comments: Comment[] = [];
 for (let page = 0; token && page < maxPages; page++) {
   const j = await call({ continuation: token });
@@ -53,8 +71,8 @@ for (let page = 0; token && page < maxPages; page++) {
       id: p.properties?.commentId ?? "",
     });
   }
-  const nt = JSON.stringify(j).match(
-    /"continuationCommand":\{"token":"([^"]+)","request":"CONTINUATION_REQUEST_TYPE_NEXT/,
+  const nt = /"continuationCommand":\{"token":"([^"]+)","request":"CONTINUATION_REQUEST_TYPE_NEXT/.exec(
+    JSON.stringify(j),
   );
   token = nt ? nt[1] : null;
 }
