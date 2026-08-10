@@ -125,6 +125,17 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.18.0',
+    date: '2026-08-10',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Hovering an item on a Plane of Sky quest names the mob that drops it again, not just the island. Every boss the catalog knows for that item is listed with its level and zone, and the island rides the same line as the item name - so you can read who to kill and where to stand without expanding the quest. Since 0.15.0 that hover had answered with the island alone.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.17.0',
     date: '2026-08-09',
     entries: [
