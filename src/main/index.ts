@@ -341,7 +341,7 @@ if (!gotSingleInstanceLock) {
 
     // Presence-driven features (overlay auto-hide + the cursor ring). LAST, because both act on
     // windows that must already exist. Costs one store read when both are off — which is the
-    // default install: `presenceNeeded()` decides whether the watcher child is spawned at all.
+    // default install: `presenceNeeded()` decides whether the watcher thread is started at all.
     initPresenceEffects()
 
     // The performance HUD (docs/plans/perf-profiling.md P1). Costs one store read when it is
@@ -358,14 +358,18 @@ if (!gotSingleInstanceLock) {
 }
 
 /**
- * REAPING THE WATCHER, BELT AND BRACES. `window-all-closed` below is the ordinary teardown, but
- * it is not the only way this process ends: an auto-updater `quitAndInstall`, a `app.quit()`
+ * STOPPING THE WATCHER, BELT AND BRACES. `window-all-closed` below is the ordinary teardown, but
+ * it is not the only way this process ends: an auto-updater `quitAndInstall`, an `app.quit()`
  * from anywhere, or an OS session logoff can reach `before-quit` on a path that never lands
- * there. The presence watcher is a CHILD PROCESS, and Windows does not kill children with their
- * parent — one missed teardown is a PowerShell loop polling user32 forever with nobody reading
- * the pipe. `stopPresenceEffects()` is idempotent, so running it on both events costs nothing.
- * (The child also self-reaps when this pid disappears — see presence.ts — which is what covers
- * the kill -9 case that no in-process handler can.)
+ * there. The presence watcher is a WORKER THREAD, and a live thread is one more thing holding a
+ * quitting process open. `stopPresenceEffects()` is idempotent, so running it on both events
+ * costs nothing.
+ *
+ * THE HARD CASE STOPPED EXISTING IN JOS-182, which is worth recording rather than quietly
+ * deleting: the watcher used to be a `powershell.exe` CHILD, Windows does not kill children with
+ * their parent, and one missed teardown left a PowerShell loop polling user32 forever with nobody
+ * reading the pipe. It carried a self-reap for exactly the kill -9 case no in-process handler can
+ * cover. A thread cannot outlive its process, so both the hazard and its workaround are gone.
  */
 app.on('before-quit', () => teardownStep('main:stopPresence', stopPresenceEffects))
 
@@ -388,8 +392,8 @@ function teardownStep(label: string, fn: () => void): void {
 
 app.on('window-all-closed', () => {
   teardownStep('main:stopSession', stopSession)
-  // Kill the presence watcher child + the cursor stream. Both already unref their timers, but a
-  // child process is not a timer: nothing else would reap it.
+  // Stop the presence watcher thread + the cursor stream. Both already unref, but an unref'd
+  // worker is still a running thread: nothing else would end it.
   teardownStep('main:stopPresence', stopPresenceEffects)
   // Stop the feedback drain's timers. They are unref'd, so they cannot be the reason the
   // process lives on; this is about not starting an attempt into a process that is quitting.

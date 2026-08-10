@@ -35,8 +35,8 @@ export interface ScreenRect {
  */
 export interface PresenceState {
   /**
-   * Has the watcher reported ANYTHING yet? False for the first second or two of a launch (the
-   * child pays a one-time compile before its first line) and again if it ever dies.
+   * Has the watcher reported ANYTHING yet? False for the first moments of a launch (the watcher
+   * thread has three system libraries to open before its first line) and again if it ever dies.
    *
    * This exists so the app never acts on a GUESS. `eqRunning:false` before the first report
    * means "we have not looked", not "the game is closed" — and auto-hide would otherwise blink
@@ -241,7 +241,7 @@ export function normalizeOverlayAutoHide(value: unknown): OverlayAutoHidePrefs {
 }
 
 /**
- * Does anything need the presence watcher running? The watcher is a child process; it starts
+ * Does anything need the presence watcher running? The watcher is a worker thread; it starts
  * ONLY when a feature is switched on and stops the moment the last one goes off.
  *
  * Pure + exported because it is the exact predicate the gating tests pin: a user with every
