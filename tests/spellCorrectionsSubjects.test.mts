@@ -114,27 +114,70 @@ test('every sweep entry states a measured evidence line and an attribution route
 // 2 — STRICTLY ADDITIVE: no new tail competes with an old one
 // ---------------------------------------------------------------------------------------------
 
-test('every restored suffix is NEW to the table, and shadows nothing that was already in it', () => {
+/**
+ * The suffixes this sweep JOINS rather than mints (JOS-189) — a row whose family already owns the
+ * sentence, so restoring the subject adds candidates and creates no new tail. Named here rather
+ * than inferred, so joining stays a decision somebody made per entry.
+ */
+const JOINS_EXISTING = new Set(['begins to chant.'])
+
+test('every restored suffix is NEW to the table, or JOINS one exactly — never partially', () => {
   // The pre-sweep table: the scrape plus the hand-derived corrections, exactly what shipped before
-  // this ticket. A restored suffix that was ALREADY there would mean the correction is redundant;
-  // one that is a suffix of an existing tail (or has one as a suffix) would mean a line can match
-  // both, and which spell wins is then decided by insertion order rather than by anybody.
+  // JOS-174. Two shapes are admitted and the difference between them is the whole invariant.
+  //
+  // MINTING one is the ordinary case: the tail is absent, so nothing it matches was matching
+  // anything before. JOINING one is the Tuyen chant case: all four chants write one sentence, the
+  // scrape gave two of them a usable subject, and the other two are simply added as candidates to
+  // a sentence the cast anchor already narrows.
+  //
+  // What neither may be is a PARTIAL overlap — a tail that is a suffix of an existing one, or has
+  // one as a suffix. There a line matches both and which spell it means is decided by insertion
+  // order rather than by anybody, which is the one thing this test exists to refuse.
   const before = buildSpellDb(applySpellCorrections(RAW, HAND_DERIVED).spells)
   const existing = [...before.castOnOtherSuffix.keys()].map(tailOf)
   for (const c of SUBJECT_PLACEHOLDER_CORRECTIONS) {
     const suffix = castOnOtherSuffix(c.to)
     assert.ok(suffix, `${c.spells[0]}: the restored message must yield a suffix`)
-    assert.equal(
-      before.castOnOtherSuffix.get(suffix),
-      undefined,
-      `${c.spells[0]}: the table already held \`${suffix}\` — this correction adds nothing`
-    )
+    const held = before.castOnOtherSuffix.get(suffix)
+    if (JOINS_EXISTING.has(suffix)) {
+      assert.ok(held, `${c.spells[0]}: \`${suffix}\` is declared a JOIN but the table does not hold it`)
+      continue
+    }
+    assert.equal(held, undefined, `${c.spells[0]}: the table already held \`${suffix}\` — declare the join`)
     const tail = tailOf(suffix)
     for (const other of existing) {
       assert.ok(!other.endsWith(tail), `${c.spells[0]}: \`${tail}\` would also match every line of \`${other}\``)
       assert.ok(!tail.endsWith(other), `${c.spells[0]}: every line of \`${tail}\` already matches \`${other}\``)
     }
   }
+})
+
+test('JOS-189: the chant family is FOUR candidates for the one sentence it prints', () => {
+  // The defect, at the layer it lives in. All four Tuyen chants print `<mob> begins to chant.`, and
+  // the scrape wrote `Someone` for two of them and `Target` for the other two — so the sentence had
+  // two owners, and a bard chaining all four had two of their debuffs filed under the wrong spell
+  // and the other two nowhere at all.
+  const db = loadSpellDb()
+  const hit = matchCastOnOtherSuffix('an ice giant begins to chant.', db)
+  assert.ok(hit, 'the live sentence must resolve at all')
+  assert.equal(hit.target, 'an ice giant')
+  assert.deepEqual(
+    hit.entry.cands.map((c) => c.name).sort(),
+    [
+      "Tuyen's Chant of Disease",
+      "Tuyen's Chant of Flame",
+      "Tuyen's Chant of Frost",
+      "Tuyen's Chant of Poison"
+    ],
+    'the whole family, under the names the log prints'
+  )
+
+  const bare = buildSpellDb(applySpellCorrections(RAW, HAND_DERIVED).spells)
+  assert.deepEqual(
+    matchCastOnOtherSuffix('an ice giant begins to chant.', bare)?.entry.cands.map((c) => c.name).sort(),
+    ["Tuyen's Chant of Flame", "Tuyen's Chant of Frost"],
+    'before the sweep the sentence had exactly the two owners whose subject the scrape got right'
+  )
 })
 
 // ---------------------------------------------------------------------------------------------
@@ -170,9 +213,13 @@ function at(sec: number, text: string): string {
   return `[Thu Jul 30 20:${two(48 + Math.floor(sec / 60))}:${two(sec % 60)} 2026] ${text}`
 }
 
-/** The `tests/spellCorrections.test.mts` harness: both modules, wired the way wiring.ts wires them. */
-function replay(lines: [number, string][], observeSec: number) {
-  const db = loadSpellDb()
+/**
+ * The `tests/spellCorrections.test.mts` harness: both modules, wired the way wiring.ts wires them.
+ * `withDb` replays against a DB other than the committed one — which is how the "…and without the
+ * correction" halves below state the defect through the same machinery rather than by inspection.
+ */
+function replay(lines: [number, string][], observeSec: number, withDb?: ReturnType<typeof loadSpellDb>) {
+  const db = withDb ?? loadSpellDb()
   installSpellDb(db)
   const buffs = new BuffsModule(db)
   buffs.reset()
@@ -243,6 +290,65 @@ test('the landing resolves to Odium alone, through the load seam the parser real
   assert.equal(hit.target, 'a rock golem')
   assert.deepEqual(hit.entry.cands.map((c) => c.name), ['Odium'], 'no other spell writes this sentence')
   assert.equal(db.castOnOtherSuffix.get('staggers under a dark curse.')?.length, 1)
+})
+
+/**
+ * THE BARD'S CHAIN, in the rhythm the game prints it: a song every two or three seconds, each one
+ * answered two seconds later by the landing sentence all four chants share — except the frost,
+ * which is RESISTED and therefore answered by nothing. Four casts, three landings, and that
+ * asymmetry is the whole report.
+ *
+ * Every shape here is the owner's own: `You begin singing <Song> <rank>.`, `<mob> begins to chant.`
+ * (6 lines whole-log) and `<Mob> resisted your <Song>!` (the ordinary resist line), with the
+ * reporter's mob replaced by one of the owner's.
+ */
+const CHAIN: [number, string][] = [
+  [0, "You begin singing Tuyen's Chant of Frost V."],
+  [2, "A fire giant warrior resisted your Tuyen's Chant of Frost V!"],
+  [2, "You begin singing Tuyen's Chant of Disease VI."],
+  [4, 'a fire giant warrior begins to chant.'],
+  [4, "You begin singing Tuyen's Chant of Flame V."],
+  [6, 'a fire giant warrior begins to chant.'],
+  [7, "You begin singing Tuyen's Chant of Poison V."],
+  [9, 'a fire giant warrior begins to chant.']
+]
+
+test('JOS-189: each chant of the chain gets its OWN row, and the resisted one gets none', () => {
+  // THE REPORT (01KZN3FSW4BQ519N3TV8CQ1TC1, v0.17.0): frost shown active when it was not on the
+  // mob, poison and disease missing, flame alone correct. With only two candidates for the shared
+  // sentence, the DISEASE landing resolved to the most recently cast of THEM — the frost that had
+  // just been resisted — and the poison and disease had no row of their own to draw.
+  const r = replay(CHAIN, 10)
+  const names = r.rows.map((x) => x.name).sort()
+  assert.deepEqual(
+    names,
+    ["Tuyen's Chant of Disease VI", "Tuyen's Chant of Flame V", "Tuyen's Chant of Poison V"],
+    'the three that landed, each under its own name — and no frost row at all'
+  )
+  for (const row of r.rows) {
+    assert.equal(row.kind, 'debuff')
+    assert.equal(row.target, 'a fire giant warrior')
+    assert.equal(row.mode, 'countdown')
+  }
+  assert.equal(r.rows.find((x) => x.name.includes('Disease'))?.durationMs, 12_000, 'the DB states 2 ticks')
+  assert.equal(r.rows.find((x) => x.name.includes('Flame'))?.durationMs, 18_000, '…and 3 for the flame')
+})
+
+test('…and with the wiki`s own two rows the same chain shows frost and loses two chants', () => {
+  // The defect stated, the way the Odium pair above states it. The correction is the only thing
+  // standing between this test and the one above: with Disease and Poison absent from the table,
+  // every landing in the chain resolves to the most recently cast of Flame and Frost.
+  const bare = buildSpellDb(applySpellCorrections(RAW, HAND_DERIVED).spells)
+  try {
+    const r = replay(CHAIN, 10, bare)
+    assert.deepEqual(
+      r.rows.map((x) => x.name).sort(),
+      ["Tuyen's Chant of Flame V", "Tuyen's Chant of Frost V"],
+      'a frost bar for a frost that was resisted, and nothing for the poison or the disease'
+    )
+  } finally {
+    installSpellDb(loadSpellDb())
+  }
 })
 
 test('JOS-103`s type-less line has a typed event now: Spirit of the Puma', () => {

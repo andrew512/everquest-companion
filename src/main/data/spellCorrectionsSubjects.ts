@@ -69,8 +69,27 @@
 // and every one of those lines had no DB owner before this file existed.
 //
 // A row may override the attribution when a caster is demonstrably attached to the landing. Odium
-// is the only one here that does: its evidence is the reporter's slice, cited by report id, and
-// that is the same route JOS-161 used for a song the owner never sang.
+// and the Tuyen chants are the ones here that do: their evidence is a reporter's slice, cited by
+// report id, and that is the same route JOS-161 used for a song the owner never sang.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// A ROW MAY ALSO JOIN A SUFFIX INSTEAD OF MINTING ONE (JOS-189), and the two shapes are held to
+// different halves of the same rule.
+//
+// Every row above MINTS a tail: the restored sentence is new to the table, so nothing it matches
+// was matching anything before and `sole` is the honest attribution. The Tuyen chant pair does not.
+// All four of that family write ONE landing sentence and the scrape gave two of them `Someone` and
+// two of them `Target`, so the suffix already exists and is already owned — restoring the subject
+// adds CANDIDATES to a sentence the cast anchor is already narrowing, and mints nothing.
+//
+// That is the SAFER of the two shapes, not the looser one, and it is the same move the
+// hand-derived list already makes for the twenty-four gates and for Cease/Desist/Sacred Word. No
+// new tail means no new competition for any line in the log; the only thing that changes is which
+// spells `admitLanding` may choose between, and it still refuses to choose without a cast. What it
+// must NOT be is a PARTIAL overlap — a tail that is a suffix of an existing one, or has one as a
+// suffix — because that is the case where table order silently decides which spell a line means.
+// `tests/spellCorrectionsSubjects.test.mts` splits the invariant exactly there: a restored suffix
+// must either be absent from the table or be byte-identical to one already in it, never in between.
 
 import type { CorrectionAttribution, SpellCorrection } from './spellCorrections'
 
@@ -123,6 +142,15 @@ const SUBJECT_DRIFTS: readonly SubjectDrift[] = [
     from: 'Target is seeded with healing energy.',
     to: 'Someone is seeded with healing energy.',
     hits: 28 },
+  {
+    spells: ["Tuyen's Chant of Disease", "Tuyen's Chant of Poison"],
+    from: 'Target begins to chant.',
+    to: 'Someone begins to chant.',
+    hits: 6,
+    attribution: 'cast',
+    evidence:
+      'THE REPORTED DEFECT (01KZN3FSW4BQ519N3TV8CQ1TC1, v0.17.0, a bard): "chant of frost being active when it was not on a mob and NOT showing chant of poison or disease. The only one it had correct was chant of Flame". All four chants share ONE landing sentence and the DB gave it only TWO owners — Flame and Frost carry the `Someone` subject, Disease and Poison carry `Target`, so they were in no table at all. That is the whole report in one line: with only two candidates, `admitLanding` resolves each landing to the most recently cast of THEM, so the disease and poison landings were filed under frost — a frost the slice shows RESISTED on every cast — and the two real debuffs had no row. Restoring the subject makes all four candidates, and the bard`s 3 s chain then resolves each landing to its own cast. The suffix ALREADY EXISTS, so this creates no new tail: it adds two owners to a sentence the cast anchor was already narrowing. Owner log: 6 lines of the shape, with Flame 14 / Disease 12 / Frost 11 third-person casts beside them.'
+  },
   { spells: ['Odium'],
     from: 'Target staggers under a dark curse.',
     to: 'Someone staggers under a dark curse.',
