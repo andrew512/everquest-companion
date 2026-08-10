@@ -94,9 +94,14 @@ function castableSharing(message: string): string[] {
 // THE MEZ / ROOT FAMILIES the parser routes to `cc`. Each key is a landing message spells.json
 // records verbatim; the comment names the ladder it is.
 const CC_FAMILIES: Record<string, string> = {
-  // The bard mez ladder — three messages, six songs, and before JOS-84 `ccSpell` held one of them.
-  "Someone 's eyes glaze over.": 'bard mez (Song of the Sirens 27, Pixie Strike 28, Bravura 39)',
-  "Target's eyes glaze over.": "bard mez (Sionachie's Dreams 40)",
+  // The bard mez ladder — TWO messages now, six songs, and before JOS-84 `ccSpell` held one of
+  // them. It was three messages until JOS-161: `Sionachie's Dreams` used to sit alone under
+  // `Target's eyes glaze over.`, which is the SAME sentence with the wrong subject placeholder,
+  // and the corrections overlay folds it into the family the other three already shared. That is
+  // exactly what the R1 assertion below is for — the family is read off the LOADED db, so a
+  // correction that moved a song shows up here as the family it moved into.
+  "Someone 's eyes glaze over.":
+    "bard mez (Song of the Sirens 27, Pixie Strike 28, Bewitching Bravura 39, Sionachie's Dreams 40)",
   "Someone 's head nods.": "bard mez (Kelin's Lucid Lullaby 15)",
   // The bard root pair — Melodic Binding 20 and its DIRECT UPGRADE, Assonant Binding 51, one
   // word apart. The upgrade was the one missing, which is the level-up failure exactly.
@@ -144,6 +149,15 @@ test('JOS-84 R2: charmSpell classifies every castable member of every charm fami
 test("JOS-84 R3: the bard's Bravura break parses as a cc refresh and fires the group alert", () => {
   // The injected sentence — verbatim from slice 01KZAG2QAW885YJNRTDDND8BF2 with the mob swapped
   // for one the owner's log prints (the slice's was `a fire giant warrior`).
+  //
+  // AND THE EXCLUSION IS THE ASSERTION, restated for a second report (01KZMPYP1QA3N02FE42T473TZM,
+  // 0.16.0: "Solon's Bewitching Bravura charm break alert not firing"). It is not firing because it
+  // is not a charm — `group:cc:broke` fires and `charm-break` does not, which is what the deepEqual
+  // below pins. The evidence is in JOS-161's characterization and in the owner's own log: fire
+  // giants sing this song at him fourteen times and what prints is `You are no longer captivated.`,
+  // the captivate family's wears-off, shared verbatim with Solon's Song of the Sirens. A charm
+  // break alert on this song would announce something that did not happen; since JOS-161 the wizard
+  // offers the per-spell mez break (`suggest:<song>:breaks`) that does.
   const line = wornOff("Solon's Bewitching Bravura", 'a froglok ton knight')
   const ev = parseEvent(line, 0)
   assert.equal(ev?.kind, 'cc', 'a bard mez break is a cc refresh, not a buffFade')

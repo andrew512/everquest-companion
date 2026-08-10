@@ -584,6 +584,39 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   suggested def end to end. That is a large part of why this shipped; the import is
   relative (repo law) and `tests/suggestedAlertsFire.test.mts` drives the real
   wizard path through the real parser into the real module.
+  **A MEZ HAS NO `buffExpired`, SO IT GETS THE EVENT IT ACTUALLY HAS** (JOS-161).
+  `wearsOff` is beneficial-only and rests on the DERIVED `buffExpired`, which the
+  buffs module synthesizes only from an AUTHORITATIVE wear-off message. A hold on a
+  mob has none — `Your <X> spell has worn off of <mob>.` is claimed by
+  `classifyWornOff` and becomes `cc {refresh:true}`, and the hygiene cull that
+  retires an unwitnessed hold is deliberately silent — so a bard reaching for
+  "alert me when my mez expires" found no template that could fire and no trigger
+  they could hand-write that would. The `breaks` template is the per-spell twin of
+  the "Mez / root broke" GROUP: `{cc, where:{spell, refresh:'true'}}`, gated on the
+  parser's own `ccSpell` roster (exported from rulesets.ts for exactly this
+  reader), because a spell the roster misses parses to `buffFade` where the trigger
+  never sees it. Same honest limit as the group: "it ended", never "it ended early".
+
+- **THE CORRECTIONS OVERLAY CAN RENAME, AND A NAME IS A JOIN KEY** (JOS-161,
+  `src/main/data/spellCorrectionsList.ts` — the evidence bar and the five drift
+  classes live in that header; `spellCorrections.ts` is the mechanism beside it).
+  The first four drift classes assume the wiki and the game agree about WHICH spell
+  is described and differ only in the words it prints. The fifth is the name itself:
+  the level-39 bard song is `Solon's Bravura` on the wiki page and
+  `Solon's Bewitching Bravura` in every line the game has ever printed. That is not
+  cosmetic — the name is what `SpellDb.byKey` folds a cast line to, what
+  `SpellCatalogEntry.name/key` is, what `where.spell` is compared against, and what
+  `spellClasses.ts`/`levelUnlocks.ts` index by; so the song anchored nothing, the
+  wizard listed a spell no bard has, and no single string could satisfy both a
+  landing alert and a break alert. TWO RULES come with it: a name correction writes
+  EVERY row of that name (the scrape carries era/rank duplicates whose MESSAGES may
+  legitimately differ — `Shock of Frost` is two rows saying two different things —
+  but whose NAME cannot, and a half-rename puts a phantom line in the catalog), and
+  it reports `unknownSpells` rather than `stale` when it rots, because a renamed row
+  is not findable by the name the correction states. The audit test fails on either
+  list. **And every index keyed by spell name must read the CORRECTED entries** —
+  `spellClasses.ts` and `levelUnlocks.ts` now do; a raw-`spells.json` importer that
+  looks a spell up BY NAME is a silent miss waiting to happen.
 
 ### Electron trust boundary (do not weaken)
 

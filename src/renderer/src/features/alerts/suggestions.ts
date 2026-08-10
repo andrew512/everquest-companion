@@ -7,7 +7,7 @@
 //
 // ID CONVENTION:  `suggest:<spellKey>:<template>`
 //   spellKey = the catalog entry's canonical (lowercased, rank-stripped) key.
-//   template ∈ 'wearsOff' | 'fade' | 'lands'.
+//   template ∈ 'wearsOff' | 'fade' | 'lands' | 'landsOnOther' | 'breaks'.
 //   Illusion is the SHARED, deduped suggestion `suggest:illusion:fade` (one alert for the
 //   generic `Your illusion fades.` line, which names no spell — see logEvents.ts IllusionFade).
 //
@@ -25,7 +25,7 @@ import type { AlertDef, LogEventKind, SpellCatalogEntry } from '@shared/types'
 import { spellIdFragment, parseSpellRank } from '../../../../shared/spellLines'
 import type { SpellRank } from '@shared/spellLines'
 
-export type TemplateKind = 'wearsOff' | 'fade' | 'lands' | 'landsOnOther'
+export type TemplateKind = 'wearsOff' | 'fade' | 'lands' | 'landsOnOther' | 'breaks'
 
 /**
  * RANK-AWARE templates (spell levelling intelligence). Everything above is rank-LESS by
@@ -145,6 +145,31 @@ export const SUGGEST_TEMPLATES: Record<
     verb: 'lands on someone',
     sound: 'task-acknowledge-task-acknowledge-05',
     raw: true
+  },
+  // Crowd control: the HOLD ENDING, per spell (JOS-161).
+  //
+  // WHY IT IS NOT `wearsOff`. That template is beneficial-only and rests on the derived
+  // `buffExpired`, which the buffs module synthesizes only from an AUTHORITATIVE wear-off message.
+  // A mez on a mob has none: `Your <Song> spell has worn off of <mob>.` is claimed by
+  // `classifyWornOff` and becomes `cc {refresh:true}` (that is how the "Mez / root broke" group has
+  // always fired), and the hygiene cull that retires an unwitnessed hold is deliberately silent. So
+  // a bard asking for "tell me when my mez expires" had nothing to click and nothing to hand-write
+  // — the reported defect, and it was true of every mez and root in the game, not just this ladder.
+  //
+  // `refresh:'true'` is what separates the BREAK from the landing: the same `cc` kind carries both,
+  // and only the break shape names a spell (the landing carries `candidates`). The group alert
+  // pins the same key for the same reason (shared/alertGroups.ts `group:cc:broke`).
+  //
+  // THE HONEST LIMIT, restated from that group because it is the same sentence: EQ prints this line
+  // whether the hold ran its course or a nuke broke it early. This alert is "it ended", never "it
+  // ended early", and it is named that way.
+  // "It has all gone rather pear-shaped."
+  breaks: {
+    chip: 'When the mez/root breaks',
+    kind: 'cc',
+    verb: 'broke',
+    sound: 'task-error-task-error-08',
+    where: (name) => ({ spell: name, refresh: 'true' })
   }
 }
 
@@ -304,6 +329,7 @@ export function suggestionsFor(entry: SpellCatalogEntry, rank?: SpellRank | null
   if (entry.templates.landsOnOther) {
     out.push({ template: 'landsOnOther', def: buildDef(entry, 'landsOnOther') })
   }
+  if (entry.templates.breaks) out.push({ template: 'breaks', def: buildDef(entry, 'breaks') })
   // Rank-pinned chips are offered only for a rank we have actually SEEN cast: a rank the log
   // has never printed cannot be confirmed to exist for this character, and an alert on a
   // spelling we guessed would sit there silently forever.
