@@ -134,8 +134,12 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, the base rung outlines instead of filling when the log cannot name it, and the Bosses view remembers which tab you left it on.',
+        text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, all five difficulties count the same, and the Bosses view remembers which tab you left it on.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Base difficulty is a real clear now. Killing a boss in a base instance greens its D0 rung like any other difficulty, and killing one out in the open world - where there is no lockout to take - greens nothing and no longer reads as a D0 you already spent.'
       },
       {
         kind: 'fixed',
