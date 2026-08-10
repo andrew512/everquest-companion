@@ -20,7 +20,7 @@ import {
 } from '@mui/material'
 import { getBossData } from '../../data'
 import { useBossKills } from './useBossKills'
-import type { TargetStatus } from './bossStatus'
+import type { BossKill, TargetStatus } from './bossStatus'
 import { CategorySection, LoadoutSections } from './BossSections'
 import { untilReset } from './lockout'
 import { useLockoutWeek } from './useLockoutWeek'
@@ -174,13 +174,15 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
   // The bossDefeat *sound* rides
   // the same predicate from App's always-mounted detector, so the two agree on every
   // kill and the alert's cooldown stops the pair double-playing.
-  const onKill = useCallback((s: TargetStatus) => {
+  // The payload carries the kill's own tier (JOS-165); this surface wants only WHICH target,
+  // because the card it flashes goes on saying the highest-ever tier a card is right to say.
+  const onKill = useCallback(({ status }: BossKill) => {
     setBurst((n) => (n ?? 0) + 1)
-    setFlashing((prev) => new Set(prev).add(s.target.name))
+    setFlashing((prev) => new Set(prev).add(status.target.name))
     window.setTimeout(() => {
       setFlashing((prev) => {
         const next = new Set(prev)
-        next.delete(s.target.name)
+        next.delete(status.target.name)
         return next
       })
     }, 3000)
