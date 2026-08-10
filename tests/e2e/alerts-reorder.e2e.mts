@@ -1,5 +1,6 @@
 /**
- * Headless Electron spec for JOS-175 — THE ALERTS LIST KEEPS THE ORDER YOU PUT IT IN.
+ * Headless Electron spec for JOS-175 / JOS-177 — THE ALERTS LIST KEEPS THE ORDER YOU PUT IT IN,
+ * AND A LINE SAYS WHERE THE ROW YOU ARE DRAGGING WILL LAND.
  *
  * WHAT A PLAYER ASKED FOR (0.16.0 report): reorder alerts by dragging. The owner's ruling on
  * 2026-08-09 took the folders half of that ask off the table; this is the reorder half, whole.
@@ -24,15 +25,37 @@
  * synthesize in a hidden window is a note about the harness, never a silent pass and never a
  * failure charged to the app. Both paths end in the same call and the same stored array.
  *
+ * JOS-177 ADDS THE THIRD PATH, AND IT IS THE ONE THAT CARRIES THE FIX. The defect was the CURSOR:
+ * native drag paints do-not-proceed for every `dragover` nobody cancels, and JOS-175 cancelled it
+ * on the rows only — so the gaps between rows, the container padding and the strip under the add
+ * button all refused the drag and the cursor flickered once per row on the way down. "Was this
+ * dragover cancelled" is not a screenshot question and not a compositor question: it is
+ * `event.defaultPrevented`, readable exactly. So this spec DISPATCHES real `DragEvent`s carrying a
+ * real `DataTransfer` at three probe points — the middle of a gap, inside a row, and the padding
+ * BELOW the last row — through `document.elementFromPoint`, so each one travels from whatever
+ * element is genuinely under that pixel up to the handler, and asserts all three were accepted.
+ * The same run reads the insertion line's slot at each probe and then drops, which is how "the
+ * line tracks the pointer" and "the drop lands where the line was" become one assertion.
+ *
  * Run: `npm run test:e2e -- alerts-reorder`.
  */
 import type { Page } from 'playwright-core'
-import { buildIfStale, check, dumpArtifacts, failures, note, reportRun, settle } from './appHarness.mjs'
+import {
+  buildIfStale,
+  check,
+  dumpArtifacts,
+  failures,
+  note,
+  reportRun,
+  settle,
+  settleGone
+} from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
 
 const ROW = '[data-testid="alert-row"]'
 const GRIP = '[data-testid="alert-reorder-grip"]'
+const LINE = '[data-testid="alert-drop-indicator"]'
 
 /** The ids of the alert rows, top to bottom, as the list is rendering them right now. */
 function renderedOrder(page: Page): Promise<string[]> {
@@ -114,6 +137,151 @@ async function checkKeyboardReorder(page: Page, before: string[]): Promise<strin
   return checkScreenMatchesStore(page, 'after the keyboard nudge')
 }
 
+// ─────────────────────────── JOS-177: the cursor, and the line ───────────────────────────────
+//
+// One probe of the drag at one point in the list: was the drag ACCEPTED there (the cursor
+// question), and where did the line say the row would land.
+interface DragProbe {
+  label: string
+  /** `event.defaultPrevented` — false is a frame of the do-not-proceed cursor. */
+  accepted: boolean
+  /**
+   * What the transfer reports after the handler set it — REPORTED, NOT ASSERTED, and here is the
+   * honest reason: Chromium's `dropEffect` setter is a no-op on a `DataTransfer` that was
+   * constructed rather than handed over by a real drag (it is created in copy-and-paste mode, and
+   * the setter early-returns unless the store is a drag store). It reads `none` here however the
+   * app behaves, so it cannot distinguish anything. `tests/alertReorder.test.mts` source-pins the
+   * assignment instead; `defaultPrevented` is the reading that carries the ticket.
+   */
+  dropEffect: string
+  /** The slot the indicator is reporting, or null when there is no line at all. */
+  slot: number | null
+  want: number
+  /** What was genuinely under that pixel, so a failure says which element refused. */
+  under: string
+  /** The line's own top edge in client coordinates — is it drawn where it says it is. */
+  lineTop: number | null
+}
+
+interface DragReport {
+  error: string | null
+  probes: DragProbe[]
+}
+
+/**
+ * Dispatch a whole drag over the list and report what each point of it did.
+ *
+ * REAL EVENTS AT REAL PIXELS. Each probe finds what is actually under the point with
+ * `elementFromPoint` and dispatches there, so a gap probe travels from the container's own box up
+ * to the handler exactly the way a pointer's dragover would — the thing JOS-175 had no handler
+ * for. One `DataTransfer` carries the whole gesture, as a real drag does.
+ *
+ * The drop is delivered at the LAST probe — the padding below the last row, which is the slot a
+ * row-shaped drop target cannot express, since there is no row down there to aim at.
+ *
+ * NOT ONE NAMED INNER FUNCTION, on purpose. `page.evaluate` ships this body to the page as SOURCE,
+ * and tsx compiles it with esbuild's keepNames — which wraps every function that gets an inferred
+ * name in a `__name(…)` helper that exists in the bundle and not in the page. A tidy
+ * `const readLine = () => …` is therefore a `ReferenceError: __name is not defined` in Chromium
+ * and nothing else. Anonymous callbacks (the `setTimeout` promise) are untouched and fine.
+ */
+function probeDrag(page: Page, movedId: string): Promise<DragReport> {
+  return page.evaluate(async (id: string): Promise<DragReport> => {
+    const out: DragReport = { error: null, probes: [] }
+    const list = document.querySelector('[data-testid="alerts-list"]')
+    const rows = [...document.querySelectorAll('[data-alert-id]')]
+    const grip = document.querySelector(`[data-alert-id="${id}"] [data-testid="alert-reorder-grip"]`)
+    if (!(list instanceof HTMLElement) || rows.length < 3 || !(grip instanceof HTMLElement)) {
+      out.error = `list ${String(list !== null)} · rows ${String(rows.length)} · grip ${String(grip !== null)}`
+      return out
+    }
+
+    const first = rows[0].getBoundingClientRect()
+    const second = rows[1].getBoundingClientRect()
+    const last = rows[rows.length - 1].getBoundingClientRect()
+    const x = Math.round(first.left + Math.min(24, first.width / 2))
+    const points = [
+      {
+        label: 'the gap between the first two rows',
+        y: Math.round((first.bottom + second.top) / 2),
+        want: 1
+      },
+      { label: 'the upper half of the last row', y: Math.round(last.top + 2), want: rows.length - 1 },
+      { label: 'the padding below the last row', y: Math.round(last.bottom + 8), want: rows.length }
+    ]
+
+    const dt = new DataTransfer()
+    grip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }))
+
+    for (const p of points) {
+      const el = document.elementFromPoint(x, p.y)
+      if (el === null || !list.contains(el)) {
+        out.probes.push({ label: p.label, accepted: false, dropEffect: '', slot: null, want: p.want, under: 'nothing inside the list', lineTop: null })
+        continue
+      }
+      const ev = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: p.y })
+      el.dispatchEvent(ev)
+      // React flushes a dragover's state in a task of its own, so the line is WAITED FOR by
+      // CONDITION rather than sampled once — bounded turns, no clock.
+      let slot: number | null = null
+      let lineTop: number | null = null
+      for (let i = 0; i < 200; i += 1) {
+        const line = list.querySelector('[data-testid="alert-drop-indicator"]')
+        slot = null
+        lineTop = null
+        if (line instanceof HTMLElement) {
+          slot = Number(line.dataset.dropIndex)
+          lineTop = line.getBoundingClientRect().top
+        }
+        if (slot === p.want) break
+        await new Promise((r) => setTimeout(r, 0))
+      }
+      out.probes.push({ label: p.label, accepted: ev.defaultPrevented, dropEffect: dt.dropEffect, slot, want: p.want, under: el.tagName.toLowerCase(), lineTop })
+    }
+
+    const drop = points[points.length - 1]
+    const target = document.elementFromPoint(x, drop.y) ?? list
+    target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: drop.y }))
+    grip.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt }))
+    return out
+  }, movedId)
+}
+
+/**
+ * THE TICKET'S ACCEPTANCE: no refusal anywhere in the list, a line that follows the pointer, and a
+ * drop that lands where the line was.
+ */
+async function checkInsertionLine(page: Page, before: string[]): Promise<string[]> {
+  const moved = before[0]
+  const report = await probeDrag(page, moved)
+  if (report.error !== null) {
+    check('the drag probe found a list to drag in', false, report.error)
+    return before
+  }
+  note('dropEffect is reported, not asserted, in these probes — see DragProbe.dropEffect for why')
+  for (const p of report.probes) {
+    check(
+      `the drag is accepted over ${p.label} — nothing there says do-not-proceed`,
+      p.accepted,
+      `defaultPrevented ${String(p.accepted)} · dropEffect ${p.dropEffect || '(unset)'} · under the pointer: ${p.under}`
+    )
+    check(
+      `the insertion line follows the pointer to ${p.label}`,
+      p.slot === p.want,
+      `line at slot ${String(p.slot)} · wanted ${String(p.want)} · drawn at y ${String(p.lineTop)}`
+    )
+  }
+  const want = [...before.slice(1), moved]
+  const after = await settleOrder(page, want)
+  check(
+    'dropping below the last row puts the alert at the bottom — the landing a row-shaped target could never name',
+    after.join('>') === want.join('>'),
+    `was ${before.join(' > ')} · now ${after.join(' > ')} · wanted ${want.join(' > ')}`
+  )
+  check('the line goes away when the drag does', await settleGone(page, LINE, { timeoutMs: 10_000 }))
+  return checkScreenMatchesStore(page, 'after the indicated drop')
+}
+
 /**
  * THE DRAG PATH, exercised for real and reported honestly.
  *
@@ -127,7 +295,12 @@ async function checkDragReorder(page: Page, before: string[]): Promise<string[]>
   const target = before[0]
   const want = [moved, ...before.filter((id) => id !== moved)]
   try {
+    // AIMED AT THE ROW'S TOP EDGE, not its centre (JOS-177). The landing is now the GAP the
+    // pointer is nearest, so the centre of a row is the boundary between "above it" and "below
+    // it" — an honest ambiguity to drop a test on. Four pixels in from the top of the first row
+    // is unambiguously the slot above it.
     await page.dragAndDrop(`[data-alert-id="${moved}"] ${GRIP}`, `[data-alert-id="${target}"]`, {
+      targetPosition: { x: 24, y: 4 },
       timeout: 10_000
     })
   } catch (err) {
@@ -199,7 +372,8 @@ async function main(): Promise<void> {
     ) {
       await checkScreenMatchesStore(page, 'at rest')
       const nudged = await checkKeyboardReorder(page, start)
-      left = await checkDragReorder(page, nudged)
+      const indicated = await checkInsertionLine(page, nudged)
+      left = await checkDragReorder(page, indicated)
       check(
         'the list is genuinely in a different order than it started in',
         left.join('>') !== start.join('>'),

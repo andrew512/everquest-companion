@@ -438,7 +438,11 @@ export default function AlertList({
     // ONE drop target for the whole list (JOS-177): the gaps between rows and the padding around
     // them are inside it, so the drag is accepted everywhere the pointer can be and the cursor
     // never flickers. `position: relative` is what the insertion line is positioned against.
-    <Box sx={{ flexGrow: 1, overflow: 'auto', position: 'relative' }} {...reorder.containerProps}>
+    <Box
+      data-testid="alerts-list"
+      sx={{ flexGrow: 1, overflow: 'auto', position: 'relative' }}
+      {...reorder.containerProps}
+    >
       {reorder.mark !== null && (
         <DropIndicator index={reorder.mark.index} y={reorder.mark.y} />
       )}
