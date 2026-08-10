@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 import {
   WATCHER_STOP_MESSAGE,
   parsePresenceLine,
+  watcherCadence,
   type PresenceWorkerInit
 } from '../src/main/presenceProtocol'
 
@@ -43,7 +44,10 @@ const INIT: PresenceWorkerInit = {
   eqRootWithSep: 'C:\\Games\\EQ\\',
   runningPollMs: 300,
   tickMs: 1,
-  foregroundEveryTicks: 10
+  foregroundEveryTicks: 10,
+  // The RING-ON posture. Everything below except the JOS-193 test runs it, because it is the
+  // watcher at its busiest — every call family, on the fast cadence.
+  watchCursor: true
 }
 
 interface Run {
@@ -212,6 +216,41 @@ test('A LAST WORD POSTED AS THE PORT CLOSES IS STILL DELIVERED — the exit path
   assert.deepEqual(seen, ['X|native-unavailable'], 'the reason survived the close')
   assert.deepEqual(parsePresenceLine(seen[0]), { t: 'exit', reason: 'native-unavailable' })
   assert.equal(exitCode, 0, 'a closed port ends the thread cleanly, which is what the fold reads')
+})
+
+test('WITH THE RING OFF THE WATCHER NEVER LOOKS AT THE CURSOR — and still does everything else', {
+  skip: NOT_WINDOWS
+}, async () => {
+  // JOS-193, and this is the assertion the ticket is actually about. `C` is emitted from the same
+  // three lines that call `cursorShowing()`, which is the ONLY `GetCursorInfo` in the application
+  // (presenceNative.ts declares it once) — so a run that produces no `C` is a run in which the app
+  // never asked Windows about the cursor. It is a strong observation rather than a weak one
+  // precisely because the record is CHANGE-DRIVEN and the very first reading always differs from
+  // the `-1` the loop starts on: the ring-on test above pins `C` as literally the FIRST line the
+  // watcher ever says, so its absence here cannot be "the cursor happened not to change".
+  //
+  // The rest of the watcher is asserted in the same breath, because "no cursor" must not have cost
+  // auto-hide anything: the foreground window, the running scan and the heartbeat are all still
+  // there, on the coarse cadence `watcherCadence(false)` asks for.
+  const init: PresenceWorkerInit = {
+    ...INIT,
+    watchCursor: false,
+    ...watcherCadence(false),
+    // The coarse tick is ~160 ms, so a 300 ms running poll would take a while to beat twice.
+    runningPollMs: 1
+  }
+  const { lines } = await runWorker(init, (l) => l.filter((x) => x === 'H').length >= 2)
+
+  assert.deepEqual(
+    lines.filter((l) => l.startsWith('C')),
+    [],
+    `the cursor was never read; got:\n${lines.join('\n')}`
+  )
+  assert.ok(lines.some((l) => l.startsWith('F|')), 'the foreground window is still reported')
+  assert.ok(lines.some((l) => l.startsWith('R|')), 'the running scan still runs')
+  assert.equal(lines.some((l) => l.startsWith('X|')), false, 'and nothing decided to stop')
+  const records = lines.map(parsePresenceLine)
+  assert.equal(records.includes(null), false, `every line still decodes:\n${lines.join('\n')}`)
 })
 
 test('AN UNREADABLE INSTALL ROOT CHANGES NOTHING — the watcher still reports', {

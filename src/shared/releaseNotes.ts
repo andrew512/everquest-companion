@@ -129,6 +129,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-10',
     entries: [
       {
+        kind: 'fixed',
+        text: 'With the cursor ring switched off, the app leaves your cursor completely alone. The ring ships off, and it stayed off - but the part of the app that watches for EverQuest was still asking Windows about your mouse pointer about seventy times a second, every second the app was open, for a circle that was never going to be drawn. Now it only ever asks when you have turned the ring on: with it off there is no cursor to share, and a cursor tool like YoloMouse has the pointer to itself. Nothing changes when the ring is on, and turning it on or off takes effect straight away rather than at the next launch. The watchdog that keeps your overlays hiding with the game is untouched and reacts to alt-tab exactly as fast as before - it just does its job on a slower clock now that it is not chasing a pointer, which is a little less work for your machine on every install that never wanted the ring.',
+        fromReport: true
+      },
+      {
         kind: 'new',
         text: 'Item icons and boss portraits are in the app now, instead of being fetched while you use it. Every picture the app can draw - 780 of them, all 751 item icons and all 29 raid-boss portraits - now ships inside the install, so a brand-new install shows them instantly, they still show up with the internet off, and the app no longer asks anyone for a picture while you play. They came from two volunteer-run EverQuest wikis: wiki.project1999.com for the boss portraits, and eqlwiki.com for the item icons and the item, spell and quest knowledge behind them. Neither is connected to this app, both have been written by people doing it for free for years, and there is now a Thanks page in Preferences that says so and links them. On the rare picture the app has not got, it still asks once - and if the answer is no, it remembers that for the rest of the session instead of asking again every time the icon scrolls back onto your screen.'
       },

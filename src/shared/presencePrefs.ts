@@ -250,3 +250,27 @@ export function normalizeOverlayAutoHide(value: unknown): OverlayAutoHidePrefs {
 export function presenceNeeded(ring: CursorRingPrefs, autoHide: OverlayAutoHidePrefs): boolean {
   return ring.enabled || autoHide.hideWhenNotRunning || autoHide.hideWhenUnfocused
 }
+
+/**
+ * Does anything need the CURSOR looked at? (JOS-193 — owner ruling 2026-08-10.)
+ *
+ * `presenceNeeded` is about the watcher's existence; this is about ONE of the four facts it can
+ * report. The distinction exists because they are not the same question and the app was answering
+ * as though they were: overlay auto-hide ships ON, so the DEFAULT install starts the watcher — and
+ * the watcher then read `GetCursorInfo` ~69 times a second for `cursorVisible`, whose only
+ * consumer in the entire app is `cursorRingActive`, for a ring that is OFF by default. A user who
+ * never asked for a ring got a cursor polled 250,000 times an hour and nothing that read the
+ * answer.
+ *
+ * The rule the owner asked for is the plain one: WITH THE RING OFF, THE APP DOES NOT TOUCH THE
+ * CURSOR. Not the watcher's `GetCursorInfo`, not main's `screen.getCursorScreenPoint()`, and not a
+ * ring window that exists to be sampled into — so a cursor tool like Yolomouse is working against
+ * an app that is not in the room. The reason it is a named predicate rather than an inlined
+ * `ring.enabled` is that it is a CLAIM about the rest of the tree — that `cursorVisible` has
+ * exactly one consumer — and a claim wants somewhere to be written down and tested.
+ *
+ * Pure + exported for `tests/presence.test.mts`, like `presenceNeeded` beside it.
+ */
+export function cursorWatchNeeded(ring: CursorRingPrefs): boolean {
+  return ring.enabled
+}
