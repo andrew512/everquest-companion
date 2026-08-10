@@ -129,6 +129,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-10',
     entries: [
       {
+        kind: 'new',
+        text: 'Drag your alerts into the order you want them in. Grab the handle at the left of any alert and drop it where it belongs - or select the handle and use the up and down arrow keys - and the list stays that way, this session and every one after it. Which alert fires, and when, is untouched by where it sits.',
+        fromReport: true
+      },
+      {
         kind: 'fixed',
         text: 'Hovering an item on a Plane of Sky quest names the mob that drops it again, not just the island. Every boss the catalog knows for that item is listed with its level and zone, and the island rides the same line as the item name - so you can read who to kill and where to stand without expanding the quest. Since 0.15.0 that hover had answered with the island alone.',
         fromReport: true
