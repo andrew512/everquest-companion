@@ -1,6 +1,7 @@
 /**
- * Headless Electron spec for JOS-175 / JOS-177 — THE ALERTS LIST KEEPS THE ORDER YOU PUT IT IN,
- * AND A LINE SAYS WHERE THE ROW YOU ARE DRAGGING WILL LAND.
+ * Headless Electron spec for JOS-175 / JOS-177 / JOS-178 — THE ALERTS LIST KEEPS THE ORDER YOU PUT
+ * IT IN, A LINE SAYS WHERE THE ROW YOU ARE DRAGGING WILL LAND, AND A SEARCH BOX FINDS AN ALERT BY
+ * ANYTHING YOU REMEMBER ABOUT IT.
  *
  * WHAT A PLAYER ASKED FOR (0.16.0 report): reorder alerts by dragging. The owner's ruling on
  * 2026-08-09 took the folders half of that ask off the table; this is the reorder half, whole.
@@ -37,6 +38,14 @@
  * The same run reads the insertion line's slot at each probe and then drops, which is how "the
  * line tracks the pointer" and "the drop lands where the line was" become one assertion.
  *
+ * JOS-178 JOINS THIS SPEC RATHER THAN STARTING ITS OWN, because the two features are one
+ * behaviour: a search box that narrows the list also SUSPENDS the gesture this file exists to
+ * prove, and "clearing the box gives the drag back" is only a claim if the same run then drags.
+ * `tests/alertSearch.test.mts` owns the matcher, facet by facet, and can see none of this:
+ * whether a real keystroke narrows the real list, whether the container genuinely stops accepting
+ * (`event.defaultPrevented` again — the same exact reading JOS-177 rests on, wanted FALSE this
+ * time), and whether the full list comes back in the order it left.
+ *
  * Run: `npm run test:e2e -- alerts-reorder`.
  */
 import type { Page } from 'playwright-core'
@@ -48,7 +57,8 @@ import {
   note,
   reportRun,
   settle,
-  settleGone
+  settleGone,
+  settleStable
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
@@ -56,6 +66,8 @@ import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs
 const ROW = '[data-testid="alert-row"]'
 const GRIP = '[data-testid="alert-reorder-grip"]'
 const LINE = '[data-testid="alert-drop-indicator"]'
+const SEARCH = '[data-testid="alerts-search"] input'
+const SEARCH_CLEAR = '[data-testid="alerts-search-clear"]'
 
 /** The ids of the alert rows, top to bottom, as the list is rendering them right now. */
 function renderedOrder(page: Page): Promise<string[]> {
@@ -342,6 +354,166 @@ async function checkSurvivesRestart(
   }
 }
 
+// ───────────────────── JOS-178: the search box, and the reorder it suspends ──────────────────
+//
+// THE SEEDED SET IS THE CORPUS (src/main/store.ts SEED_ALERTS), so the queries below are chosen
+// against facets that are ALWAYS there — a def's own name, trigger and note. Deliberately NOT the
+// sound pack's labels: the default pack self-provisions over the network on first run, so a query
+// leaning on a label would pass or fail on whether this machine could reach GitHub.
+//
+//   'confetti'  appears in exactly ONE place in the whole seeded set — the NOTE of "Raid target
+//               defeated". A name-only search finds nothing for it, which is the entire point of
+//               the wide match set.
+//   'app'       is the trigger badge's own shape word, and two of the three seeded alerts fire on
+//               an app signal. It therefore leaves MORE THAN ONE row, which is what makes "the
+//               arrow keys move nothing" a real assertion rather than an arithmetic one.
+
+/** Type into the box and let the list settle at whatever it narrowed to. */
+async function typeSearch(page: Page, q: string): Promise<string[]> {
+  await page.fill(SEARCH, q)
+  return settleStable(() => renderedOrder(page), { timeoutMs: 10_000 })
+}
+
+interface FilteredDrag {
+  error: string | null
+  grips: { draggable: string | null; ariaDisabled: string | null }[]
+  /** `event.defaultPrevented` on a dragover over a filtered row — wanted FALSE this time. */
+  accepted: boolean
+  line: boolean
+}
+
+/**
+ * Drive a drag at a list that is currently filtered, and report what it did.
+ *
+ * The SAME reading JOS-177 rests on, asked for the opposite answer: a filtered list carries no
+ * container handler at all, so nobody cancels the dragover and the browser's own refusal stands.
+ * No named inner functions here either — see probeDrag above for why that is load-bearing.
+ */
+function probeFilteredDrag(page: Page): Promise<FilteredDrag> {
+  return page.evaluate(async (): Promise<FilteredDrag> => {
+    const out: FilteredDrag = { error: null, grips: [], accepted: false, line: false }
+    const list = document.querySelector('[data-testid="alerts-list"]')
+    const rows = [...document.querySelectorAll('[data-alert-id]')]
+    const grips = [...document.querySelectorAll('[data-testid="alert-reorder-grip"]')]
+    if (!(list instanceof HTMLElement) || rows.length < 2 || grips.length !== rows.length) {
+      out.error = `list ${String(list !== null)} · rows ${String(rows.length)} · grips ${String(grips.length)}`
+      return out
+    }
+    out.grips = grips.map((g) => ({
+      draggable: g.getAttribute('draggable'),
+      ariaDisabled: g.getAttribute('aria-disabled')
+    }))
+
+    const dt = new DataTransfer()
+    grips[0].dispatchEvent(
+      new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt })
+    )
+    const box = rows[0].getBoundingClientRect()
+    const ev = new DragEvent('dragover', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: dt,
+      clientX: Math.round(box.left + 24),
+      clientY: Math.round(box.top + box.height / 2)
+    })
+    rows[0].dispatchEvent(ev)
+    out.accepted = ev.defaultPrevented
+    // An ABSENCE, so the reading is given every chance to appear before it is called absent.
+    for (let i = 0; i < 50; i += 1) await new Promise((r) => setTimeout(r, 0))
+    out.line = list.querySelector('[data-testid="alert-drop-indicator"]') !== null
+    grips[0].dispatchEvent(
+      new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt })
+    )
+    return out
+  })
+}
+
+/** A word that lives in ONE alert's note finds that alert - the wide match set, end to end. */
+async function checkSearchFindsANote(page: Page, start: string[]): Promise<void> {
+  const shown = await typeSearch(page, 'confetti')
+  check(
+    'a word that appears only in one alert’s NOTE finds that alert, and narrows the list to it',
+    shown.length < start.length && shown.includes('boss-defeat') && !shown.includes('charm-break'),
+    `${String(start.length)} rows before · now ${shown.join(' > ') || '(none)'}`
+  )
+}
+
+/** While a filter is live the gesture is GONE — no drag source, no drop target, no arrow keys. */
+async function checkFilteredListRefusesReorder(page: Page): Promise<void> {
+  const shown = await typeSearch(page, 'app')
+  if (
+    !check(
+      'a trigger word narrows the list to the alerts whose trigger says it',
+      shown.length >= 2 && !shown.includes('charm-break'),
+      `now ${shown.join(' > ') || '(none)'}`
+    )
+  ) {
+    return
+  }
+
+  const probe = await probeFilteredDrag(page)
+  if (probe.error !== null) {
+    check('the filtered list still has rows to probe', false, probe.error)
+    return
+  }
+  check(
+    'every grip greys out while the search is on — none of them is a drag source any more',
+    probe.grips.every((g) => g.draggable === 'false' && g.ariaDisabled === 'true'),
+    JSON.stringify(probe.grips)
+  )
+  check(
+    'the filtered list REFUSES the drag — the browser’s own no, because no handler cancels it',
+    !probe.accepted,
+    `defaultPrevented ${String(probe.accepted)}`
+  )
+  check('…and no insertion line is drawn, because there is no slot it could honestly name', !probe.line)
+
+  const before = await renderedOrder(page)
+  await page.focus(`[data-alert-id="${before[0]}"] ${GRIP}`)
+  await page.keyboard.press('ArrowDown')
+  const after = await settleStable(() => renderedOrder(page), { timeoutMs: 6_000 })
+  check(
+    'the arrow keys move nothing while the list is filtered',
+    after.join('>') === before.join('>'),
+    `was ${before.join(' > ')} · now ${after.join(' > ')}`
+  )
+}
+
+/** Clearing the box hands back the whole list, in the order it left, with the gesture on it. */
+async function checkClearRestores(page: Page, start: string[]): Promise<void> {
+  await page.click(SEARCH_CLEAR)
+  const shown = await settle(
+    () => renderedOrder(page),
+    (ids) => ids.join('>') === start.join('>'),
+    { timeoutMs: 10_000 }
+  )
+  check(
+    'clearing the search brings the whole list back, in the order it left',
+    shown.join('>') === start.join('>'),
+    `left ${start.join(' > ')} · back ${shown.join(' > ')}`
+  )
+  const grips = await page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].map((g) => g.getAttribute('draggable')),
+    GRIP
+  )
+  check(
+    '…and every grip is a drag source again',
+    grips.length === start.length && grips.every((d) => d === 'true'),
+    `${String(grips.length)} grips: ${grips.join(', ')}`
+  )
+}
+
+/**
+ * The ticket's acceptance, in order: type, filter, clear. "Reorder works again" is then carried by
+ * the keyboard/line/drag checks that run AFTER this on the restored list — the same three
+ * assertions that carry JOS-175 and JOS-177, which is exactly the point.
+ */
+async function checkSearch(page: Page, start: string[]): Promise<void> {
+  await checkSearchFindsANote(page, start)
+  await checkFilteredListRefusesReorder(page)
+  await checkClearRestores(page, start)
+}
+
 async function main(): Promise<void> {
   buildIfStale()
 
@@ -371,6 +543,9 @@ async function main(): Promise<void> {
       )
     ) {
       await checkScreenMatchesStore(page, 'at rest')
+      // JOS-178 runs FIRST and leaves the list exactly as it found it, so everything below is
+      // both the reorder suite and the proof that clearing the box gave the gesture back.
+      await checkSearch(page, start)
       const nudged = await checkKeyboardReorder(page, start)
       const indicated = await checkInsertionLine(page, nudged)
       left = await checkDragReorder(page, indicated)
