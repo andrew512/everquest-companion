@@ -63,7 +63,11 @@ export const epoch = new EpochDetector()
 export const sessionDetector = new SessionDetector()
 
 /** The overlay kinds that consume the generic module transport — see the fan-out below. */
-const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs', 'debuffs']
+// 'xp' (JOS-195) reads TWO of them — `progression` for the pace and the projection, `loot` for
+// the mote rates — and needs the rebuild signal below at least as much as the timer windows do:
+// its whole subject is a fold over months of log, and a window open at launch hydrates part-way
+// through one.
+const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs', 'debuffs', 'xp']
 
 /**
  * Push to every overlay window that reads modules — the fan-out `emitDelta` performs, as a

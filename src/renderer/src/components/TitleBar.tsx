@@ -193,6 +193,12 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
           <Checkbox size="small" edge="start" checked={overlayState.debuffs} tabIndex={-1} disableRipple />
           <ListItemText primary="Debuffs" secondary="Debuffs and mez you are holding, per target" />
         </MenuItem>
+        {/* JOS-195: the progress read, floating. Same per-kind machinery once more, and DEFAULT
+            OFF like the two timer rows above — this menu is the only way to meet it. */}
+        <MenuItem dense onClick={() => { toggle('xp') }}>
+          <Checkbox size="small" edge="start" checked={overlayState.xp} tabIndex={-1} disableRipple />
+          <ListItemText primary="XP" secondary="XP per hour, next level, motes per hour" />
+        </MenuItem>
       </Menu>
     </Box>
   )
