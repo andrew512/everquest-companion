@@ -45,7 +45,8 @@ import {
   type TimerOverlayKind,
   buildTimerRows,
   orderTimerRows,
-  rowsForSurface
+  rowsForSurface,
+  timerDrops
 } from '@shared/buffTimers'
 import { OverlayHeader } from './OverlayHeader'
 import { OverlayContent } from './overlayScale'
@@ -124,9 +125,22 @@ const SURFACE: Record<
  * A `log:character` rebuild resets a module and its seq restarts low, so a delta whose seq went
  * BACKWARDS re-hydrates rather than being dropped forever — the same rule `useModule` enforces in
  * the app and `EventLogOverlay` enforces here.
+ *
+ * …AND THE REBUILD SIGNAL ITSELF, SINCE JOS-172. Riding deltas was never enough on its own: a
+ * historical fold pushes NOTHING (the registry discards what it accumulated), so a window that
+ * hydrated part-way through one — which is every overlay that was already open when the app
+ * started — waited for a live event to touch this module before it could learn what the fold had
+ * rebuilt. For a long debuff on a mob (a charm, an Ensnare) that event may never come. `onCharacter`
+ * is main saying the world was rebuilt, and it is the same signal, on the same channel, that the
+ * main window's `useModule` has always re-hydrated on.
+ *
+ * IT ALSO REPORTS HOW MANY TIMES IT HAS HYDRATED, because a row set that changed because we asked
+ * again is not the same event as a row set that changed because the model moved — see
+ * `useDropFlash`.
  */
-function useWholeSnapshot<S>(moduleId: string, empty: S): S {
+function useWholeSnapshot<S>(moduleId: string, empty: S): { state: S; hydrations: number } {
   const [state, setState] = useState<S>(empty)
+  const [hydrations, setHydrations] = useState(0)
   const seqRef = useRef(-1)
 
   useEffect(() => {
@@ -136,6 +150,7 @@ function useWholeSnapshot<S>(moduleId: string, empty: S): S {
         if (!alive || !snap) return
         seqRef.current = snap.seq
         setState(snap.state)
+        setHydrations((n) => n + 1)
       })
     }
     hydrate()
@@ -148,13 +163,17 @@ function useWholeSnapshot<S>(moduleId: string, empty: S): S {
       seqRef.current = d.seq
       setState(d.delta)
     })
+    const offChar = window.eqOverlay.onCharacter(() => {
+      hydrate()
+    })
     return () => {
       alive = false
       off()
+      offChar()
     }
   }, [moduleId])
 
-  return state
+  return { state, hydrations }
 }
 
 /** A local 1 Hz clock. A timer must recede while the log is idle, which is exactly when no delta
@@ -176,28 +195,31 @@ function useSecondsClock(): number {
 /**
  * "Flash when a positive spell drops" — one of the ten reports' asks, and pure renderer state.
  *
- * It watches the row set it is ALREADY holding and reports a `kind: 'buff'` row that disappeared.
- * That is deliberately the weakest possible claim: it fires only on a removal the MODEL already
- * believed (a wears-off message, a death, a zone), so it can never announce a drop the log did
- * not state. It does not fire for the first snapshot, which would otherwise announce an empty
- * hydrate as N drops.
+ * WHAT it may say is `timerDrops` (shared/buffTimers.ts), where it is a pure function over two row
+ * sets and is unit-tested; this hook is only WHEN to ask. It watches the row set it is ALREADY
+ * holding, so it can never announce a drop the model did not believe.
+ *
+ * `hydrations` is the JOS-172 guard, and it is why the rebuilt-world signal above is safe to add:
+ * the count changes exactly when a row set arrived from a fresh SNAPSHOT rather than from a delta,
+ * and rows that vanish across a re-fold of the whole log are not drops the player just suffered.
+ * On a cold start with this window already open, the mid-fold hydrate and the post-fold one differ
+ * by whatever wore off during the months in between — every one of which would otherwise flash.
  */
-function useDropFlash(rows: BuffTimerRow[], nowMs: number): { id: string; name: string; at: number }[] {
-  const prevRef = useRef<Map<string, string> | null>(null)
+function useDropFlash(
+  rows: BuffTimerRow[],
+  nowMs: number,
+  hydrations: number
+): { id: string; name: string; at: number }[] {
+  const prevRef = useRef<BuffTimerRow[] | null>(null)
+  const hydrationsRef = useRef(hydrations)
   const [drops, setDrops] = useState<{ id: string; name: string; at: number }[]>([])
 
   useEffect(() => {
-    // THE LABEL CARRIES THE TARGET, and that is not decoration: the SAME buff can be up on you
-    // and on your pet at once (the e2e's fixture has Valor on both), so a notice that printed
-    // only the spell would show two identical lines for two genuinely different drops.
-    const current = new Map(
-      rows.filter((r) => r.kind === 'buff').map((r) => [r.id, r.group === 'self' ? r.name : `${r.name} · ${r.target ?? '?'}`])
-    )
     const prev = prevRef.current
-    prevRef.current = current
-    if (prev === null) return
-    const gone: { id: string; name: string; at: number }[] = []
-    for (const [id, name] of prev) if (!current.has(id)) gone.push({ id, name, at: Date.now() })
+    prevRef.current = rows
+    const rebuilt = hydrationsRef.current !== hydrations
+    hydrationsRef.current = hydrations
+    const gone = timerDrops(prev, rows, { rebuilt }).map((d) => ({ ...d, at: Date.now() }))
     if (gone.length === 0) return
     // KEYED BY ROW ID, and one line per buff: a re-cast that drops again while the first notice
     // is still up replaces it rather than stacking a second identical line. (Without this the
@@ -205,7 +227,7 @@ function useDropFlash(rows: BuffTimerRow[], nowMs: number): { id: string; name: 
     // also run more than once for one transition (two modules, two deltas, StrictMode), and
     // deduping on the id makes that structurally harmless instead of merely unlikely.
     setDrops((d) => [...d.filter((x) => !gone.some((g) => g.id === x.id)), ...gone].slice(-3))
-  }, [rows])
+  }, [rows, hydrations])
 
   return drops.filter((d) => nowMs - d.at < DROP_FLASH_MS)
 }
@@ -332,8 +354,11 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
   const surface = SURFACE[kind]
   // BOTH kinds read BOTH modules. The window is a view; the model is not sliced per window, and
   // `rowsForSurface` below is the only thing that knows these are two windows at all.
-  const buffs = useWholeSnapshot<BuffsSnap>('buffs', EMPTY_BUFFS)
-  const timers = useWholeSnapshot<BuffTimersSnap>('buffTimers', EMPTY_TIMERS)
+  const { state: buffs, hydrations: buffsHydrations } = useWholeSnapshot<BuffsSnap>('buffs', EMPTY_BUFFS)
+  const { state: timers, hydrations: timersHydrations } = useWholeSnapshot<BuffTimersSnap>(
+    'buffTimers',
+    EMPTY_TIMERS
+  )
   const nowMs = useSecondsClock()
   const { locked, bgAlpha, textScale, hovering, config, patch, toggleLock, onEnter, onLeave, dragRegion, noDrag } =
     useOverlayChrome()
@@ -345,7 +370,9 @@ export default function BuffsOverlay({ kind }: { kind: TimerOverlayKind }): JSX.
     [buffs, timers, kind, grouping]
   )
   const groups = useMemo(() => groupRows(rows, surface.selfLabel, grouping), [rows, surface.selfLabel, grouping])
-  const drops = useDropFlash(rows, nowMs)
+  // ONE COUNTER OVER BOTH MODULES: either one re-hydrating is a rebuilt row set, and the two
+  // snapshots land as two separate promises — so a sum, which changes on each of them.
+  const drops = useDropFlash(rows, nowMs, buffsHydrations + timersHydrations)
 
   return (
     <div

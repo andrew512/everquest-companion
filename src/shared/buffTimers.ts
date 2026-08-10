@@ -236,6 +236,52 @@ export function rowsForSurface(rows: readonly BuffTimerRow[], kind: TimerOverlay
   return rows.filter((r) => timerRowSurface(r) === kind)
 }
 
+/** One "… dropped" notice: the row that left, and the words the overlay says about it. */
+export interface TimerDrop {
+  id: string
+  name: string
+}
+
+/**
+ * WHAT A DROP NOTICE IS ALLOWED TO SAY — the buffs window's flash, as a pure function.
+ *
+ * THE LABEL CARRIES THE TARGET, and that is not decoration: the SAME buff can be up on you and on
+ * your pet at once, so a notice that printed only the spell would show two identical lines for two
+ * genuinely different drops.
+ */
+export function timerDropLabel(row: BuffTimerRow): string {
+  return row.group === 'self' ? row.name : `${row.name} · ${row.target ?? '?'}`
+}
+
+/**
+ * The `kind:'buff'` rows that were there a moment ago and are not there now.
+ *
+ * The claim is deliberately the weakest one available: a drop is a removal the MODEL already
+ * believed (a wears-off message, a death, a zone), so this can never announce a drop the log did
+ * not state. `prev === null` is the first reading and reports nothing — otherwise an empty
+ * hydrate would announce itself as N drops.
+ *
+ * `rebuilt` IS THE OTHER HALF OF THAT, AND IT IS WHY THIS IS A FUNCTION (JOS-172). Since the
+ * rebuilt-world signal reaches the overlay windows, a row set can now change for a reason that is
+ * not a drop at all: main re-folded this character's whole history and the window re-hydrated. On
+ * a COLD START with the overlay already open, the first hydrate happens PART-WAY through the fold
+ * and the second one lands after it, so rows legitimately disappear between them — a buff that was
+ * up in the middle of the log and had worn off by its end. Announcing those would be the window
+ * shouting about spells that dropped months ago, the first time the user ever sees it. A rebuild
+ * adopts the new set as the baseline and says nothing; the very next real removal still flashes.
+ */
+export function timerDrops(
+  prev: readonly BuffTimerRow[] | null,
+  current: readonly BuffTimerRow[],
+  opts: { rebuilt: boolean }
+): TimerDrop[] {
+  if (prev === null || opts.rebuilt) return []
+  const live = new Set(current.filter((r) => r.kind === 'buff').map((r) => r.id))
+  return prev
+    .filter((r) => r.kind === 'buff' && !live.has(r.id))
+    .map((r) => ({ id: r.id, name: timerDropLabel(r) }))
+}
+
 /** What a row reads RIGHT NOW. `fraction` is 1 at the landing and 0 at/after the stated end. */
 export interface TimerReading {
   elapsedMs: number

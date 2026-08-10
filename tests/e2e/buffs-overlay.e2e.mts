@@ -44,8 +44,11 @@ import {
   settle,
   settleStable
 } from './appHarness.mjs'
-import { mainWindow, overlayWindow } from './appWindow.mjs'
-import { launchOnFixture } from './logFixture.mjs'
+import { mainWindow, makeUserData, overlayWindow, removeUserData } from './appWindow.mjs'
+import { launchOnFixture, stageFixture } from './logFixture.mjs'
+// THE COLD START WITH THE WINDOW ALREADY OPEN (JOS-172) — a second launch with a narrative of its
+// own, so it lives beside the other step modules rather than inside this one's.
+import { seedRestart, stepRestartRehydrate } from './buffRestartSteps.mjs'
 // Reading a timer window's rows in EITHER arrangement (flat or per-target) lives beside the other
 // e2e readers - see ./buffTimerSteps.mts.
 import {
@@ -474,9 +477,17 @@ async function stepCloseOne(
   { kind, other }: { kind: TimerKind; other: TimerKind }
 ): Promise<void> {
   if (overlay) {
-    await overlay.evaluate(() => {
-      ;(document.querySelector('button[aria-label="Close overlay"]') as HTMLElement | null)?.click()
-    })
+    // THE CLICK DESTROYS THE PAGE IT IS EVALUATED IN, so the evaluate itself is allowed to lose
+    // its context — observed once here: "at stepCloseOne … log: []", a Playwright rejection from a
+    // window that closed before it could answer. Whether the close HAPPENED is not this call's
+    // answer to give; the settle below is, and it asks main how many windows of this kind are
+    // left. Swallowing the rejection weakens no assertion and removes a race the spec never meant
+    // to be running.
+    await overlay
+      .evaluate(() => {
+        ;(document.querySelector('button[aria-label="Close overlay"]') as HTMLElement | null)?.click()
+      })
+      .catch(() => undefined)
   } else {
     await bridge(page).toggle(kind)
   }
@@ -501,7 +512,13 @@ async function stepCloseRest(page: Page, app: ElectronApplication, kind: TimerKi
 
 async function main(): Promise<void> {
   await buildIfStale()
-  const { app, close, log } = await launchOnFixture('e2e-overlay.log')
+  // A dir shared by this spec's TWO launches and nothing else (the overlay-sync precedent): the
+  // JOS-172 step is about an overlay whose open-state SURVIVED a quit, so launch 2 has to start
+  // from the install launch 1 left behind. ONE staged log for both, so launch 2 re-folds exactly
+  // what launch 1 played into it.
+  const userData = makeUserData()
+  const log = stageFixture('e2e-overlay.log')
+  const { app, close } = await launchOnFixture(log, { userData })
   const page = await mainWindow(app)
   const consoleErrors: string[] = []
   page.on('console', (m) => {
@@ -552,11 +569,22 @@ async function main(): Promise<void> {
     await stepCloseOne(page, app, buffsOverlay, { kind: 'buffs', other: 'debuffs' })
     await stepCloseRest(page, app, 'debuffs')
 
+    // LAST, because it re-opens both windows and leaves them that way: launch 2 (JOS-172) is a
+    // COLD START with them already on screen, which is the one arrangement every step above
+    // cannot be in.
+    await seedRestart(page, app, log)
+
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
     if (failures.length) await dumpArtifacts(page, 'buffs-overlay-FAIL')
   } finally {
     await close()
   }
+
+  // Its own launch, on the dir launch 1 wrote: an overlay that was ALREADY OPEN when the app
+  // started cannot be observed in a process that is already running.
+  await stepRestartRehydrate(log, userData)
+  await removeUserData(userData)
+  await log.dispose()
 
   reportRun()
 }

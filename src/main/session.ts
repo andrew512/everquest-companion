@@ -42,6 +42,7 @@ import {
   outputFilesModule,
   registry,
   rosterModule,
+  sendWorldRebuilt,
   sessionDetector,
   turnInsModule
 } from './pipeline'
@@ -170,7 +171,9 @@ export async function applyEqDirChange(): Promise<EqConfig> {
     // No character ⇒ no self-`/who` row is identifiable. Clear the name rather than let a
     // stale one attribute the next log's rows to the character we just stopped tailing.
     installCharacterName(undefined)
-    sendToMain(IPC.onCharacter, null)
+    // Every window that folds a module, not just the main one (JOS-172): an overlay left open
+    // over an install whose log went away must empty with everything else.
+    sendWorldRebuilt(null)
     // …and start looking, because the empty state's own advice is "type /log on" and that is
     // the moment the log we are missing comes into existence. See `watchForFirstLog`.
     watchForFirstLog()
@@ -508,10 +511,17 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   startInventoryWatch(ref)
 
   // Push whatever the modules folded during replay (mainly the character module's
-  // ref + zone) so first-paint snapshots are already current, then tell the
-  // renderer the character's state was fully rebuilt so views remount/re-hydrate.
+  // ref + zone) so first-paint snapshots are already current, then tell EVERY window that
+  // folds a module the character's state was fully rebuilt, so views remount/re-hydrate.
+  //
+  // THE OVERLAYS ARE PART OF "EVERY WINDOW" SINCE JOS-172, and this is the line the whole
+  // ticket turns on. `endReplay()` above discarded what the fold accumulated, so nothing the
+  // replay rebuilt will ever arrive as a delta — and an overlay that was ALREADY OPEN when the
+  // app started hydrated part-way through that fold. Telling only the main window left a debuff
+  // that genuinely survived the rebuild (a charm, an Ensnare) on screen in the app and absent
+  // from the floating window whose entire job is to show it.
   registry.flushNow()
-  sendToMain(IPC.onCharacter, character)
+  sendWorldRebuilt(character)
   return {
     eventsReplayed: scan.seq,
     replay: { slices: slicer.slices, workMs: slicer.workMs, restMs: slicer.restMs },

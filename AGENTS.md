@@ -465,6 +465,34 @@ on `log:character`. Overlay = second renderer entry (overlay.html) with a
 minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
 ```
 
+- **A WINDOW THAT FOLDS A MODULE NEEDS BOTH HALVES OF THE TRANSPORT — THE DELTAS
+  AND THE REBUILD** (JOS-172). `module:delta` is an INCREMENT, and a historical
+  fold emits none: `endReplay()` DISCARDS what it accumulated (JOS-60's rule, and
+  it stays). So "hydrate once, then ride deltas" is only complete if something
+  says *ask again* — which is `log:character`, and which the main window's
+  `useModule` has always re-hydrated on. The OVERLAYS did not: they are created in
+  the same `whenReady` turn that started the fold (index.ts restores open kinds
+  right after `startTailing`), so an overlay that was ALREADY OPEN at launch
+  hydrates at a random instant PART-WAY through months of log and then rides
+  increments describing none of it. A charm or an Ensnare that genuinely survived
+  a restart was in the model, on screen in the app, and absent from the floating
+  window whose whole job is to show it — until some later live event happened to
+  touch that module, which on an idle log is never. `sendWorldRebuilt`
+  (pipeline.ts) is now the ONE answer to "who is told the world was rebuilt": the
+  main window and `MODULE_READING_OVERLAYS`, and every `IPC.onCharacter` send goes
+  through it. The fix is the DELIVERY, never the discard — exempting a module from
+  `endReplay` would ship its whole history as an increment again, which is exactly
+  the shape that made every celebration detector re-fire on a character switch.
+  **And re-hydration is a SECOND reason a row can vanish**, so anything watching a
+  row set for removals has to be told which kind of change it is looking at: the
+  buffs overlay's drop flash takes a `rebuilt` flag (`timerDrops`,
+  shared/buffTimers.ts) and says nothing across a re-fold, or it would greet the
+  user by announcing four spells that dropped months ago. **Measuring this in e2e
+  needs a SLOW fold**: a committed 1.6k-line fixture folds faster than a second
+  BrowserWindow loads its bundle, so the first cut of the restart step passed with
+  the bug still in the tree and said so (`hydrating:false` at the moment the
+  overlay bridge came up). `tests/e2e/buffRestartSteps.mts` pads the log with 400k
+  real lines (~4 s) and CHECKS that the fold was still running.
 - **A MODULE WITH A SECOND INPUT MUST REPORT ITS OWN REVISION AS `seq`, NOT
   THE LAST EVENT'S** (JOS-87, measured in the running app). `useModule` dedupes
   with `if (d.seq <= knownSeq) return`, and `knownSeq` comes from the hydration
