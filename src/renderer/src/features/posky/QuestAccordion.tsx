@@ -14,10 +14,17 @@
 // chips live in the ACCORDION SUMMARY, i.e. the first row under QuestFilterBar, so those cards
 // opened straight across the tab's five dropdowns and ate the clicks aimed at them; that is what
 // the owner reported, and it is the Loot ledger's defect (JOS-127) on a second surface. The
-// direction was removal, not a placement flip or a delay. Nothing is lost that this tab does not
-// already say out loud: the expanded panel's table states Dropped by and Where for every item, the
-// reward's stat block is printed under the toolbar, and the CLICK still opens the drill-down,
-// which is the deep dive the hover was only ever a preview of.
+// direction was removal, not a placement flip or a delay. The expanded panel's table states Dropped
+// by and Where for every item, the reward's stat block is printed under the toolbar, and the CLICK
+// still opens the drill-down, which is the deep dive the hover was only ever a preview of.
+//
+// ONE THING *WAS* LOST WITH IT, AND A PLAYER FOUND IT (JOS-173). JOS-143's "nothing is lost" held
+// for everything except the required-item chip: the card's lower block printed posky's `where` AND
+// a "Drops: <mob names>" line, and only the first was carried over (`title={it.where}`). So a
+// 0.16.0 hover answered "Island 5" and stopped — the who was gone, one CLICK away instead of zero,
+// which is a real loss on the tab's most-hovered surface. The chip's title is `itemDropTitle` now
+// (poskyDroppers.ts): the card's lower block as one string. A native title still mounts no DOM node
+// and holds no pointer events, so the popper rule this file lives under is unchanged.
 //
 // WHICH NAMES, AND WHY NOT ALL OF THEM. The two names that had NO click before become links: the
 // item name in the expanded table, and the reward caption in the summary row. The required-item
@@ -49,7 +56,7 @@ import { TurnInBadge, TurnInCounter } from './TurnInControls'
 import type { QuestProgress } from './useProgress'
 import { ItemNameLink, QuestItemsTable } from './QuestItemsTable'
 import { KillTargetCaption } from './DropperCell'
-import { questKillTargets, type KillTarget } from './poskyDroppers'
+import { itemDropTitle, questKillTargets, type KillTarget } from './poskyDroppers'
 import type { MobTarget } from '../mobs/mobTarget'
 import { sharingQuestLabel, type SharedItem, type SharingQuest } from './sharedItems'
 import { QuestIgnoreButton, QuestStarButton } from '../favorites/QuestFlagButtons'
@@ -256,8 +263,13 @@ function QuestItemChips({
             // These are the chips whose `placement="top"` cards landed on the toolbar (JOS-143):
             // this Stack is the second line of the collapsed summary, so for the top quest in the
             // list the card opened over QuestFilterBar itself. The card's facts are in the
-            // expanded panel's table one click below, and `where` rides a native title here so
-            // the collapsed row still answers "which island" without a popper.
+            // expanded panel's table one click below, and the roster rides a native title here so
+            // the collapsed row still answers "who drops this, and where" without a popper.
+            //
+            // THE TITLE IS THE WHOLE ROSTER, NOT JUST THE ISLAND (JOS-173). JOS-143 carried the
+            // card's `where` over and left its "Drops:" line behind, so a 0.16.0 hover said
+            // "Island 5" and nothing else — the report. `itemDropTitle` is the card's lower block
+            // as one string; still a native title, so the popper guarantee is untouched.
             <Chip
               key={it.name}
               size="small"
@@ -267,7 +279,7 @@ function QuestItemChips({
               data-testid="posky-item-chip"
               variant={fav ? 'filled' : 'outlined'}
               color={fav ? 'warning' : done ? 'success' : 'default'}
-              title={it.where}
+              title={itemDropTitle(it)}
               icon={
                 fav ? (
                   <StarIcon />

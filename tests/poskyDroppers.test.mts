@@ -32,6 +32,7 @@ import {
   islandLabel,
   islandOf,
   isSkyMob,
+  itemDropTitle,
   killTargetFacts,
   killTargetLabel,
   mergeDroppers,
@@ -39,6 +40,7 @@ import {
   skyDroppersFor,
   statedDroppers,
   type DropperMob,
+  type DropTitleItem,
   type KillTargetItem
 } from '../src/renderer/src/features/posky/poskyDroppers'
 import mobsRaw from '../src/renderer/src/data/eqlegends/mobs.json' with { type: 'json' }
@@ -70,6 +72,13 @@ const questRows = (q: PoskyQuest, have: Record<string, number> = {}): KillTarget
     where: it.where,
     droppers: skyDroppersFor(it.name, it.who)
   }))
+
+/** One item row exactly as the tracker hands it to the hover roster, read off the real scrape. */
+const itemFromScrape = (name: string): DropTitleItem => {
+  const it = QUESTS.flatMap((q) => q.items).find((x) => x.name === name)
+  assert.ok(it, `item not found in the committed scrape: ${name}`)
+  return { name: it.name, who: it.who, where: it.where, droppers: skyDroppersFor(it.name, it.who) }
+}
 
 const questByName = (className: string, name: string): PoskyQuest => {
   const q = QUESTS.find((x) => x.className === className && x.name === name)
@@ -430,4 +439,79 @@ test('the caption covers nearly every quest, and states an island for most', () 
     for (const t of questKillTargets(questRows(q)))
       for (const i of t.islands) assert.ok(stated.has(i), `${q.name}: ${i} is not stated by any item`)
   }
+})
+
+// =============================================================================
+// 10. The required-item chip's hover roster (JOS-173) — the WHO, not just the where
+// =============================================================================
+//
+// THE REGRESSION, in the reporter's own words: "The tooltip for Sky drops is no longer showing me
+// who drops it on what island as it did in previous versions" — on 0.16.0 it said "Island 5" and
+// nothing more. Traced to 8e05a20 (JOS-143, shipped in v0.15.0), which deleted every popper on the
+// Sky tab and carried each roster over to a native `title`, except on the required-item chip: there
+// `ItemTooltip`'s lower block (posky's `where` AND a "Drops: <mobs>" line) became `title={it.where}`
+// — the where alone. `itemDropTitle` is that lower block as one string, and these are its goldens.
+//
+// "Island 5" is not a paraphrase of the report: Ceremonial Belt IS an Island 5 row, so the first
+// case below is the exact hover the player was looking at.
+
+test('the item hover names the mob AND the island — not the island alone (JOS-173)', () => {
+  const title = itemDropTitle(itemFromScrape('Ceremonial Belt'))
+  // The 0.16.0 shape, pinned as what this must never be again.
+  assert.notEqual(title, 'Island 5')
+  assert.equal(title, 'Ceremonial Belt · Island 5\nDropped by:\nThe Spiroc Lord · level 63 · Plane of Sky')
+})
+
+test('the item hover lists EVERY dropper, uncapped — a title has no line to blow out', () => {
+  // The efreeti case the inline cell's DROPPER_DISPLAY_CAP exists for: three mobs, all three here.
+  // This row states no `where` at all, so there is no island clause to invent (law 1).
+  assert.equal(
+    itemDropTitle(itemFromScrape('Efreeti Mace')),
+    'Efreeti Mace\nDropped by:\n' +
+      'Noble Dojorn · level 63+ · Plane of Sky\n' +
+      'Overseer of Air · level 63 · Plane of Sky\n' +
+      'the Hand of Veeshan · level 63 · Plane of Sky'
+  )
+})
+
+test("an item no mob resolves falls back to posky's own words, verbatim", () => {
+  // A wind rune: the honest "anywhere". `where` is printed as the scrape wrote it rather than
+  // through islandOf — "Plane of Sky" is a true answer that the island matcher deliberately drops.
+  assert.equal(
+    itemDropTitle(itemFromScrape('Wind Rune Meda')),
+    'Wind Rune Meda · Plane of Sky\nDropped by:\nrandom drop — any Plane of Sky mob'
+  )
+})
+
+test('nothing known at all degrades to the bare name — never a guess', () => {
+  assert.equal(itemDropTitle({ name: 'Mystery Thing', droppers: [] }), 'Mystery Thing')
+  assert.equal(itemDropTitle({ name: 'Mystery Thing', where: '  ', who: [' '], droppers: [] }), 'Mystery Thing')
+  // A stated `where` with no dropper still answers half the question.
+  assert.equal(itemDropTitle({ name: 'Mystery Thing', where: 'Island 8', droppers: [] }), 'Mystery Thing · Island 8')
+})
+
+test('EVERY committed item row says who drops it, and none of them says only an island', () => {
+  // Over the real scrape: 222 rows, 128 distinct items. A floor plus a universal — the floor moves
+  // with a re-scrape, the universal IS the defect and must hold for every row.
+  let rows = 0
+  let named = 0
+  for (const q of QUESTS) {
+    for (const it of q.items) {
+      rows += 1
+      // Built from THIS row, not looked up by name: the same item can appear on several quests
+      // with its own stated `where`, and the row the player hovered is the one that must be right.
+      const droppers = skyDroppersFor(it.name, it.who)
+      const title = itemDropTitle({ name: it.name, who: it.who, where: it.where, droppers })
+      assert.ok(title.startsWith(it.name), `${it.name}: title does not open with the item name`)
+      // The regression, generalized: an island may never be the whole answer.
+      assert.notEqual(title, islandOf(it.where) ?? '')
+      assert.ok(title.includes('\nDropped by:\n'), `${it.name}: no dropper line at all`)
+      if (droppers.length > 0) {
+        named += 1
+        assert.ok(title.includes(' · Plane of Sky'), `${it.name}: a resolved mob states no zone`)
+      }
+    }
+  }
+  assert.ok(rows >= 222, `rows: ${rows}`)
+  assert.ok(named >= 123, `rows naming a catalog mob: ${named}`)
 })

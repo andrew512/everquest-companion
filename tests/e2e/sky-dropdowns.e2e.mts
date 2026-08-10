@@ -28,6 +28,13 @@
  * statement of what the user is owed — their click reaching the control. Neither is the whole
  * guard: `tests/tooltipCursor.test.mts` pins the code shape that makes both true.
  *
+ * IT ALSO PINS WHAT THE REMOVAL COST (JOS-173). Deleting the card was right; deleting the FACTS it
+ * carried was not, and one of them went with it. The required-item chip's card printed posky's
+ * `where` AND a "Drops: <mob names>" line; the native title that replaced it was `it.where` alone,
+ * so a 0.16.0 player hovering an item read "Island 5" and nothing more, and said so. This spec now
+ * asserts the anchor still answers its own question — which is the only way the two rules stay
+ * honest together, since "no popper" is trivially satisfiable by saying nothing at all.
+ *
  * WHAT IT READS (JOS-29): `tests/fixtures/e2e-copy.log`, a committed fixture. The Sky tab's quest
  * LIST comes from the committed catalog rather than from the log, so the rows and their item chips
  * are there whatever the log said — which is what makes this spec deterministic. Nothing here
@@ -178,6 +185,47 @@ async function stepSelectChanges(page: Page, sel: string, what: string): Promise
 }
 
 /**
+ * AND THE ANCHOR STILL ANSWERS THE QUESTION IT WAS ANCHORING (JOS-173).
+ *
+ * Removing the popper is only half a fix if the facts leave with it. JOS-143 carried each roster
+ * over to a native `title`, except on this chip, which got `title={it.where}` — so a 0.16.0 player
+ * hovering a required item read "Island 5" and nothing else, and reported exactly that. The title
+ * is the thing to read: a native tooltip is not in the DOM by design (that IS the popper fix), so
+ * there is no rendered node to hover and assert against — the attribute is the whole artifact.
+ *
+ * Asserted over EVERY chip on the page rather than the first: which quest sorts to the top is a
+ * function of the filters, and the defect was universal. The floors are floors (a re-scrape moves
+ * counts), the universal — no chip whose title is only an island — is the defect itself.
+ */
+async function stepChipTitleNamesTheDropper(page: Page): Promise<void> {
+  const titles = await page.evaluate(
+    (s) => [...document.querySelectorAll(s)].map((c) => c.getAttribute('title') ?? ''),
+    ITEM_CHIP
+  )
+  if (!check('the required-item chips carry a hover roster at all', titles.length > 0, `chips=${String(titles.length)}`)) {
+    return
+  }
+  const bare = titles.filter((t) => /^Island \d+$/.test(t.trim()))
+  check(
+    'no chip answers with an island and nothing else (the 0.16.0 shape)',
+    bare.length === 0,
+    `bare=${String(bare.length)} e.g. ${bare[0] ?? ''}`
+  )
+  const named = titles.filter((t) => t.includes('\nDropped by:\n'))
+  check(
+    '…every chip says WHO drops the item',
+    named.length === titles.length,
+    `named=${String(named.length)} of ${String(titles.length)}`
+  )
+  // The reporter's sentence, whole: a mob AND an island on the same hover. `Plane of Sky` is the
+  // zone every resolved Sky mob states, so a line carrying both is a mob line, not a wind rune's
+  // "random drop — any Plane of Sky mob" (which states no island: its `where` is the zone).
+  const both = titles.filter((t) => /· Island \d+\n/.test(t) && t.includes('· Plane of Sky'))
+  check('…and at least one names a mob and its island together', both.length > 0, `both=${String(both.length)}`)
+  if (both[0]) note(`first roster: ${both[0].replace(/\n/g, ' / ')}`)
+}
+
+/**
  * The chip-select on the same row, which is a different control with the same exposure: an
  * Autocomplete's listbox is a portal that opens straight down into the band a card used to fill.
  * Typing rather than clicking an option, for the reason sky-filters states: a click into a portal
@@ -208,6 +256,7 @@ async function main(): Promise<void> {
     await stepReady(page)
     await stepNothingCovers(page, ITEM_CHIP, 'first quest’s required-item chip')
     await stepNothingCovers(page, KILL_TARGET, 'kill-target caption')
+    await stepChipTitleNamesTheDropper(page)
     await stepSelectChanges(page, SORT, 'Sort')
     await stepSelectChanges(page, COUNT_SOURCE, 'Count items from')
     await stepChipSelectOpens(page)
