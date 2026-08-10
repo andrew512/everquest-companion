@@ -207,6 +207,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'A spell you cast and a weapon proc that fires the same effect stop sharing one row. Your casts keep the spell name; the firings that arrive with no casting line of yours get their own row, marked proc - so a cleric whose weapon procs Banish Undead can read the proc rate straight off the meter instead of putting the spell away for a fight to measure it. Casting the same spell over and over no longer hides every proc behind it either, and a cast that fizzled or was interrupted for good stops claiming the next proc as its own.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Restart the app with a buff or debuff overlay open and it comes back holding what is actually running. A long hold that survived the restart - a charm, an Ensnare, anything still ticking - used to appear in the app and never in the floating window, which sat on whatever it happened to catch while the log was still being read. Both windows now refill the moment that read finishes, and no spell is announced as dropped just because the window asked again.'
       }
     ]
   },

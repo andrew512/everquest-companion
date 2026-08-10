@@ -441,7 +441,17 @@ regression run that this ticket is not the place for.
 - the first-open window is **3.4 %** of a 2560×1392 work area (invariant: < 25 %), on-screen;
 - opening mid-session **hydrates from the replay** — the fixture's own buffs render, with the
   debuffs filed under the enemies they are on (`Your buffs` / `Lord Nagafen` /
-  `a fire giant warrior`), which is the per-target half of the reports' ask, unscripted;
+  `a fire giant warrior`), which is the per-target half of the reports' ask, unscripted.
+  **THAT SENTENCE COVERED ONLY THE WINDOW YOU OPEN AFTER LAUNCH, AND FOR MONTHS IT READ AS IF IT
+  COVERED BOTH (JOS-172).** Opening the window mid-session hydrates from a FINISHED fold; a window
+  that was ALREADY OPEN when the app started hydrates part-way THROUGH one, and `endReplay()`
+  discards what that fold accumulated, so nothing ever described the rest of it. A charm or an
+  Ensnare that survived a restart was in the model, in the app, and missing here. The fix is the
+  rebuilt-world signal (`log:character`) reaching the module-reading overlays as well as the main
+  window — `sendWorldRebuilt` in pipeline.ts — and the restart is now a step of its own
+  (`tests/e2e/buffRestartSteps.mts`), with its fold deliberately PADDED so the window really does
+  hydrate mid-fold: measured, the unpadded fixture folds faster than a second BrowserWindow loads,
+  and the first cut of that step passed with the bug still in the tree;
 - **the chain-mez**: one `You begin casting Mesmerization III.` appended to the LIVE log, followed
   by two `has been mesmerized.` broadcasts, produces **two rows, both named `Mesmerization`, both
   counting down from 24 s, grouped under `a turmoil toad` and `a scareling`** — the whole real
