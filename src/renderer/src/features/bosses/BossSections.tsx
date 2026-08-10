@@ -208,42 +208,26 @@ function TargetKillDate({ s, compact }: { s: TargetStatus; compact: boolean }): 
   )
 }
 
-/** Inside a seven-day window the weekday is the referent; the year is noise. */
-const LOCK_DAY: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'numeric', day: 'numeric' }
-
-/**
- * The week view's line under the name: the day the locking kill landed, and the tier it was at.
- * Locked at two difficulties, the line states the highest and the tooltip spells out each —
- * the same division of labour TargetKillDate already makes for a repeat kill.
- */
-function LockLine({ lock }: { lock: TierLock[] }): JSX.Element {
-  const top = lock[lock.length - 1]
-  if (!top) {
-    return (
-      <Typography variant="caption" color="text.disabled" noWrap display="block">
-        open
-      </Typography>
-    )
-  }
-  return (
-    <Tooltip title={lock.map((l) => `${tierStyle(l.tier).label} ${formatDate(l.ts, LOCK_DAY)}`).join(' · ')}>
-      <Typography variant="caption" color="text.secondary" noWrap display="block">
-        Locked · {formatDate(top.ts, LOCK_DAY)}
-      </Typography>
-    </Tooltip>
-  )
-}
-
-// Everything below the portrait: name, zone (comfortable only) and the kill/no-kill line.
+// Everything below the portrait: name, zone (comfortable only) and — depending on the view — the
+// difficulty ladder or the kill/no-kill line.
+//
+// THE WEEK CARD ENDS IN THE LADDER (JOS-171, owner ruling 2026-08-09). It used to end in a
+// `LockLine` under the rungs: `Locked · Sat 8/8` when any difficulty was taken, `open` when none
+// was, with a tooltip spelling out each lock. Every word of that is now either drawn by the rungs
+// themselves or one hover away (`rungTitle` — lockout.ts), so the line was the card saying the
+// same thing twice in less detail: it could name only the HIGHEST lock, while five chips name all
+// five. The same ruling that stripped the tier chip back to its label (JOS-169) applies here — the
+// ladder tells the whole per-tier story, so nothing is written underneath it.
+//
+// The OVERALL view is untouched: it has no ladder, so its date line is the only thing that ever
+// stated when the kill landed and it stays exactly as it was.
 function TargetCardCaption({
   s,
   compact,
-  lock,
   ladder
 }: {
   s: TargetStatus
   compact: boolean
-  lock?: TierLock[]
   ladder?: LadderRung[]
 }): JSX.Element {
   return (
@@ -261,14 +245,12 @@ function TargetCardCaption({
           {s.target.zone ?? ''}
         </Typography>
       )}
-      {lock ? (
-        <>
-          {/* The five difficulties, every week, whether or not any of them is taken (JOS-152).
-              Drawn ABOVE the date line because it is the thing a coordinator scans for; the line
-              under it dates the most recent of this CARD's locks. */}
-          {ladder && <DifficultyLadder rungs={ladder} compact={compact} />}
-          <LockLine lock={lock} />
-        </>
+      {/* The five difficulties, every week, whether or not any of them is taken (JOS-152) — and
+          since JOS-171 the last thing on the card. Its presence IS the view: a ladder is derived
+          exactly when the week's lock function is (see `Section`), so it is the discriminator the
+          removed `lock` prop used to be. */}
+      {ladder ? (
+        <DifficultyLadder rungs={ladder} compact={compact} />
       ) : s.killed ? (
         <TargetKillDate s={s} compact={compact} />
       ) : (
@@ -347,7 +329,7 @@ function TargetCard({
     >
       {chip.on && <TargetKilledBadge tier={tier} />}
       <TargetCardMedia s={s} chip={chip} height={imgH} />
-      <TargetCardCaption s={s} compact={compact} lock={lock} ladder={ladder} />
+      <TargetCardCaption s={s} compact={compact} ladder={ladder} />
     </Paper>
   )
 }

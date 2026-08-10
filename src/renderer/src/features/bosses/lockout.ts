@@ -31,9 +31,6 @@ import type { KillTierRun } from '@shared/types'
 // dependency-free date formatter, so it travels here without dragging the renderer in.
 import { DIFFICULTY_TIERS, isDifficultyTier } from '../../../../shared/kills'
 import { formatDate } from '../../lib/formatDate'
-// The app's ONE spelling of a difficulty's name ("D2 · Adaptive"). Imported rather than restated
-// so the ladder's copy cannot drift from the tier chip's; it is a dependency-free table.
-import { tierStyle } from '../../lib/tierChip'
 
 /**
  * The reset is a PACIFIC WALL-CLOCK event, so the zone is the fact and the offset is derived.
@@ -260,23 +257,33 @@ export function tierLadder(locks: TierLock[]): LadderRung[] {
   })
 }
 
-/** Inside a seven-day window the weekday is the referent; the year is noise (LockLine's rule). */
+/** Inside a seven-day window the weekday is the referent; the year is noise. */
 const RUNG_DAY: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'numeric', day: 'numeric' }
 
 /**
- * What one rung says when you rest on it. It lives HERE, beside the derivation it describes,
- * rather than in the component that draws it: putting it in a `.tsx` that imports MUI would leave
- * the one string worth pinning unreachable from a node test.
+ * What one rung says when you rest on it: THE DAY THAT DIFFICULTY'S LAST CREDITED KILL LANDED,
+ * and nothing else at all (JOS-171, owner ruling 2026-08-09 — the same ruling that took the
+ * tooltip off the tier chip in JOS-169). The rung is the only thing left under a week card now:
+ * the `Locked · <date>` / `open` caption line that used to sit beneath the ladder is gone, so the
+ * five chips carry the whole per-difficulty story and the hover is where the date lives.
  *
- * Every rung says the same KIND of thing now (JOS-166). It used to carry a caveat on the base
- * rung — the log names the harder difficulties but not the base one — which was true of the model
- * and not of the log: the zone line does state the base instance, and the app now reads it.
+ * It says the DATE ALONE because everything else it could say is already on the screen and one
+ * pixel away. The rung's own label IS the difficulty ("D3"), and its colour IS whether the week
+ * has taken it — so a sentence naming either would be the card reading itself back to you.
+ *
+ * AN OPEN RUNG SAYS NOTHING — `undefined`, never `''`. A grey rung is already a complete
+ * statement, and this app has no fact to add to it: "open this week" would only restate the
+ * colour, and (see the ladder's closing note below) it cannot even promise the difficulty EXISTS
+ * for this boss. `undefined` makes the component omit the `title` attribute outright; an empty
+ * string is an attribute that is PRESENT and empty, which suppresses tooltips inherited from
+ * ancestors — and the card above has one.
+ *
+ * It lives HERE, beside the derivation it describes, rather than in the component that draws it:
+ * putting it in a `.tsx` that imports MUI would leave the one string worth pinning unreachable
+ * from a node test.
  */
-export function rungTitle(rung: LadderRung): string {
-  const name = tierStyle(rung.tier).long
-  return rung.cleared
-    ? `${name} - cleared ${formatDate(rung.ts, RUNG_DAY)}`
-    : `${name} - open this week`
+export function rungTitle(rung: LadderRung): string | undefined {
+  return rung.cleared ? formatDate(rung.ts, RUNG_DAY) : undefined
 }
 
 /** Coarse time remaining in the window: "3d 4h" / "4h 12m" / "12m". */

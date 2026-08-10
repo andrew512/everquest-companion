@@ -40,6 +40,7 @@ import {
   untilReset,
   type LockoutWindow
 } from '../src/renderer/src/features/bosses/lockout'
+import { formatDate } from '../src/renderer/src/lib/formatDate'
 import { TIER_OPEN_WORLD, TIER_UNKNOWN } from '../src/shared/kills'
 import type { KillTierRun, RaidTarget } from '../src/shared/types'
 import { readFixture } from './harness.mts'
@@ -424,22 +425,28 @@ test('an unknown difficulty invents no sixth rung', () => {
   assert.equal(rungs.some((r) => r.cleared), false)
 })
 
-test('every rung says the same kind of thing, base rung included', () => {
-  // The REPLACEMENT for 'the base rung says its own limit out loud' (JOS-166). That caveat -
-  // "the log names the harder difficulties but never the base one" - was a true statement about
-  // the old model and a false one about the log, so it is gone rather than reworded.
-  const [base, awakened] = tierLadder([
-    { tier: 0, ts: WEEK.start + HOUR },
-    { tier: 1, ts: WEEK.start + HOUR }
-  ])
-  assert.match(rungTitle(base), /^D0 · base - cleared /)
-  assert.match(rungTitle(awakened), /^D1 · Awakened - cleared /)
-  assert.equal(
-    /open world/.test(rungTitle(base)),
-    false,
-    'the base rung no longer hedges - it means a base-difficulty instance and nothing else'
-  )
-  assert.equal(rungTitle(tierLadder([])[3]), 'D3 · Fused - open this week')
+/** The day format the rung hover is contracted to state — restated from lockout.ts's `RUNG_DAY`
+ *  so these assertions are locale-independent (the app formats through the runtime's locale) and
+ *  so a change to WHAT "the day" means shows up here as a failure rather than as silence. */
+const RUNG_DAY: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'numeric', day: 'numeric' }
+
+test('a cleared rung hover is the day of that clear; an open rung says nothing at all', () => {
+  // The REPLACEMENT for 'every rung says the same kind of thing, base rung included' (JOS-166),
+  // which pinned the sentence `D0 · base - cleared Tue 7/28`. JOS-171 deleted the prose: the card
+  // no longer carries a `Locked · <date>` / `open` line under the ladder, so the rung IS the whole
+  // statement - its label names the difficulty, its colour says whether the week has taken it, and
+  // the hover adds the only fact neither of those can carry.
+  //
+  // An OPEN rung answers `undefined`, never '': React omits the attribute for the first and emits
+  // a present-and-empty one for the second, which suppresses the tooltip the card itself carries.
+  const ts = WEEK.start + HOUR
+  const [base, awakened] = tierLadder([{ tier: 0, ts }, { tier: 1, ts }])
+  assert.equal(rungTitle(base), formatDate(ts, RUNG_DAY))
+  const same = 'two difficulties cleared in the same hour say the SAME thing - the tier is on the chip'
+  assert.equal(rungTitle(awakened), rungTitle(base), same)
+  assert.equal(/D0|base|cleared|week/.test(rungTitle(base) ?? ''), false, 'no prose survives')
+  const quiet = tierLadder([]).every((r) => rungTitle(r) === undefined)
+  assert.equal(quiet, true, 'and an untouched week hands back five rungs with no title at all')
 })
 
 test('golden: standing before the reset, Lord of Ire has ONE green rung and four grey', () => {
@@ -553,10 +560,11 @@ test('golden: the Aug 01 ladder run fills all FIVE rungs of that week', () => {
       parseEqTimestamp('Sat Aug 01 16:02:37 2026')
     ]
   )
-  // And the base rung SAYS it was cleared, with no caveat attached — the sentence the tooltip
-  // used to carry is gone because the fact behind it is now known.
-  assert.match(rungTitle(rungs[0]), /^D0 · base - cleared \w/)
-  assert.equal(/open world/.test(rungTitle(rungs[0])), false, 'and it hedges about nothing')
+  // …and each rung's hover is exactly that kill's day (JOS-171). All five landed on the same
+  // Saturday, so all five read alike — which is the point: the difficulty is the chip's job.
+  assert.equal(rungTitle(rungs[0]), formatDate(rungs[0].ts, RUNG_DAY))
+  const days = new Set(rungs.map((r) => rungTitle(r)))
+  assert.equal(days.size, 1, 'five clears in one afternoon, one day between them')
 })
 
 test('golden: the base rung comes from the `- Solo` line, not from an absence', () => {
