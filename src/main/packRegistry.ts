@@ -74,16 +74,6 @@ interface RegistryIndex {
 // works. Dropped rows are COUNTED, never interpolated — a crafted name must not ride into a log
 // line carrying escapes.
 
-/** Does a registry row's every path/URL-bound field pass the trust-boundary allowlists? */
-function isSafeRegistryPack(p: RegistryPack): boolean {
-  return (
-    isSafePackId(p.name) &&
-    isSafeSourceRepo(p.source_repo) &&
-    isSafeSourceRef(p.source_ref) &&
-    isSafeSourcePath(p.source_path)
-  )
-}
-
 /**
  * Refuse a pack whose name or `source_*` fields could escape a path/URL — called by installPack
  * BEFORE any path is built, against the same allowlists `sounds:getData` uses (no separators, no
@@ -99,12 +89,35 @@ function assertPackInstallable(pack: RegistryPack): void {
   }
 }
 
-/** Keep only rows that pass validation; log how many were dropped (count only, never the name). */
+/**
+ * Keep only rows that pass validation; log how many were dropped (COUNTS only, never a value).
+ *
+ * The counts are now PER FIELD (`name=0 source_repo=45 source_ref=0 source_path=2`), because the
+ * old single number could not tell an attack from our own over-strictness: JOS-162's 47 dropped
+ * rows read identically to 47 poisoned ones, and the shape of the answer — one field, one value
+ * of it — is what identified them as honest. A row failing two fields increments both, so the
+ * per-field counts can exceed the row count; the row total is reported separately for that
+ * reason. Field NAMES are ours and are safe to interpolate; field VALUES never are (a crafted
+ * name is exactly the kind of string that would ride escapes into a log line), and no branch
+ * here has one in hand.
+ */
 export function sanitizeRegistryPacks(packs: RegistryPack[]): RegistryPack[] {
-  const kept = packs.filter(isSafeRegistryPack)
+  const counts: Record<string, number> = { name: 0, source_repo: 0, source_ref: 0, source_path: 0 }
+  const kept = packs.filter((p) => {
+    const bad: string[] = []
+    if (!isSafePackId(p.name)) bad.push('name')
+    if (!isSafeSourceRepo(p.source_repo)) bad.push('source_repo')
+    if (!isSafeSourceRef(p.source_ref)) bad.push('source_ref')
+    if (!isSafeSourcePath(p.source_path)) bad.push('source_path')
+    for (const field of bad) counts[field]++
+    return bad.length === 0
+  })
   const dropped = packs.length - kept.length
   if (dropped > 0) {
-    logError('main:packRegistry', { message: `dropped ${dropped} registry pack(s) failing validation` })
+    const by = Object.entries(counts).map(([field, n]) => `${field}=${String(n)}`).join(' ')
+    logError('main:packRegistry', {
+      message: `dropped ${String(dropped)} of ${String(packs.length)} registry pack(s) failing validation (${by})`
+    })
   }
   return kept
 }
