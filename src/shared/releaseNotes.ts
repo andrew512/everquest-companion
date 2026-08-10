@@ -188,6 +188,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Your antivirus should stop objecting to the app, and the overlays should start hiding themselves on machines where they never did. To know whether EverQuest is running, in front, and where its window is - which is how the floating meters hide themselves and how the cursor ring stays over the game - the app used to start a hidden Windows PowerShell in the background every time you launched it. Some antivirus products read that as an attack and flagged the whole app; on a lot of PCs it could not start at all, which quietly left auto-hide and the cursor ring dead for the entire session with nothing on screen to say so. The app now asks Windows those questions itself, with no hidden program and nothing to start. Nothing about how the overlays behave has changed - they just work in places they did not before.'
+      },
+      {
+        kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
     ]
