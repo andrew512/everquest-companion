@@ -129,6 +129,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-10',
     entries: [
       {
+        kind: 'new',
+        text: 'Item icons and boss portraits are in the app now, instead of being fetched while you use it. Every picture the app can draw - 780 of them, all 751 item icons and all 29 raid-boss portraits - now ships inside the install, so a brand-new install shows them instantly, they still show up with the internet off, and the app no longer asks anyone for a picture while you play. They came from two volunteer-run EverQuest wikis: wiki.project1999.com for the boss portraits, and eqlwiki.com for the item icons and the item, spell and quest knowledge behind them. Neither is connected to this app, both have been written by people doing it for free for years, and there is now a Thanks page in Preferences that says so and links them. On the rare picture the app has not got, it still asks once - and if the answer is no, it remembers that for the rest of the session instead of asking again every time the icon scrolls back onto your screen.'
+      },
+      {
         kind: 'changed',
         text: 'A creature page counts an item once, however many upgraded versions of it you have looted. The base drop, the +1 and the +2 used to sit on three separate lines each saying you had seen one, so an item the mob had given you four times read as three ones - and an upgrade of something the wiki lists turned up down in "also looted by you" as if the page had never mentioned it. Now it is one line with the real total, sitting on the drop it belongs to, and it says how often that works out to over the kills of that mob this character has recorded - "1 per 14 kills" - with the denominator on hover, because it is your own history and not a published drop rate. Click the count of variants on the right and each +N opens up with its own tally and date, and each one still drills into its own loot history.',
         fromReport: true

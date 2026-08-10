@@ -48,7 +48,7 @@
 //   --limit <n>    stop after n network fetches (for a smoke run)
 
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 // The cache's OWN pure helpers — names, hashes, the allowlist, the sniff. Reused rather than
@@ -204,6 +204,39 @@ async function fetchOne(w: Wanted): Promise<Uint8Array | null> {
   return bytes
 }
 
+/**
+ * Fetch everything still missing, one at a time, `REQUEST_DELAY_MS` apart. Its own function
+ * rather than a block inside `main` so the per-file bookkeeping reads at one level: a failure
+ * here is never fatal, because the manifest is rebuilt from what is actually ON DISK afterwards
+ * and a partial run is a resumable run.
+ */
+async function fetchMissing(missing: readonly Wanted[], limit: number): Promise<void> {
+  let fetched = 0
+  let notImages = 0
+  let failed = 0
+  for (const w of missing) {
+    if (fetched >= limit) break
+    const outcome = await fetchOutcome(w)
+    if (outcome === 'ok') fetched++
+    else if (outcome === 'not-an-image') notImages++
+    else failed++
+    await sleep(REQUEST_DELAY_MS)
+  }
+  console.log(`[fetch-wiki-images] fetched ${fetched}, not-an-image ${notImages}, failed ${failed}`)
+}
+
+/** One image's result, flattened to a word so the loop above stays a tally rather than a tree. */
+async function fetchOutcome(w: Wanted): Promise<'ok' | 'not-an-image' | 'failed'> {
+  try {
+    if (await fetchOne(w)) return 'ok'
+    console.warn(`[fetch-wiki-images] not an image: ${w.url}`)
+    return 'not-an-image'
+  } catch (err) {
+    console.warn(`[fetch-wiki-images] FAILED ${w.url}: ${String(err)}`)
+    return 'failed'
+  }
+}
+
 // ---- manifest -----------------------------------------------------------------------
 
 /** One row of `manifest.json`: what the file is, and exactly where its bytes came from. */
@@ -280,27 +313,7 @@ async function main(): Promise<void> {
   const missing = wanted.filter((w) => !presentFile(outDir, w.req))
   console.log(`[fetch-wiki-images] ${wanted.length - missing.length} present, ${missing.length} to fetch`)
 
-  if (!dryRun) {
-    let fetched = 0
-    let notImages = 0
-    let failed = 0
-    for (const w of missing) {
-      if (fetched >= limit) break
-      try {
-        const bytes = await fetchOne(w)
-        if (bytes) fetched++
-        else {
-          notImages++
-          console.warn(`[fetch-wiki-images] not an image: ${w.url}`)
-        }
-      } catch (err) {
-        failed++
-        console.warn(`[fetch-wiki-images] FAILED ${w.url}: ${String(err)}`)
-      }
-      await sleep(REQUEST_DELAY_MS)
-    }
-    console.log(`[fetch-wiki-images] fetched ${fetched}, not-an-image ${notImages}, failed ${failed}`)
-  }
+  if (!dryRun) await fetchMissing(missing, limit)
 
   const manifest = buildManifest(wanted)
   if (!dryRun) writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
