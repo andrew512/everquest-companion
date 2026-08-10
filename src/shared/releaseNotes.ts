@@ -140,6 +140,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'A floating overlay never goes missing with the monitor it was sitting on. Swap a two-monitor setup for one screen and the combat meter used to be parked at a spot the desktop no longer had - off past the right-hand edge, where restarting put it straight back and toggling it off and on rebuilt it in the same place, with no title bar left to drag it home by. Every overlay is now placed on a screen that really exists, both when it opens and the moment your monitors change - and one that has nowhere sensible to go lands back in its usual corner. Where YOU put a window is still remembered exactly as you left it, so plugging the monitor back in takes the overlay back to it. The main window is kept on screen the same way.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
     ]

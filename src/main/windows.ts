@@ -19,12 +19,17 @@
 // to Electron: the shared webPreferences object and the per-webContents / per-session
 // hardening that installs those predicates.
 
-import { BrowserWindow, screen, shell } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { IPC } from '../shared/ipc'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
-import { defaultOverlayBounds, overlayDefaultSize } from './overlayLayout'
+import { overlayDefaultSize } from './overlayLayout'
+// WHERE A WINDOW MAY GO ON THE SCREENS THAT EXIST NOW (JOS-187). The `screen` module is not
+// consulted here any more: both questions this file asks of it — where an overlay opens, where the
+// main window opens — are decided in windowPlacement.ts over the pure geometry in displayFit.ts,
+// so the policy is testable and both windows can never drift into two answers.
+import { mainWindowBounds, overlayFittedBounds } from './windowPlacement'
 import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
@@ -257,7 +262,12 @@ export function applyMainWindowScale(scale: number): void {
 }
 
 export function createMainWindow(): void {
-  const bounds = getWindowBounds()
+  // The remembered rectangle, KEPT ON A SCREEN THAT STILL EXISTS (JOS-187). A main window lost off
+  // the edge is worse than a lost overlay, not better: it is frameless, so there is no title bar
+  // sticking onto the remaining display to drag it back by. Unlike the overlays it needs no live
+  // re-placement — the user can move this one, and Windows itself relocates ordinary top-level
+  // windows when their monitor goes away; it is the RESTORE that had no answer.
+  const bounds = mainWindowBounds(getWindowBounds())
   mainWindow = new BrowserWindow({
     ...(bounds ?? { width: 1280, height: 860 }),
     minWidth: 900,
@@ -473,18 +483,68 @@ const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   debuffs: 'Debuff Timer Overlay'
 }
 
+// ---- WHAT IS SHOWN vs WHAT IS STORED (JOS-187) ------------------------------------------------
+//
+// THE STORE KEEPS THE RECTANGLE THE USER CHOSE. THE SCREEN GETS THE ONE THAT FITS. That is the
+// whole policy, and it is what makes a docking round trip lossless: undock the widescreen and the
+// overlay is DRAWN on the laptop panel while `overlays.<kind>.bounds` still says "x: 2600, on the
+// right-hand monitor"; plug the monitor back in and the same fit puts it back where it was, on the
+// display the user actually put it on. Persisting the corrected rectangle instead would silently
+// destroy that layout the first time a cable came out — and it would do it on a laptop screen the
+// user may only be on for the length of a train journey.
+//
+// The mechanism is one remembered rectangle. Every rectangle this file applies to a window ITSELF
+// is recorded here first, and `saveOverlayBounds` refuses to persist the one it recognises as its
+// own — so the only writes that reach the store are the user's own moves and resizes. The marker is
+// dropped the moment a window reports any OTHER rectangle, so a user who later drags a window back
+// onto that exact spot still has it saved. Deliberately not a timer or a re-entrancy flag: Electron
+// may emit 'moved'/'resized' synchronously from `setBounds` or a tick later, and a policy that
+// depended on which would be a policy that worked on one platform.
+//
+// A PIXEL OF SLACK, because `setBounds` is not always an identity: on a scaled display the value
+// makes a round trip through physical pixels and can come back one off. The cost is that a 1px
+// nudge in the instant after a re-placement is not persisted — which is not a position anyone is
+// expressing — and it is paid only until the window next moves anywhere else.
+const appliedBounds = new Map<OverlayKind, Electron.Rectangle>()
+const sameSpot = (a: Electron.Rectangle, b: Electron.Rectangle): boolean =>
+  (['x', 'y', 'width', 'height'] as const).every((k) => Math.abs(a[k] - b[k]) <= 1)
+
 /**
- * Where a kind's overlay opens. Persisted bounds ALWAYS win; a first open is placed by the
- * shared layout (bottom-right, stacked per kind — overlayLayout.ts) so two overlays never open
- * exactly on top of each other.
+ * Where a kind's overlay opens. Persisted bounds win — FITTED to the displays that exist right now
+ * (windowPlacement.ts), so a position remembered from a monitor that has since been unplugged
+ * lands on screen instead of past the edge of it. A first open (and a rectangle on no display at
+ * all) is placed by the shared layout (bottom-right, stacked per kind — overlayLayout.ts) so two
+ * overlays never open exactly on top of each other.
  */
 function overlayPlacement(kind: OverlayKind) {
-  const cfg = getOverlayConfig(kind)
-  if (cfg.bounds) return cfg.bounds
-  try {
-    return defaultOverlayBounds(kind, screen.getPrimaryDisplay().workArea)
-  } catch {
-    return overlayDefaultSize(kind) // no display info (headless/e2e) — size only
+  const b = overlayFittedBounds(kind, getOverlayConfig(kind).bounds)
+  if (!b) return overlayDefaultSize(kind) // no display info (headless/e2e) — size only
+  appliedBounds.set(kind, b)
+  return b
+}
+
+/** Move a kind's overlay onto `b` without that move being mistaken for the user's own (see above). */
+export function applyOverlayBounds(kind: OverlayKind, b: Electron.Rectangle): void {
+  const w = overlayWindows[kind]
+  if (!w || w.isDestroyed() || sameSpot(w.getBounds(), b)) return
+  appliedBounds.set(kind, b)
+  w.setBounds(b)
+}
+
+/**
+ * Put every open overlay back on a display that exists — the live half of JOS-187, run whenever the
+ * monitor arrangement changes (index.ts wires it to `watchDisplays`).
+ *
+ * It re-fits the STORED rectangle rather than the window's current one, which is what lets a
+ * re-plugged monitor take its overlays back: the correction applied while that display was gone was
+ * never written down, so the user's own position is still there to return to.
+ */
+export function reconcileOverlayDisplays(): void {
+  for (const kind of OVERLAY_KINDS) {
+    const w = overlayWindows[kind]
+    if (!w || w.isDestroyed()) continue
+    const b = overlayFittedBounds(kind, getOverlayConfig(kind).bounds)
+    if (b) applyOverlayBounds(kind, b)
   }
 }
 
@@ -583,9 +643,15 @@ export function createOverlayWindow(kind: OverlayKind): void {
     raiseCursorRing()
   })
 
-  // Persist position + size so the overlay restores where the user left it.
+  // Persist position + size so the overlay restores where the user left it — the USER's moves only,
+  // never one of ours (JOS-187; the marker is explained at `appliedBounds`).
   const saveOverlayBounds = (): void => {
-    if (!w.isDestroyed()) setOverlayConfig(kind, { bounds: w.getBounds() })
+    if (w.isDestroyed()) return
+    const b = w.getBounds()
+    const applied = appliedBounds.get(kind)
+    if (applied && sameSpot(applied, b)) return
+    appliedBounds.delete(kind)
+    setOverlayConfig(kind, { bounds: b })
   }
   w.on('moved', saveOverlayBounds)
   w.on('resized', saveOverlayBounds)

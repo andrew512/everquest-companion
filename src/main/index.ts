@@ -55,8 +55,10 @@ import {
   getMainWindow,
   hardenSession,
   hardenWebContents,
+  reconcileOverlayDisplays,
   sendToMain
 } from './windows'
+import { watchDisplays } from './windowPlacement'
 import { OVERLAY_KINDS } from '../shared/types'
 
 // --- custom schemes: the permanent image cache (eqimg://) and the speech cache (eqspeech://) ---
@@ -311,6 +313,13 @@ if (!gotSingleInstanceLock) {
     for (const kind of OVERLAY_KINDS) {
       if (getOverlayConfig(kind).open) createOverlayWindow(kind)
     }
+
+    // …and keep them on a display that exists (JOS-187). The line above places them against the
+    // monitors present at launch; this one re-places them when that changes under a running app —
+    // the moment the player unplugs the widescreen their meters are parked on. Registered after
+    // the restore for the obvious reason (there is nothing to reconcile before it) and never
+    // removed: it is app-lifetime, like the security catch-alls above.
+    watchDisplays(reconcileOverlayDisplays)
 
     // Presence-driven features (overlay auto-hide + the cursor ring). LAST, because both act on
     // windows that must already exist. Costs one store read when both are off — which is the
