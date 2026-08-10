@@ -12,18 +12,19 @@
 //    ("1 2 3 4 5 in gray, green when defeated this week") and the palette collision makes it the
 //    only readable option, so the labels still come from `tierStyle` and nothing else does.
 //
-// 2. THE BASE RUNG IS DRAWN DIFFERENTLY WHEN CLEARED — an outline rather than a fill. d1..d4 are
-//    each named by an adjective the game printed on the zone line; d0 is the ABSENCE of one, and
-//    an open-world kill (which carries no lockout at all) reads identically. `LadderRung.stated`
-//    is that fact travelling out of the derivation, and honouring it costs one border. Painting
-//    five identical rungs would be the app claiming a lockout it cannot see.
+// 2. FIVE RUNGS DRAWN THE SAME WAY (JOS-166 — this used to be the opposite rule). The base rung
+//    was drawn as an outline rather than a fill, because tier 0 in the kill record meant "base
+//    instance OR open world OR no zone line seen" and the component was not allowed to promise a
+//    lockout the model could not see. The three are separated at the fold now, and only a real d0
+//    instance clear ever reaches a rung — so a filled base rung is a true statement and drawing
+//    it differently would be the app doubting a fact it has.
 //
 // 3. NATIVE `title`, NEVER A POPPER. These rungs sit in a scrolling grid directly beneath the
 //    view's toolbar, which is the geometry that produced JOS-127 and JOS-143: a `placement="top"`
 //    card anchored here opens up across the controls the user was aiming at. An OS tooltip is not
 //    in the DOM and has no hit area, so it cannot eat a click. The SENTENCE it shows lives in
-//    lockout.ts (`rungTitle`) rather than here, so the base rung's caveat is reachable from a
-//    node test instead of stranded behind an MUI import.
+//    lockout.ts (`rungTitle`) rather than here, so it is reachable from a node test instead of
+//    stranded behind an MUI import.
 
 import type { JSX } from 'react'
 import { Box, Stack } from '@mui/material'
@@ -32,7 +33,6 @@ import { tierStyle } from '../../lib/tierChip'
 
 function Rung({ rung, size }: { rung: LadderRung; size: number }): JSX.Element {
   const label = tierStyle(rung.tier).label
-  const filled = rung.cleared && rung.stated
   return (
     <Box
       data-testid={`boss-rung-d${String(rung.tier)}`}
@@ -46,8 +46,8 @@ function Rung({ rung, size }: { rung: LadderRung; size: number }): JSX.Element {
         borderRadius: 0.5,
         border: '1px solid',
         borderColor: rung.cleared ? 'success.main' : 'divider',
-        bgcolor: filled ? 'success.main' : 'transparent',
-        color: filled ? 'background.default' : rung.cleared ? 'success.main' : 'text.disabled',
+        bgcolor: rung.cleared ? 'success.main' : 'transparent',
+        color: rung.cleared ? 'background.default' : 'text.disabled',
         fontWeight: 700,
         fontSize: size > 15 ? 10 : 9,
         textAlign: 'center',

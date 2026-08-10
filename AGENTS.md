@@ -963,8 +963,21 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   SKILL-UPS ARE NOT AN INPUT anywhere here: Tiger Claw keeps ticking 111
   times after it was replaced, on a drip with no swing beside it.
 - Zone: `You have entered X.` — REJECT pseudo-zones ("an area where
-  levitation…"); instance tier suffix `(Awakened|Adaptive|Fused|Refined)`
-  = d1–d4, `- Solo/Group N` noise stripped.
+  levitation…"). **The zone name is the ONLY thing that ever states a
+  difficulty** (no kill line, lockout line or instance-creation notice
+  carries one), so `zoneTier()` decides what every kill's difficulty was
+  and it answers FOUR kinds of thing, not one number in five (JOS-166):
+  a trailing `(Awakened|Adaptive|Fused|Refined)` = **d1–d4**; a
+  `- Solo` / `- Group N` suffix with no adjective = **d0, the base
+  INSTANCE, a real difficulty with a real weekly lockout**; a bare zone
+  name = **open world** (`TIER_OPEN_WORLD`, no lockout of any kind); an
+  empty zone or an adjective the table does not know = **unknown**
+  (`TIER_UNKNOWN`). The name itself is stripped of all three markers.
+  All four are kill-record keys (`src/shared/kills.ts`), and only the
+  five difficulties can green a weekly ladder rung. Before JOS-166 the
+  last three all decoded to 0, so an open-world kill and a base clear
+  were the same fact — a raid target has FIVE lockouts a week and the
+  base one was being spent by kills that never took it.
 - Loot family (sole item-into-inventory lines): dashed
   `--You have looted X from Y's corpse.--`; currency (`…stored it in your
   currency`, NO period); sold (`…sold it for <money|free>.`). Dragon
