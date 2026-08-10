@@ -22,9 +22,13 @@
 // 3. NATIVE `title`, NEVER A POPPER. These rungs sit in a scrolling grid directly beneath the
 //    view's toolbar, which is the geometry that produced JOS-127 and JOS-143: a `placement="top"`
 //    card anchored here opens up across the controls the user was aiming at. An OS tooltip is not
-//    in the DOM and has no hit area, so it cannot eat a click. The SENTENCE it shows lives in
-//    lockout.ts (`rungTitle`) rather than here, so it is reachable from a node test instead of
-//    stranded behind an MUI import.
+//    in the DOM and has no hit area, so it cannot eat a click. What it shows lives in lockout.ts
+//    (`rungTitle`) rather than here, so it is reachable from a node test instead of stranded
+//    behind an MUI import — and since JOS-171 it is a DATE and nothing else, because the ladder
+//    is now the last thing on the card: the `Locked · <date>` caption under it is gone and the
+//    chips answer in its place. A rung with nothing to add (an open one) gets NO `title`
+//    attribute at all — `rungTitle` returns `undefined`, which React omits, where `''` would be
+//    a present-and-empty attribute that also swallows the card's own tooltip.
 
 import type { JSX } from 'react'
 import { Box, Stack } from '@mui/material'

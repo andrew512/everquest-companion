@@ -17,6 +17,12 @@
  *      rungs EXIST, that there are five of them per card in base-first order, and that they
  *      belong to the WEEK view and to no other - i.e. that the derivation reaches the screen.
  *
+ * …and since JOS-171, that the ladder is where the card ENDS: the `Locked · <date>` / `open`
+ * caption that used to sit under the rungs is gone, and a rung's hover is a bare date (a cleared
+ * one) or no `title` attribute at all (an open one). That last half is the reason it is asserted
+ * HERE rather than only in tests/bossLockouts.test.mts: an absent attribute and an empty one are
+ * the same value in a unit assertion and are two different tooltips in a real browser.
+ *
  * WHAT THIS SPEC DELIBERATELY DOES NOT ASSERT: which rungs are GREEN. "Cleared this week" is a
  * comparison against the real clock, and the committed e2e fixture's kills sit at fixed dates, so
  * any expected colour here would be true only until the next Tuesday 08:00 Pacific and would then
@@ -92,6 +98,38 @@ function rungAnswers(page: Page): Promise<string[]> {
   )
 }
 
+/** What JOS-171 left of the card's bottom: per card, whether the ladder ENDS it, and whether any
+ *  lock caption survives under it. `null` for `title` is the absence of the attribute — which is
+ *  the shape an open rung is contracted to have, and is NOT the same as an empty string. */
+interface CardTail {
+  cards: number
+  /** cards whose ladder is the last element in its caption box (nothing written beneath it) */
+  ladderLast: number
+  /** cards whose text still contains the old `Locked · <date>` caption */
+  lockedCaption: number
+  /** `[data-cleared, title]` for every rung on the view */
+  rungTitles: [string, string | null][]
+}
+
+function cardTails(page: Page): Promise<CardTail> {
+  return page.evaluate((sel) => {
+    const cards = [...document.querySelectorAll(sel.card)]
+    let ladderLast = 0
+    let lockedCaption = 0
+    for (const card of cards) {
+      const ladder = card.querySelector(sel.ladder)
+      if (ladder && ladder.parentElement?.lastElementChild === ladder) ladderLast++
+      // Only the CAPTION word is hunted. "open" still appears on the corner tier chip of a card
+      // with no lock at all (JOS-169), which this ticket did not touch.
+      if ((card.textContent ?? '').includes('Locked')) lockedCaption++
+    }
+    const rungTitles = [...document.querySelectorAll(`${sel.ladder} > *`)].map(
+      (n): [string, string | null] => [n.getAttribute('data-cleared') ?? '', n.getAttribute('title')]
+    )
+    return { cards: cards.length, ladderLast, lockedCaption, rungTitles }
+  }, { card: CARD, ladder: LADDER })
+}
+
 /** Open the Bosses tab and wait for its toolbar. Safe when the tab is already the open one. */
 async function openBosses(page: Page, timeoutMs = 60_000): Promise<boolean> {
   await page.click(NAV_BOSSES, { timeout: 30_000 })
@@ -162,6 +200,52 @@ async function stepLadder(page: Page): Promise<void> {
     'every rung states an answer (cleared or open), and none is drawn without one',
     answers.length === labels.length * 5 && silent.length === 0,
     `${String(answers.length)} rungs, ${String(silent.length)} silent`
+  )
+
+  await stepChipsAreTheEnd(page)
+}
+
+/**
+ * JOS-171: THE CARD ENDS IN THE CHIPS, AND A CHIP ANSWERS WITH ITS LAST KILL.
+ *
+ * Three claims, and every one of them is clock-independent — which is why they can live here at
+ * all (see the header: this spec never says WHICH rung is green, because the fixture's kills are
+ * fixed dates and the reset is real time). "The ladder is the last thing in its box", "no card
+ * writes Locked", and "a cleared rung carries a bare date while an open one carries no `title`
+ * attribute" are all true on any Tuesday.
+ *
+ * A unit test can pin what `rungTitle` RETURNS; only the app can show that the value reaches the
+ * DOM as an attribute at all — and that the open case reaches it as an ABSENCE. `''` and `null`
+ * are the same string in a unit assertion and completely different tooltips in a browser.
+ */
+async function stepChipsAreTheEnd(page: Page): Promise<void> {
+  const tail = await cardTails(page)
+  check(
+    'THE LADDER IS THE LAST THING ON A WEEK CARD - nothing is written beneath the chips',
+    tail.cards > 0 && tail.ladderLast === tail.cards,
+    `${String(tail.ladderLast)} / ${String(tail.cards)} cards end in their ladder`
+  )
+  check(
+    '…and the Locked caption line is gone from every card',
+    tail.lockedCaption === 0,
+    `${String(tail.lockedCaption)} cards still write it`
+  )
+
+  const cleared = tail.rungTitles.filter(([bit]) => bit === '1')
+  const open = tail.rungTitles.filter(([bit]) => bit === '0')
+  // A date and NOTHING else: the sentence this ticket deleted carried "cleared"/"open" and the
+  // "D2 · Adaptive" spelling, so those three are what a regression would put back.
+  const chatty = cleared.filter(([, t]) => !t || /cleared|open|·/.test(t))
+  check(
+    'A CLEARED RUNG HOVERS ITS LAST KILL AND SAYS NOTHING ELSE',
+    chatty.length === 0,
+    cleared.length ? `${String(cleared.length)} cleared, offender: ${String(chatty[0]?.[1])}` : 'none cleared this week'
+  )
+  const noisy = open.filter(([, t]) => t !== null)
+  check(
+    '…and an open rung carries no title attribute at all, not an empty one',
+    open.length > 0 && noisy.length === 0,
+    `${String(open.length)} open, ${String(noisy.length)} with a title`
   )
 }
 

@@ -134,7 +134,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, all five difficulties count the same, and the Bosses view remembers which tab you left it on.',
+        text: 'Every raid boss on the This week view carries its difficulty ladder: a rung turns green when your credited kill this reset week proves that clear, all five difficulties count the same, and resting on a green rung tells you the day that clear landed. The card ends in the ladder - the chips are the whole answer now - and the Bosses view remembers which tab you left it on.',
         fromReport: true
       },
       {
