@@ -241,6 +241,48 @@ export function islandLabel(islands: readonly string[]): string {
   return `Islands ${sorted.map((i) => String(islandNumber(i))).join(', ')}`
 }
 
+// ---- the ITEM hover roster (the collapsed summary row's required-item chip) ----
+//
+// JOS-173. Until v0.15.0 each required-item chip anchored `ItemTooltip`, whose lower block printed
+// posky's stated `where` AND a "Drops: <names>" line. JOS-143 deleted every popper on this tab —
+// correctly, they were eating the toolbar's clicks — and carried the DropperCell rosters over to
+// native `title`s, but the chip was given `title={it.where}` alone. So a 0.16.0 player hovering a
+// required item read the single word "Island 5": the WHERE survived and the WHO was gone, which is
+// exactly what the report said. This is that hover, rebuilt as one string a native title can carry.
+//
+// The order is the sentence the player is asking: what, where, then who. `where` is printed
+// VERBATIM rather than through `islandOf` — the card printed it verbatim too, and "Plane of Sky"
+// (the wind runes' honest "anywhere") is a true answer that the island matcher deliberately drops.
+// Nothing known ⇒ just the name; never a guess (law 1).
+
+/** The part of an item row the hover roster reads — `ItemProgress` satisfies it structurally. */
+export interface DropTitleItem {
+  name: string
+  /** the posky scrape's raw `who` — the fallback when nothing resolved to a catalog mob */
+  who?: readonly string[]
+  /** posky's stated location string for this item, e.g. "Island 5" */
+  where?: string
+  droppers: readonly DropperMob[]
+}
+
+/**
+ * "Sphinx Claw · Island 5 / Dropped by: / Gorgalosk · level 63+ · Plane of Sky / …" — every fact
+ * this tab holds about one required item, one mob per line, for a native `title`.
+ *
+ * The whole roster, uncapped: a title has no hit area and no width to blow out, so the display cap
+ * that keeps the inline cell to one line buys nothing here.
+ */
+export function itemDropTitle(it: DropTitleItem): string {
+  const where = (it.where ?? '').trim()
+  const head = where === '' ? it.name : `${it.name} · ${where}`
+  const lines =
+    it.droppers.length > 0
+      ? it.droppers.map((m) => dropperFacts(m))
+      : (it.who ?? []).map((w) => w.trim()).filter((w) => w !== '')
+  if (lines.length === 0) return head
+  return [head, 'Dropped by:', ...lines].join('\n')
+}
+
 // ---- the QUEST-level kill set (the collapsed summary row's "Kill: <boss>" caption) ----
 
 /**
