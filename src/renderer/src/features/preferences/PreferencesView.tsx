@@ -385,7 +385,11 @@ function SectionRail({
   onPick: (id: string) => void
 }): JSX.Element {
   return (
-    <List dense disablePadding sx={{ width: RAIL_WIDTH, flexShrink: 0 }}>
+    // The rail scrolls WITHIN the split rather than growing the page: thirteen rows (JOS-198
+    // added Thanks) outgrow a short window, and a rail that stretches the document makes the
+    // whole page scroll — the exact thing the whats-new pane's "the LIST scrolls, never the
+    // page" contract forbids. minHeight: 0 is what lets a flex child shrink below its content.
+    <List dense disablePadding sx={{ width: RAIL_WIDTH, flexShrink: 0, minHeight: 0, overflowY: 'auto' }}>
       {sections.map((s) => {
         const dim = unmatched.has(s.id)
         return (
