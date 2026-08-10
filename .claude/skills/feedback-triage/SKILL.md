@@ -131,3 +131,24 @@ slices never reach a public issue (the CLI enforces this; don't fight it).
 - **Feasibility spikes** are tickets too (deliverable: a comment with a
   build/no-build recommendation, NO feature code) — that's how "interesting
   but data-heavy" asks get parked without being lost.
+- **Characterize before ticketing when the evidence is reachable.** Error-store
+  signals and owner-reported bugs get parallel READ-ONLY investigation agents
+  (code + `errors show` exemplars + the owner's own local log when relevant)
+  BEFORE the ticket is written — the findings become the ticket body and the
+  ticket ships characterized (proven 2026-08-09: the registry-pack drop was
+  root-caused to the exact 47 rows by running the repo's validators against
+  the live registry; the toast bug was pinned to file:line plus the owner's
+  log). An investigation that finds the mechanism turns INVESTIGATION FIRST
+  tickets into plain fixes.
+- **Re-pull before closing.** Reports arrive DURING a triage session (6 landed
+  in 4h on 2026-08-09). Run `list --since` again before the final readout;
+  a session that only covers its opening pull is stale by its own end.
+- **A report corroborating an in-flight ticket** is stamped with that ticket
+  (`--note "JOS-N ... (2nd report)"`) and the ticket gets a comment adding the
+  report ID and any NEW specifics (e.g. a trigger path the first report
+  lacked) so the worker building it sees the extra evidence mid-build.
+- **Triage flows into dispatch.** When the owner says "kick off the work",
+  switch to the linear-board skill's loop: move tickets to In Progress with a
+  wave comment, respect the 1-5 agent disjoint-file cap (queue overlapping
+  tickets with a comment saying which ticket they wait on), Opus workers in
+  isolated worktrees, tickets ARE the briefs.
