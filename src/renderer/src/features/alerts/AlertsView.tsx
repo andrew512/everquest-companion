@@ -5,9 +5,8 @@
 //     (opens the openpeon.com registry browser — Task #29), "Add alert", and a
 //     "Reset to defaults" button (restores the seeded built-in set, confirmed)
 //     — AlertsToolbar.tsx,
-//   - a list of alerts IN THE USER'S OWN ORDER (JOS-175: drag a row's grip, or focus it and press
-//     the arrow keys; the order is stored and is the order the list is in next launch), each with
-//     an enable switch, per-alert volume, a
+//   - a list of alerts in the stored order, narrowed by the toolbar's search box (JOS-178),
+//     each with an enable switch, per-alert volume, a
 //     pack→sound picker, a compact trigger chip, Test / Edit / Delete, and an
 //     expandable "recent fires" panel (time + the actual matched log line)
 //     — AlertList.tsx,
@@ -315,7 +314,6 @@ export default function AlertsView({
         onAddSuggestion={() => setSuggestOpen(true)}
         handlers={{
           onPersist: (def) => void persistAlerts(def),
-          onReorder: (ids) => void store.reorderAlerts(ids),
           onVolumeDrag: store.setAlertVolume,
           onTest: previewAlertNow,
           onCopyShare: (ids) => void copyShare(ids),

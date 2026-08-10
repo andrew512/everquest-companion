@@ -28,12 +28,12 @@
 // scorer's own exclusion rule), so two words narrow rather than widen.
 //
 // FILTER, NEVER RANK — AND THAT IS THE WHOLE REASON THIS MODULE RETURNS A SUBSET INSTEAD OF A
-// SORTED LIST. The alerts list is in the user's OWN order (JOS-175/JOS-177): they dragged it into
-// that shape and it persists. Re-sorting the visible rows by match score would quietly overwrite
-// the one thing that list is about, and worse, it would make the filtered view a DIFFERENT list
-// than the one the rows came out of — so a filtered list is the stored sequence with rows
-// removed, and nothing else. (Reorder itself is off while a filter is live; a drop position in a
-// list with holes in it names no gap in the stored order. That half lives in useAlertReorder.ts.)
+// SORTED LIST. The alerts list is the STORED ARRAY, in the order the store holds it, and that is
+// the order every other surface (the share string, the editor, the always-mounted player) reads it
+// in. Re-sorting the visible rows by match score would make the filtered view a DIFFERENT list
+// than the one the rows came out of — rows would jump position under a keystroke and settle back
+// somewhere else when the box cleared. So a filtered list is the stored sequence with rows
+// removed, and nothing else.
 //
 // Pure + RELATIVE value imports (the mobSearch.ts precedent), so tests/alertSearch.test.mts drives
 // it under tsx with no renderer at all.

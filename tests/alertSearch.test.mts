@@ -14,19 +14,22 @@
 //     tab and the map/zone pickers, so typo tolerance and the every-token-must-match exclusion
 //     rule come for free — and are pinned here, because "we reused the tokenizer" is exactly the
 //     kind of claim that decays into a hand-rolled substring test.
-//  3. FILTER, NEVER RANK. The alerts list is in the user's own dragged order (JOS-175/JOS-177), so
-//     a filtered list must be that same sequence with rows removed. Re-sorting by score would
-//     quietly overwrite the feature the list is about.
+//  3. FILTER, NEVER RANK. The alerts list is the STORED ARRAY, so a filtered list must be that same
+//     sequence with rows removed. Re-sorting by score would make the filtered view a different list
+//     than the one the rows came out of — rows jumping under a keystroke and settling somewhere
+//     else when the box clears.
 //  4. CLEARING RESTORES THE LIST — as IDENTITY, not as an equal-looking rebuild.
 //
-// The reorder half (a filtered list cannot be dragged) is a wiring claim across four files, so it
-// is SOURCE-PINNED at the bottom and driven for real in tests/e2e/alerts-reorder.e2e.mts.
+// The wiring — where the box lives, what the list renders, and that the query is deferred — is
+// SOURCE-PINNED at the bottom and driven for real in tests/e2e/alerts-search.e2e.mts. So is the
+// ABSENCE of the drag-to-reorder experiment JOS-179 removed: it never shipped, and the search
+// plumbing is simpler for not having to suspend it.
 //
 // Run: `npm test`.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   alertFacets,
@@ -221,7 +224,7 @@ test('punctuation is noise — the query and the haystack tokenize the same way'
 
 test('a filtered list is the STORED order with rows removed, never a ranking', () => {
   assert.deepEqual(found('peon'), ['a2', 'a5'])
-  // The same two alerts, the list dragged the other way round: the answer follows the list.
+  // The same two alerts, the stored array the other way round: the answer follows the list.
   assert.deepEqual(found('peon', [MEZ, BOSS, HASTE]), ['a5', 'a2'])
   // An exact name hit does not climb over a note hit — position is the list's business.
   assert.deepEqual(found('charm', [HASTE, CHARM]), ['a1'])
@@ -246,31 +249,62 @@ test('the haystack is tokens, computed from the facets — the hook may cache it
   assert.ok(hay.includes('uncharm') && hay.includes('rickman') && hay.includes('seeded'))
 })
 
-// ── 5. SOURCE PINS: a filtered list cannot be reordered ───────────────────────────────
+// ── 5. SOURCE PINS: the wiring, and the reorder that is not there ─────────────────────
 //
-// A drop position in a list with holes in it names no gap in the STORED order, so the gesture is
-// withdrawn rather than guessed at. Four files have to agree; the e2e drives it end to end.
+// JOS-175/JOS-177 shipped a drag-to-reorder gesture that JOS-178 then had to SUSPEND, because a
+// drop position in a list with holes in it names no gap in the stored order. JOS-179 removed the
+// gesture instead (owner ruling, 2026-08-09 — it never shipped, 0.18.0 was untagged), and with it
+// went the whole of that argument: there is no `canReorder`, no greyed grip, and nothing for a
+// filter to withdraw. The list order is the STORED ARRAY and always was.
+//
+// This is pinned rather than assumed because the parts came back out of five files and a channel,
+// and a half-removal is exactly the shape that leaves a dead grip on a row or a live IPC door on
+// main. Named strings and paths only — a bare /drag/ sweep would catch the volume slider.
 
-test('SOURCE PIN: the search turns reorder off, at the source AND at the container', () => {
-  const hook = src('renderer/src/features/alerts/useAlertReorder.ts')
-  assert.match(hook, /canReorder = true/, 'the gesture is on unless something turns it off')
-  assert.match(
-    hook,
-    /canReorder \? \{ onDragOver, onDragLeave, onDrop \} : NO_DROP_TARGET/,
-    'a filtered list carries NO container handlers — the browser’s own refusal, not a painted one'
+test('SOURCE PIN: the reorder experiment is gone — no module, no gesture, no channel', () => {
+  const gone = [
+    'shared/alertOrder.ts',
+    'renderer/src/features/alerts/useAlertReorder.ts',
+    'renderer/src/features/alerts/dropTarget.ts'
+  ]
+  for (const rel of gone) {
+    assert.equal(
+      existsSync(fileURLToPath(new URL(`../src/${rel}`, import.meta.url))),
+      false,
+      `${rel} was deleted with the feature`
+    )
+  }
+
+  const ipc = src('shared/ipc.ts')
+  assert.equal(/reorderAlerts|alerts:reorder/.test(ipc), false, 'the channel is not declared')
+  assert.equal(
+    /reorderAlerts/.test(src('preload/index.ts')),
+    false,
+    'the preload offers no door to it'
   )
-  assert.match(hook, /const NO_DROP_TARGET: AlertReorder\['containerProps'\] = \{\}/)
-  assert.match(hook, /draggable: canReorder/, 'the grip stops being a drag source')
-  assert.match(hook, /if \(!canReorder \|\| delta === 0/, '…and stops answering the arrow keys')
-  // The two readings a row renders from go null with it, so no line can survive the narrowing.
-  assert.match(hook, /const draggingId = canReorder \? dragged : null/)
-  assert.match(hook, /const mark = canReorder \? marked : null/)
+  assert.equal(
+    /reorderAlerts|applyAlertOrder/.test(src('main/store.ts')),
+    false,
+    'main stores the array it is given, with no re-ordering accessor'
+  )
 
   const list = src('renderer/src/features/alerts/AlertList.tsx')
-  assert.match(list, /useAlertReorder\(alerts, handlers\.onReorder, !filtering\)/)
-  assert.match(list, /alertRowGripOff/, 'the grip greys rather than vanishing')
-  assert.match(list, /'Clear the search to reorder'/, 'the plainest possible hint')
-  assert.match(list, /aria-disabled=\{!on\}/)
+  assert.equal(/alert-reorder-grip|draggable|DropIndicator/.test(list), false, 'no row affordance')
+  assert.equal(
+    /onReorder/.test(src('renderer/src/features/alerts/AlertsView.tsx')),
+    false,
+    'and nothing wired behind one'
+  )
+})
+
+test('SOURCE PIN: `filtering` survives, and its ONE job is what an empty list says', () => {
+  const list = src('renderer/src/features/alerts/AlertList.tsx')
+  assert.match(list, /filtering: boolean/, 'the list still knows whether it is narrowed')
+  assert.match(
+    list,
+    /filtering\s*\n?\s*\?\s*'No alerts match that search\.'/,
+    'because "nothing matches" and "you have no alerts yet" are two different sentences'
+  )
 })
 
 test('SOURCE PIN: the box is in the toolbar and the narrowed list is what renders', () => {

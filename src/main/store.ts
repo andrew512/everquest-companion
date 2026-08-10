@@ -20,9 +20,6 @@ import type { InventorySource } from '../shared/outputs/baseline'
 // list may contain" has ONE definition on both sides of the IPC.
 import { applyTurnIns } from '../shared/questTurnIns'
 import { normalizeVoicePrefs } from '../shared/speechText'
-// The alert list's own sequence (JOS-175). The rules — unknown ids ignored, omitted defs kept —
-// are stated and tested there; the accessor below is one line over it.
-import { applyAlertOrder } from '../shared/alertOrder'
 import {
   normalizeCursorRing,
   normalizeOverlayAutoHide,
@@ -621,20 +618,6 @@ export function saveAlert(def: AlertDef): AlertDef[] {
   const list = getAlerts()
   const idx = list.findIndex((a) => a.id === def.id)
   const next = idx >= 0 ? list.map((a) => (a.id === def.id ? def : a)) : [...list, def]
-  store.set('alerts', next)
-  return next
-}
-
-/**
- * Re-order the alert list to follow `orderedIds` (JOS-175 — drag-to-reorder).
- *
- * One line over the pure `applyAlertOrder`, which is where the rules live and where they are
- * tested: main re-derives the list from its OWN defs, so a sequence naming an id it does not have
- * is ignored and a def the sequence omits is kept. Nothing else about a def changes, so the order
- * is the only thing this can write.
- */
-export function reorderAlerts(orderedIds: readonly string[]): AlertDef[] {
-  const next = applyAlertOrder(getAlerts(), orderedIds)
   store.set('alerts', next)
   return next
 }

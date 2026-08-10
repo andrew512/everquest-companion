@@ -23,7 +23,6 @@ import type {
   SoundPack,
   SpellCastRecency
 } from '@shared/types'
-import { applyAlertOrder } from '@shared/alertOrder'
 import { useModule } from '../../lib/useModule'
 import { onAlertStoreChange, refreshAlertStore } from './player'
 import { invalidateSoundCaches } from './soundCache'
@@ -77,14 +76,6 @@ export interface AlertsStore {
   /** Re-list packs after a registry install/uninstall. */
   refreshPacks: () => Promise<void>
   persistAlerts: (def: AlertDef) => Promise<void>
-  /**
-   * Re-order the list to the given id sequence (JOS-175 — drag-to-reorder).
-   *
-   * OPTIMISTIC, deliberately: the row is already under the pointer when the drop lands, so the
-   * local array moves first and main's answer replaces it a round trip later. Main is still the
-   * authority — if it kept a def the drag never saw, its answer says so and the screen follows.
-   */
-  reorderAlerts: (orderedIds: string[]) => Promise<void>
   removeAlert: (id: string) => Promise<void>
   resetAlerts: () => Promise<void>
   persistPrefs: (next: AlertPrefs) => Promise<void>
@@ -148,15 +139,6 @@ export function useAlertsStore(): AlertsStore {
     await refreshAlertStore()
   }, [])
 
-  const reorderAlerts = useCallback(async (orderedIds: string[]) => {
-    setAlerts((prev) => applyAlertOrder(prev, orderedIds))
-    const list = await window.eq.reorderAlerts(orderedIds)
-    setAlerts(list)
-    // The always-mounted player shares def state; refreshing keeps its copy in the same order the
-    // screen is in. Nothing about WHEN an alert fires depends on it — see alertOrder.ts.
-    await refreshAlertStore()
-  }, [])
-
   const removeAlert = useCallback(async (id: string) => {
     const list = await window.eq.deleteAlert(id)
     setAlerts(list)
@@ -194,7 +176,6 @@ export function useAlertsStore(): AlertsStore {
     reload,
     refreshPacks,
     persistAlerts,
-    reorderAlerts,
     removeAlert,
     resetAlerts,
     persistPrefs,
