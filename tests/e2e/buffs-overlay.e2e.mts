@@ -477,9 +477,17 @@ async function stepCloseOne(
   { kind, other }: { kind: TimerKind; other: TimerKind }
 ): Promise<void> {
   if (overlay) {
-    await overlay.evaluate(() => {
-      ;(document.querySelector('button[aria-label="Close overlay"]') as HTMLElement | null)?.click()
-    })
+    // THE CLICK DESTROYS THE PAGE IT IS EVALUATED IN, so the evaluate itself is allowed to lose
+    // its context — observed once here: "at stepCloseOne … log: []", a Playwright rejection from a
+    // window that closed before it could answer. Whether the close HAPPENED is not this call's
+    // answer to give; the settle below is, and it asks main how many windows of this kind are
+    // left. Swallowing the rejection weakens no assertion and removes a race the spec never meant
+    // to be running.
+    await overlay
+      .evaluate(() => {
+        ;(document.querySelector('button[aria-label="Close overlay"]') as HTMLElement | null)?.click()
+      })
+      .catch(() => undefined)
   } else {
     await bridge(page).toggle(kind)
   }
