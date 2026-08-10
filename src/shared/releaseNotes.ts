@@ -175,6 +175,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'Monk strikes get a bar of their own instead of disappearing into Melee. Tiger Claw, Eagle Strike, Dragon Punch and Tail Rake all land as a plain strike, and the game names the one you use only once, at the level-up - so a log that started after that line lumped every strike in with your weapon swings forever. They now read Strike on their own row, and still carry the real ability name whenever your log did catch that line.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The raid-kill celebration card names the kill you just made: the difficulty of the instance that boss died in, and which instance it was, instead of the highest difficulty you have ever beaten it at and the zone off the roster. Clear a boss at d1 on Sunday and the card says d1, however many times you beat it at d4. The boss cards still badge your best.',
+        fromReport: true
       }
     ]
   },

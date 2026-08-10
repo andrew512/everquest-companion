@@ -60,3 +60,36 @@ slice(
   [1205559, 1205559],
   [1211528, 1211542]
 )
+
+// THE TOAST THAT ANNOUNCED THE WRONG TIER (JOS-165, owner 2026-08-09). Same mob, three tiers,
+// nine days: the ladder the owner actually climbs. He clears d0 through d4 every week, so his
+// LAST kill of a target is routinely at a LOWER tier than his best — and the celebration toast
+// was built from `bestTier`, the all-time maximum, so a Sunday d1 kill kept announcing itself as
+// the d4 he beat on the first Saturday.
+//
+// Six spans, in log order (each zone line is the nearest preceding `You have entered` for the
+// kill that follows it — verified against the full log: nothing re-zones in between, which is
+// what lets the fixture skip the ~7k intervening lines and still state the truth):
+//   1. Sat Aug 01 14:35:15, raw 839935 — `You have entered The Plane of Hate - Solo 3 (Fused).`
+//   2. Sat Aug 01 14:56:20, raw 847286..847293 — the d3 kill. The killing blow is the charmed
+//      pet`s (`Maestro of Rancor has been slain by Innoruuk\`s Chosen!`), which is still YOUR
+//      kill: the `You gain experience!` line four lines above it is the credit join.
+//   3. Sat Aug 01 15:33:26, raw 853620 — `... - Solo 4 (Refined).`
+//   4. Sat Aug 01 16:02:37, raw 863975..863982 — the d4 kill, `You have slain Maestro of
+//      Rancor!`, with its own exp line. This is the kill that poisoned every later toast.
+//   5. Sun Aug 09 17:18:56, raw 1485672 — `... - Solo 1 (Awakened).`
+//   6. Sun Aug 09 17:29:39, raw 1489474..1489479 — THE INCIDENT: the d1 kill that toasted
+//      "D4 · Refined · Plane of Hate".
+//
+// Expected fold: ONE KillMap entry, count 3, credited 3, tiers { 3, 4, 1 } — and three
+// celebrations whose tiers are 3, then 4, then 1, against a `bestTier` that is 4 from the
+// second kill onward.
+slice(
+  'bosstier-maestro-ladder.log',
+  [839935, 839935],
+  [847286, 847293],
+  [853620, 853620],
+  [863975, 863982],
+  [1485672, 1485672],
+  [1489474, 1489479]
+)

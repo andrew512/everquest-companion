@@ -99,9 +99,11 @@ test('the same boss killed by YOU celebrates — the exp line is the whole diffe
   assert.equal(before[0].killed, false, 'undefeated before your kill')
   const fired = bossKills(prevOf(before), after)
   assert.equal(fired.length, 1, 'your own kill fires the one predicate')
-  assert.equal(fired[0].target.name, 'Thunder Spirit Princess')
-  assert.equal(fired[0].credited, 1)
-  assert.equal(fired[0].count, 1, 'one kill, credited — count and credit agree here')
+  assert.equal(fired[0].status.target.name, 'Thunder Spirit Princess')
+  assert.equal(fired[0].status.credited, 1)
+  assert.equal(fired[0].status.count, 1, 'one kill, credited — count and credit agree here')
+  // And the kill carries the tier it happened on (JOS-165) — open-world Sky, so the base tier.
+  assert.equal(fired[0].tier, 0)
 })
 
 test('the whole fixture, folded: two kills of one boss, exactly one of them yours', () => {
@@ -140,7 +142,7 @@ test('the celebration surfaces all hang off the ONE credited predicate', () => {
   )
   // The signal AND the toast live inside the same `onKill` block, so gating the predicate gates
   // both — there is no second producer that could still speak for a stranger's kill.
-  const onKill = /onKill:\s*\(s\)\s*=>\s*\{([\s\S]*?)\n\s{4}\}/.exec(app)
+  const onKill = /onKill:\s*\(\{[^}]*\}\)\s*=>\s*\{([\s\S]*?)\n\s{4}\}/.exec(app)
   assert.ok(onKill, 'the always-mounted detector wires onKill to a block')
   assert.match(onKill[1], /fireAppSignal\('bossDefeat'/)
   assert.match(onKill[1], /window\.eq\.showToast\(/)
