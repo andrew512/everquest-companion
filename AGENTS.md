@@ -844,6 +844,37 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `you|Melee` does not budge, and the melee category grows by exactly 76.
   A stranger's bow is still IGNORED by the meter (routing.ts `classify`) — parsing
   a line into a new lane is not the same as admitting it, and W57 pins that too.
+  **STRIKE (JOS-163) IS A FOURTH ARGUMENT AGAIN, AND IT IS THE ONLY LANE WHOSE
+  NAME IS DELIBERATELY ANONYMOUS.** A monk on 0.16.0: strikes lumped into Melee
+  while kicks show up fine. `strike` is not a class skill (fails JOS-77) and not
+  a different equipment slot (fails JOS-92) — it is the GENERIC VERB every monk
+  special prints as, and specialAttacks.ts already proved it EXCLUSIVE to that
+  chain (the owner's first-ever `You strike` is 3 s after his Tiger Claw grant;
+  unarmed autos print `hit`/`claw`/`punch`). So an unnamed strike is not a weapon
+  swing that wandered in, it is a special whose NAME is unknown, and the row it
+  earns is called **`Strike`** — the verb, never a name from the chain. THE BUG
+  WAS THE PRE-STATE FLOOR, NOT THE RENAME: the `You will now use <X> …` line
+  prints ONCE, at the level-up, so a log file that BEGINS after it (fresh
+  install, rotation, `/log on` enabled later) never carries it and 100% of that
+  player's strikes read "Melee" forever — v0.5.0 fixed only the case where the
+  line exists. The loadout-swap re-announce burst does not include the strike
+  lane (`w48-special-lane-reset.log`: six state lines, none a strike) and an
+  epoch reset wipes the lane with nothing to re-seed from. THE TWO HALVES STAY
+  SEPARATE: the verb earns the ROW (`meleeSkill`), the state line earns the NAME
+  (`nameSpecialLane`/`missFold` consult `specials.laneSkill(verb)` FIRST), and
+  **no lane is ever seeded from the chain's first entry** — specialAttacks.ts's
+  stated law, and the reason an Iksar's unlaned strikes can never read "Dragon
+  Punch". Person-agnostic like every other branch (a mob's `strikes` reads
+  "Strike", as its `kicks` always read "Kick"); the stateful rename above it
+  stays first-person-only. Law 8 holds by construction — a rename INSIDE the
+  melee category, so no total can move. 21 of the 104 committed fixtures carry a
+  strike line; the five with a pinned lane total each shed exactly its own
+  hand-tallied strike arm out of "Melee" and nothing else (each figure tallied
+  off the raw fixture text before the engine was asked): w46 102/10 beside
+  Eagle Strike 89/7 after its state line, w47 77/6 beside Dragon Punch 128/6,
+  `w52-cleave-lane.log` 340/16, `p2-pet-arc-bound.log` 795/12,
+  `w58-ranged-critical.log` 257/4 — every category total unchanged, and the
+  34-spec e2e suite (whose combat fixture carries 87 strikes) green.
 - **A HEAL THE LOG ANNOUNCES BUT NEVER VALUES GETS A LANE THAT CARRIES A COUNT
   AND NO NUMBER** (JOS-86 — the monk's Mend). `You mend your wounds and heal
   some damage.` is the whole sentence: no amount, no target, no third-person

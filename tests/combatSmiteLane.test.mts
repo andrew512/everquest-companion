@@ -126,9 +126,15 @@ test('S3: the split is a NAMED-SKILL table, not a matcher over verb spelling', (
   assert.equal(meleeSkill('smites'), 'Smite')
   // The neighbours it must not swallow. `smash` shares three letters and is a weapon verb; a
   // prefix rule that read `sm` would take it, which is why the branch spells `smite` out.
-  for (const v of ['smash', 'slash', 'slice', 'crush', 'pierce', 'hit', 'strike', 'reave']) {
+  for (const v of ['smash', 'slash', 'slice', 'crush', 'pierce', 'hit', 'reave']) {
     assert.equal(meleeSkill(v), 'Melee', v)
   }
+  // `strike` used to sit in that list and left in JOS-163 — NOT by this test's argument. It ticks
+  // no skill-up of its own; it earns a row because it is the generic verb every monk special
+  // prints as, and the row is anonymous for exactly that reason. `smite` is still spelled out in
+  // full above it in the branch table, so `smash` is still declined.
+  assert.equal(meleeSkill('strike'), 'Strike')
+  assert.equal(meleeSkill('smash'), 'Melee')
 })
 
 test('S4: smite claims NO special-attack lane and NO reuse-timer confidence', () => {
@@ -251,9 +257,12 @@ test('W53: THE REPORTED GAP — your smite gets its own row, and the Smiting Str
   assert.equal(catSkills.has('you|spell|Smite'), false, 'this window casts no spell of that name')
 
   // The rest of your swings stay where they were — the split takes smite OUT of Melee and
-  // touches nothing else. slash 3,598/20 + claw 1,395/15 + strike 795/12 = 4,473 over 47 hits
-  // (no `You will now use` line in this window, so `strike` stays generic — W46's rule).
-  lane(skills, 'you|Melee', 5788, 47)
+  // touches nothing else. slash 3,598/20 + claw 1,395/15 = 4,993 over 35 hits. The strike arm
+  // (795 over 12 hits) used to be inside that number and left for its own neutral row in
+  // JOS-163: this window carries no `You will now use` line, so the verb earns the row and
+  // nothing names it.
+  lane(skills, 'you|Melee', 4993, 35)
+  lane(skills, 'you|Strike', 795, 12)
   lane(skills, 'you|Bash', 898, 10)
   lane(skills, 'you|Kick', 787, 6)
   // Nobody else in the window smites, and a lane is never invented for a verb nothing printed.
@@ -270,7 +279,7 @@ test('W53: THE REPORTED GAP — your smite gets its own row, and the Smiting Str
   assert.equal(categories.get('enemy|melee'), 561)
   const sum = (prefix: string, names: string[]): number =>
     names.reduce((n, k) => n + (skills.get(`${prefix}|${k}`)?.total ?? 0), 0)
-  assert.equal(sum('you', ['Melee', 'Smite', 'Bash', 'Kick']), categories.get('you|melee'))
+  assert.equal(sum('you', ['Melee', 'Strike', 'Smite', 'Bash', 'Kick']), categories.get('you|melee'))
   assert.equal(sum('you', ['Smiting Strike', 'Lifetap Strike']), categories.get('you|spell'))
 })
 
