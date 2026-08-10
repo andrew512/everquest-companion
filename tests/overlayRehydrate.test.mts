@@ -42,8 +42,11 @@ const code = (rel: string): string =>
 
 test('ONE list answers "which windows fold a module", and the rebuild signal uses it', () => {
   const pipeline = code('../src/main/pipeline.ts')
-  // The list itself is unchanged (JOS-89/119): the event log and the two timer windows.
-  assert.match(pipeline, /MODULE_READING_OVERLAYS[^=]*=\s*\['events', 'buffs', 'debuffs'\]/)
+  // Who is on the list (JOS-89/119, and JOS-195's XP window): the event log, the two timer
+  // windows, and the progress read. Every one of them folds a module in its own renderer, which is
+  // the whole membership rule — and the XP window folds TWO (`progression` and `loot`), so an
+  // omission there would strand the same bug in two places at once.
+  assert.match(pipeline, /MODULE_READING_OVERLAYS[^=]*=\s*\['events', 'buffs', 'debuffs', 'xp'\]/)
   // …and the delta fan-out now goes through the same function the rebuild signal does, so the two
   // can never drift into disagreeing about who reads modules.
   assert.match(pipeline, /export function sendToModuleOverlays\(/)

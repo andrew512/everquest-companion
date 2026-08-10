@@ -102,7 +102,12 @@ export const TELEMETRY_OVERLAY_KINDS = [
   // validates, so this member has to reach the ingest Lambda BEFORE any client that can emit it:
   // `validateTelemetryBatch` fails the WHOLE batch on one unknown value and the endpoint answers
   // 400, which the client classes as a permanent refusal and drops. Deploy order, not a preference.
-  'debuffs'
+  'debuffs',
+  // JOS-195 added the XP window. SAME DEPLOY ORDER AS THE ROW ABOVE, and for the same reason:
+  // the enum is CLOSED and the ingest Lambda validates it through this very module, so a batch
+  // carrying an unknown value is refused WHOLE with a 400 that the client classes as permanent
+  // and drops. The server ships first.
+  'xp'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 

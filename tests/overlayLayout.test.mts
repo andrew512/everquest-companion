@@ -42,7 +42,9 @@ const overlaps = (a: Bounds, b: Bounds): boolean =>
 test('every METER kind opens at ONE uniform default size', () => {
   const sizes = METER_KINDS.map((k) => overlayDefaultSize(k))
   const first = sizes[0]
-  assert.ok(METER_KINDS.length >= 7, 'every meter kind is still registered')
+  // Eight since JOS-195 added the XP window. The floor is a floor, not a count: it exists so a
+  // kind cannot go MISSING from the stack without this file noticing.
+  assert.ok(METER_KINDS.length >= 8, 'every meter kind is still registered')
   for (const [i, s] of sizes.entries()) {
     assert.deepEqual(s, first, `${METER_KINDS[i]} must use the uniform size`)
   }
@@ -64,8 +66,10 @@ test('…and the size stays uniform ON EVERY DISPLAY, even where it had to shrin
 })
 
 test('a display big enough for the whole stack is untouched at the shipped size', () => {
-  // 1080p and up seat all seven reserved slots at 380x320, so nobody with an ordinary monitor
-  // sees a smaller first-open window because a kind was added.
+  // 1080p and up seat all EIGHT reserved slots at 380x320 (four columns of three), so nobody with
+  // an ordinary monitor sees a smaller first-open window because a kind was added. This is the
+  // claim JOS-195 had to re-earn: the eighth kind is the first to arrive after the shrink ladder
+  // existed, and the promise in shared/types.ts was that the machinery would absorb it.
   for (const name of ['1080p', '1440p', 'offset display']) {
     const s = overlayDefaultSize('fight', WORK_AREAS[name])
     assert.deepEqual(s, { width: 380, height: 320 }, `${name} should not have needed to shrink`)
@@ -73,7 +77,7 @@ test('a display big enough for the whole stack is untouched at the shipped size'
 })
 
 test('a small laptop SHRINKS the stack rather than stacking two windows on one spot', () => {
-  // The exact case shared/types.ts used to warn about. Seven 380x320 slots cannot be laid out on
+  // The exact case shared/types.ts used to warn about. Eight 380x320 slots cannot be laid out on
   // a 1366x728 work area; the answer is a smaller uniform slot, never an overlap (proven by the
   // no-overlap test below, which runs over this work area too).
   const wa = WORK_AREAS['small laptop']
