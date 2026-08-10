@@ -6,7 +6,7 @@
 // and whether the 8 ms cursor stream runs. No Electron, no thread, no game — so this suite is as
 // cheap and as unskippable as overlayLayout/storeMigrations. (The guard that no shipped code can
 // still spawn PowerShell is the one presence assertion that reads a disk, so it lives in
-// tests/presenceNoSpawn.test.mts rather than here.)
+// tests/noChildProcess.test.mts rather than here.)
 //
 // THE GATING MATRIX IS THE PERFORMANCE CONTRACT, in test form. "Nothing runs when nothing is
 // on" and "the stream stops when EQ is unfocused" are the owner's explicit requirements; they
