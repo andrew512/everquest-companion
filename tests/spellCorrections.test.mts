@@ -43,6 +43,8 @@ import { parseEvent } from '../src/main/log/parser.ts'
 import { installSpellDb } from '../src/main/log/rulesets.ts'
 import { loadSpellDb, spellCorrectionsReport, matchCastOnOtherSuffix } from '../src/main/data/spellDb.ts'
 import { applySpellCorrections, SPELL_CORRECTIONS } from '../src/main/data/spellCorrections.ts'
+import { classesForSpell } from '../src/main/data/spellClasses.ts'
+import { buildLevelUnlocks } from '../src/main/data/levelUnlocks.ts'
 import { BuffsModule } from '../src/main/modules/buffs.ts'
 import { BuffTimersModule } from '../src/main/modules/buffTimers.ts'
 import { buildTimerRows, rowsForSurface } from '../src/shared/buffTimers.ts'
@@ -113,7 +115,61 @@ test('every correction states evidence and an attribution route', () => {
     assert.notEqual(c.from, c.to, `${c.spells[0]}.${c.field}: a correction that changes nothing is noise`)
     assert.ok(c.evidence.length > 20, `${c.spells[0]}.${c.field}: state what was measured`)
     assert.ok(['cast', 'db', 'sole'].includes(c.attribution))
+    // A NAME correction has to name the row it renames: `from: null` means "the DB states nothing
+    // for this field", and a spell always has a name, so there is nothing for it to describe.
+    if (c.field === 'name') {
+      assert.notEqual(c.from, null, `${c.spells[0]}: a name correction states the name it replaces`)
+      assert.deepEqual(c.spells, [c.from], 'and it renames exactly the row it names')
+    }
   }
+})
+
+test('JOS-161: a NAME correction renames EVERY row of that name, and is idempotent', () => {
+  // The scrape carries the level-39 bard song twice (18 s, and the April-2000 1 Min revision).
+  // Renaming one and not the other would put a phantom line in the catalog: `byKey` and
+  // `buildSpellCatalog` fold by name, so the un-renamed twin becomes its own entry.
+  const before = RAW.filter((s) => s.name === "Solon's Bravura")
+  assert.equal(before.length, 2, 'the committed scrape still carries both level-39 rows')
+  assert.equal(RAW.filter((s) => s.name === "Solon's Bewitching Bravura").length, 0)
+
+  const { spells, report } = applySpellCorrections(RAW)
+  assert.equal(spells.filter((s) => s.name === "Solon's Bewitching Bravura").length, 2, 'both rows')
+  assert.equal(spells.filter((s) => s.name === "Solon's Bravura").length, 0, 'and no half-rename')
+  assert.deepEqual(report.unknownSpells, [])
+
+  // Everything BUT the name is untouched — a rename is not a licence to restate the entry.
+  const renamed = spells.filter((s) => s.name === "Solon's Bewitching Bravura")
+  assert.deepEqual(
+    renamed.map((s) => [s.durationMs, s.castTimeMs, s.spellType, s.msgWearsOff]),
+    before.map((s) => [s.durationMs, s.castTimeMs, s.spellType, s.msgWearsOff])
+  )
+
+  // THE RE-SCRAPE, BOTH WAYS. A name correction cannot report `stale` — a renamed row is no
+  // longer findable by the name the correction states — so the two directions land on the two
+  // other lists, and the audit test above fails on either being non-empty.
+  const upstream = applySpellCorrections(spells).report
+  assert.equal(upstream.applied, 0, 'a wiki that adopts the game`s name leaves nothing to do')
+  assert.deepEqual(upstream.unknownSpells, [], 'and it is satisfied, not unknown')
+
+  const third = RAW.map((s) => (s.name === "Solon's Bravura" ? { ...s, name: "Solon's Panache" } : s))
+  assert.deepEqual(
+    applySpellCorrections(third).report.unknownSpells,
+    ["Solon's Bravura"],
+    'a wiki that renames it to something ELSE must fail this suite rather than be overwritten'
+  )
+})
+
+test('JOS-161: a MESSAGE correction still writes only the first row of a duplicated name', () => {
+  // The other half of the rule, and the reason the two kinds differ. `Shock of Frost` is two rows
+  // saying two DIFFERENT things (`Your feel your skin freeze.` and `Your skin goes numb.`), so the
+  // typo correction on the first must not reach the second — writing it across both would turn a
+  // real difference into a stale report and break the anti-rot guard.
+  const { spells, report } = applySpellCorrections(RAW)
+  const frost = spells.filter((s) => s.name === 'Shock of Frost')
+  assert.equal(frost.length, 2)
+  assert.equal(frost[0].msgCastOnYou, 'You feel your skin freeze.', 'the typo row is corrected')
+  assert.equal(frost[1].msgCastOnYou, 'Your skin goes numb.', 'its sibling says something else entirely')
+  assert.deepEqual(report.stale, [])
 })
 
 // ---------------------------------------------------------------------------------------------
@@ -312,4 +368,119 @@ test('…and with the wiki`s empty field the same sequence still opens nothing',
   const cands = bare.spells.filter((s) => s.msgCastOnOther === 'Someone has been charmed.').map((s) => s.name)
   assert.equal(cands.length, 7, `the seven the ticket counted: ${cands.join(', ')}`)
   assert.ok(!cands.includes('Allure'), 'and the owner`s own charm was not one of them')
+})
+
+// ---------------------------------------------------------------------------------------------
+// JOS-161 — THE TWO BARD SONGS, THE SAME TREATMENT
+//
+// THE REPORT: a bard on 0.14.0 could not get an alert to fire for `Sionachie's Dreams` or
+// `Solon's Bewitching Bravura` with any trigger type, buff-expire included.
+//
+// THE LINES BELOW ARE THE OWNER'S OWN, from eqlog_Primitive_freeport.txt (lines 512748 and 512774,
+// Thu Jul 30 18:32:40-43): `<mob>'s eyes glaze over.` is a BARD's sentence and the owner is not a
+// bard, so the witness is a bard standing beside him — Enzee, whose `<Name> begins singing <Song>.`
+// lines the parser reads as `otherCastBegin`. Restamped through `at()` like every window in this
+// file, and cast in the FIRST person so the anchor is the ordinary own-cast one rather than the
+// externals allowlist (which is empty by default and is not what this ticket is about).
+// ---------------------------------------------------------------------------------------------
+
+test("JOS-161: Sionachie's Dreams is a candidate for its own landing sentence", () => {
+  // The defect, at the layer it lives in. `Target's eyes glaze over.` yields no castOnOtherSuffix
+  // at all, so the song was in NO table — while its three ladder siblings owned the sentence the
+  // game actually prints. Every alert naming the song was therefore comparing itself to a
+  // candidate list the song was not in.
+  const db = loadSpellDb()
+  const hit = matchCastOnOtherSuffix("a revenant's eyes glaze over.", db)
+  assert.ok(hit, 'the live sentence must resolve at all')
+  assert.equal(hit.target, 'a revenant')
+  assert.deepEqual(
+    hit.entry.cands.map((c) => c.name).sort(),
+    [
+      "Crission's Pixie Strike",
+      "Sionachie's Dreams",
+      "Solon's Bewitching Bravura",
+      "Solon's Song of the Sirens"
+    ],
+    'the whole bard mez ladder that shares this sentence, under the names the log prints'
+  )
+  assert.equal(db.castOnOtherSuffix.get("Target's eyes glaze over."), undefined, 'the wiki form is gone')
+})
+
+test("JOS-161: the level-39 song answers to the name the log prints", () => {
+  // `byKey` is what a cast line folds to, so this miss is why `You begin singing Solon's Bewitching
+  // Bravura IX.` anchored nothing and the hold below could not exist.
+  const db = loadSpellDb()
+  assert.equal(db.byKey.get("solon's bravura"), undefined, 'the wiki`s short form names no spell')
+  assert.equal(db.byKey.get("solon's bewitching bravura")?.durationMs, 18_000, 'and the game`s does')
+})
+
+test('JOS-161: …and so does every OTHER index keyed by spell name', () => {
+  // A name is a join key wherever it is used, not only in `SpellDb`. The class index is read with
+  // the name a `castBegin` carries, so before the rename a bard's own signature song contributed
+  // nothing to class inference; the level-unlock cards displayed a name no player has ever seen.
+  assert.deepEqual(classesForSpell("Solon's Bewitching Bravura IX"), ['BRD'], 'rank folds to the line')
+  assert.deepEqual(classesForSpell("Solon's Bravura"), [], 'and the wiki`s short form places nobody')
+  assert.deepEqual(classesForSpell("Sionachie's Dreams IV"), ['BRD'], 'unchanged — its name was right')
+
+  const bard = buildLevelUnlocks().spells.filter((s) => s.name.includes('Bravura'))
+  assert.deepEqual(
+    [...new Set(bard.map((s) => s.name))],
+    ["Solon's Bewitching Bravura"],
+    'the unlock cards name the song the way the player`s spellbook does'
+  )
+})
+
+test("JOS-161: a Sionachie's Dreams cast plus its landing yields a countdown row", () => {
+  const r = replay(
+    [
+      [0, "You begin singing Sionachie's Dreams IV."],
+      [3, "a revenant's eyes glaze over."]
+    ],
+    10
+  )
+  const row = r.rows.find((x) => x.target === 'a revenant')
+  assert.ok(row, `no row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
+  assert.equal(row.name, "Sionachie's Dreams IV", 'the ranked cast line names the row')
+  assert.equal(row.mode, 'countdown')
+  assert.equal(row.durationMs, 18_000, 'the DB states 3 ticks for the line')
+  assert.ok(
+    r.active.some((a) => a.spell === "Sionachie's Dreams IV" && a.target === 'a revenant'),
+    `no held instance: ${r.active.map((a) => `${a.spell}@${a.target ?? 'self'}`).join(', ') || '(none)'}`
+  )
+})
+
+test('JOS-161: a Bewitching Bravura cast plus its landing yields a countdown row', () => {
+  const r = replay(
+    [
+      [0, "You begin singing Solon's Bewitching Bravura IX."],
+      [2, "a fire giant warrior's eyes glaze over."]
+    ],
+    10
+  )
+  const row = r.rows.find((x) => x.target === 'a fire giant warrior')
+  assert.ok(row, `no row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
+  assert.equal(row.name, "Solon's Bewitching Bravura IX")
+  assert.equal(row.mode, 'countdown')
+  assert.equal(row.durationMs, 18_000)
+})
+
+test('…and with the wiki`s own two rows neither song opens anything', () => {
+  // The defect stated, the way the Allure pair above states it: the corrections are the only thing
+  // standing between this test and the two above. Sionachie's landing resolves to a candidate list
+  // it is not in, so no anchor matches it; Bravura's cast folds to a key `byKey` does not have.
+  const bare = applySpellCorrections(
+    RAW,
+    SPELL_CORRECTIONS.filter((c) => c.spells[0] !== "Sionachie's Dreams" && c.spells[0] !== "Solon's Bravura")
+  ).spells
+  const byMessage = [
+    ...new Set(bare.filter((s) => s.msgCastOnOther === "Someone 's eyes glaze over.").map((s) => s.name))
+  ].sort()
+  assert.deepEqual(byMessage, ["Crission's Pixie Strike", "Solon's Bravura", "Solon's Song of the Sirens"])
+  assert.ok(!byMessage.includes("Sionachie's Dreams"), 'the song could not be its own landing`s candidate')
+  assert.equal(
+    bare.find((s) => s.name === "Sionachie's Dreams")?.msgCastOnOther,
+    "Target's eyes glaze over.",
+    'because the scrape wrote a subject placeholder the suffix table cannot key'
+  )
+  assert.equal(bare.filter((s) => s.name === "Solon's Bewitching Bravura").length, 0, 'and the log`s name named nothing')
 })

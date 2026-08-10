@@ -87,7 +87,7 @@ test('NO DEAD `lands`: every lands template names a message the parser can match
   }
 })
 
-test('the dead-lands gate actually removed something — 59 of them', () => {
+test('the dead-lands gate actually removed something — 58 of them', () => {
   // Provenance for the claim in spellDb.ts's comment: a count, measured here rather than asserted
   // in prose. These were Detrimental spells with a cast-on-other message the suffix table cannot
   // key, every one of which was being offered a suggestion that could not fire.
@@ -100,12 +100,17 @@ test('the dead-lands gate actually removed something — 59 of them', () => {
   // already had, with the placeholder the parser keys on put back. The nine are Garrison's Mighty
   // Mana Shock, Cease, Desist, Sacred Word, Cancelling/Cessation/Negation of Life, Force Snap and
   // Thunder of Karana, each of them evidenced against the owner's log in that file.
+  //
+  // AND IT IS 58 SINCE JOS-161 — the tenth of that kind, and the first one a real user noticed
+  // from the outside. `Sionachie's Dreams` (bard mez 40) wrote `Target's eyes glaze over.` where
+  // its three ladder siblings write `Someone 's eyes glaze over.`, so the song could not be a
+  // candidate for its own landing sentence and no alert naming it could ever fire.
   let dead = 0
   for (const s of db.spells) {
     if (s.spellType !== 'Detrimental' || !s.msgCastOnOther) continue
     if (castOnOtherSuffix(s.msgCastOnOther) === null) dead += 1
   }
-  assert.equal(dead, 59, 'the measured population the `lands` gate now excludes')
+  assert.equal(dead, 58, 'the measured population the `lands` gate now excludes')
 })
 
 test('`landsOnOther` always travels with the pattern it needs', () => {
