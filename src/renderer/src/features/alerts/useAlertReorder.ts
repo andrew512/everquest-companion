@@ -36,6 +36,16 @@
 //
 // THE ORDER MATH LIVES IN `@shared/alertOrder` — the same `moveIdToIndex`/`nudgeId` main
 // re-derives with, so the row you see land is the row that gets stored.
+//
+// A FILTERED LIST CANNOT BE REORDERED, AND THE HONEST FIX IS TO REMOVE THE GESTURE (JOS-178). Once
+// the search box is narrowing the list, the gaps on screen are not the gaps in the stored order:
+// dropping between two visible rows that have four hidden rows between them names no slot, and any
+// answer the app picked would be a guess about where the invisible ones go. So `canReorder` false
+// takes the gesture off the table at BOTH ends — the grip stops being a drag source and stops
+// answering the arrow keys, and the container carries NO handlers at all. That second half is what
+// makes the container's own rule keep working: `dragover` refuses everything nobody cancels, so a
+// list with no handler on it refuses in the browser's own voice, exactly the way it already
+// refuses a photo dragged out of Explorer. Clearing the box restores every bit of it.
 
 import { useCallback, useMemo, useState } from 'react'
 import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -53,24 +63,33 @@ export interface DropMark {
 
 /** What the list container needs to be the drop target, and the grip needs to start a drag. */
 export interface AlertReorder {
+  /** Is the gesture available at all? False while a search is narrowing the list (JOS-178). */
+  canReorder: boolean
   /** The row being dragged right now, or null. Rows use it to dim themselves. */
   draggingId: string | null
   /** Where the line goes, or null when no drag is over this list. */
   mark: DropMark | null
-  /** Props for the scrolling list container — the ONE drop target (see the header). */
+  /**
+   * Props for the scrolling list container — the ONE drop target (see the header). EMPTY while
+   * `canReorder` is false: no handler means no `preventDefault`, which is the browser's own
+   * refusal rather than one we have to paint.
+   */
   containerProps: {
-    onDragOver: (e: ReactDragEvent<HTMLElement>) => void
-    onDragLeave: (e: ReactDragEvent<HTMLElement>) => void
-    onDrop: (e: ReactDragEvent<HTMLElement>) => void
+    onDragOver?: (e: ReactDragEvent<HTMLElement>) => void
+    onDragLeave?: (e: ReactDragEvent<HTMLElement>) => void
+    onDrop?: (e: ReactDragEvent<HTMLElement>) => void
   }
   /** Props for the grip itself (the drag source + the keyboard control). */
   gripProps: (id: string) => {
-    draggable: true
+    draggable: boolean
     onDragStart: (e: ReactDragEvent<HTMLElement>) => void
     onDragEnd: () => void
     onKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => void
   }
 }
+
+/** The container while the list is filtered: nothing to accept a drag with (see the header). */
+const NO_DROP_TARGET: AlertReorder['containerProps'] = {}
 
 const MIME = 'text/plain'
 /** Set on the transfer so a dragover can tell OUR row from a file the OS is offering. */
@@ -103,14 +122,21 @@ function isOurDrag(e: ReactDragEvent<HTMLElement>, draggingId: string | null): b
  *
  * `onReorder` receives the WHOLE id sequence, never a pair of indices: main re-derives its list
  * from that sequence, so a stale index cannot move the wrong def.
+ *
+ * `canReorder` false is the search box's doing (JOS-178) and it is a full stop, not a style: the
+ * two readings a row renders from (`draggingId`, `mark`) go null with it, so a gesture that was
+ * somehow in flight cannot leave a line on screen after the list narrowed under it.
  */
 export function useAlertReorder(
   alerts: readonly AlertDef[],
-  onReorder: (orderedIds: string[]) => void
+  onReorder: (orderedIds: string[]) => void,
+  canReorder = true
 ): AlertReorder {
-  const [draggingId, setDraggingId] = useState<string | null>(null)
-  const [mark, setMark] = useState<DropMark | null>(null)
+  const [dragged, setDraggingId] = useState<string | null>(null)
+  const [marked, setMark] = useState<DropMark | null>(null)
   const ids = useMemo(() => alerts.map((a) => a.id), [alerts])
+  const draggingId = canReorder ? dragged : null
+  const mark = canReorder ? marked : null
 
   const onDragOver = useCallback(
     (e: ReactDragEvent<HTMLElement>): void => {
@@ -163,14 +189,15 @@ export function useAlertReorder(
   )
 
   const containerProps = useMemo(
-    () => ({ onDragOver, onDragLeave, onDrop }),
-    [onDragOver, onDragLeave, onDrop]
+    () => (canReorder ? { onDragOver, onDragLeave, onDrop } : NO_DROP_TARGET),
+    [canReorder, onDragOver, onDragLeave, onDrop]
   )
 
   const gripProps = useCallback(
     (id: string) => ({
-      draggable: true as const,
+      draggable: canReorder,
       onDragStart: (e: ReactDragEvent<HTMLElement>): void => {
+        if (!canReorder) return
         e.dataTransfer.effectAllowed = 'move'
         e.dataTransfer.setData(MIME, id)
         e.dataTransfer.setData(MARK_MIME, id)
@@ -186,15 +213,15 @@ export function useAlertReorder(
       },
       onKeyDown: (e: ReactKeyboardEvent<HTMLElement>): void => {
         const delta = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0
-        if (delta === 0 || e.altKey || e.ctrlKey || e.metaKey) return
+        if (!canReorder || delta === 0 || e.altKey || e.ctrlKey || e.metaKey) return
         // The arrows would otherwise scroll the list out from under the row being moved.
         e.preventDefault()
         const next = nudgeId(ids, id, delta)
         if (next[ids.indexOf(id)] !== id) onReorder(next)
       }
     }),
-    [ids, onReorder]
+    [canReorder, ids, onReorder]
   )
 
-  return { draggingId, mark, containerProps, gripProps }
+  return { canReorder, draggingId, mark, containerProps, gripProps }
 }

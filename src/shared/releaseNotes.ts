@@ -130,6 +130,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
+        text: 'Search your alerts by anything you remember about them. The box above the list takes the alert name, the spell its trigger watches, the kind of thing it fires on, the sound pack, the sound, the phrase a spoken alert says, and the note - so the alert you only remember as "the one about confetti" or "the Rickman sting" is one word away. Near-misses and half-words count, every word you type has to land somewhere, and the matches stay in the order you dragged them into. While a search is on, the drag handles grey out, because a gap in a filtered list is not a gap in your real order; clear the box and the whole list and the dragging come back.'
+      },
+      {
+        kind: 'new',
         text: 'Drag your alerts into the order you want them in. Grab the handle at the left of any alert and a line follows your pointer showing the gap it will drop into - between two alerts, above the first, or below the last - and the alert lands exactly there when you let go. Or select the handle and use the up and down arrow keys. Either way the list stays as you left it, this session and every one after it, and which alert fires, and when, is untouched by where it sits.',
         fromReport: true
       },
