@@ -25,6 +25,7 @@ import {
   Typography
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import EditIcon from '@mui/icons-material/Edit'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
@@ -35,6 +36,7 @@ import { formatTime } from '../../lib/formatDate'
 import AudioPicker from './AudioPicker'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 import { triggerBadge } from './conditionDraft'
+import { useAlertReorder, type AlertReorder } from './useAlertReorder'
 
 /** The expandable "recent fires" panel for one alert. */
 function RecentFires({ fires }: { fires: AlertFireRecord[] }): JSX.Element {
@@ -129,8 +131,49 @@ const ALERT_ROW_PAPER_SX = {
   // Establishes the container the row's grid queries above (see ALERT_ROW_GRID_SX).
   containerType: 'inline-size',
   '& .alertRowActions': { opacity: 0.62, transition: 'opacity 120ms ease' },
-  '&:hover .alertRowActions, &:focus-within .alertRowActions': { opacity: 1 }
+  '&:hover .alertRowActions, &:focus-within .alertRowActions': { opacity: 1 },
+  // The grip rests with the action cluster and comes up with it (JOS-175) — it is a control the
+  // row offers, not a decoration it wears.
+  '& .alertRowGrip': { opacity: 0.45, transition: 'opacity 120ms ease' },
+  '&:hover .alertRowGrip, &:focus-within .alertRowGrip': { opacity: 1 }
 } as const
+
+/**
+ * The DRAG STATE, as style. The row being carried dims; the row it would land on shows an inset
+ * edge on the side it would arrive from. Nothing moves under the pointer until the drop, so the
+ * list never re-flows mid-gesture.
+ */
+function dragSx(isDragging: boolean, isOver: boolean): Record<string, unknown> {
+  return {
+    opacity: isDragging ? 0.4 : 1,
+    ...(isOver && !isDragging ? { borderColor: 'primary.main', boxShadow: 2 } : {})
+  }
+}
+
+/** The grip: drag it, or focus it and press the arrow keys (useAlertReorder.ts). */
+function AlertRowGrip({
+  name,
+  grip
+}: {
+  name: string
+  grip: ReturnType<AlertReorder['gripProps']>
+}): JSX.Element {
+  return (
+    <IconButton
+      size="small"
+      className="alertRowGrip"
+      data-testid="alert-reorder-grip"
+      // The title says the pointer gesture; the aria-label says BOTH, because the keyboard path is
+      // the only one a screen-reader user has.
+      title="Drag to reorder"
+      aria-label={`Reorder ${name}: drag, or press the up and down arrow keys`}
+      sx={{ cursor: 'grab', '&:active': { cursor: 'grabbing' }, ml: -0.75, mr: -0.25 }}
+      {...grip}
+    >
+      <DragIndicatorIcon fontSize="small" />
+    </IconButton>
+  )
+}
 
 /**
  * Identity. Both lines are single-line + ellipsis: a long trigger badge
@@ -240,6 +283,8 @@ function AlertRowActions({
 /** Callbacks the list forwards to every row (all fire-and-forget from the view). */
 interface AlertRowHandlers {
   onPersist: (def: AlertDef) => void
+  /** The whole list's new id sequence after a drag or an arrow-key nudge (JOS-175). */
+  onReorder: (orderedIds: string[]) => void
   onVolumeDrag: (id: string, volume: number) => void
   onTest: (def: AlertDef) => void
   onCopyShare: (ids?: string[]) => void
@@ -254,6 +299,7 @@ function AlertRow({
   packs,
   voiceSetup,
   onToggle,
+  reorder,
   handlers
 }: {
   def: AlertDef
@@ -262,6 +308,7 @@ function AlertRow({
   packs: SoundPack[]
   voiceSetup: VoiceSetupNotice
   onToggle: (id: string) => void
+  reorder: AlertReorder
   handlers: AlertRowHandlers
 }): JSX.Element {
   const badge = triggerBadge(def.trigger)
@@ -272,17 +319,22 @@ function AlertRow({
   return (
     <Paper
       variant="outlined"
-      sx={ALERT_ROW_PAPER_SX}
+      sx={{ ...ALERT_ROW_PAPER_SX, ...dragSx(reorder.draggingId === def.id, reorder.overId === def.id) }}
       data-testid="alert-row"
       data-alert-id={def.id}
+      {...reorder.rowProps(def.id)}
     >
       <Box sx={ALERT_ROW_GRID_SX}>
-        <Switch
-          size="small"
-          checked={def.enabled}
-          onChange={(e) => handlers.onPersist({ ...def, enabled: e.target.checked })}
-          sx={{ gridArea: 'toggle' }}
-        />
+        {/* The grip travels with the enable switch: one 'toggle' cell, so both row shapes (wide
+            and tight, above) keep their column edges exactly as they were. */}
+        <Box sx={{ gridArea: 'toggle', display: 'flex', alignItems: 'center' }}>
+          <AlertRowGrip name={def.name} grip={reorder.gripProps(def.id)} />
+          <Switch
+            size="small"
+            checked={def.enabled}
+            onChange={(e) => handlers.onPersist({ ...def, enabled: e.target.checked })}
+          />
+        </Box>
 
         <AlertRowIdentity def={def} badge={badge} />
 
@@ -341,6 +393,7 @@ export default function AlertList({
   handlers: AlertRowHandlers
 }): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const reorder = useAlertReorder(alerts, handlers.onReorder)
 
   const toggleExpanded = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -368,6 +421,7 @@ export default function AlertList({
             packs={packs}
             voiceSetup={voiceSetup}
             onToggle={toggleExpanded}
+            reorder={reorder}
             handlers={handlers}
           />
         ))}

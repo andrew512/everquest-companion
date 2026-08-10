@@ -61,6 +61,9 @@ export const IPC = {
   listAlerts: 'alerts:list',
   saveAlert: 'alerts:save',
   deleteAlert: 'alerts:delete',
+  // re-order the whole list (JOS-175 — drag-to-reorder). Payload: the id sequence the renderer
+  // just rendered; main re-derives its own list from it (src/shared/alertOrder.ts).
+  reorderAlerts: 'alerts:reorder',
   // test = renderer plays the alert's sound directly (main just echoes the def).
   testAlert: 'alerts:test',
   // reset all alert defs back to the seeded built-in set (Task #22).

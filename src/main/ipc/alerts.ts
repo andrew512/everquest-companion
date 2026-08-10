@@ -9,6 +9,7 @@ import {
   deleteAlert,
   getAlertPrefs,
   getAlerts,
+  reorderAlerts,
   resetAlerts,
   saveAlert,
   setAlertPrefs
@@ -39,6 +40,19 @@ export function registerAlertsIpc(): void {
   })
   ipcMain.handle(IPC.deleteAlert, (_e, id: string) => {
     const list = deleteAlert(id)
+    alertsModule.setDefs(list)
+    return list
+  })
+  // The list's own order (JOS-175). The payload is validated HERE, at the door, for the same
+  // reason `cooldownScope` is: it is a renderer-supplied value, and "today's only caller is our
+  // own UI" is not a check. Anything that is not an array of strings answers with the list
+  // unchanged; `reorderAlerts` then keeps every def whatever the sequence says.
+  ipcMain.handle(IPC.reorderAlerts, (_e, orderedIds: unknown) => {
+    if (!Array.isArray(orderedIds)) return getAlerts()
+    const list = reorderAlerts(orderedIds.filter((id): id is string => typeof id === 'string'))
+    // The evaluator is handed the new order too, so a fire and the screen never disagree about
+    // which defs exist. Order is not part of firing (each def is evaluated on its own with its
+    // own cooldown), so this is a sync, not a behavior change.
     alertsModule.setDefs(list)
     return list
   })
