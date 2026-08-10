@@ -358,6 +358,7 @@ async function stepInventoryFill(page: Page): Promise<void> {
       line.includes('/outputfile inventory') && /updated (just now|\d+[mhd] ago)/.test(line),
       line.slice(0, 120)
     )
+
   }
 
   // …and the same facts, live over the registry's own channel (JOS-44). Next door, with the rest
