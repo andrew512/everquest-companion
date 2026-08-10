@@ -1431,10 +1431,11 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   this file's own prose does too. `tests/copyNoEmDash.test.mts` is the guard and
   its header states exactly what it covers and what it does not; it parses with
   the TS compiler and inspects only string/template/JSX-text nodes, because a
-  whole-source grep would drown in comments. Three files are excluded on
+  whole-source grep would drown in comments. Two files are excluded on
   technical grounds (the Kokoro phoneme VOCABULARY, where U+2014 is a model token
-  id; an embedded PowerShell script's own `#` comments; the TELEMETRY.md
-  generator) and the exclusions are listed in the test.
+  id; the TELEMETRY.md generator) and the exclusions are listed in the test.
+  A third — an embedded PowerShell script's own `#` comments — went away with
+  the script in JOS-182.
 - **SAY WHAT THE LOG DID, NOT WHAT WE DID TO THE NUMBER (JOS-106).** A label
   describing our own bookkeeping reads as a defect to the person holding it: Monk
   Mend's healing lane was tagged `unvalued` / `amount not stated`, and a v0.12.0
@@ -2019,6 +2020,41 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   8 ms sampler, animation frame, last-surface-wins — and asserts on what was
   on the SCREEN; it reproduces the twitch on the old path first, so the fixed
   assertion means something.
+- **…AND THE LOOP THAT DROVE ALL OF IT NO LONGER SPAWNS ANYTHING (JOS-182).**
+  The presence watcher was a hidden `powershell.exe` (`-ExecutionPolicy Bypass
+  -EncodedCommand <base64>`) compiling a C# P/Invoke surface at runtime with
+  `Add-Type`, enumerating every process and reading window titles. To a
+  behavioural AV engine that is an infostealer — it was the app's largest
+  heuristic trigger — and it also just **never ran** on 578 installs' worth of
+  machines (`spawn powershell.exe ENOENT`), where auto-hide and the ring were
+  dead every session and fail-open meant nobody could tell. It is now a
+  **worker thread** calling user32/kernel32/psapi through **koffi**. Three
+  rules fall out, all of them general:
+  - **A NATIVE DEPENDENCY HERE MUST SHIP PREBUILT N-API BINARIES IN ITS NPM
+    TARBALL.** `.npmrc` ignores install scripts and `npmRebuild` is false, so
+    anything needing node-gyp needs both reconsidered. That rule, not taste,
+    is why koffi beat hand-writing an addon: a CI-only compile exists in a
+    release build and **nowhere else** — not in `npm run dev`, not in
+    `npm test`, not in a local `dist` — so the feature would be degraded
+    everywhere it is developed and live only where nobody can debug it. (Pin
+    to koffi **2.x**: 3.x dropped the in-tarball prebuilds and downloads them
+    in its install hook.)
+  - **NEVER `worker.terminate()` A THREAD THAT CALLS NATIVE CODE.** MEASURED:
+    terminating a worker while it is inside a koffi call aborts the whole
+    process — `FATAL ERROR: Error::ThrowAsJavaScriptException`, no catch
+    anywhere. Idle worker: 40/40 rounds survived. On the app's real 5 s scan
+    cadence: crashed within two. Ask it to stop over the port instead; a
+    `'message'` handler can only run BETWEEN ticks, never inside a call. This
+    would have been a rare, unattributable crash **at quit**, which every
+    session reaches.
+  - **MOVING WORK OFF A PROCESS IS NOT THE SAME AS MOVING IT ONTO MAIN.** The
+    obvious shape after deleting a child is a `setInterval` on the main
+    thread; the running scan is **8.4 ms** (`EnumProcesses` alone 4.1–4.5 ms
+    over 325 processes), and main tails the log, folds combat, answers IPC and
+    runs the 8 ms cursor sampler. The child's one virtue was being somewhere
+    else — keep that, drop the process. (Same argument as `speechWorker`;
+    these are the tree's two worker_threads, both separate rollup inputs in
+    `electron.vite.config.ts` because `new Worker(path)` loads a FILE.)
 - **…AND IT IS TWO WINDOWS, OVER ONE MODEL (JOS-119).** The owner asked for
   buffs and debuffs to be windows he can enable and place separately, so the
   one 'buffs' kind became 'buffs' + 'debuffs' — two configs, two windows, two
@@ -2269,11 +2305,16 @@ failure. Reuses the tier-2 lifecycle via `scripts/sandbox/sandbox-lifecycle.ps1`
   verified installed/declared 2026-08-06 during JOS-63): electron **43.2.0**,
   vite **7.3.6**, electron-vite **5.0.0** are what the tree runs today —
   the 33→43 / 5→7 / 2→5 upgrades this item tracked are done. Still open
-  from the same flag: .npmrc's audited-hooks comment for onnxruntime-node
-  (declares a postinstall — verified NOT needed on win32-x64, binaries ship
-  in the tarball), electron-builder.yml's 'no native modules' comment, and
-  the installer shipping ~150MB of other-platform onnx binaries (trim via
-  asarUnpack filters).
+  from the same flag: the installer shipping ~150MB of other-platform onnx
+  binaries (trim via asarUnpack filters). The two COMMENTS this item also
+  tracked are settled: .npmrc's audited-hooks list and electron-builder.yml's
+  npmRebuild note were both rewritten by JOS-182, which added the tree's
+  SECOND native module (koffi) and states the rule they now encode — a native
+  dependency is acceptable here when it ships prebuilt N-API binaries inside
+  its npm tarball, and needs `ignore-scripts`/`npmRebuild` reconsidered when
+  it ships node-gyp sources. koffi's eighteen other-platform prebuilds are
+  excluded from the installer the same way onnx's are, so that trim now has a
+  worked example next to it.
 
 - **Feedback loop (the next big feature)**: fully planned + reviewed in
   `docs/plans/feedback-triage.md` — in-app reports, scrubbed log-window
