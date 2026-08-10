@@ -59,7 +59,7 @@ import type { CombatSnapshot, SegmentView, SourceView } from '@shared/combat'
 import { DashCard, QuietNote, fmtDur } from '../combat/combatShared'
 import { LIVE_SELECTION, fightScopeOptions, meterDrill, type Drill } from '../combat/dashboardData'
 import { DrillCrumb, MeterRows, crumbOf } from '../combat/MeterRows'
-import { meterPanel } from '../combat/petRows'
+import { meterPanel, panelTotals, type MeterPanel } from '../combat/petRows'
 import { scopeSources, scopeTotals } from '../combat/meterScope'
 import { useCombinePetRow, useMeterScope } from '../combat/useCombatPrefs'
 import { useDrillMemory } from '../combat/useDrillMemory'
@@ -101,6 +101,27 @@ function scopedView(seg: SegmentView, scope: MeterScope, roster: RosterSnap): Sc
   return { rows, total, dps, activeDps }
 }
 
+/**
+ * …and the same three figures once the DRILL has had its say (JOS-170).
+ *
+ * The card's headline and supporting line are as unlabelled as the Combat tab's header, so they
+ * answer to the same rule: the number over a list describes THAT list. `petRows.panelTotals` is
+ * the one place that is decided — level 1 keeps the scoped figures, a drill takes the subject
+ * plus the pets nested into it, and the pet preference therefore moves the number in the same
+ * render that it moves the rows.
+ */
+interface CardBody {
+  /** the shared builder's answer, built ONCE — the rows below and the figures above share it. */
+  panel: MeterPanel
+  view: ScopedView
+}
+
+function cardBody(v: ScopedView, combine: boolean, drill: Drill | null): CardBody {
+  const panel = meterPanel(v.rows, combine, meterDrill(drill))
+  const { total, dps } = panelTotals(panel, v.total, v.dps)
+  return { panel, view: { rows: v.rows, total, dps, activeDps: panelTotals(panel, v.total, v.activeDps).dps } }
+}
+
 /** total · duration · active-time DPS — the secondary stat, never the headline (law 7). */
 function supportingLine(seg: SegmentView, v: ScopedView): string {
   return `${formatNum(v.total)} total · ${fmtDur(seg.durationSec)} · ${formatRate(v.activeDps)} active`
@@ -135,21 +156,16 @@ function OpenInCombat({ onOpenCombat }: { onOpenCombat: (f: CombatFocus) => void
  */
 function DpsRows({
   seg,
-  rows,
-  drill,
+  panel,
   setDrill,
-  combinePetRow,
   onOpenCombat
 }: {
   seg: SegmentView
-  /** the SCOPED source list (scopedView above) — never `seg.entities` straight. */
-  rows: SourceView[]
-  drill: Drill | null
+  /** the shared builder's answer, built ONCE in the card so its headline reads the same one. */
+  panel: MeterPanel
   setDrill: (d: Drill | null) => void
-  combinePetRow: boolean
   onOpenCombat: () => void
 }): JSX.Element {
-  const panel = meterPanel(rows, combinePetRow, meterDrill(drill))
   const crumb = crumbOf(panel)
   return (
     <Stack sx={{ minWidth: 0 }}>
@@ -177,7 +193,6 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
   // that instant, never an empty card.
   const [meterScope] = useMeterScope()
   const roster = snap?.roster ?? EMPTY_ROSTER
-  const view = seg ? scopedView(seg, meterScope, roster) : null
   // Card-local but REMEMBERED (JOS-116) — its own key, so nothing here can move the Combat tab's
   // drill and nothing there can move this one.
   //
@@ -199,6 +214,11 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
     setDrill(null)
   }, [combinePetRow, setDrill])
 
+  // THE one row builder, called ONCE for this card — the rows below and the two figures above
+  // them are now the same answer (JOS-170). It used to be called inside `DpsRows`, which is
+  // exactly how the headline came to describe the fight while the rows described a drill.
+  const body = seg ? cardBody(scopedView(seg, meterScope, roster), combinePetRow, drill) : null
+
   return (
     // The link down is offered even with nothing to show: "there are no fights" is a thing the
     // Combat tab says better than a glance card can, and a disappearing button would make the
@@ -206,7 +226,7 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
     <DashCard title="Damage" testId="overview-dps" right={<OpenInCombat onOpenCombat={onOpenCombat} />}>
       {/* No fights at all ⇒ the same honest quiet state the Combat tab shows. It never borrows
           the zone aggregate to look busy — Overall is a click away and says so there. */}
-      {!head || !seg || !view ? (
+      {!head || !seg || !body ? (
         <QuietNote>No fights yet - engage something and it’ll appear here.</QuietNote>
       ) : (
         <>
@@ -214,10 +234,10 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
             {head.label}
           </Typography>
           <Typography variant="h4" sx={{ color: 'primary.main', lineHeight: 1.15 }} data-testid="overview-dps-value">
-            {formatRate(view.dps)}
+            {formatRate(body.view.dps)}
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.75 }}>
-            {supportingLine(seg, view)}
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.75 }} data-testid="overview-dps-support">
+            {supportingLine(seg, body.view)}
           </Typography>
           {/* The inline per-ability stats a reader expanded are remembered beside the drill they
               sit inside (JOS-116); the provider is how that answer reaches the shared SkillBar
@@ -225,10 +245,8 @@ export function DpsCard({ snap, onOpenCombat }: DpsCardProps): JSX.Element {
           <AbilityExpandProvider value={{ isOpen, setOpen }}>
             <DpsRows
               seg={seg}
-              rows={view.rows}
-              drill={drill}
+              panel={body.panel}
               setDrill={setDrill}
-              combinePetRow={combinePetRow}
               onOpenCombat={() => onOpenCombat({ scope: 'fight', selection: LIVE_SELECTION })}
             />
           </AbilityExpandProvider>

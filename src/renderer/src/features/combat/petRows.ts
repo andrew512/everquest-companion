@@ -313,6 +313,47 @@ export interface MeterDrill {
  * renders the source list. The caller's stored value is untouched, so the drill re-applies the
  * moment the data is back.
  */
+/**
+ * WHAT THE HEADLINE OVER *THIS* PANEL COVERS — the one derivation every UNLABELLED damage
+ * headline in the app reads (JOS-170).
+ *
+ * THE DEFECT IT FIXES, in the owner's words: "with a fight drilled into the You row, changing the
+ * pet preference does not recalculate the You line - the pet was moved out, and the title line for
+ * the You drill kept the old combined total (321 in the observed case)."
+ *
+ * Nothing was memoized wrong and nothing was snapshotted at drill time. The headline was simply
+ * the SEGMENT's aggregate at every level — you + your pets + whoever else swung — and while the
+ * pet was folded INTO your row that aggregate happened to be exactly what the You drill was
+ * showing (`total` there is self + nested pets, which IS `outTotal` for a solo fight; see the
+ * header of this file). Turn the preference off and the pet's damage leaves the drill while the
+ * headline stays where it was: a number no visible row accounts for, which is the "aggregates
+ * lie" failure (world-model law 5) and the exact reason `meterScope.scopeTotals` exists one axis
+ * over. The preference did not fail to apply — the rows moved and the headline was never asked to.
+ *
+ * SO IT IS DERIVED FROM WHAT THE PANEL IS SHOWING, at whichever level it resolved:
+ *   level 1 ⇒ the caller's already-scoped pair, unchanged (the ranked list IS the segment, minus
+ *             whatever the meter scope filtered — which `scopeTotals` has already accounted for).
+ *   level 2 ⇒ the drilled subject plus the pets nested INTO it, which is exactly what
+ *             `MeterPanel.rows` sums to. Flip the preference and `pets` empties, so the number
+ *             follows in the same render — in both directions and without re-selecting anything.
+ *
+ * `dps` is SCALED rather than re-derived, for `scopeTotals`' reason: every source's rate divides
+ * by the same segment elapsed time (`main/combat/sourceViews.ts` — `s.total / durationSec`), so
+ * the ratio is exact arithmetic rather than a second opinion. That also makes it the right call
+ * for the ACTIVE-time rate, which no source carries at all: one function, either rate.
+ *
+ * WHAT IT DELIBERATELY DOES NOT TOUCH: the overlay meters' crumb figure, which is LABELLED `all`
+ * and states the whole segment on purpose (JOS-158, owner direction with a screenshot —
+ * overlay/meterCrumb.tsx says so at length). That is the rule this ticket makes explicit: a
+ * headline that SAYS what it covers may cover the segment; an unlabelled one sitting above the
+ * rows must describe the rows.
+ */
+export function panelTotals(panel: MeterPanel, total: number, dps: number): { total: number; dps: number } {
+  if (panel.level === 1) return { total, dps }
+  const shown = [panel.subject, ...panel.pets].reduce((n, s) => n + s.total, 0)
+  return { total: shown, dps: total > 0 ? (dps * shown) / total : 0 }
+}
+
 export function meterPanel(entities: SourceView[], combine: boolean, drill: MeterDrill | null): MeterPanel {
   const subject = drill ? entities.find((e) => e.id === drill.entityId) : undefined
   if (!subject) return { level: 1, sources: meterSources(entities, combine) }

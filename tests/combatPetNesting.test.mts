@@ -41,84 +41,15 @@ import {
   meterSources,
   nestedRows,
   ownBreakdown,
+  panelTotals,
   petSources,
   selfSource,
   type MeterPanel
 } from '../src/renderer/src/features/combat/petRows'
-import type { SkillView, SourceView } from '../src/shared/combat'
+import type { SourceView } from '../src/shared/combat'
+// The two sources every damage-meter derivation test shares — tests/combatMeterFixture.mts.
+import { ENTITIES, PET, YOU, cat, skill, source } from './combatMeterFixture.mjs'
 
-function skill(name: string, over: Partial<SkillView> = {}): SkillView {
-  return { name, total: 0, pct: 0, hits: 0, crits: 0, max: 0, ...over }
-}
-
-function cat(category: SourceView['categories'][number]['category'], skills: SkillView[]): SourceView['categories'][number] {
-  return {
-    category,
-    total: skills.reduce((n, s) => n + s.total, 0),
-    pct: 100,
-    hits: skills.reduce((n, s) => n + s.hits, 0),
-    crits: 0,
-    critPct: 0,
-    max: Math.max(0, ...skills.map((s) => s.max)),
-    resists: 0,
-    resistPct: 0,
-    skills
-  }
-}
-
-/**
- * A whole SourceView, derived the way the engine derives one (`main/combat/sourceViews.ts`) — the
- * counters summed from the categories and the three percentages taken from those counters. It is
- * fully populated rather than cast-and-hope because the LEVEL-1 FOLD reads every counter on it:
- * a half-built fixture would have let `meterSources` combine fields nothing here ever checked.
- */
-function source(
-  id: string,
-  name: string,
-  kind: SourceView['kind'],
-  categories: SourceView['categories']
-): SourceView {
-  const total = categories.reduce((n, c) => n + c.total, 0)
-  const hits = categories.reduce((n, c) => n + c.hits, 0)
-  const crits = categories.reduce((n, c) => n + c.crits, 0)
-  const misses = categories.reduce((n, c) => n + c.skills.reduce((m, s) => m + (s.misses ?? 0), 0), 0)
-  const swings = hits + misses
-  return {
-    id,
-    name,
-    kind,
-    total,
-    dps: total / 60,
-    pct: 100,
-    hits,
-    crits,
-    critPct: hits ? (crits / hits) * 100 : 0,
-    ambiguousHits: 0,
-    ambiguousTotal: 0,
-    misses,
-    hitPct: swings ? (hits / swings) * 100 : 100,
-    missBreakdown: { miss: misses, dodge: 0, parry: 0, riposte: 0, block: 0, absorb: 0 },
-    resists: 0,
-    resistPct: 0,
-    skills: categories.flatMap((c) => c.skills),
-    categories
-  }
-}
-
-const YOU = source('you', 'You', 'you', [
-  cat('melee', [
-    skill('Melee', { total: 5000, hits: 100, max: 120, min: 10, misses: 20 }),
-    skill('Backstab', { total: 3000, hits: 20, max: 400, min: 50 })
-  ]),
-  cat('spell', [skill('Ancient Wrath', { total: 1000, hits: 4, max: 300, min: 200 })])
-])
-
-/** A summoned pet's random proper name (law: pets are named Vebarn, Garer, …). */
-const PET = source('pet:7', 'Vebarn', 'pet', [
-  cat('melee', [skill('Melee', { total: 7000, hits: 210, max: 90, min: 5, misses: 30 })])
-])
-
-const ENTITIES = [PET, YOU]
 
 test('combined: the pet is ONE row, named for the pet, beside your untouched skill lanes', () => {
   const b = ownBreakdown(ENTITIES, true)
@@ -475,6 +406,90 @@ test('the overlay drill maps onto the collapsed model: pet drill, its way back, 
   })
 })
 
+// ── THE HEADLINE OVER THE ROWS FOLLOWS THE ROWS (JOS-170) ──────────────────────────────────
+//
+// Owner report, 2026-08-09: "with a fight drilled into the You row, changing the pet preference
+// does not recalculate the You line - the pet was moved out, and the title line for the You drill
+// kept the old combined total (321 in the observed case)."
+//
+// The mechanism was not a stale memo and not a drill-time snapshot. The headline was the SEGMENT's
+// aggregate at every level, and with the pet folded INTO your row that aggregate is exactly what
+// the You drill is showing (`ownBreakdown.total` is self + nested pets, which IS `outTotal` for a
+// solo fight — the invariant three blocks up). Turn the preference off and the pet's damage leaves
+// the drill while the headline stays put: a number no visible row accounts for, which is the
+// "aggregates lie" failure `meterScope.scopeTotals` already guards one axis over.
+//
+// `panelTotals` is that guard for the DRILL axis, and the block below is the acceptance: the You
+// figure moves in BOTH directions off nothing but the preference — no new fight, no re-selection,
+// no second snapshot.
+
+/** The segment's own pair, as the engine would state it: every source, over the same clock. */
+const SEG_TOTAL = ENTITIES.reduce((n, e) => n + e.total, 0)
+const SEG_DPS = SEG_TOTAL / 60
+
+const headline = (combine: boolean, drill: Drill | null): { total: number; dps: number } =>
+  panelTotals(combatTab(ENTITIES, combine, drill), SEG_TOTAL, SEG_DPS)
+
+/** What the rows on screen actually add up to — the thing the headline must equal. */
+function rowSum(p: MeterPanel): number {
+  return p.level === 1
+    ? p.sources.reduce((n, s) => n + s.total, 0)
+    : p.rows.reduce((n, r) => n + r.total, 0)
+}
+
+test('THE ACCEPTANCE: the You headline follows the pet preference, both ways, with nothing else touched', () => {
+  const you: Drill = { kind: 'entity', entityId: 'you' }
+  const folded = headline(true, you)
+  const separate = headline(false, you)
+
+  assert.equal(folded.total, YOU.total + PET.total, 'pet inside You ⇒ the You line covers both')
+  assert.equal(folded.total, SEG_TOTAL, '…which for a solo fight is the whole segment (the coincidence that hid the bug)')
+  assert.equal(separate.total, YOU.total, 'pet moved out ⇒ the You line is yours alone')
+  assert.notEqual(folded.total, separate.total, 'THE REGRESSION: the number moved when the preference did')
+  // …and back again. The derivation is pure, so "both directions" is the same statement twice —
+  // which is precisely why the defect could never have been in the flip and always was in the read.
+  assert.deepEqual(headline(true, you), folded, 'flipping back restores it exactly')
+  // The rate rides the same fraction: one clock, so the ratio is arithmetic rather than a re-derive.
+  assert.equal(separate.dps, (SEG_DPS * YOU.total) / SEG_TOTAL)
+  assert.equal(folded.dps, SEG_DPS)
+})
+
+test('the headline is what the rows add up to — at every level, in both preference states', () => {
+  const levels: (Drill | null)[] = [
+    null,
+    { kind: 'entity', entityId: 'you' },
+    { kind: 'entity', entityId: 'pet:7' },
+    // A drill this fight cannot resolve degrades to level 1 (meterPanel), so the headline has to
+    // degrade with it rather than keep describing a subject that is not on screen.
+    { kind: 'entity', entityId: 'pet:404' }
+  ]
+  for (const combine of [true, false]) {
+    for (const drill of levels) {
+      const p = combatTab(ENTITIES, combine, drill)
+      const h = panelTotals(p, SEG_TOTAL, SEG_DPS)
+      assert.equal(h.total, rowSum(p), `combine=${String(combine)} drill=${JSON.stringify(drill)}`)
+    }
+  }
+})
+
+test('a drilled PET headlines the pet, and level 1 hands the caller its own pair back untouched', () => {
+  const pet: Drill = { kind: 'entity', entityId: 'pet:7' }
+  assert.equal(headline(true, pet).total, PET.total, 'nested or not, the pet drill is the pet')
+  assert.equal(headline(false, pet).total, PET.total)
+  // Level 1 is the caller's already-scoped answer, BY VALUE and unrounded — `scopeTotals` has
+  // had its say by then and a second opinion here would be the fork this function exists to end.
+  for (const combine of [true, false]) {
+    assert.deepEqual(headline(combine, null), { total: SEG_TOTAL, dps: SEG_DPS })
+  }
+})
+
+test('an empty segment cannot divide by zero — a headline of nothing is 0, never NaN', () => {
+  const you: Drill = { kind: 'entity', entityId: 'you' }
+  const empty = panelTotals(combatTab(ENTITIES, false, you), 0, 0)
+  assert.equal(empty.dps, 0)
+  assert.ok(Number.isFinite(empty.dps))
+})
+
 // ── the source tripwire: a second row builder has nowhere to live ──────────────────────────
 
 const src = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -495,6 +510,33 @@ test('NO SECOND BUILDER: all THREE meters call meterPanel, and none shapes rows 
     assert.doesNotMatch(text, /\bnestedRows\s*\(/, `${who} reaches past meterPanel to the row fold`)
     assert.doesNotMatch(text, /\bownBreakdown\s*\(/, `${who} reaches past meterPanel to the pet fold`)
   }
+})
+
+test('ONE HEADLINE DERIVATION: every UNLABELLED figure over a meter comes from panelTotals', () => {
+  // JOS-170. The two in-app damage surfaces print a bare number above their rows — the panel
+  // header's `· 321 ·` and the glance card's `321 total` — so each of them has to be the sum of
+  // what is underneath it. Neither may go back to reading the segment straight.
+  for (const [who, rel] of [
+    ['the Combat tab', '../src/renderer/src/features/combat/SegmentPanel.tsx'],
+    ['the Overview card', '../src/renderer/src/features/overview/DpsCard.tsx']
+  ] as const) {
+    assert.match(src(rel), /\bpanelTotals\s*\(/, `${who} headlines something other than its own panel`)
+  }
+  // …and the SegmentHeader takes the pair rather than reaching for `seg.outTotal` behind the
+  // caller's back — including the active-time rate in brackets beside it, which used to be the
+  // segment's while the headline was the panel's.
+  const header = src('../src/renderer/src/features/combat/SegmentHeader.tsx')
+  assert.doesNotMatch(header, /seg\.out(Total|Dps)\b/, 'the header reads the raw segment aggregate again')
+  assert.doesNotMatch(header, /seg\.activeDps\b/, 'the (act …) note reads the raw segment rate again')
+
+  // THE DELIBERATE DIVERGENCE, pinned so that changing it is a decision rather than a drift: the
+  // floating meters' crumb figure is LABELLED `all` and states the whole segment on purpose
+  // (JOS-158, owner direction with a screenshot). A labelled aggregate may cover the fight; an
+  // unlabelled one over a list may not. If this ever becomes panel-scoped, the WORD has to move
+  // with it — which is what this assertion makes impossible to forget.
+  const overlay = src('../src/renderer/src/overlay/meterBars.tsx')
+  assert.doesNotMatch(overlay, /\bpanelTotals\s*\(/, 'the overlay crumb went panel-scoped while still saying "all"')
+  assert.match(overlay, /formatRate\(seg\.outDps\)/, 'the overlay crumb no longer states the segment it labels')
 })
 
 test('NO SECOND PANEL, NO CATEGORY LEVEL: the multi-attack readout is a per-ability inline expansion', () => {
