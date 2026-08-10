@@ -16,6 +16,13 @@
 // monitor the overlay is on, and nothing in this app would otherwise notice). Both go through the
 // same function, so a window can never be created by one rule and corrected by another.
 //
+// THE SEAM IS DELIBERATELY THE ONLY ONE. Two nearby asks are on the owner's desk and NEITHER is
+// built here: pinning overlays to a chosen monitor, and snapping them to a grid. Both are further
+// constraints on the same question this file answers — "given what the user wants and what exists,
+// where does this window go" — so both land in `overlayFittedBounds` (and, for a snap, on the
+// user's own move) without disturbing anything below. Nothing here writes to the store, so a future
+// rule can neither be fought by this one nor quietly overwrite what the user chose.
+//
 // WHY THE WATCH IS DEBOUNCED. A single dock/undock is a BURST of screen events — a removal, an
 // addition and several metrics changes as Windows re-lays-out what is left — and the work areas
 // are not final until it settles. Reconciling on the first one would place windows against an
