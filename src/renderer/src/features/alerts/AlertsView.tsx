@@ -44,6 +44,7 @@ import AlertsToolbar from './AlertsToolbar'
 import UpgradeOffers from './UpgradeOffers'
 import { useUpgradeOffers } from './lineIntel'
 import { useAlertsStore, type AlertsStore } from './useAlertsStore'
+import { useAlertFilter } from './useAlertFilter'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 import ShareImportDialog from '../profiles/ShareImportDialog'
 import { copyText } from '../../lib/clipboard'
@@ -272,6 +273,9 @@ export default function AlertsView({
   const store = useAlertsStore()
   const { alerts, prefs, sortedPacks, history, persistAlerts, removeAlert } = store
   const voiceSetup = useVoiceSetupNotice(onOpenVoicePrefs)
+  // Local search over every facet an alert carries (JOS-178). It narrows the LIST and nothing
+  // else: every alert still fires, whatever the box says.
+  const filter = useAlertFilter(alerts, sortedPacks)
 
   const edit = useEditDialog()
   const reset = useResetConfirm(store)
@@ -289,6 +293,7 @@ export default function AlertsView({
         prefs={prefs}
         onPrefsDrag={store.setPrefs}
         onPrefsCommit={(next) => void store.persistPrefs(next)}
+        search={filter}
         hasAlerts={alerts.length > 0}
         onOpenPacks={() => setSoundSurface('packs')}
         onOpenMySounds={() => setSoundSurface('mine')}
@@ -302,10 +307,11 @@ export default function AlertsView({
 
       {/* Alert list */}
       <AlertList
-        alerts={alerts}
+        alerts={filter.visible}
         history={history}
         packs={sortedPacks}
         voiceSetup={voiceSetup}
+        filtering={filter.filtering}
         onAddSuggestion={() => setSuggestOpen(true)}
         handlers={{
           onPersist: (def) => void persistAlerts(def),

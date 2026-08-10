@@ -135,7 +135,11 @@ const ALERT_ROW_PAPER_SX = {
   // The grip rests with the action cluster and comes up with it (JOS-175) — it is a control the
   // row offers, not a decoration it wears.
   '& .alertRowGrip': { opacity: 0.45, transition: 'opacity 120ms ease' },
-  '&:hover .alertRowGrip, &:focus-within .alertRowGrip': { opacity: 1 }
+  '&:hover .alertRowGrip, &:focus-within .alertRowGrip': { opacity: 1 },
+  // …and while a search is narrowing the list it rests LOWER and never comes up (JOS-178). Greyed
+  // rather than gone: a control that vanishes reads as a bug, and the row would change shape under
+  // the first keystroke.
+  '& .alertRowGripOff': { opacity: 0.22 }
 } as const
 
 /**
@@ -181,25 +185,29 @@ function DropIndicator({ index, y }: { index: number; y: number }): JSX.Element 
   )
 }
 
-/** The grip: drag it, or focus it and press the arrow keys (useAlertReorder.ts). */
-function AlertRowGrip({
-  name,
-  grip
-}: {
-  name: string
-  grip: ReturnType<AlertReorder['gripProps']>
-}): JSX.Element {
+/**
+ * The grip: drag it, or focus it and press the arrow keys (useAlertReorder.ts).
+ *
+ * WHEN A SEARCH IS ON, IT IS GREY AND SAYS SO IN SIX WORDS (JOS-178). The hint is a native `title`
+ * — no popper may live in this file (JOS-143, and tests/tooltipCursor.test.mts enforces it) — and
+ * `aria-disabled` rather than `disabled`, because MUI's disabled button takes no pointer events at
+ * all and a hint nobody can hover is not a hint. Nothing is wired behind it either way: the hook
+ * has already withdrawn the drag source and the arrow keys.
+ */
+function AlertRowGrip({ name, id, reorder }: { name: string; id: string; reorder: AlertReorder }): JSX.Element {
+  const on = reorder.canReorder
   return (
     <IconButton
       size="small"
-      className="alertRowGrip"
+      className={on ? 'alertRowGrip' : 'alertRowGripOff'}
       data-testid="alert-reorder-grip"
       // The title says the pointer gesture; the aria-label says BOTH, because the keyboard path is
       // the only one a screen-reader user has.
-      title="Drag to reorder"
-      aria-label={`Reorder ${name}: drag, or press the up and down arrow keys`}
-      sx={{ cursor: 'grab', '&:active': { cursor: 'grabbing' }, ml: -0.75, mr: -0.25 }}
-      {...grip}
+      title={on ? 'Drag to reorder' : 'Clear the search to reorder'}
+      aria-label={`Reorder ${name}: ${on ? 'drag, or press the up and down arrow keys' : 'clear the search to reorder'}`}
+      aria-disabled={!on}
+      sx={{ cursor: on ? 'grab' : 'default', '&:active': { cursor: on ? 'grabbing' : 'default' }, ml: -0.75, mr: -0.25 }}
+      {...reorder.gripProps(id)}
     >
       <DragIndicatorIcon fontSize="small" />
     </IconButton>
@@ -358,7 +366,7 @@ function AlertRow({
         {/* The grip travels with the enable switch: one 'toggle' cell, so both row shapes (wide
             and tight, above) keep their column edges exactly as they were. */}
         <Box sx={{ gridArea: 'toggle', display: 'flex', alignItems: 'center' }}>
-          <AlertRowGrip name={def.name} grip={reorder.gripProps(def.id)} />
+          <AlertRowGrip name={def.name} id={def.id} reorder={reorder} />
           <Switch
             size="small"
             checked={def.enabled}
@@ -411,19 +419,23 @@ export default function AlertList({
   history,
   packs,
   voiceSetup,
+  filtering,
   onAddSuggestion,
   handlers
 }: {
+  /** The rows to show — already narrowed by the search box, in the user's stored order. */
   alerts: AlertDef[]
   history: Record<string, AlertFireRecord[]>
   packs: SoundPack[]
   /** One answer for the whole list: is there a voice to speak with, and how to go fix it. */
   voiceSetup: VoiceSetupNotice
+  /** Is a search narrowing this list right now (JOS-178)? It is what turns reorder off. */
+  filtering: boolean
   onAddSuggestion: () => void
   handlers: AlertRowHandlers
 }): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const reorder = useAlertReorder(alerts, handlers.onReorder)
+  const reorder = useAlertReorder(alerts, handlers.onReorder, !filtering)
 
   const toggleExpanded = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -448,8 +460,10 @@ export default function AlertList({
       )}
       <Stack spacing={1}>
         {alerts.length === 0 && (
-          <Typography variant="body2" color="text.secondary">
-            No alerts yet. Add one to play a sound when something happens in your log.
+          <Typography variant="body2" color="text.secondary" data-testid="alerts-empty">
+            {filtering
+              ? 'No alerts match that search.'
+              : 'No alerts yet. Add one to play a sound when something happens in your log.'}
           </Typography>
         )}
         {alerts.map((def) => (
