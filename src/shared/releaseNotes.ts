@@ -184,6 +184,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'Overlay auto-hide and the cursor ring keep working for a whole session on machines where they used to go quietly dead a second after launch. The little watcher behind them asked Windows a process question that some machines - ones with damaged performance counters, or security software that blocks process listings - answer wrongly for programs that are plainly running, and it read that wrong answer as its cue to shut down. It now asks the system directly, so the overlays hide when you leave the game and the ring only ever draws over it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Searching the Loot page now finds items you own but never looted - anything your inventory export knows about turns up by name, spelled the way the game spells it, and its page states how many you hold beside how many times you looted it. The Loot page and the Plane of Sky view can no longer disagree about whether you have an item.',
+        fromReport: true
       }
     ]
   },
