@@ -142,6 +142,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'Dozens of spells the wiki describes with a placeholder name - Odium, Tangling Weeds, Elnerick\'s Entombment of Ice, the ward and blessing lines, the healing echoes - now open a timer bar when they land. The game says "a rock golem staggers under a dark curse" and the wiki page says "Target staggers under a dark curse", and that one word was the difference between a bar and nothing at all. Forty-four spells were checked against real logs and fixed together, so this is not one spell learning to work.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A boss pull starts when you pull the boss. A mez you cast on something else used to keep the previous skirmish open long after everything in it was dead, so the next fight opened as much as a minute early and its meter carried a scrap of the fight before it. A hold now lasts only as long as the mob it was cast on - it ends the moment that mob dies or leaves - and it is never claimed by your own charmed pet, which happens more than you would think when your pet and the things you are killing share a name. Mezzing one mob and taking your time with the other still holds the pull open exactly as before.'
       }
     ]
   },
