@@ -163,6 +163,16 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Items you keep in the Dragon\'s Hoard now count. If the game writes them into a part of the inventory dump the app had never been shown - which is exactly what the hoard does - they used to be read and then thrown away, so a Plane of Sky weapon sitting in storage read as one you did not own. The app now reads every table the dump contains rather than only the two it could name, so anything the file lists is yours wherever the game filed it. What you are wearing still comes from your equipment alone, so nothing in storage can turn up on your character sheet.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The /outputfile line now tells you how to type it so the dump is complete. Press How and you get the order: stand at a banker, open your Bank, open the Dragon\'s Hoard - it only dumps while its window is open - open your Tradeskill Depot if you use it, and only then type the command. A dump made without those windows up is not an error and does not look like one; it is a perfectly good file that quietly leaves whole storages out, which is how banked and hoarded items go missing from a tab that is otherwise right. It also says the one thing no order of typing can fix: Wind Runes and other currency-tab items are never in the dump at all.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
     ]
