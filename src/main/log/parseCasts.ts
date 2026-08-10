@@ -19,6 +19,12 @@ const UNCHARM_RE = /^Your (.+?) spell has worn off of (.+?)\.$/
 // (poisoned/diseased) and unrelated spell notices (smitten/overwritten) are NOT CC
 // and are excluded. `ensnared` is a root (a hold), so it counts.
 const CC_APPLY_RE = /^(.+?) has been (?:mesmerized|enthralled|entranced|ensnared)\.$/
+// The CC BREAK ANNOTATION (JOS-180): "<mob> has been awakened by <name>." — one shape, measured
+// over the whole log (1,518 occurrences, zero variants; `by` is the player 1,364 times, a group
+// member or a mob for the rest). It was `{kind:'unknown'}` before this rule existed, so it can
+// neither shadow nor be shadowed. Anchored end-to-end so the zone name `The Plane of Fear - Solo 1
+// (Awakened)` and the mob tier suffix `(Awakened)` cannot reach it.
+const CC_WAKE_RE = /^(.+?) has been awakened by (.+?)\.$/
 // Pet-ownership claim (direct tell). Two phrasings, both pet-only in the real log:
 //   "<Name> told you, 'Attacking <target> Master.'"
 //   "<Name> told you, 'I am unable to wake <mob>, Master.'"
@@ -289,6 +295,31 @@ export function classifyCcApply({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEv
     }
   }
   return null
+}
+
+/**
+ * The CROWD-CONTROL BREAK (JOS-180) — `<mob> has been awakened by <name>.`
+ *
+ * WHY THE PARSER CARRIES IT. `Your <S> spell has worn off of <mob>.` is the same sentence whether
+ * the mez ran its course or a nuke ended it two seconds in, and the duration learner cannot tell
+ * those apart from the wear-off alone — which is the whole of JOS-180's trap (a learner fed break
+ * spans settles below the real duration, culls every full-length hold before its wear-off arrives,
+ * and can never climb back out). This line is the only thing in the log that names the difference.
+ *
+ * IT CLOSES NOTHING, AND THE MEASUREMENT IS WHY (see CcWakeEvent for the full tally): the wear-off
+ * line always comes FIRST and in the same second, so by the time this arrives the hold is already
+ * closed and its sample already minted. The consumer's job is to go back and mark that sample
+ * CENSORED, never to end a second thing.
+ *
+ * It sits directly beneath `classifyCcApply` — the same family, the other end of the hold — and
+ * beneath rather than above so the four APPLICATION sentences are always offered to the
+ * application rule first. Neither can shadow the other (`awakened` is in neither pattern).
+ */
+export function classifyCcWake({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+  if (!text.includes(' has been awakened by ')) return null
+  const m = CC_WAKE_RE.exec(text)
+  if (!m) return null
+  return { kind: 'ccWake', seq, ts, raw, mob: norm(m[1]), by: norm(m[2]) }
 }
 
 /** Pet-ownership claim (direct tell ⇒ the named entity is your pet). */

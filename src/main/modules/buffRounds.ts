@@ -180,11 +180,23 @@ export class HoldGroup {
     for (const h of this.holds) h.clean = false
   }
 
-  /** Drop every landing older than `cutoffTs` — the hygiene sweep's half of the bookkeeping. */
-  dropExpired(cutoffTs: number): number {
-    const before = this.holds.length
-    while (this.holds.length > 0 && this.holds[0].startedTs <= cutoffTs) this.holds.shift()
-    return before - this.holds.length
+  /**
+   * Drop every landing older than `cutoffTs` — the hygiene sweep's half of the bookkeeping — and
+   * hand the dropped landings BACK, oldest first.
+   *
+   * IT STILL MINTS NOTHING, AND THE RETURN VALUE DOES NOT CHANGE THAT (JOS-180). A cull is not an
+   * observation: nobody saw the hold end, so there is no span to learn from and this method has no
+   * business inventing one. What the caller gets back is the landing itself — a START time and its
+   * `clean` flag — so a break line that arrives AFTER the cull can still be matched to the landing
+   * it belongs to and measured through the ordinary rules. The difference is the whole of JOS-180:
+   * the cull throwing the landing on the floor is what made a wear-off arriving one grace-period
+   * late teach the learner nothing, forever. Retiring the ROW is unchanged and stays law
+   * (JOS-149/156); only the memory of what was on it survives, and only in the module above.
+   */
+  dropExpired(cutoffTs: number): Hold[] {
+    let n = 0
+    while (n < this.holds.length && this.holds[n].startedTs <= cutoffTs) n += 1
+    return this.holds.splice(0, n)
   }
 
   /**

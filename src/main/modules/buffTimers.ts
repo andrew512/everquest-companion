@@ -47,6 +47,30 @@
 // whose mob name happened to be unique. Fed to the estimator that reads 44 s where it read 24 s,
 // and it climbs toward the reporter's own 46 s as unique-name cycles accumulate. Fifty-six cycles
 // are refused, which is the point.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// WHAT JOS-180 CHANGED: THE LEARNER COULD ONLY EVER LEARN THROUGH A LIVE ROW, AND THE ROW DIES.
+//
+// `closeOne` is the only mint on this path and it is reachable only through a hold that is still
+// standing; the hygiene cull retires a hold at estimate + grace (15 s once the estimate is
+// 'observed', JOS-149/156). Those two facts together are a RATCHET IN THE WRONG DIRECTION: the
+// moment break-shortened cycles drag the learned number below the true duration, every full-length
+// hold is culled before its wear-off arrives, the wear-off closes nothing, and no observation that
+// could correct the number can ever be made again.
+//
+// Measured on the owner's own bytes, Sun Aug 09 2026: Dazzle IV on a turmoil toad landed 22:45:14
+// and wore off 22:47:30 — 136 s, the first witnessed full-duration Dazzle cycle in a 1.5M-line log.
+// The bar said 100 s (five early breaks, the longest a 115 s reading the sixth had already evicted),
+// so the row died at 22:47:09 and the wear-off 21 s later taught nothing.
+//
+// THE FIX IS IN THREE PIECES AND ONLY THE MIDDLE ONE IS HERE:
+//   1. the LATE-JOIN MEMORY ({@link LateJoin}) — a culled landing stays measurable on a DB-floor
+//      schedule, so a break line that arrives after the row is gone still mints, through the same
+//      cleanliness rules. The ROW cull itself is UNTOUCHED and stays law.
+//   2. the WAKE ANNOTATION (`censorWake`, {@link WAKE_CENSOR_MS}) — `<mob> has been awakened by
+//      <name>.` marks the sample its wear-off just minted as a broken cycle.
+//   3. the SPLIT WINDOW (buffsStats.ts `observedWindowMaxFor`) — where a censored sample is kept as
+//      a lower bound but can no longer evict a full-length one. The rule is written there.
 
 import type { LogEvent } from '../../shared/logEvents'
 import type { BuffTimersDelta, BuffTimersSnap, CcEnd, CcHold } from '../../shared/buffTimers'
@@ -84,6 +108,20 @@ export const CC_END_MEMORY_MS = 60_000
  * owner's ruling and the accepted cost are stated once in buffsShapes.ts.
  */
 export const CC_END_GRACE_MS = 30_000
+
+/**
+ * How close to a mint a `<mob> has been awakened by <name>.` line must land to be talking about it
+ * (JOS-180).
+ *
+ * ONE SECOND, because EQ stamps are second-resolution and the pair is always inside one stamp.
+ * MEASURED over the owner's whole log: of 1,518 wake lines, 1,472 share the exact second of that
+ * mob's own wear-off, and in all 1,472 the wear-off comes FIRST (1,462 of them on the very next
+ * line). The one wake 27 s from a wear-off belongs to a different cycle of the same mob name, and
+ * 45 more have no wear-off within 30 s at all — a hold somebody else was maintaining. Anything
+ * tighter than a second cannot be expressed by the log; anything looser starts claiming the
+ * previous cycle.
+ */
+export const WAKE_CENSOR_MS = 1_000
 
 /**
  * The bound on a hold whose duration NOBODY states. It is the LONGEST stated CC duration in the
@@ -139,6 +177,56 @@ interface Held {
   group: HoldGroup
 }
 
+/**
+ * A CULLED LANDING THE MODEL STILL REMEMBERS — the late-join memory (JOS-180).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE TRAP IT EXISTS TO BREAK, measured on the owner's bytes 2026-08-09. A CC duration sample can
+ * only be minted through `closeOne`, which is reachable only through a LIVE hold; and a hold is
+ * culled at estimate + grace (15 s once the estimate is 'observed'). So the instant a run of
+ * break-shortened cycles drags the learned number below the real duration, every full-length hold
+ * is culled BEFORE its wear-off arrives, the wear-off closes nothing, and the estimate can never
+ * climb back out. Dazzle IV: real duration 136 s, learned 100 s from breaks, hold culled at 115 s,
+ * the first witnessed full cycle in the whole log destroyed 21 s later by its own bar.
+ *
+ * WHAT THIS IS AND — LOUDLY — WHAT IT IS NOT. It is a MEMORY, not a hold. The ROW still dies on
+ * schedule: JOS-149/156's anti-squatting rule is the owner's ruling from live testing and is
+ * untouched here, so nothing on screen comes back, no `ends` entry is invented, and the projection
+ * sees exactly what it saw before. All that survives the cull is the landing's START TIME and its
+ * `clean` flag, held privately, so that if the break line does eventually arrive it can be measured
+ * against the landing it belongs to. A cull remains not-evidence; a wear-off remains evidence.
+ *
+ * THE JOIN WINDOW IS DB-FLOOR-SCALE, and that is the point. Remembering for the CULLED schedule
+ * would be circular — that schedule is the underestimate. The floor `spells.json` states is the one
+ * number in the system a bad observation cannot drag down, so the memory lives until
+ * `dbFloor + unwitnessedTimeoutMs('db')`: the same 60 s slack JOS-156 gives a hold that has learned
+ * nothing, measured from the same DB row. (For Dazzle that is 96 s + 60 s = 156 s, and the real
+ * wear-off lands at 136 s.) With no DB row there is no floor and the live hold was already governed
+ * by {@link CC_UNKNOWN_CAP_MS}, so the memory simply matches it. It is never SHORTER than the
+ * schedule the live row had, or the memory would expire before the thing it remembers.
+ */
+interface LateJoin {
+  /** Canonical mob key — the entity half; the map key pairs it with `lineKey`. */
+  entityKey: string
+  lineKey: string
+  caster: string
+  /** The RANKED display name, for the sample's label. */
+  spell: string
+  /** When the landing happened. The span a late break measures is `breakTs - startedTs`. */
+  startedTs: number
+  /** The last event ts at which this memory may still be joined. */
+  joinableUntil: number
+}
+
+/** One sample this module just minted, kept only long enough for a wake line to annotate it. */
+interface RecentMint {
+  entityKey: string
+  lineKey: string
+  caster: string
+  /** The ts the sample was closed at — {@link SpellStats.censorSampleAt}'s join key. */
+  ts: number
+}
+
 /** Write the estimator's answer onto a hold. The absent `source` is deleted, never set to
  *  undefined, so the snapshot's optional field stays absent rather than explicitly nothing. */
 function setDuration(held: Held, est: { ms: number | null; source?: 'db' | 'observed' }): void {
@@ -152,6 +240,10 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
 
   private holds = new Map<string, Held>()
   private ends: CcEnd[] = []
+  /** Culled landings a late break line may still be measured against — see {@link LateJoin}. */
+  private culled = new Map<string, LateJoin>()
+  /** Samples minted within the last {@link WAKE_CENSOR_MS}, awaiting a possible wake annotation. */
+  private recentMints: RecentMint[] = []
   private lastEventTs = 0
   private dirty = false
 
@@ -178,6 +270,8 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
   reset(): void {
     this.holds = new Map()
     this.ends = []
+    this.culled = new Map()
+    this.recentMints = []
     this.lastEventTs = 0
     this.rev = 0
     this.dirty = false
@@ -233,6 +327,14 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
         // and the kind reads the spell's nature).
         this.apply(ev.mob, ev.ts, ev.candidates)
         break
+      case 'ccWake':
+        // THE BREAK ANNOTATION (JOS-180). It ENDS NOTHING — the wear-off line that precedes it in
+        // the same second already did, and closing a second landing here would delete a hold on
+        // another mob of that name. All it does is go back and mark the sample that wear-off just
+        // minted as CENSORED, so a run of broken mezzes cannot evict the full-length cycle the
+        // learner is waiting for. See shared/logEvents.ts CcWakeEvent for the measurement.
+        this.censorWake(idKey(ev.mob), ev.ts)
+        break
       case 'uncharm':
         // Charm and CC break through the SAME sentence family; a charm break on a mob we were
         // also holding is that hold ending too. The line NAMES the charm spell, so it closes that
@@ -280,6 +382,10 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
     const own = cands.filter((c) => this.anchors.namedAnchorFor(c.name, ts) != null)
     if (own.length === 0) return
     const id = this.resolveCc(own, ts)
+    // A FRESH LANDING RETIRES THE MEMORY OF THE OLD ONE (JOS-180). Whatever that mob was holding
+    // before, this line proves it is holding this now, and the next break sentence on this name
+    // belongs to the live hold rather than to a landing the cull already gave up on.
+    if (id.lineKey !== '') this.culled.delete(`${idKey(mob)}|${id.lineKey}`)
     const held = this.ensureHold(mob, id, cands, own)
 
     // The Buffs TAB lists every line the model has knowledge about, and a mez is now one of them —
@@ -365,17 +471,18 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
    */
   private end(entityKey: string, ts: number, spell?: string, mint = true): void {
     const line = spell != null ? spellKey(spell) : null
-    let closedAny = false
-    for (const [key, held] of [...this.holds]) {
-      if (held.entityKey !== entityKey) continue
-      // A named break line closes only the matching LINE; an anonymous one (a death, a charm
-      // break) closes every hold on that mob, because the mob itself is gone.
-      if (line != null && held.lineKey !== '' && held.lineKey !== line) continue
-      this.closeOne(held, ts, mint)
-      closedAny = true
-      if (held.group.empty) this.holds.delete(key)
-      this.dirty = true
-      this.rev += 1
+    const closedAny = this.closeLive(entityKey, line, ts, mint)
+    if (mint) {
+      // THE LATE JOIN (JOS-180). Only when NOTHING live was closed — a live hold is always the
+      // better answer, and preferring it is what keeps this from ever competing with the ordinary
+      // path. Only for a break line that NAMES its spell, because a landing has to be identified
+      // to be measured; an anonymous ending (a death) is handled below by forgetting instead.
+      if (!closedAny && line != null) this.lateJoin(entityKey, line, ts)
+    } else {
+      // A CORPSE ENDS THE MEMORY TOO. `mint:false` is a death, and land-to-death is not a duration
+      // (JOS-156's ruling, applied to the remembered landing for the same reason it applies to a
+      // live one). Forget every line we were still holding open for this mob.
+      this.forgetCulled(entityKey)
     }
     // A death line for a mob we were never holding ends nothing and is not recorded: the buffs
     // model already censors that mob's debuff instances itself (`onEntityDeath`), so an end
@@ -391,6 +498,26 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
   }
 
   /**
+   * Close the LIVE holds this ending applies to. Returns whether it found any — which is what
+   * decides between the ordinary path and the late join.
+   */
+  private closeLive(entityKey: string, line: string | null, ts: number, mint: boolean): boolean {
+    let closedAny = false
+    for (const [key, held] of [...this.holds]) {
+      if (held.entityKey !== entityKey) continue
+      // A named break line closes only the matching LINE; an anonymous one (a death, a charm
+      // break) closes every hold on that mob, because the mob itself is gone.
+      if (line != null && held.lineKey !== '' && held.lineKey !== line) continue
+      this.closeOne(held, ts, mint)
+      closedAny = true
+      if (held.group.empty) this.holds.delete(key)
+      this.dirty = true
+      this.rev += 1
+    }
+    return closedAny
+  }
+
+  /**
    * Close this hold's OLDEST landing, minting a sample when that landing was a clean cycle — and
    * when the line that ended it is one a duration may be learned from at all. `mint: false` (a
    * death) contaminates the whole group first, so neither this landing nor the ones still standing
@@ -402,10 +529,73 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
     const closed = held.group.closeOldest(ts)
     const sample = closed?.sampleMs
     if (sample == null || sample <= 0 || sample > MAX_SAMPLE_MS) return
-    this.stats.pushSample(held.lineKey, held.caster, held.spell ?? held.candidates[0] ?? held.lineKey, sample)
+    this.mintSample(
+      { entityKey: held.entityKey, lineKey: held.lineKey, caster: held.caster, ts },
+      held.spell ?? held.candidates[0] ?? held.lineKey,
+      sample
+    )
+  }
+
+  /**
+   * Record one duration sample and re-read every bar it could move.
+   *
+   * The mint is REMEMBERED for {@link WAKE_CENSOR_MS} (`recentMints`) so the wake line that follows
+   * a break — always afterwards, always in the same second — can find the sample it explains. That
+   * is the only reason this is a method rather than two lines inside `closeOne`: the late-join path
+   * mints too, and both have to be annotatable or the censoring would depend on which route the
+   * sample took.
+   */
+  private mintSample(at: RecentMint, display: string, sampleMs: number): void {
+    this.stats.pushSample(at.lineKey, at.caster, display, { ms: sampleMs, ts: at.ts })
+    this.recentMints.push(at)
     // Re-read the estimate for every live hold of this line: a sample that just beat the DB floor
     // must move the bars that are still counting, not only the next cast's.
-    this.restatLine(held.lineKey, held.caster)
+    this.restatLine(at.lineKey, at.caster)
+  }
+
+  /**
+   * A break line for a mob whose hold the cull already took — measure it against the landing this
+   * module still remembers (JOS-180; the ruling and the join window are on {@link LateJoin}).
+   *
+   * IT MINTS THROUGH THE SAME CLEANLINESS RULES and adds none of its own: only a landing that was
+   * `clean` when it was culled is ever remembered, so a family that never narrowed, a round of two,
+   * a refresh, a rank change and a contaminated group are all refused here exactly as they are on
+   * the live path. The memory is CONSUMED whether or not the span turns out to be usable — a second
+   * break sentence for the same landing is not a second observation of it.
+   */
+  private lateJoin(entityKey: string, lineKey: string, ts: number): void {
+    const key = `${entityKey}|${lineKey}`
+    const mem = this.culled.get(key)
+    if (!mem) return
+    this.culled.delete(key)
+    if (ts > mem.joinableUntil) return
+    const span = ts - mem.startedTs
+    if (span <= 0 || span > MAX_SAMPLE_MS) return
+    this.mintSample({ entityKey, lineKey, caster: mem.caster, ts }, mem.spell, span)
+  }
+
+  /** Every remembered landing on one mob is forgotten (a death, and nothing else calls it). */
+  private forgetCulled(entityKey: string): void {
+    for (const [key, mem] of this.culled) {
+      if (mem.entityKey === entityKey) this.culled.delete(key)
+    }
+  }
+
+  /**
+   * `<mob> has been awakened by <name>.` — mark whatever this mob's break just minted as censored.
+   *
+   * Nothing is closed and nothing is displayed differently: the estimate is a MAX over both sample
+   * windows, so the number does not move today. What moves is tomorrow — a censored sample can no
+   * longer evict a full-length one (buffsStats.ts `observedWindowMaxFor` states the rule).
+   */
+  private censorWake(entityKey: string, ts: number): void {
+    for (const m of this.recentMints) {
+      if (m.entityKey !== entityKey || ts - m.ts > WAKE_CENSOR_MS || ts < m.ts) continue
+      if (!this.stats.censorSampleAt(m.lineKey, m.caster, m.ts)) continue
+      this.restatLine(m.lineKey, m.caster)
+      this.dirty = true
+      this.rev += 1
+    }
   }
 
   /** Re-read the estimator for every live hold of one (line, caster) after a sample landed. */
@@ -425,12 +615,15 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
       // squatting at 0s. It mints nothing and records no end, because nothing was observed.
       const life =
         held.durationMs != null ? held.durationMs + unwitnessedTimeoutMs(held.source) : CC_UNKNOWN_CAP_MS
-      if (held.group.dropExpired(nowMs - life) > 0) {
+      const dropped = held.group.dropExpired(nowMs - life)
+      if (dropped.length > 0) {
+        this.remember(held, dropped, life)
         this.dirty = true
         this.rev += 1
       }
       if (held.group.empty) this.holds.delete(key)
     }
+    this.sweepMemories(nowMs)
     if (this.ends.length > 0) {
       const keep = this.ends.filter((e) => nowMs - e.ts <= CC_END_MEMORY_MS)
       if (keep.length !== this.ends.length) {
@@ -441,7 +634,46 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
     }
   }
 
+  /**
+   * File the CLEAN landings a cull just dropped, so a break line arriving late can still find them.
+   *
+   * Only clean ones: a contaminated landing could not have minted on the live path either, and
+   * remembering it would be a second, laxer set of rules for the same question. `lineKey` is
+   * necessarily non-empty for a clean landing — `apply` contaminates every family row — so the
+   * memory can always be keyed by (entity, line).
+   */
+  private remember(held: Held, dropped: readonly { startedTs: number; clean: boolean }[], liveLifeMs: number): void {
+    const dbMs = this.stats.dbDurationFor(held.lineKey)
+    // The DB floor's own schedule, never shorter than the one the row actually had — see LateJoin.
+    const window = Math.max(liveLifeMs, dbMs != null ? dbMs + unwitnessedTimeoutMs('db') : CC_UNKNOWN_CAP_MS)
+    for (const h of dropped) {
+      if (!h.clean) continue
+      this.culled.set(`${held.entityKey}|${held.lineKey}`, {
+        entityKey: held.entityKey,
+        lineKey: held.lineKey,
+        caster: held.caster,
+        spell: held.spell ?? held.candidates[0] ?? held.lineKey,
+        startedTs: h.startedTs,
+        joinableUntil: h.startedTs + window
+      })
+    }
+  }
+
+  /** Retire memories past their join window, and mints too old for a wake line to be about. */
+  private sweepMemories(nowMs: number): void {
+    for (const [key, mem] of this.culled) {
+      if (nowMs > mem.joinableUntil) this.culled.delete(key)
+    }
+    if (this.recentMints.length > 0) {
+      this.recentMints = this.recentMints.filter((m) => nowMs - m.ts <= WAKE_CENSOR_MS)
+    }
+  }
+
   private clearHolds(): void {
+    // The memories go with them: a zone is world-model law 4's censor, and a landing you left
+    // behind is one whose break line you will never see (JOS-180 changes what a cull remembers,
+    // never what a censor forgets).
+    this.culled = new Map()
     if (this.holds.size === 0) return
     this.holds = new Map()
     this.dirty = true
@@ -452,6 +684,8 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
     const had = this.holds.size > 0 || this.ends.length > 0
     this.holds = new Map()
     this.ends = []
+    this.culled = new Map()
+    this.recentMints = []
     if (had) {
       this.dirty = true
       this.rev += 1

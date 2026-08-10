@@ -466,6 +466,33 @@ export interface CcEvent extends LogEventBase {
 }
 
 /**
+ * `<Mob> has been awakened by <Name>.` — a crowd-control hold that somebody BROKE (JOS-180).
+ *
+ * It is the log naming the cause of an ending the wear-off sentence describes without explaining.
+ * `Your <S> spell has worn off of <mob>.` is printed identically whether a mez ran its full course
+ * or a nuke ended it at two seconds (world-model law 3's censoring, stated in buffsStats.ts), and
+ * that ambiguity is what made JOS-180: a learner fed break spans as if they were durations settles
+ * BELOW the real one and can never climb back. This line is the missing half of the pair.
+ *
+ * IT IS AN ANNOTATION, NEVER AN ENDING. The hold is already closed by the wear-off line that
+ * precedes it — MEASURED over the owner's whole log (1,518 wakes): 1,472 of them share the exact
+ * second of that mob's wear-off, the wear-off line comes FIRST in every single one (1,462 of them
+ * immediately adjacent), one sits 27 s from an unrelated cycle, and 45 have no wear-off within
+ * 30 s at all. So a consumer must not close anything on it; `modules/buffTimers.ts` uses it only
+ * to mark the sample the wear-off just minted as CENSORED.
+ *
+ * `by` is whoever the line names — the player, a group member, or a mob that hit it. It is carried
+ * because it is stated, not because anything reads it yet: the censoring rule cares only that the
+ * hold was broken, and by-whom is the same fact regardless of the answer.
+ */
+export interface CcWakeEvent extends LogEventBase {
+  kind: 'ccWake'
+  mob: string
+  /** The name the line states as having broken the hold. Raw (world-model law 2: display raw). */
+  by: string
+}
+
+/**
  * A pet-ownership claim: a line in which a pet identifies YOU as its owner, proving the named
  * entity is your pet. ONE canonical event, TWO log lines that state the same fact — the same
  * shape-to-kind canonicalization `damage` and `resist` already are.
@@ -1340,6 +1367,11 @@ export type LogEvent =
   | CharmEvent
   | UncharmEvent
   | CcEvent
+  // Beside `cc` because it annotates one: the line that says a hold was BROKEN rather than that it
+  // ended (JOS-180). Deliberately NOT in `shared/alertTypes.ts`'s curated `LogEventKind` — it is
+  // parser-internal evidence for the duration learner, and JOS-161's per-song break alerts already
+  // cover "my mez ended" from the `cc {refresh:true}` side.
+  | CcWakeEvent
   | PetClaimEvent
   | PetSayEvent
   | CastBeginEvent

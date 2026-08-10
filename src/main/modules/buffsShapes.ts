@@ -105,7 +105,14 @@ export const EMOTE_WINDOW_MS = 5_000
 /** How many times an emote TEXT must appear adjacent to a cast before it's TRUSTED. */
 export const EMOTE_MIN_OBSERVATIONS = 2
 
-/** Recency-weighted MAX window (Task #34): estimate = MAX over the most recent K samples. */
+/**
+ * Recency-weighted MAX window (Task #34): estimate = MAX over the most recent K samples.
+ *
+ * SINCE JOS-180 IT IS APPLIED TWICE — once over the samples the log gave a cause for and once over
+ * the samples it did not — so a run of break-shortened cycles can never push a full-length one out
+ * of view. The rule and the reasoning live on {@link SpellStats.observedWindowMaxFor}; the number
+ * itself is unchanged and is still the only knob.
+ */
 export const RECENT_SAMPLE_WINDOW = 5
 
 /** The activated-AA name whose burst of self-buff landing messages is trusted confident. */
@@ -217,10 +224,31 @@ export interface Pending {
   emoteSubjectKey?: string
 }
 
+/**
+ * ONE MINED DURATION — a land→end span, the instant the line that ended it arrived, and whether
+ * the log NAMED something that ended it early (JOS-180).
+ *
+ * It used to be a bare number. The `ts` is what lets a line arriving AFTER the mint reach back and
+ * annotate the sample it belongs to — which is the only order the game ever prints the pair in
+ * (`CcWakeEvent` carries the measurement). `censored` is what {@link SpellStats.observedWindowMaxFor}
+ * reads; the rule and its reasoning are written there.
+ */
+export interface DurationSample {
+  /** The measured span in ms. */
+  ms: number
+  /** Event ts (ms) of the line that closed the cycle — the join key for a later annotation. */
+  ts: number
+  /**
+   * True when the log stated a CAUSE for the ending, so the span is a LOWER BOUND on the duration
+   * rather than the duration. One-way, like `Hold.clean`: evidence of doubt does not expire.
+   */
+  censored?: boolean
+}
+
 /** Per-(line, caster) accumulated duration samples + display name. */
 export interface SpellSamples {
   spell: string
-  samples: number[]
+  samples: DurationSample[]
 }
 
 /**
