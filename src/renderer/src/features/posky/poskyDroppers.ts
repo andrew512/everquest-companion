@@ -241,23 +241,32 @@ export function islandLabel(islands: readonly string[]): string {
   return `Islands ${sorted.map((i) => String(islandNumber(i))).join(', ')}`
 }
 
-// ---- the ITEM hover roster (the collapsed summary row's required-item chip) ----
+// ---- the ITEM hover roster (the required-item chip's, and the item name's, hover card) ----
 //
-// JOS-173. Until v0.15.0 each required-item chip anchored `ItemTooltip`, whose lower block printed
-// posky's stated `where` AND a "Drops: <names>" line. JOS-143 deleted every popper on this tab —
-// correctly, they were eating the toolbar's clicks — and carried the DropperCell rosters over to
-// native `title`s, but the chip was given `title={it.where}` alone. So a 0.16.0 player hovering a
-// required item read the single word "Island 5": the WHERE survived and the WHO was gone, which is
-// exactly what the report said. This is that hover, rebuilt as one string a native title can carry.
+// THE SHAPE HAS MOVED TWICE, so the history is worth one paragraph. Until v0.15.0 each
+// required-item chip anchored `ItemTooltip`, whose lower block printed posky's stated `where` AND a
+// "Drops: <names>" line. JOS-143 deleted every popper on this tab — correctly at the time, they
+// were `placement="top"` and INTERACTIVE, so they opened onto QuestFilterBar and ate the clicks
+// aimed at its dropdowns — and carried the DropperCell rosters over to native `title`s; but the
+// chip was given `title={it.where}` alone, so a 0.16.0 player hovering a required item read the
+// single word "Island 5" and reported exactly that. JOS-173 answered with `itemDropTitle`, the whole
+// roster flattened into ONE newline-joined string, because one string is all a title can carry.
 //
-// The order is the sentence the player is asking: what, where, then who. `where` is printed
-// VERBATIM rather than through `islandOf` — the card printed it verbatim too, and "Plane of Sky"
-// (the wind runes' honest "anywhere") is a true answer that the island matcher deliberately drops.
-// Nothing known ⇒ just the name; never a guess (law 1).
+// JOS-181 IS THE OWNER RULING THE TRADE THE OTHER WAY: the rich card comes back to this tab, with
+// the click-eating defect solved in the POPPER instead of by deleting it (lib/KnownItemTooltip's
+// click-through mode — opens downward, cannot flip up, holds no pointer events, closes on
+// pointerdown). So the facts no longer have to fit an OS tooltip, and this is the same derivation
+// handing back the two PARTS a card draws rather than the string that had to join them. Every
+// golden in tests/poskyDroppers.test.mts moved with it, line for line.
+//
+// The order is the sentence the player is asking: where, then who — the card's own header already
+// says WHAT (the item window prints the name). `where` is carried VERBATIM rather than through
+// `islandOf`: the v0.14.0 card printed it verbatim too, and "Plane of Sky" (the wind runes' honest
+// "anywhere") is a true answer that the island matcher deliberately drops. Nothing known ⇒ both
+// parts empty and the caller draws no block at all; never a guess (law 1).
 
 /** The part of an item row the hover roster reads — `ItemProgress` satisfies it structurally. */
-export interface DropTitleItem {
-  name: string
+export interface ItemDropRow {
   /** the posky scrape's raw `who` — the fallback when nothing resolved to a catalog mob */
   who?: readonly string[]
   /** posky's stated location string for this item, e.g. "Island 5" */
@@ -265,22 +274,28 @@ export interface DropTitleItem {
   droppers: readonly DropperMob[]
 }
 
+/** What the card's Drops block draws: posky's location, then one line per mob. */
+export interface ItemDropFacts {
+  /** posky's stated location, verbatim ("Island 5", "Plane of Sky"). Empty when it states none. */
+  where: string
+  /** "Gorgalosk · level 63+ · Plane of Sky" per dropper — or posky's own words when none resolved. */
+  droppers: string[]
+}
+
 /**
- * "Sphinx Claw · Island 5 / Dropped by: / Gorgalosk · level 63+ · Plane of Sky / …" — every fact
- * this tab holds about one required item, one mob per line, for a native `title`.
+ * Every fact this tab holds about one required item, ready for the card's lower block.
  *
- * The whole roster, uncapped: a title has no hit area and no width to blow out, so the display cap
- * that keeps the inline cell to one line buys nothing here.
+ * The whole roster, uncapped: the card is a block of lines with a 380px ceiling, so the display cap
+ * that keeps the inline table cell to ONE line buys nothing here.
  */
-export function itemDropTitle(it: DropTitleItem): string {
-  const where = (it.where ?? '').trim()
-  const head = where === '' ? it.name : `${it.name} · ${where}`
-  const lines =
-    it.droppers.length > 0
-      ? it.droppers.map((m) => dropperFacts(m))
-      : (it.who ?? []).map((w) => w.trim()).filter((w) => w !== '')
-  if (lines.length === 0) return head
-  return [head, 'Dropped by:', ...lines].join('\n')
+export function itemDropFacts(it: ItemDropRow): ItemDropFacts {
+  return {
+    where: (it.where ?? '').trim(),
+    droppers:
+      it.droppers.length > 0
+        ? it.droppers.map((m) => dropperFacts(m))
+        : (it.who ?? []).map((w) => w.trim()).filter((w) => w !== '')
+  }
 }
 
 // ---- the QUEST-level kill set (the collapsed summary row's "Kill: <boss>" caption) ----

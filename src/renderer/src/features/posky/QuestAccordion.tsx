@@ -9,22 +9,22 @@
 // are hovering should take you to the item drill-down page." The click is the app's standing link
 // idiom (`openLoot`, appRouting.ts), the same one the Planner's donor names use.
 //
-// AND THE HOVER CARD IS GONE (JOS-143). Every item name and every required-item chip in this file
-// used to anchor `ItemTooltip` — a `placement="top"`, up-to-380px, pointer-events-taking card. The
-// chips live in the ACCORDION SUMMARY, i.e. the first row under QuestFilterBar, so those cards
-// opened straight across the tab's five dropdowns and ate the clicks aimed at them; that is what
-// the owner reported, and it is the Loot ledger's defect (JOS-127) on a second surface. The
-// direction was removal, not a placement flip or a delay. The expanded panel's table states Dropped
-// by and Where for every item, the reward's stat block is printed under the toolbar, and the CLICK
-// still opens the drill-down, which is the deep dive the hover was only ever a preview of.
+// THE HOVER CARD LEFT AND CAME BACK, AND BOTH MOVES ARE THE SAME DEFECT (JOS-143 → JOS-181).
+// Every item name and every required-item chip in this file used to anchor `ItemTooltip` — a
+// `placement="top"`, up-to-380px, pointer-events-taking card. The chips live in the ACCORDION
+// SUMMARY, i.e. the first row under QuestFilterBar, so those cards opened straight across the tab's
+// five dropdowns and ate the clicks aimed at them; that is what the owner reported, and it is the
+// Loot ledger's defect (JOS-127) on a second surface. JOS-143 removed them; JOS-173 then had to put
+// the roster the chip lost back as a native `title`, because a hover that answers "Island 5" and
+// nothing else is what a player reported next.
 //
-// ONE THING *WAS* LOST WITH IT, AND A PLAYER FOUND IT (JOS-173). JOS-143's "nothing is lost" held
-// for everything except the required-item chip: the card's lower block printed posky's `where` AND
-// a "Drops: <mob names>" line, and only the first was carried over (`title={it.where}`). So a
-// 0.16.0 hover answered "Island 5" and stopped — the who was gone, one CLICK away instead of zero,
-// which is a real loss on the tab's most-hovered surface. The chip's title is `itemDropTitle` now
-// (poskyDroppers.ts): the card's lower block as one string. A native title still mounts no DOM node
-// and holds no pointer events, so the popper rule this file lives under is unchanged.
+// The owner's v0.18.0 ruling is that the card is worth more than the removal — so it returns, with
+// the click-eating fixed IN THE POPPER rather than by deleting it. Every card on this tab is mounted
+// through `SkyItemCard`, which is `KnownItemTooltip` in click-through mode: it opens DOWNWARD and
+// cannot flip up (so it cannot land on the toolbar its anchor sits below), it holds NO pointer
+// events, and it closes on any pointerdown before the control the user aimed at opens its list.
+// The native titles those anchors carried retire with it — the card's own Drops block is the same
+// `itemDropFacts` derivation, and two hover surfaces on one anchor is an OS tooltip racing a popper.
 //
 // WHICH NAMES, AND WHY NOT ALL OF THEM. The two names that had NO click before become links: the
 // item name in the expanded table, and the reward caption in the summary row. The required-item
@@ -56,7 +56,8 @@ import { TurnInBadge, TurnInCounter } from './TurnInControls'
 import type { QuestProgress } from './useProgress'
 import { ItemNameLink, QuestItemsTable } from './QuestItemsTable'
 import { KillTargetCaption } from './DropperCell'
-import { itemDropTitle, questKillTargets, type KillTarget } from './poskyDroppers'
+import { questKillTargets, type KillTarget } from './poskyDroppers'
+import { SkyItemCard } from './SkyItemCard'
 import type { MobTarget } from '../mobs/mobTarget'
 import { sharingQuestLabel, type SharedItem, type SharingQuest } from './sharedItems'
 import { QuestIgnoreButton, QuestStarButton } from '../favorites/QuestFlagButtons'
@@ -97,8 +98,10 @@ function ProgressBar({ q }: { q: QuestProgress }): JSX.Element {
  * `data-reward` attribute is that decision, readable: it states what the chip believes it pays,
  * so "no reward ⇒ nothing to say" can be asserted from outside instead of inferred.
  *
- * The reward used to be an `ItemTooltip` card; since JOS-143 it is a native `title` (no DOM node,
- * no hit area). The stat block it also drew is a click away in the Loot drill-down.
+ * IT KEEPS ITS NATIVE TITLE while the item names took the card back (JOS-181), because it is not an
+ * item-name anchor: the chip names a QUEST, and its title states the relationship — "Reward for
+ * <class> · <quest>: <item>" — which an item card has no place to say. Two hover surfaces on one
+ * anchor is an OS tooltip racing a popper, so it is one or the other, and here the sentence wins.
  */
 function SharingQuestChip({
   sq,
@@ -199,7 +202,11 @@ function QuestSummaryRow({
         <Typography variant="subtitle2">{q.name}</Typography>
         {q.reward && (
           <Typography variant="caption" color="primary.main">
-            → <ItemNameLink name={q.reward} onOpenLoot={onOpenLoot} inSummary />
+            {/* The reward hover, back as a card (JOS-181). No `row`: a reward is not one of the
+                quest's required items, so this tab knows no dropper for it — the card is the item
+                window plus whatever the item DB says it is for, which is the whole question here.
+                The scraped stat text is the fallback when the DB has no block of its own. */}
+            → <ItemNameLink name={q.reward} onOpenLoot={onOpenLoot} inSummary stats={q.rewardStats} />
           </Typography>
         )}
         {q.giver && (
@@ -260,42 +267,37 @@ function QuestItemChips({
           const done = it.have >= it.need
           const fav = isFavorite(it.name)
           return (
-            // These are the chips whose `placement="top"` cards landed on the toolbar (JOS-143):
-            // this Stack is the second line of the collapsed summary, so for the top quest in the
-            // list the card opened over QuestFilterBar itself. The card's facts are in the
-            // expanded panel's table one click below, and the roster rides a native title here so
-            // the collapsed row still answers "who drops this, and where" without a popper.
-            //
-            // THE TITLE IS THE WHOLE ROSTER, NOT JUST THE ISLAND (JOS-173). JOS-143 carried the
-            // card's `where` over and left its "Drops:" line behind, so a 0.16.0 hover said
-            // "Island 5" and nothing else — the report. `itemDropTitle` is the card's lower block
-            // as one string; still a native title, so the popper guarantee is untouched.
-            <Chip
-              key={it.name}
-              size="small"
-              // The anchor tests/e2e/sky-dropdowns.e2e.mts hovers: this is the chip whose card
-              // used to open onto the toolbar, so the spec that proves it no longer can needs to
-              // be able to name it.
-              data-testid="posky-item-chip"
-              variant={fav ? 'filled' : 'outlined'}
-              color={fav ? 'warning' : done ? 'success' : 'default'}
-              title={itemDropTitle(it)}
-              icon={
-                fav ? (
-                  <StarIcon />
-                ) : done ? (
-                  <CheckCircleIcon />
-                ) : (
-                  <RadioButtonUncheckedIcon />
-                )
-              }
-              onClick={(e) => {
-                e.stopPropagation()
-                toggleFavorite(it.name)
-              }}
-              label={it.need > 1 ? `${it.name} ${it.have}/${it.need}` : it.name}
-              sx={{ opacity: done && !fav ? 0.65 : 1 }}
-            />
+            // THE anchor of the whole affair: this Stack is the second line of the collapsed
+            // summary, so for the top quest in the list a `placement="top"` card opened over
+            // QuestFilterBar itself and ate its clicks (JOS-143). `SkyItemCard` is the card that
+            // cannot — downward-only, no pointer events, gone on pointerdown — and it carries the
+            // roster the JOS-173 title was a flattened copy of, so the native title retires here.
+            <SkyItemCard key={it.name} name={it.name} row={it} stats={it.stats}>
+              <Chip
+                size="small"
+                // The anchor tests/e2e/sky-dropdowns.e2e.mts hovers: this is the chip whose card
+                // used to open onto the toolbar, so the spec that proves it no longer can needs to
+                // be able to name it.
+                data-testid="posky-item-chip"
+                variant={fav ? 'filled' : 'outlined'}
+                color={fav ? 'warning' : done ? 'success' : 'default'}
+                icon={
+                  fav ? (
+                    <StarIcon />
+                  ) : done ? (
+                    <CheckCircleIcon />
+                  ) : (
+                    <RadioButtonUncheckedIcon />
+                  )
+                }
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleFavorite(it.name)
+                }}
+                label={it.need > 1 ? `${it.name} ${it.have}/${it.need}` : it.name}
+                sx={{ opacity: done && !fav ? 0.65 : 1 }}
+              />
+            </SkyItemCard>
           )
         })}
     </Stack>

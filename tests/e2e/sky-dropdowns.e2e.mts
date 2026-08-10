@@ -1,5 +1,6 @@
 /**
- * Headless Electron integration test for THE SKY TAB'S DROPDOWNS BEING REACHABLE (JOS-143).
+ * Headless Electron integration test for THE SKY TAB'S DROPDOWNS BEING REACHABLE — while the item
+ * hover cards are back on the rows underneath them (JOS-143, then JOS-181).
  *
  * THE BUG, as the owner hit it, and it is the SECOND sighting of one defect. On the Loot page a
  * 0.14.0 user could not change the sort (JOS-127); the cause was never the sort's own tooltip but
@@ -8,32 +9,46 @@
  * built to the same plan — `QuestFilterBar` is five dropdowns sitting on top of a scrolling
  * accordion — and every required-item chip in the collapsed summary row anchored exactly such a
  * card (`features/posky/ItemTooltip.tsx`, up to 380px wide). For the first quest in the list those
- * cards land ON the toolbar. The direction was universal removal: no dropdown anywhere wears a
- * popper, and nothing that can open over one may either.
+ * cards land ON the toolbar. JOS-143's answer was universal removal: no popper anywhere near a
+ * dropdown, and the Sky tab lost its item cards entirely.
+ *
+ * AND THE OWNER HAS NOW RULED THE TRADE THE OTHER WAY (JOS-181, on v0.18.0): the rich cards come
+ * back to this tab, and the defect does not come with them. So THIS SPEC'S TRIPWIRE CHANGES, and
+ * the change is the whole point of the rewrite. It used to be "hovering the chip opens no popper at
+ * all" — a rule the product has stopped believing in. It is now three properties of the card that
+ * IS there, each of which the 0.15.0 card failed:
+ *   1. it opens DOWNWARD — its top edge is below its anchor's, and therefore below the toolbar the
+ *      anchor sits under. The old card was `placement="top"`; a flip back turns this red.
+ *   2. it takes NO POINTER EVENTS (computed `pointer-events: none` on the popper). The old card was
+ *      interactive, which is the property that literally ate the click.
+ *   3. it is GONE by the time the click resolves — it closes on pointerdown, so it can never be
+ *      floating over the option list the user just opened.
+ * Each is a different way the defect could return, and none of them is "count the poppers".
  *
  * WHY THIS NEEDS A BROWSER AT ALL. `tests/tooltipCursor.test.mts` pins the code shape and cannot
- * rot — it derives the rule (every file that renders a dropdown mounts no popper) rather than
- * listing it. But "the code mounts no Tooltip" and "the control takes the click" are different
- * claims, and only the second is what the owner reported. This spec asserts the second, in the
- * order a user meets it: hover the anchors that used to open the card, ask the DOM what is really
- * on top of each dropdown (`elementFromPoint`), then work both dropdowns with real clicks.
+ * rot — it derives the rule (every file that renders a dropdown mounts no popper; the Sky rows
+ * mount their card only through the one wrapper that always asks for click-through mode) rather
+ * than listing it. But "the code asks for click-through" and "the control takes the click" are
+ * different claims, and only the second is what the owner reported. This spec asserts the second,
+ * in the order a user meets it: hover the anchor that used to open the card onto the toolbar, ask
+ * the DOM what is really on top of each dropdown (`elementFromPoint` — the browser's own hit test,
+ * which is exactly the question "where would this click land?"), then work all three dropdowns with
+ * real clicks WITH A CARD OPEN.
  *
- * THE TWO CHECKS ARE NOT REDUNDANT, and this spec was MEASURED against the broken code the way
- * loot-sort.e2e.mts was (2026-08-09, this fixture, this harness): putting a `placement="top"` card
- * back on the required-item chip turns "hovering the first quest's required-item chip opens no
- * tooltip popper at all" red — `poppers=1` — and green again with it removed. The POPPER COUNT is
- * the check that reproduced; `elementFromPoint` passed even with the card up, because where a
- * popper LANDS is a function of the window and this one is a fixed 1280 the owner's is not. So the
- * count is the tripwire that catches the regression at any width, and the geometry is the
- * statement of what the user is owed — their click reaching the control. Neither is the whole
- * guard: `tests/tooltipCursor.test.mts` pins the code shape that makes both true.
+ * WHAT ELEMENTFROMPOINT IS AND IS NOT, MEASURED. The original spec recorded this and it still
+ * holds: with the broken card up, `elementFromPoint` PASSED, because where a popper lands is a
+ * function of the window and this one is a fixed 1280 the owner's is not. So the geometry is the
+ * statement of what the user is owed — their click reaching the control — while the three
+ * properties above are what catch the regression at any width.
  *
- * IT ALSO PINS WHAT THE REMOVAL COST (JOS-173). Deleting the card was right; deleting the FACTS it
- * carried was not, and one of them went with it. The required-item chip's card printed posky's
- * `where` AND a "Drops: <mob names>" line; the native title that replaced it was `it.where` alone,
- * so a 0.16.0 player hovering an item read "Island 5" and nothing more, and said so. This spec now
- * asserts the anchor still answers its own question — which is the only way the two rules stay
- * honest together, since "no popper" is trivially satisfiable by saying nothing at all.
+ * IT ALSO PINS THAT THE DROPPER ROSTER STAYS REACHABLE (JOS-173, carried forward). Deleting the
+ * card in JOS-143 deleted one of the facts it carried: the required-item chip's card printed
+ * posky's `where` AND a "Drops: <mob names>" line, and the native title that replaced it was
+ * `it.where` alone, so a 0.16.0 player hovering an item read "Island 5" and nothing more, and said
+ * so. JOS-173 rebuilt the roster as a title; JOS-181 gives it back its own block IN the card
+ * (`posky-card-drops`), which is a rendered node again — so this spec reads the node rather than an
+ * attribute. "The card cannot eat a click" is trivially satisfiable by a card that says nothing;
+ * this is the check that keeps the two rules honest together.
  *
  * WHAT IT READS (JOS-29): `tests/fixtures/e2e-copy.log`, a committed fixture. The Sky tab's quest
  * LIST comes from the committed catalog rather than from the log, so the rows and their item chips
@@ -72,19 +87,28 @@ const combo = (sel: string): string => `${sel} [role="combobox"]`
 const OPTION = 'li[role="option"]'
 /** The chip-select beside them: an Autocomplete, whose list opens into the same band. */
 const ISLAND = '[data-testid="posky-island-filter"]'
-/** Any MUI tooltip popper, whoever mounted it. This tab must mount none. */
+/** Any MUI tooltip popper, whoever mounted it. */
 const POPPER = '.MuiTooltip-popper'
+/** The card's own "where, and who drops it" block (features/posky/SkyItemCard.tsx). */
+const CARD_DROPS = '[data-testid="posky-card-drops"]'
 /** A required-item chip in the collapsed summary — THE anchor whose card sat on the toolbar. */
 const ITEM_CHIP = '[data-testid="posky-item-chip"]'
 /** The kill-target caption on the same row: the other `placement="top"` anchor that was here. */
 const KILL_TARGET = '[data-testid="posky-kill-target"]'
+/** The three controls this spec insists stay reachable, in the order they sit on the bar. */
+const CONTROLS = [
+  [SORT, 'Sort'],
+  [COUNT_SOURCE, 'Count items from'],
+  [ISLAND, 'island filter']
+] as const
 
 /**
  * What is REALLY on top of a control right now — the tag `elementFromPoint` finds at its centre,
  * and whether that node belongs to the control.
  *
- * A popper count of zero alone would pass on a card that mounted somewhere harmless. Asking the
- * geometry says the thing the user cares about: that their click reaches the dropdown.
+ * This IS the click, asked as a question: `elementFromPoint` is the same hit test the browser runs
+ * to decide what a press lands on. Answering "inside the control" while a card is open is the
+ * deterministic form of "the card did not eat it".
  */
 function whatCovers(page: Page, sel: string): Promise<{ tag: string; inside: boolean }> {
   return page.evaluate((s) => {
@@ -95,6 +119,48 @@ function whatCovers(page: Page, sel: string): Promise<{ tag: string; inside: boo
     if (!hit) return { tag: 'none', inside: false }
     return { tag: hit.tagName.toLowerCase(), inside: el.contains(hit) || hit === el }
   }, sel)
+}
+
+interface CardFacts {
+  /** the popper's own box */
+  top: number
+  bottom: number
+  /** the hovered anchor's box, read in the same frame so the comparison is not a guess */
+  anchorTop: number
+  /** the lowest edge of the three toolbar controls — the band a card may never reach */
+  barBottom: number
+  /** COMPUTED pointer-events on the popper: 'none' is the whole fix */
+  pointerEvents: string
+  text: string
+}
+
+/**
+ * The card and the toolbar, measured together in ONE frame. Separate reads would be two different
+ * layouts and the comparison between them would mean nothing.
+ */
+function cardFacts(page: Page, anchor: string): Promise<CardFacts | null> {
+  return page.evaluate(
+    (a) => {
+      const p = document.querySelector(a.popper)
+      const el = document.querySelector(a.anchor)
+      if (!p || !el) return null
+      const r = p.getBoundingClientRect()
+      let barBottom = 0
+      for (const s of a.controls) {
+        const c = document.querySelector(s)
+        if (c) barBottom = Math.max(barBottom, c.getBoundingClientRect().bottom)
+      }
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        anchorTop: el.getBoundingClientRect().top,
+        barBottom,
+        pointerEvents: getComputedStyle(p).pointerEvents,
+        text: (p as HTMLElement).innerText
+      }
+    },
+    { popper: POPPER, anchor, controls: CONTROLS.map(([sel]) => sel) }
+  )
 }
 
 /** What a `TextField select` is showing, as the user reads it. */
@@ -112,6 +178,16 @@ function appears(page: Page, sel: string, ms = 20_000): Promise<boolean> {
   )
 }
 
+/** The centre of a control, in viewport coordinates — where a real click on it goes. */
+function centreOf(page: Page, sel: string): Promise<{ x: number; y: number } | null> {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+  }, sel)
+}
+
 /** Land, then open the Sky tab on a toolbar with quest rows under it. */
 async function stepReady(page: Page): Promise<void> {
   if (!check('the app lands on the nav', await appears(page, NAV_OVERVIEW, 60_000))) {
@@ -125,14 +201,21 @@ async function stepReady(page: Page): Promise<void> {
   check('…with quest rows under it, carrying required-item chips', rows > 0, `chips=${String(rows)}`)
 }
 
+/** Park the pointer where nothing is hoverable and let any open card go. */
+async function pointerAway(page: Page): Promise<void> {
+  await page.mouse.move(2, 2)
+  await settleStable(() => countOf(page, POPPER), { timeoutMs: 3000 })
+}
+
 /**
- * HOVER AN ANCHOR THAT USED TO EAT THE CLICK, then look at what is over each dropdown.
+ * HOVER AN ANCHOR AND OPEN ITS CARD — then check the three properties that make the card
+ * incapable of the defect, and ask the geometry what is over each dropdown while it is up.
  *
- * `settleStable` on the popper count is how an ABSENCE is asserted (wave E3's law): wait for the
- * reading to stop moving — which covers the shared Tooltip's `enterDelay` several times over —
- * and only then claim nothing is there.
+ * The first quest's chip is the worst case on the whole tab and the exact anchor the owner
+ * reported: it is the second line of the collapsed summary of the TOP row, so a card that opens
+ * upward from it lands on QuestFilterBar itself.
  */
-async function stepNothingCovers(page: Page, sel: string, what: string): Promise<void> {
+async function stepCardIsHarmless(page: Page, sel: string, what: string, expectCard: boolean): Promise<void> {
   if ((await countOf(page, sel)) === 0) {
     note(`no ${what} in this run — that anchor could not be hovered`)
     return
@@ -142,12 +225,36 @@ async function stepNothingCovers(page: Page, sel: string, what: string): Promise
     return
   }
   const poppers = await settleStable(() => countOf(page, POPPER), { timeoutMs: 4000 })
-  check(`hovering the ${what} opens no tooltip popper at all`, poppers === 0, `poppers=${String(poppers)}`)
-  for (const [control, name] of [
-    [SORT, 'Sort'],
-    [COUNT_SOURCE, 'Count items from'],
-    [ISLAND, 'island filter']
-  ] as const) {
+  if (!expectCard) {
+    // The kill-target caption names MOBS, not items, and carries its roster as a native title —
+    // no DOM node, no hit area. It is on this tab and it stays that way (JOS-143's rule survives
+    // everywhere the answer is a sentence rather than an item).
+    check(`hovering the ${what} opens no popper at all`, poppers === 0, `poppers=${String(poppers)}`)
+    return
+  }
+  if (!check(`hovering the ${what} opens its item card`, poppers === 1, `poppers=${String(poppers)}`)) return
+
+  const facts = await cardFacts(page, sel)
+  if (!check(`…and the ${what}'s card can be measured`, facts != null) || !facts) return
+  // TRIPWIRE 1 — it opens DOWNWARD. Below its own anchor, and so below the bar the anchor is under.
+  check(
+    `…the card opens BELOW the ${what}, never up over the toolbar`,
+    facts.top >= facts.anchorTop,
+    `card top=${facts.top.toFixed(0)} anchor top=${facts.anchorTop.toFixed(0)}`
+  )
+  check(
+    '…and its top edge is below the whole filter bar',
+    facts.top >= facts.barBottom,
+    `card top=${facts.top.toFixed(0)} bar bottom=${facts.barBottom.toFixed(0)}`
+  )
+  // TRIPWIRE 2 — it holds no pointer events. This is the property the 0.15.0 card lacked.
+  check(
+    '…the card takes no pointer events at all',
+    facts.pointerEvents === 'none',
+    `computed pointer-events=${facts.pointerEvents}`
+  )
+  // …and the statement of what the user is owed, at this window width.
+  for (const [control, name] of CONTROLS) {
     const cover = await whatCovers(page, control)
     check(
       `…and ${name} is still the topmost thing at its own centre (${what} hovered)`,
@@ -158,7 +265,43 @@ async function stepNothingCovers(page: Page, sel: string, what: string): Promise
 }
 
 /**
- * THE USER'S SENTENCE, END TO END: open a dropdown and change what it says.
+ * AND THE ROSTER IS STILL THERE TO READ (JOS-173, in the card again since JOS-181).
+ *
+ * A card that cannot eat a click is trivially achievable by a card that says nothing, so the
+ * reporter's own question is asked of the thing on screen: hovering a required item has to answer
+ * WHO drops it, not just which island it is on. Read from the rendered block rather than from a
+ * `title` attribute, because that is where the facts live again.
+ */
+async function stepCardNamesTheDropper(page: Page): Promise<void> {
+  if (!(await hoverAt(page, ITEM_CHIP, 0.5, 0.5))) {
+    note('could not hover a required-item chip for the roster check')
+    return
+  }
+  const drops = await settleCount(page, CARD_DROPS, 1, { timeoutMs: 6000 })
+  if (!check('the hovered item card carries a drop block', drops > 0, `blocks=${String(drops)}`)) return
+  const text = await page.evaluate(
+    (s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '',
+    CARD_DROPS
+  )
+  // The 0.16.0 shape, pinned as what this must never be again: an island and nothing else.
+  check('…it is not an island and nothing else (the 0.16.0 shape)', !/^Island \d+$/.test(text.trim()), text)
+  check('…it says WHO drops the item', text.includes('Dropped by:'), text.replace(/\n/g, ' / '))
+  // `Plane of Sky` is the zone every resolved Sky mob states, so a roster carrying it names a mob
+  // rather than a wind rune's "random drop — any Plane of Sky mob" (which states no island at all).
+  const named = text.includes('· Plane of Sky')
+  check('…and names a catalog mob with its level and zone', named, text.replace(/\n/g, ' / '))
+  note(`first roster: ${text.replace(/\n/g, ' / ')}`)
+  await pointerAway(page)
+}
+
+/**
+ * THE USER'S SENTENCE, END TO END, WITH A CARD OPEN: hover the chip whose card used to eat this
+ * click, walk the pointer onto the dropdown, press ONCE, and change what it says.
+ *
+ * The press is spelled out as move / down / up rather than `page.click` for one reason: the card's
+ * leave delay has to still be running when the button goes down, which is the only way this asserts
+ * "the FIRST click, while a tooltip is visible" rather than "a click, after everything settled".
+ * The popper count read between the move and the press is what says which of those two happened.
  *
  * Asserted by NAME rather than by index, and the value has to actually BECOME the other one —
  * "the menu opened" is not the report, "I cannot change it" is.
@@ -166,9 +309,24 @@ async function stepNothingCovers(page: Page, sel: string, what: string): Promise
 async function stepSelectChanges(page: Page, sel: string, what: string): Promise<void> {
   const before = await selectValue(page, sel)
   if (!check(`the ${what} control states a value to begin with`, before.length > 0, before)) return
-  await page.click(combo(sel), { timeout: 15_000 })
+
+  await hoverAt(page, ITEM_CHIP, 0.5, 0.5)
+  await settleCount(page, POPPER, 1, { timeoutMs: 4000 })
+  const at = await centreOf(page, combo(sel))
+  if (!check(`the ${what} control has a box to press`, at != null) || !at) return
+  await page.mouse.move(at.x, at.y)
+  const upAtPress = await countOf(page, POPPER)
+  check(`a card is still open as the pointer reaches ${what}`, upAtPress > 0, `poppers=${String(upAtPress)}`)
+  await page.mouse.down()
+  await page.mouse.up()
+
   const options = await settleCount(page, OPTION, 2, { timeoutMs: 10_000 })
-  if (!check(`clicking ${what} opens its menu`, options >= 2, `options=${String(options)}`)) return
+  if (!check(`ONE click on ${what} opens its menu, card and all`, options >= 2, `options=${String(options)}`)) {
+    return
+  }
+  // …and the card let go the moment the pointer went down, rather than floating over the options.
+  const stillUp = await settleStable(() => countOf(page, POPPER), { timeoutMs: 3000 })
+  check(`…and the card is gone by the time ${what}'s options are up`, stillUp === 0, `poppers=${String(stillUp)}`)
 
   const labels = await page.evaluate(
     (s) => [...document.querySelectorAll(s)].map((o) => (o as HTMLElement).innerText.trim()),
@@ -182,60 +340,30 @@ async function stepSelectChanges(page: Page, sel: string, what: string): Promise
   await page.click(`${OPTION} >> text="${other ?? ''}"`, { timeout: 15_000 })
   const after = await settleStable(() => selectValue(page, sel), { timeoutMs: 6000 })
   check(`…and picking it actually changes ${what}`, after === other, `${before} -> ${after}`)
-}
-
-/**
- * AND THE ANCHOR STILL ANSWERS THE QUESTION IT WAS ANCHORING (JOS-173).
- *
- * Removing the popper is only half a fix if the facts leave with it. JOS-143 carried each roster
- * over to a native `title`, except on this chip, which got `title={it.where}` — so a 0.16.0 player
- * hovering a required item read "Island 5" and nothing else, and reported exactly that. The title
- * is the thing to read: a native tooltip is not in the DOM by design (that IS the popper fix), so
- * there is no rendered node to hover and assert against — the attribute is the whole artifact.
- *
- * Asserted over EVERY chip on the page rather than the first: which quest sorts to the top is a
- * function of the filters, and the defect was universal. The floors are floors (a re-scrape moves
- * counts), the universal — no chip whose title is only an island — is the defect itself.
- */
-async function stepChipTitleNamesTheDropper(page: Page): Promise<void> {
-  const titles = await page.evaluate(
-    (s) => [...document.querySelectorAll(s)].map((c) => c.getAttribute('title') ?? ''),
-    ITEM_CHIP
-  )
-  if (!check('the required-item chips carry a hover roster at all', titles.length > 0, `chips=${String(titles.length)}`)) {
-    return
-  }
-  const bare = titles.filter((t) => /^Island \d+$/.test(t.trim()))
-  check(
-    'no chip answers with an island and nothing else (the 0.16.0 shape)',
-    bare.length === 0,
-    `bare=${String(bare.length)} e.g. ${bare[0] ?? ''}`
-  )
-  const named = titles.filter((t) => t.includes('\nDropped by:\n'))
-  check(
-    '…every chip says WHO drops the item',
-    named.length === titles.length,
-    `named=${String(named.length)} of ${String(titles.length)}`
-  )
-  // The reporter's sentence, whole: a mob AND an island on the same hover. `Plane of Sky` is the
-  // zone every resolved Sky mob states, so a line carrying both is a mob line, not a wind rune's
-  // "random drop — any Plane of Sky mob" (which states no island: its `where` is the zone).
-  const both = titles.filter((t) => /· Island \d+\n/.test(t) && t.includes('· Plane of Sky'))
-  check('…and at least one names a mob and its island together', both.length > 0, `both=${String(both.length)}`)
-  if (both[0]) note(`first roster: ${both[0].replace(/\n/g, ' / ')}`)
+  await pointerAway(page)
 }
 
 /**
  * The chip-select on the same row, which is a different control with the same exposure: an
  * Autocomplete's listbox is a portal that opens straight down into the band a card used to fill.
- * Typing rather than clicking an option, for the reason sky-filters states: a click into a portal
- * is a bet about layout that has nothing to do with what is being tested here.
+ * Same hover-then-press sequence, so this too is a first click taken with a card open. Typing
+ * rather than clicking an option, for the reason sky-filters states: a click into a portal is a bet
+ * about layout that has nothing to do with what is being tested here.
  */
 async function stepChipSelectOpens(page: Page): Promise<void> {
-  await page.click(`${ISLAND} input`, { timeout: 15_000 })
+  await hoverAt(page, ITEM_CHIP, 0.5, 0.5)
+  await settleCount(page, POPPER, 1, { timeoutMs: 4000 })
+  const at = await centreOf(page, `${ISLAND} input`)
+  if (!check('the island chip-select has a box to press', at != null) || !at) return
+  await page.mouse.move(at.x, at.y)
+  const upAtPress = await countOf(page, POPPER)
+  check('a card is still open as the pointer reaches the island filter', upAtPress > 0, `poppers=${String(upAtPress)}`)
+  await page.mouse.down()
+  await page.mouse.up()
   const options = await settleCount(page, OPTION, 1, { timeoutMs: 10_000 })
-  check('the island chip-select opens its list on a click', options > 0, `options=${String(options)}`)
+  check('the island chip-select opens its list on that one click', options > 0, `options=${String(options)}`)
   await page.keyboard.press('Escape')
+  await pointerAway(page)
 }
 
 async function main(): Promise<void> {
@@ -254,9 +382,11 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     await stepReady(page)
-    await stepNothingCovers(page, ITEM_CHIP, 'first quest’s required-item chip')
-    await stepNothingCovers(page, KILL_TARGET, 'kill-target caption')
-    await stepChipTitleNamesTheDropper(page)
+    await stepCardIsHarmless(page, ITEM_CHIP, 'first quest’s required-item chip', true)
+    await pointerAway(page)
+    await stepCardIsHarmless(page, KILL_TARGET, 'kill-target caption', false)
+    await pointerAway(page)
+    await stepCardNamesTheDropper(page)
     await stepSelectChanges(page, SORT, 'Sort')
     await stepSelectChanges(page, COUNT_SOURCE, 'Count items from')
     await stepChipSelectOpens(page)
