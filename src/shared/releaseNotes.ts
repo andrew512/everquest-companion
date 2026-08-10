@@ -192,6 +192,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'The app no longer argues with a console nobody is listening to. When the window that launched it had already closed, every line it tried to print failed - and it answered each failure by trying to print again, so one install spent a whole day reporting millions of copies of a problem that was never about anything you could see. A destination with no reader is now simply not written to. Alongside it, a general rule: no single fault may report itself more than a hundred times in one run of the app. After that it says so once and goes quiet, so something that repeats can never bury the things that only happened once.'
+      },
+      {
+        kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
     ]
