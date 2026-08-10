@@ -180,6 +180,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'The raid-kill celebration card names the kill you just made: the difficulty of the instance that boss died in, and which instance it was, instead of the highest difficulty you have ever beaten it at and the zone off the roster. Clear a boss at d1 on Sunday and the card says d1, however many times you beat it at d4. The boss cards still badge your best.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Overlay auto-hide and the cursor ring keep working for a whole session on machines where they used to go quietly dead a second after launch. The little watcher behind them asked Windows a process question that some machines - ones with damaged performance counters, or security software that blocks process listings - answer wrongly for programs that are plainly running, and it read that wrong answer as its cue to shut down. It now asks the system directly, so the overlays hide when you leave the game and the ring only ever draws over it.'
       }
     ]
   },
