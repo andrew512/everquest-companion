@@ -170,6 +170,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'changed',
         text: 'The meter overlays put the total where the numbers live: the all figure sits on the You row inside the panel, and the title bar spends its room on the fight name - ten more characters of mob before anything truncates.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The raid-kill celebration card names the kill you just made: the difficulty of the instance that boss died in, and which instance it was, instead of the highest difficulty you have ever beaten it at and the zone off the roster. Clear a boss at d1 on Sunday and the card says d1, however many times you beat it at d4. The boss cards still badge your best.',
+        fromReport: true
       }
     ]
   },
