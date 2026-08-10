@@ -189,6 +189,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'Searching the Loot page now finds items you own but never looted - anything your inventory export knows about turns up by name, spelled the way the game spells it, and its page states how many you hold beside how many times you looted it. The Loot page and the Plane of Sky view can no longer disagree about whether you have an item.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Two bard songs the wiki words wrongly now answer to what the game actually prints: Sionachie\'s Dreams lands on your timers and offers its alerts, and the level-39 charm-song page the wiki calls Solon\'s Bravura is known by the name your log sings, Solon\'s Bewitching Bravura. Both hold like the mez they are - and a new per-song mez-break alert can name exactly which song just shattered.',
+        fromReport: true
       }
     ]
   },
