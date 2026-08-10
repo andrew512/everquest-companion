@@ -36,6 +36,7 @@ import {
   MAX_SAMPLE_MS,
   SELF_KEY,
   spellKey,
+  type DurationSample,
   type OpenCast,
   type Pending
 } from './buffsShapes'
@@ -354,7 +355,9 @@ export class BuffInstances {
       // recency-weighted MAX with a value that is guaranteed too large.
       const sample = closed?.sampleMs
       if (open.spannedGap !== true && sample != null && sample > 0 && sample <= MAX_SAMPLE_MS) {
-        this.addSample(key, open.caster, spell, sample)
+        // NEVER CENSORED on this path (JOS-180): the wake line is a CROWD-CONTROL annotation and
+        // there is no sentence in the log that says a beneficial buff or a debuff ended early.
+        this.addSample(key, open.caster, spell, { ms: sample, ts: fadeTs })
       }
       if (open.group.empty) this.open.delete(iKey)
       else {
@@ -387,8 +390,8 @@ export class BuffInstances {
     )
   }
 
-  private addSample(key: string, caster: string, spell: string, durMs: number): void {
-    this.stats.pushSample(key, caster, spell, durMs)
+  private addSample(key: string, caster: string, spell: string, sample: DurationSample): void {
+    this.stats.pushSample(key, caster, spell, sample)
     // Restat every live instance of this spell (they share the per-(line, caster) stats).
     for (const [ik, a] of [...this.active]) {
       if (instanceSpellKey(ik) !== key) continue

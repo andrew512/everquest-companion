@@ -183,10 +183,15 @@ test('a singleton still refuses a contamination its caller states', () => {
 // ---------------------------------------------------------------------------------------------
 
 test('the sweep drops landings older than a cutoff, oldest first, and mints nothing', () => {
-  // A cull is not evidence: `dropExpired` returns a COUNT and never a sample, which is the whole
-  // difference between it and `closeOldest`.
+  // A cull is not evidence: `dropExpired` hands back the LANDINGS and never a sample, which is the
+  // whole difference between it and `closeOldest`. Since JOS-180 the caller keeps what it gets
+  // (the late-join memory), but what it gets is a start time and a `clean` flag — no span, because
+  // nobody saw this hold end.
   const g = twoOnDifferentClocks()
-  assert.equal(g.dropExpired(10 * SEC), 1)
+  const dropped = g.dropExpired(10 * SEC)
+  assert.equal(dropped.length, 1)
+  assert.equal(dropped[0].startedTs, 1_000, 'the oldest landing, handed back whole')
+  assert.ok(!('sampleMs' in dropped[0]), 'a cull hands back a landing, never a measurement')
   assert.equal(g.count, 1)
   assert.equal(g.oldestTs, 20 * SEC)
 })

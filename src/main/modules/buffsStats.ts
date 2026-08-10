@@ -27,12 +27,18 @@
 // THE ESTIMATOR ITSELF is unchanged from JOS-117 and confirmed by the owner (ruling 6):
 //   estimate = max( DB baseline , max-over-recent-window of CLEAN observed samples )
 // The DB base is a FLOOR and the recent observed max is an EXTENSION over it. See `estimateFor`.
+//
+// WHAT JOS-180 CHANGED IS THE WINDOW, NOT THE ESTIMATOR. A sample now records whether the log
+// NAMED a cause for the cycle ending (`<mob> has been awakened by <name>.`), and the recency window
+// is applied once per evidence class instead of once over the pooled list — so a run of broken
+// mezzes can never retire the one full-length cycle the log finally produced. The exact rule, the
+// measurement behind it and the property it must not cost are on `observedWindowMaxFor`.
 
 import type { SpellDb } from '../data/spellDb'
 import { spellNature } from '../data/spellDb'
 import type { BuffClass, BuffStat } from '../../shared/types'
 import { learnKey, SELF_CASTER } from '../../shared/buffTrust'
-import { percentile, RECENT_SAMPLE_WINDOW, type SpellSamples } from './buffsShapes'
+import { percentile, RECENT_SAMPLE_WINDOW, type DurationSample, type SpellSamples } from './buffsShapes'
 
 export class SpellStats {
   /** The scraped spell database (Task #34), optional — the authoritative prior. */
@@ -79,15 +85,51 @@ export class SpellStats {
     return this.db?.byKey.get(key)?.illusion ?? false
   }
 
-  /** Append a mined duration sample for one caster (the caller re-stats the live instances). */
-  pushSample(key: string, caster: string, spell: string, durMs: number): void {
+  /**
+   * Append a mined duration sample for one caster (the caller re-stats the live instances).
+   *
+   * The sample arrives as a RECORD rather than a bare span since JOS-180, because a span alone is
+   * no longer the whole of one: `ts` (the event ts of the line that ended the cycle) is the only
+   * handle a later line has on this sample — see {@link censorSampleAt} — and every call site
+   * already holds it. It is COPIED in, so nobody keeps a mutable handle on the store's contents.
+   */
+  pushSample(key: string, caster: string, spell: string, sample: DurationSample): void {
     const lk = learnKey(key, caster)
     let s = this.samples.get(lk)
     if (!s) {
       s = { spell, samples: [] }
       this.samples.set(lk, s)
     }
-    s.samples.push(durMs)
+    s.samples.push({ ...sample })
+  }
+
+  /**
+   * Mark the sample closed at `closedTs` CENSORED — the log named something that ended that cycle
+   * early, so its span is a lower bound on the duration and not the duration (JOS-180).
+   *
+   * IT IS RETROACTIVE BECAUSE THE LOG IS. `<mob> has been awakened by <name>.` is printed AFTER the
+   * wear-off sentence it explains — measured over the owner's whole log, 1,472 of 1,472 paired
+   * wakes follow their wear-off, in the same second, 1,462 of them on the very next line — so the
+   * sample is always already minted by the time the cause arrives. Marking it afterwards costs
+   * nothing that matters: the estimate is a MAX over both windows and the value itself does not
+   * move, so no bar jumps at the moment of censoring. What changes is only what this sample may
+   * EVICT later.
+   *
+   * Returns true when it found one, so the caller knows whether to re-stat.
+   */
+  censorSampleAt(key: string, caster: string, closedTs: number): boolean {
+    const s = this.samples.get(learnKey(key, caster))
+    if (!s) return false
+    // Newest first: a re-used ts can only mean the same second, and the newest is the one the
+    // caller just minted.
+    for (let i = s.samples.length - 1; i >= 0; i--) {
+      const sample = s.samples[i]
+      if (sample.ts !== closedTs) continue
+      if (sample.censored === true) return false
+      sample.censored = true
+      return true
+    }
+    return false
   }
 
   /** The display name last minted for a (line, caster), for a row that has lost its own. */
@@ -98,7 +140,10 @@ export class SpellStats {
   statFor(key: string, caster: string = SELF_CASTER): BuffStat | null {
     const s = this.samples.get(learnKey(key, caster))
     if (!s || s.samples.length === 0) return null
-    const sorted = [...s.samples].sort((a, b) => a - b)
+    // The DISTRIBUTION columns describe every cycle the model measured, censored or not: the Buffs
+    // tab's n/median/min/max are a report on what was OBSERVED, and hiding the broken cycles there
+    // would misdescribe the log. Only the ESTIMATE reads the censoring (observedWindowMaxFor).
+    const sorted = s.samples.map((x) => x.ms).sort((a, b) => a - b)
     const est = this.estimateFor(key, caster)
     return {
       spell: s.spell,
@@ -136,11 +181,57 @@ export class SpellStats {
    * entity retirement, hygiene, a wear-off with no hold behind it — contaminates instead of
    * minting, and a re-land RESETS the clock so a refresh mints one clean cycle rather than an
    * inflated land-to-fade span.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────────────────
+   * THE RULE JOS-180 ADDED, EXACTLY: **the window is applied ONCE PER EVIDENCE CLASS.** The most
+   * recent {@link RECENT_SAMPLE_WINDOW} UNCENSORED samples are one window, the most recent
+   * {@link RECENT_SAMPLE_WINDOW} CENSORED ones are a second window, and the estimate's observed
+   * candidate is the MAX over both. A censored sample can therefore never push an uncensored one
+   * out of view, and vice versa.
+   *
+   * WHY A CENSORED SAMPLE STILL COUNTS TOWARD THE MAX. It is a real observation, just a truncated
+   * one: `<mob> has been awakened by <name>.` proves the mez was still holding one instant before
+   * that line, so the span is a LOWER BOUND on the duration. Discarding it outright would hand the
+   * DB floor back to exactly the spells JOS-126 was filed about — a Mesmerization VII whose rank is
+   * absent from the scrape and which the player always breaks early would count down from the base
+   * rank's 24 s forever, which is the bar-sits-at-zero defect. A lower bound is worth more than a
+   * wrong number, and MAX is the one estimator that can accept one safely.
+   *
+   * WHY IT MUST NOT EVICT. The window exists for ONE purpose (above): to let an old long
+   * observation age out when a duration genuinely DECREASES — a focus effect removed. A broken
+   * cycle is not evidence of a decrease. It is evidence of a nuke. Under a single shared window a
+   * run of them retires the only full-length observation the log ever produced, and JOS-180 is what
+   * that costs, measured on the owner's own bytes: five early breaks of Dazzle IV (44 s, 115 s,
+   * 14 s, 23 s, 79 s, then 100 s) drove the estimate to 100 s and evicted the 115 s reading; the
+   * 15 s grace an 'observed' estimate gets then culled every hold at 115 s; the real duration is
+   * 136 s, so no full cycle could ever be witnessed again and the number was frozen below the truth
+   * permanently. Splitting the windows is what makes the recovery STICK once the first honest
+   * 136 s cycle is minted (`modules/buffTimers.ts`'s late-join memory is what lets it be minted at
+   * all): five more breaks afterwards roll the censored window and leave the 136 s standing.
+   *
+   * A REAL DECREASE STILL RECOVERS, which is the property the split must not cost. It takes five
+   * UNCENSORED shorter cycles, exactly as it always did — censoring changes which window a sample
+   * lives in, never whether it ages out of one.
    */
   observedWindowMaxFor(key: string, caster: string = SELF_CASTER): number | null {
     const s = this.samples.get(learnKey(key, caster))
     if (!s || s.samples.length === 0) return null
-    return Math.max(...s.samples.slice(-RECENT_SAMPLE_WINDOW))
+    let best: number | null = null
+    let clean = 0
+    let broken = 0
+    for (let i = s.samples.length - 1; i >= 0; i--) {
+      const sample = s.samples[i]
+      if (sample.censored === true) {
+        if (broken >= RECENT_SAMPLE_WINDOW) continue
+        broken += 1
+      } else {
+        if (clean >= RECENT_SAMPLE_WINDOW) continue
+        clean += 1
+      }
+      if (best == null || sample.ms > best) best = sample.ms
+      if (clean >= RECENT_SAMPLE_WINDOW && broken >= RECENT_SAMPLE_WINDOW) break
+    }
+    return best
   }
 
   /**

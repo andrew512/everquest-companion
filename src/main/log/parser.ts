@@ -34,6 +34,7 @@ import {
   classifyAaActivate,
   classifyCastLifecycle,
   classifyCcApply,
+  classifyCcWake,
   classifyCharm,
   classifyDbBuff,
   classifyIllusionFade,
@@ -114,6 +115,11 @@ const CLASSIFIERS: readonly Classifier[] = [
   classifyCharm,
   classifyWornOff,
   classifyCcApply,
+  // …and the OTHER end of the same hold (JOS-180): `<mob> has been awakened by <name>.`, the one
+  // line that says a mez ENDED EARLY rather than merely ended. All 1,518 occurrences in the real
+  // log measured `{kind:'unknown'}` before this entry existed, so the position is for legibility
+  // (beside the family it annotates) and not for disambiguation.
+  classifyCcWake,
   classifyPetClaim,
   // …and the PUBLIC half of the same family, directly beneath it so the private/public split
   // is visible in the cascade itself (JOS-47). Cannot shadow anything: the six sentences it

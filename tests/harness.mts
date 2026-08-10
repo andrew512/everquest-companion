@@ -18,6 +18,7 @@ import { installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { BuffsModule } from '../src/main/modules/buffs'
 import { BuffTimersModule } from '../src/main/modules/buffTimers'
+import type { SpellStats } from '../src/main/modules/buffsStats'
 import { buildTimerRows } from '../src/shared/buffTimers'
 import type { BuffTimerRow, BuffTimersSnap } from '../src/shared/buffTimers'
 import type { BuffsSnap } from '../src/shared/types'
@@ -112,11 +113,19 @@ export function replayBuffsWithDb(
  * `until` stops the fold at an instant (inclusive), which is how a per-target mez is observed
  * BEFORE and AFTER its break line without cutting a second fixture. `tickMs` fires the wall-clock
  * heartbeat both modules take, modelling an idle log at a chosen observation instant.
+ *
+ * `ticks` fires the heartbeat MID-FOLD, at each listed instant, just before the first event at or
+ * after it — which is the only way to model what production actually does between two log lines
+ * (JOS-180 needed it: a hold has to be culled by the 1 s heartbeat BEFORE its wear-off arrives, or
+ * the test proves the cull and the late join in one event and never shows they are two).
+ *
+ * `spellStats` comes back beside the snapshots because the LEARNER is the subject of some of these
+ * tests and the snapshot only reports the SELF caster's rounded columns.
  */
 export function replayBuffTimers(
   lines: string[],
-  opts?: { until?: number; tickMs?: number; prime?: string[] }
-): { buffs: BuffsSnap; timers: BuffTimersSnap; rows: BuffTimerRow[] } {
+  opts?: { until?: number; tickMs?: number; prime?: string[]; ticks?: number[] }
+): { buffs: BuffsSnap; timers: BuffTimersSnap; rows: BuffTimerRow[]; spellStats: SpellStats } {
   const db = loadSpellDb()
   installSpellDb(db)
   const buffs = new BuffsModule(db)
@@ -128,10 +137,16 @@ export function replayBuffTimers(
   buffs.reset()
   timers.reset()
   let seq = 0
+  const pending = [...(opts?.ticks ?? [])].sort((a, b) => a - b)
   const feed = (raw: string): void => {
     const ev = parseEvent(raw, seq++)
     if (!ev) return
     if (opts?.until != null && ev.ts > opts.until) return
+    while (pending.length > 0 && pending[0] <= ev.ts) {
+      const at = pending.shift() as number
+      buffs.onTick(at)
+      timers.onTick(at)
+    }
     buffs.onEvent(ev)
     timers.onEvent(ev)
   }
@@ -143,7 +158,7 @@ export function replayBuffTimers(
   }
   const b = buffs.snapshot().state
   const t = timers.snapshot().state
-  return { buffs: b, timers: t, rows: buildTimerRows(b, t) }
+  return { buffs: b, timers: t, rows: buildTimerRows(b, t), spellStats: buffs.spellStats() }
 }
 
 /** Parse an EQ timestamp out of a raw fixture line (ms epoch), or 0. */
