@@ -206,7 +206,7 @@ When the app hits an error: the technical details of the failure, so it can be f
 | `view` | `overview` · `combat` · `mobs` · `maps` · `bosses` · `posky` · `alerts` · `leveling` · `loot` · `planner` · `buffs` · `preferences` · `triage` · `unknown` | Which tab was open. A fixed list. |
 | `sessionAgeBucket` | bucket index | How long the app had been running. |
 | `mode` | `live` · `replay` | Was it reading your log history, or following it live. |
-| `count` | whole number | How many times this same error happened since the last report. |
+| `count` | whole number | How many times this same error happened since the last report. It stops at a hundred per error per run of the app: something that goes wrong over and over reports itself a hundred times and then goes quiet, so one repeating fault cannot bury everything else. |
 
 ### `optOut`
 
