@@ -177,6 +177,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'fixed',
+        text: 'Drilled into your own damage, the total above the bars answers the pet setting the moment you change it. Fold your pet into your damage and the line covers you both; move it out and the line is yours alone. It used to keep the combined number until you picked another fight, so the figure at the top described one thing while the rows under it described another.'
+      },
+      {
+        kind: 'fixed',
         text: 'Monk strikes get a bar of their own instead of disappearing into Melee. Tiger Claw, Eagle Strike, Dragon Punch and Tail Rake all land as a plain strike, and the game names the one you use only once, at the level-up - so a log that started after that line lumped every strike in with your weapon swings forever. They now read Strike on their own row, and still carry the real ability name whenever your log did catch that line.',
         fromReport: true
       },
