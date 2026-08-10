@@ -30,6 +30,7 @@ import { KillsModule } from '../src/main/modules/kills'
 import { CharacterModule } from '../src/main/modules/character'
 import { allStatuses, bossKills, type TargetStatus } from '../src/renderer/src/features/bosses/bossStatus'
 import { tierStyle } from '../src/renderer/src/lib/tierChip'
+import { TIER_UNKNOWN } from '../src/shared/kills'
 import type { RaidTarget } from '../src/shared/types'
 import { readFixture } from './harness.mts'
 
@@ -130,11 +131,18 @@ test('the zone is the INSTANCE you stood in, not the roster string', () => {
 
 test('a target whose zone was never seen falls back to the roster, and invents nothing', () => {
   // The same kills with every `You have entered` line removed: the character module has no zone,
-  // so the subtitle keeps the roster's. The TIER is unaffected — it comes off the kill record,
-  // not off the zone string, and a kill with no zone line folds to the base tier.
+  // so the subtitle keeps the roster's. The TIER comes off the kill record rather than the zone
+  // string, and a kill folded before any zone line has no difficulty on it.
+  //
+  // IT USED TO SAY "D0 · base" HERE (JOS-166). That was the conflation this ticket removed: a
+  // kill with no zone line behind it states nothing about where it happened, and announcing the
+  // base difficulty for it is the app inventing the one fact the log withheld. The toast now says
+  // the difficulty was not stated — the same sentence an instance adjective we cannot decode
+  // would produce, because they are the same claim.
   const blind = readFixture('bosstier-maestro-ladder.log').filter((l) => !l.includes('You have entered'))
   const fired = toasts(blind)
 
   assert.equal(fired.length, 3)
-  for (const t of fired) assert.equal(t.subtitle, 'D0 · base · Plane of Hate')
+  for (const t of fired) assert.equal(t.subtitle, 'Difficulty not stated · Plane of Hate')
+  assert.equal(tierStyle(TIER_UNKNOWN).long, 'Difficulty not stated', 'and the app spells it once')
 })

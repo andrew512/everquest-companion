@@ -93,3 +93,66 @@ slice(
   [1485672, 1485672],
   [1489474, 1489479]
 )
+
+// THE FIVE-RUNG WEEK (JOS-166, owner decision 2026-08-09: d0 is a real difficulty). The owner
+// clears a raid target at every difficulty each week — FIVE weekly lockouts per target, d0
+// through d4 — and Sat Aug 01 is the whole ladder in one afternoon, one boss, in log order:
+//
+//   1. 13:07:45, raw 815345   — `You have entered The Plane of Hate - Solo.` The BASE INSTANCE:
+//      the `- Solo` suffix with NO difficulty adjective after it. This is the shape the app used
+//      to read as "tier 0, and we cannot say which of three worlds that means".
+//   2. 13:23:07, raw 819632..819636 — the d0 kill. The killing blow is the charmed pet's
+//      (`Maestro of Rancor has been slain by Innoruuk\`s Chosen!`); the `You gain experience!`
+//      three lines above it is the credit join, so the kill is YOURS.
+//   3. 13:38:00, raw 822348   — `... - Solo 1 (Awakened).`
+//   4. 13:47:58, raw 825748..825752 — the d1 kill.
+//   5. 13:57:08, raw 828266   — `... - Solo 2 (Adaptive).`
+//   6. 14:18:07, raw 835548..835552 — the d2 kill.
+//   7. 14:35:15, raw 839935   — `... - Solo 3 (Fused).`
+//   8. 14:56:20, raw 847286..847293 — the d3 kill (the same span the toast fixture above cuts).
+//   9. 15:33:26, raw 853620   — `... - Solo 4 (Refined).`
+//  10. 16:02:37, raw 863975..863982 — the d4 kill.
+//
+// He leaves to The Oasis of Marr between instances (raw 822328, 828137, 839575, 853093), which is
+// why the fixture can drop the ~48k intervening lines and still state the truth: for every kill
+// here, the nearest PRECEDING `You have entered` is the instance line above it. Verified against
+// the full log rather than assumed.
+//
+// Expected fold: ONE KillMap entry, count 5, credited 5, tiers {0,1,2,3,4} with one kill each —
+// and, read as a lockout week, FIVE GREEN RUNGS.
+slice(
+  'bosstier-hate-ladder-aug01.log',
+  [815345, 815345],
+  [819632, 819636],
+  [822348, 822348],
+  [825748, 825752],
+  [828266, 828266],
+  [835548, 835552],
+  [839935, 839935],
+  [847286, 847293],
+  [853620, 853620],
+  [863975, 863982]
+)
+
+// THE OPEN WORLD, WHICH TAKES NOTHING OFF YOUR WEEK (JOS-166). The counterpart to the ladder
+// above: the same zone, the same player, credited kills of a roster boss — and no instance, so no
+// lockout exists to be spent. Four spans, in log order:
+//
+//   1. Mon Aug 03 22:45:48, raw 1205559 — `You have entered The Plane of Hate.` A bare zone name:
+//      no `- Solo`, no ordinal, no adjective. THE OPEN WORLD.
+//   2. Tue Aug 04 00:25:52, raw 1241344..1241348 — `You have slain Master of Spite!`, with the
+//      `You gain experience! (1.880%)` line that credits it. This one lands BEFORE the Tue 08:00
+//      Pacific reset, so it sits inside the same lockout week as the Aug 01 ladder run.
+//   3. Tue Aug 04 20:19:56, raw 1296559 — the open world again, after the reset.
+//   4. Tue Aug 04 20:44:38, raw 1303994..1304000 — a second credited Master of Spite kill, in the
+//      NEW week.
+//
+// Expected fold: ONE KillMap entry, count 2, credited 2, and a SINGLE run under the open-world
+// key — no difficulty key at all. Whichever week you stand in, its ladder is five grey rungs.
+slice(
+  'boss-open-world-hate.log',
+  [1205559, 1205559],
+  [1241344, 1241348],
+  [1296559, 1296559],
+  [1303994, 1304000]
+)
