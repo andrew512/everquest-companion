@@ -71,7 +71,9 @@ slices never reach a public issue (the CLI enforces this; don't fight it).
    channels above) against the latest JOS-153 ledger comment: only items not
    yet in the ledger enter this session's readout.
 3. **CLASSIFY & RANK** — produce an owner-facing readout, priority-ordered,
-   with a worth-fixing / worth-building call per item:
+   with a worth-fixing / worth-building call per item. NUMBER every item
+   (owner directive 2026-08-09) — one global sequence across all channels —
+   so the owner can answer by number ("1 - fix", "3 - double check"):
    - `report_type` lies sometimes — users file parser bugs as features and
      vice versa. Classify by content, not by the field.
    - Cluster converging asks (N reports wanting the same thing is one line
