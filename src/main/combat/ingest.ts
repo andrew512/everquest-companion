@@ -199,6 +199,16 @@ function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
  * Brawn`, `Inner Fire`) are not `targetType: Pet`, so this rung produces zero binds there and
  * its three `told you, 'Attacking … Master.'` tells remain the only evidence in it. Same root
  * cause, different half: the answer for them is still to order it once.
+ *
+ * AND IT IS THE COMBAT MODEL'S BIND ONLY. `modules/buffs.ts` runs its own entity-level pet
+ * succession off the `petClaim` LOG EVENT (AGENTS.md law 4: two models, different reach, by
+ * measurement rather than oversight), and this rung produces no such event — it is a state
+ * transition inside the engine, not a line the parser can emit, because the arm is per-stream
+ * state and `parseEvent` is per-line. So the buff module's pet slot still waits for the tell,
+ * exactly as it did before this ticket: no worse, not yet better. Making it better means either
+ * a derived-event seam the session feeds to both, or a second arm in the buffs module — and a
+ * second arm is precisely the duplicated retirement path law 4 is a scar from, so it does not
+ * get built on the way past without its own measurement.
  */
 function bindPetBuffLanding(st: EngineState, ts: number, target: string, spellNames: readonly string[]): void {
   if (!st.charm.petBuffLanding(spellNames, ts)) return

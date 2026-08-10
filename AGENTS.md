@@ -1170,10 +1170,15 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `tests/fixtures/p3-pet-upgraded-buff-bound.log` + `tests/petBuffBind.test.mts`
   (which installs the spell DB — `buffApply` is DB-gated — while
   `petClaimWindows.test.mts` deliberately still runs without one).
-  STILL NOT CLOSED, and named rather than implied: a pet its owner neither
+  STILL NOT CLOSED, and named rather than implied: (a) a pet its owner neither
   buffs nor orders stays invisible (01KZN569YA6T751QCJW99P1ZCA is that half —
   its pet buffs are not `targetType: Pet`, so the rung fires zero times in
-  its log). JOS-49's answer stands for them: order it once.
+  its log); JOS-49's answer stands for them, order it once. (b) The rung is a
+  transition INSIDE the combat engine, not a parser event, so
+  `modules/buffs.ts`'s own entity-level succession still waits for the tell —
+  unchanged from before, not yet improved. Closing that needs a derived-event
+  seam the session feeds to both models, never a second arm in buffs.ts (that
+  is the duplicated retirement path law 4 is a scar from).
 - Exp: `You gain (party )?experience!( (N.NN%))?` — the percent is an
   INCREMENT of the current level bar (sums to ~100 between dings);
   unstated ⇒ at the cap, modeled `pct: undefined` never 0. The exp line
