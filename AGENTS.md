@@ -708,8 +708,8 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    BOTH kinds, at the buff-entity level. The combat `WorldModel` retires only
    BY KIND: `claim()` retires the prior SUMMONED pet (the game gives you one
    class pet and the recast despawns the old one printing NOTHING, so the
-   successor's tell is the only evidence there is — before this the owner's
-   log finished a replay holding 23 live pets), while `charm()` retires
+   successor's own claim is the only evidence there is — before this the
+   owner's log finished a replay holding 23 live pets), while `charm()` retires
    nothing there. The crossover is deliberately left alone: 344 charm binds
    land with a summoned pet flagged live, but the log has ZERO cases of a
    proper-named class pet and a charmed pet demonstrably swinging together,
@@ -720,7 +720,12 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    old pet keeps every point already attributed to it (rows key by
    instanceId); it only stops being yours for FUTURE admission, which means
    the engine's `petNames` index must follow the world model out
-   (`EngineState.syncPetNames`). Zoning: self +
+   (`EngineState.syncPetNames`). **AND THE CLAIM IS WHAT TRIGGERS IT, NOT THE
+   SUMMON** (JOS-188) — an UPGRADED pet has a new NAME, so before the pet-buff
+   rung a player who never ordered the successor got no succession at all: the
+   predecessor's row froze and the successor's damage went nowhere. Three lines
+   produce that claim now (tell / leader say / your own pet-only buff landing);
+   all three go through one `bindPetClaim`, on purpose. Zoning: self +
    summoned pet keep buffs; charmed pets/hostiles are left behind (censor).
    Deaths retire. **Unobservable fades censor, never pollute stats.**
    Own-cast gating: never track buffs we didn't cast (10s cast window or a
@@ -1135,6 +1140,45 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   two are an NPC's words under an NPC's name, while this one carries a
   PLAYER's name inside the quote, so it borrows the self-`/who` row's
   argument instead and a stranger's pet naming a stranger still drops.
+  **AND YOUR OWN PET-ONLY BUFF NAMES IT WITHOUT ASKING** (JOS-188) — the
+  THIRD binding signal, and the first that costs the player nothing. 40
+  spells are `targetType: Pet` in spells.json
+  (`charmModel.ts PET_TARGET_SPELLS` — Burnout, the necro Death line, Renew
+  Elements, the beastlord spirits, Tiny Companion, Ward of Calliav); the
+  game refuses one on anything but YOUR OWN pet, and `You begin casting
+  <Spell>.` is printed for the player and nobody else. So an own cast of one
+  ARMS the charm model (a third arm kind beside charm/cc, sharing its
+  window, its one-cast-at-a-time disarm and its fizzle disarm) and the named
+  `buffApply` landing that resolves it binds the pet — through the SAME
+  `bindPetClaim` in ingest.ts the tell and the leader say go through, for
+  law 4's reason.
+  THE REPORTED SHAPE (01KZPFBMF1R26DSG0R2EGER7MV): an UPGRADED pet is a new
+  NAME, so the JOS-54 succession never runs — it is not triggered by the
+  summon, it is triggered by the successor's claim, and an unordered
+  successor has none. The reporter's meter kept the predecessor's frozen row
+  and dropped 89 hits / 3,385 points of the new pet; relogging emits no
+  binding line either, which is why relogging never helped.
+  MEASURED (whole log, 1,557,569 lines, 2026-08-10): 19 binds / 14 names,
+  and **all 14 are names a `… Master.'` tell ALSO bound** — nothing is bound
+  by this rung alone, nothing it binds is contradicted, and in all 14 it
+  arrives FIRST by 81 s – 2,528 s, worth 1,865 hits / 27,088 points.
+  **THE MESSAGE IS NOT THE GATE, THE ARMED OWN CAST IS**: `goes berserk.`
+  resolves to Burnout / Fury / Rage / Voice of the Berserker and only one is
+  a pet spell, so the landing's candidate list must contain the spell being
+  cast; the arm is CONSUMED on a hit, so a Quick Buff burst (eleven landings
+  in one second, zero cast lines) can never bind off one cast. Golden window
+  `tests/fixtures/p3-pet-upgraded-buff-bound.log` + `tests/petBuffBind.test.mts`
+  (which installs the spell DB — `buffApply` is DB-gated — while
+  `petClaimWindows.test.mts` deliberately still runs without one).
+  STILL NOT CLOSED, and named rather than implied: (a) a pet its owner neither
+  buffs nor orders stays invisible (01KZN569YA6T751QCJW99P1ZCA is that half —
+  its pet buffs are not `targetType: Pet`, so the rung fires zero times in
+  its log); JOS-49's answer stands for them, order it once. (b) The rung is a
+  transition INSIDE the combat engine, not a parser event, so
+  `modules/buffs.ts`'s own entity-level succession still waits for the tell —
+  unchanged from before, not yet improved. Closing that needs a derived-event
+  seam the session feeds to both models, never a second arm in buffs.ts (that
+  is the duplicated retirement path law 4 is a scar from).
 - Exp: `You gain (party )?experience!( (N.NN%))?` — the percent is an
   INCREMENT of the current level bar (sums to ~100 between dings);
   unstated ⇒ at the cap, modeled `pct: undefined` never 0. The exp line
