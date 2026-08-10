@@ -45,14 +45,21 @@ function DispositionChip({ disposition }: { disposition?: LootDisposition }): JS
  * pane). The house convention already had the answer: one word, `est.`, beats a sentence — it
  * is in the column header, and the toolbar's "Count from" select names the source. Which
  * quests consumed how many still has a home, at full width, in the drill-down.
+ *
+ * IT TAKES A NUMBER RATHER THAN A ROW (JOS-160) because the two row kinds ask different witnesses.
+ * A loot row's estimate is the reconciled `net` — the active count source, minus turn-ins, exactly
+ * as before. An INVENTORY-ONLY row has no loot history at all and its `net` is 0 under the `log`
+ * source, so it reports what the export vouches for; a row the app is showing you *because* the
+ * export named it, rendering a dash where that count goes, would be the app declining to repeat
+ * its own evidence.
  */
-const InventoryEstimate = memo(function InventoryEstimate({ inv }: { inv?: InventoryRow }): JSX.Element {
-  if (!inv || inv.net <= 0) return <Box component="span" sx={{ color: 'text.disabled' }}>-</Box>
+const InventoryEstimate = memo(function InventoryEstimate({ n }: { n: number }): JSX.Element {
+  if (n <= 0) return <Box component="span" sx={{ color: 'text.disabled' }}>-</Box>
   return (
     <Chip
       size="small"
       variant="outlined"
-      label={`~${inv.net}`}
+      label={`~${n}`}
       sx={{ height: 18, fontSize: 11, color: 'text.secondary' }}
     />
   )
@@ -107,7 +114,7 @@ export const GroupedRow = memo(function GroupedRow({
         {g.invOnly ? '-' : g.count}
       </TableCell>
       <TableCell align="right">
-        <InventoryEstimate inv={inv} />
+        <InventoryEstimate n={g.invOnly ? (g.owned ?? 0) : (inv?.net ?? 0)} />
       </TableCell>
       <TableCell sx={{ color: 'text.secondary' }}>{g.topSource ?? '-'}</TableCell>
       <TableCell align="right" sx={{ color: 'text.secondary' }}>

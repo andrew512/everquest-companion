@@ -149,5 +149,12 @@ test('the keyring never invents a count: one row is one copy, and the item table
   const mantle = rows.find((r) => r.key === 'light woolen mantle')
   assert.ok(mantle)
   assert.equal(mantle.inv, 1)
-  assert.equal(mantle.name, 'light woolen mantle +1', 'display falls back to the export spelling')
+  // DISPLAY FALLS BACK TO THE QUEST DATA'S SPELLING, not the export's key (changed by JOS-160).
+  // This used to read `light woolen mantle +1` and was described as "the export spelling" — but
+  // `heldCountsFromDump` LOWERCASES every name it folds, so that fallback was never a spelling at
+  // all; it was a lookup key with the capitals rubbed off. Nobody noticed while inventory-only rows
+  // were an opt-in tail; JOS-160 puts one in a search result and on the item page's breadcrumb,
+  // where a lowercased name is simply wrong. The `+N` is gone with it because the counting key is
+  // the base item, which is the row this is (`key === 'light woolen mantle'`).
+  assert.equal(mantle.name, 'Light Woolen Mantle', 'the game spelling, from the quest data')
 })
