@@ -153,3 +153,34 @@ test('sanitizeRegistryPacks drops poisoned rows and keeps the honest ones', () =
   // An all-poison registry collapses to empty rather than throwing.
   assert.deepEqual(sanitizeRegistryPacks(poisoned), [])
 })
+
+// ---- JOS-162: the honest shapes the guard used to eat ----------------------------------
+//
+// The live openpeon registry carries 350 packs and this filter dropped 47 of them: 45 rows from
+// the real legacy GitHub account `heron--` (one per Overwatch hero voice pack), whose trailing
+// double hyphen the owner rule forbade, and 2 rows publishing an empty `source_path` where the
+// registry convention is `.` — a distinction no consumer below the validator makes. Both are
+// honest data, so both are KEPT now, and the traversal protections are unchanged (proven by the
+// adversarial rows sanitized alongside them, in the same call).
+
+test('sanitizeRegistryPacks keeps the legacy `heron--` owner and the empty source_path', () => {
+  // One row per real-world shape, plus the two attacks that must not ride in behind them: a
+  // traversal spelled inside the now-looser owner segment, and a `..` source_path.
+  const heron = pack({ name: 'mercy', source_repo: 'heron--/openpeon-mercy-soundpack' })
+  const emptyPath = pack({ name: 'sc-marine', source_path: '' })
+  const ownerTraversal = pack({ name: 'evil1', source_repo: 'ow..ner/repo' })
+  const ownerSlash = pack({ name: 'evil2', source_repo: 'ow/ner/repo' })
+  const pathTraversal = pack({ name: 'evil3', source_path: '../../etc' })
+
+  const out = sanitizeRegistryPacks([heron, ownerTraversal, emptyPath, ownerSlash, pathTraversal])
+  assert.deepEqual(
+    out.map((p) => p.name),
+    ['mercy', 'sc-marine']
+  )
+
+  // And the shape scaled up the way the live registry is: many `heron--` rows, all kept.
+  const many = Array.from({ length: 45 }, (_, i) =>
+    pack({ name: `heron-pack-${String(i)}`, source_repo: 'heron--/openpeon-hero-soundpack' })
+  )
+  assert.equal(sanitizeRegistryPacks(many).length, 45)
+})
