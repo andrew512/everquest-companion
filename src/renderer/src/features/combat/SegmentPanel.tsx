@@ -17,7 +17,7 @@ import { meterDrill, skillsForTarget, type Drill, type MeterMode, type TargetDet
 import { HealBody } from './HealPanel'
 import { DrillCrumb, MeterRows, crumbOf } from './MeterRows'
 import { SegmentHeader } from './SegmentHeader'
-import { meterPanel, type MeterPanel } from './petRows'
+import { meterPanel, panelTotals, type MeterPanel } from './petRows'
 import { scopeSources, scopeTotals } from './meterScope'
 import { useCombinePetRow } from './useCombatPrefs'
 import { formatEntityText, formatSegmentText, formatTargetText } from './copyText'
@@ -139,10 +139,8 @@ function SegmentContent({
 }
 
 /**
- * WHAT THE SELECTED DIMENSION IS MADE OF: the rows it ranks and the two headline figures.
+ * WHAT THE SELECTED DIMENSION IS MADE OF: the rows it ranks and its headline figures.
  *
- * The header total/DPS stay the SEGMENT's (you + every pet) at every drill level — the same
- * aggregate the Overview card headlines, so the two surfaces can never disagree on a number.
  * The healing pair is `HealingView`'s own total/hps: restored hit points + granted absorption,
  * exactly the figures the heal overlays headline (shared/combat.ts states what each includes).
  *
@@ -150,30 +148,57 @@ function SegmentContent({
  * `meterPanel` over an empty list yields level 1 with nothing in it, the right no-op while
  * another dimension is on screen.
  */
-function dimension(seg: SegmentView, mode: MeterMode): { rows: SourceView[]; total: number; dps: number } {
-  if (mode === 'heal') return { rows: [], total: seg.healing.total, dps: seg.healing.hps }
-  if (mode === 'in') return { rows: seg.incoming, total: seg.inTotal, dps: seg.inDps }
-  return { rows: seg.entities, total: seg.outTotal, dps: seg.outDps }
+interface Dimension {
+  rows: SourceView[]
+  total: number
+  dps: number
+  /** the ACTIVE-time rate that rides beside the headline — printed in the outgoing dimension
+   *  only (`ActiveDpsNote`), so the other two carry their own rate here rather than a fiction. */
+  activeDps: number
+}
+
+function dimension(seg: SegmentView, mode: MeterMode): Dimension {
+  if (mode === 'heal') {
+    return { rows: [], total: seg.healing.total, dps: seg.healing.hps, activeDps: seg.healing.hps }
+  }
+  if (mode === 'in') return { rows: seg.incoming, total: seg.inTotal, dps: seg.inDps, activeDps: seg.inDps }
+  return { rows: seg.entities, total: seg.outTotal, dps: seg.outDps, activeDps: seg.activeDps }
 }
 
 /**
- * …and the same three things once the SCOPE has had its say (docs/plans/group-model.md §2).
+ * …and the same things once the SCOPE has had its say (docs/plans/group-model.md §2).
  *
  * Only the OUTGOING dimension is scoped, because scope is a statement about whose damage — the
- * incoming list is always "what is hitting You", and no roster changes that. The headline pair
- * is recomputed from the surviving rows rather than carried over: `outTotal` counts members, so
+ * incoming list is always "what is hitting You", and no roster changes that. The headline figures
+ * are recomputed from the surviving rows rather than carried over: `outTotal` counts members, so
  * a You-scoped list under a group-scoped total would headline a number no visible row explains.
+ *
+ * BOTH RATES ride through `scopeTotals`, because each shares its denominator with the total it
+ * belongs to (`outDps` divides by elapsed time, `activeDps` by active seconds) — the same pair of
+ * calls DpsCard's `scopedView` makes, so the glance card and this panel scale identically.
  */
-function scopedDimension(
-  seg: SegmentView,
-  mode: MeterMode,
-  scope: MeterScope,
-  roster: RosterSnap
-): { rows: SourceView[]; total: number; dps: number } {
+function scopedDimension(seg: SegmentView, mode: MeterMode, scope: MeterScope, roster: RosterSnap): Dimension {
   const base = dimension(seg, mode)
   if (mode !== 'out') return base
   const rows = scopeSources(base.rows, scope, roster)
-  return { rows, ...scopeTotals(base.rows, rows, base.total, base.dps) }
+  return {
+    rows,
+    ...scopeTotals(base.rows, rows, base.total, base.dps),
+    activeDps: scopeTotals(base.rows, rows, base.total, base.activeDps).dps
+  }
+}
+
+/**
+ * …and finally what THIS PANEL is showing, which is the pair the header prints (JOS-170).
+ *
+ * At level 1 that is the scoped dimension untouched; drilled, it is the subject plus the pets
+ * nested into it — see `petRows.panelTotals`, the ONE derivation the Overview card reads too.
+ * Without it the header stated the fight while the rows stated the subject, and flipping the pet
+ * preference under an open You drill moved the rows and left the number where it was.
+ */
+function headline(panel: MeterPanel, dim: Dimension): { total: number; dps: number; activeDps: number } {
+  const { total, dps } = panelTotals(panel, dim.total, dim.dps)
+  return { total, dps, activeDps: panelTotals(panel, dim.total, dim.activeDps).dps }
 }
 
 export function SegmentBody({
@@ -194,12 +219,16 @@ export function SegmentBody({
   setDrill: (d: Drill | null) => void
 }): React.JSX.Element {
   const heal = mode === 'heal'
-  const { rows: scoped, total, dps } = scopedDimension(seg, mode, scope, roster)
+  const dim = scopedDimension(seg, mode, scope, roster)
+  const scoped = dim.rows
   const [combinePetRow] = useCombinePetRow()
   // THE one row builder — the same call the floating overlay makes (petRows.meterPanel). Nesting
   // is an OUTGOING idea: the Incoming direction lists enemies, and none of them owns a pet of
   // yours, so the preference is folded into the `combine` argument rather than tested downstream.
   const panel = meterPanel(scoped, mode === 'out' && combinePetRow, meterDrill(drill))
+  // …and the SAME panel decides the header's figures, so the number over the rows can never
+  // describe a different set of rows than the ones under it (JOS-170).
+  const head = headline(panel, dim)
   const d = useDrillState(panel, tl, drill)
 
   // "Copy this view" means THIS view: the same choice the body below makes, so the clipboard can
@@ -232,7 +261,14 @@ export function SegmentBody({
         flexDirection: 'column'
       }}
     >
-      <SegmentHeader seg={seg} mode={mode} total={total} dps={dps} copyView={heal ? null : copyView} />
+      <SegmentHeader
+        seg={seg}
+        mode={mode}
+        total={head.total}
+        dps={head.dps}
+        activeDps={head.activeDps}
+        copyView={heal ? null : copyView}
+      />
       {/* The damage crumb; the Healing dimension draws its own inside HealBody, because its one
           drill level has no nested-pet case and therefore no parent link to render. */}
       {!heal && d.crumb && (

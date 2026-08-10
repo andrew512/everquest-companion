@@ -60,6 +60,34 @@ export async function setMeterScope(page: Page, scope: Scope, back: string): Pro
   await page.click(`[data-testid="${back}"]`, { timeout: 30_000 })
 }
 
+/** The pet-nesting switch — 'Show your pet inside your damage' (features/preferences). */
+const COMBINE_PET = '[data-testid="pref-combine-pet"] input'
+
+/**
+ * Turn the PET NESTING preference on or off through Preferences > Combat, and return to `back`.
+ *
+ * The same two-window act as the scope above, and for the same reason it CLICKS THE CONTROL: this
+ * preference reaches four surfaces through localStorage plus the DOM's own 'storage' event, and a
+ * `setItem` from the test would exercise none of that path. It is also the exact route JOS-170's
+ * owner took — flip it in Preferences, come back to a Combat tab that has meanwhile unmounted and
+ * re-hydrated its drill — which is what makes the number's staleness observable at all.
+ *
+ * Idempotent: asking for the state it is already in clicks nothing and still waits for the
+ * control to agree, so a caller may state what it wants rather than track what it did.
+ */
+export async function setCombinePet(page: Page, on: boolean, back: string): Promise<boolean> {
+  await page.click('[data-testid="nav-preferences"]', { timeout: 30_000 })
+  await page.waitForSelector('[data-testid="prefs-rail-combat"]', { timeout: 20_000 })
+  await page.click('[data-testid="prefs-rail-combat"]')
+  await page.waitForSelector(COMBINE_PET, { timeout: 20_000 })
+  const isOn = (): Promise<boolean> => page.$eval(COMBINE_PET, (el) => (el as HTMLInputElement).checked)
+  if ((await isOn()) !== on) await page.click(COMBINE_PET, { timeout: 15_000 })
+  // The CONDITION the click produces — the checkbox agreeing it took the value, never a sleep.
+  const settled = await settle(isOn, (v) => v === on, { timeoutMs: 8_000 })
+  await page.click(`[data-testid="${back}"]`, { timeout: 30_000 })
+  return settled === on
+}
+
 /**
  * Which scope Preferences shows as CHOSEN, read from the control itself and not from the store,
  * then back to `back`. On a fresh profile this is the answer to "does an absent key resolve to
