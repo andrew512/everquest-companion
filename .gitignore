@@ -14,6 +14,15 @@ release/
 .vite/
 devlog.txt
 
+# TypeScript incremental build caches. `composite: true` in tsconfig.node.json and
+# tsconfig.web.json makes `npm run typecheck` write one of these next to each config — a file
+# index plus content hashes, so the next run can skip what did not change. They were committed
+# once by accident (swept into the squashed initial import, still carrying the author's
+# `../../../node_modules/…` paths, which never described this checkout). Nothing should read
+# them from git: they are per-machine, every typecheck rewrites them, and a stale one arriving
+# from someone else's tree can talk `tsc` out of work it should have done.
+*.tsbuildinfo
+
 # downloaded sound packs (audio binaries — `npm run fetch:packs` restores them; the app
 # also self-provisions the default pack at runtime). peon/sc_marine are no longer shipped
 # defaults but stay ignored so an existing dev's local copies never get committed.
