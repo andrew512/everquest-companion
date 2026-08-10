@@ -345,9 +345,12 @@ test('W57: the window carries a real bow, and the meter shows nothing — becaus
   lane(skills, 'you|Frenzy', 106, 4)
   lane(skills, 'you|Kick', 54, 2)
   lane(skills, 'you|Smite', 65, 2)
-  lane(skills, 'you|Smiting Strike', 260, 2)
+  // The two CAST-LESS spell lanes carry JOS-167's origin marker; the amounts are the same
+  // pre-change values. Blood Siphon Strike is a DoT (see the `you|dot` category below), which
+  // the detector never judges, so its lane name is untouched.
+  lane(skills, 'you|Smiting Strike · proc', 260, 2)
   lane(skills, 'you|Blood Siphon Strike', 94, 2)
-  lane(skills, 'you|Condemnation of Nife', 486, 2)
+  lane(skills, 'you|Condemnation of Nife · proc', 486, 2)
   lane(skills, 'enemy|Melee', 417, 5)
   lane(skills, 'enemy|Bash', 102, 3)
 

@@ -591,11 +591,26 @@ export interface CastFizzleEvent extends LogEventBase {
  * stunned, etc.). Clears the pending cast. NOTE (log evidence, 2026-08-01): the
  * real log has NO bare `Your spell is interrupted.` line — the shape always names
  * the spell. `You regain your concentration and continue your casting.` is the
- * OPPOSITE (a recovered cast) and is deliberately NOT parsed as an interrupt.
+ * OPPOSITE (a recovered cast) and is never parsed as an interrupt — it is its own
+ * kind, `castResumed` below.
  */
 export interface CastInterruptedEvent extends LogEventBase {
   kind: 'castInterrupted'
   spell: string
+}
+
+/**
+ * `You regain your concentration and continue your casting.` — the interrupted cast is BACK ON
+ * and will land (JOS-167). Parsed because the interrupt line alone is not evidence a cast
+ * failed: measured over the whole log, every one of the nine interrupts followed by a landing of
+ * the same spell has this line between them, so a model that drops the cast on the interrupt has
+ * to be told when to put it back.
+ *
+ * It names NO spell, and does not need to: casting is serial, so the only cast it can be about
+ * is the one that was just interrupted.
+ */
+export interface CastResumedEvent extends LogEventBase {
+  kind: 'castResumed'
 }
 
 /**
@@ -1331,6 +1346,7 @@ export type LogEvent =
   | OtherCastBeginEvent
   | CastFizzleEvent
   | CastInterruptedEvent
+  | CastResumedEvent
   | BuffFadeEvent
   | PlayerDeathEvent
   | SpellEmoteEvent

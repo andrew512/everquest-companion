@@ -45,8 +45,9 @@ const SAY_KIND_BY_TEXT = new Map<string, PetSayKind>(PET_SAY_LINES.map(([k, s]) 
 //   "Your pet's <Spell> spell has worn off."  (buff the player cast on their pet expired)
 // The worn-off-OF-<mob> shape (charm/mez) is handled earlier by uncharm/cc; these
 // TARGETLESS forms are never charm/cc, so buffFade is a pure fallthrough with no
-// overlap. "You regain your concentration…" is a recovered cast — deliberately NOT
-// treated as an interrupt.
+// overlap. "You regain your concentration…" is a recovered cast — never treated as an
+// interrupt; it is its own `castResumed` kind (JOS-167), because a cast that recovers still
+// lands and the proc detector has to be able to put back the record the interrupt took away.
 const CAST_BEGIN_RE = /^You begin (?:casting|singing) (.+?)\.$/
 // THIRD-PERSON cast (JOS-140): "<Name> begins casting <Spell>." — the only line that says who else
 // is casting what, and therefore the only thing that can ANCHOR a landing sentence to an
@@ -56,6 +57,9 @@ const CAST_BEGIN_RE = /^You begin (?:casting|singing) (.+?)\.$/
 const OTHER_CAST_BEGIN_RE = /^(.+?) begins (?:casting|singing) (.+?)\.$/
 const CAST_FIZZLE_RE = /^Your (.+?) spell fizzles!$/
 const CAST_INTERRUPT_RE = /^Your (.+?) spell is interrupted\.$/
+// The interrupt's counterpart (JOS-167): the cast recovered and WILL land. One exact sentence in
+// the whole log — matched as an equality, never as a /concentration/ pattern.
+const CAST_RESUMED_LINE = 'You regain your concentration and continue your casting.'
 // Targetless worn-off (no " of <mob>"): self-cast or pet-cast buff expiry.
 const BUFF_FADE_PET_RE = /^Your pet's (.+?) spell has worn off\.$/
 const BUFF_FADE_SELF_RE = /^Your (.+?) spell has worn off\.$/
@@ -183,6 +187,10 @@ export function classifyCastLifecycle({ text, ts, seq, raw }: ClassifyCtx): LogE
     const m = CAST_INTERRUPT_RE.exec(text)
     if (m) return { kind: 'castInterrupted', seq, ts, raw, spell: m[1].trim() }
   }
+  // The RECOVERY (JOS-167). Exact sentence, no capture: it names no spell, and casting is
+  // serial, so the only cast it can be about is the one just interrupted. See CastResumedEvent
+  // for the measurement that made it load-bearing.
+  if (text === CAST_RESUMED_LINE) return { kind: 'castResumed', seq, ts, raw }
   return null
 }
 
