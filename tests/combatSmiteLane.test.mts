@@ -250,10 +250,12 @@ test('W53: THE REPORTED GAP — your smite gets its own row, and the Smiting Str
   // of magic damage by Smiting Strike.` sits on the very next line, twice at 12:35:48), and it
   // is a different lane in a different category. 5 × 259 = 1,295. Byte-identical before and
   // after this change — it never goes near meleeSkill(), which only ever sees a melee VERB.
-  lane(skills, 'you|Smiting Strike', 1295, 5)
-  assert.equal(catSkills.get('you|spell|Smiting Strike')?.total, 1295)
+  // (The row is NAMED for its origin since JOS-167 — this window never casts Smiting Strike, so
+  // there is one row and it says where the 1,295 came from. The amount is unchanged.)
+  lane(skills, 'you|Smiting Strike · proc', 1295, 5)
+  assert.equal(catSkills.get('you|spell|Smiting Strike · proc')?.total, 1295)
   assert.equal(catSkills.get('you|melee|Smite')?.total, 296)
-  assert.equal(catSkills.has('you|melee|Smiting Strike'), false, 'the proc is never a melee lane')
+  assert.equal(catSkills.has('you|melee|Smiting Strike · proc'), false, 'the proc is never a melee lane')
   assert.equal(catSkills.has('you|spell|Smite'), false, 'this window casts no spell of that name')
 
   // The rest of your swings stay where they were — the split takes smite OUT of Melee and
@@ -280,7 +282,7 @@ test('W53: THE REPORTED GAP — your smite gets its own row, and the Smiting Str
   const sum = (prefix: string, names: string[]): number =>
     names.reduce((n, k) => n + (skills.get(`${prefix}|${k}`)?.total ?? 0), 0)
   assert.equal(sum('you', ['Melee', 'Strike', 'Smite', 'Bash', 'Kick']), categories.get('you|melee'))
-  assert.equal(sum('you', ['Smiting Strike', 'Lifetap Strike']), categories.get('you|spell'))
+  assert.equal(sum('you', ['Smiting Strike · proc', 'Lifetap Strike · proc']), categories.get('you|spell'))
 })
 
 test('W54: the SPELL named Smite and the SKILL named Smite share a row — and the category drill keeps them apart', { skip: SKIP54 }, () => {
@@ -304,8 +306,8 @@ test('W54: the SPELL named Smite and the SKILL named Smite share a row — and t
   )
 
   // …and the proc keeps its own row throughout, in the spell category, untouched.
-  lane(skills, 'you|Smiting Strike', 973, 14)
-  lane(catSkills, 'you|spell|Smiting Strike', 973, 14)
+  lane(skills, 'you|Smiting Strike · proc', 973, 14)
+  lane(catSkills, 'you|spell|Smiting Strike · proc', 973, 14)
 
   // LAW 8: the category totals are byte-identical to what the pre-change engine produced.
   // Hand-tallied melee: backstab 3,928 + bash 61 (21 of its 25 hits print the singular "for 1

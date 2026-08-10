@@ -24,7 +24,7 @@ import { SEC_RINGS, type EngineFoldProbe } from './foldProbe'
 import { StateTimeline } from './stateTimeline'
 import { CharmModel } from './charmModel'
 import { SpecialAttacks } from './specialAttacks'
-import type { RecentCasts } from './procDetect'
+import { RecentCasts } from './procDetect'
 import { EMPTY_ROSTER, EMPTY_ROSTER_VIEW, type RosterSnap, type RosterView } from '../../shared/roster'
 import type { ClassifiedLine, CoatSlot } from '../../shared/combat'
 
@@ -175,11 +175,11 @@ export class EngineState {
    */
   stateTimeline = new StateTimeline()
   /**
-   * Rank-normalized own-casts (`You begin casting <Spell>.`) → ts, for the cast-less proc
-   * detector. Only the PLAYER prints that line, which is exactly the gate the detector needs.
-   * Pruned to the 12s attribution window on write.
+   * Rank-normalized own-casts (`You begin casting <Spell>.`), for the cast-less proc detector.
+   * Only the PLAYER prints that line, which is exactly the gate the detector needs. Each record
+   * explains ONE firing and is then spent (JOS-167); pruned to the 12s attribution window.
    */
-  recentCasts: RecentCasts = new Map()
+  recentCasts = new RecentCasts()
   /**
    * ts of the last `You activate Quick Buff.` (0 = never). That AA re-applies the player's
    * memorized buffs and prints only their LANDINGS — no cast line for any of them — so the
