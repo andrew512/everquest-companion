@@ -350,6 +350,10 @@ const api = {
   listAlerts: (): Promise<AlertDef[]> => ipcRenderer.invoke(IPC.listAlerts),
   saveAlert: (def: AlertDef): Promise<AlertDef[]> => ipcRenderer.invoke(IPC.saveAlert, def),
   deleteAlert: (id: string): Promise<AlertDef[]> => ipcRenderer.invoke(IPC.deleteAlert, id),
+  /** Re-order the alert list (JOS-175). Send the id sequence to render; main answers with the
+   *  list it stored, which is the one to believe. */
+  reorderAlerts: (orderedIds: readonly string[]): Promise<AlertDef[]> =>
+    ipcRenderer.invoke(IPC.reorderAlerts, [...orderedIds]),
   testAlert: (id: string): Promise<AlertDef | null> => ipcRenderer.invoke(IPC.testAlert, id),
   resetAlerts: (): Promise<AlertDef[]> => ipcRenderer.invoke(IPC.resetAlerts),
   /** Report a renderer-evaluated 'app' fire so main records it in history (fire-and-forget). */
