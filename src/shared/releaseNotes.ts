@@ -129,6 +129,11 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     date: '2026-08-10',
     entries: [
       {
+        kind: 'changed',
+        text: 'A creature page counts an item once, however many upgraded versions of it you have looted. The base drop, the +1 and the +2 used to sit on three separate lines each saying you had seen one, so an item the mob had given you four times read as three ones - and an upgrade of something the wiki lists turned up down in "also looted by you" as if the page had never mentioned it. Now it is one line with the real total, sitting on the drop it belongs to, and it says how often that works out to over the kills of that mob this character has recorded - "1 per 14 kills" - with the denominator on hover, because it is your own history and not a published drop rate. Click the count of variants on the right and each +N opens up with its own tally and date, and each one still drills into its own loot history.',
+        fromReport: true
+      },
+      {
         kind: 'fixed',
         text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
       }
