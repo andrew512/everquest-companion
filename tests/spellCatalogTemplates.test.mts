@@ -87,7 +87,7 @@ test('NO DEAD `lands`: every lands template names a message the parser can match
   }
 })
 
-test('the dead-lands gate actually removed something — 58 of them', () => {
+test('the dead-lands gate actually removed something — 48 of them', () => {
   // Provenance for the claim in spellDb.ts's comment: a count, measured here rather than asserted
   // in prose. These were Detrimental spells with a cast-on-other message the suffix table cannot
   // key, every one of which was being offered a suggestion that could not fire.
@@ -101,16 +101,29 @@ test('the dead-lands gate actually removed something — 58 of them', () => {
   // Mana Shock, Cease, Desist, Sacred Word, Cancelling/Cessation/Negation of Life, Force Snap and
   // Thunder of Karana, each of them evidenced against the owner's log in that file.
   //
-  // AND IT IS 58 SINCE JOS-161 — the tenth of that kind, and the first one a real user noticed
+  // AND IT WAS 58 SINCE JOS-161 — the tenth of that kind, and the first one a real user noticed
   // from the outside. `Sionachie's Dreams` (bard mez 40) wrote `Target's eyes glaze over.` where
   // its three ladder siblings write `Someone 's eyes glaze over.`, so the song could not be a
   // candidate for its own landing sentence and no alert naming it could ever fire.
+  //
+  // AND IT IS 48 SINCE JOS-174, which stopped fixing this one report at a time. Another shaman
+  // reported the same shape from the other end — Odium never opened a debuff bar — so the drift
+  // was SWEPT: every spell whose cast-on-other message the suffix table cannot key was measured
+  // against the owner's whole log, and the ones the log can prove got an entry
+  // (`spellCorrectionsSubjects.ts`, 33 entries over 44 spell rows). Ten of them are Detrimental
+  // and so leave this population: Blood of Pain, Dark Soul, Elnerick's Entombment of Ice,
+  // Insidious Retrogression, Laceration, Mana Detonation, Mana Ignition, Spike of Disease and
+  // Tangling Weeds — nine names for ten rows, because the scrape carries Dustdevil twice and this
+  // loop counts rows. Odium itself is NOT among them and never was: its spellType is `Curse`, so
+  // the `lands` gate never looked at it, which is exactly why a reporter had to notice from the
+  // debuff timer instead. The remainder is what the owner's log has never printed, which is what
+  // the gate is for.
   let dead = 0
   for (const s of db.spells) {
     if (s.spellType !== 'Detrimental' || !s.msgCastOnOther) continue
     if (castOnOtherSuffix(s.msgCastOnOther) === null) dead += 1
   }
-  assert.equal(dead, 58, 'the measured population the `lands` gate now excludes')
+  assert.equal(dead, 48, 'the measured population the `lands` gate now excludes')
 })
 
 test('`landsOnOther` always travels with the pattern it needs', () => {
