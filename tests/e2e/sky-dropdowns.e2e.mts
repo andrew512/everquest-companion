@@ -25,6 +25,14 @@
  *      floating over the option list the user just opened.
  * Each is a different way the defect could return, and none of them is "count the poppers".
  *
+ * AND THE NEW TRIPWIRE WAS MEASURED AGAINST THE OLD SHAPE (2026-08-10, this fixture, this harness,
+ * a 1280-wide window), the way loot-sort.e2e.mts and this spec's first cut both were. Dropping the
+ * `clickThrough` flag in `SkyItemCard` — which is exactly the v0.15.0 card, `placement="top"` and
+ * interactive — turns FOUR checks red and nothing else: the card's top edge lands at 161 against a
+ * filter bar whose bottom is 263 (it is ON the toolbar) and against an anchor at 416, computed
+ * `pointer-events` reads `auto`, and the card is still up over an open option list. Every one of
+ * them is green with the flag on.
+ *
  * WHY THIS NEEDS A BROWSER AT ALL. `tests/tooltipCursor.test.mts` pins the code shape and cannot
  * rot — it derives the rule (every file that renders a dropdown mounts no popper; the Sky rows
  * mount their card only through the one wrapper that always asks for click-through mode) rather
@@ -35,11 +43,11 @@
  * which is exactly the question "where would this click land?"), then work all three dropdowns with
  * real clicks WITH A CARD OPEN.
  *
- * WHAT ELEMENTFROMPOINT IS AND IS NOT, MEASURED. The original spec recorded this and it still
- * holds: with the broken card up, `elementFromPoint` PASSED, because where a popper lands is a
- * function of the window and this one is a fixed 1280 the owner's is not. So the geometry is the
- * statement of what the user is owed — their click reaching the control — while the three
- * properties above are what catch the regression at any width.
+ * WHAT ELEMENTFROMPOINT IS AND IS NOT, MEASURED. The original spec recorded this and the run above
+ * confirms it: with the broken card up, `elementFromPoint` PASSED and so did every real click,
+ * because where a popper lands is a function of the window and this one is a fixed 1280 the owner's
+ * is not. So the geometry is the statement of what the user is owed — their click reaching the
+ * control — while the three properties above are what catch the regression at any width.
  *
  * IT ALSO PINS THAT THE DROPPER ROSTER STAYS REACHABLE (JOS-173, carried forward). Deleting the
  * card in JOS-143 deleted one of the facts it carried: the required-item chip's card printed

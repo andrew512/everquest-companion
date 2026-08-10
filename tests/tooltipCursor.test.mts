@@ -303,7 +303,8 @@ test('SkyItemCard always passes clickThrough — the mode is never a call-site d
   // would make it conditional on something).
   const mounts = src.match(/<KnownItemTooltip\b/g) ?? []
   assert.equal(mounts.length, 1, 'SkyItemCard mounts the generic card exactly once')
-  assert.ok(/\n\s*clickThrough\n/.test(src), 'and passes clickThrough unconditionally')
+  // Its own line, bare — `\s*$` rather than `\n` because a checkout may hand this file CRLF.
+  assert.ok(/^\s*clickThrough\s*$/m.test(src), 'and passes clickThrough unconditionally')
   assert.equal(importsMuiTooltip(src), false, 'it reaches MUI only through the generic card')
 })
 
