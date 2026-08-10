@@ -11,18 +11,27 @@
 // why this is a measured LIST rather than a wider subject stripper, and which two sentences it
 // refuses. This suite is the guard on the properties that argument rests on.
 //
-// FOUR THINGS ARE PINNED HERE:
+// JOS-189 ADDED THREE MORE REPORTS to the same sweep and the same suite: the bard whose four Tuyen
+// chants share one landing sentence (01KZN3FSW4BQ519N3TV8CQ1TC1), and the beastlord whose Sha's
+// Lethargy never reaches the debuff window (01KZP5B8F9GJ0J0BNCP29DH59J) — which is the sentence
+// JOS-174 named and REFUSED, so it is the first entry that takes a line off another classifier.
+//
+// FIVE THINGS ARE PINNED HERE:
 //
 //   1. THE SHAPE. Every entry restores a SUBJECT and changes nothing else. Strip the leading
 //      subject token from `from` and from `to` and the remainder is byte-identical — which is what
 //      makes "the sentence is the wiki's own" a checkable claim rather than a promise.
-//   2. STRICTLY ADDITIVE. Every restored tail is NEW to the suffix table, and no new tail is a
-//      suffix of an existing one or vice versa. A new tail that could also match a line an
-//      existing suffix owns would silently re-point that line by table order.
-//   3. THE REFUSALS ARE REAL. ` looks powerful.` and ` feels lethargic.` have owner-log evidence
-//      and are deliberately NOT corrected: `classifySpellEmote` already claims them and
-//      `classifyDbBuff` runs above it, so a correction would TAKE a match rather than add one.
-//   4. THE ACCEPTANCE: the reported defect, end to end, through the real parser and the real
+//   2. ADDITIVE AT THE TABLE. A restored tail is either NEW to the suffix table or byte-identical
+//      to one already in it (the Tuyen chants JOIN the sentence their two siblings already own);
+//      what it may never be is a PARTIAL overlap, because there a line matches two tails and table
+//      order decides which spell it means.
+//   3. THE REFUSAL IS REAL. ` looks powerful.` has owner-log evidence and is deliberately NOT
+//      corrected: `classifySpellEmote` already claims it and `classifyDbBuff` runs above it, so a
+//      correction would TAKE a match rather than add one.
+//   4. …AND WHAT IT COSTS TO STOP REFUSING ONE. ` feels lethargic.` left that list with a measured
+//      whole-log blast radius beside it, and this suite pins both halves: the four lines that move,
+//      and the emote path still claiming every other perception-verb sentence.
+//   5. THE ACCEPTANCES: the reported defects, end to end, through the real parser and the real
 //      unified model. An Odium VI cast plus the landing sentence the LIVE GAME prints opens a
 //      DEBUFF row with a duration. It could not before, by one subject token.
 //
@@ -33,9 +42,13 @@
 // 01KZMS8NG4FBYCP1P51VK8WP1B and INJECTED here, which is the AGENTS.md rule for a defect that
 // exists only in somebody else's log — no reporter-slice bytes enter the tree.
 //
-// MEASURED WHOLE-LOG BEFORE AND AFTER (the law-8 tripwire, 1,536,938 lines of the owner's log,
-// every line parsed twice in one process): `unknown` 140,167 -> 139,645 and `buffApply` 104,876 ->
-// 105,398. One transition, `unknown -> buffApply`, 522 lines. Every other kind byte-identical.
+// MEASURED WHOLE-LOG BEFORE AND AFTER (the law-8 tripwire, every line parsed twice in one process).
+// JOS-174, over 1,536,938 lines: `unknown` 140,167 -> 139,645 and `buffApply` 104,876 -> 105,398.
+// One transition, `unknown -> buffApply`, 522 lines. Every other kind byte-identical.
+// JOS-189's Sha's Lethargy entry, measured the same way over 1,557,575 lines and on its own:
+// `buffApply` 106,507 -> 106,511, `spellEmote` 1,858 -> 1,855, `unknown` 141,281 -> 141,280. FOUR
+// lines, named in `spellCorrectionsSubjects.ts` under THE PRECEDENCE CASE. Every other kind
+// byte-identical.
 //
 // Run: `npm test`.
 
@@ -184,15 +197,22 @@ test('JOS-189: the chant family is FOUR candidates for the one sentence it print
 // 3 — THE REFUSALS: two sentences with real evidence that are deliberately left alone
 // ---------------------------------------------------------------------------------------------
 
-test('the two cascade-claimed sentences are refused, and the cascade still claims them', () => {
-  // `classifyDbBuff` sits ABOVE `classifySpellEmote`, so correcting these would not add a match, it
-  // would take one — silently reclassifying lines that parse today. That is a different change
-  // with a different burden of proof. The list is data so this can assert on it rather than on a
-  // comment; the subject below is a synthetic one-word name so no bystander's enters the tree, and
-  // one word is what the emote matcher wants — the same sentence with an ARTICLED mob name in
-  // front of it is `unknown` either way, which is why the reclassification would be silent.
+test('the cascade-claimed sentence that is still refused is still claimed by the cascade', () => {
+  // `classifyDbBuff` sits ABOVE `classifySpellEmote`, so correcting this would not add a match, it
+  // would take one — reclassifying lines that parse today. The list is data so this can assert on
+  // it rather than on a comment; the subject below is a synthetic one-word name so no bystander's
+  // enters the tree, and one word is what the emote matcher wants.
+  //
+  // JOS-174 wrote this list with two members and JOS-189 met the burden for one of them, so what
+  // this test now guards is the SPLIT: `looks powerful.` is 15 whole-log lines, twelve of them on
+  // player names arriving in same-second pairs — a group buff landing, which is the shape the emote
+  // learner's cast-target discrimination exists for — and no report names it.
   installSpellDb(loadSpellDb())
-  assert.equal(SUBJECT_DRIFT_REFUSED.length, 2)
+  assert.deepEqual(
+    SUBJECT_DRIFT_REFUSED.map((r) => r.spell),
+    ['Infusion of Spirit'],
+    'a sentence leaves this list only with a measured blast radius beside it — see THE PRECEDENCE CASE'
+  )
   for (const r of SUBJECT_DRIFT_REFUSED) {
     assert.ok(
       !SPELL_CORRECTIONS.some((c) => c.field === 'msgCastOnOther' && c.spells.includes(r.spell)),
@@ -200,6 +220,38 @@ test('the two cascade-claimed sentences are refused, and the cascade still claim
     )
     const ev = parseEvent(`[Sat Aug 09 12:00:00 2026] Someguy ${r.suffix}`, 0)
     assert.equal(ev?.kind, r.claimedBy, `\`${r.suffix}\` must still parse the way it parsed before`)
+  }
+})
+
+test('JOS-189: the slow sentence is TAKEN from the emote path, and only that sentence', () => {
+  // THE PRECEDENCE CASE. Measured whole-log, 1,557,575 lines parsed twice in one process with and
+  // without this one correction: buffApply 106,507 -> 106,511, spellEmote 1,858 -> 1,855, unknown
+  // 141,281 -> 141,280, every other kind byte-identical. Four lines move and no others.
+  installSpellDb(loadSpellDb())
+
+  // The two shapes the sentence comes in, which is its own argument: EMOTE_PET_RE wants a
+  // CAPITALISED subject, so an articled mob name never reached the emote learner at all and the
+  // family was already split on whether the mob's name had "a " in front of it.
+  for (const subject of ['Vebarn', 'a flighty fiend']) {
+    const ev = parseEvent(`[Sat Aug 09 12:00:00 2026] ${subject} feels lethargic.`, 0)
+    assert.equal(ev?.kind, 'buffApply', `${subject}: the slow now names its spell`)
+    assert.equal(ev.kind === 'buffApply' ? ev.spell : '', "Sha's Lethargy")
+    assert.equal(ev.kind === 'buffApply' ? ev.target : '', subject, 'and carries the target it landed on')
+  }
+
+  // AND THE EMOTE PATH IS OTHERWISE UNTOUCHED — the protected behaviour, pinned. The permissive
+  // matcher still claims every OTHER perception-verb line, in both persons, which is what keeps
+  // Task #33's cast-target learning working for spells the DB does not describe.
+  const stillEmotes = [
+    'Someguy looks powerful.', // the refused sentence, above
+    'Bzzazzt feels tired.',
+    'Bzzazzt looks refreshed.',
+    'Bzzazzt seems more agile.',
+    'You feel a traveling spirit surround you.',
+    'You seem to be at peace.'
+  ]
+  for (const text of stillEmotes) {
+    assert.equal(parseEvent(`[Sat Aug 09 12:00:00 2026] ${text}`, 0)?.kind, 'spellEmote', text)
   }
 })
 
@@ -345,6 +397,53 @@ test('…and with the wiki`s own two rows the same chain shows frost and loses t
       r.rows.map((x) => x.name).sort(),
       ["Tuyen's Chant of Flame V", "Tuyen's Chant of Frost V"],
       'a frost bar for a frost that was resisted, and nothing for the poison or the disease'
+    )
+  } finally {
+    installSpellDb(loadSpellDb())
+  }
+})
+
+test('JOS-189: a Sha`s Lethargy cast plus its landing opens the slow`s debuff bar', () => {
+  // THE REPORT (01KZP5B8F9GJ0J0BNCP29DH59J, v0.18.0, a beastlord): the level-50 slow does not show
+  // up in the debuff window. `<mob> feels lethargic.` is the owner's own sentence (4 lines
+  // whole-log, every one of them within 12 s of a Sha's Lethargy cast); the cast line is cast in
+  // the FIRST person here, as the JOS-161 windows are, so the anchor is the ordinary own-cast one.
+  const r = replay(
+    [
+      [0, "You begin casting Sha's Lethargy."],
+      [3, 'a fire giant warrior feels lethargic.']
+    ],
+    30
+  )
+  const row = r.rows.find((x) => x.target === 'a fire giant warrior')
+  assert.ok(row, `no slow row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
+  assert.equal(row.name, "Sha's Lethargy")
+  assert.equal(row.kind, 'debuff')
+  assert.equal(row.mode, 'countdown')
+  assert.equal(row.durationMs, 150_000, 'the committed DB states 2 Min 30 Sec')
+  assert.ok(rowsForSurface(r.rows, 'debuffs').includes(row), 'the DEBUFF window, which is where it was missing')
+  assert.ok(
+    r.active.some((a) => a.spell === "Sha's Lethargy" && a.target === 'a fire giant warrior'),
+    `no held instance: ${r.active.map((a) => `${a.spell}@${a.target ?? 'self'}`).join(', ') || '(none)'}`
+  )
+})
+
+test('…and without the correction the same landing is a nameless emote, which is the defect', () => {
+  const bare = buildSpellDb(applySpellCorrections(RAW, HAND_DERIVED).spells)
+  try {
+    const r = replay(
+      [
+        [0, "You begin casting Sha's Lethargy."],
+        [3, 'a fire giant warrior feels lethargic.']
+      ],
+      30,
+      bare
+    )
+    assert.deepEqual(r.rows, [], 'no row at all: the sentence named no spell, so no bar could exist')
+    assert.equal(
+      castOnOtherSuffix(bare.byKey.get("sha's lethargy")?.msgCastOnOther ?? ''),
+      null,
+      'because the scrape dropped the subject entirely and the suffix table cannot key it'
     )
   } finally {
     installSpellDb(loadSpellDb())

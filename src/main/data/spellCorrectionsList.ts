@@ -85,9 +85,10 @@
 import type { SpellCorrection } from './spellCorrections'
 // THE SUBJECT-PLACEHOLDER SWEEP (JOS-174), appended below. It is one of the drift classes this
 // header governs and is held to this file's evidence bar; it lives next door only because it is
-// the one class that arrives in bulk (33 entries over 44 spell rows) and the repo's max-lines
+// the one class that arrives in bulk (35 entries over 47 spell rows) and the repo's max-lines
 // ceiling is about code mass. Its own header states why the sweep is a LIST rather than a wider
-// subject stripper, and which two sentences it refuses.
+// subject stripper, which sentence it still refuses, and — for the one sentence it stopped
+// refusing — what taking a line off another classifier costs, measured (JOS-189).
 import { SUBJECT_PLACEHOLDER_CORRECTIONS } from './spellCorrectionsSubjects'
 
 /**

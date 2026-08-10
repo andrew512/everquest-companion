@@ -48,8 +48,55 @@
 //     anything — and TWO do not: ` looks powerful.` (Infusion of Spirit) and ` feels lethargic.`
 //     (Sha's Lethargy) are already claimed by `classifySpellEmote`, which sits BELOW
 //     `classifyDbBuff` in the cascade. Correcting those two would silently RECLASSIFY existing
-//     lines, so they are deliberately absent from this list and `tests/spellCorrections.test.mts`
-//     pins their absence.
+//     lines, so JOS-174 left both out. One of them has since been admitted WITH the argument that
+//     absence stood in for — see THE PRECEDENCE CASE below; the other is still refused.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PRECEDENCE CASE: `<mob> feels lethargic.` (JOS-189).
+//
+// A beastlord reported that Sha's Lethargy — the level-50 slow — never reaches the debuff window
+// (01KZP5B8F9GJ0J0BNCP29DH59J). It is the sentence JOS-174 named and refused, so it is the first
+// entry in this file that TAKES a line from another classifier rather than adding one, and it is
+// worth being clear about what was and was not in doubt.
+//
+// THE CASCADE ORDER WAS NEVER THE DOUBT. `classifyDbBuff` sits above `classifySpellEmote`
+// deliberately and says why in its own doc comment: a line that EXACTLY matches a DB message names
+// the exact spell, which is strictly more informative than a permissive emote candidate. What
+// JOS-174 was missing was not a rule, it was the OTHER HALF OF THE ARGUMENT. Every entry in this
+// sweep could be admitted on a count alone precisely because nothing was being taken; a sentence
+// that is already parsing needs somebody to say what is downstream of the classifier losing it.
+// So this entry supplies both halves.
+//
+//   THE COUNT. Owner log, 1,557,575 lines, parsed TWICE in one process with and without this one
+//   correction: `buffApply` 106,507 -> 106,511, `spellEmote` 1,858 -> 1,855, `unknown` 141,281 ->
+//   141,280. Every other kind byte-identical. FOUR lines move, and here they are, all of them:
+//   `Magi P`tasa feels lethargic.` (x2) and `Vebarn feels lethargic.` go spellEmote -> buffApply,
+//   and `a flighty fiend feels lethargic.` goes unknown -> buffApply.
+//
+//   THE FOURTH LINE IS ITS OWN ARGUMENT. `EMOTE_PET_RE` requires a CAPITALISED subject, and an
+//   articled mob name is lowercase — so the family was already split, three lines going to the
+//   emote learner and the fourth going nowhere, purely on whether the mob's name had "a " in front
+//   of it. That is not an owner; it is an accident.
+//
+//   WHAT THE EMOTE PATH DOES WITH THEM, both consumers. `BuffsModule.mineForOverlay` treats
+//   `spellEmote` and `buffApply` IDENTICALLY — both feed `observeMessage(text, ts, 'landing')` —
+//   so the observed-message overlay miner sees exactly the same stream before and after, and that
+//   is the half most easily missed. The only other consumer is `onSpellEmote`, which names the
+//   SUBJECT of the player's own pending cast once the same text has been seen twice inside a five
+//   second window. That is a cast-target DISCRIMINATOR, and what replaces it here is a landing
+//   bound to the named entity outright — which is the thing the discriminator exists to
+//   approximate. For this sentence the trade is not close: the owner cast Sha's Lethargy ZERO
+//   times in the whole log (all 33 casts are other players'), so any pending cast of his those
+//   three lines could have named a subject for was a DIFFERENT spell, and the emote was offering
+//   to attribute somebody else's slow to it.
+//
+// ` looks powerful.` (Infusion of Spirit) IS STILL REFUSED, and the same measurement is why the two
+// are not the same case. It occurs 15 times whole-log, TWELVE of them on player names and three on
+// a mob, arriving in same-second PAIRS of players — the shape of a group buff landing, which is
+// exactly the shape the emote learner's cast-target discrimination is for. No report names it, the
+// owner is not the shaman casting it, and nothing in his log attaches those lines to a cast. It
+// waits for a beastlord's equivalent: a user who says the bar is missing, and a log that says which
+// cast each line belongs to. That is the awaiting-sample law, applied to the one sentence left.
 //
 // So: the registry, one measured entry per proven sentence, exactly like every other drift class.
 // A future spell earns an entry by clearing the bar, not by matching a pattern.
@@ -254,6 +301,15 @@ const SUBJECT_DRIFTS: readonly SubjectDrift[] = [
     from: 'Target is pierced by cosmic energy.',
     to: 'Someone is pierced by cosmic energy.',
     hits: 1 },
+  {
+    spells: ["Sha's Lethargy"],
+    from: 'feels lethargic.',
+    to: 'Someone feels lethargic.',
+    hits: 4,
+    attribution: 'cast',
+    evidence:
+      'THE SENTENCE JOS-174 REFUSED, and the one that had to be TAKEN rather than added (see THE PRECEDENCE CASE below). Reported by a beastlord (01KZP5B8F9GJ0J0BNCP29DH59J, v0.18.0): "Sha`s Lethargy the Beastlord lvl 50 slow doesn`t show up in the debuff windows". Owner log, 1,557,569 lines: `<T> feels lethargic.` occurs 4 times and ALL FOUR fall within 12 s (p50 3 s) of one of the 33 `<Name> begins casting Sha`s Lethargy.` lines, so every occurrence of the sentence in the whole log is a Sha`s Lethargy landing and no other spell in the DB writes it. The wiki form occurs 0 times, as it must — it has no subject at all.'
+  },
   { spells: ['Spirit of the Puma'],
     from: 'Target growls with the spirit of the puma.',
     to: 'Someone growls with the spirit of the puma.',
@@ -293,16 +349,20 @@ export const SUBJECT_PLACEHOLDER_CORRECTIONS: readonly SpellCorrection[] = SUBJE
 )
 
 /**
- * The two sentences this sweep deliberately does NOT correct, and the reason, as data rather than
- * prose so the suite can pin it (`tests/spellCorrections.test.mts`).
+ * The sentences this sweep deliberately does NOT correct, and the reason, as data rather than prose
+ * so the suite can pin it (`tests/spellCorrectionsSubjects.test.mts`).
  *
- * Both have real owner-log evidence and would otherwise have earned an entry. Both are already
+ * They have real owner-log evidence and would otherwise have earned an entry. They are already
  * claimed by `classifySpellEmote`, and `classifyDbBuff` runs ABOVE it in the cascade — so a
- * correction here would not ADD a match, it would TAKE one, silently reclassifying lines that are
- * parsing today. That is a different change with a different burden of proof, and it is not this
- * ticket's.
+ * correction here would not ADD a match, it would TAKE one, reclassifying lines that are parsing
+ * today. That is a different change with a different burden of proof: a measured whole-log blast
+ * radius, and a statement of what the classifier losing the line was doing with it.
+ *
+ * JOS-174 wrote this list with TWO members. JOS-189 met that burden for one of them — `feels
+ * lethargic.`, the beastlord slow, four lines whole-log, all four anchored to a cast of the spell —
+ * and it has moved into the table above. THE PRECEDENCE CASE in this file's header carries the
+ * measurement, and also why `looks powerful.` is not the same case and stays here.
  */
 export const SUBJECT_DRIFT_REFUSED: readonly { spell: string; suffix: string; claimedBy: string }[] = [
-  { spell: 'Infusion of Spirit', suffix: 'looks powerful.', claimedBy: 'spellEmote' },
-  { spell: "Sha's Lethargy", suffix: 'feels lethargic.', claimedBy: 'spellEmote' }
+  { spell: 'Infusion of Spirit', suffix: 'looks powerful.', claimedBy: 'spellEmote' }
 ]
