@@ -35,6 +35,11 @@ import { POISON_PROCS } from '../../shared/poisons'
 // the name class it produces are security-relevant, and a second copy would drift out of the
 // threat model that argues for them.
 import { subjectCapturePattern } from '../../shared/alertCaptures'
+// THE crowd-control roster, imported rather than restated (JOS-161). It is what decides whether a
+// `Your <X> spell has worn off of <mob>.` line becomes a `cc` event at all, so it is also what
+// decides whether the `breaks` template can fire. rulesets.ts's only reference back here is an
+// `import type`, so this edge is one-way at runtime.
+import { CC_STEMS } from '../log/rulesets'
 // OUR corrections to the scrape (JOS-150). They are applied to the ENTRIES, before any table is
 // derived, so the suffix index, the wears-off map, the suggestion catalog and every search string
 // all see one corrected text. Read that file's header before adding one: it carries the evidence
@@ -488,7 +493,13 @@ function suggestionTemplates(s: SpellEntry): SpellCatalogEntry['templates'] {
     landsOnOther:
       !!s.msgCastOnOther &&
       !POISON_PROC_MSGS.has(s.msgCastOnOther) &&
-      subjectCapturePattern(s.msgCastOnOther) !== null
+      subjectCapturePattern(s.msgCastOnOther) !== null,
+    // THE HOLD BREAKING (JOS-161). Gated on the parser's own crowd-control roster and on nothing
+    // else: `Your <X> spell has worn off of <mob>.` becomes a `cc {refresh:true}` for exactly the
+    // spells `ccSpell` matches, and a plain `buffFade` for every other spell — so the roster IS
+    // the "can this fire" question. Not gated on disposition: the roster is already all
+    // detrimental, and the flag would then be making a second, weaker claim about the same thing.
+    breaks: CC_STEMS.test(s.name)
   }
 }
 
@@ -516,7 +527,7 @@ export function searchTextFor(s: SpellEntry, rankNames: readonly string[] | unde
  * JOS-103 was filed for.
  */
 function offersAnyTemplate(t: SpellCatalogEntry['templates']): boolean {
-  return t.wearsOff || t.fade || t.lands || t.landsOnOther
+  return t.wearsOff || t.fade || t.lands || t.landsOnOther || t.breaks
 }
 
 export function buildSpellCatalog(

@@ -314,6 +314,24 @@ export interface SpellTemplateFlags {
    * and "who did this land on" is a question worth asking of a buff and a debuff alike.
    */
   landsOnOther: boolean
+  /**
+   * A CROWD-CONTROL spell the parser's `ccSpell` roster claims → "the hold broke" (kind: `cc`
+   * with `refresh:true`, pinned to this spell's name).
+   *
+   * THE HOLE IT FILLS (JOS-161). `wearsOff` is beneficial-only and rests on the derived
+   * `buffExpired`, which the buffs module synthesizes ONLY from an authoritative wear-off
+   * message. A mez on a mob has neither: `Your <Song> spell has worn off of <mob>.` is claimed
+   * by `classifyWornOff` and becomes a `cc` refresh, and the silent hygiene cull that retires an
+   * unwitnessed hold emits nothing on purpose. So a bard who reached for "alert me when this
+   * expires" found no template that could fire and no trigger they could hand-write that would —
+   * which is the report this ticket came from, and it was true of every mez and root in the game.
+   * The curated "Mez / root broke" GROUP already fires on this event; what did not exist was the
+   * per-spell version, and it is the per-spell version a user goes looking for by name.
+   *
+   * The roster is the gate for the usual reason: the flag is a CLAIM the alert can fire, and a
+   * spell `ccSpell` does not match parses to `buffFade` instead, where this trigger never sees it.
+   */
+  breaks: boolean
 }
 
 /** One catalog row: a spell the wizard can build alerts for. */

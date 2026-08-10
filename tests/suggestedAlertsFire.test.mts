@@ -358,6 +358,118 @@ test('JOS-103 P5: the spoken default names the spell\'s DISTINCTIVE word, not it
   assert.equal(spellShortName('Mesmerization III'), 'Mesmerization', 'the rank is not a word')
 })
 
+// ---------------------------------------------------------------------------------------------
+// JOS-161 — THE TWO BARD SONGS THE WIKI WORDS WRONGLY (report: a bard on 0.14.0 could not get an
+// alert to fire for `Sionachie's Dreams` or `Solon's Bewitching Bravura` with ANY trigger type,
+// buff-expire included).
+//
+// TWO SEPARATE CAUSES, both fixed through the JOS-150 corrections overlay:
+//   * `Sionachie's Dreams` wrote its landing as `Target's eyes glaze over.` where its three ladder
+//     siblings write `Someone 's eyes glaze over.` — no `castOnOtherSuffix`, so the song was in no
+//     table, `templates.lands` was false, and the sentence it really prints resolved to a
+//     candidate list the song was not in. There was nothing to pin an alert to.
+//   * The level-39 song is `Solon's Bravura` in the scrape and `Solon's Bewitching Bravura` in the
+//     game. The name is the join key — `byKey`, the catalog `key`/`name`, and every `where.spell`
+//     — so the landing alert and the break alert could not both be satisfied by one string.
+//
+// AND THE THIRD THING, which is why "buff-expire" was in the report: a mez on a mob emits no
+// `buffExpired` and never could. Its break is a `cc {refresh:true}`, and until now the only alert
+// that matched it was the family-wide "Mez / root broke" group. `breaks` is the per-spell one.
+//
+// THE LINES ARE REAL. The two `<mob>'s eyes glaze over.` landings and both `You begin singing`
+// lines are the shapes slice 01KZAG2QAW885YJNRTDDND8BF2 carries verbatim; the owner's own log
+// carries the same sentence 14 times (lines 300196-525511) including one three seconds after
+// `Enzee begins singing Sionachie's Dreams.`. Single client notices with no surrounding state to
+// warm, quoted here rather than committed as a fixture — the AGENTS.md reporter-slice rule, the
+// same way the JOS-84 and JOS-103 blocks above do it.
+// ---------------------------------------------------------------------------------------------
+
+const BARD = {
+  bravuraCast: "[Wed Aug 05 22:27:33 2026] You begin singing Solon's Bewitching Bravura IX.",
+  bravuraLanded: "[Wed Aug 05 22:27:35 2026] a fire giant warrior's eyes glaze over.",
+  bravuraBroke:
+    "[Wed Aug 05 22:28:56 2026] Your Solon's Bewitching Bravura spell has worn off of a fire giant warrior.",
+  dreamsCast: "[Wed Aug 05 22:26:46 2026] You begin singing Sionachie's Dreams IV.",
+  dreamsLanded: "[Thu Jul 30 18:32:43 2026] a revenant's eyes glaze over.",
+  dreamsBroke:
+    "[Sun Aug 09 13:43:23 2026] Your Sionachie's Dreams spell has worn off of an elemental crusader."
+}
+
+test('JOS-161 B1: the bard mez LANDING alert fires for both songs', () => {
+  for (const [key, line] of [
+    ["sionachie's dreams", BARD.dreamsLanded],
+    ["solon's bewitching bravura", BARD.bravuraLanded]
+  ] as const) {
+    const lands = suggestionsFor(entryFor(key)).find((s) => s.template === 'lands')?.def
+    assert.ok(lands, `the wizard must offer a "lands" suggestion for ${key}`)
+    const fired = fire([lands], [line])
+    assert.equal(fired.length, 1, `${key}: the landing line must fire it`)
+    // …and it names the ALERT's song, not the coin-flip first candidate of a four-song family.
+    assert.equal(fired[0].spell, entryFor(key).name)
+  }
+})
+
+test('JOS-161 B2: the mez BREAK alert fires for both songs, by name', () => {
+  for (const [key, line] of [
+    ["sionachie's dreams", BARD.dreamsBroke],
+    ["solon's bewitching bravura", BARD.bravuraBroke]
+  ] as const) {
+    const breaks = suggestionsFor(entryFor(key)).find((s) => s.template === 'breaks')?.def
+    assert.ok(breaks, `the wizard must offer a "breaks" suggestion for ${key}`)
+    assert.deepEqual(breaks.trigger, {
+      type: 'event',
+      kind: 'cc',
+      where: { spell: entryFor(key).name, refresh: 'true' }
+    })
+    const fired = fire([breaks], [line])
+    assert.equal(fired.length, 1, `${key}: the break line must fire it`)
+    assert.equal(fired[0].matchedText, line)
+  }
+})
+
+test('JOS-161 B3: the break alert is pinned — another song`s break does not fire it', () => {
+  // The whole point of a PER-SPELL break alert beside the family-wide group: it has to be able to
+  // tell the two songs apart. `where.spell` on a `cc` refresh compares the name the break line
+  // itself carries, which is why the rename had to happen for the level-39 song at all.
+  const dreams = suggestionsFor(entryFor("sionachie's dreams")).find((s) => s.template === 'breaks')!.def
+  assert.equal(fire([dreams], [BARD.bravuraBroke]).length, 0, 'a Bravura break is not a Dreams break')
+  assert.equal(
+    fire([dreams], ['[Sun Aug 09 13:43:23 2026] Your Mesmerization spell has worn off of a scareling.']).length,
+    0,
+    'and neither is an enchanter`s mez'
+  )
+})
+
+test('JOS-161 B4: the whole suggested set, on the reporter`s own cast-and-land pair', () => {
+  // The shape a bard actually ends up with after clicking through the wizard. `landsOnOther` is
+  // the shared capture template and rides along on the same sentence, which is honest: one line,
+  // one family, and it says which mob.
+  const defs = suggestionsFor(entryFor("solon's bewitching bravura")).map((s) => s.def)
+  const fired = fire(defs, [BARD.bravuraCast, BARD.bravuraLanded, BARD.bravuraBroke])
+  assert.deepEqual(
+    new Set(fired.map((f) => f.alertId)),
+    new Set([
+      "suggest:solon's bewitching bravura:lands",
+      "suggest:solon's bewitching bravura:landsOnOther",
+      "suggest:solon's bewitching bravura:breaks"
+    ])
+  )
+  const named = fired.find((f) => f.alertId === "suggest:solon's bewitching bravura:landsOnOther")
+  assert.deepEqual(named?.captures, { player: 'a fire giant warrior' })
+})
+
+test('JOS-161 B5: `breaks` is offered for the crowd-control roster and nobody else', () => {
+  // The template flag is a CLAIM the alert can fire (shared/alertGroups.ts's law). A spell the
+  // parser's `ccSpell` roster does not match parses its wear-off to `buffFade`, where this
+  // trigger never sees it — so an offer there would be a guessed trigger that never fires.
+  for (const key of ['mesmerization', 'ensnare', "largo's assonant binding", "kelin's lucid lullaby"]) {
+    assert.ok(entryFor(key).templates.breaks, `${key} is crowd control`)
+  }
+  for (const key of ['clarity', 'shiftless deeds', 'allure', 'drifting death']) {
+    assert.equal(entryFor(key).templates.breaks, false, `${key} is not a mez or a root`)
+  }
+})
+
 test('JOS-84 A7: the reporter\'s cast+land pair fires the cast and the landing alerts', () => {
   // End to end on the slice's own two-line sequence, with the full suggested set installed —
   // the shape a user actually ends up with after clicking through the wizard.

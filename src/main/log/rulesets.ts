@@ -107,13 +107,25 @@ export interface ParserConfig {
  *
  * `(bewitching )?` is NOT decoration — the roster oracle found it. The committed spells.json
  * records the level-39 song as **"Solon's Bravura"** while the LOG prints **"Solon's Bewitching
- * Bravura"** (the wiki scrape lost the middle word). The parser only ever sees the log's
- * spelling, but the roster is CHECKED against the DB's, so the stem has to answer to both or the
- * oracle and the game disagree about the same song. Nothing else in the DB is named Bravura.
+ * Bravura"** (the wiki page's own `spellname` is the short form). The parser only ever sees the
+ * log's spelling, but the roster is CHECKED against the DB's, so the stem has to answer to both or
+ * the oracle and the game disagree about the same song. Nothing else in the DB is named Bravura.
+ * SINCE JOS-161 the LOADED db says `Solon's Bewitching Bravura` too — the corrections overlay
+ * renames both level-39 rows, because the name is the join key `byKey`, the alert catalog and
+ * every `where.spell` are compared on. The optional group stays: this regex is also run against
+ * the RAW `spells.json` (tests/charmCcRoster.test.mts, combat/charmModel.ts), which is pristine
+ * by design, so both spellings are still live in the tree and both must classify.
+ *
+ * THE STEMS ARE EXPORTED (JOS-161) for one reader beyond this file: `spellDb.ts` gates the
+ * catalog's `breaks` template on `CC_STEMS`, because a suggestion offered for a spell the parser
+ * would file as a plain `buffFade` is a suggestion that cannot fire. Importing them is the same
+ * "one source of truth per question" move `combat/charmModel.ts` already makes by reading them
+ * back off `getParserConfig()`; there is no cycle, because rulesets.ts's only reference to
+ * spellDb.ts is a `import type`.
  */
-const CHARM_STEMS =
+export const CHARM_STEMS =
   /\bcharm\b|beguile|allure|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|boltran|thrall of bones|enslave death/i
-const CC_STEMS =
+export const CC_STEMS =
   /mesmeriz|enthrall|entranc|dazzle|largo.s (melodic|assonant) binding|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|song of the sirens|pixie strike|solon.s (bewitching )?bravura|sionachie.s dreams/i
 
 const classic: ParserConfig = {
