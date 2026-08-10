@@ -386,7 +386,16 @@ export function QuestAccordion({
     if (anchored) ref.current?.scrollIntoView({ block: 'nearest' })
   }, [anchored])
   return (
-    <Accordion disableGutters ref={ref} defaultExpanded={anchored} data-anchored={anchored || undefined}>
+    // The testid is how a spec COUNTS rows (JOS-191's paging spec): "the page cap did not snap
+    // back" is a statement about how many of these are mounted, and `.MuiAccordion-root` would be
+    // a bet on MUI's class names rather than on this app's own list.
+    <Accordion
+      disableGutters
+      ref={ref}
+      defaultExpanded={anchored}
+      data-testid="posky-quest-row"
+      data-anchored={anchored || undefined}
+    >
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Stack spacing={0.75} sx={{ width: '100%', pr: 2 }}>
           <QuestSummaryRow

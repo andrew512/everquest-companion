@@ -39,6 +39,13 @@
  * every localStorage assertion in this file. So the step asserts the relations only: picking
  * narrows, a second dimension narrows again, and clearing restores the number it started from.
  *
+ * JOS-191 ADDS THE PAGE CAP to the same file, because it is the same subject read from the other
+ * side: the thing the user asked for has to survive what the app does next. The cap was RESET BY
+ * DATA — a star, a drop, a turn-in each rebuilt the filtered array and threw a fully paged-open
+ * list back to the first forty rows — so the two steps here count ROWS rather than read a stored
+ * bit, and the stored bit ("show all") is checked on top because the preference is the second half
+ * of the ask. See `stepShowAllSurvivesInteraction`.
+ *
  * WHY IT NEVER TAKES THE SCREEN: `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
  * single-instance lock, and points `userData` at a throwaway temp dir minted per launch.
  *
@@ -48,12 +55,14 @@ import type { Page } from 'playwright-core'
 import {
   buildIfStale,
   check,
+  countIn,
   countOf,
   dumpArtifacts,
   failures,
   reportRun,
   settle,
-  settleGone
+  settleGone,
+  settleStable
 } from './appHarness.mjs'
 import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 
@@ -74,6 +83,22 @@ const ISLANDS_KEY = 'eq.posky.islands'
 const BOSSES_KEY = 'eq.posky.bosses'
 /** "N of M quests · counting from …" — where a narrowing filter becomes visible. */
 const COUNTS = '[data-testid="posky-counts"]'
+/** JOS-191: one quest row, the three footer buttons, and the bit "show all" is stored as. */
+const ROW = '[data-testid="posky-quest-row"]'
+const SHOW_MORE = '[data-testid="posky-show-more"]'
+const SHOW_ALL = '[data-testid="posky-show-all"]'
+const SHOW_FEWER = '[data-testid="posky-show-fewer"]'
+const SHOW_ALL_KEY = 'eq.posky.showAll'
+/** The quest-level star, by the label it announces itself with (favorites/QuestFlagButtons). */
+const STAR = '[aria-label="Favorite this quest"]'
+const UNSTAR = '[aria-label="Unfavorite this quest"]'
+/**
+ * `useQuestList`'s QUEST_PAGE, restated. The spec cannot import the renderer's module (it drives a
+ * built app, not this source tree), so the number is written down — and every assertion that uses
+ * it also reads the counts line, so a change to the page size fails here loudly rather than
+ * silently passing against a list that never had two pages.
+ */
+const PAGE = 40
 
 /** Is the box ticked? `null` when it is not mounted — never confused with "unticked". */
 function boxState(page: Page, box: string = BOX): Promise<boolean | null> {
@@ -95,6 +120,23 @@ function filteredCount(page: Page): Promise<number | null> {
     const m = /(\d+) of (\d+) quests/.exec(text)
     return m ? Number(m[1]) : null
   }, COUNTS)
+}
+
+/**
+ * The quest NAMES of every row that is currently expanded, in order. Empty when none is.
+ *
+ * By name rather than by index, deliberately: the interaction under test (a star) re-orders the
+ * list, so "row 61 is still open" would be a claim about a position the click legitimately moved.
+ * What the user is owed is that the QUEST they opened is still open.
+ */
+function expandedNames(page: Page): Promise<string[]> {
+  return page.evaluate(
+    (sel) =>
+      [...document.querySelectorAll(`${sel}.Mui-expanded`)].map(
+        (n) => n.querySelector('.MuiTypography-subtitle2')?.textContent ?? ''
+      ),
+    ROW
+  )
 }
 
 /** The chips a picker is showing, in order — what the user SEES their filter to be. */
@@ -127,6 +169,20 @@ async function clearPick(page: Page, picker: string): Promise<void> {
   await page.click(`${picker} input`, { timeout: 15_000 })
   await page.keyboard.press('Backspace')
   await page.keyboard.press('Escape')
+}
+
+/**
+ * Answer the analytics first-run notice, which a FRESH userData always shows and which sits at the
+ * BOTTOM CENTRE of the window until it is answered — directly over the list footer JOS-191's steps
+ * click. Nothing in this file cares about analytics, so "turn it off" is the quiet answer (the perf
+ * and text-size specs make the same call for the same reason).
+ */
+async function dismissFirstRunNotice(page: Page): Promise<void> {
+  const notice = '[data-testid="telemetry-notice"]'
+  await page.waitForSelector(notice, { timeout: 30_000 }).catch(() => undefined)
+  if ((await countOf(page, notice)) === 0) return
+  await page.click('[data-testid="telemetry-notice-off"]')
+  check('the analytics first-run notice can be answered out of the way', await settleGone(page, notice, { timeoutMs: 8_000 }))
 }
 
 /** Open the Sky tab and wait for its toolbar. Safe when the tab is already the open one. */
@@ -176,6 +232,68 @@ async function stepDefault(page: Page): Promise<void> {
     (await boxState(page, TURNED_IN_BOX)) === false
   )
   check('…exactly one of it too', (await countOf(page, TURNED_IN_BOX)) === 1)
+}
+
+/**
+ * THE JOS-191 DEFECT, in the reporter's words: on the Plane of Sky tab, after loading the whole
+ * list, "any interaction — clicking an item, favoriting — resets the page back to collapsed" and
+ * they have to load it all over again.
+ *
+ * WHY IT COULD ONLY BE CAUGHT HERE. The cap lived in a `useEffect` keyed on the FILTERED ARRAY, and
+ * that array is a `useMemo` over the quests and the favorites — so it changes identity when a star
+ * is clicked, when a drop lands, when a turn-in is written. Every unit-testable piece of that is
+ * correct in isolation: the memo recomputes because its inputs changed, and the effect fires
+ * because its dependency changed. The defect is what the two of them MEAN together, which is only
+ * visible with a real list, a real click, and a count of what is left mounted afterwards.
+ *
+ * The expanded row is half the report and gets its own assertion: rows past the cap UNMOUNT when it
+ * snaps back, so an open accordion at row 61 is destroyed rather than closed. It is opened at the
+ * BOTTOM of the list precisely because that is the region the old behaviour could not keep.
+ *
+ * Leaves "show all" ON; `stepShowFewerPutsTheCapBack` immediately below turns it off again.
+ */
+async function stepShowAllSurvivesInteraction(page: Page): Promise<void> {
+  const all = await settle(() => filteredCount(page), (n) => n !== null && n > PAGE, { timeoutMs: 30_000 })
+  if (!check(`the fresh list is longer than one page of ${String(PAGE)}`, all !== null && all > PAGE, String(all))) {
+    return
+  }
+  const first = await settle(() => countIn(page, ROW), (n) => n === PAGE, { timeoutMs: 15_000 })
+  check('a fresh install draws the first page and offers the rest', first === PAGE, String(first))
+
+  await page.click(SHOW_ALL, { timeout: 15_000 })
+  const opened = await settle(() => countIn(page, ROW), (n) => n === all, { timeoutMs: 15_000 })
+  if (!check('SHOW ALL draws every quest the filters leave', opened === all, `${String(opened)} of ${String(all)}`)) {
+    return
+  }
+  check(`…and the ask is stored under ${SHOW_ALL_KEY}`, (await storedValue(page, SHOW_ALL_KEY)) === '1')
+
+  await page.locator(`${ROW} .MuiAccordionSummary-expandIconWrapper`).last().click({ timeout: 15_000 })
+  const open = await settle(() => expandedNames(page), (n) => n.length === 1, { timeoutMs: 8_000 })
+  if (!check('the LAST quest in the list expands', open.length === 1, open.join())) return
+
+  // The interaction itself. One click on a star used to hand the user back forty rows.
+  await page.click(STAR, { timeout: 15_000 })
+  const after = await settleStable(() => countIn(page, ROW), { timeoutMs: 8_000 })
+  check('FAVORITING A QUEST LEAVES THE WHOLE LIST LOADED', after === all, `${String(after)} of ${String(all)}`)
+  const still = await expandedNames(page)
+  check('…AND THE QUEST THAT WAS EXPANDED IS STILL EXPANDED', still.join() === open.join(), still.join())
+
+  await page.click(UNSTAR, { timeout: 15_000 })
+  const cleaned = await settleStable(() => countIn(page, ROW), { timeoutMs: 8_000 })
+  check('…and un-favoriting it does not collapse the list either', cleaned === all, String(cleaned))
+}
+
+/**
+ * The off switch, which is the other half of making this a stored preference: a bit that survives
+ * everything and cannot be turned off is a trap rather than a setting. It also puts the rest of
+ * this launch back on the paged list the later steps were written against.
+ */
+async function stepShowFewerPutsTheCapBack(page: Page): Promise<void> {
+  await page.click(SHOW_FEWER, { timeout: 15_000 })
+  const back = await settle(() => countIn(page, ROW), (n) => n === PAGE, { timeoutMs: 15_000 })
+  check('SHOW FEWER puts the page cap back', back === PAGE, String(back))
+  check('…and stores the un-ask, not merely un-remembers it', (await storedValue(page, SHOW_ALL_KEY)) === '0')
+  check('…and the paging button is on offer again', (await countIn(page, SHOW_MORE)) === 1)
 }
 
 /** THE HEADLINE: tick it, leave the tab, come back — it is still ticked. */
@@ -331,6 +449,14 @@ async function stepFacetsClear(page: Page, all: number): Promise<void> {
  * restart is the last place that could still be hiding.
  */
 async function stepArmRestart(page: Page): Promise<boolean> {
+  // JOS-191 rides along: the facets were just cleared, so the list is long again and the footer is
+  // offering "Show all". Arming it here is what lets the restart step prove the CAP is off after a
+  // new process, rather than only that a bit crossed the boundary.
+  await page.click(SHOW_ALL, { timeout: 15_000 })
+  check(
+    'the "show all" ask is armed for the restart check',
+    (await settle(() => storedValue(page, SHOW_ALL_KEY), (v) => v === '1', { timeoutMs: 8_000 })) === '1'
+  )
   const ticked = await setBox(page, true)
   await pick(page, ISLAND, 'Island 3')
   check(
@@ -353,6 +479,17 @@ async function stepSurvivesRestart(page: Page): Promise<void> {
   )
   const chips = await settle(() => chipsIn(page, ISLAND), (c) => c.length > 0, { timeoutMs: 8_000 })
   check('THE ISLAND FILTER SURVIVES A FULL RESTART, chip and all', chips.join() === 'Island 3', chips.join())
+
+  // JOS-191, the far end: the bit crossed, and so did what it MEANS. Clearing the island widens the
+  // list back past a page — which is also the moment the cap used to reset — and every row is drawn.
+  check('"show all" crossed the process boundary', (await storedValue(page, SHOW_ALL_KEY)) === '1')
+  await clearPick(page, ISLAND)
+  const all = await settle(() => filteredCount(page), (n) => n !== null && n > PAGE, { timeoutMs: 15_000 })
+  if (!check('clearing the island leaves more than one page of quests', all !== null && all > PAGE, String(all))) {
+    return
+  }
+  const rows = await settle(() => countIn(page, ROW), (n) => n === all, { timeoutMs: 15_000 })
+  check('SHOW ALL SURVIVES A FULL RESTART — the whole list draws, uncapped', rows === all, `${String(rows)} of ${String(all)}`)
 }
 
 async function main(): Promise<void> {
@@ -368,10 +505,14 @@ async function main(): Promise<void> {
     try {
       page = await mainWindow(first.app)
       await page.waitForSelector(NAV_OVERVIEW, { timeout: 60_000 })
+      await dismissFirstRunNotice(page)
       if (!check('the Sky tab opens', await openSky(page))) {
         throw new Error('never reached the Plane of Sky tab — nothing below can be asserted')
       }
       await stepDefault(page)
+      // JOS-191 first, while nothing is filtered and the list is at its longest.
+      await stepShowAllSurvivesInteraction(page)
+      await stepShowFewerPutsTheCapBack(page)
       await stepSticksAcrossTabs(page)
       await stepUntickSticksToo(page)
       await stepBoxesAreIndependent(page)
