@@ -326,8 +326,11 @@ function retire(w: Worker, wedged = false): void {
   try {
     w.postMessage(WATCHER_STOP_MESSAGE)
   } catch (err) {
-    // A worker that has already closed its port refuses the message, which is not a failure —
-    // it is the thing we were asking for, already done.
+    // MEASURED: posting to a worker that has already exited is a silent no-op, not a throw — which
+    // matters, because the exit handler retires too and a throw there would put a junk line in
+    // errors.log on every ordinary stop. So this catch is for the case nobody has seen, and it
+    // logs rather than swallows on the same reasoning: an unexpected refusal here means a watcher
+    // that will not be asked again.
     logError('main:presence', { message: 'presence watcher would not take a stop', err })
   }
 }
