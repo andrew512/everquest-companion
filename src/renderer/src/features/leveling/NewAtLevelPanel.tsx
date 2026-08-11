@@ -13,6 +13,14 @@
 // A LOADOUT WITH NO SPELLS IS NOT AN ERROR. BER, MNK and WAR have zero Template:Spellpage spells
 // (measured, wave O1): their spells list is empty at every level and says so in words, while the
 // skills list carries everything they actually gain.
+//
+// AND THE WAY OUT IS ON SCREEN WHETHER OR NOT THE LOADOUT IS KNOWN (JOS-192, trigger report
+// 01KZP6SDZJK6BPEWA4Z0MF5ANG). This panel used to point at the fix ONLY in its loadout-UNKNOWN
+// state — so a reporter looking at three classes they had stopped playing was shown the wrong
+// answer confidently and offered nothing. A wrong loadout is exactly the case that needs the
+// pointer, so the line is now always there, and the chips wear the same PROVENANCE chip the
+// Profiles panel and the character header use: `inferred` is a claim about evidence, and a
+// surface that never says so is asking to be believed.
 
 import { type JSX, useEffect, useRef, useState } from 'react'
 import { Box, IconButton, Paper, Stack, Typography, Chip } from '@mui/material'
@@ -20,6 +28,8 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import { comboClassSet, unlocksAtLevel } from '@shared/levelUnlocks'
 import { Tooltip } from '../../lib/Tooltip'
+import { ProvenanceChip } from '../profiles/ClassComboChips'
+import { useComboSnap } from '../profiles/ClassComboData'
 import { UnlockList } from './UnlockList'
 import { useCurrentComboClasses, useLevelUnlocks } from './useLevelUnlocks'
 
@@ -120,6 +130,9 @@ export function NewAtLevelPanel({
 }: NewAtLevelPanelProps): JSX.Element {
   const data = useLevelUnlocks()
   const combo = useCurrentComboClasses()
+  // The same OPEN interval `useCurrentComboClasses` reduces to strings — kept whole here for the
+  // one thing the strings drop: where the loadout came from.
+  const current = useComboSnap().current
   // null = "follow the character" — so the panel keeps tracking dings until the user steps it.
   const [picked, setPicked] = useState<number | null>(null)
   const level = clampLevel(picked ?? currentLevel ?? LEVEL_MIN)
@@ -158,6 +171,7 @@ export function NewAtLevelPanel({
         )}
         <Box sx={{ flexGrow: 1 }} />
         <ComboChips classes={classes} resolved={resolved} ambiguous={combo.ambiguous} />
+        {known && current && <ProvenanceChip interval={current} />}
       </Stack>
 
       {known ? (
@@ -179,6 +193,21 @@ export function NewAtLevelPanel({
         <Typography variant="caption" color="text.secondary" data-testid="new-at-level-unknown">
           Your class loadout isn&apos;t known yet - a <code>/who</code> on yourself, or a correction on the
           Profile tab, and this fills in.
+        </Typography>
+      )}
+
+      {/* THE POINTER, whether or not the loadout is known — see the header. A swap prints nothing,
+          so the classes above can be a loadout you have left, and this is the only sentence on the
+          surface that says what to do about it. */}
+      {known && (
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          data-testid="new-at-level-correct"
+          sx={{ display: 'block', mt: 1 }}
+        >
+          Not the classes you are playing? A <code>/who</code> on yourself restates them, or correct the
+          range on the Profile tab.
         </Typography>
       )}
     </Paper>
