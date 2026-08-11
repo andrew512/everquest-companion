@@ -24,7 +24,8 @@ docs/plans/exaltation-planner.md; era = zone provenance ∪ page dropsfrom,
 page-top era banner resolves unknowns, shared/planner/*), celebration
 toasts (docs/plans/celebration-toasts.md), and a TIMERS tab + overlay
 (JOS-194: respawn clocks started by death messages, numbered from your own
-kills, opt-in per mob and scoped to the zone you are in — law 13 below).
+kills, opt-in per mob, scoped to the zone you are in, and flipped to UP when the
+log names the mob — law 13 below).
 Committed knowledge DBs: mobs
 (7.9k), items (11.2k incl. dropsfrom + eraTag), spells (1.9k), classes,
 zones (era-annotated), wiki respawn floors (507 rows, 394 readable). First stable release v0.2.0 (2026-08-03); latest
@@ -885,6 +886,34 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    promoted it to a revision-bearing change** — the module now bumps `rev` on a
    zone line, or `useModule`'s seq dedupe swallows the one push that says you
    left (JOS-87's rule, re-learned in the real app).
+   **AND A CLOCK MUST YIELD TO THE LOG NAMING THE MOB** (owner, after using the
+   prototype again, 2026-08-10). The report is the sharpest this feature has had:
+   a watched mob spawned on time, the owner arrived late, the mob was ACTIVELY
+   HITTING HIM, and the row still read "due 4m ago". The countdown was not wrong
+   about its estimate, it was answering a question the world had already settled.
+   So a row carries `seenTs` — the last instant a TYPED event named that mob
+   while the fold stood in that row's zone — and a reading whose `seenTs` is
+   newer than the clock's base reads **UP**, sorts above every countdown, and
+   holds the linger sweep off (or the sweep would delete the very row the ruling
+   is about). Coverage is off EVENTS, never a raw-text scan (the parser is the
+   only thing here that reads sentences): damage/miss/heal, consider, cc/ccWake/
+   charm/uncharm, resist/otherCastBegin/buffApply/poisonProc. It is honest about
+   what it cannot see — **a mob standing there prints nothing**, mob speech is
+   dropped by the scrub, a corpse (`loot.source`, `death.name`) is deliberately
+   NOT a sighting or every kill would flip its own row up, `spellEmote` is out
+   because it is a permissive flavor stream, and a duplicate NAME still lights
+   the wrong row exactly as the clock itself already mis-identifies it.
+   **AND A SIGHTING NEVER AUTO-ADJUSTS THE SCHEDULE** — it proves the mob is UP,
+   not when it spawned, so re-basing is an explicit affordance (`Start clock
+   here`, on the seen row in the Timers tab AND in an INTERACTIVE overlay; a
+   locked overlay is click-through and has no clicks to give) landing on
+   `respawn:confirmSighting`. It sets `basis:'sighting'`, which every surface
+   states out loud, and the base is `max(death, confirmation)` so the next death
+   resumes the death-driven cycle with nothing to undo. The confirmation is
+   session state and is never persisted: the fold is rebuilt from a log that has
+   never heard of it, so a stored copy would outlive the spawn it was about.
+   The revision rule generalizes with the third input — watch list, zone line,
+   confirmed sighting, and a sighting itself all bump `rev`.
 
 ## Log-format quick reference (all validated against the real log)
 
