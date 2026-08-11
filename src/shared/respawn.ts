@@ -294,15 +294,26 @@ export const RESPAWN_UNWATCH_LABEL = 'Unwatch'
  *
  * Both consequences are stated because both are surprising exactly once: a watch follows the mob
  * NAME, so this stops clocks for that name in zones this window is not showing; and nothing is
- * destroyed, because everything except the watch itself is re-derived from the log.
+ * destroyed, because everything except the watch itself is re-derived from the log. Round 5 cut it
+ * to those two facts - it is a hover, not a paragraph.
  */
 export function respawnUnwatchTitle(display: string): string {
   return (
-    `Stop watching ${display}. Its clock goes away here and in every other zone - a watch follows ` +
-    `the mob NAME. Nothing else is lost: your kills and gaps stay in the fold, so watching it ` +
-    `again from Recently killed brings the same clock back.`
+    `Stop watching ${display} - its clocks stop in every zone. Your kills and gaps stay, so ` +
+    `watching it again brings the same clock back.`
   )
 }
+
+/**
+ * WHAT THE CONFIRM AFFORDANCE DOES, one spelling for the tab and the floating window (round 5 -
+ * they had drifted into two four-sentence paragraphs saying the same thing).
+ *
+ * It states the action and the two things a player can get wrong about it: nothing else ever moves
+ * a clock onto a sighting, and a death message afterwards undoes this one. The epistemics behind
+ * that ("a sighting proves it is up, never when it spawned") are the header's job, not a caption's.
+ */
+export const RESPAWN_CONFIRM_TITLE =
+  'Start this clock from the sighting. Nothing else re-bases it, and the next death message takes it back.'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE ESTIMATE LADDER
@@ -573,6 +584,38 @@ export function respawnSourceLabel(row: RespawnRow): string {
 }
 
 /**
+ * THE ROW'S PROVENANCE, ON THE HOVER — one definition for the tab's tooltip and the floating
+ * window's native title (round 5; the two used to spell it separately, and the tab's ran to five
+ * sentences of teaching under a row that already prints the rung).
+ *
+ * What survives the cut is the set of facts stated NOWHERE ELSE on the row: the raw gap behind an
+ * observed number and what a gap proves, the wiki's verbatim text, whether the floor lifted the
+ * estimate, whether the base is a sighting, and the kill count. Everything the visible line already
+ * says (the rung, the zone, the duration) is not repeated here.
+ */
+const RESPAWN_RUNG_TITLE: Record<RespawnSource, string> = {
+  custom: 'Your number.',
+  observed: '',
+  wiki: 'Wiki default - no gap of your own yet.',
+  none: 'No respawn known yet. Kill it twice in one visit, or type a number.'
+}
+
+export function respawnProvenance(row: RespawnRow, fmt: (ms: number | null | undefined) => string): string {
+  const parts: string[] = []
+  if (row.source === 'observed') {
+    const gaps = `${String(row.samples)} gap${row.samples === 1 ? '' : 's'}`
+    parts.push(`Your shortest gap in one visit: ${fmt(row.observedMs)} over ${gaps}. A gap is an upper bound.`)
+  } else if (RESPAWN_RUNG_TITLE[row.source].length > 0) {
+    parts.push(RESPAWN_RUNG_TITLE[row.source])
+  }
+  if (row.wikiText !== undefined) parts.push(`Wiki: "${row.wikiText}".`)
+  if (respawnFloored(row)) parts.push('The wiki floor lifted it.')
+  if (row.basis === 'sighting') parts.push('Re-based on a sighting you confirmed.')
+  parts.push(`Killed ${String(row.kills)} time${row.kills === 1 ? '' : 's'} here.`)
+  return parts.join(' ')
+}
+
+/**
  * THE NUMBER ON THE CLOCK, worded once for every surface that draws one — the Timers tab and the
  * floating window both call this, so a countdown can never read one way in the app and another way
  * over the game.
@@ -623,7 +666,10 @@ export function respawnSeenLabel(
  * already reads "your kills" — while a re-based row states its provenance out loud, because a
  * number resting on a judgement the user made must never be indistinguishable from one resting on
  * a line the game printed (law 1: anything inferred is LABELED inferred).
+ *
+ * It is a LABEL and not a sentence (round 5): it sits in a run of chips beside the zone and the
+ * rung, where "clock started from your confirmed sighting" was a caption pretending to be one.
  */
 export function respawnBasisLabel(row: RespawnRow): string {
-  return row.basis === 'sighting' ? 'clock started from your confirmed sighting' : ''
+  return row.basis === 'sighting' ? 'from your sighting' : ''
 }

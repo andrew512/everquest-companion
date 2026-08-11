@@ -272,11 +272,24 @@ async function stepOverlay(page: Page, app: ElectronApplication): Promise<Page |
     find(rows, WIKI_MOB) !== undefined && find(rows, OWN_MOB) !== undefined,
     JSON.stringify(rows)
   )
-  const text = await o.evaluate(() => document.body.innerText)
+  // ROUND 5 MOVED IT TO THE HOVER, and this still has to find it. The two claims this window makes
+  // (a clock at zero is our estimate elapsing, UP is the game naming the mob) used to be a standing
+  // legend line under the rows; the owner cut the explanatory text, so the sentence now rides the
+  // header count's title. Read as a TITLE rather than as body text - if it had merely been deleted,
+  // this fails.
+  const titles = await o.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('[title]')].map((e) => e.title)
+  )
   check(
     '…and never claims the mob is standing there',
-    text.includes('estimate elapsed, not a sighting'),
-    text.slice(0, 200)
+    titles.some((t) => t.includes('estimate elapsed, not a sighting')),
+    JSON.stringify(titles)
+  )
+  const body = await o.evaluate(() => document.body.innerText)
+  check(
+    '…without spending a line of a 300px window saying it',
+    !body.includes('estimate elapsed'),
+    body.slice(0, 200)
   )
   return o
 }
@@ -335,7 +348,7 @@ async function stepSeenOnLogEvidence(page: Page, overlay: Page, log: FixtureLog)
   })
   const after = find(rebased, OWN_MOB)
   if (!check('confirming the sighting re-bases the clock', after?.basis === 'sighting', JSON.stringify(rebased))) return
-  check('…and says the number came from your judgement, not from a death line', after.text.includes('confirmed sighting'), after.text)
+  check('…and says the number came from your judgement, not from a death line', after.text.includes('from your sighting'), after.text)
   check('…leaving the seen state, because the evidence is now the base', after.seen === 'false', JSON.stringify(after))
   check('…counting down again rather than sitting due', after.due === 'false', JSON.stringify(after))
 }

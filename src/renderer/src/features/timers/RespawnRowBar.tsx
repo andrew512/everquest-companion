@@ -9,6 +9,13 @@
 // argument of this feature is that the number the wiki would have given them does not deserve
 // that (shared/respawnWiki.ts).
 //
+// AND IT SAYS ALL OF THAT IN LABELS (owner ruling, round 5: too much explanatory text). Rounds 1-4
+// each left a sentence behind on this row — what a gap proves, what the floor did, what a sighting
+// does not prove — until the row was three lines of prose under a countdown. Every one of those
+// facts now lives on the HOVER (`respawnProvenance`, in shared/respawn.ts so the floating window's
+// native title is the same string) and the row itself prints only state: the name, the number, the
+// rung, the zone, and the age of any sighting.
+//
 // THE ONE PLACE IT DOES SAY UP IS WHEN THE LOG SAID SO (owner ruling, round 3). A row whose mob has
 // been named by a parsed event since its clock started reads UP, in a colour used nowhere else on
 // this surface, with the age of that evidence and the family of line that carried it printed
@@ -30,9 +37,10 @@
 import { Box, Button, LinearProgress, Stack, Typography } from '@mui/material'
 import type { JSX } from 'react'
 import {
+  RESPAWN_CONFIRM_TITLE,
   respawnBasisLabel,
   respawnClockLabel,
-  respawnFloored,
+  respawnProvenance,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -42,44 +50,6 @@ import {
 import Tooltip from '../../lib/Tooltip'
 import { fmtDuration } from '../buffs/format'
 import { UnwatchButton } from './UnwatchButton'
-
-/** The sentence that explains a LEARNED number, including what a gap does and does not prove. */
-function observedSentence(row: RespawnRow): string {
-  const gaps = `${String(row.samples)} gap${row.samples === 1 ? '' : 's'}`
-  return (
-    `Your shortest gap between two deaths of this mob, in one continuous stay in the zone, was ` +
-    `${fmtDuration(row.observedMs)} over ${gaps}. A gap is an upper bound - you cannot kill it ` +
-    `before it spawns - so the real respawn is at most this.`
-  )
-}
-
-/** Why this row's number is the number it is. One rung's sentence, then the wiki's own words. */
-const RUNG_SENTENCE: Record<RespawnRow['source'], string> = {
-  custom: 'You set this number yourself. Nothing overrides it.',
-  observed: '',
-  wiki: 'No gap of your own yet, so this is the wiki default.',
-  none: 'Nothing states a respawn for this mob yet. Kill it twice in one visit, or type a number.'
-}
-
-export function respawnProvenance(row: RespawnRow): string {
-  const parts = [row.source === 'observed' ? observedSentence(row) : RUNG_SENTENCE[row.source]]
-  if (row.wikiText !== undefined) parts.push(`The wiki says: "${row.wikiText}".`)
-  if (respawnFloored(row)) {
-    parts.push('The wiki floor lifted this estimate - two mobs of one name can die together and drive your gap too low.')
-  }
-  if (row.basis === 'sighting') {
-    parts.push('This clock was re-based on a sighting YOU confirmed, not on a death message. The next kill takes it back.')
-  }
-  parts.push(`Killed ${String(row.kills)} time${row.kills === 1 ? '' : 's'} here.`)
-  return parts.filter((p) => p.length > 0).join(' ')
-}
-
-/** What the log said, and what it does not prove — the sentence beside the confirm button. */
-const SEEN_TOOLTIP =
-  'The log named this mob in this zone after the clock started, so it is up. That is all a ' +
-  'sighting proves - it does not say when it spawned, so nothing has been changed. If you are ' +
-  'sure this sighting IS the spawn, re-base the clock and it will count from that instant; a ' +
-  'death message afterwards takes the clock straight back.'
 
 /**
  * THE ROW'S TONE, one function for the accent, the clock text and the bar.
@@ -114,7 +84,7 @@ function SeenRow({
         {respawnSeenLabel(row, nowMs, fmtDuration)}
       </Typography>
       {onConfirmSighting !== undefined && (
-        <Tooltip title={SEEN_TOOLTIP}>
+        <Tooltip title={RESPAWN_CONFIRM_TITLE}>
           <Button
             size="small"
             variant="outlined"
@@ -153,7 +123,7 @@ export function RespawnRowBar({
   const basis = respawnBasisLabel(row)
   const t = tone(r)
   return (
-    <Tooltip title={respawnProvenance(row)} placement="top-start">
+    <Tooltip title={respawnProvenance(row, fmtDuration)} placement="top-start">
       <Box
         data-testid="respawn-row"
         data-respawn-mob={row.key}

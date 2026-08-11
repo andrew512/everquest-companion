@@ -87,9 +87,13 @@ test('the control says both consequences before it is pressed', () => {
   const title = respawnUnwatchTitle('a vis ghoul knight')
   assert.ok(title.includes('a vis ghoul knight'), title)
   // A watch follows the NAME, so this stops clocks in zones the surface is not showing…
-  assert.ok(title.includes('every other zone'), title)
+  assert.ok(title.includes('every zone'), title)
   // …and nothing derived from the log is lost, which is why there is no confirmation step.
   assert.ok(/kills and gaps stay/.test(title), title)
+  // AND IT IS A HOVER, NOT A PARAGRAPH (owner ruling, round 5 - too much explanatory text on this
+  // feature). Both facts above still have to be in it; the bound is what stops a fifth round from
+  // adding a third sentence to a tooltip on a floating window.
+  assert.ok(title.length <= 160, `the unwatch title must stay short: ${title}`)
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

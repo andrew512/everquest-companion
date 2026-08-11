@@ -121,10 +121,8 @@ test('SEEN outranks every countdown, because it is a different kind of fact', ()
 
 test('a re-based clock says so, and a death-based one says nothing', () => {
   assert.equal(respawnBasisLabel(row()), '')
-  assert.equal(
-    respawnBasisLabel(row({ basis: 'sighting' })),
-    'clock started from your confirmed sighting'
-  )
+  // A LABEL, not a caption (round 5): it rides a run of chips beside the zone and the rung.
+  assert.equal(respawnBasisLabel(row({ basis: 'sighting' })), 'from your sighting')
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,7 +261,7 @@ test('confirming a sighting re-bases the clock, and says that is what happened',
   assert.ok(after.seq > before, 'a confirmation must advance the module revision too')
   assert.equal(row.baseTs, Date.parse('2026-08-02T23:56:00'), 'the clock now counts from the sighting')
   assert.equal(row.basis, 'sighting')
-  assert.equal(respawnBasisLabel(row), 'clock started from your confirmed sighting')
+  assert.equal(respawnBasisLabel(row), 'from your sighting')
   // The countdown restarted, so the row is no longer due and no longer seen — the evidence is now
   // AT the base rather than after it. Fresh evidence will mark it again, which is correct: it is up.
   const r = respawnReading(row, AT_2356_10)

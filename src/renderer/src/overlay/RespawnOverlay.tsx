@@ -44,6 +44,7 @@
 import { type JSX, useEffect, useState } from 'react'
 import {
   EMPTY_RESPAWN_SNAP,
+  RESPAWN_CONFIRM_TITLE,
   RESPAWN_UNWATCH_LABEL,
   mergeRespawnDelta,
   orderRespawnRows,
@@ -51,6 +52,7 @@ import {
   respawnBasisLabel,
   respawnClockLabel,
   respawnInZone,
+  respawnProvenance,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -83,6 +85,15 @@ const SEEN = '#ff6b8a'
 /** One second. A countdown is the one number in this app that has to move while the log is idle. */
 const TICK_MS = 1000
 
+/**
+ * WHAT THE TWO COLOURS CLAIM, on the header count's hover. The distinction is load-bearing - a
+ * clock at zero is this app's estimate elapsing and is never a sighting, while UP is the game
+ * having named the mob - and it is the one thing about this window a first glance cannot teach.
+ * So it stays; it just stopped costing a line of a window that is 300px tall (round 5).
+ */
+const RESPAWN_LEGEND_TITLE =
+  'Clocks running. Zero = our estimate elapsed, not a sighting. UP = the log named the mob.'
+
 function useSecondsClock(): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -95,12 +106,6 @@ function useSecondsClock(): number {
   }, [])
   return now
 }
-
-/** What the confirm button will and will not do, on the one control that can move a clock here. */
-const CONFIRM_TITLE =
-  'The log named this mob, so it is up - but a sighting does not say when it spawned, so nothing ' +
-  'has been changed. Click to start this clock from that sighting. A death message afterwards ' +
-  'takes the clock straight back.'
 
 /**
  * The seen line, and the button that is the whole of the second ruling. Its own component because
@@ -127,7 +132,7 @@ function SeenLine({
         <button
           type="button"
           data-testid="respawn-overlay-confirm"
-          title={CONFIRM_TITLE}
+          title={RESPAWN_CONFIRM_TITLE}
           onClick={() => {
             onConfirm(row.id)
           }}
@@ -182,18 +187,6 @@ function UnwatchButton({ row, onUnwatch }: { row: RespawnRow; onUnwatch: (key: s
   )
 }
 
-/**
- * THE FULL PROVENANCE SENTENCE, on the native title — the same place the tab's tooltip puts it. A
- * floating window has no room to print this and no right to hide it.
- *
- * Its own function because `RespawnLine` is at the repo's `complexity` ceiling and this is where
- * three of its branches were; the string is the row's, not the layout's.
- */
-function rowTitle(row: RespawnRow, basis: string): string {
-  const wiki = row.wikiText === undefined ? '' : ` · wiki: "${row.wikiText}"`
-  return `${respawnSourceLabel(row)}${wiki}${basis.length > 0 ? ` · ${basis}` : ''}`
-}
-
 /** One clock. Name on the left, the number on the right, the provenance underneath in dim text. */
 function RespawnLine({
   row,
@@ -224,7 +217,10 @@ function RespawnLine({
       data-respawn-due={r.due ? 'true' : 'false'}
       data-respawn-seen={r.seen ? 'true' : 'false'}
       data-respawn-basis={row.basis}
-      title={rowTitle(row, basis)}
+      // The FULL provenance, on the native title - the same string the tab's tooltip carries
+      // (round 5 single-sourced it). A floating window has no room to print this and no right to
+      // hide it, and it is now short enough to be a hover rather than a paragraph.
+      title={respawnProvenance(row, fmtDuration)}
       style={{ padding: '2px 2px 3px', borderLeft: `2px solid ${tone}66`, paddingLeft: 5 }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
@@ -277,7 +273,7 @@ function RespawnLine({
       <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.42)', marginTop: 1 }}>
         {row.source === 'observed' ? '<= ' : ''}
         {hasEstimate ? fmtDuration(row.estimateMs) : 'no estimate'} · {respawnSourceLabel(row)}
-        {basis.length > 0 ? ' · re-based' : ''}
+        {basis.length > 0 ? ` · ${basis}` : ''}
       </div>
     </div>
   )
@@ -366,7 +362,10 @@ export default function RespawnOverlay(): JSX.Element {
         title={snap.zone.length > 0 ? snap.zone : 'Respawn'}
         titleColor={ACCENT}
         tail={rows.length > 0 ? String(rows.length) : undefined}
-        tailTitle="Clocks running."
+        // The two claims this window makes, on the count's hover (round 5). It used to be a
+        // standing legend line under the rows - a caption repeating what the words UP and `due`
+        // already say, on the surface with the least room in the app.
+        tailTitle={RESPAWN_LEGEND_TITLE}
         iconAccentBg={ACCENT_BG}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}
       />
@@ -379,7 +378,7 @@ export default function RespawnOverlay(): JSX.Element {
           <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)', padding: '8px 2px' }}>
             {elsewhere > 0
               ? `No clocks in this zone - ${String(elsewhere)} running elsewhere.`
-              : 'No clocks running - kill something, then Watch it on the Timers tab.'}
+              : 'No clocks running - watch a mob on the Timers tab.'}
           </div>
         ) : (
           rows.map((row) => (
@@ -392,14 +391,6 @@ export default function RespawnOverlay(): JSX.Element {
               onUnwatch={unwatch}
             />
           ))
-        )}
-        {/* ONE SENTENCE FOR THE WHOLE WINDOW rather than a caveat per row, and it now has to
-            distinguish the two claims: a clock at zero is this app's estimate elapsing and is
-            still never a sighting, while UP is the game having named the mob. */}
-        {rows.length > 0 && (
-          <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', paddingTop: 4 }}>
-            zero = estimate elapsed, not a sighting · UP = the log named it
-          </div>
         )}
       </OverlayContent>
 
