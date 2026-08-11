@@ -105,6 +105,39 @@ const STARTUP_FIELDS: DocField[] = [
     name: 'startup.logSizeBucket',
     type: BUCKET,
     note: 'How big the log it read is — a RANGE (see below), never the size itself.'
+  },
+  {
+    name: 'startup.newBytesBucket',
+    type: `${BUCKET} (optional)`,
+    note:
+      'How much your log had grown since the app last closed normally — a RANGE (see below), ' +
+      'never the amount itself. Sent only when the app knows where it had read to last time; ' +
+      'after a first run or a crash it is simply not sent.'
+  },
+  {
+    name: 'startup.stutter.p50Bucket',
+    type: `${BUCKET} (optional)`,
+    note:
+      'While it was reading, the app checks a clock on a fixed beat and notes how late each beat ' +
+      'was. This is the TYPICAL lateness, as a range — a reading about the computer, not about ' +
+      'anything in the log.'
+  },
+  {
+    name: 'startup.stutter.p95Bucket',
+    type: `${BUCKET} (optional)`,
+    note: 'The same measurement at its worse end: the lateness only one beat in twenty exceeded.'
+  },
+  {
+    name: 'startup.stutter.latePct',
+    type: `${COUNT} (optional)`,
+    note: 'What share of those beats were late at all, 0–100.'
+  },
+  {
+    name: 'startup.firstMbMs',
+    type: `${COUNT} (optional)`,
+    note:
+      'How long the first megabyte of the read took to arrive — how quickly the machine could ' +
+      'hand over the file, nothing about what was in it. Not sent for a log under a megabyte.'
   }
 ]
 
@@ -112,7 +145,8 @@ const STARTUP_FIELDS: DocField[] = [
 const STARTUP_WHEN =
   'Present on the first of these that follows startup, once per launch: how long reading your ' +
   'log history took, and how smoothly. Reading a log after switching character is deliberately ' +
-  'not measured.'
+  'not measured. Every number in the group is a count or a duration; several are ranges rather ' +
+  'than exact figures, and which is which is stated field by field below.'
 
 export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
   {

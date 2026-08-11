@@ -72,7 +72,7 @@ Once, when the app finishes starting up.
 
 ### `sessionHeartbeat`
 
-Every 5 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured.
+Every 5 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
 
 | Field | Values | What it means |
 | --- | --- | --- |
@@ -84,10 +84,15 @@ Every 5 minutes while the app is open — the "is anyone using it right now" sig
 | `startup.maxBlockMs` | whole number | The longest single moment the app was unresponsive while reading. |
 | `startup.blocksOver50` | whole number | How many of those moments were longer than 50 ms. |
 | `startup.logSizeBucket` | bucket index | How big the log it read is — a RANGE (see below), never the size itself. |
+| `startup.newBytesBucket` | bucket index (optional) | How much your log had grown since the app last closed normally — a RANGE (see below), never the amount itself. Sent only when the app knows where it had read to last time; after a first run or a crash it is simply not sent. |
+| `startup.stutter.p50Bucket` | bucket index (optional) | While it was reading, the app checks a clock on a fixed beat and notes how late each beat was. This is the TYPICAL lateness, as a range — a reading about the computer, not about anything in the log. |
+| `startup.stutter.p95Bucket` | bucket index (optional) | The same measurement at its worse end: the lateness only one beat in twenty exceeded. |
+| `startup.stutter.latePct` | whole number (optional) | What share of those beats were late at all, 0–100. |
+| `startup.firstMbMs` | whole number (optional) | How long the first megabyte of the read took to arrive — how quickly the machine could hand over the file, nothing about what was in it. Not sent for a log under a megabyte. |
 
 ### `sessionEnd`
 
-Once, when the app closes. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured.
+Once, when the app closes. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
 
 | Field | Values | What it means |
 | --- | --- | --- |
@@ -100,6 +105,11 @@ Once, when the app closes. Present on the first of these that follows startup, o
 | `startup.maxBlockMs` | whole number | The longest single moment the app was unresponsive while reading. |
 | `startup.blocksOver50` | whole number | How many of those moments were longer than 50 ms. |
 | `startup.logSizeBucket` | bucket index | How big the log it read is — a RANGE (see below), never the size itself. |
+| `startup.newBytesBucket` | bucket index (optional) | How much your log had grown since the app last closed normally — a RANGE (see below), never the amount itself. Sent only when the app knows where it had read to last time; after a first run or a crash it is simply not sent. |
+| `startup.stutter.p50Bucket` | bucket index (optional) | While it was reading, the app checks a clock on a fixed beat and notes how late each beat was. This is the TYPICAL lateness, as a range — a reading about the computer, not about anything in the log. |
+| `startup.stutter.p95Bucket` | bucket index (optional) | The same measurement at its worse end: the lateness only one beat in twenty exceeded. |
+| `startup.stutter.latePct` | whole number (optional) | What share of those beats were late at all, 0–100. |
+| `startup.firstMbMs` | whole number (optional) | How long the first megabyte of the read took to arrive — how quickly the machine could hand over the file, nothing about what was in it. Not sent for a log under a megabyte. |
 
 ### `viewDwell`
 
@@ -290,6 +300,45 @@ These are the exact ranges, taken from the schema:
 | 2 | 300 s – 1800 s |
 | 3 | 1800 s – 7200 s |
 | 4 | ≥ 7200 s |
+
+**`startup.newBytesBucket`** — How much the log grew while the app was closed.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 64 KB |
+| 1 | 64 KB – 256 KB |
+| 2 | 256 KB – 1 MB |
+| 3 | 1 MB – 4 MB |
+| 4 | 4 MB – 16 MB |
+| 5 | 16 MB – 64 MB |
+| 6 | 64 MB – 256 MB |
+| 7 | ≥ 256 MB |
+
+**`startup.stutter.p50Bucket`** — How late the app’s own clock ran while it read (typical beat).
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 2 ms |
+| 1 | 2 ms – 5 ms |
+| 2 | 5 ms – 10 ms |
+| 3 | 10 ms – 25 ms |
+| 4 | 25 ms – 50 ms |
+| 5 | 50 ms – 100 ms |
+| 6 | 100 ms – 250 ms |
+| 7 | ≥ 250 ms |
+
+**`startup.stutter.p95Bucket`** — The same, at the worse end (one beat in twenty).
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 2 ms |
+| 1 | 2 ms – 5 ms |
+| 2 | 5 ms – 10 ms |
+| 3 | 10 ms – 25 ms |
+| 4 | 25 ms – 50 ms |
+| 5 | 50 ms – 100 ms |
+| 6 | 100 ms – 250 ms |
+| 7 | ≥ 250 ms |
 
 ## Turning it off
 
