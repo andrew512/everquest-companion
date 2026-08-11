@@ -540,6 +540,11 @@ async function steps(page: Page): Promise<void> {
       await stepInventoryFill(page)
       await stepHostPicker(page)
       await stepSocketView(page)
+      // A FRESH MOUNT before the item filter is measured: switching modes unmounts the browser, so
+      // this hands it back its defaults (Proc, all slots, the whole corpus) instead of whatever the
+      // preset above left selected — see stepItemFilter on why a short list measures nothing.
+      await page.click(MODE_BOARD, { timeout: 15_000 })
+      await page.click(MODE_EFFECTS, { timeout: 15_000 })
       await stepItemFilter(page)
       await stepFarm(page)
     }

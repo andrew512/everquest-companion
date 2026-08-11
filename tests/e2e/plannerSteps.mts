@@ -44,6 +44,8 @@ export const ITEM_FILTER = '[data-testid="planner-item-filter"]'
 export const ITEM_CHIP = '[data-testid="planner-item-chip"]'
 export const ITEM_SEARCH = '[data-testid="planner-item-search"] input'
 export const ITEM_HIT = '[data-testid="planner-item-hit"]'
+/** JOS-67 — the sentence an empty effect list answers with, which JOS-210 taught to name the item. */
+export const EFFECTS_EMPTY = '[data-testid="planner-effects-empty"]'
 export const EXPLAINER = '[data-testid="planner-explainer"]'
 export const EXPLAINER_OPEN = '[data-testid="planner-explainer-open"]'
 export const STATE_CHIP = '[data-testid="planner-state-chip"]'
@@ -456,9 +458,14 @@ export async function stepKindSwitchKeepsItem(page: Page, socket: string): Promi
  * picker — which reaches every item the committed DB carries — and then asks the three things that
  * make it a filter rather than a search box:
  *
- *   * it NARROWS (a filter can only ever remove rows, so the list is never taller than it was),
+ *   * it NARROWS (a filter can only ever remove rows, so the list is never taller than it was, and
+ *     one item's worth of legal effects is not the whole corpus),
  *   * it SURVIVES the kind tabs, exactly as the preset now does, and
  *   * clearing it gives the whole corpus back — the height it started at, to the pixel.
+ *
+ * MEASURED FROM A FRESH MOUNT, which is why the spec re-enters the tab before calling this: the
+ * scroll box floors its own scrollHeight at its clientHeight, so a list that is already short
+ * (a preset's leftovers, say) would answer the same number before and after and prove nothing.
  *
  * "sword" is a query the committed corpus certainly answers; if it somehow does not, the step says
  * so and stops rather than inventing a second guess. Ends with the filter cleared.
@@ -477,16 +484,26 @@ export async function stepItemFilter(page: Page): Promise<void> {
     await page.keyboard.press('Escape')
     return
   }
-  const name = (await textOf(page, ITEM_HIT)).replace(/\s+/g, ' ').trim()
   await page.click(ITEM_HIT, { timeout: 15_000 })
-  if (!check('picking an item narrows the browser to it', await until(async () => (await countOf(page, ITEM_CHIP)) > 0, 10_000), name)) {
+  if (!check('picking an item narrows the browser to it', await until(async () => (await countOf(page, ITEM_CHIP)) > 0, 10_000))) {
     return
   }
+  // The chip is the app's own word for which item is being filled — read the name from there
+  // rather than from the hit row, whose text also carries the slot chip beside it.
+  const name = (await textOf(page, ITEM_CHIP)).replace(/\s+/g, ' ').trim()
   const narrowed = await listHeight(page)
   check(
     'the item filter can only REMOVE rows — it never invents an effect for an item',
     narrowed <= before,
     `list ${String(before)}px → ${String(narrowed)}px for "${name}"`
+  )
+  // …and it removes SOME: one item shares a slot with a slice of the corpus, never all of it. When
+  // that slice is empty the list says so NAMING THE ITEM, which is the same claim by other means.
+  const empty = (await textOf(page, EFFECTS_EMPTY)).replace(/\s+/g, ' ').trim()
+  check(
+    'narrowing to one item actually narrows — and an empty answer names the item, not the filters',
+    narrowed < before || empty.includes(name),
+    narrowed < before ? `${String(before)}px → ${String(narrowed)}px` : `empty state reads "${empty}"`
   )
 
   for (const kind of ['worn', 'click', 'proc'] as const) {
