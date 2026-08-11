@@ -79,8 +79,11 @@ import { SELF_CASTER } from '../../shared/buffTrust'
 import { idKey } from '../log/parseCommon'
 import { CastAnchors } from './buffAnchors'
 import { HoldGroup } from './buffRounds'
+import { BUFF_TIMERS_FOLD_SCHEMA, packHeld, unpackHeld, type BuffTimersFoldState } from './buffTimersFold'
 import { learningRecordCapMs, MAX_SAMPLE_MS, SESSION_GAP_MS, spellKey, unwitnessedTimeoutMs } from './buffsShapes'
 import { SpellStats } from './buffsStats'
+import { validate } from '../foldCache/schema'
+import type { FoldCheckpointable } from '../foldCache/serialize'
 import type { EqModule } from './types'
 
 /**
@@ -241,7 +244,14 @@ function setDuration(held: Held, est: { ms: number | null; source?: 'db' | 'obse
   else delete held.source
 }
 
-export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelta> {
+// THE CHECKPOINT DECLARATION (JOS-208 phase 2) is `BUFF_TIMERS_FOLD_SCHEMA`, in
+// `buffTimersFold.ts` — this file is at the repo's line ceiling. Read it for what this half
+// stores, and above all for what it does NOT: the two halves it SHARES with the buffs module (the
+// cast anchors and the duration learner) are checkpointed exactly once, by their owner.
+
+export class BuffTimersModule
+  implements EqModule<BuffTimersSnap, BuffTimersDelta>, FoldCheckpointable<BuffTimersFoldState>
+{
   readonly id = 'buffTimers'
 
   private holds = new Map<string, Held>()
@@ -734,5 +744,33 @@ export class BuffTimersModule implements EqModule<BuffTimersSnap, BuffTimersDelt
     if (!this.dirty) return null
     this.dirty = false
     return { seq: this.rev, delta: this.buildSnap() }
+  }
+
+  // ---- the checkpoint seam (JOS-208) ---------------------------------------------------------
+
+  readonly foldSchema = BUFF_TIMERS_FOLD_SCHEMA
+
+  serializeFold(): BuffTimersFoldState {
+    return {
+      holds: [...this.holds].map(([key, h]) => [key, packHeld(h)]),
+      ends: this.ends.map((e) => ({ ...e })),
+      culled: [...this.culled].map(([key, c]) => [key, { ...c }]),
+      recentMints: this.recentMints.map((m) => ({ ...m })),
+      lastEventTs: this.lastEventTs,
+      rev: this.rev
+    }
+  }
+
+  deserializeFold(state: unknown): boolean {
+    if (!validate(BUFF_TIMERS_FOLD_SCHEMA, state).ok) return false
+    const s = state as BuffTimersFoldState
+    this.holds = new Map(s.holds.map(([key, h]) => [key, unpackHeld(h)]))
+    this.ends = s.ends
+    this.culled = new Map(s.culled)
+    this.recentMints = s.recentMints
+    this.lastEventTs = s.lastEventTs
+    this.rev = s.rev
+    this.dirty = true
+    return true
   }
 }

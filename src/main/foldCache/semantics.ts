@@ -41,5 +41,12 @@
  * what the goldens are there to let you verify rather than assert.
  *
  *   1 — JOS-208. The first checkpointed fold.
+ *   2 — JOS-208 phase 2. The observed-message overlay's `updatedAt` is now the newest LOG instant
+ *       the miner has seen, not `new Date()`. It was a wall-clock read inside a published fold
+ *       snapshot, and the differential harness caught it at the first split point of every fixture
+ *       the moment `buffs` joined the matrix: two arms folding identical bytes disagreed on a
+ *       field that describes neither of them. What the fold COMPUTES from a given event stream
+ *       therefore changed, so the number moves — the shape did not, which is exactly the case this
+ *       axis exists for.
  */
-export const FOLD_SEMANTICS = 1
+export const FOLD_SEMANTICS = 2

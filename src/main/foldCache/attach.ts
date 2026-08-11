@@ -43,16 +43,26 @@ export function foldCacheEnabled(): boolean {
  * EVERYTHING THE CONTAINER CARRIES, in a fixed order: the registry's checkpointable modules first
  * (registration order), then the two DERIVED-EVENT PRODUCERS.
  *
- * The producers are here because they are fold state that publishes nothing and that the pilots'
+ * The producers are here because they are fold state that publishes nothing and that the modules'
  * correctness depends on — the differential harness proved it on its first run, and the story is in
  * `serialize.ts` under `FoldUnit`. This list is the answer to "what is a complete fold", and it is
  * ONE list so a write and a read cannot disagree about it.
  *
- * WHAT IS STILL OUTSIDE IT, and therefore what phase 2 owes before its consumers may be trusted
- * from a checkpoint: the `CombatEngine`'s state machine, the shared `MobLootIndex` the consider
- * module folds into, the `MessageOverlayMiner` inside the buffs module, and every module that has
- * not yet declared a shape. None of them can affect `loot` or `respawn` — nothing reads back into
- * those two — which is exactly why the phase-1 pilots are provable today and the rest is not.
+ * PHASE 2 CLOSED THE MODULE SET. Every module the registry folds now declares a shape, and two of
+ * phase 1's three named debts are paid INSIDE the modules that own their lifetimes rather than as
+ * units of their own: the shared `MobLootIndex` rides in the `consider` blob (which folds it and
+ * resets it), and the `MessageOverlayMiner` rides in `buffs` (which publishes what it builds).
+ * The buffs module also carries the two halves it SHARES with `buffTimers` — the cast anchors and
+ * the duration learner — so they are written exactly once.
+ *
+ * WHAT IS STILL OUTSIDE IT: the `CombatEngine`'s state machine. It is the last debt and it is a
+ * different size of thing from everything above — an uncapped encounter history, per-encounter
+ * aggregates, proc/heal/window accumulators, a world model of instances and generations, all of
+ * it mutable class state — and its blob would dominate the container it lives in. Nothing reads
+ * engine state back into any registry module (the dependency runs the other way: the engine PULLS
+ * the roster's view), so leaving it out cannot make a checkpointed module wrong; what it costs is
+ * that the combat meter starts empty after a restore, exactly as it does today after a cold start
+ * of the app itself. See the ticket for the measurement and the recommendation.
  */
 function foldUnits(): FoldUnit[] {
   return checkpointableUnits([...registry.list(), epoch, sessionDetector])

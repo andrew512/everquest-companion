@@ -17,8 +17,12 @@
 // THE ENV VAR WINS, in BOTH directions: `EQ_FOLD_CACHE=0` turns it off for one launch even when the
 // preference says on. A kill switch that a preference can override is not a kill switch.
 
-/** How the answer was reached — logged once at attach, so a support answer never has to guess. */
-export type FoldCacheDecision = 'env-on' | 'env-off' | 'pref-on' | 'default-off'
+// The DECISION vocabulary is shared with the renderer (Preferences shows it when the environment
+// is overriding the preference), so it lives in `shared/foldCachePrefs.ts`; the RULE below stays
+// here, where the store and the environment are.
+import type { FoldCacheDecision } from '../../shared/foldCachePrefs'
+
+export type { FoldCacheDecision }
 
 export interface FoldCacheFlagInput {
   /** The stored preference, or undefined when the key has never been written. */

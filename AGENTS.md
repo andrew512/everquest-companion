@@ -1024,9 +1024,43 @@ must always be slow-once, never wrong** — every judgement call goes toward
   feed derived events back onto the bus. Leaving them out made a fresh detector
   re-fire the launch epoch at the first event of the TAIL, clearing the respawn
   history — a measured divergence at every split point in every fixture, which
-  the differential harness found on its first run. Still OUTSIDE the container
-  (phase 2 owes these): the `CombatEngine`, the shared `MobLootIndex`, the
-  `MessageOverlayMiner`, and every module that has not declared a shape.
+  the differential harness found on its first run.
+  - **A COLLABORATOR RIDES IN THE BLOB OF THE MODULE THAT OWNS ITS LIFETIME**, and
+    is never a unit of its own: the shared `MobLootIndex` is in `consider` (which
+    folds it and resets it), the `MessageOverlayMiner` is in `buffs` (which
+    publishes what it builds), and the two halves `buffs` SHARES with
+    `buffTimers` — the `CastAnchors` and the `SpellStats` learner — are written
+    exactly ONCE, by `buffs`. Two copies of one object in one container is the
+    JOS-140 drift re-created by hand.
+  - **THE MODULE SET IS CLOSED BY A TEST, not by discipline.**
+    `CHECKPOINTED_MODULE_IDS` (`foldCache/serialize.ts`) is written by hand — a
+    list derived from the registry would go green by asking less — and
+    `foldCheckpointDifferential.test.mts` holds it against the registry's own in
+    both directions. A module added to `wiring.ts` without a seam fails there, by
+    name.
+  - Still OUTSIDE the container: the `CombatEngine`. Nothing reads engine state
+    back into a registry module (the dependency runs the other way — the engine
+    PULLS the roster's view), so its absence cannot make a checkpointed module
+    wrong; what it costs is a combat meter that starts empty after a restore. Its
+    state is also a different order of magnitude — an uncapped encounter history
+    with per-encounter aggregates, proc/heal/window accumulators and a world model
+    of instances — so bringing it in is a sizing decision, not a serializer.
+- **THE GRAMMAR GREW TWO KINDS IN PHASE 2, and both are narrow on purpose.**
+  `record` is a plain object with arbitrary string keys (a `KillMap`, an item-tier
+  table) — never a Map by another name, and never where the Map's INSERTION ORDER
+  is load-bearing, which stays an array of `tuple(key, value)`. `nullable` exists
+  only for fold state that is ALSO a wire type whose key is always present and
+  whose null is a stated "no estimate" the UI renders (`ActiveBuff.estimatedMs`).
+  A fold still never stores `null` to mean absent; `optional` is the only way to
+  say that.
+- **THE FOLD IS COMPARED BY ITS PUBLISHED PAYLOAD, so a restore reproduces the
+  SHAPE the module publishes and does not get to improve it.** Two catches from
+  phase 2's matrix, both invisible to a human reading the code: a `knowledge`
+  key that a cold row carries present-and-undefined and a restored row omitted
+  (consider), and `new Date()` inside a published snapshot (the message
+  overlay's `updatedAt`, which now reads the LOG's clock instead). A wall clock
+  anywhere a snapshot can reach is a divergence at every split point of every
+  fixture.
 - **TWO AUDITS, both dynamic, both run in `npm test`.**
   `tests/foldDeterminism.test.mts` replaces `Date.now`/`performance.now` for the
   duration of a real fold and fails on any read from repo source (the SCHEDULER's
@@ -1037,12 +1071,26 @@ must always be slow-once, never wrong** — every judgement call goes toward
   completeness half — a field the class holds and the declaration omits dies
   there). Both audits carry a TRIPWIRE test proving the audit itself can fail.
 - **THE DIFFERENTIAL HARNESS IS OWNER LAW** (`tests/foldCheckpointHarness.mts` +
-  `foldCheckpointDifferential.test.mts`): deep-equal published snapshots between
-  cold replay and checkpoint+tail, over the corpus, at session edges / zone lines
-  / mid-fight / mid-hold / deciles / seeded fuzz, plus the externality
-  permutations (truncated, regrown, flipped shoulder byte, stale semantics, stale
-  shape, corrupt cache, missing cache) which must every one land on the cold path
-  with a NAMED refusal reason. Both arms go through the production `scanLog`.
+  `foldCheckpointDifferential.test.mts`): deep-equal published snapshots of EVERY
+  checkpointed module between cold replay and checkpoint+tail, over the corpus, at
+  session edges / zone lines / mid-fight / mid-hold / mid-cast / in-hole /
+  epoch-adjacent / deciles / seeded fuzz, plus the externality permutations
+  (truncated, regrown, flipped shoulder byte, stale semantics, stale shape,
+  corrupt cache, missing cache) which must every one land on the cold path with a
+  NAMED refusal reason. Both arms go through the production `scanLog`. The two
+  split kinds that are not lines — in-hole and epoch-adjacent — are found by
+  walking the log's own parsed timestamps, because an absence has no line.
+- **THE GO-LIVE SWEEP RUNS BEFORE THE FIRST PUBLISH**, and it is asserted rather
+  than assumed: `startHeartbeat()`'s single `registry.tick(Date.now())` precedes
+  `flushNow()` and `sendWorldRebuilt` in session.ts, so no one ever sees a frame
+  of bars that real time invalidated while the app was closed. The test pins the
+  PROPERTY (swept == cold, and unswept differs somewhere), so an ordering nobody
+  can observe cannot pass it.
+- **THE SWITCH IS A PREFERENCE** (Preferences → Performance, "Start faster by
+  remembering your log"), off by default. `EQ_FOLD_CACHE` stays as a dev escape
+  hatch and still wins in BOTH directions — a kill switch a preference can
+  override is not a kill switch — and the card SAYS so when it is the thing
+  deciding, rather than drawing a switch that disagrees with the launch.
 - **B IS ALWAYS THE END OF A COMPLETE LINE.** `ScanResult.endOffset` and
   `Tailer.checkpointOffset()` are the only producers, and both mean it. A
   partial line has been folded by nobody, so a checkpoint that claimed it would

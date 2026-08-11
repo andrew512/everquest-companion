@@ -40,9 +40,11 @@
  */
 import { readFileSync } from 'node:fs'
 import { CombatEngine } from '../src/main/combat/engine'
-import { EpochDetector } from '../src/main/log/epochDetector'
+import { EpochDetector, LAUNCH_MS } from '../src/main/log/epochDetector'
 import { LogBus, type LogEventListener } from '../src/main/log/bus'
 import { ModuleRegistry } from '../src/main/modules/registry'
+import { parseLine } from '../src/main/log/parser'
+import { SESSION_GAP_MS } from '../src/main/modules/buffsShapes'
 import { SessionDetector } from '../src/main/log/sessionDetector'
 import { createModules } from '../src/main/modules/wiring'
 import { installCharacterName } from '../src/main/log/rulesets'
@@ -55,7 +57,7 @@ import { FOLD_SEMANTICS } from '../src/main/foldCache/semantics'
 import {
   isCheckpointable,
   moduleShapeHash,
-  PILOT_MODULE_IDS,
+  CHECKPOINTED_MODULE_IDS,
   type FoldUnit
 } from '../src/main/foldCache/serialize'
 import baselineJson from '../src/main/data/messageOverlay.baseline.json'
@@ -82,12 +84,15 @@ export interface FoldWorld {
   modules: EqModule[]
   /**
    * EVERYTHING THE CONTAINER CARRIES — the checkpointable modules plus the two derived-event
-   * producers, in `attach.ts`'s order. Not the same list as `pilots`: the detectors publish nothing
-   * and are compared by their EFFECT on the pilots, which is exactly how their absence was caught.
+   * producers, in `attach.ts`'s order. Not the same list as `compared`: the detectors publish
+   * nothing and are compared by their EFFECT on the modules, which is exactly how their absence
+   * was caught.
    */
   units: FoldUnit[]
   /** The modules whose published snapshots the differential compares. */
-  pilots: FoldUnit[]
+  compared: FoldUnit[]
+  /** The registry's OWN list of module ids, for the completeness assertion. */
+  registeredIds: string[]
 }
 
 /**
@@ -137,8 +142,16 @@ export function buildFoldWorld(logPath: string, respawnPrefs?: RespawnPrefs): Fo
 
   // The SAME composition `attach.ts` uses in the app: registry modules first, then the producers.
   const units = [...modules.ordered, epoch, sessions].filter(isCheckpointable)
-  const pilots = units.filter((m) => PILOT_MODULE_IDS.includes(m.id))
-  return { bus, registry, combat, modules: modules.ordered, units, pilots }
+  const compared = units.filter((m) => CHECKPOINTED_MODULE_IDS.includes(m.id))
+  return {
+    bus,
+    registry,
+    combat,
+    modules: modules.ordered,
+    units,
+    compared,
+    registeredIds: modules.ordered.map((m) => m.id)
+  }
 }
 
 /** Which bytes to fold, and from which seq. Absent `to` means "to EOF" — the ordinary case. */
@@ -172,8 +185,18 @@ export async function foldRange(
  */
 export function publishedSnapshots(world: FoldWorld, nowMs = PINNED_NOW_MS): Record<string, unknown> {
   world.registry.tick(nowMs)
+  return snapshotsWithoutSweep(world)
+}
+
+/**
+ * The published snapshots WITHOUT the go-live sweep — for the one test that is about the ORDERING
+ * itself (`foldCheckpointDifferential.test.mts`, "the go-live sweep runs before the first
+ * publish"). Nothing else should reach for this: a snapshot taken before the sweep is precisely
+ * the stale-bar frame the sweep exists to prevent anyone from ever seeing.
+ */
+export function snapshotsWithoutSweep(world: FoldWorld): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const m of world.pilots) out[m.id] = world.registry.snapshot(m.id)
+  for (const m of world.compared) out[m.id] = world.registry.snapshot(m.id)
   return out
 }
 
@@ -210,7 +233,9 @@ export interface SplitPoint {
 }
 
 /**
- * THE MATRIX OF SPLIT POINTS for one fixture: the design's list, made concrete.
+ * THE MATRIX OF SPLIT POINTS for one fixture: the design's full adversarial list, made concrete
+ * (phase 2 widened it from five kinds to eight, and every addition is aimed at a unit that joined
+ * the container in phase 2).
  *
  *   session edges  — the line after a `Welcome to EverQuest Legends!` (a login) and the line before
  *                    it (inside the hole that precedes it), because the offline-gap detector holds
@@ -220,11 +245,23 @@ export interface SplitPoint {
  *   mid-fight      — immediately after a damage line, i.e. inside an encounter the combat engine
  *                    has open and inside a stay the respawn module is measuring.
  *   mid-hold       — after a mez/charm line, the state the buff/CC ledgers carry across.
+ *   MID-CAST       — immediately after `You begin casting`, i.e. BETWEEN a cast line and the
+ *                    landing it owns. It is the split the cast-anchored attribution gate is most
+ *                    exposed to: lose the anchor and the landing in the tail is refused as a
+ *                    stranger's, so the row never appears and the learner never sees the cycle.
+ *   IN-HOLE        — inside a 30-minute event-time hole that no login has yet explained, which is
+ *                    the one state `SessionFrame` carries an open question through. Found by
+ *                    walking the parsed timestamps rather than by matching text, because a hole is
+ *                    an ABSENCE and has no line of its own.
+ *   EPOCH-ADJACENT — the lines immediately before and after the launch anchor, where the epoch
+ *                    detector fires once and half the fold is cleared mid-stream. Phase 1's
+ *                    measured divergence lived here; these two points are the regression pin.
  *   deciles        — 10% … 90% of the lines, so no fixture is only ever split at an interesting
  *                    line (the uninteresting ones are where an off-by-one hides).
- *   fuzzed         — seeded random bytes, snapped to a line.
+ *   fuzzed         — seeded random bytes, snapped to a line. Six per fixture rather than four now
+ *                    that seventeen modules are compared instead of two.
  */
-export function splitPoints(bytes: Buffer, seed: number, fuzzCount = 4): SplitPoint[] {
+export function splitPoints(bytes: Buffer, seed: number, fuzzCount = 6): SplitPoint[] {
   const boundaries = lineBoundaries(bytes)
   if (boundaries.length < 8) return []
   const text = bytes.toString('utf8')
@@ -247,12 +284,65 @@ export function splitPoints(bytes: Buffer, seed: number, fuzzCount = 4): SplitPo
   addMatches(scan, /You have entered/g, 'zone-line')
   addMatches(scan, /points of damage/g, 'mid-fight')
   addMatches(scan, /(mesmerized|charmed|Your .* spell has worn off)/g, 'mid-hold')
+  addMatches(scan, /You begin (?:casting|singing)/g, 'mid-cast')
+  addTimeSplits(text, boundaries, add)
 
   const rng = seededRng(seed)
   for (let i = 0; i < fuzzCount; i++) {
     add(`fuzz-${seed}-${i}`, snapToLine(boundaries, Math.floor(rng() * bytes.length)))
   }
   return out.sort((a, b) => a.offset - b.offset)
+}
+
+/**
+ * The two split kinds that cannot be found by matching a line, because neither of them IS a line.
+ *
+ *   IN-HOLE — a hole is an absence between two stamps. We parse the log's own timestamps, find the
+ *             largest event-time gaps, and split just AFTER the last line before one: the fold is
+ *             then carrying an open, unexplained question across the checkpoint, which is exactly
+ *             the state `SessionFrame` exists to hold and the buffs model rules on later.
+ *   EPOCH-ADJACENT — the launch anchor is a wall-clock instant, not a phrase, so the boundary is
+ *             found by comparing each line's stamp against `LAUNCH_MS` and splitting on both sides
+ *             of the crossing.
+ */
+function addTimeSplits(
+  text: string,
+  boundaries: number[],
+  add: (label: string, offset: number) => void
+): void {
+  const lines = parsedLineStamps(text)
+  if (lines.length < 4) return
+  // EPOCH-ADJACENT: the crossing of the launch anchor, from both sides.
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i - 1].ts < LAUNCH_MS && lines[i].ts >= LAUNCH_MS) {
+      add('epoch-before', snapToLine(boundaries, lines[i - 1].byte))
+      add('epoch-after', snapToLine(boundaries, lines[i].byte))
+      break
+    }
+  }
+  // IN-HOLE: the two largest event-time gaps that clear the model's own 30-minute boundary.
+  const gaps: { at: number; span: number }[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const span = lines[i].ts - lines[i - 1].ts
+    if (span >= SESSION_GAP_MS) gaps.push({ at: lines[i - 1].byte, span })
+  }
+  gaps.sort((a, b) => b.span - a.span)
+  gaps.slice(0, 2).forEach((g, i) => add(`in-hole-${i}`, snapToLine(boundaries, g.at)))
+}
+
+/**
+ * Every line's parsed timestamp and the byte offset just past it, through the PRODUCTION line
+ * parser. Unstamped lines are skipped — they carry no instant and cannot bound a hole.
+ */
+function parsedLineStamps(text: string): { ts: number; byte: number }[] {
+  const out: { ts: number; byte: number }[] = []
+  let byte = 0
+  for (const line of text.split('\n')) {
+    byte += Buffer.byteLength(line, 'utf8') + 1
+    const parsed = parseLine(line.endsWith('\r') ? line.slice(0, -1) : line)
+    if (parsed) out.push({ ts: parsed.ts, byte })
+  }
+  return out
 }
 
 interface MatchScan {

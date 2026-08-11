@@ -36,19 +36,36 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { FOLD_SEMANTICS } from '../src/main/foldCache/semantics'
+import { CHECKPOINTED_MODULE_IDS } from '../src/main/foldCache/serialize'
+import { FOLD_FIXTURES } from './foldCheckpointHarness.mts'
 import { canonicalJson, foldFingerprints, GOLDENS_PATH, type FoldGoldens } from './foldGoldenRecord.mts'
 
 test('fold goldens: published snapshots match, or FOLD_SEMANTICS was bumped', async () => {
   const golden = JSON.parse(readFileSync(GOLDENS_PATH, 'utf8')) as FoldGoldens
   const current = await foldFingerprints()
 
+  // A key the goldens have never held is NEW COVERAGE, not a changed fold: nothing can be said to
+  // have moved about a module nobody was fingerprinting. Widening the corpus or the module set
+  // therefore needs a re-record and no bump, while a key that MOVED — or one that stopped being
+  // produced at all — is the tripwire doing its job.
   const changed: string[] = []
   for (const [key, hash] of Object.entries(current)) {
+    if (!(key in golden.fingerprints)) continue
     if (golden.fingerprints[key] !== hash) changed.push(key)
   }
   for (const key of Object.keys(golden.fingerprints)) {
     if (!(key in current)) changed.push(`${key} (no longer produced)`)
   }
+
+  // NEW keys still have to be RECORDED — a fingerprint that exists only in memory is not a
+  // tripwire. This is the half that makes the "new coverage" exemption above safe.
+  const unrecorded = Object.keys(current).filter((key) => !(key in golden.fingerprints))
+  assert.deepStrictEqual(
+    unrecorded,
+    [],
+    `these fold fingerprints are produced but not committed: ${unrecorded.join(', ')}. ` +
+      'Re-record with `npm run fold:goldens -- "<why>"` — new coverage needs no FOLD_SEMANTICS bump.'
+  )
 
   if (changed.length > 0) {
     assert.notEqual(
@@ -93,7 +110,11 @@ test('fold goldens: an overzealous bump carries a stated reason', () => {
 test('fold goldens: the corpus the fingerprints cover is stated', () => {
   const golden = JSON.parse(readFileSync(GOLDENS_PATH, 'utf8')) as FoldGoldens
   const keys = Object.keys(golden.fingerprints)
-  assert.ok(keys.length >= 12, `the corpus must be six fixtures x two pilots, got ${keys.length}`)
+  assert.equal(
+    keys.length,
+    FOLD_FIXTURES.length * CHECKPOINTED_MODULE_IDS.length,
+    'the corpus is every fixture x every checkpointed module — a missing pair is a module nobody fingerprints'
+  )
   // The key format is what a red build prints, so it is asserted rather than assumed.
   for (const key of keys) assert.match(key, /^[\w.-]+\.log::\w+$/)
 })

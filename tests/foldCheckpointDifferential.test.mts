@@ -32,11 +32,12 @@ import {
   FOLD_FIXTURES,
   publishedSnapshots,
   restoreInto,
+  snapshotsWithoutSweep,
   splitPoints,
   watchesFor
 } from './foldCheckpointHarness.mts'
 import { readCheckpoint, writeCheckpoint, type RestoreResult } from '../src/main/foldCache/loader'
-import { PILOT_MODULE_IDS } from '../src/main/foldCache/serialize'
+import { CHECKPOINTED_MODULE_IDS } from '../src/main/foldCache/serialize'
 import type { RespawnPrefs } from '../src/shared/respawn'
 
 const FIXTURES = join(import.meta.dirname, 'fixtures')
@@ -81,7 +82,7 @@ for (const fixture of FOLD_FIXTURES) {
 
     for (const split of splits) {
       const warm = await warmSnapshots(logPath, split.offset, prefs)
-      for (const id of PILOT_MODULE_IDS) {
+      for (const id of CHECKPOINTED_MODULE_IDS) {
         assert.deepStrictEqual(
           warm[id],
           cold[id],
@@ -91,6 +92,85 @@ for (const fixture of FOLD_FIXTURES) {
     }
   })
 }
+
+/**
+ * THE COMPLETENESS GATE — the one assertion that makes every test above mean what it says.
+ *
+ * `CHECKPOINTED_MODULE_IDS` is written out by hand (see its own doc for why it is not derived), so
+ * on its own it could silently fall behind the app: a module added to `wiring.ts` next month that
+ * never declares a shape would fold from zero after every restore, publish a snapshot nobody
+ * compares, and every test in this file would stay green.
+ *
+ * So the list is held against the registry's own, in both directions. Adding a module to the app
+ * without a checkpoint seam fails HERE, by name, with the reason written in the message.
+ */
+test('fold checkpoint: every registered module is checkpointed and compared', () => {
+  const world = buildFoldWorld('')
+  const compared = new Set(CHECKPOINTED_MODULE_IDS)
+  const missing = world.registeredIds.filter((id) => !compared.has(id))
+  assert.deepStrictEqual(
+    missing,
+    [],
+    `these modules are folded by the app but are outside the checkpoint: ${missing.join(', ')}. ` +
+      `Every module whose state derives from events must declare a shape (foldCache/schema.ts) and ` +
+      `implement serializeFold/deserializeFold, or a restored fold serves them from zero.`
+  )
+  const registered = new Set(world.registeredIds)
+  const stale = CHECKPOINTED_MODULE_IDS.filter((id) => !registered.has(id))
+  assert.deepStrictEqual(stale, [], `these ids are compared but no longer registered: ${stale.join(', ')}`)
+  // …and every one of them really does implement the seam, rather than merely being named.
+  const units = new Set(world.units.map((u) => u.id))
+  const unsealed = CHECKPOINTED_MODULE_IDS.filter((id) => !units.has(id))
+  assert.deepStrictEqual(unsealed, [], `named but not checkpointable: ${unsealed.join(', ')}`)
+})
+
+/**
+ * THE GO-LIVE SWEEP RUNS BEFORE THE FIRST PUBLISH — asserted, not assumed (JOS-208 phase 2).
+ *
+ * session.ts's ordering is `restoreFold` → scan the tail → `startHeartbeat()` (which runs ONE
+ * `registry.tick(Date.now())`) → `registry.flushNow()` → `sendWorldRebuilt`. The sweep therefore
+ * precedes the first frame anyone sees, which is what stops a restored fold from flashing a bar
+ * that real time invalidated while the app was closed.
+ *
+ * This pins the PROPERTY rather than the call order: after a restore the swept snapshot equals the
+ * cold arm's swept snapshot (the law), and — on at least one fixture — the UNSWEPT one does not.
+ * The second half is what keeps the first from being vacuous: if the sweep changed nothing
+ * anywhere, this test would be asserting that an ordering nobody can observe is correct.
+ */
+test('fold checkpoint: the go-live sweep runs before the first publish', async () => {
+  const logPath = fixturePath('e2e-combat.log')
+  const bytes = readFileSync(logPath)
+  const prefs = await watchesFor(logPath)
+  const cold = await coldSnapshots(logPath, prefs)
+  const split = splitPoints(bytes, hashSeed('go-live')).find((s) => s.label === 'decile-50')
+  assert.ok(split, 'the fixture must yield a mid-file split')
+
+  const prefix = buildFoldWorld(logPath, prefs)
+  const at = await foldRange(prefix, logPath, { from: 0, to: split.offset, seq: 0 })
+  const container = checkpointBytes(prefix, logPath, { offset: at.endOffset, seq: at.seq })
+  const warm = buildFoldWorld(logPath, prefs)
+  const seq = restoreInto(warm, container)
+  assert.notEqual(seq, null)
+  await foldRange(warm, logPath, { from: at.endOffset, seq: seq ?? 0 })
+
+  // BEFORE the sweep: the fold is judged against the LOG's last instant, so rows real time has
+  // since invalidated are still standing. This is the frame the ordering exists to skip.
+  const unswept = snapshotsWithoutSweep(warm)
+  // …AND THEN the sweep, exactly as `startHeartbeat` runs it, before the first publish.
+  const swept = publishedSnapshots(warm)
+
+  for (const id of CHECKPOINTED_MODULE_IDS) {
+    assert.deepStrictEqual(swept[id], cold[id], `module '${id}' diverged after the go-live sweep`)
+  }
+  const sweptSomething = CHECKPOINTED_MODULE_IDS.some(
+    (id) => JSON.stringify(unswept[id]) !== JSON.stringify(swept[id])
+  )
+  assert.ok(
+    sweptSomething,
+    'the go-live sweep changed nothing on this fixture, so its ordering is unobservable and this ' +
+      'test proves nothing — pick a fixture whose fold carries live clocks past its last line.'
+  )
+})
 
 /** A stable per-fixture fuzz seed, so a red run names a matrix anybody can reproduce exactly. */
 function hashSeed(name: string): number {
