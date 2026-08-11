@@ -22,6 +22,12 @@
  * opt-in per mob, so both steps below play a death, watch it turn up in the Recently-killed panel,
  * and CLICK Watch — the difference between them is only which rung then numbers the clock.
  *
+ * AND A COMBAT LINE IS PLAYED (round 3). A line that starts no clock, ends nothing and is not a
+ * death still has to travel the whole path and change what both renderers draw — the row flips to
+ * UP because the log NAMED the mob. Then the confirm affordance is CLICKED, which is the only
+ * thing in this feature that moves a clock with no log line behind it; a build that re-based on the
+ * sighting by itself fails the assertion that the clock was untouched before the click.
+ *
  * AND THE ZONE LINE IS PLAYED TOO. The last step walks the character into another zone and asserts
  * the clocks LEAVE both surfaces while the fold keeps them: the tab's all-zones view brings them
  * straight back. That is the second owner ruling, and only the real app can show that a zone line
@@ -73,6 +79,10 @@ interface Clock {
   mob: string
   source: string
   due: string
+  /** Round 3: the log has NAMED this mob since the clock started. */
+  seen: string
+  /** Round 3: what the clock counts from — 'death', or a sighting the user confirmed. */
+  basis: string
   text: string
 }
 
@@ -83,6 +93,8 @@ function clocks(page: Page, testid: string): Promise<Clock[]> {
         mob: e.getAttribute('data-respawn-mob') ?? '',
         source: e.getAttribute('data-respawn-source') ?? '',
         due: e.getAttribute('data-respawn-due') ?? '',
+        seen: e.getAttribute('data-respawn-seen') ?? '',
+        basis: e.getAttribute('data-respawn-basis') ?? '',
         text: (e as HTMLElement).innerText.replace(/\s+/g, ' ').trim()
       })),
     testid
@@ -264,6 +276,65 @@ async function stepOverlay(page: Page, app: ElectronApplication): Promise<Page |
   return o
 }
 
+/**
+ * SEEN ON LOG EVIDENCE, AND THE RE-BASE THAT IS NEVER AUTOMATIC (owner ruling, round 3).
+ *
+ * The defect came from live play: the owner was being hit by a watched mob and the row still read
+ * due-in-the-past. Only the real app can show the fix, because the claim is that a line arriving on
+ * the LIVE tail — one that starts no clock and is not a death — travels the whole path and changes
+ * what TWO renderers draw.
+ *
+ * The played line is a real shape (`<Mob> hits YOU for N points of damage.`, verbatim from
+ * e2e-combat.log with the mob name swapped) and the mob is the one this spec already watches.
+ *
+ * IT IS DELIBERATELY THE STRICTER CASE. The owner's row was overdue; this one's countdown is still
+ * running, because an e2e cannot wait out a three-minute estimate. Evidence overriding a LIVE
+ * countdown is the same rule applied where it has more to prove — a seen row leads with the fact
+ * whether or not the clock agrees, and that is exactly what shared/respawn.ts argues.
+ */
+async function stepSeenOnLogEvidence(page: Page, overlay: Page, log: FixtureLog): Promise<void> {
+  log.append(`A wan ghoul knight hits YOU for 106 points of damage.`)
+
+  const seen = await settle(() => clocks(page, 'respawn-row'), (r) => find(r, OWN_MOB)?.seen === 'true', {
+    timeoutMs: 30_000
+  })
+  const row = find(seen, OWN_MOB)
+  if (!check('a combat line naming a watched mob flips its row UP', row?.seen === 'true', JSON.stringify(seen))) {
+    return
+  }
+  check('…and the clock says UP rather than reciting its estimate', row.text.includes('UP'), row.text)
+  check('…stating what saw it, and how long ago', row.text.includes('seen') && row.text.includes('combat line'), row.text)
+  check('…without touching the clock: it is still counting from the death', row.basis === 'death', JSON.stringify(row))
+
+  const overlayRows = await settle(
+    () => clocks(overlay, 'respawn-overlay-row'),
+    (r) => find(r, OWN_MOB)?.seen === 'true',
+    { timeoutMs: 30_000 }
+  )
+  check(
+    '…and the floating window — where the ruling came from — says UP too',
+    find(overlayRows, OWN_MOB)?.text.includes('UP') === true,
+    JSON.stringify(overlayRows)
+  )
+  check(
+    '…with its own confirm affordance, because it is unlocked',
+    (await countOf(overlay, '[data-testid="respawn-overlay-confirm"]')) >= 1
+  )
+
+  // THE SECOND RULING: nothing above moved a clock. This click is the only thing that can.
+  await page.click(`[data-testid="respawn-row"][data-respawn-mob="${OWN_MOB}"] [data-testid="respawn-confirm-sighting"]`, {
+    timeout: 15_000
+  })
+  const rebased = await settle(() => clocks(page, 'respawn-row'), (r) => find(r, OWN_MOB)?.basis === 'sighting', {
+    timeoutMs: 30_000
+  })
+  const after = find(rebased, OWN_MOB)
+  if (!check('confirming the sighting re-bases the clock', after?.basis === 'sighting', JSON.stringify(rebased))) return
+  check('…and says the number came from your judgement, not from a death line', after.text.includes('confirmed sighting'), after.text)
+  check('…leaving the seen state, because the evidence is now the base', after.seen === 'false', JSON.stringify(after))
+  check('…counting down again rather than sitting due', after.due === 'false', JSON.stringify(after))
+}
+
 /** A zone the fixture is NOT in, played onto the live tail. Real name, real sentence shape. */
 const OTHER_ZONE = 'Befallen'
 
@@ -320,7 +391,13 @@ async function main(): Promise<void> {
   // claim (one piece of zone state, two renderers), so it rides the same window rather than
   // toggling a fresh one.
   const overlay = await stepOverlay(page, launched.app)
-  if (overlay) await stepZoneScope(page, overlay, fixture)
+  if (overlay) {
+    // Round 3 rides the same window for the same reason the zone step does: the claim is that ONE
+    // piece of module state moves two renderers. It runs BEFORE the zone step, which walks the
+    // character out and empties both surfaces.
+    await stepSeenOnLogEvidence(page, overlay, fixture)
+    await stepZoneScope(page, overlay, fixture)
+  }
 
   if (failures.length) await dumpArtifacts(page, 'respawn-timers-FAIL')
   await launched.close()

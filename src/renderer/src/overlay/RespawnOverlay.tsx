@@ -20,8 +20,16 @@
 // and that includes one that has come DUE (see the helper's header).
 //
 // IT TICKS ITSELF, at 1 Hz, because a countdown is the one thing in this app that must keep moving
-// while the log is silent — and a row carries its own `diedTs`, so ticking costs no IPC at all.
+// while the log is silent — and a row carries its own `baseTs`, so ticking costs no IPC at all.
 // (The XP window's clock is 30 s for the opposite reason: nothing in it is a countdown.)
+//
+// AND IT IS WHERE THE ROUND-3 RULING HAS TO LAND (owner, 2026-08-10). The defect was reported from
+// live play: the mob was hitting him and the row over the game still read "due 4m ago". So a row
+// the log has NAMED since its clock started reads UP here, in its own colour, sorted to the top —
+// and the affordance that re-bases the clock onto that sighting lives here too, in INTERACTIVE
+// mode, because a locked window is click-through by law and has no clicks to give. Confirming from
+// the Timers tab is the same call on the same module (`confirmRespawnSighting`); this window simply
+// spares you the alt-tab in the one moment the feature is for.
 //
 // MUI-FREE, plain divs and inline styles, like every file in this bundle.
 
@@ -30,9 +38,11 @@ import {
   EMPTY_RESPAWN_SNAP,
   mergeRespawnDelta,
   orderRespawnRows,
+  respawnBasisLabel,
   respawnClockLabel,
   respawnInZone,
   respawnReading,
+  respawnSeenLabel,
   respawnSourceLabel,
   type RespawnDelta,
   type RespawnRow,
@@ -51,6 +61,14 @@ const ACCENT = '#e8b45f'
 const ACCENT_BG = 'rgba(232,180,95,0.2)'
 /** A clock that has run out. Green, so "go look" is readable in peripheral vision. */
 const DUE = '#7fd18b'
+/**
+ * THE LOG SAID IT IS THERE. Deliberately not green and not the window's amber: `due` and `seen`
+ * are different kinds of claim — one is this app's estimate elapsing, the other is the game naming
+ * the mob — and a player glancing at this window in peripheral vision has to be able to tell them
+ * apart without reading a word. Red-pink also happens to be what the moment actually is: the
+ * report that produced this ruling is a mob standing on top of the owner, hitting him.
+ */
+const SEEN = '#ff6b8a'
 
 /** One second. A countdown is the one number in this app that has to move while the log is idle. */
 const TICK_MS = 1000
@@ -68,22 +86,93 @@ function useSecondsClock(): number {
   return now
 }
 
+/** What the confirm button will and will not do, on the one control that can move a clock here. */
+const CONFIRM_TITLE =
+  'The log named this mob, so it is up - but a sighting does not say when it spawned, so nothing ' +
+  'has been changed. Click to start this clock from that sighting. A death message afterwards ' +
+  'takes the clock straight back.'
+
+/**
+ * The seen line, and the button that is the whole of the second ruling. Its own component because
+ * `RespawnLine` is at the repo's factoring ceiling — and because the button exists only where a
+ * click can land: a LOCKED overlay is click-through by law and passes them to the game.
+ */
+function SeenLine({
+  row,
+  nowMs,
+  interactive,
+  onConfirm
+}: {
+  row: RespawnRow
+  nowMs: number
+  interactive: boolean
+  onConfirm: (rowId: string) => void
+}): JSX.Element {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+      <span data-testid="respawn-overlay-seen" style={{ fontSize: 9, color: SEEN, flexGrow: 1, minWidth: 0 }}>
+        {respawnSeenLabel(row, nowMs, fmtDuration)}
+      </span>
+      {interactive && (
+        <button
+          type="button"
+          data-testid="respawn-overlay-confirm"
+          title={CONFIRM_TITLE}
+          onClick={() => {
+            onConfirm(row.id)
+          }}
+          style={{
+            flexShrink: 0,
+            fontSize: 9,
+            lineHeight: 1.4,
+            padding: '0 4px',
+            color: SEEN,
+            background: 'transparent',
+            border: `1px solid ${SEEN}66`,
+            borderRadius: 3,
+            cursor: 'pointer'
+          }}
+        >
+          start clock here
+        </button>
+      )}
+    </div>
+  )
+}
+
 /** One clock. Name on the left, the number on the right, the provenance underneath in dim text. */
-function RespawnLine({ row, nowMs }: { row: RespawnRow; nowMs: number }): JSX.Element {
+function RespawnLine({
+  row,
+  nowMs,
+  interactive,
+  onConfirm
+}: {
+  row: RespawnRow
+  nowMs: number
+  /** The window is UNLOCKED. A locked overlay is click-through, so it draws no button at all. */
+  interactive: boolean
+  onConfirm: (rowId: string) => void
+}): JSX.Element {
   const r = respawnReading(row, nowMs)
   const hasEstimate = row.estimateMs !== undefined
   // The clock's WORDING is the tab's, from shared/respawn.ts — a countdown must not read one way
-  // in the app and another way over the game.
+  // in the app and another way over the game. That includes the UP a seen row shows instead.
   const label = respawnClockLabel(row, nowMs, fmtDuration)
+  const tone = r.seen ? SEEN : r.due ? DUE : ACCENT
+  const basis = respawnBasisLabel(row)
   return (
     <div
       data-testid="respawn-overlay-row"
       data-respawn-mob={row.key}
       data-respawn-due={r.due ? 'true' : 'false'}
+      data-respawn-seen={r.seen ? 'true' : 'false'}
+      data-respawn-basis={row.basis}
       // The full provenance sentence rides the native title, the same place the tab's tooltip
       // puts it — a floating window has no room to print it and no right to hide it.
-      title={`${respawnSourceLabel(row)}${row.wikiText === undefined ? '' : ` · wiki: "${row.wikiText}"`}`}
-      style={{ padding: '2px 2px 3px', borderLeft: `2px solid ${r.due ? DUE : ACCENT}66`, paddingLeft: 5 }}
+      title={`${respawnSourceLabel(row)}${row.wikiText === undefined ? '' : ` · wiki: "${row.wikiText}"`}${
+        basis.length > 0 ? ` · ${basis}` : ''
+      }`}
+      style={{ padding: '2px 2px 3px', borderLeft: `2px solid ${tone}66`, paddingLeft: 5 }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
         <span
@@ -104,7 +193,7 @@ function RespawnLine({ row, nowMs }: { row: RespawnRow; nowMs: number }): JSX.El
           style={{
             fontSize: 13,
             fontWeight: 700,
-            color: r.due ? DUE : ACCENT,
+            color: tone,
             fontVariantNumeric: 'tabular-nums',
             flexShrink: 0
           }}
@@ -120,15 +209,18 @@ function RespawnLine({ row, nowMs }: { row: RespawnRow; nowMs: number }): JSX.El
             style={{
               height: '100%',
               width: `${String(Math.round((1 - r.fraction) * 100))}%`,
-              background: r.due ? DUE : ACCENT,
+              background: tone,
               borderRadius: 2
             }}
           />
         </div>
       )}
+      {/* NOTHING RE-BASES ITSELF — the affordance below is the only path to `basis: 'sighting'`. */}
+      {r.seen && <SeenLine row={row} nowMs={nowMs} interactive={interactive} onConfirm={onConfirm} />}
       <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.42)', marginTop: 1 }}>
         {row.source === 'observed' ? '<= ' : ''}
         {hasEstimate ? fmtDuration(row.estimateMs) : 'no estimate'} · {respawnSourceLabel(row)}
+        {basis.length > 0 ? ' · re-based' : ''}
       </div>
     </div>
   )
@@ -186,6 +278,10 @@ export default function RespawnOverlay(): JSX.Element {
   const rows = orderRespawnRows(respawnInZone(snap.rows, snap.zone), nowMs)
   /** Clocks the fold is holding for somewhere else. Counted so the empty state can say so. */
   const elsewhere = snap.rows.length - rows.length
+  /** Fire-and-forget: the module answers with a delta, and a refusal is already described by it. */
+  const confirmSighting = (rowId: string): void => {
+    void window.eqOverlay.confirmRespawnSighting(rowId)
+  }
 
   return (
     <div
@@ -225,13 +321,22 @@ export default function RespawnOverlay(): JSX.Element {
               : 'No clocks running - kill something, then Watch it on the Timers tab.'}
           </div>
         ) : (
-          rows.map((row) => <RespawnLine key={row.id} row={row} nowMs={nowMs} />)
+          rows.map((row) => (
+            <RespawnLine
+              key={row.id}
+              row={row}
+              nowMs={nowMs}
+              interactive={!locked}
+              onConfirm={confirmSighting}
+            />
+          ))
         )}
-        {/* ONE SENTENCE FOR THE WHOLE WINDOW rather than a caveat per row: a clock at zero means
-            the estimate elapsed. The app has never seen a spawn and cannot claim one. */}
+        {/* ONE SENTENCE FOR THE WHOLE WINDOW rather than a caveat per row, and it now has to
+            distinguish the two claims: a clock at zero is this app's estimate elapsing and is
+            still never a sighting, while UP is the game having named the mob. */}
         {rows.length > 0 && (
           <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', paddingTop: 4 }}>
-            zero = estimate elapsed, not a sighting
+            zero = estimate elapsed, not a sighting · UP = the log named it
           </div>
         )}
       </OverlayContent>

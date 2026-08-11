@@ -63,12 +63,96 @@
 // the same field that decides whether a gap counts, never a second tracker): the floating window
 // shows that zone and nothing else, and the Timers tab defaults to it with an explicit all-zones
 // view for editing. `respawnInZone` below is the ONE comparison both surfaces call.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// SEEN: THE LOG NAMED IT, SO THE ROW SAYS SO (owner ruling, 2026-08-10, prototype round 3)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The defect that produced this ruling is the sharpest one the feature has had. The owner was
+// killing a watched mob that had spawned on time; he arrived late; the mob was ACTIVELY HITTING
+// HIM — and the row read "due 4m ago". The countdown was not wrong about the estimate, it was
+// wrong about the QUESTION: once the log is printing the mob's name, "when do I expect it" has
+// been answered by the world, and the app was still reciting its guess.
+//
+// So a row now carries `seenTs` — the last instant the parse cascade produced an event NAMING
+// this mob while the fold was in this row's zone — and a reading whose `seenTs` is newer than the
+// clock's base reads UP rather than due. Nothing about the estimate changes; the row simply stops
+// pretending the estimate is the best thing it knows.
+//
+// WHAT MARKS SEEN, and what does not (the coverage statement, kept here because the UI's honesty
+// depends on it). The module subscribes to TYPED EVENTS, never to raw text — the parser is the
+// only thing in this app that reads sentences, and a second regex sweep over `ev.raw` would be a
+// second opinion that drifts (the `DamageEventE.verb` argument). The families that name an entity
+// and therefore mark it seen are, by the shape of the name they carry:
+//
+//   combat   `damage` (attacker/target), `miss` (attacker/target), `heal` (healer/target),
+//            `mitigation` is NOT included — it names a source only for the absorb shapes, which
+//            the miss family already covers.
+//   consider `consider` (mob) — sizing something up is the purest sighting the log has.
+//   holds    `cc`, `ccWake`, `charm`, `uncharm` (mob) — a mez/root/charm landing or breaking.
+//   spells   `resist` (caster/target), `otherCastBegin` (caster), `buffApply` (target),
+//            `poisonProc` (target).
+//
+// AND WHAT CANNOT MARK IT, stated rather than glossed:
+//   * A MOB STANDING THERE PRINTS NOTHING. EQ logs interactions, not presence, so a spawn nobody
+//     touches and nobody cons is invisible to this app forever. `seen` is "the log mentioned it",
+//     never "it is up"; the absence of `seen` is not evidence of anything at all.
+//   * MOB SPEECH IS GONE BY DESIGN. Growls and emotes are quoted speech and the scrub drops them
+//     (AGENTS.md), and nothing parses them, so a mob that only talks is not seen.
+//   * A CORPSE IS NOT A SIGHTING. `loot`'s `source` names a corpse and `death`'s `name` names the
+//     thing that just stopped existing; neither marks seen, or every kill would flip its own row
+//     up at the instant it went down.
+//   * `spellEmote` IS DELIBERATELY OUT. It is documented as a PERMISSIVE candidate stream full of
+//     unrelated flavor whose `subject` the buffs module only trusts after repetition; admitting it
+//     here would flip rows up on hunger messages.
+//   * THE NAME IS STILL JUST A NAME. Two spawns of `a froglok guk shaman` are one key to this app
+//     (law 13's whole argument), so a sighting of the OTHER one marks this row seen. That is the
+//     same limit the clock itself has and the UI does not pretend otherwise.
+//   * THE SIGHTING MUST BE IN THIS ROW'S ZONE. Rows are keyed `(zone, mob)` and only the entry for
+//     the zone the fold is standing in can be marked, so a Guk sighting never lights a Befallen row.
+//
+// A SIGHTING NEVER AUTO-ADJUSTS THE SCHEDULE (the second half of the same ruling, and the more
+// important half). Seeing a mob proves it is UP; it says nothing whatever about WHEN it spawned —
+// it could have been standing there for an hour before anyone swung at it. So the clock's base is
+// still the death message and only the death message, exactly as before. What the user gets is an
+// explicit affordance on a seen row — "start the clock from this sighting" — which moves the base
+// to that sighting instant and marks the row `basis: 'sighting'` so every surface can say the
+// number came from a judgement the user made rather than a line the game printed. It exists
+// because YOUR kill is not the only way a cycle restarts: a group-mate's kill is filtered out by
+// `isCountedKill`, and a mob you never re-killed leaves the clock frozen on a stale death. A death
+// message afterwards takes the base straight back (`baseTs` is whichever is later), so the normal
+// death-driven cycle resumes on the next kill with nothing to undo.
+//
+// THE CONFIRMATION IS SESSION STATE, not a preference: it lives in the fold beside the deaths it
+// competes with, and a relaunch re-derives the fold from the log — which has never heard of it.
+// Persisting a judgement about one spawn of one mob would outlive the spawn it was about.
 
 /** Which rung of the ladder produced the estimate on a row. `'none'` = no rung had anything. */
 export type RespawnSource = 'custom' | 'observed' | 'wiki' | 'none'
 
-/** The shape version — bumped when a renderer holding an older baseline must re-hydrate. */
-export const RESPAWN_SHAPE_VERSION = 1
+/**
+ * WHICH FAMILY OF LINE NAMED THE MOB (see the seen-coverage statement in the header). Carried so a
+ * row can say what its evidence was rather than asserting a bare "up" — a consider is a deliberate
+ * look at something, a combat line is somebody swinging at it, and the user is entitled to know
+ * which of those the app is going on.
+ */
+export type RespawnSeenVia = 'combat' | 'consider' | 'hold' | 'spell'
+
+export const RESPAWN_SEEN_VIA_LABEL: Record<RespawnSeenVia, string> = {
+  combat: 'a combat line',
+  consider: 'a consider',
+  hold: 'a mez/root/charm line',
+  spell: 'a spell line'
+}
+
+/** What the clock's `baseTs` IS — a death the log printed, or a sighting the user confirmed. */
+export type RespawnBasis = 'death' | 'sighting'
+
+/**
+ * The shape version — bumped when a renderer holding an older baseline must re-hydrate.
+ * 2: `diedTs` became `baseTs` and the row grew `basis` / `seenTs` / `seenVia` (round 3).
+ */
+export const RESPAWN_SHAPE_VERSION = 2
 
 /**
  * How long a row lingers after its clock runs out before the module drops it. A respawn that
@@ -191,7 +275,7 @@ export function resolveRespawn(ev: RespawnEvidence): RespawnEstimate {
 // THE ROW
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One live respawn clock. Carries its own `diedTs` so the renderer ticks with no IPC at all. */
+/** One live respawn clock. Carries its own `baseTs` so the renderer ticks with no IPC at all. */
 export interface RespawnRow {
   /** Stable across ticks — React key and e2e selector. `<zone key>::<mob key>`. */
   id: string
@@ -201,8 +285,24 @@ export interface RespawnRow {
   display: string
   /** The zone you were standing in when it died. Empty when the scan had seen no zone line. */
   zone: string
-  /** The death line's OWN timestamp, in ms. Never a wall clock read at fold time. */
-  diedTs: number
+  /**
+   * WHAT THE CLOCK COUNTS FROM, in ms — an instant the LOG stated, never a wall clock read at
+   * fold time. Normally the death line's own timestamp; a sighting the user explicitly confirmed
+   * moves it (see `basis` and the header's ruling), and the later of the two always wins, so the
+   * next death takes it back with nothing to undo.
+   */
+  baseTs: number
+  /** Which of those two `baseTs` is. Absent is impossible; it is stated on every row. */
+  basis: RespawnBasis
+  /**
+   * The last instant an event NAMED this mob while the fold stood in this row's zone, and only
+   * when that is NEWER than `baseTs` — a mention from before the clock started is not a sighting
+   * of the spawn the clock is about. Absent means the log has said nothing since, which is not
+   * evidence of anything (the coverage statement in the header says why).
+   */
+  seenTs?: number
+  /** Which family of line said so. Present exactly when `seenTs` is. */
+  seenVia?: RespawnSeenVia
   estimateMs?: number
   source: RespawnSource
   /** Rung 2's raw bound, kept beside `estimateMs` so the UI can show when the floor lifted it. */
@@ -297,7 +397,7 @@ export function respawnInZone<T extends { zone: string }>(items: readonly T[], z
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface RespawnReading {
-  /** How long since it died. */
+  /** How long since the clock's base (the death, or a confirmed sighting). */
   elapsedMs: number
   /** How long the estimate has left. Absent when the row has no estimate. */
   remainingMs?: number
@@ -307,12 +407,24 @@ export interface RespawnReading {
   due: boolean
   /** How long ago it came due. Zero until it does. */
   overdueMs: number
+  /**
+   * THE LOG HAS NAMED THIS MOB SINCE THE CLOCK STARTED. This is the one thing on the row that is
+   * an OBSERVATION rather than an estimate, so every surface leads with it — see the header. It
+   * is true whether or not the clock has run out: a sighting while the countdown still has ten
+   * minutes on it is the app being told its estimate (or its idea of which mob this is) is wrong,
+   * which is worth showing rather than suppressing.
+   */
+  seen: boolean
+  /** How long ago that was. Zero when nothing has been seen. */
+  seenAgoMs: number
 }
 
 export function respawnReading(row: RespawnRow, nowMs: number): RespawnReading {
-  const elapsedMs = Math.max(0, nowMs - row.diedTs)
+  const elapsedMs = Math.max(0, nowMs - row.baseTs)
+  const seen = row.seenTs !== undefined && row.seenTs > row.baseTs
+  const seenAgoMs = seen && row.seenTs !== undefined ? Math.max(0, nowMs - row.seenTs) : 0
   if (row.estimateMs === undefined || row.estimateMs <= 0) {
-    return { elapsedMs, fraction: 0, due: false, overdueMs: 0 }
+    return { elapsedMs, fraction: 0, due: false, overdueMs: 0, seen, seenAgoMs }
   }
   const left = row.estimateMs - elapsedMs
   return {
@@ -320,23 +432,38 @@ export function respawnReading(row: RespawnRow, nowMs: number): RespawnReading {
     remainingMs: left > 0 ? left : 0,
     fraction: Math.min(1, Math.max(0, left / row.estimateMs)),
     due: left <= 0,
-    overdueMs: left < 0 ? -left : 0
+    overdueMs: left < 0 ? -left : 0,
+    seen,
+    seenAgoMs
   }
 }
 
 /**
  * Has this row outlived its usefulness? A clock that ran out half an hour ago is not telling you
  * to go look any more. Rows with no estimate are judged on elapsed time by the same window.
+ *
+ * A SIGHTING RESTARTS THE LINGER, and that is what keeps the ruling from being undone by the
+ * sweep: the owner's own case is a mob that came due long ago and is standing in front of him, and
+ * a row swept for being forty minutes overdue takes the "UP" with it. So evidence within the same
+ * already-argued window holds the row on screen — no second constant, and the bound is still hard
+ * (nothing has named it for half an hour, so there is nothing to show).
  */
 export function respawnRowExpired(row: RespawnRow, nowMs: number): boolean {
   const r = respawnReading(row, nowMs)
+  if (r.seen && r.seenAgoMs <= RESPAWN_LINGER_MS) return false
   if (row.estimateMs === undefined) return r.elapsedMs > RESPAWN_LINGER_MS
   return r.overdueMs > RESPAWN_LINGER_MS
 }
 
 /**
- * Display order: soonest due first, then the ones with no estimate. Ties break on name so the
- * list never shuffles under a re-render.
+ * Display order: SEEN first, then soonest due, then the ones with no estimate. Ties break on name
+ * so the list never shuffles under a re-render.
+ *
+ * SEEN OUTRANKS EVERY COUNTDOWN because it is a different KIND of fact. Every other row on this
+ * list is the app's estimate of when something might happen; a seen row is the log stating that it
+ * already has, and burying an observation under a pile of guesses is the defect this round exists
+ * to fix. Among seen rows the freshest evidence leads — a mention two seconds ago is a better
+ * reason to look than one from twenty minutes back.
  *
  * There is no "pinned first" tier any more, and there is nothing to be pinned ABOVE: every row on
  * screen is a mob the player asked for by name (the opt-in ruling in the header), so a rank that
@@ -346,6 +473,8 @@ export function orderRespawnRows(rows: readonly RespawnRow[], nowMs: number): Re
   return [...rows].sort((a, b) => {
     const ra = respawnReading(a, nowMs)
     const rb = respawnReading(b, nowMs)
+    if (ra.seen !== rb.seen) return ra.seen ? -1 : 1
+    if (ra.seen && rb.seen && ra.seenAgoMs !== rb.seenAgoMs) return ra.seenAgoMs - rb.seenAgoMs
     const ka = ra.remainingMs ?? Number.POSITIVE_INFINITY
     const kb = rb.remainingMs ?? Number.POSITIVE_INFINITY
     if (ka !== kb) return ka - kb
@@ -378,6 +507,13 @@ export function respawnSourceLabel(row: RespawnRow): string {
  * floating window both call this, so a countdown can never read one way in the app and another way
  * over the game.
  *
+ * A SEEN ROW HAS NO NUMBER TO GIVE, so it gives the answer instead. `UP` is the whole label: the
+ * estimate is still printed beside it (the surfaces draw `respawnSourceLabel` and the duration on
+ * their second line, and the bar keeps running), but the loudest thing on the row is no longer a
+ * countdown that has been overtaken by events. This is also the ONE label in the feature that
+ * claims a mob is there — and it may, because unlike `due` it is reporting a line the game printed
+ * rather than a clock this app ran.
+ *
  * `fmt` is injected because the app's ONE duration formatter lives in the renderer
  * (features/buffs/format.ts) and this module is pure. Injecting it is what keeps that rule — one
  * formatter — from being broken by a second spelling written down here.
@@ -388,6 +524,36 @@ export function respawnClockLabel(
   fmt: (ms: number | null | undefined) => string
 ): string {
   const r = respawnReading(row, nowMs)
+  if (r.seen) return 'UP'
   if (row.estimateMs === undefined) return `+${fmt(r.elapsedMs)}`
   return r.due ? `due ${fmt(r.overdueMs)} ago` : fmt(r.remainingMs ?? 0)
+}
+
+/**
+ * The seen line: what named it and how long ago. Empty string when the row has not been seen, so a
+ * surface can render it unconditionally and get nothing when there is nothing to say.
+ *
+ * The AGE is always stated and never rounded away, because it is the whole of what the user needs
+ * to judge the claim: "seen 3s ago" is a mob in front of you and "seen 24m ago" is a mob that was
+ * there once. The app declines to turn that judgement into a threshold of its own.
+ */
+export function respawnSeenLabel(
+  row: RespawnRow,
+  nowMs: number,
+  fmt: (ms: number | null | undefined) => string
+): string {
+  const r = respawnReading(row, nowMs)
+  if (!r.seen) return ''
+  const via = row.seenVia === undefined ? '' : ` (${RESPAWN_SEEN_VIA_LABEL[row.seenVia]})`
+  return r.seenAgoMs < 1000 ? `seen just now${via}` : `seen ${fmt(r.seenAgoMs)} ago${via}`
+}
+
+/**
+ * What the clock is counting from. The death case says nothing — it is the norm and every surface
+ * already reads "your kills" — while a re-based row states its provenance out loud, because a
+ * number resting on a judgement the user made must never be indistinguishable from one resting on
+ * a line the game printed (law 1: anything inferred is LABELED inferred).
+ */
+export function respawnBasisLabel(row: RespawnRow): string {
+  return row.basis === 'sighting' ? 'clock started from your confirmed sighting' : ''
 }

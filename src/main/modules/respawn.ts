@@ -24,6 +24,15 @@
 //      log never reached the screen), so `rev` is a private counter bumped by anything that can
 //      change the state, reported by BOTH `snapshot()` and `flushDelta()`, and the IPC setter
 //      calls `registry.flushNow()` rather than waiting for the heartbeat. Both halves are needed.
+//      By round 3 there are THREE such inputs — the watch list, a zone line, and a confirmed
+//      sighting — and every one of them bumps `rev`. The rule generalizes: if it changes what the
+//      screen shows, it moves the revision, or the delta is swallowed.
+//   4. WHAT THE LOG HAS SAID ABOUT A WATCHED MOB SINCE ITS CLOCK STARTED (round 3). The rulings
+//      and the full coverage statement are in `shared/respawn.ts`; the mechanism here is small
+//      and deliberately so — `seenNamesOf` maps a TYPED event to the names it states, `markSeen`
+//      records the newest of them against the (zone, mob) entry, and nothing else in the fold
+//      changes. In particular a sighting never touches `minGapMs`, `samples` or `lastTs`: it is
+//      not a death and the ladder must not learn from it.
 
 import type { EqModule } from './types'
 import { isCountedKill } from '../log/reducers'
@@ -43,7 +52,9 @@ import {
   type RespawnDelta,
   type RespawnPrefs,
   type RespawnRow,
-  type RespawnSnap
+  type RespawnSeenVia,
+  type RespawnSnap,
+  type RespawnWatchPref
 } from '../../shared/respawn'
 
 /**
@@ -63,6 +74,20 @@ const MIN_GAP_MS = 60_000
 /** Distinct (zone, mob) pairs the history keeps before evicting the least recently killed. */
 const MAX_HISTORY = 800
 
+/**
+ * How often a CONTINUING sighting re-publishes.
+ *
+ * A fight prints several lines a second and every one of them names the mob, so recording the
+ * sighting is free but PUSHING it is not: a delta per damage line would be a snapshot of every
+ * clock in the fold, several times a second, for a number the renderer can already compute from
+ * `seenTs`. The transition into the seen state always pushes immediately — that is the whole
+ * ruling and it must not wait — and after that the row's published `seenTs` is allowed to lag by
+ * up to this much. The visible consequence is bounded and stated: a row can read "seen 6s ago"
+ * when the last line was 1s ago, which is the same order of staleness the 1 s heartbeat already
+ * imposes on everything else in this window.
+ */
+const SEEN_REFRESH_MS = 5_000
+
 /** What the fold knows about one mob in one zone. */
 interface MobHistory {
   key: string
@@ -76,6 +101,79 @@ interface MobHistory {
   samples: number
   /** Deaths counted, qualifying or not. */
   kills: number
+  /** The last event that NAMED this mob while the fold stood in this zone. Never a death. */
+  seenTs?: number
+  seenVia?: RespawnSeenVia
+  /** The last `seenTs` a delta actually carried — see SEEN_REFRESH_MS. */
+  seenPubTs?: number
+  /**
+   * A sighting the USER confirmed as the spawn (owner ruling, round 3). Competes with `lastTs`
+   * for the clock's base and the LATER one wins, which is why a death needs no code to undo it.
+   * Never persisted and never a gap sample: it is a judgement about one spawn, not a log line.
+   */
+  confirmedTs?: number
+}
+
+/** The clock's base for one history entry: the death, or a later confirmed sighting. */
+function baseOf(h: MobHistory): number {
+  return h.confirmedTs !== undefined && h.confirmedTs > h.lastTs ? h.confirmedTs : h.lastTs
+}
+
+/**
+ * Copy the sighting onto the row — but ONLY when it is newer than the clock's base. A mention from
+ * the fight that killed the mob is not a sighting of the spawn that follows, so a row must never
+ * open in the seen state. Its own function because `rowFor` is at the repo's complexity ceiling.
+ */
+function attachSeen(row: RespawnRow, h: MobHistory, base: number): void {
+  if (h.seenTs === undefined || h.seenTs <= base) return
+  row.seenTs = h.seenTs
+  if (h.seenVia !== undefined) row.seenVia = h.seenVia
+}
+
+/**
+ * THE NAMES A TYPED EVENT STATES, and which family stated them — the whole of round 3's evidence
+ * intake. The coverage statement (what is in, what is deliberately out, and what the log simply
+ * cannot say) lives in `shared/respawn.ts`'s header, beside the ruling; this is only the mapping.
+ *
+ * Split into four readers rather than one switch because one switch over twelve kinds exceeds the
+ * repo's `complexity` ceiling, and the four groups are the four `RespawnSeenVia` values anyway —
+ * the factoring and the vocabulary agree.
+ *
+ * Exported so a unit test can hold the mapping to the events the parser really emits, rather than
+ * having to reach it through a fold.
+ */
+export function seenNamesOf(ev: LogEvent): { names: (string | null | undefined)[]; via: RespawnSeenVia } | null {
+  const combat = seenCombat(ev)
+  if (combat) return { names: combat, via: 'combat' }
+  if (ev.kind === 'consider') return { names: [ev.mob], via: 'consider' }
+  const hold = seenHold(ev)
+  if (hold) return { names: hold, via: 'hold' }
+  const spell = seenSpell(ev)
+  if (spell) return { names: spell, via: 'spell' }
+  return null
+}
+
+/** Somebody swung at it, or it swung at somebody. `attacker` is null on caster-less DoT lines. */
+function seenCombat(ev: LogEvent): (string | null | undefined)[] | null {
+  if (ev.kind === 'damage' || ev.kind === 'miss') return [ev.attacker, ev.target]
+  if (ev.kind === 'heal') return [ev.healer, ev.target]
+  return null
+}
+
+/** A mez / root / charm landed on it, broke on it, or wore off it. */
+function seenHold(ev: LogEvent): (string | null | undefined)[] | null {
+  if (ev.kind === 'cc' || ev.kind === 'ccWake' || ev.kind === 'charm' || ev.kind === 'uncharm') {
+    return [ev.mob]
+  }
+  return null
+}
+
+/** A spell named it — as a resister, as a caster, or as the thing something landed on. */
+function seenSpell(ev: LogEvent): (string | null | undefined)[] | null {
+  if (ev.kind === 'resist') return [ev.caster, ev.target]
+  if (ev.kind === 'otherCastBegin') return [ev.caster]
+  if (ev.kind === 'buffApply' || ev.kind === 'poisonProc') return [ev.target]
+  return null
 }
 
 /**
@@ -101,8 +199,25 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
   /** The last wall-clock tick, so `snapshot()` prunes against the same clock `onTick` does. */
   private nowMs = Date.now()
 
+  /**
+   * The watch list as a lookup, rebuilt whenever the list changes.
+   *
+   * NOT a micro-optimization: round 3 put `watchOf` on the HOTTEST path in this module. Every
+   * damage and miss line in the log now asks it two questions, and the historical fold walks
+   * months of them — a linear scan of up to RESPAWN_MAX_WATCHES entries per name would be tens of
+   * millions of string comparisons before the app has finished starting. The list itself stays the
+   * authority (it is what is persisted and what the snapshot publishes); this is derived from it in
+   * one place so the two cannot disagree.
+   */
+  private watchIndex = new Map<string, RespawnWatchPref>()
+
   constructor(prefs?: RespawnPrefs) {
     if (prefs) this.prefs = prefs
+    this.reindexWatches()
+  }
+
+  private reindexWatches(): void {
+    this.watchIndex = new Map(this.prefs.watches.map((w) => [w.key, w]))
   }
 
   reset(): void {
@@ -122,6 +237,7 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
    */
   setPrefs(prefs: RespawnPrefs): void {
     this.prefs = prefs
+    this.reindexWatches()
     this.rev++
     this.dirty = true
   }
@@ -157,9 +273,67 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
       this.dirty = true
       return
     }
-    if (ev.kind !== 'death') return
-    if (!isCountedKill(ev)) return
-    this.recordDeath(idKey(ev.name), ev.name, ev.ts)
+    if (ev.kind === 'death') {
+      if (!isCountedKill(ev)) return
+      this.recordDeath(idKey(ev.name), ev.name, ev.ts)
+      return
+    }
+    // EVERYTHING ELSE IS POSSIBLE EVIDENCE THAT A WATCHED MOB IS UP (round 3). A death is checked
+    // first and returns, so the corpse can never mark its own row seen.
+    const seen = seenNamesOf(ev)
+    if (seen) for (const name of seen.names) this.markSeen(name, seen.via, ev.ts)
+  }
+
+  /**
+   * The log named something. Mark it seen if — and only if — it is a mob the user watches and this
+   * fold has a clock for it in the zone the fold is standing in.
+   *
+   * THE TWO GUARDS ARE THE POINT. Watching is the admission rule for everything in this module
+   * (the opt-in ruling), so an unwatched name is dropped before it can cost anything, which is
+   * what makes it acceptable to run this over every combat line in a dungeon. And the entry is
+   * looked up under the CURRENT zone's id, so the only row a sighting can light is one for where
+   * you are standing — no cross-zone leak, and no second zone tracker.
+   *
+   * A WATCHED MOB YOU HAVE NEVER KILLED HERE GETS NOTHING, and that is a stated limit rather than
+   * an oversight: a row's clock is measured from a death, so there is no row to light. The
+   * discovery surface still shows nothing about it either. Admitting a row from a sighting alone
+   * would be a fourth kind of thing on this screen and the owner has not asked for one.
+   */
+  private markSeen(name: string | null | undefined, via: RespawnSeenVia, ts: number): void {
+    if (name === null || name === undefined || name.length === 0) return
+    const key = idKey(name)
+    if (this.watchOf(key) === null) return
+    const h = this.history.get(`${idKey(this.zone)}::${key}`)
+    if (!h) return
+    // A mention from before the clock started is not a sighting of the spawn the clock is about,
+    // so the transition is judged against the base rather than against the previous `seenTs`.
+    const wasSeen = h.seenTs !== undefined && h.seenTs > baseOf(h)
+    if (h.seenTs !== undefined && ts < h.seenTs) return
+    h.seenTs = ts
+    h.seenVia = via
+    if (wasSeen && ts - (h.seenPubTs ?? 0) < SEEN_REFRESH_MS) return
+    h.seenPubTs = ts
+    this.rev++
+    this.dirty = true
+  }
+
+  /**
+   * "YES, THAT SIGHTING WAS THE SPAWN — START THE CLOCK THERE" (owner ruling, round 3).
+   *
+   * The one thing a sighting is never allowed to do on its own. `id` is the row's own id, which is
+   * how the surfaces name a row and how this fold keys its history — one identifier, no second
+   * addressing scheme to keep in step. Returns false when the id is unknown or when the row is not
+   * currently seen, so a stale click (the mob died between render and press) is a no-op rather
+   * than a clock re-based onto an instant nothing is claiming any more.
+   */
+  confirmSighting(id: string): boolean {
+    const h = this.history.get(id)
+    if (!h) return false
+    if (h.seenTs === undefined || h.seenTs <= baseOf(h)) return false
+    h.confirmedTs = h.seenTs
+    this.rev++
+    this.dirty = true
+    return true
   }
 
   private recordDeath(key: string, display: string, ts: number): void {
@@ -220,7 +394,7 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
    * decides that a row exists.
    */
   private watchOf(key: string): { customMs?: number } | null {
-    const explicit = this.prefs.watches.find((w) => w.key === key)
+    const explicit = this.watchIndex.get(key)
     if (!explicit) return null
     return explicit.customSec === undefined ? {} : { customMs: explicit.customSec * 1000 }
   }
@@ -236,16 +410,19 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
       samples: h.samples,
       wikiMs
     })
+    const base = baseOf(h)
     const row: RespawnRow = {
       id: `${idKey(h.zone)}::${h.key}`,
       key: h.key,
       display: h.display,
       zone: h.zone,
-      diedTs: h.lastTs,
+      baseTs: base,
+      basis: base === h.lastTs ? 'death' : 'sighting',
       source: est.source,
       samples: h.samples,
       kills: h.kills
     }
+    attachSeen(row, h, base)
     if (est.estimateMs !== undefined) row.estimateMs = est.estimateMs
     if (h.minGapMs !== undefined) row.observedMs = h.minGapMs
     if (wiki) row.wikiText = wiki.text

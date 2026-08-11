@@ -23,5 +23,14 @@ export const respawnBridge = {
    * a mob you start watching gets a row from its next death — and, if it already died during this
    * fold, from the death already in the model.
    */
-  setRespawn: (prefs: RespawnPrefs): Promise<RespawnPrefs> => ipcRenderer.invoke(IPC.respawnSet, prefs)
+  setRespawn: (prefs: RespawnPrefs): Promise<RespawnPrefs> => ipcRenderer.invoke(IPC.respawnSet, prefs),
+  /**
+   * "That sighting was the spawn — start this row's clock from it" (owner ruling, round 3).
+   *
+   * The ONE thing on this feature that changes a clock without a log line behind it, which is
+   * exactly why it is a call and not a rule. Resolves to whether it took effect: false means the
+   * row is gone or is no longer seen, i.e. the click lost a race with a death message.
+   */
+  confirmRespawnSighting: (rowId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.respawnConfirmSighting, rowId)
 }
