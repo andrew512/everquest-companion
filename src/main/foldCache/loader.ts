@@ -27,13 +27,14 @@
 // this format ever could.
 
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { decodeCache, encodeCache, type CacheHeader, type LogIdentity, type ModuleBlobMeta } from './format'
 import { computeIdentity, computeIdentitySync, verifyIdentity } from './identity'
 import { FOLD_SEMANTICS } from './semantics'
 import { isCheckpointable, moduleShapeHash, type FoldUnit } from './serialize'
+import type { CheckpointOrigin } from '../../shared/perf'
 
 /** Why a checkpoint was not used. Every one lands on the cold path; the name is for the log line. */
 export type RestoreRefusal =
@@ -47,8 +48,28 @@ export type RestoreRefusal =
   | `module-refused`
 
 export type RestoreResult =
-  | { restored: true; offset: number; seq: number; lastEventTs: number }
-  | { restored: false; why: RestoreRefusal }
+  | { restored: true; offset: number; seq: number; lastEventTs: number; origin: CheckpointOrigin }
+  | {
+      restored: false
+      why: RestoreRefusal
+      /**
+       * DID ANY UNIT ADOPT A BLOB BEFORE THE REFUSAL?
+       *
+       * The caller resets the world on the refusal path, and until this existed it did so
+       * UNCONDITIONALLY — which was measurably wrong. A reset BUMPS every module's private
+       * revision counter (`respawn.rev`, `combo`'s stale counter, `character`'s), those counters
+       * are published as the snapshot's `seq` AND are carried in the checkpoint, so a fold that
+       * had merely CONSULTED a missing cache ended up one revision ahead of a fold that had not —
+       * and every checkpoint written from it inherited the offset. The e2e restart-compare caught
+       * it as a one-count difference on three modules, and the shadow verifier would have reported
+       * a divergence on every single check for the same reason.
+       *
+       * `false` for every doubt judged before a module was handed anything: no file, a corrupt
+       * one, another build's shapes, another log. `true` only for `module-refused`, where a later
+       * unit said no after an earlier one had already taken its state.
+       */
+      adopted: boolean
+    }
 
 /** The checkpointable members of a candidate list, in the order given. */
 export function checkpointableUnits(candidates: readonly { id: string }[]): FoldUnit[] {
@@ -72,33 +93,63 @@ export interface WriteCheckpointArgs {
   seq: number
   /** The `ts` of the last event folded. Diagnostic; never a validity test. */
   lastEventTs: number
+  /** WHICH WRITE this is. Recorded in the header and reported by the loader (JOS-208 phase 3). */
+  origin: CheckpointOrigin
   modules: readonly FoldUnit[]
 }
 
+/**
+ * EVERY MODULE'S FOLD STATE, CAPTURED IN ONE SYNCHRONOUS TURN.
+ *
+ * Its own function because the ASYNC write must call it BEFORE its first `await`, and that is a
+ * correctness rule rather than a style: the fold keeps running while a promise is pending, so a
+ * write that computed the identity block first and serialized afterwards would pair an offset from
+ * one instant with module state from a later one — a checkpoint describing a byte position the
+ * state has already moved past. Phase 1 never met this because the only production write was the
+ * synchronous quit-path one, where nothing can interleave.
+ */
+function serializeStates(modules: readonly FoldUnit[]): Map<string, unknown> {
+  const states = new Map<string, unknown>()
+  for (const m of modules) states.set(m.id, m.serializeFold())
+  return states
+}
+
 /** Everything but the file handling — shared by the async and sync write arms. */
-function buildContainer(args: WriteCheckpointArgs, identity: LogIdentity): Buffer {
+function buildContainer(
+  args: WriteCheckpointArgs,
+  identity: LogIdentity,
+  states: Map<string, unknown>
+): Buffer {
   const header: CacheHeader = {
     foldSemantics: FOLD_SEMANTICS,
     seq: args.seq,
     writtenAtMs: Date.now(),
+    origin: args.origin,
     identity,
     modules: directoryOf(args.modules)
   }
-  const states = new Map<string, unknown>()
-  for (const m of args.modules) states.set(m.id, m.serializeFold())
   return encodeCache(header, states)
 }
 
-/** True when the checkpoint landed. False is never an error the caller must handle — just no cache. */
+/**
+ * True when the checkpoint landed. False is never an error the caller must handle — just no cache.
+ *
+ * THE ASYNC ARM, used by the two writes that happen while the app is RUNNING (`replay` and
+ * `quiet`). It serializes the fold state first and awaits afterwards — see `serializeStates` — so
+ * everything the container claims is true of one instant.
+ */
 export async function writeCheckpoint(args: WriteCheckpointArgs): Promise<boolean> {
   if (args.offset <= 0 || args.modules.length === 0) return false
+  // FIRST, and before any `await`: the state, the offset and the seq are one observation.
+  const states = serializeStates(args.modules)
   const identity = await computeIdentity(args.logPath, args.offset, args.characterKey, args.lastEventTs)
   if (!identity) return false
-  const bytes = buildContainer(args, identity)
+  const bytes = buildContainer(args, identity, states)
   const tmp = `${args.cachePath}.tmp`
   try {
     // No encoding argument, anywhere on this path: a Buffer written as bytes, renamed over the old
     // file in one operation, so a crash leaves either the previous checkpoint or none.
+    await mkdir(dirname(args.cachePath), { recursive: true })
     await writeFile(tmp, bytes)
     await rename(tmp, args.cachePath)
     return true
@@ -127,7 +178,7 @@ export function writeCheckpointSync(args: WriteCheckpointArgs): boolean {
   const tmp = `${args.cachePath}.tmp`
   try {
     mkdirSync(dirname(args.cachePath), { recursive: true })
-    writeFileSync(tmp, buildContainer(args, identity))
+    writeFileSync(tmp, buildContainer(args, identity, serializeStates(args.modules)))
     renameSync(tmp, args.cachePath)
     return true
   } catch {
@@ -153,55 +204,71 @@ export interface ReadCheckpointArgs {
  * anchors are read before any module is handed a blob.
  */
 export async function readCheckpoint(args: ReadCheckpointArgs): Promise<RestoreResult> {
+  // EVERY REFUSAL BELOW THIS LINE AND ABOVE `restoreModules` HAS TOUCHED NOTHING, and says so —
+  // see `RestoreResult.adopted` for the defect that taught us to say it.
+  const refuse = (why: RestoreRefusal): RestoreResult => ({ restored: false, why, adopted: false })
   let bytes: Buffer
   try {
     bytes = await readFile(args.cachePath)
   } catch (err) {
-    return { restored: false, why: (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable' }
+    return refuse((err as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable')
   }
   const decoded = decodeCache(bytes)
-  if (!decoded.ok) return { restored: false, why: `decode:${decoded.error}` }
+  if (!decoded.ok) return refuse(`decode:${decoded.error}`)
   const { header, blobs } = decoded.value
 
   // ---- axis 2: SEMANTICS. What the fold MEANT when this was written (semantics.ts).
-  if (header.foldSemantics !== FOLD_SEMANTICS) return { restored: false, why: 'semantics' }
+  if (header.foldSemantics !== FOLD_SEMANTICS) return refuse('semantics')
 
   // ---- axis 1: ENCODING. The module set AND every shape hash, derived fresh (schema.ts).
   const want = directoryOf(args.modules)
-  if (want.length !== header.modules.length) return { restored: false, why: 'modules' }
+  if (want.length !== header.modules.length) return refuse('modules')
   for (let i = 0; i < want.length; i++) {
     const a = want[i]
     const b = header.modules[i]
-    if (a.id !== b.id) return { restored: false, why: 'modules' }
-    if (a.shapeHash !== b.shapeHash) return { restored: false, why: 'shape' }
+    if (a.id !== b.id) return refuse('modules')
+    if (a.shapeHash !== b.shapeHash) return refuse('shape')
   }
 
   // ---- the log itself: is this the same file, up to the same byte (identity.ts)?
   const idc = await verifyIdentity(args.logPath, header.identity, args.characterKey)
-  if (!idc.ok) return { restored: false, why: `identity:${idc.reason}` }
+  if (!idc.ok) return refuse(`identity:${idc.reason}`)
 
-  if (!restoreModules(args.modules, blobs)) return { restored: false, why: 'module-refused' }
+  const adoption = restoreModules(args.modules, blobs)
+  if (!adoption.ok) return { restored: false, why: 'module-refused', adopted: adoption.adopted }
   return {
     restored: true,
     offset: header.identity.b,
     seq: header.seq,
-    lastEventTs: header.identity.lastEventTs
+    lastEventTs: header.identity.lastEventTs,
+    // A container from a build that predates the field says nothing rather than being refused.
+    origin: header.origin ?? 'unknown'
   }
 }
 
 /**
- * Hand each module its blob. Returns false if ANY refuses.
+ * Hand each module its blob. Reports whether every unit took it, AND whether any unit took one at
+ * all before a refusal.
  *
  * A module that has already adopted its state when a LATER one refuses is left holding it, and
  * that is fine — but only because the caller's failure path resets the whole registry before the
- * cold replay, which it must do anyway (a cold replay always starts from `registry.reset()`). This
- * function does not un-restore, because "half the modules are at byte B and half at zero" is a
- * state nothing should ever be able to observe, and a reset is a cheaper guarantee than an undo.
+ * cold replay. This function does not un-restore, because "half the modules are at byte B and half
+ * at zero" is a state nothing should ever be able to observe, and a reset is a cheaper guarantee
+ * than an undo.
+ *
+ * `adopted` is what lets the caller keep that reset to the ONE case that needs it. A reset is not
+ * free: it bumps every module's published revision counter, and a fold that reset twice publishes a
+ * `seq` a cold fold never would — see `RestoreResult.adopted`.
  */
-function restoreModules(modules: readonly FoldUnit[], blobs: Map<string, unknown>): boolean {
+function restoreModules(
+  modules: readonly FoldUnit[],
+  blobs: Map<string, unknown>
+): { ok: boolean; adopted: boolean } {
+  let adopted = false
   for (const m of modules) {
-    if (!blobs.has(m.id)) return false
-    if (!m.deserializeFold(blobs.get(m.id))) return false
+    if (!blobs.has(m.id)) return { ok: false, adopted }
+    if (!m.deserializeFold(blobs.get(m.id))) return { ok: false, adopted }
+    adopted = true
   }
-  return true
+  return { ok: true, adopted }
 }

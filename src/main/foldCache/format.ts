@@ -40,6 +40,7 @@
 
 import { createHash } from 'node:crypto'
 import { deserialize, serialize } from 'node:v8'
+import type { CheckpointOrigin } from '../../shared/perf'
 
 /**
  * THE CONTAINER's own version — the framing above, and nothing else.
@@ -94,6 +95,23 @@ export interface CacheHeader {
   seq: number
   /** When this checkpoint was written (wall clock, ms). Diagnostic only — never a validity test. */
   writtenAtMs: number
+  /**
+   * WHICH WRITE PRODUCED THIS FILE (JOS-208 phase 3 — the owner's dev-app repro).
+   *
+   * The feature originally wrote only on the clean-quit paths, and electron-vite's dev watcher
+   * KILLS its child rather than quitting it — so the owner ran with the preference on across
+   * several restarts, got no speedup at all, and had no file to find. The gap was invisible
+   * because nothing anywhere said WHERE a checkpoint came from, or that none had been written.
+   * Now every container says which of the three writes made it, the loader reports it, and the
+   * startup summary line prints it: a fleet (or a dev app) that only ever restores from `quit`
+   * names the missing write on the first launch anybody reads.
+   *
+   * OPTIONAL, and absent reads as `'unknown'` rather than as a refusal: a container written by the
+   * build that predates this field is still a perfectly good checkpoint, and the framing it is
+   * wrapped in has not moved (hence no `CACHE_SCHEMA_VERSION` bump — this is a JSON header field,
+   * which is exactly the kind of change the header is JSON for).
+   */
+  origin?: CheckpointOrigin
   identity: LogIdentity
   modules: ModuleBlobMeta[]
 }
@@ -159,6 +177,31 @@ export function decodeCache(buf: Buffer): DecodeResult {
   const head = readHeader(buf, body)
   if ('error' in head) return { ok: false, error: head.error }
   return readBlobs(buf, body, head.header, head.next)
+}
+
+/**
+ * THE HEADER ALONE — which log, which bytes, which build, which write.
+ *
+ * It exists because the header and the blobs have different portability. The header is JSON and can
+ * be read by anything; the blobs are `v8.serialize` output, whose format is tagged with the V8
+ * version that wrote it — so a container written by Electron's V8 legitimately fails to deserialize
+ * in a plain `node` process. That is not a defect (the app writes and reads with one V8, and the
+ * loader's answer to `blob-decode` is the cold start it has for everything else), but it does mean
+ * a DIAGNOSTIC reader — the e2e restart-compare asking "which write made this file", a support
+ * answer, a future `--inspect-checkpoint` — must be able to read the header without paying for, or
+ * being defeated by, the state.
+ *
+ * Everything the full decode doubts about the header, this doubts too: the magic, the whole-file
+ * digest, the schema version, the framing, the header's own digest, and its shape.
+ */
+export function decodeCacheHeader(buf: Buffer): { ok: true; value: CacheHeader } | { ok: false; error: CacheDecodeError } {
+  if (buf.length < MAGIC.length + 8 + DIGEST_BYTES * 2) return { ok: false, error: 'too-small' }
+  if (!buf.subarray(0, MAGIC.length).equals(MAGIC)) return { ok: false, error: 'bad-magic' }
+  const body = buf.subarray(0, buf.length - DIGEST_BYTES)
+  if (!sha256(body).equals(buf.subarray(buf.length - DIGEST_BYTES))) return { ok: false, error: 'file-digest' }
+  if (buf.readUInt32LE(MAGIC.length) !== CACHE_SCHEMA_VERSION) return { ok: false, error: 'schema-version' }
+  const head = readHeader(buf, body)
+  return 'error' in head ? { ok: false, error: head.error } : { ok: true, value: head.header }
 }
 
 /** The framed, digested, parsed, shape-checked header — or the doubt that stopped it. */

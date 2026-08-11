@@ -31,6 +31,7 @@ import {
   addMark,
   aggregateMetrics,
   buildProfile,
+  describeCheckpoint,
   describeMarkError,
   foldBlockSamples,
   formatChip,
@@ -447,6 +448,61 @@ test('the HUD is OFF by default, and a malformed pref block lands on the default
   for (const junk of [null, 42, 'nonsense', [], { enabled: 'yes' }, undefined, { nested: true }]) {
     assert.deepEqual(normalizePerfHudPrefs(junk), DEFAULT_PERF_HUD_PREFS, `${JSON.stringify(junk)} ⇒ off`)
   }
+})
+
+// ------------------------------------------------------- the checkpoint verdict (JOS-208 phase 3)
+
+test('the startup profile states what the checkpoint loader decided, and survives the round trip', () => {
+  // WHY THIS IS PINNED. Without it, a launch that cold-read 128 MB because its cache was refused
+  // and a launch that never had one are the same eight numbers with two entirely different
+  // answers — and the only way to tell them apart was to ask the user to go and look.
+  const verdicts = [
+    { outcome: 'off' as const },
+    { outcome: 'restored' as const, offset: 134_217_728, origin: 'quit' as const },
+    { outcome: 'restored' as const, offset: 42, origin: 'replay' as const },
+    { outcome: 'refused' as const, reason: 'identity:shoulder' }
+  ]
+  for (const checkpoint of verdicts) {
+    const profile = buildProfile(fullChain(), { startedAt: 1, version: '1.0.0', checkpoint })
+    assert.deepEqual(profile.checkpoint, checkpoint)
+    // Through JSON and back, which is the only trip this field actually makes.
+    const parsed = parseStartupProfile(JSON.parse(JSON.stringify(profile)) as unknown)
+    assert.deepEqual(parsed?.checkpoint, checkpoint)
+  }
+  // Absent is ABSENT — a launch with no character to tail decided nothing, and a fabricated 'off'
+  // would claim the feature had been consulted and declined.
+  const silent = buildProfile(fullChain(), { startedAt: 1, version: '1.0.0' })
+  assert.equal('checkpoint' in silent, false)
+  // …and a verdict this build cannot read is dropped rather than guessed at, exactly as a foreign
+  // phase name is: the outcome vocabulary is closed.
+  for (const junk of [null, 42, 'restored', {}, { outcome: 'maybe' }, { reason: 'shape' }]) {
+    const parsed = parseStartupProfile({ ...JSON.parse(JSON.stringify(silent)) as object, checkpoint: junk })
+    assert.equal(parsed?.checkpoint, undefined, `${JSON.stringify(junk)} ⇒ no verdict`)
+  }
+})
+
+test('the verdict clause names the ORIGIN, which is the half that names a missing write', () => {
+  // The owner ran the checkpoint for a day with the preference on and got nothing, because the
+  // only write was the clean-quit one and electron-vite kills its child. A line that had said
+  // "written at quit" on a machine that never quits would have named the gap in one reading — so
+  // the origin is part of the sentence, not a field somebody has to go and look up.
+  assert.equal(
+    describeCheckpoint({ outcome: 'restored', offset: 1_024, origin: 'replay' }),
+    'checkpoint restored at byte 1024 (written at replay)'
+  )
+  // A container from a build that predates the field is still a good checkpoint; it is just silent.
+  assert.equal(
+    describeCheckpoint({ outcome: 'restored', offset: 7 }),
+    'checkpoint restored at byte 7 (written at unknown)'
+  )
+  assert.equal(describeCheckpoint({ outcome: 'off' }), 'checkpoint off')
+  assert.equal(
+    describeCheckpoint({ outcome: 'refused', reason: 'shape' }),
+    'checkpoint refused (shape)'
+  )
+  // A refusal with no reason says so rather than printing an empty pair of brackets, which reads
+  // as a rendering bug at exactly the moment somebody is trying to diagnose a real one.
+  assert.equal(describeCheckpoint({ outcome: 'refused' }), 'checkpoint refused (unstated)')
 })
 
 test('every phase the enum lists can actually be marked, and nothing else can', () => {
