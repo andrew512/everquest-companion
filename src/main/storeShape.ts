@@ -11,6 +11,7 @@ import type { TelemetryPrefs } from '../shared/telemetry'
 import type { PerfHudPrefs } from '../shared/perf'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { BuffTrustPrefs } from '../shared/buffTrust'
+import type { RespawnPrefs } from '../shared/respawn'
 import type { WindowBounds } from './store'
 
 export interface StoreShape {
@@ -122,6 +123,14 @@ export interface StoreShape {
    * that predates the feature.
    */
   buffTrust?: BuffTrustPrefs
+  /**
+   * Which mobs get a respawn clock, and the numbers the user typed for them (JOS-194;
+   * shared/respawn.ts). ABSENT MEANS THE SHIPPED DEFAULT — auto-watch anything the committed wiki
+   * floor states a duration for, with no explicit watches — so it is another additive optional key
+   * on the carve-out above: no schema bump, no migration, and `normalizeRespawnPrefs` defaults
+   * every field, so an older build reading a store written here is unaffected and vice versa.
+   */
+  respawn?: RespawnPrefs
   /**
    * The newest release whose notes this install has been SHOWN (JOS-73; shared/releaseNotes.ts).
    *

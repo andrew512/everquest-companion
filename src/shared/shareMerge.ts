@@ -213,7 +213,13 @@ const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
   // And the XP window (JOS-195). Same story a third time: no shared field today — `src/main/
   // share.ts`'s KINDS list does not include it — but the map is keyed by the whole union on
   // purpose, so it is named here rather than letting a future shared field render as a raw id.
-  xp: 'XP and motes'
+  xp: 'XP and motes',
+  // And the respawn clocks (JOS-194). Same story a fourth time: no shared field today —
+  // `src/main/share.ts`'s KINDS list does not include it — but the map is keyed by the whole
+  // union on purpose, so it is named here rather than letting a future shared field render as a
+  // raw kind id. The WATCH LIST is deliberately not shareable either: it names the mobs somebody
+  // camps, which is a fact about their play, not a setting.
+  respawn: 'Respawn clocks'
 }
 
 /**

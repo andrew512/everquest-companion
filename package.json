@@ -17,6 +17,7 @@
     "scrape:classes": "tsx scripts/scrape-classes.ts",
     "scrape:mobs": "tsx scripts/scrape-mobs.ts",
     "scrape:quests": "tsx scripts/scrape-quests.ts",
+    "scrape:respawns": "tsx scripts/scrape-respawns.ts",
     "scrape:spells": "tsx scripts/scrape-spells.ts",
     "scrape:items": "tsx scripts/scrape-items.ts",
     "fetch:images": "tsx scripts/fetch-wiki-images.mts",

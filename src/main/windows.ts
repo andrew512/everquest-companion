@@ -552,7 +552,8 @@ const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   toast: 'Celebration Overlay',
   buffs: 'Buff Timer Overlay',
   debuffs: 'Debuff Timer Overlay',
-  xp: 'XP Overlay'
+  xp: 'XP Overlay',
+  respawn: 'Respawn Timer Overlay'
 }
 
 // ---- WHAT IS SHOWN vs WHAT IS STORED (JOS-187) ------------------------------------------------

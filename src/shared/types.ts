@@ -69,11 +69,18 @@ export type { LootDisposition, ItemStatBlock }
  * after that machinery existed, and it absorbed it exactly as promised: MEASURED in
  * tests/overlayLayout.test.mts, 1080p and up still seat all eight reserved slots at 380×320 and
  * the small laptop shrinks one rung further rather than overlapping anything.
+ *
+ * The NINTH ('respawn', JOS-194) is appended on the same terms and needed no geometry code at
+ * all — but it did MOVE a rung, and the measurement is recorded rather than glossed: 1080p and
+ * 1440p still seat all nine at 380x320, while a 1920x960 work area (80 px shorter than 1080p with
+ * a taskbar, which costs it a third row) drops to 323x272 and seats fifteen. `meterSize` chose
+ * that on its own, which is the whole point of deriving the layout instead of tabulating it.
+ * tests/overlayLayout.test.mts pins both halves.
  */
 // prettier-ignore
-export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'buffs' | 'debuffs' | 'xp'
+export type OverlayKind = 'fight' | 'overall' | 'events' | 'heal-fight' | 'heal-overall' | 'toast' | 'buffs' | 'debuffs' | 'xp' | 'respawn'
 // prettier-ignore
-export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'buffs', 'debuffs', 'xp']
+export const OVERLAY_KINDS: OverlayKind[] = ['fight', 'overall', 'events', 'heal-fight', 'heal-overall', 'toast', 'buffs', 'debuffs', 'xp', 'respawn']
 
 /** True for the two HEALING overlay kinds (they render HealMeter, not OverlayMeter). */
 export function isHealOverlayKind(kind: OverlayKind): boolean {
