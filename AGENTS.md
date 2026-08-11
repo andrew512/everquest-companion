@@ -1099,6 +1099,83 @@ must always be slow-once, never wrong** — every judgement call goes toward
   `Buffer` out, temp+rename, with three digests (header, per blob, whole file).
   The BOM history above is about a JSON file, and a JSON file survives a BOM
   better than V8 blobs ever could.
+- **THREE WRITES, AND THE QUIT ONE IS THE LEAST IMPORTANT** (phase 3 —
+  `foldCache/schedule.ts` + `policy.ts`). Phase 1 wrote only from
+  `window-all-closed` / `before-quit`, and **electron-vite's dev watcher KILLS
+  its child**: the owner ran with the preference on across a day of restarts,
+  got no speedup, and had no file to find. The same hole swallows a crash, an
+  OS kill and a power cut. So a checkpoint is written `replay` (four seconds
+  after the historical fold finishes — the fold has just been proven, remember
+  it *there*), `quiet` (periodically at idle moments: ≥8 MB of new log or ≥15
+  min since the last write, AND the tailer's offset unchanged for a whole
+  60 s check interval), and `quit` (unchanged, synchronous, the freshest final
+  word). **The container records WHICH write made it** (`CacheHeader.origin`)
+  and the loader reports it, because nothing anywhere could previously say that
+  the only write was one the machine never reached.
+  - IDLENESS IS MEASURED WITHOUT A CLOCK IN THE FOLD: two readings of
+    `Tailer.checkpointOffset()` an interval apart. "No event for N seconds"
+    would need a `Date.now()` on the per-event path — the hottest loop in the
+    app, and a wall-clock read inside a fold path.
+  - The async write serializes every module BEFORE its first `await`
+    (`loader.ts serializeStates`): a state captured across an await would
+    describe a byte position the fold had already left.
+- **A REFUSED CACHE MUST LEAVE THE WORLD EXACTLY AS A COLD START WOULD**, and
+  "reset unconditionally, it's cheap" was measurably wrong. A `registry.reset()`
+  BUMPS every module's private revision counter, which is published as the
+  snapshot's `seq` AND is itself checkpointed — so a launch that merely LOOKED
+  for a cache and found none folded one revision ahead of a launch that never
+  looked, and every checkpoint written from it carried the offset forward. The
+  loader now reports `adopted`, and the caller resets only when a unit really
+  took a blob. Caught by the e2e restart-compare (three modules, one count
+  each); it takes two launches of the real app to see, so no unit test could.
+- **THE THIRD RUNG: THE E2E RESTART-COMPARE** (`tests/e2e/fold-restart.e2e.mts`).
+  The differential harness runs in ONE process with hand-built modules; this one
+  restarts the REAL app and compares what the renderer hydrates
+  (`getModuleSnapshot`) against a cold-start control — the SAME app, SAME log,
+  SAME `userData`, with `EQ_FOLD_CACHE=0` for one launch. Four arrangements: a
+  hard-KILLED first launch (the owner's repro, mechanized), a plain restart, a
+  staged tail, and a corrupted container. Every launch is held against
+  `perf-startup.json`'s checkpoint verdict, or a "warm" launch whose cache was
+  quietly refused would cold-replay, match perfectly, and prove nothing.
+  - **A STAGED TAIL CONTINUES THE LOG'S OWN CLOCK**, never wall-clock now: a tail
+    stamped "today" over a fixture whose last line is weeks old manufactures an
+    offline gap, and the world model's answer to an unexplained gap is
+    deliberately wall-clock sensitive (law: buffs freeze across an absence), so
+    two launches a minute apart legitimately differ.
+  - **BOTH ARMS GET THE SAME STORE-DERIVED INPUTS**, which for a real app means
+    deleting `<userData>/message-overlay.json` before each launch — see the
+    accumulation note below.
+- **THE FLEET BACKSTOP: SHADOW MODE** (`foldCache/shadow.ts`). Occasionally, in
+  the background, a client restores the container on disk into a throwaway world,
+  cold-folds the log to the same byte into a second one, ticks BOTH to one pinned
+  instant, and compares. It reports TWO COUNTS on the session report —
+  `checkpointShadowChecks` and `checkpointDivergences` — and structurally nothing
+  else: a module name is a claim about the player's game, so the names go to the
+  local `errors.log` and never to the wire. Sampled and duty-cycled (dev 50% /
+  30 min, fleet 2% / 24 h, `EQ_FOLD_SHADOW=1` forces): a verification IS the cold
+  read this feature exists to remove, so always-verifying would hand the slow
+  launch back and call it instrumentation.
+  - It compares `state`, not `{seq, state}`. A module's `seq` is its private
+    REVISION counter, bumped by second inputs a cold re-fold cannot reproduce (a
+    watch-list edit, a combo correction). `seq` is compared where the arrangement
+    is controlled — the differential harness and the e2e.
+  - **IT DOES NOT COMPARE `buffs.overlay`, and that is a stated blind spot.** The
+    learned message overlay is NOT a pure function of (byte prefix, fold inputs):
+    its counts are seeded from `<userData>/message-overlay.json` — what the LAST
+    session persisted — and the fold adds this launch's observations on top. So a
+    cold re-fold from today's seed double-counts everything the seed already
+    held. **MEASURED: 22 → 44 → 88 across three cold launches.** That is a
+    pre-existing app defect (a cold launch has always re-mined the whole log into
+    a seed that already contained it) which the checkpoint incidentally FIXES,
+    since a restored launch mines only the tail. Resolving it properly is a
+    phase-2 semantics question: either the miner leaves the container, or its
+    counts become idempotent.
+- **THE VERDICT IS WRITTEN DOWN** (phase 3, deliverable 3):
+  `perf-startup.json.checkpoint` and the one-line startup summary in `errors.log`
+  both state `restored` (with the byte AND the origin) / `refused:<reason>` /
+  `off`. A launch that cold-read 128 MB because its cache was refused and a
+  launch that never had one are otherwise the same eight numbers with two
+  entirely different answers.
 
 ## Log-format quick reference (all validated against the real log)
 
