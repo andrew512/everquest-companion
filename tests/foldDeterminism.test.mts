@@ -73,19 +73,36 @@ test('fold determinism: a historical replay reads no wall clock', async () => {
 
   // THE TEST RUNNER IS NOT THE FOLD. `tsx` runs a disk-cache expiry on a `setImmediate`, so a
   // `Date.now()` from `node_modules/tsx/...` lands inside the window without any of our code having
-  // asked for it. The audit therefore fails on a stack containing a frame from THIS REPO'S SOURCE
-  // and ignores one that does not — which is the claim the ticket actually makes ("no wall-clock
-  // reads reachable from fold paths"), stated precisely rather than approximately.
+  // asked for it. The audit therefore judges only stacks containing a frame from THIS REPO'S
+  // SOURCE — which is the claim the ticket actually makes ("no wall-clock reads reachable from fold
+  // paths"), stated precisely rather than approximately.
   //
   // THE LIMIT, since a filter is a hole: a fold path that read the clock THROUGH a node_modules
   // helper would produce a stack with our frame in it anyway (the caller is on the stack), so the
   // only thing this can miss is a dependency reading the clock on a schedule of its own — which is
   // what it is deliberately ignoring.
   const ours = calls.filter((c) => /[\\/]src[\\/](main|shared)[\\/]/.test(c.stack))
+
+  // ONE EXEMPTION, BY NAME, AND IT IS AN INSTRUMENT RATHER THAN A FOLD: `startColdReadClock`
+  // (scanHistory.ts, JOS-57) times how long the OS took to hand over the first megabyte — the
+  // cold-read hypothesis this whole ticket exists to answer. Its reading reaches
+  // `ScanResult.firstMbMs` and stops there; no module's state, and nothing a checkpoint can hold,
+  // is a function of it. Exempting it by FRAME NAME rather than by file keeps everything else in
+  // scanHistory.ts — the parse loop, the byte accounting, the handoff — fully under audit.
+  const exempt = ours.filter((c) => /at startColdReadClock\b|at Object\.saw\b/.test(c.stack))
   assert.deepStrictEqual(
-    ours.map((c) => `${c.which}\n${c.stack}`),
+    ours.filter((c) => !exempt.includes(c)).map((c) => `${c.which}\n${c.stack}`),
     [],
     'a fold path read the wall clock — see the stacks above'
+  )
+
+  // …AND THE EXEMPTION IS BOUNDED, so it cannot quietly grow into a per-line cost wearing an
+  // instrument's name: one read when the stream is opened, plus at most one more when the first
+  // megabyte lands. Anything else means the clock moved into the loop.
+  assert.ok(
+    exempt.length <= 2,
+    `the cold-read clock is read at most twice per scan; got ${exempt.length}. If it has moved into ` +
+      `the read loop it is no longer an instrument — it is a cost on the fold.`
   )
 })
 

@@ -185,18 +185,7 @@ export async function scanLog(
   } catch {
     return { endOffset: 0, seq: startSeq, size: 0 }
   }
-  // THE WINDOW (JOS-208). `from` is where the fold's knowledge already reaches — 0, or the byte a
-  // checkpoint restored the fold to; `stopAt` is the frozen EOF, or the harness's earlier stop.
-  // Both clamped rather than trusted: a stale checkpoint pointing past a file that has since shrunk
-  // must produce an empty scan, not a negative-length read (the identity check will have refused it
-  // long before this anyway).
-  //
-  // `size` IS DELIBERATELY LEFT ALONE, which is the whole reason `stopAt` is a second name rather
-  // than a narrowing of it. JOS-57's `ScanResult.size` IS THE FROZEN EOF, and the cold-read delta
-  // subtracts the persisted tail mark from it; narrowing it for a test-only prefix scan would hand
-  // out a "the log rotated" verdict for a window the harness chose.
-  const from = Math.max(0, Math.min(opts.startOffset ?? 0, size))
-  const stopAt = opts.endOffset === undefined ? size : Math.max(from, Math.min(opts.endOffset, size))
+  const { from, stopAt } = scanWindow(size, opts)
   if (size === 0 || stopAt <= from) return { endOffset: from, seq: startSeq, size }
 
   let seq = startSeq
@@ -220,25 +209,14 @@ export async function scanLog(
     highWaterMark: READ_CHUNK_BYTES
   })
 
-  // The cold-disk clock (see ScanResult.firstMbMs). Started at the last statement before the first
-  // byte is asked for, and read at the top of the loop body — i.e. between the read completing and
-  // anything being parsed — so the fold is outside it by construction rather than by estimate.
-  //
-  // A CHECKPOINTED LAUNCH STILL MEASURES IT, and it is still the right measurement: the question is
-  // how long the OS took to hand over the first megabyte NOBODY HAD READ, and after a restore that
-  // is the first megabyte of the TAIL — which is precisely the never-scanned span the AV hypothesis
-  // is about. A tail shorter than a megabyte reports nothing, exactly as a small log does.
-  const readStartedAt = performance.now()
-  let bytesRead = 0
-  let firstMbMs: number | undefined
+  // The cold-disk clock (see ScanResult.firstMbMs), started at the last statement before the first
+  // byte is asked for.
+  const coldRead = startColdReadClock()
 
   try {
     for await (const chunk of stream) {
       const buf = chunk as Buffer
-      bytesRead += buf.length
-      if (firstMbMs === undefined && bytesRead >= READ_CHUNK_BYTES) {
-        firstMbMs = performance.now() - readStartedAt
-      }
+      coldRead.saw(buf.length)
       await consumeChunk(buf, st, handle, slicer)
     }
   } catch {
@@ -248,5 +226,48 @@ export async function scanLog(
   // A trailing partial line (no final newline) is intentionally NOT counted in
   // endOffset — the tailer will re-read those bytes and complete the line when
   // the game appends the rest, avoiding a dropped/duplicated final entry.
-  return { endOffset: st.endOffset, seq, size, ...(firstMbMs === undefined ? {} : { firstMbMs }) }
+  return { endOffset: st.endOffset, seq, size, ...coldRead.result() }
+}
+
+/**
+ * THE BYTE WINDOW this scan will read (JOS-208): `from` is where the fold's knowledge already
+ * reaches — 0, or the byte a checkpoint restored the fold to — and `stopAt` is the frozen EOF, or
+ * the harness's earlier stop. Both clamped rather than trusted: a stale checkpoint pointing past a
+ * file that has since shrunk must produce an empty scan rather than a negative-length read (the
+ * identity check will have refused it long before this anyway).
+ *
+ * `size` IS DELIBERATELY NOT NARROWED, which is the whole reason `stopAt` is a second name rather
+ * than a reassignment. JOS-57's `ScanResult.size` IS the frozen EOF, and the cold-read delta
+ * subtracts the persisted tail mark from it; narrowing it for a test-only prefix scan would hand
+ * out a "the log rotated" verdict for a window the harness chose.
+ */
+function scanWindow(size: number, opts: ScanOptions): { from: number; stopAt: number } {
+  const from = Math.max(0, Math.min(opts.startOffset ?? 0, size))
+  const stopAt = opts.endOffset === undefined ? size : Math.max(from, Math.min(opts.endOffset, size))
+  return { from, stopAt }
+}
+
+/**
+ * THE COLD-DISK CLOCK (JOS-57's `ScanResult.firstMbMs`), as an object so `scanLog` stays under the
+ * repo's complexity ceiling — the arithmetic is unchanged.
+ *
+ * `saw()` is called at the top of the read loop, between the read completing and anything being
+ * parsed, so the fold is outside the number by construction rather than by estimate.
+ *
+ * A CHECKPOINTED LAUNCH STILL MEASURES IT, and it is still the right measurement (JOS-208): the
+ * question is how long the OS took to hand over the first megabyte NOBODY HAD READ, and after a
+ * restore that is the first megabyte of the TAIL — precisely the never-scanned span the AV
+ * hypothesis is about. A tail under a megabyte reports nothing, exactly as a small log does.
+ */
+function startColdReadClock(): { saw: (bytes: number) => void; result: () => { firstMbMs?: number } } {
+  const startedAt = performance.now()
+  let bytesRead = 0
+  let firstMbMs: number | undefined
+  return {
+    saw: (bytes) => {
+      bytesRead += bytes
+      if (firstMbMs === undefined && bytesRead >= READ_CHUNK_BYTES) firstMbMs = performance.now() - startedAt
+    },
+    result: () => (firstMbMs === undefined ? {} : { firstMbMs })
+  }
 }
