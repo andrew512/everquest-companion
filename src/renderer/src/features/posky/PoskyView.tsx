@@ -18,7 +18,7 @@ import { useProgress, type QuestProgress } from './useProgress'
 // read the same dump the Exaltations tab does, so they get the same one-line treatment — the
 // command, one clause of why, and the FILE's own age (or "not yet run").
 import OutputKindLine from '../../components/OutputKindLine'
-import type { SharedItemsMap } from './sharedItems'
+import type { SharedItem, SharedItemsMap } from './sharedItems'
 import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
 import { QuestAccordion } from './QuestAccordion'
 import { TurnInBadge } from './TurnInControls'
@@ -196,7 +196,24 @@ function ListFooter({ total, list }: { total: number; list: QuestListState }): J
   )
 }
 
-// The scrolling body: one accordion per quest up to the page cap, then the list footer.
+/**
+ * The shared "this quest shares nothing" answer. A `?? []` written in the map would mint a new
+ * array per row per render, which is a changed prop on a memoized row — the whole point of
+ * JOS-206's first fix — for a quest that shares nothing with anything.
+ */
+const NO_SHARED_ITEMS: SharedItem[] = []
+
+/**
+ * The scrolling body: one accordion per quest up to the page cap, then the list footer.
+ *
+ * EVERY PROP THIS PASSES DOWN IS IDENTITY-STABLE ACROSS A KEYSTROKE (JOS-206), because
+ * `QuestAccordion` is `memo`'d and a shallow comparison is only as good as what it is handed. The
+ * two turn-in actions are the only ones that need wrapping — they are async, and the row wants a
+ * `void` handler — so they are `useCallback`ed here rather than written inline in the map. The
+ * rest are already stable at their source: `questFavorites.toggle` / `questIgnored.toggle` are
+ * module-lifetime store methods, `setQuery` is a `useState` setter, `isFavorite` is pinned to the
+ * favorites Set (useFavorites), and `onOpenMob`/`onOpenLoot` are App's memoized routers.
+ */
 function QuestList({
   quests,
   list,
@@ -208,6 +225,18 @@ function QuestList({
   onOpenMob,
   onOpenLoot
 }: QuestListProps): JSX.Element {
+  const onRecordTurnIn = useCallback(
+    (questKey: string) => {
+      void recordTurnIn(questKey)
+    },
+    [recordTurnIn]
+  )
+  const onUndoTurnIn = useCallback(
+    (questKey: string) => {
+      void undoTurnIn(questKey)
+    },
+    [undoTurnIn]
+  )
   return (
     <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
       {quests.slice(0, list.visibleCount).map((q) => (
@@ -219,16 +248,16 @@ function QuestList({
           key={anchor?.key === q.key ? `${q.key}#${String(anchor.nonce)}` : q.key}
           anchored={anchor?.key === q.key}
           q={q}
-          shared={sharedItems.get(q.key) ?? []}
+          shared={sharedItems.get(q.key) ?? NO_SHARED_ITEMS}
           ambiguousNames={ambiguousNames}
           favorited={list.questFavorites.has(q.key)}
-          onToggleFavorite={() => list.questFavorites.toggle(q.key)}
-          onToggleIgnore={() => list.questIgnored.toggle(q.key)}
+          onToggleFavorite={list.questFavorites.toggle}
+          onToggleIgnore={list.questIgnored.toggle}
           isFavorite={list.isFavorite}
           toggleFavorite={list.toggleFavorite}
-          onRecordTurnIn={() => void recordTurnIn(q.key)}
-          onUndoTurnIn={() => void undoTurnIn(q.key)}
-          onSelectQuest={(name) => list.setQuery(name)}
+          onRecordTurnIn={onRecordTurnIn}
+          onUndoTurnIn={onUndoTurnIn}
+          onSelectQuest={list.setQuery}
           onOpenMob={onOpenMob}
           onOpenLoot={onOpenLoot}
         />
@@ -440,7 +469,11 @@ export default function PoskyView({
   })
   const [toast, setToast] = useState<string | null>(null)
 
-  const onReload = async (): Promise<void> => setToast(await reloadInventory())
+  // Stable, because QuestFilterBar's right-hand group is memoized around it (JOS-206): a fresh
+  // arrow here would re-render the "Count items from" select on every character typed.
+  const onReload = useCallback(async (): Promise<void> => {
+    setToast(await reloadInventory())
+  }, [reloadInventory])
 
   // Counts describe the list you are looking at, so ignored quests are not in them.
   const totalQuests = list.visible.length
