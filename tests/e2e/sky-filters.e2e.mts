@@ -53,6 +53,12 @@
  * The milliseconds are deliberately not in here; they are a machine's number, and this file's job
  * is the promise that number rests on.
  *
+ * JOS-207 ADDS THE SEARCH BOX to the facet steps, because it is now reading the facets' own data:
+ * a boss name typed into the box has to find the same quests picking that boss does. That is an
+ * equality between two controls rather than a count, which is exactly the kind of claim this file
+ * is for — the counts stay out of it and live in tests/questSearch.test.mts. See
+ * `stepSearchFindsBossesAndIslands`.
+ *
  * WHY IT NEVER TAKES THE SCREEN: `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
  * single-instance lock, and points `userData` at a throwaway temp dir minted per launch.
  *
@@ -88,6 +94,10 @@ const ISLAND = '[data-testid="posky-island-filter"]'
 const BOSS = '[data-testid="posky-boss-filter"]'
 const ISLANDS_KEY = 'eq.posky.islands'
 const BOSSES_KEY = 'eq.posky.bosses'
+/** JOS-207: the free-text box, which now searches the same boss/island facts the pickers offer. */
+const SEARCH = '[data-testid="posky-search"] input'
+/** The one boss name that appears in NO quest name, reward or item name — see `stepSearchFinds…`. */
+const BOSS_NAME = 'Gorgalosk'
 /** "N of M quests · counting from …" — where a narrowing filter becomes visible. */
 const COUNTS = '[data-testid="posky-counts"]'
 /** JOS-191: one quest row, the three footer buttons, and the bit "show all" is stored as. */
@@ -494,6 +504,75 @@ async function stepFacetsClear(page: Page, all: number): Promise<void> {
 }
 
 /**
+ * THE JOS-207 ASK: the search box finds bosses and islands too.
+ *
+ * The owner's report was that typing a boss name into the Sky search box returned nothing, in an
+ * app that already knew perfectly well which quests that boss stands in front of — the fact was
+ * there, behind a dropdown, and the box did not read it. The fix routes the query through the same
+ * `questBosses`/`questIslands` the pickers are built from, so there is one truth per quest rather
+ * than two mappings that can drift.
+ *
+ * WHY THE ASSERTION IS AN EQUALITY BETWEEN TWO CONTROLS rather than a count. Which quests a boss
+ * stands in front of is committed data, and tests/questSearch.test.mts pins that without a browser
+ * (sixteen for this boss, and not one of them findable by the three fields the box searched
+ * before). What only a real app can say is that the two controls AGREE: picking the boss and
+ * typing his name narrow the same list to the same size, through two different code paths that
+ * would each look correct in isolation if they had drifted apart. `Gorgalosk` is the name chosen
+ * precisely because it appears in no quest name, no reward and no item name in the whole file, so
+ * the equality is exact rather than a superset — a name like "Spiroc" is also an item word, and
+ * the box is right to answer with the union there.
+ *
+ * Starts and ends with every filter cleared, so `stepArmRestart` below still starts from the long
+ * list it expects.
+ */
+async function stepSearchFindsBossesAndIslands(page: Page, all: number): Promise<void> {
+  await pick(page, BOSS, BOSS_NAME)
+  const picked = await settle(() => filteredCount(page), (n) => n !== null && n < all, { timeoutMs: 8_000 })
+  if (
+    !check(
+      `picking ${BOSS_NAME} in the boss picker narrows the list`,
+      picked !== null && picked > 0 && picked < all,
+      `${String(all)} -> ${String(picked)}`
+    )
+  ) {
+    return
+  }
+  await clearPick(page, BOSS)
+  const cleared = await settle(() => filteredCount(page), (n) => n === all, { timeoutMs: 8_000 })
+  if (!check('…and clearing it restores the list before the search is asked', cleared === all, String(cleared))) {
+    return
+  }
+
+  await page.fill(SEARCH, BOSS_NAME)
+  const typed = await settle(() => filteredCount(page), (n) => n !== null && n < all, { timeoutMs: 15_000 })
+  check(
+    `TYPING ${BOSS_NAME} INTO THE SEARCH BOX FINDS THE QUESTS HE STANDS IN FRONT OF`,
+    typed === picked,
+    `picker ${String(picked)} vs search ${String(typed)}`
+  )
+
+  // The island half, by the same two-control equality. "Island 7" is stated by the item rows and
+  // by nothing else the box used to read, so this one is exact too.
+  await page.fill(SEARCH, '')
+  await settle(() => filteredCount(page), (n) => n === all, { timeoutMs: 15_000 })
+  await pick(page, ISLAND, 'Island 7')
+  const island = await settle(() => filteredCount(page), (n) => n !== null && n < all, { timeoutMs: 8_000 })
+  await clearPick(page, ISLAND)
+  await settle(() => filteredCount(page), (n) => n === all, { timeoutMs: 8_000 })
+  await page.fill(SEARCH, 'Island 7')
+  const searched = await settle(() => filteredCount(page), (n) => n !== null && n < all, { timeoutMs: 15_000 })
+  check(
+    'TYPING AN ISLAND FINDS THE QUESTS THAT NAME IT — same list as picking it',
+    searched === island && island !== null && island > 0,
+    `picker ${String(island)} vs search ${String(searched)}`
+  )
+
+  await page.fill(SEARCH, '')
+  const back = await settle(() => filteredCount(page), (n) => n === all, { timeoutMs: 15_000 })
+  check('clearing the search box restores every quest', back === all, `${String(all)} -> ${String(back)}`)
+}
+
+/**
  * Leave the box ticked and an island picked for launch 2 — the restart half reads what this
  * launch wrote, and both kinds of preference (a bit, a list) make the same promise.
  *
@@ -576,7 +655,12 @@ async function main(): Promise<void> {
       await stepUntickSticksToo(page)
       await stepBoxesAreIndependent(page)
       const all = await stepFacetsNarrow(page)
-      if (all !== null) await stepFacetsClear(page, all)
+      if (all !== null) {
+        await stepFacetsClear(page, all)
+        // JOS-207 right after the facets, and deliberately: it asks whether the search box and
+        // those same pickers agree, so it wants the cleared list the step above just restored.
+        await stepSearchFindsBossesAndIslands(page, all)
+      }
       await stepArmRestart(page)
       if (failures.length) await dumpArtifacts(page, 'sky-filters-FAIL')
     } finally {
