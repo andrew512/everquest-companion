@@ -1,6 +1,8 @@
 // RESPAWN CLOCKS (JOS-194) - the estimate ladder, the reading, and the fold over real bytes.
 //
-// (The wiki floor that sits UNDER the ladder has its own file: tests/respawnWiki.test.mts.)
+// (The wiki floor that sits UNDER the ladder has its own file: tests/respawnWiki.test.mts, and the
+// round-3 SEEN rulings — the log naming a watched mob, and the confirmation that is the only thing
+// allowed to re-base a clock — have tests/respawnSeen.test.mts.)
 //
 // THE GOLDEN WINDOW IS `wl40-farm-run.log`, an existing committed fixture, and it was picked
 // because it proves BOTH arms of the design at once without a line being invented:
@@ -88,7 +90,8 @@ test('the provenance label never hides how thin the evidence is', () => {
     key: 'm',
     display: 'M',
     zone: 'Z',
-    diedTs: 0,
+    baseTs: 0,
+    basis: 'death',
     source: 'observed',
     samples: 1,
     kills: 2,
@@ -116,7 +119,8 @@ function row(over: Partial<RespawnRow> = {}): RespawnRow {
     key: 'm',
     display: 'M',
     zone: 'Z',
-    diedTs: 1_000_000,
+    baseTs: 1_000_000,
+    basis: 'death',
     source: 'wiki',
     samples: 0,
     kills: 1,
@@ -131,7 +135,9 @@ test('a countdown runs down, then reports how long ago it came due', () => {
     remainingMs: 600_000,
     fraction: 1,
     due: false,
-    overdueMs: 0
+    overdueMs: 0,
+    seen: false,
+    seenAgoMs: 0
   })
   const half = respawnReading(row(), 1_300_000)
   assert.equal(half.remainingMs, 300_000)
@@ -145,7 +151,7 @@ test('a countdown runs down, then reports how long ago it came due', () => {
 
 test('a row with no estimate counts UP and is never due', () => {
   const r = respawnReading(row({ estimateMs: undefined, source: 'none' }), 1_120_000)
-  assert.deepEqual(r, { elapsedMs: 120_000, fraction: 0, due: false, overdueMs: 0 })
+  assert.deepEqual(r, { elapsedMs: 120_000, fraction: 0, due: false, overdueMs: 0, seen: false, seenAgoMs: 0 })
 })
 
 test('a clock that ran out long ago stops being a timer', () => {
@@ -180,7 +186,7 @@ test('a zone is compared canonically, the way every other dirty name in this app
 test('the display shows the zone you are in, and a DUE clock elsewhere does not widen it', () => {
   const here = row({ id: 'here', zone: 'The Ruins of Old Guk', estimateMs: 600_000 })
   // Died an hour ago with a ten-minute estimate: due, and still not this zone's business.
-  const dueThere = row({ id: 'there', zone: 'Befallen', diedTs: 400_000, estimateMs: 600_000 })
+  const dueThere = row({ id: 'there', zone: 'Befallen', baseTs: 400_000, estimateMs: 600_000 })
   assert.equal(respawnReading(dueThere, 1_000_000).due, true)
   const shown = respawnInZone([here, dueThere], 'the ruins of OLD guk')
   assert.deepEqual(
