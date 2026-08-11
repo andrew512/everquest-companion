@@ -1,0 +1,18 @@
+{
+  "semantics": 1,
+  "reason": "JOS-208: the first checkpointed fold. Baseline for the loot ledger and the respawn clocks over the committed corpus.",
+  "fingerprints": {
+    "e2e-combat.log::loot": "cd8376181b3d8759",
+    "e2e-combat.log::respawn": "0403e9adb81eb4d6",
+    "g1-group-lifecycle.log::loot": "e32a407bb56d7495",
+    "g1-group-lifecycle.log::respawn": "f085b28b64479ef4",
+    "p2-pet-arc-bound.log::loot": "5a4b7bcc2d23dfbd",
+    "p2-pet-arc-bound.log::respawn": "5f788be4c33ad9eb",
+    "e2e-leveling.log::loot": "a563fbf11d11072d",
+    "e2e-leveling.log::respawn": "9fee6ef30bcea319",
+    "s1-session-overnight-camp.log::loot": "71df2b85ae9a0f99",
+    "s1-session-overnight-camp.log::respawn": "6ec615a16cad9d77",
+    "epoch-beta-wipe.log::loot": "c604112711a916c7",
+    "epoch-beta-wipe.log::respawn": "28cc046c925b48bb"
+  }
+}
