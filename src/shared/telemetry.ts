@@ -84,6 +84,10 @@ export const TELEMETRY_VIEWS = [
   'loot',
   'planner',
   'buffs',
+  // The respawn clocks (JOS-194). SAME CLOSED-ENUM DEPLOY ORDER as every member added since
+  // JOS-119: the ingest Lambda validates through this module, so the server has to learn the value
+  // before a client that can emit it ships, or one dwell on this tab 400s the whole batch.
+  'timers',
   'preferences',
   'triage'
 ] as const
@@ -102,7 +106,17 @@ export const TELEMETRY_OVERLAY_KINDS = [
   // validates, so this member has to reach the ingest Lambda BEFORE any client that can emit it:
   // `validateTelemetryBatch` fails the WHOLE batch on one unknown value and the endpoint answers
   // 400, which the client classes as a permanent refusal and drops. Deploy order, not a preference.
-  'debuffs'
+  'debuffs',
+  // JOS-195 added the XP window. SAME DEPLOY ORDER AS THE ROW ABOVE, and for the same reason:
+  // the enum is CLOSED and the ingest Lambda validates it through this very module, so a batch
+  // carrying an unknown value is refused WHOLE with a 400 that the client classes as permanent
+  // and drops. The server ships first.
+  'xp',
+  // JOS-194 added the respawn-clock window. THE SAME DEPLOY ORDER APPLIES A THIRD TIME, for the
+  // third identical reason: the enum is CLOSED, the ingest Lambda validates through this module,
+  // and a batch carrying a value the server has not learned yet is refused WHOLE with a 400 the
+  // client classes as permanent and drops. The server ships first.
+  'respawn'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 
@@ -704,8 +718,20 @@ export interface EvErrorReport {
    * HOW MANY TIMES THIS FINGERPRINT FIRED since the last report, and it is the field that makes
    * the client-side dedupe expressible. One exemplar per fingerprint per SESSION: the first
    * occurrence keeps its message, frames and breadcrumbs, and every repeat afterwards adds to
-   * this number instead of minting a second copy of the same stack. A loop that throws ten
-   * thousand times is one row with `count: 10000`, not ten thousand rows.
+   * this number instead of minting a second copy of the same stack.
+   *
+   * IT IS A FLOOR, NOT A TOTAL (JOS-197). This used to say "a loop that throws ten thousand times
+   * is one row with `count: 10000`" — which was written as a boast about how cheap a repeat is,
+   * and is exactly why nothing bounded it: an install then filed 7,272,196 occurrences of one
+   * fingerprint in a day, and the store was unreadable around the row. The client now stops
+   * counting a fingerprint at `MAX_REPORTS_PER_FINGERPRINT` per session (src/main/errorBudget.ts),
+   * so a looping issue reports that number and goes quiet.
+   *
+   * THE TOTAL IS STILL KNOWABLE, from the other side: `mainErrorLogLines + suppressedErrorLines`
+   * on `healthCounters` counts every occurrence whether it was reported or silenced, which is the
+   * ledger JOS-133 built for precisely this. So a build that starts looping still shows up in the
+   * error RATE; what the cap takes away is only the ability of one issue to say it ten thousand
+   * times over in the exemplar table.
    */
   count: number
 }
