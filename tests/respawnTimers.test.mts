@@ -33,6 +33,7 @@ import {
   orderRespawnRows,
   resolveRespawn,
   respawnInZone,
+  respawnProvenance,
   respawnReading,
   respawnRowExpired,
   respawnSourceLabel,
@@ -107,6 +108,35 @@ test('the provenance label never hides how thin the evidence is', () => {
   assert.equal(respawnSourceLabel({ ...base, source: 'wiki' }), 'wiki default')
   assert.equal(respawnSourceLabel({ ...base, source: 'custom' }), 'your number')
   assert.equal(respawnSourceLabel({ ...base, source: 'none' }), 'no estimate yet')
+})
+
+/**
+ * THE HOVER CARRIES WHAT THE ROW DOES NOT PRINT (owner ruling, round 5: too much explanatory text).
+ *
+ * `respawnProvenance` is where the sentences that used to sit under the countdown went, so this
+ * pins the two halves of that bargain: every fact stated NOWHERE else on the row is still in it,
+ * and it stays short enough to be a hover. Both surfaces read this one string - the tab's tooltip
+ * and the floating window's native title - so a drift between them is not expressible.
+ */
+test('the hover keeps the facts the row does not print, and stays a hover', () => {
+  const fmt = (ms: number | null | undefined): string => (ms == null ? '-' : `${String(Math.round(ms / 1000))}s`)
+  // `row()` is section 4's helper, hoisted; the ladder rungs are all this test varies.
+  const base = row({ source: 'observed', samples: 2, kills: 3, observedMs: 300_000, estimateMs: 300_000 })
+  const says = (r: Partial<RespawnRow>, ...parts: string[]): void => {
+    const s = respawnProvenance({ ...base, ...r }, fmt)
+    for (const p of parts) assert.ok(s.includes(p), `${p} missing from: ${s}`)
+    assert.ok(s.length <= 200, `the provenance hover must stay short: ${s}`)
+  }
+  // The raw bound, what it proves and the kill count - the row itself prints only the ESTIMATE.
+  says({}, '300s', '2 gaps', 'upper bound', 'Killed 3 times here.')
+  // The wiki's verbatim words, and the fact that the floor is what lifted the number.
+  says({ observedMs: 61_000, wikiMs: 267_000, estimateMs: 267_000, wikiText: '9.5 min' }, '"9.5 min"', 'floor lifted')
+  // A number resting on the user's judgement is LABELED as one (world-model law 1)…
+  says({ basis: 'sighting' }, 'sighting you confirmed')
+  // …and the rungs with no gap behind them still say why they are the number they are.
+  says({ source: 'wiki' }, 'Wiki default')
+  says({ source: 'custom' }, 'Your number.')
+  says({ source: 'none' }, 'No respawn known yet')
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

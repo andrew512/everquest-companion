@@ -31,6 +31,15 @@
 // The number in the box beside a watched mob is rung 1 of the ladder — your own respawn, in
 // seconds — and it outranks everything, including what this app learned. A player camping a spot
 // knows more about it than the wiki and more than a handful of gaps.
+//
+// AND THE PAGE STOPPED EXPLAINING ITSELF (owner ruling, round 5). Each of the four rounds above
+// left its ruling written out in prose at the top of this file's render, and the result was a
+// thirteen-line paragraph over a page whose every control is one word. It is gone, not moved: the
+// facts it recited are each already stated by something the user is looking at — the rung on a
+// clock row, `wiki default`, `UP`, the zone chip and the scope switch, the Watch/Unwatch pair —
+// and the sentences behind them live on those things' hovers (`respawnProvenance`,
+// `respawnUnwatchTitle`, `RESPAWN_CONFIRM_TITLE`, all in shared/respawn.ts). One caption survives,
+// under the seconds box, because a control's own limits are not state any label states.
 
 import { useState, type JSX } from 'react'
 import {
@@ -204,8 +213,8 @@ function ClocksPanel({
     return (
       <Typography variant="body2" color="text.secondary" data-testid="respawn-empty" sx={{ py: 2 }}>
         {elsewhere > 0
-          ? `No clocks running in ${zoneName}. ${elsewhere} ${elsewhere === 1 ? 'is' : 'are'} running in other zones - switch to All zones to see them.`
-          : 'No clocks running. Kill something, then click Watch beside it on the right - the clock starts from the kill you already made.'}
+          ? `No clocks in ${zoneName}. ${elsewhere} running in other zones.`
+          : 'No clocks running. Watch a mob from Recently killed.'}
       </Typography>
     )
   }
@@ -294,7 +303,7 @@ function DiscoveryPanel({
       {recent.length === 0 ? (
         <Typography variant="body2" color="text.secondary" data-testid="respawn-recent-empty">
           {scoped && anyRecent > 0
-            ? `Nothing has died in ${zoneName} yet. Switch to All zones for what you killed elsewhere.`
+            ? `Nothing has died in ${zoneName} yet. ${anyRecent} elsewhere.`
             : 'Nothing has died yet in this log.'}
         </Typography>
       ) : (
@@ -311,8 +320,7 @@ function DiscoveryPanel({
       </Typography>
       {prefs.watches.length === 0 ? (
         <Typography variant="body2" color="text.secondary" data-testid="respawn-watches-empty">
-          None yet. A mob you watch here is the only kind that gets a clock, and it can carry your
-          own number, which outranks everything the app worked out.
+          None yet.
         </Typography>
       ) : (
         <Stack divider={<Divider flexItem />}>
@@ -321,12 +329,14 @@ function DiscoveryPanel({
           ))}
         </Stack>
       )}
+      {/* The ONLY caption left on this page (round 5), and it is here because the seconds box is
+          the one control whose limits are stated nowhere else - a tooltip on an input the user
+          types into is against the house rules, and an out-of-range number silently clears. The
+          watch-follows-the-name and zone-scope sentences that used to sit here are on the Unwatch
+          hover and on the scope switch respectively. */}
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-        A watch follows the MOB NAME, so it clocks that name in every zone you kill it in - which is
-        also what Unwatch stops, wherever you press it. The list above shows the zone you are in
-        unless you ask for all of them. Custom respawns run from{' '}
-        {fmtDuration(RESPAWN_CUSTOM_MIN_SEC * 1000)} to {fmtDuration(RESPAWN_CUSTOM_MAX_SEC * 1000)}.
-        Leave the box empty to go back to what your kills say.
+        Custom: {fmtDuration(RESPAWN_CUSTOM_MIN_SEC * 1000)} to{' '}
+        {fmtDuration(RESPAWN_CUSTOM_MAX_SEC * 1000)}. Empty uses your kills.
       </Typography>
     </Box>
   )
@@ -355,22 +365,7 @@ export default function TimersView(): JSX.Element {
         <Typography variant="h6">Respawn clocks</Typography>
         {snap.zone.length > 0 && <Chip size="small" label={snap.zone} variant="outlined" />}
       </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 760 }}>
-        A clock starts when the log prints a death message, for the mobs you have asked to watch -
-        nothing is tracked until you click Watch. The number on it comes from your own kills - the
-        shortest gap between two deaths of that mob in one continuous stay in the zone, which is an
-        upper bound on the real respawn and tightens as you camp. The wiki is only the default
-        before you have a gap of your own, and a floor underneath the ones you do have. A clock
-        reaching zero means the estimate elapsed, never that the mob is standing there. If the log
-        NAMES a watched mob in this zone - a swing, a consider, a spell - the row says UP instead,
-        because that is the world answering the question the clock was guessing at. A sighting
-        proves it is up and not when it spawned, so it never moves the clock by itself; the button
-        on a seen row is how you say it should. Unwatch sits on the mob wherever you meet it - on
-        its clock and beside it in Recently killed - and stops that name in every zone without
-        losing a single kill you have folded.
-      </Typography>
-
-      <Box sx={{ mb: 2 }}>
+      <Box sx={{ mb: 2, mt: 1.5 }}>
         <ScopeSwitch
           scope={scope}
           onScope={setScope}
