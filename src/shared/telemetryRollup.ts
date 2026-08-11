@@ -45,6 +45,8 @@ import {
   bucketOf,
   STUTTER_MS_EDGES,
   type EvErrorReport,
+  type EvSessionEnd,
+  type EvSessionHeartbeat,
   type StartupReplayStats,
   type TelemetryBatch,
   type TelemetryEvent,
@@ -265,6 +267,24 @@ export const USAGE_METRICS = {
    * byte on the way") lives across exactly the same 10 ms → 1 s span a stall does.
    */
   startupFirstMbMs: 'startupFirstMbMs',
+  /**
+   * THE FOLD-CHECKPOINT SHADOW PAIR (JOS-208 phase 3) — the rollout's gate and its kill switch.
+   *
+   * dim = `<version>` on both, because the question is always about a BUILD: a divergence is a
+   * defect in the fold that shipped, and the answer to one is to stop shipping it. n = how many
+   * background verifications that build ran, and how many of them disagreed with a cold fold.
+   *
+   * `checkpointShadowChecks` IS THE DENOMINATOR and is the only one that always moves. Read the
+   * pair as a rate; read the numerator alone and a build that verified ten thousand times looks
+   * exactly like one that verified twice. `checkpointDivergences` is expected to be ZERO forever,
+   * and a panel that shows it as anything else is showing a reason to turn the feature off.
+   *
+   * They are versioned but NOT bucketed and never dimensioned by anything else — there is no
+   * module name, no field, no value anywhere on this path. See `shared/telemetry.ts` for the
+   * bright line these two are shaped around.
+   */
+  checkpointShadowChecks: 'checkpointShadowChecks',
+  checkpointDivergences: 'checkpointDivergences',
   /**
    * ERROR REPORTS PER BUILD (JOS-100) — the DENOMINATOR beside `error_report`'s own counts.
    *
@@ -653,6 +673,24 @@ function foldStartupDiscriminators(bag: Bag, s: StartupReplayStats, version: str
  * and that reading is dimensioned by version (see `USAGE_METRICS.startupReplays`). The version is
  * an ENVELOPE fact, not an event one — no event carries its own — so it has to be threaded here.
  */
+/**
+ * The fold-checkpoint shadow pair off one session report (JOS-208 phase 3).
+ *
+ * NOTHING IS WRITTEN WHEN THE REPORT CARRIES NO CHECKS — not a zero row. A zero would say "this
+ * build verified and found nothing", which is the opposite of the truth for the overwhelming
+ * majority of reports (a sampled, duty-cycled verification runs on almost no sessions at all), and
+ * it would drown the rows that mean something in rows that mean the feature was idle.
+ *
+ * The validator guarantees the pair travels together and that the numerator cannot exceed the
+ * denominator, so this is arithmetic and nothing else.
+ */
+function foldShadow(bag: Bag, ev: EvSessionHeartbeat | EvSessionEnd, version: string): void {
+  const checks = ev.checkpointShadowChecks
+  if (checks === undefined || checks <= 0) return
+  add(bag, USAGE_METRICS.checkpointShadowChecks, version, checks)
+  add(bag, USAGE_METRICS.checkpointDivergences, version, ev.checkpointDivergences ?? 0)
+}
+
 function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
   switch (ev.t) {
     case 'sessionStart':
@@ -663,6 +701,7 @@ function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
       add(bag, USAGE_METRICS.heartbeats, DIM_NONE, 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
+      foldShadow(bag, ev, version)
       return true
     case 'sessionEnd':
       add(bag, USAGE_METRICS.sessionEnds, DIM_NONE, 1)
@@ -670,6 +709,7 @@ function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
       add(bag, USAGE_METRICS.sessionLenBucket, String(bucketOf(ev.durationMs, SESSION_MS_EDGES)), 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
+      foldShadow(bag, ev, version)
       return true
     default:
       return false

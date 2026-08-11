@@ -362,6 +362,13 @@ function startupRow(
     dutyAchieved: dutyMean === null ? null : dutyMean / 100,
     meanEventsReplayed: ratio(events, launches),
     blocksOver50: dimsOf(usage, USAGE_METRICS.startupBlocksOver50).get(version) ?? 0,
+    // THE CHECKPOINT'S FLEET BACKSTOP (JOS-208 phase 3). Two plain sums, dimensioned by build and
+    // by nothing else, and read as a pair: a zero divergence count means something only beside the
+    // number of checks that produced it. Absent counters are 0 — which here is the honest reading,
+    // because "no client on this build has verified" and "no client on this build has verified"
+    // are the same fact, and the check count says so.
+    shadowChecks: dimsOf(usage, USAGE_METRICS.checkpointShadowChecks).get(version) ?? 0,
+    shadowDivergences: dimsOf(usage, USAGE_METRICS.checkpointDivergences).get(version) ?? 0,
     ...startupDiscriminators(version, usage)
   }
 }

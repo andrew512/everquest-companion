@@ -63,6 +63,26 @@ let linesPending = 0
  * event instead of minting a new kind (shared/telemetry.ts, THE ADDITIVE-FIELD RULE).
  */
 let startupPending: StartupReplayStats | null = null
+/**
+ * THE FOLD-CHECKPOINT SHADOW COUNTERS (JOS-208 phase 3) — how many background verifications ran
+ * since the last report, and how many of them found a difference.
+ *
+ * DELTAS, drained by the same two events `linesPending` is, for the same reason: a sum of deltas
+ * can never double-count and a killed session loses at most its last five minutes.
+ *
+ * TWO NUMBERS, NOT ONE, because a bare divergence count is uninterpretable — "3 divergences" across
+ * a fleet whose verification rate nobody knows is not a rate, and the whole purpose of this pair is
+ * to be the default-on gate ("divergence stays zero") and the kill-switch trigger. The denominator
+ * has to travel with the numerator.
+ *
+ * AND THAT IS ALL THAT TRAVELS. There is no field here — and none anywhere in the schema — that
+ * could carry which module diverged, let alone what differed. A module name is a claim about the
+ * user's game (a `loot` divergence says something about what they looted), and the bright line is
+ * that gameplay data never leaves a client. The module names are written to the local `errors.log`
+ * by `foldCache/shadow.ts`, where the person who has to fix the fold can read them.
+ */
+let shadowChecks = 0
+let shadowDivergences = 0
 
 /** Wall-clock ms since `startTelemetry()` — 0 before it has run. */
 export function sessionUptimeMs(now = Date.now()): number {
@@ -74,6 +94,8 @@ export function beginSession(now = Date.now()): void {
   viewsSeen.clear()
   linesPending = 0
   startupPending = null
+  shadowChecks = 0
+  shadowDivergences = 0
   // The health deltas live in their own leaf module (telemetry/health.ts — it has to, so
   // `errorLog.ts` can bump one without a cycle), but they are SESSION state exactly like the two
   // above and are cleared on the same boundaries.
@@ -95,6 +117,8 @@ export function endSession(): void {
   viewsSeen.clear()
   linesPending = 0
   startupPending = null
+  shadowChecks = 0
+  shadowDivergences = 0
   resetHealth()
   // The session clock is stamped to 0 here on purpose: `resetErrorReports` takes `now` and a
   // report built after this point would bucket its age from the LAST session's start. There is
@@ -152,6 +176,36 @@ export function takeStartupReplay(): StartupReplayStats | undefined {
   const held = startupPending
   startupPending = null
   return held ?? undefined
+}
+
+/**
+ * ONE BACKGROUND CHECKPOINT VERIFICATION FINISHED (JOS-208 phase 3). Called from
+ * `foldCache/shadow.ts`, at most once or twice a session — this is a duty-cycled sample, not a
+ * per-event counter.
+ *
+ * The ARGUMENT IS A BOOLEAN, which is the schema's guarantee made structural: there is no parameter
+ * here that a module id, a field name or a value could travel in, even if a future caller wanted to
+ * give one.
+ */
+export function noteCheckpointShadow(diverged: boolean): void {
+  if (!telemetryCollectEnabled(getTelemetryPrefs())) return
+  shadowChecks += 1
+  if (diverged) shadowDivergences += 1
+}
+
+/**
+ * Drain the shadow deltas for a report, or `undefined` when nothing was verified since the last
+ * one — which is the ordinary answer, since most sessions run no verification at all.
+ *
+ * BOTH OR NEITHER. A report carrying divergences with no check count beside them would be a
+ * numerator without a denominator, which is exactly the reading this pair exists to prevent.
+ */
+export function takeCheckpointShadow(): { checks: number; divergences: number } | undefined {
+  if (shadowChecks === 0) return undefined
+  const taken = { checks: Math.min(shadowChecks, MAX_COUNT), divergences: Math.min(shadowDivergences, MAX_COUNT) }
+  shadowChecks = 0
+  shadowDivergences = 0
+  return taken
 }
 
 /**

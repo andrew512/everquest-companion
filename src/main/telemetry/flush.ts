@@ -48,6 +48,7 @@ import {
   recordEvent,
   sessionUptimeMs,
   setTelemetryEnabled,
+  takeCheckpointShadow,
   takeLinesParsed,
   takeStartupReplay,
   viewsVisited
@@ -115,6 +116,19 @@ function retireBatch(batch: TelemetryBatch, accepted: boolean): TelemetryBatch |
 function startupField(): { startup?: StartupReplayStats } {
   const startup = takeStartupReplay()
   return startup === undefined ? {} : { startup }
+}
+
+/**
+ * The optional fold-checkpoint shadow pair (JOS-208 phase 3), on the same terms as `startupField`
+ * above — `{}` when nothing was verified, so the properties are ABSENT rather than `undefined`.
+ *
+ * BOTH KEYS OR NEITHER, which the drain already guarantees and this shape preserves: the validator
+ * refuses a lone numerator, so a half-spread here would throw the whole batch away on the server.
+ */
+function shadowFields(): { checkpointShadowChecks?: number; checkpointDivergences?: number } {
+  const shadow = takeCheckpointShadow()
+  if (shadow === undefined) return {}
+  return { checkpointShadowChecks: shadow.checks, checkpointDivergences: shadow.divergences }
 }
 
 /**
@@ -200,7 +214,11 @@ function startTimers(prefs: TelemetryPrefs): void {
       linesParsed: takeLinesParsed(),
       // …and this launch's startup replay, on the first heartbeat after it finished (JOS-57).
       // Drained, so exactly one report carries it: one launch is one reading.
-      ...startupField()
+      ...startupField(),
+      // …and any background checkpoint verification that finished since the last report (JOS-208
+      // phase 3). Drained too, and absent on the overwhelming majority of reports — the
+      // verification is a duty-cycled sample, so most sessions run none at all.
+      ...shadowFields()
     })
     reportHealth()
     reportErrors()
@@ -338,7 +356,9 @@ export function stopTelemetry(): void {
       linesParsed: takeLinesParsed(),
       // …and the startup reading, if no heartbeat got there first — which is the common case,
       // since most sessions end before the five-minute mark.
-      ...startupField()
+      ...startupField(),
+      // …and the tail of the shadow counters, on the same terms.
+      ...shadowFields()
     })
     // The tail of the health deltas, on the same terms as the line delta beside it. Inside the
     // `uptime > 0` guard deliberately: a process that never started collecting has no session to
