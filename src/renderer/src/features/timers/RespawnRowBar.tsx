@@ -409,6 +409,10 @@ export function RespawnRowBar({
           data-respawn-due={r.due ? 'true' : 'false'}
           data-respawn-seen={r.seen ? 'true' : 'false'}
           data-respawn-stale={r.stale ? 'true' : 'false'}
+          // ROUND 9's state, stated at ROW level like every other one — the floating window states it
+          // here too, so a reader of either surface asks the same question of the same element. It is
+          // ALSO on the duration unit, which is the thing that actually changes colour.
+          data-respawn-overridden={respawnOverridden(row) ? 'true' : 'false'}
           data-respawn-basis={row.basis}
           sx={{
             px: 1,
