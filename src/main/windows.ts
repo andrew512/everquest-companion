@@ -22,6 +22,9 @@
 import { BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { IPC } from '../shared/ipc'
+// The mouse's Back button (JOS-201). Its own module, and never installed per-overlay — the
+// scope argument (window-scoped, focused-only, no forward, no global hook) lives in its header.
+import { installBackButton } from './appBack'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
 import { overlayDefaultSize } from './overlayLayout'
@@ -324,6 +327,10 @@ export function createMainWindow(): void {
   //     composited window (EQ_E2E) whose rAF is already throttled to nothing — but a call that
   //     buys nothing and can wedge a frame loop does not get to stay on the strength of a maybe.
   // The setter still zooms the live window, because there the call is the whole point.
+
+  // The mouse's Back button (JOS-201). Installed on THIS window only, and only for a press this
+  // window received while focused — see appBack.ts for why that is the entire scope.
+  installBackButton(mainWindow)
 
   // --- webContents error capture (Task #13) ---
   // The window is passed as a GETTER: every guard inside fires long after this call returns, and

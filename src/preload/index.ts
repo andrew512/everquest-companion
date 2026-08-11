@@ -560,6 +560,17 @@ const api = {
     ipcRenderer.on(IPC.onFocusView, listener)
     return () => ipcRenderer.removeListener(IPC.onFocusView, listener)
   },
+  /**
+   * The mouse's Back button was pressed in THIS window (JOS-201). No payload — the message is the
+   * press; what "back" means is the renderer's own question (src/renderer/src/appBack.tsx). Main
+   * only forwards a `browser-backward` app-command that arrived on the focused main window
+   * (src/main/appBack.ts), so nothing global and nothing from the game reaches here.
+   */
+  onAppBack: (cb: () => void): (() => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on(IPC.onAppBack, listener)
+    return () => ipcRenderer.removeListener(IPC.onAppBack, listener)
+  },
 
   // ---- auto-update (Task #27; reworked in Task #55) ----
   /** Subscribe to update lifecycle pushes (checking/available/downloading/ready/error). */
