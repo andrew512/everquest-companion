@@ -20,7 +20,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mobDropNames, splitMobDrops } from '../src/shared/mobDrops'
-import { RESPAWN_CARD_LABEL, respawnCardNote, respawnProvenance, type RespawnRow } from '../src/shared/respawn'
+import {
+  RESPAWN_CARD_LABEL,
+  respawnCandidateNote,
+  respawnCardNote,
+  respawnProvenance,
+  type RespawnCandidate,
+  type RespawnRow
+} from '../src/shared/respawn'
 import type { MobKnowledge } from '../src/shared/mobTypes'
 
 const T = 1_754_000_000_000
@@ -104,6 +111,39 @@ test('the hover CARD states the timer knowledge in the one provenance string', (
   assert.equal(note.label, RESPAWN_CARD_LABEL)
   // A section TITLE inside a floating card, never a sentence of its own.
   assert.ok(note.label.length <= 16, note.label)
+})
+
+/**
+ * ROUND 7: THE SAME CARD ON A MOB YOU HAVE ONLY KILLED.
+ *
+ * The owner asked for the card on Recently-killed entries too — "is this worth watching" being the
+ * same question as "is it worth waiting for", one decision earlier. A candidate has no rung, no
+ * basis and no gap of its own, so its note is what remains: whether it is watched, what the wiki
+ * says verbatim, and the kill count. It shares the card's LABEL with the clock rows (one section
+ * title, not two) and it is held to round 5's cap, because a hover that grows is exactly what that
+ * round was about.
+ */
+test('a Recently-killed entry gets the same card, with the shorter note', () => {
+  const base: RespawnCandidate = {
+    key: 'a frenzied ghoul',
+    display: 'a frenzied ghoul',
+    zone: 'The Ruins of Old Guk',
+    lastTs: T,
+    kills: 1,
+    watched: false
+  }
+  const bare = respawnCandidateNote(base)
+  assert.equal(bare.label, RESPAWN_CARD_LABEL, 'one section title across both surfaces')
+  assert.ok(bare.text.includes('Not watched'), bare.text)
+  assert.ok(bare.text.includes('Killed 1 time here.'), bare.text)
+  // Never invents a respawn the wiki did not state (law 1) — the silence is simply absent.
+  assert.ok(!bare.text.includes('Wiki'), bare.text)
+
+  const rich = respawnCandidateNote({ ...base, watched: true, kills: 4, wikiText: '16.0 min (PH)' })
+  assert.ok(rich.text.includes('Watched'), rich.text)
+  assert.ok(rich.text.includes('"16.0 min (PH)"'), rich.text)
+  assert.ok(rich.text.includes('Killed 4 times here.'), rich.text)
+  assert.ok(rich.text.length <= 200, `the candidate hover must stay short: ${rich.text}`)
 })
 
 test('a page that lists an item twice still joins your count onto each listing', () => {

@@ -42,6 +42,7 @@ import respawnsJson from '../data/respawns.json'
 import type { WikiRespawn, WikiRespawnData } from '../../shared/respawnWiki'
 import {
   DEFAULT_RESPAWN_PREFS,
+  RESPAWN_MAX_GAPS,
   RESPAWN_MAX_RECENT,
   RESPAWN_MAX_ROWS,
   RESPAWN_SHAPE_VERSION,
@@ -99,6 +100,13 @@ interface MobHistory {
   minGapMs?: number
   /** How many qualifying gaps back `minGapMs`. */
   samples: number
+  /**
+   * THE GAPS THEMSELVES, oldest first, capped at `RESPAWN_MAX_GAPS` (round 7 — the Running entry
+   * shows its working now that the watch list at the bottom of the tab is gone). Kept beside
+   * `samples` and `minGapMs` rather than replacing them: those two are computed over EVERY
+   * qualifying gap and must not start describing only the last six.
+   */
+  gaps: number[]
   /** Deaths counted, qualifying or not. */
   kills: number
   /** The last event that NAMED this mob while the fold stood in this zone. Never a death. */
@@ -339,7 +347,7 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
   private recordDeath(key: string, display: string, ts: number): void {
     const id = `${idKey(this.zone)}::${key}`
     const prior = this.history.get(id)
-    const h: MobHistory = prior ?? { key, display, zone: this.zone, lastTs: 0, samples: 0, kills: 0 }
+    const h: MobHistory = prior ?? { key, display, zone: this.zone, lastTs: 0, samples: 0, kills: 0, gaps: [] }
     if (prior) {
       // Re-insert so the Map's iteration order is the LRU order (oldest first).
       this.history.delete(id)
@@ -350,6 +358,10 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
       if (this.zoneSince > 0 && h.lastTs >= this.zoneSince && gap >= MIN_GAP_MS) {
         h.minGapMs = h.minGapMs === undefined ? gap : Math.min(h.minGapMs, gap)
         h.samples++
+        // The working, for the row to print (round 7). Oldest first here and reversed on the way
+        // out, so the cap drops the OLDEST rather than the freshest evidence.
+        h.gaps.push(gap)
+        if (h.gaps.length > RESPAWN_MAX_GAPS) h.gaps.shift()
       }
     }
     h.lastTs = ts
@@ -425,6 +437,11 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
     attachSeen(row, h, base)
     if (est.estimateMs !== undefined) row.estimateMs = est.estimateMs
     if (h.minGapMs !== undefined) row.observedMs = h.minGapMs
+    // NEWEST FIRST on the wire (the row reads left to right and the freshest gap is the one worth
+    // reading), and a COPY, so a renderer holding a snapshot can never see the fold mutate it.
+    if (h.gaps.length > 0) row.gapsMs = [...h.gaps].reverse()
+    // Rung 1's number, so the row's own seconds box has something to open with (round 7).
+    if (watch.customMs !== undefined) row.customMs = watch.customMs
     if (wiki) row.wikiText = wiki.text
     if (wikiMs !== undefined) row.wikiMs = wikiMs
     return respawnRowExpired(row, nowMs) ? null : row

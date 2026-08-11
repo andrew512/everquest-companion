@@ -36,7 +36,13 @@
  * AND A LOOT LINE IS PLAYED (round 6). Pointing at a clock row has to answer the other half of
  * "should I keep standing here" — the mob's drop table, and what we have looted off it ourselves —
  * which is a JOIN no unit test can reach: a loot line folds into main's own-loot index, and a hover
- * on a row belonging to a different module entirely comes back carrying it, in both renderers.
+ * on a row belonging to a different module entirely comes back carrying it.
+ *
+ * AND ROUND 7 IS FOUR MORE RULINGS, three of which are the tab's alone: the page is titled Timers;
+ * "Your watches" is gone and its two controls are on the mob's Running entry (which also prints the
+ * gaps it measured); Recently killed is searchable; and the mob card opens on a Recently-killed
+ * entry too. The fifth is an ABSENCE and belongs over the game: the floating window draws NO card
+ * any more, and says what it knows about the respawn on a plain title instead.
  *
  * AND THE ZONE LINE IS PLAYED TOO. The last step walks the character into another zone and asserts
  * the clocks LEAVE both surfaces while the fold keeps them: the tab's all-zones view brings them
@@ -66,6 +72,9 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, overlayWindow } from './appWindow.mjs'
 import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
+// Round 7's two TAB-ONLY steps live beside this file (the 400-line ceiling, and the
+// `buffRestartSteps.mts` precedent): the seconds box that moved onto the clock row, and the search.
+import { stepCustomOnTheMob, stepSearchRecentlyKilled } from './respawnRound7Steps.mjs'
 
 /** A mob the committed wiki floor states a duration for: `9.5 min` → 570 s. */
 const WIKI_MOB = 'a frenzied ghoul'
@@ -113,18 +122,35 @@ function clocks(page: Page, testid: string): Promise<Clock[]> {
 
 const find = (rows: Clock[], mob: string): Clock | undefined => rows.find((r) => r.mob === mob)
 
-/** The watch-list bridge, i.e. what the tab's Watch button lands on. Used only to READ here. */
-function readWatches(page: Page): Promise<{ watches: { key: string }[] }> {
+/**
+ * The watch-list bridge, i.e. what the tab's Watch button lands on. Used only to READ here — and
+ * since round 7 also to prove the seconds box on a clock row PERSISTED, which is why `customSec`
+ * is part of the shape.
+ */
+interface Watches {
+  watches: { key: string; customSec?: number }[]
+}
+function readWatches(page: Page): Promise<Watches> {
   return page.evaluate(() =>
-    (window as unknown as { eq: { getRespawn: () => Promise<{ watches: { key: string }[] }> } }).eq.getRespawn()
+    (window as unknown as { eq: { getRespawn: () => Promise<Watches> } }).eq.getRespawn()
   )
 }
 
-/** Click Watch on a mob offered in the Recently-killed panel. The only way a clock ever exists. */
+/**
+ * Click Watch on a mob offered in the Recently-killed panel. The only way a clock ever exists.
+ *
+ * AND IT PUTS THE POINTER BACK (round 7). A click leaves the mouse where it landed, and since round
+ * 7 a Recently-killed entry has a hover CARD — so the Watch button's own click opens one and leaves
+ * it standing over the panel for the rest of the run. That broke the hover step twice over: its
+ * "nothing is drawn until you point at a row" assertion, and then its `settle` for the row's card,
+ * which the candidate's own card satisfied because both carry the same drops. The click is about the
+ * click; this helper hands the pointer back.
+ */
 async function clickWatch(page: Page, mob: string): Promise<void> {
   await page.click(`[data-testid="respawn-candidate"][data-respawn-mob="${mob}"] [data-testid="respawn-watch"]`, {
     timeout: 15_000
   })
+  await page.mouse.move(0, 0)
 }
 
 async function stepFreshInstall(page: Page, app: ElectronApplication): Promise<void> {
@@ -142,10 +168,25 @@ async function stepFreshInstall(page: Page, app: ElectronApplication): Promise<v
 
   const prefs = await readWatches(page)
   check('a fresh install watches nothing at all', prefs.watches.length === 0, JSON.stringify(prefs))
-  check(
-    '…and says so where the watches would be listed',
-    (await countOf(page, '[data-testid="respawn-watches-empty"]')) === 1
+
+  // ROUND 7, RULING 3: the page is called what the nav row has always called it. Two names for one
+  // surface is the thing `VIEW_LABELS` exists to prevent one floor up, and this one had two.
+  const heading = await page.evaluate(
+    () => document.querySelector('[data-testid="timers-view"] h6')?.textContent ?? ''
   )
+  check('the page is titled Timers, like the tab that opens it', heading.trim() === 'Timers', heading)
+
+  // ROUND 7, RULING 2: "Your watches" is GONE. Both halves of what it held are on the mob now, so
+  // this asserts the ABSENCE — a build that merely hid the empty state would keep the editor rows.
+  check(
+    'the watch list at the bottom of the page is gone, not emptied',
+    (await countOf(page, '[data-testid="respawn-watches-empty"]')) === 0 &&
+      (await countOf(page, '[data-testid="respawn-watch-row"]')) === 0
+  )
+  // …and there is exactly one seconds box per CLOCK, which on a fresh install is none at all.
+  check('…so nothing on the page types a number until a clock exists', (await countOf(page, '[data-testid="respawn-custom"]')) === 0)
+  // ROUND 7, RULING 4: the discovery panel has its own search from the first render.
+  check('Recently killed is searchable', (await countOf(page, '[data-testid="respawn-search"]')) === 1)
 
   const state = await overlayState(page)
   check('…and the floating window is OFF until asked for', state.respawn === false, JSON.stringify(state))
@@ -210,6 +251,16 @@ async function stepLiveKillIsOfferedThenWatched(page: Page, log: FixtureLog): Pr
 async function stepWatchFromRecentKills(page: Page, log: FixtureLog): Promise<void> {
   const earlier = new Date(Date.now() - 3 * 60_000)
   log.appendAt(earlier, `You have slain ${OWN_MOB}!`)
+  // THE LOOT LINE RIDES THE FIRST CORPSE, AND THE ORDER IS LOAD-BEARING (round 7, measured).
+  // `lib/hoverCards.tsx` fetches a mob's knowledge ONCE PER NAME for the window's lifetime, and
+  // round 7 put the card on Recently-killed entries — so the Watch CLICK below is itself a hover,
+  // and it is now the first thing that ever asks about this mob. Whatever main's own-loot index
+  // holds at that instant is what every later card shows. Playing the loot BEFORE the second death
+  // makes that instant deterministic: the settle underneath waits for the second death, which is
+  // later in the file, so the loot is folded by construction rather than by luck. (Measured the
+  // other way round: green at 38 s of wall clock, red at 96 s. Realistic, too — you loot the corpse
+  // and then kill it again.)
+  log.appendAt(earlier, `--You have looted 2 ${LOOTED} from ${OWN_MOB}'s corpse.--`)
   log.append(`You have slain ${OWN_MOB}!`)
 
   const offered = await settle(
@@ -236,6 +287,9 @@ async function stepWatchFromRecentKills(page: Page, log: FixtureLog): Promise<vo
   // The two deaths were played three minutes apart, so the learned bound is 3m — printed with the
   // "<=" that says it is a bound and not a measurement.
   check('…and the gap it learned is the one that was played', row.text.includes('<= 3m 00s'), row.text)
+  // ROUND 7, RULING 2: the row shows its WORKING — the gaps it measured, not only the minimum it
+  // reduced them to. One gap was played, so one is printed, and it is that gap.
+  check('…and the row shows the gap itself, not only the estimate it became', row.text.includes('gaps: 3m 00s'), row.text)
 
   const prefs = await readWatches(page)
   check(
@@ -332,7 +386,7 @@ function pointAtOverlayRow(overlay: Page, mob: string, over: boolean): Promise<v
 const LOOTED = 'Bone Chips'
 
 /**
- * THE ROW ANSWERS "IS IT WORTH WAITING FOR" (owner ruling, round 6).
+ * THE ROW ANSWERS "IS IT WORTH WAITING FOR" (owner ruling, round 6) — AND ONLY IN THE APP (round 7).
  *
  * A countdown says when; the question a player standing on a spawn point is asking is whether to
  * keep standing there, and that is a question about loot. So pointing at a clock row reveals the
@@ -342,18 +396,25 @@ const LOOTED = 'Bone Chips'
  * ONLY THE REAL APP CAN SHOW THIS, because the claim is a JOIN across two subsystems that never
  * meet in a unit test: a loot line arriving on the live tail folds into main's own-loot index, and
  * a hover on a clock row belonging to an entirely different module has to come back carrying it —
- * through the same cache-first `mobs:lookup` door the `/con` card uses, in TWO renderers.
+ * through the same cache-first `mobs:lookup` door the `/con` card uses.
  *
- * THE LOOT LINE IS PLAYED FIRST and it is deliberately a mob the wiki says nothing about, so the
- * item can only be on that card because the app watched it drop. The card is also asserted ABSENT
- * before the hover: it costs no lookup until a row is pointed at, which is the whole reason a feed
- * of clocks can afford one at all.
+ * THE LOOT LINE IS PLAYED IN `stepWatchFromRecentKills`, and the comment there says why it cannot be
+ * played here any more. It is deliberately an item on a mob the wiki page does not list it for, so
+ * it can only be on that card because the app watched it drop. The card is also asserted ABSENT
+ * before the hover — nothing is DRAWN until a row is pointed at, which is the whole reason a list of
+ * clocks can afford one at all.
+ *
+ * ROUND 7 MOVED THE LINE IN TWO DIRECTIONS AT ONCE, and both are asserted here:
+ *   * THE RECENTLY-KILLED ENTRY gets the same card — the owner asked for it where the decision to
+ *     watch is actually made — with the shorter note a mob with no clock can honestly carry.
+ *   * THE FLOATING WINDOW LOSES IT. The card is 300px wide and the window is about 300px wide, so
+ *     it took the window over; the owner ruled it in-app only. Pointing at an overlay row now has
+ *     to produce NOTHING, and the provenance sentence is back on the row's native title where
+ *     round 5 left it.
  */
-async function stepHoverCard(page: Page, overlay: Page, log: FixtureLog): Promise<void> {
-  log.append(`--You have looted 2 ${LOOTED} from ${OWN_MOB}'s corpse.--`)
-
+async function stepHoverCard(page: Page, overlay: Page): Promise<void> {
   const before = await settleStable(() => cardText(page))
-  check('a clock row costs no lookup until it is pointed at', before === '', before)
+  check('a clock row draws no card until it is pointed at', before === '', before)
 
   await page.hover(`[data-testid="respawn-row"][data-respawn-mob="${OWN_MOB}"]`, { timeout: 15_000 })
   const shown = await settle(() => cardText(page), (t) => t.includes(LOOTED), { timeoutMs: 30_000 })
@@ -366,26 +427,38 @@ async function stepHoverCard(page: Page, overlay: Page, log: FixtureLog): Promis
   check('…under what we know about the respawn', shown.includes('A gap is an upper bound'), shown)
   check('…labelled as ours rather than the wiki’s', shown.includes('Your shortest gap'), shown)
 
-  // AND THE SAME CARD OVER THE GAME. Dispatched rather than pointed at, for the reason at the top
-  // of this file: this window is hidden, so it is driven rather than clicked. It exists here only
-  // because the window is UNLOCKED — a locked overlay is click-through, receives no mouse events at
-  // all, and so has no more hover to give than it has clicks (the same gate the confirm and unwatch
-  // controls above are asserted behind).
-  await pointAtOverlayRow(overlay, OWN_MOB, true)
-  const over = await settle(() => cardText(overlay), (t) => t.includes(LOOTED), { timeoutMs: 30_000 })
-  check('the floating window draws the same card off the same door', over.includes(LOOTED), over)
-  check('…with the respawn knowledge leading it there too', over.includes('A gap is an upper bound'), over)
-
-  // POINT AWAY AGAIN. Both cards have to go — they are a hover, not a panel — and the steps that
-  // follow click controls on these rows, which a card left standing over them would swallow.
   await page.mouse.move(0, 0)
-  await pointAtOverlayRow(overlay, OWN_MOB, false)
-  // A transition, not an absence: wait for the reading to REACH empty rather than for it to stop
-  // moving (a card mid-fade is stable-looking and still on screen).
   const tabGone = await settle(() => cardText(page), (t) => t === '', { timeoutMs: 20_000 })
-  check('the card leaves with the pointer, on the tab', tabGone === '', tabGone)
-  const overGone = await settle(() => cardText(overlay), (t) => t === '', { timeoutMs: 20_000 })
-  check('…and over the game', overGone === '', overGone)
+  check('the card leaves with the pointer', tabGone === '', tabGone)
+
+  // ROUND 7: THE SAME CARD ON THE MOB YOU HAVE ONLY KILLED. Same component, same lookup door, same
+  // drops — a shorter note, because a candidate has no rung, no basis and no gap of its own.
+  await page.hover(`[data-testid="respawn-candidate"][data-respawn-mob="${OWN_MOB}"]`, { timeout: 15_000 })
+  const cand = await settle(() => cardText(page), (t) => t.includes(LOOTED), { timeoutMs: 30_000 })
+  check('pointing at a Recently-killed entry opens the same card', cand.includes(LOOTED), cand)
+  check('…saying what it can honestly say about a mob with no clock', cand.includes('Killed'), cand)
+  await page.mouse.move(0, 0)
+  const candGone = await settle(() => cardText(page), (t) => t === '', { timeoutMs: 20_000 })
+  check('…and it leaves with the pointer too', candGone === '', candGone)
+
+  // ROUND 7: AND NOT OVER THE GAME. Dispatched rather than pointed at, for the reason at the top of
+  // this file: this window is hidden, so it is driven rather than clicked. A build that left round
+  // 6's wiring in place fails here, because the row would answer with a card.
+  await pointAtOverlayRow(overlay, OWN_MOB, true)
+  const over = await settleStable(() => cardText(overlay))
+  check('the floating window draws NO card at all - it is in-app only now', over === '', over)
+  // What it draws instead is round 5's shape: the provenance sentence on the row's native title,
+  // the same string the tab's card leads with. Read as a TITLE — if it had merely been deleted with
+  // the card, this fails.
+  const rowTitles = await overlay.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('[data-testid="respawn-overlay-row"]')].map((e) => e.title)
+  )
+  check(
+    '…and says what it knows about the respawn on a plain title instead',
+    rowTitles.some((t) => t.includes('Killed') && t.includes('upper bound')),
+    JSON.stringify(rowTitles)
+  )
+  await pointAtOverlayRow(overlay, OWN_MOB, false)
 }
 
 /**
@@ -585,6 +658,10 @@ async function main(): Promise<void> {
   await stepFreshInstall(page, launched.app)
   await stepLiveKillIsOfferedThenWatched(page, fixture)
   await stepWatchFromRecentKills(page, fixture)
+  // ROUND 7's two tab-only rulings, before any window is opened: they need no second renderer, and
+  // the search step deliberately leaves the box EMPTY so the steps below can still click Watch.
+  await stepCustomOnTheMob(page, OWN_MOB, readWatches)
+  await stepSearchRecentlyKilled(page, OWN_MOB, WIKI_MOB)
   // The zone step needs the window the overlay step opened — it is the second half of the same
   // claim (one piece of zone state, two renderers), so it rides the same window rather than
   // toggling a fresh one.
@@ -592,7 +669,7 @@ async function main(): Promise<void> {
   if (overlay) {
     // Round 6 rides the same window and runs FIRST of the three, for one reason: it asserts the
     // card is absent until a row is hovered, and the steps below leave pointers and rows moving.
-    await stepHoverCard(page, overlay, fixture)
+    await stepHoverCard(page, overlay)
     // Round 3 rides the same window for the same reason the zone step does: the claim is that ONE
     // piece of module state moves two renderers. It runs BEFORE the zone step, which walks the
     // character out and empties both surfaces.

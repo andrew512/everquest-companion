@@ -36,16 +36,25 @@
 // get rid of a row that is wrong about the mob in front of you, which on EQ's duplicated names is
 // the common case. So a row here carries its own Unwatch, in INTERACTIVE mode only, beside the
 // confirm affordance and under the same law: a locked window is click-through and has no clicks to
-// give. It stops that NAME everywhere, including zones this window does not show, and the button's
-// title says so — the row it removes from another zone is off screen here by construction.
+// give. It stops that NAME everywhere, including zones this window does not show — which the
+// button's title used to say, until the owner deleted every Unwatch tooltip in the round-7 addendum
+// on the grounds that the control speaks for itself. The behaviour is unchanged and argued in
+// shared/respawn.ts; nothing on screen recites it.
 //
-// AND ROUND 6 IS A HOVER CARD, WHICH IS THE THIRD THING THE LOCK TAKES AWAY (owner, 2026-08-10).
-// A row now reveals the mob's DROPS — the wiki table plus what you have looted off it yourself —
-// under what we know about its respawn, so "should I keep standing here" is answerable without
-// leaving the game. It is the SAME card the event feed's `/con` rows draw (`lib/hoverCards.tsx`,
-// moved down there so both windows can use it) fed by the SAME `mobs:lookup` door, with round 5's
-// provenance string as its leading block. And it is interactive-only for the plainest of reasons:
-// a locked window is click-through, so it receives no mouse events and cannot be hovered at all.
+// AND ROUND 6'S HOVER CARD IS GONE AGAIN (owner, 2026-08-10, round 7 — and the reversal is the
+// interesting part). Round 6 put the mob's drop card on these rows as well as on the tab's; the
+// owner used it and ruled it out HERE only: it "takes the overlay over too completely". The
+// arithmetic is plain once you have seen it — this window is about 300px wide and its rows are 30px
+// tall, and the card is 300px wide and can run several times a row's height, so pointing anywhere
+// replaces the countdown you opened the window for with a drop table. The card is not worse than it
+// was; it is bigger than its host. So it is IN-APP ONLY, and this window went back to exactly what
+// round 5 left: plain rows whose native `title` carries `respawnProvenance` — the one string the tab
+// also shows, so the two surfaces still cannot drift — and a LOCKED window carrying neither, being
+// click-through and receiving no mouse events at all.
+//
+// (Nothing about round 6's REFACTOR is undone: the card still lives in `lib/hoverCards.tsx`, where
+// the event overlay's `/con` rows and the Timers tab both draw it. One of its two new callers went
+// away, not the move.)
 //
 // MUI-FREE, plain divs and inline styles, like every file in this bundle.
 
@@ -56,11 +65,10 @@ import {
   RESPAWN_UNWATCH_LABEL,
   mergeRespawnDelta,
   orderRespawnRows,
-  respawnUnwatchTitle,
   respawnBasisLabel,
-  respawnCardNote,
   respawnClockLabel,
   respawnInZone,
+  respawnProvenance,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -69,9 +77,6 @@ import {
   type RespawnSnap
 } from '@shared/respawn'
 import { fmtDuration } from '../features/buffs/format'
-import { MobCard } from '../lib/hoverCards'
-import { overlayMobLookup } from './mobLookup'
-import { HoverCardLayer } from './hoverCardLayer'
 import { OverlayHeader } from './OverlayHeader'
 import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
@@ -171,13 +176,18 @@ function SeenLine({
  * is unlocked. Deliberately dim — it is the least urgent thing on a row whose whole job is a
  * countdown — and deliberately a WORD rather than an ×, which on a floating window reads as "close
  * this thing" and would be a lie: nothing closes and nothing derived from the log is lost.
+ *
+ * AND IT SAYS NOTHING ON HOVER (owner ruling, round 7 addendum). It carried the two consequences on
+ * a native `title` until the owner deleted it — the control speaks for itself — so the attribute is
+ * gone rather than shortened. The `aria-label` stays, because it is the only thing distinguishing
+ * one row's button from the next one's to anything not reading pixels.
  */
 function UnwatchButton({ row, onUnwatch }: { row: RespawnRow; onUnwatch: (key: string) => void }): JSX.Element {
   return (
     <button
       type="button"
       data-testid="respawn-overlay-unwatch"
-      title={respawnUnwatchTitle(row.display)}
+      aria-label={`${RESPAWN_UNWATCH_LABEL} ${row.display}`}
       onClick={() => {
         onUnwatch(row.key)
       }}
@@ -195,24 +205,6 @@ function UnwatchButton({ row, onUnwatch }: { row: RespawnRow; onUnwatch: (key: s
     >
       {RESPAWN_UNWATCH_LABEL.toLowerCase()}
     </button>
-  )
-}
-
-/**
- * THE ROW'S HOVER CARD (round 6) — the mob's drops, under what we know about its respawn.
- *
- * Its own component only so `RespawnLine` stays under the repo's factoring ceiling; the ANCHOR
- * state and the listeners live on the row box itself, because the card is placed against the whole
- * row and because a listener on an inner wrapper would miss a hover delivered to the row's own
- * edges. It is drawn only while the window is INTERACTIVE — a locked overlay is click-through,
- * receives no mouse events at all, and can no more be hovered than clicked.
- */
-function RowCard({ row, anchor }: { row: RespawnRow; anchor: HTMLElement | null }): JSX.Element | null {
-  if (!anchor) return null
-  return (
-    <HoverCardLayer anchor={anchor}>
-      <MobCard mob={row.display} note={respawnCardNote(row, fmtDuration)} lookup={overlayMobLookup} />
-    </HoverCardLayer>
   )
 }
 
@@ -291,15 +283,6 @@ function RespawnLine({
   // in the app and another way over the game. That includes the UP a seen row shows instead.
   const label = respawnClockLabel(row, nowMs, fmtDuration)
   const tone = r.seen ? SEEN : r.due ? DUE : ACCENT
-  // ROUND 6: pointing at the row reveals the mob's drops under what we know about its respawn. It
-  // replaced the native title this row used to carry — that string is the card's leading block now.
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
-  const enter = (ev: React.MouseEvent<HTMLDivElement>): void => {
-    setAnchor(ev.currentTarget)
-  }
-  const leave = (): void => {
-    setAnchor(null)
-  }
   return (
     <div
       data-testid="respawn-overlay-row"
@@ -307,12 +290,13 @@ function RespawnLine({
       data-respawn-due={r.due ? 'true' : 'false'}
       data-respawn-seen={r.seen ? 'true' : 'false'}
       data-respawn-basis={row.basis}
-      // Like every other affordance on this window, only while it is unlocked — see `RowCard`.
-      onMouseEnter={interactive ? enter : undefined}
-      onMouseLeave={interactive ? leave : undefined}
+      // ROUND 7: back to round 5's hover — the provenance sentence as a NATIVE title, which is the
+      // whole of what a 300px window can afford to say. Same string the tab's card leads with, so
+      // the two surfaces cannot drift; and a LOCKED window is click-through, so like every other
+      // affordance here it gets nothing, because it receives no mouse events at all.
+      title={interactive ? respawnProvenance(row, fmtDuration) : undefined}
       style={{ padding: '2px 2px 3px', borderLeft: `2px solid ${tone}66`, paddingLeft: 5 }}
     >
-      <RowCard row={row} anchor={anchor} />
       <ClockLine row={row} label={label} tone={tone} interactive={interactive} onUnwatch={onUnwatch} />
       {/* The bar is the estimate running down. Absent entirely when there is no estimate, rather
           than drawn empty — an empty bar reads as "nearly up", which would be a lie. */}
