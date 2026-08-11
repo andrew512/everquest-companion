@@ -525,6 +525,13 @@ export const IPC = {
   // the module's own revision counter is what keeps the push from being deduped, because a watch
   // edit advances no log seq (JOS-87). Returns what was stored.
   respawnSet: 'respawn:set',
+  // renderer -> main: "that sighting WAS the spawn — start this row's clock from it" (owner
+  // ruling, prototype round 3). The app never does this on its own: a sighting proves the mob is
+  // up and says nothing about when it spawned, so re-basing a clock is a judgement and needs a
+  // click. Payload is the ROW ID the surfaces already draw; main re-checks that the row exists and
+  // is currently seen. Returns whether it took effect. Called from the Timers tab AND from an
+  // INTERACTIVE floating window (a locked one is click-through and has no clicks to give).
+  respawnConfirmSighting: 'respawn:confirmSighting',
 
   // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
   //

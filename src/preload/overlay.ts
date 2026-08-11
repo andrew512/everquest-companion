@@ -164,6 +164,21 @@ const overlayApi = {
     return () => ipcRenderer.removeListener(IPC.onToast, listener)
   },
 
+  /**
+   * "That sighting was the spawn — start this row's clock from it" (JOS-194, round 3).
+   *
+   * THE SAME MEMBER, UNDER THE SAME NAME, as the main app's bridge (preload/respawn.ts), for the
+   * reason the fight-selection trio above is duplicated: one fact, one name, two windows. The
+   * respawn overlay is where this feature is actually USED — a timer you have to alt-tab to read
+   * is a timer you do not read — so making the confirmation tab-only would put the affordance in
+   * the window the user is not looking at while the mob is hitting them.
+   *
+   * Interactive mode only, by the caller's construction (the `focusMob` rule): a LOCKED overlay is
+   * click-through by law, so it has no clicks to give. Main re-validates the id regardless.
+   */
+  confirmRespawnSighting: (rowId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.respawnConfirmSighting, rowId),
+
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)
 }
