@@ -11,9 +11,10 @@
  * the floating window receives the same fold in a second renderer.
  *
  * THE PLAYED LINES ARE THE SUBJECT, and they are played rather than borrowed because
- * e2e-leveling.log's own kills are days old — every clock they would start has been due for days
- * and `RESPAWN_LINGER_MS` has correctly swept it away. So a row appearing here can only have come
- * down the live path. Both names and the sentence shape are real: `a frenzied ghoul` and
+ * e2e-leveling.log's own kills are days old and in zones the character has walked out of — nothing
+ * of theirs is watched, and nothing of theirs is in the zone the tab defaults to. So a row appearing
+ * in these steps can only have come down the live path. Both names and the sentence shape are real:
+ * `a frenzied ghoul` and
  * `a wan ghoul knight` both appear in committed fixtures, and the first is one of the 394 mobs the
  * committed wiki floor states a duration for (9.5 min) while the second is one of the thousands it
  * says nothing about — which is what makes them the two ends of the estimate ladder.
@@ -43,6 +44,11 @@
  * gaps it measured); Recently killed is searchable; and the mob card opens on a Recently-killed
  * entry too. The fifth is an ABSENCE and belongs over the game: the floating window draws NO card
  * any more, and says what it knows about the respawn on a plain title instead.
+ *
+ * AND ROUND 8 IS THE ONE STEP THAT DOES NOT PLAY A LINE (respawnRound8Steps.mts). The owner came
+ * back to the app hours after his kills, clicked Watch and got no row — a defect only OLD deaths can
+ * show, so that step watches the fixture's own days-old kills through the all-zones view and asserts
+ * the row is there and reads honestly. It runs first and puts everything back.
  *
  * AND THE ZONE LINE IS PLAYED TOO. The last step walks the character into another zone and asserts
  * the clocks LEAVE both surfaces while the fold keeps them: the tab's all-zones view brings them
@@ -75,11 +81,20 @@ import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 // Round 7's two TAB-ONLY steps live beside this file (the 400-line ceiling, and the
 // `buffRestartSteps.mts` precedent): the seconds box that moved onto the clock row, and the search.
 import { stepCustomOnTheMob, stepSearchRecentlyKilled } from './respawnRound7Steps.mjs'
+// Round 8's one step lives beside them for the same reason, and is the only one whose subject is a
+// death the fixture itself carries rather than one played onto the tail.
+import { stepAncientKillIsWatchable } from './respawnRound8Steps.mjs'
 
 /** A mob the committed wiki floor states a duration for: `9.5 min` → 570 s. */
 const WIKI_MOB = 'a frenzied ghoul'
 /** A mob it says nothing about — the 85 % case in the dungeons this ticket targets. */
 const OWN_MOB = 'a wan ghoul knight'
+/**
+ * A MOB THE FIXTURE ITSELF KILLED, days ago (`e2e-leveling.log`, Aug 5 2026 — its last kills, in a
+ * zone the character has since left). Round 8's subject: the owner's defect needs a death that is
+ * genuinely old, which no line played onto the live tail can be.
+ */
+const ANCIENT_MOB = 'an essence tamer'
 
 /** The main window's overlay bridge — the same one the title-bar menu calls. */
 interface OverlayBridge {
@@ -160,11 +175,13 @@ async function stepFreshInstall(page: Page, app: ElectronApplication): Promise<v
   })
   check('the Timers tab mounts', mounted === 1)
 
-  // A log whose kills are all days old starts NO clocks — the sweep, in the real app.
+  // A whole log folded at launch starts NO clocks, because nothing in it is watched — the opt-in
+  // ruling, in the real app. (Round 8: not because anything was swept. The step after this one
+  // watches one of those days-old kills and asserts the row IS there.)
   const empty = await settle(() => countOf(page, '[data-testid="respawn-empty"]'), (n) => n === 1, {
     timeoutMs: 20_000
   })
-  check('a log with only long-elapsed kills shows no clocks, and says why', empty === 1)
+  check('a fresh install clocks nothing at all, and says why', empty === 1)
 
   const prefs = await readWatches(page)
   check('a fresh install watches nothing at all', prefs.watches.length === 0, JSON.stringify(prefs))
@@ -656,6 +673,10 @@ async function main(): Promise<void> {
   await page.waitForSelector('[data-testid="nav-overview"]', { timeout: 60_000 })
 
   await stepFreshInstall(page, launched.app)
+  // ROUND 8 runs while the fold still holds NOTHING but the fixture's own days-old kills, which are
+  // its subject. It unwatches what it watched and puts the scope back, so the steps below still see
+  // a fresh install.
+  await stepAncientKillIsWatchable(page, ANCIENT_MOB)
   await stepLiveKillIsOfferedThenWatched(page, fixture)
   await stepWatchFromRecentKills(page, fixture)
   // ROUND 7's two tab-only rulings, before any window is opened: they need no second renderer, and
