@@ -132,6 +132,21 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
         kind: 'fixed',
         text: 'A bard\'s Solon\'s Bewitching Bravura is read as the charm it is, so the charm-break alert finally goes off when your charm lets go. Any charm can have an alert of its own now too - pick the spell by name and hear which one broke.',
         fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Alt-tab out of EverQuest and you stay where you went - the overlays no longer drag you back into the game as they hide.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: '"Hide overlays when you\'re not in EverQuest" now counts this app too, so the meters get out of the way while you browse the Companion. Clicking an overlay itself still keeps them up.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A press of the mouse\'s back button goes back a page inside the app - from an item description to the page that opened it. It only listens while the Companion is the focused window, so a back button bound in game stays the game\'s.',
+        fromReport: true
       }
     ]
   },
@@ -218,16 +233,6 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'The full item card is back when hovering a Plane of Sky item - it opens downward and clicks pass straight through it, so the filter dropdowns keep every click.'
-      },
-      {
-        kind: 'fixed',
-        text: 'Alt-tab out of EverQuest and you stay where you went - the overlays no longer drag you back into the game as they hide.',
-        fromReport: true
-      },
-      {
-        kind: 'changed',
-        text: '"Hide overlays when you\'re not in EverQuest" now counts this app too, so the meters get out of the way while you browse the Companion. Clicking an overlay itself still keeps them up.',
-        fromReport: true
       }
     ]
   },
