@@ -46,6 +46,13 @@
  * bit, and the stored bit ("show all") is checked on top because the preference is the second half
  * of the ask. See `stepShowAllSurvivesInteraction`.
  *
+ * JOS-206 ADDS ONE MORE ROW-COUNTING STEP for the same reason JOS-191's are here: typing in the
+ * search box stalled the app, and the largest single cause was that a COLLAPSED quest's panel was
+ * still in the DOM being reconciled. The fix is structural and so is the assertion —
+ * `stepCollapsedRowsDrawNoPanel` counts a panel-only control before, during and after an expand.
+ * The milliseconds are deliberately not in here; they are a machine's number, and this file's job
+ * is the promise that number rests on.
+ *
  * WHY IT NEVER TAKES THE SCREEN: `EQ_E2E=1` (src/main/e2e.ts) shows no window, skips the
  * single-instance lock, and points `userData` at a throwaway temp dir minted per launch.
  *
@@ -89,6 +96,15 @@ const SHOW_MORE = '[data-testid="posky-show-more"]'
 const SHOW_ALL = '[data-testid="posky-show-all"]'
 const SHOW_FEWER = '[data-testid="posky-show-fewer"]'
 const SHOW_ALL_KEY = 'eq.posky.showAll'
+/**
+ * JOS-206: the manual turn-in counter, which lives ONLY in a quest's expanded panel. Counting it
+ * is how "the collapsed panel is not in the DOM at all" is asked of a real app — and it is one of
+ * this app's own testids rather than a MUI class, so it is a claim about the tab rather than a bet
+ * on `.MuiAccordionDetails-root` surviving a library upgrade.
+ */
+const DETAILS = '[data-testid="posky-record-turnin"]'
+/** The control that opens one, by MUI's own name for it — the spec has no handle of its own here. */
+const EXPAND = `${ROW} .MuiAccordionSummary-expandIconWrapper`
 /** The quest-level star, by the label it announces itself with (favorites/QuestFlagButtons). */
 const STAR = '[aria-label="Favorite this quest"]'
 const UNSTAR = '[aria-label="Unfavorite this quest"]'
@@ -235,6 +251,43 @@ async function stepDefault(page: Page): Promise<void> {
 }
 
 /**
+ * JOS-206: A CLOSED QUEST IS NOT DRAWN AT ALL.
+ *
+ * Typing in the search box stalled the app — 82 ms per character at the default page cap, 179 ms
+ * with "show all" — and roughly 60% of what each row cost to re-render was a panel nobody had
+ * opened: MUI's Collapse keeps its children mounted by default, so forty quests' item tables,
+ * shared-item sections and turn-in toolbars (~2,700 DOM nodes) were reconciled on every keystroke
+ * behind `height: 0`. The row now unmounts them.
+ *
+ * WHY IT IS ASSERTED HERE AND LIKE THIS. The measurement is a machine's number and does not belong
+ * in a spec (frozen numbers rot); what belongs is the STRUCTURAL claim the speed rests on, which is
+ * only visible with a real list: no expanded panel exists until a user opens one, opening one
+ * builds it, and closing it takes it away again. The last of the three is what a naive
+ * `unmountOnExit` on a controlled accordion gets wrong, and it is also the promise the next
+ * keystroke depends on.
+ *
+ * It runs on the FIRST row and leaves it closed, so the steps after it still start from a list
+ * with nothing expanded.
+ */
+async function stepCollapsedRowsDrawNoPanel(page: Page): Promise<void> {
+  // The list has to be settled before an absence means anything: a page of rows that is still
+  // arriving is trivially a page with no expanded panel in it.
+  await settle(() => countIn(page, ROW), (n) => n === PAGE, { timeoutMs: 15_000 })
+  const closed = await settleStable(() => countIn(page, DETAILS), { timeoutMs: 8_000 })
+  if (!check('a list of collapsed quests mounts NO expanded panel at all', closed === 0, String(closed))) {
+    return
+  }
+  await page.locator(EXPAND).first().click({ timeout: 15_000 })
+  const opened = await settle(() => countIn(page, DETAILS), (n) => n === 1, { timeoutMs: 8_000 })
+  if (!check('OPENING A QUEST BUILDS ITS PANEL', opened === 1, String(opened))) return
+
+  await page.locator(EXPAND).first().click({ timeout: 15_000 })
+  // The Collapse animates out before it unmounts, so this is a settle rather than a read.
+  const gone = await settle(() => countIn(page, DETAILS), (n) => n === 0, { timeoutMs: 8_000 })
+  check('…AND CLOSING IT TAKES THE PANEL BACK OUT OF THE DOM', gone === 0, String(gone))
+}
+
+/**
  * THE JOS-191 DEFECT, in the reporter's words: on the Plane of Sky tab, after loading the whole
  * list, "any interaction — clicking an item, favoriting — resets the page back to collapsed" and
  * they have to load it all over again.
@@ -267,7 +320,7 @@ async function stepShowAllSurvivesInteraction(page: Page): Promise<void> {
   }
   check(`…and the ask is stored under ${SHOW_ALL_KEY}`, (await storedValue(page, SHOW_ALL_KEY)) === '1')
 
-  await page.locator(`${ROW} .MuiAccordionSummary-expandIconWrapper`).last().click({ timeout: 15_000 })
+  await page.locator(EXPAND).last().click({ timeout: 15_000 })
   const open = await settle(() => expandedNames(page), (n) => n.length === 1, { timeoutMs: 8_000 })
   if (!check('the LAST quest in the list expands', open.length === 1, open.join())) return
 
@@ -513,6 +566,12 @@ async function main(): Promise<void> {
       // JOS-191 first, while nothing is filtered and the list is at its longest.
       await stepShowAllSurvivesInteraction(page)
       await stepShowFewerPutsTheCapBack(page)
+      // JOS-206 straight after it: the cap is back, so the list is one page of CLOSED rows again
+      // (the quest the step above expanded was row 95 and the cap just unmounted it), and the app
+      // has been driven enough by now that the historical fold is not still remounting the tab
+      // underneath — which it can be in the first seconds of a launch against a real log, and
+      // which would close a row this step had just opened.
+      await stepCollapsedRowsDrawNoPanel(page)
       await stepSticksAcrossTabs(page)
       await stepUntickSticksToo(page)
       await stepBoxesAreIndependent(page)
