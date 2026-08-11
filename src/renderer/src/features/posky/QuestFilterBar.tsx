@@ -162,7 +162,11 @@ const QuestSearchField = memo(function QuestSearchField({
       // The handle tests/e2e/sky-turnin.e2e.mts narrows the list with — the same
       // `[data-testid="…"] input` idiom the two facet pickers already carry.
       data-testid="posky-search"
-      label="Search item / quest / reward"
+      // JOS-207 added the boss and the island to what this matches, and the label says so: the
+      // two facts a player standing in the zone is most likely to type were the two the box
+      // silently did not search, and a control that has grown has to be seen to have grown.
+      // questSearch.ts owns the rule; this string is the promise it keeps.
+      label="Search quest / item / reward / boss / island"
       value={text}
       onChange={(e) => {
         setText(e.target.value)
@@ -170,7 +174,10 @@ const QuestSearchField = memo(function QuestSearchField({
         setLastPublished(e.target.value)
         setQuery(e.target.value)
       }}
-      sx={{ minWidth: 240 }}
+      // Wide enough that the (now longer) label fits its own notch rather than being clipped by
+      // it. The bar wraps (`flexWrap` on the Stack below), so buying the room costs a row on a
+      // narrow window and never truncates the promise.
+      sx={{ minWidth: 320 }}
     />
   )
 })

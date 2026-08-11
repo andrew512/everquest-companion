@@ -20,6 +20,10 @@ import { useFavorites } from '../favorites/useFavorites'
 import { useQuestFavorites, useQuestIgnored, type QuestFlagSet } from '../favorites/useQuestFlags'
 import { DEFAULT_SORT, isSortKey, orderQuests, type SortKey } from './questSort'
 import { facetOptions, filterByFacets, type FacetOptions } from './questFacets'
+// What the search box searches (JOS-207): the quest name, the reward, the required item names,
+// and — through the facets' own derivations, so there is one truth per quest and not two — the
+// bosses it stands in front of and the islands it names.
+import { filterByQuery } from './questSearch'
 // The two readings of "done" this tab offers, and the argument for keeping them apart (JOS-131 for
 // has-every-item-now, JOS-145 for has-ever-turned-in). Two lines of code, a page of reasoning, and
 // a node test — so they live in their own pure module.
@@ -272,7 +276,6 @@ interface QuestSelection {
 /** Filter → sort → pin, in that order. Pure, so the useMemo below is the only caller state. */
 function selectQuests(sel: QuestSelection): QuestProgress[] {
   const { isFavorite, isQuestFavorite } = sel
-  const q = sel.query.trim().toLowerCase()
   let list: readonly QuestProgress[] = sel.quests
   if (sel.selectedClasses.length) list = list.filter((x) => sel.selectedClasses.includes(x.className))
   // The island/boss facets, both dimensions in one pass (questFacets.ts owns the semantics).
@@ -286,16 +289,12 @@ function selectQuests(sel: QuestSelection): QuestProgress[] {
   // "Favorites only" = the quest itself is starred OR it needs a starred item.
   if (sel.favoritesOnly)
     list = list.filter((x) => isQuestFavorite(x.key) || questHasFavorite(x, isFavorite))
-  if (q) {
-    list = list.filter(
-      (x) =>
-        x.name.toLowerCase().includes(q) ||
-        // `?? false` only so the expression is a boolean; a quest with no reward matched
-        // nothing here before either.
-        (x.reward?.toLowerCase().includes(q) ?? false) ||
-        x.items.some((i) => i.name.toLowerCase().includes(q))
-    )
-  }
+  // The typed query, in ONE pass over five fields (questSearch.ts owns the rule): the quest name,
+  // the reward, the item names, and since JOS-207 the quest's bosses and islands — the latter two
+  // read through the same `questBosses`/`questIslands` the facet dropdowns are built from, so the
+  // box and the pickers can never disagree about what a quest's bosses and islands are. An empty
+  // query hands the caller's own array straight back.
+  list = filterByQuery(list, sel.query)
   // A quest the user STARRED outright outranks one that merely contains a favorited item — the
   // star is an explicit "I'm working on this", so it pins even once turned in; the item-level pin
   // stays what it always was (only while the quest still needs something, which since JOS-131 is
