@@ -50,7 +50,7 @@ import {
 import Tooltip from '../../lib/Tooltip'
 import { fmtDuration } from '../buffs/format'
 import { RespawnRowBar } from './RespawnRowBar'
-import { useRespawnSnap, useSecondsClock, useSetRespawnPrefs } from './useRespawn'
+import { useConfirmSighting, useRespawnSnap, useSecondsClock, useSetRespawnPrefs } from './useRespawn'
 
 /** Which zone the page is showing. Component state: a view mode, not a preference. */
 type Scope = 'zone' | 'all'
@@ -172,13 +172,15 @@ function ClocksPanel({
   rows,
   nowMs,
   elsewhere,
-  zoneName
+  zoneName,
+  onConfirmSighting
 }: {
   rows: RespawnRow[]
   nowMs: number
   /** How many clocks the scope is hiding. Stated, never silently dropped. */
   elsewhere: number
   zoneName: string
+  onConfirmSighting: (rowId: string) => void
 }): JSX.Element {
   if (rows.length === 0) {
     return (
@@ -192,7 +194,7 @@ function ClocksPanel({
   return (
     <Stack spacing={0.75} data-testid="respawn-rows">
       {rows.map((row) => (
-        <RespawnRowBar key={row.id} row={row} nowMs={nowMs} />
+        <RespawnRowBar key={row.id} row={row} nowMs={nowMs} onConfirmSighting={onConfirmSighting} />
       ))}
     </Stack>
   )
@@ -238,6 +240,7 @@ export default function TimersView(): JSX.Element {
   const snap = useRespawnSnap()
   const nowMs = useSecondsClock()
   const setPrefs = useSetRespawnPrefs()
+  const confirmSighting = useConfirmSighting()
   const prefs = snap.prefs
   const [scope, setScope] = useState<Scope>('zone')
 
@@ -261,7 +264,11 @@ export default function TimersView(): JSX.Element {
         shortest gap between two deaths of that mob in one continuous stay in the zone, which is an
         upper bound on the real respawn and tightens as you camp. The wiki is only the default
         before you have a gap of your own, and a floor underneath the ones you do have. A clock
-        reaching zero means the estimate elapsed, never that the mob is standing there.
+        reaching zero means the estimate elapsed, never that the mob is standing there. If the log
+        NAMES a watched mob in this zone - a swing, a consider, a spell - the row says UP instead,
+        because that is the world answering the question the clock was guessing at. A sighting
+        proves it is up and not when it spawned, so it never moves the clock by itself; the button
+        on a seen row is how you say it should.
       </Typography>
 
       <Box sx={{ mb: 2 }}>
@@ -284,6 +291,7 @@ export default function TimersView(): JSX.Element {
             nowMs={nowMs}
             elsewhere={scope === 'zone' ? snap.rows.length - hereRows.length : 0}
             zoneName={zoneName}
+            onConfirmSighting={confirmSighting}
           />
         </Box>
 

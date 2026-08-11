@@ -49,3 +49,16 @@ export function useSetRespawnPrefs(): (next: RespawnPrefs) => void {
     void window.eq.setRespawn(next)
   }, [])
 }
+
+/**
+ * "That sighting was the spawn — start the clock from it" (owner ruling, round 3). Same shape as
+ * the prefs writer above and for the same reason: main applies it to the running module and forces
+ * a push, so the module delta is the authority and this hook keeps no local copy to render
+ * optimistically from. The resolved boolean is deliberately dropped — a refusal means the row is
+ * gone or is no longer seen, and the delta that says so is already on its way.
+ */
+export function useConfirmSighting(): (rowId: string) => void {
+  return useCallback((rowId: string) => {
+    void window.eq.confirmRespawnSighting(rowId)
+  }, [])
+}
