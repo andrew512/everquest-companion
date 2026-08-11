@@ -89,6 +89,19 @@ export class Tailer extends EventEmitter<TailerEvents> {
     this.watcher = undefined
   }
 
+  /**
+   * How far into the file this tail has read, in bytes (JOS-57 scope addition).
+   *
+   * The one reader is the clean-shutdown mark (`session.ts stopSession` → `setLogTailMark`), which
+   * needs the tail's own answer rather than a fresh `stat()`: what the next launch wants to know is
+   * how many bytes NOBODY HAS READ, and the file may well have grown since the last read. It is a
+   * getter over the same field `readNew` maintains, so it cannot drift from the handoff offset —
+   * and it is 0 before `start()` has resolved, which reads correctly as "this tail read nothing".
+   */
+  readOffset(): number {
+    return this.offset
+  }
+
   /** Coalesce rapid change events into sequential reads. */
   private scheduleRead(): void {
     if (this.reading) {

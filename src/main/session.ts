@@ -53,12 +53,16 @@ import {
   setActiveLogPath,
   setInventory
 } from './store'
+// The clean-shutdown tail mark (JOS-57 scope addition) — a split-out store accessor, for the
+// reason its own header gives: store.ts is at the factoring ceiling.
+import { getLogTailMark, setLogTailMark } from './logTailMark'
 import { markFunnelStep, noteLinesParsed } from './telemetry'
 import { refreshPresenceEffects, suspendCursorStream } from './presenceEffects'
 import { setHistoricalReplayRunning } from './replayGate'
 import { sendToMain, setOverlaysHidden } from './windows'
 import type { CharacterRef, EqConfig } from '../shared/types'
 import type { ScanResult } from './log/scanHistory'
+import { newBytesSince } from './log/coldRead'
 import type { ReplayDutyStats } from '../shared/perf'
 
 let tailer: Tailer | null = null
@@ -385,6 +389,18 @@ export interface TailResult {
    * a 2 MB log. It never leaves the process as a byte count — perf.ts turns it into a bucket.
    */
   logBytes: number
+  /**
+   * How many of those bytes were appended since this app last shut down CLEANLY (JOS-57's scope
+   * addition) — i.e. how much of this fold read pages nothing had touched since.
+   *
+   * UNDEFINED IS THE HONEST ANSWER TWICE OVER: no mark from a previous clean shutdown (a first
+   * run, or a launch after a crash), and a mark that sits PAST the log's current end, which is a
+   * rotated or truncated file rather than a negative amount of growth. Neither is a zero, and the
+   * telemetry reading drops the field rather than inventing one.
+   */
+  newBytes?: number
+  /** How long the first megabyte of that read took to arrive (`ScanResult.firstMbMs`). */
+  firstMbMs?: number
 }
 
 /**
@@ -473,6 +489,11 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // a switch re-fired the boss/quest alerts and re-showed the announcement cards. `endReplay()`
   // DISCARDS what the fold accumulated; the renderer gets all of it from `snapshot()` the moment
   // the `onCharacter` send below makes it re-hydrate.
+  // WHERE WE HAD READ TO LAST TIME, read BEFORE the fold and never after (JOS-57 scope addition).
+  // The mark is only ever written on the way out, so nothing can move it under us — but reading it
+  // here keeps the "before" of the measurement literally before the thing being measured, and
+  // `activeCharId()` already names the character this call just switched to.
+  const mark = getLogTailMark(activeCharId())
   registry.beginReplay()
   const slicer = createSlicer()
   let scan: ScanResult
@@ -522,10 +543,17 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // from the floating window whose entire job is to show it.
   registry.flushNow()
   sendWorldRebuilt(character)
+  // Against the scan's FROZEN SIZE, not its `endOffset`: the mark is the tailer's offset, which is
+  // the file's size as of its last read, and subtracting two observations of the same quantity is
+  // what keeps a log that merely ended mid-line from being reported as a rotation (scanHistory.ts).
+  const newBytes = newBytesSince(mark, scan.size)
   return {
     eventsReplayed: scan.seq,
     replay: { slices: slicer.slices, workMs: slicer.workMs, restMs: slicer.restMs },
-    logBytes: scan.endOffset
+    logBytes: scan.endOffset,
+    // The cold-read delta, whose "no answer" cases are the point of it (log/coldRead.ts).
+    ...(newBytes === undefined ? {} : { newBytes }),
+    ...(scan.firstMbMs === undefined ? {} : { firstMbMs: scan.firstMbMs })
   }
 }
 
@@ -596,8 +624,34 @@ export async function startTailing(): Promise<TailResult | null> {
   return tailCharacter(ref)
 }
 
-/** Release the session's OS resources (tail, watcher, heartbeat, rescan) on the way out. */
+/**
+ * LEAVE THE MARK THE NEXT LAUNCH MEASURES ITSELF AGAINST (JOS-57 scope addition).
+ *
+ * It records the TAILER'S OWN OFFSET rather than a fresh `stat()`, because the question the next
+ * launch asks is how far WE had read, not how big the file has since become — and that offset is
+ * the file's size as of the tail's last read, which is the same quantity the next scan's frozen EOF
+ * is (see log/coldRead.ts, which subtracts them).
+ *
+ * CALLED FROM BOTH ORDERLY EXITS, and the belt-and-braces is not decoration: MEASURED (and stated
+ * in tests/e2e/telemetry.e2e.mts `closeWindows`), Electron does NOT emit `window-all-closed` when
+ * something calls `app.quit()` — an auto-updater's `quitAndInstall`, an OS logoff. Hanging the
+ * mark off that one event alone would silently skip the launch after every update, which is
+ * exactly the launch this measurement is most interested in. Writing it twice is harmless: it is
+ * one store key and the later write is the better answer.
+ *
+ * A launch that is KILLED still writes nothing, and that is intended rather than a gap — the next
+ * launch then compares itself to the last exit this app can vouch for, or to nothing at all.
+ */
+export function markTailPosition(): void {
+  if (tailer && character) setLogTailMark(activeCharId(), tailer.readOffset())
+}
+
+/**
+ * Release the session's OS resources (tail, watcher, heartbeat, rescan) on the way out — and leave
+ * the mark above, BEFORE the tail is stopped in program order.
+ */
 export function stopSession(): void {
+  markTailPosition()
   void tailer?.stop()
   inventoryWatch?.close()
   stopWatchingForFirstLog()

@@ -17,7 +17,37 @@ export interface ScanResult {
    * sequence for the character.
    */
   seq: number
+  /**
+   * The FROZEN EOF this scan bounded itself by — the file's size at the moment it started, before
+   * a byte was read (JOS-57 scope addition).
+   *
+   * It is not `endOffset`, and the difference is at most one incomplete trailing line — which is
+   * exactly why the cold-read delta uses THIS one. The persisted mark is the tailer's offset, and
+   * the tailer's offset is the file's SIZE as of its last read; subtracting `endOffset` from it
+   * would go a few bytes negative every time the log happened to end mid-line, and a "the log
+   * rotated" verdict would be handed out for a partial line. Two observations of the same
+   * quantity, taken the same way, subtract cleanly.
+   */
+  size: number
+  /**
+   * HOW LONG THE FIRST MEGABYTE TOOK TO ARRIVE, ms (JOS-57 scope addition) — the cold-disk hint.
+   *
+   * WHAT MAKES IT A DISK MEASUREMENT and not a fold measurement: the read stream's high-water mark
+   * IS a megabyte, so the first chunk to satisfy this is the first read, and it is stamped BEFORE
+   * that chunk is folded. Nothing this app does with the bytes is inside the number; what is
+   * inside it is the time the operating system — and anything sitting between it and the disk, an
+   * on-access virus scanner being the hypothesis this exists to test — took to hand them over.
+   *
+   * Absent when the file is smaller than a megabyte: a partial read is a different measurement
+   * wearing this one's name, and there is no cold-read question to ask of a log that small.
+   */
+  firstMbMs?: number
 }
+
+/** The read stream's high-water mark, and the size of the "first MB" measured above. One constant
+ *  so the two can never be given different numbers — the measurement's whole claim is that it
+ *  lands on a chunk boundary. */
+const READ_CHUNK_BYTES = 1 << 20
 
 /** Everything about a scan that is not "which file, which bus, from which seq". */
 export interface ScanOptions {
@@ -131,9 +161,9 @@ export async function scanLog(
   try {
     size = (await stat(logPath)).size
   } catch {
-    return { endOffset: 0, seq: startSeq }
+    return { endOffset: 0, seq: startSeq, size: 0 }
   }
-  if (size === 0) return { endOffset: 0, seq: startSeq }
+  if (size === 0) return { endOffset: 0, seq: startSeq, size: 0 }
 
   let seq = startSeq
 
@@ -148,11 +178,27 @@ export async function scanLog(
   const st: SplitState = { endOffset: 0, pendingBytes: 0, leftover: '' }
   const slicer = opts.slicer ?? createSlicer()
 
-  const stream = createReadStream(logPath, { start: 0, end: size - 1, highWaterMark: 1 << 20 })
+  const stream = createReadStream(logPath, {
+    start: 0,
+    end: size - 1,
+    highWaterMark: READ_CHUNK_BYTES
+  })
+
+  // The cold-disk clock (see ScanResult.firstMbMs). Started at the last statement before the first
+  // byte is asked for, and read at the top of the loop body — i.e. between the read completing and
+  // anything being parsed — so the fold is outside it by construction rather than by estimate.
+  const readStartedAt = performance.now()
+  let bytesRead = 0
+  let firstMbMs: number | undefined
 
   try {
     for await (const chunk of stream) {
-      await consumeChunk(chunk as Buffer, st, handle, slicer)
+      const buf = chunk as Buffer
+      bytesRead += buf.length
+      if (firstMbMs === undefined && bytesRead >= READ_CHUNK_BYTES) {
+        firstMbMs = performance.now() - readStartedAt
+      }
+      await consumeChunk(buf, st, handle, slicer)
     }
   } catch {
     // Partial results are still valid up to endOffset; fall through and return.
@@ -161,5 +207,5 @@ export async function scanLog(
   // A trailing partial line (no final newline) is intentionally NOT counted in
   // endOffset — the tailer will re-read those bytes and complete the line when
   // the game appends the rest, avoiding a dropped/duplicated final entry.
-  return { endOffset: st.endOffset, seq }
+  return { endOffset: st.endOffset, seq, size, ...(firstMbMs === undefined ? {} : { firstMbMs }) }
 }

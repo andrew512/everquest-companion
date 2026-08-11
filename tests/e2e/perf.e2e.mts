@@ -18,7 +18,7 @@
  *
  * Run: `node --import tsx tests/e2e/perf.e2e.mts` (it is also in tests/e2e/run-all.mts).
  */
-import type { Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -34,8 +34,9 @@ import {
   settleStable
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
-import { launchOnFixture } from './logFixture.mjs'
-import { PERF_LAG_PROBE_INTERVAL_MS } from '../../src/shared/perf'
+import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
+// The file half of this spec lives beside it (see that module's header).
+import { stepProfileFile } from './perfProfileSteps.mjs'
 
 const CHIP = '[data-testid="perf-chip"]'
 const POPOVER = '[data-testid="perf-popover"]'
@@ -50,49 +51,6 @@ const REPLAY_WAIT_MS = 300_000
  *  errors.log and told apart from the run's own noise. */
 const CONSOLE_MARK = 'JOS99-PROBE'
 
-/**
- * The strictly-sequential head of the boot, asserted as a LIST: a profile whose phases arrived
- * in a different order would still be "monotonic" by timestamp alone, so the order is checked
- * as well as the timestamps.
- */
-const SEQUENTIAL_PHASES = [
-  'storeLoaded',
-  'dataLoaded',
-  'appReady',
-  'protocols',
-  'windowCreated',
-  'tailAttached'
-]
-/** …and the tail, which RACES: the window paints while the historical scan is still folding, so
- *  either of these can land first depending on how much log there is. */
-const CONCURRENT_PHASES = ['replayDone', 'rendererHydrated']
-
-interface Phase {
-  phase: string
-  atMs: number
-  durationMs: number
-}
-interface BlockStats {
-  samples: number
-  maxBlockMs: number
-  blocksOver50Ms: number
-}
-/** What the duty-cycled replay spent, as the profile states it (JOS-50). */
-interface ReplayStats {
-  slices: number
-  workMs: number
-  restMs: number
-}
-interface Profile {
-  startedAt: number
-  version: string
-  phases: Phase[]
-  totalMs: number
-  eventsReplayed?: number
-  block?: BlockStats
-  replay?: ReplayStats
-  complete: boolean
-}
 
 function textOf(page: Page, selector: string): Promise<string> {
   return page.evaluate(
@@ -298,140 +256,46 @@ async function stepReloadIsNotAnError(page: Page, userData: string): Promise<voi
   )
 }
 
-/** THE FILE. Written on every launch, HUD or no HUD — this is the "the launch you wish you had
- *  profiled is the one that already happened" promise, asserted against real bytes. */
-function stepProfileFile(userData: string): void {
-  const path = join(userData, 'perf-startup.json')
-  let profile: Profile | null = null
+/**
+ * QUIT THE WAY A USER QUITS, which is not the way Playwright does — the argument (and the
+ * measurement behind it) is `tests/e2e/telemetry.e2e.mts closeWindows`, restated in one sentence:
+ * `ElectronApplication.close()` calls `app.quit()`, Electron does not emit `window-all-closed` on
+ * that path, and every teardown this app hangs off that event therefore never runs.
+ *
+ * This spec needs the real path because the SECOND launch below measures itself against a mark the
+ * first one writes on its way out (JOS-57 scope addition).
+ */
+async function closeWindows(app: ElectronApplication): Promise<void> {
+  const exited = app.waitForEvent('close').catch(() => undefined)
+  await app
+    .evaluate(({ BrowserWindow }) => {
+      for (const w of BrowserWindow.getAllWindows()) w.close()
+    })
+    .catch(() => undefined)
+  await exited
+}
+
+/**
+ * THE SECOND LAUNCH, on the SAME userData and the SAME staged log — the only way the cold-read
+ * delta means anything, because the whole claim is that one process left something behind that the
+ * next one could read. It does no UI work: it boots, folds, and quits by the window path again.
+ */
+async function stepSecondLaunch(log: FixtureLog, userData: string, errors: string[]): Promise<void> {
+  console.log('launch 2: same userData, same log — does the cold-read delta appear…')
+  const { app, close } = await launchOnFixture(log, { userData })
   try {
-    profile = JSON.parse(readFileSync(path, 'utf8')) as Profile
-  } catch (err) {
-    check('every launch writes <userData>/perf-startup.json', false, String(err))
-    return
+    const page = await mainWindow(app)
+    page.on('console', (m) => {
+      if (m.type() === 'error' && !m.text().includes(CONSOLE_MARK)) errors.push(m.text())
+    })
+    // The profile is written when the last phase lands, and `rendererHydrated` is that phase on a
+    // fixture this small — so wait for the window to be usable before quitting, or the file this
+    // asserts against would be the incomplete flush instead.
+    await page.waitForSelector('[data-testid="nav-preferences"]', { timeout: 60_000 })
+    await closeWindows(app)
+  } finally {
+    await close()
   }
-  if (!check('every launch writes <userData>/perf-startup.json', profile.phases.length > 0)) return
-
-  const names = profile.phases.map((p) => p.phase)
-  check(
-    'it records the sequential half of the boot, in order',
-    JSON.stringify(names.slice(0, SEQUENTIAL_PHASES.length)) === JSON.stringify(SEQUENTIAL_PHASES),
-    names.join(' → ')
-  )
-  check(
-    '…and both of the phases that race, in whichever order this launch produced',
-    [...names.slice(SEQUENTIAL_PHASES.length)].sort().join(',') === [...CONCURRENT_PHASES].sort().join(','),
-    names.slice(SEQUENTIAL_PHASES.length).join(' → ')
-  )
-  const marks = profile.phases.map((p) => p.atMs)
-  check(
-    'the phase marks are MONOTONIC — no phase lands before the one it follows',
-    marks.every((at, i) => i === 0 || at >= (marks[i - 1] ?? 0)),
-    marks.map((m) => Math.round(m)).join(', ')
-  )
-  const summed = profile.phases.reduce((n, p) => n + p.durationMs, 0)
-  check(
-    'the durations account for the whole launch, exactly (nothing is NaN or negative)',
-    profile.phases.every((p) => Number.isFinite(p.durationMs) && p.durationMs >= 0) &&
-      Math.abs(summed - profile.totalMs) < 1,
-    `Σ ${String(Math.round(summed))}ms vs total ${String(Math.round(profile.totalMs))}ms`
-  )
-  check('…and states the launch it describes', profile.complete && profile.startedAt > 0, JSON.stringify({ complete: profile.complete, startedAt: profile.startedAt }))
-  check(
-    'the replay states how many events it folded, beside how long it took',
-    typeof profile.eventsReplayed === 'number' && profile.eventsReplayed >= 0,
-    `${String(profile.eventsReplayed)} events`
-  )
-  stepBlockProbe(profile.block, profile.phases.find((p) => p.phase === 'replayDone')?.durationMs ?? 0)
-  stepReplayDuty(profile.replay, replayWindowMs(profile))
-}
-
-/**
- * How long the replay ACTUALLY ran: `replayDone` minus `tailAttached`, both absolute marks.
- *
- * NOT `replayDone.durationMs`, which is the gap to whatever mark PRECEDED it — and `replayDone`
- * races `rendererHydrated` (see CONCURRENT_PHASES). When the renderer wins that race the replay's
- * duration column is the sliver between the two, not the replay. MEASURED the hard way: the first
- * version of the check below used `durationMs`, passed solo, and failed under a full parallel run
- * as `93ms folding + 67ms resting ≤ 16ms replay` — the load reordered the race, and the assertion
- * had been reading a number that only looks like the one it wanted.
- */
-function replayWindowMs(profile: Profile): number {
-  const at = (phase: string): number => profile.phases.find((p) => p.phase === phase)?.atMs ?? 0
-  return Math.max(0, at('replayDone') - at('tailAttached'))
-}
-
-/**
- * THE DUTY LEDGER (JOS-50), asserted the same way and for the same reason as the block probe: as
- * IDENTITIES about a file a real launch wrote, never as this machine's numbers.
- *
- * What a spec can honestly claim here is that the launch STATED its duty and that the statement is
- * internally consistent — work and rest are non-negative, they fit inside the phase they describe,
- * and a fold that yielded at all did not somehow rest a negative amount. Whether 60% was actually
- * held on a 100 MB log is the bench's budget, on one machine, against a known input.
- */
-function stepReplayDuty(replay: ReplayStats | undefined, windowMs: number): void {
-  const ok = check(
-    'the launch states how the replay split its time between folding and resting',
-    replay !== undefined,
-    replay ? `${String(replay.slices)} slices` : 'absent'
-  )
-  if (!ok || !replay) return
-  const sane =
-    Number.isFinite(replay.workMs) &&
-    Number.isFinite(replay.restMs) &&
-    replay.workMs >= 0 &&
-    replay.restMs >= 0 &&
-    Number.isInteger(replay.slices) &&
-    replay.slices >= 0
-  check(
-    '…and the two of them fit inside the window they describe (nothing invented, nothing negative)',
-    // +1 ms of slack: the marks are rounded to a tenth and the ledger is timed inside them.
-    sane && replay.workMs + replay.restMs <= windowMs + 1,
-    `${String(Math.round(replay.workMs))}ms folding + ${String(Math.round(replay.restMs))}ms resting ≤ ${String(Math.round(windowMs))}ms tailAttached→replayDone`
-  )
-  check(
-    'a replay that never yielded never rested either — a rest without a slice would be fiction',
-    replay.slices > 0 || replay.restMs === 0,
-    `${String(replay.slices)} slices · ${String(Math.round(replay.restMs))}ms rest`
-  )
-}
-
-/**
- * THE ALWAYS-ON BLOCK PROBE (docs/plans/chunked-replay.md §2), asserted additively beside the
- * phases it shares a file with. Unlike the HUD's probe this one is not opt-in and has no switch to
- * forget, so its absence from a real boot IS the regression. Identities only: how blocked this
- * particular machine got is not something a spec can assert — the bench (`npm run bench:replay`)
- * owns that budget, against a known log, on one machine.
- */
-function stepBlockProbe(block: BlockStats | undefined, replayMs: number): void {
-  // THE PROBE'S WINDOW IS THE REPLAY, and it ticks on a 500 ms interval. A per-spec fixture folds
-  // in single-digit milliseconds (wave E2), so a launch against one legitimately produces ZERO
-  // samples — and a profile that then stated `maxBlockMs: 0` would be inventing a measurement
-  // nobody took (world-model law 1). So the presence of the stats is asserted only when the
-  // replay actually outlived a tick; below that, their absence is the correct answer and the run
-  // says so. The BUDGET on those numbers was never this spec's anyway: `npm run bench:replay`
-  // owns it, against a ~100 MB log, on one machine.
-  if (replayMs < PERF_LAG_PROBE_INTERVAL_MS) {
-    check(
-      'a replay shorter than one probe tick states NO block figures rather than inventing zeroes',
-      block === undefined || block.samples === 0,
-      `replay ${String(Math.round(replayMs))}ms < ${String(PERF_LAG_PROBE_INTERVAL_MS)}ms tick · ${block ? `${String(block.samples)} samples` : 'absent'}`
-    )
-    return
-  }
-  const ok = check(
-    'the launch also states how blocked the main loop got — the always-on startup probe',
-    block !== undefined && block.samples > 0,
-    block ? `${String(block.samples)} probe ticks` : 'absent'
-  )
-  if (!ok || !block) return
-  const sane =
-    Number.isFinite(block.maxBlockMs) && block.maxBlockMs >= 0 && Number.isInteger(block.blocksOver50Ms)
-  check(
-    '…as a worst single stall and a count of the ones past the HUD’s own warn threshold',
-    sane && block.blocksOver50Ms >= 0 && block.blocksOver50Ms <= block.samples,
-    `max ${String(block.maxBlockMs)}ms · ${String(block.blocksOver50Ms)}/${String(block.samples)} over 50ms`
-  )
 }
 
 async function main(): Promise<void> {
@@ -441,9 +305,13 @@ async function main(): Promise<void> {
   // every spec that has no such reading to do. (Brand-new either way: "absent by default" is only
   // meaningful on a genuinely fresh install.)
   const userData = makeUserData()
+  // …and a staged log this spec owns too, so BOTH launches tail the same bytes. A fresh staging per
+  // launch would still work by content, but the second launch's delta would then be a statement
+  // about two copies rather than about one file that outlived a process.
+  const log = stageFixture('e2e-perf.log')
 
   console.log('launch: hidden Electron (EQ_E2E=1), fresh userData — Performance spec…')
-  const { app, close } = await launchOnFixture('e2e-perf.log', { userData })
+  const { app, close } = await launchOnFixture(log, { userData })
   let page: Page | null = null
   const consoleErrors: string[] = []
   try {
@@ -466,13 +334,18 @@ async function main(): Promise<void> {
     // running, and a reload would put those steps' subjects back through a fresh mount.
     await stepReloadIsNotAnError(page, userData)
     if (failures.length) await dumpArtifacts(page, 'perf-FAIL')
+    // Quit by closing the windows, so the teardown that leaves the tail mark actually runs.
+    await closeWindows(app)
   } finally {
     await close()
   }
 
   // Read the file AFTER the app has quit: the profile is written when the last phase lands, and
   // a quit-time flush covers a launch that never got there.
-  stepProfileFile(userData)
+  stepProfileFile(userData, true)
+  await stepSecondLaunch(log, userData, consoleErrors)
+  stepProfileFile(userData, false)
+  await log.dispose()
   await removeUserData(userData)
 
   // A missing IPC handler shows up here first (`invoke` rejects into an unhandled rejection).
