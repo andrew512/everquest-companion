@@ -113,7 +113,14 @@ export function buildFoldWorld(logPath: string, respawnPrefs?: RespawnPrefs): Fo
   const registry = new ModuleRegistry({ emitDelta: () => undefined })
   for (const mod of modules.ordered) registry.register(mod)
   registry.reset()
-  modules.character.setCharacter({ ...HARNESS_CHARACTER, logPath })
+  // The ref's logPath is CANONICALIZED to the fixture's basename: the real absolute path differs
+  // per checkout (a worktree vs the main clone recorded different golden fingerprints for
+  // `character` on every fixture — caught 2026-08-11, the phase-2 merge), and the path is an
+  // environment fact the fold never computed from bytes. The basename keeps fixtures distinct.
+  modules.character.setCharacter({
+    ...HARNESS_CHARACTER,
+    logPath: `fixtures://${logPath.split(/[\\/]/).pop()}`
+  })
   installCharacterName(HARNESS_CHARACTER.name)
   registry.attach(bus)
 

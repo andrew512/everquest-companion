@@ -48,5 +48,11 @@
  *       field that describes neither of them. What the fold COMPUTES from a given event stream
  *       therefore changed, so the number moves — the shape did not, which is exactly the case this
  *       axis exists for.
+ *   3 — JOS-208 integration. Not a fold change: the HARNESS canonicalized the character ref's
+ *       `logPath` to `fixtures://<basename>` because the absolute path is an environment fact that
+ *       differed per checkout — the phase-2 goldens were recorded in a worktree and went red on
+ *       the main clone for `character` on every fixture. The fingerprints move once to their
+ *       first checkout-independent values; the tripwire cannot tell a harness-input fix from a
+ *       fold change, and the rule is the rule: the number moves with the goldens, in one commit.
  */
-export const FOLD_SEMANTICS = 2
+export const FOLD_SEMANTICS = 3
