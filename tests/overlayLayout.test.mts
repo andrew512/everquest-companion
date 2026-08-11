@@ -66,14 +66,30 @@ test('…and the size stays uniform ON EVERY DISPLAY, even where it had to shrin
 })
 
 test('a display big enough for the whole stack is untouched at the shipped size', () => {
-  // 1080p and up seat all EIGHT reserved slots at 380x320 (four columns of three), so nobody with
+  // 1080p and up seat all NINE reserved slots at 380x320 (four columns of three), so nobody with
   // an ordinary monitor sees a smaller first-open window because a kind was added. This is the
-  // claim JOS-195 had to re-earn: the eighth kind is the first to arrive after the shrink ladder
-  // existed, and the promise in shared/types.ts was that the machinery would absorb it.
-  for (const name of ['1080p', '1440p', 'offset display']) {
+  // claim each new kind has to re-earn: JOS-195's eighth was the first to arrive after the shrink
+  // ladder existed, and shared/types.ts promised the machinery would absorb it.
+  for (const name of ['1080p', '1440p']) {
     const s = overlayDefaultSize('fight', WORK_AREAS[name])
     assert.deepEqual(s, { width: 380, height: 320 }, `${name} should not have needed to shrink`)
   }
+})
+
+test('the 1920x960 offset display took the NINTH kind one rung down, and that is the answer', () => {
+  // MEASURED, JOS-194, and the reason this case moved out of the test above rather than being
+  // argued away. A 1920x960 work area is 80 px shorter than 1080p-with-a-taskbar, which is exactly
+  // enough to cost it a THIRD ROW at 320 px: 4 columns x 2 rows = 8 full-size slots, and there are
+  // now nine kinds. The ladder's next rung (0.85) gives 323x272, which seats 5 x 3 = 15.
+  //
+  // That is the machinery doing its job, not a regression. The alternative — the thing this whole
+  // file exists to forbid — is two windows opening on the same spot. The slot is a little smaller
+  // on one class of display; nobody's window lands under somebody else's.
+  const s = overlayDefaultSize('fight', WORK_AREAS['offset display'])
+  assert.deepEqual(s, { width: 323, height: 272 })
+  // …and it is still a readable window rather than a postage stamp, on the same bar the small
+  // laptop is held to.
+  assert.ok(s.width >= 260 && s.height >= 220)
 })
 
 test('a small laptop SHRINKS the stack rather than stacking two windows on one spot', () => {

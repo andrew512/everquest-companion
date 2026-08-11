@@ -21,10 +21,12 @@ labelled Exaltations since JOS-42; the `planner` view id, route, store keys
 and `planner-*` testids are unchanged, it was a label not a refactor —
 multi-set socket planning over a class-filtered effect browser with layered era filtering —
 docs/plans/exaltation-planner.md; era = zone provenance ∪ page dropsfrom,
-page-top era banner resolves unknowns, shared/planner/*), and celebration
-toasts (docs/plans/celebration-toasts.md). Committed knowledge DBs: mobs
+page-top era banner resolves unknowns, shared/planner/*), celebration
+toasts (docs/plans/celebration-toasts.md), and a TIMERS tab + overlay
+(JOS-194: respawn clocks started by death messages, numbered from your own
+kills — law 13 below). Committed knowledge DBs: mobs
 (7.9k), items (11.2k incl. dropsfrom + eraTag), spells (1.9k), classes,
-zones (era-annotated). First stable release v0.2.0 (2026-08-03); latest
+zones (era-annotated), wiki respawn floors (507 rows, 394 readable). First stable release v0.2.0 (2026-08-03); latest
 release v0.8.0 (2026-08-07: maps N-S fix, Sky keyring counting, planner
 21-cell board + slot-fact layer, alert sets round two, owner-tools gating,
 engine fold ~2x — after v0.7.0 the same day: pet-question removal +
@@ -839,6 +841,31 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    `catalogZonesFor`); closest-match would conflate genuinely distinct
    zones, and an anti-fuzzy tripwire pins two near-name rosters disjoint.
    A new gap gets a VERIFIED row, never a matcher.
+13. **A DEATH→DEATH GAP IS AN UPPER BOUND, NOT A MEASUREMENT** (JOS-194,
+   `shared/respawn.ts`). Respawn clocks start on the death MESSAGE and are
+   numbered from your own kills, because the owner ruled the wiki a bad primary
+   source and the sweep proved him right: of 7,872 catalog pages **522** state
+   a `|respawn_time` at all, **394** state something readable, and 113 answer
+   "Triggered" / "?" / "Night" / "Ultra Rare" — and across the four dungeons the
+   reports named (Befallen, Najena, Upper/Lower Guk) it is **28 of 184**. So the
+   ladder is: your typed number, then your kills, then the wiki as a DEFAULT
+   before you have kills and a FLOOR under them once you do. You cannot kill a
+   mob before it spawns, so every observed gap is `respawn + your delay`: the
+   tightest thing your kills can say is the SMALLEST gap, which converges
+   downward where an average would sit permanently above. It prints as `≤` with
+   the sample count, and a clock at zero says **due**, never "spawned" — the app
+   has never seen a spawn (law 1, law 6). Two rules keep the bound honest and
+   both are EVIDENCE: a gap counts only when both deaths fall inside ONE stated
+   stay in the zone (a zone line ends the stay even when it names the same zone
+   — you left and came back), and two deaths of one name inside 60 s are two
+   mobs in one pull, because the shortest respawn the whole catalog states is
+   **78 s** (p01 165 s, median 22 min). The floor's one job is that same failure:
+   51 kills of `a teir\`dal ranger` give a 61 s minimum, and the wiki's 267 s
+   lifts it while the label still says "your kills, floored by the wiki".
+   The committed floor keeps each page's VERBATIM text beside the parsed
+   seconds, so a grammar fix re-derives the file with NO network
+   (`npm run scrape:respawns -- --reparse`) and the UI can quote what the wiki
+   said instead of inventing a number.
 
 ## Log-format quick reference (all validated against the real log)
 

@@ -31,6 +31,7 @@ import type { ModuleDelta } from './modules/types'
 import { lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
 import { getAlerts, getBuffTrustPrefs } from './store'
+import { getRespawnPrefs } from './storeRespawn'
 import { getOverlayWindow, sendToMain } from './windows'
 import type { AlertsDelta, CharacterRef, OverlayKind } from '../shared/types'
 
@@ -67,7 +68,7 @@ export const sessionDetector = new SessionDetector()
 // the mote rates — and needs the rebuild signal below at least as much as the timer windows do:
 // its whole subject is a fold over months of log, and a window open at launch hydrates part-way
 // through one.
-const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs', 'debuffs', 'xp']
+const MODULE_READING_OVERLAYS: OverlayKind[] = ['events', 'buffs', 'debuffs', 'xp', 'respawn']
 
 /**
  * Push to every overlay window that reads modules — the fan-out `emitDelta` performs, as a
@@ -149,6 +150,8 @@ const modules = createModules({
   // WHOSE casts may anchor a landing besides your own (JOS-140). Empty unless the user named
   // somebody in Preferences; ipc/buffTrust.ts keeps it in sync while the app runs.
   buffTrust: getBuffTrustPrefs(),
+  // Which mobs get a respawn clock (JOS-194). ipc/respawn.ts keeps it in sync while the app runs.
+  respawnPrefs: getRespawnPrefs(),
   // The committed baseline first, then what this user's own log has taught since install.
   overlays: [baselineOverlay(), loadUserOverlay()],
   lookupItem,
@@ -165,6 +168,7 @@ export const rosterModule = modules.roster
 export const lootModule = modules.loot
 export const turnInsModule = modules.turnIns
 export const killsModule = modules.kills
+export const respawnModule = modules.respawn
 export const progressionModule = modules.progression
 export const levelingModule = modules.leveling
 export const characterModule = modules.character

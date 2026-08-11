@@ -512,6 +512,20 @@ export const IPC = {
   // Returns what was stored.
   buffTrustSet: 'buffTrust:set',
 
+  // ---- respawn clocks (JOS-194 — shared/respawn.ts) -------------------------------------
+  //
+  // WHICH MOBS GET A CLOCK. The clocks themselves are log-derived and ride the generic module
+  // transport (`respawn`); this pair carries the ONE thing the log cannot state — the mobs you
+  // chose to watch and the respawn you typed for them.
+  //
+  // main -> renderer: the persisted watch list. Returns RespawnPrefs.
+  respawnGet: 'respawn:get',
+  // renderer -> main: replace it. VALIDATED AT THE HANDLER through the same normalizer the store
+  // reader uses, applied to the running module, and PUSHED immediately (`registry.flushNow`) —
+  // the module's own revision counter is what keeps the push from being deduped, because a watch
+  // edit advances no log seq (JOS-87). Returns what was stored.
+  respawnSet: 'respawn:set',
+
   // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
   //
   // The main window's zoom factor: the Preferences control a player asked for after reporting

@@ -87,6 +87,7 @@ import { graphicsBridge } from './graphics'
 // The buff externals allowlist (JOS-140), spread in below for the same file-size reason. Shape
 // and normalizer live together in shared/buffTrust.ts.
 import { buffTrustBridge } from './buffTrust'
+import { respawnBridge } from './respawn'
 // The main window's text size (JOS-123), split out for the same file-mass reason. Its shapes are
 // a single number; the ladder and the normalizer live in shared/uiScale.ts.
 import { uiScaleBridge } from './uiScale'
@@ -277,6 +278,7 @@ const api = {
   ...graphicsBridge,
   // …and the buff externals allowlist (./buffTrust.ts), likewise.
   ...buffTrustBridge,
+  ...respawnBridge,
   // …and the main window's text size (./uiScale.ts), likewise.
   ...uiScaleBridge,
   // …and `restartApp` (./dev.ts), whose handler refuses in a packaged build.

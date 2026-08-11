@@ -86,6 +86,40 @@ function CaptionButton({
 }
 
 /**
+ * THE MENU, as a table: `[kind, primary, secondary]` in display order.
+ *
+ * It was nine hand-written `<MenuItem>`s differing only in those three strings, which is how it
+ * crossed the 100-line function cap when JOS-194 added the ninth. The rows below carry the history
+ * each one used to carry inline:
+ *
+ *   fight / overall            Task #52, two kinds in Task #54 — the damage meters.
+ *   heal-fight / heal-overall  Task #59 — siblings of the damage pair, same per-kind machinery
+ *                              (persisted config, position, lock, drill) and the same fight vs
+ *                              zone-session selection semantics.
+ *   events                     Task #59 — a NON-meter kind on the same per-kind machinery.
+ *   buffs / debuffs            JOS-89, split in two by JOS-119. TWO rows because they are two
+ *                              windows, separately enabled and separately placed, so "what is on
+ *                              me" and "what is on them" can live in different corners.
+ *   xp                         JOS-195 — the progress read.
+ *   respawn                    JOS-194 — the respawn clocks, and the window this feature is
+ *                              actually read in: the Timers tab is where you choose what to clock.
+ *
+ * Every kind from `buffs` onward ships DEFAULT OFF and this menu is the ONLY way to meet it. The
+ * 'toast' kind is deliberately absent: it is a notifier, not a window a user places.
+ */
+const OVERLAY_MENU_ROWS: readonly (readonly [OverlayKind, string, string])[] = [
+  ['fight', 'Fight meter', 'Current fight + fight selector'],
+  ['overall', 'Zone meter', 'Zone total + zone selector'],
+  ['heal-fight', 'Fight healing', 'Healing + absorption, current fight'],
+  ['heal-overall', 'Zone healing', 'Healing + absorption, zone total'],
+  ['events', 'Event log', 'Alerts, notable loot, quest completions'],
+  ['buffs', 'Buffs', 'Buffs you have running, with timers'],
+  ['debuffs', 'Debuffs', 'Debuffs and mez you are holding, per target'],
+  ['xp', 'XP', 'XP per hour, next level, motes per hour'],
+  ['respawn', 'Respawn', 'Countdowns started by your own kills']
+]
+
+/**
  * Floating DPS overlay menu (Task #52; two kinds in Task #54). A compact menu toggles the
  * overlay windows independently; the button is active-tinted when ANY is open so the user
  * knows an overlay is live even off-screen / behind the game. The menu anchor is local
@@ -156,49 +190,12 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        <MenuItem dense onClick={() => { toggle('fight') }}>
-          <Checkbox size="small" edge="start" checked={overlayState.fight} tabIndex={-1} disableRipple />
-          <ListItemText primary="Fight meter" secondary="Current fight + fight selector" />
-        </MenuItem>
-        <MenuItem dense onClick={() => { toggle('overall') }}>
-          <Checkbox size="small" edge="start" checked={overlayState.overall} tabIndex={-1} disableRipple />
-          <ListItemText primary="Zone meter" secondary="Zone total + zone selector" />
-        </MenuItem>
-        {/* Task #59: the HEALING pair — siblings of the damage meters above, same per-kind
-            machinery (persisted config, position, lock, drill) and the same fight vs
-            zone-session selection semantics. */}
-        <MenuItem dense onClick={() => { toggle('heal-fight') }}>
-          <Checkbox size="small" edge="start" checked={overlayState['heal-fight']} tabIndex={-1} disableRipple />
-          <ListItemText primary="Fight healing" secondary="Healing + absorption, current fight" />
-        </MenuItem>
-        <MenuItem dense onClick={() => { toggle('heal-overall') }}>
-          <Checkbox size="small" edge="start" checked={overlayState['heal-overall']} tabIndex={-1} disableRipple />
-          <ListItemText primary="Zone healing" secondary="Healing + absorption, zone total" />
-        </MenuItem>
-        {/* Task #59: the event log — a non-meter overlay kind driven by the same
-            per-kind machinery (persisted config, position, lock). */}
-        <MenuItem dense onClick={() => { toggle('events') }}>
-          <Checkbox size="small" edge="start" checked={overlayState.events} tabIndex={-1} disableRipple />
-          <ListItemText primary="Event log" secondary="Alerts, notable loot, quest completions" />
-        </MenuItem>
-        {/* JOS-89, split into two windows by JOS-119: the timer bars. Same per-kind machinery
-            again, and TWO rows because they are two windows — separately enabled, separately
-            placed, so "what is on me" and "what is on them" can live in different corners. Both
-            ship DEFAULT OFF and these rows are the only way to meet them. */}
-        <MenuItem dense onClick={() => { toggle('buffs') }}>
-          <Checkbox size="small" edge="start" checked={overlayState.buffs} tabIndex={-1} disableRipple />
-          <ListItemText primary="Buffs" secondary="Buffs you have running, with timers" />
-        </MenuItem>
-        <MenuItem dense onClick={() => { toggle('debuffs') }}>
-          <Checkbox size="small" edge="start" checked={overlayState.debuffs} tabIndex={-1} disableRipple />
-          <ListItemText primary="Debuffs" secondary="Debuffs and mez you are holding, per target" />
-        </MenuItem>
-        {/* JOS-195: the progress read, floating. Same per-kind machinery once more, and DEFAULT
-            OFF like the two timer rows above — this menu is the only way to meet it. */}
-        <MenuItem dense onClick={() => { toggle('xp') }}>
-          <Checkbox size="small" edge="start" checked={overlayState.xp} tabIndex={-1} disableRipple />
-          <ListItemText primary="XP" secondary="XP per hour, next level, motes per hour" />
-        </MenuItem>
+        {OVERLAY_MENU_ROWS.map(([kind, primary, secondary]) => (
+          <MenuItem dense key={kind} onClick={() => { toggle(kind) }}>
+            <Checkbox size="small" edge="start" checked={overlayState[kind]} tabIndex={-1} disableRipple />
+            <ListItemText primary={primary} secondary={secondary} />
+          </MenuItem>
+        ))}
       </Menu>
     </Box>
   )

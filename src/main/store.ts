@@ -429,7 +429,11 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // `xpRows` and `xpSlice` are ABSENT here on purpose rather than spelled out: absent is what each
   // one's default MEANS (every row; this session), those meanings live beside the code that reads
   // them, and writing them here would be a second copy of both.
-  xp: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
+  xp: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  // RESPAWN CLOCKS (JOS-194). Default off, no migration — the fourth restatement of the same
+  // policy, and the argument above holds verbatim: `overlays.respawn` has never been written by
+  // any build, so every existing store reads this default and gets the window off for free.
+  respawn: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.
@@ -828,6 +832,13 @@ export function setBuffTrustPrefs(next: unknown): BuffTrustPrefs {
   store.set('buffTrust', clean)
   return clean
 }
+
+// The RESPAWN watch list (JOS-194) is NOT here: it is `src/main/storeRespawn.ts`, the second
+// module through the `settingsStore` door above (uiScale.ts was the first). This file was one
+// addition away from the 400-code-line ceiling when that feature landed, and the ceiling's stated
+// answer is a split rather than a widened threshold. The split module owes the same discipline
+// every accessor here follows and pays it — read through `normalizeRespawnPrefs`, write back
+// through the same one.
 
 // ----- What's new (JOS-73; shared/releaseNotes.ts) -----
 //

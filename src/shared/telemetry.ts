@@ -84,6 +84,10 @@ export const TELEMETRY_VIEWS = [
   'loot',
   'planner',
   'buffs',
+  // The respawn clocks (JOS-194). SAME CLOSED-ENUM DEPLOY ORDER as every member added since
+  // JOS-119: the ingest Lambda validates through this module, so the server has to learn the value
+  // before a client that can emit it ships, or one dwell on this tab 400s the whole batch.
+  'timers',
   'preferences',
   'triage'
 ] as const
@@ -107,7 +111,12 @@ export const TELEMETRY_OVERLAY_KINDS = [
   // the enum is CLOSED and the ingest Lambda validates it through this very module, so a batch
   // carrying an unknown value is refused WHOLE with a 400 that the client classes as permanent
   // and drops. The server ships first.
-  'xp'
+  'xp',
+  // JOS-194 added the respawn-clock window. THE SAME DEPLOY ORDER APPLIES A THIRD TIME, for the
+  // third identical reason: the enum is CLOSED, the ingest Lambda validates through this module,
+  // and a batch carrying a value the server has not learned yet is refused WHOLE with a 400 the
+  // client classes as permanent and drops. The server ships first.
+  'respawn'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 
