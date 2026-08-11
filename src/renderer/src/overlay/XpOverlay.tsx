@@ -31,7 +31,15 @@
 // MUI-FREE, plain divs and inline styles, like every file in this bundle.
 
 import { type JSX, useEffect, useMemo, useState } from 'react'
-import type { LootDelta, LootEvent, LootSnap, ProgressionDelta, ProgressionSnap } from '@shared/types'
+import type {
+  CharacterDelta,
+  CharacterSnap,
+  LootDelta,
+  LootEvent,
+  LootSnap,
+  ProgressionDelta,
+  ProgressionSnap
+} from '@shared/types'
 import { availableSlices, resolveSlice, resolveSliceId, sliceLabel, type SliceId } from '@shared/timeslice'
 import { toggleXpRow, XP_ROW_IDS, xpRowVisible, type XpRowId } from '@shared/xpOverlay'
 import { EMPTY_PROGRESSION, applyProgressionDelta } from '../features/leveling/progressionDelta'
@@ -52,6 +60,9 @@ const ACCENT_BG = 'rgba(143,191,232,0.2)'
 /** The `loot` module's whole delta contract: a concat, forever (features/loot/useLootHistory). */
 const applyLootDelta = (s: LootSnap, d: LootDelta): LootSnap => [...s, ...d.appended]
 const NO_LOOT: LootEvent[] = []
+/** The `character` module's delta is a partial merge, exactly as the main window folds it. */
+const applyCharacterDelta = (s: CharacterSnap, d: CharacterDelta): CharacterSnap => ({ ...s, ...d })
+const NO_CHARACTER: CharacterSnap = { character: null }
 /** `dataBounds` takes the series the caller draws on top of the snapshot; this window draws none
  *  (the progression columns already carry the dings and the AA gains). Stable, so the memo holds. */
 const NO_EXTRA: readonly number[] = []
@@ -240,6 +251,11 @@ export default function XpOverlay(): JSX.Element {
     EMPTY_PROGRESSION
   )
   const loot = useOverlayModule<LootSnap, LootDelta>('loot', applyLootDelta, NO_LOOT)
+  // THE THIRD (JOS-192) — `character`, for one field: the level the log last STATED. The ding
+  // series is silent across a loadout swap, so a floating window that reads only the dings keeps
+  // announcing the level of a class you are no longer running; your own `/who` row is what
+  // corrects it, and it arrives here.
+  const who = useOverlayModule<CharacterSnap, CharacterDelta>('character', applyCharacterDelta, NO_CHARACTER)
   const { locked, bgAlpha, textScale, hovering, config, patch, toggleLock, capture, dragRegion, noDrag } =
     useOverlayChrome()
   useSlowClock()
@@ -252,8 +268,8 @@ export default function XpOverlay(): JSX.Element {
   const slice = useMemo(() => resolveSlice({ snap: prog, bounds, id }), [prog, bounds, id])
   const visible = config?.xpRows
   const view = useMemo(
-    () => xpOverlayView({ snap: prog, loot, slice, visible }),
-    [prog, loot, slice, visible]
+    () => xpOverlayView({ snap: prog, loot, slice, visible, level: who.level }),
+    [prog, loot, slice, visible, who.level]
   )
 
   return (
@@ -283,8 +299,8 @@ export default function XpOverlay(): JSX.Element {
         tag="XP"
         title={sliceLabel(id)}
         titleColor={ACCENT}
-        tail={view.level === null ? undefined : `lvl ${view.level}`}
-        tailTitle="The level the log last reported for this character."
+        tail={view.level === null ? undefined : `lvl ${view.level}${view.levelCue ? ` ${view.levelCue}` : ''}`}
+        tailTitle={view.levelTitle}
         iconAccentBg={ACCENT_BG}
         select={{ rows: sliceRows(prog, available, bounds), value: id, onChange: (v) => patch({ xpSlice: v as SliceId }), accent: ACCENT }}
         chrome={{ locked, hovering, dragRegion, noDrag, toggleLock, capture }}

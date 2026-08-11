@@ -62,7 +62,11 @@ import type { LootEvent, ProgressionSnap } from '@shared/types'
 import type { RangeStats } from '@shared/progressionStats'
 import type { Timeslice } from '@shared/timeslice'
 import { rangeStats } from '../../../shared/progressionStats'
-import { ETA_ABSURD_MS, ETA_BLOCKED_TITLE, atCap, currentLevel, levelEta } from '../../../shared/levelEta'
+import { ETA_ABSURD_MS, ETA_BLOCKED_TITLE, atCap, levelEta } from '../../../shared/levelEta'
+// The header's level is the STATED fact now (JOS-192) — the later of your last ding and your own
+// `/who` row — because the ding series says nothing across a loadout swap, which is the one moment
+// the number on a floating window is most likely to be wrong.
+import { currentLevelRead, type LevelStatement } from '../../../shared/currentLevel'
 import { aaEta } from '../../../shared/aaPace'
 import { moteRates, xpRowVisible, type XpRowId } from '../../../shared/xpOverlay'
 import { AA_EST, AA_ETA_BLOCKED_TITLE, aaEtaValue } from '../features/leveling/aaPaceRows'
@@ -97,8 +101,13 @@ export interface XpOverlayView {
    * minutes read as a confident 12/hr.
    */
   span: string
-  /** The level the log last reported, or null (the header chip is omitted). */
+  /** The level the log last STATED, or null (the header chip is omitted). */
   level: number | null
+  /** '/who' or 'Nh ago' beside that number, '' when the bare number is the whole fact. */
+  levelCue: string
+  /** The header chip's hover: which line stated the level, and how long ago. '' when there is
+   *  no level to state. */
+  levelTitle: string
   /** The slice gained experience the log stated no percentage for — this window speaks AA. */
   atCap: boolean
 }
@@ -199,9 +208,14 @@ function aaWaitRow(snap: ProgressionSnap, stats: RangeStats): XpOverlayRow {
  * on a window this small "why is that blank" is the question a blank invites, and the reason is one
  * clause (`ETA_BLOCKED_TITLE`, shared with the Overview card so the two refuse in the same words).
  */
-function etaRow(snap: ProgressionSnap, stats: RangeStats, capped: boolean): XpOverlayRow {
+function etaRow(
+  snap: ProgressionSnap,
+  stats: RangeStats,
+  capped: boolean,
+  level: LevelStatement | null | undefined
+): XpOverlayRow {
   if (capped) return aaWaitRow(snap, stats)
-  const eta = levelEta(snap, stats)
+  const eta = levelEta(snap, stats, level)
   if (eta.blocked !== null) {
     return {
       id: 'eta',
@@ -290,6 +304,8 @@ export interface XpRowsArgs {
   slice: Timeslice
   /** The user's row checklist. `undefined` ⇒ every row (shared/xpOverlay.ts). */
   visible: XpRowId[] | undefined
+  /** `CharacterSnap.level` — the stated level fact. Absent ⇒ the ding tail stands in. */
+  level?: LevelStatement | null
 }
 
 /**
@@ -298,12 +314,20 @@ export interface XpRowsArgs {
  * measured over a different stretch than the caption claims.
  */
 export function xpOverlayView(args: XpRowsArgs): XpOverlayView {
-  const { snap, loot, slice, visible } = args
+  const { snap, loot, slice, visible, level } = args
   const stats = rangeStats({ snap, range: slice.range, zoneKey: slice.zoneKey })
   const capped = atCap(stats)
   const rows: XpOverlayRow[] = []
   if (xpRowVisible('xp', visible)) rows.push(...paceRows(stats, capped))
-  if (xpRowVisible('eta', visible)) rows.push(etaRow(snap, stats, capped))
+  if (xpRowVisible('eta', visible)) rows.push(etaRow(snap, stats, capped, level))
   if (xpRowVisible('motes', visible)) rows.push(...moteRows(loot, slice, stats))
-  return { rows, span: activeSpanText(stats.activeMs), level: currentLevel(snap), atCap: capped }
+  const read = currentLevelRead(level, snap)
+  return {
+    rows,
+    span: activeSpanText(stats.activeMs),
+    level: read?.level ?? null,
+    levelCue: read?.cue ?? '',
+    levelTitle: read?.title ?? '',
+    atCap: capped
+  }
 }
