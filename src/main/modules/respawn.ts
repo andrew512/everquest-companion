@@ -147,6 +147,13 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
       // spawn point. Same-name re-entry is the case this would get wrong if it compared names.
       this.zone = ev.zone
       this.zoneSince = ev.ts
+      // AND THE REVISION MOVES, because the zone is now part of what the screen shows (the display
+      // is zone-scoped). `dirty` alone only decides whether a delta is BUILT; `useModule` then
+      // drops it with `d.seq <= knownSeq`, and a zone line moves no other state in this module —
+      // no death, no watch edit — so the push carrying "you are somewhere else now" was the one
+      // push the dedupe was guaranteed to swallow. MEASURED in the e2e before this line existed:
+      // both surfaces kept drawing the old zone's clocks for as long as the log stayed quiet.
+      this.rev++
       this.dirty = true
       return
     }

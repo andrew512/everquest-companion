@@ -462,6 +462,33 @@ test('the fold keeps every zone; the display shows the one you are in', () => {
   )
 })
 
+test('a zone line ADVANCES the revision, or the screen never hears about it', () => {
+  // Found by the e2e, fixed in the module (JOS-87's dedupe, one module further on). A zone line
+  // moves no other state here — no death, no watch edit — so if it left `rev` alone the delta it
+  // marks dirty is exactly the one `useModule`'s `d.seq <= knownSeq` throws away. With the display
+  // scoped by zone, that is both surfaces still drawing the zone you just walked out of.
+  const mod = new RespawnModule(watching('a vis ghoul knight'))
+  mod.reset()
+  let seq = 0
+  for (const raw of [
+    '[Sun Aug 02 23:45:41 2026] You have entered The Ruins of Old Guk.',
+    '[Sun Aug 02 23:50:00 2026] You have slain a vis ghoul knight!'
+  ]) {
+    const ev = parseEvent(raw, seq++)
+    if (ev) mod.onEvent(ev)
+  }
+  const before = mod.snapshot()
+  assert.equal(before.state.zone, 'The Ruins of Old Guk')
+
+  const zoned = parseEvent('[Sun Aug 02 23:52:00 2026] You have entered Befallen.', seq++)
+  assert.ok(zoned)
+  mod.onEvent(zoned)
+  const flushed = mod.flushDelta()
+  assert.ok(flushed, 'a zone line makes the module dirty')
+  assert.equal(flushed.delta.zone, 'Befallen')
+  assert.ok(flushed.seq > before.seq, 'and the revision must move, or the renderer dedupes it away')
+})
+
 test('a zone line ENDS the stay, even when it names the zone you were already in', () => {
   // Zoning out and back is not camping, and the log states it the same way either time. Built from
   // the fixture's own line shapes with its own timestamps so nothing here is a shape EQ has not
