@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+﻿import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { CombatSnapshot, SnapshotOpts } from '../shared/combat'
 import type {
@@ -14,6 +14,7 @@ import type {
 } from '../shared/types'
 import { OVERLAY_KINDS } from '../shared/types'
 import type { ToastPayload } from '../shared/toast'
+import type { AlertTextCard } from '../shared/alertDisplay'
 
 export type { CombatSnapshot, SnapshotOpts, OverlayConfig, OverlayDrill, OverlayKind, MobKnowledge }
 
@@ -190,6 +191,24 @@ const overlayApi = {
    */
   unwatchRespawn: (key: string): Promise<boolean> => ipcRenderer.invoke(IPC.respawnUnwatch, key),
 
+  /**
+   * ALERT TEXT (docs/plans/alert-text-overlays.md): one finished line to draw, pushed by main.
+   * Self-contained by the same law the toast follows - the overlay stacks, times and drops it
+   * locally and fetches nothing.
+   */
+  onAlertText: (cb: (c: AlertTextCard) => void): (() => void) => {
+    const listener = (_e: unknown, c: AlertTextCard): void => cb(c)
+    ipcRenderer.on(IPC.onAlertText, listener)
+    return () => ipcRenderer.removeListener(IPC.onAlertText, listener)
+  },
+  /**
+   * "I am drawing nothing / something right now." Only a NOTIFIER kind has anything to say here
+   * (shared/alertOverlays.ts); main uses it to hide an empty window in the opaque-overlay
+   * compatibility mode. Deliberately NOT the same signal as setIgnoreMouse above: an alert text
+   * lane stays click-through whether or not it is drawing, so its mouse state says nothing about
+   * what is on screen. Fire-and-forget.
+   */
+  setIdle: (idle: boolean): void => ipcRenderer.send(IPC.overlaySetIdle, KIND, idle),
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)
 }

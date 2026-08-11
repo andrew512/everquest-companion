@@ -1,4 +1,4 @@
-// PreferencesView — the app's single settings surface (Task #55).
+﻿// PreferencesView — the app's single settings surface (Task #55).
 //
 // Replaces the old SettingsDialog (EQ install folder) and the drawer's update-channel
 // selector: everything app-level lives here, reached from the drawer's bottom-aligned
@@ -92,6 +92,7 @@ import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
 import { VoiceSetting } from './VoiceSetting'
 import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
 import { ToastSetting } from './ToastSetting'
+import { AlertOverlaySetting } from './AlertOverlaySetting'
 // Cursor ring: another descriptor that lives beside its own card, same ceiling, same answer.
 import { cursorRingSection } from './CursorRingSetting'
 import { TelemetrySetting } from './TelemetrySetting'
@@ -197,6 +198,13 @@ function overlaysSection(): PrefSection {
         keywords:
           'toast toasts celebrate celebration boss kill raid target defeated quest complete sky plane of sky notification popup card sound silent position move top',
         content: <ToastSetting />
+      },
+      {
+        id: 'alert-overlay',
+        label: 'Alert text',
+        keywords:
+          'alert alerts text overlay on screen display show gina trigger line font size colour color duration stack position move transparent',
+        content: <AlertOverlaySetting />
       }
     ]
   }

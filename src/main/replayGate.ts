@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // replayGate.ts — nothing rides the mouse or the screen until parsing is done.
 // ============================================================================
 //
@@ -41,6 +41,7 @@
 
 import { E2E } from './e2e'
 import type { OverlayKind } from '../shared/types'
+import { isNotifierOverlayKind } from '../shared/alertOverlays'
 
 /**
  * Is a historical replay folding right now?
@@ -95,14 +96,16 @@ export function windowsMayShow(): boolean {
  * Does this kind's click-through mode install the WH_MOUSE_LL forwarding hook? PURE.
  *
  * TWO reasons not to, and they are independent:
- *   * the TOAST never forwards at all — its capture is driven by its queue, not by a hover
- *     sensor, so it would pay for a hook over a window that is empty almost all of the time
- *     (JOS-40; the rule was already here, this is just its one definition now).
+ *   * no NOTIFIER forwards at all (shared/alertOverlays.ts). Forwarding exists to serve a HOVER
+ *     SENSOR — the thing that re-enables capture over a meter's pin button — and a notifier is a
+ *     window that is empty almost all of the time and has none. The toast was the first (JOS-40;
+ *     its capture is driven by its queue); an alert text lane is the second, and a stronger case,
+ *     because it never captures the mouse at all.
  *   * NOBODY forwards during a replay — the hook's cost lands on the user's own mouselook, and
  *     the window it exists for is not even on screen (JOS-62).
  */
 export function overlayForwardsMouse(kind: OverlayKind, replayRunning: boolean): boolean {
-  return kind !== 'toast' && !replayRunning
+  return !isNotifierOverlayKind(kind) && !replayRunning
 }
 
 /** Should this kind's ignore-mouse call forward? (Bound form of `overlayForwardsMouse`.) */

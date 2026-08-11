@@ -64,7 +64,9 @@ export const SPEECH_MODES = [
 ] as const satisfies readonly SpeechMode[]
 
 /** Every audio action, for the editor's sound/speech/both selector. Exhaustive by construction. */
-export const ALERT_AUDIO_ACTIONS = ['sound', 'speech', 'both'] as const satisfies readonly AlertAudio[]
+// 'silent' is LAST on purpose: the list is the picker's order, and "make no sound" is the answer
+// you reach for after the three that do (docs/plans/alert-text-overlays.md D1).
+export const ALERT_AUDIO_ACTIONS = ['sound', 'speech', 'both', 'silent'] as const satisfies readonly AlertAudio[]
 
 /** Every engine tier, for the preferences engine picker. Exhaustive by construction. */
 export const SPEECH_ENGINES = ['system', 'kokoro'] as const satisfies readonly SpeechEngine[]

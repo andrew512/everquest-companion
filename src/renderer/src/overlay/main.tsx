@@ -1,14 +1,16 @@
-import React from 'react'
+﻿import React from 'react'
 import ReactDOM from 'react-dom/client'
 import OverlayMeter from './OverlayMeter'
 import EventLogOverlay from './EventLogOverlay'
 import HealMeter from './HealMeter'
 import ToastOverlay from './ToastOverlay'
 import BuffsOverlay from './BuffsOverlay'
+import AlertTextOverlay from './AlertTextOverlay'
 import XpOverlay from './XpOverlay'
 import RespawnOverlay from './RespawnOverlay'
 import { isHealOverlayKind } from '@shared/types'
 import { isTimerOverlayKind } from '@shared/buffTimers'
+import { isAlertOverlayKind } from '@shared/alertOverlays'
 
 // The overlay renders in its OWN transparent BrowserWindow (Task #52). It is a
 // standalone React root — deliberately NOT wrapped in the app's MUI ThemeProvider
@@ -32,6 +34,7 @@ import { isTimerOverlayKind } from '@shared/buffTimers'
 //   'respawn'                         → the respawn clocks (JOS-194): one countdown per watched
 //                                       mob that has died, started by the death message and
 //                                       numbered from your own kills
+//   'alert' (ALERT_OVERLAY_KINDS)     → alert text (usually renders nothing)
 //   everything else                   → the damage meter (fight / zone selection lives inside)
 const kind = window.eqOverlay?.kind ?? 'fight'
 
@@ -40,6 +43,7 @@ function Surface(): React.JSX.Element {
   if (kind === 'toast') return <ToastOverlay />
   if (kind === 'xp') return <XpOverlay />
   if (kind === 'respawn') return <RespawnOverlay />
+  if (isAlertOverlayKind(kind)) return <AlertTextOverlay />
   if (isTimerOverlayKind(kind)) return <BuffsOverlay kind={kind} />
   if (isHealOverlayKind(kind)) return <HealMeter />
   return <OverlayMeter />

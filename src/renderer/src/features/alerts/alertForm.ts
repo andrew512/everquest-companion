@@ -1,4 +1,4 @@
-// alertForm — the add/edit dialog's FORM MODEL: the fields it owns, how they are hydrated from
+﻿// alertForm — the add/edit dialog's FORM MODEL: the fields it owns, how they are hydrated from
 // the def being edited (or from blanks), and how they turn back into an `AlertDef`.
 //
 // Its own file because AlertDialog.tsx is the RENDERING and this is the state machine behind it;
@@ -33,7 +33,8 @@ import {
   primitiveFromDraft
 } from './conditionDraft'
 import { fallbackPack, firstSoundId } from './SoundPicker'
-import { type SpeechForm, speechFieldsFor, useSpeechForm } from './SpeechBlock'
+import { playsSound, type SpeechForm, speechFieldsFor, useSpeechForm } from './SpeechBlock'
+import { type DisplayForm, displayFieldsFor, useDisplayForm } from './displayForm'
 import { DEFAULT_PACK_ID } from './suggestions'
 
 export const DEFAULT_COOLDOWN_MS = 2000
@@ -66,6 +67,8 @@ export interface AlertForm {
   setCooldownScope: (v: CooldownScope) => void
   /** The Speech block's own sub-form (voice-alerts §4) — see SpeechBlock.tsx. */
   speech: SpeechForm
+  /** The Show-on-screen sub-form (alert-text-overlays) - see DisplayBlock.tsx. */
+  display: DisplayForm
 }
 
 /** The setters hydration writes through, passed as ONE object so `hydrateForm` stays a plain fn. */
@@ -126,6 +129,7 @@ export function useAlertForm(
   // The Speech block hydrates itself on the same `open` edge (its deps are `[open, initial]`,
   // which is why it never carried this bug).
   const speech = useSpeechForm(open, initial)
+  const display = useDisplayForm(open, initial)
 
   /**
    * WHICH OPENING THIS FORM IS ALREADY HOLDING — null while closed, otherwise a cell naming the
@@ -194,7 +198,8 @@ export function useAlertForm(
     setCooldownMs,
     cooldownScope,
     setCooldownScope,
-    speech
+    speech,
+    display
   }
 }
 
@@ -207,13 +212,14 @@ export function formCanSave(f: AlertForm): boolean {
   const conditionsValid = f.conditions.every(
     (c) => conditionRawErr(c) == null && conditionFieldValErr(c) == null
   )
-  return (
-    f.name.trim().length > 0 &&
-    f.conditions.length > 0 &&
-    conditionsValid &&
-    f.packId.length > 0 &&
-    f.soundId.length > 0
-  )
+  // A HIDDEN FIELD MAY NEVER BE THE REASON A DIALOG WILL NOT SAVE. The sound is required only
+  // when the alert actually plays one — otherwise a text-only alert (audio:'silent') or a
+  // speech-only one authored before the default pack has self-provisioned (a first run, the e2e
+  // channel) would sit behind a disabled Add button with nothing on screen saying why. The def
+  // still CARRIES whatever sound it had: `defFromForm` always writes the pair, so switching back
+  // to "Play a sound" finds it intact.
+  const soundReady = !playsSound(f.speech) || (f.packId.length > 0 && f.soundId.length > 0)
+  return f.name.trim().length > 0 && f.conditions.length > 0 && conditionsValid && soundReady
 }
 
 export function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
@@ -232,6 +238,9 @@ export function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
     note: initial?.note,
     // audio / speech / alwaysPlay, each omitted at its default so a sound-only alert saves
     // byte-identically to how it always did (SpeechBlock.speechFieldsFor).
-    ...speechFieldsFor(f.speech)
+    ...speechFieldsFor(f.speech),
+    // ...and `display`, on exactly the same terms: absent entirely unless the alert asks to be
+    // seen, and each field inside it absent unless it OVERRIDES its overlay (displayForm.ts).
+    ...displayFieldsFor(f.display)
   }
 }

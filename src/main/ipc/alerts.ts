@@ -1,4 +1,4 @@
-// IPC: the alerts extension (Task #18) and the event-log feed (Task #59) it writes into.
+﻿// IPC: the alerts extension (Task #18) and the event-log feed (Task #59) it writes into.
 // They share a domain because an alert fire IS a feed row — the registry host folds one into
 // the other, and both of the renderer-originated reports below end with the same flushNow.
 
@@ -13,27 +13,41 @@ import {
   saveAlert,
   setAlertPrefs
 } from '../store'
+import { normalizeAlertDisplay } from '../../shared/alertDisplay'
 import type { AlertDef, AlertPrefs, FeedReport } from '../../shared/types'
 
 /**
- * Re-validate the ONE renderer-supplied enum on a saved def. `cooldownScope` reaches the
- * evaluator's Map-key logic, so main states the legal values itself rather than trusting them
- * because today's only caller is the app's own dialog (the same rule `sounds:getData`'s packId
- * follows). Anything else is DROPPED, not rejected: absent means 'alert', which is the safe
- * reading, and the rest of the def still saves.
+ * Re-validate the renderer-supplied fields on a saved def that main's own code will act on.
+ *
+ * Main states the legal values itself rather than trusting them because today's only caller is
+ * the app's own dialog (the same rule `sounds:getData`'s packId follows). Nothing here REJECTS a
+ * save: a field that cannot be made sense of is dropped or repaired and the rest of the def still
+ * stores, because refusing the whole alert over one bad scalar loses work the user can see they
+ * did.
+ *
+ * `cooldownScope` reaches the evaluator's Map-key logic — absent means 'alert', which is the safe
+ * reading. `display` (docs/plans/alert-text-overlays.md) carries five values that end up in
+ * another WINDOW's style attribute, so it goes through the same normalizer the share-import path
+ * and the store both use; a block that survives as nothing at all has its key dropped, because
+ * the presence of `display` is what makes an alert draw.
  */
-function sanitizeCooldownScope(def: AlertDef): AlertDef {
-  if (def.cooldownScope === undefined) return def
-  if (def.cooldownScope === 'alert' || def.cooldownScope === 'target') return def
+function sanitizeSavedDef(def: AlertDef): AlertDef {
   const clean = { ...def }
-  delete clean.cooldownScope
+  if (clean.cooldownScope !== undefined && clean.cooldownScope !== 'alert' && clean.cooldownScope !== 'target') {
+    delete clean.cooldownScope
+  }
+  if (clean.display !== undefined) {
+    const display = normalizeAlertDisplay(clean.display)
+    if (display) clean.display = display
+    else delete clean.display
+  }
   return clean
 }
 
 export function registerAlertsIpc(): void {
   ipcMain.handle(IPC.listAlerts, () => getAlerts())
   ipcMain.handle(IPC.saveAlert, (_e, def: AlertDef) => {
-    const list = saveAlert(sanitizeCooldownScope(def))
+    const list = saveAlert(sanitizeSavedDef(def))
     alertsModule.setDefs(list) // keep the live evaluator in sync
     return list
   })

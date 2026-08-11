@@ -1,4 +1,4 @@
-// Voice alerts — the CONTENT resolver (src/shared/speechText.ts).
+﻿// Voice alerts — the CONTENT resolver (src/shared/speechText.ts).
 //
 // `speechTextFor` decides the literal words a spoken alert says, and it is the single place
 // three surfaces agree: the alert editor's live preview, the renderer's alert player, and any
@@ -65,7 +65,9 @@ test('every mode resolves against a firing with NO spell — by falling back to 
 
 test('SPEECH_MODES covers exactly the four documented modes', () => {
   assert.deepEqual([...SPEECH_MODES].sort(), ['alertName', 'custom', 'spellFirstWord', 'spellName'])
-  assert.deepEqual([...ALERT_AUDIO_ACTIONS], ['sound', 'speech', 'both'])
+  // The channel list is ORDER-SENSITIVE: it is the editor's picker order, and 'silent' (text
+  // overlays, D1) belongs after the three that make a sound rather than among them.
+  assert.deepEqual([...ALERT_AUDIO_ACTIONS], ['sound', 'speech', 'both', 'silent'])
   assert.deepEqual([...SPEECH_ENGINES], ['system', 'kokoro'])
 })
 

@@ -1,4 +1,4 @@
-// Default overlay window placement (Task #59).
+﻿// Default overlay window placement (Task #59).
 //
 // Overlay windows persist their bounds the moment the user moves/resizes them, so this only
 // ever decides where a kind appears the FIRST time it is opened (or after its stored bounds are
@@ -26,6 +26,7 @@
 // display big enough for the full grid (anything 1080p or larger) is untouched at 380x320.
 
 import { OVERLAY_KINDS, type OverlayKind } from '../shared/types'
+import { ALERT_OVERLAY_KINDS, isNotifierOverlayKind } from '../shared/alertOverlays'
 
 export interface Size {
   width: number
@@ -61,6 +62,75 @@ const TOAST_SIZE: Size = { width: 560, height: 360 }
 const TOAST_TOP = 12
 
 /**
+ * ALERT TEXT is a LANE, not a panel (docs/plans/alert-text-overlays.md). Wide enough for a
+ * substituted line at the default 28 px without wrapping mid-phrase, and only tall enough to hold
+ * a few stacked lines — the window is transparent, so unused height costs nothing visually, but
+ * unused height is also where a stray line would appear far from where the user is looking.
+ */
+const ALERT_SIZE: Size = { width: 560, height: 200 }
+
+/**
+ * Where the first alert overlay sits: centred, and BELOW the celebration strip.
+ *
+ * The toast occupies 12…372 from the top of the work area, so 400 clears it with a gutter and the
+ * two notifier kinds cannot open on top of each other. It is high enough to read without looking
+ * away from the fight and low enough not to sit in the toast's lane — and, like every other kind,
+ * it is only ever the FIRST open: persisted bounds always win.
+ */
+const ALERT_TOP = 400
+
+/** How far a kind's window may be dragged. An absent maximum means the OS imposes the only one. */
+export interface SizeLimits {
+  minWidth: number
+  minHeight: number
+  maxWidth?: number
+  maxHeight?: number
+}
+
+/**
+ * The resize bounds for a kind's window.
+ *
+ * A METER IS A PANEL AND HAS A LARGEST USEFUL SIZE. 720x820 is about where a dense bar list stops
+ * gaining anything from more room and starts being a window you have to look away from the fight
+ * to read — and the reserved-slot grid is laid out against sizes in that neighbourhood.
+ *
+ * AN ALERT LANE IS A BANNER, AND HAS NO SUCH CEILING. It draws one centred line per firing, so its
+ * width is simply how much of a substituted line fits before it wraps — a raid caller who wants
+ * "Kaiaren begins casting Ancient Breath" across the full top of an ultrawide is asking for the
+ * feature to work, not misusing it. So the lane states its own limits: a minimum small enough to
+ * park a short banner in a corner, and NO maximum at all. The height cap goes with the width for
+ * the same reason — a taller lane is more stacked lines visible at once, which is what someone
+ * widening it for a busy pull also wants.
+ */
+export function overlaySizeLimits(kind: OverlayKind): SizeLimits {
+  if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) {
+    return { minWidth: 120, minHeight: 48 }
+  }
+  return { minWidth: 200, minHeight: 90, maxWidth: 720, maxHeight: 820 }
+}
+
+/**
+ * Where an alert overlay's window goes on its first open: horizontally CENTRED like the toast, at
+ * ALERT_TOP, and staggered DOWNWARD by its index in the roster so a second one never lands on the
+ * first. Clamped to the work area exactly like every other path here.
+ *
+ * The stagger is by roster index rather than by "how many are open", for the same reason the meter
+ * stack reserves slots: a position that depends on what else happens to be open is a position that
+ * moves under the user.
+ */
+function alertBounds(kind: OverlayKind, workArea: Bounds): Bounds {
+  const size = { ...ALERT_SIZE }
+  const idx = Math.max(0, (ALERT_OVERLAY_KINDS as readonly string[]).indexOf(kind))
+  const x = workArea.x + Math.round((workArea.width - size.width) / 2)
+  const y = workArea.y + ALERT_TOP + idx * (size.height + GUTTER)
+  return {
+    ...size,
+    x: Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - size.width)),
+    y: Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - size.height))
+  }
+}
+
+/**
  * The first-open size for a kind — the same for all the meters; the toast is its own strip.
  *
  * `workArea` is optional because one caller genuinely has no display to ask about (windows.ts's
@@ -69,6 +139,10 @@ const TOAST_TOP = 12
  */
 export function overlayDefaultSize(kind: OverlayKind, workArea?: Bounds): Size {
   if (kind === 'toast') return { ...TOAST_SIZE }
+  // A NOTIFIER ignores `workArea` entirely: it holds no slot in the reserved grid, so the shrink
+  // that keeps the meters from overlapping has nothing to do with it — and shrinking a text lane
+  // would shrink the one thing on screen the user asked to be able to read.
+  if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) return { ...ALERT_SIZE }
   return workArea ? meterSize(workArea) : { ...DEFAULT_SIZE }
 }
 
@@ -91,7 +165,7 @@ const MARGIN = 16
 const GUTTER = 10
 
 /** The kinds that dock into the bottom-right stack — every kind except the toast strip. */
-export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => k !== 'toast')
+export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter((k) => !isNotifierOverlayKind(k))
 
 /**
  * How many uniform slots of this height stack between the bottom and top margins of a work area.
@@ -147,9 +221,10 @@ function meterSize(workArea: Bounds): Size {
  */
 export function defaultOverlayBounds(kind: OverlayKind, workArea: Bounds): Bounds {
   if (kind === 'toast') return toastBounds(workArea)
+  if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) return alertBounds(kind, workArea)
   const size = overlayDefaultSize(kind, workArea)
-  // The toast holds no slot in the meter stack (it lives at the top centre), so it must not
-  // consume an index either — otherwise adding it would shift every meter's reserved slot.
+  // A NOTIFIER holds no slot in the meter stack (each lives in its own lane), so it must not
+  // consume an index either — otherwise adding one would shift every meter's reserved slot.
   const idx = Math.max(0, METER_KINDS.indexOf(kind))
   // How many uniform slots fit between the bottom and top margins of this work area.
   const perColumn = rowsThatFit(size.height, workArea)
@@ -188,5 +263,6 @@ export const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   buffs: 'Buff Timer Overlay',
   debuffs: 'Debuff Timer Overlay',
   xp: 'XP Overlay',
-  respawn: 'Respawn Timer Overlay'
+  respawn: 'Respawn Timer Overlay',
+  alert: 'Alert Text Overlay'
 }

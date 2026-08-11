@@ -6,6 +6,11 @@
 // text is UNCHANGED and every name here is still exported from `shared/types` (which
 // re-exports this module), so no importer moved and no import path changed.
 
+// TYPE-ONLY, and the cycle is deliberate + precedented: ./alertOverlays imports OverlayKind from
+// ./types, which re-exports this module. Type imports are erased, so there is no runtime edge —
+// the same arrangement types.ts already has with ./toast.
+import type { AlertOverlayKind } from './alertOverlays'
+
 // ----- Alerts extension (Task #18) -----
 //
 // An alert = a trigger (matched against the live LogEvent stream, a raw log line,
@@ -146,8 +151,16 @@ export type SpeechMode = 'custom' | 'alertName' | 'spellName' | 'spellFirstWord'
  * what every alert written before voice alerts existed meant — so the field is optional and
  * no migration has to touch a def that never asked to speak.
  * 'both' plays the sound first and queues the speech after it; cooldowns are unchanged.
+ *
+ * 'silent' (docs/plans/alert-text-overlays.md D1) is the member that makes no noise at all. It
+ * arrived with TEXT OVERLAYS, because until then every alert had to be audible: an alert whose
+ * whole job is to put a line on screen had no way to say so, and turning its volume to zero
+ * would have been a second, undiscoverable spelling of the same intent. It is a channel and not
+ * a fourth flag for exactly that reason — "what does this alert do when it fires" stays ONE
+ * question with one answer. NOTE that the `display` block below is INDEPENDENT of this field: a
+ * spoken alert may also draw text, and a silent one need not.
  */
-export type AlertAudio = 'sound' | 'speech' | 'both'
+export type AlertAudio = 'sound' | 'speech' | 'both' | 'silent'
 
 /** Per-alert speech configuration. Absent on a def ⇒ treated as `{ mode: 'alertName' }`. */
 export interface AlertSpeech {
@@ -318,6 +331,64 @@ export interface AlertDef {
    * round-trips the key untouched).
    */
   alwaysPlay?: boolean
+  /**
+   * TEXT THIS ALERT PUTS ON SCREEN (docs/plans/alert-text-overlays.md). Absent ⇒ it draws
+   * nothing, which is what every def written before text overlays existed already meant.
+   *
+   * INDEPENDENT OF `audio`. Drawing is not a channel: a spoken alert may also show its line, and
+   * an `audio:'silent'` one shows it and says nothing. That independence is why the firing path
+   * resolves this ABOVE the sound/speech plan (renderer/features/alerts/player.tsx) — the master
+   * mute and the cross-alert audio throttle both govern NOISE, and a card is a thing you see.
+   */
+  display?: AlertDisplay
+}
+
+// ----- Text overlays (docs/plans/alert-text-overlays.md) -----
+//
+// The TYPES only; their values (the font stacks, the caps, the normalizer, the resolver) live in
+// shared/alertDisplay.ts — the arrangement AlertSpeech/speechText.ts already uses, and for the
+// same reason: this file is the shared type surface and must stay importable by everything.
+
+/**
+ * WHICH FONT a text alert draws in. A CLOSED union of KEYS, never a free-text family name. Two
+ * reasons and they are independent: the overlay bundle loads no webfonts, so a family it does not
+ * have renders as a silent fallback with nothing on screen saying why; and a def field is renderer
+ * input that ends up in a `font-family` IN ANOTHER WINDOW, which is the one place this repo does
+ * not pass strings through. The keys map to CSS stacks in shared/alertDisplay.ts, and an unknown
+ * key resolves to the default rather than to nothing.
+ */
+export type AlertFont = 'sans' | 'serif' | 'mono' | 'display'
+
+/**
+ * TEXT THIS ALERT PUTS ON SCREEN when it fires.
+ *
+ * ABSENT ⇒ THE ALERT DRAWS NOTHING, and that is the whole enable. There is no `enabled` flag
+ * beside these fields: the presence of the block IS the alert asking to be seen, exactly as the
+ * toast overlay's open-state is the celebration feature being on. Two switches for one state is
+ * how they drift.
+ *
+ * Additive and optional, like `alwaysPlay` and `cooldownScope` above — every reader defaults on
+ * absence and electron-store round-trips the key untouched, so this needs no store migration.
+ * AN OMITTED STYLE FIELD MEANS INHERIT, not "the shipped constant": the target overlay carries
+ * its own font/size/colour/seconds and fills in whatever this block does not override.
+ */
+export interface AlertDisplay {
+  /**
+   * What to draw. A template: `{token}` placeholders resolve against the firing's captures
+   * (shared/alertCaptures.ts), exactly as a spoken custom phrase does — same syntax, same rules,
+   * same threat model. Absent or empty ⇒ the alert's own NAME.
+   */
+  text?: string
+  /** Absent ⇒ the target overlay's default. */
+  font?: AlertFont
+  /** Pixels, clamped to MIN/MAX_ALERT_FONT_PX. Absent ⇒ the target overlay's default. */
+  fontSize?: number
+  /** `#rgb` or `#rrggbb` ONLY (see alertDisplay.ts). Absent ⇒ the target overlay's default. */
+  color?: string
+  /** Which overlay window it lands in (shared/alertOverlays.ts). Absent ⇒ DEFAULT_ALERT_OVERLAY. */
+  overlay?: AlertOverlayKind
+  /** How long the line holds before it leaves. Absent ⇒ the target overlay's default. */
+  durationMs?: number
 }
 
 /** Global sound preferences (main-owned, persisted). */

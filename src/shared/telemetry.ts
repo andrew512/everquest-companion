@@ -116,7 +116,11 @@ export const TELEMETRY_OVERLAY_KINDS = [
   // third identical reason: the enum is CLOSED, the ingest Lambda validates through this module,
   // and a batch carrying a value the server has not learned yet is refused WHOLE with a 400 the
   // client classes as permanent and drops. The server ships first.
-  'respawn'
+  'respawn',
+  // The alert-text lane (docs/plans/alert-text-overlays.md). A FOURTH time, same deploy order,
+  // same reason: the enum is CLOSED, the ingest Lambda validates through this module, and a batch
+  // carrying a value the server has not learned yet is refused WHOLE. The server ships first.
+  'alert'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 

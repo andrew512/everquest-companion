@@ -15,6 +15,7 @@ import { type JSX, useCallback, useState } from 'react'
 import {
   Box,
   Button,
+  Chip,
   Collapse,
   Divider,
   IconButton,
@@ -141,9 +142,22 @@ const ALERT_ROW_PAPER_SX = {
 function AlertRowIdentity({ def, badge }: { def: AlertDef; badge: string }): JSX.Element {
   return (
     <Box sx={{ gridArea: 'identity', minWidth: 0, opacity: def.enabled ? 1 : 0.55 }}>
-      <Typography variant="body2" noWrap title={def.name} sx={{ fontWeight: 600 }}>
-        {def.name}
-      </Typography>
+      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
+        <Typography variant="body2" noWrap title={def.name} sx={{ fontWeight: 600 }}>
+          {def.name}
+        </Typography>
+        {/* STATE, not a control: this alert also puts a line over the game. The row already says
+            what it sounds like (the channel picker), and this is the other half of what it does. */}
+        {def.display && (
+          <Chip
+            size="small"
+            variant="outlined"
+            label="on screen"
+            data-testid="alert-row-display"
+            sx={{ height: 18, flexShrink: 0, '& .MuiChip-label': { px: 0.75, fontSize: 10 } }}
+          />
+        )}
+      </Stack>
       <Typography
         component="div"
         variant="caption"

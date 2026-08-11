@@ -1,4 +1,4 @@
-// IPC: everything the renderer says ABOUT WINDOWS — the frameless title-bar controls, the
+﻿// IPC: everything the renderer says ABOUT WINDOWS — the frameless title-bar controls, the
 // floating overlays' open/config/click-through state, the cross-window deep link, and the
 // renderer's own error reports.
 
@@ -25,6 +25,7 @@ import {
   getOverlayWindow,
   isOverlayOpen,
   overlayStateMap,
+  setOverlayIdle,
   setOverlayIgnoreMouse,
   setOverlayOpen
 } from '../windows'
@@ -140,6 +141,13 @@ export function registerWindowIpc(): void {
   // Whether mouse-move is FORWARDED is decided per kind in windows.ts, in one place.
   ipcMain.on(IPC.overlaySetIgnoreMouse, (_e, kind: OverlayKind, ignore: boolean) => {
     setOverlayIgnoreMouse(kind, ignore)
+  })
+  // "This notifier is drawing nothing / something." The opaque-overlay compatibility mode
+  // (JOS-40) hides an empty notifier window rather than parking a solid rectangle over the game,
+  // and this is how it learns. Separate from the ignore-mouse signal above because they are two
+  // questions: an alert text lane is click-through whether or not lines are on screen.
+  ipcMain.on(IPC.overlaySetIdle, (_e, kind: OverlayKind, idle: boolean) => {
+    setOverlayIdle(kind, idle)
   })
   ipcMain.on(IPC.overlayClose, (_e, kind: OverlayKind) => setOverlayOpen(kind, false))
 

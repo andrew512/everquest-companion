@@ -1,4 +1,4 @@
-import Store from 'electron-store'
+﻿import Store from 'electron-store'
 import { join } from 'path'
 import { STORE_NAME, USER_DATA } from './channel'
 import { logError, logInfo } from './errorLog'
@@ -27,7 +27,9 @@ import {
   type OverlayAutoHidePrefs
 } from '../shared/presencePrefs'
 import { normalizeTelemetryPrefs, type TelemetryPrefs } from '../shared/telemetry'
-import { DEFAULT_TOAST_CONFIG, normalizeToastConfig } from '../shared/toast'
+import { DEFAULT_TOAST_CONFIG } from '../shared/toast'
+import { DEFAULT_ALERT_TEXT } from '../shared/alertDisplay'
+import { normalizeKindBlobs } from './overlayBlobs'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
 import { normalizeBuffTrustPrefs, type BuffTrustPrefs } from '../shared/buffTrust'
@@ -433,7 +435,27 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // RESPAWN CLOCKS (JOS-194). Default off, no migration — the fourth restatement of the same
   // policy, and the argument above holds verbatim: `overlays.respawn` has never been written by
   // any build, so every existing store reads this default and gets the window off for free.
-  respawn: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null }
+  respawn: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
+  // ALERT TEXT (docs/plans/alert-text-overlays.md). A notifier like the toast, and locked for the
+  // same reason: locked = click-through, and this kind NEVER captures the mouse even with lines
+  // on screen — a combat alert must not eat the click you aimed at the mob under it. Positioning
+  // is therefore the one thing it cannot offer from its own window while locked, which is why
+  // Preferences → Overlays carries a "Move it" switch exactly as the toast does.
+  //
+  // `bgAlpha: 0` — FULLY TRANSPARENT, unlike every other kind. There is no panel here to see
+  // through: a line of text is the whole surface, and it carries its own legibility with a text
+  // shadow rather than by dimming the game behind it. Nothing in this kind's UI changes it (it
+  // has no footer chrome to hang a slider off), so this is the value, not a starting point.
+  //
+  // DEFAULTS OFF, and that is what keeps this migration-free: a new key in a partial record whose
+  // reader fills the defaults changes no bytes already on disk. The toast needed migration 8→9
+  // precisely because it flipped an existing default from off to ON.
+  //
+  // `alertText` is the LOOK this lane gives a line that does not override it. It ships at the
+  // same constants a per-alert field defaults to, so turning the feature on changes nothing until
+  // somebody chooses otherwise — and a user who wants every alert big and yellow says it once,
+  // here, instead of on every alert.
+  alert: { open: false, locked: true, bgAlpha: 0, bounds: undefined, drill: null, alertText: { ...DEFAULT_ALERT_TEXT } }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.
@@ -446,7 +468,10 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   // The spread above is SHALLOW, so a stored `toast` blob written by an older build (or by
   // hand) replaces the defaults wholesale. Normalizing it here means every reader — including
   // the one that decides what sound to play — sees a complete, clamped blob.
-  if (kind === 'toast') cfg.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...cfg.toast })
+  normalizeKindBlobs(kind, cfg)
+  // The same shallow-spread hazard, same answer: an `alertText` blob written by an older build (or
+  // by hand) replaces the defaults wholesale, so it is completed and clamped here — which is what
+  // lets `resolveAlertTextCard` treat one read as an answer to every question.
   // Text scale postdates every other field, so it is ABSENT in most stores and out of range in a
   // hand-edited one — both answered here rather than repeated six times above, because the
   // default (1) does not differ per kind. Clamped on the way out as well as in: see
@@ -479,8 +504,7 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // The toast blob is renderer-writable too (the Preferences sound picker), so it is clamped
   // by its own normalizer rather than trusted — same rule as bgAlpha/textScale above. Only the
   // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
-  if (kind === 'toast') next.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...next.toast })
-  else delete next.toast
+  normalizeKindBlobs(kind, next)
   // The row ARRANGEMENT belongs to the two timer windows and to nothing else (JOS-140). It is
   // rebuilt rather than trusted, on the same argument as the drill above: a renderer patch must
   // not be able to widen what is persisted, and an absent value is a real answer — it means "the

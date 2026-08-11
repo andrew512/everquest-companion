@@ -1,4 +1,4 @@
-// speech.ts — THE ENGINE SEAM for voice alerts (docs/plans/voice-alerts.md §3).
+﻿// speech.ts — THE ENGINE SEAM for voice alerts (docs/plans/voice-alerts.md §3).
 //
 // `speechText.ts` (shared) answers WHAT is said. This module answers WHO SAYS IT and WHEN —
 // and it is the ONLY place in the renderer that touches a speech engine. Every caller (the
@@ -96,6 +96,10 @@ export function speechPlan(
 ): SpeechPlan {
   if (muted) return SILENT
   const action: AlertAudio = def.audio ?? 'sound'
+  // 'silent' (alert-text-overlays D1) is the ONE channel that produces no audio by choice rather
+  // than by mute. What such an alert does instead is DRAW (AlertDef.display), which is resolved
+  // before this function is called and is deliberately not routed through this plan.
+  if (action === 'silent') return SILENT
   if (action === 'sound') return SOUND_ONLY
   const text = speechTextFor(def, firing)
   if (!text) return SOUND_ONLY

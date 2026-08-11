@@ -1,4 +1,4 @@
-// Default overlay placement (Task #59 follow-up: UNIFORM default size).
+﻿// Default overlay placement (Task #59 follow-up: UNIFORM default size).
 //
 // This is pure geometry — no log, no fixture, so it never skips. It pins the two properties the
 // first-open layout has to have on any display, and the one product rule behind them:
@@ -24,7 +24,18 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize, type Bounds } from '../src/main/overlayLayout'
+import {
+  METER_KINDS,
+  defaultOverlayBounds,
+  overlayDefaultSize,
+  overlaySizeLimits,
+  type Bounds
+} from '../src/main/overlayLayout'
+import {
+  ALERT_OVERLAY_KINDS,
+  DEFAULT_ALERT_OVERLAY,
+  NOTIFIER_OVERLAY_KINDS
+} from '../src/shared/alertOverlays'
 import { OVERLAY_KINDS } from '../src/shared/types'
 
 /** Work areas worth proving: a 1080p desktop with a taskbar, a tall 1440p, a small laptop, and a
@@ -209,6 +220,75 @@ test('the toast holds NO slot in the meter stack — adding it moved nothing', (
   assert.deepEqual(stack[0], { width: 380, height: 320, x: 1524, y: 704 })
   assert.deepEqual(stack[1], { width: 380, height: 320, x: 1524, y: 374 })
   assert.deepEqual(stack[2], { width: 380, height: 320, x: 1524, y: 44 })
+})
+
+// ---- alert text overlays (docs/plans/alert-text-overlays.md) -----------------------------
+
+test('NO NOTIFIER holds a slot in the meter stack — adding the alert lane moved nothing', () => {
+  // The slot assertions above run over METER_KINDS, which now excludes every NOTIFIER rather than
+  // just the toast — so this pins that the exclusion still means the same thing for the meters.
+  for (const kind of NOTIFIER_OVERLAY_KINDS) {
+    assert.ok(OVERLAY_KINDS.includes(kind), `${kind} is a registered overlay kind`)
+    assert.equal(METER_KINDS.includes(kind), false, `…and ${kind} is not one of the stacked meters`)
+  }
+})
+
+test('an alert lane opens CENTRED, in its own lane, clear of the celebration strip', () => {
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const b = defaultOverlayBounds(DEFAULT_ALERT_OVERLAY, wa)
+    assert.equal(b.width, 560, `${name}: the text lane's own width, not the meter size`)
+    // Centred: the gap to the left edge equals the gap to the right, within a rounding pixel.
+    const left = b.x - wa.x
+    const right = wa.x + wa.width - (b.x + b.width)
+    assert.ok(Math.abs(left - right) <= 1, `${name}: not centred (${left} vs ${right})`)
+    assert.ok(b.x >= wa.x && b.x + b.width <= wa.x + wa.width, `${name}: on-screen horizontally`)
+    assert.ok(b.y >= wa.y && b.y + b.height <= wa.y + wa.height, `${name}: on-screen vertically`)
+  }
+})
+
+test('the two notifier lanes never open on top of each other', () => {
+  // Both are centred in the top half of the screen, so this is the one collision the first-open
+  // layout could plausibly produce — and a text alert appearing underneath a celebration card is
+  // exactly the case where you most need to read it.
+  for (const [name, wa] of Object.entries(WORK_AREAS)) {
+    const placed = NOTIFIER_OVERLAY_KINDS.map((k) => defaultOverlayBounds(k, wa))
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        assert.ok(
+          !overlaps(placed[i], placed[j]),
+          `${name}: ${NOTIFIER_OVERLAY_KINDS[i]} overlaps ${NOTIFIER_OVERLAY_KINDS[j]}`
+        )
+      }
+    }
+  }
+})
+
+test('an alert lane may be STRETCHED without limit; a meter has a largest useful size', () => {
+  // The lane draws one centred line per firing, so its width is just how much of a substituted
+  // line fits before it wraps — a banner across the top of an ultrawide is the feature working.
+  // 720 is the METERS' ceiling and stays theirs.
+  for (const kind of ALERT_OVERLAY_KINDS) {
+    const limits = overlaySizeLimits(kind)
+    assert.equal(limits.maxWidth, undefined, `${kind}: still capped in width`)
+    assert.equal(limits.maxHeight, undefined, `${kind}: still capped in height`)
+    assert.ok(limits.minWidth <= 200 && limits.minHeight <= 90, `${kind}: ${JSON.stringify(limits)}`)
+  }
+  for (const kind of OVERLAY_KINDS.filter((k) => !(ALERT_OVERLAY_KINDS as readonly string[]).includes(k))) {
+    const limits = overlaySizeLimits(kind)
+    assert.equal(limits.maxWidth, 720, `${kind}: lost its width cap`)
+    assert.equal(limits.maxHeight, 820, `${kind}: lost its height cap`)
+  }
+})
+
+test('every kind opens at least as big as its own minimum', () => {
+  // A first-open window smaller than its own minimum would be resized by the OS the moment it
+  // appeared, which is a window that does not open where the layout says it does.
+  for (const kind of OVERLAY_KINDS) {
+    const limits = overlaySizeLimits(kind)
+    const size = overlayDefaultSize(kind, WORK_AREAS['small laptop'])
+    assert.ok(size.width >= limits.minWidth, `${kind}: opens narrower than its minimum`)
+    assert.ok(size.height >= limits.minHeight, `${kind}: opens shorter than its minimum`)
+  }
 })
 
 // ---- the two timer windows (JOS-119) ----------------------------------------------------

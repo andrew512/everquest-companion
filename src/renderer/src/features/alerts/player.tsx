@@ -1,4 +1,4 @@
-// AlertPlayer — an always-mounted (App-level) component that turns fired alerts
+﻿// AlertPlayer — an always-mounted (App-level) component that turns fired alerts
 // into sound AND SPEECH, and the `fireAppSignal` entry point for renderer-side app triggers.
 //
 // SPEECH (docs/plans/voice-alerts.md §3, wave 2) rides the SAME firing paths, decided by ONE
@@ -32,13 +32,14 @@ import type {
   AlertPrefs,
   AlertsDelta,
   AppSignal,
-  FiredAlert,
   ModuleDelta
 } from '@shared/types'
+import type { SpeechFiring } from '@shared/speechText'
 import { playSound } from './soundCache'
 import { currentVoicePrefs, loadVoicePrefs, speak, speechPlan } from '../../lib/speech'
 import { coalesceAudio } from './audioThrottle'
 import { previewDef } from './preview'
+import { showAlertDisplay } from './displayFire'
 
 // ---- shared, module-level alert state (so fireAppSignal works outside React) ----
 
@@ -94,15 +95,24 @@ function effectiveVolume(def: AlertDef): number {
  * both firing paths and by the list's Test button.
  *
  * `firing` carries the matched event's SPELL CONTEXT (rank intact, see FiredAlert.spell) so the
- * `spellName`/`spellFirstWord` modes have something to say; omitted for a Test or an app signal,
- * where `speechTextFor` falls back to the alert's own name rather than inventing one.
+ * `spellName`/`spellFirstWord` modes have something to say, and its CAPTURES so a `{token}` in a
+ * custom phrase — or in a display line — resolves; omitted for a Test or an app signal, where
+ * `speechTextFor` falls back to the alert's own name rather than inventing one. (The parameter
+ * used to be typed `Pick<FiredAlert,'spell'>` while the delta handler passed the whole `FiredAlert`
+ * anyway, so the captures were always here at runtime; the type now says so.)
+ *
+ * IT DRAWS BEFORE IT DECIDES ANYTHING ABOUT AUDIO. The master mute and the cross-alert coalescer
+ * below are both promises about NOISE — a smear of simultaneous sounds carries less than one —
+ * and neither is true of text: a card is a thing you see, lines stack, and three buffs fading at
+ * once is precisely when you want all three named (docs/plans/alert-text-overlays.md §4).
  *
  * CROSS-ALERT COALESCING is applied here and only here, AFTER the sound/speech plan and only
  * when something would actually have been audible: a muted app (or a plan that resolved to
  * nothing) must not consume the window and silence the next alert for 1.5s. The firing itself
  * is already recorded upstream — this drops noise, never history.
  */
-export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>): void {
+export function playAlertNow(def: AlertDef, firing?: SpeechFiring): void {
+  showAlertDisplay(def, firing)
   const voice = currentVoicePrefs()
   const plan = speechPlan(def, firing ?? null, prefs.muted)
   if (!plan.sound && !plan.speak) return
