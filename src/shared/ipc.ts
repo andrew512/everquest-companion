@@ -256,6 +256,15 @@ export const IPC = {
   // hands the target down (today: the mob to drill into).
   onFocusView: 'app:focusedView',
 
+  // ---- the mouse's Back button (JOS-201) ----
+  // main -> renderer(main app): the user pressed the browser-Back button on their mouse while
+  // THIS window had focus. No payload: the message is the press, and what "back" means is a
+  // question only the renderer can answer (src/renderer/src/appBack.tsx). The event is
+  // WINDOW-SCOPED by construction — it originates in a BrowserWindow `app-command` handler
+  // (src/main/appBack.ts), so a press landing in EverQuest, or in any other app, never reaches
+  // here. There is deliberately no global hook and no forward channel.
+  onAppBack: 'app:back',
+
   // ---- class-combo corrections (docs/plans/class-combo-inference.md § 5.3) ----
   // READS need no channel of their own — the combo module rides the generic module transport
   // (`module:getSnapshot('combo')` + `module:delta`). These two exist because a correction is a

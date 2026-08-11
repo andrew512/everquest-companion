@@ -1471,6 +1471,25 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `cameFrom` prop: five of those are five opinions about what Back means. A back
   affordance NAMES ITS DESTINATION ("Back to Planner"), and a breadcrumb root
   keeps meaning the place it reads. Session-lifetime only, nothing persisted.
+  **AND THE MOUSE'S BACK BUTTON PRESSES THE AFFORDANCE THAT IS ON SCREEN** (JOS-201).
+  mouse4 is not a second navigation model: `backTargets.ts` (pure, node-tested) says
+  the innermost REGISTERED affordance wins and the app-level `nav.back()` is the
+  fallback slot behind it, and each drill registers *the same expression its own
+  button runs* (`useBackTarget` in appBack.tsx) — never a parallel opinion. A target
+  reports whether it handled the press, so an inert one falls through and a press with
+  nowhere to go is a no-op. The provider sits ABOVE `App` in main.tsx because effects
+  run children-first and "the last thing to try" must be a slot, not a race. THE INPUT
+  IS WINDOW-SCOPED AND STAYS THAT WAY: a BrowserWindow `app-command` listener on the
+  MAIN window only (`src/main/appBack.ts`), gated on `browser-backward` and on that
+  window having focus — no `globalShortcut`, no low-level mouse hook, no polling, and
+  nothing at all while EverQuest is foreground, where mouse4 keeps meaning whatever the
+  player bound it to. `browser-forward` is deliberately unhandled (the origin stack is
+  consumed by Back; there is no forward to walk). The combat meter's drill breadcrumb
+  is deliberately NOT a target — an in-panel expansion is not a page. The e2e raises
+  the app-command on the real window (`deep-link-back.e2e.mts`), which drives every
+  link but the OS's: Chromium handles the physical X-button in the browser process, so
+  it never reaches the renderer as a DOM mouse event on Windows — which is why this is
+  an `app-command` handler and a DOM listener would not work.
 - **A VIEW UNMOUNTS ON EVERY TAB SWITCH, so `useState` in one is a promise you
   cannot keep** (JOS-90, JOS-97, JOS-116 — the same bug three times).
   `App`'s `ViewContent` mounts exactly ONE feature view at a time, so anything a

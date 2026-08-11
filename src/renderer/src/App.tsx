@@ -9,6 +9,8 @@ import NoLogsEmptyState from './components/NoLogsEmptyState'
 import { VIEW_KEY, loadView, type View } from './appViews'
 // The app's navigation MODEL — the deep-link routers and their nonce contract. See appRouting.ts.
 import { useAppRouting, usePrefsRouting, type AppRouting, type PrefsRouting } from './appRouting'
+// The mouse's Back button (JOS-201): the app-level answer, behind whatever drill is on screen.
+import { useBackFallback } from './appBack'
 import PoskyView from './features/posky/PoskyView'
 import LootView from './features/loot/LootView'
 import LevelingView from './features/leveling/LevelingView'
@@ -470,6 +472,10 @@ export default function App(): JSX.Element {
   const routing = useAppRouting(view, setView)
   const prefsRouting = usePrefsRouting(view, routing.selectView)
   const { openMob, openQuest, openLeveling, selectView } = routing
+  // The mouse's Back button, when no drill on screen claimed it (JOS-201): the SAME parked-origin
+  // walk every Back affordance in the app reads. `back()` reports whether it navigated, so a press
+  // with nothing parked is a no-op rather than a surprise tab switch.
+  useBackFallback(routing.nav.back)
 
   useAppCelebrations(setDefeatToast, setQuestToast)
 
