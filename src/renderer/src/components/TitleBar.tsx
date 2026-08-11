@@ -12,6 +12,7 @@ import type { CharacterRef, OverlayKind } from '@shared/types'
 import { OVERLAY_KINDS } from '@shared/types'
 import { track } from '../lib/telemetry'
 import PerfChip from './PerfChip'
+import { isDragSurfaceDoubleClick } from './titleBarDrag'
 
 /**
  * Frameless window title bar (Task #23). Replaces BOTH the OS chrome and the old
@@ -191,7 +192,7 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
         {OVERLAY_MENU_ROWS.map(([kind, primary, secondary]) => (
-          <MenuItem dense key={kind} onClick={() => { toggle(kind) }}>
+          <MenuItem dense key={kind} data-testid={`overlay-menu-${kind}`} onClick={() => { toggle(kind) }}>
             <Checkbox size="small" edge="start" checked={overlayState[kind]} tabIndex={-1} disableRipple />
             <ListItemText primary={primary} secondary={secondary} />
           </MenuItem>
@@ -334,18 +335,22 @@ export default function TitleBar({
     )
   }, [])
 
-  // Double-click on the drag region toggles maximize (native-ish behavior). We
-  // guard against double-clicks that originate on an interactive child by only
-  // reacting when the target is inside the drag area (children are `no-drag`).
+  // Double-click on the drag region toggles maximize (native-ish behavior). WHICH clicks count is
+  // `isDragSurfaceDoubleClick` — read its header before touching this. The short version (JOS-204):
+  // this handler sees REACT-tree events, so every portal rendered from this bar (the overlay Menu,
+  // the character Select's dropdown, any Popover/Tooltip/Dialog) bubbles into it while sitting
+  // under <body> in the DOM, where the old `closest('[data-no-drag]')` guard could never see it.
+  // Rapidly checking and unchecking an overlay maximized the window as a result.
   const onDoubleClick = (e: React.MouseEvent): void => {
-    // Only toggle when the click landed on a drag surface, not a control.
-    const el = e.target as HTMLElement
-    if (el.closest('[data-no-drag]')) return
+    if (!isDragSurfaceDoubleClick(e.currentTarget, e.target as Element)) return
     window.eq.toggleMaximizeWindow()
   }
 
   return (
     <Box
+      // The e2e spec asks this element whether the open menu is inside it. That question IS the
+      // defect above, so the handle it needs is part of the fix.
+      data-testid="title-bar"
       onDoubleClick={onDoubleClick}
       sx={{
         WebkitAppRegion: 'drag',
