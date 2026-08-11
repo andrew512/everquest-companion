@@ -13,7 +13,7 @@ import { writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { FOLD_SEMANTICS } from '../src/main/foldCache/semantics'
-import { CHECKPOINTED_MODULE_IDS } from '../src/main/foldCache/serialize'
+import { PUBLISHED_FOLD_IDS } from '../src/main/foldCache/serialize'
 import { buildFoldWorld, foldRange, FOLD_FIXTURES, publishedSnapshots, watchesFor } from './foldCheckpointHarness.mts'
 
 export const GOLDENS_PATH = join(import.meta.dirname, 'goldens', 'foldFingerprints.json')
@@ -22,7 +22,7 @@ export interface FoldGoldens {
   semantics: number
   /** Why the fold means what it means at this version — see semantics.ts. */
   reason: string
-  /** `<fixture>::<moduleId>` → a hash of that module's published snapshot over that fixture. */
+  /** `<fixture>::<foldId>` → a hash of that fold's published snapshot over that fixture. */
   fingerprints: Record<string, string>
 }
 
@@ -56,7 +56,7 @@ export async function foldFingerprints(): Promise<Record<string, string>> {
     const world = buildFoldWorld(logPath, prefs)
     await foldRange(world, logPath, { from: 0, seq: 0 })
     const snaps = publishedSnapshots(world)
-    for (const id of CHECKPOINTED_MODULE_IDS) {
+    for (const id of PUBLISHED_FOLD_IDS) {
       out[`${fixture}::${id}`] = createHash('sha256').update(canonicalJson(snaps[id])).digest('hex').slice(0, 16)
     }
   }

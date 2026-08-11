@@ -1,6 +1,6 @@
 {
   "semantics": 3,
-  "reason": "harness canonicalized character logPath to fixtures basename; fingerprints now checkout-independent (see FOLD_SEMANTICS 3 note)",
+  "reason": "Phase 4: the CombatEngine joined the FoldUnit seam. New coverage only - six new fixture x combat fingerprints, no existing fold output moved, so FOLD_SEMANTICS stays at its prior value.",
   "fingerprints": {
     "e2e-combat.log::combo": "9897cda8d50328a8",
     "e2e-combat.log::roster": "29048f1210ff9678",
@@ -19,6 +19,7 @@
     "e2e-combat.log::buffTimers": "f261533e5925d1cd",
     "e2e-combat.log::consider": "8ea1125364712a2a",
     "e2e-combat.log::eventFeed": "8ea1125364712a2a",
+    "e2e-combat.log::combat": "45afa4db89896bf7",
     "g1-group-lifecycle.log::combo": "2c7b29f56cd1c227",
     "g1-group-lifecycle.log::roster": "12e6774c0bb5ba3e",
     "g1-group-lifecycle.log::loot": "e32a407bb56d7495",
@@ -36,6 +37,7 @@
     "g1-group-lifecycle.log::buffTimers": "7f44bfb213b85fa1",
     "g1-group-lifecycle.log::consider": "70541363da1fff77",
     "g1-group-lifecycle.log::eventFeed": "70541363da1fff77",
+    "g1-group-lifecycle.log::combat": "1565014b2f8d747c",
     "p2-pet-arc-bound.log::combo": "a3ca3b055bbb9757",
     "p2-pet-arc-bound.log::roster": "0b3578eba0d30ea7",
     "p2-pet-arc-bound.log::loot": "5a4b7bcc2d23dfbd",
@@ -53,6 +55,7 @@
     "p2-pet-arc-bound.log::buffTimers": "f261533e5925d1cd",
     "p2-pet-arc-bound.log::consider": "80c91ab74615d09d",
     "p2-pet-arc-bound.log::eventFeed": "a70ae57e81f30d1d",
+    "p2-pet-arc-bound.log::combat": "1c1a296d19f3ccc4",
     "e2e-leveling.log::combo": "b7f63a5b5c4235a5",
     "e2e-leveling.log::roster": "af7124cc166dfcaf",
     "e2e-leveling.log::loot": "a563fbf11d11072d",
@@ -70,6 +73,7 @@
     "e2e-leveling.log::buffTimers": "f261533e5925d1cd",
     "e2e-leveling.log::consider": "a563fbf11d11072d",
     "e2e-leveling.log::eventFeed": "a563fbf11d11072d",
+    "e2e-leveling.log::combat": "2ed209dbc464fe9e",
     "s1-session-overnight-camp.log::combo": "9ac0585cce7f2751",
     "s1-session-overnight-camp.log::roster": "270ede5f0eb0c8c9",
     "s1-session-overnight-camp.log::loot": "71df2b85ae9a0f99",
@@ -87,6 +91,7 @@
     "s1-session-overnight-camp.log::buffTimers": "f261533e5925d1cd",
     "s1-session-overnight-camp.log::consider": "531e47e453e940be",
     "s1-session-overnight-camp.log::eventFeed": "531e47e453e940be",
+    "s1-session-overnight-camp.log::combat": "cab7b46b2d29fd9c",
     "epoch-beta-wipe.log::combo": "cfcd5b6be7d6f6bf",
     "epoch-beta-wipe.log::roster": "8ec9a44c750fa0c5",
     "epoch-beta-wipe.log::loot": "c604112711a916c7",
@@ -103,6 +108,7 @@
     "epoch-beta-wipe.log::buffs": "fdfc0d26cef8d50c",
     "epoch-beta-wipe.log::buffTimers": "f261533e5925d1cd",
     "epoch-beta-wipe.log::consider": "e480bcb5af3e9b67",
-    "epoch-beta-wipe.log::eventFeed": "e480bcb5af3e9b67"
+    "epoch-beta-wipe.log::eventFeed": "e480bcb5af3e9b67",
+    "epoch-beta-wipe.log::combat": "49a8006bbb0a650d"
   }
 }

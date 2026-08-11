@@ -1010,6 +1010,19 @@ must always be slow-once, never wrong** — every judgement call goes toward
 - **THE CORPUS IS THE HONESTY BOUNDARY.** A semantic change visible only on log
   shapes no fixture contains will not be caught. Shadow mode (phase 3) is the
   fleet backstop; say "structurally covered" only when that is what you mean.
+  - **MEASURED, for the engine (phase 4):** folding the whole corpus leaves
+    `specials`, `charm.arm`, `charm.provisional`, `charm.observed`,
+    `recentCasts.suspended`, `slowSamples`, the coats, the markers and the
+    invocation ALL EMPTY, and two fixtures (`e2e-leveling`, `epoch-beta-wipe`)
+    produce no combat state at all — a fully no-op combat restore keeps both of
+    them green. A serializer that dropped any of those fields would pass the entire
+    matrix. `tests/combatFoldCodec.test.mts` is the answer: it composes a state
+    that reaches every declared field (a REAL fold of the pet-arc fixture, topped
+    up through each collaborator's own method) and round-trips it, with a
+    coverage-probe list held against the schema's own keys IN BOTH DIRECTIONS so a
+    new field cannot be added without coverage. It is a CODEC test and says so —
+    composing state claims nothing about the log, which is what the
+    awaiting-sample law is about.
 - **INVALIDATION IS ALWAYS WHOLE-CACHE.** A partial refold needs the same cold
   read the whole thing does, so granularity exists only to make invalidation
   rarer, never to make a restore partial. If ANY unit refuses, nothing is
@@ -1038,13 +1051,65 @@ must always be slow-once, never wrong** — every judgement call goes toward
     `foldCheckpointDifferential.test.mts` holds it against the registry's own in
     both directions. A module added to `wiring.ts` without a seam fails there, by
     name.
-  - Still OUTSIDE the container: the `CombatEngine`. Nothing reads engine state
-    back into a registry module (the dependency runs the other way — the engine
-    PULLS the roster's view), so its absence cannot make a checkpointed module
-    wrong; what it costs is a combat meter that starts empty after a restore. Its
-    state is also a different order of magnitude — an uncapped encounter history
-    with per-encounter aggregates, proc/heal/window accumulators and a world model
-    of instances — so bringing it in is a sizing decision, not a serializer.
+  - **THE `CombatEngine` IS IN (phase 4), AND THE ARGUMENT FOR LEAVING IT OUT IS
+    THE LESSON.** Phases 1–3 excluded it on this reasoning: nothing reads engine
+    state back into a registry module (TRUE — the dependency runs the other way,
+    the engine PULLS the roster's view), so its absence cannot make a checkpointed
+    module wrong, and what it costs is "a combat meter that starts empty after a
+    restore, exactly as after a cold start". **The second clause was FALSE**, and
+    the owner's live retest is what found it: a COLD start folds the engine from
+    the WHOLE log, so its meter comes up holding every fight in it; only a RESTORED
+    launch came up empty. Uniform state, no tiers — a restore is byte-identical to
+    a cold fold or it is a different program, and "the same as a cold start" has to
+    be a statement about the program we SHIP rather than about a plausible one.
+    Size is a measurement to report, never a reason to serve a different world.
+    Its published payload is `snapshot(now, {timeline:true})`
+    (`foldCache/publishedFold.ts` — ONE shape, so the three rungs compare one
+    thing, and the timeline is the only published field that reads an encounter's
+    per-event ring). It is in `PUBLISHED_FOLD_IDS`, not `CHECKPOINTED_MODULE_IDS`,
+    because it is not a registry module; the codec is
+    `combat/foldTypes|foldSchema|foldAgg|foldCodec.ts`.
+  - **ALL LOG-DERIVED STATE IS CHECKPOINTED, AND A TEST SAYS SO — the census**
+    (`foldCache/census.ts` + `tests/foldConsumerCensus.test.mts`; owner
+    requirement, phase 4). The module gate above was green for three phases while
+    the largest fold in the app sat outside the container, because the engine is
+    not a module: it subscribes to the bus from `pipeline.ts` and publishes through
+    its own IPC, so no assertion had cause to name it. So the census is over the
+    INLETS rather than the consumers — every `bus.subscribe` / `registry.attach(bus)`
+    (the parsed stream), every `scanLog` / `new Tailer` / `parseEvent` /
+    `newBytesSince` (log BYTES), and the two taps that see everything going through
+    those (`noteEventKind`, `noteLinesParsed`). The test SCANS `src/main/**` for
+    those call sites and holds them against the committed table in BOTH directions,
+    with per-(file, inlet) COUNTS — so a second subscription inside an
+    already-declared file is a second fact somebody has to argue. Every row is
+    `unit` (names checkpointed `FoldUnit` ids, each asserted to exist in a built
+    world), `registry` (delegated to the module gate above), or `exempt` WITH ITS
+    ARGUMENT — and an argument under 80 characters fails, on the same reasoning as
+    the goldens' stated reason. The standing exemptions: the telemetry taps (a
+    per-launch line count and a crash-crumb ring, ephemeral by design — a restored
+    launch is entitled to its own), the two FEEDERS (their state is `seq` and the
+    byte offset, which live in the container HEADER, not in a blob), the
+    store-persisted tail mark (durable through its own store — one truth per fact),
+    the checkpoint's own last-event probe (it writes the header), and the shadow
+    verifier's throwaway world (it IS the instrument). A future log consumer wired
+    outside the registry — which is exactly how the engine escaped — fails CI by
+    name.
+    - The scanner counts PER OCCURRENCE and excludes only the occurrence preceded
+      by `function `. Its first cut skipped whole LINES that looked like
+      declarations, and a one-line `export function wire(bus) { bus.subscribe(…) }`
+      walked straight through the audit that exists for precisely that. Measured
+      against a planted consumer, then narrowed.
+  - **MEASURED WITH THE ENGINE ABOARD** (owner's log, 122.6 MB, 1,580,741 events,
+    2026-08-11): container **47.50 MB** (was 6.04 MB), of which `combat` is
+    **41.7 MB / 87.8%** — 3,213 finalized encounters at ~12.3 KB each, dominated by
+    the per-encounter `Agg.out`/`Agg.inc` source maps (30.1 MB), inside which the
+    per-second rounds buckets (5.3 MB) and the `RoundAccum` lanes (7.0 MB) are the
+    two largest single items. Restore **1.67 s** (was 175 ms) against a 9.3 s cold
+    fold of the same log and the 122 MB cold READ this feature exists to remove;
+    write 466 ms async / 436 ms synchronous on the quit path. `npm run
+    bench:fold-size` re-measures all of it. **ANY CAP IS AN OWNER DECISION** — a
+    history cap is a semantics change (`searchFights` claims "all time") and the
+    fold laws put that call with the owner, not with the worker who measured it.
 - **THE GRAMMAR GREW TWO KINDS IN PHASE 2, and both are narrow on purpose.**
   `record` is a plain object with arbitrary string keys (a `KillMap`, an item-tier
   table) — never a Map by another name, and never where the Map's INSERTION ORDER
@@ -1148,7 +1213,10 @@ must always be slow-once, never wrong** — every judgement call goes toward
 - **THE FLEET BACKSTOP: SHADOW MODE** (`foldCache/shadow.ts`). Occasionally, in
   the background, a client restores the container on disk into a throwaway world,
   cold-folds the log to the same byte into a second one, ticks BOTH to one pinned
-  instant, and compares. It reports TWO COUNTS on the session report —
+  instant, and compares. Since phase 4 each throwaway world builds its OWN
+  `CombatEngine` — phase 3 deliberately did not, on the argument that nothing reads
+  engine state back so its presence could not change a compared snapshot, which was
+  true only while the engine was outside the container. It reports TWO COUNTS on the session report —
   `checkpointShadowChecks` and `checkpointDivergences` — and structurally nothing
   else: a module name is a claim about the player's game, so the names go to the
   local `errors.log` and never to the wire. Sampled and duty-cycled (dev 50% /

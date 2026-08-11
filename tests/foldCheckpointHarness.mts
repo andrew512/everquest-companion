@@ -54,10 +54,12 @@ import { unchunkedSlicer } from '../src/main/log/replaySlicer'
 import { decodeCache, encodeCache, type CacheHeader } from '../src/main/foldCache/format'
 import { identityFrom, type ReadRange } from '../src/main/foldCache/identity'
 import { FOLD_SEMANTICS } from '../src/main/foldCache/semantics'
+import { combatPublished } from '../src/main/foldCache/publishedFold'
 import {
   isCheckpointable,
   moduleShapeHash,
   CHECKPOINTED_MODULE_IDS,
+  COMBAT_FOLD_ID,
   type FoldUnit
 } from '../src/main/foldCache/serialize'
 import baselineJson from '../src/main/data/messageOverlay.baseline.json'
@@ -147,8 +149,8 @@ export function buildFoldWorld(logPath: string, respawnPrefs?: RespawnPrefs): Fo
   bus.subscribe(observeEpoch)
   bus.subscribe(observeSession)
 
-  // The SAME composition `attach.ts` uses in the app: registry modules first, then the producers.
-  const units = [...modules.ordered, epoch, sessions].filter(isCheckpointable)
+  // The SAME composition `attach.ts` uses: registry modules, then the engine, then the producers.
+  const units = [...modules.ordered, combat, epoch, sessions].filter(isCheckpointable)
   const compared = units.filter((m) => CHECKPOINTED_MODULE_IDS.includes(m.id))
   return {
     bus,
@@ -192,7 +194,7 @@ export async function foldRange(
  */
 export function publishedSnapshots(world: FoldWorld, nowMs = PINNED_NOW_MS): Record<string, unknown> {
   world.registry.tick(nowMs)
-  return snapshotsWithoutSweep(world)
+  return snapshotsWithoutSweep(world, nowMs)
 }
 
 /**
@@ -201,9 +203,19 @@ export function publishedSnapshots(world: FoldWorld, nowMs = PINNED_NOW_MS): Rec
  * publish"). Nothing else should reach for this: a snapshot taken before the sweep is precisely
  * the stale-bar frame the sweep exists to prevent anyone from ever seeing.
  */
-export function snapshotsWithoutSweep(world: FoldWorld): Record<string, unknown> {
+export function snapshotsWithoutSweep(world: FoldWorld, nowMs = PINNED_NOW_MS): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const m of world.compared) out[m.id] = world.registry.snapshot(m.id)
+  // THE ENGINE'S PUBLISHED PAYLOAD is `snapshot(now)` — the object `combat:snapshot` hands the
+  // renderer, and the one the combat-dashboard e2e reads its head row out of. It is not a registry
+  // module (it subscribes to the bus directly), so it is fetched rather than looked up.
+  //
+  // THE PINNED CLOCK IS LOAD-BEARING HERE IN A WAY IT IS NOT FOR A MODULE. `snapshot(now)` is not
+  // a pure read: it sweeps uncorroborated charm binds and evaluates deferred encounter closure, so
+  // asking two arms at two different instants can legitimately finalize a fight in one and not the
+  // other. Both arms are asked at the same instant, which is the go-live sweep with the clock held
+  // still — the same argument `publishedSnapshots` makes for `registry.tick`.
+  out[COMBAT_FOLD_ID] = combatPublished(world.combat, nowMs)
   return out
 }
 

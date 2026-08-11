@@ -22,11 +22,14 @@
 //     — handing the live one to a shadow fold would have a throwaway world writing into the state
 //     the user's session is reading. The unit is checkpointed inside `consider`'s blob, so a fresh
 //     index is exactly what the warm arm restores over anyway.
-//   * NO `CombatEngine`. Nothing reads engine state back into any registry module (attach.ts states
-//     this where it argues the engine's absence from the container), so its presence cannot change
-//     a compared snapshot — and its uncapped encounter history is the single largest thing a fold
-//     builds. A verifier that doubled the app's peak memory to observe a value it then ignores
-//     would be a worse instrument than no instrument.
+//   * ITS OWN `CombatEngine` — which phase 3 deliberately did NOT build, on the argument that
+//     nothing reads engine state back so its presence could not change a compared snapshot. That
+//     was true only while the engine was outside the container. It is a checkpointed unit now
+//     (JOS-208 phase 4) and its `snapshot(now)` is one of the compared payloads, so a verifier
+//     without one would be blind to the single largest blob in the file. It costs what the note
+//     said it costs — the engine's own fold, twice, for the duration of a check — which is why the
+//     sampling is what it is (dev 50% / 30 min, fleet 2% / 24 h) and why a check is a rare event
+//     rather than a background hum.
 //   * NO IPC. The registry is constructed with a no-op delta emitter, so nothing this world folds
 //     can reach a window.
 //
@@ -36,6 +39,7 @@
 // DB after wiring — so the second call re-installs an equal object into the parser, which is a
 // no-op with extra steps.
 
+import { CombatEngine } from '../combat/engine'
 import { LogBus, type LogEventListener } from '../log/bus'
 import { EpochDetector } from '../log/epochDetector'
 import { SessionDetector } from '../log/sessionDetector'
@@ -47,14 +51,17 @@ import { ModuleRegistry } from '../modules/registry'
 import { createModules } from '../modules/wiring'
 import { getAlerts, getBuffTrustPrefs } from '../store'
 import { getRespawnPrefs } from '../storeRespawn'
-import { isCheckpointable, CHECKPOINTED_MODULE_IDS, type FoldUnit } from './serialize'
+import { combatPublished } from './publishedFold'
+import { isCheckpointable, CHECKPOINTED_MODULE_IDS, COMBAT_FOLD_ID, type FoldUnit } from './serialize'
 import type { CharacterRef } from '../../shared/types'
 
 /** One throwaway fold: everything the verifier needs to drive it and read it. */
 export interface ShadowWorld {
   bus: LogBus
   registry: ModuleRegistry
-  /** EVERYTHING THE CONTAINER CARRIES, in `attach.ts`'s order — modules, then the two producers. */
+  /** This world's own engine — one of the compared payloads since phase 4. */
+  combat: CombatEngine
+  /** EVERYTHING THE CONTAINER CARRIES, in `attach.ts`'s order — modules, engine, then producers. */
   units: FoldUnit[]
 }
 
@@ -85,6 +92,18 @@ export function buildShadowWorld(ref: CharacterRef): ShadowWorld {
   modules.character.setCharacter(ref)
   registry.attach(bus)
 
+  // The engine, wired exactly as pipeline.ts wires it: the roster pull installed BEFORE it ever
+  // folds a line (the registry is attached above, so the roster module has already consumed the
+  // event the engine is about to), then the player's own name injected before the first line, then
+  // the subscription — after the registry's, before the producers'.
+  const combat = new CombatEngine()
+  combat.setRoster(modules.roster)
+  combat.reset()
+  combat.setPlayerName(ref.name)
+  bus.subscribe((ev, live) => {
+    combat.ingestEvent(ev, live)
+  })
+
   // The two derived-event producers, subscribed LAST — the order pipeline.ts documents, and the
   // one that makes an `epoch` arrive after every module has seen the event that provoked it.
   const epoch = new EpochDetector()
@@ -102,9 +121,9 @@ export function buildShadowWorld(ref: CharacterRef): ShadowWorld {
   bus.subscribe(observeEpoch)
   bus.subscribe(observeSession)
 
-  // The SAME composition `attach.ts` uses in the app: registry modules first, then the producers.
-  const candidates: { id: string }[] = [...modules.ordered, epoch, sessions]
-  return { bus, registry, units: candidates.filter(isCheckpointable) }
+  // The SAME composition `attach.ts` uses: registry modules, then the engine, then the producers.
+  const candidates: { id: string }[] = [...modules.ordered, combat, epoch, sessions]
+  return { bus, registry, combat, units: candidates.filter(isCheckpointable) }
 }
 
 /**
@@ -130,6 +149,11 @@ export function shadowSnapshots(world: ShadowWorld, nowMs: number): Record<strin
   world.registry.tick(nowMs)
   const out: Record<string, unknown> = {}
   for (const id of CHECKPOINTED_MODULE_IDS) out[id] = comparable(id, world.registry.snapshot(id)?.state)
+  // The engine publishes through its own IPC rather than the module transport, so it is fetched
+  // rather than looked up — and it is ticked by the SAME pinned instant, because `snapshot(now)`
+  // evaluates deferred closure and sweeps the charm binds. Two folds compared at two different
+  // instants would differ on every fight that closed in between.
+  out[COMBAT_FOLD_ID] = combatPublished(world.combat, nowMs)
   return out
 }
 

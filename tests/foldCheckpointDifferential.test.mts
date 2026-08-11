@@ -38,7 +38,7 @@ import {
   watchesFor
 } from './foldCheckpointHarness.mts'
 import { readCheckpoint, writeCheckpoint, type RestoreResult } from '../src/main/foldCache/loader'
-import { CHECKPOINTED_MODULE_IDS } from '../src/main/foldCache/serialize'
+import { CHECKPOINTED_MODULE_IDS, COMBAT_FOLD_ID, PUBLISHED_FOLD_IDS } from '../src/main/foldCache/serialize'
 import type { RespawnPrefs } from '../src/shared/respawn'
 
 const FIXTURES = join(import.meta.dirname, 'fixtures')
@@ -83,7 +83,7 @@ for (const fixture of FOLD_FIXTURES) {
 
     for (const split of splits) {
       const warm = await warmSnapshots(logPath, split.offset, prefs)
-      for (const id of CHECKPOINTED_MODULE_IDS) {
+      for (const id of PUBLISHED_FOLD_IDS) {
         assert.deepStrictEqual(
           warm[id],
           cold[id],
@@ -123,6 +123,19 @@ test('fold checkpoint: every registered module is checkpointed and compared', ()
   const units = new Set(world.units.map((u) => u.id))
   const unsealed = CHECKPOINTED_MODULE_IDS.filter((id) => !units.has(id))
   assert.deepStrictEqual(unsealed, [], `named but not checkpointable: ${unsealed.join(', ')}`)
+
+  // …AND THE ENGINE, which is none of the above: it subscribes to the bus directly and publishes
+  // through `combat:snapshot`, so the registry has never heard of it and the three assertions above
+  // are all satisfiable without it existing. That is precisely how it sat outside the container for
+  // three phases (JOS-208 phase 4). It is asserted HERE by name, and the census test beside this one
+  // is what generalizes the rule to anything else that ever gets wired the same way.
+  assert.ok(units.has(COMBAT_FOLD_ID), 'the CombatEngine must implement the FoldUnit seam')
+  assert.ok(PUBLISHED_FOLD_IDS.includes(COMBAT_FOLD_ID), 'the engine must be compared, not merely carried')
+  assert.deepStrictEqual(
+    PUBLISHED_FOLD_IDS.filter((id) => !units.has(id)),
+    [],
+    'every compared fold must really implement the seam'
+  )
 })
 
 /**
@@ -160,10 +173,10 @@ test('fold checkpoint: the go-live sweep runs before the first publish', async (
   // …AND THEN the sweep, exactly as `startHeartbeat` runs it, before the first publish.
   const swept = publishedSnapshots(warm)
 
-  for (const id of CHECKPOINTED_MODULE_IDS) {
+  for (const id of PUBLISHED_FOLD_IDS) {
     assert.deepStrictEqual(swept[id], cold[id], `module '${id}' diverged after the go-live sweep`)
   }
-  const sweptSomething = CHECKPOINTED_MODULE_IDS.some(
+  const sweptSomething = PUBLISHED_FOLD_IDS.some(
     (id) => JSON.stringify(unswept[id]) !== JSON.stringify(swept[id])
   )
   assert.ok(
@@ -372,7 +385,7 @@ test('fold checkpoint: consulting a cache that is refused changes nothing at all
   // `state` alone would be the same test with the finding taken out of it.
   const a = publishedSnapshots(untouched)
   const b = publishedSnapshots(offered)
-  for (const id of CHECKPOINTED_MODULE_IDS) {
+  for (const id of PUBLISHED_FOLD_IDS) {
     assert.deepStrictEqual(b[id], a[id], `module '${id}' moved just because a cache was consulted`)
   }
 })
