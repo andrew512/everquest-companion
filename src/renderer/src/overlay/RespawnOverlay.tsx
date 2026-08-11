@@ -31,13 +31,23 @@
 // the Timers tab is the same call on the same module (`confirmRespawnSighting`); this window simply
 // spares you the alt-tab in the one moment the feature is for.
 //
+// AND ROUND 4 LANDS HERE FOR THE SAME REASON (owner, 2026-08-10). Unwatching used to mean finding
+// the name in the watch list at the bottom of the Timers tab — i.e. alt-tabbing out of the game to
+// get rid of a row that is wrong about the mob in front of you, which on EQ's duplicated names is
+// the common case. So a row here carries its own Unwatch, in INTERACTIVE mode only, beside the
+// confirm affordance and under the same law: a locked window is click-through and has no clicks to
+// give. It stops that NAME everywhere, including zones this window does not show, and the button's
+// title says so — the row it removes from another zone is off screen here by construction.
+//
 // MUI-FREE, plain divs and inline styles, like every file in this bundle.
 
 import { type JSX, useEffect, useState } from 'react'
 import {
   EMPTY_RESPAWN_SNAP,
+  RESPAWN_UNWATCH_LABEL,
   mergeRespawnDelta,
   orderRespawnRows,
+  respawnUnwatchTitle,
   respawnBasisLabel,
   respawnClockLabel,
   respawnInZone,
@@ -140,18 +150,65 @@ function SeenLine({
   )
 }
 
+/**
+ * THE ROW'S OWN WAY OUT (round 4), and the second control on this window that exists only while it
+ * is unlocked. Deliberately dim — it is the least urgent thing on a row whose whole job is a
+ * countdown — and deliberately a WORD rather than an ×, which on a floating window reads as "close
+ * this thing" and would be a lie: nothing closes and nothing derived from the log is lost.
+ */
+function UnwatchButton({ row, onUnwatch }: { row: RespawnRow; onUnwatch: (key: string) => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      data-testid="respawn-overlay-unwatch"
+      title={respawnUnwatchTitle(row.display)}
+      onClick={() => {
+        onUnwatch(row.key)
+      }}
+      style={{
+        flexShrink: 0,
+        fontSize: 9,
+        lineHeight: 1.4,
+        padding: '0 4px',
+        color: 'rgba(255,255,255,0.55)',
+        background: 'transparent',
+        border: '1px solid rgba(255,255,255,0.18)',
+        borderRadius: 3,
+        cursor: 'pointer'
+      }}
+    >
+      {RESPAWN_UNWATCH_LABEL.toLowerCase()}
+    </button>
+  )
+}
+
+/**
+ * THE FULL PROVENANCE SENTENCE, on the native title — the same place the tab's tooltip puts it. A
+ * floating window has no room to print this and no right to hide it.
+ *
+ * Its own function because `RespawnLine` is at the repo's `complexity` ceiling and this is where
+ * three of its branches were; the string is the row's, not the layout's.
+ */
+function rowTitle(row: RespawnRow, basis: string): string {
+  const wiki = row.wikiText === undefined ? '' : ` · wiki: "${row.wikiText}"`
+  return `${respawnSourceLabel(row)}${wiki}${basis.length > 0 ? ` · ${basis}` : ''}`
+}
+
 /** One clock. Name on the left, the number on the right, the provenance underneath in dim text. */
 function RespawnLine({
   row,
   nowMs,
   interactive,
-  onConfirm
+  onConfirm,
+  onUnwatch
 }: {
   row: RespawnRow
   nowMs: number
   /** The window is UNLOCKED. A locked overlay is click-through, so it draws no button at all. */
   interactive: boolean
   onConfirm: (rowId: string) => void
+  /** Round 4: stop watching this mob from here, without alt-tabbing to the tab's list. */
+  onUnwatch: (key: string) => void
 }): JSX.Element {
   const r = respawnReading(row, nowMs)
   const hasEstimate = row.estimateMs !== undefined
@@ -167,11 +224,7 @@ function RespawnLine({
       data-respawn-due={r.due ? 'true' : 'false'}
       data-respawn-seen={r.seen ? 'true' : 'false'}
       data-respawn-basis={row.basis}
-      // The full provenance sentence rides the native title, the same place the tab's tooltip
-      // puts it — a floating window has no room to print it and no right to hide it.
-      title={`${respawnSourceLabel(row)}${row.wikiText === undefined ? '' : ` · wiki: "${row.wikiText}"`}${
-        basis.length > 0 ? ` · ${basis}` : ''
-      }`}
+      title={rowTitle(row, basis)}
       style={{ padding: '2px 2px 3px', borderLeft: `2px solid ${tone}66`, paddingLeft: 5 }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
@@ -200,6 +253,8 @@ function RespawnLine({
         >
           {label}
         </span>
+        {/* After the number, so the countdown keeps its place on every row. */}
+        {interactive && <UnwatchButton row={row} onUnwatch={onUnwatch} />}
       </div>
       {/* The bar is the estimate running down. Absent entirely when there is no estimate, rather
           than drawn empty — an empty bar reads as "nearly up", which would be a lie. */}
@@ -216,7 +271,9 @@ function RespawnLine({
         </div>
       )}
       {/* NOTHING RE-BASES ITSELF — the affordance below is the only path to `basis: 'sighting'`. */}
-      {r.seen && <SeenLine row={row} nowMs={nowMs} interactive={interactive} onConfirm={onConfirm} />}
+      {r.seen && (
+        <SeenLine row={row} nowMs={nowMs} interactive={interactive} onConfirm={onConfirm} />
+      )}
       <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.42)', marginTop: 1 }}>
         {row.source === 'observed' ? '<= ' : ''}
         {hasEstimate ? fmtDuration(row.estimateMs) : 'no estimate'} · {respawnSourceLabel(row)}
@@ -282,6 +339,10 @@ export default function RespawnOverlay(): JSX.Element {
   const confirmSighting = (rowId: string): void => {
     void window.eqOverlay.confirmRespawnSighting(rowId)
   }
+  /** Same contract, round 4's write: main removes the watch, persists it and pushes the delta. */
+  const unwatch = (key: string): void => {
+    void window.eqOverlay.unwatchRespawn(key)
+  }
 
   return (
     <div
@@ -328,6 +389,7 @@ export default function RespawnOverlay(): JSX.Element {
               nowMs={nowMs}
               interactive={!locked}
               onConfirm={confirmSighting}
+              onUnwatch={unwatch}
             />
           ))
         )}

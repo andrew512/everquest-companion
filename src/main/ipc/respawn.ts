@@ -25,6 +25,7 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
+import { respawnWithoutWatch } from '../../shared/respawn'
 import { getRespawnPrefs, setRespawnPrefs } from '../storeRespawn'
 import { registry, respawnModule } from '../pipeline'
 
@@ -36,6 +37,13 @@ import { registry, respawnModule } from '../pipeline'
  */
 const MAX_ROW_ID = 160
 
+/**
+ * Longest mob key the unwatch handler will look at — the same 64 the store's own normalizer slices
+ * a key to, so a string this door accepts is a string that could have been stored in the first
+ * place. Same rule as `MAX_ROW_ID` above: the refusal belongs at the door.
+ */
+const MAX_MOB_KEY = 64
+
 export function registerRespawnIpc(): void {
   ipcMain.handle(IPC.respawnGet, () => getRespawnPrefs())
   ipcMain.handle(IPC.respawnSet, (_e, value: unknown) => {
@@ -43,6 +51,27 @@ export function registerRespawnIpc(): void {
     respawnModule.setPrefs(next)
     registry.flushNow()
     return next
+  })
+  /**
+   * STOP WATCHING ONE MOB (round 4). All three of the setter's duties apply — persist, apply live,
+   * push now — and it is a separate channel from the setter for one reason: the surfaces that call
+   * it know a mob, not a list. A clock row in the tab and a row in an interactive overlay each hold
+   * exactly one name; making them read the whole watch list, remove an entry and write it back
+   * would put a second author on a list they never edited, and the loser of a race would be a watch
+   * the user did not touch.
+   *
+   * It reports `false` — a no-op, honestly — when nothing was watching that name, which is what a
+   * click that lost a race with another surface's unwatch looks like. Nothing is persisted in that
+   * case, so a stale click cannot re-write the list it agrees with.
+   */
+  ipcMain.handle(IPC.respawnUnwatch, (_e, key: unknown) => {
+    if (typeof key !== 'string' || key.length === 0 || key.length > MAX_MOB_KEY) return false
+    const current = getRespawnPrefs()
+    const next = respawnWithoutWatch(current, key)
+    if (next.watches.length === current.watches.length) return false
+    respawnModule.setPrefs(setRespawnPrefs(next))
+    registry.flushNow()
+    return true
   })
   /**
    * CONFIRM A SIGHTING (round 3). Two of the setter's three duties apply and the third does not:

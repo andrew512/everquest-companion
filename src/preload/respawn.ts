@@ -32,5 +32,14 @@ export const respawnBridge = {
    * row is gone or is no longer seen, i.e. the click lost a race with a death message.
    */
   confirmRespawnSighting: (rowId: string): Promise<boolean> =>
-    ipcRenderer.invoke(IPC.respawnConfirmSighting, rowId)
+    ipcRenderer.invoke(IPC.respawnConfirmSighting, rowId),
+  /**
+   * "Stop watching this mob" (owner ruling, round 4) — the other half of Watch, offered on the mob
+   * itself wherever a surface names it rather than only in the global list.
+   *
+   * It takes a KEY and not a list on purpose: the callers are a clock row and a Recently-killed
+   * entry, each of which knows one mob, and the handler is the only thing that rewrites the list.
+   * Resolves to whether anything was watching that name; false is a no-op, not an error.
+   */
+  unwatchRespawn: (key: string): Promise<boolean> => ipcRenderer.invoke(IPC.respawnUnwatch, key)
 }

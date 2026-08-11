@@ -28,6 +28,11 @@
  * thing in this feature that moves a clock with no log line behind it; a build that re-based on the
  * sighting by itself fails the assertion that the clock was untouched before the click.
  *
+ * AND UNWATCH IS CLICKED ON THE MOB ITSELF (round 4). The clock row's own control has to take the
+ * row off BOTH renderers and out of the store, flip the Recently-killed entry back to offering
+ * Watch, and give the identical clock back when it is watched again — and the floating window has
+ * to be able to do the same thing, which is where the ruling came from.
+ *
  * AND THE ZONE LINE IS PLAYED TOO. The last step walks the character into another zone and asserts
  * the clocks LEAVE both surfaces while the fold keeps them: the tab's all-zones view brings them
  * straight back. That is the second owner ruling, and only the real app can show that a zone line
@@ -335,6 +340,92 @@ async function stepSeenOnLogEvidence(page: Page, overlay: Page, log: FixtureLog)
   check('…counting down again rather than sitting due', after.due === 'false', JSON.stringify(after))
 }
 
+/**
+ * UNWATCH IS ON THE MOB, WHEREVER YOU MEET IT (owner ruling, round 4).
+ *
+ * Watch was always a per-mob click; stopping used to mean scrolling to the global watch list at the
+ * bottom of the tab and matching a name against it. This step exercises the two ends of the new
+ * symmetry on the mob the spec has been clocking from the wiki:
+ *
+ *   1. CLICK Unwatch ON ITS CLOCK ROW. The row has to leave the tab AND the floating window, the
+ *      Recently-killed entry has to flip straight back to offering Watch (the toggle), the OTHER
+ *      watched mob must be untouched, and the store must no longer hold it — a build that only
+ *      hid the row locally fails all four.
+ *   2. WATCH IT AGAIN, and the same clock comes back numbered the same way. That is the promise
+ *      the control's own tooltip makes and the reason it needs no confirmation step: nothing but
+ *      the preference was ever thrown away, because everything else is re-derived from the log.
+ *
+ * Then the FLOATING WINDOW's own path is driven, because that is where the ruling came from: a row
+ * about the wrong duplicate-named mob is worth removing without alt-tabbing out of the fight. The
+ * button's presence is asserted in the overlay DOM (it exists only because the window is unlocked —
+ * a locked one is click-through by law), and the call itself goes through that window's bridge
+ * rather than a synthetic click, for the reason stated at the top of this file: the overlay is
+ * hidden here, so it is read rather than clicked.
+ */
+async function stepUnwatchOnTheMob(page: Page, overlay: Page, app: ElectronApplication): Promise<void> {
+  check(
+    'an unlocked floating window offers Unwatch on its rows',
+    (await countOf(overlay, '[data-testid="respawn-overlay-unwatch"]')) >= 1
+  )
+
+  await page.click(`[data-testid="respawn-row"][data-respawn-mob="${WIKI_MOB}"] [data-testid="respawn-row-unwatch"]`, {
+    timeout: 15_000
+  })
+  const left = await settle(() => clocks(page, 'respawn-row'), (r) => find(r, WIKI_MOB) === undefined, {
+    timeoutMs: 30_000
+  })
+  if (!check('Unwatch on the clock row takes the clock away', find(left, WIKI_MOB) === undefined, JSON.stringify(left))) {
+    return
+  }
+  check('…and leaves the other watched mob alone', find(left, OWN_MOB) !== undefined, JSON.stringify(left))
+  const overlayLeft = await settle(
+    () => clocks(overlay, 'respawn-overlay-row'),
+    (r) => find(r, WIKI_MOB) === undefined,
+    { timeoutMs: 30_000 }
+  )
+  check('…on the floating window too, off the one fold', find(overlayLeft, WIKI_MOB) === undefined, JSON.stringify(overlayLeft))
+  check(
+    '…and the choice was PERSISTED, not held in the component',
+    (await readWatches(page)).watches.every((w) => w.key !== WIKI_MOB)
+  )
+  const offersWatch = await settle(
+    () => countOf(page, `[data-testid="respawn-candidate"][data-respawn-mob="${WIKI_MOB}"] [data-testid="respawn-watch"]`),
+    (n) => n === 1,
+    { timeoutMs: 20_000 }
+  )
+  check('…while the mob itself is offered again, the same control saying the opposite thing', offersWatch === 1)
+
+  // NOTHING BUT THE PREFERENCE WENT AWAY: one click and the clock is back, numbered as before.
+  await clickWatch(page, WIKI_MOB)
+  const back = await settle(() => clocks(page, 'respawn-row'), (r) => find(r, WIKI_MOB) !== undefined, {
+    timeoutMs: 30_000
+  })
+  check('watching it again brings back the same clock', find(back, WIKI_MOB)?.source === 'wiki', JSON.stringify(back))
+  check('…still the duration the wiki states, so the fold kept everything', find(back, WIKI_MOB)?.text.includes('9m 30s') === true)
+
+  // AND THE WINDOW OVER THE GAME CAN DO IT, which is the half of the ruling the tab cannot show.
+  await unwatchFromOverlay(overlay, WIKI_MOB)
+  const goneAgain = await settle(
+    () => clocks(overlay, 'respawn-overlay-row'),
+    (r) => find(r, WIKI_MOB) === undefined,
+    { timeoutMs: 30_000 }
+  )
+  check('the floating window can stop a clock on its own', find(goneAgain, WIKI_MOB) === undefined, JSON.stringify(goneAgain))
+  const tabToo = await settle(() => clocks(page, 'respawn-row'), (r) => find(r, WIKI_MOB) === undefined, {
+    timeoutMs: 30_000
+  })
+  check('…and the tab agrees, because both read one fold', find(tabToo, WIKI_MOB) === undefined, JSON.stringify(tabToo))
+  check('…with no extra window spawned or lost along the way', (await windowsOfKind(app, 'respawn')) === 1)
+}
+
+/** Round 4's write, from the floating window's OWN bridge — the path a click there would take. */
+function unwatchFromOverlay(overlay: Page, mob: string): Promise<boolean> {
+  return overlay.evaluate(
+    (k) => (window as unknown as { eqOverlay: { unwatchRespawn: (key: string) => Promise<boolean> } }).eqOverlay.unwatchRespawn(k),
+    mob
+  )
+}
+
 /** A zone the fixture is NOT in, played onto the live tail. Real name, real sentence shape. */
 const OTHER_ZONE = 'Befallen'
 
@@ -396,6 +487,10 @@ async function main(): Promise<void> {
     // piece of module state moves two renderers. It runs BEFORE the zone step, which walks the
     // character out and empties both surfaces.
     await stepSeenOnLogEvidence(page, overlay, fixture)
+    // Round 4 rides the same window again, and runs before the zone step for the same reason round
+    // 3 does: the zone step walks the character out and empties both surfaces. It deliberately
+    // leaves ONE clock watched, so what follows still has something to take away.
+    await stepUnwatchOnTheMob(page, overlay, launched.app)
     await stepZoneScope(page, overlay, fixture)
   }
 

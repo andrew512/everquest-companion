@@ -20,6 +20,12 @@
 // row, says what it will do, and is the only path to `basis: 'sighting'` — which the row then
 // states out loud, because a number resting on the user's judgement must never look like one
 // resting on a line the game printed.
+//
+// AND THE ROW CARRIES ITS OWN WAY OUT (owner ruling, round 4). Every row here is a mob the user
+// asked for by name, so the question "do I still want this clock" is asked AT the clock — not by
+// scrolling to a list at the bottom of the page and matching a name against it, which is where the
+// only unwatch used to live. It is the same control the Recently-killed entry offers, so the mob
+// reads the same wherever you meet it.
 
 import { Box, Button, LinearProgress, Stack, Typography } from '@mui/material'
 import type { JSX } from 'react'
@@ -35,6 +41,7 @@ import {
 } from '@shared/respawn'
 import Tooltip from '../../lib/Tooltip'
 import { fmtDuration } from '../buffs/format'
+import { UnwatchButton } from './UnwatchButton'
 
 /** The sentence that explains a LEARNED number, including what a gap does and does not prove. */
 function observedSentence(row: RespawnRow): string {
@@ -131,12 +138,15 @@ function SeenRow({
 export function RespawnRowBar({
   row,
   nowMs,
-  onConfirmSighting
+  onConfirmSighting,
+  onUnwatch
 }: {
   row: RespawnRow
   nowMs: number
   /** Absent on a surface with no way to write (nothing today) — the button then does not exist. */
   onConfirmSighting?: (rowId: string) => void
+  /** Same contract: no writer, no control. Round 4's affordance, on the mob rather than in a list. */
+  onUnwatch?: (key: string) => void
 }): JSX.Element {
   const r = respawnReading(row, nowMs)
   const hasEstimate = row.estimateMs !== undefined
@@ -180,6 +190,16 @@ export function RespawnRowBar({
           >
             {respawnClockLabel(row, nowMs, fmtDuration)}
           </Typography>
+          {/* Last, so the countdown keeps its place on every row and the control never sits
+              between the name and the number the eye is looking for. */}
+          {onUnwatch !== undefined && (
+            <UnwatchButton
+              mobKey={row.key}
+              display={row.display}
+              testId="respawn-row-unwatch"
+              onUnwatch={onUnwatch}
+            />
+          )}
         </Stack>
         <Stack direction="row" spacing={1} alignItems="baseline">
           <Typography variant="caption" sx={{ flex: 1, minWidth: 0, color: 'text.secondary' }}>

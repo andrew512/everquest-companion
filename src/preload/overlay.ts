@@ -179,6 +179,17 @@ const overlayApi = {
   confirmRespawnSighting: (rowId: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.respawnConfirmSighting, rowId),
 
+  /**
+   * "Stop watching this mob" (JOS-194, round 4) — again THE SAME MEMBER UNDER THE SAME NAME as the
+   * main app's bridge, and here for the reason the ruling exists: the moment you want a clock gone
+   * is the moment you are looking at it over the game, and making the only way out a list at the
+   * bottom of a tab means alt-tabbing away from the fight to get rid of a row about the wrong mob.
+   *
+   * Interactive mode only by the caller's construction (a LOCKED overlay is click-through by law
+   * and has no clicks to give), and main re-validates the key regardless.
+   */
+  unwatchRespawn: (key: string): Promise<boolean> => ipcRenderer.invoke(IPC.respawnUnwatch, key),
+
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)
 }
