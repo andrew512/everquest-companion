@@ -53,8 +53,9 @@ import {
   WATCHER_STALE_MS,
   WATCHER_STOP_MESSAGE,
   eqRootPrefix,
+  focusCountsAsEq,
   focusDebounceStep,
-  isEqWindow,
+  foregroundSide,
   newFocusDebounce,
   parsePresenceLine,
   watcherCadence,
@@ -64,6 +65,11 @@ import {
 } from './presenceProtocol'
 import { INITIAL_PRESENCE } from '../shared/presencePrefs'
 import type { PresenceState, ScreenRect } from '../shared/presencePrefs'
+// THE ONE QUESTION THIS FILE CANNOT ANSWER FROM A WATCHER LINE (JOS-199): which of OUR windows is
+// in front. Every window this process owns reports the same pid and the same image path, so the
+// accessory/app split has to come from Electron. It is a QUERY — the only thing imported from the
+// window module here, and nothing in this file's dependency closure reaches back into presence.
+import { mainWindowFocused } from './windows'
 
 // ------------------------------------------------------------------ the watcher thread itself
 
@@ -201,15 +207,18 @@ function applyFocus(observed: boolean): void {
 /**
  * Fold one decoded record into the state.
  *
- * THE OWN-WINDOWS RULE lives here: a foreground window belonging to THIS process counts as
- * "EQ side". Every window this app creates (main, the five overlays, the ring) is owned by the
- * main process, so `pid === process.pid` identifies all of them at once — and that is what
- * makes "clicking your own overlay must not hide it" true by construction rather than by a list
- * of window handles somebody has to remember to extend. It survived the move off a child
- * process unchanged, and got slightly stronger doing it: the watcher is now a thread of this
- * very process, so the pid it reports for our own windows is the pid it is running under.
+ * THE OWN-WINDOWS RULE lives here, and since JOS-199 it has TWO answers rather than one. A
+ * foreground window belonging to THIS process is still identified by `pid === process.pid` — every
+ * window this app creates is owned by the main process, and the watcher is now a thread of that
+ * very process, so the pid it reports for our own windows is the pid it is running under. What
+ * changed is what that identification BUYS: an ACCESSORY window (an unlocked overlay being
+ * dragged, the ring) is EQ-side, so "clicking your own overlay must not hide it" is still true by
+ * construction; the COMPANION WINDOW is not, because a player who brings the app to the front has
+ * said with a click that they are looking at something other than the game. `foregroundSide`
+ * (presenceProtocol.ts) is that policy, and `mainWindowFocused()` is the only fact it needs which
+ * a watcher line cannot carry.
  *
- * Bounds are updated ONLY for a genuine EQ window: our own windows are EQ-side for the FOCUS
+ * Bounds are updated ONLY for a genuine EQ window: our own windows can be EQ-side for the FOCUS
  * question but they are not where the game is, and the ring must not jump onto them.
  */
 function applyRecord(rec: PresenceRecord): void {
@@ -232,10 +241,13 @@ function applyRecord(rec: PresenceRecord): void {
     update({ observed: true, cursorVisible: rec.visible })
     return
   }
-  const ours = rec.pid === process.pid
-  const isEq = !ours && isEqWindow(rec, effectiveEqRoot())
-  update(isEq ? { observed: true, eqBounds: rec.rect } : { observed: true })
-  applyFocus(isEq || ours)
+  const side = foregroundSide(
+    rec,
+    { pid: process.pid, appWindowFocused: mainWindowFocused() },
+    effectiveEqRoot()
+  )
+  update(side === 'eq' ? { observed: true, eqBounds: rec.rect } : { observed: true })
+  applyFocus(focusCountsAsEq(side))
 }
 
 /**

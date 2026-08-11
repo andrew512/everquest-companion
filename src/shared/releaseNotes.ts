@@ -207,6 +207,16 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'The full item card is back when hovering a Plane of Sky item - it opens downward and clicks pass straight through it, so the filter dropdowns keep every click.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Alt-tab out of EverQuest and you stay where you went - the overlays no longer drag you back into the game as they hide.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: '"Hide overlays when you\'re not in EverQuest" now counts this app too, so the meters get out of the way while you browse the Companion. Clicking an overlay itself still keeps them up.',
+        fromReport: true
       }
     ]
   },

@@ -387,6 +387,19 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
   duty — anything pacing itself with a timer must MEASURE what it got and
   bookkeep the difference (`replaySlicer.ts`'s debt ledger is the pattern),
   never trust the nominal argument.
+- **`setFocusable` IS NOT AN ATTRIBUTE WRITE ON WINDOWS — IT MOVES THE
+  FOREGROUND WINDOW** (JOS-199). Electron's own doc note gives it away: "on
+  macOS it does not remove the focus from the window", i.e. everywhere else it
+  does. `setFocusable(false)` DEACTIVATES the window, and Chromium's deactivate
+  walks the Z-ORDER and `SetForegroundWindow`s the first VISIBLE window below
+  it — which, under an always-on-top overlay, is EverQuest. `setFocusable(true)`
+  ACTIVATES. So the call is not idempotent and must never be "re-asserted": two
+  reported bugs came from `setOverlaysHidden` re-stating the locked mode on
+  five visible topmost windows, which yanked the user back into the game on
+  every alt-tab. Focusability is a WINDOW STYLE (WS_EX_NOACTIVATE) and survives
+  hide/show, so there is nothing to re-assert — set it in the CONSTRUCTOR
+  (`focusable:`) and afterwards only when `isFocusable()` disagrees.
+  `tests/overlayFocusPolicy.test.mts` pins the one call site.
 
 ## Linting (ESLint 9 flat config + the ratchet)
 
