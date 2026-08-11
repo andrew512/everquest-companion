@@ -82,8 +82,18 @@ function lookupMobCached(name: string, lookup: MobLookup): Promise<MobKnowledge 
   return p
 }
 
-/** Knowledge for a mob card that is CURRENTLY OPEN (mount == first hover). */
-function useMobKnowledge(name: string, lookup: MobLookup): { data: MobKnowledge | null; loading: boolean } {
+/**
+ * Knowledge for a mob card that is CURRENTLY OPEN (mount == first hover).
+ *
+ * EXPORTED SINCE JOS-194 ROUND 9, for the respawn edit modal — which needs one field of it (`page`,
+ * the wiki title, so it can link out) and would otherwise either duplicate this cache or open a
+ * second lookup beside the card it is drawing. Sharing the hook means the modal's link and the
+ * card's drops are answers to ONE question asked once, and the map above dedupes them.
+ */
+export function useMobKnowledge(
+  name: string,
+  lookup: MobLookup
+): { data: MobKnowledge | null; loading: boolean } {
   const [data, setData] = useState<MobKnowledge | null>(() => MOB_KNOWLEDGE.get(name.toLowerCase()) ?? null)
   const [loading, setLoading] = useState(() => !MOB_KNOWLEDGE.get(name.toLowerCase()))
 
@@ -227,10 +237,18 @@ function MobCardFooter({
  *
  * It is a STRING, not a node, deliberately: the round-5 ruling capped that sentence by test, and a
  * node-shaped slot is an invitation to grow a paragraph back into a hover.
+ *
+ * ROUND 9 ADDED `lines`, and it is STRINGS for the same reason. The owner asked the card to show the
+ * observed gaps (all of them) and the wiki default, which are LISTS rather than clauses — reciting
+ * them inside the capped sentence would have grown it back into the paragraph round 5 deleted, and a
+ * node slot would have let any caller draw anything. A caller hands over prepared lines; the card
+ * decides how a line looks.
  */
 export interface MobCardNote {
   label: string
   text: string
+  /** Facts of the same block that read as lines rather than as prose. Empty/absent draws nothing. */
+  lines?: string[]
 }
 
 /**
@@ -307,6 +325,13 @@ export function MobCard({
           <div data-testid="mob-card-note" style={TEXT_STYLE}>
             {note.text}
           </div>
+          {/* ROUND 9: the lists the sentence above summarises — every gap the fold measured, and
+              what the wiki said. Dimmer than the sentence, because they are its working. */}
+          {(note.lines ?? []).map((line) => (
+            <div key={line} data-testid="mob-card-note-line" style={LABEL_STYLE}>
+              {line}
+            </div>
+          ))}
         </CardSection>
       )}
       <WikiDrops wiki={wiki} />

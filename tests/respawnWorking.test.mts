@@ -11,8 +11,11 @@
 //   * `RespawnRow.gapsMs` publishes the death→death gaps this fold measured, newest first and
 //     bounded, BESIDE the minimum it already published. It is the working behind rung 2, not a
 //     second opinion about it — `observedMs` is still the minimum over EVERY gap.
-//   * `RespawnRow.customMs` publishes rung 1, so the box that now lives on the row has something to
-//     open with. Deliberately published rather than inferred from `estimateMs`.
+//   * `RespawnRow.customMs` publishes rung 1, so the control that now lives on the row has something
+//     to open with. Deliberately published rather than inferred from `estimateMs`. (Round 9 replaced
+//     the seconds box with an edit icon and a modal; `customMs` is unchanged and is what that modal
+//     reads, so these cases are still exactly the claim they were — see tests/respawnOverride.test.mts
+//     for the round-9 half.)
 //   * `filterRespawnCandidates` is the whole of the search: one pass, three fields, one rule, and
 //     an empty query returning the SAME array (the `filterByQuery` contract from the Sky search —
 //     JOS-206's learnings applied to the other list in this app that grows while you play).

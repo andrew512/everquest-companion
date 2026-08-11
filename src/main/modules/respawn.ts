@@ -463,6 +463,10 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
     if (watch.customMs !== undefined) row.customMs = watch.customMs
     if (wiki) row.wikiText = wiki.text
     if (wikiMs !== undefined) row.wikiMs = wikiMs
+    // ROUND 9: the page those words came from, so the edit modal can LINK to it. The scrape has
+    // carried this title since the floor was written (`WikiRespawn.page`) and nothing had read it —
+    // quoting a source the reader cannot open is the half of provenance this feature was missing.
+    if (wiki) row.wikiPage = wiki.page
     return row
   }
 
