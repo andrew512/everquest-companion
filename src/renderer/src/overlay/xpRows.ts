@@ -35,10 +35,14 @@
 //   · the levels row goes away AT THE CAP (`atCap`) and only there — every levels number is built
 //     on stated percentages, and at max level the game stops stating them. A permanent em-dash is
 //     a row a capped character closes the window over.
-//   · the AA row appears whenever the SLICE HOLDS A COMPLETION — which is `aaRateText`'s own rule
-//     on the Leveling tab ("a character earning no AA is told nothing about AA", law 1), quoted
-//     rather than re-decided here — and unconditionally at the cap, where it is the only pace read
-//     left and a window with no pace row at all would be worse than one reading 0.00.
+//   · the AA row is drawn ALWAYS (owner ruling, 2026-08-10). AAs are earned below the cap in this
+//     game, so "no completion in this slice" is not "AA does not apply to you" — it is a measured
+//     0.00, exactly the reading the cap case has always printed, and exactly what the levels row
+//     does below the cap when an hour of farming moved no bar. Gating it on a completion made the
+//     row appear and disappear under a user who is watching a rate, which is the one thing a rate
+//     display must not do. (The Leveling tab's `aaRateText` still says nothing about AA in a
+//     silent window; that is a page with other things on it, this is a four-row meter whose
+//     subject is pace.)
 //
 // The two rates are the same denominator (active time, stated once under the rows), so they read
 // against each other, and the AA pair (completions · points) is printed together for the reason the
@@ -162,9 +166,9 @@ function aaRow(stats: RangeStats): XpOverlayRow {
 function paceRows(stats: RangeStats, capped: boolean): XpOverlayRow[] {
   const rows: XpOverlayRow[] = []
   if (!capped) rows.push(levelsRow(stats))
-  // The Leveling tab's rule (`aaRateText`) for a window holding no completion at all: say nothing
-  // about AA rather than print a row of em-dashes. At the cap it is the only pace read there is.
-  if (capped || stats.aaGainEvents > 0) rows.push(aaRow(stats))
+  // UNCONDITIONAL (see the header): a slice holding no completion reads a measured 0.00, never a
+  // missing row. Nothing about the cap enters this decision.
+  rows.push(aaRow(stats))
   return rows
 }
 

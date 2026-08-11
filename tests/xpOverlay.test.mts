@@ -7,9 +7,9 @@
 // `windowItemRows` in tests/lootRates.test.mts, and the slice definitions in
 // tests/timeslice.test.mts. So nothing here re-checks an arithmetic. What it checks is the part
 // that is NEW — which rows exist, which are switched off, what a mote is, and the one thing the
-// window does that no other surface does: DECIDE WHICH PACES THE LOG CAN CURRENTLY STATE (levels
-// and AA while both bars are moving; AA alone at the cap — JOS-202) and change its vocabulary with
-// them.
+// window does that no other surface does: DECIDE WHICH PACES THE LOG CAN CURRENTLY STATE (AA
+// always, since AAs are earned below the cap too; levels while the game still states a bar
+// percentage — JOS-202) and change its vocabulary with them.
 //
 // SNAPSHOTS ARE HAND-BUILT AND ANCHORED IN THE PAST, like every other test over this model: the
 // derivations read `snap.lastTs` and never `Date.now()`, and a fixture near the wall clock would
@@ -141,7 +141,10 @@ test('a hidden row is ABSENT from the window, never present and blank', () => {
   const all = view(snap, [])
   assert.ok(all.rows.some((r) => r.row === 'xp') && all.rows.some((r) => r.row === 'eta'))
   const only = view(snap, [], 'all', ['xp'])
-  assert.deepEqual(only.rows.map((r) => r.row), ['xp'])
+  // The pace entry draws TWO rows (levels and AA), so what survives the checklist is both of them
+  // and nothing else — one entry, one decision.
+  assert.deepEqual(only.rows.map((r) => r.row), ['xp', 'xp'])
+  assert.deepEqual(only.rows.map((r) => r.id), ['xp', 'aa'])
   assert.deepEqual(view(snap, [], 'all', []).rows, [], 'all three off is an empty window, honestly')
 })
 
@@ -245,18 +248,24 @@ test('AA/hr rides BESIDE the levels pace while leveling, points and all', () => 
   assert.equal(labelOf(v, 'eta'), 'Next level')
 })
 
-test('a slice holding no AA completion is told nothing about AA — never a row of em-dashes', () => {
+test('a slice holding no AA completion still reads AA — a measured 0.00, not a missing row', () => {
   const snap = farming({ pct: 1 })
   ding(snap, 30 * MIN, 43)
   aa(snap, 90 * MIN) // an hour before this slice's window even opens
   const hour = view(snap, [], 'h1')
+  // Owner ruling (JOS-202, 2026-08-10): AAs are earned below the cap too, so the row is drawn
+  // unconditionally. A rate a user is watching must not appear and disappear under them.
   assert.deepEqual(
     hour.rows.filter((r) => r.row === 'xp').map((r) => r.id),
-    ['xp'],
-    'the tab’s own rule (aaRateText): no completion in range, no AA read'
+    ['xp', 'aa'],
+    'both paces, whatever the slice happens to hold'
   )
-  // …and the same record over the whole log, where the completion IS in range, does draw it.
-  assert.ok(view(snap, [], 'all').rows.some((r) => r.id === 'aa'))
+  assert.equal(valueOf(hour, 'aa'), '0.00', 'no completion in range is a measurement, not an unknown')
+  assert.equal(hour.rows.find((r) => r.id === 'aa')?.unit, 'AA/hr')
+  // …and the same record over the whole log, where the completion IS in range, reads above zero.
+  const all = view(snap, [], 'all')
+  assert.ok(all.rows.some((r) => r.id === 'aa'))
+  assert.notEqual(valueOf(all, 'aa'), '0.00')
 })
 
 test('the AA row is the pace entry, so hiding that entry hides BOTH paces', () => {
