@@ -130,83 +130,83 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'fixed',
-        text: 'With the cursor ring switched off, the app leaves your cursor completely alone. The ring ships off, and it stayed off - but the part of the app that watches for EverQuest was still asking Windows about your mouse pointer about seventy times a second, every second the app was open, for a circle that was never going to be drawn. Now it only ever asks when you have turned the ring on: with it off there is no cursor to share, and a cursor tool like YoloMouse has the pointer to itself. Nothing changes when the ring is on, and turning it on or off takes effect straight away rather than at the next launch. The watchdog that keeps your overlays hiding with the game is untouched and reacts to alt-tab exactly as fast as before - it just does its job on a slower clock now that it is not chasing a pointer, which is a little less work for your machine on every install that never wanted the ring.',
+        text: 'With the cursor ring off, the app never touches your cursor - cursor tools like YoloMouse get the pointer to themselves, and toggling the ring takes effect immediately.',
         fromReport: true
       },
       {
         kind: 'new',
-        text: 'Item icons and boss portraits are in the app now, instead of being fetched while you use it. Every picture the app can draw - 780 of them, all 751 item icons and all 29 raid-boss portraits - now ships inside the install, so a brand-new install shows them instantly, they still show up with the internet off, and the app no longer asks anyone for a picture while you play. They came from two volunteer-run EverQuest wikis: wiki.project1999.com for the boss portraits, and eqlwiki.com for the item icons and the item, spell and quest knowledge behind them. Neither is connected to this app, both have been written by people doing it for free for years, and there is now a Thanks page in Preferences that says so and links them. On the rare picture the app has not got, it still asks once - and if the answer is no, it remembers that for the rest of the session instead of asking again every time the icon scrolls back onto your screen.'
+        text: 'All 780 item icons and boss portraits now ship inside the app - instant on a fresh install, there with the internet off. They come from two volunteer-run wikis, credited and linked on the new Thanks page in Preferences.'
       },
       {
         kind: 'new',
-        text: 'A floating XP window, for the numbers you want without alt-tabbing out of a pull. Turn it on from the Overlay menu in the title bar and it sits over the game like the damage meters do: your experience per hour, how long the level you are on has left at that pace, and motes per hour broken out by tier - Infinitesimal, Lesser, Major - so "which camp pays better" is a glance rather than a tab. At max level it changes what it is talking about instead of going blank: the rate becomes AA an hour and the estimate becomes the wait for your next point, marked "est." because the game never states where you are in the AA bar. It reads this session by default, and the same All / Session / Zone / last-hour picker the Leveling tab has is in its title bar. The numbers are the Leveling tab\'s own, so the two can never disagree - and every one of them says which stretch of play and how much active time it was measured over. Unpin it and the footer has a checkbox per row, so a window that only shows motes per hour is three clicks away. Nothing is invented: a rate the log did not state prints as a dash and says on hover why, and the mote tiers are ordered by how many you looted rather than by any ranking, because nothing in the game states one.',
+        text: 'A floating XP overlay: experience per hour, time to level (AA pace at max), and motes per hour by tier, with the Leveling tab\'s own time-slice picker and a checkbox per row. Turn it on from the Overlay menu.',
         fromReport: true
       },
       {
         kind: 'changed',
-        text: 'A creature page counts an item once, however many upgraded versions of it you have looted. The base drop, the +1 and the +2 used to sit on three separate lines each saying you had seen one, so an item the mob had given you four times read as three ones - and an upgrade of something the wiki lists turned up down in "also looted by you" as if the page had never mentioned it. Now it is one line with the real total, sitting on the drop it belongs to, and it says how often that works out to over the kills of that mob this character has recorded - "1 per 14 kills" - with the denominator on hover, because it is your own history and not a published drop rate. Click the count of variants on the right and each +N opens up with its own tally and date, and each one still drills into its own loot history.',
+        text: 'A creature page counts an item once across its +N upgrades - one line with the real total and your observed rate, like "1 per 14 kills" - and expands to each variant on click.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'The Plane of Sky list stays where you put it. Loading the rest of the quests used to last until you touched anything - one star, one favorited item, or simply a drop landing while you had the tab open, and the list snapped back to the first forty rows with every quest you had expanded shut again. Nothing about that was you asking to start over: the page only ever needed to go back to the top when you changed a filter, the sort or the search, and now that is the only thing that does it. There is also a "Show all" button beside "Show more" for the whole list in one click, and it is remembered - leave the tab, close the app, come back, and the list is still open. "Show fewer" at the bottom puts the paging back.',
+        text: 'The Plane of Sky list keeps your place - starring, favoriting, or a drop landing no longer collapses it - and a remembered "Show all" button loads everything in one click.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'A floating overlay never goes missing with the monitor it was sitting on. Swap a two-monitor setup for one screen and the combat meter used to be parked at a spot the desktop no longer had - off past the right-hand edge, where restarting put it straight back and toggling it off and on rebuilt it in the same place, with no title bar left to drag it home by. Every overlay is now placed on a screen that really exists, both when it opens and the moment your monitors change - and one that has nowhere sensible to go lands back in its usual corner. Where YOU put a window is still remembered exactly as you left it, so plugging the monitor back in takes the overlay back to it. The main window is kept on screen the same way.',
+        text: 'An overlay never goes missing with the monitor it was on: windows always land on a screen that exists, and your saved spot is restored when the monitor comes back.',
         fromReport: true
       },
       {
         kind: 'changed',
-        text: 'The app no longer runs Windows command-line tools to find your EverQuest folder. Looking for the game used to mean starting nine little Windows programs in the first second - eight copies of the registry tool searching your whole list of installed software, and the old disk-listing tool to see which drives you have. That is the same opening move a lot of actual malware makes, and it is part of why an unsigned download like this one gets a scary warning from Norton or Defender. The app now asks Windows the same two questions directly, without starting anything: it finds the same installs it always did, about twenty times faster, and it starts one fewer kind of argument with your antivirus. The installer stopped doing its own version of this too - it still notices when it is running under Wine or CrossOver on a Mac and skips the check that used to trap those installs, it just does it without the one trick that looked most like a virus.'
+        text: 'Finding your EverQuest folder no longer launches Windows command-line tools - the app asks Windows directly, about twenty times faster, and looks far less like malware to antivirus. The installer dropped its most suspicious-looking trick too.'
       },
       {
         kind: 'fixed',
-        text: 'The "Add an alert" suggestion list stops printing on top of itself. A spell the app has watched you cast wears the most chips - buff or debuff, the levels each of your classes learns it at, "recently cast", how often it has been seen, and one chip per alert it can build for you - and past a certain point those simply ran out of room and drew straight through each other, so "When it wears off (you or your pet)" had a class level stamped across the middle of it. Now the row keeps everything on one line while one line will hold it, shortens a long spell name before anything else, and drops the one-click chips onto a second line rather than over the top of the row when even that is not enough. Rows that already fitted are exactly where they were.',
+        text: 'The "Add an alert" suggestion rows stop printing on top of themselves - crowded rows wrap to a second line instead.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Upgrade your pet and the new one shows up in the meter, without you having to order it first. Summon a fresh pet and cast any pet-only buff on it - Burnout, Intensify Death, Renew Elements, a beastlord spirit - and the app now knows that pet is yours from the moment the buff lands, because the game only lets those spells land on your own pet. Until now the only thing that named a pet as yours was the pet answering an order, so a pet you never spoke to was invisible, and upgrading meant the old pet\'s row froze while the new one counted for nothing - relogging changed nothing either, because relogging says nothing about your pet. On the log this came from, the new pet had landed eighty-nine hits into no row at all. Where a player does order the pet, the buff now names it minutes earlier: across one player\'s whole history that is over 27,000 points of pet damage the meter used to miss. A pet you neither buff nor order is still invisible - one pet command is still all it takes.',
+        text: 'A pet-only buff like Burnout now marks the pet as yours the moment it lands - so an upgraded pet shows in the meter without being ordered first.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Items you keep in the Dragon\'s Hoard now count. If the game writes them into a part of the inventory dump the app had never been shown - which is exactly what the hoard does - they used to be read and then thrown away, so a Plane of Sky weapon sitting in storage read as one you did not own. The app now reads every table the dump contains rather than only the two it could name, so anything the file lists is yours wherever the game filed it. What you are wearing still comes from your equipment alone, so nothing in storage can turn up on your character sheet.',
+        text: 'Items in the Dragon\'s Hoard and other storage tabs now count - the app reads every table the inventory dump contains. Worn gear still comes from your equipment alone.',
         fromReport: true
       },
       {
         kind: 'new',
-        text: 'The /outputfile line now tells you how to type it so the dump is complete. Press How and you get the order: stand at a banker, open your Bank, open the Dragon\'s Hoard - it only dumps while its window is open - open your Tradeskill Depot if you use it, and only then type the command. A dump made without those windows up is not an error and does not look like one; it is a perfectly good file that quietly leaves whole storages out, which is how banked and hoarded items go missing from a tab that is otherwise right. It also says the one thing no order of typing can fix: Wind Runes and other currency-tab items are never in the dump at all.',
+        text: 'The /outputfile line gained a How: which windows to open (Bank, Dragon\'s Hoard, Tradeskill Depot) before typing it so the dump is complete - and a note that currency-tab items never dump at all.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Spirit of the Puma gets a timer bar. Everything the app needed to track it was already there - the cast line, the "you begin to snarl" landing, the "spirit of the puma departs" fade - except the length, and the wiki writes that one as "60s". The app could read "60 seconds" and "1 minute" and a dozen other spellings but not that one, and a spell with no length is a spell the buffs window will not draw at all. It can read it now, along with 86 other spells whose length was written the same short way or as a plain clock like 6:00:00 - the familiars, Form of the Bear, Blessing of Faith, the cleric healing echoes, Instill, the shaman heal-over-time line. Sicken was wrong rather than missing: its length is written "1 min 24s" and only the first half was being counted, so a 1 minute 24 second debuff was showing as one minute.',
+        text: 'Spirit of the Puma and 86 other spells whose wiki durations are written like "60s" or "6:00:00" get their timer bars - those spellings read correctly now. Sicken corrects from 1:00 to its real 1:24.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'A bard chaining Tuyen\'s chants sees all four of them, each on its own bar. Every chant in that family prints the same "begins to chant" line when it lands, and the app only knew two of the four - so a chant of disease landing was drawn as a chant of frost, a frost that had just been resisted, while the poison and the disease had no bar at all. Replayed against the reporting bard\'s own fight, the overlay now shows flame, disease and poison counting down on the mob and no frost, which is exactly what was on the mob.',
+        text: 'All four Tuyen\'s chants get their own bars - a disease landing no longer draws as a resisted frost.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Two more debuffs turn up on the debuff window: Dooming Darkness, the shadow knight and necromancer darkness, and Sha\'s Lethargy, the level 50 beastlord slow. Both were cases where the wiki writes the landing line slightly differently from the game - one preposition for the darkness, a missing name for the slow - so the app was watching for a sentence that never arrives. Cascading Darkness was fixed alongside its own line-mate.',
+        text: 'Dooming Darkness, Cascading Darkness and Sha\'s Lethargy turn up on the debuff window - three more landing lines the wiki words differently than the game, corrected.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Your antivirus should stop objecting to the app, and the overlays should start hiding themselves on machines where they never did. To know whether EverQuest is running, in front, and where its window is - which is how the floating meters hide themselves and how the cursor ring stays over the game - the app used to start a hidden Windows PowerShell in the background every time you launched it. Some antivirus products read that as an attack and flagged the whole app; on a lot of PCs it could not start at all, which quietly left auto-hide and the cursor ring dead for the entire session with nothing on screen to say so. The app now asks Windows those questions itself, with no hidden program and nothing to start. Nothing about how the overlays behave has changed - they just work in places they did not before.'
+        text: 'The app no longer starts a hidden PowerShell to watch for EverQuest - it asks Windows directly. Antivirus stops objecting, and overlay auto-hide now works on machines where the old helper could never start.'
       },
       {
         kind: 'fixed',
-        text: 'The app no longer argues with a console nobody is listening to. When the window that launched it had already closed, every line it tried to print failed - and it answered each failure by trying to print again, so one install spent a whole day reporting millions of copies of a problem that was never about anything you could see. A destination with no reader is now simply not written to. Alongside it, a general rule: no single fault may report itself more than a hundred times in one run of the app. After that it says so once and goes quiet, so something that repeats can never bury the things that only happened once.'
+        text: 'No fault may report itself more than a hundred times a session - after that it says so once and goes quiet. The install that reported one problem seven million times in a day is the reason.'
       },
       {
         kind: 'fixed',
-        text: 'The full item card is back when you hover an item on a Plane of Sky quest. Point at a required item, an item in the expanded list, or a quest reward, and you get the item window itself - name, flags, stats, effects, in the game\'s own colours - with the island and every boss that drops it underneath, and whatever else that item is used for. The card had been taken away in 0.15.0 because it opened upward across the filter bar and swallowed the clicks aimed at Sort and the other pickers. It now opens downward, cannot be pushed back up over the toolbar, and lets a click pass straight through it - so the card is there and the dropdowns still take the first click you give them, card and all.'
+        text: 'The full item card is back when hovering a Plane of Sky item - it opens downward and clicks pass straight through it, so the filter dropdowns keep every click.'
       }
     ]
   },
@@ -216,26 +216,26 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
-        text: 'Search your alerts by anything you remember about them. The box above the list takes the alert name, the spell its trigger watches, the kind of thing it fires on, the sound pack, the sound, the phrase a spoken alert says, and the note - so the alert you only remember as "the one about confetti" or "the Rickman sting" is one word away. Near-misses and half-words count, every word you type has to land somewhere, and the matches stay in the order the list was already in rather than jumping about by how well they matched. Clear the box and the whole list comes back. Every alert still fires while a search is on - the box narrows what you are looking at, never what is running.'
+        text: 'Search your alerts by anything you remember - name, spell, trigger, sound, spoken phrase, or note. The box narrows what you see, never what fires.'
       },
       {
         kind: 'fixed',
-        text: 'Hovering an item on a Plane of Sky quest names the mob that drops it again, not just the island. Every boss the catalog knows for that item is listed with its level and zone, and the island rides the same line as the item name - so you can read who to kill and where to stand without expanding the quest. Since 0.15.0 that hover had answered with the island alone.',
+        text: 'Hovering a Plane of Sky item names the mobs that drop it again, with level and zone - since 0.15.0 the hover had answered with the island alone.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'Dozens of spells the wiki describes with a placeholder name - Odium, Tangling Weeds, Elnerick\'s Entombment of Ice, the ward and blessing lines, the healing echoes - now open a timer bar when they land. The game says "a rock golem staggers under a dark curse" and the wiki page says "Target staggers under a dark curse", and that one word was the difference between a bar and nothing at all. Forty-four spells were checked against real logs and fixed together, so this is not one spell learning to work.',
+        text: 'Forty-four spells the wiki describes with a placeholder subject - Odium, Tangling Weeds, the ward and blessing lines, the healing echoes - now open timer bars when they land.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'A mez that runs longer than the app expects finally teaches the timer instead of being thrown away. Your mez bar learns from the mezzes you cast, but a mez you break early is shorter than the real one - so a run of quick breaks taught the app a number below the truth, and every full-length mez after that had its bar taken away seconds before it actually wore off. The one cast that could have corrected the number was the one cast the wrong number destroyed. Now the app remembers a mez the bar has given up on for long enough to still learn from it when it does wear off, and it reads the game\'s own "has been awakened by" line to tell a mez somebody broke from a mez that ran its course - so a broken one can never push the full-length reading out of what it has learned. On the log this came from, a 136-second hold that taught nothing for weeks now sets the bar the first time it happens. The bar itself still disappears on exactly the same schedule as before.',
+        text: 'A mez that outlives its estimate still teaches the timer: late wear-offs are learned instead of thrown away, and broken mezzes can no longer drag the learned duration below the truth.',
         fromReport: true
       },
       {
         kind: 'fixed',
-        text: 'A boss pull starts when you pull the boss. A mez you cast on something else used to keep the previous skirmish open long after everything in it was dead, so the next fight opened as much as a minute early and its meter carried a scrap of the fight before it. A hold now lasts only as long as the mob it was cast on - it ends the moment that mob dies or leaves - and it is never claimed by your own charmed pet, which happens more than you would think when your pet and the things you are killing share a name. Mezzing one mob and taking your time with the other still holds the pull open exactly as before.'
+        text: 'A boss pull starts when you pull the boss - a mez hold ends when its mob dies or leaves, and is never claimed by your own charmed pet.'
       }
     ]
   },
