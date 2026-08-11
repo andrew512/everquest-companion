@@ -1635,6 +1635,12 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   `node --import tsx scripts/check-release-notes.mjs $env:GITHUB_REF_NAME`, which
   refuses a tag with no entry and re-runs the same `releaseNotesProblems` shape
   check `tests/releaseNotes.test.mts` runs. Write the entry BEFORE tagging.
+  **WHO WRITES IT: THE INTEGRATOR, AT RELEASE CUT (owner rule 2026-08-10).**
+  Notes are a release-driven activity, not a work-driven one. Worker branches
+  never touch `releaseNotes.ts` — the integrator drafts the whole entry from
+  the release's merged tickets when the tag is cut. (Two workers in one wave
+  independently appended bullets to an already-shipped version; per-worker
+  notes also can't see the release's shape or apply the five-bullet cap.)
 - **RELEASE CADENCE: tag only when the user asks, or at a clearly STABLE
   point** — features verified end-to-end, the gauntlet green, no waves in
   flight. Commits land on main continuously; a tag is a deliberate act,
