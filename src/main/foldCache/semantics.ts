@@ -1,0 +1,45 @@
+// ============================================================================
+// semantics.ts — THE SEMANTICS AXIS: one number, policed by goldens (JOS-208, design revision).
+// ============================================================================
+//
+// The encoding axis (schema.ts) is mechanized because a stored SHAPE is data and a hash can be
+// derived from it. The other axis cannot be: when a fold's MEANING changes — a gap rule tightened,
+// a kill newly counted, a zone line newly clearing something — the shape is untouched and every
+// existing checkpoint now holds numbers this build would never have produced. Nothing in the
+// source can tell that apart from a refactor.
+//
+// So it is a MANUAL constant. And a manual constant is a constant somebody will forget, which is
+// why it does not stand alone: `tests/foldGoldens.test.mts` folds the fixture corpus and
+// FINGERPRINTS each pilot module's published snapshots. The committed goldens
+// (`tests/goldens/foldFingerprints.json`) are the tripwire.
+//
+//     fold output changed, FOLD_SEMANTICS unchanged  → RED, naming the module and the fixture.
+//         Fix: bump the number and re-record the goldens IN THE SAME COMMIT.
+//     fold output changed, FOLD_SEMANTICS bumped     → green. This is a correct change, stated.
+//     output unchanged, FOLD_SEMANTICS bumped        → allowed, but FLAGGED as overzealous, and
+//         the goldens file must carry a `reason` for that version. An unnecessary bump costs the
+//         whole fleet one cold start — cheap, and honest about being cheap — but an unexplained
+//         one is a habit, and the habit is what makes the number meaningless.
+//
+// THE CORPUS IS THE HONESTY BOUNDARY, and it is stated rather than implied: a semantic change
+// visible only on log shapes no fixture contains will not be caught here. That is what shadow mode
+// (phase 3) is the fleet backstop for, and it is why the standing rule is WHEN IN DOUBT, BUMP —
+// the cost of a bump nobody needed is one cold start, and the cost of a bump nobody made is a
+// silently wrong world model.
+
+/**
+ * THE FOLD'S SEMANTIC VERSION. Bump this in the SAME COMMIT as any change to what the fold
+ * COMPUTES from a given event stream.
+ *
+ * What counts (the fold laws now in AGENTS.md, in short): the parser's event stream, any module's
+ * `onEvent`, the derived-event producers (epoch, offline-gap, buffExpired), the reducers, the
+ * committed data that feeds any of them (spells.json, respawns.json, the message-overlay baseline,
+ * the spell corrections), and the bus delivery order.
+ *
+ * What does not: anything under `src/renderer/**` or `src/preload/**`, anything that only reads a
+ * snapshot, and any refactor that leaves every fixture's fingerprint unchanged — which is precisely
+ * what the goldens are there to let you verify rather than assert.
+ *
+ *   1 — JOS-208. The first checkpointed fold.
+ */
+export const FOLD_SEMANTICS = 1

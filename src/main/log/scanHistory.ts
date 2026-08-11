@@ -61,6 +61,28 @@ export interface ScanOptions {
    * compare. There is deliberately no environment variable behind this: see replaySlicer.ts.
    */
   slicer?: Slicer
+  /**
+   * THE TAIL REPLAY'S FIRST BYTE (JOS-208). Absent ⇒ 0, which is every pre-checkpoint caller and
+   * still the default.
+   *
+   * When a checkpoint restored the fold to byte B, the scan must read [B, EOF) and nothing before
+   * it — that IS the feature. It is the same seam the live handoff already uses in the other
+   * direction: `endOffset` comes back including this offset, so the tailer's start point is
+   * computed exactly as it always was and the "a line can be folded neither twice nor never"
+   * property is unchanged. It must be the end of a COMPLETE line, which is the only kind of offset
+   * anything in this app ever produces (`ScanResult.endOffset`, `Tailer.checkpointOffset()`).
+   */
+  startOffset?: number
+  /**
+   * WHERE TO STOP, exclusive. Absent ⇒ the frozen EOF, which is every production caller.
+   *
+   * THE DIFFERENTIAL HARNESS IS THE ONLY CALLER THAT PASSES IT (tests/foldCheckpoint*), and it
+   * needs it for the same reason the equivalence test needs `unchunkedSlicer()`: proving
+   * `restore(checkpoint(fold(prefix))) + fold(tail) == fold(prefix + tail)` requires folding a
+   * PREFIX, and a prefix is not a thing production ever wants. A parameter rather than an
+   * environment variable, for the reason replaySlicer.ts states about its own seam.
+   */
+  endOffset?: number
 }
 
 /**
@@ -163,7 +185,19 @@ export async function scanLog(
   } catch {
     return { endOffset: 0, seq: startSeq, size: 0 }
   }
-  if (size === 0) return { endOffset: 0, seq: startSeq, size: 0 }
+  // THE WINDOW (JOS-208). `from` is where the fold's knowledge already reaches — 0, or the byte a
+  // checkpoint restored the fold to; `stopAt` is the frozen EOF, or the harness's earlier stop.
+  // Both clamped rather than trusted: a stale checkpoint pointing past a file that has since shrunk
+  // must produce an empty scan, not a negative-length read (the identity check will have refused it
+  // long before this anyway).
+  //
+  // `size` IS DELIBERATELY LEFT ALONE, which is the whole reason `stopAt` is a second name rather
+  // than a narrowing of it. JOS-57's `ScanResult.size` IS THE FROZEN EOF, and the cold-read delta
+  // subtracts the persisted tail mark from it; narrowing it for a test-only prefix scan would hand
+  // out a "the log rotated" verdict for a window the harness chose.
+  const from = Math.max(0, Math.min(opts.startOffset ?? 0, size))
+  const stopAt = opts.endOffset === undefined ? size : Math.max(from, Math.min(opts.endOffset, size))
+  if (size === 0 || stopAt <= from) return { endOffset: from, seq: startSeq, size }
 
   let seq = startSeq
 
@@ -174,19 +208,26 @@ export async function scanLog(
     bus.emit(ev, false)
   }
 
-  // Byte-accurate line splitting (see SplitState / consumeChunk).
-  const st: SplitState = { endOffset: 0, pendingBytes: 0, leftover: '' }
+  // Byte-accurate line splitting (see SplitState / consumeChunk). `endOffset` starts at `from`,
+  // not at zero: the offset this returns is an offset INTO THE FILE, and the tailer handoff is
+  // arithmetic against it.
+  const st: SplitState = { endOffset: from, pendingBytes: 0, leftover: '' }
   const slicer = opts.slicer ?? createSlicer()
 
   const stream = createReadStream(logPath, {
-    start: 0,
-    end: size - 1,
+    start: from,
+    end: stopAt - 1,
     highWaterMark: READ_CHUNK_BYTES
   })
 
   // The cold-disk clock (see ScanResult.firstMbMs). Started at the last statement before the first
   // byte is asked for, and read at the top of the loop body — i.e. between the read completing and
   // anything being parsed — so the fold is outside it by construction rather than by estimate.
+  //
+  // A CHECKPOINTED LAUNCH STILL MEASURES IT, and it is still the right measurement: the question is
+  // how long the OS took to hand over the first megabyte NOBODY HAD READ, and after a restore that
+  // is the first megabyte of the TAIL — which is precisely the never-scanned span the AV hypothesis
+  // is about. A tail shorter than a megabyte reports nothing, exactly as a small log does.
   const readStartedAt = performance.now()
   let bytesRead = 0
   let firstMbMs: number | undefined
