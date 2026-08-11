@@ -22,6 +22,7 @@ import { registerClipboardIpc } from './clipboard'
 import { registerComboIpc } from './combo'
 import { registerDevIpc } from './dev'
 import { registerFeedbackIpc } from './feedback'
+import { registerFoldCacheIpc } from './foldCache'
 import { registerGraphicsIpc } from './graphics'
 import { registerKnowledgeIpc } from './knowledge'
 import { registerMapsIpc } from './maps'
@@ -70,6 +71,7 @@ export function registerIpc(): void {
   registerGraphicsIpc()
   registerBuffTrustIpc()
   registerRespawnIpc()
+  registerFoldCacheIpc()
   registerUiScaleIpc()
   registerReleaseNotesIpc()
   // Registered in EVERY build, and a no-op in a packaged one — the refusal lives inside the

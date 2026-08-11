@@ -13,7 +13,7 @@ import { writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { FOLD_SEMANTICS } from '../src/main/foldCache/semantics'
-import { PILOT_MODULE_IDS } from '../src/main/foldCache/serialize'
+import { CHECKPOINTED_MODULE_IDS } from '../src/main/foldCache/serialize'
 import { buildFoldWorld, foldRange, FOLD_FIXTURES, publishedSnapshots, watchesFor } from './foldCheckpointHarness.mts'
 
 export const GOLDENS_PATH = join(import.meta.dirname, 'goldens', 'foldFingerprints.json')
@@ -41,7 +41,8 @@ export function canonicalJson(v: unknown): string {
 }
 
 /**
- * Fold every fixture once and fingerprint each pilot's published snapshot.
+ * Fold every fixture once and fingerprint EVERY checkpointed module's published snapshot (phase 2
+ * — phase 1 fingerprinted the two pilots).
  *
  * The watch list comes from `watchesFor`, exactly as the differential harness derives it, so the
  * respawn module publishes real rows rather than an empty list — a golden over an empty snapshot
@@ -55,7 +56,7 @@ export async function foldFingerprints(): Promise<Record<string, string>> {
     const world = buildFoldWorld(logPath, prefs)
     await foldRange(world, logPath, { from: 0, seq: 0 })
     const snaps = publishedSnapshots(world)
-    for (const id of PILOT_MODULE_IDS) {
+    for (const id of CHECKPOINTED_MODULE_IDS) {
       out[`${fixture}::${id}`] = createHash('sha256').update(canonicalJson(snaps[id])).digest('hex').slice(0, 16)
     }
   }

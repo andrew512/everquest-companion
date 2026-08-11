@@ -46,8 +46,36 @@ export type FoldSchema =
   /** A fixed-length, positionally-typed array — how an entries pair is declared. */
   | { k: 'tuple'; of: readonly FoldSchema[] }
   | { k: 'object'; fields: Readonly<Record<string, FoldSchema>> }
-  /** The field may be ABSENT. Never `null`: an absent fact and a null one are one thing here. */
+  /**
+   * A plain object with ARBITRARY string keys, all values of one type — a `Record<string, T>`.
+   *
+   * Added in phase 2 for the modules whose live state already IS one (`kills`' KillMap,
+   * `itemTiers`' rows, the per-tier runs inside a kill). It is NOT a Map by another name and the
+   * distinction is the same one the header makes: an object's meaning does not depend on which
+   * class was in scope, and a reader that walks its keys needs nothing but `Object.keys`. Where
+   * the live state is a MAP whose INSERTION ORDER is load-bearing (an LRU, a
+   * least-recently-fired eviction), the declaration stays an array of `tuple(key, value)` — a
+   * record's key order is an accident of the engine and must never carry meaning.
+   */
+  | { k: 'record'; of: FoldSchema }
+  /** The field may be ABSENT. An absent fact is the grammar's ONLY way to say "no such fact". */
   | { k: 'optional'; of: FoldSchema }
+  /**
+   * The value may be the literal `null` — and this kind exists for exactly one situation, stated
+   * so it is not reached for casually.
+   *
+   * The rule is unchanged: a fold NEVER stores null to mean "absent" (use `optional`). But a few
+   * pieces of fold state are also WIRE types the renderer hydrates, and two of them —
+   * `ActiveBuff.estimatedMs` / `p25` / `p75` / `overlayDurationMs` — declare `number | null` with
+   * the key always present, where null is a STATED "the model has no estimate" that the UI renders
+   * as such. The differential law compares published snapshots with `deepStrictEqual`, so a
+   * restore that turned one of those nulls into an absent key would be a real divergence in a
+   * real payload. The checkpoint reproduces the shape the module publishes; it does not get to
+   * improve it.
+   *
+   * `null` survives a structured clone unchanged, so this widens nothing about plainness.
+   */
+  | { k: 'nullable'; of: FoldSchema }
 
 // ------------------------------------------------------------------ tiny constructors, for reading
 
@@ -59,7 +87,9 @@ export const S = {
   arr: (of: FoldSchema): FoldSchema => ({ k: 'array', of }),
   tuple: (...of: FoldSchema[]): FoldSchema => ({ k: 'tuple', of }),
   obj: (fields: Record<string, FoldSchema>): FoldSchema => ({ k: 'object', fields }),
-  opt: (of: FoldSchema): FoldSchema => ({ k: 'optional', of })
+  rec: (of: FoldSchema): FoldSchema => ({ k: 'record', of }),
+  opt: (of: FoldSchema): FoldSchema => ({ k: 'optional', of }),
+  nullable: (of: FoldSchema): FoldSchema => ({ k: 'nullable', of })
 }
 
 /**
@@ -91,6 +121,10 @@ export function canonical(schema: FoldSchema): string {
       return `array(${canonical(schema.of)})`
     case 'tuple':
       return `tuple(${schema.of.map(canonical).join(',')})`
+    case 'record':
+      return `record(${canonical(schema.of)})`
+    case 'nullable':
+      return `nullable(${canonical(schema.of)})`
     case 'optional':
       return `optional(${canonical(schema.of)})`
     case 'object': {
@@ -120,12 +154,16 @@ export function validate(schema: FoldSchema, value: unknown, path = ''): Validat
   switch (schema.k) {
     case 'optional':
       return value === undefined ? OK : validate(schema.of, value, path)
+    case 'nullable':
+      return value === null ? OK : validate(schema.of, value, path)
     case 'array':
       return validateArray(schema.of, value, path)
     case 'tuple':
       return validateTuple(schema.of, value, path)
     case 'object':
       return validateObject(schema.fields, value, path)
+    case 'record':
+      return validateRecord(schema.of, value, path)
     default:
       return validateLeaf(schema, value, path)
   }
@@ -187,6 +225,20 @@ function validateObject(
   }
   for (const key of Object.keys(fields)) {
     const r = validate(fields[key], value[key], join(path, key))
+    if (!r.ok) return r
+  }
+  return OK
+}
+
+/**
+ * Every value of an arbitrary-keyed plain object. The KEYS are unconstrained by design (they are
+ * mob names, item keys, message texts — the fold's own vocabulary) and are never themselves
+ * validated beyond being an object's own enumerable strings, which is all a plain object can hold.
+ */
+function validateRecord(of: FoldSchema, value: unknown, path: string): ValidateResult {
+  if (!isPlainObject(value)) return { ok: false, error: { path, expected: 'plain object', got: describe(value) } }
+  for (const key of Object.keys(value)) {
+    const r = validate(of, value[key], join(path, key))
     if (!r.ok) return r
   }
   return OK

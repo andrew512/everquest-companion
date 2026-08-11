@@ -79,7 +79,7 @@ for (const fixture of FOLD_FIXTURES) {
     const world = buildFoldWorld(logPath, prefs)
     await foldRange(world, logPath, { from: 0, seq: 0 })
 
-    assert.ok(world.units.length >= 4, 'the pilots and both derived-event producers must be present')
+    assert.ok(world.units.length >= 17, 'every module and both derived-event producers must be present')
     for (const unit of world.units) {
       const state = unit.serializeFold()
 

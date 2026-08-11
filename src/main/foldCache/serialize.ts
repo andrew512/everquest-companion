@@ -90,18 +90,36 @@ export function moduleShapeHash(unit: FoldCheckpointable): string {
 }
 
 /**
- * THE PILOTS (JOS-208 phase 1) — the modules whose PUBLISHED SNAPSHOTS the differential harness
- * compares, by id and in a fixed order.
+ * EVERY MODULE WHOSE PUBLISHED SNAPSHOT THE DIFFERENTIAL COMPARES, by id and in registration
+ * order (phase 2 — phase 1 shipped this as `PILOT_MODULE_IDS` holding `loot` and `respawn`).
  *
- * Two, chosen because they exercise the two shapes the rest of the fold is made of: `loot` is a
- * large append-only array of small flat records (the bulk-data case — hundreds of thousands of rows
- * on a real log), and `respawn` is a keyed history with gaps, watches, an LRU order and its own
- * revision counter (the structured-state case, and the one that exercises every exclusion rule at
- * once). Phase 2 adds the rest; the harness is written over this LIST, so adding one is a one-line
- * change there.
+ * THIS LIST IS NOT DERIVED FROM THE REGISTRY, and that is the point of writing it out. If it were
+ * `registry.list().filter(isCheckpointable)` then a module that quietly lost its seam would
+ * quietly leave the comparison, and the harness would go green by asking less. Written down, a
+ * module that stops being checkpointable fails `tests/foldCheckpointDifferential.test.mts` by
+ * name — and a NEW module that never declares a shape fails the completeness test beside it,
+ * which asserts this list against the registry's own.
  *
  * NOT THE SAME LIST AS "what the container carries" — see `FoldUnit`. The two derived-event
- * producers are checkpointed without publishing anything, because the pilots' correctness depends
- * on them.
+ * producers are checkpointed without publishing anything, because the modules' correctness
+ * depends on them.
  */
-export const PILOT_MODULE_IDS: readonly string[] = ['loot', 'respawn']
+export const CHECKPOINTED_MODULE_IDS: readonly string[] = [
+  'combo',
+  'roster',
+  'loot',
+  'turnins',
+  'classUnlocks',
+  'kills',
+  'respawn',
+  'progression',
+  'leveling',
+  'character',
+  'outputFiles',
+  'itemTiers',
+  'alerts',
+  'buffs',
+  'buffTimers',
+  'consider',
+  'eventFeed'
+]
