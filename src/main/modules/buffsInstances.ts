@@ -50,6 +50,7 @@ import {
   isPermanentIllusion,
   landingSpec,
   openLeftBehindOnZone,
+  reapOrphanedOpen,
   unwitnessedCullCap
 } from './buffsInstanceRules'
 
@@ -600,6 +601,11 @@ export class BuffInstances {
       // rule produces.
       if (now - a.startedTs > unwitnessedCullCap(a) && this.active.delete(ik)) changed = true
     }
+    // …AND THE RECORDS THE CULL ABOVE LEFT BEHIND (JOS-203). The loop above can only ever reach a
+    // record through its active row, so before this the open cast of a culled row had no reaper at
+    // all. It is NOT part of `changed`: nothing in the snapshot describes an open record, so a reap
+    // must not push a delta. `buffsInstanceRules.ts` states the schedule and the defect.
+    reapOrphanedOpen(this.open, this.active, (k) => this.stats.dbDurationFor(k), now)
     if (changed) this.dirty = true
   }
 
