@@ -928,12 +928,22 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    a rewritten list: a row and a candidate each know one mob, and handing either
    the whole watch list to rewrite would put a second author on entries the user
    never touched. It removes the NAME, so it stops that name's clocks in zones the
-   surface is not showing — stated on the control, because those rows are off
-   screen by construction — and it throws away nothing else: kills, gaps and the
+   surface is not showing, and it throws away nothing else: kills, gaps and the
    LRU history are the fold's, re-derived from the log, so watching again restores
-   the identical clock. That property is what makes a one-click unwatch over the
-   game safe without a confirmation step, and `tests/respawnUnwatch.test.mts`
-   pins it.
+   the identical clock. Those two properties are pinned on the WRITE
+   (`respawnWithoutWatch`, `tests/respawnUnwatch.test.mts`) — the control itself
+   carries no tooltip (owner, round 7 addendum: it speaks for itself).
+
+   ROUND 7 (owner, 2026-08-10): the tab is titled Timers; the Your-watches
+   section is gone — the seconds box (rung 1) and Unwatch live on the mob's
+   Running entry, which also states the measured gap history
+   (`RespawnRow.gapsMs`, newest-first, bounded; `observedMs` stays the minimum
+   over all gaps; `customMs` published for the box). Recently killed is
+   searchable via a pure single-pass filter with JOS-206 row memoization. The
+   mob hover card opens from clock rows AND Recently-killed entries — IN-APP
+   ONLY: the floating overlay carries no card (owner: it takes the overlay over
+   too completely); over the game it is plain rows and a native title, and a
+   locked window gets neither.
 
 ## Log-format quick reference (all validated against the real log)
 
