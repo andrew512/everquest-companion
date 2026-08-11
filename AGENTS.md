@@ -945,6 +945,20 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    too completely); over the game it is plain rows and a native title, and a
    locked window gets neither.
 
+   ROUND 9 (owner spec, 2026-08-11): the duration and its source label are ONE
+   bordered unit; a small edit icon on it opens the modal
+   (`RespawnEditDialog.tsx`) carrying the mob card, all observed gaps, the
+   wiki's verbatim words, and a real wiki link (`RespawnRow.wikiPage`, shape
+   v4; system browser only). The input parses a WHITELIST grammar
+   (`parseRespawnDuration`: bare number = seconds; strictly-descending d/h/m/s
+   terms like `44m 30s`; colons refused as ambiguous; the whole string must
+   parse) and answers ok/empty/unreadable/range so the dialog never guesses.
+   `respawnOverridden` = the ladder saying `source === 'custom'`, never the
+   mere presence of `customMs`; overridden rows carry `data-respawn-overridden`
+   and a distinct tint on both surfaces; clear/revert re-runs the ladder minus
+   rung 1 and states the number before you press it. The round-7 bare seconds
+   box is gone; the OVERLAY shows the state and carries none of the editing.
+
    ROUND 8 (owner defect, 2026-08-11): **a watched row NEVER vanishes while
    watched.** The old expiry sweep retired any row whose estimate elapsed 30+
    min ago — so Watch clicked hours after the only death produced a row born
