@@ -42,6 +42,7 @@
 
 import type { ProgressionSnap } from './progressionTypes'
 import type { RangeStats } from './progressionStats'
+import { dingStatement, type LevelStatement } from './currentLevel'
 
 const MS_PER_HOUR = 3_600_000
 
@@ -65,7 +66,15 @@ export const ETA_ABSURD_MS = 24 * MS_PER_HOUR
 export const ETA_MIN_ONLINE_MS = 15 * 60_000
 
 /** WHY there is no estimate. Each one is a hole in the evidence, and each is shown on hover. */
-export type EtaBlocked = 'no-ding' | 'unstated' | 'clipped' | 'overfull' | 'offline' | 'no-pace'
+export type EtaBlocked =
+  | 'no-ding'
+  | 'unstated'
+  | 'clipped'
+  | 'overfull'
+  | 'offline'
+  | 'no-pace'
+  /** a `/who` states a different level than the ding this sum is anchored on (JOS-192) */
+  | 'swapped'
 
 /**
  * The reason there is no estimate — one clause per `EtaBlocked` (AGENTS.md tooltip diet).
@@ -80,7 +89,8 @@ export const ETA_BLOCKED_TITLE: Record<EtaBlocked, string> = {
   clipped: 'The retained record no longer reaches back to your last level-up.',
   overfull: 'The percentages since your last level-up already exceed a full level.',
   offline: 'Most of this stretch is time you were logged out.',
-  'no-pace': 'This stretch states no levels of progress.'
+  'no-pace': 'This stretch states no levels of progress.',
+  swapped: 'Your /who reports a different level than your last level-up - the bar restarted where the log cannot see.'
 }
 
 /**
@@ -93,15 +103,18 @@ export type LevelEta =
   | { blocked: null; ms: number; toLevel: number; progress: number; offlineMs: number }
 
 /**
- * The CURRENT level as the log last reported it — the tail of `levelValue`, never `max()`.
- * You level three classes at once and a loadout swap re-reports the level of the new (lowest)
- * class with no line of its own, so the latest value is the only honest "your level" (the same
- * rule `latestLevel` follows in the Leveling tab). Null when the snapshot holds no ding: a surface
- * omits the chip rather than guessing one.
+ * The last level the DING SERIES reported — the tail of `levelValue`, never `max()` (you level
+ * three classes at once and a loadout swap re-reports the level of the new, lowest class).
+ *
+ * IT IS NO LONGER WHAT A SURFACE PRINTS (JOS-192). The tail of the dings is silent about exactly
+ * the moment a swap happens, so "your level" is now `CharacterSnap.level` — the latest of the
+ * ding and your own `/who` row — read through `currentLevelRead` (shared/currentLevel.ts), which
+ * also carries the provenance and the age. This stays as the DING anchor: it is what the
+ * projection below sums from, and what `dingStatement` degrades to when no character snapshot is
+ * in hand. Null when the snapshot holds no ding at all.
  */
 export function currentLevel(snap: ProgressionSnap): number | null {
-  const n = snap.levelValue.length
-  return n > 0 ? snap.levelValue[n - 1] : null
+  return dingStatement(snap)?.level ?? null
 }
 
 /**
@@ -145,32 +158,73 @@ function tooOffline(stats: RangeStats): boolean {
 }
 
 /**
+ * Reasons the ANCHOR itself is unusable, before a single percentage is summed.
+ *
+ *   swapped — a `/who` row states a different level than the last ding, so a loadout swap happened
+ *             between them and the bar restarted where the log cannot see. Every percentage since
+ *             that ding belongs to a bar that no longer exists; "~2h to level 51" beside a header
+ *             reading 11 is the incoherence JOS-192 is about, not a rounding error.
+ *   clipped — the retention floor rose past the anchor, so samples between the ding and the floor
+ *             are gone and the sum would silently under-count. (`levelTs` itself is uncapped;
+ *             `expTs` is not.)
+ */
+function anchorBlocked(
+  snap: ProgressionSnap,
+  dingTs: number,
+  level: LevelStatement | null | undefined
+): EtaBlocked | null {
+  const dinged = snap.levelValue[snap.levelValue.length - 1]
+  if (level?.source === 'who' && level.ts > dingTs && level.level !== dinged) return 'swapped'
+  if (snap.windowStart > 0 && dingTs < snap.windowStart) return 'clipped'
+  return null
+}
+
+/**
+ * Reasons the RANGE cannot carry a projection: most of it was an empty chair, or it states no
+ * pace at all. The ACTIVE rate is the gate (null ⇒ no active time, or at cap); the ONLINE WALL
+ * rate is what divides — see `RangeStats.levelsPerHourWall`, whose denominator excludes the logout.
+ */
+function paceOf(stats: RangeStats): { blocked: EtaBlocked } | { blocked: null; perHour: number } {
+  if (tooOffline(stats)) return { blocked: 'offline' }
+  if (stats.levelsPerHourActive == null) return { blocked: 'no-pace' }
+  const perHour = stats.levelsPerHourWall
+  if (perHour == null || perHour <= 0) return { blocked: 'no-pace' }
+  return { blocked: null, perHour }
+}
+
+/**
  * The next-level estimate, or the reason there is none. `stats` is the range's own `rangeStats` —
  * the SAME object the surface's headline rate came from, so the number on screen and the number
  * the projection used can never diverge.
+ *
+ * `level` is `CharacterSnap.level` when the caller has it (JOS-192). It is not used to compute
+ * anything — it is a SIXTH GATE, and it closes the one hole the other five could not see: a
+ * `/who` row stating a different level than the last ding means a loadout swap happened between
+ * them, the bar restarted at a level nothing here can date, and every experience percentage since
+ * the ding belongs to a bar that no longer exists. "~2h to level 51" while the header says level
+ * 11 is precisely the incoherence this ticket is about. Omit it and the function behaves exactly
+ * as it always did.
  */
-export function levelEta(snap: ProgressionSnap, stats: RangeStats): LevelEta {
+export function levelEta(
+  snap: ProgressionSnap,
+  stats: RangeStats,
+  level?: LevelStatement | null
+): LevelEta {
   const n = snap.levelTs.length
   if (n === 0) return { blocked: 'no-ding' }
   const dingTs = snap.levelTs[n - 1]
-  // The retention floor rose past the anchor ⇒ samples between the ding and the floor are gone
-  // and the sum below would silently under-count. (`levelTs` itself is uncapped; `expTs` is not.)
-  if (snap.windowStart > 0 && dingTs < snap.windowStart) return { blocked: 'clipped' }
+  const anchor = anchorBlocked(snap, dingTs, level)
+  if (anchor) return { blocked: anchor }
   const { equiv, unstated } = statedSinceDing(snap, dingTs)
   if (unstated > 0) return { blocked: 'unstated' }
   // More than a full bar's worth stated with no ding to show for it: the model and the log
   // disagree, and the honest answer to "where am I in the bar" is that we do not know.
   if (equiv >= 1) return { blocked: 'overfull' }
-  // Most of the range was an empty chair: what is left is a rate, not an hour of evidence.
-  if (tooOffline(stats)) return { blocked: 'offline' }
-  // The ACTIVE rate is the gate (null ⇒ no active time, or at cap); the ONLINE WALL rate
-  // divides — see `RangeStats.levelsPerHourWall`, whose denominator excludes the logout.
-  if (stats.levelsPerHourActive == null) return { blocked: 'no-pace' }
-  const pace = stats.levelsPerHourWall
-  if (pace == null || pace <= 0) return { blocked: 'no-pace' }
+  const pace = paceOf(stats)
+  if (pace.blocked !== null) return { blocked: pace.blocked }
   return {
     blocked: null,
-    ms: ((1 - equiv) / pace) * MS_PER_HOUR,
+    ms: ((1 - equiv) / pace.perHour) * MS_PER_HOUR,
     toLevel: snap.levelValue[n - 1] + 1,
     progress: equiv,
     offlineMs: stats.offlineMs

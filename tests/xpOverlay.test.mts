@@ -219,6 +219,51 @@ test('below the cap the window speaks LEVELS: a pace and the level it is heading
   assert.equal(v.rows.find((r) => r.id === 'eta')?.detail, 'to 44')
   assert.match(valueOf(v, 'eta'), /^~/, 'a projection wears its tilde')
   assert.equal(v.level, 43, 'the header chip is the level the log last reported')
+  assert.equal(v.levelCue, '', 'a level you dinged to half an hour ago needs no qualifier')
+  assert.equal(v.levelTitle, 'Your last level-up reported this level, 30m ago.')
+})
+
+// ---------------------------------------------------------------------------------------
+// THE HEADER'S LEVEL IS THE STATED FACT (JOS-192)
+// ---------------------------------------------------------------------------------------
+
+test('the header takes your own /who over the ding tail, and says so', () => {
+  // A floating window over the game is the surface most likely to be read at a glance and least
+  // likely to be questioned, so the one moment its number goes wrong — a loadout swap, which
+  // prints nothing — is the moment it has to be correctable. A `/who` on yourself is that
+  // correction, and this window now rides the `character` module to receive it.
+  const snap = farming({ pct: 1 })
+  ding(snap, 30 * MIN, 43)
+  const bounds = dataBounds(snap, [])
+  const withWho = xpOverlayView({
+    snap,
+    loot: [],
+    slice: resolveSlice({ snap, bounds, id: 'all' }),
+    visible: undefined,
+    level: { level: 11, ts: T0 - 5 * MIN, source: 'who' }
+  })
+  assert.equal(withWho.level, 11)
+  assert.equal(withWho.levelCue, '/who')
+  assert.equal(withWho.levelTitle, 'Your own /who row stated this level, 5m ago.')
+  // …and the projection refuses rather than projecting the bar the swap threw away.
+  assert.equal(valueOf(withWho, 'eta'), NONE)
+  assert.match(withWho.rows.find((r) => r.id === 'eta')?.title ?? '', /different level than your last level-up/)
+})
+
+test('a level nothing has restated for hours wears its age in the header', () => {
+  const snap = farming({ pct: 1 })
+  ding(snap, 30 * MIN, 43)
+  const bounds = dataBounds(snap, [])
+  const stale = xpOverlayView({
+    snap,
+    loot: [],
+    slice: resolveSlice({ snap, bounds, id: 'all' }),
+    visible: undefined,
+    level: { level: 43, ts: T0 - 40 * HOUR, source: 'ding' }
+  })
+  assert.equal(stale.level, 43)
+  assert.equal(stale.levelCue, '40h 0m ago')
+  assert.match(stale.levelTitle, /loadout swap since then would have printed nothing/)
 })
 
 // ---------------------------------------------------------------------------------------

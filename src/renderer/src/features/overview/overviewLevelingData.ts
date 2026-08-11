@@ -113,6 +113,10 @@ import {
   type EtaBlocked,
   type LevelEta
 } from '../../../../shared/levelEta'
+// "What level am I" is its own derivation now (JOS-192): the tail of the dings is silent across a
+// loadout swap, so the card reads the STATED fact — ding or your own `/who`, whichever spoke last
+// — through the one shared reader that also words its provenance and its age.
+import { currentLevelRead, type LevelStatement } from '../../../../shared/currentLevel'
 import { aaEta } from '../../../../shared/aaPace'
 import { aaPaceLine } from '../leveling/aaPaceRows'
 import { NONE, activeIdleText, idleRuleCaption, offlineText } from '../leveling/rangeStatsRows'
@@ -381,8 +385,13 @@ export interface OverviewLevelingState {
   verdict: string | null
   /** The history line's tooltip. '' when there is no history line to hang it on. */
   historyTitle: string
-  /** Latest reported level, or null (chip omitted). */
+  /** The level the log last STATED (ding or your own `/who`), or null (chip omitted). */
   level: number | null
+  /** Where that level came from and how long ago it was said — ALWAYS a sentence when `level`
+   *  is non-null, '' when it is. See shared/currentLevel.ts. */
+  levelTitle: string
+  /** '/who' or 'Nh ago' beside the number, '' when the bare number is the whole fact. */
+  levelCue: string
   /** The idle rule, literally — a tooltip/caption on the number it explains, never a caption
    *  that describes the app's process (AGENTS.md: state, never process). */
   idleCaption: string
@@ -418,6 +427,8 @@ function emptyState(): OverviewLevelingState {
     verdict: null,
     historyTitle: '',
     level: null,
+    levelTitle: '',
+    levelCue: '',
     idleCaption: idleRuleCaption(IDLE_GAP_MS),
     kills: 0,
     // No window means no columns to draw: an empty spark, never twelve zero bars implying a
@@ -425,6 +436,20 @@ function emptyState(): OverviewLevelingState {
     tiles: [],
     spark: { buckets: [], peak: 0, stated: 0, unstated: 0 }
   }
+}
+
+/**
+ * The card's three level fields, from the ONE read (JOS-192) — so the chip, the tile and the
+ * tile's hover cannot say two different things, and so the fold below carries no null guards for
+ * a fact that is simply absent on a log nothing has stated a level in.
+ */
+function levelFields(
+  stated: LevelStatement | null | undefined,
+  snap: ProgressionSnap
+): { level: number | null; levelTitle: string; levelCue: string } {
+  const read = currentLevelRead(stated, snap)
+  if (!read) return { level: null, levelTitle: '', levelCue: '' }
+  return { level: read.level, levelTitle: read.title, levelCue: read.cue }
 }
 
 /** Window B's one line. Same formatters as the headline, so the two are directly comparable. */
@@ -441,16 +466,21 @@ function zoneLineText(stats: RangeStats, zone: string): string {
  * columns directly, so neither added a sweep. Memoize this on snapshot identity and the card is
  * free to re-render as often as the module pushes.
  */
-export function overviewLeveling(snap: ProgressionSnap): OverviewLevelingState {
+export function overviewLeveling(
+  snap: ProgressionSnap,
+  stated?: LevelStatement | null
+): OverviewLevelingState {
   const { hour, zone } = levelingWindows(snap)
   if (!hour) return emptyState()
   const a = rangeStats({ snap, range: hour })
   const b = zone ? rangeStats({ snap, range: zone }) : null
-  const eta = levelEta(snap, a)
+  const eta = levelEta(snap, a, stated)
   const spans = recentLevelSpans(snap)
   const verdict = paceVerdict(spans, a.levelsPerHourWall)
   const rateText = rate(a.levelsPerHourActive, formatLevelRate)
-  const level = currentLevel(snap)
+  // ONE read of "what level am I" for the whole card — the chip, the tile and the tile's hover
+  // all take it, so the card cannot say two levels (JOS-192).
+  const lv = levelFields(stated, snap)
   const idleCaption = idleRuleCaption(a.idleThresholdMs)
   return {
     empty: false,
@@ -468,10 +498,10 @@ export function overviewLeveling(snap: ProgressionSnap): OverviewLevelingState {
     history: historyText(spans),
     verdict: verdict && VERDICT_TEXT[verdict],
     historyTitle: historyTitleText(spans, a.levelsPerHourWall),
-    level,
+    ...lv,
     idleCaption,
     kills: a.kills,
-    tiles: levelingTiles({ level, hour: a, eta, rateText }),
+    tiles: levelingTiles({ ...lv, hour: a, eta, rateText }),
     spark: levelingSpark(snap, hour)
   }
 }

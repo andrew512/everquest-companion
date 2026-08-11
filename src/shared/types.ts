@@ -662,12 +662,9 @@ export interface LevelingDelta {
   aaPotions: AAPotionEvent[]
 }
 
-/** character module: current character + zone. */
-export interface CharacterSnap {
-  character: CharacterRef | null
-  zone?: string
-}
-export type CharacterDelta = Partial<CharacterSnap>
+/** character module: current character, zone, and the level the log last STATED (JOS-192). The
+ *  shapes moved to ./characterTypes when the level field pushed this file over its ceiling. */
+export type { CharacterDelta, CharacterSnap } from './characterTypes'
 
 /**
  * itemTiers module (Task #60): the OBSERVED item level of an item the CURRENT character has
