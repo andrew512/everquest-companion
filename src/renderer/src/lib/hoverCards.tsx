@@ -234,6 +234,23 @@ export interface MobCardNote {
 }
 
 /**
+ * HOW A MUI TOOLTIP MUST DRESS THIS CARD, hoisted to module scope so every surface that hangs it
+ * off a Tooltip passes the SAME object identity (the JOS-206 finding: fresh `slotProps` with nested
+ * `sx` rebuilt per render is real reconciliation cost across a list of anchors, and this card now
+ * hangs off every clock row AND every Recently-killed entry).
+ *
+ * The values themselves are the card getting the tooltip out of its way: `MobCard` draws its own
+ * surface — it has to, being the same component the MUI-free overlay bundle renders — so the
+ * tooltip contributes no padding, no background and no 300px width cap on top of the card's own.
+ *
+ * A PLAIN OBJECT, which is why it can live in this MUI-free file: nothing here imports MUI, it is
+ * only shaped for it.
+ */
+export const MOB_CARD_SLOT_PROPS = {
+  tooltip: { sx: { p: 0, bgcolor: 'transparent', maxWidth: 'none' } }
+} as const
+
+/**
  * THE mob hover card — what a `/con` was actually asking, and what a respawn clock is about.
  *
  * It leads with the facts the anchor already gave (faction rung, level, rare — or, on a Timers

@@ -7,16 +7,21 @@
 // button sits, which is what makes the pair read as one toggle rather than two unrelated buttons.
 //
 // The floating window cannot import it (that bundle is MUI-free and draws plain divs), but it takes
-// the same two strings out of `shared/respawn.ts`, so the wording is one definition on all three.
+// the same LABEL out of `shared/respawn.ts`, so the wording is one definition on all three.
 //
 // WHY A WORD AND NOT AN ICON. A trash can says "delete", and this deletes nothing the log cannot
-// restate — it stops a clock and keeps every kill behind it. The tooltip carries that promise,
-// which is also the reason the control needs no confirmation step.
+// restate — it stops a clock and keeps every kill behind it. That promise is what makes the control
+// safe with no confirmation step, and it is a property of the WRITE (`respawnWithoutWatch` touches
+// one entry of the watch list and nothing else), not of anything the button says.
+//
+// AND IT SAYS NOTHING (owner ruling, round 7 addendum). It carried a tooltip stating the two
+// consequences until the owner deleted it: the control speaks for itself. So there is no Tooltip
+// wrapper here at all — not an empty one, not a shortened string — and the two facts live in
+// shared/respawn.ts's header where they are argued rather than recited.
 
 import { Button } from '@mui/material'
 import type { JSX } from 'react'
-import { RESPAWN_UNWATCH_LABEL, respawnUnwatchTitle } from '@shared/respawn'
-import Tooltip from '../../lib/Tooltip'
+import { RESPAWN_UNWATCH_LABEL } from '@shared/respawn'
 
 /**
  * THE SHAPE OF BOTH HALVES OF THE TOGGLE — worn by Unwatch here and by the Recently-killed entry's
@@ -41,29 +46,32 @@ export function UnwatchButton({
   onUnwatch
 }: {
   mobKey: string
-  /** The name as the log printed it — the tooltip says out loud which mob is about to stop. */
+  /**
+   * The name as the log printed it. Kept on the props after the tooltip that used it was deleted,
+   * because it is the ACCESSIBLE name of the control — a screen reader on a list of clocks would
+   * otherwise hear "Unwatch" a dozen times with nothing to tell them apart.
+   */
   display: string
   /** Which surface this one is, so an e2e can click the row's and the candidate's separately. */
   testId: string
   onUnwatch: (key: string) => void
 }): JSX.Element {
   return (
-    <Tooltip title={respawnUnwatchTitle(display)}>
-      <Button
-        size="small"
-        variant="outlined"
-        color="inherit"
-        data-testid={testId}
-        sx={RESPAWN_TOGGLE_SX}
-        onClick={(e) => {
-          // The row itself carries a tooltip and, in the candidate list, a click target of its own;
-          // a click on this button is about this button (the confirm button's rule).
-          e.stopPropagation()
-          onUnwatch(mobKey)
-        }}
-      >
-        {RESPAWN_UNWATCH_LABEL}
-      </Button>
-    </Tooltip>
+    <Button
+      size="small"
+      variant="outlined"
+      color="inherit"
+      data-testid={testId}
+      aria-label={`${RESPAWN_UNWATCH_LABEL} ${display}`}
+      sx={RESPAWN_TOGGLE_SX}
+      onClick={(e) => {
+        // The row itself carries a hover card and, in the candidate list, a click target of its own;
+        // a click on this button is about this button (the confirm button's rule).
+        e.stopPropagation()
+        onUnwatch(mobKey)
+      }}
+    >
+      {RESPAWN_UNWATCH_LABEL}
+    </Button>
   )
 }

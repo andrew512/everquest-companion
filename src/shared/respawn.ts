@@ -144,9 +144,10 @@
 // A WATCH IS A NAME, SO UNWATCH IS A NAME TOO. The list is keyed by the canonical mob name and a
 // watch deliberately follows that name into every zone you kill it in, so removing it from any
 // surface removes it everywhere — including a clock for the same name running in a zone you are
-// not standing in. That is one behaviour, stated on the control itself (`respawnUnwatchTitle`)
-// rather than discovered afterwards, because a floating window shows one zone and the thing it
-// silently would have stopped is off screen by construction.
+// not standing in. Round 4 put that sentence on the control's tooltip; the owner deleted the
+// tooltip in round 7 (the control speaks for itself), so it is argued HERE and pinned by
+// tests/respawnUnwatch.test.mts instead of recited on screen — which is the same bargain round 5
+// struck with every other caption on this feature.
 //
 // AND IT THROWS AWAY NOTHING BUT THE WATCH. The kills, the gaps and the sightings are the fold's,
 // derived from the log; the watch list is the only thing the log cannot state. So unwatching drops
@@ -177,12 +178,51 @@
 // round 5 cut that sentence to the facts the row does not print and CAPPED it by test, so round 6
 // carries it into the card as a titled block rather than growing a second tooltip beside it.
 //
-// AND IT OBEYS THE SAME LAW AS EVERY OTHER AFFORDANCE OVER THE GAME. A locked floating window is
-// click-through, which means it receives no mouse events at all and can no more be hovered than
-// clicked. So the card exists on the Timers tab always, and on the floating window only while it
-// is interactive — the same gate the confirm and unwatch controls sit behind, for the same reason.
-// The native `title` the row used to carry there is gone rather than doubled: an unlocked row
-// shows the card (which contains that string), and a locked one was never showing either.
+// AND THE CARD IS IN THE APP ONLY (owner ruling, round 7 — this AMENDS the paragraph above). Round
+// 6 also wired the card into the floating window, behind the interactive gate. The owner used it and
+// threw that half out: a 300px window whose whole job is a countdown cannot afford a 300px card on
+// top of it, and it "takes the overlay over too completely". So the floating window is back to
+// round 5's shape exactly — plain rows, with `respawnProvenance` on the row's native `title`, and a
+// LOCKED window still getting neither because it is click-through and receives no mouse events at
+// all. The card stays on the Timers tab, where there is room for it, and it is the SAME shared
+// component either way (`lib/hoverCards.tsx` keeps its home: the event overlay's `/con` rows still
+// draw it, so the move round 6 made is not undone, only one of its two callers is).
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// THE MOB IS THE PLACE, AND THE LIST AT THE BOTTOM DIES (owner ruling, round 7)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Round 4 put unwatch on the mob and left "Your watches" standing at the bottom of the tab, because
+// typing a number felt like list work. It was not: the list was a second inventory of the same mobs,
+// sorted differently, carrying one control the mob itself did not have. So it is gone, and the two
+// things it held — the removal and the custom-seconds box — are on the mob's RUNNING entry, which is
+// where the player is already looking when they decide the number is wrong.
+//
+// AND THE RUNNING ENTRY NOW SHOWS ITS WORKING. The row printed the ESTIMATE and the rung; what it
+// never printed was the evidence — the actual death→death gaps this fold measured for this mob in
+// this zone. `gapsMs` carries them (newest first, `RESPAWN_MAX_GAPS` of them) and the row prints
+// them under the countdown when there are any. They are the same samples `observedMs` is the
+// minimum of, so nothing new is derived and nothing is claimed that was not already claimed: every
+// one of them is an upper bound, which is what the hover has always said.
+//
+// THE ONE LIMIT THIS CREATES, stated rather than discovered. A watch whose clock is not on screen
+// has no row to carry its controls — a mob you watch in Guk while standing in Befallen (switch to
+// all zones), or one whose clock the linger sweep retired half an hour ago (its Recently-killed
+// entry still toggles the watch off; only the seconds box is out of reach until it dies again).
+// The alternative was keeping a global list on screen for that case, which is the thing the ruling
+// removed.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// AND RECENTLY KILLED IS SEARCHABLE (owner ruling, round 7)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The discovery panel is the only door a clock comes through, and in a dungeon it fills with forty
+// names in a few pulls. `filterRespawnCandidates` is the whole of the filter: ONE pass, a lowercased
+// substring, three fields (the name, the zone, the wiki's verbatim text) and an empty query
+// returning the SAME array untouched — the `filterByQuery` contract from the Sky search (JOS-206 /
+// JOS-207), restated for the other list in the app that grows while you play. Pure and node-tested;
+// the renderer's half of those learnings (a memoized row, stable props, an input that owns its own
+// state) lives in TimersView.tsx.
 
 /** Which rung of the ladder produced the estimate on a row. `'none'` = no rung had anything. */
 export type RespawnSource = 'custom' | 'observed' | 'wiki' | 'none'
@@ -208,8 +248,10 @@ export type RespawnBasis = 'death' | 'sighting'
 /**
  * The shape version — bumped when a renderer holding an older baseline must re-hydrate.
  * 2: `diedTs` became `baseTs` and the row grew `basis` / `seenTs` / `seenVia` (round 3).
+ * 3: the row grew `gapsMs` and `customMs` — the working the Running entry now shows, and the
+ *    number its own seconds box edits, after the watch list at the bottom of the tab died (round 7).
  */
-export const RESPAWN_SHAPE_VERSION = 2
+export const RESPAWN_SHAPE_VERSION = 3
 
 /**
  * How long a row lingers after its clock runs out before the module drops it. A respawn that
@@ -223,6 +265,16 @@ export const RESPAWN_MAX_ROWS = 60
 
 /** Most recently-killed mobs offered as watch candidates in the view. */
 export const RESPAWN_MAX_RECENT = 40
+
+/**
+ * How many measured gaps a row carries as its working (round 7).
+ *
+ * Bounded for the reason every list in this file is: a camped spawn produces a sample every cycle
+ * and a long night would put a hundred durations under one countdown. Six is what fits under a row
+ * without the row becoming a table, and the NEWEST are the ones kept — the estimate is the minimum
+ * of all of them (`observedMs`, published beside these), so nothing is lost by dropping the tail.
+ */
+export const RESPAWN_MAX_GAPS = 6
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PREFERENCES (electron-store, additive optional key — no migration)
@@ -310,23 +362,19 @@ export function respawnWithoutWatch(prefs: RespawnPrefs, key: string): RespawnPr
   return { ...prefs, watches: prefs.watches.filter((w) => w.key !== want) }
 }
 
-/** The word on the control, one spelling for all three surfaces. */
-export const RESPAWN_UNWATCH_LABEL = 'Unwatch'
-
 /**
- * What unwatching will do, said on the control BEFORE it is pressed rather than discovered after.
+ * The word on the control, one spelling for all three surfaces — and now the WHOLE of it.
  *
- * Both consequences are stated because both are surprising exactly once: a watch follows the mob
- * NAME, so this stops clocks for that name in zones this window is not showing; and nothing is
- * destroyed, because everything except the watch itself is re-derived from the log. Round 5 cut it
- * to those two facts - it is a hover, not a paragraph.
+ * ROUND 7 ADDENDUM (owner): the tooltip is gone. `respawnUnwatchTitle` used to state the two
+ * consequences on the hover — that a watch follows the NAME so its clocks stop in every zone, and
+ * that nothing is destroyed because everything but the watch re-derives from the log — and the
+ * owner's ruling is that the control speaks for itself. That is round 5's argument taken one step
+ * further: the word `Unwatch` is the opposite of the `Watch` beside it, both facts remain true and
+ * are argued here rather than recited on screen, and the second one is what made the button safe to
+ * press without a confirmation in the first place — a property of the write, not of the caption.
+ * So the string is DELETED rather than shortened; a hover kept "for reference" is how it grows back.
  */
-export function respawnUnwatchTitle(display: string): string {
-  return (
-    `Stop watching ${display} - its clocks stop in every zone. Your kills and gaps stay, so ` +
-    `watching it again brings the same clock back.`
-  )
-}
+export const RESPAWN_UNWATCH_LABEL = 'Unwatch'
 
 /**
  * WHAT THE CONFIRM AFFORDANCE DOES, one spelling for the tab and the floating window (round 5 -
@@ -413,6 +461,25 @@ export interface RespawnRow {
   /** Rung 2's raw bound, kept beside `estimateMs` so the UI can show when the floor lifted it. */
   observedMs?: number
   samples: number
+  /**
+   * THE WORKING BEHIND RUNG 2 (round 7) — the qualifying death→death gaps themselves, NEWEST FIRST
+   * and capped at `RESPAWN_MAX_GAPS`. Absent when there are none, so a surface renders it
+   * unconditionally and gets nothing when there is nothing to show.
+   *
+   * `observedMs` is the minimum over ALL of them, not over these — a row that measured twenty gaps
+   * publishes six and is still numbered by the smallest of the twenty. Every one of these is an
+   * upper bound on the respawn (the header's argument), which is why the row prints them as
+   * measurements of GAPS and never as spawns observed: this app has never seen a spawn.
+   */
+  gapsMs?: number[]
+  /**
+   * Rung 1's number as the watch list holds it, in ms — carried so the row can EDIT it (round 7,
+   * where the seconds box moved when the watch list at the bottom of the tab died). Absent means no
+   * number of your own, which is the norm; it is not derivable from `estimateMs`, because a custom
+   * number and a wiki default that happen to agree are different facts about where the number came
+   * from.
+   */
+  customMs?: number
   /** The wiki's verbatim text, when it has one — shown as-is, including "Triggered" and "?". */
   wikiText?: string
   wikiMs?: number
@@ -495,6 +562,47 @@ export function respawnZoneKey(zone: string): string {
 export function respawnInZone<T extends { zone: string }>(items: readonly T[], zone: string): T[] {
   const want = respawnZoneKey(zone)
   return items.filter((i) => respawnZoneKey(i.zone) === want)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEARCHING RECENTLY KILLED (owner ruling, round 7 — see the header)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Does this candidate match what was typed? `needle` is expected ALREADY TRIMMED AND LOWERCASED —
+ * `filterRespawnCandidates` does that once per keystroke rather than once per row.
+ *
+ * THREE FIELDS, ONE RULE: the name as the log printed it, the zone it died in, and the wiki's
+ * verbatim respawn text. Lowercased substring, no tokenising, no fuzzing, no per-field special
+ * cases — the `questMatchesQuery` contract (JOS-207), which is what makes a search box explainable
+ * in one sentence. The zone is in because the all-zones view is a list across a whole night's
+ * dungeons, and the wiki text is in because "min" is a real thing to type when you are looking for
+ * the mobs the wiki numbers at all.
+ *
+ * The canonical `key` is deliberately NOT a fourth field: it is `display` lowercased (law 2), so
+ * matching it would be the first comparison run twice.
+ */
+export function respawnCandidateMatches(c: RespawnCandidate, needle: string): boolean {
+  if (!needle) return true
+  if (c.display.toLowerCase().includes(needle)) return true
+  if (c.zone.toLowerCase().includes(needle)) return true
+  // `?? false` only so the expression is a boolean; a candidate the wiki says nothing about
+  // matched nothing here either way (the `questMatchesQuery` spelling, for the same reason).
+  return c.wikiText?.toLowerCase().includes(needle) ?? false
+}
+
+/**
+ * Narrow the Recently-killed list by the typed query, folding the query ONCE. An empty (or
+ * whitespace-only) query returns the SAME array untouched, so the default path costs one comparison
+ * and allocates nothing — which is the property that lets the caller memoize on identity.
+ */
+export function filterRespawnCandidates<T extends RespawnCandidate>(
+  items: readonly T[],
+  query: string
+): readonly T[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return items
+  return items.filter((c) => respawnCandidateMatches(c, needle))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -660,6 +768,41 @@ export function respawnCardNote(
   fmt: (ms: number | null | undefined) => string
 ): { label: string; text: string } {
   return { label: RESPAWN_CARD_LABEL, text: respawnProvenance(row, fmt) }
+}
+
+/**
+ * THE SAME CARD, ON A MOB YOU HAVE ONLY KILLED (owner ruling, round 7: the hover card opens on
+ * Recently-killed entries too, not only on running clocks).
+ *
+ * A candidate is the same mob asking the same question — is it worth coming back for — one decision
+ * earlier, so it gets the same card and the drops half is identical. What differs is the note, and
+ * it is SHORTER by construction rather than by editing: a mob with no clock has no rung, no basis
+ * and no gap of its own to report, so what is left is whether it is watched at all, what the wiki
+ * says, and how many times you have killed it here. Capped by the same test as `respawnProvenance` —
+ * a hover, not a paragraph.
+ */
+export function respawnCandidateNote(cand: RespawnCandidate): { label: string; text: string } {
+  const parts: string[] = []
+  parts.push(cand.watched ? 'Watched - its clock is under Running.' : 'Not watched, so nothing is clocked.')
+  if (cand.wikiText !== undefined) parts.push(`Wiki: "${cand.wikiText}".`)
+  parts.push(`Killed ${String(cand.kills)} time${cand.kills === 1 ? '' : 's'} here.`)
+  return { label: RESPAWN_CARD_LABEL, text: parts.join(' ') }
+}
+
+/**
+ * THE ROW'S WORKING, ON THE ROW (owner ruling, round 7): the gaps this fold actually measured for
+ * this mob in this zone, newest first. Empty string when there are none, so a surface can render it
+ * unconditionally.
+ *
+ * IT SAYS "GAPS" AND IT MEANS IT. Every number in this list is a death→death interval — respawn
+ * plus however long you took to find it again — and the app has never watched a mob spawn (law 1).
+ * So the word is the one the rest of the feature already uses, the estimate beside it is still
+ * printed with `<=`, and the hover still spells out what a gap proves. Naming these "respawns seen"
+ * would be the single sentence that undoes the whole ticket's honesty.
+ */
+export function respawnGapsLabel(row: RespawnRow, fmt: (ms: number | null | undefined) => string): string {
+  if (row.gapsMs === undefined || row.gapsMs.length === 0) return ''
+  return `gaps: ${row.gapsMs.map((g) => fmt(g)).join(' · ')}`
 }
 
 /**

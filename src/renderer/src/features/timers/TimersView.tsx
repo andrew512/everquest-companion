@@ -3,7 +3,8 @@
 // Two panels, and the second one is why the feature is usable on the first kill of a fresh
 // install rather than after a configuration session:
 //
-//   LEFT   the live clocks. One row per watched mob that has died, counting down.
+//   LEFT   the live clocks. One row per watched mob that has died, counting down — and, since
+//          round 7, carrying everything that mob's watch can be edited with.
 //   RIGHT  what you just killed. Every mob whose death this fold has seen recently, each with a
 //          one-click Watch. Clicking it does not merely arm the FUTURE — the module already holds
 //          the death, so the clock starts from the kill you already made. That is the whole
@@ -21,16 +22,14 @@
 // away and is what you want when you are setting up a camp you are not in yet; the counts on the
 // switch say how much is hiding either way, so the default never silently swallows anything.
 //
-// AND UNWATCHING IS ON THE MOB, NOT IN A LIST (owner ruling, round 4). Watch was always a per-mob
-// click; stopping used to mean finding the name again in "Your watches" at the bottom of this page.
-// Now the clock row and the Recently-killed entry each carry the same Unwatch control — in the
-// candidate's case in the exact place its Watch button sits, so the pair is one toggle — and every
-// one of them lands on the same one-mob IPC call. The list below keeps its editor, because typing a
-// number is genuinely list work; it is no longer the only way out.
-//
-// The number in the box beside a watched mob is rung 1 of the ladder — your own respawn, in
-// seconds — and it outranks everything, including what this app learned. A player camping a spot
-// knows more about it than the wiki and more than a handful of gaps.
+// AND UNWATCHING IS ON THE MOB, NOT IN A LIST (owner ruling, round 4, FINISHED in round 7). Watch
+// was always a per-mob click; stopping used to mean finding the name again in "Your watches" at the
+// bottom of this page. Round 4 put Unwatch on the clock row and on the Recently-killed entry and
+// left the list standing for the one thing it still had — typing a number. Round 7 removed it: the
+// seconds box is on the mob's Running entry now, beside the gaps that produced the number it
+// overrides, and this page has no third section. The stated cost is in shared/respawn.ts: a watch
+// whose clock is not on screen (another zone — switch the scope; or swept by the linger) has no row
+// to carry its box until it dies again, and its Recently-killed entry still toggles the watch off.
 //
 // AND THE PAGE STOPPED EXPLAINING ITSELF (owner ruling, round 5). Each of the four rounds above
 // left its ruling written out in prose at the top of this file's render, and the result was a
@@ -38,32 +37,53 @@
 // facts it recited are each already stated by something the user is looking at — the rung on a
 // clock row, `wiki default`, `UP`, the zone chip and the scope switch, the Watch/Unwatch pair —
 // and the sentences behind them live on those things' hovers (`respawnProvenance`,
-// `respawnUnwatchTitle`, `RESPAWN_CONFIRM_TITLE`, all in shared/respawn.ts). One caption survives,
-// under the seconds box, because a control's own limits are not state any label states.
+// `RESPAWN_CONFIRM_TITLE`, both in shared/respawn.ts). One caption survives, under the clocks,
+// because the seconds box's own limits are not state any label states. Round 7's addendum took one
+// more: Unwatch has no tooltip at all now — the control speaks for itself.
+//
+// AND EVERY MOB ON THIS PAGE OPENS ITS CARD (owner ruling, rounds 6 and 7). Pointing at a clock row
+// reveals the mob's drop table with your own loot counts riding it; round 7 put the same card on the
+// Recently-killed entries, which is the surface where "is this worth watching at all" is actually
+// asked. One component, one lookup door, two notes (`respawnCardNote` / `respawnCandidateNote`).
+//
+// AND RECENTLY KILLED IS SEARCHABLE (owner ruling, round 7), built to the JOS-206 findings rather
+// than to taste, because this is the same shape of list that made the Sky tab stall:
+//
+//   * THE FILTER IS PURE AND SINGLE-PASS, and lives in shared/respawn.ts where it is node-tested.
+//   * THE INPUT OWNS ITS OWN STATE and is memoized, so a keystroke never waits on the list.
+//   * THE QUERY LIVES IN THE PANEL THAT USES IT, not on the page — typing re-renders the
+//     Recently-killed column and nothing else. The clocks column, which re-renders once a second on
+//     its own, is not dragged into it.
+//   * THE ROW IS MEMOIZED AND ITS PROPS ARE STABLE — it takes the mob's KEY and hands it back, so
+//     the two writers are `useCallback`s with no per-row closure and no `prefs` in their deps (the
+//     prefs are read through a ref at click time, which is the only moment they are needed).
 
-import { useState, type JSX } from 'react'
+import { memo, useCallback, useMemo, useRef, useState, type JSX } from 'react'
 import {
   Box,
   Button,
   Chip,
   Divider,
-  IconButton,
   Stack,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography
 } from '@mui/material'
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import {
   RESPAWN_CUSTOM_MAX_SEC,
   RESPAWN_CUSTOM_MIN_SEC,
+  filterRespawnCandidates,
+  respawnCandidateNote,
   respawnInZone,
   type RespawnCandidate,
   type RespawnPrefs,
   type RespawnRow
 } from '@shared/respawn'
+import Tooltip from '../../lib/Tooltip'
+import { MOB_CARD_SLOT_PROPS, MobCard } from '../../lib/hoverCards'
 import { fmtDuration } from '../buffs/format'
+import { mainMobLookup } from './mobLookup'
 import { RespawnRowBar } from './RespawnRowBar'
 import { RESPAWN_TOGGLE_SX, UnwatchButton } from './UnwatchButton'
 import {
@@ -84,113 +104,115 @@ function withWatch(prefs: RespawnPrefs, key: string, display: string, customSec?
   return { ...prefs, watches: [...rest, entry] }
 }
 
-function CandidateRow({
+/**
+ * ONE RECENTLY-KILLED ENTRY. `memo` because this list is the one on the page that a keystroke
+ * re-filters, and its rows are the ones JOS-206 measured as the cost: a row whose props did not
+ * change must not reconcile a MUI Button, a Tooltip and (now) a hover card anchor.
+ *
+ * ITS PROPS ARE PRIMITIVES AND STABLE FUNCTIONS. It takes the mob's key and display back UP rather
+ * than being handed a closure over the watch list — that is what lets the two writers be
+ * `useCallback`s that never change identity, which is the half of memoization people forget.
+ */
+const CandidateRow = memo(function CandidateRow({
   cand,
-  prefs,
-  onSet,
+  onWatch,
   onUnwatch
 }: {
   cand: RespawnCandidate
-  prefs: RespawnPrefs
-  onSet: (next: RespawnPrefs) => void
+  onWatch: (key: string, display: string) => void
   onUnwatch: (key: string) => void
 }): JSX.Element {
   return (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="center"
-      data-testid="respawn-candidate"
-      data-respawn-mob={cand.key}
-      sx={{ py: 0.5 }}
+    <Tooltip
+      // ROUND 7: the same card the clock rows draw — the mob's drop table with your own loot counts
+      // riding it — because "is this worth watching" is the same question as "is it worth waiting
+      // for", asked one decision earlier. The note is the shorter one: a candidate has no rung.
+      title={<MobCard mob={cand.display} note={respawnCandidateNote(cand)} lookup={mainMobLookup} />}
+      slotProps={MOB_CARD_SLOT_PROPS}
+      disableInteractive
+      placement="top-start"
     >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="body2" noWrap>
-          {cand.display}
-        </Typography>
-        <Typography variant="caption" color="text.secondary" noWrap>
-          {cand.zone.length > 0 ? cand.zone : 'unknown zone'} · {cand.kills} kill
-          {cand.kills === 1 ? '' : 's'}
-          {cand.wikiText !== undefined ? ` · wiki: ${cand.wikiText}` : ''}
-        </Typography>
-      </Box>
-      {/* `watched` is the MODULE's answer, not a second one worked out here from the same
-          snapshot's prefs — one fact, one owner. The two states are ONE TOGGLE (round 4): the same
-          size of button in the same place, saying the opposite thing. */}
-      {cand.watched ? (
-        <UnwatchButton
-          mobKey={cand.key}
-          display={cand.display}
-          testId="respawn-unwatch"
-          onUnwatch={onUnwatch}
-        />
-      ) : (
-        <Button
-          size="small"
-          variant="outlined"
-          color="inherit"
-          data-testid="respawn-watch"
-          // The SAME shape as its opposite (RESPAWN_TOGGLE_SX) — one control with two states, not
-          // two buttons that happen to share a slot.
-          sx={RESPAWN_TOGGLE_SX}
-          onClick={() => {
-            onSet(withWatch(prefs, cand.key, cand.display))
-          }}
-        >
-          Watch
-        </Button>
-      )}
-    </Stack>
-  )
-}
-
-function WatchEditorRow({
-  watch,
-  prefs,
-  onSet,
-  onUnwatch
-}: {
-  watch: { key: string; display: string; customSec?: number }
-  prefs: RespawnPrefs
-  onSet: (next: RespawnPrefs) => void
-  /** The same one-mob removal every other surface calls — one write path, not a second list edit. */
-  onUnwatch: (key: string) => void
-}): JSX.Element {
-  const [draft, setDraft] = useState(watch.customSec === undefined ? '' : String(watch.customSec))
-  return (
-    <Stack direction="row" spacing={1} alignItems="center" data-testid="respawn-watch-row" sx={{ py: 0.5 }}>
-      <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>
-        {watch.display}
-      </Typography>
-      <TextField
-        size="small"
-        label="seconds"
-        value={draft}
-        data-testid="respawn-custom"
-        sx={{ width: 110 }}
-        onChange={(e) => {
-          setDraft(e.target.value)
-        }}
-        onBlur={() => {
-          const n = Number(draft.trim())
-          const ok = Number.isFinite(n) && n >= RESPAWN_CUSTOM_MIN_SEC && n <= RESPAWN_CUSTOM_MAX_SEC
-          // An unreadable or out-of-range entry CLEARS the custom number rather than keeping a
-          // half-typed one: the ladder then falls back to your kills, which is a real answer.
-          onSet(withWatch(prefs, watch.key, watch.display, ok ? Math.round(n) : undefined))
-        }}
-      />
-      <IconButton
-        size="small"
-        aria-label={`Stop watching ${watch.display}`}
-        onClick={() => {
-          onUnwatch(watch.key)
-        }}
+      <Stack
+        direction="row"
+        spacing={1}
+        alignItems="center"
+        data-testid="respawn-candidate"
+        data-respawn-mob={cand.key}
+        sx={{ py: 0.5 }}
       >
-        <DeleteOutlineIcon fontSize="inherit" />
-      </IconButton>
-    </Stack>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="body2" noWrap>
+            {cand.display}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" noWrap>
+            {cand.zone.length > 0 ? cand.zone : 'unknown zone'} · {cand.kills} kill
+            {cand.kills === 1 ? '' : 's'}
+            {cand.wikiText !== undefined ? ` · wiki: ${cand.wikiText}` : ''}
+          </Typography>
+        </Box>
+        {/* `watched` is the MODULE's answer, not a second one worked out here from the same
+            snapshot's prefs — one fact, one owner. The two states are ONE TOGGLE (round 4): the same
+            size of button in the same place, saying the opposite thing. */}
+        {cand.watched ? (
+          <UnwatchButton
+            mobKey={cand.key}
+            display={cand.display}
+            testId="respawn-unwatch"
+            onUnwatch={onUnwatch}
+          />
+        ) : (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            data-testid="respawn-watch"
+            // The SAME shape as its opposite (RESPAWN_TOGGLE_SX) — one control with two states, not
+            // two buttons that happen to share a slot.
+            sx={RESPAWN_TOGGLE_SX}
+            onClick={(e) => {
+              e.stopPropagation()
+              onWatch(cand.key, cand.display)
+            }}
+          >
+            Watch
+          </Button>
+        )}
+      </Stack>
+    </Tooltip>
   )
-}
+})
+
+/**
+ * THE SEARCH BOX, and it holds its own text (JOS-206's fourth fix, which is the one that stops a
+ * keystroke from being a round trip through the list).
+ *
+ * `memo` + a stable `onQuery` means the box does not re-render when the results do; its value comes
+ * from nowhere but its own state, so nothing about how long the filter takes can be felt while
+ * typing. There is deliberately no programmatic writer for it — nothing on this page reveals a
+ * candidate the way the Sky tab reveals a quest — so the sync problem that shape usually brings
+ * does not exist here.
+ */
+const RecentSearch = memo(function RecentSearch({
+  onQuery
+}: {
+  onQuery: (q: string) => void
+}): JSX.Element {
+  const [text, setText] = useState('')
+  return (
+    <TextField
+      size="small"
+      fullWidth
+      placeholder="Search name, zone or wiki"
+      value={text}
+      data-testid="respawn-search"
+      sx={{ mb: 1 }}
+      onChange={(e) => {
+        setText(e.target.value)
+        onQuery(e.target.value)
+      }}
+    />
+  )
+})
 
 function ClocksPanel({
   rows,
@@ -198,7 +220,8 @@ function ClocksPanel({
   elsewhere,
   zoneName,
   onConfirmSighting,
-  onUnwatch
+  onUnwatch,
+  onSetCustom
 }: {
   rows: RespawnRow[]
   nowMs: number
@@ -208,6 +231,8 @@ function ClocksPanel({
   onConfirmSighting: (rowId: string) => void
   /** Round 4: the row's own way out, handed down so the clock carries it instead of a list. */
   onUnwatch: (key: string) => void
+  /** Round 7: rung 1, typed on the clock — the other half of what the retired list used to hold. */
+  onSetCustom: (key: string, display: string, sec?: number) => void
 }): JSX.Element {
   if (rows.length === 0) {
     return (
@@ -219,17 +244,28 @@ function ClocksPanel({
     )
   }
   return (
-    <Stack spacing={0.75} data-testid="respawn-rows">
-      {rows.map((row) => (
-        <RespawnRowBar
-          key={row.id}
-          row={row}
-          nowMs={nowMs}
-          onConfirmSighting={onConfirmSighting}
-          onUnwatch={onUnwatch}
-        />
-      ))}
-    </Stack>
+    <>
+      <Stack spacing={0.75} data-testid="respawn-rows">
+        {rows.map((row) => (
+          <RespawnRowBar
+            key={row.id}
+            row={row}
+            nowMs={nowMs}
+            onConfirmSighting={onConfirmSighting}
+            onUnwatch={onUnwatch}
+            onSetCustom={onSetCustom}
+          />
+        ))}
+      </Stack>
+      {/* The ONLY caption left on this page (round 5), and it followed the seconds box up here when
+          the watch list died (round 7). It exists because that box is the one control whose limits
+          are stated nowhere else — a tooltip on an input the user types into is against the house
+          rules, and an out-of-range number silently clears. */}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+        Custom: {fmtDuration(RESPAWN_CUSTOM_MIN_SEC * 1000)} to{' '}
+        {fmtDuration(RESPAWN_CUSTOM_MAX_SEC * 1000)}. Empty uses your kills.
+      </Typography>
+    </>
   )
 }
 
@@ -269,21 +305,51 @@ function ScopeSwitch({
   )
 }
 
+/** What the Recently-killed list says when it is showing nothing, and WHY it is showing nothing. */
+function RecentEmpty({
+  query,
+  scoped,
+  anyRecent,
+  zoneName
+}: {
+  query: string
+  scoped: boolean
+  anyRecent: number
+  zoneName: string
+}): JSX.Element {
+  // A search that matched nothing is a different state from an empty log, and saying so is what
+  // keeps a typo from reading as "this dungeon killed nothing".
+  const text =
+    query.trim().length > 0
+      ? `No kills match "${query.trim()}".`
+      : scoped && anyRecent > 0
+        ? `Nothing has died in ${zoneName} yet. ${anyRecent} elsewhere.`
+        : 'Nothing has died yet in this log.'
+  return (
+    <Typography variant="body2" color="text.secondary" data-testid="respawn-recent-empty">
+      {text}
+    </Typography>
+  )
+}
+
 /**
- * THE RIGHT-HAND COLUMN: what you killed, and what you are watching.
+ * THE RIGHT-HAND COLUMN: what you killed, and the one door a clock comes through.
  *
  * Its own component because the page reached the repo's `max-lines-per-function` ceiling when round
  * 4 wired the removal writer through it, and the answer to that is a split rather than a widened
  * threshold. The seam is the honest one anyway — the left column is the running clocks and this is
  * where they are ADMITTED and retired.
+ *
+ * IT OWNS THE QUERY (round 7). The typed text is this panel's business and nothing else on the page
+ * reads it, so holding it here means a keystroke re-renders one column instead of the whole tab —
+ * and in particular does not re-render the clocks, which are already re-rendering once a second.
  */
 function DiscoveryPanel({
   recent,
   anyRecent,
   scoped,
   zoneName,
-  prefs,
-  onSet,
+  onWatch,
   onUnwatch
 }: {
   recent: RespawnCandidate[]
@@ -291,53 +357,33 @@ function DiscoveryPanel({
   anyRecent: number
   scoped: boolean
   zoneName: string
-  prefs: RespawnPrefs
-  onSet: (next: RespawnPrefs) => void
+  onWatch: (key: string, display: string) => void
   onUnwatch: (key: string) => void
 }): JSX.Element {
+  const [query, setQuery] = useState('')
+  // ONE PASS PER KEYSTROKE, memoized on identity: an empty query returns the SAME array the module
+  // published, so the default path allocates nothing and this memo hits.
+  const shown = useMemo(() => filterRespawnCandidates(recent, query), [recent, query])
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Recently killed
-      </Typography>
-      {recent.length === 0 ? (
-        <Typography variant="body2" color="text.secondary" data-testid="respawn-recent-empty">
-          {scoped && anyRecent > 0
-            ? `Nothing has died in ${zoneName} yet. ${anyRecent} elsewhere.`
-            : 'Nothing has died yet in this log.'}
-        </Typography>
+      <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mb: 1 }}>
+        <Typography variant="subtitle2">Recently killed</Typography>
+        {shown.length !== recent.length && (
+          <Typography variant="caption" color="text.secondary" data-testid="respawn-search-count">
+            {shown.length} of {recent.length}
+          </Typography>
+        )}
+      </Stack>
+      <RecentSearch onQuery={setQuery} />
+      {shown.length === 0 ? (
+        <RecentEmpty query={query} scoped={scoped} anyRecent={anyRecent} zoneName={zoneName} />
       ) : (
         <Stack data-testid="respawn-recent" divider={<Divider flexItem />}>
-          {recent.map((c) => (
-            <CandidateRow key={`${c.zone}::${c.key}`} cand={c} prefs={prefs} onSet={onSet} onUnwatch={onUnwatch} />
+          {shown.map((c) => (
+            <CandidateRow key={`${c.zone}::${c.key}`} cand={c} onWatch={onWatch} onUnwatch={onUnwatch} />
           ))}
         </Stack>
       )}
-
-      <Divider sx={{ my: 2 }} />
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Your watches
-      </Typography>
-      {prefs.watches.length === 0 ? (
-        <Typography variant="body2" color="text.secondary" data-testid="respawn-watches-empty">
-          None yet.
-        </Typography>
-      ) : (
-        <Stack divider={<Divider flexItem />}>
-          {prefs.watches.map((w) => (
-            <WatchEditorRow key={w.key} watch={w} prefs={prefs} onSet={onSet} onUnwatch={onUnwatch} />
-          ))}
-        </Stack>
-      )}
-      {/* The ONLY caption left on this page (round 5), and it is here because the seconds box is
-          the one control whose limits are stated nowhere else - a tooltip on an input the user
-          types into is against the house rules, and an out-of-range number silently clears. The
-          watch-follows-the-name and zone-scope sentences that used to sit here are on the Unwatch
-          hover and on the scope switch respectively. */}
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-        Custom: {fmtDuration(RESPAWN_CUSTOM_MIN_SEC * 1000)} to{' '}
-        {fmtDuration(RESPAWN_CUSTOM_MAX_SEC * 1000)}. Empty uses your kills.
-      </Typography>
     </Box>
   )
 }
@@ -351,6 +397,27 @@ export default function TimersView(): JSX.Element {
   const prefs = snap.prefs
   const [scope, setScope] = useState<Scope>('zone')
 
+  // THE WATCH LIST, READ AT CLICK TIME RATHER THAN CLOSED OVER (JOS-206's "stable props"). Both
+  // writers below edit one entry of a list they must not otherwise disturb, so they need the
+  // CURRENT list — but taking it as a dependency would rebuild them on every module delta and
+  // un-memoize every row they are handed to. A ref is the standard answer: the value is only ever
+  // needed inside a handler, which by definition runs after the render that set it.
+  const prefsRef = useRef(prefs)
+  prefsRef.current = prefs
+
+  const onWatch = useCallback(
+    (key: string, display: string) => {
+      setPrefs(withWatch(prefsRef.current, key, display))
+    },
+    [setPrefs]
+  )
+  const onSetCustom = useCallback(
+    (key: string, display: string, sec?: number) => {
+      setPrefs(withWatch(prefsRef.current, key, display, sec))
+    },
+    [setPrefs]
+  )
+
   // The zone name as the switch and the empty states say it. The fold has no zone before the log
   // states one, and "this zone" is then a claim it cannot make.
   const zoneName = snap.zone.length > 0 ? snap.zone : 'Unknown zone'
@@ -362,7 +429,10 @@ export default function TimersView(): JSX.Element {
   return (
     <Box sx={{ p: 2, height: '100%', overflow: 'auto' }} data-testid="timers-view">
       <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mb: 0.5 }}>
-        <Typography variant="h6">Respawn clocks</Typography>
+        {/* ROUND 7: the page is called what the tab is called. "Respawn clocks" described the rows;
+            the nav row has said Timers since the tab existed, and two names for one surface is the
+            thing VIEW_LABELS exists to prevent one floor up. */}
+        <Typography variant="h6">Timers</Typography>
         {snap.zone.length > 0 && <Chip size="small" label={snap.zone} variant="outlined" />}
       </Stack>
       <Box sx={{ mb: 2, mt: 1.5 }}>
@@ -387,6 +457,7 @@ export default function TimersView(): JSX.Element {
             zoneName={zoneName}
             onConfirmSighting={confirmSighting}
             onUnwatch={unwatch}
+            onSetCustom={onSetCustom}
           />
         </Box>
 
@@ -395,8 +466,7 @@ export default function TimersView(): JSX.Element {
           anyRecent={snap.recent.length}
           scoped={scope === 'zone'}
           zoneName={zoneName}
-          prefs={prefs}
-          onSet={setPrefs}
+          onWatch={onWatch}
           onUnwatch={unwatch}
         />
       </Stack>

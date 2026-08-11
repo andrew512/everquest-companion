@@ -40,15 +40,30 @@
 // scrolling to a list at the bottom of the page and matching a name against it, which is where the
 // only unwatch used to live. It is the same control the Recently-killed entry offers, so the mob
 // reads the same wherever you meet it.
+//
+// AND ROUND 7 FINISHED THAT MOVE. "Your watches" — the list at the bottom of the tab that round 4
+// left standing — is gone, so the OTHER thing it held is here too: the seconds box that is rung 1
+// of the ladder. It is on the row because that is where the player is standing when they decide the
+// number is wrong, and it is the only control on this row that types rather than clicks, which is
+// why the page keeps one caption stating its limits (a tooltip on an input is against the house
+// rules, and an out-of-range number silently clears).
+//
+// AND THE ROW SHOWS ITS WORKING. Under the countdown it now prints the GAPS this fold measured for
+// this mob in this zone — the samples `<= 3m 00s` is the minimum of — newest first. They are not a
+// new claim and not a new source: the same numbers, un-minimised, said plainly, so "where did that
+// estimate come from" is answerable without opening the hover. What they are NOT is spawns
+// observed; see `respawnGapsLabel` in shared/respawn.ts for why that wording is load-bearing.
 
-import { Box, Button, LinearProgress, Stack, Typography } from '@mui/material'
-import type { JSX } from 'react'
-import type { MobKnowledge } from '@shared/types'
+import { Box, Button, LinearProgress, Stack, TextField, Typography } from '@mui/material'
+import { useState, type JSX } from 'react'
 import {
   RESPAWN_CONFIRM_TITLE,
+  RESPAWN_CUSTOM_MAX_SEC,
+  RESPAWN_CUSTOM_MIN_SEC,
   respawnBasisLabel,
   respawnCardNote,
   respawnClockLabel,
+  respawnGapsLabel,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -56,24 +71,10 @@ import {
   type RespawnRow
 } from '@shared/respawn'
 import Tooltip from '../../lib/Tooltip'
-import { MobCard } from '../../lib/hoverCards'
+import { MOB_CARD_SLOT_PROPS, MobCard } from '../../lib/hoverCards'
 import { fmtDuration } from '../buffs/format'
+import { mainMobLookup } from './mobLookup'
 import { UnwatchButton } from './UnwatchButton'
-
-/**
- * THE MAIN WINDOW'S DOOR to main's cache-first `mobs:lookup`. Module scope, so the card's effect
- * depends on ONE stable identity rather than a new function every second the clock ticks.
- */
-const mainMobLookup = (name: string): Promise<MobKnowledge> => window.eq.lookupMob(name)
-
-/**
- * The card is styled by `MobCard` itself (it is the same card the floating window draws over the
- * game, so it cannot lean on the theme), which means the Tooltip must get out of its way entirely
- * — no padding, no surface of its own, and no 300px width cap on top of the card's own.
- */
-const CARD_SLOT_PROPS = {
-  tooltip: { sx: { p: 0, bgcolor: 'transparent', maxWidth: 'none' } }
-} as const
 
 /**
  * THE ROW'S TONE, one function for the accent, the clock text and the bar.
@@ -129,11 +130,104 @@ function SeenRow({
   )
 }
 
+/**
+ * RUNG 1 OF THE LADDER, EDITABLE ON THE MOB (owner ruling, round 7).
+ *
+ * The number you typed outranks everything, including what this app learned — a player camping a
+ * spot knows more about it than the wiki and more than a handful of gaps — and until this round the
+ * only place to type it was a list at the bottom of the page. Now it is on the clock it changes.
+ *
+ * IT OWNS ITS DRAFT and commits on BLUR, which is the behaviour the retired editor had and the
+ * reason it is a component rather than a controlled field on the row: this row re-renders once a
+ * second forever (it is a countdown), and a field reading the module's number every tick would
+ * fight anybody halfway through typing one.
+ *
+ * AN UNREADABLE OR OUT-OF-RANGE ENTRY CLEARS the custom number rather than keeping a half-typed
+ * one — the ladder then falls back to your kills, which is a real answer. And a blur that changed
+ * nothing writes nothing: `setPrefs` bumps the module revision and pushes a snapshot to two
+ * renderers, so tabbing through a row must not cost that.
+ */
+function CustomSeconds({
+  row,
+  onSetCustom
+}: {
+  row: RespawnRow
+  onSetCustom: (key: string, display: string, sec?: number) => void
+}): JSX.Element {
+  const current = row.customMs === undefined ? undefined : Math.round(row.customMs / 1000)
+  const [draft, setDraft] = useState(current === undefined ? '' : String(current))
+  return (
+    <TextField
+      size="small"
+      label="sec"
+      value={draft}
+      data-testid="respawn-custom"
+      sx={{ width: 96, flexShrink: 0 }}
+      onChange={(e) => {
+        setDraft(e.target.value)
+      }}
+      onBlur={() => {
+        const n = Number(draft.trim())
+        const ok = Number.isFinite(n) && n >= RESPAWN_CUSTOM_MIN_SEC && n <= RESPAWN_CUSTOM_MAX_SEC
+        const next = ok ? Math.round(n) : undefined
+        if (next === current) return
+        onSetCustom(row.key, row.display, next)
+      }}
+    />
+  )
+}
+
+/**
+ * THE ROW'S WORKING: the gaps it measured, and the number that overrides them.
+ *
+ * One line because they are one thought — "here is what I learned, and here is where you tell me I
+ * am wrong". The gaps half is absent when there are none (a row numbered by the wiki, or by a kill
+ * with nothing to pair it with), and the box half is absent on a surface with no way to write, the
+ * same contract every other control on this row is under.
+ */
+function WorkingLine({
+  row,
+  onSetCustom
+}: {
+  row: RespawnRow
+  onSetCustom?: (key: string, display: string, sec?: number) => void
+}): JSX.Element | null {
+  const gaps = respawnGapsLabel(row, fmtDuration)
+  if (gaps.length === 0 && onSetCustom === undefined) return null
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5, minWidth: 0 }}>
+      {gaps.length > 0 && (
+        <Typography
+          variant="caption"
+          data-testid="respawn-gaps"
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            color: 'text.secondary',
+            fontVariantNumeric: 'tabular-nums',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {gaps}
+        </Typography>
+      )}
+      {onSetCustom !== undefined && (
+        <Box sx={{ ml: 'auto' }}>
+          <CustomSeconds row={row} onSetCustom={onSetCustom} />
+        </Box>
+      )}
+    </Stack>
+  )
+}
+
 export function RespawnRowBar({
   row,
   nowMs,
   onConfirmSighting,
-  onUnwatch
+  onUnwatch,
+  onSetCustom
 }: {
   row: RespawnRow
   nowMs: number
@@ -141,6 +235,8 @@ export function RespawnRowBar({
   onConfirmSighting?: (rowId: string) => void
   /** Same contract: no writer, no control. Round 4's affordance, on the mob rather than in a list. */
   onUnwatch?: (key: string) => void
+  /** Round 7's: rung 1, typed on the clock it changes. Same contract again — no writer, no box. */
+  onSetCustom?: (key: string, display: string, sec?: number) => void
 }): JSX.Element {
   const r = respawnReading(row, nowMs)
   const hasEstimate = row.estimateMs !== undefined
@@ -154,12 +250,16 @@ export function RespawnRowBar({
       title={
         <MobCard mob={row.display} note={respawnCardNote(row, fmtDuration)} lookup={mainMobLookup} />
       }
-      slotProps={CARD_SLOT_PROPS}
+      slotProps={MOB_CARD_SLOT_PROPS}
       // The card has nothing to click — item names are plain text on it by design — so it takes no
-      // pointer at all, which is the same law the floating window's card is drawn under
-      // (`HoverCardLayer`: a card that took the pointer while overlapping a row could swallow the
-      // Unwatch beneath it, or fire the row's own mouseleave and flicker).
+      // pointer at all, which is the same law the floating window's card was drawn under while it
+      // had one (a card that took the pointer while overlapping a row could swallow the Unwatch
+      // beneath it, or fire the row's own mouseleave and flicker).
       disableInteractive
+      // ROUND 7: the row now contains a text field, and MUI opens a tooltip on the ANCHOR's focus by
+      // default — so tabbing into the seconds box would throw a 300px card over the row you are
+      // typing into. This card is a mouse affordance and says so.
+      disableFocusListener
       placement="top-start"
     >
       <Box
@@ -221,6 +321,7 @@ export function RespawnRowBar({
             </Typography>
           )}
         </Stack>
+        <WorkingLine row={row} onSetCustom={onSetCustom} />
         {r.seen && <SeenRow row={row} nowMs={nowMs} onConfirmSighting={onConfirmSighting} />}
         {/* The bar is the estimate running down. Absent entirely when there is no estimate rather
             than drawn empty - an empty bar reads as "nearly up", which would be a lie. */}

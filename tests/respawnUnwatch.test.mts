@@ -25,11 +25,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseEvent } from '../src/main/log/parser'
 import { RespawnModule } from '../src/main/modules/respawn'
-import {
-  respawnUnwatchTitle,
-  respawnWithoutWatch,
-  type RespawnPrefs
-} from '../src/shared/respawn'
+// The namespace import is deliberate: one test below asserts that a name is ABSENT from this
+// module, which is not something a named import can express (it would be a compile error instead of
+// a failing assertion, and the string would then be deleted from the test along with the code).
+import * as respawn from '../src/shared/respawn'
+import { respawnWithoutWatch, type RespawnPrefs } from '../src/shared/respawn'
 
 const GUK_ENTER = '[Sun Aug 02 23:45:41 2026] You have entered The Ruins of Old Guk.'
 const VIS_DEATH_1 = '[Sun Aug 02 23:50:00 2026] You have slain a vis ghoul knight!'
@@ -83,17 +83,24 @@ test('removing a name nobody watches is a no-op, not an error', () => {
   assert.equal(after.watches.length, before.watches.length)
 })
 
-test('the control says both consequences before it is pressed', () => {
-  const title = respawnUnwatchTitle('a vis ghoul knight')
-  assert.ok(title.includes('a vis ghoul knight'), title)
-  // A watch follows the NAME, so this stops clocks in zones the surface is not showing…
-  assert.ok(title.includes('every zone'), title)
-  // …and nothing derived from the log is lost, which is why there is no confirmation step.
-  assert.ok(/kills and gaps stay/.test(title), title)
-  // AND IT IS A HOVER, NOT A PARAGRAPH (owner ruling, round 5 - too much explanatory text on this
-  // feature). Both facts above still have to be in it; the bound is what stops a fifth round from
-  // adding a third sentence to a tooltip on a floating window.
-  assert.ok(title.length <= 160, `the unwatch title must stay short: ${title}`)
+test('the control says one word, and the module carries the promise it used to make', () => {
+  // ROUND 7 ADDENDUM (owner): the Unwatch tooltip is GONE — "the control speaks for itself" — so
+  // `respawnUnwatchTitle` no longer exists and this pins the ABSENCE, which is the only way a
+  // deleted caption stays deleted. Round 5's length cap dies with the string it bounded.
+  assert.equal(Object.hasOwn(respawn, 'respawnUnwatchTitle'), false, 'the unwatch tooltip string is deleted, not shortened')
+  assert.equal(respawn.RESPAWN_UNWATCH_LABEL, 'Unwatch', 'one word, one spelling, three surfaces')
+
+  // AND THE TWO FACTS IT USED TO RECITE ARE STILL TRUE — they were always properties of the WRITE
+  // rather than of the caption, which is exactly why deleting the caption costs nothing. Asserted
+  // here so "the button says nothing" can never quietly become "the button does something else".
+  const both = watchingBoth()
+  //  (1) a watch is a NAME, so removing it removes it everywhere — there is no zone in this list at
+  //      all, and therefore nothing a per-zone removal could even be expressed against.
+  assert.ok(both.watches.every((w) => !Object.hasOwn(w, 'zone')))
+  //  (2) nothing but the watch goes: the neighbour keeps its own typed number, and the fold's kills
+  //      and gaps are re-derived from the log (the two tests below drive that end to end).
+  const after = respawnWithoutWatch(both, 'a vis ghoul knight')
+  assert.deepEqual(after.watches, [{ key: 'a wan ghoul knight', display: 'a wan ghoul knight', customSec: 900 }])
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
