@@ -53,7 +53,8 @@ import {
   type RespawnPrefs,
   type RespawnRow,
   type RespawnSeenVia,
-  type RespawnSnap
+  type RespawnSnap,
+  type RespawnWatchPref
 } from '../../shared/respawn'
 
 /**
@@ -198,8 +199,25 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
   /** The last wall-clock tick, so `snapshot()` prunes against the same clock `onTick` does. */
   private nowMs = Date.now()
 
+  /**
+   * The watch list as a lookup, rebuilt whenever the list changes.
+   *
+   * NOT a micro-optimization: round 3 put `watchOf` on the HOTTEST path in this module. Every
+   * damage and miss line in the log now asks it two questions, and the historical fold walks
+   * months of them — a linear scan of up to RESPAWN_MAX_WATCHES entries per name would be tens of
+   * millions of string comparisons before the app has finished starting. The list itself stays the
+   * authority (it is what is persisted and what the snapshot publishes); this is derived from it in
+   * one place so the two cannot disagree.
+   */
+  private watchIndex = new Map<string, RespawnWatchPref>()
+
   constructor(prefs?: RespawnPrefs) {
     if (prefs) this.prefs = prefs
+    this.reindexWatches()
+  }
+
+  private reindexWatches(): void {
+    this.watchIndex = new Map(this.prefs.watches.map((w) => [w.key, w]))
   }
 
   reset(): void {
@@ -219,6 +237,7 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
    */
   setPrefs(prefs: RespawnPrefs): void {
     this.prefs = prefs
+    this.reindexWatches()
     this.rev++
     this.dirty = true
   }
@@ -375,7 +394,7 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
    * decides that a row exists.
    */
   private watchOf(key: string): { customMs?: number } | null {
-    const explicit = this.prefs.watches.find((w) => w.key === key)
+    const explicit = this.watchIndex.get(key)
     if (!explicit) return null
     return explicit.customSec === undefined ? {} : { customMs: explicit.customSec * 1000 }
   }
