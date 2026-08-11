@@ -10,7 +10,7 @@
 //
 // So it is a MANUAL constant. And a manual constant is a constant somebody will forget, which is
 // why it does not stand alone: `tests/foldGoldens.test.mts` folds the fixture corpus and
-// FINGERPRINTS each pilot module's published snapshots. The committed goldens
+// FINGERPRINTS every checkpointed module’s published snapshots. The committed goldens
 // (`tests/goldens/foldFingerprints.json`) are the tripwire.
 //
 //     fold output changed, FOLD_SEMANTICS unchanged  → RED, naming the module and the fixture.

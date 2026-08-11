@@ -26,7 +26,7 @@
  *     to BOTH arms identically — which is exactly what production does (pipeline.ts injects it at
  *     construction). It is deliberately non-empty: with no watches the module publishes no rows at
  *     all, and a differential test over an empty list would prove nothing about the hardest state
- *     in the pilot set.
+ *     in the module set.
  *   * THE SAME CLOCK. `respawn` orders its published rows against a wall clock, so both arms are
  *     ticked with ONE pinned value before snapshotting. That is not a fudge: it is the go-live
  *     sweep (`registry.tick(Date.now())`, session.ts) with the clock held still, and holding it
@@ -176,7 +176,7 @@ export async function foldRange(
 }
 
 /**
- * THE PUBLISHED SNAPSHOTS of the pilot modules, after the go-live sweep — the exact objects the
+ * THE PUBLISHED SNAPSHOTS of every compared module, after the go-live sweep — the exact objects the
  * renderer hydrates from (`module:getSnapshot`), which is what the owner's law compares.
  *
  * The tick is the sweep: it is what session.ts runs once before the first publish, and it is what
@@ -369,7 +369,7 @@ function addMatches(scan: MatchScan, re: RegExp, label: string): void {
 // ------------------------------------------------------------------ the checkpoint round trip
 
 /**
- * Serialize the pilots of `world` at `offset` into REAL CONTAINER BYTES.
+ * Serialize every UNIT of `world` at `offset` into REAL CONTAINER BYTES.
  *
  * Through `encodeCache`, not through a hand-rolled object copy: the differential test is also the
  * format's round-trip test, and a warm arm that skipped the encoder would prove the fold correct

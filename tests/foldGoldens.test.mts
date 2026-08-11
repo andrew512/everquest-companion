@@ -9,7 +9,7 @@
  * So `FOLD_SEMANTICS` is a manual constant, and THIS is what stops it from being a constant
  * everybody forgets.
  *
- * WHAT IT DOES: folds each fixture in the corpus and FINGERPRINTS the pilot modules' published
+ * WHAT IT DOES: folds each fixture in the corpus and FINGERPRINTS every checkpointed module's published
  * snapshots — a canonical JSON rendering, hashed. The fingerprints are committed
  * (`tests/goldens/foldFingerprints.json`) alongside the `FOLD_SEMANTICS` they were recorded at.
  *

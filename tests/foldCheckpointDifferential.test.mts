@@ -5,9 +5,10 @@
  *
  *     restore(checkpoint(fold(prefix))) + fold(tail)   ==   fold(prefix + tail)
  *
- * asserted with DEEP-EQUAL published snapshots of the pilot modules, over the fixture corpus, at a
- * matrix of split points: session edges, zone lines, mid-fight, mid-hold, deciles, and seeded
- * fuzz. Then the externality permutations — a log that was truncated, regrown, or edited under the
+ * asserted with DEEP-EQUAL published snapshots of EVERY checkpointed module, over the corpus, at a
+ * matrix of split points: session edges, zone lines, mid-fight, mid-hold, mid-cast, inside an
+ * unexplained hole, either side of the epoch boundary, deciles, and seeded fuzz. Then the
+ * externality permutations — a log that was truncated, regrown, or edited under the
  * checkpoint, and a cache that is missing, corrupt, or from another build — every one of which
  * must land on the COLD PATH and produce the cold answer.
  *

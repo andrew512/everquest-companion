@@ -1000,7 +1000,7 @@ must always be slow-once, never wrong** — every judgement call goes toward
   fixture's fingerprint unchanged — which the goldens let you VERIFY rather than
   assert.
 - **THE GOLDENS ARE THE ENFORCEMENT.** `tests/foldGoldens.test.mts` fingerprints
-  each pilot module's published snapshots over the fixture corpus against
+  every checkpointed module’s published snapshots over the fixture corpus against
   `tests/goldens/foldFingerprints.json`. Output changed + no bump ⇒ RED, naming
   the module and the fixture. **A golden update REQUIRES the bump in the same
   commit** (`npm run fold:goldens -- "<why>"`). A bump with unchanged goldens is
