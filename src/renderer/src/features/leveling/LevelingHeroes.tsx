@@ -89,13 +89,19 @@ export function LevelingHeroes({
       <HeroCard
         icon={<MilitaryTechIcon fontSize="large" />}
         value={currentLevel != null ? String(currentLevel) : '-'}
-        label={levelCue ? `Character level · ${levelCue}` : 'Character level'}
+        label="Character level"
         title={levelTitle || undefined}
+        // THE CUE RIDES THE CAPTION, NOT THE LABEL (measured, JOS-192). The caption is already a
+        // list of qualifiers about the level-up record and has a line to spare; the LABEL is the
+        // card's one-line name, and appending to it wrapped the tallest hero card by a line at
+        // every width — which pushed the whole two-column band down and drew the timeslice
+        // control under the panel above it (tests/e2e/leveling.e2e.mts caught exactly that).
         sub={
-          levelCount
+          (levelCue ? `${levelCue} · ` : '') +
+          (levelCount
             ? `${levelCount} level-ups logged` +
               (swaps > 0 ? ` · peak ${peak} · ${swaps} class swap${swaps === 1 ? '' : 's'}` : '')
-            : 'no level-ups in log'
+            : 'no level-ups in log')
         }
         accent="#d9b25f"
         testId="leveling-hero-level"

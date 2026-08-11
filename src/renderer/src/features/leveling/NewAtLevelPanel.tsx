@@ -15,12 +15,18 @@
 // skills list carries everything they actually gain.
 //
 // AND THE WAY OUT IS ON SCREEN WHETHER OR NOT THE LOADOUT IS KNOWN (JOS-192, trigger report
-// 01KZP6SDZJK6BPEWA4Z0MF5ANG). This panel used to point at the fix ONLY in its loadout-UNKNOWN
-// state — so a reporter looking at three classes they had stopped playing was shown the wrong
-// answer confidently and offered nothing. A wrong loadout is exactly the case that needs the
-// pointer, so the line is now always there, and the chips wear the same PROVENANCE chip the
-// Profiles panel and the character header use: `inferred` is a claim about evidence, and a
-// surface that never says so is asking to be believed.
+// 01KZP6SDZJK6BPEWA4Z0MF5ANG). This panel pointed at the fix ONLY in its loadout-UNKNOWN state —
+// so a reporter looking at three classes they had stopped playing was shown the wrong answer
+// confidently and offered nothing. It now wears the same PROVENANCE chip the Profiles panel and
+// the character header use, and that chip's `inferred` tooltip names the two moves that correct
+// it. `inferred` is a claim about evidence, and a surface that never says so is asking to be
+// believed.
+//
+// THE POINTER IS A TOOLTIP AND NOT A LINE, AND THAT IS MEASURED RATHER THAN TASTE. This panel is
+// the LAST child of a `height: 100%` stack whose middle child is the scroller, so every pixel it
+// takes comes out of the charts. At the app's own minimum width one caption line here pushed the
+// two-column band far enough that the timeslice control was drawn under the panel above it —
+// `tests/e2e/leveling.e2e.mts` hit-tests exactly that and went red. The budget is zero.
 
 import { type JSX, useEffect, useRef, useState } from 'react'
 import { Box, IconButton, Paper, Stack, Typography, Chip } from '@mui/material'
@@ -196,20 +202,6 @@ export function NewAtLevelPanel({
         </Typography>
       )}
 
-      {/* THE POINTER, whether or not the loadout is known — see the header. A swap prints nothing,
-          so the classes above can be a loadout you have left, and this is the only sentence on the
-          surface that says what to do about it. */}
-      {known && (
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          data-testid="new-at-level-correct"
-          sx={{ display: 'block', mt: 1 }}
-        >
-          Not the classes you are playing? A <code>/who</code> on yourself restates them, or correct the
-          range on the Profile tab.
-        </Typography>
-      )}
     </Paper>
   )
 }
