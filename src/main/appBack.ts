@@ -60,8 +60,12 @@ export function isBackCommand(command: string): boolean {
 export function installBackButton(win: BrowserWindow): void {
   win.on('app-command', (_event, command) => {
     if (!isBackCommand(command)) return
-    if (!E2E && !win.isFocused()) return
+    // DESTROYED FIRST: every other question here is a method call on the window, and calling one
+    // on a destroyed BrowserWindow throws — which in the main process is an uncaught exception,
+    // not a missed keystroke. The listener outlives nothing here today, but this is the same
+    // guard every `getMainWindow()` caller in windows.ts already keeps.
     if (win.isDestroyed()) return
+    if (!E2E && !win.isFocused()) return
     win.webContents.send(IPC.onAppBack)
   })
 }
