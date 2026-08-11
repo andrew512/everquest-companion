@@ -126,7 +126,7 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
     version: '0.20.0',
-    date: '2026-08-11',
+    date: '2026-08-10',
     entries: [
       {
         kind: 'fixed',
@@ -140,7 +140,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'changed',
-        text: '"Hide overlays when you\'re not in EverQuest" now counts this app too, so the meters get out of the way while you browse the Companion. Clicking an overlay itself still keeps them up.',
+        text: '"Hide overlays when you\'re not in EverQuest" now counts this app too, so the meters get out of the way while you browse the Companion - and the cursor ring rests here as well, since your pointer is not over the game. Clicking an overlay itself still keeps them up.',
         fromReport: true
       },
       {
