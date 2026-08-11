@@ -27,7 +27,7 @@ import { IPC } from '../shared/ipc'
 import { installBackButton } from './appBack'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
-import { overlayDefaultSize } from './overlayLayout'
+import { OVERLAY_TITLE, overlayDefaultSize } from './overlayLayout'
 // WHERE A WINDOW MAY GO ON THE SCREENS THAT EXIST NOW (JOS-187). The `screen` module is not
 // consulted here any more: both questions this file asks of it — where an overlay opens, where the
 // main window opens — are decided in windowPlacement.ts over the pure geometry in displayFit.ts,
@@ -538,22 +538,6 @@ export function applyOverlayLocked(kind: OverlayKind, locked: boolean): void {
   if (!w || w.isDestroyed()) return
   setOverlayIgnoreMouse(kind, locked)
   setOverlayFocusable(w, !locked)
-}
-
-/** Per-kind title (the OS window title; never user-visible on a frameless overlay, but it is
- *  what shows up in a window list / crash report). Partial + fallback so a new kind can't
- *  break the build here. */
-const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
-  fight: 'Fight Overlay',
-  overall: 'Zone Overlay',
-  events: 'Event Log Overlay',
-  'heal-fight': 'Fight Healing Overlay',
-  'heal-overall': 'Zone Healing Overlay',
-  toast: 'Celebration Overlay',
-  buffs: 'Buff Timer Overlay',
-  debuffs: 'Debuff Timer Overlay',
-  xp: 'XP Overlay',
-  respawn: 'Respawn Timer Overlay'
 }
 
 // ---- WHAT IS SHOWN vs WHAT IS STORED (JOS-187) ------------------------------------------------
