@@ -39,7 +39,7 @@ import { subjectCapturePattern } from '../../shared/alertCaptures'
 // `Your <X> spell has worn off of <mob>.` line becomes a `cc` event at all, so it is also what
 // decides whether the `breaks` template can fire. rulesets.ts's only reference back here is an
 // `import type`, so this edge is one-way at runtime.
-import { CC_STEMS } from '../log/rulesets'
+import { CC_STEMS, CHARM_STEMS } from '../log/rulesets'
 // OUR corrections to the scrape (JOS-150). They are applied to the ENTRIES, before any table is
 // derived, so the suffix index, the wears-off map, the suggestion catalog and every search string
 // all see one corrected text. Read that file's header before adding one: it carries the evidence
@@ -502,7 +502,12 @@ function suggestionTemplates(s: SpellEntry): SpellCatalogEntry['templates'] {
     // spells `ccSpell` matches, and a plain `buffFade` for every other spell — so the roster IS
     // the "can this fire" question. Not gated on disposition: the roster is already all
     // detrimental, and the flag would then be making a second, weaker claim about the same thing.
-    breaks: CC_STEMS.test(s.name)
+    breaks: CC_STEMS.test(s.name),
+    // THE CHARM BREAKING (JOS-200) — the same sentence, the other roster, and therefore the other
+    // EVENT. `charmSpell` is tested FIRST in classifyWornOff, so these two gates are disjoint by
+    // construction and no spell can be offered both chips. See buffTypes.ts `charmBreaks` for why
+    // the per-spell offer had to exist beside the curated group.
+    charmBreaks: CHARM_STEMS.test(s.name)
   }
 }
 
@@ -530,7 +535,7 @@ export function searchTextFor(s: SpellEntry, rankNames: readonly string[] | unde
  * JOS-103 was filed for.
  */
 function offersAnyTemplate(t: SpellCatalogEntry['templates']): boolean {
-  return t.wearsOff || t.fade || t.lands || t.landsOnOther || t.breaks
+  return t.wearsOff || t.fade || t.lands || t.landsOnOther || t.breaks || t.charmBreaks
 }
 
 export function buildSpellCatalog(
