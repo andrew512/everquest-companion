@@ -64,6 +64,15 @@
 // draws no bar, and `orderRespawnRows` sinks it under every live clock. It keeps its Unwatch,
 // because it is still a mob you asked for.
 //
+// AND ROUND 9 PUTS A STATE HERE AND NONE OF ITS CONTROLS (owner, 2026-08-11). A row whose duration
+// the player set themselves is OVERRIDDEN, and over the game that is worth knowing at a glance — so
+// the rung line goes violet, a colour this window uses for nothing else, off the same
+// `respawnOverridden` the tab paints in gold. What does NOT come here is the editing: the edit icon
+// and its modal are tab-only, for exactly the reason round 7 removed the hover card from this window
+// (a 300px window cannot host a 300px surface) and because a locked window is click-through and has
+// no clicks to give. Its rung line also stopped spelling the duration inline and reads
+// `respawnDurationText`, so the `<=` that says "upper bound" cannot go missing on one surface.
+//
 // MUI-FREE, plain divs and inline styles, like every file in this bundle.
 
 import { type JSX, useEffect, useState } from 'react'
@@ -75,7 +84,9 @@ import {
   orderRespawnRows,
   respawnBasisLabel,
   respawnClockLabel,
+  respawnDurationText,
   respawnInZone,
+  respawnOverridden,
   respawnProvenance,
   respawnReading,
   respawnSeenLabel,
@@ -112,6 +123,13 @@ const SEEN = '#ff6b8a'
  * claims: not the window's amber, not due's green, not a sighting's red.
  */
 const STALE = 'rgba(255,255,255,0.38)'
+/**
+ * A NUMBER THE PLAYER SET THEMSELVES (round 9). A soft violet, deliberately none of the four above:
+ * this is not a claim about the clock (due / UP / long gone are), it is a claim about where the
+ * clock's LENGTH came from, and a camp full of clocks has to say which of them you overruled without
+ * being read word by word.
+ */
+const OVERRIDDEN = '#c3aef5'
 
 /** One second. A countdown is the one number in this app that has to move while the log is idle. */
 const TICK_MS = 1000
@@ -264,13 +282,29 @@ function ClockLine({
   )
 }
 
-/** The dim line under the bar: the estimate, the rung that produced it, and the basis. */
+/**
+ * The dim line under the bar: the estimate, the rung that produced it, and the basis — one string,
+ * because that is what it describes (round 9 made the tab's version one bordered object for the same
+ * reason; over the game a line of its own IS the object).
+ *
+ * AND AN OVERRULED NUMBER SAYS SO IN COLOUR (owner ruling, round 9). `respawnOverridden` is the tab's
+ * definition, read here rather than re-derived, and the colour is one this window uses nowhere else —
+ * amber is the window, green is due, pink is UP, grey is long gone. Over the game the whole question
+ * is "which of these clocks did I set myself", and it has to answer without being read.
+ *
+ * THE STATE ONLY. There is no edit affordance here and there will not be one: a modal over a 300px
+ * window is round 7's card ruling with a bigger footprint, and a locked window is click-through and
+ * has no clicks to give at all.
+ */
 function RungLine({ row }: { row: RespawnRow }): JSX.Element {
   const basis = respawnBasisLabel(row)
+  const over = respawnOverridden(row)
   return (
-    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.42)', marginTop: 1 }}>
-      {row.source === 'observed' ? '<= ' : ''}
-      {row.estimateMs === undefined ? 'no estimate' : fmtDuration(row.estimateMs)} · {respawnSourceLabel(row)}
+    <div
+      data-testid="respawn-overlay-rung"
+      style={{ fontSize: 9, color: over ? OVERRIDDEN : 'rgba(255,255,255,0.42)', marginTop: 1 }}
+    >
+      {respawnDurationText(row, fmtDuration)} · {respawnSourceLabel(row)}
       {basis.length > 0 ? ` · ${basis}` : ''}
     </div>
   )
@@ -305,6 +339,7 @@ function RespawnLine({
       data-respawn-due={r.due ? 'true' : 'false'}
       data-respawn-seen={r.seen ? 'true' : 'false'}
       data-respawn-stale={r.stale ? 'true' : 'false'}
+      data-respawn-overridden={respawnOverridden(row) ? 'true' : 'false'}
       data-respawn-basis={row.basis}
       // ROUND 7: back to round 5's hover — the provenance sentence as a NATIVE title, which is the
       // whole of what a 300px window can afford to say. Same string the tab's card leads with, so

@@ -49,9 +49,18 @@
 // facts it recited are each already stated by something the user is looking at — the rung on a
 // clock row, `wiki default`, `UP`, the zone chip and the scope switch, the Watch/Unwatch pair —
 // and the sentences behind them live on those things' hovers (`respawnProvenance`,
-// `RESPAWN_CONFIRM_TITLE`, both in shared/respawn.ts). One caption survives, under the clocks,
-// because the seconds box's own limits are not state any label states. Round 7's addendum took one
-// more: Unwatch has no tooltip at all now — the control speaks for itself.
+// `RESPAWN_CONFIRM_TITLE`, both in shared/respawn.ts). Round 7's addendum took one more: Unwatch has
+// no tooltip at all now — the control speaks for itself. And round 9 took the LAST one: the caption
+// under the clocks existed to state the seconds box's limits, the box is gone, and the modal that
+// replaced it says what it accepts where the typing happens. This page now carries no standing
+// sentence of its own at all.
+//
+// AND THE NUMBER IS EDITED IN A MODAL (owner ruling, round 9). The clock row's duration and its rung
+// are one bordered unit with a small edit affordance attached; pressing it opens `RespawnEditDialog`,
+// which is the first surface in this feature with room to put the evidence and the decision in front
+// of each other — the hover card, every gap the fold measured, the wiki's words and a link to the
+// page they came from, the number, and the way back to the calculated one. It is TAB-ONLY: the
+// floating window paints the overridden STATE and carries none of the editing.
 //
 // AND EVERY MOB ON THIS PAGE OPENS ITS CARD (owner ruling, rounds 6 and 7). Pointing at a clock row
 // reveals the mob's drop table with your own loot counts riding it; round 7 put the same card on the
@@ -83,8 +92,6 @@ import {
   Typography
 } from '@mui/material'
 import {
-  RESPAWN_CUSTOM_MAX_SEC,
-  RESPAWN_CUSTOM_MIN_SEC,
   filterRespawnCandidates,
   orderRespawnRows,
   respawnCandidateNote,
@@ -95,7 +102,6 @@ import {
 } from '@shared/respawn'
 import Tooltip from '../../lib/Tooltip'
 import { MOB_CARD_SLOT_PROPS, MobCard } from '../../lib/hoverCards'
-import { fmtDuration } from '../buffs/format'
 import { mainMobLookup } from './mobLookup'
 import { RespawnRowBar } from './RespawnRowBar'
 import { RESPAWN_TOGGLE_SX, UnwatchButton } from './UnwatchButton'
@@ -257,28 +263,23 @@ function ClocksPanel({
     )
   }
   return (
-    <>
-      <Stack spacing={0.75} data-testid="respawn-rows">
-        {rows.map((row) => (
-          <RespawnRowBar
-            key={row.id}
-            row={row}
-            nowMs={nowMs}
-            onConfirmSighting={onConfirmSighting}
-            onUnwatch={onUnwatch}
-            onSetCustom={onSetCustom}
-          />
-        ))}
-      </Stack>
-      {/* The ONLY caption left on this page (round 5), and it followed the seconds box up here when
-          the watch list died (round 7). It exists because that box is the one control whose limits
-          are stated nowhere else — a tooltip on an input the user types into is against the house
-          rules, and an out-of-range number silently clears. */}
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-        Custom: {fmtDuration(RESPAWN_CUSTOM_MIN_SEC * 1000)} to{' '}
-        {fmtDuration(RESPAWN_CUSTOM_MAX_SEC * 1000)}. Empty uses your kills.
-      </Typography>
-    </>
+    // ROUND 9 TOOK THE LAST CAPTION OFF THIS PAGE. It stated the seconds box's limits, because a
+    // tooltip on an input the user is typing into is against the house rules and an out-of-range
+    // number silently cleared. The box is gone and the modal that replaced it says the same thing
+    // where the typing happens (`RESPAWN_INPUT_HELP`), states what it understood while you type, and
+    // refuses out loud instead of clearing — so the page keeps no standing sentence at all.
+    <Stack spacing={0.75} data-testid="respawn-rows">
+      {rows.map((row) => (
+        <RespawnRowBar
+          key={row.id}
+          row={row}
+          nowMs={nowMs}
+          onConfirmSighting={onConfirmSighting}
+          onUnwatch={onUnwatch}
+          onSetCustom={onSetCustom}
+        />
+      ))}
+    </Stack>
   )
 }
 
