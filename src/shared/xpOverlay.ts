@@ -25,9 +25,11 @@ import { windowItemRows } from './lootRates'
  *
  *   'xp'    — the progress rate(s). ONE ROW PER MEASURE THE LOG IS STATING (JOS-202), like the
  *             motes entry below: levels of progress per hour while the game still states a level-bar
- *             percentage, AND AA per hour whenever the slice holds a completion — the two bars fill
- *             at the same time and a leveller wants both. At the cap only the AA row survives
- *             (JOS-36/11; shared/aaPace.ts states why those are two different measurements).
+ *             percentage, AND AA per hour ALWAYS — AAs are earned below the cap in this game, the
+ *             two bars fill at the same time, and a slice with no completion reads a measured 0.00
+ *             rather than dropping the row out from under someone watching a rate. At the cap only
+ *             the AA row survives (JOS-36/11; shared/aaPace.ts states why those are two different
+ *             measurements).
  *   'eta'   — what is next: time to the level, or (at cap) the inferred wait for the next AA.
  *   'motes' — motes per hour, one line per mote type seen in the slice.
  *
