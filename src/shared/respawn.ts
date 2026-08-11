@@ -159,6 +159,30 @@
 // only because the mob is watched (the opt-in ruling is the admission rule), so "Watch" on one
 // would be a control that can never be in its other state. The Recently-killed entry is the one
 // surface that meets both kinds of mob, and it is the one that toggles.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ROW ANSWERS "IS IT WORTH WAITING FOR" (owner ruling, 2026-08-10, prototype round 6)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A countdown says WHEN. The question a player standing on a spawn point is actually asking is
+// whether to keep standing there, and that is a question about LOOT. So a respawn row now reveals,
+// on mouseover, the mob's drop table — the wiki's list plus what we have looted off it ourselves —
+// beside what we know about its respawn.
+//
+// BOTH HALVES ARE THINGS THIS APP ALREADY HAD, and the ruling was explicit that neither may be
+// rebuilt. The drops are `MobKnowledge` through the cache-first `mobs:lookup` door — the same
+// answer the `/con` hover card, the mob page and the consider strip draw — split by the one fold
+// in shared/mobDrops.ts. The card is the same component (`lib/hoverCards.tsx`, moved down from the
+// event overlay so both windows can draw it). And the timer half is `respawnProvenance` verbatim:
+// round 5 cut that sentence to the facts the row does not print and CAPPED it by test, so round 6
+// carries it into the card as a titled block rather than growing a second tooltip beside it.
+//
+// AND IT OBEYS THE SAME LAW AS EVERY OTHER AFFORDANCE OVER THE GAME. A locked floating window is
+// click-through, which means it receives no mouse events at all and can no more be hovered than
+// clicked. So the card exists on the Timers tab always, and on the floating window only while it
+// is interactive — the same gate the confirm and unwatch controls sit behind, for the same reason.
+// The native `title` the row used to carry there is gone rather than doubled: an unlocked row
+// shows the card (which contains that string), and a locked one was never showing either.
 
 /** Which rung of the ladder produced the estimate on a row. `'none'` = no rung had anything. */
 export type RespawnSource = 'custom' | 'observed' | 'wiki' | 'none'
@@ -613,6 +637,29 @@ export function respawnProvenance(row: RespawnRow, fmt: (ms: number | null | und
   if (row.basis === 'sighting') parts.push('Re-based on a sighting you confirmed.')
   parts.push(`Killed ${String(row.kills)} time${row.kills === 1 ? '' : 's'} here.`)
   return parts.join(' ')
+}
+
+/**
+ * THE TITLE OVER THAT SENTENCE when it is a block of the mob's hover CARD rather than a bare
+ * tooltip (round 6). Both surfaces spell it once, like everything else in this file.
+ */
+export const RESPAWN_CARD_LABEL = 'Respawn:'
+
+/**
+ * WHAT THE ROW'S HOVER IS, ONE COMPOSITION FOR BOTH SURFACES (owner ruling, round 6).
+ *
+ * The owner asked a respawn row to answer two questions on mouseover: what the mob DROPS (the
+ * wiki table plus what we have looted off it ourselves) and what we know about its RESPAWN (the
+ * wiki's number or the one we learned, labelled with which). The drops half is the mob hover card
+ * that already existed for `/con` rows in the event overlay, and the timer half is this — the
+ * round-5 provenance string, unchanged and still capped by test, carried into that card as its
+ * leading block rather than duplicated into a second tooltip.
+ */
+export function respawnCardNote(
+  row: RespawnRow,
+  fmt: (ms: number | null | undefined) => string
+): { label: string; text: string } {
+  return { label: RESPAWN_CARD_LABEL, text: respawnProvenance(row, fmt) }
 }
 
 /**

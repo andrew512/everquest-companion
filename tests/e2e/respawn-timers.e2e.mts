@@ -33,6 +33,11 @@
  * Watch, and give the identical clock back when it is watched again — and the floating window has
  * to be able to do the same thing, which is where the ruling came from.
  *
+ * AND A LOOT LINE IS PLAYED (round 6). Pointing at a clock row has to answer the other half of
+ * "should I keep standing here" — the mob's drop table, and what we have looted off it ourselves —
+ * which is a JOIN no unit test can reach: a loot line folds into main's own-loot index, and a hover
+ * on a row belonging to a different module entirely comes back carrying it, in both renderers.
+ *
  * AND THE ZONE LINE IS PLAYED TOO. The last step walks the character into another zone and asserts
  * the clocks LEAVE both surfaces while the fold keeps them: the tab's all-zones view brings them
  * straight back. That is the second owner ruling, and only the real app can show that a zone line
@@ -295,6 +300,95 @@ async function stepOverlay(page: Page, app: ElectronApplication): Promise<Page |
 }
 
 /**
+ * What the mob hover card is saying, on whichever surface is asked. Empty when none is open.
+ *
+ * `textContent`, not `innerText`: this card is drawn in a window that is never composited, and
+ * `innerText` is the layout-aware reading of the two.
+ */
+function cardText(p: Page): Promise<string> {
+  return p.evaluate(() => document.querySelector('[data-testid="mob-hover-card"]')?.textContent ?? '')
+}
+
+/**
+ * Point at / away from a row of the FLOATING window, which is hidden here and so is driven rather
+ * than pointed at. A BUBBLING `mouseover`, never `mouseenter`: React synthesises enter/leave at the
+ * root out of mouseover/mouseout, so a directly dispatched `mouseenter` reaches no handler at all
+ * (the overlay-sync spec learned this the same way). `relatedTarget` is the body — outside the
+ * React root, which is what makes it read as arriving from outside the tree.
+ */
+function pointAtOverlayRow(overlay: Page, mob: string, over: boolean): Promise<void> {
+  return overlay.evaluate(
+    ({ mob: m, over: isOver }) => {
+      const row = document.querySelector(`[data-testid="respawn-overlay-row"][data-respawn-mob="${m}"]`)
+      row?.dispatchEvent(
+        new MouseEvent(isOver ? 'mouseover' : 'mouseout', { bubbles: true, relatedTarget: document.body })
+      )
+    },
+    { mob, over }
+  )
+}
+
+/** An item played onto the live tail as looted off the watched mob — real EQ shape (parseWorld.ts). */
+const LOOTED = 'Bone Chips'
+
+/**
+ * THE ROW ANSWERS "IS IT WORTH WAITING FOR" (owner ruling, round 6).
+ *
+ * A countdown says when; the question a player standing on a spawn point is asking is whether to
+ * keep standing there, and that is a question about loot. So pointing at a clock row reveals the
+ * mob's DROPS — the wiki table plus what we have looted off it ourselves — under what we know about
+ * its respawn.
+ *
+ * ONLY THE REAL APP CAN SHOW THIS, because the claim is a JOIN across two subsystems that never
+ * meet in a unit test: a loot line arriving on the live tail folds into main's own-loot index, and
+ * a hover on a clock row belonging to an entirely different module has to come back carrying it —
+ * through the same cache-first `mobs:lookup` door the `/con` card uses, in TWO renderers.
+ *
+ * THE LOOT LINE IS PLAYED FIRST and it is deliberately a mob the wiki says nothing about, so the
+ * item can only be on that card because the app watched it drop. The card is also asserted ABSENT
+ * before the hover: it costs no lookup until a row is pointed at, which is the whole reason a feed
+ * of clocks can afford one at all.
+ */
+async function stepHoverCard(page: Page, overlay: Page, log: FixtureLog): Promise<void> {
+  log.append(`--You have looted 2 ${LOOTED} from ${OWN_MOB}'s corpse.--`)
+
+  const before = await settleStable(() => cardText(page))
+  check('a clock row costs no lookup until it is pointed at', before === '', before)
+
+  await page.hover(`[data-testid="respawn-row"][data-respawn-mob="${OWN_MOB}"]`, { timeout: 15_000 })
+  const shown = await settle(() => cardText(page), (t) => t.includes(LOOTED), { timeoutMs: 30_000 })
+  if (!check('pointing at a clock row opens the mob card', shown.length > 0, shown)) return
+  // (a) THE DROPS, from our own entry for the mob — the item is on the card only because a loot
+  // line said so, wherever the card's authority ordering ends up putting it.
+  check('…carrying what we have actually seen it drop', shown.includes(LOOTED), shown)
+  // (b) THE TIMER KNOWLEDGE, and it is round 5's provenance string rather than a second spelling:
+  // the raw gap, what a gap proves, and how many kills are behind it.
+  check('…under what we know about the respawn', shown.includes('A gap is an upper bound'), shown)
+  check('…labelled as ours rather than the wiki’s', shown.includes('Your shortest gap'), shown)
+
+  // AND THE SAME CARD OVER THE GAME. Dispatched rather than pointed at, for the reason at the top
+  // of this file: this window is hidden, so it is driven rather than clicked. It exists here only
+  // because the window is UNLOCKED — a locked overlay is click-through, receives no mouse events at
+  // all, and so has no more hover to give than it has clicks (the same gate the confirm and unwatch
+  // controls above are asserted behind).
+  await pointAtOverlayRow(overlay, OWN_MOB, true)
+  const over = await settle(() => cardText(overlay), (t) => t.includes(LOOTED), { timeoutMs: 30_000 })
+  check('the floating window draws the same card off the same door', over.includes(LOOTED), over)
+  check('…with the respawn knowledge leading it there too', over.includes('A gap is an upper bound'), over)
+
+  // POINT AWAY AGAIN. Both cards have to go — they are a hover, not a panel — and the steps that
+  // follow click controls on these rows, which a card left standing over them would swallow.
+  await page.mouse.move(0, 0)
+  await pointAtOverlayRow(overlay, OWN_MOB, false)
+  // A transition, not an absence: wait for the reading to REACH empty rather than for it to stop
+  // moving (a card mid-fade is stable-looking and still on screen).
+  const tabGone = await settle(() => cardText(page), (t) => t === '', { timeoutMs: 20_000 })
+  check('the card leaves with the pointer, on the tab', tabGone === '', tabGone)
+  const overGone = await settle(() => cardText(overlay), (t) => t === '', { timeoutMs: 20_000 })
+  check('…and over the game', overGone === '', overGone)
+}
+
+/**
  * SEEN ON LOG EVIDENCE, AND THE RE-BASE THAT IS NEVER AUTOMATIC (owner ruling, round 3).
  *
  * The defect came from live play: the owner was being hit by a watched mob and the row still read
@@ -496,6 +590,9 @@ async function main(): Promise<void> {
   // toggling a fresh one.
   const overlay = await stepOverlay(page, launched.app)
   if (overlay) {
+    // Round 6 rides the same window and runs FIRST of the three, for one reason: it asserts the
+    // card is absent until a row is hovered, and the steps below leave pointers and rows moving.
+    await stepHoverCard(page, overlay, fixture)
     // Round 3 rides the same window for the same reason the zone step does: the claim is that ONE
     // piece of module state moves two renderers. It runs BEFORE the zone step, which walks the
     // character out and empties both surfaces.

@@ -139,6 +139,9 @@ test('the hover keeps the facts the row does not print, and stays a hover', () =
   says({ source: 'none' }, 'No respawn known yet')
 })
 
+// (Round 6 carried that same string into the row's hover CARD, and wrote no second spelling of it:
+// `respawnCardNote` is pinned in tests/mobDrops.test.mts beside the drops half of that card.)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. READING A ROW AGAINST THE CLOCK
 // ─────────────────────────────────────────────────────────────────────────────
