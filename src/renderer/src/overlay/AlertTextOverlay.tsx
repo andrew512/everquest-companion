@@ -83,7 +83,10 @@ export default function AlertTextOverlay(): JSX.Element {
           once would be two answers to one question. */}
       {chrome.ready && !chrome.locked && (
         <DragFrame
-          caption="Drag me where alert text should appear"
+          // Says BOTH things it can do, because this frame is the only chrome the lane ever shows:
+          // locked it is empty and click-through, so an affordance the user cannot see is one they
+          // will never find. Stretching is the point of the width (overlayLayout.overlaySizeLimits).
+          caption="Drag me where alert text should appear, or stretch my edges"
           testId="alert-text-drag-frame"
           onDone={chrome.toggleLock}
           noDrag={chrome.noDrag}

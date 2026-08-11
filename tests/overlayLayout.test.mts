@@ -27,7 +27,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize, type Bounds } from '../src/main/overlayLayout'
+import {
+  METER_KINDS,
+  defaultOverlayBounds,
+  overlayDefaultSize,
+  overlaySizeLimits,
+  type Bounds
+} from '../src/main/overlayLayout'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import {
   ALERT_OVERLAY_KINDS,
@@ -231,6 +237,37 @@ test('the two notifier lanes never open on top of each other', () => {
         )
       }
     }
+  }
+})
+
+test('an alert lane may be STRETCHED without limit; a meter has a largest useful size', () => {
+  // The lane draws one centred line per firing, so its width is just how much of a substituted
+  // line fits before it wraps — a banner across the top of an ultrawide is the feature working.
+  // 720 was the METERS' ceiling, applied to every kind because the toast was the only exception
+  // anyone had needed, and it is what stopped the lane being dragged wider (owner, 2026-08-11).
+  for (const kind of ALERT_OVERLAY_KINDS) {
+    const limits = overlaySizeLimits(kind)
+    assert.equal(limits.maxWidth, undefined, `${kind}: still capped in width`)
+    assert.equal(limits.maxHeight, undefined, `${kind}: still capped in height`)
+    // …and small enough at the other end to park a short banner in a corner.
+    assert.ok(limits.minWidth <= 200 && limits.minHeight <= 90, `${kind}: ${JSON.stringify(limits)}`)
+  }
+  // Every OTHER kind keeps the panel ceiling — this is a carve-out, not a removal.
+  for (const kind of OVERLAY_KINDS.filter((k) => !(ALERT_OVERLAY_KINDS as readonly string[]).includes(k))) {
+    const limits = overlaySizeLimits(kind)
+    assert.equal(limits.maxWidth, 720, `${kind}: lost its width cap`)
+    assert.equal(limits.maxHeight, 820, `${kind}: lost its height cap`)
+  }
+})
+
+test('every kind can still be resized DOWN to its own minimum, and opens at least that big', () => {
+  // A first-open window smaller than its own minimum would be resized by the OS the moment it
+  // appeared, which is a window that does not open where the layout says it does.
+  for (const kind of OVERLAY_KINDS) {
+    const limits = overlaySizeLimits(kind)
+    const size = overlayDefaultSize(kind, WORK_AREAS['small laptop'])
+    assert.ok(size.width >= limits.minWidth, `${kind}: opens narrower than its minimum`)
+    assert.ok(size.height >= limits.minHeight, `${kind}: opens shorter than its minimum`)
   }
 })
 

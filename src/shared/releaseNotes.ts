@@ -558,7 +558,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'new',
-        text: 'Alerts can put their text on screen. Switch on the alert overlay in Preferences, drag the lane where you want it, and a triggered alert writes its line over the game and fades on its own.'
+        text: 'Alerts can put their text on screen. Switch on the alert overlay in Preferences, drag the lane where you want it and stretch it as wide as you like, and a triggered alert writes its line over the game and fades on its own.'
       },
       {
         kind: 'new',

@@ -96,6 +96,39 @@ export function overlayDefaultSize(kind: OverlayKind, workArea?: Bounds): Size {
   return workArea ? meterSize(workArea) : { ...DEFAULT_SIZE }
 }
 
+/** How far a kind's window may be dragged. An absent maximum means the OS imposes the only one. */
+export interface SizeLimits {
+  minWidth: number
+  minHeight: number
+  maxWidth?: number
+  maxHeight?: number
+}
+
+/**
+ * The resize bounds for a kind's window.
+ *
+ * A METER IS A PANEL AND HAS A LARGEST USEFUL SIZE. 720x820 is about where a dense bar list stops
+ * gaining anything from more room and starts being a window you have to look away from the fight
+ * to read — and the reserved-slot grid is laid out against sizes in that neighbourhood.
+ *
+ * AN ALERT LANE IS A BANNER, AND HAS NO SUCH CEILING (owner, 2026-08-11: stretch it wider). It
+ * draws one centred line per firing, so its width is simply how much of a substituted line fits
+ * before it wraps — a raid caller who wants "Kaiaren begins casting Ancient Breath" across the
+ * full top of a 3440px ultrawide is asking for the feature to work, not misusing it. Capping that
+ * at 720 was never a rendering constraint; it was the meters' number, applied to every kind
+ * because the toast was the only exception anyone had needed. So the lane states its own limits:
+ * a minimum small enough to park a short banner in a corner, and NO maximum at all.
+ *
+ * The height cap goes with it for the same reason — a taller lane is more stacked lines visible at
+ * once, which is exactly what someone widening it for a busy pull also wants.
+ */
+export function overlaySizeLimits(kind: OverlayKind): SizeLimits {
+  if ((ALERT_OVERLAY_KINDS as readonly string[]).includes(kind)) {
+    return { minWidth: 120, minHeight: 48 }
+  }
+  return { minWidth: 200, minHeight: 90, maxWidth: 720, maxHeight: 820 }
+}
+
 /**
  * The toast's first-open placement: horizontally CENTRED on the work area, 12px from its top.
  * Clamped like every other kind so a display narrower than the strip still lands on-screen.

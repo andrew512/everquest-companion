@@ -264,6 +264,27 @@ async function stepOverriddenField(main: Page, lane: Page): Promise<void> {
   check('…and the size it never mentioned is still the lane’s', l.fontSize === '44px', l.fontSize)
 }
 
+/**
+ * THE LANE STRETCHES, and only the real app can show it.
+ *
+ * `overlaySizeLimits` is pinned in tests/overlayLayout.test.mts, but that asserts what we ASK for.
+ * The cap that stopped this was Electron's `maxWidth`, enforced in the OS window rather than in our
+ * code — so the claim worth making end to end is that a window told to be 1600px wide comes back
+ * 1600px wide. On the old 720 cap it came back 720.
+ */
+async function stepStretch(app: ElectronApplication): Promise<void> {
+  const sized = await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes('kind=alert'))
+    if (!w) return null
+    const before = w.getBounds()
+    w.setBounds({ ...before, width: 1600 })
+    return { before: before.width, after: w.getBounds().width }
+  })
+  if (!check('the alert window is reachable to resize', sized !== null)) return
+  const { before, after } = sized as { before: number; after: number }
+  check('an alert lane can be stretched far past the meters’ 720px ceiling', after === 1600, `${before} -> ${after}`)
+}
+
 /** A CLOSED overlay is silent: the alert still fired, it just has nowhere to be drawn. */
 async function stepClosedIsSilent(app: ElectronApplication, main: Page, lane: Page): Promise<void> {
   await toggleOverlay(main)
@@ -311,6 +332,7 @@ async function main(): Promise<void> {
       await stepRepair(page, l)
       await stepInheritedLook(page, l)
       await stepOverriddenField(page, l)
+      await stepStretch(app)
       await stepClosedIsSilent(app, page, l)
     }
 

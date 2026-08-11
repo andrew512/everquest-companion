@@ -152,6 +152,20 @@ its queue. An alert lane stays click-through whether or not it is drawing, so id
 `main/notifierVisibility.ts` where it is unit-testable against a stub window. The toast sends both
 signals and behaves byte-identically.
 
+**IT STRETCHES, WITH NO MAXIMUM SIZE** (owner, 2026-08-11). `overlaySizeLimits` is per kind: a
+meter is a panel with a largest useful size (720×820 — about where a dense bar list stops gaining
+from more room, and the neighbourhood the reserved-slot grid is laid out against), and a lane is a
+banner with none. Its width is simply how much of a substituted line fits before it wraps, so
+stretching one across the full top of an ultrawide is the feature working rather than a misuse of
+it. The 720 cap that used to stop it was never a rendering constraint — it was the meters' number
+applied to every kind, because the toast was the only exception anyone had needed. The drag frame
+says both things it can do, since locked the lane is empty and click-through and an affordance the
+user cannot see is one they will never find.
+
+The first-open geometry is unchanged: 560×200, horizontally centred at `ALERT_TOP = 400`, which
+clears the toast strip's 12…372 with a gutter so the two notifier lanes cannot open on top of each
+other. Persisted bounds always win, so a stretched lane stays stretched.
+
 ## 6. Storage, sharing, and what would have gone wrong
 
 **No migration.** `AlertDef.display` is the documented `alwaysPlay` / `cooldownScope` precedent —

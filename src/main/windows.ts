@@ -24,7 +24,7 @@ import { join } from 'path'
 import { IPC } from '../shared/ipc'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
-import { defaultOverlayBounds, overlayDefaultSize } from './overlayLayout'
+import { defaultOverlayBounds, overlayDefaultSize, overlaySizeLimits } from './overlayLayout'
 import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
@@ -491,10 +491,9 @@ export function createOverlayWindow(kind: OverlayKind): void {
   noteNotifierOpacity(kind, opaque)
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
-    minWidth: 200,
-    minHeight: 90,
-    maxWidth: 720,
-    maxHeight: 820,
+    // PER KIND (overlayLayout.ts): a meter is a panel with a largest useful size, an alert text
+    // lane is a banner with none — it may be stretched across the whole display.
+    ...overlaySizeLimits(kind),
     // The toast strip is a fixed-width card LANE, not a resizable panel: the card sizes itself
     // and everything around it is transparent, so resizing that window would only change how
     // much invisible nothing surrounds the card. It still MOVES, and its bounds still persist —
