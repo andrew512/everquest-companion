@@ -31,7 +31,6 @@ import {
   respawnBasisLabel,
   respawnClockLabel,
   respawnReading,
-  respawnRowExpired,
   respawnSeenLabel,
   type RespawnPrefs,
   type RespawnRow
@@ -99,15 +98,24 @@ test('a mention from BEFORE the clock started is not a sighting of the spawn it 
   assert.equal(respawnReading(row({ baseTs: 1_000_000, seenTs: 1_000_000 }), 1_100_000).seen, false)
 })
 
-test('a seen row is held on screen, so the sweep cannot undo the ruling', () => {
-  // A row forty minutes overdue is swept — unless something named the mob, in which case sweeping
-  // it would take the UP with it. The window is the SAME linger constant; no second number.
+test('a sighting outranks a tired clock, and stops being one after the linger', () => {
+  // ROUND 8 CHANGED WHAT THIS WINDOW DOES, not what it means. Round 3 had to spare seen rows from a
+  // sweep that DELETED them, because the owner's own case is a mob that came due long ago and is
+  // standing in front of him. Nothing is deleted now: a row forty minutes overdue reads `stale`,
+  // and evidence inside the window overrides that — the row leads with the fact, exactly as before.
   const ancient = row({ baseTs: 0, estimateMs: 600_000 })
   const now = 600_000 + RESPAWN_LINGER_MS + 60_000
-  assert.equal(respawnRowExpired(ancient, now), true)
-  assert.equal(respawnRowExpired({ ...ancient, seenTs: now - 1_000 }, now), false)
-  // …and the hold is bounded by that same window: evidence older than the linger stops holding it.
-  assert.equal(respawnRowExpired({ ...ancient, seenTs: now - RESPAWN_LINGER_MS - 1 }, now), true)
+  assert.equal(respawnReading(ancient, now).stale, true)
+  const witnessed = respawnReading({ ...ancient, seenTs: now - 1_000 }, now)
+  assert.equal(witnessed.seen, true)
+  assert.equal(witnessed.stale, false, 'fresh evidence is the better answer; the clock stops leading')
+  assert.equal(respawnClockLabel({ ...ancient, seenTs: now - 1_000 }, now, fmt), 'UP')
+  // …and the claim is bounded by that same window, which is the linger's remaining job: `UP` is the
+  // one label here that says a mob is standing there, and a line from an hour ago does not say it.
+  const old = { ...ancient, seenTs: now - RESPAWN_LINGER_MS - 1 }
+  assert.equal(respawnReading(old, now).seen, false)
+  assert.equal(respawnReading(old, now).stale, true, 'the row is still published, and says so honestly')
+  assert.equal(respawnSeenLabel(old, now, fmt), '')
 })
 
 test('SEEN outranks every countdown, because it is a different kind of fact', () => {

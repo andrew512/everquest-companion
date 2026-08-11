@@ -28,8 +28,20 @@
 // left the list standing for the one thing it still had — typing a number. Round 7 removed it: the
 // seconds box is on the mob's Running entry now, beside the gaps that produced the number it
 // overrides, and this page has no third section. The stated cost is in shared/respawn.ts: a watch
-// whose clock is not on screen (another zone — switch the scope; or swept by the linger) has no row
-// to carry its box until it dies again, and its Recently-killed entry still toggles the watch off.
+// whose clock is not on screen (another zone — switch the scope; or a mob you have never killed) has
+// no row to carry its box, and its Recently-killed entry still toggles the watch off.
+//
+// AND A WATCHED MOB IS ALWAYS UNDER RUNNING (owner ruling, round 8). The owner clicked Watch on a
+// kill from hours earlier, the button flipped to Unwatch — and this panel still read "No clocks
+// running", because the fold swept every row whose estimate had elapsed more than half an hour ago.
+// A watched mob the fold holds a death for now ALWAYS has a row here; when its clock is long gone it
+// says so honestly (`respawnClockLabel`) and sorts under the live ones. So the empty state below
+// means what it says again — nothing is watched here, rather than something watched and hidden.
+//
+// AND THIS PAGE RE-ORDERS AGAINST ITS OWN CLOCK, the way the floating window always has. The order
+// is a function of NOW — soonest due, a sighting ageing out of UP, a countdown passing into stale —
+// while the module publishes an order only when the FOLD changes, which on an idle log is never.
+// So the rows are sorted here, per tick, by the same `orderRespawnRows` both surfaces read.
 //
 // AND THE PAGE STOPPED EXPLAINING ITSELF (owner ruling, round 5). Each of the four rounds above
 // left its ruling written out in prose at the top of this file's render, and the result was a
@@ -74,6 +86,7 @@ import {
   RESPAWN_CUSTOM_MAX_SEC,
   RESPAWN_CUSTOM_MIN_SEC,
   filterRespawnCandidates,
+  orderRespawnRows,
   respawnCandidateNote,
   respawnInZone,
   type RespawnCandidate,
@@ -423,7 +436,9 @@ export default function TimersView(): JSX.Element {
   const zoneName = snap.zone.length > 0 ? snap.zone : 'Unknown zone'
   const hereRows = respawnInZone(snap.rows, snap.zone)
   const hereRecent = respawnInZone(snap.recent, snap.zone)
-  const rows = scope === 'zone' ? hereRows : snap.rows
+  // Scoped first, then ordered against THIS renderer's clock — see the header: the ranking moves
+  // every second whether or not the log does.
+  const rows = orderRespawnRows(scope === 'zone' ? hereRows : snap.rows, nowMs)
   const recent = scope === 'zone' ? hereRecent : snap.recent
 
   return (
