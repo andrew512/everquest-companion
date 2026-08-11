@@ -125,6 +125,51 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.21.0',
+    date: '2026-08-11',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A new Timers tab: respawn clocks built from your own kills. Watch a mob from Recently killed and the clock starts from the kill you already made - your measured gaps drive the estimate, and the wiki value is only a default under them.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The clocks are honest about what they know: a mob the log names reads UP instead of a stale countdown, a long-quiet estimate says due long ago instead of counting forever, and nothing is tracked until you ask. Hover a row for the mob\'s drops, your own gaps, and the wiki\'s word on it.'
+      },
+      {
+        kind: 'new',
+        text: 'Every clock is yours to overrule: an edit control shows the evidence - all your gaps, the wiki time, a link to the page - then takes entries like 44m 30s, marks the row as overridden, and reverts to the calculated value on request. A floating Respawn overlay carries the clocks over the game, scoped to the zone you are in.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Doing /who now corrects your level and classes everywhere, immediately - the app no longer believes an abandoned loadout\'s last level forever, and each surface says where its answer came from and how fresh it is.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A buff or debuff bar you dismiss stays dismissed without touching what the app has learned - and duration learning now waits long enough to catch buffs your AAs have extended well past the wiki\'s number.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The XP overlay shows AA per hour while you level, beside your level pace - not only at the cap.'
+      },
+      {
+        kind: 'changed',
+        text: 'Plane of Sky search answers instantly now, even with the whole list showing - and it finds bosses and islands too, so typing Gorgalosk or Island 7 narrows exactly like picking them would.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The Maps tab holds its ground while it loads - nothing shifts when the map image arrives - and Castle Mistmoore\'s map opens when you zone in, now that the app understands the game\'s own name for it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Rapidly toggling overlays from the title-bar menu no longer maximizes the window.'
+      }
+    ]
+  },
+  {
     version: '0.20.0',
     date: '2026-08-10',
     entries: [
