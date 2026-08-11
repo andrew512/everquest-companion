@@ -84,6 +84,22 @@ export function getMainWindow(): BrowserWindow | null {
 }
 
 /**
+ * Is the COMPANION WINDOW the active window right now? (JOS-199.)
+ *
+ * The presence watcher can tell that the foreground window belongs to this process; it cannot tell
+ * WHICH of our windows it is, because they all report the same pid and the same image path and the
+ * only remaining field is a page-supplied title. Electron knows, so it is asked here — one query,
+ * in the module that owns every window handle, exactly as the file header requires.
+ *
+ * A read, never a write: nothing here shows, focuses or raises anything. `presence.ts` calls it on
+ * FOREGROUND-CHANGE records only (a handful a second at most), and a `false` is always the safe
+ * answer — it lands on the pre-JOS-199 behavior, which is to leave the overlays up.
+ */
+export function mainWindowFocused(): boolean {
+  return getMainWindow()?.isFocused() === true
+}
+
+/**
  * Push to the main window's renderer, or do nothing if there isn't one — where "isn't one"
  * includes a window that exists as a JS object but is already destroyed. Every `onX`
  * broadcast in the main process goes through here, so "the window may not exist yet /
@@ -468,12 +484,60 @@ function applyOpaqueToastVisibility(kind: OverlayKind, idle: boolean): void {
   raiseCursorRing()
 }
 
-/** Apply the locked/interactive mouse + focus behavior to a kind's overlay window. */
+// ---- `setFocusable` IS NOT AN ATTRIBUTE WRITE, IT MOVES THE FOREGROUND (JOS-199) --------------
+//
+// THE ALT-TAB HIJACK, and it is Electron's documented Windows behavior rather than a mystery.
+// `BrowserWindow.setFocusable` is spelled "changes whether the window can be focused" and carries
+// the note "on macOS it does not remove the focus from the window" — i.e. on WINDOWS it does.
+// `setFocusable(false)` deactivates the window, and Chromium's deactivate walks the Z-ORDER and
+// calls `SetForegroundWindow` on the first VISIBLE window below it. An overlay of ours is
+// always-on-top directly over the game, so the first window below it is EverQuest.
+//
+// That turned every auto-hide into a foreground grab, because `setOverlaysHidden` re-asserted the
+// locked mode on the way DOWN as well as up, and the locked mode is `setFocusable(false)`:
+//
+//   "Alt tabbing from EQ will bring you back to EQ the first time but with hidden overlay… but if
+//    you click into EQ, alt tab will continue to bring you back ANY TIME THE OVERLAYS ARE VISIBLE"
+//                                            — report 01KZPTD3MHP3DFG7NJY5QF96VJ, v0.18.0
+//
+// The reporter's last clause is the diagnosis: Chromium's deactivate is a no-op on a window that
+// is not visible, so the alt-tab that happened while the overlays were already hidden worked, and
+// the next one — after they came back — did not. Alt-tab away, the debounce commits ~300 ms later,
+// the hide pass re-states `setFocusable(false)` on five still-visible topmost windows, and the
+// user is standing in EverQuest again wondering what they did wrong.
+//
+// THE FIX IS TO STOP RE-STATING IT. Focusability is a WINDOW STYLE (WS_EX_NOACTIVATE); it survives
+// hide/show, so unlike always-on-top and the mouse mode it has nothing to re-assert. So:
+//
+//   * a window is BORN with the focusability its persisted lock implies, which costs no call at
+//     all and takes the very first `setFocusable` — the one at `ready-to-show`, which used to fire
+//     while another app was in front and could yank the foreground off it — out of existence too;
+//   * and every later apply is a no-op unless the value actually CHANGED, which now happens only
+//     when the user toggles the lock. There, moving the foreground is the point: locking hands the
+//     game back, unlocking gives you the window you are about to drag.
+//
+// THE WINDOW ITSELF IS ASKED, never a remembered copy. `isFocusable()` is the exact state
+// `setFocusable` writes, so there is no bookkeeping to seed at construction, none to clear when an
+// overlay closes, and no way for a map to disagree with the window it describes.
+
+/** Set a window's focusability, but ONLY on a real change — see the block above. */
+function setOverlayFocusable(w: BrowserWindow, focusable: boolean): void {
+  if (w.isFocusable() === focusable) return
+  w.setFocusable(focusable)
+}
+
+/**
+ * Apply the locked/interactive mouse + focus behavior to a kind's overlay window.
+ *
+ * The MOUSE half is idempotent and re-stated freely (a hidden window must drop its WH_MOUSE_LL
+ * hook, which is why the auto-hide path calls this at all). The FOCUS half is guarded, because on
+ * Windows it is not idempotent at all — it moves the foreground window. See above.
+ */
 export function applyOverlayLocked(kind: OverlayKind, locked: boolean): void {
   const w = overlayWindows[kind]
   if (!w || w.isDestroyed()) return
   setOverlayIgnoreMouse(kind, locked)
-  w.setFocusable(!locked)
+  setOverlayFocusable(w, !locked)
 }
 
 /** Per-kind title (the OS window title; never user-visible on a frameless overlay, but it is
@@ -514,8 +578,13 @@ const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
 // nudge in the instant after a re-placement is not persisted — which is not a position anyone is
 // expressing — and it is paid only until the window next moves anywhere else.
 const appliedBounds = new Map<OverlayKind, Electron.Rectangle>()
+const RECT_KEYS = ['x', 'y', 'width', 'height'] as const
 const sameSpot = (a: Electron.Rectangle, b: Electron.Rectangle): boolean =>
-  (['x', 'y', 'width', 'height'] as const).every((k) => Math.abs(a[k] - b[k]) <= 1)
+  RECT_KEYS.every((k) => Math.abs(a[k] - b[k]) <= 1)
+/** The EXACT twin of `sameSpot`, for the ring: it is re-bounded to the EQ window and re-drawn from
+ *  that origin, so a pixel of slack here would be a pixel of drift in the halo's offset. */
+const sameRect = (a: Electron.Rectangle, b: ScreenRect): boolean =>
+  RECT_KEYS.every((k) => a[k] === b[k])
 
 /**
  * Where a kind's overlay opens. Persisted bounds win — FITTED to the displays that exist right now
@@ -570,8 +639,14 @@ export function createOverlayWindow(kind: OverlayKind): void {
   // 'auto' arrives here as `true` without the user having found anything.
   const opaque = resolvedGraphics().opaqueOverlays.on
   if (kind === 'toast') opaqueToastWindow = opaque
+  // BORN WITH THE RIGHT FOCUSABILITY (JOS-199 — see `setOverlayFocusable`). The lock state is read
+  // here, at construction, purely so that the `ready-to-show` apply below has nothing to do:
+  // `setFocusable` on Windows moves the FOREGROUND window, and an overlay opened from the
+  // Companion's own Overlay menu used to deactivate itself the instant it appeared.
+  const locked = getOverlayConfig(kind).locked
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
+    focusable: !locked,
     minWidth: 200,
     minHeight: 90,
     maxWidth: 720,
@@ -720,8 +795,14 @@ export function overlayStateMap(): Record<OverlayKind, boolean> {
  * `showInactive`, not `show`: the same reason the first open uses it. An overlay must never
  * steal focus from the game, and coming back from auto-hide is exactly the moment it would —
  * the user just alt-tabbed INTO EverQuest, and a window that grabs focus on the way would undo
- * the thing that triggered it. Always-on-top and the locked/click-through mode are re-asserted
- * on the way back, because a hidden window can lose both on Windows.
+ * the thing that triggered it. Always-on-top and the click-through mode are re-asserted on the
+ * way back, because a hidden window can lose both on Windows.
+ *
+ * AND NOTHING HERE TOUCHES FOCUSABILITY, in either direction (JOS-199). It is a window style that
+ * survives hide/show, so there is nothing to re-assert — and re-asserting it anyway is what made
+ * this function grab the foreground on every alt-tab. `applyOverlayLocked` still carries the whole
+ * locked mode; its focus half is now a no-op unless the value really changed. See
+ * `setOverlayFocusable`.
  *
  * E2E never shows a window (src/main/e2e.ts is the whole test mode), so a re-show is skipped
  * there; hiding stays live, since hiding an already-hidden window is a no-op. A historical replay
@@ -879,16 +960,7 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
  *  changed — a setBounds per cursor sample would be a window-manager round trip at 125 Hz. */
 export function setCursorRingBounds(bounds: ScreenRect): void {
   const w = cursorRingWindow
-  if (!w || w.isDestroyed()) return
-  const cur = w.getBounds()
-  if (
-    cur.x === bounds.x &&
-    cur.y === bounds.y &&
-    cur.width === bounds.width &&
-    cur.height === bounds.height
-  ) {
-    return
-  }
+  if (!w || w.isDestroyed() || sameRect(w.getBounds(), bounds)) return
   w.setBounds(bounds)
 }
 

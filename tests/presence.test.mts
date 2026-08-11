@@ -222,6 +222,10 @@ test("this app's own windows never look like EverQuest", () => {
   }
 })
 
+// The FOUR-WAY split of that same question — which side of "are you in EverQuest?" the foreground
+// window falls on, including the two answers our OWN pid can give — lives in
+// tests/overlayFocusPolicy.test.mts, beside the alt-tab half of the same ticket (JOS-199).
+
 // ------------------------------------------------------------------- the focus debounce
 
 test('a focus change must hold still for the debounce before it is committed', () => {

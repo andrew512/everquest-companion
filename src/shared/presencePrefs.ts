@@ -46,7 +46,13 @@ export interface PresenceState {
   observed: boolean
   /** Is an EverQuest process running at all? (5 s cadence — a coarse, cheap fact.) */
   eqRunning: boolean
-  /** Is the EQ window the FOREGROUND window? (App-owned windows count as EQ-side — presence.ts.) */
+  /**
+   * Is the EQ window the FOREGROUND window?
+   *
+   * This app's ACCESSORY windows count as EQ-side (an overlay you are dragging, the cursor ring);
+   * the COMPANION window does not, so bringing the app to the front reads as "not in EverQuest"
+   * (JOS-199 — the whole matrix is `foregroundSide` in main/presenceProtocol.ts).
+   */
   eqFocused: boolean
   /** Last known EQ window rectangle, or null if we have never seen it foreground. */
   eqBounds: ScreenRect | null

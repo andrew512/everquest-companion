@@ -207,6 +207,53 @@ export function isEqWindow(w: { exePath: string; title: string }, eqRoot: string
   return titleIsEqClient(w.title)
 }
 
+/**
+ * WHICH SIDE OF "ARE YOU IN EVERQUEST?" THE FOREGROUND WINDOW FALLS ON — four answers, because
+ * for one of them the pid is not enough (JOS-199).
+ *
+ * The OWN-WINDOWS rule used to be a single bit: `pid === process.pid` ⇒ EQ side, on the reasoning
+ * that every window this app creates is owned by the main process, so one comparison covers the
+ * overlays, the ring and the app at once and "clicking your own overlay must not hide it" is true
+ * by construction. That is still exactly right for the ACCESSORY windows and it is why they are
+ * still classified by pid alone.
+ *
+ * It was wrong for the COMPANION WINDOW ITSELF, and a player said so: "the overlays cover a lot of
+ * the Companion unnecessarily when trying to navigate through the app" (report
+ * 01KZPVWXZACDHVRNKTFGDW3E4M, v0.18.0). Bringing the app to the front is the ONE case where the
+ * user has said, with a click, that they are looking at something other than the game — and it is
+ * the case where a floating always-on-top meter is directly in the way of what they switched to.
+ * "Hide when you're not in EverQuest" that makes an exception for the biggest window the app owns
+ * is not the setting the label describes.
+ *
+ * So the app's own windows split in two, and the split is a QUESTION ELECTRON ANSWERS rather than
+ * anything the watcher can see: every one of our windows reports the same pid and the same image
+ * path, and the only field left is a title, which is page-supplied text and no basis for a policy.
+ * `self.appWindowFocused` is `windows.ts mainWindowFocused()` — the main process asking its own
+ * main window whether it is the active one, at the moment the record arrives.
+ *
+ * Pure, so the whole matrix is a unit test rather than an alt-tab somebody performs by hand.
+ */
+export type ForegroundSide = 'eq' | 'own-accessory' | 'own-app' | 'other'
+
+export function foregroundSide(
+  w: { pid: number; exePath: string; title: string },
+  self: { pid: number; appWindowFocused: boolean },
+  eqRoot: string
+): ForegroundSide {
+  if (w.pid === self.pid) return self.appWindowFocused ? 'own-app' : 'own-accessory'
+  return isEqWindow(w, eqRoot) ? 'eq' : 'other'
+}
+
+/**
+ * Does this side count as "you are in EverQuest" for `PresenceState.eqFocused`?
+ *
+ * The game itself, and the app's ACCESSORY windows — an unlocked overlay the user is dragging, the
+ * cursor ring. Never the Companion window, and never anybody else's.
+ */
+export function focusCountsAsEq(side: ForegroundSide): boolean {
+  return side === 'eq' || side === 'own-accessory'
+}
+
 // ---------------------------------------------------------------- the focus debounce
 
 /**
