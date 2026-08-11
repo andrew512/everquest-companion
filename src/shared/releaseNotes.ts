@@ -125,6 +125,17 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.20.0',
+    date: '2026-08-11',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'A bard\'s Solon\'s Bewitching Bravura is read as the charm it is, so the charm-break alert finally goes off when your charm lets go. Any charm can have an alert of its own now too - pick the spell by name and hear which one broke.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.19.0',
     date: '2026-08-10',
     entries: [
@@ -207,11 +218,6 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'The full item card is back when hovering a Plane of Sky item - it opens downward and clicks pass straight through it, so the filter dropdowns keep every click.'
-      },
-      {
-        kind: 'fixed',
-        text: 'A bard\'s Solon\'s Bewitching Bravura is read as the charm it is, so the charm-break alert finally goes off when your charm lets go. Any charm can have an alert of its own now too - pick the spell by name and hear which one broke.',
-        fromReport: true
       }
     ]
   },
