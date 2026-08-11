@@ -35,7 +35,6 @@ import {
   respawnInZone,
   respawnProvenance,
   respawnReading,
-  respawnRowExpired,
   respawnSourceLabel,
   respawnZoneKey,
   type RespawnPrefs,
@@ -170,7 +169,8 @@ test('a countdown runs down, then reports how long ago it came due', () => {
     due: false,
     overdueMs: 0,
     seen: false,
-    seenAgoMs: 0
+    seenAgoMs: 0,
+    stale: false
   })
   const half = respawnReading(row(), 1_300_000)
   assert.equal(half.remainingMs, 300_000)
@@ -184,16 +184,26 @@ test('a countdown runs down, then reports how long ago it came due', () => {
 
 test('a row with no estimate counts UP and is never due', () => {
   const r = respawnReading(row({ estimateMs: undefined, source: 'none' }), 1_120_000)
-  assert.deepEqual(r, { elapsedMs: 120_000, fraction: 0, due: false, overdueMs: 0, seen: false, seenAgoMs: 0 })
+  assert.deepEqual(r, {
+    elapsedMs: 120_000,
+    fraction: 0,
+    due: false,
+    overdueMs: 0,
+    seen: false,
+    seenAgoMs: 0,
+    stale: false
+  })
 })
 
-test('a clock that ran out long ago stops being a timer', () => {
+test('a clock that ran out long ago goes STALE — a reading, never a removal', () => {
+  // Round 8 turned this window from a retirement into a reading; the ruling and the rest of the
+  // vocabulary it produced are pinned in tests/respawnLinger.test.mts.
   const r = row()
-  assert.equal(respawnRowExpired(r, 1_600_000 + RESPAWN_LINGER_MS - 1), false)
-  assert.equal(respawnRowExpired(r, 1_600_000 + RESPAWN_LINGER_MS + 1), true)
+  assert.equal(respawnReading(r, 1_600_000 + RESPAWN_LINGER_MS - 1).stale, false)
+  assert.equal(respawnReading(r, 1_600_000 + RESPAWN_LINGER_MS + 1).stale, true)
   // …and so does one that never had an estimate, judged on elapsed time instead.
   const bare = row({ estimateMs: undefined, source: 'none' })
-  assert.equal(respawnRowExpired(bare, 1_000_000 + RESPAWN_LINGER_MS + 1), true)
+  assert.equal(respawnReading(bare, 1_000_000 + RESPAWN_LINGER_MS + 1).stale, true)
 })
 
 test('soonest due leads, then the ones with no estimate', () => {
@@ -314,9 +324,9 @@ const WL40_END = 1785717206000
  *
  * The Befallen half of this fixture happens an hour before its end, and these clocks are four to
  * sixteen minutes long — so read at `WL40_END` every one of them has been due for the best part of
- * an hour and `RESPAWN_LINGER_MS` has correctly swept them away. That is the feature working, not a
- * fixture problem, so the test that is about WHAT THE FOLD LEARNED reads the clock while the run is
- * still current; the sweep itself has its own test below.
+ * an hour and would read STALE (round 8; before it, the sweep deleted them outright). The rows are
+ * the same rows either way, but the tests that are about WHAT THE FOLD LEARNED read the clock while
+ * the run is still current, so the numbers below are the ones a player would have been looking at.
  */
 const WL40_BEFALLEN_END = 1785713528000 + 60_000
 
@@ -458,16 +468,8 @@ test('a custom number overrides what the fold learned, live', () => {
   assert.equal(r.observedMs, 162_000)
 })
 
-test('the clocks expire, so a months-old replay does not open holding a hundred timers', () => {
-  // The realistic cold start: the app folds the whole log at launch and the deaths in it are old.
-  // Everything here IS watched, so the empty list is the linger sweep and nothing else.
-  const prefs = watching(...BEFALLEN_FOUR, 'a vis ghoul knight', 'a wan ghoul knight')
-  assert.ok(replay('wl40-farm-run.log', prefs, WL40_END).rows.length > 0, 'watched, and alive at the end of the run')
-  const long = replay('wl40-farm-run.log', prefs, WL40_END + 7 * 24 * 3600 * 1000)
-  assert.equal(long.rows.length, 0)
-  // …and the candidates survive, because "what have I killed here" is not a countdown.
-  assert.ok(long.recent.length > 0)
-})
+// (WHAT A COLD START OPENS HOLDING — a whole log of old deaths, folded at launch — moved to
+// tests/respawnLinger.test.mts with the round-8 ruling that changed the answer.)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. THE ZONE SCOPE, over the same real bytes

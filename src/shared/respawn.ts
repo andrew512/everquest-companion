@@ -207,10 +207,49 @@
 //
 // THE ONE LIMIT THIS CREATES, stated rather than discovered. A watch whose clock is not on screen
 // has no row to carry its controls — a mob you watch in Guk while standing in Befallen (switch to
-// all zones), or one whose clock the linger sweep retired half an hour ago (its Recently-killed
-// entry still toggles the watch off; only the seconds box is out of reach until it dies again).
-// The alternative was keeping a global list on screen for that case, which is the thing the ruling
-// removed.
+// all zones), or one you have never killed at all (nothing has started a clock, so its
+// Recently-killed entry is where it lives). The alternative was keeping a global list on screen for
+// that case, which is the thing the ruling removed. (Round 7 listed a third case here — a clock the
+// linger sweep had retired — and round 8 deleted the sweep, so that one is gone: a watched mob this
+// fold has a death for always has a row, and the box is always on it.)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// A WATCHED MOB ALWAYS HAS A ROW (owner ruling, round 8 — this AMENDS the linger everywhere above)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// THE DEFECT, from live play again: the owner came back to the app HOURS after his kills, clicked
+// Watch on a Recently-killed entry, saw the button flip to Unwatch — and Running still read "no
+// clocks running". Nothing was lost on the way: the write persisted, the module bumped its revision
+// (round 2's law held) and the delta reached the renderer. The row was BORN PAST THE LINGER. The
+// fold ran the sweep below on every row it built, so a clock whose estimate had elapsed more than
+// RESPAWN_LINGER_MS ago — which is what a five-hour-old death is, always — was published as no row
+// at all. The one mob the user had just asked for by name was the one mob the module refused to
+// show, and a successful click with no visible effect is the worst thing a control can do.
+//
+// SO THE SWEEP IS GONE FROM THE FOLD. A watched mob this fold holds a death for ALWAYS publishes a
+// row, however old that death is. The list stays bounded the way the rest of the feature is: by the
+// opt-in ruling (rows exist only for names the player asked for), by the zone scope, and by
+// RESPAWN_MAX_ROWS — never by a clock silently retiring a mob the user is still watching.
+//
+// AND THE LINGER KEEPS THE TWO JOBS THAT ARE NOT "DELETE THE ROW" (owner: it "may tidy seen-state
+// but must never make a watched row vanish while watched"). Both are readings, not admissions:
+//
+//   1. IT BOUNDS THE SEEN STATE. `UP` is the one label in this feature that claims a mob is
+//      standing there, and it is allowed to because the log printed the name. A line from ninety
+//      minutes ago prints nothing about now, so evidence older than the window stops reading UP.
+//      Before round 8 the sweep did this by DELETING the row, which is why round 3 had to spare
+//      seen rows from it; the state simply expires now, and the row stays.
+//   2. IT MARKS A LONG-ELAPSED CLOCK STALE. A countdown that ran out five hours ago has stopped
+//      being a countdown: "due 5h 12m ago" is a growing number about a thing this app knows nothing
+//      about. So past the same window the reading is `stale`, and the surfaces say so in the two
+//      honest ways there are — `due long ago` when an estimate elapsed, `awaiting next death` when
+//      there was never an estimate to elapse — draw no progress bar (there is no estimate left
+//      running to draw), and sort it UNDER every live clock. It is the least actionable row on the
+//      screen and it is still on the screen.
+//
+// THE NEXT DEATH IS THE WHOLE RECOVERY, and it needs no code: `baseTs` moves to the new death, the
+// reading stops being stale in the same tick, and the normal cycle resumes. A sighting does the
+// same for the seen half. Nothing has to be re-watched, re-typed or re-discovered.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // AND RECENTLY KILLED IS SEARCHABLE (owner ruling, round 7)
@@ -254,9 +293,19 @@ export type RespawnBasis = 'death' | 'sighting'
 export const RESPAWN_SHAPE_VERSION = 3
 
 /**
- * How long a row lingers after its clock runs out before the module drops it. A respawn that
- * elapsed an hour ago is not a timer any more, it is history, and history belongs on the mob
- * page. Rows with no estimate at all count UP and use this against their elapsed time instead.
+ * HOW LONG A READING STAYS CURRENT — and, since round 8, the ONLY thing this number governs.
+ *
+ * It used to be a retirement: a row whose clock ran out this long ago was dropped from the fold
+ * entirely, which is the defect round 8 exists to fix (see the header — watching an hours-old kill
+ * produced no row at all). Now it bounds two READINGS and removes nothing:
+ *
+ *   * a sighting older than this stops flipping the row to `UP` (the log said so once; it is not
+ *     saying so now), and
+ *   * a clock overdue by more than this — or, with no estimate, a death this old — reads `stale`,
+ *     which every surface prints as an honest state and sorts under the live clocks.
+ *
+ * One number for both, because they are one question: how long a thing the log said stays worth
+ * repeating.
  */
 export const RESPAWN_LINGER_MS = 30 * 60 * 1000
 
@@ -621,23 +670,53 @@ export interface RespawnReading {
   /** How long ago it came due. Zero until it does. */
   overdueMs: number
   /**
-   * THE LOG HAS NAMED THIS MOB SINCE THE CLOCK STARTED. This is the one thing on the row that is
-   * an OBSERVATION rather than an estimate, so every surface leads with it — see the header. It
-   * is true whether or not the clock has run out: a sighting while the countdown still has ten
-   * minutes on it is the app being told its estimate (or its idea of which mob this is) is wrong,
-   * which is worth showing rather than suppressing.
+   * THE LOG HAS NAMED THIS MOB SINCE THE CLOCK STARTED, RECENTLY ENOUGH TO STILL MEAN IT. This is
+   * the one thing on the row that is an OBSERVATION rather than an estimate, so every surface leads
+   * with it — see the header. It is true whether or not the clock has run out: a sighting while the
+   * countdown still has ten minutes on it is the app being told its estimate (or its idea of which
+   * mob this is) is wrong, which is worth showing rather than suppressing.
+   *
+   * ROUND 8 BOUNDED IT BY `RESPAWN_LINGER_MS`. Until then a sighting held forever and the 30-minute
+   * sweep deleted the row instead; now the row never leaves, so the STATE has to expire or a line
+   * from two hours ago would still be shouting UP — the one label here that claims a mob is there.
    */
   seen: boolean
   /** How long ago that was. Zero when nothing has been seen. */
   seenAgoMs: number
+  /**
+   * THE CLOCK HAS STOPPED MEANING ANYTHING (round 8). True when the estimate elapsed more than
+   * `RESPAWN_LINGER_MS` ago — or, on a row with no estimate, when the death itself is that old —
+   * and nothing has been seen since. It is never true at the same time as `seen`: fresh evidence is
+   * the better answer and outranks a tired countdown.
+   *
+   * It is a READING, never an admission: the row is still published, still watched and still
+   * carries its controls. What changes is what it says (`respawnClockLabel`), that it draws no bar,
+   * and that it sorts under every live clock.
+   */
+  stale: boolean
+}
+
+/**
+ * How long ago the log named this mob — `undefined` when it has not since the clock started, or
+ * when it was long enough ago that the claim has gone stale (see `RESPAWN_LINGER_MS`). Its own
+ * function so `respawnReading` states one thing per line and stays under the complexity ceiling.
+ */
+function seenAgoOf(row: RespawnRow, nowMs: number): number | undefined {
+  if (row.seenTs === undefined || row.seenTs <= row.baseTs) return undefined
+  const ago = Math.max(0, nowMs - row.seenTs)
+  return ago <= RESPAWN_LINGER_MS ? ago : undefined
 }
 
 export function respawnReading(row: RespawnRow, nowMs: number): RespawnReading {
   const elapsedMs = Math.max(0, nowMs - row.baseTs)
-  const seen = row.seenTs !== undefined && row.seenTs > row.baseTs
-  const seenAgoMs = seen && row.seenTs !== undefined ? Math.max(0, nowMs - row.seenTs) : 0
+  const ago = seenAgoOf(row, nowMs)
+  const seen = ago !== undefined
+  const seenAgoMs = ago ?? 0
   if (row.estimateMs === undefined || row.estimateMs <= 0) {
-    return { elapsedMs, fraction: 0, due: false, overdueMs: 0, seen, seenAgoMs }
+    // No estimate to elapse, so the elapsed time is what goes stale: a row counting up from a death
+    // five hours ago is not telling anybody anything the mob page does not tell them better.
+    const stale = !seen && elapsedMs > RESPAWN_LINGER_MS
+    return { elapsedMs, fraction: 0, due: false, overdueMs: 0, seen, seenAgoMs, stale }
   }
   const left = row.estimateMs - elapsedMs
   return {
@@ -647,40 +726,30 @@ export function respawnReading(row: RespawnRow, nowMs: number): RespawnReading {
     due: left <= 0,
     overdueMs: left < 0 ? -left : 0,
     seen,
-    seenAgoMs
+    seenAgoMs,
+    stale: !seen && -left > RESPAWN_LINGER_MS
   }
 }
 
 /**
- * Has this row outlived its usefulness? A clock that ran out half an hour ago is not telling you
- * to go look any more. Rows with no estimate are judged on elapsed time by the same window.
- *
- * A SIGHTING RESTARTS THE LINGER, and that is what keeps the ruling from being undone by the
- * sweep: the owner's own case is a mob that came due long ago and is standing in front of him, and
- * a row swept for being forty minutes overdue takes the "UP" with it. So evidence within the same
- * already-argued window holds the row on screen — no second constant, and the bound is still hard
- * (nothing has named it for half an hour, so there is nothing to show).
- */
-export function respawnRowExpired(row: RespawnRow, nowMs: number): boolean {
-  const r = respawnReading(row, nowMs)
-  if (r.seen && r.seenAgoMs <= RESPAWN_LINGER_MS) return false
-  if (row.estimateMs === undefined) return r.elapsedMs > RESPAWN_LINGER_MS
-  return r.overdueMs > RESPAWN_LINGER_MS
-}
-
-/**
- * Display order: SEEN first, then soonest due, then the ones with no estimate. Ties break on name
- * so the list never shuffles under a re-render.
+ * Display order: SEEN first, then the live clocks by soonest due, then the ones with no estimate,
+ * and STALE last of all. Ties break on name so the list never shuffles under a re-render.
  *
  * SEEN OUTRANKS EVERY COUNTDOWN because it is a different KIND of fact. Every other row on this
  * list is the app's estimate of when something might happen; a seen row is the log stating that it
- * already has, and burying an observation under a pile of guesses is the defect this round exists
+ * already has, and burying an observation under a pile of guesses is the defect round 3 exists
  * to fix. Among seen rows the freshest evidence leads — a mention two seconds ago is a better
  * reason to look than one from twenty minutes back.
  *
- * There is no "pinned first" tier any more, and there is nothing to be pinned ABOVE: every row on
- * screen is a mob the player asked for by name (the opt-in ruling in the header), so a rank that
- * says "this one was your idea" would sort every row into the same bucket.
+ * AND STALE SINKS (round 8), for the mirror-image reason. A row whose estimate elapsed hours ago
+ * still ranks `remainingMs: 0`, so under the round-3 ordering alone a night's worth of old kills
+ * would sit ON TOP of the clock actually running in front of you — the ruling that keeps a watched
+ * mob visible must not cost the player the ordering that makes the list readable. It is last rather
+ * than hidden: still there, still watched, still one glance away.
+ *
+ * There is no "pinned first" tier, and there is nothing to be pinned ABOVE: every row on screen is
+ * a mob the player asked for by name (the opt-in ruling in the header), so a rank that says "this
+ * one was your idea" would sort every row into the same bucket.
  */
 export function orderRespawnRows(rows: readonly RespawnRow[], nowMs: number): RespawnRow[] {
   return [...rows].sort((a, b) => {
@@ -688,6 +757,7 @@ export function orderRespawnRows(rows: readonly RespawnRow[], nowMs: number): Re
     const rb = respawnReading(b, nowMs)
     if (ra.seen !== rb.seen) return ra.seen ? -1 : 1
     if (ra.seen && rb.seen && ra.seenAgoMs !== rb.seenAgoMs) return ra.seenAgoMs - rb.seenAgoMs
+    if (ra.stale !== rb.stale) return ra.stale ? 1 : -1
     const ka = ra.remainingMs ?? Number.POSITIVE_INFINITY
     const kb = rb.remainingMs ?? Number.POSITIVE_INFINITY
     if (ka !== kb) return ka - kb
@@ -817,10 +887,20 @@ export function respawnGapsLabel(row: RespawnRow, fmt: (ms: number | null | unde
  * claims a mob is there — and it may, because unlike `due` it is reporting a line the game printed
  * rather than a clock this app ran.
  *
+ * AND A STALE ROW STOPS COUNTING (round 8). Once the estimate has been elapsed longer than the
+ * linger, `due 5h 12m ago` is a number that grows forever about a mob this app knows nothing about;
+ * a row that never had an estimate is in the same position with `+5h 12m`. Both say what is
+ * actually true instead — the estimate is long gone, and what would restart the clock is the next
+ * death. The two spellings are constants because three surfaces read them and round 5's law is that
+ * a string on screen has ONE home.
+ *
  * `fmt` is injected because the app's ONE duration formatter lives in the renderer
  * (features/buffs/format.ts) and this module is pure. Injecting it is what keeps that rule — one
  * formatter — from being broken by a second spelling written down here.
  */
+export const RESPAWN_LONG_DUE_LABEL = 'due long ago'
+export const RESPAWN_AWAITING_LABEL = 'awaiting next death'
+
 export function respawnClockLabel(
   row: RespawnRow,
   nowMs: number,
@@ -828,6 +908,7 @@ export function respawnClockLabel(
 ): string {
   const r = respawnReading(row, nowMs)
   if (r.seen) return 'UP'
+  if (r.stale) return row.estimateMs === undefined ? RESPAWN_AWAITING_LABEL : RESPAWN_LONG_DUE_LABEL
   if (row.estimateMs === undefined) return `+${fmt(r.elapsedMs)}`
   return r.due ? `due ${fmt(r.overdueMs)} ago` : fmt(r.remainingMs ?? 0)
 }

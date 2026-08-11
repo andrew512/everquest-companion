@@ -27,6 +27,10 @@
 //      By round 3 there are THREE such inputs — the watch list, a zone line, and a confirmed
 //      sighting — and every one of them bumps `rev`. The rule generalizes: if it changes what the
 //      screen shows, it moves the revision, or the delta is swallowed.
+//      AND IT PUBLISHES EVERY WATCHED MOB IT HOLDS A DEATH FOR (round 8). This file used to sweep
+//      the derived rows against a 30-minute linger, which meant a watch clicked hours after the
+//      kill produced no row at all — the defect the owner reported from live play. The sweep is
+//      gone; the linger's remaining jobs are readings in `shared/respawn.ts` and remove nothing.
 //   4. WHAT THE LOG HAS SAID ABOUT A WATCHED MOB SINCE ITS CLOCK STARTED (round 3). The rulings
 //      and the full coverage statement are in `shared/respawn.ts`; the mechanism here is small
 //      and deliberately so — `seenNamesOf` maps a TYPED event to the names it states, `markSeen`
@@ -48,7 +52,6 @@ import {
   RESPAWN_SHAPE_VERSION,
   orderRespawnRows,
   resolveRespawn,
-  respawnRowExpired,
   type RespawnCandidate,
   type RespawnDelta,
   type RespawnPrefs,
@@ -377,21 +380,23 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
     this.dirty = true
   }
 
-  /** Prune the rows whose clocks ran out long ago. Live tail only; the registry never ticks a replay. */
+  /**
+   * KEEP THE FOLD'S CLOCK CURRENT, and nothing else. Live tail only; the registry never ticks a
+   * replay.
+   *
+   * IT PUBLISHES NOTHING ON ITS OWN ANY MORE (round 8). It used to count the rows that were still
+   * inside the linger and mark the module dirty when that number changed, because a row could STOP
+   * EXISTING purely because time passed. Nothing does that now — `rowFor` no longer consults the
+   * clock at all, so the set of rows changes only when a death, a watch edit, a zone line or a
+   * sighting changes it, and every one of those already bumps `rev` and sets `dirty`. What the
+   * clock still buys is the ORDER `build` publishes in, so it is recorded here and read there.
+   *
+   * The time-driven parts of a row — a countdown running down, a sighting going stale, a clock
+   * passing into `stale` — are all derived by the RENDERER from `baseTs`/`seenTs` against its own
+   * 1 Hz clock (that is why a row carries them), so none of them needs a push to be seen.
+   */
   onTick(nowMs: number): void {
     this.nowMs = nowMs
-    // The rows are DERIVED, so there is nothing to prune in the history — but the derived set
-    // shrinks as clocks expire, and the renderer has to be told. Only publish when the visible
-    // set actually changed, or this would push a snapshot every second forever.
-    if (this.visibleCount(nowMs) !== this.lastVisible) this.dirty = true
-  }
-
-  private lastVisible = -1
-
-  private visibleCount(nowMs: number): number {
-    let n = 0
-    for (const h of this.history.values()) if (this.rowFor(h, nowMs) !== null) n++
-    return n
   }
 
   /**
@@ -411,7 +416,21 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
     return explicit.customSec === undefined ? {} : { customMs: explicit.customSec * 1000 }
   }
 
-  private rowFor(h: MobHistory, nowMs: number): RespawnRow | null {
+  /**
+   * ONE HISTORY ENTRY AS A ROW, or null when the mob is not watched — and that is now the ONLY
+   * reason this returns null (owner ruling, round 8).
+   *
+   * IT USED TO SWEEP, and that was the defect: it ran `respawnRowExpired` on the row it had just
+   * built and threw away anything whose estimate had elapsed more than half an hour ago. A player
+   * clicking Watch on a kill from hours earlier therefore got a successful write, a bumped
+   * revision, a pushed delta — and no row, because the row was born past the window. The linger's
+   * two remaining jobs are READINGS and live in `shared/respawn.ts`; nothing here refuses to
+   * publish a mob the user is watching.
+   *
+   * It no longer takes the clock either: nothing it computes depends on `now`, which is what lets
+   * `onTick` stop republishing.
+   */
+  private rowFor(h: MobHistory): RespawnRow | null {
     const watch = this.watchOf(h.key)
     if (!watch) return null
     const wiki = WIKI.get(h.key)
@@ -444,7 +463,7 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
     if (watch.customMs !== undefined) row.customMs = watch.customMs
     if (wiki) row.wikiText = wiki.text
     if (wikiMs !== undefined) row.wikiMs = wikiMs
-    return respawnRowExpired(row, nowMs) ? null : row
+    return row
   }
 
   private build(nowMs: number): RespawnSnap {
@@ -453,7 +472,7 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
     // The Map iterates oldest-first (the LRU order), so walk it backwards for "most recent".
     const entries = [...this.history.values()].sort((a, b) => b.lastTs - a.lastTs)
     for (const h of entries) {
-      const row = this.rowFor(h, nowMs)
+      const row = this.rowFor(h)
       if (row && rows.length < RESPAWN_MAX_ROWS) rows.push(row)
       if (recent.length < RESPAWN_MAX_RECENT) {
         const wiki = WIKI.get(h.key)
@@ -470,7 +489,6 @@ export class RespawnModule implements EqModule<RespawnSnap, RespawnDelta> {
         recent.push(cand)
       }
     }
-    this.lastVisible = rows.length
     return {
       v: RESPAWN_SHAPE_VERSION,
       zone: this.zone,

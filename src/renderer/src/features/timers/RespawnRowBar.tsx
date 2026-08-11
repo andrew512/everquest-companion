@@ -48,6 +48,15 @@
 // why the page keeps one caption stating its limits (a tooltip on an input is against the house
 // rules, and an out-of-range number silently clears).
 //
+// AND THE ROW EXISTS EVEN WHEN THE CLOCK IS LONG GONE (owner ruling, round 8). A watched mob always
+// has a row, so this component now draws one whose estimate elapsed hours ago — and it must not do
+// that by shouting. A STALE row says the honest thing instead of a number that grows forever
+// (`respawnClockLabel`: "due long ago", or "awaiting next death" where there was never an estimate),
+// drops the progress bar because there is no estimate left running to draw, and goes grey so the
+// clock actually ticking in front of you is still the loudest thing on the page. Everything else on
+// it is unchanged: the hover, the gaps, the seconds box and Unwatch are all still there, because the
+// row is still a mob the user is watching.
+//
 // AND THE ROW SHOWS ITS WORKING. Under the countdown it now prints the GAPS this fold measured for
 // this mob in this zone — the samples `<= 3m 00s` is the minimum of — newest first. They are not a
 // new claim and not a new source: the same numbers, un-minimised, said plainly, so "where did that
@@ -82,11 +91,38 @@ import { UnwatchButton } from './UnwatchButton'
  * Red when the log says it is UP, green once the clock ran out, blue while it runs. Every row on
  * screen is a mob the user asked for (tracking is opt-in), so there is no second class of ROW to
  * colour apart — only a second kind of FACT, and it is the one that outranks the countdown.
+ *
+ * AND GREY WHEN THE CLOCK STOPPED MEANING ANYTHING (round 8). A row whose estimate elapsed hours
+ * ago is not "go and look" — painting it the same green as a clock that ran out ninety seconds ago
+ * would make the loudest thing on the page the least useful one. It is dimmed rather than removed:
+ * the ruling is that a watched mob is always visible.
  */
-function tone(r: RespawnReading): 'error' | 'success' | 'info' {
+type RowTone = 'error' | 'success' | 'info' | 'stale'
+
+function tone(r: RespawnReading): RowTone {
   if (r.seen) return 'error'
+  if (r.stale) return 'stale'
   return r.due ? 'success' : 'info'
 }
+
+/** The clock's own colour. Blue is the resting state, so a running number is plain text. */
+const CLOCK_COLOR: Record<RowTone, string> = {
+  error: 'error.main',
+  success: 'success.main',
+  info: 'text.primary',
+  stale: 'text.disabled'
+}
+
+/** The stripe down the left edge, which is the row's accent at a glance. */
+const EDGE_COLOR: Record<RowTone, string> = {
+  error: 'error.main',
+  success: 'success.main',
+  info: 'info.main',
+  stale: 'divider'
+}
+
+/** The bar's palette colour. No entry for `stale`: a stale row draws no bar (see the render). */
+const BAR_COLOR = { error: 'error', success: 'success', info: 'info' } as const
 
 /**
  * THE SEEN LINE AND THE ONLY AFFORDANCE THAT MOVES A CLOCK WITHOUT A LOG LINE BEHIND IT.
@@ -222,6 +258,28 @@ function WorkingLine({
   )
 }
 
+/**
+ * THE ESTIMATE RUNNING DOWN — and the two states that draw NO bar at all.
+ *
+ * A row with no estimate would draw an empty one, which reads as "nearly up" and would be a lie. A
+ * STALE row (round 8) would draw a full one, which claims the moment it filled is still worth
+ * knowing — it is not, which is the whole reason that row stopped printing a countdown.
+ *
+ * Its own component because `RespawnRowBar` is at the repo's factoring ceiling, the same reason
+ * `SeenRow` and `WorkingLine` above are.
+ */
+function ClockBar({ hasEstimate, r, t }: { hasEstimate: boolean; r: RespawnReading; t: RowTone }): JSX.Element | null {
+  if (!hasEstimate || t === 'stale') return null
+  return (
+    <LinearProgress
+      variant="determinate"
+      value={(1 - r.fraction) * 100}
+      color={BAR_COLOR[t]}
+      sx={{ mt: 0.5, height: 3, borderRadius: 2 }}
+    />
+  )
+}
+
 export function RespawnRowBar({
   row,
   nowMs,
@@ -268,12 +326,13 @@ export function RespawnRowBar({
         data-respawn-source={row.source}
         data-respawn-due={r.due ? 'true' : 'false'}
         data-respawn-seen={r.seen ? 'true' : 'false'}
+        data-respawn-stale={r.stale ? 'true' : 'false'}
         data-respawn-basis={row.basis}
         sx={{
           px: 1,
           py: 0.75,
           borderLeft: 3,
-          borderColor: `${t}.main`,
+          borderColor: EDGE_COLOR[t],
           bgcolor: 'action.hover',
           borderRadius: 0.5
         }}
@@ -292,8 +351,8 @@ export function RespawnRowBar({
               fontVariantNumeric: 'tabular-nums',
               fontWeight: r.seen ? 700 : 400,
               // Blue is the resting state and would read as an alert on a number that is simply
-              // counting; the two facts worth colouring are UP and due.
-              color: t === 'info' ? 'text.primary' : `${t}.main`
+              // counting; the facts worth colouring are UP, due, and long gone.
+              color: CLOCK_COLOR[t]
             }}
           >
             {respawnClockLabel(row, nowMs, fmtDuration)}
@@ -323,16 +382,7 @@ export function RespawnRowBar({
         </Stack>
         <WorkingLine row={row} onSetCustom={onSetCustom} />
         {r.seen && <SeenRow row={row} nowMs={nowMs} onConfirmSighting={onConfirmSighting} />}
-        {/* The bar is the estimate running down. Absent entirely when there is no estimate rather
-            than drawn empty - an empty bar reads as "nearly up", which would be a lie. */}
-        {hasEstimate && (
-          <LinearProgress
-            variant="determinate"
-            value={(1 - r.fraction) * 100}
-            color={t}
-            sx={{ mt: 0.5, height: 3, borderRadius: 2 }}
-          />
-        )}
+        <ClockBar hasEstimate={hasEstimate} r={r} t={t} />
       </Box>
     </Tooltip>
   )

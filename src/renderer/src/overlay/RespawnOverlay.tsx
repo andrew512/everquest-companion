@@ -56,6 +56,14 @@
 // the event overlay's `/con` rows and the Timers tab both draw it. One of its two new callers went
 // away, not the move.)
 //
+// AND ROUND 8 PUTS ROWS HERE THAT NO CLOCK IS RUNNING FOR (owner, 2026-08-11). A watched mob always
+// has a row now — the fold no longer retires one whose estimate elapsed half an hour ago — so this
+// window can hold a clock that ran out overnight beside one with four minutes left. Over the game
+// that ordering is the whole product, so the two are told apart without reading: the long-gone row
+// is GREY, says "due long ago" (or "awaiting next death") instead of a number that grows forever,
+// draws no bar, and `orderRespawnRows` sinks it under every live clock. It keeps its Unwatch,
+// because it is still a mob you asked for.
+//
 // MUI-FREE, plain divs and inline styles, like every file in this bundle.
 
 import { type JSX, useEffect, useState } from 'react'
@@ -97,6 +105,13 @@ const DUE = '#7fd18b'
  * report that produced this ruling is a mob standing on top of the owner, hitting him.
  */
 const SEEN = '#ff6b8a'
+/**
+ * A CLOCK THAT STOPPED MEANING ANYTHING (round 8). A watched mob always has a row now, including one
+ * whose estimate elapsed hours ago — and over the game, where every pixel is spent, the row that
+ * cannot help you must not look like the one that can. Grey is the absence of the other three
+ * claims: not the window's amber, not due's green, not a sighting's red.
+ */
+const STALE = 'rgba(255,255,255,0.38)'
 
 /** One second. A countdown is the one number in this app that has to move while the log is idle. */
 const TICK_MS = 1000
@@ -282,13 +297,14 @@ function RespawnLine({
   // The clock's WORDING is the tab's, from shared/respawn.ts — a countdown must not read one way
   // in the app and another way over the game. That includes the UP a seen row shows instead.
   const label = respawnClockLabel(row, nowMs, fmtDuration)
-  const tone = r.seen ? SEEN : r.due ? DUE : ACCENT
+  const tone = r.seen ? SEEN : r.stale ? STALE : r.due ? DUE : ACCENT
   return (
     <div
       data-testid="respawn-overlay-row"
       data-respawn-mob={row.key}
       data-respawn-due={r.due ? 'true' : 'false'}
       data-respawn-seen={r.seen ? 'true' : 'false'}
+      data-respawn-stale={r.stale ? 'true' : 'false'}
       data-respawn-basis={row.basis}
       // ROUND 7: back to round 5's hover — the provenance sentence as a NATIVE title, which is the
       // whole of what a 300px window can afford to say. Same string the tab's card leads with, so
@@ -299,8 +315,9 @@ function RespawnLine({
     >
       <ClockLine row={row} label={label} tone={tone} interactive={interactive} onUnwatch={onUnwatch} />
       {/* The bar is the estimate running down. Absent entirely when there is no estimate, rather
-          than drawn empty — an empty bar reads as "nearly up", which would be a lie. */}
-      {hasEstimate && (
+          than drawn empty — an empty bar reads as "nearly up", which would be a lie. And absent on a
+          STALE row (round 8) for the same reason: nothing is still running for it to draw. */}
+      {hasEstimate && !r.stale && (
         <div style={{ height: 2, background: 'rgba(255,255,255,0.08)', borderRadius: 2, marginTop: 2 }}>
           <div
             style={{
