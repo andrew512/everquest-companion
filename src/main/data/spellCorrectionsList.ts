@@ -528,9 +528,13 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
   // --- the bard mez ladder: one subject token and one dropped word (JOS-161) --------------------
   //
   // THE REPORT: a bard on 0.14.0 could not get an alert to fire for `Sionachie's Dreams` or
-  // `Solon's Bewitching Bravura` with any trigger type. Both songs are in `ccSpell` since JOS-84,
-  // so the "Mez / root broke" GROUP has fired for them all along — what could not fire was
-  // anything naming the spell, and each song had its own reason.
+  // `Solon's Bewitching Bravura` with any trigger type. Both songs were in `ccSpell` at the time
+  // (JOS-84), so the "Mez / root broke" GROUP had fired for them all along — what could not fire
+  // was anything naming the spell, and each song had its own reason. JOS-200 later moved Bravura to
+  // `charmSpell` (it is the bard's level-39 CHARM, not a mez — see rulesets.ts for the log
+  // evidence), which changes which alert its break fires and changes NOTHING about the two
+  // corrections below: a name is a join key whatever roster the spell sits in, and the landing
+  // sentence it shares with the mez ladder is exactly why the message oracle got it wrong.
   //
   // THE COUNTS BELOW are whole-log over the owner's `eqlog_Primitive_freeport.txt` (1,494,065
   // lines, measured 2026-08-09) unless a reporter slice is named. `<mob>'s eyes glaze over.` is a
