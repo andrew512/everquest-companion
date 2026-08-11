@@ -969,6 +969,89 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    clock. What ages out is the SEEN state (UP is the one label that claims
    presence); unwatch remains the only way a row leaves.
 
+## The fold laws (JOS-208 — the checkpoint's rules; read before changing a fold)
+
+A launch can now RESTORE the fold from a binary checkpoint and replay only the
+tail (`src/main/foldCache/**`, feature-flagged OFF by default). The whole thing
+rests on ONE claim: a checkpoint is a memo of a pure function of (byte prefix,
+the fold). These are the rules that keep that claim true. **The failure mode
+must always be slow-once, never wrong** — every judgement call goes toward
+"discard and cold-replay".
+
+- **TWO INVALIDATION AXES, and only two.**
+  - **ENCODING — mechanized, never bumped by hand.** Each checkpointed unit
+    declares its stored shape as DATA (`foldCache/schema.ts`), and the shape
+    hash in a container header is DERIVED from that declaration. So a refactor
+    that renames a private field, splits a function or reorders a method churns
+    nothing, and adding/renaming/retyping a STORED field invalidates the fleet's
+    caches with nobody having to remember. The same declaration is the load-time
+    validator and the plain-data enforcement point — one statement, three jobs,
+    no way for them to disagree.
+  - **SEMANTICS — a manual constant, policed by goldens.** `FOLD_SEMANTICS`
+    (`foldCache/semantics.ts`) is bumped **in the same commit** as any change to
+    what the fold COMPUTES from a given event stream.
+- **WHAT COUNTS AS FOLD-AFFECTING**: the parser's event stream
+  (`src/main/log/**`), any module's `onEvent` (`src/main/modules/**`), the
+  derived-event producers (epoch, offline-gap, `buffExpired`), the reducers, the
+  bus DELIVERY ORDER, and the committed data that feeds any of them
+  (spells.json, respawns.json, the message-overlay baseline, the spell
+  corrections). What does NOT count: `src/renderer/**`, `src/preload/**`,
+  anything that only reads a snapshot, and any refactor that leaves every
+  fixture's fingerprint unchanged — which the goldens let you VERIFY rather than
+  assert.
+- **THE GOLDENS ARE THE ENFORCEMENT.** `tests/foldGoldens.test.mts` fingerprints
+  each pilot module's published snapshots over the fixture corpus against
+  `tests/goldens/foldFingerprints.json`. Output changed + no bump ⇒ RED, naming
+  the module and the fixture. **A golden update REQUIRES the bump in the same
+  commit** (`npm run fold:goldens -- "<why>"`). A bump with unchanged goldens is
+  allowed but FLAGGED as overzealous and must carry a stated `reason`.
+  **WHEN IN DOUBT, BUMP**: one unnecessary cold start against a silently wrong
+  world model is not a close call.
+- **THE CORPUS IS THE HONESTY BOUNDARY.** A semantic change visible only on log
+  shapes no fixture contains will not be caught. Shadow mode (phase 3) is the
+  fleet backstop; say "structurally covered" only when that is what you mean.
+- **INVALIDATION IS ALWAYS WHOLE-CACHE.** A partial refold needs the same cold
+  read the whole thing does, so granularity exists only to make invalidation
+  rarer, never to make a restore partial. If ANY unit refuses, nothing is
+  restored and the caller resets the world before the cold replay.
+- **NEVER IN THE CHECKPOINT**: store-derived state (prefs, corrections,
+  turn-ins, watch lists, alert defs) — event-derived fold state only, one truth
+  per fact; and anything read from the WALL CLOCK, which a restored fold is
+  entitled to re-read.
+- **EVERYTHING WHOSE STATE AFFECTS A CHECKPOINTED FOLD IS ITSELF CHECKPOINTED,
+  whether or not it publishes a snapshot.** The registry's modules are NOT the
+  whole fold: `EpochDetector` and `SessionDetector` carry state across events and
+  feed derived events back onto the bus. Leaving them out made a fresh detector
+  re-fire the launch epoch at the first event of the TAIL, clearing the respawn
+  history — a measured divergence at every split point in every fixture, which
+  the differential harness found on its first run. Still OUTSIDE the container
+  (phase 2 owes these): the `CombatEngine`, the shared `MobLootIndex`, the
+  `MessageOverlayMiner`, and every module that has not declared a shape.
+- **TWO AUDITS, both dynamic, both run in `npm test`.**
+  `tests/foldDeterminism.test.mts` replaces `Date.now`/`performance.now` for the
+  duration of a real fold and fails on any read from repo source (the SCHEDULER's
+  clock is injected, not allow-listed). `tests/foldPlainData.test.mts` walks the
+  real fold state of a real fixture: it must validate against its own
+  declaration, carry nothing a structured clone cannot mean, survive
+  `v8.serialize`, and re-serialize IDENTICALLY out of a fresh unit (the
+  completeness half — a field the class holds and the declaration omits dies
+  there). Both audits carry a TRIPWIRE test proving the audit itself can fail.
+- **THE DIFFERENTIAL HARNESS IS OWNER LAW** (`tests/foldCheckpointHarness.mts` +
+  `foldCheckpointDifferential.test.mts`): deep-equal published snapshots between
+  cold replay and checkpoint+tail, over the corpus, at session edges / zone lines
+  / mid-fight / mid-hold / deciles / seeded fuzz, plus the externality
+  permutations (truncated, regrown, flipped shoulder byte, stale semantics, stale
+  shape, corrupt cache, missing cache) which must every one land on the cold path
+  with a NAMED refusal reason. Both arms go through the production `scanLog`.
+- **B IS ALWAYS THE END OF A COMPLETE LINE.** `ScanResult.endOffset` and
+  `Tailer.checkpointOffset()` are the only producers, and both mean it. A
+  partial line has been folded by nobody, so a checkpoint that claimed it would
+  drop a line the cold arm keeps.
+- **BINARY END TO END, never a text write.** The container is `Buffer` in,
+  `Buffer` out, temp+rename, with three digests (header, per blob, whole file).
+  The BOM history above is about a JSON file, and a JSON file survives a BOM
+  better than V8 blobs ever could.
+
 ## Log-format quick reference (all validated against the real log)
 
 - Melee verbs CONJUGATE — match first person ("You slash") AND third

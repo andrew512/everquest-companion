@@ -28,6 +28,7 @@ import { installCharacterName } from './log/rulesets'
 import { scanLog } from './log/scanHistory'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
+import { restoreFold, saveFold } from './foldCache/attach'
 import { loadInventory } from './inventory/parseInventory'
 import { watchOutputKind, type OutputKindWatch } from './outputs'
 import {
@@ -497,12 +498,32 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   registry.beginReplay()
   const slicer = createSlicer()
   let scan: ScanResult
+  // THE CHECKPOINT (JOS-208), and note WHERE it sits: after `resetWorldFor` put every module at
+  // zero and inside the replay bracket, so a restore is folded into exactly the state a cold replay
+  // would have started from and nothing it produces can be pushed. `restoreFold` answers null for
+  // every doubt there is — flag off, no cache, a cache from another build or another log, a module
+  // that refused its blob — and null is the path this function has always taken.
+  //
+  // ALL IT CHANGES IS WHERE THE SCAN STARTS. The scan below still runs, still freezes EOF, still
+  // returns the offset the tailer resumes at, and still ends in the same `finally`; it simply reads
+  // [B, EOF) instead of [0, EOF). That is the entire feature at this seam, and it is why the
+  // handoff, the slicing and the replay gate are untouched.
+  const resumed = await restoreFold(ref)
+  if (resumed) seq = resumed.seq
+  // WHERE THE COUNT NOW COMES FROM. `scan.seq` is the seq the stream REACHED, and it used to be
+  // the number of lines parsed for one reason only: `resetWorldFor` had just set `seq` to 0. A
+  // restored fold starts the scan part-way up that counter, so the count is a DIFFERENCE. Every
+  // reader of it — the parse counter, the startup profile's `eventsReplayed` — means "what this
+  // launch folded", which after a restore is honestly the tail alone.
+  const startSeq = seq
   try {
-    scan = await scanLog(ref.logPath, bus, seq, { slicer })
-    // The replay's whole cost, in one call: `seq` was reset to 0 by `resetWorldFor`, so `scan.seq`
-    // IS the number of lines this scan parsed. Counted here rather than per line inside the fold so
+    scan = await scanLog(ref.logPath, bus, seq, {
+      slicer,
+      ...(resumed ? { startOffset: resumed.offset } : {})
+    })
+    // The replay's whole cost, in one call — counted here rather than per line inside the fold so
     // the replay's inner loop is untouched.
-    noteParsed(scan.seq)
+    noteParsed(scan.seq - startSeq)
     seq = scan.seq
     combat.setLive()
   } finally {
@@ -541,6 +562,13 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // app started hydrated part-way through that fold. Telling only the main window left a debuff
   // that genuinely survived the rebuild (a charm, an Ensnare) on screen in the app and absent
   // from the floating window whose entire job is to show it.
+  //
+  // AND THE GO-LIVE SWEEP IS ALREADY HERE (JOS-208), which is why the checkpoint needed no new
+  // ordering seam: `startHeartbeat()` above runs ONE `registry.tick(Date.now())` before arming its
+  // interval (JOS-149's fix, for exactly this hazard in its cold-replay form), and it runs BEFORE
+  // this `flushNow()` and this `sendWorldRebuilt`. So whatever real time invalidated while the app
+  // was closed is swept before the first publish, and the first snapshot a restored fold ever shows
+  // is judged against now — identically to a cold one.
   registry.flushNow()
   sendWorldRebuilt(character)
   // Against the scan's FROZEN SIZE, not its `endOffset`: the mark is the tailer's offset, which is
@@ -548,7 +576,7 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // what keeps a log that merely ended mid-line from being reported as a rotation (scanHistory.ts).
   const newBytes = newBytesSince(mark, scan.size)
   return {
-    eventsReplayed: scan.seq,
+    eventsReplayed: scan.seq - startSeq,
     replay: { slices: slicer.slices, workMs: slicer.workMs, restMs: slicer.restMs },
     logBytes: scan.endOffset,
     // The cold-read delta, whose "no answer" cases are the point of it (log/coldRead.ts).
@@ -656,4 +684,24 @@ export function stopSession(): void {
   inventoryWatch?.close()
   stopWatchingForFirstLog()
   stopHeartbeat()
+}
+
+/**
+ * WRITE THE FOLD CHECKPOINT (JOS-208). Called on a CLEAN shutdown, before `stopSession`.
+ *
+ * `Tailer.checkpointOffset()` is the byte the fold's knowledge reaches — the end of the last
+ * COMPLETE line the live tail emitted, never the read cursor (a trailing partial line has been
+ * folded by nobody). `seq` is this session's counter at the same instant, and the two are read
+ * together, from a process that is no longer folding anything, so they cannot disagree.
+ *
+ * SYNCHRONOUS, like every other teardown step, and for the reason index.ts states about all of
+ * them: a quit step that can hang can leave a windowless zombie holding the single-instance lock.
+ * A `false` is not a failure to handle — no flag, no tail, no writable directory, a log that moved
+ * — because the write timing is a pragmatic and not a correctness need.
+ */
+export function saveFoldCheckpoint(): boolean {
+  if (!character || !tailer) return false
+  const offset = tailer.checkpointOffset()
+  if (offset <= 0) return false
+  return saveFold(character, offset, seq)
 }
