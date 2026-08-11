@@ -28,6 +28,13 @@
 // states out loud, because a number resting on the user's judgement must never look like one
 // resting on a line the game printed.
 //
+// AND THE HOVER IS NOW THE MOB'S CARD (owner ruling, round 6). A countdown says when; the question
+// a player standing on a spawn point is asking is whether to keep standing there, which is a
+// question about loot. So pointing at a row reveals the SAME card the `/con` hover has always
+// drawn — the wiki drop table with your own loot counts riding on it, and anything only your
+// history knows underneath — with round 5's provenance sentence as its leading block. No second
+// drops source, no second card, and the sentence is still the one string both surfaces read.
+//
 // AND THE ROW CARRIES ITS OWN WAY OUT (owner ruling, round 4). Every row here is a mob the user
 // asked for by name, so the question "do I still want this clock" is asked AT the clock — not by
 // scrolling to a list at the bottom of the page and matching a name against it, which is where the
@@ -36,11 +43,12 @@
 
 import { Box, Button, LinearProgress, Stack, Typography } from '@mui/material'
 import type { JSX } from 'react'
+import type { MobKnowledge } from '@shared/types'
 import {
   RESPAWN_CONFIRM_TITLE,
   respawnBasisLabel,
+  respawnCardNote,
   respawnClockLabel,
-  respawnProvenance,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -48,8 +56,24 @@ import {
   type RespawnRow
 } from '@shared/respawn'
 import Tooltip from '../../lib/Tooltip'
+import { MobCard } from '../../lib/hoverCards'
 import { fmtDuration } from '../buffs/format'
 import { UnwatchButton } from './UnwatchButton'
+
+/**
+ * THE MAIN WINDOW'S DOOR to main's cache-first `mobs:lookup`. Module scope, so the card's effect
+ * depends on ONE stable identity rather than a new function every second the clock ticks.
+ */
+const mainMobLookup = (name: string): Promise<MobKnowledge> => window.eq.lookupMob(name)
+
+/**
+ * The card is styled by `MobCard` itself (it is the same card the floating window draws over the
+ * game, so it cannot lean on the theme), which means the Tooltip must get out of its way entirely
+ * — no padding, no surface of its own, and no 300px width cap on top of the card's own.
+ */
+const CARD_SLOT_PROPS = {
+  tooltip: { sx: { p: 0, bgcolor: 'transparent', maxWidth: 'none' } }
+} as const
 
 /**
  * THE ROW'S TONE, one function for the accent, the clock text and the bar.
@@ -123,7 +147,21 @@ export function RespawnRowBar({
   const basis = respawnBasisLabel(row)
   const t = tone(r)
   return (
-    <Tooltip title={respawnProvenance(row, fmtDuration)} placement="top-start">
+    <Tooltip
+      // ROUND 6: the hover is the mob's CARD — its drop table (wiki, plus what you have looted off
+      // it yourself) under what we know about its respawn. The timer half is round 5's provenance
+      // string unchanged, carried in as the card's leading block rather than duplicated beside it.
+      title={
+        <MobCard mob={row.display} note={respawnCardNote(row, fmtDuration)} lookup={mainMobLookup} />
+      }
+      slotProps={CARD_SLOT_PROPS}
+      // The card has nothing to click — item names are plain text on it by design — so it takes no
+      // pointer at all, which is the same law the floating window's card is drawn under
+      // (`HoverCardLayer`: a card that took the pointer while overlapping a row could swallow the
+      // Unwatch beneath it, or fire the row's own mouseleave and flicker).
+      disableInteractive
+      placement="top-start"
+    >
       <Box
         data-testid="respawn-row"
         data-respawn-mob={row.key}

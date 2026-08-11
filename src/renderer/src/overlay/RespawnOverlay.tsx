@@ -39,6 +39,14 @@
 // give. It stops that NAME everywhere, including zones this window does not show, and the button's
 // title says so — the row it removes from another zone is off screen here by construction.
 //
+// AND ROUND 6 IS A HOVER CARD, WHICH IS THE THIRD THING THE LOCK TAKES AWAY (owner, 2026-08-10).
+// A row now reveals the mob's DROPS — the wiki table plus what you have looted off it yourself —
+// under what we know about its respawn, so "should I keep standing here" is answerable without
+// leaving the game. It is the SAME card the event feed's `/con` rows draw (`lib/hoverCards.tsx`,
+// moved down there so both windows can use it) fed by the SAME `mobs:lookup` door, with round 5's
+// provenance string as its leading block. And it is interactive-only for the plainest of reasons:
+// a locked window is click-through, so it receives no mouse events and cannot be hovered at all.
+//
 // MUI-FREE, plain divs and inline styles, like every file in this bundle.
 
 import { type JSX, useEffect, useState } from 'react'
@@ -50,9 +58,9 @@ import {
   orderRespawnRows,
   respawnUnwatchTitle,
   respawnBasisLabel,
+  respawnCardNote,
   respawnClockLabel,
   respawnInZone,
-  respawnProvenance,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -61,6 +69,9 @@ import {
   type RespawnSnap
 } from '@shared/respawn'
 import { fmtDuration } from '../features/buffs/format'
+import { MobCard } from '../lib/hoverCards'
+import { overlayMobLookup } from './mobLookup'
+import { HoverCardLayer } from './hoverCardLayer'
 import { OverlayHeader } from './OverlayHeader'
 import { OverlayContent } from './overlayScale'
 import { TextScaleStepper } from './TextScaleStepper'
@@ -187,7 +198,78 @@ function UnwatchButton({ row, onUnwatch }: { row: RespawnRow; onUnwatch: (key: s
   )
 }
 
-/** One clock. Name on the left, the number on the right, the provenance underneath in dim text. */
+/**
+ * THE ROW'S HOVER CARD (round 6) — the mob's drops, under what we know about its respawn.
+ *
+ * Its own component only so `RespawnLine` stays under the repo's factoring ceiling; the ANCHOR
+ * state and the listeners live on the row box itself, because the card is placed against the whole
+ * row and because a listener on an inner wrapper would miss a hover delivered to the row's own
+ * edges. It is drawn only while the window is INTERACTIVE — a locked overlay is click-through,
+ * receives no mouse events at all, and can no more be hovered than clicked.
+ */
+function RowCard({ row, anchor }: { row: RespawnRow; anchor: HTMLElement | null }): JSX.Element | null {
+  if (!anchor) return null
+  return (
+    <HoverCardLayer anchor={anchor}>
+      <MobCard mob={row.display} note={respawnCardNote(row, fmtDuration)} lookup={overlayMobLookup} />
+    </HoverCardLayer>
+  )
+}
+
+/** The top line: the name, the number, and (unlocked only) the row's own way out. */
+function ClockLine({
+  row,
+  label,
+  tone,
+  interactive,
+  onUnwatch
+}: {
+  row: RespawnRow
+  label: string
+  tone: string
+  interactive: boolean
+  onUnwatch: (key: string) => void
+}): JSX.Element {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+      <span
+        style={{
+          fontSize: 11.5,
+          flexGrow: 1,
+          flexShrink: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }}
+      >
+        {row.display}
+      </span>
+      <span
+        data-testid="respawn-overlay-clock"
+        style={{ fontSize: 13, fontWeight: 700, color: tone, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}
+      >
+        {label}
+      </span>
+      {/* After the number, so the countdown keeps its place on every row. */}
+      {interactive && <UnwatchButton row={row} onUnwatch={onUnwatch} />}
+    </div>
+  )
+}
+
+/** The dim line under the bar: the estimate, the rung that produced it, and the basis. */
+function RungLine({ row }: { row: RespawnRow }): JSX.Element {
+  const basis = respawnBasisLabel(row)
+  return (
+    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.42)', marginTop: 1 }}>
+      {row.source === 'observed' ? '<= ' : ''}
+      {row.estimateMs === undefined ? 'no estimate' : fmtDuration(row.estimateMs)} · {respawnSourceLabel(row)}
+      {basis.length > 0 ? ` · ${basis}` : ''}
+    </div>
+  )
+}
+
+/** One clock. Name on the left, the number on the right, the rung underneath in dim text. */
 function RespawnLine({
   row,
   nowMs,
@@ -209,7 +291,15 @@ function RespawnLine({
   // in the app and another way over the game. That includes the UP a seen row shows instead.
   const label = respawnClockLabel(row, nowMs, fmtDuration)
   const tone = r.seen ? SEEN : r.due ? DUE : ACCENT
-  const basis = respawnBasisLabel(row)
+  // ROUND 6: pointing at the row reveals the mob's drops under what we know about its respawn. It
+  // replaced the native title this row used to carry — that string is the card's leading block now.
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
+  const enter = (ev: React.MouseEvent<HTMLDivElement>): void => {
+    setAnchor(ev.currentTarget)
+  }
+  const leave = (): void => {
+    setAnchor(null)
+  }
   return (
     <div
       data-testid="respawn-overlay-row"
@@ -217,41 +307,13 @@ function RespawnLine({
       data-respawn-due={r.due ? 'true' : 'false'}
       data-respawn-seen={r.seen ? 'true' : 'false'}
       data-respawn-basis={row.basis}
-      // The FULL provenance, on the native title - the same string the tab's tooltip carries
-      // (round 5 single-sourced it). A floating window has no room to print this and no right to
-      // hide it, and it is now short enough to be a hover rather than a paragraph.
-      title={respawnProvenance(row, fmtDuration)}
+      // Like every other affordance on this window, only while it is unlocked — see `RowCard`.
+      onMouseEnter={interactive ? enter : undefined}
+      onMouseLeave={interactive ? leave : undefined}
       style={{ padding: '2px 2px 3px', borderLeft: `2px solid ${tone}66`, paddingLeft: 5 }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <span
-          style={{
-            fontSize: 11.5,
-            flexGrow: 1,
-            flexShrink: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-        >
-          {row.display}
-        </span>
-        <span
-          data-testid="respawn-overlay-clock"
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: tone,
-            fontVariantNumeric: 'tabular-nums',
-            flexShrink: 0
-          }}
-        >
-          {label}
-        </span>
-        {/* After the number, so the countdown keeps its place on every row. */}
-        {interactive && <UnwatchButton row={row} onUnwatch={onUnwatch} />}
-      </div>
+      <RowCard row={row} anchor={anchor} />
+      <ClockLine row={row} label={label} tone={tone} interactive={interactive} onUnwatch={onUnwatch} />
       {/* The bar is the estimate running down. Absent entirely when there is no estimate, rather
           than drawn empty — an empty bar reads as "nearly up", which would be a lie. */}
       {hasEstimate && (
@@ -267,14 +329,8 @@ function RespawnLine({
         </div>
       )}
       {/* NOTHING RE-BASES ITSELF — the affordance below is the only path to `basis: 'sighting'`. */}
-      {r.seen && (
-        <SeenLine row={row} nowMs={nowMs} interactive={interactive} onConfirm={onConfirm} />
-      )}
-      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.42)', marginTop: 1 }}>
-        {row.source === 'observed' ? '<= ' : ''}
-        {hasEstimate ? fmtDuration(row.estimateMs) : 'no estimate'} · {respawnSourceLabel(row)}
-        {basis.length > 0 ? ` · ${basis}` : ''}
-      </div>
+      {r.seen && <SeenLine row={row} nowMs={nowMs} interactive={interactive} onConfirm={onConfirm} />}
+      <RungLine row={row} />
     </div>
   )
 }
