@@ -119,7 +119,6 @@ export type CacheDecodeError =
 export type DecodeResult = { ok: true; value: DecodedCache } | { ok: false; error: CacheDecodeError }
 
 const sha256 = (b: Buffer): Buffer => createHash('sha256').update(b).digest()
-export const sha256Hex = (b: Buffer): string => createHash('sha256').update(b).digest('hex')
 
 /**
  * Encode one checkpoint. Throws only if V8 refuses a state — which is the plain-data audit's
