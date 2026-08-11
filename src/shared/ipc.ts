@@ -532,6 +532,15 @@ export const IPC = {
   // is currently seen. Returns whether it took effect. Called from the Timers tab AND from an
   // INTERACTIVE floating window (a locked one is click-through and has no clicks to give).
   respawnConfirmSighting: 'respawn:confirmSighting',
+  // renderer -> main: "stop watching this mob" (owner ruling, prototype round 4). The same write
+  // `respawnSet` could express, given its own channel because it is called from surfaces that have
+  // no business holding the whole watch list: a clock row and an INTERACTIVE floating window each
+  // know one mob, and handing either of them the entire list to rewrite would be a second place
+  // that can lose a watch the user did not touch. Payload is the canonical mob KEY the rows
+  // already carry; main removes it through the shared pure helper, persists, applies to the
+  // running module and pushes (`registry.flushNow`) exactly as the setter does. Returns whether
+  // anything was actually watching that name — false is a no-op, not a failure.
+  respawnUnwatch: 'respawn:unwatch',
 
   // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
   //

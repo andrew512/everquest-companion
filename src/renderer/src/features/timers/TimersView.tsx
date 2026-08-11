@@ -21,6 +21,13 @@
 // away and is what you want when you are setting up a camp you are not in yet; the counts on the
 // switch say how much is hiding either way, so the default never silently swallows anything.
 //
+// AND UNWATCHING IS ON THE MOB, NOT IN A LIST (owner ruling, round 4). Watch was always a per-mob
+// click; stopping used to mean finding the name again in "Your watches" at the bottom of this page.
+// Now the clock row and the Recently-killed entry each carry the same Unwatch control — in the
+// candidate's case in the exact place its Watch button sits, so the pair is one toggle — and every
+// one of them lands on the same one-mob IPC call. The list below keeps its editor, because typing a
+// number is genuinely list work; it is no longer the only way out.
+//
 // The number in the box beside a watched mob is rung 1 of the ladder — your own respawn, in
 // seconds — and it outranks everything, including what this app learned. A player camping a spot
 // knows more about it than the wiki and more than a handful of gaps.
@@ -47,10 +54,16 @@ import {
   type RespawnPrefs,
   type RespawnRow
 } from '@shared/respawn'
-import Tooltip from '../../lib/Tooltip'
 import { fmtDuration } from '../buffs/format'
 import { RespawnRowBar } from './RespawnRowBar'
-import { useConfirmSighting, useRespawnSnap, useSecondsClock, useSetRespawnPrefs } from './useRespawn'
+import { RESPAWN_TOGGLE_SX, UnwatchButton } from './UnwatchButton'
+import {
+  useConfirmSighting,
+  useRespawnSnap,
+  useSecondsClock,
+  useSetRespawnPrefs,
+  useUnwatch
+} from './useRespawn'
 
 /** Which zone the page is showing. Component state: a view mode, not a preference. */
 type Scope = 'zone' | 'all'
@@ -62,18 +75,16 @@ function withWatch(prefs: RespawnPrefs, key: string, display: string, customSec?
   return { ...prefs, watches: [...rest, entry] }
 }
 
-function withoutWatch(prefs: RespawnPrefs, key: string): RespawnPrefs {
-  return { ...prefs, watches: prefs.watches.filter((w) => w.key !== key) }
-}
-
 function CandidateRow({
   cand,
   prefs,
-  onSet
+  onSet,
+  onUnwatch
 }: {
   cand: RespawnCandidate
   prefs: RespawnPrefs
   onSet: (next: RespawnPrefs) => void
+  onUnwatch: (key: string) => void
 }): JSX.Element {
   return (
     <Stack
@@ -95,24 +106,24 @@ function CandidateRow({
         </Typography>
       </Box>
       {/* `watched` is the MODULE's answer, not a second one worked out here from the same
-          snapshot's prefs — one fact, one owner. */}
+          snapshot's prefs — one fact, one owner. The two states are ONE TOGGLE (round 4): the same
+          size of button in the same place, saying the opposite thing. */}
       {cand.watched ? (
-        <Tooltip title="Stop watching this mob">
-          <IconButton
-            size="small"
-            data-testid="respawn-unwatch"
-            onClick={() => {
-              onSet(withoutWatch(prefs, cand.key))
-            }}
-          >
-            <DeleteOutlineIcon fontSize="inherit" />
-          </IconButton>
-        </Tooltip>
+        <UnwatchButton
+          mobKey={cand.key}
+          display={cand.display}
+          testId="respawn-unwatch"
+          onUnwatch={onUnwatch}
+        />
       ) : (
         <Button
           size="small"
           variant="outlined"
+          color="inherit"
           data-testid="respawn-watch"
+          // The SAME shape as its opposite (RESPAWN_TOGGLE_SX) — one control with two states, not
+          // two buttons that happen to share a slot.
+          sx={RESPAWN_TOGGLE_SX}
           onClick={() => {
             onSet(withWatch(prefs, cand.key, cand.display))
           }}
@@ -127,11 +138,14 @@ function CandidateRow({
 function WatchEditorRow({
   watch,
   prefs,
-  onSet
+  onSet,
+  onUnwatch
 }: {
   watch: { key: string; display: string; customSec?: number }
   prefs: RespawnPrefs
   onSet: (next: RespawnPrefs) => void
+  /** The same one-mob removal every other surface calls — one write path, not a second list edit. */
+  onUnwatch: (key: string) => void
 }): JSX.Element {
   const [draft, setDraft] = useState(watch.customSec === undefined ? '' : String(watch.customSec))
   return (
@@ -158,8 +172,9 @@ function WatchEditorRow({
       />
       <IconButton
         size="small"
+        aria-label={`Stop watching ${watch.display}`}
         onClick={() => {
-          onSet(withoutWatch(prefs, watch.key))
+          onUnwatch(watch.key)
         }}
       >
         <DeleteOutlineIcon fontSize="inherit" />
@@ -173,7 +188,8 @@ function ClocksPanel({
   nowMs,
   elsewhere,
   zoneName,
-  onConfirmSighting
+  onConfirmSighting,
+  onUnwatch
 }: {
   rows: RespawnRow[]
   nowMs: number
@@ -181,6 +197,8 @@ function ClocksPanel({
   elsewhere: number
   zoneName: string
   onConfirmSighting: (rowId: string) => void
+  /** Round 4: the row's own way out, handed down so the clock carries it instead of a list. */
+  onUnwatch: (key: string) => void
 }): JSX.Element {
   if (rows.length === 0) {
     return (
@@ -194,7 +212,13 @@ function ClocksPanel({
   return (
     <Stack spacing={0.75} data-testid="respawn-rows">
       {rows.map((row) => (
-        <RespawnRowBar key={row.id} row={row} nowMs={nowMs} onConfirmSighting={onConfirmSighting} />
+        <RespawnRowBar
+          key={row.id}
+          row={row}
+          nowMs={nowMs}
+          onConfirmSighting={onConfirmSighting}
+          onUnwatch={onUnwatch}
+        />
       ))}
     </Stack>
   )
@@ -236,11 +260,84 @@ function ScopeSwitch({
   )
 }
 
+/**
+ * THE RIGHT-HAND COLUMN: what you killed, and what you are watching.
+ *
+ * Its own component because the page reached the repo's `max-lines-per-function` ceiling when round
+ * 4 wired the removal writer through it, and the answer to that is a split rather than a widened
+ * threshold. The seam is the honest one anyway — the left column is the running clocks and this is
+ * where they are ADMITTED and retired.
+ */
+function DiscoveryPanel({
+  recent,
+  anyRecent,
+  scoped,
+  zoneName,
+  prefs,
+  onSet,
+  onUnwatch
+}: {
+  recent: RespawnCandidate[]
+  /** How many candidates the fold holds in total, so the scoped empty state can say where they are. */
+  anyRecent: number
+  scoped: boolean
+  zoneName: string
+  prefs: RespawnPrefs
+  onSet: (next: RespawnPrefs) => void
+  onUnwatch: (key: string) => void
+}): JSX.Element {
+  return (
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        Recently killed
+      </Typography>
+      {recent.length === 0 ? (
+        <Typography variant="body2" color="text.secondary" data-testid="respawn-recent-empty">
+          {scoped && anyRecent > 0
+            ? `Nothing has died in ${zoneName} yet. Switch to All zones for what you killed elsewhere.`
+            : 'Nothing has died yet in this log.'}
+        </Typography>
+      ) : (
+        <Stack data-testid="respawn-recent" divider={<Divider flexItem />}>
+          {recent.map((c) => (
+            <CandidateRow key={`${c.zone}::${c.key}`} cand={c} prefs={prefs} onSet={onSet} onUnwatch={onUnwatch} />
+          ))}
+        </Stack>
+      )}
+
+      <Divider sx={{ my: 2 }} />
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        Your watches
+      </Typography>
+      {prefs.watches.length === 0 ? (
+        <Typography variant="body2" color="text.secondary" data-testid="respawn-watches-empty">
+          None yet. A mob you watch here is the only kind that gets a clock, and it can carry your
+          own number, which outranks everything the app worked out.
+        </Typography>
+      ) : (
+        <Stack divider={<Divider flexItem />}>
+          {prefs.watches.map((w) => (
+            <WatchEditorRow key={w.key} watch={w} prefs={prefs} onSet={onSet} onUnwatch={onUnwatch} />
+          ))}
+        </Stack>
+      )}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+        A watch follows the MOB NAME, so it clocks that name in every zone you kill it in - which is
+        also what Unwatch stops, wherever you press it. The list above shows the zone you are in
+        unless you ask for all of them. Custom respawns run from{' '}
+        {fmtDuration(RESPAWN_CUSTOM_MIN_SEC * 1000)} to {fmtDuration(RESPAWN_CUSTOM_MAX_SEC * 1000)}.
+        Leave the box empty to go back to what your kills say.
+      </Typography>
+    </Box>
+  )
+}
+
 export default function TimersView(): JSX.Element {
   const snap = useRespawnSnap()
   const nowMs = useSecondsClock()
   const setPrefs = useSetRespawnPrefs()
   const confirmSighting = useConfirmSighting()
+  const unwatch = useUnwatch()
   const prefs = snap.prefs
   const [scope, setScope] = useState<Scope>('zone')
 
@@ -268,7 +365,9 @@ export default function TimersView(): JSX.Element {
         NAMES a watched mob in this zone - a swing, a consider, a spell - the row says UP instead,
         because that is the world answering the question the clock was guessing at. A sighting
         proves it is up and not when it spawned, so it never moves the clock by itself; the button
-        on a seen row is how you say it should.
+        on a seen row is how you say it should. Unwatch sits on the mob wherever you meet it - on
+        its clock and beside it in Recently killed - and stops that name in every zone without
+        losing a single kill you have folded.
       </Typography>
 
       <Box sx={{ mb: 2 }}>
@@ -292,51 +391,19 @@ export default function TimersView(): JSX.Element {
             elsewhere={scope === 'zone' ? snap.rows.length - hereRows.length : 0}
             zoneName={zoneName}
             onConfirmSighting={confirmSighting}
+            onUnwatch={unwatch}
           />
         </Box>
 
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            Recently killed
-          </Typography>
-          {recent.length === 0 ? (
-            <Typography variant="body2" color="text.secondary" data-testid="respawn-recent-empty">
-              {scope === 'zone' && snap.recent.length > 0
-                ? `Nothing has died in ${zoneName} yet. Switch to All zones for what you killed elsewhere.`
-                : 'Nothing has died yet in this log.'}
-            </Typography>
-          ) : (
-            <Stack data-testid="respawn-recent" divider={<Divider flexItem />}>
-              {recent.map((c) => (
-                <CandidateRow key={`${c.zone}::${c.key}`} cand={c} prefs={prefs} onSet={setPrefs} />
-              ))}
-            </Stack>
-          )}
-
-          <Divider sx={{ my: 2 }} />
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            Your watches
-          </Typography>
-          {prefs.watches.length === 0 ? (
-            <Typography variant="body2" color="text.secondary" data-testid="respawn-watches-empty">
-              None yet. A mob you watch here is the only kind that gets a clock, and it can carry
-              your own number, which outranks everything the app worked out.
-            </Typography>
-          ) : (
-            <Stack divider={<Divider flexItem />}>
-              {prefs.watches.map((w) => (
-                <WatchEditorRow key={w.key} watch={w} prefs={prefs} onSet={setPrefs} />
-              ))}
-            </Stack>
-          )}
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-            A watch follows the MOB NAME, so it clocks that name in every zone you kill it in - the
-            list above shows the zone you are in unless you ask for all of them. Custom respawns run
-            from {fmtDuration(RESPAWN_CUSTOM_MIN_SEC * 1000)} to{' '}
-            {fmtDuration(RESPAWN_CUSTOM_MAX_SEC * 1000)}. Leave the box empty to go back to what
-            your kills say.
-          </Typography>
-        </Box>
+        <DiscoveryPanel
+          recent={recent}
+          anyRecent={snap.recent.length}
+          scoped={scope === 'zone'}
+          zoneName={zoneName}
+          prefs={prefs}
+          onSet={setPrefs}
+          onUnwatch={unwatch}
+        />
       </Stack>
     </Box>
   )

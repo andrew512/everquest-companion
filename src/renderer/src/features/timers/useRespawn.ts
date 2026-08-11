@@ -62,3 +62,21 @@ export function useConfirmSighting(): (rowId: string) => void {
     void window.eq.confirmRespawnSighting(rowId)
   }, [])
 }
+
+/**
+ * "Stop watching this mob" (owner ruling, round 4). Same shape and same reasoning as the two
+ * writers above — main removes the entry, persists it, applies it to the running module and forces
+ * a push, so the delta is the authority and nothing here keeps a second copy of the watch list to
+ * render from.
+ *
+ * It takes a KEY rather than the edited prefs so that every surface offering this control sends the
+ * same thing: a clock row, a floating-window row and a Recently-killed entry all know one mob's
+ * name and none of them has to hold — or risk clobbering — the whole list. The resolved boolean is
+ * dropped for the reason its sibling's is: false means nothing was watching that name any more, and
+ * the delta that already says so is on its way.
+ */
+export function useUnwatch(): (key: string) => void {
+  return useCallback((key: string) => {
+    void window.eq.unwatchRespawn(key)
+  }, [])
+}

@@ -126,6 +126,39 @@
 // THE CONFIRMATION IS SESSION STATE, not a preference: it lives in the fold beside the deaths it
 // competes with, and a relaunch re-derives the fold from the log — which has never heard of it.
 // Persisting a judgement about one spawn of one mob would outlive the spawn it was about.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// UNWATCH LIVES ON THE MOB, WHEREVER YOU MEET IT (owner ruling, 2026-08-10, prototype round 4)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Watching was already a per-mob act — you meet a mob in the Recently-killed panel and click Watch
+// beside it. STOPPING was not: the only way out was to find the name again in the global watch
+// list at the bottom of the tab and delete it there. So the two halves of one decision lived in
+// two different places, and the half you reach for while a clock is wrong in front of you (over
+// the game, mid-camp, the mob a duplicate name the app cannot tell apart) was the one that made
+// you go looking. The ruling makes them symmetric: wherever a surface names a watched mob, that
+// mob carries its own way out — its clock row in the Timers tab, its clock row in an INTERACTIVE
+// floating window, and its Recently-killed entry, where Watch and Unwatch are now the same
+// control in the same place saying the opposite thing.
+//
+// A WATCH IS A NAME, SO UNWATCH IS A NAME TOO. The list is keyed by the canonical mob name and a
+// watch deliberately follows that name into every zone you kill it in, so removing it from any
+// surface removes it everywhere — including a clock for the same name running in a zone you are
+// not standing in. That is one behaviour, stated on the control itself (`respawnUnwatchTitle`)
+// rather than discovered afterwards, because a floating window shows one zone and the thing it
+// silently would have stopped is off screen by construction.
+//
+// AND IT THROWS AWAY NOTHING BUT THE WATCH. The kills, the gaps and the sightings are the fold's,
+// derived from the log; the watch list is the only thing the log cannot state. So unwatching drops
+// the row and keeps the history behind it, the mob is still offered in Recently killed the moment
+// after (`RespawnCandidate.watched` flips back to false), and watching it again brings back the
+// same clock with the same numbers — which is what makes an unwatch on a floating window safe
+// enough to be one click with no confirmation.
+//
+// THE ROW SURFACES OFFER ONLY THE UNWATCH HALF, and that is not an asymmetry: a clock row exists
+// only because the mob is watched (the opt-in ruling is the admission rule), so "Watch" on one
+// would be a control that can never be in its other state. The Recently-killed entry is the one
+// surface that meets both kinds of mob, and it is the one that toggles.
 
 /** Which rung of the ladder produced the estimate on a row. `'none'` = no rung had anything. */
 export type RespawnSource = 'custom' | 'observed' | 'wiki' | 'none'
@@ -232,6 +265,43 @@ function normalizeWatch(raw: unknown): RespawnWatchPref | null {
   const sec = typeof w.customSec === 'number' && Number.isFinite(w.customSec) ? Math.round(w.customSec) : 0
   if (sec >= RESPAWN_CUSTOM_MIN_SEC && sec <= RESPAWN_CUSTOM_MAX_SEC) out.customSec = sec
   return out
+}
+
+/**
+ * DROP ONE MOB FROM THE WATCH LIST, and touch nothing else — the whole of round 4's write.
+ *
+ * Pure, and shared by every surface through the IPC handler that calls it, so "stop watching this"
+ * has ONE definition: the clock row in the tab, the row in the floating window and the
+ * Recently-killed entry cannot drift into three ideas of what the button did. The key is
+ * canonicalized here the way `normalizeWatch` canonicalizes what it stores (world-model law 2 —
+ * canonicalize at boundaries), so a row's `key` (which is `idKey(name)` on the far side of that
+ * rule) and a hand-edited settings file both land on the same entry.
+ *
+ * Removing a name that is not watched is not an error and not a special case: it returns a list
+ * equal to the one it was given, and the caller decides whether an unchanged list is worth
+ * persisting. That is what a click racing a delta looks like.
+ */
+export function respawnWithoutWatch(prefs: RespawnPrefs, key: string): RespawnPrefs {
+  const want = key.trim().toLowerCase()
+  return { ...prefs, watches: prefs.watches.filter((w) => w.key !== want) }
+}
+
+/** The word on the control, one spelling for all three surfaces. */
+export const RESPAWN_UNWATCH_LABEL = 'Unwatch'
+
+/**
+ * What unwatching will do, said on the control BEFORE it is pressed rather than discovered after.
+ *
+ * Both consequences are stated because both are surprising exactly once: a watch follows the mob
+ * NAME, so this stops clocks for that name in zones this window is not showing; and nothing is
+ * destroyed, because everything except the watch itself is re-derived from the log.
+ */
+export function respawnUnwatchTitle(display: string): string {
+  return (
+    `Stop watching ${display}. Its clock goes away here and in every other zone - a watch follows ` +
+    `the mob NAME. Nothing else is lost: your kills and gaps stay in the fold, so watching it ` +
+    `again from Recently killed brings the same clock back.`
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -914,6 +914,26 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    never heard of it, so a stored copy would outlive the spawn it was about.
    The revision rule generalizes with the third input — watch list, zone line,
    confirmed sighting, and a sighting itself all bump `rev`.
+   **AND UNWATCH LIVES ON THE MOB, WHEREVER YOU MEET IT** (owner, prototype round
+   4). Watching was already per-mob; STOPPING was a trip to the global watch list
+   at the bottom of the tab — so the half you reach for while a wrong clock is in
+   front of you (over the game, mid-camp, on one of EQ's duplicated names) was the
+   half that made you go looking. Every surface that names a watched mob now
+   carries its own way out: the clock row in the Timers tab, the row in an
+   INTERACTIVE floating window (same click-through law as the confirm control),
+   and the Recently-killed entry, where Watch and Unwatch are ONE control in one
+   slot — same size, same casing, opposite words (MUI upper-cases button text by
+   default, and "WATCH" next to "Unwatch" reads as two controls). All of them land
+   on ONE channel, `respawn:unwatch`, which takes the canonical mob KEY rather than
+   a rewritten list: a row and a candidate each know one mob, and handing either
+   the whole watch list to rewrite would put a second author on entries the user
+   never touched. It removes the NAME, so it stops that name's clocks in zones the
+   surface is not showing — stated on the control, because those rows are off
+   screen by construction — and it throws away nothing else: kills, gaps and the
+   LRU history are the fold's, re-derived from the log, so watching again restores
+   the identical clock. That property is what makes a one-click unwatch over the
+   game safe without a confirmation step, and `tests/respawnUnwatch.test.mts`
+   pins it.
 
 ## Log-format quick reference (all validated against the real log)
 
