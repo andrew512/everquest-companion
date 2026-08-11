@@ -893,9 +893,9 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    about its estimate, it was answering a question the world had already settled.
    So a row carries `seenTs` — the last instant a TYPED event named that mob
    while the fold stood in that row's zone — and a reading whose `seenTs` is
-   newer than the clock's base reads **UP**, sorts above every countdown, and
-   holds the linger sweep off (or the sweep would delete the very row the ruling
-   is about). Coverage is off EVENTS, never a raw-text scan (the parser is the
+   newer than the clock's base reads **UP** and sorts above every countdown.
+   The UP claim itself expires after `RESPAWN_LINGER_MS` (round 8: the STATE
+   ages out, never the row). Coverage is off EVENTS, never a raw-text scan (the parser is the
    only thing here that reads sentences): damage/miss/heal, consider, cc/ccWake/
    charm/uncharm, resist/otherCastBegin/buffApply/poisonProc. It is honest about
    what it cannot see — **a mob standing there prints nothing**, mob speech is
@@ -944,6 +944,16 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    ONLY: the floating overlay carries no card (owner: it takes the overlay over
    too completely); over the game it is plain rows and a native title, and a
    locked window gets neither.
+
+   ROUND 8 (owner defect, 2026-08-11): **a watched row NEVER vanishes while
+   watched.** The old expiry sweep retired any row whose estimate elapsed 30+
+   min ago — so Watch clicked hours after the only death produced a row born
+   already swept, a flipped button, and an empty Running list. The sweep is
+   gone: a long-elapsed estimate reads "due long ago" (grey, no bar,
+   `stale=true`), a watched mob with no death yet reads "awaiting next death",
+   the next death starts the normal cycle, and stale rows sort under every live
+   clock. What ages out is the SEEN state (UP is the one label that claims
+   presence); unwatch remains the only way a row leaves.
 
 ## Log-format quick reference (all validated against the real log)
 
