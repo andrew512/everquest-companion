@@ -199,6 +199,7 @@ function startupLines(d: TriageAnalyticsData): string[] {
         ` · ${r.meanEventsReplayed === null ? '-' : String(Math.round(r.meanEventsReplayed))} events/launch` +
         ` · ${String(r.blocksOver50)} stalls >50ms`,
       stutterLine(r),
+      shadowLine(r),
     ]),
     '  log size of measured launches (all builds)',
     ...mixBlock(s.logSizes),
@@ -226,6 +227,25 @@ function stutterLine(r: TriageStartupRow): string {
     ` · ${r.stutterLatePct === null ? '-' : pct(r.stutterLatePct)} ticks late` +
     ` · first MB p50 ${(r.p50FirstMbLabel ?? '-').padStart(10)} p95 ${(r.p95FirstMbLabel ?? '-').padStart(10)}`
   )
+}
+
+/**
+ * THE THIRD LINE OF A BUILD'S ROW (JOS-208 phase 3) — the startup checkpoint's fleet backstop.
+ *
+ * A build that has never verified says so in words, for the reason `stutterLine` does: `0` beside
+ * `0` reads as "measured and blameless", and this is the one number where that misreading would
+ * cost a default-on rollout. A build with a DIVERGENCE shouts, because a non-zero here is not a
+ * metric, it is the kill switch's trigger.
+ */
+function shadowLine(r: TriageStartupRow): string {
+  if (r.shadowChecks === 0) {
+    return '                 (no fold-checkpoint verification has run on this build)'
+  }
+  const verdict =
+    r.shadowDivergences === 0
+      ? 'all matched a cold fold'
+      : `*** ${String(r.shadowDivergences)} DIVERGED — the checkpoint disagreed with a cold fold ***`
+  return `                 ${String(r.shadowChecks).padStart(5)} checkpoint checks · ${verdict}`
 }
 
 function versionLines(d: TriageAnalyticsData): string[] {

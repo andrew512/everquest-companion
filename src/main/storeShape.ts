@@ -165,7 +165,11 @@ export interface StoreShape {
    * has stayed at zero — so it is another additive key on the same carve-out: no schema bump, no
    * migration, and a build that predates the feature ignores it.
    */
-  foldCache?: { enabled?: boolean }
+  foldCache?: {
+    enabled?: boolean
+    /** When the shadow verifier last ran (wall clock, ms) — its duty cycle's only memory. */
+    shadowLastMs?: number
+  }
   /**
    * The newest release whose notes this install has been SHOWN (JOS-73; shared/releaseNotes.ts).
    *

@@ -222,6 +222,10 @@ test('fold checkpoint: every externality lands on the cold path', async () => {
       offset: at.endOffset,
       seq: at.seq,
       lastEventTs: 0,
+      // The write this arm stands in for is a RUNNING-APP one (foldCache/schedule.ts's `replay`
+      // write), so it states that origin — and the control below asserts the loader reports it
+      // back, which is the whole round trip the field needs.
+      origin: 'replay',
       modules: units
     })
     assert.equal(ok, true, 'the checkpoint must write')
@@ -245,7 +249,8 @@ test('fold checkpoint: every externality lands on the cold path', async () => {
     restored: true,
     offset: at.endOffset,
     seq: at.seq,
-    lastEventTs: 0
+    lastEventTs: 0,
+    origin: 'replay'
   })
 
   // 1. MISSING CACHE — the ordinary first launch.
@@ -257,12 +262,12 @@ test('fold checkpoint: every externality lands on the cold path', async () => {
     characterKey: 'primitive@freeport',
     modules: w0.units
   })
-  assert.deepStrictEqual(missing, { restored: false, why: 'missing' })
+  assert.deepStrictEqual(missing, { restored: false, why: 'missing', adopted: false })
 
   // 2. TRUNCATED LOG — the file is now shorter than the byte the checkpoint describes. Caught by
   //    the size floor, before a single byte is read.
   writeFileSync(logPath, source.subarray(0, Math.floor(at.endOffset / 2)))
-  assert.deepStrictEqual(await read(), { restored: false, why: 'identity:shrank' })
+  assert.deepStrictEqual(await read(), { restored: false, why: 'identity:shrank', adopted: false })
 
   // 3. REGROWN LOG — truncated and refilled past B with DIFFERENT bytes. The size test passes and
   //    the shoulder is what catches it. This is the case the whole identity block exists for.
@@ -277,7 +282,7 @@ test('fold checkpoint: every externality lands on the cold path', async () => {
   const shoulderByte = at.endOffset - 1024
   flipped[shoulderByte] = (flipped[shoulderByte] ?? 0) ^ 0x01
   writeFileSync(logPath, flipped)
-  assert.deepStrictEqual(await read(), { restored: false, why: 'identity:shoulder' })
+  assert.deepStrictEqual(await read(), { restored: false, why: 'identity:shoulder', adopted: false })
 
   // 5. THE LOG IS FINE AGAIN — so the control still holds, proving 2–4 were about the log and not
   //    about the cache having been damaged along the way.
@@ -304,7 +309,7 @@ test('fold checkpoint: every externality lands on the cold path', async () => {
   // 8. STALE SEMANTICS — a checkpoint written by a build whose fold MEANT something else. Forged by
   //    rewriting the header's `foldSemantics`, which is exactly what an older build's file is.
   writeFileSync(cachePath, forgeHeader(good, (h) => ({ ...h, foldSemantics: 999 })))
-  assert.deepStrictEqual(await read(), { restored: false, why: 'semantics' })
+  assert.deepStrictEqual(await read(), { restored: false, why: 'semantics', adopted: false })
 
   // 9. STALE SHAPE — the ENCODING axis. A checkpoint whose module declared a different shape.
   writeFileSync(
@@ -314,7 +319,7 @@ test('fold checkpoint: every externality lands on the cold path', async () => {
       modules: h.modules.map((m, i) => (i === 0 ? { ...m, shapeHash: 'deadbeefdeadbeef' } : m))
     }))
   )
-  assert.deepStrictEqual(await read(), { restored: false, why: 'shape' })
+  assert.deepStrictEqual(await read(), { restored: false, why: 'shape', adopted: false })
 
   // 10. A DIFFERENT CHARACTER's log at the same path.
   writeFileSync(cachePath, good)
@@ -325,7 +330,51 @@ test('fold checkpoint: every externality lands on the cold path', async () => {
     characterKey: 'somebodyelse@freeport',
     modules: w1.units
   })
-  assert.deepStrictEqual(wrongChar, { restored: false, why: 'identity:character' })
+  assert.deepStrictEqual(wrongChar, { restored: false, why: 'identity:character', adopted: false })
+})
+
+/**
+ * A REFUSED CACHE LEAVES THE WORLD EXACTLY AS A COLD START WOULD (JOS-208 phase 3).
+ *
+ * `adopted: false` on every refusal above is the loader's half of this; the reason it matters is the
+ * caller's. `attach.ts` resets the registry on the refusal path so a PARTIAL adoption cannot survive
+ * into the cold replay — and a reset is not free: it bumps every module's private revision counter,
+ * which is published as the snapshot's `seq` AND is itself checkpointed. So while that reset was
+ * unconditional, a launch that merely LOOKED for a cache and found none folded one revision ahead of
+ * a launch that never looked, and every checkpoint written from it carried the difference forward.
+ *
+ * MEASURED by tests/e2e/fold-restart.e2e.mts, which is the only place it could be: it takes two
+ * whole launches of the real app to see it, and both arms of the unit differential reset exactly
+ * once. Three modules, one count each — `combo`, `respawn`, `character`.
+ *
+ * What is pinned here is the property that makes the conditional reset safe: consulting a cache the
+ * loader then refuses changes NOTHING about the world it was offered.
+ */
+test('fold checkpoint: consulting a cache that is refused changes nothing at all', async () => {
+  const logPath = fixturePath('e2e-combat.log')
+  const prefs = await watchesFor(logPath)
+  const dir = mkdtempSync(join(tmpdir(), 'eqfold-refuse-'))
+
+  const untouched = buildFoldWorld(logPath, prefs)
+  await foldRange(untouched, logPath, { from: 0, seq: 0 })
+
+  const offered = buildFoldWorld(logPath, prefs)
+  const refused = await readCheckpoint({
+    cachePath: join(dir, 'nothing.eqfold'),
+    logPath,
+    characterKey: 'primitive@freeport',
+    modules: offered.units
+  })
+  assert.deepStrictEqual(refused, { restored: false, why: 'missing', adopted: false })
+  await foldRange(offered, logPath, { from: 0, seq: 0 })
+
+  // The WHOLE snapshot, `seq` included — which is the field the defect moved, so a comparison of
+  // `state` alone would be the same test with the finding taken out of it.
+  const a = publishedSnapshots(untouched)
+  const b = publishedSnapshots(offered)
+  for (const id of CHECKPOINTED_MODULE_IDS) {
+    assert.deepStrictEqual(b[id], a[id], `module '${id}' moved just because a cache was consulted`)
+  }
 })
 
 /**

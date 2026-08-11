@@ -18,6 +18,9 @@
 
 export {
   ensureAnalyticsId,
+  // THE FOLD-CHECKPOINT SHADOW COUNTER (JOS-208 phase 3). Its producer is a background verifier in
+  // `foldCache/shadow.ts`, and it comes through the façade like every other producer.
+  noteCheckpointShadow,
   noteLinesParsed,
   noteStartupReplay,
   pendingBatch,

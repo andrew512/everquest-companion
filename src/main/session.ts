@@ -29,6 +29,7 @@ import { scanLog } from './log/scanHistory'
 import { createSlicer } from './log/replaySlicer'
 import { saveUserOverlay } from './data/overlayPersistence'
 import { restoreFold, saveFold } from './foldCache/attach'
+import { startCheckpointSchedule, stopCheckpointSchedule } from './foldCache/schedule'
 import { loadInventory } from './inventory/parseInventory'
 import { watchOutputKind, type OutputKindWatch } from './outputs'
 import {
@@ -453,6 +454,13 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   // The heartbeat belongs to the character we are leaving; it must not tick (nor push) through
   // the replay that follows. `startHeartbeat()` below re-arms it once the live tail is running.
   stopHeartbeat()
+  // …and neither must the checkpoint schedule (JOS-208 phase 3), for a sharper reason than the
+  // heartbeat's: `CHECKPOINT_SOURCE.ref()` reads the live `character`, which the next statement
+  // moves. A timer that fired between here and the end of the fold would write the NEW character's
+  // cache file from the OLD character's fold state — a container whose identity block would then
+  // (correctly, and far too late) be refused on the next launch. Disarmed here, re-armed once the
+  // new fold is complete.
+  stopCheckpointSchedule()
   character = ref
   setActiveLogPath(ref.logPath)
   logInfo(`[everquest-companion] Tailing ${ref.name}@${ref.server}: ${ref.logPath}`)
@@ -548,6 +556,11 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
 
   startTailer(ref.logPath, scan.endOffset)
   startHeartbeat()
+  // THE FOLD HAS JUST BEEN PROVEN, SO IT GETS REMEMBERED (JOS-208 phase 3). The schedule's two
+  // running-app writes are armed here and nowhere else — this is the one statement in the app that
+  // knows a historical fold has finished and a live tail has taken over. Its whole argument, and
+  // the owner repro that produced it, is in foldCache/schedule.ts.
+  startCheckpointSchedule(CHECKPOINT_SOURCE)
 
   // Watch this character's inventory export so a fresh /outputfile auto-reloads.
   startInventoryWatch(ref)
@@ -680,6 +693,10 @@ export function markTailPosition(): void {
  */
 export function stopSession(): void {
   markTailPosition()
+  // The running-app writes stop before the tail does: the quit write (index.ts's teardown step,
+  // which runs BEFORE this) is the final word, and a quiet-point timer firing behind it would be
+  // serializing a fold nobody is going to read.
+  stopCheckpointSchedule()
   void tailer?.stop()
   inventoryWatch?.close()
   stopWatchingForFirstLog()
@@ -704,4 +721,17 @@ export function saveFoldCheckpoint(): boolean {
   const offset = tailer.checkpointOffset()
   if (offset <= 0) return false
   return saveFold(character, offset, seq)
+}
+
+/**
+ * WHERE THE FOLD IS, for the checkpoint schedule (JOS-208 phase 3) — the same three readings
+ * `saveFoldCheckpoint` above takes, handed over as accessors instead of imported.
+ *
+ * A module-level constant rather than an object built per call, so the schedule holds one thing for
+ * the life of the process and a character switch changes only what these functions return.
+ */
+const CHECKPOINT_SOURCE = {
+  ref: (): CharacterRef | null => character,
+  offset: (): number => tailer?.checkpointOffset() ?? 0,
+  seq: (): number => seq
 }

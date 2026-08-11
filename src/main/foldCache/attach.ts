@@ -17,18 +17,47 @@
 
 import { logInfo } from '../errorLog'
 import { characterId } from '../log/config'
+import { noteCheckpointVerdict } from '../perf'
 import { bus, epoch, registry, sessionDetector } from '../pipeline'
 import { getFoldCacheEnabled } from '../storeFoldCache'
 import { resolveFoldCacheFlag } from './flag'
-import { readCheckpoint, writeCheckpointSync, checkpointableUnits, type RestoreResult } from './loader'
+import {
+  readCheckpoint,
+  writeCheckpoint,
+  writeCheckpointSync,
+  checkpointableUnits,
+  type RestoreResult,
+  type WriteCheckpointArgs
+} from './loader'
 import { foldCachePath } from './paths'
 import type { FoldUnit } from './serialize'
+import type { CheckpointOrigin, CheckpointVerdict } from '../../shared/perf'
 import type { CharacterRef } from '../../shared/types'
 
 let flag: { enabled: boolean; why: string } | null = null
 /** The `ts` of the last event any feeder emitted — see the header for why it is conditional. */
 let lastEventTs = 0
 let probeInstalled = false
+/**
+ * WHAT THIS PROCESS'S LOADER DECIDED, most recent first (JOS-208 phase 3).
+ *
+ * Two readers, and they want different things, which is why the verdict is BOTH pushed and kept.
+ * `perf.ts` is pushed the FIRST one (the launch's own, for the profile and the summary line); the
+ * shadow verifier reads the LATEST one, because after a character switch the fold that is on
+ * screen is the one it has to be able to check.
+ */
+let verdict: CheckpointVerdict = { outcome: 'off' }
+
+/** The loader's decision as it stands. Read by the shadow verifier (`shadow.ts`). */
+export function checkpointVerdict(): CheckpointVerdict {
+  return verdict
+}
+
+/** Record a decision: kept here for the shadow verifier, pushed once to the startup profile. */
+function decide(next: CheckpointVerdict): void {
+  verdict = next
+  noteCheckpointVerdict(next)
+}
 
 /** The launch's answer, resolved once and logged once. */
 export function foldCacheEnabled(): boolean {
@@ -89,7 +118,15 @@ function installProbe(): void {
  * documents, where a partial adoption is possible and the caller resets again below.
  */
 export async function restoreFold(ref: CharacterRef): Promise<{ offset: number; seq: number } | null> {
-  if (!foldCacheEnabled()) return null
+  if (!foldCacheEnabled()) {
+    // OFF IS A VERDICT, not a silence. Without this the startup profile simply has no `checkpoint`
+    // field on the launches where the feature was switched off — which is indistinguishable from a
+    // build that predates the readout, and leaves "is the preference even on?" as the one question
+    // a triage session still has to ask the user. (Caught by the e2e restart-compare's control arm,
+    // which is exactly the arrangement that was silent.)
+    decide({ outcome: 'off' })
+    return null
+  }
   installProbe()
   const modules = foldUnits()
   if (modules.length === 0) return null
@@ -101,21 +138,56 @@ export async function restoreFold(ref: CharacterRef): Promise<{ offset: number; 
   })
   if (!res.restored) {
     // A refusal may have left SOME units holding a blob (the loader's all-or-nothing note), so the
-    // world goes back to zero before the cold replay that follows. Cheap, and unconditional rather
-    // than clever: reasoning about which half adopted is exactly the state this avoids. All THREE
-    // resets, in the same order `resetWorldFor` does them — the detectors are units now, so a
-    // registry reset alone would leave the half of the fold that publishes nothing half-restored.
-    registry.reset()
-    epoch.reset()
-    sessionDetector.reset()
+    // world goes back to zero before the cold replay that follows. All THREE resets, in the same
+    // order `resetWorldFor` does them — the detectors are units now, so a registry reset alone
+    // would leave the half of the fold that publishes nothing half-restored.
+    //
+    // ONLY WHEN SOMETHING WAS ACTUALLY ADOPTED, and that condition was earned. This used to be
+    // unconditional on the grounds that it was cheap and that reasoning about which half adopted
+    // was the very state it avoided. It is not cheap: a reset BUMPS every module's private
+    // revision counter, which is published as the snapshot's `seq` and is itself checkpointed — so
+    // a launch that merely LOOKED for a cache and found none folded one revision ahead of a launch
+    // that never looked, and every checkpoint written from it carried the offset forward. The e2e
+    // restart-compare measured it (three modules, one count each) and the shadow verifier would
+    // have reported a divergence on every check. The loader now says whether it touched anything,
+    // so a refused cache leaves the world EXACTLY as a cold start would — which is what
+    // "slow-once, never wrong" has to mean if it means anything.
+    if (res.adopted) {
+      registry.reset()
+      epoch.reset()
+      sessionDetector.reset()
+    }
+    decide({ outcome: 'refused', reason: res.why })
     logInfo(`[everquest-companion] Fold checkpoint: cold start (${res.why}).`)
     return null
   }
   lastEventTs = res.lastEventTs
+  decide({ outcome: 'restored', offset: res.offset, origin: res.origin })
   logInfo(
-    `[everquest-companion] Fold checkpoint: restored ${modules.length} modules at byte ${res.offset} (seq ${res.seq}); replaying the tail only.`
+    `[everquest-companion] Fold checkpoint: restored ${modules.length} modules at byte ${res.offset} (seq ${res.seq}, written at ${res.origin}); replaying the tail only.`
   )
   return { offset: res.offset, seq: res.seq }
+}
+
+/** Where the fold has reached, as the two writes below both state it. */
+interface WriteAt {
+  offset: number
+  seq: number
+  origin: CheckpointOrigin
+}
+
+/** Everything every write shares, so no two writes can disagree about where or for whom. */
+function writeArgs(ref: CharacterRef, at: WriteAt, modules: readonly FoldUnit[]): WriteCheckpointArgs {
+  return {
+    cachePath: foldCachePath(characterId(ref)),
+    logPath: ref.logPath,
+    characterKey: `${ref.name}@${ref.server}`.toLowerCase(),
+    offset: at.offset,
+    seq: at.seq,
+    lastEventTs,
+    origin: at.origin,
+    modules
+  }
 }
 
 /**
@@ -126,24 +198,57 @@ export async function restoreFold(ref: CharacterRef): Promise<{ offset: number; 
  * tail emitted. The write TIMING is a tail-length pragmatic and not a correctness need (the design
  * says so) — a checkpoint at any byte position is as valid as one at any other — so a missed write
  * costs a longer tail replay next launch and nothing else.
+ *
+ * IT IS NO LONGER THE ONLY WRITE, and that was a real defect rather than a tuning question: a
+ * process that is KILLED never runs a quit path, and electron-vite's dev watcher kills its child on
+ * every reload. The owner ran with the preference on for a day, restarted repeatedly and never got
+ * a single restore, because no file had ever been written. `saveFoldAsync` below is the fix; this
+ * write stays as the freshest possible final word.
  */
 export function saveFold(ref: CharacterRef, offset: number, seq: number): boolean {
   if (!foldCacheEnabled()) return false
   const modules = foldUnits()
   if (modules.length === 0) return false
-  const ok = writeCheckpointSync({
-    cachePath: foldCachePath(characterId(ref)),
-    logPath: ref.logPath,
-    characterKey: `${ref.name}@${ref.server}`.toLowerCase(),
-    offset,
-    seq,
-    lastEventTs,
-    modules
-  })
+  const ok = writeCheckpointSync(writeArgs(ref, { offset, seq, origin: 'quit' }, modules))
   logInfo(
     ok
-      ? `[everquest-companion] Fold checkpoint: wrote ${modules.length} modules at byte ${offset}.`
+      ? `[everquest-companion] Fold checkpoint: wrote ${modules.length} modules at byte ${offset} (quit).`
       : `[everquest-companion] Fold checkpoint: not written (byte ${offset}).`
+  )
+  return ok
+}
+
+/**
+ * THE SAME WRITE, ASYNCHRONOUSLY — for the two writes that happen while the app is RUNNING.
+ *
+ * `replay` fires moments after the historical fold finishes: the fold has just been computed and
+ * proven, so it is remembered right there rather than being staked on a shutdown that may never
+ * come. `quiet` fires at idle moments through a long session so the next launch's tail stays short.
+ *
+ * WHAT IS SYNCHRONOUS ABOUT IT AND WHY. The module states are serialized in ONE turn inside
+ * `writeCheckpoint` (its `serializeStates` note says why: a state captured across an `await` would
+ * describe a byte position the fold has already left). That turn is the only cost this write puts on
+ * the main loop, and the SCHEDULING is what keeps it off the hot path — `schedule.ts` never calls
+ * this during the fold or while lines are arriving. Everything after it (the identity block's
+ * bounded reads, the temp write, the rename) is off-thread.
+ *
+ * Failure is silent-but-logged, exactly like the quit write's: there is no caller behaviour to
+ * change, because a launch with no checkpoint is the launch this app has always had.
+ */
+export async function saveFoldAsync(
+  ref: CharacterRef,
+  offset: number,
+  seq: number,
+  origin: CheckpointOrigin
+): Promise<boolean> {
+  if (!foldCacheEnabled()) return false
+  const modules = foldUnits()
+  if (modules.length === 0) return false
+  const ok = await writeCheckpoint(writeArgs(ref, { offset, seq, origin }, modules))
+  logInfo(
+    ok
+      ? `[everquest-companion] Fold checkpoint: wrote ${modules.length} modules at byte ${offset} (${origin}).`
+      : `[everquest-companion] Fold checkpoint: not written (byte ${offset}, ${origin}).`
   )
   return ok
 }

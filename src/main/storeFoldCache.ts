@@ -12,17 +12,39 @@
 
 import { settingsStore } from './store'
 
+/** The stored object, as an object. Two fields live under this key now, so both readers share one
+ *  shape check and both writers MERGE — a `set` that replaced the object would silently drop the
+ *  other field, which is the classic way two settings under one key eat each other. */
+function raw(): { enabled?: unknown; shadowLastMs?: unknown } {
+  const value: unknown = settingsStore.get('foldCache')
+  return typeof value === 'object' && value !== null ? value : {}
+}
+
 /** The stored preference, or undefined when nobody has ever set it. Never throws. */
 export function getFoldCacheEnabled(): boolean | undefined {
-  const raw: unknown = settingsStore.get('foldCache')
-  if (typeof raw !== 'object' || raw === null) return undefined
-  const v: unknown = (raw as { enabled?: unknown }).enabled
+  const v = raw().enabled
   return typeof v === 'boolean' ? v : undefined
 }
 
 /** Store the preference; returns what was stored. Validated here — the renderer may supply it. */
 export function setFoldCacheEnabled(next: unknown): boolean {
   const clean = next === true
-  settingsStore.set('foldCache', { enabled: clean })
+  settingsStore.set('foldCache', { ...raw(), enabled: clean })
   return clean
+}
+
+/**
+ * WHEN THE SHADOW VERIFIER LAST RAN (JOS-208 phase 3), or 0 when it never has.
+ *
+ * Persisted rather than held in memory because its whole job is to space runs across LAUNCHES — the
+ * design's "sample, do not always-verify", which exists so the verification's own cold read never
+ * lands on top of the cold read it is measuring the absence of.
+ */
+export function getFoldShadowLastMs(): number {
+  const v = raw().shadowLastMs
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
+}
+
+export function setFoldShadowLastMs(atMs: number): void {
+  settingsStore.set('foldCache', { ...raw(), shadowLastMs: Math.max(0, Math.round(atMs)) })
 }

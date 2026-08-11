@@ -38,6 +38,7 @@ import {
   addMark,
   aggregateMetrics,
   buildProfile,
+  describeCheckpoint,
   describeMarkError,
   foldBlockSamples,
   foldStutterSamples,
@@ -50,6 +51,7 @@ import {
   STARTUP_STUTTER_MIN_SAMPLES,
   totalsOf,
   type BlockSample,
+  type CheckpointVerdict,
   type PerfSample,
   type RawProcessMetric,
   type ReplayDutyStats,
@@ -85,7 +87,26 @@ let replayBytes: number | undefined
 // JOS-57's scope addition, both arriving with `replayDone` and both meaning UNKNOWN while unset.
 let newBytes: number | undefined
 let firstMbMs: number | undefined
+/** What the startup checkpoint loader decided (JOS-208 phase 3). Unset ⇒ nothing decided. */
+let checkpoint: CheckpointVerdict | undefined
 let profileWritten = false
+
+/**
+ * RECORD THE CHECKPOINT LOADER'S VERDICT for this launch (JOS-208 phase 3).
+ *
+ * PUSHED FROM `foldCache/attach.ts` rather than pulled from here, and the direction is the point:
+ * this module deliberately imports neither the store nor the pipeline (see `startPerfSampler`'s
+ * note about the same rule), and a `perf.ts` that reached into the fold cache to ask would drag
+ * every module in the app in behind it.
+ *
+ * FIRST WRITE WINS, for the same reason the startup reading's does: the loader runs once per
+ * character attach and the profile describes the LAUNCH, so a character SWITCH — which attaches
+ * again, and may legitimately decide differently for a different log — must not overwrite what the
+ * launch itself did.
+ */
+export function noteCheckpointVerdict(verdict: CheckpointVerdict): void {
+  checkpoint ??= verdict
+}
 
 // ------------------------------------------------------------------- the startup block probe
 //
@@ -337,7 +358,8 @@ export function startupProfile(): StartupProfile {
     ...(replayStats === undefined ? {} : { replay: replayStats }),
     ...(stutterStats === undefined ? {} : { stutter: stutterStats }),
     ...(newBytes === undefined ? {} : { newBytes }),
-    ...(firstMbMs === undefined ? {} : { firstMbMs })
+    ...(firstMbMs === undefined ? {} : { firstMbMs }),
+    ...(checkpoint === undefined ? {} : { checkpoint })
   })
 }
 
@@ -368,9 +390,14 @@ function logStartupSummary(profile: StartupProfile): void {
       : `, replay duty ${String(Math.round(replayDutyOf(profile.replay) * 100))}%` +
         ` (${String(Math.round(profile.replay.workMs))}ms folding / ${String(Math.round(profile.replay.restMs))}ms resting` +
         ` over ${String(profile.replay.slices)} slices)`
+  // THE LOADER'S VERDICT, on the same line as the cost it explains (JOS-208 phase 3). A launch that
+  // cold-read 128 MB because the cache was refused and a launch that never had one are the same
+  // number of milliseconds with two entirely different answers, and until this clause existed the
+  // only way to tell them apart was to ask the user to go and look.
+  const cache = profile.checkpoint === undefined ? '' : `, ${describeCheckpoint(profile.checkpoint)}`
   logInfo(
     `[everquest-companion] Startup ${String(Math.round(profile.totalMs))}ms` +
-      `${replayed}${blocked}${duty}${coldRead(profile)} (${worst}) - profile at ${profilePath()}`
+      `${replayed}${blocked}${duty}${cache}${coldRead(profile)} (${worst}) - profile at ${profilePath()}`
   )
 }
 
