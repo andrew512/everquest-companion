@@ -676,10 +676,16 @@ export function getAlertPrefs(): AlertPrefs {
   return { ...DEFAULT_ALERT_PREFS, ...(store.get('alertPrefs') ?? {}) }
 }
 
+/**
+ * Persist the global alert prefs, re-clamped. `alwaysPlayAll` is written ONLY when true (JOS-222)
+ * so a store with the audio throttle on stays byte-identical to one written before the preference
+ * existed — `getAlertPrefs` defaults the absent key, so off and absent are the same answer.
+ */
 export function setAlertPrefs(prefs: AlertPrefs): AlertPrefs {
   const next: AlertPrefs = {
     globalVolume: Math.max(0, Math.min(1, prefs.globalVolume)),
-    muted: prefs.muted
+    muted: prefs.muted,
+    ...(prefs.alwaysPlayAll === true ? { alwaysPlayAll: true } : {})
   }
   store.set('alertPrefs', next)
   return next

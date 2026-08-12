@@ -346,6 +346,22 @@ export interface AlertPrefs {
   globalVolume: number
   /** When true, no alert sounds play (the player still receives deltas). */
   muted: boolean
+  /**
+   * ALWAYS PLAY EVERY ALERT — the per-alert `AlertDef.alwaysPlay` opt-out, raised to a global
+   * one (JOS-222, owner 2026-08-11: "a preference to always play for all alerts").
+   *
+   * It is the SAME bypass, applied to every def rather than to the ones the user ticked: the
+   * cross-alert coalescing window (renderer/features/alerts/audioThrottle.ts) is skipped and
+   * nothing occupies it, so four buffs fading together are four sounds. That IS the smear the
+   * throttle exists to prevent — which is why it STARTS OFF and stays off unless the user says
+   * otherwise. Someone who would rather hear everything twice than miss one thing gets to say
+   * so in one place instead of ticking a box on every alert they ever add.
+   *
+   * Absent ⇒ false ⇒ today's behavior, which is why this is additive: the key is written only
+   * when it is true, so a store where the throttle is on is byte-identical to one written
+   * before this existed, and every def's own `alwaysPlay` still means exactly what it meant.
+   */
+  alwaysPlayAll?: boolean
 }
 
 /** One alert that fired, carried in the alerts module delta. */
