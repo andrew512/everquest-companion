@@ -559,7 +559,10 @@ export default function App(): JSX.Element {
       <Box sx={{ display: 'flex', flexGrow: 1, minHeight: 0 }}>
         {/* MANUAL navigation: `selectView`, not the raw setter — the user choosing a tab by hand
             is also the user ending whatever deep-link journey was parked (navOrigin.ts). */}
-        <NavDrawer view={view} onSelect={selectView} onSendFeedback={() => feedback.openFeedback()} />
+        {/* …and it takes the prefs router the way `BottomStrips` does (JOS-254): the patch-notes
+            icon beside the version number in the chip at its foot opens a Preferences SECTION,
+            which is not a view, so the destination travels as the router rather than as a tab. */}
+        <NavDrawer view={view} onSelect={selectView} prefs={prefsRouting} onSendFeedback={() => feedback.openFeedback()} />
 
         <Box
           component="main"
