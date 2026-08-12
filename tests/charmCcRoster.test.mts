@@ -68,6 +68,7 @@ import assert from 'node:assert/strict'
 import { parseEvent } from '../src/main/log/parser'
 import { getParserConfig, installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
+import { CharmModel } from '../src/main/combat/charmModel'
 import { AlertsModule } from '../src/main/modules/alerts'
 import { ALERT_GROUPS, alertGroupDefs } from '../src/shared/alertGroups'
 import type { AlertDef } from '../src/shared/types'
@@ -198,7 +199,47 @@ const CHARM_FAMILIES: Record<string, string> = {
   'Someone has been charmed.': 'the Enchanter charm ladder (Charm 11 → Dictate 60)',
   // Five Necromancer charm-undead spells share this one; the stems covered the first three by
   // accident (dominate / beguile / cajol) and a necro who reached 54 lost their charm break.
-  'Someone moans.': 'the Necromancer charm-undead ladder (Dominate Undead 18 → Enslave Death 60)'
+  'Someone moans.': 'the Necromancer charm-undead ladder (Dominate Undead 18 → Enslave Death 60)',
+  // THE THIRD FAMILY, AND IT WAS NEVER A PAIR (JOS-250 charm roster research 2026-08-12). This
+  // ladder has SEVEN castable members and rulesets.ts used to claim in prose that it was complete
+  // at two. Registering the message here is what proved otherwise: R2 walks the family off
+  // spells.json and failed on exactly the three the stems had never matched — Befriend Animal
+  // (Druid 13 / Shaman 25, the druid's FIRST charm), Call of Karana (Druid 52) and Tunare`s
+  // Request (Druid 55, the capstone). Same "one word apart" failure JOS-84 caught for Largo's, at
+  // both ends of a different ladder.
+  'Someone blinks.': 'the Druid/Shaman charm ladder (Befriend Animal 13 → Tunare`s Request 55)'
+}
+
+/**
+ * NOT A CHARM (JOS-250 charm roster research 2026-08-12) — the spells `CHARM_STEMS` used to match
+ * and must never match again, and why. The mirror of `NOT_A_HOLD` above, and it exists for the
+ * same reason: a stem that reaches too far is a silent claim about a spell, and the only way to
+ * stop the next scrape or the next widening quietly re-adopting one is to write the claim down as
+ * an assertion.
+ *
+ * THE DANGEROUS ONE IS `Boltran's Animation`, and it is worth being explicit about the mechanism.
+ * The old roster carried a bare `boltran` stem, which bought nothing (`agacerie` already matches
+ * `Boltran's Agacerie` uniquely) and which also matched a magician PET SUMMON with a 9,000 ms cast
+ * time. JOS-250 arms an ownership window of `castTime + slack` on a matching third-person cast, so
+ * that stem handed a magician summoning their pet a 10.5-second window in which the next
+ * caster-less `<mob> has been charmed.` in the zone would be attributed to them — the exact
+ * foreign-pet adoption Task #65 spent a wave undoing, reached through the roster's back door.
+ *
+ * `castArms` says whether the spell is castable by a player and therefore whether the second half
+ * of the assertion (drive it through the real `CharmModel` and prove no arm opens) applies. The
+ * two item entries are focus effects with no cast line at all.
+ */
+const NOT_A_CHARM: Record<string, { why: string; castArms: boolean }> = {
+  'Allure of Death': {
+    why: 'Necromancer self-buff, Beneficial — `Someone looks sick.`, not a charm landing',
+    castArms: true
+  },
+  "Boltran's Animation": {
+    why: 'Magician PET SUMMON, Beneficial, 9,000 ms cast — the 10.5 s false ownership window',
+    castArms: true
+  },
+  "Naki's Charm of Pernicity": { why: 'an ITEM focus effect; a charm is a trinket too', castArms: false },
+  "Tavee's Charm of Diuturnity": { why: 'an ITEM focus effect', castArms: false }
 }
 
 /**
@@ -353,6 +394,33 @@ test('JOS-84 R2: charmSpell classifies every castable member of every charm fami
   }
 })
 
+test('JOS-250 R2b: a NOT_A_CHARM spell is refused by the roster AND arms no ownership window', () => {
+  for (const [name, { why, castArms }] of Object.entries(NOT_A_CHARM)) {
+    assert.ok(!cfg.charmSpell.test(name), `charmSpell must refuse "${name}" — ${why}`)
+    assert.ok(!cfg.ccSpell.test(name), `ccSpell must refuse "${name}" — ${why}`)
+    if (!castArms) continue
+    // THE ASSERTION NOTHING IN THIS SUITE USED TO MAKE: drive the name through the real ownership
+    // model as an own cast and prove the next charm broadcast is still foreign. A stem test alone
+    // would have passed on the old roster too — `Boltran's Animation` matched the stem and the
+    // damage it did was one layer down, in the arm the match opened.
+    const m = new CharmModel()
+    m.noteCastBegin(name, 1_000)
+    assert.equal(
+      m.charmBroadcast('a rock golem', 'a rock golem', 3_000),
+      'foreign',
+      `"${name}" must not arm the charm window — ${why}`
+    )
+  }
+})
+
+test('JOS-250 R2c: the roster still arms for a real charm, so R2b is not vacuous', () => {
+  // The control the refusal above needs: the same three calls with a genuine charm must bind, or
+  // R2b would pass on a model that never arms for anything.
+  const m = new CharmModel()
+  m.noteCastBegin('Charm', 1_000)
+  assert.equal(m.charmBroadcast('a rock golem', 'a rock golem', 3_000), 'own')
+})
+
 // ── R3: the reporter's own sentence, end to end ──────────────────────────────────────────────
 
 test("JOS-200 R3: the bard's Bravura break parses as an uncharm and fires the charm-break alert", () => {
@@ -401,6 +469,28 @@ test("JOS-84 R5: the Necromancer charm-undead ladder's top two now fire charm br
     '[Wed Aug 05 22:31:00 2026] Your Enslave Death spell has worn off of a decaying skeleton.'
   ]
   assert.deepEqual(fire(GROUP_DEFS, lines), ['charm-break', 'charm-break'])
+})
+
+test('JOS-250 R5b: the three unmatched Druid/Shaman charms now fire charm break', () => {
+  // The ladder's two ends: the druid's FIRST charm (13) and their last two (52, 55). Every one of
+  // them was an ordinary `buffFade` before JOS-250 — no `uncharm` event, no alert, and the same
+  // "your charm break doesn't work" report the bard filed in JOS-84, waiting to be filed again by
+  // a druid.
+  //
+  // TUNARE`S REQUEST IS SPELLED WITH AN APOSTROPHE HERE, ON PURPOSE. The committed spells.json
+  // row uses a BACKTICK (`Tunare\`s Request`) and the game's own lines use an apostrophe, so the
+  // stem's `.` covers both and this pair of assertions is what proves it: the LOG form below, and
+  // the DB form that R2 above walks out of `castableSharing('Someone blinks.')`.
+  const lines = [
+    '[Wed Aug 05 22:30:00 2026] Your Befriend Animal spell has worn off of a black bear.',
+    '[Wed Aug 05 22:31:00 2026] Your Call of Karana spell has worn off of a black bear.',
+    "[Wed Aug 05 22:32:00 2026] Your Tunare's Request spell has worn off of a black bear."
+  ]
+  for (const l of lines) assert.equal(parseEvent(l, 0)?.kind, 'uncharm', l)
+  assert.deepEqual(fire(GROUP_DEFS, lines), ['charm-break', 'charm-break', 'charm-break'])
+  // …and the DB's backtick spelling classifies too, or the oracle and the game would disagree
+  // about one spell (the same trap `solon.s (bewitching )?bravura` exists for).
+  assert.ok(cfg.charmSpell.test('Tunare`s Request'), 'the backtick form is the DB\'s')
 })
 
 test('JOS-84 R6: the regression gate — the enchanter shapes are untouched', () => {

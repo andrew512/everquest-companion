@@ -188,9 +188,39 @@ export interface ParserConfig {
  * charm-undead spells share the landing message "Someone moans." — Dominate Undead 18, Beguile
  * Undead 31, Cajole Undead 47, Thrall of Bones 54, Enslave Death 60 — and the stems covered the
  * first three by accident (dominate / beguile / cajol) while a necro who reached 54 lost their
- * charm break. The Enchanter ladder (Charm 11, Beguile 23, Cajoling Whispers 37, Allure 46,
- * Boltran's Agacerie 53, Dictate 60) and the Druid/Shaman pair (Charm Animals, Allure of the
- * Wild) were already complete and are unchanged.
+ * charm break.
+ *
+ * …AND THE DRUID/SHAMAN SIDE WAS NEVER A PAIR (JOS-250 charm roster research 2026-08-12). This
+ * paragraph used to say "the Druid/Shaman pair (Charm Animals, Allure of the Wild) were already
+ * complete", and that was FALSE. `Someone blinks.` is a SEVEN-member ladder in the committed
+ * spells.json, every one of them castable and Detrimental: Befriend Animal (Druid 13 / Shaman 25),
+ * Charm Animals (Druid 23 / Shaman 32), Beguile Plants (Druid 28), Beguile Animals (Druid 33),
+ * Allure of the Wild (Druid 43), Call of Karana (Druid 52), Tunare`s Request (Druid 55). Three of
+ * the seven — Befriend Animal, Call of Karana, Tunare`s Request — matched no stem at all, so the
+ * druid's FIRST charm and their last two both lost their break line. The same "one word apart"
+ * failure JOS-84 caught for Largo's, at the two ends of a different ladder.
+ *
+ * `tunare.s request` carries the same apostrophe/backtick dot the bard stems do, and here it is
+ * load-bearing rather than defensive: the committed DB row spells it with a BACKTICK
+ * (``Tunare`s Request``) while the log prints an apostrophe, so a stem written either way alone
+ * would satisfy one of the two readers and fail the other.
+ *
+ * FOUR FALSE POSITIVES LEFT AT THE SAME TIME, and one of them was dangerous rather than untidy:
+ *   * `\bcharm\b(?! of )` drops the two ITEM focus effects `Naki's Charm of Pernicity` and
+ *     `Tavee's Charm of Diuturnity` — a charm is a trinket as well as a spell in this game.
+ *   * `\ballure\b(?! of death)` drops `Allure of Death`, a Beneficial NECRO SELF-BUFF.
+ *   * the `boltran` stem is DELETED outright. `agacerie` already matches `Boltran's Agacerie`
+ *     uniquely, so the stem bought nothing — while it also matched `Boltran's Animation`, a
+ *     Beneficial PET SUMMON with a 9,000 ms cast time. That is not a cosmetic miss: JOS-250 arms
+ *     a charm-attribution window of `castTime + slack` on a matching cast, so the stem was
+ *     handing a pet-summoning magician a 10.5-second window in which the next caster-less charm
+ *     broadcast in the zone would be attributed to them. The exact adoption the ownership model
+ *     exists to prevent, reached through the roster's back door.
+ * `alluring whispers` is added for completeness (NPC-only, so no `Your … has worn off of` line can
+ * ever name it, but it is a member of the enchanter landing family and the oracle walks members).
+ *
+ * `song of the sirens` is DELIBERATELY NOT ADDED — contested, owner ruling pending. It stays in
+ * `CC_STEMS` where JOS-84 put it.
  *
  * NOTHING HERE IS INVENTED. Every added name is a spell in src/main/data/spells.json that shares
  * its landing message with a member the rosters already classified; tests/charmCcRoster.test.mts
@@ -227,7 +257,7 @@ export interface ParserConfig {
  * built from the catalog's display name matches the sentence the game actually prints.
  */
 export const CHARM_STEMS =
-  /\bcharm\b|beguile|allure|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|boltran|thrall of bones|enslave death|solon.s (bewitching )?bravura/i
+  /\bcharm\b(?! of )|beguile|\ballure\b(?! of death)|alluring whispers|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|thrall of bones|enslave death|befriend animal|call of karana|tunare.s request|solon.s (bewitching )?bravura/i
 export const CC_STEMS =
   /mesmeriz|enthrall|entranc|dazzle|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|song of the sirens|pixie strike|sionachie.s dreams/i
 
