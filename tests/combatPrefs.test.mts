@@ -7,9 +7,12 @@
 // localStorage, and everything that can silently go wrong is here: a default, a guard, a degrade.
 //
 // WHAT IS WORTH PINNING, and why each one is not obvious:
-//   * the DEFAULT scope is Group, and an ABSENT key is that default rather than 'you'. A user who
-//     has never opened Preferences has not chosen You (owner ruling: "fresh install and absent key
-//     both resolve to Group").
+//   * the DEFAULT scope is Everyone (JOS-229; it was Group from JOS-115 until then), and an ABSENT
+//     key is that default. A user who has never opened Preferences has chosen nothing, and the
+//     answer a meter gives them must not depend on an inferred roster being complete.
+//   * …and the flip is FRESH-STATE ONLY. A stored 'group' is an answer somebody gave and comes
+//     back verbatim — the default speaks for absence and for nothing else, which is why there is
+//     no migration here to test.
 //   * anything that is not one of the three degrades to the default. A meter is never blank
 //     because a value was hand-edited or written by a future build.
 //   * a stored drill is TOTAL: absent, empty, malformed JSON, an array, an unknown arm and a
@@ -44,10 +47,25 @@ import { METER_SCOPES } from '../src/shared/roster'
 
 // ── JOS-115: whose damage ────────────────────────────────────────────────────────────────
 
-test('the meter scope defaults to Group — for a fresh install and an absent key alike', () => {
-  assert.equal(DEFAULT_METER_SCOPE, 'group')
-  assert.equal(readMeterScope(null), 'group')
-  assert.equal(readMeterScope(''), 'group')
+test('the meter scope defaults to Everyone — for a fresh install and an absent key alike', () => {
+  // JOS-229. Group's no-roster fallback made it look free, but it only covers the EMPTY roster:
+  // membership is inferred from lines the game prints once, so a SEEN roster can still be missing
+  // a real player, and Group then hides their bars with no fallback to say why.
+  assert.equal(DEFAULT_METER_SCOPE, 'everyone')
+  assert.equal(readMeterScope(null), 'everyone')
+  assert.equal(readMeterScope(''), 'everyone')
+})
+
+test('an explicitly stored scope is kept — the default speaks for ABSENCE only', () => {
+  // The half of JOS-229 that is a promise rather than a constant: someone who went to Preferences
+  // and chose Group keeps Group. `readMeterScope` is the ONLY reader and it hands a valid stored
+  // value straight back, so "no forced migration" is a property of this function, not a piece of
+  // migration code that could be omitted. Pinned per scope so a future "normalise the old default"
+  // shortcut has to fail here first.
+  assert.equal(readMeterScope('group'), 'group')
+  assert.equal(readMeterScope('you'), 'you')
+  assert.equal(readMeterScope('everyone'), 'everyone')
+  assert.notEqual(readMeterScope('group'), DEFAULT_METER_SCOPE)
 })
 
 test('each of the three scopes round-trips, and nothing else does', () => {
@@ -55,7 +73,7 @@ test('each of the three scopes round-trips, and nothing else does', () => {
   // Hand-edited, capitalised, a future build's fourth state, or a whole JSON blob in the slot:
   // every one of them is the DEFAULT rather than an empty meter.
   for (const junk of ['You', 'GROUP', 'party', 'raid', '{"scope":"you"}', ' you', 'you ', '0', 'null']) {
-    assert.equal(readMeterScope(junk), 'group', `${junk} must degrade to the default`)
+    assert.equal(readMeterScope(junk), 'everyone', `${junk} must degrade to the default`)
   }
 })
 

@@ -30,14 +30,24 @@ import type { Drill } from './dashboardData'
 export const METER_SCOPE_KEY = 'eq.combat.meterScope'
 
 /**
- * DEFAULT GROUP, for a fresh install and for an absent key alike (owner, JOS-115).
+ * DEFAULT EVERYONE, for a fresh install and for an absent key alike (owner, JOS-229).
  *
- * Safe by construction: with no roster, Group resolves to Everyone and the surfaces label
- * themselves `Group (no roster yet)` (shared/roster.ts effectiveScope / chipLabel), so a solo
- * player sees what they always saw and a grouped player sees their group without hunting for a
- * control.
+ * It shipped as Group (JOS-115) on the argument that Group is safe by construction: with no
+ * roster it resolves to Everyone and the surfaces say `Group (no roster yet)`, so nobody could be
+ * hidden by it. That argument covers the EMPTY roster and not the WRONG one — which is the case
+ * the owner actually fields. Membership is inferred from lines the game prints once (a join the
+ * log never carried, a group formed before the app was open, a break EQ never announces), so a
+ * seen-but-incomplete roster is a meter with a real group-mate's bars silently missing, and the
+ * report that arrives is "the damage meter is broken". Everyone hides nobody, needs no inference
+ * to be right, and is what the meter showed before the group model existed. The narrowing is
+ * still one click away in Preferences > Combat, where a wrong answer is visible as a choice.
+ *
+ * A DEFAULT SPEAKS FOR AN ABSENT KEY AND FOR NOTHING ELSE. A user who went to Preferences and
+ * chose Group has 'group' in storage, `readMeterScope` hands it straight back, and no migration
+ * anywhere rewrites it — flipping this constant moves the people who never answered the question,
+ * which are the only people a default was ever entitled to move.
  */
-export const DEFAULT_METER_SCOPE: MeterScope = 'group'
+export const DEFAULT_METER_SCOPE: MeterScope = 'everyone'
 
 /** The stored scope, or the default — for absent, empty, misspelled or hand-edited values alike. */
 export function readMeterScope(raw: string | null): MeterScope {
