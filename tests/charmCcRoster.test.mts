@@ -44,6 +44,15 @@
 // slice with the mob's name swapped for one the owner's own log prints, exactly as the
 // petClaimWindows / mobLifetapPlayer precedents do.
 //
+// AND THE ORACLE PRODUCED A SECOND WRONG ANSWER, IN THE OTHER DIRECTION (JOS-225). A bard reported
+// the "Mez / root broke" alert firing every time `Largo's Melodic Binding` lapsed. That song was
+// not something the family walk added — it was in `ccSpell` from the original hand-audited stem
+// list, labelled "bard/enchanter mez", and JOS-84 completed the pair (Assonant Binding 51) on the
+// strength of the shared landing sentence without ever re-checking what the songs DO. They hold
+// nothing. `NOT_A_HOLD` below carries the evidence and R1c/R1d are its assertions; the point of
+// writing it as a table rather than a quiet regex edit is that the oracle would otherwise sweep
+// both songs straight back in on the next scrape.
+//
 // Run: `npm test`.
 
 import { test } from 'node:test'
@@ -116,11 +125,43 @@ const CC_FAMILIES: Record<string, string> = {
   // sentence and is a charm (FAMILY_EXCEPTIONS, below).
   "Someone 's eyes glaze over.":
     "bard mez (Song of the Sirens 27, Pixie Strike 28, Sionachie's Dreams 40)",
-  "Someone 's head nods.": "bard mez (Kelin's Lucid Lullaby 15)",
-  // The bard root pair — Melodic Binding 20 and its DIRECT UPGRADE, Assonant Binding 51, one
-  // word apart. The upgrade was the one missing, which is the level-up failure exactly.
-  'Someone is bound in strands of solid music.': "bard root (Largo's Melodic Binding 20)",
-  'Someone is bound by strands of solid music.': "bard root (Largo's Assonant Binding 51)"
+  "Someone 's head nods.": "bard mez (Kelin's Lucid Lullaby 15)"
+  // The two `… bound in/by strands of solid music.` families used to sit here, claimed as "bard
+  // root" (Largo's Melodic Binding 20 and its direct upgrade, Assonant Binding 51). JOS-225
+  // WITHDREW that claim — they are movement debuffs and hold nothing. See NOT_A_HOLD below.
+}
+
+/**
+ * NOT A HOLD (JOS-225) — the songs that must stay OUT of both rosters, and why.
+ *
+ * THE REPORT: a bard hears the "Mez / root broke" alert every time `Largo's Melodic Binding`
+ * lapses. Replaying the reporter's slice (01KZSH65ZX4Z74AK1CSZWQ42VK, read-only, never committed)
+ * through the real parser and the real alerts module fires `group:cc:broke` four times, and all
+ * four are Largo's — there is not one genuine mez in it.
+ *
+ * THIS IS THE OTHER DIRECTION OF THE JOS-200 MISTAKE. There, the message oracle swept a charm into
+ * the mez roster. Here, the ORIGINAL hand-audited stem list called Largo's "bard/enchanter mez" in
+ * 2026-07, JOS-84's family walk completed the pair without re-checking the effect, and this table
+ * is where the effect finally got checked. A message family is not an effect family in either
+ * direction.
+ *
+ * THE EVIDENCE IS MECHANICAL (the full argument, with counts, is in src/main/log/rulesets.ts):
+ * the song's target trades melee blows in the same second its wear-off prints; `<mob> has been
+ * awakened by <name>.` lands with 0 of 81 Largo's wear-offs over the owner's whole log against
+ * 67.7% of Mesmerization's 1,848, 78.9% of Enthrall's 95, 85.9% of Dazzle's 85 and 84.1% of
+ * Entrance's 69; and the committed DB gives it a `buffApply` landing sentence, so no CC
+ * APPLICATION event for it exists in the corpus at all. Both songs go together for the reason
+ * JOS-84 added the second: a fix that stops at level 20 hands the bug back at level 51.
+ *
+ * FALLING OUT OF BOTH ROSTERS IS THE POINT HERE, and it is the one outcome R1b forbids — for a
+ * HOLD. R1c below is the counterpart assertion: a movement debuff filed as `buffFade` is a debuff
+ * filed correctly, and it must be SILENT. Adding a row here is not a way to quiet a noisy alert;
+ * it is a claim that the game shows the spell doing something other than holding, and it needs
+ * evidence of that shape.
+ */
+const NOT_A_HOLD: Record<string, string> = {
+  "Largo's Melodic Binding": "bard 20, PB AE, 3 ticks — the reporter's own false positive",
+  "Largo's Assonant Binding": 'bard 51 — the direct upgrade, one word apart'
 }
 
 /** The charm families the parser routes to `uncharm`. */
@@ -184,6 +225,48 @@ test('JOS-200 R1b: every family exception is still classified — into the OTHER
   }
 })
 
+test('JOS-225 R1c: a NOT_A_HOLD song is in NEITHER roster, parses to buffFade, and is SILENT', () => {
+  for (const [name, why] of Object.entries(NOT_A_HOLD)) {
+    assert.ok(
+      db.byKey.has(name.toLowerCase()),
+      `spells.json must still carry "${name}" (${why}) — a table naming a spell that no longer ` +
+        'exists is a stale claim, not a passing test'
+    )
+    assert.ok(!cfg.ccSpell.test(name), `ccSpell must NOT claim "${name}" — ${why}`)
+    assert.ok(!cfg.charmSpell.test(name), `charmSpell must NOT claim "${name}" — ${why}`)
+
+    // …and end to end. The synthesized sentence has the same grammatical shape as the reporter's
+    // (`Your <song> spell has worn off of <mob>.`) with a mob the owner's own log prints.
+    const line = wornOff(name, 'a froglok ton knight')
+    const ev = parseEvent(line, 0)
+    assert.equal(
+      ev?.kind,
+      'buffFade',
+      `"${name}" must file as an ordinary named-target debuff fade, not a hold ending`
+    )
+    assert.deepEqual(
+      fire(GROUP_DEFS, [line]),
+      [],
+      `"${name}" wearing off must fire NOTHING — this is the JOS-225 report, and the alert it ` +
+        'used to fire was "Mez / root broke"'
+    )
+  }
+})
+
+test('JOS-225 R1d: silencing Largo did not silence the mez beside it', () => {
+  // The acceptance the ticket names: the false positive goes, the true positives stay, in ONE
+  // stream. Timestamps are spaced so the group's 3 s cooldown collapses nothing — a `[]` here
+  // would be the cooldown lying, not the roster.
+  const lines = [
+    `[Wed Aug 05 22:30:00 2026] Your Largo's Melodic Binding spell has worn off of a wanderer.`,
+    '[Wed Aug 05 22:31:00 2026] Your Mesmerization spell has worn off of a wanderer.',
+    `[Wed Aug 05 22:32:00 2026] Your Largo's Assonant Binding spell has worn off of a wanderer.`,
+    `[Wed Aug 05 22:33:00 2026] Your Solon's Song of the Sirens spell has worn off of a wanderer.`,
+    '[Wed Aug 05 22:34:00 2026] Your Allure spell has worn off of a wanderer.'
+  ]
+  assert.deepEqual(fire(GROUP_DEFS, lines), ['group:cc:broke', 'group:cc:broke', 'charm-break'])
+})
+
 test('JOS-84 R2: charmSpell classifies every castable member of every charm family it claims', () => {
   for (const [message, ladder] of Object.entries(CHARM_FAMILIES)) {
     const members = castableSharing(message)
@@ -218,13 +301,12 @@ test("JOS-200 R3: the bard's Bravura break parses as an uncharm and fires the ch
 test('JOS-84 R4: the whole bard crowd-control ladder fires the mez/root group', () => {
   // Every song at its own timestamp so the group's 3 s cooldown does not collapse them.
   // Bravura is NOT in this list since JOS-200 — it is a charm, and R3 above is its assertion.
+  // Neither Largo's is in it since JOS-225 — they are movement debuffs, and R1c/R1d are theirs.
   const songs = [
     "Kelin's Lucid Lullaby",
-    "Largo's Melodic Binding",
     "Solon's Song of the Sirens",
     "Crission's Pixie Strike",
-    "Sionachie's Dreams",
-    "Largo's Assonant Binding"
+    "Sionachie's Dreams"
   ]
   const lines = songs.map(
     (s, i) => `[Wed Aug 05 22:${String(30 + i).padStart(2, '0')}:00 2026] Your ${s} spell has worn off of a froglok ton knight.`
