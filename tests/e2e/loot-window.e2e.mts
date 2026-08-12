@@ -58,6 +58,12 @@ const LOOT_SCROLL = '[data-testid="loot-scroll"]'
 const LOOT_ROW = '[data-testid="loot-row"]'
 const LOOT_DETAIL = '[data-testid="loot-detail"]'
 const LOOT_BACK = '[data-testid="loot-back"]'
+/**
+ * THE APP'S ONE CONTENT SCROLLER (App.tsx). Views that manage their own scrolling — the Loot
+ * ledger, the Planner's browser — fill it and scroll INSIDE it; a view that does not simply grows
+ * and this scrolls. The testid exists for the step below, which proves the shell grows no SECOND
+ * scroll behind a view that is already scrolling itself.
+ */
 const APP_CONTENT = '[data-testid="app-content"]'
 
 /**

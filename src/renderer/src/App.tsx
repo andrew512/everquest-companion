@@ -568,10 +568,6 @@ export default function App(): JSX.Element {
           component="main"
           sx={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
         >
-          {/* THE APP'S ONE CONTENT SCROLLER. Views that manage their own scrolling (the Loot
-              ledger, the Planner's browser) fill it and scroll INSIDE it; a view that does not
-              simply grows and this scrolls. The testid is the handle the e2e uses to prove there
-              is no SECOND scroll here when a view is already scrolling itself (JOS-260). */}
           <Box data-testid="app-content" sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
             <ViewContent
               view={view}
