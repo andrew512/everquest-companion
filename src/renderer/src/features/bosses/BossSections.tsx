@@ -467,17 +467,25 @@ function LoadoutHeader({ group }: { group: LoadoutGrouping }): JSX.Element {
 }
 
 /** Defeated targets, split per tier run and time-joined to the combo intervals (loadoutGroups). */
-function useLoadoutGroups(list: TargetStatus[]): LoadoutGrouping[] {
+function useLoadoutGroups(list: TargetStatus[], keep?: (card: TargetStatus) => boolean): LoadoutGrouping[] {
   const intervals = useComboIntervals()
-  return useMemo(() => loadoutGroups(intervals, list), [intervals, list])
+  return useMemo(() => loadoutGroups(intervals, list, keep), [intervals, list, keep])
 }
 
 /**
  * The roster sectioned by class loadout. Undefeated targets carry no timestamp to join on, so
  * they keep their own trailing section instead of being silently dropped or attributed.
+ *
+ * `keep` is the toolbar's "defeated" filter at CARD grain (JOS-237): a card here is one tier run
+ * of a target, so a filter that only ran over whole targets would let a run it excludes back onto
+ * the screen. Absent = the switch is off and every card stands.
  */
-export function LoadoutSections({ list, ...grid }: SectionProps): JSX.Element {
-  const groups = useLoadoutGroups(list)
+export function LoadoutSections({
+  list,
+  keep,
+  ...grid
+}: SectionProps & { keep?: (card: TargetStatus) => boolean }): JSX.Element {
+  const groups = useLoadoutGroups(list, keep)
   const undefeated = list.filter((s) => !s.killed || s.lastTs === 0)
   return (
     <>
