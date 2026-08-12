@@ -110,6 +110,12 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     verification — the full-sweep-only pattern is broken, green on immediate
     rerun) · fix shape diagnosed (wait for bounds to differ before settling);
     ticket JOS-232 filed — now firing standalone, priority raised.
+  - `window-bounds.e2e` · close-time bounds write never lands under sweep
+    load ("closing the window writes down where it was left — (none)",
+    cascades into both relaunch-bounds checks) · 1 sighting (2026-08-12,
+    40-spec sweep during JOS-260 verification; green standalone immediately
+    after and in the following full sweep) · load-sensitive
+    persistence-on-close, unrelated to the change under test; report line.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
     while EverQuest runs with a player at the keyboard · 3 sightings
     (2026-08-10 ×2, 2026-08-12 JOS-239 worker mid-session, green on final
