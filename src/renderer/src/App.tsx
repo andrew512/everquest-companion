@@ -568,7 +568,7 @@ export default function App(): JSX.Element {
           component="main"
           sx={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
         >
-          <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
+          <Box data-testid="app-content" sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
             <ViewContent
               view={view}
               hasCharacters={characters.length > 0}
