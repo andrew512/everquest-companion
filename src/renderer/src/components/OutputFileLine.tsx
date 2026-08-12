@@ -57,6 +57,47 @@ import {
 /** How often the age re-renders. Coarse, matching `formatAge`'s own resolution (UpdateChip). */
 const AGE_TICK_MS = 60_000
 
+/** A child's testid, or none when the line was given none. Module-level so the component stays
+ *  within the measured complexity ceiling rather than carrying four copies of this ternary. */
+const sub = (testId: string | undefined, part: string): string | undefined =>
+  testId === undefined ? undefined : `${testId}-${part}`
+
+/** The exact clock time behind a coarse label, or nothing when there is no instant to state. */
+const clock = (at: number | undefined): string | undefined =>
+  at === undefined ? undefined : formatDateTime(at)
+
+/**
+ * ONE TIME SLOT on the right-hand end: coarse words, the exact clock on hover.
+ *
+ * The two slots (the file's age, and — since JOS-253 — when we read it) are the SAME rendering
+ * with different words and a different colour, so they are one component. That is also what keeps
+ * the layout above readable: it reads as a row of groups rather than as two near-identical
+ * fifteen-line blocks that a reader has to diff by eye.
+ */
+function Stamp({
+  label,
+  at,
+  warn = false,
+  testId
+}: {
+  label: string
+  at: number | undefined
+  warn?: boolean
+  testId: string | undefined
+}): JSX.Element {
+  return (
+    <Typography
+      variant="caption"
+      color={warn ? 'warning.main' : 'text.disabled'}
+      title={clock(at)}
+      data-testid={testId}
+      sx={{ flexShrink: 0 }}
+    >
+      {label}
+    </Typography>
+  )
+}
+
 export interface OutputFileLineProps {
   /** the command as the player must type it, verbatim — e.g. `/outputfile inventory` */
   command: string
@@ -119,7 +160,7 @@ export default function OutputFileLine({
         <Typography
           variant="body2"
           sx={{ fontFamily: 'monospace', fontWeight: 700, flexShrink: 0 }}
-          data-testid={testId === undefined ? undefined : `${testId}-command`}
+          data-testid={sub(testId, 'command')}
         >
           {command}
         </Typography>
@@ -134,7 +175,7 @@ export default function OutputFileLine({
             size="small"
             variant="text"
             onClick={() => setShowSteps((v) => !v)}
-            data-testid={testId === undefined ? undefined : `${testId}-steps-toggle`}
+            data-testid={sub(testId, 'steps-toggle')}
             sx={{ flexShrink: 0, minWidth: 0, px: 0.75, py: 0 }}
           >
             {showSteps ? 'Hide steps' : 'How'}
@@ -143,15 +184,7 @@ export default function OutputFileLine({
         {/* The exact clock time is one hover away; the ambient text stays coarse (formatDate's
             own contract). This is the ONE place a tooltip is warranted here — it states the
             precise value of the number beside it, which is what makes the coarse one safe. */}
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          title={at === undefined ? undefined : formatDateTime(at)}
-          data-testid={testId === undefined ? undefined : `${testId}-age`}
-          sx={{ flexShrink: 0 }}
-        >
-          {age}
-        </Typography>
+        <Stamp label={age} at={at} testId={sub(testId, 'age')} />
         {/* WHEN WE READ IT, in the same idiom as the slot beside it: coarse text, exact time on
             hover. It goes WARNING-coloured only when the file is provably newer than our copy —
             that is a fact about two instants we hold, not a staleness threshold this app invented
@@ -159,16 +192,20 @@ export default function OutputFileLine({
             its neighbour, because on a healthy load the two say the same thing and a permanently
             highlighted number stops meaning anything. */}
         {loadedAt !== undefined && (
-          <Typography
-            variant="caption"
-            color={stale ? 'warning.main' : 'text.disabled'}
-            title={read === undefined ? undefined : formatDateTime(read)}
-            data-testid={testId === undefined ? undefined : `${testId}-loaded`}
-            sx={{ flexShrink: 0 }}
-          >
-            {'· '}
-            {outputLoadedLabel(read, now)}
-          </Typography>
+          <>
+            {/* The separator is its OWN node and carries no testid: it is punctuation between two
+                slots, and a reader of the load slot — a spec, a screen reader — should get the
+                sentence rather than the sentence plus a dot. */}
+            <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
+              ·
+            </Typography>
+            <Stamp
+              label={outputLoadedLabel(read, now)}
+              at={read}
+              warn={stale}
+              testId={sub(testId, 'loaded')}
+            />
+          </>
         )}
       </Stack>
       {/* Numbered because the ORDER is the content: opening the hoard after typing the command
@@ -176,7 +213,7 @@ export default function OutputFileLine({
       <Collapse in={showSteps} unmountOnExit>
         <Box
           component="ol"
-          data-testid={testId === undefined ? undefined : `${testId}-steps`}
+          data-testid={sub(testId, 'steps')}
           sx={{ m: 0, mt: 0.75, pl: 2.5 }}
         >
           {steps.map((s) => (
