@@ -43,10 +43,13 @@ export interface ParserConfig {
    * spell (handled by charmSpell) or an unrelated buff/debuff. A CC spell wearing
    * off means the mob was mez'd/rooted right up to that moment, so the engine treats
    * it as a keep-alive CC refresh. Stems audited against real worn-off lines:
-   * Mesmerization/Mesmerize/Enthrall/Entrance/Dazzle (mez), Largo's Melodic Binding
-   * & Screaming Terror (bard/enchanter mez), Ensnare/Immobilize/Suffocate (root).
-   * Deliberately EXCLUDES pacify/lull/calm (aggro-reduction, not a hold) and the
-   * Selo's snare line (a movement slow, not a hold).
+   * Mesmerization/Mesmerize/Enthrall/Entrance/Dazzle (mez), Screaming Terror and the
+   * bard mez ladder, Ensnare/Immobilize/Suffocate (root).
+   * Deliberately EXCLUDES pacify/lull/calm (aggro-reduction, not a hold), the
+   * Selo's snare line (a movement slow, not a hold) — and, since JOS-225, the two
+   * Largo's BINDING songs, which are that same movement debuff and were the one
+   * member of this roster the log never once shows holding anything (see "NOT A
+   * HOLD" below).
    */
   ccSpell: RegExp
 }
@@ -76,6 +79,9 @@ export interface ParserConfig {
  *
  * Largo's Assonant Binding is the tell: it is the DIRECT UPGRADE of the one song the list had,
  * one word apart, and it was missing — the level-up failure the roster law exists to prevent.
+ * (Both Largo's songs have since LEFT this roster — see "NOT A HOLD" below — but the pairing
+ * argument is why they left together: whatever is true of the level-20 song is true of the
+ * level-51 one, in either direction.)
  *
  * AND THE BARD'S SONG IS A CHARM AFTER ALL (JOS-200) — the one call JOS-84 got wrong, corrected
  * here rather than quietly patched, because the WAY it was wrong is the reusable lesson.
@@ -118,6 +124,55 @@ export interface ParserConfig {
  * guarded no-op when no charm was recorded (`WorldModel.uncharm` returns undefined for an unknown
  * name, `buffs.onUncharm` is keyed on the charmed slot, `ingest`'s release path is idempotent), so
  * an `uncharm` with no preceding `charm` costs nothing beyond the alert it exists to fire.
+ *
+ * NOT A HOLD — THE TWO LARGO'S BINDING SONGS LEAVE `ccSpell` (JOS-225), and this is the OTHER
+ * direction of the same mistake. JOS-200 removed a spell the message oracle wrongly called a mez;
+ * this removes two the ORIGINAL hand-audited stem list called "bard/enchanter mez" in 2026-07 and
+ * that JOS-84's ladder then completed without ever re-checking the effect. Same failure, one layer
+ * up: the roster oracle is very good at "who else prints this sentence" and says nothing at all
+ * about what the sentence DOES.
+ *
+ * THE REPORT (JOS-225): a bard — the same install as JOS-214, feedback report
+ * 01KZSH65ZX4Z74AK1CSZWQ42VK, read-only, never committed — hears the "Mez / root broke" alert
+ * every time `Largo's Melodic Binding` lapses. Replaying that slice through the real parser and
+ * the real alerts module: `group:cc:broke` fires FOUR times and all four are Largo's. There is not
+ * one genuine mez in the slice.
+ *
+ * THE EFFECT EVIDENCE, and it is mechanical rather than lexical:
+ *
+ *   1. THE MOB FIGHTS THROUGH IT. In the slice the song's target is trading melee blows in the
+ *      same second the wear-off prints — landing hits and taking them. A mesmerized mob does
+ *      neither; the first point of damage wakes it and the log SAYS SO (JOS-180's line).
+ *   2. NO WAKE LINE, EVER, over the owner's whole log (1,593,491 lines, measured read-only
+ *      2026-08-11). `<mob> has been awakened by <name>.` lands in the same or next second as the
+ *      mob's own wear-off for 1,252 of 1,848 Mesmerization breaks (67.7%), 75 of 95 Enthrall
+ *      (78.9%), 73 of 85 Dazzle (85.9%), 58 of 69 Entrance (84.1%) — and 0 of 81 Largo's Melodic
+ *      Binding (0.0%). Every mez in the roster is broken by damage most of the time it is cast;
+ *      this one never is, because there is nothing to break.
+ *   3. IT NEVER APPLIES A HOLD. The four sentences `classifyCcApply` reads — `<mob> has been
+ *      mesmerized/enthralled/entranced/ensnared.` — occur 3,116 times in that log (mesmerized
+ *      2,889, enthralled 128, entranced 87, ensnared 12) and Largo's cannot be any of them: the
+ *      committed DB records its landing as `<mob> is bound in strands of solid music.`, which is
+ *      a `buffApply`. So the "hold" this roster claimed to keep alive has no application event
+ *      anywhere in the corpus — the wear-off was the only evidence it ever existed, and a
+ *      wear-off is what every debuff prints.
+ *   4. IT IS A `PB AE` in the committed DB, sung on a 6-second pulse (the slice re-lands it every
+ *      6-7 s for minutes) against an 18-second duration. A bard AE-holding every mob adjacent to
+ *      themselves while the group melees those same mobs is not a thing the slice shows happening;
+ *      what it shows is the group killing them.
+ *
+ * ONE ROSTER, TWO SONGS, and both go — Melodic 20 and Assonant 51 — for exactly the reason JOS-84
+ * added the second: a fix that leaves the level-51 upgrade behind hands the same false positive
+ * back to the same bard thirty levels later.
+ *
+ * FALLING OUT OF BOTH ROSTERS IS THE CORRECT FILING HERE, which is the one thing R1b in
+ * tests/charmCcRoster.test.mts warns against — for a HOLD. A hold that lands in `buffFade` fires
+ * nothing and that is JOS-84's defect. A movement debuff that lands in `buffFade` is a debuff
+ * filed as a debuff: the Buffs tab still draws its bar off the landing emote and its fade off this
+ * very sentence, and the alert that should not fire does not. The slice settles it from the inside
+ * — that bard also sings `Selo's Consonant Chain`, the level-23 song of the same binding line,
+ * which this roster has ALWAYS excluded; its three wear-offs in the slice are silent `buffFade`s
+ * while Largo's four scream. Two songs, one effect, opposite behaviour, in one pull.
  *
  * THE CHARM SIDE gets the same completion, from the DB's other roster: five Necromancer
  * charm-undead spells share the landing message "Someone moans." — Dominate Undead 18, Beguile
@@ -164,7 +219,7 @@ export interface ParserConfig {
 export const CHARM_STEMS =
   /\bcharm\b|beguile|allure|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|boltran|thrall of bones|enslave death|solon.s (bewitching )?bravura/i
 export const CC_STEMS =
-  /mesmeriz|enthrall|entranc|dazzle|largo.s (melodic|assonant) binding|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|song of the sirens|pixie strike|sionachie.s dreams/i
+  /mesmeriz|enthrall|entranc|dazzle|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|song of the sirens|pixie strike|sionachie.s dreams/i
 
 const classic: ParserConfig = {
   id: 'classic',

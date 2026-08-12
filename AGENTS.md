@@ -1707,15 +1707,28 @@ must always be slow-once, never wrong** — every judgement call goes toward
   Crission's Pixie Strike 28, Solon's Bewitching Bravura 39, Sionachie's Dreams 40,
   Largo's **Assonant** Binding 51 — the direct upgrade of the one song that was
   covered, one word apart) and the Necromancer charm-undead tail (Thrall of Bones
-  54, Enslave Death 60; the ladder's first three were covered by accident).
-  **THE BARD'S BRAVURA IS A MEZ, NOT A CHARM**, measured on the reporter's slice:
-  each own `You begin singing Solon's Bewitching Bravura IX.` is followed ~2 s
-  later by `<mob>'s eyes glaze over.` (Bravura's own landing message), while every
-  `<mob> has been charmed.` in that slice trails ANOTHER player's `begins casting
-  Allure X.` by one second. So it fires "Mez / root broke", not charm break.
+  54, Enslave Death 60; the ladder's first three were covered by accident). Two of
+  those bard entries have since been withdrawn — Bravura to `charmSpell` (JOS-200)
+  and both Largo's out of the rosters altogether (JOS-225); see the effect-family
+  law below.
   **THE DB AND THE LOG DISAGREE ABOUT ITS NAME**: spells.json says `Solon's
   Bravura`, the log prints `Solon's Bewitching Bravura` (the scrape lost the middle
   word), so the stem answers to both — the oracle found that, not a reviewer.
+  **AND A MESSAGE FAMILY IS NOT AN EFFECT FAMILY — THE ORACLE HAS BEEN WRONG IN
+  BOTH DIRECTIONS.** JOS-84 read `Solon's Bewitching Bravura` as a mez off the
+  landing family it shares with three real mezzes; JOS-200 reversed that (it is the
+  bard's level-39 CHARM, and it fires charm break) because spells.json has no
+  effect column. JOS-225 is the same error the other way: BOTH `Largo's` binding
+  songs left `ccSpell` entirely — they are movement debuffs whose wear-off was
+  firing "Mez / root broke" at a bard, they were never checked for effect (the
+  level-20 one was in the original hand-audited stems, the level-51 one arrived
+  with JOS-84's family walk), and the log settles it — the target trades melee
+  blows through the song, and `<mob> has been awakened by <name>.` accompanies 0 of
+  81 Largo's wear-offs against 67-86% for every genuine mez in the roster. Both
+  reversals live as EVIDENCE-CARRYING TABLES in tests/charmCcRoster.test.mts
+  (`FAMILY_EXCEPTIONS`, `NOT_A_HOLD`) rather than as quiet regex edits, precisely
+  so the next scrape cannot sweep them back in. Adding a row is a claim about what
+  the game DOES, backed by log lines — never a way to quiet a noisy alert.
 - **THE FRIEND SYSTEM ANNOUNCES NOTHING** (JOS-69, same sweep). It prints exactly
   two things: `Friends currently on EverQuest Legends:` (43× — the `/friends`
   command's own output, a header + dashed rule + a /who-style roster row, printed
