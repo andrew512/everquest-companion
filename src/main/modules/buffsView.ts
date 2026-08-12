@@ -6,7 +6,7 @@
 import type { ActiveBuff, BuffClass } from '../../shared/types'
 import type { EntityDisposition } from '../combat/entityRules'
 import { SELF_CASTER } from '../../shared/buffTrust'
-import { SELF_KEY } from './buffsShapes'
+import { SELF_KEY, spellKey } from './buffsShapes'
 import type { PetEntities } from './buffsEntities'
 import type { SpellStats } from './buffsStats'
 
@@ -121,10 +121,17 @@ function durationFields(
  */
 function optionalFields(
   spec: ActiveSpec,
-  at: { inferredTarget: boolean; permanent: boolean; messageDriven: boolean; caster: string }
+  at: {
+    inferredTarget: boolean
+    permanent: boolean
+    messageDriven: boolean
+    caster: string
+    calmsTarget: boolean
+  }
 ): Partial<ActiveBuff> {
   const count = spec.count ?? 1
   return {
+    ...(at.calmsTarget ? { calmsTarget: true as const } : {}),
     ...(at.inferredTarget ? { inferredTarget: true } : {}),
     ...(at.permanent ? { permanent: true } : {}),
     ...(at.messageDriven ? { messageDriven: true } : {}),
@@ -146,6 +153,11 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
   const messageDriven = opts?.messageDriven === true
   const { target, inferredTarget } = resolveTargetLabel({ entityKey, cls, self, disp, messageDriven }, pets)
   const permanent = opts?.permanent === true
+  // THE CALM LINE (JOS-213), read at the same seam as `cls` and from the same DB. A FAMILY the
+  // anchors could not narrow answers only if EVERY candidate calms — the same rule `statedDuration`
+  // applies to a family's duration, and it is trivially satisfied here because the candidates of a
+  // shared landing sentence are exactly the spells that print it.
+  const calms = stats.calmsTarget(key) || (spec.candidates?.every((c) => stats.calmsTarget(spellKey(c))) ?? false)
   const d = durationFields(key, permanent, stats, caster)
   return {
     spell,
@@ -161,6 +173,6 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
     ...(d.durationSource ? { durationSource: d.durationSource } : {}),
     overlayDurationMs: d.overlayDurationMs,
     ...(d.overlaySource ? { overlaySource: d.overlaySource } : {}),
-    ...optionalFields(spec, { inferredTarget, permanent, messageDriven, caster })
+    ...optionalFields(spec, { inferredTarget, permanent, messageDriven, caster, calmsTarget: calms })
   }
 }

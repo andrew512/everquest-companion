@@ -84,6 +84,19 @@ export interface ActiveBuff {
   /** buff vs debuff — a SPELL property (Task #35), not who it's on. */
   cls: BuffClass
   /**
+   * True when the spell CALMS its target — the calm/lull line (JOS-213): a `cls: 'buff'` whose
+   * effect happens to a MOB's aggression. Absent for every other spell.
+   *
+   * It is a SECOND, ORTHOGONAL fact about the spell, not a correction to `cls`. A Pacify is a
+   * beneficial spell and the row keeps saying so; what this adds is that the thing it does is a
+   * mob-state effect, which is what routes its timer to the DEBUFFS overlay beside the slows and
+   * the mez holds (shared/buffTimers.ts `timerRowSurface`) instead of leaving an aggro clock among
+   * the player's own buffs. Filled by main from the DB roster (`data/spellDb.ts
+   * spellCalmsTarget`), and — like `cls` since JOS-140 ruling 8 — never resolved by looking at who
+   * the spell landed on.
+   */
+  calmsTarget?: true
+  /**
    * True when this instance is on the PLAYER (self). False when it's on some other
    * entity (a pet, another player, or — for a debuff — a hostile mob). The UI shows
    * self instances first ("Your buffs"), then per-entity groups (Task #35).

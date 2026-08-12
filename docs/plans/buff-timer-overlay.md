@@ -305,6 +305,7 @@ moments and belong in different corners of the screen.
 | row kind | window | why |
 | --- | --- | --- |
 | `buff` | `'buffs'` | a beneficial spell you have running |
+| `buff` + `calmsTarget` | `'debuffs'` | the calm line — beneficial, but the effect is on a mob (JOS-213) |
 | `debuff` | `'debuffs'` | something you put on something else |
 | `cc` | `'debuffs'` | the owner rules mez and slow ARE debuffs, so the holds sit beside them |
 
@@ -313,6 +314,22 @@ cleric you buffed are `group: 'target'` and are still buffs; routing by target w
 own group buffs under "debuffs", which is a lie about what they are. `tests/buffTimers.test.mts`
 pins that both ways, plus the partition property (every row lands on exactly one surface) over
 every committed fixture.
+
+**The one exception is a SPELL fact, not a target fact (JOS-213).** Report
+01KZSDPV3NV8NWK2GF01MCQMK3 casts `Pacify IV` at `an icy terror` and watches the aggro clock
+appear beside their own Clarity: the calm line is `spellType: Beneficial`, so `cls` is `'buff'`
+and always will be — a calm is a good thing you cast at something you are afraid of. What was
+missing is the orthogonal fact that its effect lands on a *mob's state*, which is
+`ActiveBuff.calmsTarget`, filled by main from a roster spells.json's landing messages derive
+(`src/main/data/spellDb.ts spellCalmsTarget`: `Someone looks less aggressive.` /
+`Someone calms down.` / `Someone looks friendly.` — ten members, re-derived and audited every
+run, the `ccSpell`/`charmSpell` oracle pattern). The first cut routed on the *target* instead
+("a mob is not a person") and two committed goldens rejected it: `disposition: 'hostile'` means
+only "not you and not a pet I am currently holding", so a `Resist Disease` on a spider and the
+owner's own `Valor` on a charmed fire giant warrior both went to the debuffs window. That is the
+same rule JOS-136/JOS-140 ruling 8 settled one level down — nature comes from the spell, never
+from the shape of the target — and routing obeys it too. `tests/calmLineTimers.test.mts` carries
+the fixtures, the oracle and the friendly-buff guard.
 
 **One component.** `BuffsOverlay.tsx` takes a `kind` prop and everything that differs is one
 data table (`SURFACE`): tag, title, accent, empty sentence, the heading a self row sits under,
