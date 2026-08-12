@@ -38,13 +38,6 @@
 //      changes. In particular a sighting never touches `minGapMs`, `samples` or `lastTs`: it is
 //      not a death and the ladder must not learn from it.
 
-//   5. AND IT IS THE SECOND CHECKPOINT PILOT (JOS-208 — src/main/foldCache/serialize.ts). It was
-//      chosen because it is the STRUCTURED-STATE shape and it exercises all three exclusion rules
-//      at once: a keyed history with gaps and an LRU order that must survive the round trip, a
-//      second input the STORE owns (`prefs`, and the `watchIndex` derived from it) that must NOT
-//      be in the blob, and a WALL-CLOCK field (`nowMs`) that must be re-read rather than restored.
-//      `serializeFold` below states each one at the line that drops it.
-
 import type { EqModule } from './types'
 import { isCountedKill } from '../log/reducers'
 import { idKey } from '../log/parser'

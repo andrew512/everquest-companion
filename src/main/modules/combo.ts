@@ -22,7 +22,6 @@
 import type { EqModule } from './types'
 import type { LogEvent } from '../../shared/logEvents'
 import {
-  CLASS_ABBRS,
   isClassAbbr,
   type ClassObservation,
   type ComboCorrection,

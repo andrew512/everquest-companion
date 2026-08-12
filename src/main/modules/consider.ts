@@ -29,7 +29,6 @@
 // of that index instead of a second bus subscription that could reset out of step.
 
 import type { EqModule } from './types'
-import { CONSIDER_FACTION_RUNGS } from '../../shared/considerFaction'
 import type { LogEvent } from '../../shared/logEvents'
 import type { ConsiderDelta, ConsiderRow, ConsiderSnap, MobKnowledge } from '../../shared/types'
 import { MobLootIndex, mobKey } from '../mobLookupParse'

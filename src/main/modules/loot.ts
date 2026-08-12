@@ -1,10 +1,6 @@
 // loot module — the self-loot history. Wraps the pure loot fold from reducers.ts
 // (a LootEvent tagged with the zone it happened in). Delta = the rows appended
 // since the last flush; the renderer concats them.
-//
-// CHECKPOINTABLE (JOS-208, pilot 1 of 2 — src/main/foldCache/serialize.ts). This is the BULK-DATA
-// shape: one append-only array of small flat records, hundreds of thousands of rows deep on a real
-// log, and the reason the container carries V8 structured-clone blobs rather than JSON.
 
 import type { EqModule } from './types'
 import type { LogEvent } from '../../shared/logEvents'
