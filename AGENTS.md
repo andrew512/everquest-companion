@@ -1690,6 +1690,21 @@ must always be slow-once, never wrong** — every judgement call goes toward
   feel less drowsy.` (62) — that name no spell and resolve to all-slow candidate
   lists, so the alert reports the family and never which one. Its tripwire is one
   word away: `Your speed returns to normal.` is NINE HASTES (law 3).
+  **AND THE ROSTER HAS TWO SIDES NOW, BECAUSE ONE MEMBER CANNOT SAFELY BE ON BOTH**
+  (JOS-233, owner ruling 2026-08-12). The bard's binding pair — Largo's Melodic
+  Binding 20 and its direct upgrade Largo's Assonant Binding 51 — joined the slow
+  roster on the MOB side, the first members that do not come from the two landing
+  emotes (each prints its own one-member sentence, so the oracle says nothing about
+  them either way; the ruling is that the binding slows a mob's swings as well as
+  its feet, and JOS-225 had left its wear-off silent after taking it out of
+  `ccSpell`). They are NOT on the on-you side: `The strands fade away.` is shared
+  VERBATIM with `Lyssa's Solidarity of Vision`, a Bard 34 BENEFICIAL buff, and a
+  `where.spell` matcher tests the whole candidate list (JOS-84) — one shared roster
+  would announce a slow every time that buff lapsed. Same tripwire as the haste
+  twin except the sentences are identical rather than a word apart, so anchoring
+  cannot fix it and only the split roster can. The wider binding line (Selo's
+  Consonant Chain 23, Chords of Cessation 48, Assonant Strain 54) is EXPLICITLY
+  UNRULED and stays silent; the table that says so is in tests/charmCcRoster.test.mts.
 - **CHARM AND MEZ ARE ROSTERS TOO — AND THE SPELL DB IS THE ORACLE** (JOS-84).
   `Your <spell> spell has worn off of <mob>.` is ONE sentence for three facts, and
   `rulesets.ts` decides which by matching the spell NAME: `charmSpell` ⇒ `uncharm`,
@@ -1729,6 +1744,12 @@ must always be slow-once, never wrong** — every judgement call goes toward
   (`FAMILY_EXCEPTIONS`, `NOT_A_HOLD`) rather than as quiet regex edits, precisely
   so the next scrape cannot sweep them back in. Adding a row is a claim about what
   the game DOES, backed by log lines — never a way to quiet a noisy alert.
+  **AND "NOT A HOLD" IS NOT "NOT AN ALERT"** (JOS-233): the parser rosters still
+  refuse both Largo's and their break is still a `buffFade`, but the owner ruled
+  them attack-speed debuffs, so the SLOW group's mob-side roster claims them by
+  name and the wear-off that used to say "Mez / root broke" now says "Slow wore off
+  a mob". `NOT_A_HOLD` carries a `fires` column for exactly that reason — a row
+  states which group it ends up in, so it cannot drift silently between the two.
 - **THE FRIEND SYSTEM ANNOUNCES NOTHING** (JOS-69, same sweep). It prints exactly
   two things: `Friends currently on EverQuest Legends:` (43× — the `/friends`
   command's own output, a header + dashed rule + a /who-style roster row, printed

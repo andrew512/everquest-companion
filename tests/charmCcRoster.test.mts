@@ -53,6 +53,14 @@
 // writing it as a table rather than a quiet regex edit is that the oracle would otherwise sweep
 // both songs straight back in on the next scrape.
 //
+// AND "NOT A HOLD" WAS NEVER "NOT AN ALERT" (JOS-233, owner ruling 2026-08-12). Both Largo's are
+// still refused by both rosters here — nothing in the parser moved — but the owner ruled them
+// attack-speed debuffs as well as snares, so shared/alertGroups.ts's mob-side slow roster claims
+// them by name and their wear-off now fires `group:slow:mob`. The JOS-225 regression is unchanged
+// and is asserted directly: zero mez and zero charm firings from either song, forever. The rest of
+// the bard binding line (Selo's Consonant Chain 23, Chords of Cessation 48, Assonant Strain 54) is
+// EXPLICITLY UNRULED and sits in the same table with an empty `fires` list.
+//
 // Run: `npm test`.
 
 import { test } from 'node:test'
@@ -155,13 +163,34 @@ const CC_FAMILIES: Record<string, string> = {
  *
  * FALLING OUT OF BOTH ROSTERS IS THE POINT HERE, and it is the one outcome R1b forbids — for a
  * HOLD. R1c below is the counterpart assertion: a movement debuff filed as `buffFade` is a debuff
- * filed correctly, and it must be SILENT. Adding a row here is not a way to quiet a noisy alert;
- * it is a claim that the game shows the spell doing something other than holding, and it needs
- * evidence of that shape.
+ * filed correctly. Adding a row here is not a way to quiet a noisy alert; it is a claim that the
+ * game shows the spell doing something other than holding, and it needs evidence of that shape.
+ *
+ * WHAT `buffFade` LEADS TO IS A SECOND QUESTION, AND JOS-233 ANSWERED IT. R1c used to assert the
+ * two songs fire NOTHING, which was true of the tree JOS-225 left and was never the ticket's
+ * claim: "not a hold" says what the songs are not. The owner ruled 2026-08-12 what they are — an
+ * attack-speed debuff as well as a snare — so the mob-side slow roster in shared/alertGroups.ts
+ * claims them by name and their wear-off now fires `group:slow:mob`. NOTHING IN THE PARSER MOVED:
+ * both rosters here still refuse them, the event is still `buffFade`, and the alert that must
+ * never fire again is still `group:cc:broke`. The `fires` column below is what each row is
+ * expected to produce end to end, so a row cannot silently drift between the two answers.
  */
-const NOT_A_HOLD: Record<string, string> = {
-  "Largo's Melodic Binding": "bard 20, PB AE, 3 ticks — the reporter's own false positive",
-  "Largo's Assonant Binding": 'bard 51 — the direct upgrade, one word apart'
+const NOT_A_HOLD: Record<string, { why: string; fires: string[] }> = {
+  "Largo's Melodic Binding": {
+    why: "bard 20, PB AE, 3 ticks — the reporter's own false positive",
+    fires: ['group:slow:mob']
+  },
+  "Largo's Assonant Binding": {
+    why: 'bard 51 — the direct upgrade, one word apart',
+    fires: ['group:slow:mob']
+  },
+  // THE UNRULED REST OF THE BINDING LINE (JOS-233). Same shape of song, same `buffFade`, and no
+  // owner ruling — so they must stay SILENT. These are the control JOS-225's slice supplied from
+  // the inside (Consonant Chain's wear-offs were quiet while Largo's screamed), kept as an
+  // assertion so a future widening of the slow roster has to be deliberate about them.
+  "Selo's Consonant Chain": { why: 'bard 23 — explicitly unruled', fires: [] },
+  "Selo's Chords of Cessation": { why: 'bard 48 — explicitly unruled', fires: [] },
+  "Selo's Assonant Strain": { why: 'bard 54 — explicitly unruled', fires: [] }
 }
 
 /** The charm families the parser routes to `uncharm`. */
@@ -225,8 +254,8 @@ test('JOS-200 R1b: every family exception is still classified — into the OTHER
   }
 })
 
-test('JOS-225 R1c: a NOT_A_HOLD song is in NEITHER roster, parses to buffFade, and is SILENT', () => {
-  for (const [name, why] of Object.entries(NOT_A_HOLD)) {
+test('JOS-225 R1c: a NOT_A_HOLD song is in NEITHER parser roster and parses to buffFade', () => {
+  for (const [name, { why, fires }] of Object.entries(NOT_A_HOLD)) {
     assert.ok(
       db.byKey.has(name.toLowerCase()),
       `spells.json must still carry "${name}" (${why}) — a table naming a spell that no longer ` +
@@ -244,19 +273,60 @@ test('JOS-225 R1c: a NOT_A_HOLD song is in NEITHER roster, parses to buffFade, a
       'buffFade',
       `"${name}" must file as an ordinary named-target debuff fade, not a hold ending`
     )
+    const fired = fire(GROUP_DEFS, [line])
     assert.deepEqual(
-      fire(GROUP_DEFS, [line]),
-      [],
-      `"${name}" wearing off must fire NOTHING — this is the JOS-225 report, and the alert it ` +
-        'used to fire was "Mez / root broke"'
+      fired,
+      fires,
+      `"${name}" wearing off must fire exactly ${JSON.stringify(fires)} — ${why}`
     )
+    // The JOS-225 report itself, stated as its own assertion so a future roster edit that
+    // re-introduces the false positive fails HERE with the reporter's own words attached.
+    assert.ok(
+      !fired.includes('group:cc:broke'),
+      `"${name}" must never fire "Mez / root broke" again — that is the JOS-225 report`
+    )
+    assert.ok(!fired.includes('charm-break'), `"${name}" is not a charm either`)
   }
 })
 
-test('JOS-225 R1d: silencing Largo did not silence the mez beside it', () => {
+test('JOS-233 R1c2: the binding songs fire the SLOW group, and only on the mob side', () => {
+  // THE RULING, end to end: `Your Largo's <X> Binding spell has worn off of <mob>.` is the quiet
+  // loss the slow group exists for, so it fires "Slow wore off a mob".
+  const mob = fire(GROUP_DEFS, [
+    `[Wed Aug 05 22:30:00 2026] Your Largo's Melodic Binding spell has worn off of a wanderer.`,
+    `[Wed Aug 05 22:32:00 2026] Your Largo's Assonant Binding spell has worn off of a wanderer.`
+  ])
+  assert.deepEqual(mob, ['group:slow:mob', 'group:slow:mob'])
+
+  // THE ON-YOU TRIPWIRE, and it is why the roster is two lists rather than one. Both Largo's and
+  // the Bard 34 BENEFICIAL buff `Lyssa's Solidarity of Vision` print `The strands fade away.`
+  // VERBATIM, and a `where:{spell}` matcher tests the whole candidate list (JOS-84) — so a single
+  // shared roster would announce a slow every time that buff lapsed. The self sentence resolves
+  // to all three names and must fire nothing at all.
+  const self = parseEvent('[Wed Aug 05 22:34:00 2026] The strands fade away.', 0)
+  assert.equal(self?.kind, 'buffWearOff')
+  if (self?.kind !== 'buffWearOff') return
+  assert.equal(self.target, 'self')
+  assert.deepEqual(self.candidates, [
+    "Largo's Assonant Binding",
+    "Largo's Melodic Binding",
+    "Lyssa's Solidarity of Vision"
+  ])
+  assert.deepEqual(
+    fire(GROUP_DEFS, ['[Wed Aug 05 22:34:00 2026] The strands fade away.']),
+    [],
+    'one sentence for two songs and a beneficial buff cannot report a slow on you'
+  )
+})
+
+test('JOS-225 R1d: re-filing Largo did not silence the mez beside it', () => {
   // The acceptance the ticket names: the false positive goes, the true positives stay, in ONE
   // stream. Timestamps are spaced so the group's 3 s cooldown collapses nothing — a `[]` here
   // would be the cooldown lying, not the roster.
+  //
+  // Since JOS-233 the two Largo's lines are not silent, they are the OTHER alert: `group:slow:mob`
+  // where they used to say `group:cc:broke`. Position in this list is the assertion — the mez and
+  // the charm beside them are unmoved, and no line answers to two groups.
   const lines = [
     `[Wed Aug 05 22:30:00 2026] Your Largo's Melodic Binding spell has worn off of a wanderer.`,
     '[Wed Aug 05 22:31:00 2026] Your Mesmerization spell has worn off of a wanderer.',
@@ -264,7 +334,13 @@ test('JOS-225 R1d: silencing Largo did not silence the mez beside it', () => {
     `[Wed Aug 05 22:33:00 2026] Your Solon's Song of the Sirens spell has worn off of a wanderer.`,
     '[Wed Aug 05 22:34:00 2026] Your Allure spell has worn off of a wanderer.'
   ]
-  assert.deepEqual(fire(GROUP_DEFS, lines), ['group:cc:broke', 'group:cc:broke', 'charm-break'])
+  assert.deepEqual(fire(GROUP_DEFS, lines), [
+    'group:slow:mob',
+    'group:cc:broke',
+    'group:slow:mob',
+    'group:cc:broke',
+    'charm-break'
+  ])
 })
 
 test('JOS-84 R2: charmSpell classifies every castable member of every charm family it claims', () => {
@@ -301,7 +377,8 @@ test("JOS-200 R3: the bard's Bravura break parses as an uncharm and fires the ch
 test('JOS-84 R4: the whole bard crowd-control ladder fires the mez/root group', () => {
   // Every song at its own timestamp so the group's 3 s cooldown does not collapse them.
   // Bravura is NOT in this list since JOS-200 — it is a charm, and R3 above is its assertion.
-  // Neither Largo's is in it since JOS-225 — they are movement debuffs, and R1c/R1d are theirs.
+  // Neither Largo's is in it since JOS-225 — they are movement debuffs, and R1c/R1c2/R1d are
+  // theirs (they fire the SLOW group since JOS-233, never this one).
   const songs = [
     "Kelin's Lucid Lullaby",
     "Solon's Song of the Sirens",
