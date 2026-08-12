@@ -555,6 +555,46 @@ export interface PetClaimEvent extends LogEventBase {
   via: 'tell' | 'leader'
 }
 
+/**
+ * `<PetName> says, 'My leader is <SomeoneElse>.'` — the SAME `/pet who leader` sentence as
+ * `PetClaimEvent{via:'leader'}`, spoken by a pet that belongs to somebody who is not you (JOS-250).
+ *
+ * A SEPARATE KIND ON PURPOSE, and this is the exception that proves law 4's rule. The tell and the
+ * self-leader say are one FACT ("this entity is my pet") and so are one kind; this line states the
+ * opposite fact ("this entity is somebody ELSE's pet") and every consumer of `petClaim` — the
+ * combat world model's `claim()`, the JOS-54 single-pet succession, `modules/buffs.ts`'s
+ * buff-entity succession, the progression pet ledger, the roster — would bind it to YOU if it
+ * arrived wearing that kind. Reusing `petClaim` with an `owner` field would make all five of them
+ * responsible for reading a field they have never read; a distinct kind makes the one consumer
+ * that wants it (combat's ally-charm model) opt in and leaves the other five untouched.
+ *
+ * IT IS THE STRONGEST ALLY BIND THERE IS, because it names both ends out loud, and it is the only
+ * one that also covers a SUMMONED pet of someone else's (a charm broadcast covers only charms).
+ *
+ * THE GUARD IS THE SAME ONE `classifyPetLeader` uses, inverted and then re-tightened: the leader
+ * must NOT be the tailed character (that line is a `petClaim` and is claimed first), the leader
+ * must be PLAYER-SHAPED, and the tailed character's name must be installed at all — with no
+ * character installed the self rule cannot run, so this rule would silently claim the user's own
+ * pet line. Same forgeability caveat as the self form, with the same bounded cost (one row in a
+ * meter, attributed to a stranger rather than to you).
+ *
+ * MEASURED (owner's whole log, 1,608,483 lines, 2026-08-12): the family has exactly ONE occurrence
+ * and it is the SELF form (`Jaber says, 'My leader is Primitive.'`). There is no third-party
+ * instance in this corpus, so this rule is STRUCTURALLY covered — the sentence shape is proven by
+ * a real line, the third-party variant is that same line with a different name in one capture, and
+ * it is unit-tested against a constructed sentence. It is stated rather than implied because the
+ * awaiting-sample law asks which half of "verified" a claim is standing on. The scrub keeps
+ * dropping it (AGENTS.md: the pet-leader carve-out is SELF-GATED, a stranger's pet naming a
+ * stranger falls to the quoted-speech rule), so no fixture can ever carry one either.
+ */
+export interface AllyPetLeaderEvent extends LogEventBase {
+  kind: 'allyPetLeader'
+  /** The speaking pet, spelled as the log spelled it (world-model law 2). */
+  pet: string
+  /** The player it named as its leader. Never the tailed character — that line is a `petClaim`. */
+  owner: string
+}
+
 /** Which of the six pet responses was spoken (shared/logScrub.ts `PET_SAY_LINES`). */
 export type PetSayKind = 'follow' | 'regroup' | 'calm' | 'hold' | 'comply' | 'illegalTarget'
 
@@ -1394,6 +1434,10 @@ export type LogEvent =
   // cover "my mez ended" from the `cc {refresh:true}` side.
   | CcWakeEvent
   | PetClaimEvent
+  // The same `/pet who leader` sentence spoken about SOMEBODY ELSE (JOS-250). A separate kind
+  // rather than a field on PetClaimEvent, for the reason its own doc comment gives: five models
+  // bind `petClaim` to YOU and none of them should have to learn a new field to keep doing it.
+  | AllyPetLeaderEvent
   | PetSayEvent
   | CastBeginEvent
   | OtherCastBeginEvent
