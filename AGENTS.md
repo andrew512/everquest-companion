@@ -989,300 +989,57 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
    clock. What ages out is the SEEN state (UP is the one label that claims
    presence); unwatch remains the only way a row leaves.
 
-## The fold laws (JOS-208 — the checkpoint's rules; read before changing a fold)
+## The fold checkpoint, and why there isn't one (JOS-208, removed by JOS-230)
 
-A launch can now RESTORE the fold from a binary checkpoint and replay only the
-tail (`src/main/foldCache/**`, feature-flagged OFF by default). The whole thing
-rests on ONE claim: a checkpoint is a memo of a pure function of (byte prefix,
-the fold). These are the rules that keep that claim true. **The failure mode
-must always be slow-once, never wrong** — every judgement call goes toward
-"discard and cold-replay".
+Between 2026-08-10 and 2026-08-12 this app could RESTORE its whole world model
+from a binary checkpoint and replay only the log's tail. It was four phases,
+~5,000 lines, twenty checkpointed units, a schema grammar, a differential
+harness over six fixtures at eight kinds of split point, golden fingerprints, a
+consumer census, an e2e restart-compare and a fleet shadow verifier. It worked.
+The owner removed it on 2026-08-12 anyway, and the reasons are worth keeping:
 
-- **TWO INVALIDATION AXES, and only two.**
-  - **ENCODING — mechanized, never bumped by hand.** Each checkpointed unit
-    declares its stored shape as DATA (`foldCache/schema.ts`), and the shape
-    hash in a container header is DERIVED from that declaration. So a refactor
-    that renames a private field, splits a function or reorders a method churns
-    nothing, and adding/renaming/retyping a STORED field invalidates the fleet's
-    caches with nobody having to remember. The same declaration is the load-time
-    validator and the plain-data enforcement point — one statement, three jobs,
-    no way for them to disagree.
-  - **SEMANTICS — a manual constant, policed by goldens.** `FOLD_SEMANTICS`
-    (`foldCache/semantics.ts`) is bumped **in the same commit** as any change to
-    what the fold COMPUTES from a given event stream.
-- **WHAT COUNTS AS FOLD-AFFECTING**: the parser's event stream
-  (`src/main/log/**`), any module's `onEvent` (`src/main/modules/**`), the
-  derived-event producers (epoch, offline-gap, `buffExpired`), the reducers, the
-  bus DELIVERY ORDER, and the committed data that feeds any of them
-  (spells.json, respawns.json, the message-overlay baseline, the spell
-  corrections). What does NOT count: `src/renderer/**`, `src/preload/**`,
-  anything that only reads a snapshot, and any refactor that leaves every
-  fixture's fingerprint unchanged — which the goldens let you VERIFY rather than
-  assert.
-- **THE GOLDENS ARE THE ENFORCEMENT.** `tests/foldGoldens.test.mts` fingerprints
-  every checkpointed module’s published snapshots over the fixture corpus against
-  `tests/goldens/foldFingerprints.json`. Output changed + no bump ⇒ RED, naming
-  the module and the fixture. **A golden update REQUIRES the bump in the same
-  commit** (`npm run fold:goldens -- "<why>"`). A bump with unchanged goldens is
-  allowed but FLAGGED as overzealous and must carry a stated `reason`.
-  **WHEN IN DOUBT, BUMP**: one unnecessary cold start against a silently wrong
-  world model is not a close call.
-- **THE CORPUS IS THE HONESTY BOUNDARY.** A semantic change visible only on log
-  shapes no fixture contains will not be caught. Shadow mode (phase 3) is the
-  fleet backstop; say "structurally covered" only when that is what you mean.
-  - **MEASURED, for the engine (phase 4):** folding the whole corpus leaves
-    `specials`, `charm.arm`, `charm.provisional`, `charm.observed`,
-    `recentCasts.suspended`, `slowSamples`, the coats, the markers and the
-    invocation ALL EMPTY, and two fixtures (`e2e-leveling`, `epoch-beta-wipe`)
-    produce no combat state at all — a fully no-op combat restore keeps both of
-    them green. A serializer that dropped any of those fields would pass the entire
-    matrix. `tests/combatFoldCodec.test.mts` is the answer: it composes a state
-    that reaches every declared field (a REAL fold of the pet-arc fixture, topped
-    up through each collaborator's own method) and round-trips it, with a
-    coverage-probe list held against the schema's own keys IN BOTH DIRECTIONS so a
-    new field cannot be added without coverage. It is a CODEC test and says so —
-    composing state claims nothing about the log, which is what the
-    awaiting-sample law is about.
-- **INVALIDATION IS ALWAYS WHOLE-CACHE.** A partial refold needs the same cold
-  read the whole thing does, so granularity exists only to make invalidation
-  rarer, never to make a restore partial. If ANY unit refuses, nothing is
-  restored and the caller resets the world before the cold replay.
-- **NEVER IN THE CHECKPOINT**: store-derived state (prefs, corrections,
-  turn-ins, watch lists, alert defs) — event-derived fold state only, one truth
-  per fact; and anything read from the WALL CLOCK, which a restored fold is
-  entitled to re-read.
-- **EVERYTHING WHOSE STATE AFFECTS A CHECKPOINTED FOLD IS ITSELF CHECKPOINTED,
-  whether or not it publishes a snapshot.** The registry's modules are NOT the
-  whole fold: `EpochDetector` and `SessionDetector` carry state across events and
-  feed derived events back onto the bus. Leaving them out made a fresh detector
-  re-fire the launch epoch at the first event of the TAIL, clearing the respawn
-  history — a measured divergence at every split point in every fixture, which
-  the differential harness found on its first run.
-  - **A COLLABORATOR RIDES IN THE BLOB OF THE MODULE THAT OWNS ITS LIFETIME**, and
-    is never a unit of its own: the shared `MobLootIndex` is in `consider` (which
-    folds it and resets it), the `MessageOverlayMiner` is in `buffs` (which
-    publishes what it builds), and the two halves `buffs` SHARES with
-    `buffTimers` — the `CastAnchors` and the `SpellStats` learner — are written
-    exactly ONCE, by `buffs`. Two copies of one object in one container is the
-    JOS-140 drift re-created by hand.
-  - **THE MODULE SET IS CLOSED BY A TEST, not by discipline.**
-    `CHECKPOINTED_MODULE_IDS` (`foldCache/serialize.ts`) is written by hand — a
-    list derived from the registry would go green by asking less — and
-    `foldCheckpointDifferential.test.mts` holds it against the registry's own in
-    both directions. A module added to `wiring.ts` without a seam fails there, by
-    name.
-  - **THE `CombatEngine` IS IN (phase 4), AND THE ARGUMENT FOR LEAVING IT OUT IS
-    THE LESSON.** Phases 1–3 excluded it on this reasoning: nothing reads engine
-    state back into a registry module (TRUE — the dependency runs the other way,
-    the engine PULLS the roster's view), so its absence cannot make a checkpointed
-    module wrong, and what it costs is "a combat meter that starts empty after a
-    restore, exactly as after a cold start". **The second clause was FALSE**, and
-    the owner's live retest is what found it: a COLD start folds the engine from
-    the WHOLE log, so its meter comes up holding every fight in it; only a RESTORED
-    launch came up empty. Uniform state, no tiers — a restore is byte-identical to
-    a cold fold or it is a different program, and "the same as a cold start" has to
-    be a statement about the program we SHIP rather than about a plausible one.
-    Size is a measurement to report, never a reason to serve a different world.
-    Its published payload is `snapshot(now, {timeline:true})`
-    (`foldCache/publishedFold.ts` — ONE shape, so the three rungs compare one
-    thing, and the timeline is the only published field that reads an encounter's
-    per-event ring). It is in `PUBLISHED_FOLD_IDS`, not `CHECKPOINTED_MODULE_IDS`,
-    because it is not a registry module; the codec is
-    `combat/foldTypes|foldSchema|foldAgg|foldCodec.ts`.
-    - **AND IT CAUGHT ONE, exactly as the wall clock and the detectors were caught:
-      A REPLAY IS NOT A MOMENT IN TIME** (FOLD_SEMANTICS 3→4). `snapshot(now)`
-      evaluated deferred encounter closure and swept charm binds against `now` —
-      the WALL clock — unconditionally, and the historical replay YIELDS every
-      slice while the renderer polls `combat:snapshot` throughout hydration. So a
-      poll landing between two slices finalized whatever fight was open (every line
-      in a months-old log is behind the wall clock) and handed the rest of it to a
-      fresh encounter. MEASURED under full-suite load: `e2e-combat.log`'s
-      53,577-damage fight came back as 43,504 + 10,073, and the in-app shadow
-      verifier called it a divergence. PRE-EXISTING — a sliced replay has always
-      been pollable, and every launch folded the whole log the same way so nothing
-      could compare two folds and notice — and the checkpoint is what made it
-      visible, because a restored launch folds the same bytes in TWO passes. The
-      sweep is now gated on `st.hydrating`; closure from the LOG's own clock
-      (`ingestEvent`) is untouched, so a fight that really ended still ends at the
-      instant the log says. `tests/combatReplayClock.test.mts` pins BOTH halves —
-      polling every event of a real replay changes nothing, and after `setLive()`
-      the same call still finalizes — so a "fix" that just switched the sweep off
-      fails as loudly as the defect did.
-  - **ALL LOG-DERIVED STATE IS CHECKPOINTED, AND A TEST SAYS SO — the census**
-    (`foldCache/census.ts` + `tests/foldConsumerCensus.test.mts`; owner
-    requirement, phase 4). The module gate above was green for three phases while
-    the largest fold in the app sat outside the container, because the engine is
-    not a module: it subscribes to the bus from `pipeline.ts` and publishes through
-    its own IPC, so no assertion had cause to name it. So the census is over the
-    INLETS rather than the consumers — every `bus.subscribe` / `registry.attach(bus)`
-    (the parsed stream), every `scanLog` / `new Tailer` / `parseEvent` /
-    `newBytesSince` (log BYTES), and the two taps that see everything going through
-    those (`noteEventKind`, `noteLinesParsed`). The test SCANS `src/main/**` for
-    those call sites and holds them against the committed table in BOTH directions,
-    with per-(file, inlet) COUNTS — so a second subscription inside an
-    already-declared file is a second fact somebody has to argue. Every row is
-    `unit` (names checkpointed `FoldUnit` ids, each asserted to exist in a built
-    world), `registry` (delegated to the module gate above), or `exempt` WITH ITS
-    ARGUMENT — and an argument under 80 characters fails, on the same reasoning as
-    the goldens' stated reason. The standing exemptions: the telemetry taps (a
-    per-launch line count and a crash-crumb ring, ephemeral by design — a restored
-    launch is entitled to its own), the two FEEDERS (their state is `seq` and the
-    byte offset, which live in the container HEADER, not in a blob), the
-    store-persisted tail mark (durable through its own store — one truth per fact),
-    the checkpoint's own last-event probe (it writes the header), and the shadow
-    verifier's throwaway world (it IS the instrument). A future log consumer wired
-    outside the registry — which is exactly how the engine escaped — fails CI by
-    name.
-    - The scanner counts PER OCCURRENCE and excludes only the occurrence preceded
-      by `function `. Its first cut skipped whole LINES that looked like
-      declarations, and a one-line `export function wire(bus) { bus.subscribe(…) }`
-      walked straight through the audit that exists for precisely that. Measured
-      against a planted consumer, then narrowed.
-  - **MEASURED WITH THE ENGINE ABOARD** (owner's log, 122.6 MB, 1,580,741 events,
-    2026-08-11): container **47.50 MB** (was 6.04 MB), of which `combat` is
-    **41.7 MB / 87.8%** — 3,213 finalized encounters at ~12.3 KB each, dominated by
-    the per-encounter `Agg.out`/`Agg.inc` source maps (30.1 MB), inside which the
-    per-second rounds buckets (5.3 MB) and the `RoundAccum` lanes (7.0 MB) are the
-    two largest single items. Restore **1.67 s** (was 175 ms) against a 9.3 s cold
-    fold of the same log and the 122 MB cold READ this feature exists to remove;
-    write 466 ms async / 436 ms synchronous on the quit path. `npm run
-    bench:fold-size` re-measures all of it. **ANY CAP IS AN OWNER DECISION** — a
-    history cap is a semantics change (`searchFights` claims "all time") and the
-    fold laws put that call with the owner, not with the worker who measured it.
-- **THE GRAMMAR GREW TWO KINDS IN PHASE 2, and both are narrow on purpose.**
-  `record` is a plain object with arbitrary string keys (a `KillMap`, an item-tier
-  table) — never a Map by another name, and never where the Map's INSERTION ORDER
-  is load-bearing, which stays an array of `tuple(key, value)`. `nullable` exists
-  only for fold state that is ALSO a wire type whose key is always present and
-  whose null is a stated "no estimate" the UI renders (`ActiveBuff.estimatedMs`).
-  A fold still never stores `null` to mean absent; `optional` is the only way to
-  say that.
-- **THE FOLD IS COMPARED BY ITS PUBLISHED PAYLOAD, so a restore reproduces the
-  SHAPE the module publishes and does not get to improve it.** Two catches from
-  phase 2's matrix, both invisible to a human reading the code: a `knowledge`
-  key that a cold row carries present-and-undefined and a restored row omitted
-  (consider), and `new Date()` inside a published snapshot (the message
-  overlay's `updatedAt`, which now reads the LOG's clock instead). A wall clock
-  anywhere a snapshot can reach is a divergence at every split point of every
-  fixture.
-- **TWO AUDITS, both dynamic, both run in `npm test`.**
-  `tests/foldDeterminism.test.mts` replaces `Date.now`/`performance.now` for the
-  duration of a real fold and fails on any read from repo source (the SCHEDULER's
-  clock is injected, not allow-listed). `tests/foldPlainData.test.mts` walks the
-  real fold state of a real fixture: it must validate against its own
-  declaration, carry nothing a structured clone cannot mean, survive
-  `v8.serialize`, and re-serialize IDENTICALLY out of a fresh unit (the
-  completeness half — a field the class holds and the declaration omits dies
-  there). Both audits carry a TRIPWIRE test proving the audit itself can fail.
-- **THE DIFFERENTIAL HARNESS IS OWNER LAW** (`tests/foldCheckpointHarness.mts` +
-  `foldCheckpointDifferential.test.mts`): deep-equal published snapshots of EVERY
-  checkpointed module between cold replay and checkpoint+tail, over the corpus, at
-  session edges / zone lines / mid-fight / mid-hold / mid-cast / in-hole /
-  epoch-adjacent / deciles / seeded fuzz, plus the externality permutations
-  (truncated, regrown, flipped shoulder byte, stale semantics, stale shape,
-  corrupt cache, missing cache) which must every one land on the cold path with a
-  NAMED refusal reason. Both arms go through the production `scanLog`. The two
-  split kinds that are not lines — in-hole and epoch-adjacent — are found by
-  walking the log's own parsed timestamps, because an absence has no line.
-- **THE GO-LIVE SWEEP RUNS BEFORE THE FIRST PUBLISH**, and it is asserted rather
-  than assumed: `startHeartbeat()`'s single `registry.tick(Date.now())` precedes
-  `flushNow()` and `sendWorldRebuilt` in session.ts, so no one ever sees a frame
-  of bars that real time invalidated while the app was closed. The test pins the
-  PROPERTY (swept == cold, and unswept differs somewhere), so an ordering nobody
-  can observe cannot pass it.
-- **THE SWITCH IS A PREFERENCE** (Preferences → Performance, "Start faster by
-  remembering your log"), off by default. `EQ_FOLD_CACHE` stays as a dev escape
-  hatch and still wins in BOTH directions — a kill switch a preference can
-  override is not a kill switch — and the card SAYS so when it is the thing
-  deciding, rather than drawing a switch that disagrees with the launch.
-- **B IS ALWAYS THE END OF A COMPLETE LINE.** `ScanResult.endOffset` and
-  `Tailer.checkpointOffset()` are the only producers, and both mean it. A
-  partial line has been folded by nobody, so a checkpoint that claimed it would
-  drop a line the cold arm keeps.
-- **BINARY END TO END, never a text write.** The container is `Buffer` in,
-  `Buffer` out, temp+rename, with three digests (header, per blob, whole file).
-  The BOM history above is about a JSON file, and a JSON file survives a BOM
-  better than V8 blobs ever could.
-- **THREE WRITES, AND THE QUIT ONE IS THE LEAST IMPORTANT** (phase 3 —
-  `foldCache/schedule.ts` + `policy.ts`). Phase 1 wrote only from
-  `window-all-closed` / `before-quit`, and **electron-vite's dev watcher KILLS
-  its child**: the owner ran with the preference on across a day of restarts,
-  got no speedup, and had no file to find. The same hole swallows a crash, an
-  OS kill and a power cut. So a checkpoint is written `replay` (four seconds
-  after the historical fold finishes — the fold has just been proven, remember
-  it *there*), `quiet` (periodically at idle moments: ≥8 MB of new log or ≥15
-  min since the last write, AND the tailer's offset unchanged for a whole
-  60 s check interval), and `quit` (unchanged, synchronous, the freshest final
-  word). **The container records WHICH write made it** (`CacheHeader.origin`)
-  and the loader reports it, because nothing anywhere could previously say that
-  the only write was one the machine never reached.
-  - IDLENESS IS MEASURED WITHOUT A CLOCK IN THE FOLD: two readings of
-    `Tailer.checkpointOffset()` an interval apart. "No event for N seconds"
-    would need a `Date.now()` on the per-event path — the hottest loop in the
-    app, and a wall-clock read inside a fold path.
-  - The async write serializes every module BEFORE its first `await`
-    (`loader.ts serializeStates`): a state captured across an await would
-    describe a byte position the fold had already left.
-- **A REFUSED CACHE MUST LEAVE THE WORLD EXACTLY AS A COLD START WOULD**, and
-  "reset unconditionally, it's cheap" was measurably wrong. A `registry.reset()`
-  BUMPS every module's private revision counter, which is published as the
-  snapshot's `seq` AND is itself checkpointed — so a launch that merely LOOKED
-  for a cache and found none folded one revision ahead of a launch that never
-  looked, and every checkpoint written from it carried the offset forward. The
-  loader now reports `adopted`, and the caller resets only when a unit really
-  took a blob. Caught by the e2e restart-compare (three modules, one count
-  each); it takes two launches of the real app to see, so no unit test could.
-- **THE THIRD RUNG: THE E2E RESTART-COMPARE** (`tests/e2e/fold-restart.e2e.mts`).
-  The differential harness runs in ONE process with hand-built modules; this one
-  restarts the REAL app and compares what the renderer hydrates
-  (`getModuleSnapshot`) against a cold-start control — the SAME app, SAME log,
-  SAME `userData`, with `EQ_FOLD_CACHE=0` for one launch. Four arrangements: a
-  hard-KILLED first launch (the owner's repro, mechanized), a plain restart, a
-  staged tail, and a corrupted container. Every launch is held against
-  `perf-startup.json`'s checkpoint verdict, or a "warm" launch whose cache was
-  quietly refused would cold-replay, match perfectly, and prove nothing.
-  - **A STAGED TAIL CONTINUES THE LOG'S OWN CLOCK**, never wall-clock now: a tail
-    stamped "today" over a fixture whose last line is weeks old manufactures an
-    offline gap, and the world model's answer to an unexplained gap is
-    deliberately wall-clock sensitive (law: buffs freeze across an absence), so
-    two launches a minute apart legitimately differ.
-  - **BOTH ARMS GET THE SAME STORE-DERIVED INPUTS**, which for a real app means
-    deleting `<userData>/message-overlay.json` before each launch — see the
-    accumulation note below.
-- **THE FLEET BACKSTOP: SHADOW MODE** (`foldCache/shadow.ts`). Occasionally, in
-  the background, a client restores the container on disk into a throwaway world,
-  cold-folds the log to the same byte into a second one, ticks BOTH to one pinned
-  instant, and compares. Since phase 4 each throwaway world builds its OWN
-  `CombatEngine` — phase 3 deliberately did not, on the argument that nothing reads
-  engine state back so its presence could not change a compared snapshot, which was
-  true only while the engine was outside the container. It reports TWO COUNTS on the session report —
-  `checkpointShadowChecks` and `checkpointDivergences` — and structurally nothing
-  else: a module name is a claim about the player's game, so the names go to the
-  local `errors.log` and never to the wire. Sampled and duty-cycled (dev 50% /
-  30 min, fleet 2% / 24 h, `EQ_FOLD_SHADOW=1` forces): a verification IS the cold
-  read this feature exists to remove, so always-verifying would hand the slow
-  launch back and call it instrumentation.
-  - It compares `state`, not `{seq, state}`. A module's `seq` is its private
-    REVISION counter, bumped by second inputs a cold re-fold cannot reproduce (a
-    watch-list edit, a combo correction). `seq` is compared where the arrangement
-    is controlled — the differential harness and the e2e.
-  - **IT DOES NOT COMPARE `buffs.overlay`, and that is a stated blind spot.** The
-    learned message overlay is NOT a pure function of (byte prefix, fold inputs):
-    its counts are seeded from `<userData>/message-overlay.json` — what the LAST
-    session persisted — and the fold adds this launch's observations on top. So a
-    cold re-fold from today's seed double-counts everything the seed already
-    held. **MEASURED: 22 → 44 → 88 across three cold launches.** That is a
-    pre-existing app defect (a cold launch has always re-mined the whole log into
-    a seed that already contained it) which the checkpoint incidentally FIXES,
-    since a restored launch mines only the tail. Resolving it properly is a
-    phase-2 semantics question: either the miner leaves the container, or its
-    counts become idempotent.
-- **THE VERDICT IS WRITTEN DOWN** (phase 3, deliverable 3):
-  `perf-startup.json.checkpoint` and the one-line startup summary in `errors.log`
-  both state `restored` (with the byte AND the origin) / `refused:<reason>` /
-  `off`. A launch that cold-read 128 MB because its cache was refused and a
-  launch that never had one are otherwise the same eight numbers with two
-  entirely different answers.
+- **The hypothesis did not survive its own instrumentation.** It was built
+  against a cold-read/AV stall. JOS-57's fleet numbers (585 launches) put
+  time-to-first-MB at p50 <10 ms / p95 10-25 ms, and stutter drift at
+  p50 = p95 = 10-25 ms. Nothing was stalling. The real p95 cost is fold CPU
+  under the slicer's fixed 0.6 duty — a cheaper lever, and one nobody had tried.
+- **It had zero field evidence, structurally.** It shipped OFF, gated on "turn
+  it on once the fleet's divergence count has held at zero", and the fleet's
+  CHECK count was zero on every build. A gate whose denominator cannot move
+  cannot open.
+- **It taxed every fold change.** A three-method persistence seam plus a
+  data-declaration in every registry module, both derived-event producers and
+  the combat engine; and a per-change ceremony of schema edit, semantics bump,
+  goldens re-record, census row, differential run.
+
+WHAT SURVIVED IT, because all three are the app's and not the feature's:
+
+- `tests/foldDeterminism.test.mts` — **a historical replay reads no wall
+  clock.** Written as the checkpoint's first audit, kept because the property is
+  the app's: a fixture-backed golden is only reproducible if the fold is a pure
+  function of the bytes. It traps `Date.now`/`performance.now` around a real
+  fold of a real fixture and carries its own tripwire.
+- The combat engine's `st.hydrating` gate (`combat/engine.ts`) — a mid-replay
+  `combat:snapshot` poll used to evaluate deferred encounter closure against the
+  wall clock and SPLIT a finalized fight (measured: 53,577 damage becoming
+  43,504 + 10,073). `tests/combatReplayClock.test.mts`.
+- `MessageOverlayMiner.lastObservedTs` (`data/messageOverlay.ts`) — the
+  overlay's `updatedAt` is the LOG's clock, not `new Date()`. A wall-clock read
+  inside a published snapshot is a statement about the reader, not about the
+  observations.
+
+Both product fixes were found by folding the same bytes twice and diffing —
+which is the technique to reach for again, harness or no harness.
+
+AND ONE DEFECT IT WAS MASKING, now re-exposed and tracked separately (JOS-231):
+the message overlay DOUBLE-COUNTS on every cold launch. Its counts are seeded
+from `<userData>/message-overlay.json` — what the last session persisted — and
+the fold then re-mines the whole log on top. MEASURED: 22 -> 44 -> 88 across
+three cold launches. A restored launch mined only the tail and so didn't show
+it. The fix is idempotent mining counts, or the miner excluded from the seed.
+
+If a startup-cost ticket ever comes back: measure first, and read
+`git log 5038f6f0..1c3e584f` before rebuilding any of this.
 
 ## Log-format quick reference (all validated against the real log)
 
