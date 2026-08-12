@@ -36,7 +36,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { FOLD_SEMANTICS } from '../src/main/foldCache/semantics'
-import { CHECKPOINTED_MODULE_IDS } from '../src/main/foldCache/serialize'
+import { PUBLISHED_FOLD_IDS } from '../src/main/foldCache/serialize'
 import { FOLD_FIXTURES } from './foldCheckpointHarness.mts'
 import { canonicalJson, foldFingerprints, GOLDENS_PATH, type FoldGoldens } from './foldGoldenRecord.mts'
 
@@ -112,8 +112,8 @@ test('fold goldens: the corpus the fingerprints cover is stated', () => {
   const keys = Object.keys(golden.fingerprints)
   assert.equal(
     keys.length,
-    FOLD_FIXTURES.length * CHECKPOINTED_MODULE_IDS.length,
-    'the corpus is every fixture x every checkpointed module — a missing pair is a module nobody fingerprints'
+    FOLD_FIXTURES.length * PUBLISHED_FOLD_IDS.length,
+    'the corpus is every fixture x every published fold — a missing pair is a fold nobody fingerprints'
   )
   // The key format is what a red build prints, so it is asserted rather than assumed.
   for (const key of keys) assert.match(key, /^[\w.-]+\.log::\w+$/)

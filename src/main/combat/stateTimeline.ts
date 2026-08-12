@@ -20,6 +20,7 @@
 // boundary is 'censored' and NEVER renders as an end time.
 
 import type { EdgeEvidence, StateKind, StateSpan } from '../../shared/procAnalytics'
+import type { StateTimelineFold } from './foldTypes'
 
 /**
  * Memory bound only — the whole 1.1M-line log produces ~700 stance+invocation commits, 6
@@ -97,6 +98,29 @@ export class StateTimeline {
     this.spans = []
     this.active.clear()
     this.open.clear()
+  }
+
+  /**
+   * THE CHECKPOINT'S VIEW (JOS-208 phase 4): the span ring, and nothing else.
+   *
+   * `open` and `active` are DERIVED and are not stored — a span is open exactly when its
+   * `endEvidence` is `'open'`, which is the field `finish()` overwrites, so both indexes rebuild
+   * from the ring with no possibility of disagreeing with it. Storing them would be the same fact
+   * three times, and `dropOldest()` already proves the indexes can legitimately point at nothing.
+   */
+  foldState(): StateTimelineFold {
+    return { spans: this.spans.map((s) => ({ ...s })) }
+  }
+
+  /** Adopt a previously folded ring (validated by the caller), rebuilding both open indexes. */
+  restoreFoldState(s: StateTimelineFold): void {
+    this.reset()
+    this.spans = s.spans.map((span) => ({ ...span }))
+    for (const span of this.spans) {
+      if (span.endEvidence !== 'open') continue
+      this.open.set(span.group, span)
+      this.active.add(stateKeyOf(span.kind, span.key))
+    }
   }
 
   /**

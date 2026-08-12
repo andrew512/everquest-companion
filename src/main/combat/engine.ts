@@ -60,6 +60,11 @@
 
 import { EngineState } from './state'
 import { ingestEvent } from './ingest'
+import { engineStateIn, engineStateOut } from './foldCodec'
+import { COMBAT_FOLD_SCHEMA } from './foldSchema'
+import { validate } from '../foldCache/schema'
+import { COMBAT_FOLD_ID, type FoldUnit } from '../foldCache/serialize'
+import type { EngineStateFold } from './foldTypes'
 import type { EngineFoldProbe } from './foldProbe'
 import { encSummary, evalClosure, zoneSessionSummaries, zoneSummary } from './lifecycle'
 import { buildSelected, buildTimeline } from './segmentViews'
@@ -134,8 +139,53 @@ function stanceState(st: EngineState): StanceState {
   }
 }
 
-export class CombatEngine {
+/**
+ * THE CHECKPOINT SEAM (JOS-208 phase 4). `CombatEngine` is a `FoldUnit` — the twentieth, and the
+ * one the first three phases left out.
+ *
+ * WHY IT IS IN NOW, and why the phase-2 argument for leaving it out was wrong. That argument was:
+ * nothing reads engine state back into a registry module (true — the dependency runs the other way,
+ * the engine PULLS the roster's view), so its absence cannot make a checkpointed module wrong, and
+ * what it costs is "a combat meter that starts empty after a restore, exactly as it does today
+ * after a cold start of the app itself". The second half is FALSE, and the owner's live retest is
+ * what proved it: a cold start folds the engine from the WHOLE log, so the meter comes up holding
+ * every fight in it. A restored launch folded the engine from the tail alone — five events — so the
+ * meter came up empty and the last-fight head row had nothing to name. Uniform state, no tiers: a
+ * restore must be byte-identical to a cold fold, and "the same as a cold start" was a claim about a
+ * program nobody was running.
+ *
+ * The id is `combat` and it is NOT a registry module, so it is not in `CHECKPOINTED_MODULE_IDS`
+ * (whose completeness test holds that list against the registry's own). It is in
+ * `PUBLISHED_FOLD_IDS`, which is what the differential, the goldens and the shadow verifier
+ * compare, and its published payload is `snapshot(now)` — the exact object `combat:snapshot`
+ * hands the renderer.
+ */
+export class CombatEngine implements FoldUnit {
+  readonly id = COMBAT_FOLD_ID
+  readonly foldSchema = COMBAT_FOLD_SCHEMA
   private st = new EngineState()
+
+  /** The engine's complete event-derived fold state, as plain data (`foldCodec.ts`). */
+  serializeFold(): EngineStateFold {
+    return engineStateOut(this.st)
+  }
+
+  /**
+   * Adopt a previously serialized state. Returns false — never throws — if it refuses, and the
+   * loader's answer to false is its answer to a corrupt digest: discard the WHOLE container and
+   * cold-replay.
+   *
+   * The reset first is not belt-and-braces: `engineStateIn` ADDS to the four name sets rather than
+   * replacing them (they are the sets `notePet`/`notePlayer` write through, and the world model's
+   * `onRetire` wiring lives on the instance), so a restore into a dirty engine would union two
+   * folds. The app has already reset by the time it gets here; a test or a second restore has not.
+   */
+  deserializeFold(state: unknown): boolean {
+    if (!validate(COMBAT_FOLD_SCHEMA, state).ok) return false
+    this.st.reset()
+    engineStateIn(this.st, state as EngineStateFold)
+    return true
+  }
 
   /** Enable classification logging (after the historical scan, for the live tail), and
    *  flip HYDRATION off — from here on every snapshot describes the real present. */
@@ -224,8 +274,29 @@ export class CombatEngine {
     // snapshot may be the first observation after that threshold, so evaluate the
     // deferred closure here (stamped at the encounter's own lastTs, not `now`).
     // An uncorroborated charm bind expires on the same wall clock (Task #65).
-    this.st.sweepCharm(now)
-    evalClosure(this.st, now)
+    //
+    // …BUT NOT WHILE THE HISTORICAL FOLD IS STILL RUNNING (JOS-208 phase 4). A REPLAY IS NOT A
+    // MOMENT IN TIME. `now` is the wall clock, every line in a months-old log is hours or weeks
+    // behind it, and the replay YIELDS to the event loop every slice — so a renderer poll landing
+    // between two slices used to finalize whatever fight was open and hand the rest of that fight
+    // to a fresh encounter. MEASURED, by the e2e restart-compare the moment the engine joined the
+    // container: one 53,577-damage fight in `e2e-combat.log` split into 43,504 + 10,073 under
+    // load, and the shadow verifier reported it as a real divergence. It is a PRE-EXISTING defect
+    // — a sliced replay has always been pollable, so a busy machine has always been able to saw a
+    // fight in half on a clock that has nothing to do with the log — and it was invisible while
+    // every launch folded the whole log the same way. A checkpoint makes it visible because the
+    // two arms then fold the SAME bytes in two different numbers of passes.
+    //
+    // Closure from the LOG's own clock is untouched: `ingestEvent` evaluates it per event, so a
+    // fight that really ended still ends, at the instant the log says. What this removes is the
+    // machine's opinion about a fold that has not finished reading. `st.hydrating` is exactly the
+    // right question — true from `reset()` until `setLive()`, which `session.ts` calls the moment
+    // the scan hands over to the tail — and the snapshot already carries it so the UI renders a
+    // loading state rather than a churning fake-live meter.
+    if (!this.st.hydrating) {
+      this.st.sweepCharm(now)
+      evalClosure(this.st, now)
+    }
     const st = this.st
     const maxSegments = opts.maxSegments ?? 100
     const inCombat = !!st.current && now - st.current.lastTs < ACTIVE_MS

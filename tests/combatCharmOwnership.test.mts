@@ -42,6 +42,13 @@ const AUG4 = (clock: string): number => Date.parse(`Tue Aug 04 ${clock} 2026`)
  *  snapshot(Date.now()) while the tailer is still catching up (the tick race). */
 function replay(lines: string[], pollLagMs = 0): { eng: CombatEngine; lastTs: number } {
   const eng = new CombatEngine()
+  // LIVE FROM THE START, because that is the only state anybody ever LOOKS at a meter in, and
+  // since JOS-208 phase 4 it is also the only state the wall-clock closure sweep runs in: a
+  // replay is not a moment in time, so `snapshot(now)` no longer finalizes a fight while the
+  // historical fold is still reading (engine.ts). Every window below asks what the meter shows
+  // after its span, which is a live question; the poll-lag arms model the live tick race and
+  // still exercise it.
+  eng.setLive()
   eng.setPlayerName('Primitive')
   let seq = 0
   let lastTs = 0

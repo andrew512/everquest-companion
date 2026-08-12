@@ -104,6 +104,8 @@ export function moduleShapeHash(unit: FoldCheckpointable): string {
  * producers are checkpointed without publishing anything, because the modules' correctness
  * depends on them.
  */
+export const COMBAT_FOLD_ID = 'combat'
+
 export const CHECKPOINTED_MODULE_IDS: readonly string[] = [
   'combo',
   'roster',
@@ -123,3 +125,22 @@ export const CHECKPOINTED_MODULE_IDS: readonly string[] = [
   'consider',
   'eventFeed'
 ]
+
+/**
+ * EVERY PUBLISHED FOLD THE DIFFERENTIAL COMPARES — the registry's modules, plus the CombatEngine
+ * (JOS-208 phase 4).
+ *
+ * Two lists rather than one, because the two are answers to different questions and one of them is
+ * held against the registry. `CHECKPOINTED_MODULE_IDS` is "every module the registry folds", and
+ * `foldCheckpointDifferential.test.mts` asserts it in BOTH directions against `registry.list()` —
+ * so a name in it that the registry does not know is a failure, and `combat` is exactly such a
+ * name: the engine subscribes to the bus directly (pipeline.ts) and publishes through its own
+ * `combat:snapshot` IPC rather than through `module:delta`.
+ *
+ * THIS is the list the proof stack iterates: the differential matrix, the golden fingerprints and
+ * the shadow verifier all compare every id here. The engine's payload is `snapshot(now)`; a
+ * module's is `registry.snapshot(id)`. Where the two lists differ is the seam between "a module"
+ * and "a fold", and `tests/foldConsumerCensus.test.mts` is what stops anything else from living in
+ * the gap between them unnoticed.
+ */
+export const PUBLISHED_FOLD_IDS: readonly string[] = [...CHECKPOINTED_MODULE_IDS, COMBAT_FOLD_ID]

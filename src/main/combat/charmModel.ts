@@ -95,6 +95,7 @@ import spellsJson from '../data/spells.json'
 import { getParserConfig } from '../log/rulesets'
 import { spellCanonKey } from '../log/parseCommon'
 import type { SpellDbFile } from '../../shared/types'
+import type { CharmFold } from './foldTypes'
 
 /** How long after a cast's nominal completion a broadcast may still be that cast's. EQ log
  *  timestamps are truncated to whole seconds, so a cast begun at x.9s and resolving at
@@ -265,6 +266,33 @@ export class CharmModel {
     this.confirmed.clear()
     this.observed.clear()
     this.seenCharmed.clear()
+  }
+
+  /**
+   * THE CHECKPOINT'S VIEW (JOS-208 phase 4). All five fields, because all five are event-derived
+   * and every one of them decides a later line: a mid-cast split lands between `You begin casting
+   * Allure` and `<mob> has been charmed.`, and an unstored `arm` would hand the broadcast in the
+   * tail to a stranger — the pet would never bind and every swing it made afterwards would be
+   * dropped as somebody else's. That split is in the differential matrix by name (`mid-cast`).
+   */
+  foldState(): CharmFold {
+    return {
+      ...(this.arm === null ? {} : { arm: { ...this.arm } }),
+      provisional: [...this.provisional].map(([k, v]) => [k, { ...v }]),
+      confirmed: [...this.confirmed],
+      observed: [...this.observed],
+      seenCharmed: [...this.seenCharmed]
+    }
+  }
+
+  /** Adopt a previously folded charm model (validated by the caller). */
+  restoreFoldState(s: CharmFold): void {
+    this.reset()
+    this.arm = s.arm ? { ...s.arm } : null
+    for (const [k, v] of s.provisional) this.provisional.set(k, { ...v })
+    for (const k of s.confirmed) this.confirmed.add(k)
+    for (const [k, ts] of s.observed) this.observed.set(k, ts)
+    for (const k of s.seenCharmed) this.seenCharmed.add(k)
   }
 
   /** True if a charm broadcast has ever named this entity (ours or a stranger's). */

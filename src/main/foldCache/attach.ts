@@ -18,7 +18,7 @@
 import { logInfo } from '../errorLog'
 import { characterId } from '../log/config'
 import { noteCheckpointVerdict } from '../perf'
-import { bus, epoch, registry, sessionDetector } from '../pipeline'
+import { bus, combat, epoch, registry, sessionDetector } from '../pipeline'
 import { getFoldCacheEnabled } from '../storeFoldCache'
 import { resolveFoldCacheFlag } from './flag'
 import {
@@ -84,17 +84,22 @@ export function foldCacheEnabled(): boolean {
  * The buffs module also carries the two halves it SHARES with `buffTimers` — the cast anchors and
  * the duration learner — so they are written exactly once.
  *
- * WHAT IS STILL OUTSIDE IT: the `CombatEngine`'s state machine. It is the last debt and it is a
- * different size of thing from everything above — an uncapped encounter history, per-encounter
- * aggregates, proc/heal/window accumulators, a world model of instances and generations, all of
- * it mutable class state — and its blob would dominate the container it lives in. Nothing reads
- * engine state back into any registry module (the dependency runs the other way: the engine PULLS
- * the roster's view), so leaving it out cannot make a checkpointed module wrong; what it costs is
- * that the combat meter starts empty after a restore, exactly as it does today after a cold start
- * of the app itself. See the ticket for the measurement and the recommendation.
+ * PHASE 4 CLOSED THE LAST GAP: the `CombatEngine` is here now, between the modules and the two
+ * producers. The phase-2 argument for leaving it out — "nothing reads engine state back, so its
+ * absence cannot make a checkpointed module wrong, and what it costs is a combat meter that starts
+ * empty, exactly as after a cold start" — was half true and half false, and the owner's live retest
+ * found the false half: a COLD start folds the engine from the whole log, so its meter comes up
+ * full. Only a RESTORED launch came up empty. Uniform state, no tiers; the size of the thing is a
+ * measurement to report, never a reason to serve a different world.
+ *
+ * NOTHING IS OUTSIDE IT NOW, and that is a machine-checked claim rather than a paragraph:
+ * `tests/foldConsumerCensus.test.mts` enumerates every bus subscriber and every reader of log bytes
+ * in `src/main/**` and requires each to be a checkpointed unit or a committed exemption with its
+ * argument. A future consumer wired outside the registry — which is exactly how the engine escaped
+ * phases 1–3 — fails CI by name.
  */
 function foldUnits(): FoldUnit[] {
-  return checkpointableUnits([...registry.list(), epoch, sessionDetector])
+  return checkpointableUnits([...registry.list(), combat, epoch, sessionDetector])
 }
 
 /** Install the last-event clock. Idempotent; only ever called when the flag is on. */
@@ -154,6 +159,14 @@ export async function restoreFold(ref: CharacterRef): Promise<{ offset: number; 
     // "slow-once, never wrong" has to mean if it means anything.
     if (res.adopted) {
       registry.reset()
+      combat.reset()
+      // …AND RE-INJECT THE NAME THE RESET JUST DROPPED. `resetWorldFor` calls `setPlayerName` right
+      // after its own `combat.reset()`, because the engine has to know whose heals are incoming
+      // before the replay's first line — so a reset here without the re-injection would leave the
+      // cold replay that follows in a state the cold path never has. (The registry's two injections
+      // survive their own reset; the engine's does not, by design: `reset()` is also what a
+      // character switch runs.)
+      combat.setPlayerName(ref.name)
       epoch.reset()
       sessionDetector.reset()
     }
