@@ -356,7 +356,9 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // backoff tick, because one logical check must produce exactly one of each. `runCheck`
     // reads `retryPending` and goes round again; the second failure takes the path below.
     // Downloads are untouched: they have their own bounded retry (MAX_DOWNLOAD_ATTEMPTS).
-    if (step === 'check' && !retryPending && shouldRetryCheck(err, checkAttempts)) {
+    // `checkInFlight` is what makes the swallow safe: only a failure `runCheck` is
+    // waiting on may be withheld, so a stray 'error' can never leave a verdict unpushed.
+    if (step === 'check' && checkInFlight && !retryPending && shouldRetryCheck(err, checkAttempts)) {
       retryPending = true
       return
     }
