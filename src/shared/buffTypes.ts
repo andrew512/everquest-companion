@@ -343,6 +343,31 @@ export interface SpellEntry {
   illusion: boolean
   /** mana cost, when present. */
   mana?: number
+  /**
+   * THE WIKI'S NUMBERED EFFECT LIST, VERBATIM (JOS-251) — one string per `{{SpellSlotRow}}` on
+   * the page, in the order the page prints them:
+   *
+   *   ["Charm (up to L37)", "Decrease Magic Resist by 4 (L27) to 8 (L60)"]
+   *
+   * RAW, and deliberately so. Wiki markup is stripped exactly the way every other field's text
+   * is (`clean()` in the scrape — links, bold, tags), and NOTHING else is normalised: no
+   * lower-casing, no re-ordering, no interpretation. The two phrasings the wiki uses for the same
+   * effect ("Charm up to level 37" and "Charm (up to L37)") both survive here as written, because
+   * the file's job is to record what the wiki said. What the strings MEAN is a separate,
+   * deletable layer — `src/main/data/spellEffectClass.ts` — for the reason the corrections overlay
+   * exists: a scrape rewrites this file wholesale, so anything we conclude must not live in it.
+   *
+   * Absent when the page carries no slot list at all. The slot NUMBER is not kept: it is the
+   * list's own ordinal for every page but the seven that write `?`, and no reader needs it.
+   */
+  effects?: string[]
+  /**
+   * The bard pages' `Enhanced by instrument?` row, verbatim ("Yes", "No", "Required",
+   * "Yes (just the resists debuff)"). It is a row of the same slot table but is not an effect, so
+   * it gets its own field rather than polluting `effects`. Absent on the ~95% of pages (every
+   * non-song) that have no such row.
+   */
+  instrumentEnhanced?: string
 }
 
 /** The committed spells.json shape: metadata + the spell list. */
@@ -350,6 +375,14 @@ export interface SpellDbFile {
   scrapedAt: string
   count: number
   spells: SpellEntry[]
+  /**
+   * Scrape schema version — bumped when the scraper starts capturing a new per-spell field, so a
+   * consumer can tell an old committed file from a new one instead of guessing from absent keys.
+   * 2 = the effect list + instrument flag (JOS-251). Absent means 1 (pre-JOS-251).
+   */
+  schema?: number
+  /** How many spells carry a non-empty `effects` list — scrape health at a glance. */
+  withEffects?: number
 }
 
 // ----- Suggested-alerts wizard (Task #38) -----

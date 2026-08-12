@@ -1,5 +1,20 @@
 import { DEFAULT_PROFILE } from '../../shared/profiles'
 import type { SpellDb } from '../data/spellDb'
+// THE DERIVED ROSTER (JOS-251). `charmRoster` reads the wiki EFFECT LINES the scrape now captures
+// and answers "does this spell charm?" from data instead of from the stem alternation below. The
+// import is one-way at runtime: spellEffectClass.ts reaches back here for nothing, and its own
+// import of parseCommon.ts is `spellCanonKey`, which imports this file for a TYPE only.
+import { charmRoster } from '../data/spellEffectClass'
+import { spellCanonKey } from './parseCommon'
+
+/**
+ * WHAT A ROSTER HAS TO BE ABLE TO DO: answer, for one spell name off a log line, whether it is a
+ * member. A `RegExp` satisfies this structurally, which is what lets the derived sets below slide
+ * in under every existing `cfg.charmSpell.test(name)` call site without one of them changing.
+ */
+export interface SpellRoster {
+  test(name: string): boolean
+}
 
 /**
  * Per-profile parser configuration. Different EQ servers/emulators can differ in
@@ -35,8 +50,12 @@ export interface ParserConfig {
    * decide whether it un-charms a pet. True charm spells only — MEZ spells also
    * wear off but must NOT uncharm. Stems audited against real worn-off lines, and
    * completed against the spell DB's own charm rosters (see below).
+   *
+   * SINCE JOS-251 THIS IS A DERIVED SET once a spell DB is installed — every spell whose wiki
+   * EFFECT LIST says it charms — with `CHARM_STEMS` demoted to the fallback for a name the catalog
+   * does not carry. It is still typed as a roster rather than a regex for exactly that reason.
    */
-  charmSpell: RegExp
+  charmSpell: SpellRoster
   /**
    * Matches the spell name from "Your <spell> spell has worn off of <mob>." to
    * decide whether it is a CROWD-CONTROL (mez/root) spell — as opposed to a charm
@@ -50,8 +69,10 @@ export interface ParserConfig {
    * Largo's BINDING songs, which are that same movement debuff and were the one
    * member of this roster the log never once shows holding anything (see "NOT A
    * HOLD" below).
+   *
+   * STILL A STEM SET, DELIBERATELY (JOS-251 — see THE HALF-SWAP below the stems).
    */
-  ccSpell: RegExp
+  ccSpell: SpellRoster
 }
 
 /**
@@ -284,10 +305,65 @@ export const CHARM_STEMS =
 export const CC_STEMS =
   /mesmeriz|enthrall|entranc|dazzle|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|pixie strike|sionachie.s dreams/i
 
+/**
+ * THE HALF-SWAP (JOS-251), and the half that did not move is the interesting one.
+ *
+ * `charmSpell` IS NOW DERIVED. The scrape captures each spell page's numbered effect list, and
+ * `spellEffectClass.ts` reads it, so "does this spell charm?" is a query over committed data rather
+ * than a stem alternation somebody has to remember to extend. The stems above stay as the FALLBACK
+ * for a name the catalog does not carry — which is the only case left, because the derived set is
+ * keyed by `spellCanonKey` and therefore already answers a ranked log name (`Allure VII`).
+ *
+ * THE SWAP IS PROVABLY BEHAVIOUR-PRESERVING TODAY, and that is the point of doing it this way
+ * rather than as a rewrite: over all 1,928 rows of the corrected catalog, `CHARM_STEMS.test(name)`
+ * and the derived set agree on EVERY name, in both directions — zero disagreements, measured, and
+ * asserted every run by tests/charmCcRoster.test.mts. So this commit changes no classification at
+ * all; what it changes is where the next charm comes from. JOS-250 had to hand-add four stems and
+ * hand-remove four false positives after a human read the wiki page by page; the next scrape that
+ * adds a charm adds it here for free, and a scrape that DISAGREES with a stem fails the suite
+ * instead of quietly being right or quietly being wrong.
+ *
+ * `ccSpell` DID NOT MOVE, and refusing to move it is a finding rather than an omission. The derived
+ * hold roster (mez ∪ root) disagrees with these stems on nineteen spells in both directions:
+ *
+ *   THE STEMS CLAIM FIVE NON-HOLDS — `Ensnare` (a pure `Decrease Movement Speed by 40%`, swept in
+ *   by the `ensnar` stem that exists for Ensnaring ROOTS), `Suffocate` and `Suffocating Sphere`
+ *   (damage-over-time and stat debuffs), and two NPC spells whose names contain "mesmeriz" while
+ *   their effect lines say Silence and Stun. By the JOS-225 rule — a movement debuff is not a hold
+ *   — the first three are that exact defect, still live.
+ *
+ *   THE DERIVATION CLAIMS FOURTEEN THE STEMS MISS — the whole druid root ladder, `Fetter`,
+ *   `Paralyzing Earth`, three enchanter mezzes, and, most plainly, the spell literally named
+ *   `Root`, whose break has never reached the "Mez / root broke" group at all.
+ *
+ * Both halves are corrections. But `Ensnare` is not a stray: it is the worked example in
+ * tests/earlyWarningBreaks.test.mts, the debuff in the buff-overlay e2e, and the hold in the
+ * offline-pause fixture — this tree has treated a snare as a trackable hold since long before
+ * JOS-225 drew the line for ALERTS. Reconciling "a snare is a hold for the timer model" with "a
+ * snare is not a hold for the alert" is an owner ruling about product behaviour, not a refactor an
+ * executor performs on the way past. tests/spellEffectClass.test.mts pins the derivation's answer
+ * for all nineteen so the ruling has something to land against.
+ */
 const classic: ParserConfig = {
   id: 'classic',
   charmSpell: CHARM_STEMS,
   ccSpell: CC_STEMS
+}
+
+/**
+ * The derived charm roster over an installed DB, with `fallback` answering for names it does not
+ * carry.
+ *
+ * NPC-ONLY SPELLS ARE KEPT (`castableOnly: false`), which is not the default `effectRoster` gate
+ * and is deliberate here: `CHARM_STEMS` matches `Alluring Whispers`, `Dragon Charm` and
+ * `Vampire Charm` — JOS-250 added the first of them "for completeness" — and this config feeds
+ * `charmModel.isCharmSpell`, which arms on a CAST rather than on a `Your <X> … worn off of` line.
+ * Dropping them would be a real behaviour change smuggled inside a refactor. SELF-target rows stay
+ * excluded (`targetOnly` default), because there are none in the charm class to exclude.
+ */
+function derivedCharmRoster(db: SpellDb, fallback: RegExp): SpellRoster {
+  const keys = charmRoster(db.spells, { castableOnly: false })
+  return { test: (name: string): boolean => keys.has(spellCanonKey(name)) || fallback.test(name) }
 }
 
 export const PARSER_CONFIGS: Record<string, ParserConfig> = {
@@ -304,15 +380,28 @@ export function getParserConfig(profileId: string = DEFAULT_PROFILE): ParserConf
  * message-driven buffApply / buffWearOff events. Called once at main startup after the DB
  * is loaded. Applies to ALL configs by default (they share the same message grammar); pass
  * a profileId to scope it. Idempotent — re-installing replaces the DB.
+ *
+ * IT ALSO INSTALLS THE DERIVED CHARM ROSTER (JOS-251). A DB is the only thing that carries the
+ * effect lines, so this is the one place that can build the roster from them — and clearing the DB
+ * puts `CHARM_STEMS` back, which keeps the purity contract this function was written under: a
+ * profile with no DB behaves exactly as it did before any of this existed.
  */
 export function installSpellDb(db: SpellDb | undefined, profileId?: string): void {
+  const roster = db ? derivedCharmRoster(db, CHARM_STEMS) : CHARM_STEMS
   if (profileId) {
     const cfg = PARSER_CONFIGS[profileId]
-    if (cfg) cfg.spellDb = db
+    if (cfg) {
+      cfg.spellDb = db
+      cfg.charmSpell = roster
+    }
     return
   }
-  for (const cfg of Object.values(PARSER_CONFIGS)) cfg.spellDb = db
+  for (const cfg of Object.values(PARSER_CONFIGS)) {
+    cfg.spellDb = db
+    cfg.charmSpell = roster
+  }
   classic.spellDb = db
+  classic.charmSpell = roster
 }
 
 /**

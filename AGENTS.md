@@ -615,6 +615,29 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   The learned counts are filed PER SOURCE and a re-fold replaces its own
   bucket — JOS-231's law in the checkpoint tombstone below; read it before
   touching the miner's seed or `<userData>/message-overlay.json`.
+  **AND SINCE JOS-251 IT CARRIES WHAT A SPELL DOES** — `SpellEntry.effects` is
+  the wiki page's numbered effect list VERBATIM (`"Charm (up to L37)"`,
+  `"Decrease Attack Speed by 30%"`) plus `instrumentEnhanced` for bard songs, and
+  `src/main/data/spellEffectClass.ts` is the separable OVERLAY that reads them.
+  Rules are anchored at the HEAD of the effect sentence, which is the whole
+  difference from the name stems it replaces: a stem matched a substring of a
+  NAME (`charm` found `Naki's Charm of Pernicity`, `boltran` found a PET SUMMON),
+  these match a sentence the wiki wrote to describe a mechanic. The derived charm
+  roster equals JOS-250's hand audit on all 23 rows and IS `ParserConfig.charmSpell`
+  now (`installSpellDb` builds it; `CHARM_STEMS` is the fallback for a name the
+  catalog lacks). `ccSpell` is still stems ON PURPOSE — the derived hold roster
+  disagrees with it on 19 spells, including `Ensnare`, which this tree treats as
+  a trackable hold in three places while JOS-225 ruled a snare is not a hold for
+  ALERTS; reconciling those is an owner ruling, and the derivation's answer is
+  pinned in `tests/spellEffectClass.test.mts` waiting for it.
+  **THE SCRAPE IS REVISION-KEYED AND BATCHED** (`scripts/sources/cache/spells/index.json`
+  records the revid behind each cached page): a cold pass over 1,962 pages is ~84
+  requests / 73 s, a re-run is 44 requests and ZERO fetches, and `scrapedAt` is
+  KEPT when the spell list is unchanged so a re-run is a byte-identical no-op
+  rather than a one-line diff that fires every time. Re-scraping is cheap now —
+  but it is a DATA CHANGE, not a refresh: the run that added the effect lists
+  also picked up 160 pages the wiki had edited under us (46 pet summons retyped,
+  87 durations filled, one page edited WRONG). Diff it, do not skim it.
 - **Alerts**: declarative JSON `AlertDef` in electron-store; triggers =
   primitives (event kind + `where` match, raw regex, app signal) or
   composites `{any|all}` (same-event semantics only). Module evaluates
