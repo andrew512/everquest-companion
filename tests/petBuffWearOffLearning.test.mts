@@ -43,6 +43,43 @@
 // derived-event seam, not a second arm in buffs.ts). Even so the SELF wear-off still mints its
 // 406 s and the estimate is still 900 000 / 'db'. So the pet-matching question cannot be the cause
 // of what the reporter sees, in either world.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// HOW BIG THE BELOW-FLOOR POPULATION IS — MEASURED on the owner's whole log, 1,593,491 lines,
+// 2026-08-11, folded through this same module. 66 (line, caster) rows carry clean samples and all
+// 66 have a DB row. 46 of them observe AT OR ABOVE the floor, so the learner already wins there
+// and nothing about them is in question. TWENTY sit below it, and the floor is what the app draws
+// for every one:
+//
+//   spell (n clean)              DB floor   top 3 clean samples      top-3 spread   max vs floor
+//   Quickness (60)                 11:00    6:54, 6:26, 6:09             12.2%          -37.3%
+//   Charm (52)                     16:00    7:05, 6:49, 6:34              7.9%          -55.7%
+//   Feedback (37)                  15:00    14:51, 14:45, 14:40           1.3%           -1.0%
+//   Cajoling Whispers (27)         16:00    14:43, 14:25, 14:23           2.3%           -8.0%
+//   Improved Invisibility (27)     10:00    6:40, 5:49, 5:09             29.4%          -33.3%
+//   Invisibility Vs Undead (25)    27:00    9:02, 3:31, 3:19            172.4%          -66.5%
+//   Celerity (24)                  16:00    15:01, 14:59, 14:58           0.3%           -6.1%
+//   Languid Pace (21)               2:30    1:17, 1:11, 1:08             13.2%          -48.7%
+//   Invisibility (20)              20:00    4:24, 2:13, 1:41            161.4%          -78.0%
+//   Alacrity (19)                  11:00    7:05, 6:58, 6:56              2.2%          -35.6%
+//   Beguile (18)                   16:00    9:53, 9:29, 9:12              7.4%          -38.2%
+//   Tashina (9)                    11:00    5:04, 4:43, 4:40              8.6%          -53.9%
+//   …plus eight rows at n<=3 (Negation of Life, Lull, Tepid Deeds, Shield of Thistles, Shield of
+//   Barbs, Spirit of Bih`Li, Root, Rune IV).
+//
+// TWO SHAPES LIVE IN THAT LIST, AND THEY ARE DISTINGUISHABLE. Invisibility — the floor law's own
+// worked counterexample — SCATTERS (4:24, 2:13, 1:41; 161% across the top three), which is what a
+// buff clicked off at whatever moment you happened to need it looks like. Alacrity CLUSTERS
+// (7:05, 6:58, 6:56; 2.2%), which is what a timer running out looks like, and its 7:05 against an
+// 11:00 row is the same disease as JOS-126: the committed scrape is classic-EQ data and this game
+// re-tiered the spell. Shield of Fire in the report is the clustered shape at n=2 (408 s, 406 s;
+// 0.5%).
+//
+// WHAT IS NOT DECIDED HERE. Whether a tight below-floor cluster may overrule the floor is a change
+// to THE ONE ESTIMATOR — JOS-117 ruling 6, owner-confirmed — and it would move the number the app
+// draws for at least eight spells on the owner's own log. That is an owner ruling and a
+// FOLD_SEMANTICS bump, not an executor's call, so this commit changes no behavior at all: it
+// proves the mechanism and leaves the estimator exactly as it was.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
