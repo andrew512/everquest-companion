@@ -71,9 +71,9 @@ export interface ParserConfig {
  *
  *   "Someone 's head nods."                          Kelin's Lucid Lullaby        Bard 15
  *   "Someone is bound in strands of solid music."    Largo's Melodic Binding      Bard 20  (was covered)
- *   "Someone 's eyes glaze over."                    Solon's Song of the Sirens   Bard 27
+ *   "Someone 's eyes glaze over."                    Solon's Song of the Sirens   Bard 27  (a CHARM — owner, 2026-08-12)
  *   "Someone 's eyes glaze over."                    Crission's Pixie Strike      Bard 28
- *   "Someone 's eyes glaze over."                    Solon's Bewitching Bravura   Bard 39
+ *   "Someone 's eyes glaze over."                    Solon's Bewitching Bravura   Bard 39  (a CHARM — JOS-200)
  *   "Target's eyes glaze over."                      Sionachie's Dreams           Bard 40
  *   "Someone is bound by strands of solid music."    Largo's Assonant Binding     Bard 51
  *
@@ -88,8 +88,10 @@ export interface ParserConfig {
  *
  * JOS-84 read `Solon's Bewitching Bravura` as a mez off the LANDING-MESSAGE FAMILY: spells.json
  * files it under `Someone 's eyes glaze over.` beside Solon's Song of the Sirens, Crission's Pixie
- * Strike and Sionachie's Dreams, which are genuine mezzes, so the roster oracle below put it in
- * `ccSpell`. But **spells.json has no effect column** — `spellType` is only Beneficial/Detrimental
+ * Strike and Sionachie's Dreams, which it took for genuine mezzes, so the roster oracle below put
+ * it in `ccSpell`. (Sirens has since gone the same way — see the second Solon ruling below, which
+ * makes the family two charms and two mezzes rather than one and three.)
+ * But **spells.json has no effect column** — `spellType` is only Beneficial/Detrimental
  * — and the game reuses one sentence for two effects. A message family is not an effect family.
  * That substitution is the whole of the error, and the oracle in tests/charmCcRoster.test.mts now
  * says so out loud.
@@ -219,8 +221,29 @@ export interface ParserConfig {
  * `alluring whispers` is added for completeness (NPC-only, so no `Your … has worn off of` line can
  * ever name it, but it is a member of the enchanter landing family and the oracle walks members).
  *
- * `song of the sirens` is DELIBERATELY NOT ADDED — contested, owner ruling pending. It stays in
- * `CC_STEMS` where JOS-84 put it.
+ * AND THE SECOND SOLON SONG IS A CHARM TOO (owner ruling 2026-08-12, on the wiki evidence). This
+ * paragraph said `song of the sirens` was contested and staying in `CC_STEMS`; the ruling settled
+ * it, and the citation is the wiki page's own EFFECT line — **"1: Charm up to level 37"**, which
+ * is the column spells.json does not carry and the column JOS-84's message-family walk had to
+ * guess at. So BOTH of Solon's songs are the bard charm line: `Solon's Song of the Sirens` 27 and
+ * `Solon's Bewitching Bravura` 39, one stem alternation, one roster.
+ *
+ * IT MOVES ROSTERS RATHER THAN JOINING ONE. Leaving it in `CC_STEMS` as well would make it the
+ * only spell in the tree that satisfies both, which `isCcSpell`'s charm-wins overlap rule would
+ * quietly paper over and which the roster oracle refuses outright — a spell has one effect. Its
+ * wear-off is an `uncharm` and fires charm-break from here on, never the mez group.
+ *
+ * THE LANDING IS UNCHANGED and stays impure: `Someone 's eyes glaze over.` is now two charms
+ * (Sirens 27, Bravura 39) and two real mezzes (Crission's Pixie Strike 28, Sionachie's Dreams 40),
+ * so the sentence still cannot be routed and still resolves through the arm — exactly the
+ * `goes berserk.` pattern charmModel.ts already runs on. That is JOS-200's standing cost, paid
+ * once more rather than relitigated.
+ *
+ * FIELD CORROBORATION IS STILL OUTSTANDING, and it is named rather than implied: JOS-200 proved
+ * Bravura a charm from a reporter's slice (`You lose control of yourself!` at T+3 s, against nine
+ * `You are stunned!` episodes in the same slice), and no slice in hand shows Sirens doing the same
+ * thing. The wiki effect line is the evidence this ruling rests on; a slice that shows the
+ * lose-control pair for Sirens would upgrade it from stated to measured.
  *
  * NOTHING HERE IS INVENTED. Every added name is a spell in src/main/data/spells.json that shares
  * its landing message with a member the rosters already classified; tests/charmCcRoster.test.mts
@@ -257,9 +280,9 @@ export interface ParserConfig {
  * built from the catalog's display name matches the sentence the game actually prints.
  */
 export const CHARM_STEMS =
-  /\bcharm\b(?! of )|beguile|\ballure\b(?! of death)|alluring whispers|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|thrall of bones|enslave death|befriend animal|call of karana|tunare.s request|solon.s (bewitching )?bravura/i
+  /\bcharm\b(?! of )|beguile|\ballure\b(?! of death)|alluring whispers|cajol|dictate|besiege|agacerie|beckon|command of druzzil|dominate|thrall of bones|enslave death|befriend animal|call of karana|tunare.s request|solon.s ((bewitching )?bravura|song of the sirens)/i
 export const CC_STEMS =
-  /mesmeriz|enthrall|entranc|dazzle|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|song of the sirens|pixie strike|sionachie.s dreams/i
+  /mesmeriz|enthrall|entranc|dazzle|screaming terror|ensnar|immobiliz|suffocat|kelin.s lucid lullaby|pixie strike|sionachie.s dreams/i
 
 const classic: ParserConfig = {
   id: 'classic',
