@@ -38,6 +38,7 @@ import {
 } from '../src/renderer/src/features/leveling/progressionDelta'
 import type { ProgressionKill, ProgressionSnap } from '../src/shared/progressionTypes'
 import { readFixture } from './harness.mts'
+import { payableExpLine } from './progressionJoin.mts'
 
 const LOG =
   'C:/Users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs/eqlog_Primitive_freeport.txt'
@@ -388,26 +389,10 @@ test('applyProgressionDelta: offline intervals arrive whole, in order, across fl
 // 99.74%, with all 14 misses the documented one-line-one-kill contention (a mob and its pet
 // dying in the same second share one experience line, and the mob claims it).
 
-/**
- * The newest experience line stamped inside KILL_EXP_JOIN_MS before `ts`, as an index into the
- * experience columns, or -1 when the kill had nothing to claim. This is the whole definition of
- * a PAYABLE kill, and it is deliberately written from the columns rather than from the module's
- * own `pendingExp` — a re-implementation of the claiming order would only prove itself.
- */
-function payableExpLine(snap: ProgressionSnap, ts: number): number {
-  let lo = 0
-  let hi = snap.expTs.length - 1
-  let best = -1
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1
-    if (snap.expTs[mid] <= ts) {
-      best = mid
-      lo = mid + 1
-    } else hi = mid - 1
-  }
-  if (best < 0 || ts - snap.expTs[best] > KILL_EXP_JOIN_MS) return -1
-  return best
-}
+// `payableExpLine` — the whole definition of a payable kill — now lives in tests/progressionJoin.mts
+// beside its mirror, because JOS-241 needed the same conditioning for the column-level
+// correspondence in progressionWindows.test.mts. Read that file's header for the argument; nothing
+// about the rule changed when it moved.
 
 /**
  * Does this joined row carry a line the log really printed in its window? EQ stamps to the
