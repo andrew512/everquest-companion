@@ -231,6 +231,21 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
 - **Frozen numbers rot**: the live log grows, so full-log assertions must be
   identities (`earned == allocated + unspent`), monotonic floors, or
   anchor-independent invariants — never `== <today's count>`.
+  **AND A RATIO ROTS TOO, IF ITS DENOMINATOR IS THE OWNER'S PLAY** (JOS-234). A
+  floor looks safe and is not when the quantity underneath it is a fact about
+  what the owner was killing rather than about the code: the kill/exp join's
+  `joined / credited kills > 0.9` measured 95.8% when written, went
+  deterministically red at 85.8% with no diff behind it, and fell every evening
+  — because the character hit the level cap and a grey kill prints no
+  experience line for anything to join (measured: 97-99% joined per day through
+  2026-08-09, 4% on 2026-08-10/11; 550 slain lines against 91 lines containing
+  the word "experience" on one of them). Before freezing a rate, ask which side
+  of it the code controls, and CONDITION the denominator on the code's
+  precondition — here, kills that HAD an experience line to claim, which is
+  99.7% and stays there. Then say the same thing again over the most RECENT
+  slice, or thousands of correct old rows will dilute a regression that only
+  breaks new ones. tests/progressionKillJoin.test.mts carries the worked
+  example.
 - **Regression gates**: model refactors prove untouched dimensions
   byte-identical (taxonomy added categories; total damage stayed exact).
   Run baseline before changing, diff after.
