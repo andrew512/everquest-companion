@@ -42,11 +42,25 @@
 // reads the same wherever you meet it.
 //
 // AND ROUND 7 FINISHED THAT MOVE. "Your watches" — the list at the bottom of the tab that round 4
-// left standing — is gone, so the OTHER thing it held is here too: the seconds box that is rung 1
-// of the ladder. It is on the row because that is where the player is standing when they decide the
-// number is wrong, and it is the only control on this row that types rather than clicks, which is
-// why the page keeps one caption stating its limits (a tooltip on an input is against the house
-// rules, and an out-of-range number silently clears).
+// left standing — is gone, so the OTHER thing it held came here too: rung 1 of the ladder, the
+// number that outranks everything this app learned. It is on the row because that is where the
+// player is standing when they decide the number is wrong.
+//
+// AND ROUND 9 CHANGED ITS SHAPE (owner ruling — this SUPERSEDES round 7's bare seconds box, which is
+// deleted rather than hidden). Three things happened to this row and they are one idea:
+//
+//   * THE DURATION AND ITS SOURCE ARE ONE THING. They used to sit at opposite ends of the same line,
+//     which reads as two facts sharing a row rather than as a fact and its provenance. They are now
+//     one bordered unit — `respawnDurationText` and `respawnSourceLabel` inside one box — so a
+//     glance reads "9m 30s, from the wiki".
+//   * THE EDIT AFFORDANCE IS ATTACHED TO THAT UNIT, because it edits that unit and nothing else, and
+//     it is an ICON: a text field on a 30px countdown row was the whole of what was wrong with the
+//     seconds box. It opens `RespawnEditDialog`, which is where the evidence and the decision finally
+//     meet.
+//   * AN OVERRULED ROW IS IN A STATE. `respawnOverridden` is the one definition (`source === 'custom'`)
+//     and this surface paints it in the theme's gold on that same unit — so a camp's worth of clocks
+//     tells you at a glance which numbers are yours. The floating window paints the same state in its
+//     own palette and carries none of the editing.
 //
 // AND THE ROW EXISTS EVEN WHEN THE CLOCK IS LONG GONE (owner ruling, round 8). A watched mob always
 // has a row, so this component now draws one whose estimate elapsed hours ago — and it must not do
@@ -63,16 +77,17 @@
 // estimate come from" is answerable without opening the hover. What they are NOT is spawns
 // observed; see `respawnGapsLabel` in shared/respawn.ts for why that wording is load-bearing.
 
-import { Box, Button, LinearProgress, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, IconButton, LinearProgress, Stack, Typography } from '@mui/material'
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import { useState, type JSX } from 'react'
 import {
   RESPAWN_CONFIRM_TITLE,
-  RESPAWN_CUSTOM_MAX_SEC,
-  RESPAWN_CUSTOM_MIN_SEC,
   respawnBasisLabel,
   respawnCardNote,
   respawnClockLabel,
+  respawnDurationText,
   respawnGapsLabel,
+  respawnOverridden,
   respawnReading,
   respawnSeenLabel,
   respawnSourceLabel,
@@ -83,6 +98,7 @@ import Tooltip from '../../lib/Tooltip'
 import { MOB_CARD_SLOT_PROPS, MobCard } from '../../lib/hoverCards'
 import { fmtDuration } from '../buffs/format'
 import { mainMobLookup } from './mobLookup'
+import { RespawnEditDialog } from './RespawnEditDialog'
 import { UnwatchButton } from './UnwatchButton'
 
 /**
@@ -167,92 +183,90 @@ function SeenRow({
 }
 
 /**
- * RUNG 1 OF THE LADDER, EDITABLE ON THE MOB (owner ruling, round 7).
+ * THE ROW'S WORKING: the gaps it measured, newest first.
  *
- * The number you typed outranks everything, including what this app learned — a player camping a
- * spot knows more about it than the wiki and more than a handful of gaps — and until this round the
- * only place to type it was a list at the bottom of the page. Now it is on the clock it changes.
- *
- * IT OWNS ITS DRAFT and commits on BLUR, which is the behaviour the retired editor had and the
- * reason it is a component rather than a controlled field on the row: this row re-renders once a
- * second forever (it is a countdown), and a field reading the module's number every tick would
- * fight anybody halfway through typing one.
- *
- * AN UNREADABLE OR OUT-OF-RANGE ENTRY CLEARS the custom number rather than keeping a half-typed
- * one — the ladder then falls back to your kills, which is a real answer. And a blur that changed
- * nothing writes nothing: `setPrefs` bumps the module revision and pushes a snapshot to two
- * renderers, so tabbing through a row must not cost that.
+ * Its own line because it is the evidence under the number, and it is absent when there is none (a
+ * row numbered by the wiki, or by a kill with nothing to pair it with) rather than drawn as an empty
+ * label. Round 7 shared this line with the seconds box; round 9 deleted the box, so the gaps have
+ * the line to themselves and the same numbers are in the edit modal beside the field that overrules
+ * them.
  */
-function CustomSeconds({
-  row,
-  onSetCustom
-}: {
-  row: RespawnRow
-  onSetCustom: (key: string, display: string, sec?: number) => void
-}): JSX.Element {
-  const current = row.customMs === undefined ? undefined : Math.round(row.customMs / 1000)
-  const [draft, setDraft] = useState(current === undefined ? '' : String(current))
+function WorkingLine({ row }: { row: RespawnRow }): JSX.Element | null {
+  const gaps = respawnGapsLabel(row, fmtDuration)
+  if (gaps.length === 0) return null
   return (
-    <TextField
-      size="small"
-      label="sec"
-      value={draft}
-      data-testid="respawn-custom"
-      sx={{ width: 96, flexShrink: 0 }}
-      onChange={(e) => {
-        setDraft(e.target.value)
+    <Typography
+      variant="caption"
+      data-testid="respawn-gaps"
+      sx={{
+        display: 'block',
+        mt: 0.5,
+        minWidth: 0,
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
       }}
-      onBlur={() => {
-        const n = Number(draft.trim())
-        const ok = Number.isFinite(n) && n >= RESPAWN_CUSTOM_MIN_SEC && n <= RESPAWN_CUSTOM_MAX_SEC
-        const next = ok ? Math.round(n) : undefined
-        if (next === current) return
-        onSetCustom(row.key, row.display, next)
-      }}
-    />
+    >
+      {gaps}
+    </Typography>
   )
 }
 
 /**
- * THE ROW'S WORKING: the gaps it measured, and the number that overrides them.
+ * THE DURATION AND WHERE IT CAME FROM, AS ONE THING (owner ruling, round 9).
  *
- * One line because they are one thought — "here is what I learned, and here is where you tell me I
- * am wrong". The gaps half is absent when there are none (a row numbered by the wiki, or by a kill
- * with nothing to pair it with), and the box half is absent on a surface with no way to write, the
- * same contract every other control on this row is under.
+ * One bordered box holding the estimate, the rung that produced it and — on a surface that can write
+ * — the affordance that overrules it. The border is what makes it one object rather than three
+ * neighbours, and it is the same object in both states: an OVERRIDDEN row keeps the shape and
+ * changes the colour, in the theme's gold, which is used by nothing else on this row (the clock's
+ * own states are red / green / grey / plain).
+ *
+ * The edit icon is absent on a surface with no writer, the contract every other control here is
+ * under, and its click is about ITSELF — the row is a hover-card anchor and the propagation stop is
+ * the same one Unwatch and the confirm button make.
  */
-function WorkingLine({
-  row,
-  onSetCustom
-}: {
-  row: RespawnRow
-  onSetCustom?: (key: string, display: string, sec?: number) => void
-}): JSX.Element | null {
-  const gaps = respawnGapsLabel(row, fmtDuration)
-  if (gaps.length === 0 && onSetCustom === undefined) return null
+function DurationUnit({ row, onEdit }: { row: RespawnRow; onEdit?: () => void }): JSX.Element {
+  const over = respawnOverridden(row)
   return (
-    <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5, minWidth: 0 }}>
-      {gaps.length > 0 && (
-        <Typography
-          variant="caption"
-          data-testid="respawn-gaps"
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            color: 'text.secondary',
-            fontVariantNumeric: 'tabular-nums',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
+    <Stack
+      direction="row"
+      spacing={0.5}
+      alignItems="center"
+      data-testid="respawn-duration"
+      data-respawn-overridden={over ? 'true' : 'false'}
+      sx={{
+        flexShrink: 0,
+        pl: 0.75,
+        pr: onEdit === undefined ? 0.75 : 0.25,
+        py: 0.125,
+        border: 1,
+        borderRadius: 1,
+        borderColor: over ? 'primary.main' : 'divider',
+        bgcolor: over ? 'action.selected' : 'transparent',
+        color: over ? 'primary.main' : 'text.secondary'
+      }}
+    >
+      <Typography variant="caption" sx={{ color: 'inherit', fontVariantNumeric: 'tabular-nums' }}>
+        {respawnDurationText(row, fmtDuration)}
+      </Typography>
+      <Typography variant="caption" sx={{ color: 'inherit', opacity: 0.8 }}>
+        · {respawnSourceLabel(row)}
+      </Typography>
+      {onEdit !== undefined && (
+        <IconButton
+          size="small"
+          data-testid="respawn-edit"
+          aria-label={`Edit respawn for ${row.display}`}
+          sx={{ p: 0.25, color: 'inherit' }}
+          onClick={(e) => {
+            e.stopPropagation()
+            onEdit()
           }}
         >
-          {gaps}
-        </Typography>
-      )}
-      {onSetCustom !== undefined && (
-        <Box sx={{ ml: 'auto' }}>
-          <CustomSeconds row={row} onSetCustom={onSetCustom} />
-        </Box>
+          <EditOutlinedIcon sx={{ fontSize: 14 }} />
+        </IconButton>
       )}
     </Stack>
   )
@@ -280,6 +294,56 @@ function ClockBar({ hasEstimate, r, t }: { hasEstimate: boolean; r: RespawnReadi
   )
 }
 
+/**
+ * THE LINE THE EYE GOES TO: the mob, the number, and the row's own way out.
+ *
+ * Its own component because `RespawnRowBar` is at the repo's `max-lines-per-function` ceiling — the
+ * same reason `SeenRow`, `WorkingLine`, `DurationUnit` and `ClockBar` are, and the seam is the honest
+ * one: this line is the ANSWER, everything below it is the working.
+ */
+function NameAndClock({
+  row,
+  nowMs,
+  r,
+  t,
+  onUnwatch
+}: {
+  row: RespawnRow
+  nowMs: number
+  r: RespawnReading
+  t: RowTone
+  onUnwatch?: (key: string) => void
+}): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1} alignItems="baseline" sx={{ minWidth: 0 }}>
+      <Typography
+        variant="body2"
+        sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      >
+        {row.display}
+      </Typography>
+      <Typography
+        variant="body2"
+        data-testid="respawn-clock"
+        sx={{
+          fontVariantNumeric: 'tabular-nums',
+          fontWeight: r.seen ? 700 : 400,
+          // Blue is the resting state and would read as an alert on a number that is simply
+          // counting; the facts worth colouring are UP, due, and long gone.
+          color: CLOCK_COLOR[t]
+        }}
+      >
+        {respawnClockLabel(row, nowMs, fmtDuration)}
+      </Typography>
+      {/* Last, so the countdown keeps its place on every row and the control never sits between the
+          name and the number the eye is looking for. */}
+      {onUnwatch !== undefined && (
+        <UnwatchButton mobKey={row.key} display={row.display} testId="respawn-row-unwatch" onUnwatch={onUnwatch} />
+      )}
+    </Stack>
+  )
+}
+
 export function RespawnRowBar({
   row,
   nowMs,
@@ -293,97 +357,119 @@ export function RespawnRowBar({
   onConfirmSighting?: (rowId: string) => void
   /** Same contract: no writer, no control. Round 4's affordance, on the mob rather than in a list. */
   onUnwatch?: (key: string) => void
-  /** Round 7's: rung 1, typed on the clock it changes. Same contract again — no writer, no box. */
+  /**
+   * Rung 1, edited on the clock it changes. Same contract again — no writer, no edit icon. Round 7
+   * spent this on a bare seconds field; round 9 spends it on the modal, and it is the SAME write.
+   */
   onSetCustom?: (key: string, display: string, sec?: number) => void
 }): JSX.Element {
   const r = respawnReading(row, nowMs)
   const hasEstimate = row.estimateMs !== undefined
   const basis = respawnBasisLabel(row)
   const t = tone(r)
+  /** Whether this row's modal is open. Local, because it is a view state about this row's controls. */
+  const [editing, setEditing] = useState(false)
   return (
-    <Tooltip
-      // ROUND 6: the hover is the mob's CARD — its drop table (wiki, plus what you have looted off
-      // it yourself) under what we know about its respawn. The timer half is round 5's provenance
-      // string unchanged, carried in as the card's leading block rather than duplicated beside it.
-      title={
-        <MobCard mob={row.display} note={respawnCardNote(row, fmtDuration)} lookup={mainMobLookup} />
-      }
-      slotProps={MOB_CARD_SLOT_PROPS}
-      // The card has nothing to click — item names are plain text on it by design — so it takes no
-      // pointer at all, which is the same law the floating window's card was drawn under while it
-      // had one (a card that took the pointer while overlapping a row could swallow the Unwatch
-      // beneath it, or fire the row's own mouseleave and flicker).
-      disableInteractive
-      // ROUND 7: the row now contains a text field, and MUI opens a tooltip on the ANCHOR's focus by
-      // default — so tabbing into the seconds box would throw a 300px card over the row you are
-      // typing into. This card is a mouse affordance and says so.
-      disableFocusListener
-      placement="top-start"
-    >
-      <Box
-        data-testid="respawn-row"
-        data-respawn-mob={row.key}
-        data-respawn-source={row.source}
-        data-respawn-due={r.due ? 'true' : 'false'}
-        data-respawn-seen={r.seen ? 'true' : 'false'}
-        data-respawn-stale={r.stale ? 'true' : 'false'}
-        data-respawn-basis={row.basis}
-        sx={{
-          px: 1,
-          py: 0.75,
-          borderLeft: 3,
-          borderColor: EDGE_COLOR[t],
-          bgcolor: 'action.hover',
-          borderRadius: 0.5
-        }}
+    <>
+      <Tooltip
+        // ROUND 6: the hover is the mob's CARD — its drop table (wiki, plus what you have looted off
+        // it yourself) under what we know about its respawn. The timer half is round 5's provenance
+        // string unchanged, carried in as the card's leading block rather than duplicated beside it.
+        // ROUND 9: …and it says NOTHING while this row's modal is open. The click that opens the
+        // modal is a hover, so the card is standing over the row the dialog is about — two answers
+        // to one question, one of them behind the other. An EMPTY title is how a MUI tooltip is told
+        // to close and stay closed ("there is no point in displaying an empty tooltip" — it forces
+        // `open` false), and it is used rather than `disableHoverListener` because that only stops
+        // the listeners: an already-open card would then never receive the mouseleave that closes
+        // it, and would still be standing there long after the dialog was dismissed. MEASURED — the
+        // e2e's "a clock row draws no card until it is pointed at" caught exactly that.
+        title={
+          editing ? (
+            ''
+          ) : (
+            <MobCard mob={row.display} note={respawnCardNote(row, fmtDuration)} lookup={mainMobLookup} />
+          )
+        }
+        slotProps={MOB_CARD_SLOT_PROPS}
+        // The card has nothing to click — item names are plain text on it by design — so it takes no
+        // pointer at all, which is the same law the floating window's card was drawn under while it
+        // had one (a card that took the pointer while overlapping a row could swallow the Unwatch
+        // beneath it, or fire the row's own mouseleave and flicker).
+        disableInteractive
+        // MUI opens a tooltip on the ANCHOR's focus by default, and this row contains buttons — so
+        // tabbing along a list of clocks would throw a 300px card over each one in turn. This card is
+        // a mouse affordance and says so.
+        disableFocusListener
+        placement="top-start"
       >
-        <Stack direction="row" spacing={1} alignItems="baseline" sx={{ minWidth: 0 }}>
-          <Typography
-            variant="body2"
-            sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
-            {row.display}
-          </Typography>
-          <Typography
-            variant="body2"
-            data-testid="respawn-clock"
-            sx={{
-              fontVariantNumeric: 'tabular-nums',
-              fontWeight: r.seen ? 700 : 400,
-              // Blue is the resting state and would read as an alert on a number that is simply
-              // counting; the facts worth colouring are UP, due, and long gone.
-              color: CLOCK_COLOR[t]
-            }}
-          >
-            {respawnClockLabel(row, nowMs, fmtDuration)}
-          </Typography>
-          {/* Last, so the countdown keeps its place on every row and the control never sits
-              between the name and the number the eye is looking for. */}
-          {onUnwatch !== undefined && (
-            <UnwatchButton
-              mobKey={row.key}
-              display={row.display}
-              testId="respawn-row-unwatch"
-              onUnwatch={onUnwatch}
-            />
-          )}
-        </Stack>
-        <Stack direction="row" spacing={1} alignItems="baseline">
-          <Typography variant="caption" sx={{ flex: 1, minWidth: 0, color: 'text.secondary' }}>
-            {row.zone.length > 0 ? row.zone : 'unknown zone'} · {respawnSourceLabel(row)}
-            {basis.length > 0 ? ` · ${basis}` : ''}
-          </Typography>
-          {hasEstimate && (
-            <Typography variant="caption" sx={{ color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
-              {row.source === 'observed' ? '<= ' : ''}
-              {fmtDuration(row.estimateMs)}
+        <Box
+          data-testid="respawn-row"
+          data-respawn-mob={row.key}
+          data-respawn-source={row.source}
+          data-respawn-due={r.due ? 'true' : 'false'}
+          data-respawn-seen={r.seen ? 'true' : 'false'}
+          data-respawn-stale={r.stale ? 'true' : 'false'}
+          // ROUND 9's state, stated at ROW level like every other one — the floating window states it
+          // here too, so a reader of either surface asks the same question of the same element. It is
+          // ALSO on the duration unit, which is the thing that actually changes colour.
+          data-respawn-overridden={respawnOverridden(row) ? 'true' : 'false'}
+          data-respawn-basis={row.basis}
+          sx={{
+            px: 1,
+            py: 0.75,
+            borderLeft: 3,
+            borderColor: EDGE_COLOR[t],
+            bgcolor: 'action.hover',
+            borderRadius: 0.5
+          }}
+        >
+            <NameAndClock row={row} nowMs={nowMs} r={r} t={t} onUnwatch={onUnwatch} />
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.25 }}>
+            {/* Where it died, and (only when it is not the norm) what the clock counts from. The RUNG
+                is no longer here: round 9 moved it into the duration unit it describes. */}
+            <Typography
+              variant="caption"
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                color: 'text.secondary',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {row.zone.length > 0 ? row.zone : 'unknown zone'}
+              {basis.length > 0 ? ` · ${basis}` : ''}
             </Typography>
-          )}
-        </Stack>
-        <WorkingLine row={row} onSetCustom={onSetCustom} />
-        {r.seen && <SeenRow row={row} nowMs={nowMs} onConfirmSighting={onConfirmSighting} />}
-        <ClockBar hasEstimate={hasEstimate} r={r} t={t} />
-      </Box>
-    </Tooltip>
+            <DurationUnit
+              row={row}
+              {...(onSetCustom === undefined
+                ? {}
+                : {
+                    onEdit: () => {
+                      setEditing(true)
+                    }
+                  })}
+            />
+          </Stack>
+          <WorkingLine row={row} />
+          {r.seen && <SeenRow row={row} nowMs={nowMs} onConfirmSighting={onConfirmSighting} />}
+          <ClockBar hasEstimate={hasEstimate} r={r} t={t} />
+        </Box>
+      </Tooltip>
+      {/* MOUNTED ONLY WHILE OPEN, outside the tooltip's anchor: the dialog prefills from the row at
+          the instant it opens (a countdown row re-renders every second and must not re-prefill under
+          the typing), and a portal rendered from inside a tooltip child is a needless entanglement. */}
+      {editing && onSetCustom !== undefined && (
+        <RespawnEditDialog
+          row={row}
+          open
+          onClose={() => {
+            setEditing(false)
+          }}
+          onSetCustom={onSetCustom}
+        />
+      )}
+    </>
   )
 }

@@ -140,7 +140,9 @@ function capColumns(cap: number, cols: unknown[][]): number {
   return drop
 }
 
-export class ProgressionModule implements EqModule<ProgressionSnap, ProgressionDelta> {
+export class ProgressionModule
+  implements EqModule<ProgressionSnap, ProgressionDelta>
+{
   readonly id = 'progression'
   private s: ProgressionSnap = blankSnap()
   private p: ProgressionDelta = blankDelta()
