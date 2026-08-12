@@ -53,8 +53,6 @@
 // kick, and the `strike` special lane) have no such confound — one timer, one hand. That split
 // is the whole content of `roundConfidence()` below, and the renderer must carry it.
 
-import type { PendingLaneFold, RoundAccumFold, RoundLaneTallyFold } from './foldTypes'
-
 /** Confidence in a lane's multi-swing reading — the dual-wield confound, made explicit. */
 export type RoundConfidence = 'perEvent' | 'aggregate'
 
@@ -376,41 +374,7 @@ export class RoundAccum {
     return this.lanes.size === 0 && this.pending.size === 0
   }
 
-  /**
-   * THE CHECKPOINT'S VIEW (JOS-208 phase 4) — including the OPEN SECOND, which is the whole reason
-   * this needs a seam of its own rather than being reconstructed from the lanes.
-   *
-   * A split can land in the middle of a second: three swings printed before B and a fourth after
-   * it. Storing only the counted lanes would flush the open second at the checkpoint (a 3-swing
-   * round) and open a new one in the tail (a 1-swing round) — two rounds where the cold arm counts
-   * one quadruple attack. The pending map and `openSecond` carry that second across the boundary,
-   * so the fan-out collapse sees the same swings it would have seen in one pass.
-   */
-  foldState(): RoundAccumFold {
-    const lanes: [string, RoundLaneTallyFold][] = []
-    for (const [key, lane] of this.lanes) lanes.push([key, cloneLane(lane)])
-    const pending: [string, PendingLaneFold][] = []
-    for (const [key, lane] of this.pending) {
-      pending.push([key, { verb: lane.verb, skill: lane.skill, seq: [...lane.seq] }])
-    }
-    return { lanes, openSecond: this.openSecond, pending, excluded: { ...this.excluded } }
-  }
-
-  /** Adopt a previously folded accumulator (validated by the caller). */
-  restoreFoldState(s: RoundAccumFold): void {
-    this.lanes.clear()
-    this.pending.clear()
-    for (const [key, lane] of s.lanes) this.lanes.set(key, cloneLane(lane))
-    for (const [key, lane] of s.pending) {
-      this.pending.set(key, { verb: lane.verb, skill: lane.skill, seq: [...lane.seq] })
-    }
-    this.openSecond = s.openSecond
-    for (const key of ROUND_EXCLUSIONS) this.excluded[key] = s.excluded[key]
-  }
 }
-
-/** The four exclusion reasons, as a list — the one place the record's keys are enumerated. */
-const ROUND_EXCLUSIONS: readonly RoundExclusion[] = ['frenzy', 'riposte', 'flurry', 'rampage']
 
 function cloneLane(l: RoundLaneTally): RoundLaneTally {
   return { ...l, buckets: [...l.buckets] }

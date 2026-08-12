@@ -60,11 +60,6 @@
 
 import { EngineState } from './state'
 import { ingestEvent } from './ingest'
-import { engineStateIn, engineStateOut } from './foldCodec'
-import { COMBAT_FOLD_SCHEMA } from './foldSchema'
-import { validate } from '../foldCache/schema'
-import { COMBAT_FOLD_ID, type FoldUnit } from '../foldCache/serialize'
-import type { EngineStateFold } from './foldTypes'
 import type { EngineFoldProbe } from './foldProbe'
 import { encSummary, evalClosure, zoneSessionSummaries, zoneSummary } from './lifecycle'
 import { buildSelected, buildTimeline } from './segmentViews'
@@ -139,53 +134,8 @@ function stanceState(st: EngineState): StanceState {
   }
 }
 
-/**
- * THE CHECKPOINT SEAM (JOS-208 phase 4). `CombatEngine` is a `FoldUnit` — the twentieth, and the
- * one the first three phases left out.
- *
- * WHY IT IS IN NOW, and why the phase-2 argument for leaving it out was wrong. That argument was:
- * nothing reads engine state back into a registry module (true — the dependency runs the other way,
- * the engine PULLS the roster's view), so its absence cannot make a checkpointed module wrong, and
- * what it costs is "a combat meter that starts empty after a restore, exactly as it does today
- * after a cold start of the app itself". The second half is FALSE, and the owner's live retest is
- * what proved it: a cold start folds the engine from the WHOLE log, so the meter comes up holding
- * every fight in it. A restored launch folded the engine from the tail alone — five events — so the
- * meter came up empty and the last-fight head row had nothing to name. Uniform state, no tiers: a
- * restore must be byte-identical to a cold fold, and "the same as a cold start" was a claim about a
- * program nobody was running.
- *
- * The id is `combat` and it is NOT a registry module, so it is not in `CHECKPOINTED_MODULE_IDS`
- * (whose completeness test holds that list against the registry's own). It is in
- * `PUBLISHED_FOLD_IDS`, which is what the differential, the goldens and the shadow verifier
- * compare, and its published payload is `snapshot(now)` — the exact object `combat:snapshot`
- * hands the renderer.
- */
-export class CombatEngine implements FoldUnit {
-  readonly id = COMBAT_FOLD_ID
-  readonly foldSchema = COMBAT_FOLD_SCHEMA
+export class CombatEngine {
   private st = new EngineState()
-
-  /** The engine's complete event-derived fold state, as plain data (`foldCodec.ts`). */
-  serializeFold(): EngineStateFold {
-    return engineStateOut(this.st)
-  }
-
-  /**
-   * Adopt a previously serialized state. Returns false — never throws — if it refuses, and the
-   * loader's answer to false is its answer to a corrupt digest: discard the WHOLE container and
-   * cold-replay.
-   *
-   * The reset first is not belt-and-braces: `engineStateIn` ADDS to the four name sets rather than
-   * replacing them (they are the sets `notePet`/`notePlayer` write through, and the world model's
-   * `onRetire` wiring lives on the instance), so a restore into a dirty engine would union two
-   * folds. The app has already reset by the time it gets here; a test or a second restore has not.
-   */
-  deserializeFold(state: unknown): boolean {
-    if (!validate(COMBAT_FOLD_SCHEMA, state).ok) return false
-    this.st.reset()
-    engineStateIn(this.st, state as EngineStateFold)
-    return true
-  }
 
   /** Enable classification logging (after the historical scan, for the live tail), and
    *  flip HYDRATION off — from here on every snapshot describes the real present. */

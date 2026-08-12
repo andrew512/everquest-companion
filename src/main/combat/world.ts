@@ -101,7 +101,6 @@ import { idKey } from '../log/parser'
 import { PRESENCE_GONE_MS } from './encounter'
 import { isLeftBehindOnZone, type PetKind } from './entityRules'
 import { SEC_WORLD, type EngineFoldProbe } from './foldProbe'
-import type { Entry, InstanceFold, WorldFold } from './foldTypes'
 
 /**
  * How long a LIVE hostile instance may go completely unobserved before its slot is eligible
@@ -206,45 +205,6 @@ export class WorldModel {
     this.byId.clear()
     this.gens.clear()
     this.petTankedBy.clear()
-  }
-
-  /**
-   * THE CHECKPOINT'S VIEW OF THIS MODEL (JOS-208 phase 4) — every spawn ever, the gen counters, and
-   * the per-pet killer sets, as plain data.
-   *
-   * `activeByName` and `byId` are NOT written, and that is the JOS-140 rule rather than a saving:
-   * all three indexes hold the SAME `Instance` objects, so a container carrying all three would
-   * carry one entity three times and could be restored into three that disagree. They are rebuilt
-   * in `restoreFoldState` — exactly, because retirement only ever SPLICES (it never reorders), and
-   * because `spawn()` gives `byName` and `activeByName` their key in the same statement.
-   *
-   * `onRetire` and `probe` are injected collaborators and are deliberately absent: the owner of
-   * this model re-installs the first in its constructor and the bench installs the second.
-   */
-  foldState(): WorldFold {
-    const byName: Entry<string, InstanceFold[]>[] = []
-    for (const [key, list] of this.byName) byName.push([key, list.map((i) => ({ ...i }))])
-    const petTankedBy: Entry<string, string[]>[] = []
-    for (const [id, killers] of this.petTankedBy) petTankedBy.push([id, [...killers]])
-    return { byName, gens: [...this.gens], petTankedBy }
-  }
-
-  /** Adopt a previously folded world. The caller has already validated `s` against the schema. */
-  restoreFoldState(s: WorldFold): void {
-    this.reset()
-    for (const [key, list] of s.byName) {
-      const instances: Instance[] = list.map((i) => ({ ...i }))
-      this.byName.set(key, instances)
-      // An emptied entry is KEPT (see `activeByName`): its key position is the order pets are
-      // reported in, and a name whose every instance retired must not silently lose its place.
-      this.activeByName.set(
-        key,
-        instances.filter((i) => !i.retired)
-      )
-      for (const inst of instances) this.byId.set(inst.instanceId, inst)
-    }
-    for (const [key, gen] of s.gens) this.gens.set(key, gen)
-    for (const [id, killers] of s.petTankedBy) this.petTankedBy.set(id, new Set(killers))
   }
 
   /**
