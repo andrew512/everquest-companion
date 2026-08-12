@@ -125,6 +125,29 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.22.0',
+    date: '2026-08-11',
+    entries: [
+      {
+        kind: 'new',
+        text: 'A new Performance switch in Preferences: Start faster by remembering your log. Turned on, the app checkpoints what it has already read, so a morning start resumes in about a second instead of re-reading your whole history - and it continuously proves the remembered state matches a full read, falling back to one at the first hint of doubt. Off by default while it earns its keep.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A fight can no longer be split in two by startup timing. Reading your history could close an open fight against the wrong clock if the meter was glanced at mid-read - so two launches could disagree about your fight list. Fixed for every launch, switch on or off.'
+      },
+      {
+        kind: 'fixed',
+        text: 'In the exaltations planner, the item you narrowed to now survives switching between proc, worn, focus and click.'
+      },
+      {
+        kind: 'new',
+        text: 'The planner can start from the item side now: search any worn item and browse just the effects compatible with it.'
+      }
+    ]
+  },
+  {
     version: '0.21.0',
     date: '2026-08-11',
     entries: [
