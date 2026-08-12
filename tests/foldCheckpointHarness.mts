@@ -38,6 +38,19 @@
  * partial line has been folded by nobody. A split inside a line would drop that line from the warm
  * arm and keep it in the cold one, which is a difference in the INPUT, not in the fold.
  */
+/**
+ * THE PINNED TIMEZONE. EQ log lines carry LOCAL wall times with no zone; the parser interprets
+ * them in the machine's timezone, so the same fixture folds to different absolute instants on
+ * different machines. The fixtures were cut from the owner's Pacific machine, and the golden
+ * fingerprints are therefore DEFINED over America/Los_Angeles — without this pin, goldens
+ * recorded locally failed on the UTC CI runner with every timestamped module "changed" on every
+ * fixture (red on every CI build from phase 1 until 2026-08-12, caught by the v0.22.0 tag build).
+ * Node re-reads process.env.TZ per Date operation, so setting it at module top governs every fold
+ * this harness runs, on every machine, including the recorder. The differential test never needed
+ * it (both arms share one process); the goldens are a cross-machine comparison and do.
+ */
+process.env.TZ = 'America/Los_Angeles'
+
 import { readFileSync } from 'node:fs'
 import { CombatEngine } from '../src/main/combat/engine'
 import { EpochDetector, LAUNCH_MS } from '../src/main/log/epochDetector'
