@@ -242,9 +242,11 @@ test('a buff always broken early keeps its DB FLOOR — DB 20m, observed max 4m 
 // reports source 'cluster', which is a different claim from 'observed' and says so.
 //
 // Every number below is MEASURED — the owner's whole log, 1.59M lines, folded through this module
-// (JOS-212 characterization). What the cases drive is the recency WINDOW's contents, which on a
-// live log is the last five clean cycles rather than the all-time top three; the measured triples
-// are used as those contents because they are what the two populations were separated on.
+// (JOS-212 characterization). What the cases drive is the recency WINDOW's contents, and the
+// measured triples are used as those contents because they are what the two populations were
+// separated on. On the live log the window is the last five CLEAN cycles rather than the all-time
+// top three, and for three of these spells that is a different question with a different answer —
+// see the Charm case below, which is where that distinction is argued and pinned.
 // =============================================================================================
 
 /** The measured below-floor population: [spell, DB floor ms, top-3 clean samples ms, flips?]. */
@@ -284,6 +286,41 @@ test('the measured below-floor population splits exactly as the owner ruled — 
     // The threshold really is what separates them, in both directions.
     assert.equal(relativeSpread(top3) <= BELOW_FLOOR_MAX_SPREAD, flips, `${spell}: spread vs threshold`)
   }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE EVIDENCE POOL IS THE RECENCY WINDOW, NOT ALL TIME — and this is the case that decides it.
+//
+// The characterization measured the population above as the top three of ALL of a spell's clean
+// samples. Read that way, the CHARM family (Charm, Beguile, Cajoling Whispers) clusters and would
+// flip. Re-measured through this rule on the owner's log 2026-08-12 — 1.60M lines, both halves of
+// the buffs model — their RECENT five clean cycles scatter instead: Charm 7:05 / 1:14 / 0:31
+// (1271%), Beguile 89.6%, Cajoling Whispers 40.8%. Charm BREAKS; that is what charm does.
+//
+// Two reasons the window wins, and the second is the one that matters:
+//   • it is the estimator's existing law (RECENT_SAMPLE_WINDOW), and the property that law exists
+//     to protect — a genuine change in duration must be able to recover — applies to an overrule
+//     exactly as it applies to an extension.
+//   • an all-time top-three is an ORDER STATISTIC that gets tighter as n grows, for any
+//     distribution whatever. Charm's three luckiest holds out of 52 sit 7.9% apart for the same
+//     reason the three tallest people in a stadium are all about the same height. Windowing is
+//     what stops "cast it enough times" from being a way to defeat the floor.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+test('a spell whose ALL-TIME best three agree but whose recent cycles scatter keeps its floor — the Charm shape', () => {
+  const { stats, key } = statsWithDb('Charm', 960_000)
+  stats.everFaded.add(key)
+  // The three longest holds this log ever saw, 7:05 / 6:49 / 6:34 — 7.9% apart, all-time.
+  ;[425_000, 409_000, 394_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Charm', { ms, ts: (i + 1) * 60_000 })
+  })
+  assert.equal(stats.estimateFor(key).source, 'cluster', 'while they ARE the window, they overrule')
+
+  // …and then charm goes on being charm: five more cycles, broken all over the place.
+  ;[74_000, 31_000, 120_000, 18_000, 205_000].forEach((ms, i) => {
+    stats.pushSample(key, SELF_CASTER, 'Charm', { ms, ts: 600_000 + i * 60_000 })
+  })
+  assert.deepEqual(stats.estimateFor(key), { ms: 960_000, source: 'db' }, 'the floor is back, and rightly')
 })
 
 test('the third clean cycle is what flips it — Alacrity at n=2 still draws its 11:00 floor', () => {

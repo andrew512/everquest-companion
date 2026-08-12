@@ -187,6 +187,18 @@ export const RECENT_SAMPLE_WINDOW = 5
  * it. The cost is stated: a spell is drawn at its DB floor until its third clean cycle lands, and
  * then self-heals (Shield of Fire's report is exactly one cycle short of the evidence bar).
  *
+ * THE POOL IS THE RECENCY WINDOW, AND THAT CHANGES THE ANSWER FOR THREE SPELLS. The table above
+ * is the top three of ALL of each spell's clean samples; the rule reads the last
+ * {@link RECENT_SAMPLE_WINDOW} clean cycles instead. Re-measured through the rule as built
+ * (2026-08-12, 1.60M lines, both halves of the model): FOUR rows flip — Alacrity 11:00 ⇒ 6:58,
+ * Celerity 16:00 ⇒ 15:01, Feedback 15:00 ⇒ 14:45, Tashina 11:00 ⇒ 5:04 — and the CHARM family does
+ * NOT, because its recent cycles scatter (Charm 1271%, Beguile 89.6%, Cajoling Whispers 40.8%).
+ * Charm breaks; that is what charm does. Keeping the window is deliberate on two grounds: it is
+ * the estimator's own law, and an all-time top-three is an order statistic that gets tighter as n
+ * grows for ANY distribution — Charm's three luckiest holds out of 52 sit 7.9% apart the way the
+ * three tallest people in a stadium are all about the same height. The window is what stops "cast
+ * it enough times" from being a way to defeat the floor.
+ *
  * WHAT IS DELIBERATELY *NOT* GATED: a minimum below-floor MARGIN. Feedback sits 1% under its row
  * and flips, moving a 15:00 bar to 14:51. If that 1% is really a systematic land-to-fade shortfall
  * rather than a shorter spell, the estimate is wrong by nine seconds in the direction of expiring
