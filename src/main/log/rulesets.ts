@@ -174,6 +174,16 @@ export interface ParserConfig {
  * which this roster has ALWAYS excluded; its three wear-offs in the slice are silent `buffFade`s
  * while Largo's four scream. Two songs, one effect, opposite behaviour, in one pull.
  *
+ * AND `buffFade` IS WHERE THE SLOW GROUP PICKS THEM UP (JOS-233, owner ruling 2026-08-12). Nothing
+ * in THIS file changes — both songs stay out of both parser rosters, exactly as above, and their
+ * break is still an ordinary `buffFade`. What changed is downstream: shared/alertGroups.ts's slow
+ * roster now claims them by NAME on the mob side, because the owner ruled the binding is an
+ * attack-speed debuff as well as a snare and its expiry is the quiet loss the slow group exists
+ * for. So JOS-225's silence was the correct middle step and not the destination: the alert that
+ * fires is "Slow wore off a mob", never "Mez / root broke", and R1c/R1d below pin exactly that.
+ * The wider binding line (`Selo's Consonant Chain` 23, `Selo's Chords of Cessation` 48,
+ * `Selo's Assonant Strain` 54) is EXPLICITLY UNRULED and stays silent in every roster.
+ *
  * THE CHARM SIDE gets the same completion, from the DB's other roster: five Necromancer
  * charm-undead spells share the landing message "Someone moans." — Dominate Undead 18, Beguile
  * Undead 31, Cajole Undead 47, Thrall of Bones 54, Enslave Death 60 — and the stems covered the
