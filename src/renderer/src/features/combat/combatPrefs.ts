@@ -108,12 +108,19 @@ export function abilityKey(category: string, name: string): string {
 }
 
 /** The stored `Drill` union, or null. Anything not exactly one of the two documented arms — a
- *  future build's third kind, a hand-edited blob, a missing id — is no drill at all. */
+ *  future build's third kind, a hand-edited blob, a missing id — is no drill at all.
+ *
+ *  `name` (JOS-240) is OPTIONAL on the entity arm and is dropped unless it is a non-empty string:
+ *  every token this app wrote before that ticket lacks it, and a drill without a name is a drill
+ *  that resolves by id exactly as it always did. An empty name is worse than none — it would ask
+ *  the builder to look for a row called '' — so it is normalised away here rather than guarded
+ *  again downstream. */
 function parseDrill(v: unknown): Drill | null {
   if (typeof v !== 'object' || v === null) return null
   const o = v as Record<string, unknown>
   if (o.kind === 'entity' && typeof o.entityId === 'string' && o.entityId !== '') {
-    return { kind: 'entity', entityId: o.entityId }
+    const name = typeof o.name === 'string' && o.name !== '' ? o.name : undefined
+    return name === undefined ? { kind: 'entity', entityId: o.entityId } : { kind: 'entity', entityId: o.entityId, name }
   }
   if (o.kind === 'target' && typeof o.target === 'string' && o.target !== '') {
     return { kind: 'target', target: o.target }
@@ -160,7 +167,9 @@ export function serializeDrillMemory(m: DrillMemory): string | null {
 }
 
 /** True when two drills name the same subject — the test that decides whether the expanded
- *  abilities still belong to what is on screen. */
+ *  abilities still belong to what is on screen. The entity arm compares the ID and only the ID:
+ *  the JOS-240 `name` is a resolution hint, not part of who the subject is, so a token that gained
+ *  or changed one is still the same drill and keeps its expansions. */
 function sameSubject(a: Drill | null, b: Drill | null): boolean {
   if (a === null || b === null) return a === b
   if (a.kind !== b.kind) return false
@@ -174,9 +183,11 @@ function sameSubject(a: Drill | null, b: Drill | null): boolean {
  * click that lands where you already were is not a reset.
  *
  * UN-DRILLING IS ALWAYS A FULL RESET, which is the one asymmetry here and it is deliberate: `null`
- * is not a subject you can be "already on", and Back / All / Esc / a fight change all mean "put
- * this surface back the way it opens". It is also what keeps a level-1 expansion (the Incoming
- * direction's inline enemy list) from leaking into the next level-2 list.
+ * is not a subject you can be "already on", and Back / All / Esc / a DIRECTION change all mean
+ * "put this surface back the way it opens". (A fight change used to be on that list and is not
+ * any more — JOS-240; it changes which segment the drill resolves against, not whether there is
+ * one.) It is also what keeps a level-1 expansion (the Incoming direction's inline enemy list)
+ * from leaking into the next level-2 list.
  */
 export function withDrill(m: DrillMemory, drill: Drill | null): DrillMemory {
   if (drill === null) return NO_DRILL
