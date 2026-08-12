@@ -36,7 +36,7 @@ import {
   TextField,
   Typography
 } from '@mui/material'
-import type { AlertFont } from '@shared/types'
+import type { AlertFont } from '@shared/alertTypes'
 import {
   ALERT_FONTS,
   ALERT_FONT_LABELS,

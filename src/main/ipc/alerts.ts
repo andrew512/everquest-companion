@@ -4,6 +4,7 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
+import { normalizeEarlyWarnSec } from '../../shared/earlyWarning'
 import { alertsModule, eventFeedModule, registry } from '../pipeline'
 import {
   deleteAlert,
@@ -17,37 +18,58 @@ import { normalizeAlertDisplay } from '../../shared/alertDisplay'
 import type { AlertDef, AlertPrefs, FeedReport } from '../../shared/types'
 
 /**
- * Re-validate the renderer-supplied fields on a saved def that main's own code will act on.
- *
- * Main states the legal values itself rather than trusting them because today's only caller is
- * the app's own dialog (the same rule `sounds:getData`'s packId follows). Nothing here REJECTS a
- * save: a field that cannot be made sense of is dropped or repaired and the rest of the def still
- * stores, because refusing the whole alert over one bad scalar loses work the user can see they
- * did.
- *
- * `cooldownScope` reaches the evaluator's Map-key logic — absent means 'alert', which is the safe
- * reading. `display` (docs/plans/alert-text-overlays.md) carries five values that end up in
- * another WINDOW's style attribute, so it goes through the same normalizer the share-import path
- * and the store both use; a block that survives as nothing at all has its key dropped, because
- * the presence of `display` is what makes an alert draw.
+ * Re-validate the ONE renderer-supplied enum on a saved def. `cooldownScope` reaches the
+ * evaluator's Map-key logic, so main states the legal values itself rather than trusting them
+ * because today's only caller is the app's own dialog (the same rule `sounds:getData`'s packId
+ * follows). Anything else is DROPPED, not rejected: absent means 'alert', which is the safe
+ * reading, and the rest of the def still saves.
  */
-function sanitizeSavedDef(def: AlertDef): AlertDef {
+function sanitizeCooldownScope(def: AlertDef): AlertDef {
+  if (def.cooldownScope === undefined) return def
+  if (def.cooldownScope === 'alert' || def.cooldownScope === 'target') return def
   const clean = { ...def }
-  if (clean.cooldownScope !== undefined && clean.cooldownScope !== 'alert' && clean.cooldownScope !== 'target') {
-    delete clean.cooldownScope
-  }
-  if (clean.display !== undefined) {
-    const display = normalizeAlertDisplay(clean.display)
-    if (display) clean.display = display
-    else delete clean.display
-  }
+  delete clean.cooldownScope
+  return clean
+}
+
+/**
+ * Re-validate the TEXT-OVERLAY block (docs/plans/alert-text-overlays.md) — the same rule as its
+ * two neighbours, for a sharper reason: `display` carries five values that end up in another
+ * WINDOW's style attribute, so it goes through the same normalizer the share-import path and the
+ * store both use rather than being trusted because today's only caller is our own dialog.
+ *
+ * A block that survives as nothing at all has its KEY dropped, because the presence of `display`
+ * is what makes an alert draw — and the rest of the def still saves either way.
+ */
+function sanitizeDisplay(def: AlertDef): AlertDef {
+  if (def.display === undefined) return def
+  const display = normalizeAlertDisplay(def.display)
+  const clean = { ...def }
+  if (display) clean.display = display
+  else delete clean.display
+  return clean
+}
+
+/**
+ * Re-validate the early-warning offset (JOS-216) — the same rule, for the same reason: the number
+ * reaches a scheduler, so main states the legal range itself rather than trusting the dialog's own
+ * bounds. Out of range or not a number ⇒ the key is DROPPED, which reads as "no early warning" and
+ * is the safe answer; the rest of the def still saves.
+ */
+function sanitizeEarlyWarn(def: AlertDef): AlertDef {
+  if (def.earlyWarnSec === undefined) return def
+  const sec = normalizeEarlyWarnSec(def.earlyWarnSec)
+  if (sec === def.earlyWarnSec) return def
+  const clean = { ...def }
+  if (sec === undefined) delete clean.earlyWarnSec
+  else clean.earlyWarnSec = sec
   return clean
 }
 
 export function registerAlertsIpc(): void {
   ipcMain.handle(IPC.listAlerts, () => getAlerts())
   ipcMain.handle(IPC.saveAlert, (_e, def: AlertDef) => {
-    const list = saveAlert(sanitizeSavedDef(def))
+    const list = saveAlert(sanitizeDisplay(sanitizeEarlyWarn(sanitizeCooldownScope(def))))
     alertsModule.setDefs(list) // keep the live evaluator in sync
     return list
   })

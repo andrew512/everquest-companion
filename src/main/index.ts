@@ -48,13 +48,14 @@ import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetect
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
-import { getActiveCharacter, startTailing, stopSession } from './session'
+import { getActiveCharacter, markTailPosition, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
 import { initUpdater } from './updater'
 import {
   createMainWindow,
   createOverlayWindow,
+  flushMainWindowState,
   getMainWindow,
   hardenSession,
   hardenWebContents,
@@ -266,7 +267,13 @@ if (!gotSingleInstanceLock) {
           // …and what the fold's duty cycle actually cost (JOS-50), plus how many bytes it read
           // (JOS-57, the fleet reading's size bucket). Both absent on a machine with no log to
           // replay, where there was no fold to have a duty and no bytes to have a size.
-          ...(res ? { replay: res.replay, bytesReplayed: res.logBytes } : {})
+          ...(res ? { replay: res.replay, bytesReplayed: res.logBytes } : {}),
+          // JOS-57's two discriminators, each forwarded ONLY when the session actually measured
+          // it: how much of that read was bytes appended since our last clean exit, and how long
+          // the first megabyte took to arrive. `TailResult` leaves both absent rather than zero
+          // when there was nothing to compare against, and that distinction has to survive here.
+          ...(res?.newBytes === undefined ? {} : { newBytes: res.newBytes }),
+          ...(res?.firstMbMs === undefined ? {} : { firstMbMs: res.firstMbMs })
         })
       })
       .catch((err: unknown) => {
@@ -371,7 +378,20 @@ if (!gotSingleInstanceLock) {
  * reading the pipe. It carried a self-reap for exactly the kill -9 case no in-process handler can
  * cover. A thread cannot outlive its process, so both the hazard and its workaround are gone.
  */
-app.on('before-quit', () => teardownStep('main:stopPresence', stopPresenceEffects))
+app.on('before-quit', () => {
+  teardownStep('main:stopPresence', stopPresenceEffects)
+  // …and the tail mark, for the same belt-and-braces reason and one more (JOS-57 scope addition):
+  // `app.quit()` does NOT emit `window-all-closed`, so an auto-updater's `quitAndInstall` would
+  // otherwise leave no mark and blind the very next launch — the one right after an update, which
+  // is exactly the launch a startup measurement most wants to see. Writing it on both events is
+  // one store key written twice, and the later write is the better answer.
+  teardownStep('main:logTailMark', markTailPosition)
+  // …and the window's own size and position (JOS-248), for EXACTLY that reason: the debounced save
+  // is flushed by the window's `close`, and `app.quit()` — an auto-updater's `quitAndInstall`, an
+  // OS logoff — is not a close. Without this the launch right after an update is the one that comes
+  // up at a stale size, which is the launch a user is most likely to be watching.
+  teardownStep('main:saveWindowState', flushMainWindowState)
+})
 
 /**
  * One teardown step, isolated. `window-all-closed` runs a LIST of these before `app.quit()`,
@@ -410,7 +430,7 @@ app.on('window-all-closed', () => {
   teardownStep('main:stopPerf', stopPerf)
   // Flush the learned message overlay one last time so the final session's observations
   // aren't lost between debounced saves (Task #36).
-  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlaySnapshot()))
+  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlayRegister()))
   // Dev only, and null in every other build: a live DSQL socket is not a timer and would hold
   // the process open long past the last window.
   teardownStep('main:triage', () => {

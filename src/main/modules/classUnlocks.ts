@@ -22,7 +22,9 @@ import type { EqModule } from './types'
 import type { LogEvent } from '../../shared/logEvents'
 import type { ClassUnlockDelta, ClassUnlockRecord, ClassUnlockSnap } from '../../shared/types'
 
-export class ClassUnlocksModule implements EqModule<ClassUnlockSnap, ClassUnlockDelta> {
+export class ClassUnlocksModule
+  implements EqModule<ClassUnlockSnap, ClassUnlockDelta>
+{
   readonly id = 'classUnlocks'
   private unlocks: ClassUnlockRecord[] = []
   /** lowercased class names already recorded — the dedupe key (law 2: keys are case-folded). */

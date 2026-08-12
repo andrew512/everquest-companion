@@ -17,7 +17,7 @@
 
 import { type JSX, useCallback, useEffect, useState } from 'react'
 import { Box, FormControlLabel, MenuItem, Select, Stack, Switch, TextField, Typography } from '@mui/material'
-import type { AlertFont } from '@shared/types'
+import type { AlertFont } from '@shared/alertTypes'
 import {
   ALERT_FONTS,
   ALERT_FONT_LABELS,

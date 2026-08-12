@@ -11,6 +11,9 @@ import type { ExaltPlan } from './planner/types'
 // factoring ceiling); OverlayConfig names the blob, that file owns its shape + normalizer.
 import type { ToastOverlayConfig } from './toast'
 // …and the alert-text kinds' per-overlay defaults live beside theirs, for the same reason.
+// `AlertDisplay`/`AlertFont` are deliberately NOT re-exported from this file: it is at the
+// 400-code-line ceiling (see the note at the bottom), so their consumers import them from
+// `@shared/alertTypes` directly — the same exception `presencePrefs` already takes.
 import type { AlertTextDefaults } from './alertDisplay'
 // TYPE-ONLY, and the cycle it closes (buffTimers.ts imports `OverlayKind` from here) is erased at
 // compile time. The union lives beside the function that applies it, which is where the argument
@@ -192,6 +195,24 @@ export interface OverlayConfig {
    * optional rather than defaulted here, and shared/buffTimers.ts holds the per-surface answer.
    */
   grouping?: TimerGrouping
+  /**
+   * SHOW THE BUFFS THAT NEVER EXPIRE (JOS-215) — Yaulp, the Shielding ladder, a rogue's blade
+   * coats, a druid's wolf form. Present only on the 'buffs' and 'debuffs' kinds, like `grouping`
+   * above, and `setOverlayConfig` deletes it everywhere else.
+   *
+   * ABSENT MEANS HIDDEN, and that is the owner's ruling for this ticket rather than a default
+   * anyone is free to re-argue: a permanent buff has no clock, so it can never be the thing you
+   * are watching a timer window to see, and a stack of them at the bottom of every bar list would
+   * push the countdowns that matter off the top. The user who wants the roster switches it on.
+   *
+   * IT IS A RENDERER FILTER, NOT A MODEL ONE — the same shape the grouping chip beside it has. The
+   * rows exist in the model either way (they have to: the hygiene sweep, the wear-off and the death
+   * censor all act on them), and only the window decides whether to draw them. Nothing is ever
+   * hidden from the learner, because there is nothing here for the learner to hear.
+   *
+   * Stored ONLY when true, so "absent" and "the default" are the same fact rather than two.
+   */
+  showPermanent?: boolean
   /**
    * WHICH ROWS THE XP OVERLAY DRAWS (JOS-195) — the whole of that window's configurability, by
    * owner scope: a checklist, never a widget builder. Present only on the 'xp' kind;
@@ -1009,8 +1030,6 @@ export type {
   AlertPrefs,
   SpeechMode,
   AlertAudio,
-  AlertFont,
-  AlertDisplay,
   AlertSpeech,
   SpeechEngine,
   VoicePrefs,
@@ -1046,6 +1065,7 @@ export type {
 export type {
   BuffClass,
   BuffStat,
+  EstimatorSource,
   ActiveBuff,
   OverlayVerdict,
   OverlayMessage,

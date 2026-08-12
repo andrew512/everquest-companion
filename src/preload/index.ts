@@ -615,6 +615,7 @@ const api = {
   setOverlayAutoHide: (patch: Partial<OverlayAutoHidePrefs>): Promise<OverlayAutoHidePrefs> =>
     ipcRenderer.invoke(IPC.overlayAutoHideSet, patch),
 
+
   // ---- clipboard ----
   /**
    * Put plain text on the OS clipboard; resolves to whether it was written.

@@ -44,6 +44,8 @@ import {
 } from '../src/shared/alertOverlays'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import { speechTextFor } from '../src/shared/speechText'
+import { alertBehaviorKey, sanitizeAlertDef } from '../src/shared/profiles'
+import type { AlertDef } from '../src/shared/types'
 
 // ------------------------------------------------------------------ (A) the roster
 
@@ -339,4 +341,59 @@ test('an over-long line is capped at the boundary too, not just at the resolver'
     text: 'y'.repeat(MAX_DISPLAY_CHARS + 500)
   })
   assert.equal(out?.text.length, MAX_DISPLAY_CHARS)
+})
+
+// ------------------------------------------------------------------ (E) surviving a share
+//
+// `sanitizeAlertDef` (shared/shareSchema.ts) rebuilds a def FIELD BY FIELD, which is what makes an
+// untrusted payload safe — and is exactly why it once silently dropped `audio`/`speech`: a field
+// added to AlertDef and not added there does not survive a share, and the alert arrives looking
+// like it never had the feature. These live here rather than in tests/shareProfiles.test.mts only
+// because that file is at its 400-line ceiling; the claim they pin belongs to both.
+
+test('the display block survives a share round trip, validated field by field', () => {
+  const shown = sanitizeAlertDef({
+    id: 'd',
+    name: 'Adds',
+    trigger: { type: 'raw', regex: 'adds' },
+    sound: { packId: 'p', soundId: 's' },
+    display: { text: '{mob} incoming', font: 'display', fontSize: 48, color: '#ff0000', durationMs: 8000 }
+  })
+  assert.deepEqual(shown?.display, {
+    text: '{mob} incoming',
+    font: 'display',
+    fontSize: 48,
+    color: '#ff0000',
+    durationMs: 8000
+  })
+})
+
+test('an imported display block is repaired, not trusted', () => {
+  // A stranger's bundle is untrusted input that ends up in a `style` attribute in another window,
+  // so it goes through the same normalizer the app's own save path uses.
+  const dirty = sanitizeAlertDef({
+    id: 'd',
+    name: 'D',
+    trigger: { type: 'raw', regex: 'ok' },
+    sound: { packId: 'p', soundId: 's' },
+    display: {
+      text: 'hi',
+      color: 'red; background:url(http://evil)',
+      fontSize: 9000,
+      font: 'Comic Sans',
+      // An overlay this build does not have — the alert must still appear SOMEWHERE.
+      overlay: 'alert99'
+    }
+  })
+  assert.deepEqual(dirty?.display, { text: 'hi', fontSize: MAX_ALERT_FONT_PX })
+})
+
+test('adding a display block does NOT change the merge fingerprint', () => {
+  // `alertBehaviorKey` hashes trigger/sound/volume/cooldown — what an alert LISTENS for and what
+  // it plays. Two copies of one alert that differ only in what they draw are still one alert, so
+  // importing a friend's styled copy over your own must not duplicate it.
+  const base = { id: 'k', name: 'K', trigger: { type: 'raw' as const, regex: 'ok' }, sound: { packId: 'p', soundId: 's' } }
+  const plain = sanitizeAlertDef(base) as AlertDef
+  const styled = sanitizeAlertDef({ ...base, display: { text: 'K!', fontSize: 40 } }) as AlertDef
+  assert.equal(alertBehaviorKey(styled), alertBehaviorKey(plain))
 })

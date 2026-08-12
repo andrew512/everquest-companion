@@ -13,7 +13,8 @@
 // default is that changing it moves the alerts that never disagreed with it.
 
 import { useEffect, useState } from 'react'
-import type { AlertDef, AlertDisplay, AlertFont } from '@shared/types'
+import type { AlertDef } from '@shared/types'
+import type { AlertDisplay, AlertFont } from '@shared/alertTypes'
 import { MAX_DISPLAY_CHARS } from '@shared/alertDisplay'
 import { DEFAULT_ALERT_OVERLAY, type AlertOverlayKind } from '@shared/alertOverlays'
 

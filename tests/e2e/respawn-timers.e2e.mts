@@ -45,6 +45,13 @@
  * entry too. The fifth is an ABSENCE and belongs over the game: the floating window draws NO card
  * any more, and says what it knows about the respawn on a plain title instead.
  *
+ * AND ROUND 9 SUPERSEDES ONE OF THOSE (respawnRound9Steps.mts). The bare seconds box is deleted; the
+ * duration and the rung that produced it are one bordered unit with an edit icon attached, and the
+ * icon opens a MODAL carrying the card's own account, every measured gap, the wiki's words and a
+ * link to the page they came from. Two steps, because the ruling has two halves: the modal itself is
+ * tab-only and needs no second renderer, while "the OVERRIDDEN state reaches the window over the
+ * game and none of the editing does" can only be claimed with both windows open.
+ *
  * AND ROUND 8 IS THE ONE STEP THAT DOES NOT PLAY A LINE (respawnRound8Steps.mts). The owner came
  * back to the app hours after his kills, clicked Watch and got no row — a defect only OLD deaths can
  * show, so that step watches the fixture's own days-old kills through the all-zones view and asserts
@@ -78,12 +85,15 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, overlayWindow } from './appWindow.mjs'
 import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
-// Round 7's two TAB-ONLY steps live beside this file (the 400-line ceiling, and the
-// `buffRestartSteps.mts` precedent): the seconds box that moved onto the clock row, and the search.
-import { stepCustomOnTheMob, stepSearchRecentlyKilled } from './respawnRound7Steps.mjs'
+// Round 7's surviving TAB-ONLY step lives beside this file (the 400-line ceiling, and the
+// `buffRestartSteps.mts` precedent): the Recently-killed search.
+import { stepSearchRecentlyKilled } from './respawnRound7Steps.mjs'
 // Round 8's one step lives beside them for the same reason, and is the only one whose subject is a
 // death the fixture itself carries rather than one played onto the tail.
 import { stepAncientKillIsWatchable } from './respawnRound8Steps.mjs'
+// Round 9's two: the edit modal that superseded round 7's seconds box, and the pair of claims about
+// the overridden state that need both renderers open at once.
+import { stepEditTheNumber, stepOverriddenOverTheGame } from './respawnRound9Steps.mjs'
 
 /** A mob the committed wiki floor states a duration for: `9.5 min` → 570 s. */
 const WIKI_MOB = 'a frenzied ghoul'
@@ -200,8 +210,15 @@ async function stepFreshInstall(page: Page, app: ElectronApplication): Promise<v
     (await countOf(page, '[data-testid="respawn-watches-empty"]')) === 0 &&
       (await countOf(page, '[data-testid="respawn-watch-row"]')) === 0
   )
-  // …and there is exactly one seconds box per CLOCK, which on a fresh install is none at all.
-  check('…so nothing on the page types a number until a clock exists', (await countOf(page, '[data-testid="respawn-custom"]')) === 0)
+  // ROUND 9: and round 7's own seconds box is gone in its turn — deleted, not hidden. Nothing on a
+  // fresh install offers to edit a duration, because no duration exists to edit.
+  check('the bare seconds box round 7 added is gone too', (await countOf(page, '[data-testid="respawn-custom"]')) === 0)
+  check(
+    '…and nothing offers to edit a number until a clock exists',
+    (await countOf(page, '[data-testid="respawn-duration"]')) === 0 &&
+      (await countOf(page, '[data-testid="respawn-edit"]')) === 0 &&
+      (await countOf(page, '[data-testid="respawn-edit-dialog"]')) === 0
+  )
   // ROUND 7, RULING 4: the discovery panel has its own search from the first render.
   check('Recently killed is searchable', (await countOf(page, '[data-testid="respawn-search"]')) === 1)
 
@@ -679,9 +696,11 @@ async function main(): Promise<void> {
   await stepAncientKillIsWatchable(page, ANCIENT_MOB)
   await stepLiveKillIsOfferedThenWatched(page, fixture)
   await stepWatchFromRecentKills(page, fixture)
-  // ROUND 7's two tab-only rulings, before any window is opened: they need no second renderer, and
-  // the search step deliberately leaves the box EMPTY so the steps below can still click Watch.
-  await stepCustomOnTheMob(page, OWN_MOB, readWatches)
+  // ROUND 9's edit modal, and ROUND 7's search, before any window is opened: neither needs a second
+  // renderer, and the search step deliberately leaves the box EMPTY so the steps below can still
+  // click Watch. The modal step leaves the mob numbered by its own kills, which is what the hover
+  // step's provenance assertion below reads.
+  await stepEditTheNumber(page, OWN_MOB, readWatches)
   await stepSearchRecentlyKilled(page, OWN_MOB, WIKI_MOB)
   // The zone step needs the window the overlay step opened — it is the second half of the same
   // claim (one piece of zone state, two renderers), so it rides the same window rather than
@@ -691,6 +710,11 @@ async function main(): Promise<void> {
     // Round 6 rides the same window and runs FIRST of the three, for one reason: it asserts the
     // card is absent until a row is hovered, and the steps below leave pointers and rows moving.
     await stepHoverCard(page, overlay)
+    // Round 9's second half needs both renderers: the OVERRIDDEN state has to reach the window over
+    // the game while none of the EDITING does. It runs on the wiki-numbered mob (the committed floor
+    // holds a page title for it, so the modal's link needs no network) and hands that mob back to
+    // the wiki default, which is what the unwatch step below reads.
+    await stepOverriddenOverTheGame(page, overlay, WIKI_MOB)
     // Round 3 rides the same window for the same reason the zone step does: the claim is that ONE
     // piece of module state moves two renderers. It runs BEFORE the zone step, which walks the
     // character out and empties both surfaces.

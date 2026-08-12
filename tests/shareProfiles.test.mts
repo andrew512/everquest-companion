@@ -1,4 +1,4 @@
-﻿// Share-profile envelope tests — the paste-safe settings/alert sharing model.
+// Share-profile envelope tests — the paste-safe settings/alert sharing model.
 //
 // What's guarded here (and why each one is load-bearing):
 //   * round-trip: encode → decode returns exactly what went in, through a real deflate.
@@ -34,7 +34,6 @@ import {
 } from '../src/shared/profiles'
 import { decodeShareString, encodeShareString, looksLikeShareString } from '../src/main/shareCodec'
 import { MAX_SPEECH_CHARS } from '../src/shared/speechText'
-import { MAX_ALERT_FONT_PX } from '../src/shared/alertDisplay'
 import type { AlertDef } from '../src/shared/types'
 
 const MACHINE_PATH = 'C:\\Users\\jmoye\\AppData\\Roaming\\everquest-companion-dev'
@@ -218,59 +217,6 @@ test('a sound-only alert is byte-identical after sanitizing (the merge fingerpri
   assert.equal(Object.prototype.hasOwnProperty.call(plain as object, 'display'), false)
 })
 
-// ------------------------------------------------------------------ text overlays on the wire
-//
-// The lesson this file already records for `audio`/`speech`: a field added to AlertDef and not
-// added to `sanitizeAlertDef` DOES NOT SURVIVE A SHARE — the sanitizer rebuilds the def field by
-// field, so anything it does not name is silently dropped and the alert arrives looking like it
-// never had the feature. `display` (docs/plans/alert-text-overlays.md) is the third such field.
-
-test('the display block survives a share round trip, validated field by field', () => {
-  const shown = sanitizeAlertDef({
-    id: 'd',
-    name: 'Adds',
-    trigger: { type: 'raw', regex: 'adds' },
-    sound: { packId: 'p', soundId: 's' },
-    display: { text: '{mob} incoming', font: 'display', fontSize: 48, color: '#ff0000', durationMs: 8000 }
-  })
-  assert.deepEqual(shown?.display, {
-    text: '{mob} incoming',
-    font: 'display',
-    fontSize: 48,
-    color: '#ff0000',
-    durationMs: 8000
-  })
-})
-
-test('an imported display block is repaired, not trusted', () => {
-  // A stranger's bundle is untrusted input that ends up in a `style` attribute in another window,
-  // so it goes through the same normalizer the app's own save path uses.
-  const dirty = sanitizeAlertDef({
-    id: 'd',
-    name: 'D',
-    trigger: { type: 'raw', regex: 'ok' },
-    sound: { packId: 'p', soundId: 's' },
-    display: {
-      text: 'hi',
-      color: 'red; background:url(http://evil)',
-      fontSize: 9000,
-      font: 'Comic Sans',
-      // An overlay this build does not have — the alert must still appear SOMEWHERE.
-      overlay: 'alert99'
-    }
-  })
-  assert.deepEqual(dirty?.display, { text: 'hi', fontSize: MAX_ALERT_FONT_PX })
-})
-
-test('adding a display block does NOT change the merge fingerprint', () => {
-  // `alertBehaviorKey` hashes trigger/sound/volume/cooldown — what an alert LISTENS for and what
-  // it plays. Two copies of one alert that differ only in what they draw are still one alert, so
-  // importing a friend's styled copy over your own must not duplicate it.
-  const base = { id: 'k', name: 'K', trigger: { type: 'raw' as const, regex: 'ok' }, sound: { packId: 'p', soundId: 's' } }
-  const plain = sanitizeAlertDef(base) as AlertDef
-  const styled = sanitizeAlertDef({ ...base, display: { text: 'K!', fontSize: 40 } }) as AlertDef
-  assert.equal(alertBehaviorKey(styled), alertBehaviorKey(plain))
-})
 
 test('untrusted voice fields are validated against the closed sets, clamped, or dropped', () => {
   const base = {
@@ -474,6 +420,40 @@ test('scalar changes are reported only when they actually differ', () => {
   })
   const ids = changes.map((c) => c.id).sort()
   assert.deepEqual(ids, ['alertPrefs.muted', 'overlay.fight.bgAlpha'])
+})
+
+test('the global always-play preference travels, and an OLD bundle offers no row for it', () => {
+  // JOS-222. It is written only when true (store, export and wire all agree), so "absent" and
+  // "off" have to read as the same thing — otherwise every share string written before the
+  // preference existed would arrive asking the user to turn something off.
+  const off = buildSettingsBody({ alerts: [], alertPrefs: { globalVolume: 0.7, muted: false } })
+  assert.equal('alwaysPlayAll' in (off.alertPrefs ?? {}), false, 'off is absent, byte for byte')
+  const on = buildSettingsBody({
+    alerts: [],
+    alertPrefs: { globalVolume: 0.7, muted: false, alwaysPlayAll: true }
+  })
+  assert.equal(on.alertPrefs?.alwaysPlayAll, true)
+
+  const ctx = {
+    alertPrefs: { globalVolume: 0.7, muted: false },
+    overlays: {},
+    ui: {}
+  }
+  // A pre-JOS-222 bundle: nothing to opt into.
+  assert.deepEqual(planScalarChanges(off, ctx).map((c) => c.id), [])
+  // A bundle from someone who turned it on: one row, false → true.
+  const rows = planScalarChanges(on, ctx)
+  assert.deepEqual(rows.map((c) => c.id), ['alertPrefs.alwaysPlayAll'])
+  assert.deepEqual(
+    { current: rows[0]?.current, incoming: rows[0]?.incoming },
+    { current: 'false', incoming: 'true' }
+  )
+  // …and the row exists in the other direction too, so an import can turn it back OFF.
+  const backOff = planScalarChanges(off, {
+    ...ctx,
+    alertPrefs: { globalVolume: 0.7, muted: false, alwaysPlayAll: true }
+  })
+  assert.deepEqual(backOff.map((c) => c.id), ['alertPrefs.alwaysPlayAll'])
 })
 
 test('list-shaped UI prefs union additively; nothing you had is dropped', () => {

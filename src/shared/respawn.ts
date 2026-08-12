@@ -252,6 +252,56 @@
 // same for the seen half. Nothing has to be re-watched, re-typed or re-discovered.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// THE NUMBER IS A THING YOU EDIT, NOT A THING YOU TYPE INTO A BOX (owner ruling, round 9)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// ROUND 7'S SECONDS BOX IS SUPERSEDED, and the reason is the one the owner gave for every other
+// move in this feature: the control was in the right PLACE and was the wrong SHAPE. A bare `sec`
+// field sitting on a countdown asks the player to (a) know that the app wants seconds, (b) convert
+// the number they actually hold — "it's about 44 minutes" — into 2640 in their head, and (c) decide
+// whether to overrule the app while looking at none of the evidence the app used. Three demands, on
+// a row 30 pixels tall, for the one decision on this surface that outranks everything the fold
+// learned.
+//
+// SO THE ROW CARRIES AN EDIT AFFORDANCE AND THE DECISION HAPPENS IN A MODAL, which is the first
+// surface in this feature with room to state its case. What the modal holds is exactly the evidence
+// the decision needs and nothing invented for it: the hover card (the mob, its drops, the round-5
+// provenance sentence), ALL the gaps the fold measured rather than the minimum they reduce to, what
+// the wiki said in the wiki's own words, and a LINK to the page those words came from — because
+// "the wiki says 9.5 min" is a claim the player is entitled to go and check, and this app has had
+// the page title in `WikiRespawn.page` since the floor was scraped.
+//
+// AND THE DURATION IS ONE UNIT WITH ITS SOURCE. Until this round the Running entry printed the rung
+// ("wiki default") at the left end of a line and the duration at the right end of it, which reads as
+// two facts that happen to share a row rather than as one fact and its provenance. They are now one
+// bordered thing — `respawnDurationText` and `respawnSourceLabel` inside one box, with the edit
+// affordance attached to it — so the sentence a glance reads is "9m 30s, from the wiki", never
+// "9m 30s" and, separately, "wiki default".
+//
+// AND AN EDITED ROW IS IN A STATE, NOT MERELY HOLDING A DIFFERENT NUMBER. Rung 1 already existed
+// (`customMs`, and `resolveRespawn` has always ranked it first), so the MODEL half of this round is
+// nearly nothing; what was missing is that the screen said "your number" in the same grey as
+// "wiki default" and left the player no way to tell, at a glance across a camp's worth of clocks,
+// which of them they had overruled. `respawnOverridden` is the one definition of that state and both
+// surfaces paint it — the tab in the theme's gold, the floating window in a colour it uses nowhere
+// else. The overlay shows the STATE and carries none of the editing: a modal over the game is the
+// round-7 card's mistake with a bigger footprint, and a locked window has no clicks to give anyway.
+//
+// AND THERE IS A WAY BACK. The clear control returns the row to what the ladder calculated, and the
+// modal says what that number IS before you press it (`respawnCalculated` re-runs the ladder with
+// rung 1 removed) — a revert whose result you cannot see is a dare, not a control.
+//
+// THE PARSER IS ONE FUNCTION AND ITS GRAMMAR IS A WHITELIST (`parseRespawnDuration`). Plain seconds
+// stay the default because that is what the retired box took and what a store entry holds; the
+// shorthand exists because "44m" is what the player is actually holding. Everything the grammar does
+// not fully consume is REFUSED and says so, rather than being half-read into a number — the same
+// rule `parseWikiRespawn` is written under, for the same reason: a fabricated countdown is worse
+// than no countdown. It is NOT that function reused, and deliberately: the wiki grammar refuses a
+// bare number (a page saying "600" has not said seconds) and forgives prose the wiki prints
+// ("every", "approximately"), and a text field the user is typing into wants the exact opposite of
+// both.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // AND RECENTLY KILLED IS SEARCHABLE (owner ruling, round 7)
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -289,8 +339,10 @@ export type RespawnBasis = 'death' | 'sighting'
  * 2: `diedTs` became `baseTs` and the row grew `basis` / `seenTs` / `seenVia` (round 3).
  * 3: the row grew `gapsMs` and `customMs` — the working the Running entry now shows, and the
  *    number its own seconds box edits, after the watch list at the bottom of the tab died (round 7).
+ * 4: the row grew `wikiPage`, so the edit modal can LINK to the page whose words it is quoting
+ *    rather than asking the player to take "the wiki says 9.5 min" on trust (round 9).
  */
-export const RESPAWN_SHAPE_VERSION = 3
+export const RESPAWN_SHAPE_VERSION = 4
 
 /**
  * HOW LONG A READING STAYS CURRENT — and, since round 8, the ONLY thing this number governs.
@@ -532,6 +584,14 @@ export interface RespawnRow {
   /** The wiki's verbatim text, when it has one — shown as-is, including "Triggered" and "?". */
   wikiText?: string
   wikiMs?: number
+  /**
+   * THE PAGE THOSE WORDS CAME FROM (round 9) — the committed floor's own `WikiRespawn.page`, which
+   * the scrape has carried since it was written and which nothing had ever read. Present exactly
+   * when `wikiText` is, because they are two fields of one row; the edit modal turns it into a URL
+   * with `wikiPageUrl` (shared/wiki.ts, the ONE place a title becomes a link) and opens it in the
+   * user's browser, never in an app window.
+   */
+  wikiPage?: string
   /** How many deaths of this mob this fold has counted in this zone. */
   kills: number
 }
@@ -786,6 +846,58 @@ export function respawnSourceLabel(row: RespawnRow): string {
 }
 
 /**
+ * THE DURATION AS IT IS PRINTED, one spelling for the tab and the floating window (round 9).
+ *
+ * The `<=` is not decoration and is not optional: rung 2 is the SMALLEST gap you measured, which is
+ * an upper bound on the respawn rather than the respawn (the header's whole argument), so a number
+ * derived from your kills is never printed bare. Rung 1 and rung 3 are stated numbers and print as
+ * numbers. Both surfaces spelled this inline until this round, one of them inside the same JSX
+ * expression as the source label it is now bolted to.
+ */
+export function respawnDurationText(
+  est: { estimateMs?: number; source: RespawnSource },
+  fmt: (ms: number | null | undefined) => string
+): string {
+  if (est.estimateMs === undefined) return 'no estimate'
+  return est.source === 'observed' ? `<= ${fmt(est.estimateMs)}` : fmt(est.estimateMs)
+}
+
+/**
+ * IS THIS ROW'S NUMBER THE USER'S OWN? (owner ruling, round 9 — the OVERRIDDEN state.)
+ *
+ * It is `source === 'custom'` and nothing more, said once so the two surfaces that paint the state
+ * cannot come to disagree about which rows are in it. It is deliberately NOT `customMs !== undefined`:
+ * the ladder is the authority on which rung won, and a stored number that resolveRespawn declined
+ * (a zero, say) must not light up a row it is not numbering.
+ */
+export function respawnOverridden(row: RespawnRow): boolean {
+  return row.source === 'custom'
+}
+
+/**
+ * THE SAME ROW AS THE LADDER WOULD HAVE NUMBERED IT WITHOUT RUNG 1 (round 9) — the same
+ * `resolveRespawn`, with the user's own number taken out.
+ *
+ * The clear/revert control needs it, and needs it as a NUMBER rather than as a promise: "use the
+ * calculated value" with no calculated value on screen is a control whose result you cannot see
+ * before you press it. It comes back as a ROW rather than as a bare estimate so that every label
+ * this file already writes — the duration text, the rung, whether the wiki floor lifted it — reads
+ * it with no second spelling; on a row that is not overridden it is the row itself, which is the
+ * honest answer to "what would clearing do" there too: nothing.
+ */
+export function respawnCalculated(row: RespawnRow): RespawnRow {
+  const ev: RespawnEvidence = { samples: row.samples }
+  if (row.observedMs !== undefined) ev.observedMs = row.observedMs
+  if (row.wikiMs !== undefined) ev.wikiMs = row.wikiMs
+  const est = resolveRespawn(ev)
+  const out: RespawnRow = { ...row, source: est.source }
+  delete out.customMs
+  if (est.estimateMs === undefined) delete out.estimateMs
+  else out.estimateMs = est.estimateMs
+  return out
+}
+
+/**
  * THE ROW'S PROVENANCE, ON THE HOVER — one definition for the tab's tooltip and the floating
  * window's native title (round 5; the two used to spell it separately, and the tab's ran to five
  * sentences of teaching under a row that already prints the rung).
@@ -836,8 +948,37 @@ export const RESPAWN_CARD_LABEL = 'Respawn:'
 export function respawnCardNote(
   row: RespawnRow,
   fmt: (ms: number | null | undefined) => string
-): { label: string; text: string } {
-  return { label: RESPAWN_CARD_LABEL, text: respawnProvenance(row, fmt) }
+): { label: string; text: string; lines: string[] } {
+  return {
+    label: RESPAWN_CARD_LABEL,
+    text: respawnProvenance(row, fmt),
+    // ROUND 9: the two things the sentence above summarises rather than states. They are LINES of
+    // their own rather than more clauses of the sentence, because the round-5 cap on that sentence
+    // is what keeps a hover from growing back into a paragraph — and because a list of durations
+    // read as a list is a different thing from the same durations recited inside prose.
+    lines: [respawnGapsLabel(row, fmt), respawnWikiDefaultLine(row, fmt)].filter((s) => s.length > 0)
+  }
+}
+
+/**
+ * WHAT THE WIKI SAID, AND WHETHER IT WAS A DURATION (round 9).
+ *
+ * Two facts in one line because they are one fact with a caveat: 111 of the 522 pages that state a
+ * `|respawn_time` at all state something the grammar refuses ("Triggered", "?", "Night" — see
+ * respawnWiki.ts), so a surface that printed only the parsed seconds would silently drop the page's
+ * answer for a fifth of the pages that HAVE one. The verbatim text is quoted in both branches and
+ * never paraphrased; the parsed number is offered only where there is one.
+ *
+ * Empty string when the wiki says nothing at all — the 85 % case in the dungeons this ticket
+ * targets — so a surface renders it unconditionally and gets nothing where there is nothing.
+ */
+export function respawnWikiDefaultLine(
+  row: RespawnRow,
+  fmt: (ms: number | null | undefined) => string
+): string {
+  if (row.wikiText === undefined) return ''
+  if (row.wikiMs === undefined) return `wiki: "${row.wikiText}" - not a duration`
+  return `wiki default: ${fmt(row.wikiMs)} ("${row.wikiText}")`
 }
 
 /**
@@ -944,3 +1085,158 @@ export function respawnSeenLabel(
 export function respawnBasisLabel(row: RespawnRow): string {
   return row.basis === 'sighting' ? 'from your sighting' : ''
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPING A DURATION (owner ruling, round 9 — see the header)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WHAT A TYPED DURATION TURNED OUT TO BE. Four answers, because the modal has four different things
+ * to say and "null" collapses three of them into one shrug:
+ *
+ *   ok         a duration inside the accepted range, in whole SECONDS (the unit the store holds).
+ *   empty      the field was cleared, which is not an error — it is the REVERT (`customSec` goes
+ *              away and the ladder falls back to your kills, then to the wiki).
+ *   unreadable the grammar did not fully consume it. The number is refused rather than half-read.
+ *   range      it read as a duration and that duration is not one this app will store.
+ */
+export type RespawnDurationParse =
+  | { ok: true; sec: number }
+  | { ok: false; reason: 'empty' | 'unreadable' | 'range' }
+
+/**
+ * Unit tokens, LONGEST FIRST inside each alternation so `minutes` is never read as `m` with
+ * `inutes` left over — the `parseWikiRespawn` spelling, for the same reason it has it.
+ *
+ * Four units and no more. There is no week (the range tops out at seven days, which is spelled
+ * `7d`), no month (a respawn is not a calendar), and no millisecond (`500ms` would read as 500
+ * minutes followed by an `s` the grammar cannot use, and so is refused — which is the correct
+ * answer, not an accident).
+ */
+const INPUT_UNITS: readonly (readonly [RegExp, number])[] = [
+  [/^(?:days?|d)/i, 86400],
+  [/^(?:hours?|hrs?|h)/i, 3600],
+  [/^(?:minutes?|mins?|m)/i, 60],
+  [/^(?:seconds?|secs?|s)/i, 1]
+]
+
+/** A bare, unsigned number — the whole field. Seconds, which is what the retired box took. */
+const BARE_NUMBER_RE = /^\d+(?:\.\d+)?$/
+
+/** The number at the head of a shorthand term. Unsigned by construction: `-5m` is not a duration. */
+const TERM_NUMBER_RE = /^(\d+(?:\.\d+)?)\s*/
+
+/** What may sit BETWEEN two terms: whitespace, or a comma with whitespace around it. Nothing else. */
+const TERM_SEPARATOR_RE = /^[\s,]+/
+
+/** The same four units on the way OUT, largest first — `formatRespawnDuration`'s whole table. */
+const FORMAT_UNITS: readonly (readonly [string, number])[] = [
+  ['d', 86400],
+  ['h', 3600],
+  ['m', 60],
+  ['s', 1]
+]
+
+/**
+ * READ WHAT THE USER TYPED. The one parser (owner: "write one parser"), and the only thing in this
+ * app that turns a field into rung 1.
+ *
+ * THE GRAMMAR, stated so the modal's help text and this function cannot drift:
+ *
+ *   * A BARE NUMBER IS SECONDS. `90` → 90 s, `90.5` → 91 s (rounded, because the store holds whole
+ *     seconds). This is the default the owner asked for and the shape every existing store entry is
+ *     already in.
+ *   * SHORTHAND IS ONE OR MORE `<number><unit>` TERMS, units strictly DESCENDING: `44m`,
+ *     `44m 30s`, `1h 10m`, `1h10m30s`, `2d`. Long forms are accepted (`44 min`, `44 minutes`,
+ *     `1 hour`), the space between number and unit is optional, and terms may be separated by
+ *     whitespace or a comma.
+ *   * DESCENDING IS ENFORCED, so `30s 44m` and `44m 44m` are refused. A repeated or reordered unit
+ *     means something the field cannot know — is `44m 44m` eighty-eight minutes, or a typo? — and
+ *     the honest answer is to refuse rather than to pick.
+ *   * THE WHOLE STRING MUST BE CONSUMED. That is the entire refusal mechanism: `44m 30` runs out of
+ *     units at the bare `30`, `44x` at the `x`, `1e3` at the `e`, `-5` at the sign, `abc` at the `a`.
+ *   * A COLON FORM IS REFUSED, deliberately. `1:30` is minutes:seconds on a wiki page and hours:
+ *     minutes on a clock, this app has an argued reading of it for wiki text ONLY
+ *     (`parseWikiRespawn`'s readClock, which the catalog's own camps prove), and guessing which one
+ *     a player meant would put a number on a countdown that is out by a factor of sixty. `1h 30m`
+ *     and `1m 30s` both say it in one keystroke more.
+ *
+ * The range is checked AFTER the grammar, so a readable duration that is simply too long says so
+ * instead of reading as gibberish.
+ */
+export function parseRespawnDuration(text: string): RespawnDurationParse {
+  const s = text.trim()
+  if (s.length === 0) return { ok: false, reason: 'empty' }
+  const seconds = BARE_NUMBER_RE.test(s) ? Number(s) : readTermSequence(s)
+  if (seconds === null || !Number.isFinite(seconds)) return { ok: false, reason: 'unreadable' }
+  const sec = Math.round(seconds)
+  if (sec < RESPAWN_CUSTOM_MIN_SEC || sec > RESPAWN_CUSTOM_MAX_SEC) return { ok: false, reason: 'range' }
+  return { ok: true, sec }
+}
+
+/** `N UNIT` one or more times, strictly descending, whole string consumed. Null on anything else. */
+function readTermSequence(input: string): number | null {
+  let rest = input
+  let total = 0
+  let lastUnit = Number.POSITIVE_INFINITY
+  let terms = 0
+  while (rest.length > 0) {
+    if (terms > 0) rest = rest.replace(TERM_SEPARATOR_RE, '')
+    const num = TERM_NUMBER_RE.exec(rest)
+    if (!num) return null
+    rest = rest.slice(num[0].length)
+    const unit = INPUT_UNITS.find(([re]) => re.test(rest))
+    if (!unit) return null
+    const [re, mult] = unit
+    if (mult >= lastUnit) return null
+    lastUnit = mult
+    rest = rest.replace(re, '')
+    total += Number(num[1]) * mult
+    terms++
+  }
+  return terms > 0 ? total : null
+}
+
+/**
+ * THE SAME DURATION, WRITTEN THE WAY THE FIELD ACCEPTS IT — what the modal's input opens with.
+ *
+ * It is the parser's inverse and is tested as one (`parseRespawnDuration(formatRespawnDuration(x))`
+ * is `x` for every whole second in range), which is the property that makes prefilling safe: the
+ * player who opens the modal, changes nothing and presses Save must not thereby change the number.
+ *
+ * Largest unit first, zero terms dropped, seconds shown only when there are any — so 570 s is
+ * `9m 30s`, 3600 s is `1h`, and 1 s is `1s` rather than `0d 0h 0m 1s`. Zero is `0s`: it is outside
+ * the accepted range and the field will say so, which is better than an empty box that looks like a
+ * cleared one.
+ */
+export function formatRespawnDuration(sec: number): string {
+  const whole = Math.max(0, Math.round(sec))
+  const parts: string[] = []
+  let rest = whole
+  for (const [unit, mult] of FORMAT_UNITS) {
+    const n = Math.floor(rest / mult)
+    rest -= n * mult
+    if (n > 0) parts.push(`${String(n)}${unit}`)
+  }
+  return parts.length > 0 ? parts.join(' ') : '0s'
+}
+
+/**
+ * WHAT THE FIELD ACCEPTS, said once for the modal's help text — the only caption this round adds,
+ * and it replaces the one round 7 left standing under the clocks (which existed to state the
+ * retired seconds box's limits and nothing else).
+ *
+ * The range is spelled from the constants rather than written out, so a change to either bound
+ * cannot leave the sentence lying.
+ */
+export const RESPAWN_INPUT_HELP = `Plain seconds, or 44m / 44m 30s / 1h 10m. ${String(
+  RESPAWN_CUSTOM_MIN_SEC
+)}s to ${String(RESPAWN_CUSTOM_MAX_SEC / 86400)}d. Empty uses the calculated value.`
+
+/** What the modal says when the grammar refused what was typed. One spelling, pinned by test. */
+export const RESPAWN_INPUT_UNREADABLE = 'Not a duration. Try 2640, 44m, or 44m 30s.'
+
+/** …and when it read fine and is simply not a duration this app will hold. */
+export const RESPAWN_INPUT_RANGE = `Out of range - ${String(RESPAWN_CUSTOM_MIN_SEC)}s to ${String(
+  RESPAWN_CUSTOM_MAX_SEC / 86400
+)}d.`
