@@ -99,6 +99,26 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
   log span (`tests/fixtures/*.log` via `tests/extract-*.mjs`), hand-read it,
   write the expected state, fix until green. Priming fixtures warm learned
   state (classifier/overlay) the way a full replay would.
+- **FLAKES ARE TRACKED AND FIXED, regardless of who wrote the test** (owner
+  rule, 2026-08-11). A test that fails under load/live conditions and passes
+  on re-run is not noise to shrug at — it is either a fragile spec or a real
+  race, and both are work. The ledger lives HERE; every observed flake gets a
+  row (spec · signature · occurrences · disposition), integrators append on
+  sighting, and a flake at 3+ occurrences must have a fix ticket or chip —
+  "green on re-run" is a report line, never a resolution. Known rows:
+  - `sky-filters.e2e` · expanded-quest step vs live-log viewKey remount ·
+    3 sightings (2026-08-10/11, full-sweep only, green standalone every
+    time) · documented in-file by the JOS-206 worker; needs the same
+    order-hardening the spec's own comment describes.
+  - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
+    settles on stale geometry · 2 sightings (2026-08-10/11) · fix shape
+    diagnosed (wait for bounds to differ before settling); chip filed.
+  - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
+    while EverQuest runs with a player at the keyboard · 2 sightings
+    (2026-08-10) · needs hermetics without weakening the once-then-heartbeat
+    pin; chip filed.
+  - `perf.e2e` heartbeat boundary (118 vs 125 ms under load) · 1 sighting
+    (2026-08-11, phase-4 worker) · watch; ticket at 3 per this rule.
 - **Fixtures are COMMITTED and SCRUBBED.** `tests/fixtures/*.log` is tracked
   (a `!tests/fixtures/*.log` negation under the blanket `*.log` in
   .gitignore), so CI's `npm test` runs the FULL suite; before this they were
