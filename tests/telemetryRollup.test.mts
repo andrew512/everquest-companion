@@ -91,39 +91,6 @@ test('a session end is kept THREE ways: a count, a total, and a histogram bucket
   assert.equal(c.get(`${USAGE_METRICS.sessionLenBucket} 3`), 1)
 })
 
-test('the checkpoint shadow pair is dimmed by BUILD, and a report with no checks writes nothing', () => {
-  // DIMMED BY BUILD because the question is always about a release: a divergence is a defect in
-  // the fold that shipped, and the answer to one is to stop shipping it. Both halves land, from
-  // both session reports, and they SUM across the batch like every other counter here.
-  const c = counters(
-    batchOf(
-      [
-        { t: 'sessionHeartbeat', uptimeMs: 1, checkpointShadowChecks: 2, checkpointDivergences: 0 },
-        { t: 'sessionEnd', durationMs: 1, viewsVisited: 1, checkpointShadowChecks: 1, checkpointDivergences: 1 }
-      ],
-      '0.9.0'
-    )
-  )
-  assert.equal(c.get(`${USAGE_METRICS.checkpointShadowChecks} 0.9.0`), 3)
-  assert.equal(c.get(`${USAGE_METRICS.checkpointDivergences} 0.9.0`), 1)
-
-  // A REPORT THAT VERIFIED NOTHING WRITES NO ROW — not a zero. The verification is sampled and
-  // duty-cycled, so the overwhelming majority of reports carry none; a zero row would say "this
-  // build verified and found nothing", which is the opposite of the truth, and there would be
-  // hundreds of them for every row that meant something.
-  const quiet = counters(batchOf([{ t: 'sessionHeartbeat', uptimeMs: 1 }, { t: 'sessionEnd', durationMs: 1, viewsVisited: 0 }]))
-  assert.equal(quiet.has(`${USAGE_METRICS.checkpointShadowChecks} 0.2.0`), false)
-  assert.equal(quiet.has(`${USAGE_METRICS.checkpointDivergences} 0.2.0`), false)
-
-  // …and two builds stay two rows, for the reason every other per-version counter here does.
-  const split = new Map([
-    ...counters(batchOf([{ t: 'sessionEnd', durationMs: 1, viewsVisited: 0, checkpointShadowChecks: 5, checkpointDivergences: 0 }], '1.0.0')),
-    ...counters(batchOf([{ t: 'sessionEnd', durationMs: 1, viewsVisited: 0, checkpointShadowChecks: 7, checkpointDivergences: 2 }], '1.1.0'))
-  ])
-  assert.equal(split.get(`${USAGE_METRICS.checkpointShadowChecks} 1.0.0`), 5)
-  assert.equal(split.get(`${USAGE_METRICS.checkpointDivergences} 1.1.0`), 2)
-})
-
 test('an overlay toggle splits on OPEN vs CLOSE — the mix is opens, not events', () => {
   const c = counters(
     batchOf([

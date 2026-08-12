@@ -41,7 +41,6 @@
     "fixtures:procs": "node --import tsx tests/extract-proc-fixtures.mjs",
     "fixtures:progression": "node --import tsx tests/extract-progression-fixtures.mjs",
     "fixtures:session": "node --import tsx tests/extract-session-fixtures.mjs",
-    "fold:goldens": "tsx tests/foldGoldenRecord.mts",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/",
     "lint:fix": "eslint . --fix --cache --cache-location node_modules/.cache/eslint/",
     "lint:measure": "tsx scripts/lint-report.mts --measure",
@@ -55,8 +54,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir",
-    "bench:fold-size": "node --import tsx --max-old-space-size=8192 tests/bench/foldSize.mts"
+    "dist:dir": "npm run build && electron-builder --win --dir"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",

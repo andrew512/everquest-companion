@@ -55,10 +55,7 @@ export interface HealInput {
   crit?: boolean
 }
 
-// EXPORTED for the checkpoint codec (JOS-208 phase 4) and for nothing else: `foldAgg.ts` rebuilds
-// these three shapes from a blob, so it has to be able to name them. Still internal by intent — the
-// serializable form the UI reads is `HealingView`, built at the bottom of this file.
-export interface HealSpellStat {
+interface HealSpellStat {
   name: string
   total: number
   count: number
@@ -69,7 +66,7 @@ export interface HealSpellStat {
   fullOverheal: number
 }
 
-export interface HealSourceStat {
+interface HealSourceStat {
   name: string
   kind: HealSourceKind
   total: number
@@ -103,7 +100,7 @@ function newSource(name: string, kind: HealSourceKind): HealSourceStat {
 
 /** The absorption counters. Amounts exist for runes only — the rest are counts by construction,
  *  which is exactly why only the rune lane can become a ledger row (see runeRow). */
-export interface MitAccum {
+interface MitAccum {
   runeTotal: number
   runeCount: number
   runeMax: number

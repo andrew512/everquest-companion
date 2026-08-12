@@ -151,11 +151,6 @@ test('a build that reported no replay has NO row, and an unmeasured percentile i
       dutyAchieved: 0,
       meanEventsReplayed: 0,
       blocksOver50: 0,
-      // …and the checkpoint backstop (JOS-208 phase 3): a build nobody has verified reports ZERO
-      // CHECKS beside its zero divergences, which is what makes the pair readable. Both surfaces
-      // render "no verification has run" for exactly this row rather than a reassuring 0.
-      shadowChecks: 0,
-      shadowDivergences: 0,
       // The scope addition's fields follow the same rule, and a build that predates the emitting
       // client reports none of them — which reads as dashes, never as a machine that never stuttered.
       p50StutterLabel: null,
@@ -231,32 +226,6 @@ test('the digest prints the SAME reading as the tab — one computation, two ren
   )
   assert.match(bare, /no stutter or cold-read reading on this build/)
   assert.match(bare, /no launch has reported one yet/)
-  // …and a build nobody has verified says THAT in words too, rather than printing `0 / 0`. This is
-  // the one number in the panel where "measured and blameless" is the misreading that could
-  // license a default-on rollout.
-  assert.match(bare, /no fold-checkpoint verification has run on this build/)
-})
-
-test('the checkpoint backstop prints its own population, and a divergence SHOUTS', () => {
-  // JOS-208 phase 3. A THIRD population, smaller than either above it: the verification is sampled
-  // and duty-cycled because it costs the exact cold read the checkpoint exists to remove. So the
-  // check count is printed beside the divergence count — a reader must be able to see that a build
-  // with zero divergences also ran zero checks.
-  const rows = (version: string, checks: number, diverged: number): UsageRow[] => [
-    ...startupRows(version, { replayBucket: 2, blockBucket: 2, dutyPct: 70, events: 4, stalls: 0, logBucket: 2 }),
-    u(TODAY, USAGE_METRICS.checkpointShadowChecks, version, checks),
-    u(TODAY, USAGE_METRICS.checkpointDivergences, version, diverged)
-  ]
-  const clean = build(rows('0.9.0', 120, 0)).startup.byVersion[0]
-  assert.equal(clean.shadowChecks, 120)
-  assert.equal(clean.shadowDivergences, 0)
-  assert.match(renderAnalyticsDigest(build(rows('0.9.0', 120, 0))), /120 checkpoint checks · all matched a cold fold/)
-
-  // A NON-ZERO IS NOT A METRIC, IT IS A DECISION: the checkpoint's own design names this counter
-  // as the kill-switch trigger, so the digest says so in words a reader cannot skim past.
-  const bad = renderAnalyticsDigest(build(rows('0.9.0', 40, 3)))
-  assert.match(bad, /40 checkpoint checks · \*\*\* 3 DIVERGED/)
-  assert.match(bad, /the checkpoint disagreed with a cold fold/)
 })
 
 test('one build’s histogram never leaks into another’s — the dim is split at the LAST colon', () => {

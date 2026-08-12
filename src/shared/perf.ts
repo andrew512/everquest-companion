@@ -323,36 +323,6 @@ export function foldStutterSamples(drifts: readonly number[]): StartupStutterPro
   }
 }
 
-// ------------------------------------------------------------------ the checkpoint verdict
-//
-// WHAT THE STARTUP CHECKPOINT LOADER DECIDED (JOS-208 phase 3). The fold cache turns a launch's
-// cold read of the whole log into a restore plus a tail — when it is on, and when nothing about
-// the file or the build has changed under it. Every one of those doubts lands on the SAME path
-// (cold-replay), which is what makes the feature safe and also what makes it invisible: a launch
-// that took nine seconds because the cache was refused looks exactly like a launch that never had
-// one.
-//
-// So the verdict is written down, in both places a triage session already reads: the profile on
-// disk and the one-line startup summary in `errors.log`. "Why did it cold-start" is answered before
-// anybody has to ask the user to run something.
-//
-// THE VOCABULARY ITSELF LIVES NEXT DOOR, in `shared/checkpointVerdict.ts`. This file was AT the
-// 400-code-line factoring ceiling and the house answer to that is a split, not a widened threshold
-// (the storeMigrations precedent) — and the sibling importing NOTHING is what keeps this file's own
-// stated property true: `storeMigrations.ts` loads it from `store.ts`'s module scope, before
-// electron-store exists, and nothing heavy may come with it. Re-exported here because
-// `StartupProfile` carries the verdict, and a reader of the profile should find the words for it
-// beside the shape that uses them.
-import { parseCheckpointVerdict, type CheckpointVerdict } from './checkpointVerdict'
-export {
-  CHECKPOINT_ORIGINS,
-  describeCheckpoint,
-  parseCheckpointVerdict,
-  type CheckpointOrigin,
-  type CheckpointOutcome,
-  type CheckpointVerdict
-} from './checkpointVerdict'
-
 /**
  * WHAT THE DUTY-CYCLED REPLAY ACTUALLY SPENT (JOS-50, `main/log/replaySlicer.ts`).
  *
@@ -554,12 +524,6 @@ export interface StartupProfile {
   /** How long the first megabyte of the historical read took, ms — the cold-disk hint. Absent when
    *  the log is smaller than a megabyte. */
   firstMbMs?: number
-  /**
-   * WHAT THE STARTUP CHECKPOINT LOADER DECIDED (JOS-208 phase 3) — restored, refused with the
-   * reason, or off. Absent on a launch with no character to tail (nothing decided anything) and on
-   * every profile written before this existed.
-   */
-  checkpoint?: CheckpointVerdict
   /** Did every phase land? False for a launch that quit early (or crashed) mid-boot. */
   complete: boolean
 }
@@ -661,7 +625,6 @@ export interface StartupProfileMeta {
   stutter?: StartupStutterProbe
   newBytes?: number
   firstMbMs?: number
-  checkpoint?: CheckpointVerdict
 }
 
 /**
@@ -701,9 +664,6 @@ export function buildProfile(
   if (meta.stutter !== undefined) profile.stutter = meta.stutter
   if (meta.newBytes !== undefined) profile.newBytes = Math.max(0, Math.round(finite(meta.newBytes)))
   if (meta.firstMbMs !== undefined) profile.firstMbMs = round(Math.max(0, finite(meta.firstMbMs)), 1)
-  // A closed vocabulary already (`CheckpointOutcome`), so it is copied rather than re-cleaned —
-  // the cleaning that matters is the parser's, on the way back OFF disk.
-  if (meta.checkpoint !== undefined) profile.checkpoint = meta.checkpoint
   return profile
 }
 
@@ -771,7 +731,6 @@ export function parseStartupProfile(raw: unknown): StartupProfile | null {
   const block = parseBlockStats(raw.block)
   const replay = parseReplayStats(raw.replay)
   const stutter = parseStutterProbe(raw.stutter)
-  const checkpoint = parseCheckpointVerdict(raw.checkpoint)
   return {
     startedAt: finite(raw.startedAt),
     version: typeof raw.version === 'string' ? raw.version : '',
@@ -783,7 +742,6 @@ export function parseStartupProfile(raw: unknown): StartupProfile | null {
     ...(stutter === null ? {} : { stutter }),
     ...optionalCount(raw.newBytes, 'newBytes'),
     ...optionalCount(raw.firstMbMs, 'firstMbMs'),
-    ...(checkpoint === null ? {} : { checkpoint }),
     complete: raw.complete === true
   }
 }

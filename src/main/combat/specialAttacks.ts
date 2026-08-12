@@ -203,17 +203,4 @@ export class SpecialAttacks {
     this.active.clear()
   }
 
-  /**
-   * Adopt a previously folded lane table (JOS-208 phase 4). The serialized form is `entries()`
-   * above — the whole state is one small map, so there is nothing to declare a second shape for.
-   *
-   * It has to be in the checkpoint for the same reason the module exists: the `You will now use …`
-   * line is printed ONCE, at the level-up, so a restored launch that folded only the tail would
-   * never see it and every strike a monk threw would be labelled by the bare verb for the rest of
-   * the session — the JOS-163 defect, re-created by a checkpoint.
-   */
-  restoreFoldState(entries: readonly (readonly [string, string])[]): void {
-    this.active.clear()
-    for (const [verb, skill] of entries) this.active.set(verb, skill)
-  }
 }

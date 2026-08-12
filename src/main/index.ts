@@ -44,12 +44,11 @@ import { installImageCacheProtocol } from './imageCache'
 import { bundledImageRoots, findBundledImagesDir } from './bundledImages'
 import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
-import { startShadowVerification, stopShadowVerification } from './foldCache/shadow'
 import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
-import { getActiveCharacter, markTailPosition, saveFoldCheckpoint, startTailing, stopSession } from './session'
+import { getActiveCharacter, markTailPosition, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
 import { initUpdater } from './updater'
@@ -315,13 +314,6 @@ if (!gotSingleInstanceLock) {
     // mid-session the loop starts then, not next launch. Same predicate discipline as
     // `queueFlushEnabled` — one gate, in one place.
     startTelemetry(Date.now() - PROCESS_START_MS)
-    // THE FOLD CHECKPOINT'S FLEET BACKSTOP (JOS-208 phase 3), armed beside the two loops above and
-    // for the same reasons: after the window exists, on an unref'd timer, with every gate inside
-    // the function rather than restated here. It decides by SAMPLE — a verification is a full cold
-    // read of the log, i.e. exactly the cost the checkpoint exists to remove, so almost every
-    // launch declines and says nothing. `getActiveCharacter` is passed rather than read: the
-    // verification fires a minute from now, and by then the user may have switched character.
-    startShadowVerification(getActiveCharacter)
     // Self-provision the shipped voice packs (Task #39): a CI-built installer ships
     // WITHOUT the gitignored peon/sc_marine packs, so a fresh install's seeded
     // charm-break alert would reference a missing sound. Download any missing default
@@ -393,14 +385,6 @@ app.on('before-quit', () => {
   // is exactly the launch a startup measurement most wants to see. Writing it on both events is
   // one store key written twice, and the later write is the better answer.
   teardownStep('main:logTailMark', markTailPosition)
-  // …AND THE FOLD CHECKPOINT, on exactly the argument the line above makes (JOS-208). `app.quit()`
-  // does not emit `window-all-closed`, so an auto-updater's `quitAndInstall` would leave no
-  // checkpoint — and the launch right after an update is a launch that may WELL still be able to
-  // use one: invalidation is per-shape and per-semantics now, so a release that moved neither keeps
-  // every user's cache warm. Idempotent for the same reason `markTailPosition` is: it is one file
-  // written twice by a temp+rename, from a process that is no longer folding, so both writes
-  // describe the same byte and the later one wins.
-  teardownStep('main:foldCheckpoint', () => void saveFoldCheckpoint())
 })
 
 /**
@@ -421,17 +405,6 @@ function teardownStep(label: string, fn: () => void): void {
 }
 
 app.on('window-all-closed', () => {
-  // THE FOLD CHECKPOINT (JOS-208), and it goes FIRST — before `stopSession` stops the tailer,
-  // because the offset it writes is the tailer's own (`Tailer.checkpointOffset()`). A no-op unless
-  // the flag is on, and a `teardownStep` like everything else here: a checkpoint that throws must
-  // not be able to veto a quit, and the answer to a failed write is the cold start the app does
-  // today. THIS IS THE CLEAN-SHUTDOWN HALF of "write at clean shutdown + occasional quiet moments"
-  // — a crash leaves the previous checkpoint, which is still valid for the bytes it describes.
-  teardownStep('main:foldCheckpoint', () => void saveFoldCheckpoint())
-  // …and disarm the background verifier, which is a full cold fold and has no business starting
-  // inside a quit (JOS-208 phase 3). Its timer is unref'd, so this is about not beginning work
-  // rather than about letting the process go.
-  teardownStep('main:stopFoldShadow', stopShadowVerification)
   teardownStep('main:stopSession', stopSession)
   // Stop the presence watcher thread + the cursor stream. Both already unref, but an unref'd
   // worker is still a running thread: nothing else would end it.

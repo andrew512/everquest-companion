@@ -102,7 +102,6 @@
 
 import { spellCanonKey } from '../log/parseCommon'
 import type { DamageType } from '../../shared/combat'
-import type { CastRecordFold, RecentCastsFold } from './foldTypes'
 
 /**
  * The cast-attribution window. See the file header for the measurement that fixes it at 12s;
@@ -204,30 +203,6 @@ export class RecentCasts {
   clear(): void {
     this.casts.clear()
     this.suspended = undefined
-  }
-
-  /**
-   * THE CHECKPOINT'S VIEW (JOS-208 phase 4). Both fields, and the `suspended` one is the
-   * interesting half: a split can land between `Your <X> spell is interrupted.` and
-   * `You regain your concentration and continue your casting.`, and an unstored suspension makes
-   * the recovery in the tail a no-op — the cast that really did land is then read as a PROC, on the
-   * one path (JOS-167) whose whole subject is telling those two apart.
-   *
-   * `claimTs` rides along per record because the join CONSUMES: a restored ledger that forgot which
-   * firing a cast had already explained would let the next landing claim it a second time.
-   */
-  foldState(): RecentCastsFold {
-    const casts: [string, CastRecordFold][] = []
-    for (const [key, rec] of this.casts) casts.push([key, { ...rec }])
-    const s = this.suspended
-    return { casts, ...(s === undefined ? {} : { suspended: { key: s.key, rec: { ...s.rec } } }) }
-  }
-
-  /** Adopt a previously folded ledger (validated by the caller). */
-  restoreFoldState(s: RecentCastsFold): void {
-    this.clear()
-    for (const [key, rec] of s.casts) this.casts.set(key, { ...rec })
-    this.suspended = s.suspended ? { key: s.suspended.key, rec: { ...s.suspended.rec } } : undefined
   }
 
   private inWindow(spell: string, ts: number): CastRecord | undefined {

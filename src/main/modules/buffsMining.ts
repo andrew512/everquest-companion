@@ -15,7 +15,7 @@
 
 import type { MessageOverlay } from '../../shared/types'
 import type { SpellDb } from '../data/spellDb'
-import { MessageOverlayMiner, type OverlayMinerFoldState } from '../data/messageOverlay'
+import { MessageOverlayMiner } from '../data/messageOverlay'
 import type { LogEvent } from '../../shared/logEvents'
 import { looksLandingMessage } from './buffsShapes'
 
@@ -91,21 +91,5 @@ export class OverlayMining {
       this.dirty = false
     }
     return this.cache
-  }
-
-  // ---- the checkpoint seam (JOS-208 phase 2) --------------------------------------------------
-  //
-  // The MINER's accumulator travels; the CACHE does not, because it is a memo of it. Dropping the
-  // cache on restore is what makes the first snapshot after one describe the restored counts
-  // rather than the seeded ones.
-
-  serializeFold(): OverlayMinerFoldState {
-    return this.miner.serializeFold()
-  }
-
-  deserializeFold(state: OverlayMinerFoldState): void {
-    this.miner.deserializeFold(state)
-    this.cache = null
-    this.dirty = true
   }
 }

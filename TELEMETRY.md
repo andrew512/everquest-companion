@@ -89,8 +89,6 @@ Every 5 minutes while the app is open — the "is anyone using it right now" sig
 | `startup.stutter.p95Bucket` | bucket index (optional) | The same measurement at its worse end: the lateness only one beat in twenty exceeded. |
 | `startup.stutter.latePct` | whole number (optional) | What share of those beats were late at all, 0–100. |
 | `startup.firstMbMs` | whole number (optional) | How long the first megabyte of the read took to arrive — how quickly the machine could hand over the file, nothing about what was in it. Not sent for a log under a megabyte. |
-| `checkpointShadowChecks` | whole number (optional) | The app can remember your log’s reading between launches so it starts faster. Now and then, in the background, it re-reads the log the slow way and checks that the remembered answer matches. This is how many times it did that check. Usually not sent at all — the check runs rarely and on purpose. |
-| `checkpointDivergences` | whole number (optional) | How many of those checks found a difference. Expected to be zero; if it ever is not, the shortcut is switched off. It is a COUNT and nothing else — nothing says which part of the app differed, and nothing about your log, characters or game is sent with it. |
 
 ### `sessionEnd`
 
@@ -112,8 +110,6 @@ Once, when the app closes. Present on the first of these that follows startup, o
 | `startup.stutter.p95Bucket` | bucket index (optional) | The same measurement at its worse end: the lateness only one beat in twenty exceeded. |
 | `startup.stutter.latePct` | whole number (optional) | What share of those beats were late at all, 0–100. |
 | `startup.firstMbMs` | whole number (optional) | How long the first megabyte of the read took to arrive — how quickly the machine could hand over the file, nothing about what was in it. Not sent for a log under a megabyte. |
-| `checkpointShadowChecks` | whole number (optional) | The app can remember your log’s reading between launches so it starts faster. Now and then, in the background, it re-reads the log the slow way and checks that the remembered answer matches. This is how many times it did that check. Usually not sent at all — the check runs rarely and on purpose. |
-| `checkpointDivergences` | whole number (optional) | How many of those checks found a difference. Expected to be zero; if it ever is not, the shortcut is switched off. It is a COUNT and nothing else — nothing says which part of the app differed, and nothing about your log, characters or game is sent with it. |
 
 ### `viewDwell`
 

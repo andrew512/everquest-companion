@@ -506,10 +506,9 @@ interface FirstRun {
   byWindow?: boolean
 }
 
-// `closeWindows` — QUIT THE WAY A USER QUITS — moved to ./appWindow.mts (JOS-208 phase 3), which
-// is where `launchApp` and `mainWindow` already live and where the fold-restart spec could reach
-// it: it needs the same real teardown to read a session's last record. Its whole measured story is
-// in that file's header, unchanged.
+// `closeWindows` — QUIT THE WAY A USER QUITS — moved to ./appWindow.mts, which is where
+// `launchApp` and `mainWindow` already live and where any spec asserting about a session's LAST
+// record can reach it. Its whole measured story is in that file's header, unchanged.
 
 async function firstRun({ label, errors, step, log, userData, byWindow }: FirstRun): Promise<void> {
   console.log(label)
