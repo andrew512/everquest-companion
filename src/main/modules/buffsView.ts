@@ -124,6 +124,7 @@ function optionalFields(
   at: {
     inferredTarget: boolean
     permanent: boolean
+    permanentSource: ActiveBuff['permanentSource']
     messageDriven: boolean
     caster: string
     calmsTarget: boolean
@@ -133,7 +134,7 @@ function optionalFields(
   return {
     ...(at.calmsTarget ? { calmsTarget: true as const } : {}),
     ...(at.inferredTarget ? { inferredTarget: true } : {}),
-    ...(at.permanent ? { permanent: true } : {}),
+    ...(at.permanent ? { permanent: true, permanentSource: at.permanentSource } : {}),
     ...(at.messageDriven ? { messageDriven: true } : {}),
     ...(count > 1 ? { count } : {}),
     ...(at.caster !== SELF_CASTER ? { caster: at.caster } : {}),
@@ -158,6 +159,10 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
   // applies to a family's duration, and it is trivially satisfied here because the candidates of a
   // shared landing sentence are exactly the spells that print it.
   const calms = stats.calmsTarget(key) || (spec.candidates?.every((c) => stats.calmsTarget(spellKey(c))) ?? false)
+  // WHY it is permanent, derived rather than plumbed (JOS-215). `landingIsPermanent` asks the DB
+  // first and the AA second, so re-asking the DB here answers the same question in the same order
+  // and the two can never disagree — which is the reason this is not a field on the landing.
+  const permanentSource: ActiveBuff['permanentSource'] = stats.isPermanent(key) ? 'spell' : 'illusion-aa'
   const d = durationFields(key, permanent, stats, caster)
   return {
     spell,
@@ -173,6 +178,13 @@ export function buildActive(spec: ActiveSpec, stats: SpellStats, pets: PetEntiti
     ...(d.durationSource ? { durationSource: d.durationSource } : {}),
     overlayDurationMs: d.overlayDurationMs,
     ...(d.overlaySource ? { overlaySource: d.overlaySource } : {}),
-    ...optionalFields(spec, { inferredTarget, permanent, messageDriven, caster, calmsTarget: calms })
+    ...optionalFields(spec, {
+      inferredTarget,
+      permanent,
+      permanentSource,
+      messageDriven,
+      caster,
+      calmsTarget: calms
+    })
   }
 }

@@ -60,7 +60,7 @@
 import type { ActiveBuff, BuffsSnap, EstimatorSource } from './buffTypes'
 // Type-only: `shared/types.ts` is a value module (OVERLAY_KINDS) and this one is imported by the
 // node tests as a pure module, so the reference is erased at compile time and nothing follows it.
-import type { OverlayKind } from './types'
+import type { OverlayConfig, OverlayKind } from './types'
 
 // ----- the two TIMER SURFACES (JOS-119) -----
 
@@ -95,6 +95,32 @@ export type TimerGrouping = 'none' | 'target'
 /** A stored/patched grouping, or null when it is absent and the surface's own default applies. */
 export function normalizeTimerGrouping(raw: unknown): TimerGrouping | null {
   return raw === 'none' || raw === 'target' ? raw : null
+}
+
+/**
+ * THE KNOBS ONLY THE TWO TIMER WINDOWS CARRY, rebuilt in place on the way into the store — the row
+ * arrangement (JOS-140) and the permanent-buff switch (JOS-215).
+ *
+ * It lives HERE rather than in `main/store.ts` for the same reason `isTimerOverlayKind` does: which
+ * kinds carry a timer knob is a fact about this surface, not about persistence, and store.ts's own
+ * rule is that each knob is validated by the module that owns its meaning. (store.ts is also at its
+ * complexity and line ceilings, which is what made the question worth asking.)
+ *
+ * BOTH ARE REBUILT RATHER THAN TRUSTED — the argument store.ts makes about the drill: a renderer
+ * patch must not be able to widen what is persisted. And for both, an ABSENT value is a real
+ * answer: "the window's own default" for the arrangement (which differs between buffs and debuffs
+ * — see {@link TimerGrouping}), and "hidden" for the permanent rows (which does not).
+ *
+ * The permanent switch is stored ONLY when TRUE, so an absent key and a stored `false` are not two
+ * spellings of one answer. `=== true` rather than a cast, so a hand-edited `"true"` or `1` is off.
+ */
+export function applyTimerOverlayKnobs(kind: OverlayKind, cfg: OverlayConfig): void {
+  const timer = isTimerOverlayKind(kind)
+  const grouping = normalizeTimerGrouping(cfg.grouping)
+  if (grouping && timer) cfg.grouping = grouping
+  else delete cfg.grouping
+  if (cfg.showPermanent === true && timer) cfg.showPermanent = true
+  else delete cfg.showPermanent
 }
 
 // ----- the CC half's state (owned by main/modules/buffTimers.ts, rendered by the overlay) -----
@@ -269,6 +295,32 @@ export function timerRowSurface(row: BuffTimerRow): TimerOverlayKind {
 /** The rows one timer surface shows. Order is `buildTimerRows`' order, filtered — never re-sorted. */
 export function rowsForSurface(rows: readonly BuffTimerRow[], kind: TimerOverlayKind): BuffTimerRow[] {
   return rows.filter((r) => timerRowSurface(r) === kind)
+}
+
+/**
+ * THE PERMANENT ROWS, HIDDEN BY DEFAULT (JOS-215, owner ruling) — a DISPLAY filter, and the only
+ * thing in this file that removes a row for a reason the model does not believe.
+ *
+ * WHY IT IS HIDDEN. A permanent buff has no clock (`timerModeOf` gives it `mode: 'permanent'` and
+ * no duration at all), so it can never be the thing a timer window is watched for, and
+ * `compareRows` already ranks it last for exactly that reason. Admitting 62 spells' worth of them
+ * — a cleric's Yaulp and Divine Purpose and Instrument of Nife all at once — would push the
+ * countdowns that matter off the top of a small floating window. So the window opens on the timers
+ * and the roster is one press away.
+ *
+ * WHY IT IS IN THE RENDERER AND NOT THE MODEL, which is the half a future reader is most likely to
+ * be tempted by. The model has to keep these rows whatever the window draws: the hygiene sweep
+ * exempts them, a wears-off line clears them, a death strips them, and `BuffsSnap.active` is what
+ * the Buffs TAB, the alerts module and any later surface read. A preference that reached into
+ * `buffs.active` would be a window's opinion deleting evidence from everybody else's model — the
+ * mistake JOS-203 states at length about dismissals. Same rule here: there is no channel for the
+ * model to hear about it.
+ *
+ * It is applied BEFORE ordering and dismissal so everything downstream — the header count, the
+ * groups, the drop flash — is talking about what is actually on screen.
+ */
+export function filterPermanentRows(rows: readonly BuffTimerRow[], showPermanent: boolean): BuffTimerRow[] {
+  return showPermanent ? [...rows] : rows.filter((r) => r.mode !== 'permanent')
 }
 
 /** One "… dropped" notice: the row that left, and the words the overlay says about it. */

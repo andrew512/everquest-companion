@@ -667,10 +667,16 @@ export interface DurationReport {
  * derives it used to live inside `scripts/scrape-spells.ts` — so it only ever ran when somebody
  * re-scraped, and every duration string it could not read became a PERMANENT null in the committed
  * catalog. That null is fatal rather than cosmetic: `BuffInstances.applyMessageBuff` returns early
- * for a landing with no duration and no illusion flag, so those spells could never open an
- * instance, never draw a bar and never reach the Buffs tab, however correct their three messages
- * were. Spirit of the Puma — whose wiki duration is the three characters `60s` — is the reported
- * case, and 87 rows of the committed scrape were in that state.
+ * for a landing that states no duration, no illusion flag and no permanence, so those spells could
+ * never open an instance, never draw a bar and never reach the Buffs tab, however correct their
+ * three messages were. Spirit of the Puma — whose wiki duration is the three characters `60s` — is
+ * the reported case, and 87 rows of the committed scrape were in that state.
+ *
+ * THE `Permanent` ROWS ARE NOT AMONG THEM, and JOS-215 is why the distinction is worth a sentence
+ * here: their null is CORRECT — the wiki states a word, not a number — so this pass leaves all 62
+ * of them exactly as they are and the model admits them on `durationText` instead
+ * (`SpellStats.isPermanent`). A reader tempted to "fix" the remaining nulls should check which kind
+ * they are looking at first.
  *
  * IT RE-DERIVES RATHER THAN MERELY FILLING, and the reason is a row a fill would have missed:
  * `Sicken` states `1 min 24s`, and the old reader summed only the component it could see, so the

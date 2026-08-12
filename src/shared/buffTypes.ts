@@ -164,11 +164,27 @@ export interface ActiveBuff {
   /** Where `overlayDurationMs` came from — see {@link EstimatorSource}. */
   overlaySource?: EstimatorSource
   /**
-   * True when this buff is PERMANENT (Task #34): an illusion-flagged spell the player
-   * self-cast while the Permanent Illusion AA is owned (self-cast illusions last forever
-   * on the player). The UI shows "permanent · illusion AA" and no countdown.
+   * True when this buff NEVER EXPIRES, for either of the two reasons `permanentSource` names
+   * (Task #34's Permanent Illusion AA; JOS-215's permanent SPELLS). The UI draws no countdown, the
+   * hygiene sweep never retires it, and no duration sample is ever paired from it — only a
+   * wear-off, a death or a zone can take it off the board.
    */
   permanent?: boolean
+  /**
+   * WHY it is permanent, so the row can say so without guessing (JOS-215).
+   *
+   *   'spell'       — the spell database states `Permanent` for this line. 62 rows, all Self:
+   *                   Yaulp, the Shielding ladder, the blade coats, Instrument of Nife, the wolf
+   *                   forms. Nothing about the player's AAs is involved.
+   *   'illusion-aa' — the Permanent Illusion AA (Task #34): an illusion-flagged spell the player
+   *                   self-cast at or after buying it, whose OWN duration is finite.
+   *
+   * Present only when `permanent` is true. It is DERIVED in main from the same DB row the
+   * permanence was read off (buffsView.ts), never plumbed through the landing, so the two can not
+   * disagree. The distinction is the whole of the JOS-215 copy fix: the row used to hardcode
+   * "permanent · illusion AA" and said it about a rogue's poison coat.
+   */
+  permanentSource?: 'spell' | 'illusion-aa'
   /**
    * True when this active was applied by an EXACT chat MESSAGE match (Task #34) — a
    * msg_cast_on_you / msg_cast_on_other / self-heal-by-buff line. Since JOS-118 this is the ONLY

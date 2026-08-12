@@ -31,7 +31,7 @@ import { DEFAULT_TOAST_CONFIG, normalizeToastConfig } from '../shared/toast'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
 import { normalizeBuffTrustPrefs, type BuffTrustPrefs } from '../shared/buffTrust'
-import { isTimerOverlayKind, normalizeTimerGrouping } from '../shared/buffTimers'
+import { applyTimerOverlayKnobs } from '../shared/buffTimers'
 // The XP overlay's two persisted knobs (JOS-195) — each validated by the module that owns its
 // meaning, never by a predicate written here.
 import { normalizeXpRows } from '../shared/xpOverlay'
@@ -481,13 +481,11 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // toast kind carries one; the meters must not grow a stray blob from a malformed patch.
   if (kind === 'toast') next.toast = normalizeToastConfig({ ...DEFAULT_TOAST_CONFIG, ...next.toast })
   else delete next.toast
-  // The row ARRANGEMENT belongs to the two timer windows and to nothing else (JOS-140). It is
-  // rebuilt rather than trusted, on the same argument as the drill above: a renderer patch must
-  // not be able to widen what is persisted, and an absent value is a real answer — it means "the
-  // window's own default", which differs between buffs and debuffs.
-  const grouping = normalizeTimerGrouping(next.grouping)
-  if (grouping && isTimerOverlayKind(kind)) next.grouping = grouping
-  else delete next.grouping
+  // THE TWO TIMER WINDOWS' OWN KNOBS — the row arrangement (JOS-140) and the permanent-buff switch
+  // (JOS-215). Both are rebuilt rather than trusted, on the same argument as the drill above; the
+  // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds
+  // carry this knob" is a fact about.
+  applyTimerOverlayKnobs(kind, next)
   // THE XP WINDOW'S TWO KNOBS (JOS-195), rebuilt rather than trusted — the same argument as the
   // drill and the grouping above: a renderer patch must not be able to widen what is persisted, and
   // ABSENT is a real answer for both (every row; this session). `normalizeXpRows` drops unknown row

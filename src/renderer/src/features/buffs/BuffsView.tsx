@@ -227,6 +227,60 @@ function OverlayDiagnostics({ overlay }: { overlay: MessageOverlay }): JSX.Eleme
   )
 }
 
+/**
+ * THE PERMANENT BUFFS, HIDDEN BY DEFAULT (JOS-215, owner ruling) — the tab's half of the overlay's
+ * `showPermanent` switch, and deliberately NOT the same storage.
+ *
+ * The overlay's answer rides its per-kind `OverlayConfig` because a floating window remembers
+ * everything about itself there; a tab's view preference is renderer state and lives where this
+ * app's other view preferences live (the loot sort, the boss density) — one localStorage key, read
+ * once. Two surfaces, two readings: the window over the game and the page you open to audit the
+ * model are looked at for different reasons, and neither should silently re-scope the other.
+ *
+ * A MISSING KEY IS HIDDEN, which is what makes "absent" and "the default" the same fact.
+ */
+const SHOW_PERMANENT_KEY = 'eq.buffs.showPermanent'
+
+function readShowPermanent(): boolean {
+  return localStorage.getItem(SHOW_PERMANENT_KEY) === '1'
+}
+
+/** The section header for Active: the word, and the switch for the buffs that never expire. */
+function ActiveHeader({
+  permanentCount,
+  showPermanent,
+  onToggle
+}: {
+  permanentCount: number
+  showPermanent: boolean
+  onToggle: () => void
+}): JSX.Element {
+  return (
+    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+      <Typography variant="subtitle2">Active</Typography>
+      {/* The chip is absent when there is nothing to reveal — a switch for an empty set would be
+          the app inviting you to look at nothing. Its label carries the COUNT, which is the whole
+          answer for a user who only wanted to know whether any are up. */}
+      {permanentCount > 0 && (
+        <Chip
+          size="small"
+          data-testid="buffs-show-permanent"
+          variant={showPermanent ? 'filled' : 'outlined'}
+          color={showPermanent ? 'warning' : 'default'}
+          onClick={onToggle}
+          label={`${permanentCount} permanent`}
+          title={
+            showPermanent
+              ? 'Showing buffs that never expire. Click to hide them.'
+              : 'Buffs that never expire are hidden. Click to show them.'
+          }
+          sx={{ height: 18, fontSize: 11 }}
+        />
+      )}
+    </Stack>
+  )
+}
+
 /** One entity's live buffs: its label, a count chip, and the row grid. */
 function ActiveGroup({
   label,
@@ -291,7 +345,14 @@ export default function BuffsView(): JSX.Element {
     return () => clearInterval(id)
   }, [])
 
-  const active = snap.active
+  // HIDDEN BY DEFAULT (JOS-215) — a display filter over the snapshot, never a request to the
+  // model. `snap.active` keeps every row; this page just chooses which to draw.
+  const [showPermanent, setShowPermanent] = useState(readShowPermanent)
+  const permanentCount = useMemo(() => snap.active.filter((b) => b.permanent === true).length, [snap.active])
+  const active = useMemo(
+    () => (showPermanent ? snap.active : snap.active.filter((b) => b.permanent !== true)),
+    [snap.active, showPermanent]
+  )
   const minedCount = Object.values(snap.stats).filter((s) => s.n > 0).length
 
   // PRIORITY layout (Task #35): "Your buffs" (self) FIRST, then one group per bound entity
@@ -330,18 +391,29 @@ export default function BuffsView(): JSX.Element {
         <Stack direction="row" alignItems="center" spacing={1}>
           <AutoFixHighIcon color="primary" />
           <Typography variant="h6">Buffs</Typography>
+          {/* THE MODEL'S COUNT, not the drawn one (JOS-215): this chip summarizes what the app
+              believes is up, and the permanent switch below decides what this page draws. A
+              header that shrank when you hid a section would be reporting a preference as a fact. */}
           <Chip
             size="small"
             variant="outlined"
-            label={`${active.length} active · ${minedCount} tracked`}
+            label={`${snap.active.length} active · ${minedCount} tracked`}
           />
         </Stack>
       </Box>
 
       <Box>
-        <Typography variant="subtitle2" gutterBottom>
-          Active
-        </Typography>
+        <ActiveHeader
+          permanentCount={permanentCount}
+          showPermanent={showPermanent}
+          onToggle={() => {
+            setShowPermanent((v) => {
+              const next = !v
+              localStorage.setItem(SHOW_PERMANENT_KEY, next ? '1' : '0')
+              return next
+            })
+          }}
+        />
         {active.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             No active buffs.
