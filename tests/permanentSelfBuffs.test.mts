@@ -25,6 +25,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { lastTs, readFixture, replayBuffs, replayBuffTimers, tsOf } from './harness.mts'
 import { landingIsPermanent } from '../src/main/modules/buffsInstanceRules.ts'
+import {
+  applyTimerOverlayKnobs,
+  filterPermanentRows,
+  orderTimerRows,
+  rowsForSurface
+} from '../src/shared/buffTimers.ts'
+import type { OverlayConfig } from '../src/shared/types.ts'
 import { loadSpellDb, spellNature } from '../src/main/data/spellDb.ts'
 // The game's own `Sat Aug 01 19:02:06 2026` prefix, built by the ONE implementation this repo has
 // (scripts/smokeLog.mts) rather than a third hand-rolled copy — a synthetic line only proves
@@ -276,4 +283,76 @@ test('a permanent buff cast before the log window began is NOT shown — it wait
   // which is what makes the assertion above a claim about EVIDENCE rather than an empty fixture.
   const recast = replayBuffTimers(between(NIFE_LANDS, NIFE_RECAST + 1_000)).buffs.active
   assert.ok(activeNamed(recast, 'Instrument of Nife'), 'the next recast is what the model can see')
+})
+
+// ---------------------------------------------------------------------------------------------
+// 7. THE DISPLAY, hidden by default (owner ruling) — a RENDERER filter over rows the model keeps.
+// ---------------------------------------------------------------------------------------------
+
+test('the buffs window hides the permanent rows by default, and shows every other one', () => {
+  const all = rowsForSurface(replayBuffTimers(readFixture('e2e-overlay.log')).rows, 'buffs')
+  const permanent = all.filter((r) => r.mode === 'permanent')
+  assert.ok(permanent.length >= 3, 'the Quick Buff burst should leave Yaulp, Nife and Divine Purpose up')
+
+  const hidden = filterPermanentRows(all, false)
+  assert.equal(hidden.length, all.length - permanent.length)
+  assert.equal(hidden.filter((r) => r.mode === 'permanent').length, 0)
+  // NOTHING ELSE MOVES: a filter removes rows, it never re-sorts or renames them.
+  assert.deepEqual(
+    hidden.map((r) => r.id),
+    all.filter((r) => r.mode !== 'permanent').map((r) => r.id)
+  )
+})
+
+test('…and switching it on brings back exactly those rows, in the same order', () => {
+  const all = rowsForSurface(replayBuffTimers(readFixture('e2e-overlay.log')).rows, 'buffs')
+  const shown = filterPermanentRows(all, true)
+  assert.deepEqual(shown.map((r) => r.id), all.map((r) => r.id))
+  // A copy, never the caller's array — the same rule every other projection here follows.
+  assert.notEqual(shown, all)
+})
+
+test('a permanent row still sorts LAST when it is shown — it is never going to expire', () => {
+  const all = rowsForSurface(replayBuffTimers(readFixture('e2e-overlay.log')).rows, 'buffs')
+  const flat = orderTimerRows(filterPermanentRows(all, true), 'none')
+  const firstPermanent = flat.findIndex((r) => r.mode === 'permanent')
+  assert.ok(firstPermanent >= 0, 'the fixture should leave a permanent row to place')
+  assert.ok(
+    flat.slice(firstPermanent).every((r) => r.mode === 'permanent'),
+    'once the permanent rows start, nothing with a clock may follow them'
+  )
+})
+
+test('the switch is stored only on the timer kinds, and only when it is ON', () => {
+  const cfg = (patch: Partial<OverlayConfig>): OverlayConfig => ({
+    open: false,
+    locked: false,
+    bgAlpha: 0.72,
+    ...patch
+  })
+
+  const on = cfg({ showPermanent: true })
+  applyTimerOverlayKnobs('buffs', on)
+  assert.equal(on.showPermanent, true, 'a timer window remembers that you asked for the roster')
+
+  const off = cfg({ showPermanent: false })
+  applyTimerOverlayKnobs('buffs', off)
+  assert.ok(!('showPermanent' in off), 'hidden is the default, so it is stored as an ABSENT key')
+
+  const meter = cfg({ showPermanent: true })
+  applyTimerOverlayKnobs('fight', meter)
+  assert.ok(!('showPermanent' in meter), 'a damage meter must not grow a timer knob from a patch')
+
+  // A hand-edited store cannot smuggle a truthy non-boolean past it.
+  const forged = cfg({ showPermanent: 'true' as unknown as boolean })
+  applyTimerOverlayKnobs('debuffs', forged)
+  assert.ok(!('showPermanent' in forged), 'only a real `true` counts')
+
+  // …and the arrangement it moved in beside still behaves exactly as it did (JOS-140).
+  const grouped = cfg({ grouping: 'target' })
+  applyTimerOverlayKnobs('debuffs', grouped)
+  assert.equal(grouped.grouping, 'target')
+  const bogus = cfg({ grouping: 'sideways' as unknown as 'none' })
+  applyTimerOverlayKnobs('buffs', bogus)
+  assert.ok(!('grouping' in bogus), 'an unknown arrangement degrades to the window default')
 })

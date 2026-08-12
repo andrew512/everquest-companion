@@ -35,10 +35,16 @@ function estimateState(buff: ActiveBuff, elapsed: number): EstimateState {
 }
 
 /**
- * Permanent illusion (Task #34): a full, steady bar and an explicit label — no countdown,
- * because a self-cast illusion under the Permanent Illusion AA never fades.
+ * A buff that never fades: a full, steady bar and an explicit label — no countdown.
+ *
+ * THE LABEL SAYS WHY, AND IT USED TO GUESS (JOS-215). This read `permanent · illusion AA`
+ * unconditionally, because when Task #34 wrote it the Permanent Illusion AA was the only way an
+ * instance could be permanent. Since JOS-215 the far larger case is the spell's own duration — 62
+ * rows the wiki states as `Permanent`, from Yaulp to a rogue's blade coat to a druid's wolf form —
+ * and telling a rogue their poison coat is an illusion AA is a caption that is simply false.
+ * `permanentSource` is the model's own answer (shared/buffTypes.ts), so nothing is inferred here.
  */
-function PermanentBar(): JSX.Element {
+function PermanentBar({ source }: { source: ActiveBuff['permanentSource'] }): JSX.Element {
   return (
     <>
       <LinearProgress
@@ -47,7 +53,7 @@ function PermanentBar(): JSX.Element {
         sx={{ height: 8, borderRadius: 1, '& .MuiLinearProgress-bar': { bgcolor: 'warning.main' } }}
       />
       <Typography variant="caption" color="warning.main">
-        permanent · illusion AA
+        {source === 'illusion-aa' ? 'permanent · illusion AA' : 'permanent'}
       </Typography>
     </>
   )
@@ -133,8 +139,8 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
   // "target: inferred" chip, never a silent guess (Task #32 rule 5c).
   const inferred = buff.inferredTarget === true
 
-  // Permanent illusion (Task #34): a self-cast illusion buff while the Permanent Illusion
-  // AA is owned lasts forever — no countdown, an explicit "permanent · illusion AA" state.
+  // A buff that never fades — the spell's own `Permanent` duration (JOS-215) or a self-cast
+  // illusion under the Permanent Illusion AA (Task #34). No countdown; the caption says which.
   const permanent = buff.permanent === true
 
   return (
@@ -183,7 +189,7 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
       </Stack>
 
       {permanent ? (
-        <PermanentBar />
+        <PermanentBar source={buff.permanentSource} />
       ) : state.est !== null ? (
         <EstimateBar est={state.est} elapsed={elapsed} state={state} buff={buff} />
       ) : (
