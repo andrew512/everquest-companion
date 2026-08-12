@@ -55,6 +55,7 @@ import { initUpdater } from './updater'
 import {
   createMainWindow,
   createOverlayWindow,
+  flushMainWindowState,
   getMainWindow,
   hardenSession,
   hardenWebContents,
@@ -385,6 +386,11 @@ app.on('before-quit', () => {
   // is exactly the launch a startup measurement most wants to see. Writing it on both events is
   // one store key written twice, and the later write is the better answer.
   teardownStep('main:logTailMark', markTailPosition)
+  // …and the window's own size and position (JOS-248), for EXACTLY that reason: the debounced save
+  // is flushed by the window's `close`, and `app.quit()` — an auto-updater's `quitAndInstall`, an
+  // OS logoff — is not a close. Without this the launch right after an update is the one that comes
+  // up at a stale size, which is the launch a user is most likely to be watching.
+  teardownStep('main:saveWindowState', flushMainWindowState)
 })
 
 /**

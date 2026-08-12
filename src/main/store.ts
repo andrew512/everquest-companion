@@ -51,18 +51,17 @@ import { ALERT_TRIGGER_MIGRATION_VERSION, migrateAlertTriggers } from './data/al
 // The persisted SHAPE lives in ./storeShape.ts (this file is at its factoring ceiling). Nothing
 // moved but the declaration; every accessor below is still written against it.
 import type { StoreShape } from './storeShape'
+// The main window's remembered size, position and maximized state (JOS-248). The type and its
+// normalizer live next door because the module is PURE — see windowState.ts. Re-exported here so
+// every existing importer (storeShape.ts, windows.ts) keeps the door it already used.
+import { normalizeWindowState, type WindowBounds } from './windowState'
+
+export type { WindowBounds }
 
 const emptyProgress: ProgressState = {
   inventory: {},
   completedQuests: [],
   inventorySource: undefined
-}
-
-export interface WindowBounds {
-  x: number
-  y: number
-  width: number
-  height: number
 }
 
 
@@ -132,12 +131,23 @@ export const STORE_READY_MS = performance.now()
  */
 export const settingsStore = store
 
+/**
+ * The main window's remembered state, or `undefined` when there is none to remember (JOS-248).
+ *
+ * Read through the normalizer and written through the SAME one, like every other setting in this
+ * file: a store hand-edited to `width: "big"` answers `undefined` here, which the caller already
+ * has an answer for (the default size), rather than reaching a BrowserWindow constructor.
+ */
 export function getWindowBounds(): WindowBounds | undefined {
-  return store.get('windowBounds')
+  return normalizeWindowState(store.get('windowBounds'))
 }
 
 export function setWindowBounds(b: WindowBounds): void {
-  store.set('windowBounds', b)
+  const next = normalizeWindowState(b)
+  // A state that does not normalize is not written. There is no sensible partial write here — the
+  // rectangle is the value — and clobbering a good remembered position with a bad one would be the
+  // one failure mode the user cannot undo without finding the JSON.
+  if (next) store.set('windowBounds', next)
 }
 
 function allProgress(): Record<string, ProgressState> {
