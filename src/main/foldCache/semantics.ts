@@ -54,5 +54,20 @@
  *       the main clone for `character` on every fixture. The fingerprints move once to their
  *       first checkout-independent values; the tripwire cannot tell a harness-input fix from a
  *       fold change, and the rule is the rule: the number moves with the goldens, in one commit.
+ *   4 — JOS-208 phase 4. A REPLAY IS NOT A MOMENT IN TIME. `CombatEngine.snapshot(now)` used to
+ *       run the wall-clock closure sweep unconditionally — finalizing whatever fight was open and
+ *       demoting uncorroborated charm binds — and the historical replay YIELDS to the event loop
+ *       every slice, so a renderer poll landing between two slices could saw a fight in half on a
+ *       clock that has nothing to do with the log. MEASURED by the e2e restart-compare the moment
+ *       the engine joined the container: `e2e-combat.log`'s 53,577-damage fight came back as
+ *       43,504 + 10,073 under full-suite load, and the shadow verifier called it a divergence. A
+ *       pre-existing defect — every launch folded the whole log the same way, so nothing could
+ *       see it — and a checkpoint is what makes it visible, because the two arms then fold the
+ *       same bytes in two different numbers of passes. The sweep is now gated on
+ *       `hydrating`; closure from the LOG's own clock (`ingestEvent`) is untouched. The
+ *       fingerprints move for `combat` only, and they move for a second reason in the same
+ *       commit: the harness now calls `setLive()` before publishing, exactly as `session.ts`
+ *       does, so `hydrating` is false in the published snapshot the goldens hash — a
+ *       harness-input fix riding along, stated rather than hidden (see version 3's precedent).
  */
-export const FOLD_SEMANTICS = 3
+export const FOLD_SEMANTICS = 4

@@ -153,6 +153,12 @@ export function shadowSnapshots(world: ShadowWorld, nowMs: number): Record<strin
   // rather than looked up — and it is ticked by the SAME pinned instant, because `snapshot(now)`
   // evaluates deferred closure and sweeps the charm binds. Two folds compared at two different
   // instants would differ on every fight that closed in between.
+  //
+  // `setLive()` first, because that closure is gated on `hydrating` (phase 4 — a replay is not a
+  // moment in time) and both of these worlds have only ever folded. It is the same statement
+  // `session.ts` makes when the scan hands over, and it is what the app's own engine has already
+  // done by the time a verification runs.
+  world.combat.setLive()
   out[COMBAT_FOLD_ID] = combatPublished(world.combat, nowMs)
   return out
 }

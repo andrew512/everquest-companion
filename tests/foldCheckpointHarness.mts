@@ -204,6 +204,13 @@ export function publishedSnapshots(world: FoldWorld, nowMs = PINNED_NOW_MS): Rec
  * the stale-bar frame the sweep exists to prevent anyone from ever seeing.
  */
 export function snapshotsWithoutSweep(world: FoldWorld, nowMs = PINNED_NOW_MS): Record<string, unknown> {
+  // THE FOLD IS OVER, SO THE ENGINE GOES LIVE — the `combat.setLive()` `session.ts` runs the
+  // instant the scan hands over to the tailer, and before anything publishes. Without it this
+  // harness would ask for a snapshot from a world that still believes it is mid-replay, which is a
+  // lifecycle the app never publishes from, and — since phase 4 gated the wall-clock closure on
+  // `hydrating` — a world whose deferred closure would never be evaluated at all. Idempotent, so
+  // both arms and repeated calls agree.
+  world.combat.setLive()
   const out: Record<string, unknown> = {}
   for (const m of world.compared) out[m.id] = world.registry.snapshot(m.id)
   // THE ENGINE'S PUBLISHED PAYLOAD is `snapshot(now)` — the object `combat:snapshot` hands the

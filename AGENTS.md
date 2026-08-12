@@ -1069,6 +1069,25 @@ must always be slow-once, never wrong** — every judgement call goes toward
     per-event ring). It is in `PUBLISHED_FOLD_IDS`, not `CHECKPOINTED_MODULE_IDS`,
     because it is not a registry module; the codec is
     `combat/foldTypes|foldSchema|foldAgg|foldCodec.ts`.
+    - **AND IT CAUGHT ONE, exactly as the wall clock and the detectors were caught:
+      A REPLAY IS NOT A MOMENT IN TIME** (FOLD_SEMANTICS 3→4). `snapshot(now)`
+      evaluated deferred encounter closure and swept charm binds against `now` —
+      the WALL clock — unconditionally, and the historical replay YIELDS every
+      slice while the renderer polls `combat:snapshot` throughout hydration. So a
+      poll landing between two slices finalized whatever fight was open (every line
+      in a months-old log is behind the wall clock) and handed the rest of it to a
+      fresh encounter. MEASURED under full-suite load: `e2e-combat.log`'s
+      53,577-damage fight came back as 43,504 + 10,073, and the in-app shadow
+      verifier called it a divergence. PRE-EXISTING — a sliced replay has always
+      been pollable, and every launch folded the whole log the same way so nothing
+      could compare two folds and notice — and the checkpoint is what made it
+      visible, because a restored launch folds the same bytes in TWO passes. The
+      sweep is now gated on `st.hydrating`; closure from the LOG's own clock
+      (`ingestEvent`) is untouched, so a fight that really ended still ends at the
+      instant the log says. `tests/combatReplayClock.test.mts` pins BOTH halves —
+      polling every event of a real replay changes nothing, and after `setLive()`
+      the same call still finalizes — so a "fix" that just switched the sweep off
+      fails as loudly as the defect did.
   - **ALL LOG-DERIVED STATE IS CHECKPOINTED, AND A TEST SAYS SO — the census**
     (`foldCache/census.ts` + `tests/foldConsumerCensus.test.mts`; owner
     requirement, phase 4). The module gate above was green for three phases while

@@ -274,8 +274,29 @@ export class CombatEngine implements FoldUnit {
     // snapshot may be the first observation after that threshold, so evaluate the
     // deferred closure here (stamped at the encounter's own lastTs, not `now`).
     // An uncorroborated charm bind expires on the same wall clock (Task #65).
-    this.st.sweepCharm(now)
-    evalClosure(this.st, now)
+    //
+    // …BUT NOT WHILE THE HISTORICAL FOLD IS STILL RUNNING (JOS-208 phase 4). A REPLAY IS NOT A
+    // MOMENT IN TIME. `now` is the wall clock, every line in a months-old log is hours or weeks
+    // behind it, and the replay YIELDS to the event loop every slice — so a renderer poll landing
+    // between two slices used to finalize whatever fight was open and hand the rest of that fight
+    // to a fresh encounter. MEASURED, by the e2e restart-compare the moment the engine joined the
+    // container: one 53,577-damage fight in `e2e-combat.log` split into 43,504 + 10,073 under
+    // load, and the shadow verifier reported it as a real divergence. It is a PRE-EXISTING defect
+    // — a sliced replay has always been pollable, so a busy machine has always been able to saw a
+    // fight in half on a clock that has nothing to do with the log — and it was invisible while
+    // every launch folded the whole log the same way. A checkpoint makes it visible because the
+    // two arms then fold the SAME bytes in two different numbers of passes.
+    //
+    // Closure from the LOG's own clock is untouched: `ingestEvent` evaluates it per event, so a
+    // fight that really ended still ends, at the instant the log says. What this removes is the
+    // machine's opinion about a fold that has not finished reading. `st.hydrating` is exactly the
+    // right question — true from `reset()` until `setLive()`, which `session.ts` calls the moment
+    // the scan hands over to the tail — and the snapshot already carries it so the UI renders a
+    // loading state rather than a churning fake-live meter.
+    if (!this.st.hydrating) {
+      this.st.sweepCharm(now)
+      evalClosure(this.st, now)
+    }
     const st = this.st
     const maxSegments = opts.maxSegments ?? 100
     const inCombat = !!st.current && now - st.current.lastTs < ACTIVE_MS
