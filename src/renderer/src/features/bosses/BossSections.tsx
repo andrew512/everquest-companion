@@ -30,6 +30,13 @@
 // worded, what the badge means) lives in loadoutGroups.ts's header; this file only draws it:
 // `spansText` over the section's members instead of `spanText` over one, and a tooltip that
 // spells the stretches out when there is more than one.
+//
+// AND A HEADER MAY DECLINE TO NAME A LOADOUT (JOS-239, 2026-08-12). The owner's roster showed Lord
+// Nagafen defeated at D4 under `ENC / WIZ / MNK`; the wizard was level 25 and had never entered the
+// zone. `loadoutGroups` now routes intervals that fail the confidence gate into ONE unresolved
+// section, and this file draws it as `Mixed loadouts` + the spans — deliberately the same shape as
+// the `Loadout not known` header, because it is the same kind of sentence (a fact about our
+// knowledge, not about the classes) and the surface should not grow a third dialect for it.
 
 import { type JSX, useMemo, useState } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
@@ -435,20 +442,49 @@ const GROUP_RULE = 'Grouped by the loadout you were running for these kills.'
  * many; the tooltip is where they are spelled out, so the header stays one line.
  */
 const MERGED_RULE = 'You ran this loadout more than once; those stretches are one section:'
+/**
+ * The gated section's sentence (JOS-239). It states the two facts the model has — that the stretch
+ * held more than one loadout, and which stretch — and refuses the third. No trio, no chips, no
+ * "probably": naming a loadout here is the defect the ticket is about, and a greyed-out guess is
+ * still a guess. `MERGED_RULE`'s spelled-out stretches still apply, so a reader can go and look.
+ */
+const MIXED_RULE =
+  'More classes showed up in these stretches than a loadout holds, or your level went backwards inside one - so a swap happened in there that nothing in the log dated. These kills are yours; which loadout took them is not something this app can honestly say.'
 
 /** The loadout header: the slots as chips, its provenance, and the span(s) they cover. */
 function LoadoutHeader({ group }: { group: LoadoutGrouping }): JSX.Element {
   const interval = group.interval
   const ranges = group.intervals
-  const title =
-    ranges.length > 1 ? `${GROUP_RULE} ${MERGED_RULE} ${ranges.map(spanText).join('; ')}` : GROUP_RULE
+  const rule = group.uncertain ? MIXED_RULE : GROUP_RULE
+  const title = ranges.length > 1 ? `${rule} ${MERGED_RULE} ${ranges.map(spanText).join('; ')}` : rule
   return (
     <Tooltip title={title}>
-      <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.75 }}>
+      <Stack
+        // The header is the sentence this whole feature is judged on, so it is addressable and it
+        // states which of the three it is: a named loadout, a gated stretch, or an unattributed
+        // one. tests/e2e/bosses-week.e2e.mts reads both attributes.
+        data-testid="boss-loadout-header"
+        data-loadout={interval ? 'named' : group.uncertain ? 'mixed' : 'unknown'}
+        direction="row"
+        spacing={0.75}
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
+        sx={{ mb: 0.75 }}
+      >
         {interval ? (
           <>
             <SlotChips slots={interval.slots} />
             <ProvenanceChip interval={interval} />
+            <Typography variant="caption" color="text.secondary">
+              {spansText(ranges)}
+            </Typography>
+          </>
+        ) : group.uncertain ? (
+          <>
+            <Typography variant="subtitle2" color="warning.main">
+              Mixed loadouts
+            </Typography>
             <Typography variant="caption" color="text.secondary">
               {spansText(ranges)}
             </Typography>

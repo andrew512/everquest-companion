@@ -273,6 +273,104 @@ test('a predicate nothing satisfies leaves no sections rather than empty ones', 
   assert.deepEqual(groups, [], 'a header is a statement about cards; with none there is nothing to say')
 })
 
+// ---------------------------------------------------------------------------
+// THE CONFIDENCE GATE (JOS-239) — a header is a claim about a kill, so a span the model cannot
+// explain draws no trio. `loadoutUncertain` (shared/comboIndex.ts) owns the predicate; what is
+// pinned here is what the SECTIONING does with it.
+// ---------------------------------------------------------------------------
+
+/** An interval the model has flagged as unexplained: more classes than slots cleared the bar. */
+function overDetermined(id: string, startTs: number, endTs: number | null, classes: ClassAbbr[]): ComboInterval {
+  return interval(id, startTs, endTs, { classes, startAlso: ['overDetermined'] })
+}
+
+test('an over-determined interval names NO loadout — one unresolved section, not a hedged trio', () => {
+  // The reported shape in miniature: kills under a span whose evidence sustains more classes than a
+  // loadout holds. The old sectioning printed the ranking's top three as a fact; the roster said
+  // Lord Nagafen fell at D4 to a level-25 wizard.
+  const kills: KillMap = {}
+  const a = killedAt(kills, 'A mob', 1, 1_000)
+  const b = killedAt(kills, 'Another mob', 1, 5_000)
+  const groups = loadoutGroups(
+    [
+      overDetermined('ci1', 0, 4_000, IRE_TRIO),
+      interval('ci2', 4_000, null, { classes: LATER_TRIO })
+    ],
+    allStatuses([a, b], kills)
+  )
+  assert.equal(groups.length, 2)
+  const [gated, clean] = groups
+  assert.equal(gated.uncertain, true)
+  assert.equal(gated.interval, null, 'no speaker, so nothing can draw its chips')
+  assert.deepEqual(gated.intervals.map((i) => i.id), ['ci1'], 'the span is still carried and shown')
+  assert.deepEqual(gated.rows.map((r) => r.s.target.name), ['A mob'], 'and the kills are still there')
+  assert.equal(clean.uncertain, false, 'a clean interval is untouched')
+  assert.equal(clean.interval?.id, 'ci2')
+})
+
+test('every gated span is ONE section — the same sentence is not said twice', () => {
+  // JOS-236's rule applied to JOS-239's header: "these kills came out of a stretch that held more
+  // than one loadout" is one sentence however many stretches say it, and the caption counts them.
+  const kills: KillMap = {}
+  const early = killedAt(kills, 'A mob', 1, 1_000)
+  const middle = killedAt(kills, 'Another mob', 1, 5_000)
+  const late = killedAt(kills, 'A third mob', 1, 9_000)
+  const groups = loadoutGroups(
+    [
+      overDetermined('ci1', 0, 4_000, IRE_TRIO),
+      interval('ci2', 4_000, 8_000, { classes: LATER_TRIO }),
+      // A DIFFERENT trio, also unexplained — it must not get a second "we cannot say" header.
+      overDetermined('ci3', 8_000, null, ['WIZ', 'DRU', 'PAL'])
+    ],
+    allStatuses([early, middle, late], kills)
+  )
+  assert.equal(groups.length, 2, 'one gated section, one real loadout')
+  const [gated] = groups
+  assert.equal(gated.uncertain, true)
+  assert.deepEqual(gated.intervals.map((i) => i.id), ['ci1', 'ci3'], 'both members, earliest first')
+  assert.deepEqual(gated.rows.map((r) => r.s.target.name), ['A mob', 'A third mob'])
+  assert.equal(gated.key, 'uncertain')
+})
+
+test('a level that went BACKWARDS gates the span too, and a STATED loadout never gates', () => {
+  const kills: KillMap = {}
+  const a = killedAt(kills, 'A mob', 1, 1_000)
+  // Min-of-loadout only ever rises inside one loadout, so a regression is a swap nothing cut.
+  const [regressed] = loadoutGroups(
+    [interval('ci1', 0, null, { classes: IRE_TRIO, levelRegressed: true })],
+    allStatuses([a], kills)
+  )
+  assert.equal(regressed.uncertain, true)
+
+  // …but the game's own word outranks the gate. A `/who` row is not a guess that surplus evidence
+  // can undermine, and answering "the game said PAL/MNK/ENC" with "we are not sure" is nonsense.
+  const [stated] = loadoutGroups(
+    [
+      interval('ci1', 0, null, {
+        slots: IRE_TRIO.map((c) => slot([c], 'who')),
+        startAlso: ['overDetermined'],
+        levelRegressed: true
+      })
+    ],
+    allStatuses([a], kills)
+  )
+  assert.equal(stated.uncertain, false)
+  assert.equal(stated.interval?.id, 'ci1', 'and it keeps its speaker and its chips')
+})
+
+test('the gated section is NOT the unattributed one — they are different things to know', () => {
+  const kills: KillMap = {}
+  const orphan = killedAt(kills, 'A mob', 1, 500)
+  const gated = killedAt(kills, 'Another mob', 1, 5_000)
+  const groups = loadoutGroups([overDetermined('ci1', 4_000, null, IRE_TRIO)], allStatuses([orphan, gated], kills))
+  assert.equal(groups.length, 2)
+  assert.equal(groups[0].key, 'unknown', 'no interval covers the orphan; there is no span to show')
+  assert.deepEqual(groups[0].intervals, [])
+  assert.equal(groups[0].uncertain, false)
+  assert.equal(groups[1].key, 'uncertain', 'an interval covers the other and cannot be trusted to name it')
+  assert.equal(groups[1].intervals.length, 1)
+})
+
 test('kills no interval covers keep their own section and never merge into a loadout', () => {
   const kills: KillMap = {}
   const orphan = killedAt(kills, 'A mob', 1, 500)

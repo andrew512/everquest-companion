@@ -29,6 +29,11 @@
  * cards left standing == the cards drawing a green rung), which is why it can live here beside a
  * real clock. `stepDefeatedOnlyIsThisWeek` carries the argument.
  *
+ * …and since JOS-239, that the OTHER grouping mounts and that its headers are honest — the
+ * by-loadout switch had never been flipped by anything in this suite, so a whole view of the roster
+ * had zero app-level coverage. `loadoutSectionSteps.mts` carries that argument and the step, out of
+ * this file because it is at the 400-code-line ceiling.
+ *
  * WHAT THIS SPEC DELIBERATELY DOES NOT ASSERT: which rungs are GREEN. "Cleared this week" is a
  * comparison against the real clock, and the committed e2e fixture's kills sit at fixed dates, so
  * any expected colour here would be true only until the next Tuesday 08:00 Pacific and would then
@@ -61,6 +66,7 @@ import {
   waitHydrated
 } from './appHarness.mjs'
 import { launchApp, mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { stepLoadoutSectionsAreHonest } from './loadoutSectionSteps.mjs'
 
 const NAV_BOSSES = '[data-testid="nav-bosses"]'
 const NAV_OVERVIEW = '[data-testid="nav-overview"]'
@@ -77,7 +83,6 @@ const LADDER = '[data-testid="boss-difficulty-ladder"]'
 const DEFEATED = '[data-testid="boss-defeated-only"]'
 /** The toolbar's running count — the filter's yardstick, and unmoved by the filter itself. */
 const TALLY = '[data-testid="boss-tally"]'
-
 /** Which mode the toggle group is showing as selected. `null` when it is not mounted. */
 function modeState(page: Page): Promise<string | null> {
   return page.evaluate((sel) => {
@@ -624,6 +629,7 @@ async function main(): Promise<void> {
       await stepDefault(page)
       await stepWeekSticksAcrossTabs(page)
       await stepOverallSticksToo(page)
+      await stepLoadoutSectionsAreHonest(page)
       await stepArmRestart(page)
       if (failures.length) await dumpArtifacts(page, 'bosses-week-FAIL')
     } finally {

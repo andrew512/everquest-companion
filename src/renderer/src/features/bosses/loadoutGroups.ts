@@ -51,6 +51,15 @@
 //     it that no member observed was never observed. It is carried as data; nothing on this
 //     surface draws it, and the surface that does draw level ranges (the Profile tab's interval
 //     list) is per-interval and untouched.
+// A SECTION HEADER IS A CLAIM ABOUT A KILL, SO IT ANSWERS TO THE CONFIDENCE GATE (JOS-239). The
+// owner's roster showed Lord Nagafen defeated at D4 under a crisp `ENC / WIZ / MNK` header; his
+// wizard was level 25 and had never been in the zone. The interval behind it already carried
+// `overDetermined` and a level range of 11-50, and this layer printed the trio anyway. Now an
+// interval that fails `loadoutUncertain` (shared/comboIndex.ts) is routed to ONE unresolved section
+// instead of naming classes — see `UNCERTAIN_KEY` for why one and not one per span. Nothing about
+// the JOIN changes: the same kills land under the same intervals, and the gate decides only what
+// the header is allowed to SAY.
+//
 //   * the BADGES follow the rule above with one word widened — SAME SECTION rather than same
 //     interval. The ticket's case, a target killed at d4 under the trio in one interval and at d0
 //     under the SAME trio in a later one, is now ONE card wearing the d4 badge, which is a true
@@ -59,7 +68,7 @@
 //     loadout is still a different section — the Lord of Ire regression, pinned in
 //     tests/bossTierRuns.test.mts.
 
-import { groupByCombo } from '../../../../shared/comboIndex'
+import { groupByCombo, loadoutUncertain } from '../../../../shared/comboIndex'
 import { addTierRun, tierRuns } from '../../../../shared/kills'
 import type { ComboInterval, ComboProvenance } from '../../../../shared/classCombo'
 import type { KillTierRun } from '../../../../shared/kills'
@@ -78,14 +87,23 @@ export interface LoadoutCard {
 export interface LoadoutGrouping {
   key: string
   /**
+   * THE CONFIDENCE GATE (JOS-239, `loadoutUncertain` in shared/comboIndex.ts). True ⇒ the members
+   * are spans the model has said it cannot explain, so this section states NO loadout: the header
+   * says the kills came from a stretch that held more than one, and `interval` is null even though
+   * `intervals` is not. See the file header for why it is one section rather than one per member.
+   */
+  uncertain: boolean
+  /**
    * The member that SPEAKS for the section — the one with the weakest provenance, so the chips
-   * cannot upgrade a section that is partly inference. null = no interval covers these cards.
+   * cannot upgrade a section that is partly inference. null in the two cases where the section
+   * states no loadout: no interval covers these cards, or `uncertain` (JOS-239).
    */
   interval: ComboInterval | null
   /**
    * Every interval merged into this section, earliest first — the honest span, kept whole rather
    * than flattened into a synthetic interval (an id nothing in the model owns is a stale join
-   * waiting to happen). Empty exactly when `interval` is null.
+   * waiting to happen). Empty for the UNATTRIBUTED section only; a gated section has members and
+   * no speaker, which is the whole point of it.
    */
   intervals: ComboInterval[]
   /** hull of the members' level ranges: min of the lows, max of the highs, null when unobserved */
@@ -188,6 +206,21 @@ interface Pending {
 const UNKNOWN_KEY = 'unknown'
 
 /**
+ * The one section for runs whose interval FAILED the confidence gate (JOS-239).
+ *
+ * ONE SECTION, NOT ONE PER MEMBER, and for JOS-236's reason: a section header is a SENTENCE, and
+ * every gated span says the identical one — "these kills came out of a stretch that held more than
+ * one loadout, and the app will not pick". Drawing that sentence four times with four different
+ * date ranges is the exact complaint that ticket fixed. The members are all kept in `intervals`,
+ * so the caption can still count the stretches and the tooltip can spell them out.
+ *
+ * It is deliberately NOT merged with `UNKNOWN_KEY`: "no interval covers these kills" and "an
+ * interval covers them and cannot be trusted to name a trio" are different things to know, and the
+ * second one has spans to show.
+ */
+const UNCERTAIN_KEY = 'uncertain'
+
+/**
  * Defeated targets, split into tier runs, time-joined to the combo intervals, and sectioned by
  * LOADOUT — every interval stating the same classes is one section (JOS-236, file header).
  * Undefeated targets carry no timestamp to join on and are not returned here — the view keeps
@@ -211,7 +244,8 @@ export function loadoutGroups(
   const byKey = new Map<string, Pending>()
   const ordered: Pending[] = []
   for (const group of groupByCombo(intervals, runRows(list))) {
-    const key = group.interval ? `combo:${loadoutKey(group.interval)}` : UNKNOWN_KEY
+    const gated = group.interval !== null && loadoutUncertain(group.interval)
+    const key = !group.interval ? UNKNOWN_KEY : gated ? UNCERTAIN_KEY : `combo:${loadoutKey(group.interval)}`
     let pending = byKey.get(key)
     if (!pending) {
       pending = { key, members: [], rows: [] }
@@ -229,9 +263,13 @@ export function loadoutGroups(
     const cards = cardsFor([...pending.rows].sort((a, b) => a.ts - b.ts))
     const rows = keep ? cards.filter((c) => keep(c.s)) : cards
     if (rows.length === 0) continue
+    const uncertain = pending.key === UNCERTAIN_KEY
     out.push({
       key: pending.key,
-      interval: speaker(members),
+      uncertain,
+      // A gated section names NO loadout, so it has no speaker — the chips are exactly what must
+      // not be drawn. Its members are still carried, because the spans are true and useful.
+      interval: uncertain ? null : speaker(members),
       intervals: members,
       ...levelHull(members),
       rows

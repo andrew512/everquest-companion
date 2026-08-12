@@ -165,6 +165,27 @@ export function confidenceText(confidence: number): string {
   return `${Math.round(confidence * 100)}%`
 }
 
+/**
+ * Why the confidence gate (`loadoutUncertain`, shared/comboIndex.ts) is holding this interval, or
+ * null when it is not — the wording for the Profile tab's per-interval row (JOS-239).
+ *
+ * The two conditions read differently to a user and are worth separating: "more classes than a
+ * loadout holds" is about the evidence, "your level went backwards" is about a swap the log did
+ * announce and nothing dated. Both end the same way — the classes on this row are the ranking's
+ * opinion, and the row is the place to correct it.
+ */
+export function uncertainText(interval: ComboInterval): string | null {
+  const reasons: string[] = []
+  if (interval.startAlso?.includes('overDetermined') === true) {
+    reasons.push('more classes showed up here than a loadout holds')
+  }
+  if (interval.levelRegressed === true) {
+    reasons.push('your level went backwards inside this range, which only a swap does')
+  }
+  if (reasons.length === 0) return null
+  return `${reasons.join(', and ')} - so a swap probably happened in here that nothing dated. Treat these classes as a guess, and correct the range if you know better.`
+}
+
 /** `levels 10–24`, `level 50`, or null when no level was observed inside the interval. */
 export function levelRangeText(interval: ComboInterval): string | null {
   const { levelLo: lo, levelHi: hi } = interval
