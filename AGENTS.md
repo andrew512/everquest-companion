@@ -111,9 +111,11 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
     time) · documented in-file by the JOS-206 worker; needs the same
     order-hardening the spec's own comment describes.
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
-    settles on stale geometry · 3 sightings (2026-08-10/11/12, full-sweep only,
-    green standalone every time) · fix shape diagnosed (wait for bounds to
-    differ before settling); chip filed — at 3 this needs the ticket now.
+    settles on stale geometry · 5 sightings (2026-08-10/11/12 full-sweep; 4th
+    in the JOS-229 sweep; 5th 2026-08-12 STANDALONE on the JOS-240 merge
+    verification — the full-sweep-only pattern is broken, green on immediate
+    rerun) · fix shape diagnosed (wait for bounds to differ before settling);
+    ticket JOS-232 filed — now firing standalone, priority raised.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
     while EverQuest runs with a player at the keyboard · 2 sightings
     (2026-08-10) · needs hermetics without weakening the once-then-heartbeat
