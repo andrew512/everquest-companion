@@ -66,7 +66,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseEvent } from '../src/main/log/parser'
-import { getParserConfig, installSpellDb } from '../src/main/log/rulesets'
+import { CHARM_STEMS, getParserConfig, installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { CharmModel } from '../src/main/combat/charmModel'
 import { AlertsModule } from '../src/main/modules/alerts'
@@ -432,6 +432,39 @@ test('JOS-250 R2b: a NOT_A_CHARM spell is refused by the roster AND arms no owne
       `"${name}" must not arm the charm window — ${why}`
     )
   }
+})
+
+test('JOS-251 R2d: THE SWAP — the derived charm roster and the hand-audited stems agree, everywhere', () => {
+  // `cfg.charmSpell` is no longer `CHARM_STEMS` (JOS-251): `installSpellDb` replaces it with the
+  // set derived from each spell page's own EFFECT LIST, keeping the stems only as the fallback for
+  // a name the catalog does not carry. This is the assertion that says the swap changed nothing.
+  //
+  // It is also the assertion that makes the swap worth making. JOS-250 arrived at these stems by
+  // having a human read the wiki page by page and then hand-add four names and hand-remove four
+  // others; the derivation arrives at the same 23 rows by reading a sentence the scrape now
+  // captures. Agreement in BOTH directions over the whole catalog means the two methods can be
+  // swapped without a behaviour question — and from here the next scrape that adds a charm adds it
+  // without anybody reading anything.
+  //
+  // A FAILURE HERE IS INFORMATION, NOT NOISE. It means the wiki's effect line and our stem list
+  // disagree about a specific spell, which is exactly the report JOS-84/200/225/250 each needed and
+  // none of them had.
+  const derived: string[] = []
+  const stems: string[] = []
+  for (const s of db.spells) {
+    if (cfg.charmSpell.test(s.name)) derived.push(s.name)
+    if (CHARM_STEMS.test(s.name)) stems.push(s.name)
+  }
+  const uniq = (a: string[]): string[] => [...new Set(a)].sort()
+  assert.deepEqual(uniq(derived), uniq(stems))
+  assert.equal(uniq(derived).length, 23, 'twenty player-castable charms and the three NPC-only ones')
+
+  // …and the fallback is reachable rather than decorative: a name the catalog has never heard of
+  // still answers to the stems, which is the only job they have left.
+  // (`Dictate` and not `Charm`, because `\bcharm\b(?! of )` deliberately refuses a "Charm of …" —
+  // that lookahead is JOS-250's fix for the two item focus effects.)
+  assert.ok(!db.byKey.has('dictate of frobnication'), 'a name spells.json does not carry')
+  assert.ok(cfg.charmSpell.test('Dictate of Frobnication'), 'the stem fallback still answers')
 })
 
 test('JOS-250 R2c: the roster still arms for a real charm, so R2b is not vacuous', () => {

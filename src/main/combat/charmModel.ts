@@ -93,7 +93,7 @@
 
 import spellsJson from '../data/spells.json'
 import { applySpellCorrections } from '../data/spellCorrections'
-import { getParserConfig } from '../log/rulesets'
+import { getParserConfig, type SpellRoster } from '../log/rulesets'
 import { spellCanonKey } from '../log/parseCommon'
 import type { SpellDbFile } from '../../shared/types'
 
@@ -245,10 +245,13 @@ const CHARM_SPELLS_WITH_OTHER_CAST_MESSAGE: ReadonlySet<string> = (() => {
   return new Set([...stated].filter(([, onlyOther]) => onlyOther).map(([k]) => k))
 })()
 
-/** Membership tests. The audited stem regexes live in the parser ruleset (they are what the
+/** Membership tests. The audited rosters live in the parser ruleset (they are what the
  *  `Your <spell> spell has worn off of <mob>` path already uses to tell charm from mez), so
- *  they are read from there rather than re-implemented — one source of truth per question. */
-function stems(): { charmSpell: RegExp; ccSpell: RegExp } {
+ *  they are read from there rather than re-implemented — one source of truth per question.
+ *  SINCE JOS-251 `charmSpell` is a DERIVED set rather than a regex once a spell DB is installed,
+ *  which is why the return type is the roster interface: both answer `test(name)` and this file
+ *  never wanted anything else from them. */
+function stems(): { charmSpell: SpellRoster; ccSpell: SpellRoster } {
   const cfg = getParserConfig()
   return { charmSpell: cfg.charmSpell, ccSpell: cfg.ccSpell }
 }

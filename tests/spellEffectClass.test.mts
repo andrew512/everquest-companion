@@ -11,11 +11,13 @@
 // sentence. A roster that agrees with a hand audit it never saw is a roster that can be trusted to
 // notice the next spell nobody thought about.
 //
-// WHY THE ROSTER IS THE DELIVERABLE AND NOT THE PARSER SWAP. JOS-250's build is live in
-// src/main/log/rulesets.ts and tests/charmCcRoster.test.mts as this lands, so the swap of
-// `CHARM_STEMS` / `CC_STEMS` over to these sets is sequenced behind that merge. What this file
-// pins is the DERIVATION and the DELTA — what the stems get wrong today, name by name — so the
-// swap, whenever it happens, is a mechanical change against an assertion that already exists.
+// WHAT THIS FILE PINS AND WHAT IT DOES NOT. The parser swap itself landed on top of JOS-250:
+// `ParserConfig.charmSpell` is now the derived set with `CHARM_STEMS` as the fallback for a name
+// the catalog does not carry, and tests/charmCcRoster.test.mts asserts the two agree on every row.
+// This file is the layer underneath — the grammar, the class memberships, the delta against the
+// hand audit, and the separation. `ccSpell` deliberately did NOT move; R3b/R3c pin the derivation's
+// answer for the nineteen spells the two disagree about, so the owner ruling that decides them has
+// something to land against. The argument is in src/main/log/rulesets.ts under THE HALF-SWAP.
 //
 // SEPARABILITY IS ASSERTED, NOT ASSUMED (the owner's second constraint). R7 builds the roster from
 // the RAW committed JSON with no correction overlay applied at all, and then proves the corrected
@@ -121,36 +123,41 @@ test('JOS-251 R1c: the NPC charms are real charms, and are excluded by the CASTA
 // ── R2: the delta against the stems the derivation replaces ─────────────────────────────────────
 
 /**
- * THE FALSE POSITIVES, measured to their consumers by the JOS-250 audit. Each is a spell whose NAME
- * the charm stems claim and whose EFFECT LIST says something else entirely.
+ * THE FALSE POSITIVES the JOS-250 audit measured to their consumers, each a spell whose NAME reads
+ * like a charm and whose EFFECT LIST says something else entirely.
+ *
+ * JOS-250 removed all four from `CHARM_STEMS` by hand, days before this file existed, so the stems
+ * and the derivation now agree about them — which is the good outcome and also the reason these
+ * are asserted against the EFFECT LINE rather than against the stem delta. The claim being pinned
+ * is that reading the wiki's own words gets these right WITHOUT anybody having to notice them.
  */
-const STEM_FALSE_POSITIVES: Record<string, string> = {
-  'Allure of Death': 'necro permanent self-buff — caught by the `allure` stem',
-  "Boltran's Animation": 'a PET SUMMON with a 9,000 ms cast — the `boltran` stem armed a 10.5-second false charm window, the exact foreign-pet-adoption window the admission gate exists to prevent',
-  "Naki's Charm of Pernicity": 'an ITEM focus effect — the bare `charm` stem',
+const AUDIT_FALSE_POSITIVES: Record<string, string> = {
+  'Allure of Death': 'necro self-buff — the `allure` stem used to catch it',
+  "Boltran's Animation": 'a PET SUMMON with a 9,000 ms cast — the `boltran` stem armed a 10.5-second false charm window, the exact foreign-pet adoption the ownership model exists to prevent',
+  "Naki's Charm of Pernicity": 'an ITEM focus effect — a charm is a trinket as well as a spell in this game',
   "Tavee's Charm of Diuturnity": 'the second item focus effect'
 }
 
-test('JOS-251 R2: every stem false positive the audit found classifies as NON-charm', () => {
-  for (const [name, why] of Object.entries(STEM_FALSE_POSITIVES)) {
+test('JOS-251 R2: every false positive the audit found is a non-charm by its effect line', () => {
+  for (const [name, why] of Object.entries(AUDIT_FALSE_POSITIVES)) {
     const row = RAW.find((s) => s.name === name)
-    assert.ok(row, `spells.json must still carry "${name}" — a table naming a spell that no longer exists is a stale claim`)
-    // The delta is stated from BOTH sides, so this cannot pass by the spell having quietly vanished.
-    assert.ok(CHARM_STEMS.test(name), `the stems really do claim "${name}" — ${why}`)
+    assert.ok(row, `spells.json must still carry "${name}" — a table naming a spell that no longer exists is a stale claim, not a passing test`)
     assert.ok(!spellHasEffect(row, 'charm'), `"${name}" must not be a charm — ${why}`)
+    assert.ok(row.effects?.length, `…and it must say what it IS: ${JSON.stringify(row.effects)}`)
+    // The stems agree TODAY because a human fixed them. If a later edit puts one back, the
+    // derivation is the thing that was right all along, and this says so.
+    assert.ok(!CHARM_STEMS.test(name), `CHARM_STEMS must still refuse "${name}" — ${why}`)
   }
 })
 
-test('JOS-251 R2b: and every charm the stems MISS is in the derived roster', () => {
-  // The other half of the audit: three druid charms with no stem at all, the NPC line the `allure`
-  // stem cannot reach (it matches "Allure", not "Alluring"), and the bard song JOS-250 escalated.
-  const missed = ['Befriend Animal', 'Call of Karana', 'Tunare`s Request', "Solon's Song of the Sirens"]
-  for (const n of missed) {
-    assert.ok(!CHARM_STEMS.test(n), `the stems really do miss "${n}"`)
+test('JOS-251 R2b: and every charm the audit had to hand-add is derived without being told', () => {
+  // The other half: three druid charms that matched no stem (the druid's FIRST charm and their last
+  // two), the NPC line the `allure` stem could not reach, and the bard song the owner ruled on.
+  // Each needed a hand edit in JOS-250; each falls out of the effect list for free.
+  for (const n of ['Befriend Animal', 'Call of Karana', 'Tunare`s Request', "Solon's Song of the Sirens"]) {
     assert.ok(names('charm').includes(n), `the derivation must find "${n}"`)
   }
-  assert.ok(!CHARM_STEMS.test('Alluring Whispers'), 'the NPC one the audit named')
-  assert.ok(names('charm', { castableOnly: false }).includes('Alluring Whispers'))
+  assert.ok(names('charm', { castableOnly: false }).includes('Alluring Whispers'), 'the NPC one')
 })
 
 // ── R3: the hold roster, and the JOS-225 line it must not cross ─────────────────────────────────
