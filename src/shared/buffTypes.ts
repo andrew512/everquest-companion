@@ -38,6 +38,24 @@ import type { ClassAbbr } from './classCombo'
  */
 export type BuffClass = 'buff' | 'debuff'
 
+/**
+ * WHERE A DURATION ESTIMATE CAME FROM — the provenance of every countdown this app draws
+ * (buffsStats.ts `estimateFor` is the one place that decides it).
+ *
+ *   'db'       — the spell-database baseline held: nothing observed beat it, and nothing
+ *                observed corroborated a shorter answer.
+ *   'observed' — a logged cycle ran LONGER than the baseline (AA/focus extension) and won.
+ *   'cluster'  — the app's own clean cycles agree the spell is SHORTER than the baseline says,
+ *                and there are enough of them to say so (JOS-212, owner ruling 2026-08-12).
+ *                It is a separate label from 'observed' on purpose: the two answers are read off
+ *                the same samples but they make opposite claims about the database row, and a UI
+ *                that said "longer than the baseline" for both would be lying about one of them.
+ *
+ * Every consumer that is not asking specifically about the DB floor should treat 'cluster' the
+ * way it treats 'observed' — both are this caster's own measured cycles.
+ */
+export type EstimatorSource = 'db' | 'observed' | 'cluster'
+
 /** Per-spell mined duration statistics (milliseconds). */
 export interface BuffStat {
   /** spell name (display casing of the first observed cast/fade). */
@@ -64,12 +82,13 @@ export interface BuffStat {
   /**
    * The value the estimator uses for the remaining-time bar (JOS-117): max(DB baseline, recent
    * observed max) — the DB is a FLOOR that below-base click-off samples cannot pull under, and a
-   * logged cast that beat the floor wins. Provenance in `estimatorSource`. Null when neither is
-   * available (n=0, no DB duration).
+   * logged cast that beat the floor wins. Since JOS-212 the floor is no longer absolute: a
+   * corroborated cluster of clean below-floor cycles removes it (see {@link EstimatorSource}).
+   * Provenance in `estimatorSource`. Null when neither is available (n=0, no DB duration).
    */
   estimateMs?: number | null
-  /** Where `estimateMs` came from: 'db' (floor held) | 'observed' (a logged cast beat it). */
-  estimatorSource?: 'db' | 'observed'
+  /** Where `estimateMs` came from — see {@link EstimatorSource}. */
+  estimatorSource?: EstimatorSource
   /**
    * The newest event ts (ms epoch) this spell was seen — the last castBegin / apply / fade
    * involving it (Task #45). The RECENCY signal the suggested-alerts wizard sorts by (recent
@@ -116,12 +135,10 @@ export interface ActiveBuff {
    */
   inferredTarget?: boolean
   /**
-   * Where `estimatedMs` came from (JOS-117):
-   *   'db'       — the spell-database baseline held (no logged cast beat it).
-   *   'observed' — a logged cast beat the floor: max over the recent sample window.
-   *   undefined  — no estimate (n=0 and no DB duration).
+   * Where `estimatedMs` came from (JOS-117) — see {@link EstimatorSource}. `undefined` means no
+   * estimate at all (n=0 and no DB duration).
    */
-  durationSource?: 'db' | 'observed'
+  durationSource?: EstimatorSource
   /**
    * THE BUFFS/TIMER OVERLAY's countdown duration (ms). Since JOS-117 this is the SAME estimator the
    * Buffs TAB uses — max(DB floor, recent observed max) — so both surfaces agree; a below-base
@@ -131,8 +148,8 @@ export interface ActiveBuff {
    * buffsStats.ts `estimateFor` and shared/buffTimers.ts `timerModeOf`.
    */
   overlayDurationMs?: number | null
-  /** Where `overlayDurationMs` came from: 'db' (floor held) | 'observed' (a logged cast beat it). */
-  overlaySource?: 'db' | 'observed'
+  /** Where `overlayDurationMs` came from — see {@link EstimatorSource}. */
+  overlaySource?: EstimatorSource
   /**
    * True when this buff is PERMANENT (Task #34): an illusion-flagged spell the player
    * self-cast while the Permanent Illusion AA is owned (self-cast illusions last forever

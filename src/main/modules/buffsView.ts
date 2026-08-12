@@ -3,7 +3,7 @@
 // Pure: it reads the learned per-spell stats and the current pet identities and writes
 // nothing, so every caller in the instance store shares one definition of what a row says.
 
-import type { ActiveBuff, BuffClass } from '../../shared/types'
+import type { ActiveBuff, BuffClass, EstimatorSource } from '../../shared/types'
 import type { EntityDisposition } from '../combat/entityRules'
 import { SELF_CASTER } from '../../shared/buffTrust'
 import { SELF_KEY } from './buffsShapes'
@@ -78,7 +78,7 @@ function overlayDurationOf(
   permanent: boolean,
   stats: SpellStats,
   caster: string
-): { overlayDurationMs: number | null; overlaySource?: 'db' | 'observed' } {
+): { overlayDurationMs: number | null; overlaySource?: EstimatorSource } {
   if (permanent) return { overlayDurationMs: null }
   const est = stats.estimateFor(key, caster)
   if (est.ms != null && est.source) return { overlayDurationMs: est.ms, overlaySource: est.source }
@@ -96,9 +96,9 @@ function durationFields(
   p25: number | null
   p75: number | null
   n: number
-  durationSource?: 'db' | 'observed'
+  durationSource?: EstimatorSource
   overlayDurationMs: number | null
-  overlaySource?: 'db' | 'observed'
+  overlaySource?: EstimatorSource
 } {
   const st = stats.statFor(key, caster)
   const est = stats.estimateFor(key, caster)

@@ -27,7 +27,7 @@ import type {
 } from '@shared/types'
 import { useModule } from '../../lib/useModule'
 import { ActiveRow } from './ActiveBuffRow'
-import { fmtDuration, classAccent, groupKey, groupLabel } from './format'
+import { fmtDuration, classAccent, groupKey, groupLabel, estimatorSourceTitle } from './format'
 import { Tooltip } from '../../lib/Tooltip'
 
 // Stats-table sections: buffs first, then debuffs (Task #35 — a spell property).
@@ -80,9 +80,10 @@ function StatsTable({ stats, cls }: { stats: Record<string, BuffStat>; cls: Buff
 
 /**
  * The estimate the app uses (JOS-117): max(DB floor, recent observed max). The source names which
- * WON — 'db' when the DB floor held, 'observed' when a logged cast beat it (shown as a "log" chip:
- * the DB is the baseline, the log is what makes it accurate). Falls back to median for older
- * deltas without the field.
+ * WON — 'db' when the DB floor held, 'observed' when a logged cast beat it, and since JOS-212
+ * 'cluster' when three agreeing clean cycles overruled a floor that was too long. Both learned
+ * sources show a "log" chip (the DB is the baseline, the log is what makes it accurate) and are
+ * told apart by the tooltip. Falls back to median for older deltas without the field.
  */
 function rowEstimate(s: BuffStat): { ms?: number | null; src?: string } {
   const ms = s.estimateMs ?? s.dbDurationMs ?? s.medianMs
@@ -95,9 +96,7 @@ function rowEstimate(s: BuffStat): { ms?: number | null; src?: string } {
 function EstimateCell({ ms, src }: { ms?: number | null; src?: string }): JSX.Element {
   if (ms == null) return <>-</>
   return (
-    <Tooltip
-      title={src === 'db' ? 'The spell-database baseline' : 'From your logged casts - longer than the baseline'}
-    >
+    <Tooltip title={estimatorSourceTitle(src)}>
       <span>
         {fmtDuration(ms)}
         {src ? (
