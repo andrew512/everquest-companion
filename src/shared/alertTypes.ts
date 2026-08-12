@@ -201,14 +201,30 @@ export interface SpeechVoice {
  * Why a speech request could not be served. These are STATES, not errors — the UI says
  * what is missing instead of failing silently:
  *  - 'engine-not-installed' → the selected tier has no model/voices on disk yet.
+ *  - 'engine-failed'        → the model IS on disk and synthesis still produced no audio.
+ *  - 'engine-unloadable'    → the model is on disk and the machine cannot LOAD the engine at
+ *                             all: the native module's `dlopen` failed (ERR_DLOPEN_FAILED).
  *  - 'not-implemented'      → this build ships the channel but not the engine behind it.
  *  - 'invalid-request'      → the handler rejected the payload (see ipc/speech.ts).
+ *
+ * THE LAST TWO ARE JOS-247, AND THEY EXIST BECAUSE ONE OF THEM WAS BEING TOLD AS THE FIRST.
+ * Every failure of the downloaded tier used to answer 'engine-not-installed', including a user
+ * whose 115 MB download had finished perfectly and whose worker thread then died on startup.
+ * The renderer degrades to a Windows voice on any of these (that seam is unchanged and is the
+ * point), but it can only SAY what happened if the reason is true — and "not downloaded" is a
+ * different sentence, with a different remedy, from "downloaded, and this PC cannot run it".
+ *
+ * They are separate members rather than one reason plus a message because a message is free
+ * text crossing IPC on an error path; a closed union carries the same fact and the renderer
+ * owns every word the user reads.
  *
  * There is no 'disabled' member any more: it meant "voice is switched off in preferences", and
  * that switch no longer exists (see VoicePrefs). Nothing ever returned it.
  */
 export type SpeechUnavailableReason =
   | 'engine-not-installed'
+  | 'engine-failed'
+  | 'engine-unloadable'
   | 'not-implemented'
   | 'invalid-request'
 

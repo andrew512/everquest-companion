@@ -24,7 +24,19 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AlertDef } from '../src/shared/types'
 import { DEFAULT_VOICE_PREFS } from '../src/shared/speechText'
-import { pickVoice, speechPlan, voiceIdOf } from '../src/renderer/src/lib/speech'
+import {
+  noteSpeechEngineFault,
+  onSpeechEngineFault,
+  pickVoice,
+  resetSpeechEngineFault,
+  speechEngineFault,
+  speechPlan,
+  speechSetupGap,
+  voiceIdOf,
+  SPEECH_SETUP_NOTES,
+  type SpeechEngineFault,
+  type SpeechSetupGap
+} from '../src/renderer/src/lib/speech'
 import { AUDIO_COALESCE_MS, coalesceAudio } from '../src/renderer/src/features/alerts/audioThrottle'
 
 function def(over: Partial<AlertDef> = {}): AlertDef {
@@ -217,4 +229,57 @@ test('a voice with no URI is identified by its name', () => {
   assert.equal(voiceIdOf(VOICES[2]), 'Google UK English Male')
   assert.equal(voiceIdOf(VOICES[0]), 'urn:sapi:David?en-US')
   assert.equal(pickVoice(VOICES, 'Google UK English Male')?.lang, 'en-GB')
+})
+
+// ------------------------------------------------------ 4. the engine fault latch (JOS-247)
+//
+// The reported failure was SILENT, and this is the mechanism that ends that. A downloaded
+// natural voice whose worker will not start enumerates all 54 of its voices perfectly — the
+// picker reads the FILE — so nothing derived from the inventory can ever notice. Only a failed
+// utterance knows, and before this it told a `console.warn` in a window with no console.
+
+test('the fault latches from a failed utterance, and tells its listeners once', () => {
+  resetSpeechEngineFault()
+  const seen: SpeechEngineFault[] = []
+  const off = onSpeechEngineFault((f) => seen.push(f))
+  assert.equal(speechEngineFault(), null, 'nothing has failed yet')
+  noteSpeechEngineFault('engine-unloadable')
+  noteSpeechEngineFault('engine-unloadable')
+  assert.equal(speechEngineFault(), 'engine-unloadable')
+  assert.deepEqual(seen, ['engine-unloadable'], 'a fault is a STATE, not an event per alert')
+  off()
+  resetSpeechEngineFault()
+})
+
+test('a setup state is NOT a fault — "not downloaded" is already said everywhere else', () => {
+  // Latching this one would double the note the picker and every speaking row already carry,
+  // and would keep saying it after the download finished.
+  resetSpeechEngineFault()
+  noteSpeechEngineFault('engine-not-installed')
+  noteSpeechEngineFault('invalid-request')
+  noteSpeechEngineFault('not-implemented')
+  assert.equal(speechEngineFault(), null)
+})
+
+test('every gap the UI can render has a note, and the unloadable one names its remedy', () => {
+  const gaps: SpeechSetupGap[] = ['engine-not-installed', 'no-voices', 'engine-failed', 'engine-unloadable']
+  for (const gap of gaps) assert.ok(SPEECH_SETUP_NOTES[gap].length > 0, gap)
+  // The two engine faults must never send a user off to re-download a model they already have —
+  // which is precisely what the old 'engine-not-installed' answer did say to them.
+  for (const gap of ['engine-failed', 'engine-unloadable'] as const) {
+    assert.match(SPEECH_SETUP_NOTES[gap], /is downloaded/, gap)
+    assert.ok(!SPEECH_SETUP_NOTES[gap].includes(SPEECH_SETUP_NOTES['engine-not-installed']), gap)
+  }
+  // …and the one whose remedy was MEASURED (the PE import tables of the shipped binaries) says it.
+  assert.match(SPEECH_SETUP_NOTES['engine-unloadable'], /Visual C\+\+/)
+  // House copy law (JOS-106): no em dashes in user-facing strings.
+  for (const gap of gaps) assert.ok(!SPEECH_SETUP_NOTES[gap].includes('—'), gap)
+})
+
+test('the inventory gap is unchanged — it still answers only what asking can answer', () => {
+  assert.equal(speechSetupGap('kokoro', []), 'engine-not-installed')
+  assert.equal(speechSetupGap('system', []), 'no-voices')
+  // THE REPORTER'S OWN STATE: a downloaded pack lists its voices, so nothing is missing and the
+  // inventory has nothing to say. That is why the fault has to come from having TRIED.
+  assert.equal(speechSetupGap('kokoro', [{ id: 'af_heart' }]), null)
 })
