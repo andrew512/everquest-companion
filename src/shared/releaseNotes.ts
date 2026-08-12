@@ -125,6 +125,76 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.23.0',
+    date: '2026-08-12',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'Killing a mob that shares a name with your mezzed mob no longer wipes the mez timer. A mezzed mob can never be the corpse, so the bar and its count survive the adds dying around it.'
+      },
+      {
+        kind: 'fixed',
+        text: "Largo's binding songs no longer trip the mez-break alert - they announce as the slows they are, and every real mez break and charm break still speaks.",
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Alerts can warn you early: set Warn early (sec) on an alert and it speaks before the tracked debuff drops - on wear-off alerts too, where it arms when the debuff lands and counts back from the bar on screen. A debuff that breaks before the warning still speaks at the break.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'An Always play switch in the Alerts toolbar lets every alert skip the audio throttle - each alert\'s own setting greys out while the global one is in charge.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Alerts made from the catalog now fire when you cast a ranked spell - Swift Like the Wind IV counts as Swift Like The Wind, with the rank shown as a small chip beside the buff's name."
+      },
+      {
+        kind: 'fixed',
+        text: 'When three clean casts agree your buff runs shorter than the wiki says, the app now believes its own stopwatch - Alacrity, Tashina and friends stop promising minutes they never deliver.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Permanent self-buffs - Yaulp, the shielding lines, blade coats, Lich and the wolf forms - can now appear in the buff window behind a new show-permanent switch, off by default. The forms also stopped quietly vanishing from the list after 90 minutes.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Pacify and the calm line now time on the debuff overlay with the other mob timers, instead of posing as one of your own buffs.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'The damage meter now opens on Everyone. Group tracking from the log is imperfect and the meter should just show numbers - a Group choice you made on purpose is kept.',
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: 'Your combat drilldown survives switching fights - drill into a source on one fight, flip to another and back, and you are still where you left off. Only changing direction starts you over.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Raid targets stopped double-listing a class trio you swapped away from and back to - one loadout, one section, however many stretches it took - and Defeated only now follows the This week view instead of always answering for all time.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The raid board no longer invents a class trio you never played: a swap the log dates is honored, and a stretch the app cannot untangle says Mixed loadouts instead of guessing.'
+      },
+      {
+        kind: 'changed',
+        text: 'The fast-start switch from 0.22.0 is retired. Fleet numbers showed machines read the log quickly without it, and it taxed every future improvement - startup reads your history in full again.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The spell-message counts in the log no longer double on every launch, and a failed update check now explains itself instead of showing a raw parse error.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.22.0',
     date: '2026-08-11',
     entries: [
