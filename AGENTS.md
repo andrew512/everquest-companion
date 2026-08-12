@@ -125,7 +125,8 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
     NO drift figures" fails when the replay lands JUST under the beat and a tick
     still gets counted (118 vs 125 ms twice, 123 vs 125 once) · 3 sightings
     (2026-08-11 phase-4 worker, 2026-08-12 JOS-230 worker, 2026-08-12 JOS-238
-    worker — full-sweep only, green standalone) · diagnosis sharpened by the
+    worker, 2026-08-12 v0.23.0 release sweep at 115 vs 125 ms — full-sweep
+    only, green standalone) · diagnosis sharpened by the
     JOS-229 worker: the sub-beat replay precondition holds on essentially every
     run of this machine, so the failure is the always-on stutter probe recording
     a tick inside the window — a tick-phase coin flip, not load · chip filed
