@@ -125,6 +125,52 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.24.0',
+    date: '2026-08-12',
+    entries: [
+      {
+        kind: 'new',
+        text: "A group-mate's charm pet now shows on the meter as its own row - Pet (Name) with the charmer's name - credited from the moment the charm lands to the moment the log proves it broke, and never a second longer. The instant an ex-pet swings at anyone friendly, even a miss, it stops counting. Your own rows are untouched by any of it.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "Every charm in the game now binds, counts down, and speaks when it breaks - the druid and shaman animal charms (Befriend Animal, Call of Karana, Tunare's Request) were silent before, and Tunare's Request runs almost three hours. Solon's Song of the Sirens breaks as the charm it is, not a mez.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Vengeance of the Wild opens a debuff row like any other dot - the wiki wrote its landing line in a shape the catalog missed.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Blessing of the Theurgist counts in the Procs list - a proc whose only trace is its own sentence, with no damage or heal line, is now a kind of proc the meter understands.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A dot with an initial hit no longer splits into two meter bars - one spell, one bar, with the landing and tick components one click down.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Hover any "active time" or per-hour label and it tells you exactly what the clock counts: gaps over five minutes with no experience, kill, or loot line pause it - not an AFK check, not combat time.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'When a downloaded natural voice cannot load, the app now says so - in the voice picker and on the alert - instead of silently speaking in the default system voice. The usual fix (the Microsoft Visual C++ runtime) is named right there.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The window remembers its size, position, and maximized state across restarts - and a launch with a monitor unplugged fits the screen you have without forgetting the layout you chose.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '0.23.0',
     date: '2026-08-12',
     entries: [
