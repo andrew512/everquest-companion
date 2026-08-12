@@ -435,12 +435,33 @@ export interface UncharmEvent extends LogEventBase {
  * instance is engaged-and-alive by definition. `spell` is present on the worn-off
  * shape; the application shape carries only the mob.
  */
+/** The four crowd-control APPLICATION verbs `classifyCcApply` claims, verbatim from the log. */
+export type CcVerb = 'mesmerized' | 'enthralled' | 'entranced' | 'ensnared'
+
 export interface CcEvent extends LogEventBase {
   kind: 'cc'
   mob: string
   spell?: string
   /** True when derived from a "spell has worn off" line (keep-alive), not a fresh application. */
   refresh?: boolean
+  /**
+   * THE WORD THE GAME USED (JOS-228) — present only on the APPLICATION shape, and reported rather
+   * than interpreted (world-model law 1: messages over inference).
+   *
+   * WHY A CONSUMER WANTS IT. Three of these four sentences describe a hold that ANY damage breaks
+   * — a mesmerized mob cannot be hit without waking up — and the fourth (`ensnared`) is a snare,
+   * which does nothing to stop you killing the mob it is on. That difference decides whether a
+   * `<mob> died.` line arriving while the hold still stands can be ABOUT that hold, and it is the
+   * whole of JOS-228: killing one mob of a name was closing a landing on the mezzed mob standing
+   * beside it, so the bar vanished at the moment it mattered most.
+   *
+   * IT IS THE VERB AND NOT A CLASSIFICATION on purpose. The alternative was a hand-authored roster
+   * of mez spell NAMES, which is exactly the substitution JOS-200 caught and reversed — spells.json
+   * has no effect column, the game reuses one landing sentence for two effects, and "a message
+   * family is not an effect family". These four words are what the log itself prints; the ruling
+   * about which of them a corpse can explain belongs to the model (modules/buffTimers.ts).
+   */
+  verb?: CcVerb
   /**
    * EVERY spell whose `msg_cast_on_other` produced this APPLICATION sentence (JOS-89), from the
    * same DB suffix table `buffApply` reads — present only on the application shape, only when a

@@ -69,5 +69,17 @@
  *       commit: the harness now calls `setLive()` before publishing, exactly as `session.ts`
  *       does, so `hydrating` is false in the published snapshot the goldens hash — a
  *       harness-input fix riding along, stated rather than hidden (see version 3's precedent).
+ *   5 — JOS-228. A DEATH IS NOT A MEZ ENDING. `modules/buffTimers.ts` closed one landing of every
+ *       hold on the dead mob's NAME, so killing one mob took the bar off the mezzed mob standing
+ *       beside it — the owner's urgent report. A mesmerized mob cannot be killed while it is
+ *       mesmerized (damage wakes it, and the wake's wear-off prints first — 1,472 of 1,518 wake
+ *       lines share the exact second of that mob's own wear-off), so the three landing verbs whose
+ *       hold damage breaks now refuse the corpse while `has been ensnared.` keeps ruling 7's
+ *       count-chip rule. A death also records no `CcEnd` any more: an end with no spell on it
+ *       matched EVERY ActiveBuff on that entity in the projection and blanked rows the buffs half
+ *       had correctly kept. NO FINGERPRINT MOVES — no fixture in the corpus kills a mob whose name
+ *       a live mez hold is on, which is precisely the honesty boundary this file names, and the
+ *       standing rule is to bump when in doubt. `CcEvent.verb` and the stored `Held.mez` change
+ *       the ENCODING axis in the same commit, so a stale checkpoint is refused twice over.
  */
-export const FOLD_SEMANTICS = 4
+export const FOLD_SEMANTICS = 5

@@ -4,7 +4,7 @@
 // DB-gated message-driven buff events, and — matched LAST of all — spell-landing emotes.
 // Every regex, table and comment here is verbatim from the single-pass parser.
 
-import type { LogEvent, PetSayKind } from '../../shared/logEvents'
+import type { CcVerb, LogEvent, PetSayKind } from '../../shared/logEvents'
 import { PET_LEADER_RE, PET_SAY_LINES, PET_SAY_RE } from '../../shared/logScrub'
 import type { PoisonProcDef } from '../../shared/poisons'
 import { POISON_BY_COAT_MSG, POISON_DRY_MSG, POISON_PROCS } from '../../shared/poisons'
@@ -18,7 +18,10 @@ const UNCHARM_RE = /^Your (.+?) spell has worn off of (.+?)\.$/
 // siblings. Charm is handled separately (CHARM_RE); the DoT-application shapes
 // (poisoned/diseased) and unrelated spell notices (smitten/overwritten) are NOT CC
 // and are excluded. `ensnared` is a root (a hold), so it counts.
-const CC_APPLY_RE = /^(.+?) has been (?:mesmerized|enthralled|entranced|ensnared)\.$/
+// The verb is CAPTURED since JOS-228: three of these four sentences describe a hold that damage
+// breaks and one does not, and the model needs the word to tell a corpse it can explain from one
+// it cannot (`CcEvent.verb` states the whole argument).
+const CC_APPLY_RE = /^(.+?) has been (mesmerized|enthralled|entranced|ensnared)\.$/
 // The CC BREAK ANNOTATION (JOS-180): "<mob> has been awakened by <name>." — one shape, measured
 // over the whole log (1,518 occurrences, zero variants; `by` is the player 1,364 times, a group
 // member or a mob for the rest). It was `{kind:'unknown'}` before this rule existed, so it can
@@ -291,6 +294,7 @@ export function classifyCcApply({ text, ts, seq, raw, cfg }: ClassifyCtx): LogEv
       ts,
       raw,
       mob: norm(m[1]),
+      verb: m[2] as CcVerb,
       ...(cands ? { candidates: cands.map((s) => ({ name: s.name, durationMs: s.durationMs })) } : {})
     }
   }

@@ -31,6 +31,13 @@ export interface HeldFoldState {
   caster: string
   durationMs?: number
   source?: 'db' | 'observed'
+  /**
+   * JOS-228: the landing verb said damage breaks this hold, so no death line may close one of its
+   * landings. STORED rather than re-derived, because the verb arrives exactly once — on the
+   * sentence that opened the row — and a restored hold that forgot it would start letting the
+   * next kill in the zone take somebody's mez bar down again.
+   */
+  mez: boolean
   group: HoldGroupFoldState
 }
 
@@ -74,6 +81,7 @@ const HELD_SCHEMA: FoldSchema = S.obj({
   // the grammar's one way to say that. The module restores it as null on the way back in.
   durationMs: S.opt(S.num),
   source: S.opt(S.enum('db', 'observed')),
+  mez: S.bool,
   group: HoldGroup.FOLD_SCHEMA
 })
 
@@ -109,6 +117,7 @@ export function packHeld(h: {
   caster: string
   durationMs: number | null
   source?: 'db' | 'observed'
+  mez: boolean
   group: HoldGroup
 }): HeldFoldState {
   return {
@@ -121,6 +130,7 @@ export function packHeld(h: {
     caster: h.caster,
     ...(h.durationMs === null ? {} : { durationMs: h.durationMs }),
     ...(h.source === undefined ? {} : { source: h.source }),
+    mez: h.mez,
     group: h.group.serializeFold()
   }
 }
@@ -140,6 +150,7 @@ export function unpackHeld(h: HeldFoldState): {
   caster: string
   durationMs: number | null
   source?: 'db' | 'observed'
+  mez: boolean
   group: HoldGroup
 } {
   return {
@@ -152,6 +163,7 @@ export function unpackHeld(h: HeldFoldState): {
     caster: h.caster,
     durationMs: h.durationMs ?? null,
     ...(h.source === undefined ? {} : { source: h.source }),
+    mez: h.mez,
     group: HoldGroup.from(false, h.group)
   }
 }

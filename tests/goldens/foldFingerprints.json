@@ -1,6 +1,6 @@
 {
-  "semantics": 4,
-  "reason": "FOLD_SEMANTICS 4 - the CombatEngine no longer lets the wall clock close a fight while the historical replay is still running (a renderer poll between two replay slices split a 53,577-damage fight into 43,504 + 10,073 under load; the e2e restart-compare and the shadow verifier both caught it). Only the six combat fingerprints move.",
+  "semantics": 5,
+  "reason": "FOLD_SEMANTICS 5 - JOS-228: a death no longer closes a mez hold in modules/buffTimers.ts (a mesmerized mob cannot be killed while mesmerized, so a same-named corpse is about another mob), and a death records no anonymous CcEnd. No fingerprint moves: no fixture in the corpus kills a mob whose name a live mez hold is on, which is the stated honesty boundary - bumped under the when-in-doubt rule.",
   "fingerprints": {
     "e2e-combat.log::combo": "9897cda8d50328a8",
     "e2e-combat.log::roster": "29048f1210ff9678",
