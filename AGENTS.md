@@ -117,9 +117,10 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
     rerun) · fix shape diagnosed (wait for bounds to differ before settling);
     ticket JOS-232 filed — now firing standalone, priority raised.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
-    while EverQuest runs with a player at the keyboard · 2 sightings
-    (2026-08-10) · needs hermetics without weakening the once-then-heartbeat
-    pin; chip filed.
+    while EverQuest runs with a player at the keyboard · 3 sightings
+    (2026-08-10 ×2, 2026-08-12 JOS-239 worker mid-session, green on final
+    run) · needs hermetics without weakening the once-then-heartbeat pin;
+    chip filed — satisfies the 3+ rule via the chip.
   - `perf.e2e` heartbeat boundary · "a replay shorter than one heartbeat states
     NO drift figures" fails when the replay lands JUST under the beat and a tick
     still gets counted (118 vs 125 ms twice, 123 vs 125 once) · 3 sightings
