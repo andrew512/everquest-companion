@@ -432,6 +432,29 @@ function parseSpell(title: string, fields: Record<string, string>): SpellEntry {
   }
 }
 
+/**
+ * THE TIMESTAMP IS THE LAST THING THAT CAN BREAK IDEMPOTENCE, and it did.
+ *
+ * The ticket's acceptance is "a full re-scrape is a no-op diff when the wiki has not changed", and
+ * a `scrapedAt` stamped unconditionally makes that impossible: every re-run rewrites one line, the
+ * committed file goes dirty, and the ONE signal that would tell a reviewer the wiki moved is
+ * drowned by a signal that fires every time. So the stamp is kept when the spell list this run
+ * produced is identical to the one already committed — it dates the DATA, not the invocation.
+ *
+ * Returns the previous stamp when nothing moved, `undefined` when something did (or when there is
+ * no previous file to compare against).
+ */
+function previousScrapedAt(spells: readonly SpellEntry[]): string | undefined {
+  if (!existsSync(OUT_PATH)) return undefined
+  try {
+    const prev = JSON.parse(readFileSync(OUT_PATH, 'utf8')) as SpellDbFile
+    if (prev.schema !== SCHEMA) return undefined
+    return JSON.stringify(prev.spells) === JSON.stringify(spells) ? prev.scrapedAt : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function main(): Promise<void> {
   const t0 = Date.now()
   console.log('Enumerating Template:Spellpage pages…')
@@ -485,7 +508,7 @@ async function main(): Promise<void> {
   const withInstrument = spells.filter((s) => s.instrumentEnhanced).length
 
   const out: SpellDbFile = {
-    scrapedAt: new Date().toISOString(),
+    scrapedAt: previousScrapedAt(spells) ?? new Date().toISOString(),
     schema: SCHEMA,
     count: spells.length,
     withEffects,
