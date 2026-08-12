@@ -99,7 +99,31 @@ export interface BuffStat {
 
 /** A currently-active (landed, not yet faded) buff INSTANCE = (spell, target entity). */
 export interface ActiveBuff {
+  /**
+   * THE SPELL'S IDENTITY, and since JOS-238 that means the DB's own display name whenever the
+   * model resolved which spell this is — never the ranked text one cast line happened to spell.
+   *
+   * It used to be the cast line's when a cast ANCHOR resolved an ambiguous landing, and the cost
+   * was the whole reason that ticket exists: `Swift Like the Wind IV` travelled from the anchor
+   * into this field, into the learner's display, and into the derived `buffExpired`, so a
+   * suggested wears-off alert — which pins the bare catalog name, `Swift Like The Wind` — could
+   * never fire for a spell cast at rank II or above. The rank is now {@link castName}.
+   *
+   * A FAMILY the anchors could not narrow still names every candidate here (`A / B`) and says so
+   * with `candidates`; that is an honest absence of an identity, not a second spelling of one.
+   */
   spell: string
+  /**
+   * The RANKED name the cast line spelled (`Swift Like the Wind IV`), when the model resolved this
+   * instance from a cast anchor AND the log's spelling says something `spell` does not (JOS-238).
+   *
+   * DISPLAY ONLY, and deliberately so: nothing keys, matches, learns or alerts off this field. It
+   * exists because the rank is genuinely information — the cast line is the ONLY line in the whole
+   * family that carries one — and losing it entirely would give back a fact JOS-126 asked for. A
+   * surface that wants to show "which rank is up" reads this; everything that wants to know WHICH
+   * SPELL is up reads `spell`.
+   */
+  castName?: string
   /** buff vs debuff — a SPELL property (Task #35), not who it's on. */
   cls: BuffClass
   /**

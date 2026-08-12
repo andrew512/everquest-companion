@@ -95,7 +95,7 @@ test('JOS-156: the SAME line leaves the live pet its own buffs', () => {
   // is wearing a Swift Like the Wind the owner cast on it at 15:20:59. The censor reads the
   // spell's CLASS, so a detrimental row on that name goes and a beneficial one stays.
   const rows = onTarget(at(AFTER_FIRST_DEATH), 'Bzzazzt')
-  assert.deepEqual(rows, ['swift like the wind iv'], 'the pet keeps its haste and loses nothing else')
+  assert.deepEqual(rows, ['swift like the wind'], 'the pet keeps its haste and loses nothing else')
 })
 
 test('JOS-156: the player keeps their own buffs when a mob dies', () => {
@@ -139,7 +139,7 @@ test('JOS-156: all three death shapes clear the dead mob rows', () => {
   for (const line of shapes) {
     assert.deepEqual(
       onTarget(withDeathShape(line), 'Bzzazzt'),
-      ['swift like the wind iv'],
+      ['swift like the wind'],
       `the debuffs go and the pet buff stays: ${line.slice(27)}`
     )
   }

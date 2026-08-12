@@ -190,13 +190,15 @@ test('THE REPORTED DEFECT: a Spirit of the Puma cast plus its landing draws a ba
     ],
     20
   )
-  const row = r.rows.find((x) => x.name === 'Spirit of the Puma VI')
+  const row = r.rows.find((x) => x.name === 'Spirit of the Puma')
   assert.ok(row, `no Puma row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
   assert.equal(row.kind, 'buff')
+  // The row is named for the SPELL (JOS-238) and carries the cast line's rank beside it.
+  assert.equal(row.castName, 'Spirit of the Puma VI')
   assert.equal(row.mode, 'countdown', 'a bar with a duration, which is the whole report')
   assert.equal(row.durationMs, 60_000, 'the wiki`s `60s`, which nothing in the tree could read before')
   assert.ok(
-    r.active.some((a) => a.spell === 'Spirit of the Puma VI'),
+    r.active.some((a) => a.spell === 'Spirit of the Puma'),
     `no held instance: ${r.active.map((a) => a.spell).join(', ') || '(none)'}`
   )
 })

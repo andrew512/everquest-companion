@@ -7,6 +7,7 @@
 import type { JSX } from 'react'
 import { Box, Chip, LinearProgress, Paper, Stack, Typography } from '@mui/material'
 import type { ActiveBuff } from '@shared/types'
+import { rowRankLabel } from '@shared/buffTimers'
 import { fmtDuration, remainingFraction, isOverdue, classAccent, estimatorSourceTitle } from './format'
 import { Tooltip } from '../../lib/Tooltip'
 
@@ -143,6 +144,9 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
   // illusion under the Permanent Illusion AA (Task #34). No countdown; the caption says which.
   const permanent = buff.permanent === true
 
+  // The rank the cast line spelled, when this instance was resolved from one (JOS-238).
+  const rank = rowRankLabel(buff.spell, buff.castName)
+
   return (
     <Paper
       variant="outlined"
@@ -160,6 +164,15 @@ export function ActiveRow({ buff, now }: { buff: ActiveBuff; now: number }): JSX
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
           {buff.spell}
         </Typography>
+        {/* THE RANK, BESIDE THE NAME AND NOT INSIDE IT (JOS-238). `spell` is the identity — the
+            DB's own display name, which is what alerts, the learner and the wear-off sentence
+            all speak — and the numeral the cast line spelled is a separate fact about this
+            instance. Absent whenever the cast line named no rank. */}
+        {rank != null && (
+          <Typography variant="caption" color="text.secondary" data-testid="active-buff-rank">
+            {rank}
+          </Typography>
+        )}
         {/* The chip's own word IS the disclosure — a tooltip re-explaining `inferred` is the
             defensive footnoting the UI conventions ban (AGENTS.md tooltip and caveat diet). */}
         {inferred ? (

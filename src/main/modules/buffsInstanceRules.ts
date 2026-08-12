@@ -176,8 +176,37 @@ export function landingSpec(candidates: string[] | undefined, at: LandingPlaceme
     dispOverride: at.disp,
     caster: at.caster,
     count: at.permanent ? 1 : at.record.group.count,
+    // DISPLAY ONLY (JOS-238) — the rank the cast line spelled, when it said one.
+    ...(at.record.castName != null ? { castName: at.record.castName } : {}),
     ...(candidates ? { candidates } : {}),
     opts: { messageDriven: true, permanent: at.permanent }
+  }
+}
+
+/**
+ * THE SPEC FOR RE-PROJECTING A ROW THAT IS ALREADY LIVE: everything the instance IS, carried
+ * forward from the row being replaced, with only the coordinates a re-projection restates
+ * (`at`) supplied by the caller.
+ *
+ * IT EXISTS BECAUSE THE STORE RE-PROJECTS FROM TWO PLACES THAT MUST NOT DRIFT — `restat` (the
+ * hold group moved: a landing closed, or another mob of that name joined it) and `addSample` (a
+ * fresh duration changed what every live instance of that line counts down from). Both used to
+ * hand-copy the same seven fields, and a display fact added to one and not the other is precisely
+ * the shape of the defect JOS-238 fixed one level up: a row that says a different thing depending
+ * on which internal event last touched it. There is one copy now, and `castName` — the ranked text
+ * of the cast line, which a re-projection must not silently drop — is carried here.
+ */
+export function reprojectSpec(
+  a: ActiveBuff,
+  at: { key: string; entityKey: string; startedTs: number; caster: string; count: number }
+): ActiveSpec {
+  return {
+    spell: a.spell,
+    ...at,
+    dispOverride: a.disposition,
+    ...(a.castName != null ? { castName: a.castName } : {}),
+    ...(a.candidates ? { candidates: [...a.candidates] } : {}),
+    opts: { messageDriven: a.messageDriven, permanent: a.permanent }
   }
 }
 

@@ -304,7 +304,8 @@ test('THE REPORTED DEFECT: an Odium VI cast plus the live landing opens a DEBUFF
   )
   const row = r.rows.find((x) => x.target === 'a rock golem')
   assert.ok(row, `no Odium row: ${r.rows.map((x) => `${x.name}@${x.target ?? 'self'}`).join(', ') || '(none)'}`)
-  assert.equal(row.name, 'Odium VI', 'the ranked cast line names the row — the rank was never the defect')
+  assert.equal(row.name, 'Odium', 'the DB name is the row identity (JOS-238); the rank was never the defect')
+  assert.equal(row.castName, 'Odium VI', 'and the rank the cast line spelled is kept beside it')
   assert.equal(row.kind, 'debuff')
   assert.equal(row.mode, 'countdown', 'a bar with a duration, which is the whole report')
   assert.equal(row.durationMs, 30_000, 'the committed DB states 30 seconds for the line')
@@ -312,7 +313,7 @@ test('THE REPORTED DEFECT: an Odium VI cast plus the live landing opens a DEBUFF
   // The instance under the row: before the correction the landing parsed to nothing at all, so
   // there was no held instance and no projection could have invented one.
   assert.ok(
-    r.active.some((a) => a.spell === 'Odium VI' && a.target === 'a rock golem'),
+    r.active.some((a) => a.spell === 'Odium' && a.target === 'a rock golem'),
     `no held instance: ${r.active.map((a) => `${a.spell}@${a.target ?? 'self'}`).join(', ') || '(none)'}`
   )
 })
@@ -374,7 +375,7 @@ test('JOS-189: each chant of the chain gets its OWN row, and the resisted one ge
   const names = r.rows.map((x) => x.name).sort()
   assert.deepEqual(
     names,
-    ["Tuyen's Chant of Disease VI", "Tuyen's Chant of Flame V", "Tuyen's Chant of Poison V"],
+    ["Tuyen's Chant of Disease", "Tuyen's Chant of Flame", "Tuyen's Chant of Poison"],
     'the three that landed, each under its own name — and no frost row at all'
   )
   for (const row of r.rows) {
@@ -395,7 +396,7 @@ test('…and with the wiki`s own two rows the same chain shows frost and loses t
     const r = replay(CHAIN, 10, bare)
     assert.deepEqual(
       r.rows.map((x) => x.name).sort(),
-      ["Tuyen's Chant of Flame V", "Tuyen's Chant of Frost V"],
+      ["Tuyen's Chant of Flame", "Tuyen's Chant of Frost"],
       'a frost bar for a frost that was resisted, and nothing for the poison or the disease'
     )
   } finally {

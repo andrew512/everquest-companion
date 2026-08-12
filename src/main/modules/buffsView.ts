@@ -12,7 +12,10 @@ import type { SpellStats } from './buffsStats'
 
 /** Everything that identifies the instance being projected, plus how it was established. */
 export interface ActiveSpec {
+  /** The IDENTITY — a resolved landing's DB name, or the joined family (JOS-238). */
   spell: string
+  /** DISPLAY ONLY: the ranked text the cast line spelled, when it said one (JOS-238). */
+  castName?: string
   key: string
   entityKey: string
   startedTs: number
@@ -132,6 +135,7 @@ function optionalFields(
 ): Partial<ActiveBuff> {
   const count = spec.count ?? 1
   return {
+    ...(spec.castName != null && spec.castName !== spec.spell ? { castName: spec.castName } : {}),
     ...(at.calmsTarget ? { calmsTarget: true as const } : {}),
     ...(at.inferredTarget ? { inferredTarget: true } : {}),
     ...(at.permanent ? { permanent: true, permanentSource: at.permanentSource } : {}),

@@ -208,8 +208,22 @@ export interface BuffTimerRow {
   /** Stable across ticks so React keys and e2e selectors do not churn. */
   id: string
   kind: 'buff' | 'debuff' | 'cc'
-  /** The resolved spell name, or the candidate names joined when the sentence is shared. */
+  /**
+   * The resolved spell name, or the candidate names joined when the sentence is shared.
+   *
+   * For a buff/debuff row this is `ActiveBuff.spell` — the DB's own name since JOS-238, where it
+   * used to be whatever the cast line spelled. A CC hold's is still the ranked name off its cast
+   * line, and the difference is deliberate rather than an oversight: nothing downstream of a hold
+   * matches on the string (it emits no `buffExpired`), and JOS-126 asked for the rank to be
+   * visible on exactly those rows.
+   */
   name: string
+  /**
+   * DISPLAY ONLY: the ranked text the cast line spelled, when a buff row's identity came from a
+   * cast anchor and the two differ (JOS-238, `ActiveBuff.castName`). Never an identity — `name`
+   * is, and `id` is built from `name` alone.
+   */
+  castName?: string
   /** Present only when the row is a FAMILY: every spell the line could be (JOS-84). */
   candidates?: string[]
   /** True when `name` is a family rather than a spell — drives the `~` chip. */
@@ -511,6 +525,23 @@ export function timerNameBase(name: string): string {
   return name.trim().replace(RANK_TAIL_RE, '').trim()
 }
 
+/**
+ * THE RANK A ROW MAY PRINT — the numeral off the cast line, or nothing (JOS-238).
+ *
+ * `castName` is the ranked text one cast line spelled and `name` is the spell's identity, so the
+ * only honest thing to show beside the name is the DIFFERENCE between them: the rank tail. Two
+ * refusals are deliberate. The two strings must fold to the SAME line under `timerNameKey`, or the
+ * chip would be a rank belonging to some other spell; and a `castName` with no rank tail yields
+ * nothing, because "the cast line spelled it differently" is not by itself a rank.
+ *
+ * Pure and shared so the floating window and the Buffs tab cannot disagree about what a row says.
+ */
+export function rowRankLabel(name: string, castName: string | undefined): string | undefined {
+  if (castName == null || timerNameKey(castName) !== timerNameKey(name)) return undefined
+  const m = RANK_TAIL_RE.exec(castName.trim())
+  return m ? m[0].trim().toUpperCase() : undefined
+}
+
 /** Canonical entity key (mirrors parseCommon.idKey for the same reason as above). */
 function entityKeyOf(name: string): string {
   return name.trim().toLowerCase()
@@ -578,6 +609,7 @@ function timerModeOf(b: ActiveBuff): { mode: TimerMode; durationMs?: number } {
  */
 function buffRowExtras(b: ActiveBuff): Partial<BuffTimerRow> {
   return {
+    ...(b.castName != null && b.castName !== b.spell ? { castName: b.castName } : {}),
     ...(b.calmsTarget === true ? { calmsTarget: true as const } : {}),
     ...(b.inferredTarget === true ? { inferredTarget: true as const } : {}),
     ...(b.count != null && b.count > 1 ? { count: b.count } : {}),

@@ -302,7 +302,17 @@ export function instanceSpellKey(iKey: string): string {
  * The clean-cycle bookkeeping that decides whether a span may be learned from lives there too.
  */
 export interface OpenCast {
+  /**
+   * The spell's IDENTITY — the DB name a resolved landing carries (JOS-238), the joined family
+   * when the anchors could not narrow one. Never the ranked cast text; that is {@link castName}.
+   */
   spell: string
+  /**
+   * The RANKED text the cast line spelled (`Swift Like the Wind IV`), when a named anchor resolved
+   * this landing and the log wrote something the DB name does not (JOS-238). DISPLAY ONLY: nothing
+   * keys, matches, learns or emits off it — see `AdmittedLanding.spell` for what that cost before.
+   */
+  castName?: string
   /** rank-stripped spell key — the LINE, and half of the learner's key. */
   spellKey: string
   /** the entity this instance is on ('self' or a canonical name key). */
