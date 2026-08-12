@@ -25,8 +25,11 @@ import {
   MAX_DISPLAY_CHARS,
   MIN_ALERT_DISPLAY_MS,
   MIN_ALERT_FONT_PX,
+  ALERT_TEXT_GROWTHS,
   DEFAULT_ALERT_TEXT,
   alertFontStack,
+  alertStackJustify,
+  alertTextGrowth,
   displayTextFor,
   normalizeAlertDisplay,
   normalizeAlertTextDefaults,
@@ -396,4 +399,44 @@ test('adding a display block does NOT change the merge fingerprint', () => {
   const plain = sanitizeAlertDef(base) as AlertDef
   const styled = sanitizeAlertDef({ ...base, display: { text: 'K!', fontSize: 40 } }) as AlertDef
   assert.equal(alertBehaviorKey(styled), alertBehaviorKey(plain))
+})
+// ------------------------------------------------------------------ (F) which way a lane stacks
+
+test('an overlay stacks DOWN unless it says otherwise, and the shipped answer moves no pixel', () => {
+  // 'down' is what every lane did before this option existed: the block sits at the top of the
+  // window and grows downward, which is a plain flex column with nothing pushing it.
+  assert.equal(DEFAULT_ALERT_TEXT.growth, 'down')
+  assert.equal(alertStackJustify('down'), 'flex-start')
+  assert.equal(normalizeAlertTextDefaults({}).growth, 'down')
+})
+
+test('“up” anchors the stack to the BOTTOM of the lane, which is what makes it grow upward', () => {
+  // The block fills the lane as a flex column, so anchoring it to the far end is the whole
+  // mechanism — arrival order is untouched, and the newest line stays nearest the growing edge.
+  assert.equal(alertStackJustify('up'), 'flex-end')
+})
+
+test('a lane holding more lines than it can show keeps the ones at the growing edge', () => {
+  // The reason this is `justifyContent` and not an auto margin: an auto margin needs FREE SPACE,
+  // and a lane with more text than height has none — so an 'up' lane would silently revert to
+  // growing down at exactly the busy moment the setting was chosen for. Anchoring to the end has
+  // no such cliff: the overflow goes off the far edge, so the oldest line is the one lost.
+  for (const g of ALERT_TEXT_GROWTHS) {
+    assert.ok(['flex-start', 'flex-end'].includes(alertStackJustify(g)), g)
+  }
+  assert.notEqual(alertStackJustify('up'), alertStackJustify('down'))
+})
+
+test('an unusable growth direction takes the default rather than leaving the lane unlaid-out', () => {
+  for (const bad of ['sideways', '', 0, null, undefined, {}]) {
+    assert.equal(alertTextGrowth(bad), 'down', `${String(bad)} should coerce`)
+  }
+  assert.equal(normalizeAlertTextDefaults({ growth: 'up' }).growth, 'up', 'a real choice survives')
+})
+
+test('growth is on the LANE, not on an alert — a display block cannot carry one', () => {
+  // The one rule this option has: two alerts pointed at one window cannot disagree about which way
+  // it stacks. `normalizeAlertDisplay` rebuilds field by field, so a def that tries is simply not
+  // carrying the key — there is nothing for a per-alert override to be read from.
+  assert.deepEqual(normalizeAlertDisplay({ growth: 'up' }), {})
 })

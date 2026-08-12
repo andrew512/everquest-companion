@@ -27,6 +27,7 @@
 
 import { type JSX, useEffect, useReducer } from 'react'
 import type { AlertTextCard as Card } from '@shared/alertDisplay'
+import { alertStackJustify, alertTextGrowth } from '@shared/alertDisplay'
 import AlertTextCard from './AlertTextCard'
 import DragFrame from './DragFrame'
 import { ScaledContent } from './overlayScale'
@@ -69,13 +70,24 @@ export default function AlertTextOverlay(): JSX.Element {
   }, [])
 
   useWindowSignals(chrome.ready, chrome.locked, cards.length > 0)
+  const growth = alertTextGrowth(chrome.config?.alertText?.growth)
 
   return (
     <div
       data-testid="alert-text-overlay"
       /* 100%, NOT 100vw/100vh — a viewport unit inside the scaled lines is resolved against the
          window and then zoomed (overlayScale). */
-      style={{ width: '100%', height: '100%', padding: 6, boxSizing: 'border-box', ...chrome.dragRegion }}
+      /* A flex COLUMN so the stack can be anchored to either edge — see `growth` below. The drag
+         frame stays first either way; only the block of lines moves. */
+      style={{
+        width: '100%',
+        height: '100%',
+        padding: 6,
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
+        ...chrome.dragRegion
+      }}
     >
       {/* The drag frame is CHROME: unscaled, so "Done" stays inside the lane at a 2.0 text scale.
           It carries NO text-size stepper, unlike the toast's: a text alert's size is per-alert
@@ -99,16 +111,36 @@ export default function AlertTextOverlay(): JSX.Element {
           Alert text appears here
         </div>
       )}
-      <ScaledContent textScale={chrome.textScale}>
-        {cards.map((c) => (
-          <AlertTextCard
-            key={c.card.id}
-            card={c.card}
-            exiting={c.exitingMs !== null}
-            bgAlpha={chrome.bgAlpha}
-          />
-        ))}
-      </ScaledContent>
+      {/* WHICH WAY THE LANE GROWS. The block is anchored to the top ('down', the shipped answer)
+          or to the bottom ('up'), and that is the entire difference — arrival order is still
+          render order, so the newest line is always the one nearest the growing edge. Read off
+          this window's OWN config, which is what `chrome.config` is for.
+
+          It takes the leftover height (`flex: 1`, `minHeight: 0` so it may also be SHORTER than
+          its lines) and clips, so a lane holding more text than it is tall loses the line furthest
+          from the growing edge rather than spilling over the drag bar. */}
+      <div
+        data-testid="alert-text-stack"
+        style={{
+          flex: '1 1 auto',
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: alertStackJustify(growth),
+          overflow: 'hidden'
+        }}
+      >
+        <ScaledContent textScale={chrome.textScale}>
+          {cards.map((c) => (
+            <AlertTextCard
+              key={c.card.id}
+              card={c.card}
+              exiting={c.exitingMs !== null}
+              bgAlpha={chrome.bgAlpha}
+            />
+          ))}
+        </ScaledContent>
+      </div>
     </div>
   )
 }

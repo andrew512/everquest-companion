@@ -21,6 +21,7 @@ phrase already resolves against.
 | D7 | One overlay ships; the **roster is the extension point** | One lane is enough to be useful, and the groundwork for several costs nothing. Defs store a target *kind*, and everything downstream reads `ALERT_OVERLAY_KINDS` rather than the literal `'alert'`. |
 | D8 | No store migration | Both additions are additive-and-optional with readers that default, so no bytes already on disk change meaning. See §6. |
 | D9 | Each overlay carries **its own** font/size/colour/seconds, and any alert may override any of the four | A user who wants their alerts big and yellow should say it once, and every alert that never disagreed should follow, including the ones written months ago. An absent per-alert field therefore means **inherit**, not "the shipped constant". |
+| D10 | Which way the stack grows is a property of the **lane**, with no per-alert override | Two alerts pointed at one window cannot be allowed to disagree about which way it stacks — that is how lines end up drawn over each other. It is also the only setting here that is about the *window's* place on screen rather than about a line's look, which is why it sits beside "Move it" rather than in the editor. See §5. |
 
 ## 1. The model
 
@@ -157,6 +158,19 @@ user cannot see is one they will never find.
 The first-open geometry is unchanged: 560×200, horizontally centred at `ALERT_TOP = 400`, which
 clears the toast strip's 12…372 with a gutter so the two notifier lanes cannot open on top of each
 other. Persisted bounds always win, so a stretched lane stays stretched.
+
+**AND IT GROWS THE WAY THE USER PUT IT ON SCREEN** (D10). A lane dragged to the bottom of the
+screen and told to grow *down* walks its own text off the desktop; the edge the user anchored is
+the one they want the newest line against. So `AlertTextDefaults.growth` is `'down'` (the shipped
+answer, and what every lane did before the option existed) or `'up'`, and the whole mechanism is
+`alertStackJustify` — the block of lines fills the lane as a flex column and is anchored to one
+end of it. Arrival order is untouched (D5 still holds), so the newest line is always the one
+nearest the growing edge and the older ones move away from it.
+
+`justifyContent`, not an auto margin, and the difference is not cosmetic: an auto margin needs
+free space, and a lane holding more text than it is tall has none — so an 'up' lane would silently
+revert to growing down at exactly the busy moment the setting was chosen for. Anchoring to the end
+has no such cliff; the overflow leaves by the far edge, so what is lost is the OLDEST line.
 
 ## 6. Storage, sharing, and what would have gone wrong
 

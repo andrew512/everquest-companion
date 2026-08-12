@@ -1,7 +1,8 @@
 // AlertOverlaySetting — Preferences → Overlays → "Alert text"
 // (docs/plans/alert-text-overlays.md §10).
 //
-// TWO controls over one window: is it on, and where does it sit. The near-twin of ToastSetting,
+// The controls over one window: is it on, where does it sit, and what it does with the lines it
+// is given (the look an alert inherits, and which way the stack grows). The near-twin of ToastSetting,
 // and for the same structural reason rather than by copy-paste habit: this is a NOTIFIER, so it
 // is empty and click-through at rest and has no chrome of its own to grab. Unlocking it here is
 // the ONLY route to positioning it. (What each alert draws — the text, the font, the size, the
@@ -22,16 +23,26 @@ import {
   ALERT_FONTS,
   ALERT_FONT_LABELS,
   ALERT_FONT_STACKS,
+  ALERT_TEXT_GROWTHS,
   DEFAULT_ALERT_TEXT,
   MAX_ALERT_DISPLAY_MS,
   MAX_ALERT_FONT_PX,
   MIN_ALERT_DISPLAY_MS,
   MIN_ALERT_FONT_PX,
   alertDisplayColor,
-  type AlertTextDefaults
+  type AlertTextDefaults,
+  type AlertTextGrowth
 } from '@shared/alertDisplay'
 import { DEFAULT_ALERT_OVERLAY } from '@shared/alertOverlays'
 
+/**
+ * What each direction is called, in terms of the WINDOW the user just dragged into place: the
+ * lane's edge is the fixed thing, and the stack extends away from it.
+ */
+const GROWTH_LABELS: Record<AlertTextGrowth, string> = {
+  down: 'Down from the top',
+  up: 'Up from the bottom'
+}
 /** The facts this panel shows. `defaults` is the LOOK this lane gives an alert that has no opinion. */
 interface AlertOverlayState {
   open: boolean
@@ -87,7 +98,7 @@ function useAlertOverlayState(): [AlertOverlayState, (patch: Partial<AlertOverla
 }
 
 /**
- * THE LANE'S OWN LOOK — what an alert gets when it does not say otherwise (owner, 2026-08-07).
+ * THE LANE'S OWN LOOK — what an alert gets when it does not say otherwise.
  *
  * It lives HERE rather than on each alert because it is a property of the surface: a user who
  * wants their alerts big and yellow says it once, and every alert that never disagreed follows —
@@ -160,6 +171,27 @@ function DefaultsRow({
         }}
         sx={{ width: 160 }}
       />
+      {/* NOT a default, unlike the four beside it: no alert can override which way its lane
+          stacks, because two of them disagreeing is how lines end up drawn over each other. It
+          sits here because it is a property of this window, which is what this panel is about. */}
+      <Box sx={{ minWidth: 190 }}>
+        <Typography variant="caption" color="text.secondary">
+          Text grows
+        </Typography>
+        <Select
+          size="small"
+          fullWidth
+          data-testid="pref-alert-overlay-growth"
+          value={defaults.growth}
+          onChange={(e) => patch({ growth: e.target.value as AlertTextGrowth })}
+        >
+          {ALERT_TEXT_GROWTHS.map((g) => (
+            <MenuItem key={g} value={g}>
+              {GROWTH_LABELS[g]}
+            </MenuItem>
+          ))}
+        </Select>
+      </Box>
     </Stack>
   )
 }

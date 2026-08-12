@@ -99,6 +99,9 @@ function request(id: string, text: string, over: Record<string, unknown> = {}): 
   }
 }
 
+/** The lane look the inheritance and growth steps both send. Long hold: later steps read the lines. */
+const LANE_LOOK = { font: 'display', fontSize: 44, color: '#00ff00', durationMs: 25_000 }
+
 /** Set the lane's own defaults, exactly as the Preferences panel does. */
 function setDefaults(page: Page, defaults: Record<string, unknown>): Promise<unknown> {
   return page.evaluate(
@@ -246,7 +249,7 @@ async function sendAndFind(
  * side of that seam could pass with the wiring backwards.
  */
 async function stepInheritedLook(main: Page, lane: Page): Promise<void> {
-  await setDefaults(main, { font: 'display', fontSize: 44, color: '#00ff00', durationMs: 25_000 })
+  await setDefaults(main, LANE_LOOK)
   // A request that overrides NOTHING — every style field absent from the wire.
   const l = await sendAndFind(main, lane, { id: 'e2e:inherit', overlay: 'alert', text: 'Inherited look' }, 'Inherited look')
   if (!check('an alert that overrides nothing takes the LANE’s font, size and colour', l.text !== '')) return
@@ -262,6 +265,54 @@ async function stepOverriddenField(main: Page, lane: Page): Promise<void> {
   if (!check('an alert that overrides ONE field gets it', l.text !== '')) return
   check('…its own colour wins', l.color === 'rgb(255, 0, 255)', l.color)
   check('…and the size it never mentioned is still the lane’s', l.fontSize === '44px', l.fontSize)
+}
+
+/**
+ * Where the LINES actually sit in the lane: the gap above the first and below the last.
+ *
+ * Measured off the cards rather than off their wrapper, because the wrapper fills the lane by
+ * design (it is the thing doing the anchoring) and so would report the same numbers either way.
+ */
+function stackGaps(lane: Page): Promise<{ top: number; bottom: number }> {
+  return lane.evaluate(() => {
+    const els = [...document.querySelectorAll('[data-testid="alert-text-card"]')] as HTMLElement[]
+    if (!els.length) return { top: 0, bottom: 0 }
+    const first = els[0].getBoundingClientRect()
+    const last = els[els.length - 1].getBoundingClientRect()
+    return { top: Math.round(first.top), bottom: Math.round(window.innerHeight - last.bottom) }
+  })
+}
+
+/**
+ * WHICH WAY THE LANE GROWS, measured rather than inspected.
+ *
+ * The setting is one CSS property, so a unit test can pin the rule (tests/alertDisplay.test.mts) —
+ * but only the real window can say that the property reaches the right element and that the block
+ * genuinely lands at the other end of a lane the user positioned. The gap to the far edge is the
+ * observable: with 'down' the lines hug the top, with 'up' they hug the bottom.
+ *
+ * THE LANE IS MADE TALL FIRST, and that is not a fudge: by this point six lines at 44px are held,
+ * which is more than a 200px lane can show, and a full lane has no room left to move a block
+ * within. What "up" does to an OVERFLOWING lane (it keeps the newest line and pushes the oldest
+ * out of sight) is a different claim, and it belongs to the pure rule — see `alertStackJustify`.
+ */
+async function stepGrowth(app: ElectronApplication, main: Page, lane: Page): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes('kind=alert'))
+    if (w) w.setBounds({ ...w.getBounds(), height: 900 })
+  })
+
+  await setDefaults(main, { ...LANE_LOOK, growth: 'down' })
+  await settle(() => stackGaps(lane), (g) => g.top < g.bottom, { timeoutMs: 10_000 })
+  const down = await stackGaps(lane)
+  check('“Down from the top” hugs the top of the lane', down.top < down.bottom, JSON.stringify(down))
+
+  await setDefaults(main, { ...LANE_LOOK, growth: 'up' })
+  await settle(() => stackGaps(lane), (g) => g.bottom < g.top, { timeoutMs: 10_000 })
+  const up = await stackGaps(lane)
+  check('“Up from the bottom” hugs the bottom instead', up.bottom < up.top, JSON.stringify(up))
+  // Only the block moved: the same lines are still there, in the same order.
+  check('…and the same lines are on screen either way', (await lines(lane)).length > 0)
 }
 
 /**
@@ -332,6 +383,7 @@ async function main(): Promise<void> {
       await stepRepair(page, l)
       await stepInheritedLook(page, l)
       await stepOverriddenField(page, l)
+      await stepGrowth(app, page, l)
       await stepStretch(app)
       await stepClosedIsSilent(app, page, l)
     }

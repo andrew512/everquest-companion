@@ -219,12 +219,39 @@ type AlertDisplayStyle = Pick<AlertDisplay, 'font' | 'fontSize' | 'color' | 'dur
 // have nothing left to fall back to. `normalizeAlertTextDefaults` fills each one from the shipped
 // constant, so a single read answers every question the resolver can ask.
 
-/** The look one alert overlay gives a line that does not override it. */
+/**
+ * WHICH WAY A LANE STACKS as lines arrive — the one thing here that is NOT a default.
+ *
+ * 'down' pins the stack to the TOP of the lane, so the first line appears where you put the window
+ * and the block grows downward. 'up' pins it to the BOTTOM, so the first line appears at the
+ * window's lower edge and the block grows upward. Either way the newest line is the one nearest
+ * the growing edge, because arrival order is render order (alertTextQueue.ts) and only the anchor
+ * moves.
+ *
+ * IT IS A PROPERTY OF THE LANE, NOT OF AN ALERT, and no per-alert override exists: two alerts
+ * cannot disagree about which way one window stacks, and letting them try is how lines end up
+ * drawn over each other. That is also why it lives here rather than on AlertDisplay.
+ */
+export type AlertTextGrowth = 'down' | 'up'
+
+/** Every growth direction, for the Preferences picker. Exhaustive by construction. */
+export const ALERT_TEXT_GROWTHS = ['down', 'up'] as const satisfies readonly AlertTextGrowth[]
+
+export const DEFAULT_ALERT_GROWTH: AlertTextGrowth = 'down'
+
+/**
+ * One alert overlay's text settings.
+ *
+ * FOUR OF THESE ARE DEFAULTS an alert may override (`AlertDisplay`); `growth` is not, and cannot
+ * be — see its own note above. They share a blob because they share a lane: one read answers
+ * everything the renderer and the resolver need to know about that window.
+ */
 export interface AlertTextDefaults {
   font: AlertFont
   fontSize: number
   color: string
   durationMs: number
+  growth: AlertTextGrowth
 }
 
 /** What an overlay looks like before anybody changes it — the shipped constants, gathered. */
@@ -232,7 +259,8 @@ export const DEFAULT_ALERT_TEXT: AlertTextDefaults = {
   font: DEFAULT_ALERT_FONT,
   fontSize: DEFAULT_ALERT_FONT_PX,
   color: DEFAULT_ALERT_COLOR,
-  durationMs: DEFAULT_ALERT_DISPLAY_MS
+  durationMs: DEFAULT_ALERT_DISPLAY_MS,
+  growth: DEFAULT_ALERT_GROWTH
 }
 
 /**
@@ -247,8 +275,35 @@ export function normalizeAlertTextDefaults(v: unknown): AlertTextDefaults {
     font: alertFont(o.font),
     fontSize: alertFontSize(o.fontSize),
     color: alertDisplayColor(o.color),
-    durationMs: alertDisplayDuration(o.durationMs)
+    durationMs: alertDisplayDuration(o.durationMs),
+    growth: alertTextGrowth(o.growth)
   }
+}
+
+/** A growth direction from anything; unknown ⇒ DEFAULT_ALERT_GROWTH. */
+export function alertTextGrowth(v: unknown): AlertTextGrowth {
+  return ALERT_TEXT_GROWTHS.find((g) => g === v) ?? DEFAULT_ALERT_GROWTH
+}
+
+/**
+ * WHERE THE STACK SITS IN ITS LANE, as the one style property that expresses it.
+ *
+ * The block of lines fills the lane as a flex column and is anchored to one end of it: the top
+ * ('down', the shipped direction and what the lane has always done) or the bottom ('up'). Arrival
+ * order is untouched either way (alertTextQueue.ts), so the newest line is the one nearest the
+ * growing edge and older ones move away from it.
+ *
+ * `justifyContent` rather than an auto margin, because the two differ exactly when it matters:
+ * once more lines are queued than the lane is tall, an auto margin has no free space left to give
+ * and the block falls back to the top — so a lane set to 'up' would quietly start growing DOWN at
+ * the moment it filled. Anchoring to the end keeps the newest line against the edge the user
+ * chose and pushes the OLDEST out of sight instead, which is the direction they asked for.
+ *
+ * A pure function rather than a ternary in the component, because "which way does it grow" is the
+ * whole feature and a test should be able to ask it without a DOM.
+ */
+export function alertStackJustify(growth: AlertTextGrowth): 'flex-end' | 'flex-start' {
+  return growth === 'up' ? 'flex-end' : 'flex-start'
 }
 
 // ---- what a firing draws ------------------------------------------------------------------
