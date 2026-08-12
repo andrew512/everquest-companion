@@ -216,7 +216,7 @@ function LootLedgerBody({
     // the full scroll height so only the visible slice of MUI rows is mounted — see
     // useWindowedRows. `minHeight: 0` is what lets it actually SHRINK inside the column flex above
     // it, so this box is the only thing on the page that scrolls the ledger.
-    <Box ref={scrollRef} sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto' }}>
+    <Box ref={scrollRef} data-testid="loot-scroll" sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto' }}>
       <LootTable groupByItem={groupByItem} rows={groupRows} events={events} ctx={{ ...ctx, win }} />
     </Box>
   )
