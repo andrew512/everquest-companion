@@ -24,6 +24,7 @@
 // tests (tests/combatPerMobGhosts.test.mts), which resolve no `@shared/*` alias for values.
 import { LIVE_FIGHT } from '../../../../shared/fightSelection'
 import { abilityMultiAttack, type AbilityMulti } from './abilityStats'
+import { groupSpellComponents, mergeGroup, rankRows } from './skillGroups'
 import type {
   DamageCategory,
   SegmentSummary,
@@ -38,12 +39,20 @@ export type FlatSkill = SkillView & { category: DamageCategory }
 
 /**
  * A row of the flat level-2 list. Identical to a FlatSkill except that a GROUP row also carries
- * the per-skill rows it stands for (`children`) — today only the Slay Undead aggregate does —
+ * the rows it stands for (`children`) — the Slay Undead aggregate and the spell-component merge —
  * and that a row may carry its own per-ability multi-attack reading (`multi`, JOS-113: the
  * double/triple that used to live one level down, attached to the ability it belongs to). Both
  * are optional; consumers that just render a bar ignore them, the ones that expand a row use them.
  */
-export type SkillRow = FlatSkill & { children?: FlatSkill[]; multi?: AbilityMulti | null }
+export type SkillRow = FlatSkill & {
+  children?: FlatSkill[]
+  multi?: AbilityMulti | null
+  /** What a GROUP row's children are, for the two labels that name them ("· 2 skills" on the bar
+   *  face, "By skill" over the expansion). Absent ⇒ 'skill', which is what the Slay Undead group
+   *  has always said. A spell group's children are the message SHAPES one cast printed, not
+   *  separate abilities, so it says 'component' instead. */
+  childKind?: 'skill' | 'component'
+}
 
 /**
  * Label for the aggregated slay row. Mirrors `CATEGORY_LABEL.slay` in @shared/combat, spelled
@@ -61,10 +70,9 @@ const SLAY_LABEL = 'Slay Undead'
  * different weapons. The user reads them as one ability, so the list shows one row; the weapon
  * split is one click down, inside the row's own expansion (no new nav level).
  *
- * Aggregation is a plain sum over counts/damage with `max` = the largest single proc across all
- * weapons and `min` = the smallest LANDED one (0/absent minima are skipped — a resist/miss-only
- * lane carries no amount and must never pull the group minimum to 0). Rows are re-sorted and
- * every bar pct re-based on the new global max, since the merged row is usually the biggest one.
+ * Aggregation, child ranking and the list's re-scaling are `skillGroups.mergeGroup`/`rankRows` —
+ * shared with the spell-component merge (JOS-244), so the two groups this list can hold behave
+ * identically and there is one place to read what a group row's numbers mean.
  *
  * A single slay skill is left EXACTLY as it is: a group of one is a wrapper around nothing, and
  * the per-weapon row ("Backstab · Slay Undead") is strictly more informative than a "Slay Undead"
@@ -73,30 +81,8 @@ const SLAY_LABEL = 'Slay Undead'
 export function groupSlay(rows: SkillRow[]): SkillRow[] {
   const slay = rows.filter((r) => r.category === 'slay')
   if (slay.length < 2) return rows
-  const children = [...slay].sort((a, b) => b.total - a.total || b.hits - a.hits || a.name.localeCompare(b.name))
-  const sum = (pick: (s: FlatSkill) => number): number => children.reduce((n, s) => n + pick(s), 0)
-  const minima = children.map((s) => s.min ?? 0).filter((m) => m > 0)
-  const childMax = Math.max(1, ...children.map((s) => s.total))
-  const group: SkillRow = {
-    name: SLAY_LABEL,
-    category: 'slay',
-    total: sum((s) => s.total),
-    pct: 0,
-    hits: sum((s) => s.hits),
-    crits: sum((s) => s.crits),
-    max: Math.max(0, ...children.map((s) => s.max)),
-    min: minima.length > 0 ? Math.min(...minima) : undefined,
-    misses: sum((s) => s.misses ?? 0),
-    resists: sum((s) => s.resists ?? 0),
-    lands: sum((s) => s.lands ?? 0),
-    // Children bar widths are relative to the LARGEST slay skill, so the nested list reads as
-    // its own ranking rather than as slivers of the parent's width.
-    children: children.map((s) => ({ ...s, pct: (s.total / childMax) * 100 }))
-  }
-  const out: SkillRow[] = [...rows.filter((r) => r.category !== 'slay'), group]
-  out.sort((a, b) => b.total - a.total || b.hits - a.hits || a.name.localeCompare(b.name))
-  const max = Math.max(1, ...out.map((r) => r.total))
-  return out.map((r) => ({ ...r, pct: (r.total / max) * 100 }))
+  const group = mergeGroup(slay, SLAY_LABEL, 'slay', 'skill')
+  return rankRows([...rows.filter((r) => r.category !== 'slay'), group])
 }
 
 /**
@@ -144,9 +130,10 @@ export function meterDrill(drill: Drill | null): { entityId: string; name?: stri
  * Flatten a source's per-category skill lists into ONE list ranked by damage desc, and
  * re-base each row's bar pct on the global max (the engine's `pct` is relative to the
  * skill's own category max, which would make small categories render full-width here).
- * The slay rows then collapse into a single grouped row (`groupSlay`) — the ONE place the
- * flat list departs from "one row per engine skill", so every surface that renders this
- * list (meter drill, overlay drill, breakdown preview) groups identically.
+ * The slay rows then collapse into a single grouped row (`groupSlay`), and the two message
+ * shapes of one spell into another (`groupSpellComponents`, JOS-244) — the TWO places the flat
+ * list departs from "one row per engine skill", so every surface that renders this list (meter
+ * drill, overlay drill, breakdown preview, copy-to-clipboard) groups identically.
  */
 export function flattenSkills(e: SourceView): SkillRow[] {
   const rows: FlatSkill[] = e.categories.flatMap((c) => c.skills.map((s) => ({ ...s, category: c.category })))
@@ -157,7 +144,9 @@ export function flattenSkills(e: SourceView): SkillRow[] {
   // engine's round lanes and files each to exactly one ability (auto-attack "Melee" pools its
   // weapon verbs; a named special is its own lane). groupSlay spreads it through onto any child.
   return groupSlay(
-    rows.map((r) => ({ ...r, pct: (r.total / max) * 100, multi: abilityMultiAttack(e, r.name, r.category) }))
+    groupSpellComponents(
+      rows.map((r) => ({ ...r, pct: (r.total / max) * 100, multi: abilityMultiAttack(e, r.name, r.category) }))
+    )
   )
 }
 
@@ -560,11 +549,11 @@ export function skillsForTarget(tl: TimelineView, target: string): TargetDetail 
   const max = Math.max(1, ...rows.map((r) => r.total))
   for (const r of rows) r.pct = (r.total / max) * 100
   return {
-    // Same slay grouping as the source drill — the per-mob list is the same flat list, filtered
-    // to one defender, so it must not regrow the per-weapon slay duplicates. Grouping runs AFTER
-    // the sample scaling above, so a downsampled ring's group sums the same estimates its
-    // children show (all of them wear the panel's `~`).
-    rows: groupSlay(rows),
+    // Same grouping as the source drill — the per-mob list is the same flat list, filtered to one
+    // defender, so it must not regrow the per-weapon slay duplicates NOR the two-shapes-of-one-
+    // spell duplicates (JOS-244). Grouping runs AFTER the sample scaling above, so a downsampled
+    // ring's group sums the same estimates its children show (all of them wear the panel's `~`).
+    rows: groupSlay(groupSpellComponents(rows)),
     total: t.total * scale,
     hits: Math.round(t.hits * scale),
     crits: Math.round(t.crits * scale),
