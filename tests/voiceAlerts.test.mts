@@ -9,7 +9,9 @@
 //      voice enable any more, so nothing outside the def can turn a spoken alert back into its
 //      sound except having nothing truthful to say.
 //   2. `coalesceAudio` — "three buffs fading at once is ONE audio alert" (owner direction), plus
-//      the per-alert opt-out's exact contract: it bypasses the window AND does not occupy it.
+//      the per-alert opt-out's exact contract: it bypasses the window AND does not occupy it —
+//      and now the GLOBAL preference above it (JOS-222, `AlertPrefs.alwaysPlayAll`), whose whole
+//      claim is that it is the SAME branch with a wider subject and STARTS OFF.
 //   3. `pickVoice` — a stored voice id resolved against a per-machine voice list, bounded: exact
 //      then case-insensitive, and NEVER "the first voice" (a stranger's voice is worse than the
 //      engine's own default).
@@ -138,6 +140,47 @@ test('alwaysPlay BYPASSES the window and does NOT occupy it', () => {
   const b = coalesceAudio(def({ alwaysPlay: true }), 900, a.lastAudioMs)
   assert.equal(a.play && b.play, true)
   assert.equal(b.lastAudioMs, null, 'a critical alert never opens a window against the next one')
+})
+
+// ---------------------------------------------------- the GLOBAL always-play preference (JOS-222)
+
+test('the global preference STARTS OFF — an omitted 4th argument throttles exactly as before', () => {
+  // The regression that would be invisible: a default of `true` (or a caller that forgets to pass
+  // the flag through as a boolean) silently deletes the throttle for everyone. The owner's spec is
+  // that it starts off, so the ABSENCE of the argument must mean off.
+  const t0 = 7_000
+  const first = coalesceAudio(def(), t0, null)
+  assert.equal(first.play, true)
+  assert.equal(coalesceAudio(def(), t0 + 10, first.lastAudioMs).play, false)
+  // …and passing it explicitly false is the same answer, not a different code path.
+  assert.deepEqual(coalesceAudio(def(), t0 + 10, first.lastAudioMs, false), { play: false, lastAudioMs: t0 })
+})
+
+test('the global preference plays EVERY alert in a burst, and opens no window doing it', () => {
+  const now = 2_000_000
+  let last: number | null = null
+  const played: boolean[] = []
+  for (let i = 0; i < 3; i++) {
+    const gate = coalesceAudio(def(), now + i, last, true)
+    last = gate.lastAudioMs
+    played.push(gate.play)
+  }
+  assert.deepEqual(played, [true, true, true], 'three buffs fading at once is now three sounds')
+  assert.equal(last, null, 'nothing occupied the channel, so nothing can be silenced by it later')
+})
+
+test('the global preference is the SAME branch as the per-alert opt-out, not a second one', () => {
+  // It bypasses an already-open window and leaves it exactly as it found it — the property that
+  // makes the per-alert opt-out safe, asserted for the global one so the two cannot drift.
+  const opened = coalesceAudio(def(), 500, null)
+  const gate = coalesceAudio(def(), 510, opened.lastAudioMs, true)
+  assert.deepEqual(gate, { play: true, lastAudioMs: 500 })
+  // And it is a bypass laid OVER the defs, never a rewrite of them: a def that already opted out
+  // reads identically with the preference on or off.
+  assert.deepEqual(
+    coalesceAudio(def({ alwaysPlay: true }), 510, opened.lastAudioMs, true),
+    coalesceAudio(def({ alwaysPlay: true }), 510, opened.lastAudioMs, false)
+  )
 })
 
 test("'both' is ONE occupancy — its sound+speech pair cannot silence itself", () => {

@@ -259,6 +259,7 @@ export default function AlertDialog({
   initial,
   packs,
   voiceSetup,
+  allAlwaysPlay = false,
   onClose,
   onSave
 }: {
@@ -267,6 +268,13 @@ export default function AlertDialog({
   packs: SoundPack[]
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
+  /**
+   * `AlertPrefs.alwaysPlayAll` (JOS-222) — passed straight through to the Speech block, which is
+   * the only thing in this dialog the global preference has an opinion about. Optional and false
+   * by default for the same reason `onOpenVoicePrefs` is on the view: a caller without the prefs
+   * must still compile, and the safe rendering is the editable one.
+   */
+  allAlwaysPlay?: boolean
   onClose: () => void
   onSave: (def: AlertDef) => void
 }): JSX.Element {
@@ -319,6 +327,7 @@ export default function AlertDialog({
             form={f.speech}
             voiceSetup={voiceSetup}
             captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
+            allAlwaysPlay={allAlwaysPlay}
           />
         </Stack>
       </DialogContent>
