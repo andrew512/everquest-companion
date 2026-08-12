@@ -75,11 +75,17 @@
 // re-tiered the spell. Shield of Fire in the report is the clustered shape at n=2 (408 s, 406 s;
 // 0.5%).
 //
-// WHAT IS NOT DECIDED HERE. Whether a tight below-floor cluster may overrule the floor is a change
-// to THE ONE ESTIMATOR — JOS-117 ruling 6, owner-confirmed — and it would move the number the app
-// draws for at least eight spells on the owner's own log. That is an owner ruling, not an
-// executor's call, so this commit changes no behavior at all: it proves the mechanism and leaves
-// the estimator exactly as it was.
+// HOW IT WAS DECIDED (owner ruling 2026-08-12, built in the same ticket). A tight below-floor
+// cluster MAY overrule the floor: at least three clean cycles whose top three agree within 10%
+// (`corroboratedMax`, buffsShapes.ts; the population above is the measurement the two numbers come
+// from, and tests/buffOverlayDuration.test.mts drives every row of it). The scattered shapes keep
+// their floor, Invisibility included.
+//
+// SO THE REPORTER'S WINDOW IS ONE CYCLE SHORT OF THE EVIDENCE BAR, and that is not a defect: two
+// agreeing cycles are also what two identical click-offs look like. The last two cases below pin
+// both halves of that — n=2 still draws the 15:00 floor, and the moment a third clean cast of the
+// same shape lands the bar becomes the 6:48 the log measured, labelled 'cluster'. Self-healing by
+// design, in the owner's words.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -153,12 +159,31 @@ test('every sample is CLEAN — nothing on this path is censored', () => {
   )
 })
 
-test('and the estimate STILL reads 15:00 from the DB floor — the reported symptom', () => {
+test('at n=2 the estimate STILL reads 15:00 from the DB floor — the reported symptom', () => {
   const stats = replay(WINDOW).spellStats()
   // The learner did its job: the observed max is the real duration, to the second.
   assert.equal(stats.observedWindowMaxFor(SPELL_KEY, SELF_CASTER), PET_SPAN_MS)
-  // …and loses to the floor, which is what the overlay draws.
+  // …and loses to the floor, which is what the overlay draws. TWO agreeing cycles are below the
+  // evidence bar the owner set (JOS-212), and two identical click-offs look exactly like this.
   assert.deepEqual(stats.estimateFor(SPELL_KEY, SELF_CASTER), { ms: DB_MS, source: 'db' })
+})
+
+test('a THIRD clean cast of the same shape flips it — the bar becomes the 6:48 the log measured', () => {
+  // A re-buff later in the same session — one more cycle of the same shape, and the third clean
+  // sample. Nothing about the mechanism changes; only the count of measurements agreeing with each
+  // other. (It stays inside the session on purpose: a 24-hour jump is a log hole, and JOS-134's
+  // unexplained-hole rule would drop the open cast before its wear-off could be paired.)
+  const AGAIN: readonly string[] = [
+    '[Wed Aug 05 21:20:07 2026] You begin casting Shield of Fire.',
+    `[Wed Aug 05 21:20:09 2026] ${PET} is enveloped by flame.`,
+    "[Wed Aug 05 21:26:56 2026] Your pet's Shield of Fire spell has worn off."
+  ]
+  const mod = replay([...WINDOW, ...AGAIN])
+  assert.deepEqual(samples(mod), [PET_SPAN_MS, SELF_SPAN_MS, 407_000], 'three clean cycles, 408/406/407 s')
+
+  const est = mod.spellStats().estimateFor(SPELL_KEY, SELF_CASTER)
+  assert.deepEqual(est, { ms: PET_SPAN_MS, source: 'cluster' }, '6:48 from the log, not 15:00 from the wiki')
+  assert.ok(est.ms != null && est.ms < DB_MS, 'and it is BELOW the floor, which is the whole ruling')
 })
 
 test('with NO binding tell the pet fade mints nothing — and the symptom is unchanged', () => {

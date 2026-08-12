@@ -1027,6 +1027,7 @@ export type {
 export type {
   BuffClass,
   BuffStat,
+  EstimatorSource,
   ActiveBuff,
   OverlayVerdict,
   OverlayMessage,

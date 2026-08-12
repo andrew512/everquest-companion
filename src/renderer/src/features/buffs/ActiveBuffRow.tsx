@@ -7,7 +7,7 @@
 import type { JSX } from 'react'
 import { Box, Chip, LinearProgress, Paper, Stack, Typography } from '@mui/material'
 import type { ActiveBuff } from '@shared/types'
-import { fmtDuration, remainingFraction, isOverdue, classAccent } from './format'
+import { fmtDuration, remainingFraction, isOverdue, classAccent, estimatorSourceTitle } from './format'
 import { Tooltip } from '../../lib/Tooltip'
 
 /** Everything the countdown bar needs, resolved once so nothing downstream re-derives it. */
@@ -80,8 +80,10 @@ function EstimateBar({
   const remaining = Math.max(0, est - elapsed)
   const frac = remainingFraction(elapsed, est)
   const { overdue, spread } = state
-  // Estimate provenance (JOS-117): 'db' (the spell-database floor held) vs 'observed' (a logged
-  // cast beat the floor — shown as a "log" chip). A small chip on the bar caption.
+  // Estimate provenance (JOS-117 + JOS-212): 'db' (the spell-database floor held) vs 'observed' (a
+  // logged cast ran LONGER than the floor) vs 'cluster' (your own clean cycles agree it is SHORTER
+  // than the floor and overruled it). Both learned sources show a "log" chip — the number came from
+  // the log either way — but they say opposite things about the database, so the tooltip says which.
   const source = buff.durationSource
   return (
     <>
@@ -104,9 +106,7 @@ function EstimateBar({
         </Typography>
         <Stack direction="row" spacing={0.5} alignItems="center">
           {source && (
-            <Tooltip
-              title={source === 'db' ? 'The spell-database baseline' : 'From your logged casts - longer than the baseline'}
-            >
+            <Tooltip title={estimatorSourceTitle(source)}>
               <Chip
                 size="small"
                 label={source === 'db' ? 'db' : 'log'}

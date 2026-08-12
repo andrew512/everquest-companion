@@ -74,6 +74,7 @@
 
 import type { CcVerb, LogEvent } from '../../shared/logEvents'
 import type { BuffTimersDelta, BuffTimersSnap, CcEnd, CcHold } from '../../shared/buffTimers'
+import type { EstimatorSource } from '../../shared/buffTypes'
 import { statedDuration } from '../../shared/buffTimers'
 import { SELF_CASTER } from '../../shared/buffTrust'
 import { idKey } from '../log/parseCommon'
@@ -192,7 +193,7 @@ interface Held {
   /** Whose cast: 'self' or an allowlisted external. */
   caster: string
   durationMs: number | null
-  source?: 'db' | 'observed'
+  source?: EstimatorSource
   /**
    * True when the landing sentence was one of {@link DAMAGE_BREAKS} — i.e. a hold whose mob cannot
    * be damaged without waking it, so no death line may close a landing of this row.
@@ -259,7 +260,7 @@ interface RecentMint {
 
 /** Write the estimator's answer onto a hold. The absent `source` is deleted, never set to
  *  undefined, so the snapshot's optional field stays absent rather than explicitly nothing. */
-function setDuration(held: Held, est: { ms: number | null; source?: 'db' | 'observed' }): void {
+function setDuration(held: Held, est: { ms: number | null; source?: EstimatorSource }): void {
   held.durationMs = est.ms
   if (est.source) held.source = est.source
   else delete held.source

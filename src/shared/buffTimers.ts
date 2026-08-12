@@ -31,6 +31,12 @@
 // never an inflated land→fade span. `estimatedMs`/`durationSource` are the tab's own copies of the
 // same numbers; this surface reads `overlayDurationMs`/`overlaySource`.
 //
+// JOS-212 RELAXED THE FLOOR IN EXACTLY ONE PLACE, and this surface inherits it: a below-floor
+// observation overrules the DB base when the log corroborates it (three clean cycles in the window
+// whose top three agree within 10% — buffsStats.ts `estimateFor`). The bar then counts down from
+// what the player's own casts measured and `source` reads 'cluster'. Invisibility, the floor's own
+// counterexample, scatters and keeps its 20m.
+//
 // JOS-118 EXTENDS THAT RULE IN TWO PLACES, both for the same reason — only OUR OWN cast under OUR
 // OWN modifiers is a duration we are entitled to learn from. (1) An instance now opens only from a
 // LANDING line, so a cast that was resisted (or simply never confirmed) mints nothing, where the
@@ -51,7 +57,7 @@
 // estimator, keyed on (spell line, caster) — which is what took a reporter's Mesmerization VII bar
 // from the base rank's 24 s to the 44 s their own log proves.
 
-import type { ActiveBuff, BuffsSnap } from './buffTypes'
+import type { ActiveBuff, BuffsSnap, EstimatorSource } from './buffTypes'
 // Type-only: `shared/types.ts` is a value module (OVERLAY_KINDS) and this one is imported by the
 // node tests as a pure module, so the reference is erased at compile time and nothing follows it.
 import type { OverlayKind } from './types'
@@ -130,8 +136,8 @@ export interface CcHold {
    * under. `source` says which won.
    */
   durationMs: number | null
-  /** Where `durationMs` came from: 'db' (the floor held) | 'observed' (a logged cycle beat it). */
-  source?: 'db' | 'observed'
+  /** Where `durationMs` came from — see {@link EstimatorSource}. */
+  source?: EstimatorSource
   /**
    * HOW MANY MOBS OF THAT NAME are holding this spell (ruling 7). Absent for the ordinary one.
    * EQ prints no instance identifier and stamps to the second, so an AE round landing on five

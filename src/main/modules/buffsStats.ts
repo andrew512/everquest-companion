@@ -24,9 +24,19 @@
 //     about a caster's AAs, focus items and rank; a grouped enchanter's 31-second mez and your own
 //     44-second one are two answers to two questions, and pooling them gives a bar wrong for both.
 //
-// THE ESTIMATOR ITSELF is unchanged from JOS-117 and confirmed by the owner (ruling 6):
+// THE ESTIMATOR ITSELF is JOS-117's, confirmed by the owner (ruling 6):
 //   estimate = max( DB baseline , max-over-recent-window of CLEAN observed samples )
 // The DB base is a FLOOR and the recent observed max is an EXTENSION over it. See `estimateFor`.
+//
+// JOS-212 (owner ruling 2026-08-12) ADDED THE ONE WAY THE FLOOR CAN LOSE, and it is still the same
+// one estimator: a below-floor observation overrules the DB base when the log CORROBORATES it —
+// three clean cycles in the recency window whose top three agree within 10% (`corroboratedMax` in
+// buffsShapes.ts, where the measurement behind both numbers lives). It exists because the floor's
+// assumption (AA/focus only extend, so nothing is ever shorter than its base) is a claim about
+// classic EQ, and this game re-tiered spells the committed scrape still describes the old way. The
+// estimate then reports source 'cluster' rather than 'observed', because the two make opposite
+// claims about the DB row and the UI must not tell the user "longer than the baseline" about a
+// number that is shorter.
 //
 // WHAT JOS-180 CHANGED IS THE WINDOW, NOT THE ESTIMATOR. A sample now records whether the log
 // NAMED a cause for the cycle ending (`<mob> has been awakened by <name>.`), and the recency window
@@ -38,7 +48,14 @@ import type { SpellDb } from '../data/spellDb'
 import { spellNature } from '../data/spellDb'
 import type { BuffClass, BuffStat } from '../../shared/types'
 import { learnKey, SELF_CASTER } from '../../shared/buffTrust'
-import { percentile, RECENT_SAMPLE_WINDOW, type DurationSample, type SpellSamples } from './buffsShapes'
+import type { EstimatorSource } from '../../shared/buffTypes'
+import {
+  corroboratedMax,
+  percentile,
+  RECENT_SAMPLE_WINDOW,
+  type DurationSample,
+  type SpellSamples
+} from './buffsShapes'
 
 export class SpellStats {
   /** The scraped spell database (Task #34), optional — the authoritative prior. */
@@ -235,6 +252,27 @@ export class SpellStats {
   }
 
   /**
+   * The most recent {@link RECENT_SAMPLE_WINDOW} CLEAN samples for this (line, caster), newest
+   * first — the same window {@link observedWindowMaxFor} maxes over on the uncensored side, handed
+   * out as a list because the below-floor overrule (JOS-212) asks a question a max cannot answer:
+   * do the observations AGREE?
+   *
+   * Censored samples are absent by construction. They are lower bounds on a duration, not
+   * measurements of one, so they may neither corroborate a cluster nor break one — the same
+   * reasoning that gives them their own window in the max.
+   */
+  cleanWindowFor(key: string, caster: string = SELF_CASTER): number[] {
+    const s = this.samples.get(learnKey(key, caster))
+    if (!s) return []
+    const out: number[] = []
+    for (let i = s.samples.length - 1; i >= 0 && out.length < RECENT_SAMPLE_WINDOW; i--) {
+      const sample = s.samples[i]
+      if (sample.censored !== true) out.push(sample.ms)
+    }
+    return out
+  }
+
+  /**
    * THE ONE ESTIMATOR (JOS-117, ruling 6) — used by the Buffs TAB estimate column, the buff/debuff
    * overlay countdown (buffsView.ts `overlayDurationOf`) AND, since JOS-140, the crowd-control
    * holds. The DB baseline is a FLOOR, the recent observed max is an EXTENSION over it:
@@ -251,19 +289,50 @@ export class SpellStats {
    *     rank's, the only row that exists), observed 44 s at rank VII ⇒ 44 s.
    * With no DB base the observed max stands alone; with neither, null.
    *
-   * THE FLOOR'S ASSUMPTION, stated: the base rank's stated duration is a floor for the upgraded
-   * ranks. That is true of a rank line and is the only assumption being made. A CC spell ever
-   * observed running SHORTER than its DB row is what would need revisiting, and the source label
-   * says 'db' in that case rather than silently averaging.
+   * ─────────────────────────────────────────────────────────────────────────────────────────
+   * WHAT JOS-212 CHANGED — THE FLOOR IS NO LONGER UNFALSIFIABLE (owner ruling 2026-08-12, and the
+   * only sanctioned change to ruling 6's estimator since it was written).
    *
-   * `source` names which WON — 'observed' when a sample beat the floor (the tab/overlay label it
-   * "log"), 'db' when the floor held (Invisibility legitimately stays 'db').
+   * The floor rests on ONE assumption, stated above and stated here again because it is the whole
+   * of the argument: *a beneficial buff's true duration is never below its DB base, because AA and
+   * focus only EXTEND.* That is a claim about the game the wiki describes. The committed
+   * spells.json is a CLASSIC-ERA scrape and EverQuest Legends re-tiered spells, so for a real
+   * population of rows the base is not a floor at all — it is a wrong number, and because the
+   * estimator is a max, no amount of evidence could ever move it. Twenty rows on the owner's log
+   * sit below their floor; a reporter's Shield of Fire drew 15:00 for a spell his own log measured
+   * at 6:48 twice.
+   *
+   * So a below-floor observation may now overrule the floor, but ONLY when it is CORROBORATED:
+   *
+   *   estimate = observed max, source 'cluster'
+   *      when  observed max < DB base
+   *      and   `corroboratedMax(cleanWindowFor(...)) != null`
+   *            — i.e. ≥ {@link BELOW_FLOOR_MIN_SAMPLES} clean samples in the recency window whose
+   *              top three agree within {@link BELOW_FLOOR_MAX_SPREAD}.
+   *
+   * buffsShapes.ts carries the measurement the two constants come from: the clustered spells
+   * (Celerity 0.3% … Tashina 8.6%) and the click-off spells (Quickness 12.2% … Invisibility 161%)
+   * separate cleanly, and the threshold sits in the gap. INVISIBILITY STILL KEEPS ITS FLOOR — the
+   * floor law's own worked counterexample survives the change that relaxes it, which is the test
+   * that the relaxation is honest.
+   *
+   * TWO SMALL EXACTNESSES. (1) The number the overrule returns is the whole window's max, not the
+   * clean cluster's — if a CENSORED sample in the window is longer, the log proved the spell was
+   * still running at that instant and the estimate may never be drawn below a proven lower bound.
+   * It errs long, which is the direction everything in this file errs. (2) The comparison is
+   * strict, so an observation that merely EQUALS the floor changes nothing and stays 'db'.
+   *
+   * `source` names which won — 'observed' when a sample beat the floor, 'cluster' when a
+   * corroborated below-floor cluster removed it, 'db' when the floor held.
    */
-  estimateFor(key: string, caster: string = SELF_CASTER): { ms: number | null; source: 'db' | 'observed' | undefined } {
+  estimateFor(key: string, caster: string = SELF_CASTER): { ms: number | null; source: EstimatorSource | undefined } {
     const dbMs = this.dbDurationFor(key)
     const observedMax = this.observedWindowMaxFor(key, caster)
     if (dbMs != null) {
       if (observedMax != null && observedMax > dbMs) return { ms: observedMax, source: 'observed' }
+      if (observedMax != null && observedMax < dbMs && corroboratedMax(this.cleanWindowFor(key, caster)) != null) {
+        return { ms: observedMax, source: 'cluster' }
+      }
       return { ms: dbMs, source: 'db' }
     }
     if (observedMax != null) return { ms: observedMax, source: 'observed' }
