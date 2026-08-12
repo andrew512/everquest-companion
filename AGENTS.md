@@ -111,14 +111,18 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
     time) · documented in-file by the JOS-206 worker; needs the same
     order-hardening the spec's own comment describes.
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
-    settles on stale geometry · 2 sightings (2026-08-10/11) · fix shape
-    diagnosed (wait for bounds to differ before settling); chip filed.
+    settles on stale geometry · 3 sightings (2026-08-10/11/12, full-sweep only,
+    green standalone every time) · fix shape diagnosed (wait for bounds to
+    differ before settling); chip filed — at 3 this needs the ticket now.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
     while EverQuest runs with a player at the keyboard · 2 sightings
     (2026-08-10) · needs hermetics without weakening the once-then-heartbeat
     pin; chip filed.
-  - `perf.e2e` heartbeat boundary (118 vs 125 ms under load) · 1 sighting
-    (2026-08-11, phase-4 worker) · watch; ticket at 3 per this rule.
+  - `perf.e2e` heartbeat boundary · "a replay shorter than one heartbeat states
+    NO drift figures" fails when the replay lands JUST under the beat and a tick
+    still gets counted (118 vs 125 ms both times) · 2 sightings (2026-08-11
+    phase-4 worker, 2026-08-12 JOS-230 worker — full-sweep only, green
+    standalone) · watch; ticket at 3 per this rule.
 - **Fixtures are COMMITTED and SCRUBBED.** `tests/fixtures/*.log` is tracked
   (a `!tests/fixtures/*.log` negation under the blanket `*.log` in
   .gitignore), so CI's `npm test` runs the FULL suite; before this they were
