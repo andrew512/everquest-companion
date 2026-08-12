@@ -50,6 +50,9 @@ import { LootTable, type LootTableContext } from './LootTables'
 import { LootNotices, LootSummary, LootToolbar, useLootSort } from './LootChrome'
 import { NotablePickupsStrip, useNotableStrip } from './NotablePickupsStrip'
 import { useLootRows } from './useLootRows'
+// HOW FAST THE SLICE IS PAYING (JOS-261) — the aggregate loot-per-hour the caption states, joined
+// against the same `progression` snapshot the slice was resolved from.
+import { useSliceLootRates } from './useSliceLootRates'
 // THE TIMESLICE (JOS-130): the app's one "which stretch of play is this about" control. The ledger
 // is where it was asked for — "what did I gain in totality vs this session" — and it is the SAME
 // control and the SAME pick the Leveling tab reads, so the drops and the xp behind them can never
@@ -250,13 +253,20 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
   const [sort, setSort] = useLootSort()
   const [showInventoryOnly, setShowInventoryOnly] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const { available, slice, setId, setCustom } = useTimeslice()
+  // `prog` comes back with the slice on purpose (TimesliceState.prog): the rate line below needs a
+  // `rangeStats` over this very slice, and a second subscription to the same module is how a
+  // numerator and a denominator end up describing two different snapshots.
+  const { prog, available, slice, setId, setCustom } = useTimeslice()
   // THE SLICE IS APPLIED ONCE, HERE, and everything below reads the result — the ledger, the
   // grouped counts, the notable strip and the drill-down's events. `inSlice` is the shared
   // membership test (`shared/timeslice.ts`), half-open exactly like `rangeStats`, so a row is in
   // this table if and only if the same instant is inside the range the xp numbers were measured
   // over. Under `All` it keeps every row, so this costs one pass and changes nothing.
   const sliced = useMemo(() => history.filter((e) => inSlice(slice, e.ts, e.zone)), [history, slice])
+  // THE WHOLE history goes in, not `sliced`: the hook applies the slice through the same membership
+  // test `inSlice` is, so the caption's count and the caption's rate cannot disagree about what
+  // "inside this slice" means (useSliceLootRates' header states the argument).
+  const rates = useSliceLootRates(history, slice, prog)
   const { knowledgeByKey, strip } = useNotableStrip(sliced)
   const rows = useLootRows({
     history: sliced,
@@ -313,6 +323,7 @@ export default function LootView(props: LootViewProps = {}): JSX.Element {
         slice={slice}
         uniqueCount={grouped.length}
         inventoryInfo={inventoryInfo}
+        rates={rates}
       />
 
       <NotablePickupsStrip {...strip} onSelect={detail.open} />
