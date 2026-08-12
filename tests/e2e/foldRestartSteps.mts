@@ -17,10 +17,10 @@ import { check, settle, sleep } from './appHarness.mjs'
 import { decodeCacheHeader } from '../../src/main/foldCache/format'
 import { parseLine } from '../../src/main/log/parser'
 import { FOLD_CACHE_EXT } from '../../src/main/foldCache/name'
-import { CHECKPOINTED_MODULE_IDS } from '../../src/main/foldCache/serialize'
+import { CHECKPOINTED_MODULE_IDS, COMBAT_FOLD_ID, PUBLISHED_FOLD_IDS } from '../../src/main/foldCache/serialize'
 import { parseStartupProfile, type CheckpointVerdict } from '../../src/shared/perf'
 
-/** Every published snapshot the differential harness compares, keyed by module id. */
+/** Every published snapshot the differential harness compares, keyed by fold id. */
 export type Snapshots = Record<string, unknown>
 
 /**
@@ -32,14 +32,26 @@ export type Snapshots = Record<string, unknown>
  * which a live tail could move the world underneath us.
  */
 export function moduleSnapshots(page: Page): Promise<Snapshots> {
-  return page.evaluate(async (ids: string[]) => {
-    const bridge = (window as unknown as {
-      eq: { getModuleSnapshot: (id: string) => Promise<unknown> }
-    }).eq
-    const out: Record<string, unknown> = {}
-    for (const id of ids) out[id] = await bridge.getModuleSnapshot(id)
-    return out
-  }, [...CHECKPOINTED_MODULE_IDS])
+  return page.evaluate(
+    async ([ids, combatId]: [string[], string]) => {
+      const bridge = (window as unknown as {
+        eq: {
+          getModuleSnapshot: (id: string) => Promise<unknown>
+          getCombatSnapshot: (opts: { timeline?: boolean }) => Promise<unknown>
+        }
+      }).eq
+      const out: Record<string, unknown> = {}
+      for (const id of ids) out[id] = await bridge.getModuleSnapshot(id)
+      // THE ENGINE, over its OWN transport (`combat:snapshot`), because it is not a module — which
+      // is the whole reason it could sit outside the container for three phases with every module
+      // assertion in the tree still green, and the reason the owner's restored launch came up with
+      // an empty meter that nothing in this spec could see. `timeline: true` is the shape
+      // `foldCache/publishedFold.ts` names, so this rung compares what the other two compare.
+      out[combatId] = await bridge.getCombatSnapshot({ timeline: true })
+      return out
+    },
+    [[...CHECKPOINTED_MODULE_IDS], COMBAT_FOLD_ID] as [string[], string]
+  )
 }
 
 /**
@@ -60,7 +72,7 @@ function canonical(value: unknown): string {
 
 /** Which module ids differ between two readings. Empty is the whole point of this spec. */
 export function divergent(warm: Snapshots, cold: Snapshots): string[] {
-  return CHECKPOINTED_MODULE_IDS.filter((id) => canonical(warm[id]) !== canonical(cold[id]))
+  return PUBLISHED_FOLD_IDS.filter((id) => canonical(warm[id]) !== canonical(cold[id]))
 }
 
 /**
@@ -95,7 +107,7 @@ export function checkSame(tag: string, warm: Snapshots, cold: Snapshots): void {
   const diff = divergent(warm, cold)
   const detail =
     diff.length === 0
-      ? `${String(CHECKPOINTED_MODULE_IDS.length)} modules identical`
+      ? `${String(PUBLISHED_FOLD_IDS.length)} folds identical`
       : diff.map((id) => `${id}${firstDifference(warm[id], cold[id]) ?? ''}`).join(' || ')
   check(`[${tag}] every module's published snapshot matches the cold-start control`, diff.length === 0, detail)
 }
