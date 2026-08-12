@@ -253,6 +253,12 @@ function watchForFirstLog(): void {
 function resetWorldFor(ref: CharacterRef): void {
   seq = 0
   registry.reset()
+  // THE MESSAGE OVERLAY IS GAME KNOWLEDGE AND SURVIVES `reset()` — but the counts THIS log
+  // accounts for are about to be re-stated in full by the scan below, so its bucket is discarded
+  // and re-filed rather than added to (JOS-231: seeding the fold with its own previous output is
+  // what doubled every count on every launch). Before the scan, and per character, because the
+  // bucket key is the character.
+  buffsModule.beginOverlaySource(characterId(ref))
   epoch.reset()
   // The offline-gap detector is per-LOG state (a rolling window of recent timestamps + the
   // pending camp), so it resets alongside the epoch detector: a new character's first login
@@ -353,12 +359,13 @@ function startHeartbeat(): void {
   registry.tick(Date.now())
   tickTimer = setInterval(() => {
     registry.tick(Date.now())
-    // Debounced overlay persistence (Task #36): the miner accretes from the live tail; snap
-    // it to userData every ~60s so the user's learned messages survive a restart. Cheap —
-    // overlaySnapshot() builds a small object; the write is best-effort.
+    // Debounced overlay persistence (Task #36): the miner accretes from the live tail; snap the
+    // per-source REGISTER to userData every ~60s so the user's learned messages survive a restart
+    // (JOS-231 — the register, never the served view, or the next launch's fold re-imports its own
+    // output). Cheap: a small object, and the write is best-effort.
     if (++overlaySaveTick >= 60) {
       overlaySaveTick = 0
-      saveUserOverlay(buffsModule.overlaySnapshot())
+      saveUserOverlay(buffsModule.overlayRegister())
     }
   }, 1000)
 }

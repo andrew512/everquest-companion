@@ -424,7 +424,7 @@ app.on('window-all-closed', () => {
   teardownStep('main:stopPerf', stopPerf)
   // Flush the learned message overlay one last time so the final session's observations
   // aren't lost between debounced saves (Task #36).
-  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlaySnapshot()))
+  teardownStep('main:saveOverlay', () => saveUserOverlay(buffsModule.overlayRegister()))
   // Dev only, and null in every other build: a live DSQL socket is not a timer and would hold
   // the process open long past the last window.
   teardownStep('main:triage', () => {
