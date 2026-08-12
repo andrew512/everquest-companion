@@ -47,7 +47,7 @@ import {
   deathCensorsActive,
   deathCensorsOpen,
   hygieneCap,
-  isPermanentIllusion,
+  landingIsPermanent,
   landingSpec,
   openLeftBehindOnZone,
   reapOrphanedOpen,
@@ -218,8 +218,20 @@ export class BuffInstances {
    */
   applyMessageBuff(spell: string, spec: LandingSpec): void {
     const { target, ts, illusion, durationMs } = spec
-    if (durationMs == null && !illusion) return
     const key = spec.lineKey ?? spellKey(spell)
+    // WHAT A LANDING MUST STATE TO OPEN A ROW — a duration, an illusion flag, or (JOS-215) the
+    // spell DB's own word that it never expires.
+    //
+    // The third arm is the reported defect (01KZS7FZEAC0Q0T76ZJRS32DSR: "the buff window omits self
+    // buffs"). A permanent buff has no duration BECAUSE it is permanent, so the first two arms
+    // refused 57 of the 62 permanent spells outright — they printed their landing sentence, the
+    // parser emitted a perfectly good `buffApply`, and this line dropped it on the floor. The
+    // remaining five are the illusion-flagged permanents, which got in through the middle arm and
+    // were then mis-modelled as count-up rows the 90-minute cull retired (see `landingIsPermanent`).
+    //
+    // `isPermanent` reads `durationText`, never the null `durationMs` beside it — buffsStats.ts
+    // carries the measurement that says why those are not the same question.
+    if (durationMs == null && !illusion && !this.stats.isPermanent(key)) return
     // A SELF apply of a DETRIMENTAL spell is an incoming debuff a MOB cast on the player —
     // not the player's own buff. Skip it (the bar shows only the player's beneficial buffs).
     const self = target === 'self'
@@ -244,15 +256,16 @@ export class BuffInstances {
 
   /**
    * WHERE a landing binds: the entity it names, that entity's disposition, whose cast it is, and
-   * whether it is a permanent self illusion. Also the one side effect worth naming — the target's
-   * display CASING is remembered here, so the row's chip reads "Cazic-Thule" and not the
-   * lowercased key (Task #35).
+   * whether it is PERMANENT — the spell's own `Permanent` duration, or a self illusion under the
+   * Permanent Illusion AA (`landingIsPermanent` holds both arms). Also the one side effect worth
+   * naming — the target's display CASING is remembered here, so the row's chip reads "Cazic-Thule"
+   * and not the lowercased key (Task #35).
    */
   private bindTo(
     key: string,
     spec: LandingSpec
   ): { self: boolean; disp: EntityDisposition; eKey: string; caster: string; permanent: boolean } {
-    const { target, ts, illusion } = spec
+    const { target } = spec
     const self = target === 'self'
     const eKey = self ? SELF_KEY : idKey(target)
     if (!self) this.pets.namedEntityDisplay.set(eKey, target)
@@ -261,7 +274,7 @@ export class BuffInstances {
       disp: self ? 'self' : this.pets.dispForNamedTarget(target),
       eKey,
       caster: spec.caster ?? SELF_CASTER,
-      permanent: isPermanentIllusion(self, illusion, ts, spec.permanentIllusionOwnedTs)
+      permanent: landingIsPermanent(self, this.stats.isPermanent(key), spec)
     }
   }
 

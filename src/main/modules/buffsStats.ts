@@ -103,6 +103,41 @@ export class SpellStats {
   }
 
   /**
+   * DOES THE SPELL DATABASE SAY THIS SPELL NEVER EXPIRES (JOS-215) — the self/permanent-buff
+   * discriminator, read at the same seam as `dbDurationFor` and `isIllusion` and from the same row.
+   *
+   * THE REPORT (01KZS7FZEAC0Q0T76ZJRS32DSR, v0.21.0): the buff window omits self buffs. The cause is
+   * one line in `BuffInstances.applyMessageBuff`, which refused a landing with no duration and no
+   * illusion flag — and a permanent buff HAS no duration, by definition. Yaulp, the Shielding line,
+   * Instrument of Nife, the rogue blade coats and 57 others therefore landed, printed their sentence,
+   * and opened nothing at all.
+   *
+   * THE DISCRIMINATOR IS `durationText === 'Permanent'`, AND `durationMs == null` ALONE IS NOT IT.
+   * Measured over the committed spells.json (1,926 rows): 62 rows state `Permanent`, every one of
+   * them `targetType: Self` and beneficial (58 `Beneficial`, 3 `Statistic Buff`, 1 `Damage Shield`),
+   * and every one of them carries `durationMs: null` because `parseDurationMs` deliberately refuses
+   * the word. But 453 Self rows carry a null `durationMs`, and the rest of them are `Instant` nukes,
+   * `Unlimited`, and a handful of clock forms an older scrape could not read — admitting on the null
+   * would open a permanent instance for every instant self-cast in the game. The wiki's own WORD is
+   * the fact; the null is an artefact of reading it.
+   *
+   * IT IS THE WIKI'S WORD AND NOT A CURATED LIST, which is the same rule `spellCalmsTarget` and the
+   * `ccSpell` roster already follow: a re-scrape that marks another spell Permanent gets it for free,
+   * and nothing here has to be hand-maintained. `durationText` is compared verbatim — the scrape
+   * writes the template field unchanged and all 62 rows spell it exactly this way.
+   *
+   * HONEST LIMIT, STATED HERE BECAUSE THIS IS WHERE A READER WILL ASK. The model learns a permanent
+   * buff is up only from its CAST: there is no login roster in the log and a permanent buff prints
+   * no periodic reminder, so one raised before logging began is invisible until the next recast.
+   * Nothing can fix that from the log alone, and the failure is in the safe direction — the window
+   * under-reports rather than inventing a buff. Death is the one event that heals it: it strips your
+   * self buffs, so the model and the game agree again from the next cast onward.
+   */
+  isPermanent(key: string): boolean {
+    return this.db?.byKey.get(key)?.durationText === 'Permanent'
+  }
+
+  /**
    * Append a mined duration sample for one caster (the caller re-stats the live instances).
    *
    * The sample arrives as a RECORD rather than a bare span since JOS-180, because a span alone is
