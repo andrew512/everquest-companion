@@ -3,8 +3,8 @@
 // ============================================================================
 //
 // The FIFTH file of the one definition (`telemetryValidate.ts`'s header lists the other four), and
-// split out for exactly the reason those two were: adding JOS-208 phase 3's checkpoint counters
-// pushed that file past the repo's 400-code-line ceiling, and the house answer is a split.
+// split out for exactly the reason those two were: a rider added to these two events pushed that
+// file past the repo's 400-code-line ceiling, and the house answer is a split.
 //
 // THE CUT IS BY SUBJECT, not by size. `sessionHeartbeat` and `sessionEnd` are the two events that
 // carry OPTIONAL RIDERS — measurements that ride an existing kind rather than arriving as a new one
@@ -13,7 +13,6 @@
 //   * `linesParsed` (2026-08-06) — the rule's first customer, and where it was learned.
 //   * `startup` (JOS-57) — the startup replay reading, all six fields or none, with three later
 //     discriminators each independently optional inside it.
-//   * the CHECKPOINT SHADOW PAIR (JOS-208 phase 3) — both counts or neither.
 //
 // Why the rule: a NEW EVENT KIND fails the whole batch on a server that has not been redeployed,
 // and `telemetryPermanentRefusal` classes that 400 as "these bytes will never be accepted" and
@@ -56,42 +55,6 @@ export function vSessionStart(o: Record<string, unknown>): Validated<TelemetryEv
 function optionalLines(o: Record<string, unknown>): Validated<number | undefined> {
   if (o.linesParsed === undefined || o.linesParsed === null) return { ok: true, value: undefined }
   return whole(o.linesParsed, 'linesParsed', MAX_COUNT)
-}
-
-/** The validated pair, in the shape both session reports SPREAD — `{}` when there is none. */
-type ShadowFields = Pick<EvSessionEnd, 'checkpointShadowChecks' | 'checkpointDivergences'>
-
-/**
- * THE FOLD-CHECKPOINT SHADOW COUNTERS (JOS-208 phase 3), which both session reports carry
- * OPTIONALLY under the same additive-field rule as `linesParsed`.
- *
- * BOTH OR NEITHER, refused rather than repaired. `checkpointDivergences` alone is a numerator with
- * no denominator — "three disagreements" out of an unknown number of checks is not a rate, and a
- * rate is the entire reading (the rollout gate is "divergence stays at zero", which only means
- * anything beside "and this many checks ran"). Defaulting the missing half to zero would invent the
- * denominator, which is worse than refusing the batch: it would make a build that never verified
- * look like a build that verified once and was fine.
- */
-function optionalShadow(o: Record<string, unknown>): Validated<ShadowFields> {
-  const c = o.checkpointShadowChecks
-  const d = o.checkpointDivergences
-  const noC = c === undefined || c === null
-  const noD = d === undefined || d === null
-  if (noC && noD) return { ok: true, value: {} }
-  const together = 'checkpointShadowChecks and checkpointDivergences must be sent together.'
-  if (noC || noD) return fail('checkpointShadowChecks', together)
-  const checks = whole(c, 'checkpointShadowChecks', MAX_COUNT)
-  if (!checks.ok) return checks
-  const diverged = whole(d, 'checkpointDivergences', MAX_COUNT)
-  if (!diverged.ok) return diverged
-  // A run cannot diverge more often than it ran. Not defensiveness: this pair's only job is to be a
-  // rate, and a rate over 1 would be read as a broken feature rather than as a broken client.
-  const tooMany = 'checkpointDivergences may not exceed checkpointShadowChecks.'
-  if (diverged.value > checks.value) return fail('checkpointDivergences', tooMany)
-  return {
-    ok: true,
-    value: { checkpointShadowChecks: checks.value, checkpointDivergences: diverged.value }
-  }
 }
 
 /**
@@ -204,9 +167,7 @@ export function vSessionHeartbeat(o: Record<string, unknown>): Validated<Telemet
   if (!lines.ok) return lines
   const startup = optionalStartup(o)
   if (!startup.ok) return startup
-  const shadow = optionalShadow(o)
-  if (!shadow.ok) return shadow
-  const value: EvSessionHeartbeat = { t: 'sessionHeartbeat', uptimeMs: ms.value, ...shadow.value }
+  const value: EvSessionHeartbeat = { t: 'sessionHeartbeat', uptimeMs: ms.value }
   if (lines.value !== undefined) value.linesParsed = lines.value
   if (startup.value !== undefined) value.startup = startup.value
   return { ok: true, value }
@@ -221,13 +182,10 @@ export function vSessionEnd(o: Record<string, unknown>): Validated<TelemetryEven
   if (!lines.ok) return lines
   const startup = optionalStartup(o)
   if (!startup.ok) return startup
-  const shadow = optionalShadow(o)
-  if (!shadow.ok) return shadow
   const value: EvSessionEnd = {
     t: 'sessionEnd',
     durationMs: ms.value,
-    viewsVisited: views.value,
-    ...shadow.value
+    viewsVisited: views.value
   }
   if (lines.value !== undefined) value.linesParsed = lines.value
   if (startup.value !== undefined) value.startup = startup.value

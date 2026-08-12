@@ -381,21 +381,6 @@ export interface TriageStartupRow {
    */
   p50FirstMbLabel: string | null
   p95FirstMbLabel: string | null
-  /**
-   * THE FOLD-CHECKPOINT SHADOW PAIR (JOS-208 phase 3) — how many background verifications this
-   * build ran, and how many found the remembered fold and a cold re-fold disagreeing.
-   *
-   * `shadowDivergences` IS EXPECTED TO BE ZERO FOREVER. It is the rollout's gate (the checkpoint
-   * stays off by default until the fleet's count has held at zero) and its kill switch, so a
-   * non-zero here is not a metric to reason about, it is a reason to turn the feature off.
-   *
-   * A THIRD POPULATION, smaller than either above: the verification is sampled and duty-cycled,
-   * because it costs the exact cold read the checkpoint exists to remove. `shadowChecks` is
-   * printed beside the divergences for the same reason `stutterLaunches` is — a reader must be
-   * able to see that a build with zero divergences also ran zero checks.
-   */
-  shadowChecks: number
-  shadowDivergences: number
 }
 
 export interface TriageAnalyticsStartup {

@@ -169,25 +169,6 @@ function stutterText(r: TriageStartupRow): string {
   )
 }
 
-/**
- * THE STARTUP CHECKPOINT'S FLEET BACKSTOP (JOS-208 phase 3) — the third line of a build's row.
- *
- * A build that has never verified says so in words rather than rendering `0 / 0`, which reads as
- * "checked and clean" and is the one place in this panel where that misreading would license a
- * default-on rollout. A divergence is rendered as a sentence, not a figure: the expected value is
- * zero forever, so anything else is a decision rather than a datum.
- */
-function shadowText(r: TriageStartupRow): string {
-  if (r.shadowChecks === 0) return 'no fold-checkpoint verification has run on this build'
-  if (r.shadowDivergences === 0) {
-    return `${formatNum(r.shadowChecks)} checkpoint checks · all matched a cold fold`
-  }
-  return (
-    `${formatNum(r.shadowChecks)} checkpoint checks · ${formatNum(r.shadowDivergences)} DIVERGED` +
-    ' - the remembered fold disagreed with a cold one'
-  )
-}
-
 export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
   const s = data.startup
   return (
@@ -230,20 +211,6 @@ export function StartupSection({ data }: { data: TriageAnalyticsData }): JSX.Ele
               events/launch · {formatNum(r.blocksOver50)} stalls over 50 ms
               <Box component="span" sx={{ display: 'block', pl: 2, opacity: 0.8 }}>
                 {stutterText(r)}
-              </Box>
-              <Box
-                component="span"
-                data-testid="analytics-startup-shadow"
-                sx={{
-                  display: 'block',
-                  pl: 2,
-                  opacity: 0.8,
-                  // A divergence is the kill switch's trigger, so it is the one row in this panel
-                  // allowed to shout. Zero divergences read exactly like their neighbours.
-                  ...(r.shadowDivergences > 0 ? { color: 'error.main', fontWeight: 600 } : {})
-                }}
-              >
-                {shadowText(r)}
               </Box>
             </Typography>
           ))}

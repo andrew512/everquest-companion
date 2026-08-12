@@ -589,10 +589,6 @@ export interface EvSessionHeartbeat {
   linesParsed?: number
   /** This launch's startup replay, if it has not been reported yet. Optional, same rule. */
   startup?: StartupReplayStats
-  /** Fold-checkpoint shadow verifications since the last report. Optional, same rule. */
-  checkpointShadowChecks?: number
-  /** How many of those DIVERGED. A COUNT ONLY — see the block below. Optional, same rule. */
-  checkpointDivergences?: number
 }
 export interface EvSessionEnd {
   t: 'sessionEnd'
@@ -602,40 +598,8 @@ export interface EvSessionEnd {
   linesParsed?: number
   /** This launch's startup replay, if no heartbeat carried it first. Optional, same rule. */
   startup?: StartupReplayStats
-  /** The tail of the shadow counters, on the same terms as the line delta beside them. Optional. */
-  checkpointShadowChecks?: number
-  /** How many of those DIVERGED. A COUNT ONLY — see the block below. Optional, same rule. */
-  checkpointDivergences?: number
 }
 
-// ------------------------------------------ the fold-checkpoint shadow counters (JOS-208 phase 3)
-//
-// WHAT THEY ARE. The startup checkpoint (JOS-208) lets a launch restore its whole world model from
-// a file and replay only the log's tail. The proof that this is safe is a differential test over a
-// fixture corpus and an e2e restart-compare — both bounded by the logs this repo has. These two
-// counters are the fleet's half: occasionally, in the background, a client re-folds its log the slow
-// way and compares the result to the checkpoint. `checkpointShadowChecks` is how many times that
-// happened; `checkpointDivergences` is how many times the two disagreed.
-//
-// THE EXPECTED VALUE OF THE SECOND ONE IS ZERO, FOREVER. It is the rollout's gate (the feature stays
-// off by default until the fleet's divergence count has stayed at zero) and its kill switch. A
-// counter whose only interesting value is "not zero" is worth having precisely because it is cheap.
-//
-// A COUNT, AND STRUCTURALLY NOTHING ELSE. There is no field here for WHICH module diverged, and
-// there will not be one: the module set is a map of the app's world model, so "the loot module
-// diverged" is a statement about what that player looted. The bright line in this repo is that
-// gameplay data never leaves a client, and it is held by SHAPE rather than by scrubbing — same
-// posture as `updateOutcome.failureClass`, which reduces a message to one of five words before it
-// can reach an event. The module names exist, in the user's own `errors.log`, where the person who
-// would have to fix the divergence can read them and nobody else can.
-//
-// THEY RIDE THE SESSION REPORTS, like `linesParsed` and `startup`, and for the same reason THE
-// ADDITIVE-FIELD RULE gives: a new event kind would black out every counter this app collects on
-// every install that auto-updated ahead of the Lambda deploy. Two optional fields on two existing
-// kinds cost a server that has not been redeployed exactly nothing.
-//
-// BOTH OR NEITHER, and the client enforces it (`takeCheckpointShadow`): a divergence count with no
-// check count beside it is a numerator without a denominator, which is not a measurement.
 export interface EvViewDwell {
   t: 'viewDwell'
   view: TelemetryView

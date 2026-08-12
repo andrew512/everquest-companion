@@ -141,33 +141,6 @@ const STARTUP_FIELDS: DocField[] = [
   }
 ]
 
-/**
- * THE FOLD-CHECKPOINT SHADOW PAIR (JOS-208 phase 3), printed on both session reports.
- *
- * The doc is a PROMISE about what may be measured, so the note has to say the thing a reader would
- * otherwise have to take on trust: that a disagreement is reported as a NUMBER and that nothing
- * identifies what disagreed. It says it in the user's own words, not the schema's.
- */
-const SHADOW_FIELDS: readonly DocField[] = [
-  {
-    name: 'checkpointShadowChecks',
-    type: `${COUNT} (optional)`,
-    note:
-      'The app can remember your log’s reading between launches so it starts faster. Now and ' +
-      'then, in the background, it re-reads the log the slow way and checks that the remembered ' +
-      'answer matches. This is how many times it did that check. Usually not sent at all — the ' +
-      'check runs rarely and on purpose.'
-  },
-  {
-    name: 'checkpointDivergences',
-    type: `${COUNT} (optional)`,
-    note:
-      'How many of those checks found a difference. Expected to be zero; if it ever is not, the ' +
-      'shortcut is switched off. It is a COUNT and nothing else — nothing says which part of the ' +
-      'app differed, and nothing about your log, characters or game is sent with it.'
-  }
-]
-
 /** Why the group is optional and where it appears — said once, printed on both events. */
 const STARTUP_WHEN =
   'Present on the first of these that follows startup, once per launch: how long reading your ' +
@@ -191,8 +164,7 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
     fields: [
       { name: 'uptimeMs', type: COUNT, note: 'How long this session has been running.' },
       { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
-      ...STARTUP_FIELDS,
-      ...SHADOW_FIELDS
+      ...STARTUP_FIELDS
     ]
   },
   {
@@ -202,8 +174,7 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
       { name: 'durationMs', type: COUNT, note: 'How long the session lasted.' },
       { name: 'viewsVisited', type: COUNT, note: 'How many different tabs were opened.' },
       { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
-      ...STARTUP_FIELDS,
-      ...SHADOW_FIELDS
+      ...STARTUP_FIELDS
     ]
   },
   {
