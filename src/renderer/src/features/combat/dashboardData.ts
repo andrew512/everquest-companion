@@ -110,8 +110,20 @@ export function groupSlay(rows: SkillRow[]): SkillRow[] {
  *
  * They are mutually exclusive by construction: picking either replaces the other, so the panel
  * always has exactly one subject and one breadcrumb.
+ *
+ * `name` IS THE IDENTITY THAT CROSSES FIGHTS (JOS-240), and it is why the entity arm carries two
+ * fields for one subject. A `SourceView.id` is only as stable as what minted it: 'you',
+ * `member:<key>` and `heal:<key>` are the same string in every fight, but `pet:<instanceId>` and
+ * an incoming mob's id are WORLD INSTANCES — one spawn, one summon — so the same pet after a
+ * re-summon, or the same fight after a restart re-folded the log, is a different id for what the
+ * user reads as the same row. The name is what they clicked; the id is what they clicked it on.
+ * Resolution prefers the id and falls back to the name (`petRows.meterPanel`), so an exact match
+ * always wins and the name only ever rescues a drill that would otherwise have degraded.
+ *
+ * OPTIONAL, not required: a token written by a build before JOS-240 carries no name, and reads
+ * exactly as it always did. The `target` arm needs none — a mob drill was always keyed by NAME.
  */
-export type Drill = { kind: 'entity'; entityId: string } | { kind: 'target'; target: string }
+export type Drill = { kind: 'entity'; entityId: string; name?: string } | { kind: 'target'; target: string }
 
 /**
  * The drill token as the ROW BUILDER wants it (`petRows.meterPanel`). The mob arm is not a source
@@ -119,11 +131,12 @@ export type Drill = { kind: 'entity'; entityId: string } | { kind: 'target'; tar
  *
  * This is the one translation between the Combat tab's union and the shape the overlay already
  * persists (`OverlayDrill`), which is why the overlay hands its stored value straight to the
- * builder and needs no translation of its own.
+ * builder and needs no translation of its own. The overlay passes no `name` and so keeps the
+ * pure id resolution it has always had.
  */
-export function meterDrill(drill: Drill | null): { entityId: string } | null {
+export function meterDrill(drill: Drill | null): { entityId: string; name?: string } | null {
   if (!drill) return null
-  if (drill.kind === 'entity') return { entityId: drill.entityId }
+  if (drill.kind === 'entity') return { entityId: drill.entityId, name: drill.name }
   return null
 }
 

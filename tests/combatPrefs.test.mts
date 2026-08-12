@@ -21,6 +21,10 @@
 //     un-drill leave the store in exactly the same state.
 //   * changing the drilled SUBJECT drops the expanded abilities (they name bars in the old
 //     subject's list); re-drilling the SAME subject keeps them.
+//   * JOS-240 gave the entity arm an OPTIONAL `name` so a drill can survive a fight change even
+//     when the row's id was minted per spawn. Optional is the load-bearing word: every token in
+//     an existing user's localStorage lacks it and must read exactly as it always did, and an
+//     empty or non-string name degrades to "resolve by id", never to level 1.
 //
 // The OTHER half of the degrade — a drill this build can read but the current fight cannot
 // RESOLVE — is `petRows.meterPanel`'s and is pinned in tests/combatPetNesting.test.mts. Nothing
@@ -128,6 +132,58 @@ test('a real drill round-trips through the store, abilities and all', () => {
   assert.deepEqual(parseDrillMemory(serializeDrillMemory(mob)), mob)
 })
 
+// ── JOS-240: the NAME the drill crossed a fight on ───────────────────────────────────────
+//
+// The token gained an optional `name` so a drill can re-resolve in a fight where the same row has
+// a different id (`pet:<instanceId>` is minted per summon, an incoming mob's id per spawn). The
+// SHAPE is this file's half; whether the builder actually finds the row by it is
+// tests/combatPetNesting.test.mts's.
+
+test('the drilled row NAME round-trips beside its id', () => {
+  const m: DrillMemory = {
+    drill: { kind: 'entity', entityId: 'pet:i7', name: 'Gorlag' },
+    abilities: [abilityKey('melee', 'Bash')]
+  }
+  const raw = serializeDrillMemory(m)
+  assert.ok(raw !== null)
+  assert.deepEqual(parseDrillMemory(raw), m)
+})
+
+test('a drill written before JOS-240 has no name, and reads as one that resolves by id alone', () => {
+  // Exactly the bytes an existing user has in localStorage today. It must not grow a `name: ''`
+  // or an `undefined` key on the way through — a token with no name is a legal token.
+  const m = parseDrillMemory('{"d":{"kind":"entity","entityId":"you"},"a":[]}')
+  assert.deepEqual(m.drill, { kind: 'entity', entityId: 'you' })
+  assert.equal(m.drill !== null && 'name' in m.drill, false, 'no name key at all, not an empty one')
+})
+
+test('an unusable name is normalised away rather than passed to the builder', () => {
+  // An EMPTY name would ask the row builder to look for a source called '' — worse than none. A
+  // non-string name is a hand-edit or a future build's field. Both degrade to "resolve by id",
+  // never to level 1: the id is still perfectly good.
+  for (const raw of [
+    '{"d":{"kind":"entity","entityId":"you","name":""}}',
+    '{"d":{"kind":"entity","entityId":"you","name":42}}',
+    '{"d":{"kind":"entity","entityId":"you","name":null}}',
+    '{"d":{"kind":"entity","entityId":"you","name":{"first":"You"}}}'
+  ]) {
+    assert.deepEqual(parseDrillMemory(raw).drill, { kind: 'entity', entityId: 'you' }, raw)
+  }
+})
+
+test('the name is a resolution hint, not part of WHO the subject is', () => {
+  // Re-drilling the same id keeps the expansions even if the name travelling with it differs (a
+  // row relabelled between renders). Only the id decides whether the subject changed.
+  const open: DrillMemory = { drill: { kind: 'entity', entityId: 'pet:i7', name: 'Gorlag' }, abilities: ['melee|Bash'] }
+  assert.equal(withDrill(open, { kind: 'entity', entityId: 'pet:i7', name: 'Gorlag' }), open)
+  assert.equal(withDrill(open, { kind: 'entity', entityId: 'pet:i7' }), open, 'same id, no name ⇒ same subject')
+  // …and a genuinely different pet still drops them, name or no name.
+  assert.deepEqual(withDrill(open, { kind: 'entity', entityId: 'pet:i9', name: 'Vebarn' }), {
+    drill: { kind: 'entity', entityId: 'pet:i9', name: 'Vebarn' },
+    abilities: []
+  })
+})
+
 test('level 1 with nothing expanded is stored as an ABSENCE, so it matches a fresh install', () => {
   assert.equal(serializeDrillMemory(NO_DRILL), null)
   assert.equal(serializeDrillMemory({ drill: null, abilities: [] }), null)
@@ -170,7 +226,8 @@ test('changing the drilled SUBJECT drops the expansions; re-drilling the same on
   })
 
   // UN-DRILLING IS ALWAYS A FULL RESET — `null` is not a subject you can already be on, and Back /
-  // All / Esc / a fight change all mean "put this surface back the way it opens".
+  // All / Esc / a DIRECTION change all mean "put this surface back the way it opens". A FIGHT
+  // change is no longer on that list (JOS-240): it never reaches `withDrill` at all.
   assert.deepEqual(withDrill(open, null), NO_DRILL)
   assert.equal(withDrill(NO_DRILL, null), NO_DRILL, 'already at level 1 ⇒ no change and no write')
   assert.deepEqual(withDrill({ drill: null, abilities: ['melee|Slash'] }, null), NO_DRILL)
