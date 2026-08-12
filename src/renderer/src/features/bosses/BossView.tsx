@@ -131,6 +131,7 @@ function BossToolbar({
       <FormControlLabel
         control={
           <Switch
+            data-testid="boss-by-loadout"
             checked={filters.byLoadout}
             onChange={(e) => filters.onByLoadoutChange(e.target.checked)}
           />

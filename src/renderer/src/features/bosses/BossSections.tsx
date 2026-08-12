@@ -459,7 +459,19 @@ function LoadoutHeader({ group }: { group: LoadoutGrouping }): JSX.Element {
   const title = ranges.length > 1 ? `${rule} ${MERGED_RULE} ${ranges.map(spanText).join('; ')}` : rule
   return (
     <Tooltip title={title}>
-      <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.75 }}>
+      <Stack
+        // The header is the sentence this whole feature is judged on, so it is addressable and it
+        // states which of the three it is: a named loadout, a gated stretch, or an unattributed
+        // one. tests/e2e/bosses-week.e2e.mts reads both attributes.
+        data-testid="boss-loadout-header"
+        data-loadout={interval ? 'named' : group.uncertain ? 'mixed' : 'unknown'}
+        direction="row"
+        spacing={0.75}
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
+        sx={{ mb: 0.75 }}
+      >
         {interval ? (
           <>
             <SlotChips slots={interval.slots} />
