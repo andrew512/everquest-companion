@@ -539,7 +539,14 @@ export async function tailCharacter(ref: CharacterRef): Promise<TailResult> {
   startTailer(ref.logPath, scan.endOffset)
   startHeartbeat()
 
-  // Watch this character's inventory export so a fresh /outputfile auto-reloads.
+  // READ THE DUMP, THEN FOLLOW IT (JOS-253) — the same two-step the log itself gets, in the same
+  // order. `scanHistory` above replays what the log already holds and only then hands the offset
+  // to the tailer; the inventory export had the follow half and not the read half, because the
+  // watcher is armed with `ignoreInitial: true` (outputs/watch.ts) and a file that was rewritten
+  // while the app was closed never changes again. So a player who typed `/outputfile inventory`
+  // between sessions was tailed against a dump this app had never opened, with the store still
+  // holding whatever the last run loaded — and the only way out was a button.
+  loadInventoryNow(ref, 'startup')
   startInventoryWatch(ref)
 
   // Push whatever the modules folded during replay (mainly the character module's
@@ -593,7 +600,7 @@ function startInventoryWatch(ref: CharacterRef): void {
     { name: ref.name, server: ref.server },
     {
       onChange: () => {
-        reloadInventoryNow(ref)
+        loadInventoryNow(ref, 'watch')
       },
       onError: (err) => {
         logConsoleError('[everquest-companion] inventory watch error', err)
@@ -616,13 +623,25 @@ export function inventoryWrittenAt(file: string): number | null {
   return outputFilesModule.writtenAt(file)
 }
 
-/** Re-read the dump and push it, guarded against a stale watcher firing after a switch. */
-function reloadInventoryNow(ref: CharacterRef): void {
+/**
+ * Read the dump and push it, guarded against a stale watcher firing after a switch.
+ *
+ * ONE FUNCTION FOR BOTH HALVES OF "follows itself" (JOS-253): the read at session start and the
+ * re-read the watcher triggers are the same act on the same file, and the only thing that differs
+ * is what the log line says happened. Splitting them would be two places to forget the push.
+ *
+ * A missing dump is silence, not an error: on a machine where `/outputfile inventory` has never
+ * been typed there is nothing to load, and the surfaces already render that as the never-run
+ * state (the `/outputfile` registry's own line).
+ */
+function loadInventoryNow(ref: CharacterRef, why: 'startup' | 'watch'): void {
   if (character?.logPath !== ref.logPath) return
   const res = loadInventory(character.name, character.server, inventoryWrittenAt)
   if (!res) return
   setInventory(activeCharId(), res.counts, res.source)
-  logInfo(`[everquest-companion] Inventory auto-reloaded: ${res.path}`)
+  logInfo(
+    `[everquest-companion] Inventory ${why === 'startup' ? 'loaded at startup' : 'auto-reloaded'}: ${res.path}`
+  )
   sendToMain(IPC.onInventoryReload, { path: res.path, loadedAt: res.loadedAt })
   sendToMain(IPC.onProgress, getProgress(activeCharId()))
 }

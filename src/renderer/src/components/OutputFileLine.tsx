@@ -36,10 +36,23 @@
 // exists when `steps` is non-empty, so the three-things-and-stop contract is intact everywhere it
 // was already true.
 
+// AND THE FIFTH (JOS-253): WHEN THIS APP LAST READ IT. The four things above are all about the
+// FILE — what to type, why, how to type it, how old it is — and the owner's 2026-08-12 ruling is
+// that a surface fed by a dump owes the player one more fact, which is whether the thing on screen
+// is that file. The two are the same number on a healthy load and diverge exactly when something
+// went wrong, so the second slot costs nothing to read and is the only thing that can say "the
+// game rewrote this and we are still showing you the old one". It is OPTIONAL: a surface with no
+// load instant to offer renders precisely what it rendered before.
+
 import { type JSX, useEffect, useState } from 'react'
 import { Box, Button, Collapse, Paper, Stack, Typography } from '@mui/material'
 import { formatDateTime } from '../lib/formatDate'
-import { outputAgeLabel, outputUpdatedMillis } from '../lib/outputFreshness'
+import {
+  outputAgeLabel,
+  outputIsStale,
+  outputLoadedLabel,
+  outputUpdatedMillis
+} from '../lib/outputFreshness'
 
 /** How often the age re-renders. Coarse, matching `formatAge`'s own resolution (UpdateChip). */
 const AGE_TICK_MS = 60_000
@@ -61,6 +74,16 @@ export interface OutputFileLineProps {
    * registry owns them (`OutputKindDef.steps`); an empty list renders no toggle at all.
    */
   steps?: readonly string[]
+  /**
+   * Epoch ms this app last READ the dump (`InventorySource.readAt`) — a TRI-STATE, because
+   * "we have never loaded it" and "this surface does not load it" are different claims and only
+   * one of them belongs on screen:
+   *   a number   — read at that instant.
+   *   `null`     — this surface reads the dump and has NOT loaded one. Renders "not loaded yet",
+   *                which is the state the JOS-253 reporter was in and could not see.
+   *   `undefined`— this surface does not load the file (the default). The slot is not rendered.
+   */
+  loadedAt?: number | null
   testId?: string
 }
 
@@ -69,6 +92,7 @@ export default function OutputFileLine({
   why,
   updatedAt,
   steps = [],
+  loadedAt,
   testId
 }: OutputFileLineProps): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
@@ -84,6 +108,11 @@ export default function OutputFileLine({
   // not a separate rendering) lives with the words, in lib/outputFreshness.ts.
   const at = outputUpdatedMillis(updatedAt)
   const age = outputAgeLabel(at, now)
+  // The second slot (JOS-253). `read` is undefined for both "never loaded" and "not our subject";
+  // `loadedAt !== undefined` is what separates them, and it is a prop check rather than a value
+  // check on purpose (see the prop's doc).
+  const read = loadedAt ?? undefined
+  const stale = outputIsStale(at, read)
   return (
     <Paper variant="outlined" data-testid={testId} sx={{ px: 1.25, py: 0.75, mb: 1 }}>
       <Stack direction="row" spacing={1} alignItems="baseline" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
@@ -123,6 +152,24 @@ export default function OutputFileLine({
         >
           {age}
         </Typography>
+        {/* WHEN WE READ IT, in the same idiom as the slot beside it: coarse text, exact time on
+            hover. It goes WARNING-coloured only when the file is provably newer than our copy —
+            that is a fact about two instants we hold, not a staleness threshold this app invented
+            (outputFreshness.ts draws that line). Everywhere else it is the same disabled grey as
+            its neighbour, because on a healthy load the two say the same thing and a permanently
+            highlighted number stops meaning anything. */}
+        {loadedAt !== undefined && (
+          <Typography
+            variant="caption"
+            color={stale ? 'warning.main' : 'text.disabled'}
+            title={read === undefined ? undefined : formatDateTime(read)}
+            data-testid={testId === undefined ? undefined : `${testId}-loaded`}
+            sx={{ flexShrink: 0 }}
+          >
+            {'· '}
+            {outputLoadedLabel(read, now)}
+          </Typography>
+        )}
       </Stack>
       {/* Numbered because the ORDER is the content: opening the hoard after typing the command
           captures nothing, which is the whole failure this is here to prevent. */}
