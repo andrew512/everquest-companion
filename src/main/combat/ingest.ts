@@ -27,7 +27,8 @@ import {
   routeDry,
   routeProc,
   routeProcBuffApply,
-  routeProcBuffWearOff
+  routeProcBuffWearOff,
+  routeSelfLandingProc
 } from './procRouting'
 import {
   QUICK_BUFF_AA,
@@ -473,7 +474,7 @@ function foldDamageAnalytics(st: EngineState, f: DamageFold): void {
     agg.windows.fold(fold, active)
     agg.procs.addActiveMs(activeDeltaMs, active)
     if (a.swing) agg.procs.addSwing(active)
-    if (a.proc) agg.procs.addSpellProc({ spell: ev.skill, amount: ev.amount, isHeal: false, active })
+    if (a.proc) agg.procs.addSpellProc({ spell: ev.skill, side: 'damage', amount: ev.amount, active })
   })
   if (p) p.leave()
 }
@@ -490,7 +491,7 @@ function foldHealAnalytics(st: EngineState, ev: HealEvent): void {
   const p = st.probe
   if (p) p.enter(SEC_ANALYTICS)
   foldBoth(st, ev.ts, (agg, active) => {
-    agg.procs.addSpellProc({ spell, amount: ev.amount, isHeal: true, active })
+    agg.procs.addSpellProc({ spell, side: 'heal', amount: ev.amount, active })
   })
   if (p) p.leave()
 }
@@ -708,10 +709,12 @@ function ingestModifier(st: EngineState, ev: LogEvent): void {
       // buffed entity is. A third disjoint gate over one event, and the only one that binds.
       if (ev.target !== 'self') bindPetBuffLanding(st, ev.ts, ev.target, names)
       routeDispelLanding(st, ev.ts, ev.target, names)
-      // The SAME landing stream also carries the tracked proc-buff spans (§3.2). Two disjoint
-      // curated gates over one event: DISPEL_FAMILY names a lane on a mob, PROC_BUFF_CATALOG
-      // opens a self-buff span. Neither can consume the other's lines.
+      // The SAME landing stream also carries the tracked proc-buff spans (§3.2), and — JOS-246 —
+      // the procs whose ONLY printed evidence IS a landing. Three disjoint curated gates over one
+      // event: DISPEL_FAMILY names a lane on a mob, PROC_BUFF_CATALOG opens a self-buff span, and
+      // SELF_LANDING_PROCS counts a firing. None can consume another's lines.
       routeProcBuffApply(st, ev.ts, ev.target, names)
+      routeSelfLandingProc(st, ev.ts, ev.target, names)
       return
     }
     case 'buffWearOff':
