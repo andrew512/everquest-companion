@@ -141,8 +141,11 @@ export const EMPTY_ROSTER_VIEW: RosterView = {
  * are battling" is already segmented by the fight model and scope must not touch it.
  *
  *   'you'      you + your pets. Today's behavior, unchanged, and still what a solo player sees.
- *   'group'    you + your pets + the current roster. The DEFAULT once a roster exists.
- *   'everyone' every recorded source, including members who have since left the group.
+ *   'group'    you + your pets + the current roster.
+ *   'everyone' every recorded source, including members who have since left the group. THE
+ *              DEFAULT (JOS-229) — an inferred roster can be incomplete as easily as empty, and
+ *              the only scope that can hide nobody is the one that filters nobody. The constant
+ *              itself lives in renderer features/combat/combatPrefs.ts, which argues it.
  */
 export type MeterScope = 'you' | 'group' | 'everyone'
 
