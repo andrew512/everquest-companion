@@ -17,12 +17,10 @@
 //   [20:50:50] You have slain a scareling!
 //   [20:50:52] Your Mesmerization spell has worn off of a turmoil toad.
 //
-// The replay below is the REAL parser into the REAL AlertsModule, BuffsModule and BuffTimersModule,
-// wired in the SAME registration order production uses (modules/wiring.ts: alerts, then buffs, then
-// buffTimers) — which is load-bearing rather than incidental. The alerts module folds a landing
-// BEFORE the two modules that build the row for it, which is the whole reason an arm is resolved on
-// the next heartbeat instead of at the match; a harness that folded them in a friendlier order
-// would prove the feature works in a program nobody ships.
+// The replay is the REAL parser into the REAL AlertsModule, BuffsModule and BuffTimersModule, wired
+// in the SAME registration order production uses — `replayAlertLines` in tests/harness.mts, which
+// carries the argument for why that order is load-bearing rather than incidental. (It moved there
+// when JOS-235's break-family matrix, tests/earlyWarningBreaks.test.mts, needed the same driver.)
 //
 // The expected fire instant is DERIVED from the row the model actually built (`startedTs +
 // durationMs - offset`), never frozen: the estimate is learned, spells.json can be re-scraped, and
@@ -32,13 +30,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseEvent } from '../src/main/log/parser'
-import { installSpellDb } from '../src/main/log/rulesets'
-import { loadSpellDb } from '../src/main/data/spellDb'
-import { AlertsModule } from '../src/main/modules/alerts'
-import { BuffsModule } from '../src/main/modules/buffs'
-import { BuffTimersModule } from '../src/main/modules/buffTimers'
-import { buildTimerRows, type BuffTimerRow } from '../src/shared/buffTimers'
+import type { BuffTimerRow } from '../src/shared/buffTimers'
 import {
   MAX_EARLY_WARN_SEC,
   MIN_EARLY_WARN_SEC,
@@ -48,7 +40,7 @@ import {
 } from '../src/shared/earlyWarning'
 import { sanitizeAlertDef } from '../src/shared/shareSchema'
 import type { AlertDef, FiredAlert } from '../src/shared/types'
-import { readFixture, replayBuffTimers, tsOf } from './harness.mts'
+import { readFixture, replayAlertLines, replayBuffTimers, tsOf } from './harness.mts'
 
 const W10 = readFixture('w10-cazic-slow.log')
 
@@ -93,58 +85,13 @@ function slowAlert(earlyWarnSec: number): AlertDef {
 }
 
 /**
- * Replay the fixture through the real modules in PRODUCTION ORDER, with a 1-second heartbeat, and
- * collect everything the alerts module fired. `to` bounds the window the way the buff-timer goldens
- * do — the same log keeps going for another three minutes.
+ * Replay the FIXTURE through the real modules in production order (tests/harness.mts
+ * `replayAlertLines`, which is where the registration-order argument lives) and collect everything
+ * the alerts module fired. `to` bounds the window the way the buff-timer goldens do — the same log
+ * keeps going for another three minutes.
  */
 function replayAlerts(defs: AlertDef[], to: number): FiredAlert[] {
-  const db = loadSpellDb()
-  installSpellDb(db)
-  const alerts = new AlertsModule()
-  const buffs = new BuffsModule(db)
-  const timers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
-  alerts.setDefs(defs)
-  // The ONE seam this feature reads its estimated ends through — the same projection both timer
-  // overlays draw (modules/wiring.ts hands over exactly this closure).
-  alerts.setTimerRows(() => buildTimerRows(buffs.snapshot().state, timers.snapshot().state))
-  alerts.reset()
-  buffs.reset()
-  timers.reset()
-
-  const fired: FiredAlert[] = []
-  const drain = (): void => {
-    const out = alerts.flushDelta()
-    if (out) fired.push(...out.delta.fired)
-  }
-  // registry.tick advances every module in registration order, then flushes.
-  const tick = (at: number): void => {
-    alerts.onTick(at)
-    buffs.onTick(at)
-    timers.onTick(at)
-    drain()
-  }
-
-  let seq = 0
-  let nextTick = 0
-  for (const raw of W10) {
-    const ev = parseEvent(raw, seq++)
-    if (!ev) continue
-    if (ev.ts > to) break
-    if (nextTick === 0) nextTick = ev.ts
-    while (nextTick <= ev.ts) {
-      tick(nextTick)
-      nextTick += 1_000
-    }
-    alerts.onEvent(ev, true)
-    buffs.onEvent(ev, true)
-    timers.onEvent(ev, true)
-    drain()
-  }
-  while (nextTick > 0 && nextTick <= to) {
-    tick(nextTick)
-    nextTick += 1_000
-  }
-  return fired
+  return replayAlertLines(W10, defs, to)
 }
 
 /** The row the model built for one target at an instant, straight off the shared projection. */

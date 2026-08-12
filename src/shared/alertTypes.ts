@@ -327,6 +327,15 @@ export interface AlertDef {
    * landing is one warning, and a debuff that ends early (a break line, the mob dying, a zone)
    * takes its pending warning with it — the row is gone, so there is nothing left to warn about.
    *
+   * AND WHEN THE TRIGGER IS THE ENDING, THE OFFSET ARMS FROM THE ROW INSTEAD (JOS-235). For a
+   * break-family def — the per-spell `breaks`/`charmBreaks` alerts, the "Mez / root broke" and
+   * "Charm break" groups, a slow wearing off — the trigger and the end are the SAME line, so
+   * arming on it resolved against a world that line had already emptied and the alert went
+   * SILENT, both early and at the break. Such a def instead arms when a row it would announce the
+   * break of LANDS, and it still fires on its own trigger: one landing yields one firing, the
+   * warning when the hold survives to the deadline (the at-break firing for that landing is then
+   * suppressed), the break itself when it ends sooner. An early break is never silent.
+   *
    * IT CONSUMES THE EXISTING ESTIMATE AND TRACKS NOTHING ITSELF. The end it counts back from is
    * `shared/buffTimers.ts buildTimerRows`' countdown row — the same number the debuffs overlay
    * draws — so a landing the model can state no duration for arms nothing at all rather than
