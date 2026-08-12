@@ -22,6 +22,14 @@
 // combo interval at ITS OWN most recent kill and wears ITS OWN tier badge, and the header's
 // claim is true of every card under it. Single-tier targets — nearly all of them — project to
 // exactly the card they rendered before.
+//
+// ONE SECTION PER LOADOUT (JOS-236, 2026-08-12). A section is a claim about CLASSES, not about a
+// span of the timeline, so every interval stating the same trio draws ONE header here — the
+// owner's board was showing PAL / MNK / ENC twice because he had swapped away and back. The rule
+// and everything it decides (which member's chips, whose provenance, how the union span is
+// worded, what the badge means) lives in loadoutGroups.ts's header; this file only draws it:
+// `spansText` over the section's members instead of `spanText` over one, and a tooltip that
+// spells the stretches out when there is more than one.
 
 import { type JSX, useMemo, useState } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
@@ -37,7 +45,7 @@ import { formatDate, formatDateTime } from '../../lib/formatDate'
 import { cachedImageUrl } from '../../lib/imageUrl'
 import { useComboIntervals } from '../profiles/ClassComboData'
 import { ProvenanceChip, SlotChips } from '../profiles/ClassComboChips'
-import { spanText } from '../profiles/ClassComboLabels'
+import { spanText, spansText } from '../profiles/ClassComboLabels'
 import { Tooltip } from '../../lib/Tooltip'
 
 function BossImage({
@@ -421,19 +429,28 @@ export function CategorySection({ category, list, ...grid }: SectionProps & { ca
 }
 
 const GROUP_RULE = 'Grouped by the loadout you were running for these kills.'
+/**
+ * Said only where it applies (JOS-236). A section can cover several stretches of the same trio —
+ * you swapped away and came back, or a `/who` restated it — and the caption already says how
+ * many; the tooltip is where they are spelled out, so the header stays one line.
+ */
+const MERGED_RULE = 'You ran this loadout more than once; those stretches are one section:'
 
-/** The loadout header: the slots as chips, its provenance, and the span they cover. */
+/** The loadout header: the slots as chips, its provenance, and the span(s) they cover. */
 function LoadoutHeader({ group }: { group: LoadoutGrouping }): JSX.Element {
   const interval = group.interval
+  const ranges = group.intervals
+  const title =
+    ranges.length > 1 ? `${GROUP_RULE} ${MERGED_RULE} ${ranges.map(spanText).join('; ')}` : GROUP_RULE
   return (
-    <Tooltip title={GROUP_RULE}>
+    <Tooltip title={title}>
       <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.75 }}>
         {interval ? (
           <>
             <SlotChips slots={interval.slots} />
             <ProvenanceChip interval={interval} />
             <Typography variant="caption" color="text.secondary">
-              {spanText(interval)}
+              {spansText(ranges)}
             </Typography>
           </>
         ) : (
