@@ -211,12 +211,16 @@ export function nextScope(scope: MeterScope): MeterScope {
 export function scopeAllows(
   scope: MeterScope,
   roster: RosterSnap,
-  kind: 'you' | 'pet' | 'member' | 'enemy',
+  kind: 'you' | 'pet' | 'member' | 'enemy' | 'allyPet',
   key?: string
 ): boolean {
   if (kind === 'enemy') return true
   const eff = effectiveScope(scope, roster)
-  if (kind !== 'member') return true // you + your pets are in every scope
+  // AN ALLY'S CHARM PET FILTERS LIKE ITS CHARMER (JOS-250), which is what `key` carries for one:
+  // the row belongs to a person, so "show me my group" must mean the same thing whether that
+  // person is swinging themselves or their charmed giant is doing it for them. Under the You scope
+  // it is hidden for the same reason a group-mate's row is — it is not yours.
+  if (kind !== 'member' && kind !== 'allyPet') return true // you + your pets are in every scope
   if (eff === 'you') return false
   if (eff === 'everyone') return true
   return key !== undefined && roster.members.some((m) => m.key === key)

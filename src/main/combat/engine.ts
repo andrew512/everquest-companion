@@ -161,6 +161,18 @@ export class CombatEngine {
   }
 
   /**
+   * Display names of the live ALLY pets — SOMEBODY ELSE'S charm pets (JOS-250, allyCharms.ts).
+   *
+   * Deliberately its own door beside the two above, and deliberately not in the snapshot either:
+   * an ally pet is not in `petNames`, not in the world model's pet set and not a pet of yours in
+   * any sense the meter's attribution recognises. The rows it earns reach the UI as ordinary
+   * `kind: 'allyPet'` sources; this accessor exists so a test can ask the model directly.
+   */
+  allyPetNames(): string[] {
+    return this.st.allyPetNames()
+  }
+
+  /**
    * The mob in front of you (law 6, LIVE half). Undefined when no encounter is open or when
    * the open encounter has not yet landed an outgoing hit — never a guess, never the largest
    * target (that is the FINALIZED naming rule and would relabel a live pull retroactively).
@@ -245,6 +257,10 @@ export class CombatEngine {
     // loading state rather than a churning fake-live meter.
     if (!this.st.hydrating) {
       this.st.sweepCharm(now)
+      // …and the ally binds on the same clock and for the same reason (JOS-250): a charm cannot
+      // outlive its own spell, and the deadline must be observed by whichever of the two readers
+      // reaches it first.
+      this.st.sweepAlly(now)
       evalClosure(this.st, now)
     }
     const st = this.st

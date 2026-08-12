@@ -28,11 +28,10 @@ import { MultiAttackStats, StatItem } from './meterBits'
 
 // `member` (a group-mate, docs/plans/group-model.md) is a green in the same muted family as the
 // pet's blue — a friendly, clearly not you, and clearly not the enemy's red.
+// `allyPet` (JOS-250) is somebody ELSE's charm pet: a dimmer, cooler wash of the pet blue, so it
+// reads as the same KIND of thing as your pet while never being mistaken for it at a glance.
 export const KIND_COLOR: Record<string, string> = {
-  you: '#d9b25f',
-  pet: '#6fb3d2',
-  member: '#7fbf8f',
-  enemy: '#cf6679'
+  you: '#d9b25f', pet: '#6fb3d2', allyPet: '#5b7f95', member: '#7fbf8f', enemy: '#cf6679'
 }
 
 /**
