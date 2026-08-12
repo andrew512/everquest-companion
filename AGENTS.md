@@ -589,6 +589,9 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   Beneficial/Detrimental) + `messageOverlay.baseline.json` + per-user
   learned overlay (VERIFIED / SHARED / CONTRADICTS-WIKI verdicts mined from
   the log; overlay wins over wiki). Injected via rulesets `ParserConfig`.
+  The learned counts are filed PER SOURCE and a re-fold replaces its own
+  bucket — JOS-231's law in the checkpoint tombstone below; read it before
+  touching the miner's seed or `<userData>/message-overlay.json`.
 - **Alerts**: declarative JSON `AlertDef` in electron-store; triggers =
   primitives (event kind + `where` match, raw regex, app signal) or
   composites `{any|all}` (same-event semantics only). Module evaluates
@@ -1035,12 +1038,41 @@ WHAT SURVIVED IT, because all three are the app's and not the feature's:
 Both product fixes were found by folding the same bytes twice and diffing —
 which is the technique to reach for again, harness or no harness.
 
-AND ONE DEFECT IT WAS MASKING, now re-exposed and tracked separately (JOS-231):
-the message overlay DOUBLE-COUNTS on every cold launch. Its counts are seeded
+AND ONE DEFECT IT WAS MASKING, re-exposed by the rip-out and FIXED in JOS-231:
+the message overlay DOUBLE-COUNTED on every cold launch. Its counts were seeded
 from `<userData>/message-overlay.json` — what the last session persisted — and
-the fold then re-mines the whole log on top. MEASURED: 22 -> 44 -> 88 across
+the fold then re-mined the whole log on top. MEASURED: 22 -> 44 -> 88 across
 three cold launches. A restored launch mined only the tail and so didn't show
-it. The fix is idempotent mining counts, or the miner excluded from the seed.
+it. The rule it left behind is below.
+
+**A FOLD MUST NEVER BE SEEDED WITH WHAT IT IS ABOUT TO RE-DERIVE, AND THE ONLY
+HONEST WAY TO KNOW IS TO FILE EVERY COUNT UNDER ITS SOURCE** (JOS-231). The
+message overlay is a fold: it re-mines the whole log every launch and its counts
+are a pure function of the bytes. Its persisted file was the SERVED VIEW — one
+flat pile of baseline + everything learned so far — so re-seeding from it fed the
+fold its own previous output, and each launch added the log's observations to a
+snapshot that already held them. Verdicts ride those counts (`n >= 2` is what
+makes a message VERIFIED), so the registry was drifting from "what the log says"
+toward "how many times the app has started". `MessageOverlayMiner` now keeps ONE
+BUCKET PER SOURCE (the character id whose log produced the counts;
+`BASELINE_SOURCE` for the committed baseline), `beginSource(key)` DISCARDS that
+bucket before its log is folded again — `session.resetWorldFor` calls it, before
+the scan — and `build()` sums the buckets. A re-fold REPLACES a source's
+contribution; idempotence is structural rather than a check somebody remembers to
+run. The persisted file is version 2 and is a REGISTER (`sources: [{key,
+messages}]`, no verdicts — a stored verdict is a second opinion waiting to
+disagree with the derived one); v1 files are ignored, which retires the inflation
+in the field. TWO THINGS THE FIX DELIBERATELY IS NOT. It does not drop the
+persisted seed: a bucket for a character you are not folding is knowledge nothing
+can re-derive, and the seed is the ONLY channel by which a user's own mined
+messages become parser corrections (`effectiveSpellDb` derives them from the seed,
+BEFORE the fold, and nothing recomputes them after). And it does not dedupe by log
+position: an identity per observation would persist thousands of offsets to answer
+a question the source key already answers.
+`tests/messageOverlayIdempotence.test.mts` folds three simulated cold launches and
+demands byte-identical overlays, proves a second character's bucket survives
+untouched, and carries a TRIPWIRE that re-creates the old shape and watches the
+counts double.
 
 If a startup-cost ticket ever comes back: measure first, and read
 `git log 5038f6f0..1c3e584f` before rebuilding any of this.
