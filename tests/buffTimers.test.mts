@@ -480,10 +480,16 @@ test('a slow you put on a mob is a DEBUFF row on the debuffs window, not a buff'
   const debuffs = rows.filter((r) => r.kind === 'debuff')
   assert.ok(debuffs.length > 0, 'the Cazic pull should leave debuff rows standing')
   assert.ok(
-    // The RANK is on the row since JOS-140 — the cast line says `Shiftless Deeds IV` and the
-    // wear-off says `Shiftless Deeds`, and the row now shows the one you actually cast.
-    debuffs.some((r) => r.name === 'Shiftless Deeds IV'),
+    // The row is NAMED for the spell since JOS-238 — the DB's `Shiftless Deeds`, which is also
+    // what the wear-off sentence says — while the rank the cast line spelled rides beside it in
+    // `castName`. JOS-140 put the rank IN the name; that made the name a fact about one log line.
+    debuffs.some((r) => r.name === 'Shiftless Deeds'),
     `the slow itself should be one of them: ${debuffs.map((r) => r.name).join(', ')}`
+  )
+  assert.equal(
+    debuffs.find((r) => r.name === 'Shiftless Deeds')?.castName,
+    'Shiftless Deeds IV',
+    'and the rank the owner actually cast is still on the row'
   )
   for (const r of debuffs) assert.equal(timerRowSurface(r), 'debuffs', `${r.name} was filed as a buff`)
   // …and they arrive on the debuffs window under the enemy they are on, not under a self heading.

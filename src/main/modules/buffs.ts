@@ -465,6 +465,8 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
       illusion: landing.illusion,
       durationMs: landing.durationMs,
       caster: landing.caster,
+      // DISPLAY ONLY (JOS-238): the rank the cast line spelled. `landing.spell` is the identity.
+      ...(landing.castName ? { castName: landing.castName } : {}),
       ...(landing.lineKey ? { lineKey: landing.lineKey } : {}),
       ...(landing.candidates ? { candidates: landing.candidates } : {}),
       permanentIllusionOwnedTs: this.permanentIllusionOwnedTs

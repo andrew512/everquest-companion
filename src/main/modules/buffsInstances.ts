@@ -51,6 +51,7 @@ import {
   landingSpec,
   openLeftBehindOnZone,
   reapOrphanedOpen,
+  reprojectSpec,
   unwitnessedCullCap
 } from './buffsInstanceRules'
 
@@ -68,6 +69,11 @@ export interface LandingSpec {
    * `instanceSpellKey`.
    */
   lineKey?: string
+  /**
+   * The RANKED text the cast line spelled, when a named anchor resolved this landing and it is not
+   * simply the spell's own name (JOS-238). DISPLAY ONLY — the identity is `spell`.
+   */
+  castName?: string
   /**
    * The spells this landing sentence could be, when it is a FAMILY the anchor could not narrow
    * (a Quick Buff burst names no spell). Present ⇒ the row shows the ~ chip and mints nothing.
@@ -242,7 +248,14 @@ export class BuffInstances {
 
     const { disp, eKey, caster, permanent } = this.bindTo(key, spec)
     const iKey = instanceKey(key, eKey)
-    const record = this.openRecord(iKey, { spell, spellKey: key, entityKey: eKey, caster, disp })
+    const record = this.openRecord(iKey, {
+      spell,
+      castName: spec.castName,
+      spellKey: key,
+      entityKey: eKey,
+      caster,
+      disp
+    })
     // A FAMILY never mints (we do not know which spell it was), so its landings open contaminated.
     record.group.land(ts, spec.candidates !== undefined)
     // A permanent self illusion has no expiry to pair with, so it keeps no open record at all.
@@ -287,6 +300,10 @@ export class BuffInstances {
     const existing = this.open.get(iKey)
     if (existing?.caster === id.caster) {
       existing.spell = id.spell
+      // The NEWEST landing's word on what was cast, including "nothing extra" — a re-land through
+      // a Quick Buff burst names no rank, and keeping the previous cast's would attribute a rank
+      // to a landing that never stated one.
+      existing.castName = id.castName
       existing.disp = id.disp
       return existing
     }
@@ -388,19 +405,10 @@ export class BuffInstances {
   private restat(iKey: string, open: OpenCast): void {
     const prev = this.active.get(iKey)
     if (!prev) return
+    const { spellKey: key, entityKey, caster, group } = open
     this.active.set(
       iKey,
-      this.build({
-        spell: prev.spell,
-        key: open.spellKey,
-        entityKey: open.entityKey,
-        startedTs: open.group.oldestTs,
-        dispOverride: prev.disposition,
-        caster: open.caster,
-        count: open.group.count,
-        ...(prev.candidates ? { candidates: prev.candidates } : {}),
-        opts: { messageDriven: prev.messageDriven, permanent: prev.permanent }
-      })
+      this.build(reprojectSpec(prev, { key, entityKey, caster, startedTs: group.oldestTs, count: group.count }))
     )
   }
 
@@ -409,21 +417,9 @@ export class BuffInstances {
     // Restat every live instance of this spell (they share the per-(line, caster) stats).
     for (const [ik, a] of [...this.active]) {
       if (instanceSpellKey(ik) !== key) continue
-      const open = this.open.get(ik)
-      this.active.set(
-        ik,
-        this.build({
-          spell: a.spell,
-          key,
-          entityKey: instanceEntityKey(ik),
-          startedTs: a.startedTs,
-          dispOverride: a.disposition,
-          caster: a.caster ?? SELF_CASTER,
-          count: open?.group.count ?? a.count ?? 1,
-          ...(a.candidates ? { candidates: a.candidates } : {}),
-          opts: { messageDriven: a.messageDriven, permanent: a.permanent }
-        })
-      )
+      const count = this.open.get(ik)?.group.count ?? a.count ?? 1
+      const at = { key, entityKey: instanceEntityKey(ik), startedTs: a.startedTs, caster: a.caster ?? SELF_CASTER, count }
+      this.active.set(ik, this.build(reprojectSpec(a, at)))
     }
     this.dirty = true
   }
