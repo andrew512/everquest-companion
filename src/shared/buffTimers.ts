@@ -494,7 +494,21 @@ const RANK_TAIL_RE = / (?:I|II|III|IV|V|VI|VII|VIII|IX|X)$/i
  * are built from, which is the point of sharing it rather than writing a third copy.
  */
 export function timerNameKey(name: string): string {
-  return name.trim().replace(RANK_TAIL_RE, '').trim().toLowerCase()
+  return timerNameBase(name).toLowerCase()
+}
+
+/**
+ * The same fold WITHOUT the case-fold — a row's spell name as the WEAR-OFF LINE will print it.
+ *
+ * EXPORTED for `shared/earlyWarning.ts` (JOS-235), which builds the break sentence a def would
+ * match against out of a row that is still running. A row's name comes from the ranked CAST line
+ * (`Mesmerization VII`) and every `Your <X> spell has worn off of <mob>.` line is rank-LESS —
+ * measured over the owner's whole log for JOS-200, 3,382 of 3,383 — so the name to compare a
+ * break-family def against is this one, and it has to keep its display casing because the firing
+ * SPEAKS it.
+ */
+export function timerNameBase(name: string): string {
+  return name.trim().replace(RANK_TAIL_RE, '').trim()
 }
 
 /** Canonical entity key (mirrors parseCommon.idKey for the same reason as above). */

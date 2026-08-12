@@ -23,8 +23,11 @@
 // Pure and Electron-free (it is `shared/`, and node:test loads it directly): no clock of its own,
 // no state, and every input is handed in.
 
+import type { AlertTrigger, AlertTriggerPrimitive } from './alertTypes'
 import type { BuffTimerRow } from './buffTimers'
 import { timerNameKey } from './buffTimers'
+import { timerNameBase } from './buffTimers'
+import type { LogEvent } from './logEvents'
 
 /**
  * The bounds on the offset, in SECONDS.
@@ -134,4 +137,249 @@ export function earlyWarnRowFor(
 export function earlyWarnFireAt(row: BuffTimerRow, sec: number): number | undefined {
   if (!hasStatedEnd(row) || row.durationMs == null) return undefined
   return row.startedTs + row.durationMs - sec * 1000
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// THE BREAK FAMILY (JOS-235) — and why the offset had to mean something different for it.
+//
+// JOS-216 (everything above) reads: a def with an offset does not fire when its trigger matches;
+// the match ARMS a warning against the row that landing produced. That is exactly right for a
+// LANDING-triggered def and exactly WRONG for a def whose trigger IS the ending — the per-spell
+// `breaks` alert, the "Mez / root broke" group, the charm break, the slow wear-off. For those the
+// arming event and the end are the SAME event: by the time the arm is resolved on the next
+// heartbeat the row it is looking for has already been removed by that very line, no row is ever
+// found, and `ARM_RESOLVE_WINDOW_MS` drops the request in silence. Net effect, and it is the worst
+// possible one: typing a number into "Warn early" DELETED the alert. The owner found it in release
+// testing with `earlyWarnSec: 90` on his breaks-for-Dazzle alert — no warning, and no break alert.
+//
+// SO A BREAK-FAMILY DEF ARMS FROM THE ROW APPEARING, NOT FROM ITS OWN TRIGGER. When a timer row
+// lands for a spell whose break this def would announce, the warning is scheduled at that row's
+// estimated end minus the offset. The trigger keeps its ordinary meaning: the break line still
+// FIRES the alert. One landing yields exactly one firing, and which one it is depends on what the
+// world did:
+//
+//   * the hold survives to the deadline  → the WARNING speaks, and the at-break firing for THAT
+//                                          landing is suppressed (the alert already spoke).
+//   * the hold breaks BEFORE the deadline → nothing was warned, so the break fires normally.
+//
+// AN EARLY BREAK MUST NEVER BE SILENT. That is the whole ticket, and it is why every failure mode
+// here degrades to "the alert behaves exactly as it did before the offset existed": a row with no
+// stated end arms nothing, a def whose probe matches no row arms nothing, an offset longer than the
+// spell arms nothing — and in every one of those cases the break line still fires the alert.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The event kinds whose arrival means a tracked row has ENDED.
+ *
+ * Measured against the parser rather than assumed (`log/parseCasts.ts classifyWornOff` routes the
+ * one sentence `Your <X> spell has worn off of <mob>.` three ways, and this file's tests drive all
+ * of them through the real parser):
+ *   'cc'          — a mez/root spell's wear-off, `refresh:true` (the `ccSpell` roster).
+ *   'uncharm'     — a charm spell's wear-off (the `charmSpell` roster, tested first).
+ *   'buffFade'    — everything else that wore off a NAMED target: a slow, a Largo, a Pacify.
+ *   'buffWearOff' — a shared-message wear-off ON YOU (`Your speed returns.`).
+ *   'buffExpired' — the buffs module's derived, resolved "wore off you / your pet".
+ */
+export type BreakTriggerKind = 'cc' | 'uncharm' | 'buffFade' | 'buffWearOff' | 'buffExpired'
+
+/**
+ * Whether a `where` matcher SPEC accepts a value — MIRRORING `compileFieldMatch` in
+ * main/modules/alerts.ts (a `/…/` spec is a case-insensitive regex, anything else is a
+ * case-insensitive exact match, and an invalid regex degrades to the literal).
+ *
+ * It is repeated rather than imported because that function lives in main and this file is shared
+ * (the alert EDITOR asks the same question, to caption the field honestly). The two must stay
+ * identical, and `tests/earlyWarning.test.mts` pins the equality against the real compiled matcher
+ * — the same arrangement `shared/spellLines.ts`'s RANK_TAIL_RE has with the parser's.
+ */
+export function matcherAccepts(spec: string, value: string): boolean {
+  if (spec.length >= 2 && spec.startsWith('/') && spec.endsWith('/')) {
+    try {
+      return new RegExp(spec.slice(1, -1), 'i').test(value)
+    } catch {
+      // fall through to literal, exactly as the compiler does
+    }
+  }
+  return spec.toLowerCase() === value.toLowerCase()
+}
+
+/**
+ * The break kind ONE primitive condition watches for, or null when it is not a break condition.
+ *
+ * THE `cc` KIND CARRIES BOTH HALVES and so has to be read rather than listed: the same event is
+ * the application (`a turmoil toad has been mesmerized.`) and the break (`Your Dazzle spell has
+ * worn off of a turmoil toad.`). Two things separate them, and a def only has to state either:
+ *
+ *   `refresh` — present and 'true' ONLY on the break shape. What both `breaks` templates pin.
+ *   `spell`   — the APPLICATION SENTENCE NAMES NO SPELL. It carries `candidates` and no `spell`
+ *               field at all (measured — see the probe below), and an absent field is a no-match
+ *               before the JOS-84 candidate widening is ever consulted. So a `cc` condition that
+ *               constrains `spell` can only ever fire on a break, whether or not it also says
+ *               `refresh`. That is not a nicety: the alert EDITOR keeps only the FIRST `where`
+ *               entry of a condition, so a stored `{spell, refresh}` breaks def that has been
+ *               through the dialog comes back out as `{spell}` alone — and it still fires only on
+ *               breaks, so it must still be read as one.
+ *
+ * A bare `{kind:'cc'}` with no such constraint matches the APPLICATION too and stays a
+ * landing-family def, which is what keeps JOS-216's behavior byte-for-byte for every def written
+ * before this existed.
+ */
+function breakKindOf(t: AlertTriggerPrimitive): BreakTriggerKind | null {
+  if (t.type !== 'event') return null
+  if (t.kind === 'uncharm' || t.kind === 'buffFade') return t.kind
+  if (t.kind === 'buffWearOff' || t.kind === 'buffExpired') return t.kind
+  if (t.kind !== 'cc') return null
+  const where = t.where ?? {}
+  if (where.spell !== undefined) return 'cc'
+  return where.refresh !== undefined && matcherAccepts(where.refresh, 'true') ? 'cc' : null
+}
+
+/**
+ * THE BREAK KINDS A DEF WATCHES FOR — empty when it is not a break-family def at all.
+ *
+ * EVERY condition must be a break condition, and there must be at least one. A def with a `raw` or
+ * an 'app' condition is therefore never break-family, which is the honest answer twice over: this
+ * file cannot build a hypothetical LOG LINE for a pattern to match (the probe below builds a
+ * projected sentence, deliberately not a log-shaped one), and a renderer-evaluated app signal never
+ * sees a LogEvent at all. A mixed composite (one landing condition, one break condition) keeps
+ * JOS-216's landing behavior rather than half of each.
+ *
+ * The `wearsOff` suggestion template is the reason this returns a LIST: it is an `any` composite
+ * over `buffExpired` + `buffWearOff` (JOS-103 made it one, because the derived event can never
+ * fire for a buff somebody else cast on you), and both halves have to be probed.
+ */
+export function breakTriggerKinds(trigger: AlertTrigger): BreakTriggerKind[] {
+  const conds: AlertTriggerPrimitive[] = 'conditions' in trigger ? trigger.conditions : [trigger]
+  const out: BreakTriggerKind[] = []
+  for (const c of conds) {
+    const kind = breakKindOf(c)
+    if (kind === null) return []
+    if (!out.includes(kind)) out.push(kind)
+  }
+  return out
+}
+
+/**
+ * Every spell name a running row could be announced under, as the wear-off line would print it.
+ *
+ * An unambiguous row answers to its own name; a FAMILY row (JOS-84: one landing sentence, four
+ * spells) answers to every candidate, because the log itself has not said which one it is and the
+ * break line will name exactly one of them. Ranks are stripped (see `timerNameBase`) and the list
+ * is deduped case-insensitively, first spelling wins.
+ */
+export function rowBreakNames(row: BuffTimerRow): string[] {
+  const raw = row.candidates && row.candidates.length > 0 ? row.candidates : [row.name]
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const n of raw) {
+    const base = timerNameBase(n)
+    const key = base.toLowerCase()
+    if (base === '' || seen.has(key)) continue
+    seen.add(key)
+    out.push(base)
+  }
+  return out
+}
+
+/** One hypothetical break, ready to be offered to a def's own matcher. */
+export interface BreakProbe {
+  /** The event a break of this row would be, as the parser would emit it. */
+  ev: LogEvent
+  /** The spell name this probe stands for — what the firing SAYS, and what the break line prints. */
+  spell: string
+}
+
+/**
+ * WHAT A BREAK OF THIS ROW WOULD LOOK LIKE — the seam, stated in one place.
+ *
+ * A def's `where` is written against the shape of the BREAK EVENT, so the only honest way to ask
+ * "would this def announce the break of this row" is to ask the def's own matcher, with the event
+ * it was written for. Re-implementing the question — "compare the def's spell key to the row's
+ * name" — would be a second matcher beside the real one, which is exactly the two-models drift
+ * world-model law 4 exists to forbid: it would have to re-derive regex specs, the candidate
+ * widening and the field-absence rule, and it would drift the first time any of them changed.
+ *
+ * SO THE PROBE IS A FABRICATION, AND HERE IS ITS ENTIRE BLAST RADIUS. It is built here, handed to
+ * `AlertsModule.matches`, and dropped. It is never emitted on the bus, never folded by any module,
+ * never counted, and never learned from. Nothing downstream can mistake it for a line the game
+ * printed, because `raw` is deliberately NOT log-shaped: it is a projection sentence ("Dazzle on a
+ * turmoil toad is about to end"), which is also what the recent-fires panel shows for such a
+ * firing — the truth, rather than a sentence the log never carried (AGENTS.md: never hand-author a
+ * shape no real log has printed).
+ *
+ * THE FIELDS ARE THE MEASURED ONES, per kind — verified by driving every family through the real
+ * parser in tests/earlyWarning.test.mts:
+ *   cc          `{ mob, spell, refresh:true }`  — no candidates: the BREAK shape carries none.
+ *   uncharm     `{ mob, spell }`                — no refresh; a charm break never carries one.
+ *   buffFade    `{ spell, target }`             — `target` omitted for a row on you.
+ *   buffWearOff `{ spell, candidates, target:'self' }` — self rows only; the field is typed 'self'.
+ *   buffExpired `{ spell, target }`             — 'self' for a self row, else the entity's name.
+ *
+ * A kind that cannot describe this row yields NOTHING (a `cc` break names a mob, so it can say
+ * nothing about a buff on you), which is a def that arms no warning and still fires at the break.
+ */
+export function breakProbes(kind: BreakTriggerKind, row: BuffTimerRow, ts: number): BreakProbe[] {
+  const self = row.group === 'self'
+  const target = row.target ?? ''
+  if (!self && target === '') return []
+  return rowBreakNames(row).flatMap((spell) => {
+    const base = { ts, seq: 0, raw: breakProbeText(row, spell) }
+    const ev = probeEvent(kind, { self, target, spell, base })
+    return ev ? [{ ev, spell }] : []
+  })
+}
+
+/** The per-kind shape, split out so `breakProbes` stays one idea (and under the depth ceiling). */
+function probeEvent(
+  kind: BreakTriggerKind,
+  p: { self: boolean; target: string; spell: string; base: { ts: number; seq: number; raw: string } }
+): LogEvent | null {
+  const { self, target, spell, base } = p
+  if (kind === 'cc') return self ? null : { kind, ...base, mob: target, spell, refresh: true }
+  if (kind === 'uncharm') return self ? null : { kind, ...base, mob: target, spell }
+  if (kind === 'buffFade') return { kind, ...base, spell, ...(self ? {} : { target }) }
+  if (kind === 'buffWearOff') {
+    return self ? { kind, ...base, spell, candidates: [spell], target: 'self' } : null
+  }
+  return { kind, ...base, spell, target: self ? 'self' : target }
+}
+
+/**
+ * The projected sentence a break-armed firing carries as its `matchedText`.
+ *
+ * NOT a log line, on purpose (see `breakProbes`): this firing is a projection off the timer model,
+ * and the recent-fires panel says so. It still names the two things the user needs to tell one
+ * warning from another — the spell, and which mob it is on.
+ */
+export function breakProbeText(row: BuffTimerRow, spell: string): string {
+  return row.group === 'self'
+    ? `${spell} is about to wear off`
+    : `${spell} on ${row.target ?? 'unknown target'} is about to end`
+}
+
+/**
+ * THE IDENTITY A WARNING AND ITS BREAK SHARE — `<entity>|<spell family>`, folded on both sides.
+ *
+ * It is what lets the at-break firing be suppressed for a landing whose warning already spoke,
+ * WITHOUT the alerts module having to re-derive a timer row id from a break line (that id scheme
+ * belongs to `buildTimerRows`, and a second copy of it here is the drift this file is trying not
+ * to be). A row contributes one key per name it answers to; an event contributes one per name it
+ * could be, and any overlap is the same hold.
+ *
+ * 'self' is the entity key for a row on the player — the model's own word for it, and the one
+ * `buffWearOff`/`buffExpired` already spell in their `target` field.
+ */
+export function breakIdentityKeys(entityKey: string, names: readonly string[]): string[] {
+  const out: string[] = []
+  for (const n of names) {
+    const key = `${entityKey}|${timerNameKey(n)}`
+    if (!out.includes(key)) out.push(key)
+  }
+  return out
+}
+
+/** The identity keys a live row would be broken under. */
+export function rowBreakIdentity(row: BuffTimerRow): string[] {
+  const entity = row.group === 'self' ? 'self' : (row.targetKey ?? row.target ?? '')
+  return breakIdentityKeys(entity, rowBreakNames(row))
 }

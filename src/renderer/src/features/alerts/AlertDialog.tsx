@@ -33,7 +33,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import type { AlertDef, SoundPack } from '@shared/types'
 import { captureNamesIn } from '@shared/alertCaptures'
-import { MAX_EARLY_WARN_SEC } from '@shared/earlyWarning'
+import { MAX_EARLY_WARN_SEC, breakTriggerKinds } from '@shared/earlyWarning'
 import { blankCondition, type CombineMode, type ConditionDraft } from './conditionDraft'
 import {
   type AlertForm,
@@ -222,6 +222,18 @@ function VolumeCooldownSection({ f }: { f: AlertForm }): JSX.Element {
  * MOUSEOVER, two short sentences, because it is a thing to know once rather than a thing to read on
  * every visit. The one caption below it states what the number changes and nothing else.
  */
+/**
+ * True when this alert's trigger is an ENDING rather than a landing (JOS-235) — asked of the SAME
+ * classifier main schedules by, over the trigger the form would save right now.
+ *
+ * It changes one caption, and the caption was a lie for exactly these defs: a mez-break alert with
+ * an offset does not fire "instead of when it lands" (it never fired on a landing), and the thing
+ * a user needs told is the half that is new — an early break still speaks at the break.
+ */
+function isBreakForm(f: AlertForm): boolean {
+  return breakTriggerKinds(triggerFromForm(f.mode, f.conditions)).length > 0
+}
+
 function EarlyWarnSection({ f }: { f: AlertForm }): JSX.Element {
   return (
     <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -247,7 +259,9 @@ function EarlyWarnSection({ f }: { f: AlertForm }): JSX.Element {
       </span>
       {f.earlyWarnSec > 0 && (
         <Typography variant="caption" color="text.secondary" sx={{ flexBasis: '100%' }}>
-          Fires {f.earlyWarnSec}s before it is due to wear off, instead of when it lands.
+          {isBreakForm(f)
+            ? `Fires ${String(f.earlyWarnSec)}s before it is due to end. If it ends sooner than that, you still hear the alert then.`
+            : `Fires ${String(f.earlyWarnSec)}s before it is due to wear off, instead of when it lands.`}
         </Typography>
       )}
     </Stack>
