@@ -482,6 +482,15 @@ test('full-log replay: progression identities hold and the epoch floor is respec
   //    which is what stops the number tracking how the owner spent his evening.
   //    MEASURED 2026-08-12 over 1.61M lines: 5443 payable / 5433 paid = 1.0018, with 14 contended
   //    (0.26%); every 500-kill window in the whole log reads between 0.9940 and 1.0060.
+  //
+  //    AND IT WAS MUTATION-TESTED, because a tripwire that never trips is decoration. Four breaks
+  //    were introduced into src/main/modules/progression.ts, run against the real log, reverted:
+  //      • every third-party kill credited  → contended 64/5705 (1.12%)   — the contention clause
+  //      • every self kill counted twice    → payable/paid 9628/5433       — the ratio
+  //      • the at-cap experience line pushed to the column twice → 5443/6334 — the ratio, downward
+  //      • self kills counted twice ONLY after 2026-08-11 → recent 500/476 — the RECENT clause
+  //        alone; the aggregate read 1.0070 and contention 0.77%, both comfortably inside their
+  //        bounds. That is the whole argument for the recency restatement, measured.
   assert.equal(r.kills, snap.killTs.length, 'the range query reports the whole credited column')
   assert.equal(r.expSamples, snap.expTs.length, 'and the whole experience column')
   const pairing = expPairing(snap)
