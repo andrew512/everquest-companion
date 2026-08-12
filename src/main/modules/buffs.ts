@@ -106,6 +106,7 @@ import type { BuffsDelta, BuffsSnap, MessageOverlay } from '../../shared/types'
 import { idKey } from '../log/parser'
 import type { SpellDb } from '../data/spellDb'
 import { OverlayMining } from './buffsMining'
+import type { OverlayRegister, OverlaySeed } from '../data/messageOverlay'
 import { charmedPetDiesOnDeathLine } from '../combat/entityRules'
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
 import { admitLanding, type LandingContext } from './buffLanding'
@@ -179,7 +180,7 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
 
   constructor(
     db?: SpellDb,
-    seedOverlays?: (MessageOverlay | null | undefined)[],
+    seedOverlays?: readonly OverlaySeed[],
     emitDerived?: (ev: LogEvent, live: boolean) => void
   ) {
     this.stats = new SpellStats(db)
@@ -235,9 +236,28 @@ export class BuffsModule implements EqModule<BuffsSnap, BuffsDelta> {
     this.emitDerived(ev, this.curLive)
   }
 
-  /** Serialize the current learned overlay (for debounced persistence in index.ts). */
+  /** Serialize the current learned overlay (the served/audit view). */
   overlaySnapshot(): MessageOverlay {
     return this.mining.build()
+  }
+
+  /**
+   * The overlay REGISTER — per-source counts, for debounced persistence (session.ts, index.ts).
+   * Deliberately not `overlaySnapshot()`: what gets written must be attributable to the log that
+   * produced it, or the next launch's fold adds its own output back on top (JOS-231).
+   */
+  overlayRegister(): OverlayRegister {
+    return this.mining.register()
+  }
+
+  /**
+   * A NEW LOG IS ABOUT TO BE FOLDED FROM ITS FIRST BYTE (JOS-231). Mining is game knowledge and
+   * survives `reset()` on purpose — a spell's cast messages are the same for every character —
+   * but the counts THIS log accounts for are about to be re-stated in full, so its bucket is
+   * discarded rather than added to. Called from `session.resetWorldFor`, before the scan.
+   */
+  beginOverlaySource(key: string): void {
+    this.mining.beginSource(key)
   }
 
   reset(): void {

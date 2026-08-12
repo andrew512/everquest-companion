@@ -24,7 +24,7 @@
 
 import { installSpellDb } from '../log/rulesets'
 import { loadSpellDb, applyOverlayCorrections, type SpellDb } from '../data/spellDb'
-import { MessageOverlayMiner } from '../data/messageOverlay'
+import { MessageOverlayMiner, type OverlaySeed } from '../data/messageOverlay'
 import { ComboModule } from './combo'
 import { RosterModule } from './roster'
 import { LootModule } from './loot'
@@ -45,7 +45,7 @@ import { EventFeedModule, type EventFeedDeps } from './eventFeed'
 import type { EqModule } from './types'
 import { buildTimerRows } from '../../shared/buffTimers'
 import type { LogEvent } from '../../shared/logEvents'
-import type { AlertDef, MessageOverlay } from '../../shared/types'
+import type { AlertDef } from '../../shared/types'
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
 import type { RespawnPrefs } from '../../shared/respawn'
 
@@ -55,11 +55,13 @@ export interface ModuleWiringDeps extends ConsiderDeps, EventFeedDeps {
   /** The user's alert definitions (the store owns them; the module is kept in sync by setDefs). */
   alertDefs?: AlertDef[]
   /**
-   * Observed-message overlays to seed the miner with, in merge order: the committed baseline, then
-   * the user's persisted one. Both are additive and both are optional — a caller with no userData
-   * (the bench) passes the baseline alone and says so.
+   * Observed-message counts to seed the miner with, in merge order: the committed baseline, then
+   * the user's persisted buckets. Each carries the SOURCE KEY its counts belong to (JOS-231) —
+   * that is what lets a re-fold of a log replace its own previous contribution instead of adding
+   * to it. All are additive and all are optional — a caller with no userData (the bench) passes
+   * the baseline alone and says so.
    */
-  overlays?: (MessageOverlay | null | undefined)[]
+  overlays?: readonly OverlaySeed[]
   /**
    * Where the buffs module hands its RESOLVED `buffExpired` back (Task #47) — `bus.emitDerived` in
    * both callers, but the bus is the caller's, so the function is injected rather than the bus.
@@ -114,13 +116,17 @@ export interface ModuleWiring {
  * Pinzarn's real message) is only recognized once the corrections are in the cast-on-you table.
  * A fold that skipped this step would parse a different event stream and time a different program.
  */
-function effectiveSpellDb(overlays: readonly (MessageOverlay | null | undefined)[]): {
+function effectiveSpellDb(overlays: readonly OverlaySeed[]): {
   db: SpellDb
   corrections: number
 } {
   const db = loadSpellDb()
   const seedMiner = new MessageOverlayMiner(db.byKey)
-  for (const ov of overlays) seedMiner.merge(ov)
+  // EVERY seed, the persisted buckets included — the corrections a user's OWN log has earned reach
+  // the parser through here and nowhere else (this runs before the fold that would re-derive them,
+  // and nothing recomputes them afterwards). JOS-231 changed how counts are FILED, never which of
+  // them inform the DB.
+  for (const seed of overlays) seedMiner.merge(seed.counts, seed.key)
   const corrections = applyOverlayCorrections(db, seedMiner.deriveLandingCorrections())
   installSpellDb(db)
   return { db, corrections }

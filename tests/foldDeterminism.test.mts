@@ -54,8 +54,9 @@ import type { MessageOverlay } from '../src/shared/types'
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'e2e-combat.log')
 
-/** The committed baseline overlay — `data/overlayPersistence.ts` needs Electron and cannot load here. */
-const BASELINE = baselineJson as unknown as MessageOverlay
+/** The committed baseline overlay, as a keyed seed (JOS-231) — `data/overlayPersistence.ts` needs
+ *  Electron and cannot load here. */
+const BASELINE = { key: 'baseline', counts: baselineJson as unknown as MessageOverlay }
 
 /** The character every fixture in this repo was cut from. */
 const CHARACTER = { name: 'Primitive', server: 'freeport', logPath: '' }
