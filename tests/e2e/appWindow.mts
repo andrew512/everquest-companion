@@ -101,10 +101,10 @@ export async function overlayWindow(
  * is the real user path — clicking the X — and it is the only one under which the last record of a
  * session is written.
  *
- * IT LIVES HERE, beside `launchApp`, since JOS-208 phase 3 needed it too: the fold-restart spec has
- * to read the shadow verifier's counters out of the ring the closing session writes, and a second
- * copy of a lesson this expensive is a second copy to lose. (It was tests/e2e/telemetry.e2e.mts's
- * private helper first; that spec now imports this one, unchanged.)
+ * IT LIVES HERE, beside `launchApp`, rather than in the one spec that first needed it: a lesson
+ * this expensive should have exactly one copy, and any spec that asserts about what a session
+ * WROTE ON THE WAY OUT needs this exit rather than Playwright's. (It was
+ * tests/e2e/telemetry.e2e.mts's private helper first; that spec now imports this one, unchanged.)
  *
  * Best effort on both halves: a launch that has already gone is not an error here, and the caller's
  * own `close()` still runs afterwards (it swallows "already closed").

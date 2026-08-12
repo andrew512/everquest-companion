@@ -77,9 +77,9 @@
 //
 // WHAT IS NOT DECIDED HERE. Whether a tight below-floor cluster may overrule the floor is a change
 // to THE ONE ESTIMATOR — JOS-117 ruling 6, owner-confirmed — and it would move the number the app
-// draws for at least eight spells on the owner's own log. That is an owner ruling and a
-// FOLD_SEMANTICS bump, not an executor's call, so this commit changes no behavior at all: it
-// proves the mechanism and leaves the estimator exactly as it was.
+// draws for at least eight spells on the owner's own log. That is an owner ruling, not an
+// executor's call, so this commit changes no behavior at all: it proves the mechanism and leaves
+// the estimator exactly as it was.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
