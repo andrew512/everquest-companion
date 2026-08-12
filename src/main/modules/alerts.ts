@@ -35,10 +35,13 @@
 // length and the number of groups; nothing downstream is trusted to do that for us.
 
 import type { EqModule } from './types'
+import { EarlyWarnings, earlyWarnSubject, type EarlyWarnDue } from './alertsEarlyWarning'
 import { idKey } from '../log/parseCommon'
 import { S, validate, type FoldSchema } from '../foldCache/schema'
 import type { FoldCheckpointable } from '../foldCache/serialize'
 import { harvestCaptures } from '../../shared/alertCaptures'
+import type { BuffTimerRow } from '../../shared/buffTimers'
+import { normalizeEarlyWarnSec } from '../../shared/earlyWarning'
 import type { LogEvent } from '../../shared/logEvents'
 import type {
   AlertDef,
@@ -491,10 +494,28 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
   private poisonSlowSeen: PoisonSlowRecency | null = null
   /** true when `poisonSlowSeen` advanced since the last flush (delta payload). */
   private poisonSlowDirty = false
+  /**
+   * THE ARMED EARLY WARNINGS (JOS-216) — the alerts whose fire has been MOVED to N seconds before a
+   * tracked debuff's estimated end. Its whole state machine, and why an arm resolves on the next
+   * tick rather than at the match, is in alertsEarlyWarning.ts.
+   */
+  private early = new EarlyWarnings()
 
   /** Replace the live alert set (called by main after load + every save/delete). */
   setDefs(defs: AlertDef[]): void {
     this.compiled = defs.map(compileAlert)
+  }
+
+  /**
+   * Where the early-warning offset reads its estimated ends from (JOS-216) — the PUBLIC timer
+   * projection, `buildTimerRows(buffs, buffTimers)`, injected by modules/wiring.ts.
+   *
+   * A seam rather than a direct dependency because this module is registered BEFORE the two it
+   * would have to reach for, and because the rows are the one output both timer overlays already
+   * draw: consuming them is what keeps this feature from growing a duration model of its own.
+   */
+  setTimerRows(rows: () => readonly BuffTimerRow[]): void {
+    this.early.setRowSource(rows)
   }
 
   /** The defs currently loaded (for snapshot()). */
@@ -514,6 +535,9 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
     this.castPending = new Map()
     this.poisonSlowSeen = null
     this.poisonSlowDirty = false
+    // A pending warning is about a debuff on a mob this character was fighting; the next character
+    // is not fighting it, and the replay that follows will re-arm nothing (a replay never fires).
+    this.early.reset()
   }
 
   /**
@@ -572,8 +596,6 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
       const match = this.matches(c, ev)
       if (match == null) continue
       const key = cooldownKey(c.def, ev)
-      if (this.onCooldown(key, c.def, ev.ts)) continue
-      this.noteFire(key, ev.ts)
       if (!spellResolved) {
         base = firingSpell(ev)
         spellResolved = true
@@ -587,9 +609,50 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta>, FoldChec
       // so the delta stays byte-identical for them. The values are already sanitized and capped
       // (shared/alertCaptures.ts `harvestCaptures`); nothing downstream re-derives them.
       if (match.captures) fired.captures = match.captures
+      // THE OFFSET MOVES THIS FIRE; IT DOES NOT ADD A SECOND ONE (JOS-216). An alert with an early
+      // warning says nothing when its trigger matches — the match ARMS a warning against the timer
+      // row this landing produces, and the firing built above is made later, N seconds before that
+      // row's estimated end. The cooldown is deliberately NOT spent here: the clock belongs to the
+      // sound, and no sound has been made yet.
+      const sec = normalizeEarlyWarnSec(c.def.earlyWarnSec)
+      if (sec !== undefined) {
+        const names = [...(spell === undefined ? [] : [spell]), ...spellCandidateNames(ev)]
+        this.early.arm({ sec, cooldownKey: key, subject: earlyWarnSubject(ev, names), ts: ev.ts, fired })
+        continue
+      }
+      if (this.onCooldown(key, c.def, ev.ts)) continue
+      this.noteFire(key, ev.ts)
       this.pending.push(fired)
       this.record(c.def.id, ev.ts, match.text)
     }
+  }
+
+  /**
+   * The wall-clock heartbeat (~1×/sec while the LIVE tail runs, never during replay). It exists for
+   * ONE thing: the early-warning offset, whose whole subject is a deadline that arrives while the
+   * log is idle — which is exactly when a player is watching a mez run down.
+   */
+  onTick(nowMs: number): void {
+    for (const due of this.early.tick(nowMs)) this.fireWarning(due, nowMs)
+  }
+
+  /**
+   * Make an early warning's firing, if the alert behind it still wants it.
+   *
+   * The def is re-read rather than trusted: a warning can be armed for a minute, and an alert the
+   * user deleted or switched off in the meantime must not speak. The cooldown is spent HERE, on the
+   * clock the ARMING event chose (so `cooldownScope:'target'` still means one clock per mob), and
+   * `seq` is bumped by hand — a tick advances no log seq, and `useModule` would drop the delta as a
+   * duplicate (JOS-87; `appFired` bumps it for the same reason).
+   */
+  private fireWarning(due: EarlyWarnDue, nowMs: number): void {
+    const def = this.compiled.find((c) => c.def.id === due.fired.alertId)?.def
+    if (!def?.enabled) return
+    if (this.onCooldown(due.cooldownKey, def, nowMs)) return
+    this.noteFire(due.cooldownKey, nowMs)
+    this.seq += 1
+    this.pending.push({ ...due.fired, ts: nowMs })
+    this.record(def.id, nowMs, due.fired.matchedText)
   }
 
   /**
