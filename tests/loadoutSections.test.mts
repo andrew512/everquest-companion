@@ -28,6 +28,8 @@ import { recordKill } from '../src/main/log/reducers'
 import { TIER_OPEN_WORLD, type KillMap } from '../src/shared/kills'
 import { allStatuses } from '../src/renderer/src/features/bosses/bossStatus'
 import { loadoutGroups, loadoutKey } from '../src/renderer/src/features/bosses/loadoutGroups'
+import { lockoutWindow } from '../src/renderer/src/features/bosses/lockout'
+import { defeatedThisWeek } from '../src/renderer/src/features/bosses/rosterFilter'
 import { intervalProvenance } from '../src/renderer/src/features/profiles/ClassComboLabels'
 import type { ClassAbbr, ComboInterval } from '../src/shared/classCombo'
 import type { RaidTarget } from '../src/shared/types'
@@ -188,6 +190,87 @@ test('a merged section states the HULL of its members level ranges', () => {
   // …and a section nothing was ever observed for says null, not 0.
   const [none] = loadoutGroups([interval('ci1', 0, null, { classes: IRE_TRIO })], allStatuses([early], kills))
   assert.deepEqual({ levelLo: none.levelLo, levelHi: none.levelHi }, { levelLo: null, levelHi: null })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TOOLBAR'S FILTER, AT CARD GRAIN (JOS-237)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The roster's "Defeated only" switch means "defeated THIS WEEK" on the week view, and the view
+// applies that predicate to whole targets. Sectioning by loadout then splits a target into one
+// card per tier run — so a boss cleared at d0 this week and at d4 last month passes the target
+// filter on the strength of the d0 run and would drag its d4 card onto the screen under whichever
+// loadout was running last month: grey, chipped `open`, beneath a header saying "defeated this
+// week". `keep` is the same predicate applied where the cards are, which is the only grain at
+// which the answer is true of what is drawn.
+
+const HOUR = 3_600_000
+/** The week the lockout view would be standing in: Tue Aug 04 2026 08:00 Pacific → Tue Aug 11. */
+const WEEK = lockoutWindow(Date.UTC(2026, 7, 5, 17))
+
+test('a card whose OWN kills took no lockout is dropped, even when its target passes', () => {
+  const kills: KillMap = {}
+  // One boss, two runs: d4 three days before the reset, d0 two hours after it.
+  recordKill(kills, {
+    key: 'lord of ire',
+    display: 'Lord of Ire',
+    tier: 4,
+    ts: WEEK.start - 3 * 24 * HOUR,
+    credited: true
+  })
+  recordKill(kills, {
+    key: 'lord of ire',
+    display: 'Lord of Ire',
+    tier: 0,
+    ts: WEEK.start + 2 * HOUR,
+    credited: true
+  })
+  const intervals = [
+    interval('ci1', WEEK.start - 30 * 24 * HOUR, WEEK.start, { classes: IRE_TRIO }),
+    interval('ci2', WEEK.start, null, { classes: LATER_TRIO })
+  ]
+  const list = allStatuses([LORD_OF_IRE], kills)
+
+  // The TARGET is defeated this week — the d0 clear is inside the window — so the view keeps it.
+  const isThisWeek = defeatedThisWeek(WEEK)
+  assert.equal(isThisWeek(list[0]), true, 'the roster-level filter lets this target through')
+
+  const unfiltered = loadoutGroups(intervals, list)
+  assert.deepEqual(
+    unfiltered.map((g) => g.rows[0].s.bestTier),
+    [4, 0],
+    'with the switch off, both runs draw their own card under their own loadout'
+  )
+
+  const filtered = loadoutGroups(intervals, list, isThisWeek)
+  assert.equal(filtered.length, 1, 'the section whose only card is last month draws no header at all')
+  assert.equal(filtered[0].interval?.id, 'ci2', 'the surviving section is the one this week ran')
+  assert.deepEqual(filtered[0].rows.map((r) => r.s.bestTier), [0], 'and it is the d0 card')
+  assert.equal(
+    filtered[0].rows[0].whole.count,
+    2,
+    'the card still opens the mob page on the WHOLE record - filtering hides cards, not kills'
+  )
+})
+
+test('a card is judged on the runs it MERGED, not on one of them', () => {
+  // Both runs under the same trio, so the section merges them into one card (the JOS-236 rule
+  // above). That card claims a kill inside the window, so it stands - and it would stand even if
+  // its other run were years old, because the merged card really did take a lockout this week.
+  const kills: KillMap = {}
+  recordKill(kills, { key: 'lord of ire', display: 'Lord of Ire', tier: 4, ts: WEEK.start - 400 * 24 * HOUR, credited: true })
+  recordKill(kills, { key: 'lord of ire', display: 'Lord of Ire', tier: 0, ts: WEEK.start + 2 * HOUR, credited: true })
+  const one = [interval('ci1', 0, null, { classes: IRE_TRIO })]
+  const [section] = loadoutGroups(one, allStatuses([LORD_OF_IRE], kills), defeatedThisWeek(WEEK))
+  assert.equal(section.rows.length, 1)
+  assert.equal(section.rows[0].s.bestTier, 4, 'and it still wears the best tier this loadout took')
+})
+
+test('a predicate nothing satisfies leaves no sections rather than empty ones', () => {
+  const kills: KillMap = {}
+  const mob = killedAt(kills, 'A mob', 1, 1_000)
+  const groups = loadoutGroups(thereAndBack(), allStatuses([mob], kills), () => false)
+  assert.deepEqual(groups, [], 'a header is a statement about cards; with none there is nothing to say')
 })
 
 test('kills no interval covers keep their own section and never merge into a loadout', () => {

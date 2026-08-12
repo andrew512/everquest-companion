@@ -195,10 +195,18 @@ const UNKNOWN_KEY = 'unknown'
  *
  * Sections come out in the order their first kill did, and an interval with no kills under it
  * draws no section at all: both were true before the merge and stay true.
+ *
+ * `keep` (JOS-237) is the toolbar's "defeated" test, applied to the card AFTER the merge — the
+ * only moment a card's own kill set exists. It runs at card grain deliberately: the view has
+ * already applied the same predicate to whole targets, and a target kept because ONE of its runs
+ * qualifies must not smuggle its other runs onto the screen (the week view's case — a boss
+ * cleared at d0 this week and at d4 last month, sectioned under two loadouts). A section whose
+ * every card is filtered out draws no header, because a header states something about cards.
  */
 export function loadoutGroups(
   intervals: readonly ComboInterval[],
-  list: readonly TargetStatus[]
+  list: readonly TargetStatus[],
+  keep?: (card: TargetStatus) => boolean
 ): LoadoutGrouping[] {
   const byKey = new Map<string, Pending>()
   const ordered: Pending[] = []
@@ -213,16 +221,21 @@ export function loadoutGroups(
     if (group.interval) pending.members.push(group.interval)
     pending.rows.push(...group.rows)
   }
-  return ordered.map((pending) => {
+  const out: LoadoutGrouping[] = []
+  for (const pending of ordered) {
     const members = [...pending.members].sort((a, b) => a.startTs - b.startTs)
-    return {
+    // Re-sorted because a section's runs can come from intervals that are not neighbours, and
+    // the card order (first appearance of each target) should still read oldest kill first.
+    const cards = cardsFor([...pending.rows].sort((a, b) => a.ts - b.ts))
+    const rows = keep ? cards.filter((c) => keep(c.s)) : cards
+    if (rows.length === 0) continue
+    out.push({
       key: pending.key,
       interval: speaker(members),
       intervals: members,
       ...levelHull(members),
-      // Re-sorted because a section's runs can come from intervals that are not neighbours, and
-      // the card order (first appearance of each target) should still read oldest kill first.
-      rows: cardsFor([...pending.rows].sort((a, b) => a.ts - b.ts))
-    }
-  })
+      rows
+    })
+  }
+  return out
 }
