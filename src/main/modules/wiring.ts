@@ -43,6 +43,7 @@ import { BuffTimersModule } from './buffTimers'
 import { ConsiderModule, type ConsiderDeps } from './consider'
 import { EventFeedModule, type EventFeedDeps } from './eventFeed'
 import type { EqModule } from './types'
+import { buildTimerRows } from '../../shared/buffTimers'
 import type { LogEvent } from '../../shared/logEvents'
 import type { AlertDef, MessageOverlay } from '../../shared/types'
 import type { BuffTrustPrefs } from '../../shared/buffTrust'
@@ -190,6 +191,13 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   // history and had no learner at all, so a mez could never be taught its real duration and the
   // two halves could disagree about whose spell had just landed.
   const buffTimers = new BuffTimersModule(buffs.castAnchors(), buffs.spellStats())
+  // THE EARLY-WARNING OFFSET READS THE TIMER PROJECTION, AND NOTHING ELSE (JOS-216). An alert may
+  // fire N seconds before a tracked debuff's estimated end; the end it counts back from is the very
+  // row the debuffs overlay draws — `buildTimerRows` over these two snapshots — so the feature adds
+  // no duration tracking of its own and can never disagree with the bar the user is looking at.
+  // A LAZY reader, not a subscription: the alerts module calls it at most once per heartbeat, and
+  // only while a warning is actually armed (alertsEarlyWarning.ts `idle`).
+  alerts.setTimerRows(() => buildTimerRows(buffs.snapshot().state, buffTimers.snapshot().state))
   // The consider ring (Task #63): the mobs you've recently `/con`ed. It also OWNS the shared
   // own-loot index's lifetime — it folds every loot event into `ownLoot` and resets it on
   // epoch/character switch.

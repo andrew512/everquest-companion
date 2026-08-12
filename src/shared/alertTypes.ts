@@ -318,6 +318,26 @@ export interface AlertDef {
    * round-trips the key untouched).
    */
   alwaysPlay?: boolean
+  /**
+   * THE EARLY WARNING OFFSET, IN SECONDS (JOS-216) — "warn me 10 seconds before the mez drops".
+   *
+   * It MOVES this alert's one fire; it does not add a second one. A def with an offset does not
+   * sound when its trigger matches: the match ARMS a warning against the timer row that landing
+   * produced, and the alert fires `earlyWarnSec` seconds before that row's estimated end. One
+   * landing is one warning, and a debuff that ends early (a break line, the mob dying, a zone)
+   * takes its pending warning with it — the row is gone, so there is nothing left to warn about.
+   *
+   * IT CONSUMES THE EXISTING ESTIMATE AND TRACKS NOTHING ITSELF. The end it counts back from is
+   * `shared/buffTimers.ts buildTimerRows`' countdown row — the same number the debuffs overlay
+   * draws — so a landing the model can state no duration for arms nothing at all rather than
+   * warning against an invented one (world-model law 1; the rule and its honest limits are in
+   * shared/earlyWarning.ts, the evaluator is main/modules/alerts.ts).
+   *
+   * Bounded by MIN/MAX_EARLY_WARN_SEC. Absent ⇒ fire on the trigger, which is what every def
+   * written before this existed already meant — so it is additive, needs no store migration, and
+   * an ordinary alert still saves byte-identically (import dedupe hashes these fields).
+   */
+  earlyWarnSec?: number
 }
 
 /** Global sound preferences (main-owned, persisted). */

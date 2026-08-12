@@ -391,7 +391,17 @@ export function timerReading(row: BuffTimerRow, nowMs: number): TimerReading {
 /** Rank tail (mirrors parser.spellCanonKey — kept local so `shared/` never reaches into main;
  *  the same trick `data/spellDb.ts canonKey` already uses for the same reason). */
 const RANK_TAIL_RE = / (?:I|II|III|IV|V|VI|VII|VIII|IX|X)$/i
-function nameKey(name: string): string {
+
+/**
+ * A row's spell name folded to its FAMILY: rank suffix stripped, case-folded.
+ *
+ * EXPORTED for `shared/earlyWarning.ts` (JOS-216), which has to compare a row's name against the
+ * names an arming log line could have been — and those two come from different lines of the log
+ * (the row's from the ranked CAST line, the event's from a landing sentence that carries no rank),
+ * so the comparison is only meaningful under this fold. It is the same key this file's own row ids
+ * are built from, which is the point of sharing it rather than writing a third copy.
+ */
+export function timerNameKey(name: string): string {
   return name.trim().replace(RANK_TAIL_RE, '').trim().toLowerCase()
 }
 
@@ -422,7 +432,7 @@ function ccRow(h: CcHold): BuffTimerRow {
   const spell = h.spell
   const family = h.candidates.length > 0 ? h.candidates.join(' / ') : 'Crowd control'
   return {
-    id: `cc|${h.key}|${spell != null ? nameKey(spell) : h.candidates.map(nameKey).join('+')}`,
+    id: `cc|${h.key}|${spell != null ? timerNameKey(spell) : h.candidates.map(timerNameKey).join('+')}`,
     kind: 'cc',
     name: spell ?? family,
     group: 'target',
@@ -473,7 +483,7 @@ function buffRowExtras(b: ActiveBuff): Partial<BuffTimerRow> {
 function buffRow(b: ActiveBuff): BuffTimerRow {
   const targetKey = b.self ? undefined : b.target != null ? entityKeyOf(b.target) : 'unknown'
   return {
-    id: `${b.self ? 'self' : 'target'}|${targetKey ?? 'self'}|${nameKey(b.spell)}`,
+    id: `${b.self ? 'self' : 'target'}|${targetKey ?? 'self'}|${timerNameKey(b.spell)}`,
     kind: b.cls,
     name: b.spell,
     group: b.self ? 'self' : 'target',
@@ -496,8 +506,8 @@ function buffRow(b: ActiveBuff): BuffTimerRow {
 function endedByCc(b: ActiveBuff, ends: readonly CcEnd[]): boolean {
   if (b.self || b.target == null) return false
   const key = entityKeyOf(b.target)
-  const spell = nameKey(b.spell)
-  return ends.some((e) => e.key === key && e.ts >= b.startedTs && (e.spell == null || nameKey(e.spell) === spell))
+  const spell = timerNameKey(b.spell)
+  return ends.some((e) => e.key === key && e.ts >= b.startedTs && (e.spell == null || timerNameKey(e.spell) === spell))
 }
 
 /**
@@ -536,13 +546,13 @@ export function buildTimerRows(buffs: BuffsSnap, timers: BuffTimersSnap): BuffTi
   // `<mob> has been …` siblings become holds. Where both exist for one (mob, spell), the HOLD
   // wins — it is the half that knows about break lines.
   const heldBySpell = new Set(
-    timers.holds.filter((h) => h.spell != null).map((h) => `${h.key}|${nameKey(h.spell ?? '')}`)
+    timers.holds.filter((h) => h.spell != null).map((h) => `${h.key}|${timerNameKey(h.spell ?? '')}`)
   )
   const rows: BuffTimerRow[] = []
   for (const b of buffs.active) {
     if (endedByCc(b, timers.ends)) continue
     const row = buffRow(b)
-    if (row.group === 'target' && heldBySpell.has(`${row.targetKey ?? ''}|${nameKey(row.name)}`)) continue
+    if (row.group === 'target' && heldBySpell.has(`${row.targetKey ?? ''}|${timerNameKey(row.name)}`)) continue
     rows.push(row)
   }
   for (const h of timers.holds) rows.push(ccRow(h))
