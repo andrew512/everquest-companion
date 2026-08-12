@@ -120,9 +120,13 @@ custom-directory normalization, startup fleet telemetry, dev restart button). La
     pin; chip filed.
   - `perf.e2e` heartbeat boundary · "a replay shorter than one heartbeat states
     NO drift figures" fails when the replay lands JUST under the beat and a tick
-    still gets counted (118 vs 125 ms both times) · 2 sightings (2026-08-11
-    phase-4 worker, 2026-08-12 JOS-230 worker — full-sweep only, green
-    standalone) · watch; ticket at 3 per this rule.
+    still gets counted (118 vs 125 ms twice, 123 vs 125 once) · 3 sightings
+    (2026-08-11 phase-4 worker, 2026-08-12 JOS-230 worker, 2026-08-12 JOS-238
+    worker — full-sweep only, green standalone) · diagnosis sharpened by the
+    JOS-229 worker: the sub-beat replay precondition holds on essentially every
+    run of this machine, so the failure is the always-on stutter probe recording
+    a tick inside the window — a tick-phase coin flip, not load · chip filed
+    (fix the phase race or gate the assertion on probe phase), per this rule.
 - **Fixtures are COMMITTED and SCRUBBED.** `tests/fixtures/*.log` is tracked
   (a `!tests/fixtures/*.log` negation under the blanket `*.log` in
   .gitignore), so CI's `npm test` runs the FULL suite; before this they were
