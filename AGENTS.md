@@ -1543,6 +1543,27 @@ If a startup-cost ticket ever comes back: measure first, and read
   name and the wear-off that used to say "Mez / root broke" now says "Slow wore off
   a mob". `NOT_A_HOLD` carries a `fires` column for exactly that reason — a row
   states which group it ends up in, so it cannot drift silently between the two.
+- **THE CALM LINE IS A ROSTER TOO — AND ROUTING OBEYS RULING 8 (JOS-213).** Pacify,
+  Soothe, Calm, Lull and the rest are `spellType: Beneficial`, so `cls` is `buff`
+  and the timer landed in the player's BUFF overlay beside their own Clarity — while
+  the thing they are watching is how long that giant stays calm, which is a mob-state
+  timer. The fix is a SECOND, orthogonal fact about the SPELL
+  (`ActiveBuff.calmsTarget`, `data/spellDb.ts spellCalmsTarget`), derived from the
+  three landing sentences spells.json groups the family by (`Someone looks less
+  aggressive.` 6 members, `Someone calms down.` 1, `Someone looks friendly.` 3) and
+  re-derived by an oracle every run, exactly like `ccSpell`/`charmSpell`. `cls` does
+  NOT change: a calm is a good thing you cast at something you are afraid of.
+  **THE CUT THAT FAILED IS THE LESSON**: routing on "the TARGET is a mob" is the
+  obvious reading of the report and reruns the error JOS-136/JOS-140 ruling 8 already
+  outlawed — `disposition: 'hostile'` means only "not you and not a pet I am currently
+  holding", so a friendly buff on somebody the model lost track of tallies hostile.
+  Two committed goldens rejected it on the spot (a `Resist Disease` from a Quick Buff
+  burst on a spider, and the owner's own `Valor` on a charmed fire giant warrior whose
+  charm line is outside the window). Nature — and now surface — comes from the spell,
+  never from the shape of the target. Fixtures: `w64-pacify-mob.log` /
+  `w65-pacify-mob-death.log` (`npm run fixtures:calm`), pinned in
+  `tests/calmLineTimers.test.mts`. A pacified mob CAN be killed, so it takes the
+  ordinary decrement-one death censor and never JOS-228's mez refusal.
 - **THE FRIEND SYSTEM ANNOUNCES NOTHING** (JOS-69, same sweep). It prints exactly
   two things: `Friends currently on EverQuest Legends:` (43× — the `/friends`
   command's own output, a header + dashed rule + a /who-style roster row, printed

@@ -357,7 +357,11 @@ export class BuffTimersModule
         // and simultaneously carries this detrimental hold, so it legitimately appears in BOTH
         // windows — a Tashani and a charm bar under DEBUFFS, a pet haste under BUFFS, one name.
         // Nothing routes by target (shared/buffTimers.ts `timerRowSurface` reads the row's kind,
-        // and the kind reads the spell's nature).
+        // and the kind reads the spell's nature). JOS-213 added ONE more question and it is a
+        // question about the spell too — does it CALM its target — so the pet haste above is still
+        // a buff, on the buffs window, on a mob's name. Routing it by the target instead is the
+        // cut of JOS-213 that two committed goldens rejected; the header of `timerRowSurface`
+        // names them.
         this.apply(ev.mob, ev.ts, undefined, ev.candidates)
         break
       case 'ccWake':

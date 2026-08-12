@@ -504,3 +504,51 @@ test('JOS-228 acceptance: killing the LAST one of the name takes the bar with it
   const { timers } = replayBuffTimers([P0, MEZ_A, KILL_B, BREAK_A, KILL_A])
   assert.deepEqual(timers.holds, [], 'the bar goes away when the mob that was holding it does')
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JOS-213 — A PACIFIED MOB CAN BE KILLED, SO THE ORDINARY DEATH CENSOR APPLIES.
+//
+// The calm line reaches the DEBUFFS window since JOS-213, and a mob timer that could not be
+// cleared by a corpse would be a bar squatting for the rest of Soothe's 150 s. It cannot take the
+// mez refusal above: that ruling rests on a hold DAMAGE BREAKS, which the log announces
+// (`<mob> has been awakened by <name>.`) before the corpse appears. A calm is not that — a
+// pacified mob is calm, not invulnerable — so the ordinary decrement-one censor is the right one,
+// and buffsInstanceRules.ts `deathCensorsOpen` has covered it since JOS-156 precisely because
+// the PACIFY family is a `cls: 'buff'` standing on a hostile.
+//
+// Fixture: w65-pacify-mob-death.log, the owner's own Lower Guk window (tests/extract-calm-
+// fixtures.mjs W65 has the hand-read). Two Soothes on `a shin ghoul knight`, two on
+// `a vampire bat`, then he kills the knight 35 s in.
+
+const W65 = 'w65-pacify-mob-death.log'
+const BEFORE_KNIGHT_DIES = tsOf('[Mon Jul 20 19:44:54 2026] x')
+const AFTER_KNIGHT_DIES = tsOf('[Mon Jul 20 19:44:55 2026] You have slain a shin ghoul knight!')
+/** The log's own confirmation, one second past the corpse — it must land on an empty group. */
+const AFTER_LATE_WEAR_OFF = tsOf('[Mon Jul 20 19:44:56 2026] Your Soothe spell has worn off of a shin ghoul knight.')
+
+test('JOS-213: killing a pacified mob clears ITS row and leaves the other pacified mob standing', () => {
+  const lines = readFixture(W65)
+  const before = replayBuffTimers(lines, { until: BEFORE_KNIGHT_DIES })
+  assert.deepEqual(
+    before.rows.filter((r) => r.name === 'Soothe').map((r) => r.target).sort(),
+    ['a shin ghoul knight', 'a vampire bat'],
+    'both calms should be standing before the kill'
+  )
+
+  const after = replayBuffTimers(lines, { until: AFTER_KNIGHT_DIES })
+  assert.deepEqual(
+    after.rows.filter((r) => r.name === 'Soothe').map((r) => r.target),
+    ['a vampire bat'],
+    'the corpse takes its own row and nothing else'
+  )
+})
+
+test('…and it MINTS NOTHING — a land-to-death span is not a duration, for a calm either', () => {
+  const lines = readFixture(W65)
+  const { spellStats } = replayBuffTimers(lines, { until: AFTER_LATE_WEAR_OFF })
+  assert.equal(
+    spellStats.statFor(spellKey('Soothe'), 'self')?.n ?? 0,
+    0,
+    'the death closed the landing and the late wear-off found nothing — neither may mint a sample'
+  )
+})

@@ -45,7 +45,7 @@
 // measurement behind it and the property it must not cost are on `observedWindowMaxFor`.
 
 import type { SpellDb } from '../data/spellDb'
-import { spellNature } from '../data/spellDb'
+import { spellCalmsTarget, spellNature } from '../data/spellDb'
 import type { BuffClass, BuffStat } from '../../shared/types'
 import { learnKey, SELF_CASTER } from '../../shared/buffTrust'
 import type { EstimatorSource } from '../../shared/buffTypes'
@@ -360,6 +360,22 @@ export class SpellStats {
    */
   classOf(key: string): BuffClass {
     return spellNature(this.db?.byKey.get(key)?.spellType) === 'detrimental' ? 'debuff' : 'buff'
+  }
+
+  /**
+   * DOES THIS SPELL CALM ITS TARGET (JOS-213) — the second, orthogonal question about a spell's
+   * effect, asked at the same seam and answered from the same place.
+   *
+   * `classOf` says whether the spell is a good thing or a bad thing; this says whether the thing
+   * it does happens to an ENEMY. The calm line — Pacify, Soothe, Calm, Lull and the rest of the
+   * family spells.json groups by landing message — is beneficial AND on a mob, which is why one
+   * flag could never carry both and why the timer overlay was showing an aggro clock beside the
+   * player's own buffs. `data/spellDb.ts spellCalmsTarget` holds the roster and the argument;
+   * everything true of `classOf` is true here too, including that it is never resolved by looking
+   * at who the spell landed on.
+   */
+  calmsTarget(key: string): boolean {
+    return spellCalmsTarget(this.db?.byKey.get(key))
   }
 
   /**

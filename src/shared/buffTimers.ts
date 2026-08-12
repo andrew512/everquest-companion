@@ -203,6 +203,15 @@ export interface BuffTimerRow {
    * compares them to each other rather than to `Date.now()` would be comparing two of them.
    */
   startedTs: number
+  /**
+   * True when the spell CALMS its target — the calm/lull line (JOS-213). Carried straight from
+   * `ActiveBuff.calmsTarget`, which main fills from the DB roster, and it is the ONE reason a
+   * `kind: 'buff'` row belongs to the debuffs window. See `timerRowSurface`.
+   *
+   * Present only on the rows projected from an `ActiveBuff`. A CC hold needs none — a hold is
+   * already a mob-state timer and routes by kind alone.
+   */
+  calmsTarget?: true
   mode: TimerMode
   /** ONLY on 'countdown', and ONLY a number the shared estimator stated (JOS-117/JOS-140). */
   durationMs?: number
@@ -220,7 +229,7 @@ export interface BuffTimerRow {
  *
  * The owner asked for two windows he can enable and place separately, NOT for two models: one
  * source (`buildTimerRows` above) is folded once and each surface keeps the rows that are its
- * subject. The discriminator is the row's own `kind`, which the model already carries:
+ * subject. The first discriminator is the row's own `kind`, which the model already carries:
  *
  *   'buff'            → the BUFFS window. A beneficial spell you have running. `group` is NOT the
  *                       discriminator here: a Symbol on your pet and a Valor on the cleric you
@@ -231,10 +240,30 @@ export interface BuffTimerRow {
  *                       a mez hold. The owner rules mez and slow ARE debuffs, so the CC holds live
  *                       here beside them rather than in a third place.
  *
+ * …AND A BENEFICIAL SPELL WHOSE EFFECT IS ON AN ENEMY IS A MOB TIMER (JOS-213, report
+ * 01KZSDPV3NV8NWK2GF01MCQMK3: `You begin casting Pacify IV.` / `an icy terror looks less
+ * aggressive.`). The calm line — Pacify, Soothe, Calm, Lull and the rest of the family — is
+ * `Beneficial` in the committed spells.json, so `cls` is 'buff' and `kind` is 'buff', and the
+ * aggro clock the player is watching landed in the window that shows their own Clarity. Every
+ * other mob-state timer lives on the debuffs surface, which is where a player looks to see how
+ * long that giant stays calm. `calmsTarget` is the one exception to the kind, and it is a fact
+ * about the SPELL: main fills it from a roster spells.json's landing messages DERIVE
+ * (`data/spellDb.ts spellCalmsTarget`, which carries the family and the audit).
+ *
+ * IT IS NOT A TARGET TEST, AND THAT IS THE WHOLE LESSON OF THE FIRST CUT. "Route it when the
+ * target is a mob" is the obvious reading of the report and it is the mistake JOS-136/JOS-140
+ * ruling 8 already outlawed one level down: an ally is a named target and so is a mob, the game
+ * does not distinguish them in a landing sentence, and `disposition: 'hostile'` means only "not
+ * you and not a pet I am currently holding". Two committed goldens went red under a disposition
+ * test and both are real users' shapes — a `Resist Disease` from a Quick Buff burst on a spider
+ * the model was not holding as a pet, and the owner's own `Valor` on a charmed fire giant warrior
+ * whose charm line falls outside the window. A friendly buff on somebody the model has lost track
+ * of must never become a debuff. Nothing here reads `group`, `target` or `disposition`.
+ *
  * Exhaustive over `BuffTimerRow['kind']` by construction — a new row kind has to choose a window.
  */
 export function timerRowSurface(row: BuffTimerRow): TimerOverlayKind {
-  return row.kind === 'buff' ? 'buffs' : 'debuffs'
+  return row.kind === 'buff' && row.calmsTarget !== true ? 'buffs' : 'debuffs'
 }
 
 /** The rows one timer surface shows. Order is `buildTimerRows`' order, filtered — never re-sorted. */
@@ -260,7 +289,7 @@ export function timerDropLabel(row: BuffTimerRow): string {
 }
 
 /**
- * The `kind:'buff'` rows that were there a moment ago and are not there now.
+ * The BUFFS-WINDOW rows that were there a moment ago and are not there now.
  *
  * The claim is deliberately the weakest one available: a drop is a removal the MODEL already
  * believed (a wears-off message, a death, a zone), so this can never announce a drop the log did
@@ -275,6 +304,12 @@ export function timerDropLabel(row: BuffTimerRow): string {
  * up in the middle of the log and had worn off by its end. Announcing those would be the window
  * shouting about spells that dropped months ago, the first time the user ever sees it. A rebuild
  * adopts the new set as the baseline and says nothing; the very next real removal still flashes.
+ *
+ * THE SUBJECT IS THE BUFFS SURFACE, NOT THE 'buff' KIND (JOS-213). The two were the same set until
+ * a Pacify became a `kind: 'buff'` row on the DEBUFFS window. Reading the kind would hand the
+ * debuffs window a "positive spell dropped" flash it has never had and nobody asked for — the ask
+ * this answers was always "flash when a positive spell drops", a buffs-window feature — so it
+ * routes through `timerRowSurface` instead, which is a no-op for every row that existed before.
  */
 export function timerDrops(
   prev: readonly BuffTimerRow[] | null,
@@ -282,10 +317,9 @@ export function timerDrops(
   opts: { rebuilt: boolean }
 ): TimerDrop[] {
   if (prev === null || opts.rebuilt) return []
-  const live = new Set(current.filter((r) => r.kind === 'buff').map((r) => r.id))
-  return prev
-    .filter((r) => r.kind === 'buff' && !live.has(r.id))
-    .map((r) => ({ id: r.id, name: timerDropLabel(r) }))
+  const onBuffs = (r: BuffTimerRow): boolean => timerRowSurface(r) === 'buffs'
+  const live = new Set(current.filter(onBuffs).map((r) => r.id))
+  return prev.filter((r) => onBuffs(r) && !live.has(r.id)).map((r) => ({ id: r.id, name: timerDropLabel(r) }))
 }
 
 // ----- DISMISSAL: a display verdict, and structurally nothing else (JOS-203) -----
@@ -478,6 +512,7 @@ function timerModeOf(b: ActiveBuff): { mode: TimerMode; durationMs?: number } {
  */
 function buffRowExtras(b: ActiveBuff): Partial<BuffTimerRow> {
   return {
+    ...(b.calmsTarget === true ? { calmsTarget: true as const } : {}),
     ...(b.inferredTarget === true ? { inferredTarget: true as const } : {}),
     ...(b.count != null && b.count > 1 ? { count: b.count } : {}),
     ...(b.caster != null ? { caster: b.caster } : {}),
