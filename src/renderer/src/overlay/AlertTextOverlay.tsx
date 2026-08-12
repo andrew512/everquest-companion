@@ -24,12 +24,21 @@
 // INTERACTIVE MODE is how you move it (Preferences → Overlays → "Move it"): the lane shows its
 // outline and a drag bar. It has to be, since locked it is empty and click-through and there is
 // nothing to grab — the same bind the toast is in, answered the same way.
+//
+// …AND IT IS ALSO THE ONLY MOMENT THE LANE CAN BE SIZED, which is why unlocking shows more than a
+// bar. The window's real dimensions are printed in the frame, a corner grip resizes it (ResizeGrip
+// — a notifier's OS resize border is a few invisible pixels under a full-window drag region), and
+// the empty lane fills with SAMPLE LINES in its own look, one of them long enough to wrap
+// (AlertLanePreview). Sizing this window is a question about how much text fits, so the answer has
+// to be text.
 
 import { type JSX, useEffect, useReducer } from 'react'
 import type { AlertTextCard as Card } from '@shared/alertDisplay'
-import { alertStackJustify, alertTextGrowth } from '@shared/alertDisplay'
+import { alertStackJustify, normalizeAlertTextDefaults } from '@shared/alertDisplay'
+import { LaneSamples, LaneSizeReadout } from './AlertLanePreview'
 import AlertTextCard from './AlertTextCard'
 import DragFrame from './DragFrame'
+import ResizeGrip from './ResizeGrip'
 import { ScaledContent } from './overlayScale'
 import { alertTextReduce, type AlertTextCardState } from './alertTextQueue'
 import { useOverlayChrome } from './useOverlayChrome'
@@ -70,7 +79,11 @@ export default function AlertTextOverlay(): JSX.Element {
   }, [])
 
   useWindowSignals(chrome.ready, chrome.locked, cards.length > 0)
-  const growth = alertTextGrowth(chrome.config?.alertText?.growth)
+  const defaults = normalizeAlertTextDefaults(chrome.config?.alertText)
+  // POSITIONING MODE: unlocked, with nothing real to draw. That is the only moment this window can
+  // be sized, so it is the only moment it shows what a line will look like in it.
+  const positioning = chrome.ready && !chrome.locked
+  const preview = positioning && cards.length === 0
 
   return (
     <div
@@ -86,6 +99,13 @@ export default function AlertTextOverlay(): JSX.Element {
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
+        // THE OUTLINE IS THE BOX. Locked, this window has no edges you can see, which is fine when
+        // it is a line over the game and useless when you are trying to decide how big it should
+        // be. `position: relative` is what the corner grip hangs off.
+        position: 'relative',
+        ...(positioning
+          ? { border: '1px dashed rgba(217,178,95,0.55)', borderRadius: 8 }
+          : {}),
         ...chrome.dragRegion
       }}
     >
@@ -93,23 +113,19 @@ export default function AlertTextOverlay(): JSX.Element {
           It carries NO text-size stepper, unlike the toast's: a text alert's size is per-alert
           (`display.fontSize`, in the editor), and a second control that scaled all of them at
           once would be two answers to one question. */}
-      {chrome.ready && !chrome.locked && (
+      {positioning && (
         <DragFrame
           // Says BOTH things it can do, because this frame is the only chrome the lane ever shows:
           // locked it is empty and click-through, so an affordance the user cannot see is one they
-          // will never find. Stretching is the point of the width (overlayLayout.overlaySizeLimits).
-          caption="Drag me where alert text should appear, or stretch my edges"
+          // will never find. Size is the point here as much as position (overlaySizeLimits puts no
+          // ceiling on either edge), and the corner it names is the one carrying the grip.
+          caption="Drag me where alert text should appear, or the corner to resize"
           testId="alert-text-drag-frame"
           onDone={chrome.toggleLock}
           noDrag={chrome.noDrag}
-        />
-      )}
-      {/* An empty lane while unlocked would leave nothing but the bar, so the user gets a sample
-          of what will appear here — state, not instructions. */}
-      {chrome.ready && !chrome.locked && cards.length === 0 && (
-        <div style={{ textAlign: 'center', color: '#8b8f98', fontSize: 12 }}>
-          Alert text appears here
-        </div>
+        >
+          <LaneSizeReadout />
+        </DragFrame>
       )}
       {/* WHICH WAY THE LANE GROWS. The block is anchored to the top ('down', the shipped answer)
           or to the bottom ('up'), and that is the entire difference — arrival order is still
@@ -126,7 +142,7 @@ export default function AlertTextOverlay(): JSX.Element {
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: alertStackJustify(growth),
+          justifyContent: alertStackJustify(defaults.growth),
           overflow: 'hidden'
         }}
       >
@@ -139,8 +155,16 @@ export default function AlertTextOverlay(): JSX.Element {
               bgAlpha={chrome.bgAlpha}
             />
           ))}
+          {/* Inside the SAME stack as the real thing, on purpose: the samples wrap where a real
+              line wraps, anchor to the edge a real line anchors to, and fall off the same end when
+              there are more of them than the lane is tall. A preview drawn anywhere else would be
+              a picture of the feature rather than the feature. */}
+          {preview && <LaneSamples defaults={defaults} bgAlpha={chrome.bgAlpha} />}
         </ScaledContent>
       </div>
+      {/* The size handle, last so it sits over everything, and only while positioning — a lane the
+          user has finished with is click-through and has no corner to grab. */}
+      {positioning && <ResizeGrip noDrag={chrome.noDrag} onResize={window.eqOverlay.resize} testId="alert-text-resize" />}
     </div>
   )
 }

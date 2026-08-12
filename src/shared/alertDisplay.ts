@@ -306,6 +306,40 @@ export function alertStackJustify(growth: AlertTextGrowth): 'flex-end' | 'flex-s
   return growth === 'up' ? 'flex-end' : 'flex-start'
 }
 
+// ---- what the lane shows while you are POSITIONING it ---------------------------------------
+
+/**
+ * The sample lines an UNLOCKED lane draws in place of the alerts it has not been sent yet.
+ *
+ * A lane is transparent and empty at rest, so the only moment its size is decidable is while it is
+ * unlocked — and a single grey "alert text appears here" told the user nothing about the question
+ * they are actually asking, which is HOW MUCH FITS. So the samples are drawn in that lane's own
+ * font, size and colour, and there are several of them, because "how many can I see at once"
+ * is the reason the window has a height at all.
+ *
+ * THE LAST ONE IS DELIBERATELY TOO LONG FOR A DEFAULT LANE. A line that wraps is the case that
+ * surprises people — a raid call is not four words — and a preview that only ever showed short
+ * phrases would let someone size a lane that cannot hold the alert they wrote. It is within
+ * MAX_DISPLAY_CHARS (pinned by test), so it is a line this app could really draw.
+ */
+export const ALERT_PREVIEW_LINES: readonly string[] = [
+  'Kaiaren begins casting Ancient Breath',
+  'Mez broke on a shadowed man',
+  'Assist call - everyone off the tank and behind the pillar before the cast lands, adds are coming from the tunnel'
+]
+
+/** Those lines as finished cards, wearing the look this lane gives an alert that asks for none. */
+export function alertPreviewCards(defaults: AlertTextDefaults): AlertTextCard[] {
+  return ALERT_PREVIEW_LINES.map((text, i) => ({
+    id: `preview:${String(i)}`,
+    text: text.slice(0, MAX_DISPLAY_CHARS),
+    font: defaults.font,
+    fontSize: defaults.fontSize,
+    color: defaults.color,
+    durationMs: defaults.durationMs
+  }))
+}
+
 // ---- what a firing draws ------------------------------------------------------------------
 
 /** The def fields the resolver reads. Any AlertDef satisfies it. */

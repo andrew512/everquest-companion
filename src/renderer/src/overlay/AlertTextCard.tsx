@@ -35,12 +35,19 @@ function motionStyle(entering: boolean, exiting: boolean): CSSProperties {
 export default function AlertTextCard({
   card,
   exiting,
-  bgAlpha
+  bgAlpha,
+  testId = 'alert-text-card'
 }: {
   card: Card
   exiting: boolean
   /** The overlay's panel alpha. 0 (this kind's default) means no panel at all. */
   bgAlpha: number
+  /**
+   * What this line IS, for anything counting them. The positioning preview draws real lines
+   * through this same component — that is what makes it a truthful preview — but a sample is not
+   * an alert, and a test asking "how many alerts are on screen" must not be told three.
+   */
+  testId?: string
 }): JSX.Element {
   // True for exactly one frame, so the browser has a FROM state to animate out of. Without it the
   // line simply appears at its final opacity and the enter transition never runs.
@@ -52,7 +59,7 @@ export default function AlertTextCard({
 
   return (
     <div
-      data-testid="alert-text-card"
+      data-testid={testId}
       style={{
         fontFamily: alertFontStack(card.font),
         fontSize: card.fontSize,

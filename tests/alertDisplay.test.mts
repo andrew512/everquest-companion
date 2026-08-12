@@ -28,6 +28,7 @@ import {
   ALERT_TEXT_GROWTHS,
   DEFAULT_ALERT_TEXT,
   alertFontStack,
+  alertPreviewCards,
   alertStackJustify,
   alertTextGrowth,
   displayTextFor,
@@ -432,6 +433,33 @@ test('an unusable growth direction takes the default rather than leaving the lan
     assert.equal(alertTextGrowth(bad), 'down', `${String(bad)} should coerce`)
   }
   assert.equal(normalizeAlertTextDefaults({ growth: 'up' }).growth, 'up', 'a real choice survives')
+})
+
+// ------------------------------------------------- (G) the samples an unlocked lane shows
+
+test('the positioning preview wears the LANE’s own look, not the shipped constants', () => {
+  // The whole point of previewing inside the window is that it answers "how much fits" for the
+  // font this lane actually uses. Drawing the samples in the default 28px sans would be a picture
+  // of somebody else's lane.
+  const lane = { font: 'display' as const, fontSize: 44, color: '#00ff00', durationMs: 8000, growth: 'up' as const }
+  for (const card of alertPreviewCards(lane)) {
+    assert.equal(card.font, 'display')
+    assert.equal(card.fontSize, 44)
+    assert.equal(card.color, '#00ff00')
+  }
+})
+
+test('one sample is long enough to wrap, and every sample is a line this app could really draw', () => {
+  // A preview made only of four-word phrases is how someone sizes a lane that cannot hold the raid
+  // call they actually wrote — so one sample is deliberately a sentence. It still has to obey the
+  // cap the real path enforces, or the preview would promise a width no alert can use.
+  const cards = alertPreviewCards(DEFAULT_ALERT_TEXT)
+  assert.ok(cards.length >= 3, `${cards.length} sample(s) - too few to say anything about height`)
+  for (const c of cards) assert.ok(c.text.length <= MAX_DISPLAY_CHARS, c.text)
+  const longest = Math.max(...cards.map((c) => c.text.length))
+  // The lane opens 560px wide and a default line is 28px bold: roughly 35 characters to the row,
+  // so anything past 80 wraps two or three times over. 100 keeps the claim well clear of the noise.
+  assert.ok(longest > 100, `longest sample is ${String(longest)} chars - it would not wrap`)
 })
 
 test('growth is on the LANE, not on an alert — a display block cannot carry one', () => {

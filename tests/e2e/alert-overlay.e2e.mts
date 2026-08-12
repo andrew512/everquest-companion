@@ -161,6 +161,114 @@ async function stepPreferences(page: Page): Promise<void> {
   check('…and the lane’s default font, size, colour and seconds', knobs.every((n) => n === 1), knobs.join(','))
 }
 
+/** Unlock or re-lock the lane through the app's own bridge, as the Preferences switch does. */
+function setLocked(main: Page, locked: boolean): Promise<void> {
+  return main.evaluate(
+    (l) =>
+      (window as unknown as { eq: { setAlertOverlayLocked: (k: string, v: boolean) => void } }).eq
+        .setAlertOverlayLocked('alert', l),
+    locked
+  )
+}
+
+/** Every sample line the positioning preview is drawing, with the box each one occupies. */
+function samples(lane: Page): Promise<{ text: string; color: string; width: number; height: number }[]> {
+  return lane.evaluate(() =>
+    [...document.querySelectorAll('[data-testid="alert-text-sample"]')].map((el) => {
+      const r = (el as HTMLElement).getBoundingClientRect()
+      return {
+        text: (el as HTMLElement).innerText.replace(/\s+/g, ' ').trim(),
+        color: getComputedStyle(el as HTMLElement).color,
+        width: Math.round(r.width),
+        height: Math.round(r.height)
+      }
+    })
+  )
+}
+
+/** The lane's own idea of how big it is: the readout in the drag bar, and the DOM's own numbers. */
+function laneBox(lane: Page): Promise<{ readout: string; inner: string }> {
+  return lane.evaluate(() => ({
+    readout: (document.querySelector('[data-testid="alert-text-size"]') as HTMLElement | null)?.innerText.trim() ?? '',
+    inner: `${String(window.innerWidth)} × ${String(window.innerHeight)}`
+  }))
+}
+
+/** What the OS says the window is, which is the thing the readout claims to be reporting. */
+interface Size {
+  width: number
+  height: number
+}
+function laneBounds(app: ElectronApplication): Promise<Size | null> {
+  return app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes('kind=alert'))
+    return w ? { width: w.getBounds().width, height: w.getBounds().height } : null
+  })
+}
+
+/**
+ * The corner grip, pulled 300px right and 260px DOWN, and what the window did about it.
+ *
+ * The DOWN is the point: "as many stacked alerts as I want" is a height, and a lane that could be
+ * stretched sideways but not downward would be half the feature. Pointer events are dispatched AT
+ * the element rather than moved over it because this window is never shown (EQ_E2E=1) and has no
+ * pointer to move.
+ */
+async function stepLaneGrip(app: ElectronApplication, lane: Page, was: Size, readout: string): Promise<void> {
+  // (Written without an inner helper: a named function inside `evaluate` is compiled with
+  // esbuild's `__name` shim, which does not exist inside the page.)
+  await lane.evaluate(() => {
+    const el = document.querySelector('[data-testid="alert-text-resize"]')
+    if (!el) return
+    el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, screenX: 0, screenY: 0 }))
+    el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, screenX: 300, screenY: 260 }))
+    el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, screenX: 300, screenY: 260 }))
+  })
+  const grown = (await settle(() => laneBounds(app), (b) => (b?.height ?? 0) > was.height, { timeoutMs: 10_000 })) ?? {
+    width: 0,
+    height: 0
+  }
+  check('the corner grip makes the lane TALLER, not only wider', grown.height === was.height + 260, JSON.stringify(grown))
+  check('…and wider in the same gesture', grown.width === was.width + 300, JSON.stringify(grown))
+  const after = await settle(() => laneBox(lane), (b) => b.readout !== readout, { timeoutMs: 10_000 })
+  check('…with the readout following the window it reports', after.readout === after.inner, `${readout} -> ${after.readout}`)
+}
+
+/**
+ * SIZING THE LANE — the half of positioning that no unit test can reach.
+ *
+ * A lane is transparent and empty, so "how big should it be" is a question about text that is not
+ * there yet: the preview answers it by drawing real sample lines, in this lane's own look, inside
+ * the real stack, with one of them long enough to wrap. `alertPreviewCards` is pinned in
+ * tests/alertDisplay.test.mts; what only the app can show is that those lines REACH the window,
+ * that the readout agrees with the window the OS actually has, and that dragging the corner grip
+ * changes that window in BOTH axes — the ask being "as many stacked alerts as I want", which is a
+ * height.
+ */
+async function stepLaneBox(app: ElectronApplication, main: Page, lane: Page): Promise<void> {
+  await setLocked(main, false)
+  await lane.waitForSelector('[data-testid="alert-text-drag-frame"]', { timeout: 15_000 })
+  const shown = await settle(() => samples(lane), (s) => s.length >= 3, { timeoutMs: 10_000 })
+  if (!check('an unlocked lane fills with sample lines, so its size is a question you can answer', shown.length >= 3, `${shown.length} sample(s)`)) {
+    await setLocked(main, true)
+    return
+  }
+  check('…drawn in the lane’s own colour, not some preview grey', shown[0].color === 'rgb(255, 204, 51)', shown[0].color)
+  const tallest = shown[shown.length - 1]
+  check('…and the long one WRAPS onto several lines, which is the case that surprises people', tallest.height > 70, `${String(tallest.height)}px tall`)
+
+  const before = await laneBox(lane)
+  const osBefore = await laneBounds(app)
+  check('the drag bar prints the lane’s true dimensions', before.readout === before.inner, `${before.readout} vs ${before.inner}`)
+  check('…and those are the dimensions the window really has', before.inner === `${String(osBefore?.width)} × ${String(osBefore?.height)}`, `${before.inner} vs ${JSON.stringify(osBefore)}`)
+
+  await stepLaneGrip(app, lane, osBefore ?? { width: 0, height: 0 }, before.readout)
+
+  await setLocked(main, true)
+  const idle = await settleStable(() => samples(lane), { timeoutMs: 8_000, stable: 5, pollMs: 150 })
+  check('and a lane you have finished positioning shows nothing at all again', idle.length === 0, `${idle.length} sample(s)`)
+}
+
 /** One line, drawn with the font, size and colour the request named. */
 async function stepFirstLine(main: Page, lane: Page): Promise<void> {
   await sendAndSettle(main, lane, request('e2e:1', 'Ancient Breath incoming'), 1)
@@ -377,6 +485,9 @@ async function main(): Promise<void> {
       const l = lane as Page
       check('…which renders nothing at rest', (await countOf(l, '[data-testid="alert-text-card"]')) === 0)
       await stepPreferences(page)
+      // BEFORE anything is sent: the preview is what an EMPTY lane shows, and every later step
+      // leaves lines on screen for 25 seconds.
+      await stepLaneBox(app, page, l)
       await stepFirstLine(page, l)
       await stepStacking(page, l)
       await stepRefusal(page, l)

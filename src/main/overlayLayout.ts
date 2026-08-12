@@ -110,6 +110,27 @@ export function overlaySizeLimits(kind: OverlayKind): SizeLimits {
 }
 
 /**
+ * The size a kind's window may actually be given, from a size somebody ASKED for.
+ *
+ * The OS enforces `overlaySizeLimits` on a border drag by itself; this is the same ruling for the
+ * other route — the grab handle a notifier draws while it is being positioned (`overlay:resize`),
+ * whose numbers arrive from a renderer and are therefore anything at all. A non-finite ask is not
+ * clamped but IGNORED, falling back to the minimum, because `NaN` through `Math.min` is `NaN` and
+ * a window sized `NaN` is a window that has vanished.
+ */
+export function clampOverlaySize(kind: OverlayKind, size: Partial<Size>): Size {
+  const l = overlaySizeLimits(kind)
+  const axis = (v: unknown, min: number, max?: number): number => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return min
+    return Math.round(Math.max(min, max === undefined ? v : Math.min(max, v)))
+  }
+  return {
+    width: axis(size.width, l.minWidth, l.maxWidth),
+    height: axis(size.height, l.minHeight, l.maxHeight)
+  }
+}
+
+/**
  * Where an alert overlay's window goes on its first open: horizontally CENTRED like the toast, at
  * ALERT_TOP, and staggered DOWNWARD by its index in the roster so a second one never lands on the
  * first. Clamped to the work area exactly like every other path here.

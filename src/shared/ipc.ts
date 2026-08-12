@@ -162,6 +162,12 @@ export const IPC = {
   overlaySetIgnoreMouse: 'overlay:setIgnoreMouse',
   // renderer(overlay) -> main: close the overlay from its own close button. Arg: kind.
   overlayClose: 'overlay:close',
+  // renderer(overlay) -> main: "make my window this big" (Args: kind, {width, height}). A window
+  // can already be resized by its OS border, so this is not the only route - it is the one behind
+  // a GRAB HANDLE, for the notifier kinds whose whole surface is a drag region and whose border is
+  // therefore a few invisible pixels the user has to hunt for. Main clamps to the kind's limits
+  // (main/overlayLayout.ts) and persists the result, exactly as a border drag would.
+  overlayResize: 'overlay:resize',
   // renderer(overlay) -> main: read a kind's persisted config. Arg: kind. Returns OverlayConfig.
   overlayGetConfig: 'overlay:getConfig',
   // renderer(overlay) -> main: persist a kind's config (partial merge). Args: kind, patch.

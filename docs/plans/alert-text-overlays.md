@@ -155,6 +155,22 @@ applied to every kind, because the toast was the only exception anyone had neede
 says both things it can do, since locked the lane is empty and click-through and an affordance the
 user cannot see is one they will never find.
 
+**AND SIZING IT IS ITS OWN PROBLEM, ANSWERED WHILE POSITIONING.** A meter's size is obvious the
+moment you drag it, because it is full of bars. A lane is transparent and empty, so the question a
+user is actually asking - how wide before a raid call wraps, how tall before the fourth stacked
+alert is off the bottom - has nothing on screen to answer it. Unlocking therefore shows three
+things beyond the drag bar: the window's **outline**, its **true dimensions** in the bar, and
+**sample lines** drawn by the real `AlertTextCard` in this lane's own font/size/colour, inside the
+real stack, one of them long enough to wrap (`alertPreviewCards`). The samples carry their own
+testid: a sample is not an alert, and a count of what is on screen must not say three.
+
+The **corner grip** (`ResizeGrip`, `overlay:resize`) exists because a notifier's whole surface is a
+drag region - there is no header to grab, so the window moves from anywhere - which leaves the OS
+resize border a few invisible pixels at the edge of a transparent window. It sends an absolute size
+measured from where the drag began (a clamped incremental delta loses what it clips), main clamps
+it with `clampOverlaySize` and persists the result, and the window's top-left never moves: the
+corner you placed it by is not the corner that resizes it.
+
 The first-open geometry is unchanged: 560×200, horizontally centred at `ALERT_TOP = 400`, which
 clears the toast strip's 12…372 with a gutter so the two notifier lanes cannot open on top of each
 other. Persisted bounds always win, so a stretched lane stays stretched.

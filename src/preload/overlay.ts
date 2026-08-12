@@ -209,6 +209,15 @@ const overlayApi = {
    * what is on screen. Fire-and-forget.
    */
   setIdle: (idle: boolean): void => ipcRenderer.send(IPC.overlaySetIdle, KIND, idle),
+  /**
+   * "Make this window this big" - the grab handle a notifier draws while it is unlocked, in CSS
+   * pixels of its own content. Main clamps to the kind's limits and persists the result.
+   *
+   * Interactive mode only by the caller's construction (a LOCKED overlay is click-through by law
+   * and has no drags to give), and the numbers are re-checked in main regardless.
+   */
+  resize: (size: { width: number; height: number }): void =>
+    ipcRenderer.send(IPC.overlayResize, KIND, size),
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)
 }

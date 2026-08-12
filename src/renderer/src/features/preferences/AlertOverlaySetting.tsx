@@ -250,7 +250,7 @@ export function AlertOverlaySetting(): JSX.Element {
         <Typography variant="caption" color="text.secondary">
           {state.locked
             ? 'The lane sits where you left it and clicks pass straight through to the game.'
-            : 'The lane is showing its outline - drag it anywhere. Turn this off (or press Done) when it sits where you want it.'}
+            : 'The lane is showing its outline, its size, and sample lines in the look below - drag it anywhere, or pull its bottom-right corner to make it as big as you want. Turn this off (or press Done) when it fits.'}
         </Typography>
       </Stack>
 

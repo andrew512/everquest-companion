@@ -7,6 +7,7 @@ import { IPC } from '../../shared/ipc'
 import { E2E } from '../e2e'
 import { logError } from '../errorLog'
 import { getFightSelection, setFightSelection } from '../fightSelection'
+import { clampOverlaySize, type Size } from '../overlayLayout'
 import { getOverlayConfig, setOverlayConfig } from '../store'
 import { noteCurrentView } from '../telemetry/errorReports'
 
@@ -150,6 +151,28 @@ export function registerWindowIpc(): void {
     setOverlayIdle(kind, idle)
   })
   ipcMain.on(IPC.overlayClose, (_e, kind: OverlayKind) => setOverlayOpen(kind, false))
+
+  // "Make my window this big" — the grab handle a NOTIFIER draws while it is being positioned.
+  //
+  // WHY A WINDOW NEEDS AN IPC TO RESIZE ITSELF AT ALL. Every other overlay is resized by dragging
+  // its OS border, and so is this one — but a notifier's entire surface is a drag region (there is
+  // no header to grab, so the whole window moves), which leaves the resize border a few invisible
+  // pixels at the very edge of a transparent window. The handle is a target the user can see and
+  // hit; this is what it pulls.
+  //
+  // The position is NOT touched: a resize moves the corner you dragged, never the corner you
+  // placed. The result is persisted here rather than left to the window's own 'resized' event,
+  // because a programmatic setBounds does not reliably raise one — and this IS the user's own
+  // resize, so it must survive a restart like any other.
+  ipcMain.on(IPC.overlayResize, (_e, kind: OverlayKind, size: Partial<Size>) => {
+    const w = getOverlayWindow(kind)
+    if (!w || w.isDestroyed()) return
+    const b = w.getBounds()
+    const next = { x: b.x, y: b.y, ...clampOverlaySize(kind, size ?? {}) }
+    if (next.width === b.width && next.height === b.height) return
+    w.setBounds(next)
+    setOverlayConfig(kind, { bounds: w.getBounds() })
+  })
 
   // ---- global fight selection (docs/plans/combat-overlay-parity.md P4) ----
   // A read for a surface that mounted after the last change, and a fire-and-forget write that

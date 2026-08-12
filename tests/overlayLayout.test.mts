@@ -26,6 +26,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   METER_KINDS,
+  clampOverlaySize,
   defaultOverlayBounds,
   overlayDefaultSize,
   overlaySizeLimits,
@@ -278,6 +279,33 @@ test('an alert lane may be STRETCHED without limit; a meter has a largest useful
     assert.equal(limits.maxWidth, 720, `${kind}: lost its width cap`)
     assert.equal(limits.maxHeight, 820, `${kind}: lost its height cap`)
   }
+})
+
+test('a lane can be dragged as tall as the user likes, and the ceiling stays the meters’ own', () => {
+  // `clampOverlaySize` is the OTHER route to a size — the corner grip an alert lane draws while it
+  // is being positioned, whose numbers come from a renderer rather than from the OS. It has to
+  // honour exactly the limits a border drag does, in BOTH axes: "as many stacked alerts as you
+  // want" is a height, and a lane that grew sideways but not downward would be half a feature.
+  const huge = { width: 4000, height: 2400 }
+  for (const kind of ALERT_OVERLAY_KINDS) {
+    assert.deepEqual(clampOverlaySize(kind, huge), huge, `${kind}: a lane was clipped`)
+  }
+  assert.deepEqual(clampOverlaySize('fight', huge), { width: 720, height: 820 })
+})
+
+test('a resize ask that is too small, or not a number at all, lands on the minimum', () => {
+  // NaN is the one that matters: it survives Math.min/Math.max, and a window set to NaN pixels is
+  // a window that has disappeared with no way back short of clearing the store.
+  const limits = overlaySizeLimits(DEFAULT_ALERT_OVERLAY)
+  const floor = { width: limits.minWidth, height: limits.minHeight }
+  assert.deepEqual(clampOverlaySize(DEFAULT_ALERT_OVERLAY, { width: 1, height: 1 }), floor)
+  assert.deepEqual(clampOverlaySize(DEFAULT_ALERT_OVERLAY, { width: NaN, height: NaN }), floor)
+  assert.deepEqual(clampOverlaySize(DEFAULT_ALERT_OVERLAY, {}), floor)
+  // A fractional ask is rounded rather than passed through: window bounds are whole pixels.
+  assert.deepEqual(clampOverlaySize(DEFAULT_ALERT_OVERLAY, { width: 640.4, height: 300.6 }), {
+    width: 640,
+    height: 301
+  })
 })
 
 test('every kind opens at least as big as its own minimum', () => {
