@@ -85,6 +85,8 @@ interface Ledger {
   scrollTop: number
   scrollHeight: number
   clientHeight: number
+  /** Px the table overflows its box sideways — a fixed-layout table must not have any. */
+  sidewaysOverflow: number
   /** Px of the visible box below the last mounted row — the blank space the reporter saw. */
   blankBelowLastRow: number
   /** Height of the trailing spacer row, if the table still reserves space it has not rendered. */
@@ -116,6 +118,7 @@ function readLedger(page: Page): Promise<Ledger | null> {
       scrollTop: Math.round(el.scrollTop),
       scrollHeight: Math.round(el.scrollHeight),
       clientHeight: Math.round(el.clientHeight),
+      sidewaysOverflow: Math.round(el.scrollWidth - el.clientWidth),
       blankBelowLastRow: last === null ? -1 : Math.round(box.bottom - last.getBoundingClientRect().bottom),
       trailingSpacer:
         tail === null || tail.hasAttribute('data-testid')
@@ -202,6 +205,15 @@ async function stepWindowed(page: Page): Promise<Ledger | null> {
     'every mounted row is the same one row tall',
     l.rowHeights.length > 0 && spread <= 1,
     `heights: ${l.rowHeights.join(', ')}`
+  )
+  // The width half of the same contract: a `tableLayout: fixed` table takes its columns from the
+  // header, so it fits the pane whatever the mounted slice happens to contain. An auto-layout one
+  // re-measures from the widest visible cell — and a table wide enough to need a horizontal
+  // scrollbar spends that bar's height on vertical overflow the reader never asked for.
+  check(
+    'the ledger has nothing to scroll sideways',
+    l.sidewaysOverflow <= 1,
+    `${String(l.sidewaysOverflow)}px wider than its box`
   )
   return l
 }

@@ -216,7 +216,16 @@ function LootLedgerBody({
     // the full scroll height so only the visible slice of MUI rows is mounted — see
     // useWindowedRows. `minHeight: 0` is what lets it actually SHRINK inside the column flex above
     // it, so this box is the only thing on the page that scrolls the ledger.
-    <Box ref={scrollRef} data-testid="loot-scroll" sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto' }}>
+    // `overscrollBehavior: contain` is the other half of the reporter's sentence (JOS-260): they
+    // described dead space above and below that the wheel moved through. A wheel gesture that
+    // reaches the end of this box CHAINS into whatever is behind it, so a list that had stopped
+    // rendering still felt like it was scrolling — the app shell moving instead of the ledger.
+    // Contained, the gesture ends here, which is what a self-scrolling pane means.
+    <Box
+      ref={scrollRef}
+      data-testid="loot-scroll"
+      sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain' }}
+    >
       <LootTable groupByItem={groupByItem} rows={groupRows} events={events} ctx={{ ...ctx, win }} />
     </Box>
   )
