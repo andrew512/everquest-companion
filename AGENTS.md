@@ -99,9 +99,11 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
   sighting, and a flake at 3+ occurrences must have a fix ticket or chip —
   "green on re-run" is a report line, never a resolution. Known rows:
   - `sky-filters.e2e` · expanded-quest step vs live-log viewKey remount ·
-    3 sightings (2026-08-10/11, full-sweep only, green standalone every
-    time) · documented in-file by the JOS-206 worker; needs the same
-    order-hardening the spec's own comment describes.
+    4 sightings (2026-08-10/11 x3, 2026-08-12 six-spec sweep during JOS-253,
+    green standalone and in the final full sweep; multi-spec-sweep only,
+    green standalone every time) · documented in-file by the JOS-206 worker;
+    needs the same order-hardening the spec's own comment describes; fix
+    chip filed 2026-08-12 (Harden sky-filters expanded-quest step).
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
     settles on stale geometry · 5 sightings (2026-08-10/11/12 full-sweep; 4th
     in the JOS-229 sweep; 5th 2026-08-12 STANDALONE on the JOS-240 merge
