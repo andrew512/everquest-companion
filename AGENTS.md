@@ -603,7 +603,11 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   **That allowlist is the boundary, not a formality**: link URLs are built from
   WIKI PAGE TITLES (`shared/wiki.ts`), and an unvalidated openExternal would let
   one ask the OS to run `file:///…exe`. Widen `EXTERNAL_LINK_ALLOWLIST`
-  (security.ts) deliberately or not at all. All permissions are denied wholesale
+  (security.ts) deliberately or not at all — it has been widened ONCE, for
+  `github.com` (JOS-254, the What's new panel's link to the releases page), and
+  that entry's justification is written where it lives: the URL is a constant in
+  the renderer bundle rather than scraped text, and github.com is already where
+  every build of this app comes from. All permissions are denied wholesale
   (this app needs none); pure policy lives in `src/main/security.ts` and is
   pinned by `tests/security.test.mts` (no Electron, never skips).
 - Renderer-supplied strings that reach `join()` are validated AT THE IPC
