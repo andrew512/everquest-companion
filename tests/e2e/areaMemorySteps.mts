@@ -260,6 +260,30 @@ export async function drillAndBack(page: Page, opts: DrillOptions): Promise<void
 // "nothing defaults to" part is what makes the assertion mean anything — restoring a default is
 // indistinguishable from forgetting one, so every field is moved off its shipped value first.
 
+/**
+ * Wait until a selector's MATCH COUNT stops moving, and hand it back.
+ *
+ * The condition a windowed list needs before anything may be CLICKED. A deferred search re-runs the
+ * filter, the fold and the row flattening after the box echoes (the standing search law), so the
+ * first `planner-effect-row` a click resolves is routinely detached and replaced a frame later —
+ * Playwright retries, the list moves again, and the click times out against a list that is working
+ * perfectly. Measured, not guessed: that is exactly how the first run of `stepBrowseMemory` failed.
+ */
+async function settleRows(page: Page, sel: string): Promise<number> {
+  let last = -1
+  await settle(
+    async () => {
+      const now = await countOf(page, sel)
+      const stable = now === last && now > 0
+      last = now
+      return stable
+    },
+    (ok) => ok,
+    { timeoutMs: 20_000 }
+  )
+  return last
+}
+
 /** A control's settled reading — the count text is the condition, never a sleep (the search law). */
 async function settleText(page: Page, sel: string): Promise<void> {
   let last = ''
@@ -432,37 +456,54 @@ async function readBrowse(page: Page): Promise<Fingerprint> {
  * and group-by controls sitting beside them survived a tab switch and these did not, which is the
  * inconsistency the owner was reporting: one row of controls, two behaviours.
  */
-/** A search the corpus answers on any socket tab, and one nothing defaults to. */
-const BROWSE_PARKED_SEARCH = 'resist'
+/**
+ * A SEARCH TERM THE CORPUS ACTUALLY ANSWERS, taken from a row that is on screen.
+ *
+ * Not a string typed into this file, and for the standing reason frozen numbers rot: the first
+ * spelling of this step hardcoded `resist`, which matches nothing on the WORN tab, so the step
+ * emptied the list, failed its own precondition and proved nothing about the search box. A word
+ * lifted off a visible row cannot miss, whatever a rescrape does to the effect names.
+ */
+async function termFromScreen(page: Page): Promise<string> {
+  const row = await textOf(page, PLANNER_EFFECT_ROW)
+  return (/[A-Za-z]{4,}/.exec(row)?.[0] ?? 'a').toLowerCase()
+}
 
 export async function stepBrowseMemory(page: Page): Promise<void> {
   await page.click(PLANNER_SOCKET_WORN, { timeout: 15_000 })
   // A STATE, not a click — `stepNonEquip` ran before this and its parting state is its business.
   await setChip(page, PLANNER_NONEQUIP, 'on')
-  await page.fill(PLANNER_SEARCH, BROWSE_PARKED_SEARCH, { timeout: 15_000 })
-  const listed = await until(async () => (await countOf(page, PLANNER_EFFECT_ROW)) > 0, 20_000)
-  if (!check('the browser has groups to expand before the memory step takes it away', listed)) return
-  await page.click(PLANNER_EFFECT_ROW, { timeout: 15_000 })
-  const expanded = await until(async () => (await countOf(page, PLANNER_DONOR_ROW)) > 0, 15_000)
-  check('…and one of them is expanded, so the round trip has an expansion to restore', expanded)
-  check(
-    '…with a search in the box that nothing defaults to',
-    (await valueOf(page, PLANNER_SEARCH)) === BROWSE_PARKED_SEARCH
-  )
+  // SETTLE BEFORE READING OR CLICKING, never merely "wait for one" — see `settleRows`. A deferred
+  // fold is still replacing rows when the first one appears, and a click on a row that is about to
+  // be swapped fails against a browser behaving perfectly.
+  if ((await settleRows(page, PLANNER_EFFECT_ROW)) > 0) {
+    const term = await termFromScreen(page)
+    await page.fill(PLANNER_SEARCH, term, { timeout: 15_000 })
+    const listed = (await settleRows(page, PLANNER_EFFECT_ROW)) > 0
+    if (check('the browser has groups to expand before the memory step takes it away', listed, `searched "${term}"`)) {
+      await page.click(PLANNER_EFFECT_ROW, { timeout: 15_000 })
+      const expanded = await until(async () => (await countOf(page, PLANNER_DONOR_ROW)) > 0, 15_000)
+      check('…and one of them is expanded, so the round trip has an expansion to restore', expanded)
+      check('…with a search in the box that nothing defaults to', (await valueOf(page, PLANNER_SEARCH)) === term)
 
-  await awayAndBack(page, {
-    label: 'the Exaltations browser',
-    tab: PLANNER_TAB,
-    view: PLANNER_VIEW,
-    read: readBrowse
-  })
+      await awayAndBack(page, {
+        label: 'the Exaltations browser',
+        tab: PLANNER_TAB,
+        view: PLANNER_VIEW,
+        read: readBrowse
+      })
+    }
+  }
 
-  // Hand it back: the box, the escape hatch and the socket tab all go home. The expansion is left
-  // alone — a collapsed group is only what a fresh mount used to show, and nothing below reads it.
+  // HAND THE TAB BACK ON EVERY PATH, including the ones that gave up above. This step is the only
+  // one in the spec that moves the socket tab and types in the box, and the steps after it were
+  // written against the proc tab with an empty search — an early return that skipped this left
+  // `stepAddWish` looking for donor rows on a tab that had none, which turned one step's bad search
+  // term into a spec-wide failure.
   await page.fill(PLANNER_SEARCH, '', { timeout: 15_000 })
   await setChip(page, PLANNER_NONEQUIP, 'off')
   await page.click(PLANNER_SOCKET_PROC, { timeout: 15_000 })
-  await until(async () => (await countOf(page, PLANNER_EFFECT_ROW)) > 0, 20_000)
+  await settleRows(page, PLANNER_EFFECT_ROW)
 }
 
 // ---- the Character tab's carry-all search ----------------------------------------------------------
