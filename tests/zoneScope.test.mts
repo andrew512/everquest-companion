@@ -123,9 +123,11 @@ test('the in-app membership lives in the timeslice store and never reaches disk'
 test('the in-app control is mounted only while the slice carries a zone', () => {
   const bar = code('../src/renderer/src/features/timeslice/ScopeBar.tsx')
   assert.match(bar, /slice\.zoneKey !== null && <ZoneScopeBar/)
-  // It is a THIRD control beside the other two, not a row inside either of them.
-  assert.match(bar, /<SliceBar/)
-  assert.match(bar, /<RateBasisBar/)
+  // It is a THIRD control beside the other two, not a row inside either of them. Since JOS-301 the
+  // other two arrive as their CONTROL halves (their captions moved to the one line under the row),
+  // which is a change of where the words are drawn and not of how many picks there are.
+  assert.match(bar, /<SliceControls/)
+  assert.match(bar, /<RateBasisControls/)
   // The loot ledger mounts `SliceBar` alone and must not pick this up by accident.
   assert.doesNotMatch(code('../src/renderer/src/features/loot/LootChrome.tsx'), /ZoneScopeBar/)
 })
