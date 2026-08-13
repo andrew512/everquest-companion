@@ -369,6 +369,17 @@ export const IPC = {
   // new dump, and a keystroke that re-renders the table gets the cached fold.
   gearOwnership: 'gear:ownership',
 
+  // ---- gear planner (JOS-286, phase 5) ----
+  // The active character's saved GEAR SETS — named virtual loadouts, one item per equipment cell,
+  // each assignment carrying its own tracked plus-state (shared/planner/gearSet.ts). Read/write
+  // pair over `ProgressState.gearSets`, exactly the `planner:getPlans` / `planner:setPlans`
+  // arrangement: the renderer is UNTRUSTED, so a written list is re-validated cell by cell against
+  // the closed `PLAN_SLOTS` allowlist and clamped to states the game's item window can be in
+  // (src/main/planner/validate.ts sanitizeGearSets) before a byte of it reaches the store — and
+  // the same validator runs on the way out, so the round trip is a fixed point.
+  gearGetSets: 'gear:getSets',
+  gearSetSets: 'gear:setSets',
+
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest
   // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB

@@ -405,7 +405,8 @@ const api = {
     ipcRenderer.invoke(IPC.voicePrefsSet, prefs),
 
   // ---- the planner's slice, in its own file (src/preload/planner.ts) ----
-  // The exaltation planner's four reads + one write and the Gear tab's two reads. Split out
+  // The exaltation planner's four reads + one write and the Gear tab's two reads plus its own
+  // set read/write pair (JOS-286). Split out
   // under the same rule roster.ts/windows.ts/perf.ts state: this file is AT the measured
   // 400-code-line ceiling, and phase 4 (JOS-285) needed one more method than it had room for.
   // (The item/mob lookups live in knowledge.ts beside the spell lookups — JOS-293's split.)
