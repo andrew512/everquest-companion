@@ -11,6 +11,15 @@
 // only ids missing from listPacks() are fetched. A user who installed the old peon /
 // sc_marine / default packs keeps them (and any alert pointing at them keeps playing).
 //
+// AND ADDITIVE IS NOT THE SAME AS UNCONDITIONAL (JOS-273). "Missing" used to mean "not on disk",
+// so deleting the shipped pack worked exactly until the next launch put it back — which users
+// experienced as the pack re-enabling itself with every update, because an update is when they
+// relaunch. A DELETION IS A STATEMENT: the uninstall handler tombstones the id
+// (storeSoundPacks.ts) and this pass skips every tombstoned id, so a pack the user threw away
+// stays thrown away. Installing it again from the registry browser clears the stone, which is the
+// only way back and is one click. The tombstone set is passed IN by the caller (index.ts) rather
+// than read here, so this module stays loadable by node:test — the store is not.
+//
 // ETIQUETTE (AGENTS.md "Scraper etiquette" LAW): idempotent (an installed pack skips the
 // network entirely), ONE request per missing pack (the release tarball — not 60 file
 // GETs), pinned to an immutable tag, spaced by a delay when more than one pack is
@@ -94,6 +103,20 @@ async function provisionPack(pack: RegistryPack, packsRoot: string): Promise<boo
 }
 
 /**
+ * WHICH SHIPPED PACKS THIS LAUNCH SHOULD FETCH — the whole decision, as a pure function.
+ *
+ * Split out so the rule is testable without a network: "not installed" was the entire rule until
+ * JOS-273, and the half that was added (a deletion is remembered) is exactly the half a test has
+ * to be able to state. `provisionDefaultPacks` below does the I/O and nothing else decides.
+ */
+export function packsToProvision(
+  installed: ReadonlySet<string>,
+  removed?: ReadonlySet<string>
+): RegistryPack[] {
+  return DEFAULT_PACKS.filter((p) => !installed.has(p.name) && !removed?.has(p.name))
+}
+
+/**
  * Ensure every shipped default pack is present. For each id NOT already surfaced by
  * listPacks() (bundled or user), install it in the background. Best-effort: a failure on
  * one pack is logged and skipped; the next startup retries. Resolves to the number of
@@ -105,6 +128,11 @@ export async function provisionDefaultPacks(opts?: {
   packsRoot?: string
   /** Override which pack ids count as already-present (defaults to listPacks()). For the harness. */
   installedIds?: Set<string>
+  /**
+   * Shipped ids the user DELETED (storeSoundPacks.ts `removedPackIds`). Skipped entirely — see
+   * the header. Absent means "nothing was deleted", which is every fresh install.
+   */
+  removedIds?: ReadonlySet<string>
 }): Promise<number> {
   let installed: Set<string>
   if (opts?.installedIds) {
@@ -118,7 +146,9 @@ export async function provisionDefaultPacks(opts?: {
     }
   }
 
-  const missing = DEFAULT_PACKS.filter((p) => !installed.has(p.name))
+  // NOT INSTALLED, AND NOT THROWN AWAY (see `packsToProvision` — the decision is up there so a
+  // test can state it without a network).
+  const missing = packsToProvision(installed, opts?.removedIds)
   if (missing.length === 0) return 0
 
   // Resolve the target root only once we know we'll write (keeps the no-op path from
