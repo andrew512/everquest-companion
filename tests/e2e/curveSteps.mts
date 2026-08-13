@@ -387,49 +387,132 @@ function unionRect(page: Page, sels: readonly string[], pad = 12): Promise<Clip 
  */
 let lastShot = ''
 
-async function capturePng(app: ElectronApplication, page: Page, clip: Clip): Promise<string> {
-  const win = await app.browserWindow(page)
-  return win
-    .evaluate(async (w, r) => {
-      const wait = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
-      w.webContents.invalidate()
-      await wait(250)
-      await w.webContents.capturePage(r)
-      await wait(150)
-      const img = await w.webContents.capturePage(r)
-      return img.isEmpty() ? '' : img.toPNG().toString('base64')
-    }, clip)
-    .catch(() => '')
+/**
+ * THE PICTURE THAT ALWAYS LANDS: the chart column as a STANDALONE HTML page.
+ *
+ * Every pixel path out of a window that is never shown turned out to be unreliable, and each in a
+ * different direction — `page.screenshot` hangs waiting for a frame and leaves a device-metrics
+ * override behind that pins the viewport for later steps; `capturePage` returns whatever surface
+ * the browser process is holding, which can be a window out of date; `Page.captureScreenshot` with
+ * `fromSurface:false` through a raw CDP session hung the spec outright. `dumpArtifacts` already
+ * says the quiet part in its own comment: the HTML is the evidence that matters and the PNG is a
+ * bonus with a three-second budget.
+ *
+ * So the primary artifact is a self-contained page: every `<style>` the app has injected (MUI's
+ * emotion sheets included), then the chart column's own markup, on the app's background at the
+ * exact pane width it was measured at. It opens in any browser, it is byte-for-byte what the
+ * renderer built, and — this matters for the axis-text half of the ticket — the reviewer can drag
+ * the browser window and watch the labels at any pane width, which no PNG can show.
+ */
+function writeColumnHtml(page: Page, path: string, width: number): Promise<boolean> {
+  return page
+    .evaluate((arg: { sels: { sel: string; paper: boolean }[]; width: number }) => {
+      // `paper: true` walks up to the panel the plot lives in, so the picture carries the title and
+      // the caption that say what the reader is looking at.
+      const parts = arg.sels
+        .map((s) => {
+          const el = document.querySelector(s.sel)
+          if (!el) return ''
+          return (s.paper ? (el.closest('.MuiPaper-root') ?? el) : el).outerHTML
+        })
+        .filter((h) => h.length > 0)
+      if (parts.length === 0) return ''
+      // THE RULES, NOT THE TAGS. Emotion (MUI's engine) inserts its rules through `insertRule` in
+      // production, so every `<style>` element in this document has EMPTY text content — the first
+      // cut of this artifact shipped four blank style tags and a page of unstyled markup. The rules
+      // are only reachable through the CSSOM.
+      const styles = Array.from(document.styleSheets)
+        .map((sheet) => {
+          try {
+            return Array.from(sheet.cssRules)
+              .map((r) => r.cssText)
+              .join('\n')
+          } catch {
+            return ''
+          }
+        })
+        .join('\n')
+      const bg = getComputedStyle(document.body).backgroundColor
+      return [
+        '<!doctype html><meta charset="utf-8">',
+        `<style>${styles}</style>`,
+        `<body style="margin:0;padding:16px;background:${bg}">`,
+        `<div style="width:${String(arg.width)}px">${parts.join('')}</div>`
+      ].join('\n')
+    }, {
+      sels: [
+        { sel: SLICE_WINDOW, paper: false },
+        { sel: AA_CHART, paper: true },
+        { sel: LEVEL_CHART, paper: true }
+      ],
+      width
+    })
+    .then((html) => {
+      if (!html) return false
+      writeFileSync(path, html, 'utf8')
+      console.log(`artifact: ${path}`)
+      return true
+    })
+    .catch(() => false)
 }
 
+/**
+ * …and the PNG beside it, BEST EFFORT ONLY.
+ *
+ * `capturePage` is the one pixel path that cannot hang and cannot leave an override behind, so it
+ * is the only one used. Before it fires, the content area is scrolled by a pixel and back: a scroll
+ * dirties the compositor, which is the cheapest honest way to make a never-shown window paint. The
+ * result is rejected if it is byte-identical to the previous window's — three windows of one chart
+ * cannot legitimately produce the same pixels — and a rejected shot is a note, never a failure. The
+ * HTML above is the artifact the acceptance rests on.
+ */
+async function shootPng(app: ElectronApplication, page: Page, path: string, clip: Clip): Promise<boolean> {
+  const win = await app.browserWindow(page)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.evaluate((s) => {
+      const sc = document.querySelector(s)
+      if (sc) sc.scrollTop += 1
+    }, SCROLLER)
+    await page.evaluate((s) => {
+      const sc = document.querySelector(s)
+      if (sc) sc.scrollTop -= 1
+    }, SCROLLER)
+    const b64 = await win
+      .evaluate(async (w, r) => {
+        const wait = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
+        w.webContents.invalidate()
+        await wait(300)
+        // TWO CAPTURES. The first pulls the surface across (and on this window frequently returns
+        // an empty image doing it); the second is the one worth keeping.
+        await w.webContents.capturePage(r).catch(() => undefined)
+        await wait(200)
+        const img = await w.webContents.capturePage(r)
+        return img.isEmpty() ? '' : img.toPNG().toString('base64')
+      }, clip)
+      .catch(() => '')
+    if (b64 && b64 !== lastShot) {
+      lastShot = b64
+      writeFileSync(path, Buffer.from(b64, 'base64'))
+      console.log(`artifact: ${path}`)
+      return true
+    }
+  }
+  return false
+}
+
+/** One window, photographed: the standalone page always, the PNG when the surface cooperates.
+ *  Returns the artifact stem, or null when even the markup could not be read. */
 async function shoot(app: ElectronApplication, page: Page, window: string): Promise<string | null> {
   await alignToSlice(page)
   const clip = await unionRect(page, [SLICE, AA_CHART, LEVEL_CHART, LEGEND])
   if (!clip) return null
   mkdirSync(ARTIFACTS, { recursive: true })
-  const path = join(ARTIFACTS, `${SHOT_TAG}-${window}.png`)
-  let b64 = ''
-  for (let attempt = 0; attempt < 3; attempt++) {
-    b64 = await capturePng(app, page, clip)
-    if (b64 && b64 !== lastShot) break
-    b64 = ''
+  const stem = join(ARTIFACTS, `${SHOT_TAG}-${window}`)
+  const wrote = await writeColumnHtml(page, `${stem}.html`, clip.width)
+  if (!(await shootPng(app, page, `${stem}.png`, clip))) {
+    note(`chart shot "${window}": no PNG — the surface never moved off the previous window's`)
   }
-  if (!b64) {
-    // The slow path: a platform where a never-shown window captures empty, or a surface that
-    // refused to move. It waits for a real frame, which is exactly what is missing here.
-    try {
-      await page.screenshot({ path, clip, timeout: 15_000 })
-    } catch (err) {
-      note(`chart shot "${window}" unavailable — ${String(err)}`)
-      return null
-    }
-    console.log(`artifact: ${path}`)
-    return path
-  }
-  lastShot = b64
-  writeFileSync(path, Buffer.from(b64, 'base64'))
-  console.log(`artifact: ${path}`)
-  return path
+  return wrote ? `${stem}.html` : null
 }
 
 /** The caption the slice bar prints — the window in words, and the thing that must CHANGE when a
