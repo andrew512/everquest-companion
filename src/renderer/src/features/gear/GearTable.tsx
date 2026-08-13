@@ -30,8 +30,7 @@
 // measured in `tests/e2e/gearColumnSteps.mts`, container-scroll and page-no-scroll in one step.
 
 import { type JSX, memo, useMemo } from 'react'
-import { IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
-import AddIcon from '@mui/icons-material/Add'
+import { Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName } from '../planner/PlannerChips'
@@ -85,15 +84,18 @@ export interface GearTableProps {
   /** the Owned header's own explanation, including the uncounted-keyring note when there is one */
   ownedHint: string
   onSort: (key: GearSortKey) => void
-  /** deep-link an item into the Loot tab's drill-down, where the ItemWindow draws its tier block */
-  onOpenLoot?: (item: string) => void
   /**
-   * PUT THIS ROW IN THE SELECTED GEAR SET (JOS-286, phase 5) — the natural gesture from a search
-   * row. ABSENT when there is no set to add to, and the `+` is then absent as well rather than
-   * disabled: a button that does nothing is a worse answer than no button, and the pane's own
-   * empty state is where "make a set first" belongs.
+   * Deep-link an item into the Loot tab's drill-down, where the ItemWindow draws its tier block.
+   *
+   * THE ONLY PER-ROW ACTION THIS TABLE HAS, since JOS-325. There was a second — `onAssign`, the `+`
+   * that dropped a search row into the selected gear set (JOS-286) — and it went with the sets
+   * surface the owner retired: no pane, no set to add to, nothing for the button to mean. The
+   * argument it used to carry (absent beats disabled, because a button that does nothing is a worse
+   * answer than no button) survives it as a general rule, and this prop is now the whole of its
+   * application here: a host that has nowhere to send the click passes nothing, and `DonorName`
+   * draws plain text rather than a link that goes nowhere.
    */
-  onAssign?: (row: GearRow) => void
+  onOpenLoot?: (item: string) => void
 }
 
 /** The spacer rows that reserve the full scroll height — see useWindowedRows. */
@@ -121,28 +123,19 @@ const GearLine = memo(function GearLine({
   row: GearRow
   columns: readonly GearColumn[]
   ownership: GearOwnershipMap | null
-  on: { openLoot?: (item: string) => void; assign?: (row: GearRow) => void }
+  on: { openLoot?: (item: string) => void }
 }): JSX.Element {
   // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
   // already the ownership key — phase 3's seam — so there is nothing to normalise here.
   const owned = ownership === null ? null : ownershipFor(ownership, row)
-  const assign = on.assign
   return (
     <TableRow hover data-testid="gear-row" data-item-key={row.key} sx={FIXED_ROW}>
       <TableCell>
+        {/* THE `+` IS GONE FROM THIS CELL (JOS-325). It put the row into the selected gear set, and
+            the sets are retired — see `GearTableProps.onOpenLoot`. The `Stack` stays because the
+            name still shares the cell with the era chip, and the FIXED_ROW contract above is what
+            makes that one clipped line rather than two. */}
         <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
-          {assign !== undefined && (
-            <IconButton
-              size="small"
-              data-testid="gear-add"
-              aria-label={`Add ${row.name} to the selected set`}
-              title="Add to the selected gear set. It lands in the first free cell its slot can occupy, displacing what is there when none is free."
-              onClick={() => assign(row)}
-              sx={{ flexShrink: 0, p: 0.25 }}
-            >
-              <AddIcon fontSize="inherit" />
-            </IconButton>
-          )}
           <DonorName name={row.name} onOpen={on.openLoot} />
           {/* THE ONE CHIP A SEARCH ROW WEARS, and it is a POINTER rather than a verdict: the era
               join's (out of era / era?), which explains a row you can SEE.
@@ -210,14 +203,14 @@ export default function GearTable({
   ownership,
   ownedHint,
   onSort,
-  onOpenLoot,
-  onAssign
+  onOpenLoot
 }: GearTableProps): JSX.Element {
   const span = columns.length + (ownership === null ? 3 : 4)
   const layout = gearTableLayout(columns.length, ownership !== null)
-  // ONE object for the row's two callbacks, memoized on the callbacks themselves: `GearLine` is
-  // `memo`'d and a fresh literal per render would defeat it on every keystroke.
-  const handlers = useMemo(() => ({ openLoot: onOpenLoot, assign: onAssign }), [onOpenLoot, onAssign])
+  // ONE object for the row's callbacks, memoized on the callbacks themselves: `GearLine` is
+  // `memo`'d and a fresh literal per render would defeat it on every keystroke. It held two until
+  // JOS-325 retired the `+`; it stays an object because the wrapper is what the memo depends on.
+  const handlers = useMemo(() => ({ openLoot: onOpenLoot }), [onOpenLoot])
   return (
     <Table
       size="small"

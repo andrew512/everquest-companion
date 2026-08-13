@@ -4,7 +4,8 @@
 // TWO CHOICES, ONE SHAPE. Which numeric COLUMNS the table draws, and which FILTER CONTROLS the
 // toolbar shows. Both are machine-class view preferences — they say how you like to READ the
 // corpus, not anything about your character — so both live in raw `localStorage` under `eq.gear.*`
-// beside the sets pane's own two keys, and neither ever crosses IPC.
+// and neither ever crosses IPC. (They shared that namespace with the sets pane's own two keys,
+// `eq.gear.set` / `eq.gear.setsOpen`, until JOS-325 retired the pane; nothing reads those now.)
 //
 // ABSENT IS NOT EMPTY, and every function here exists to keep those two apart. `null` means the
 // user has never expressed a preference, so the app's own default answers: the derived column seed

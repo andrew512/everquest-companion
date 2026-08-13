@@ -106,12 +106,27 @@ export interface ProgressState {
    * (`shared/planner/gearSet.ts`). Character-scoped for the same reason `exaltPlans` is: a
    * loadout is built for one character.
    *
+   * **RETIRED FROM THE UI, KEPT ON DISK (JOS-325, owner ruling 2026-08-13).** The sets SURFACE is
+   * gone — the Gear tab is pure search and acquisition planning is the wish list's job (JOS-326) —
+   * but this key is not, and the distinction is the whole point. Nothing deletes a set, nothing
+   * migrates one away, and no reader has to defend against the key's absence any differently than
+   * it did before. A user who built ten loadouts still has ten loadouts in their store file; what
+   * they no longer have is a pane that draws them. Removing a feature is the app's call to make,
+   * and throwing away the user's own document while doing it is not the same act.
+   *
+   * SO THE MACHINERY THAT KEEPS THE PROMISE STAYS, and only that: the two interfaces in
+   * `shared/planner/gearSet.ts`, main's `sanitizeGearSets` (both directions — a store file is
+   * hand-editable and an unvalidated read is a crash waiting for whoever revives this), the
+   * `getGearSets`/`setGearSets` store accessors, and the IPC pair behind them. The folds, the
+   * totals and the pane went with the surface. `tests/gearSetStore.test.mts` still pins the round
+   * trip, which is what makes "untouched on disk" a claim rather than a hope.
+   *
    * A SECOND KEY RATHER THAN A FIELD ON `exaltPlans`, deliberately. The two answer different
    * questions — an exaltation set plans which EFFECT to socket where and which donor to farm for
-   * it, a gear set plans which ITEM to wear where and at what +N — and they are edited on
-   * different tabs by different code. Folding one into the other would make every exaltation set
-   * carry an empty gear plan, and a user who only ever opens one tab would still be writing the
-   * other's shape.
+   * it, a gear set plans which ITEM to wear where and at what +N — and they were edited on
+   * different tabs by different code. Folding one into the other would have made every exaltation
+   * set carry an empty gear plan, and a user who only ever opened one tab would still be writing
+   * the other's shape.
    *
    * ADDITIVE and OPTIONAL — no schema bump and no migration, the `exaltPlans` precedent exactly:
    * every reader defaults on a missing key and electron-store rewrites the whole parsed object,

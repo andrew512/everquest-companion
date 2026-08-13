@@ -1,9 +1,10 @@
 // gear/useGearPrefs.ts — the two view preferences the Gear tab remembers (JOS-297).
 //
-// THE STORAGE TIER IS `localStorage`, and that is `useGearSets.ts`'s own argument reused: which
-// columns you like to read and which controls you keep on screen are facts about THIS MACHINE's
-// window, with no meaning on another one and nothing to validate in main. So they sit beside
-// `eq.gear.set` / `eq.gear.setsOpen` under the same `eq.<feature>.*` idiom, and never cross IPC.
+// THE STORAGE TIER IS `localStorage`, and the argument is `usePlans.ts`'s two tiers: which columns
+// you like to read and which controls you keep on screen are facts about THIS MACHINE's window,
+// with no meaning on another one and nothing to validate in main. So they sit under the
+// `eq.<feature>.*` idiom and never cross IPC. (The argument arrived here from `useGearSets.ts`,
+// which kept `eq.gear.set` / `eq.gear.setsOpen` on the same tier until JOS-325 retired the sets.)
 //
 // AND THEY ARE PREFERENCES PRECISELY BECAUSE A VIEW UNMOUNTS ON EVERY TAB SWITCH (JOS-90/97/116,
 // the same bug three times). A column set held in `useState` would survive exactly until the user
