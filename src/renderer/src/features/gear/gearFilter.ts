@@ -21,7 +21,9 @@
 // stated (gear.ts, law 1), so a SORT puts absent LAST in both directions — ascending by haste must
 // not rank six thousand plain items above the sixty-four that state one, and descending must not
 // either. `gearRatio` is `undefined` for anything that is not a weapon, so a ratio sort never ranks
-// 5,000 non-weapons at zero.
+// 5,000 non-weapons at zero. `gearEffectiveHp` (JOS-336) obeys the same rule from the other side: a
+// row stating NEITHER HP nor STA reads `undefined`, while a row stating just one reads that one —
+// silence is not a zero, and a stated number is not silence.
 //
 // THERE IS NO NUMERIC FILTER LEFT IN THIS FILE (owner ruling 2026-08-13, JOS-302, fourth ask:
 // *drop the min-ratio and stat-at-least filters completely - sorting services that need without
@@ -41,7 +43,7 @@
 import type { ClassAbbr } from '../../../../shared/classCombo'
 import type { ItemUpgradeState } from '../../../../shared/itemUpgrade'
 import type { GearRow, GearStatKey } from '../../../../shared/planner/gear'
-import { gearRatio, scaleGearRow } from '../../../../shared/planner/gearScale'
+import { gearEffectiveHp, gearRatio, scaleGearRow } from '../../../../shared/planner/gearScale'
 import { weaponPicksMatch, type WeaponPick } from '../../../../shared/planner/weaponType'
 import type { EquipSlot, SocketType } from '../../../../shared/planner/types'
 
@@ -232,10 +234,15 @@ export function filterGearRows<T extends GearRow>(
 // ---- the sort ------------------------------------------------------------------------------
 
 /**
- * Any numeric column, plus the two derived ones. `RATIO` is `gearRatio` (never a second opinion on
- * DMG/DELAY) and `name` is the only non-numeric axis.
+ * Any numeric column, plus the DERIVED ones. `RATIO` is `gearRatio` (never a second opinion on
+ * DMG/DELAY), `EFF_HP` is `gearEffectiveHp` (JOS-336 — raw HP plus raw STA, likewise never a second
+ * opinion), and `name` is the only non-numeric axis.
+ *
+ * A DERIVED KEY IS NOT A VECTOR KEY, and the union says so: `GearStats` has no `EFF_HP` field and
+ * never will. Nothing indexes it, nothing scales it, and nothing stores it — it is computed from the
+ * vector at the moment somebody asks, which is exactly why the plus-state moves it for free.
  */
-export type GearSortKey = 'name' | 'RATIO' | GearStatKey
+export type GearSortKey = 'name' | 'RATIO' | 'EFF_HP' | GearStatKey
 
 export interface GearSort {
   key: GearSortKey
@@ -245,10 +252,19 @@ export interface GearSort {
 /** The table opens on the highest AC — a ranking, so the first screen says something. */
 export const DEFAULT_GEAR_SORT: GearSort = { key: 'AC', dir: 'desc' }
 
-/** The number a sort reads, or `undefined` when the row states none (which sorts LAST, both ways). */
+/**
+ * The number a sort reads, or `undefined` when the row states none (which sorts LAST, both ways).
+ *
+ * THE DERIVED ARMS COME FIRST AND EACH DELEGATES. `gearRatio` and `gearEffectiveHp` both live in
+ * `shared/planner/gearScale.ts` beside the scaler, so the cell the table DRAWS and the number the
+ * sort RANKS by are one function call rather than two agreeing implementations — which is the
+ * property that lets `GearTable` render every column with `statText(sortValue(row, key), key)` and
+ * never learn that two of the keys are not vector fields.
+ */
 export function sortValue(row: GearRow, key: GearSortKey): number | undefined {
   if (key === 'name') return undefined
   if (key === 'RATIO') return gearRatio(row.stats)
+  if (key === 'EFF_HP') return gearEffectiveHp(row.stats)
   return row.stats[key]
 }
 

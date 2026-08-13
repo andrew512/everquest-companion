@@ -73,7 +73,11 @@ function row(name: string, stats: GearStats): GearRow {
   }
 }
 
-/** Every indexed key at `n`, with DELAY forced so the derived RATIO moves the same way DMG does. */
+/**
+ * Every indexed key at `n`, with DELAY forced so the derived RATIO moves the same way DMG does.
+ * The other derived key needs no such help: HP and STA are both in the list, so `EFF_HP` reads `2n`
+ * on any row this builds and `undefined` on the row that states nothing.
+ */
 function everyStat(n: number, delay: number): GearStats {
   const out: GearStats = {}
   for (const key of GEAR_STAT_KEYS) out[key] = n
@@ -132,13 +136,23 @@ test('a stored choice DEGRADES rather than erroring, whatever another build wrot
   assert.deepEqual(sanitizeColumns(['AC', 'NOT_A_STAT', 'name', 42, 'HP']), ['AC', 'HP'], 'unknown keys drop out')
   assert.deepEqual(sanitizeColumns(['HP', 'AC', 'HP']), ['HP', 'AC'], 'repeats collapse, stored order survives')
   assert.deepEqual(sanitizeColumns(['RATIO']), ['RATIO'], 'the derived ratio is a pickable column')
+  assert.deepEqual(sanitizeColumns(['EFF_HP']), ['EFF_HP'], '…and so is the derived effective HP')
 })
 
-test('the picker offers the WHOLE vocabulary - every indexed stat, plus ratio, and never the name', () => {
-  assert.equal(PICKABLE_COLUMNS.length, GEAR_STAT_KEYS.length + 1)
+test('the picker offers the WHOLE vocabulary - every indexed stat, both derived keys, never the name', () => {
+  // TWO DERIVED KEYS SINCE JOS-336: `RATIO` and `EFF_HP`. Neither is a field of `GearStats`, both
+  // are computed off the SCALED vector at read time, and both are offered exactly like a stat.
+  assert.equal(PICKABLE_COLUMNS.length, GEAR_STAT_KEYS.length + 2)
   for (const key of GEAR_STAT_KEYS) assert.ok(PICKABLE_COLUMNS.includes(key), `${key} is offered`)
   assert.ok(PICKABLE_COLUMNS.includes('RATIO'))
+  assert.ok(PICKABLE_COLUMNS.includes('EFF_HP'))
   assert.ok(!PICKABLE_COLUMNS.includes('name' as GearSortKey), 'the item column is not optional')
+  // A DERIVED KEY STANDS BESIDE THE NUMBERS IT IS MADE OF — the only documentation a flat checkbox
+  // list can carry (gearColumns.ts). Ratio follows DELAY; effective HP follows HP, one row under
+  // the STA it is summed with.
+  assert.equal(PICKABLE_COLUMNS[PICKABLE_COLUMNS.indexOf('DELAY') + 1], 'RATIO')
+  assert.equal(PICKABLE_COLUMNS[PICKABLE_COLUMNS.indexOf('HP') + 1], 'EFF_HP')
+  assert.ok(PICKABLE_COLUMNS.indexOf('STA') < PICKABLE_COLUMNS.indexOf('EFF_HP'), 'both halves come first')
   // The seven attributes the owner named by hand. Since JOS-302 this list is the ONLY way to put a
   // stat on the table that the sort has not already put there - which is exactly the trade the
   // owner priced when the stat-threshold box went: the picker names it, the header ranks it.
@@ -247,9 +261,11 @@ test('past the floor the layout switches to PIXELS and states a table minimum - 
   assert.ok(gearTableLayout(20, true).minWidth > gearTableLayout(20, false).minWidth)
 
   // A full-vocabulary pick is wider than any window this app runs in - the case the ticket names.
+  // The count is read off `PICKABLE_COLUMNS` rather than typed, so a key added to the vocabulary
+  // (JOS-336 added the thirty-fourth) widens this claim instead of stale-ing it.
   const everything = gearTableLayout(PICKABLE_COLUMNS.length, true)
   assert.equal(everything.mode, 'pixel')
-  assert.ok(everything.minWidth > 2500, `all 33 columns state ${String(everything.minWidth)}px`)
+  assert.ok(everything.minWidth > 2500, `all ${String(PICKABLE_COLUMNS.length)} columns state ${String(everything.minWidth)}px`)
 })
 
 // =================================================================================
