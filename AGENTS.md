@@ -104,8 +104,9 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     sweep — green standalone immediately after, every time;
     multi-spec-sweep only) · documented in-file
     by the JOS-206 worker;
-    needs the same order-hardening the spec's own comment describes; fix
-    dispatched in JOS-279 (2026-08-13 wave).
+    **RESOLVED 9816cd34 (JOS-279)** — order-hardening was a BET;
+    `tests/e2e/viewRemount.mts` HOLDS the precondition instead (mark the keyed
+    subtree, read before you `check`, discard an attempt that lost its mount).
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
     settles on stale geometry · 5 sightings (2026-08-10/11/12 full-sweep; 4th
     in the JOS-229 sweep; 5th 2026-08-12 STANDALONE on the JOS-240 merge
@@ -114,10 +115,19 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     ticket JOS-232 filed — now firing standalone, priority raised.
   - `window-bounds.e2e` · close-time bounds write never lands under sweep
     load ("closing the window writes down where it was left — (none)",
-    cascades into both relaunch-bounds checks) · 1 sighting (2026-08-12,
-    40-spec sweep during JOS-260 verification; green standalone immediately
-    after and in the following full sweep) · load-sensitive
-    persistence-on-close, unrelated to the change under test; report line.
+    cascades into both relaunch-bounds checks) · 2 sightings (2026-08-12
+    40-spec sweep, JOS-260; 2026-08-13 sweep, JOS-279 — green standalone
+    after, both) · load-sensitive persistence-on-close, unrelated to the
+    change under test; report line.
+  - `respawn-timers.e2e` · the learned gap reads 3m 01s where four assertions
+    spell `3m 00s` · 1 sighting (2026-08-13 sweep, JOS-279; green standalone
+    after) · DIAGNOSED: `stepWatchFromRecentKills` stamps its two deaths off
+    two instants, so a second of wall clock makes the gap 181 s. Stamp both
+    off ONE instant; never widen the assertions.
+  - MULTI-SPEC SWEEP · six specs die at once mid-click, "Target page … has
+    been closed" · 1 sighting (2026-08-13 sweep, JOS-279; six green serially
+    after, none in the next sweep) · a host/load event, not one spec's race —
+    a second sighting is a runner-concurrency ticket.
   - `presenceWorker.test` first-tick dedup · watches the REAL machine; fails
     while EverQuest runs with a player at the keyboard · 3 sightings
     (2026-08-10 ×2, 2026-08-12 JOS-239 worker mid-session, green on final
@@ -129,11 +139,14 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     (2026-08-11 phase-4 worker, 2026-08-12 JOS-230 worker, 2026-08-12 JOS-238
     worker, 2026-08-12 v0.23.0 release sweep at 115 vs 125 ms, 2026-08-13
     v0.25.0 release sweep — full-sweep only, green standalone every time; the
-    prior row said 3 while listing four events, count corrected) · diagnosis sharpened by the
-    JOS-229 worker: the sub-beat replay precondition holds on essentially every
-    run of this machine, so the failure is the always-on stutter probe recording
-    a tick inside the window — a tick-phase coin flip, not load · chip filed
-    (fix the phase race or gate the assertion on probe phase), per this rule.
+    prior row said 3 while listing four events, count corrected) · the JOS-229
+    worker sharpened it to "the probe banks a tick inside the window — a
+    tick-phase coin flip, not load", which was right about the tick and wrong
+    about why ·
+    **RESOLVED 0523dd90 (JOS-279)** — asked about the WRONG window: both probes
+    run `appReady`→`replayDone`, wider than the fold it gated on (138 vs
+    103 ms). Now `probeWindowMs`, plus a three-valued verdict so the naive
+    fix's mirror flake cannot appear.
 - **Fixtures are COMMITTED and SCRUBBED.** `tests/fixtures/*.log` is tracked
   (a `!tests/fixtures/*.log` negation under the blanket `*.log`), so CI's
   `npm test` runs the FULL suite. The repo is PUBLIC, so every extractor
