@@ -37,6 +37,7 @@ import { applyTimerOverlayKnobs } from '../shared/buffTimers'
 // meaning, never by a predicate written here.
 import { normalizeXpRows } from '../shared/xpOverlay'
 import { normalizeRateBasis } from '../shared/rateBasis'
+import { normalizeZoneScope } from '../shared/zoneScope'
 import { isSliceId } from '../shared/timeslice'
 import type { ComboCorrection } from '../shared/classCombo'
 import {
@@ -459,6 +460,43 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   return cfg
 }
 
+/**
+ * THE XP WINDOW'S FOUR KNOBS (JOS-195 rows + slice, JOS-288 basis, JOS-291 zone membership),
+ * REBUILT RATHER THAN TRUSTED — the same argument as the drill and the toast blob beside them: a
+ * renderer patch must not be able to widen what is persisted, and ABSENT is a real answer for all
+ * four (every row; the current zone this session; the elapsed hour; every tier of that zone).
+ *
+ * Its own function for `applyTimerOverlayKnobs`' reason, one file over: four knobs is four more
+ * branches, and `setOverlayConfig` is at the measured complexity ceiling. Every one of them is
+ * deleted on every other kind, so a malformed patch cannot grow an xp knob on a damage meter.
+ */
+function applyXpOverlayKnobs(kind: OverlayKind, next: OverlayConfig): void {
+  // `normalizeXpRows` drops unknown row ids, so a hand-edited store cannot switch on a row this
+  // build does not have.
+  const xpRows = normalizeXpRows(next.xpRows)
+  if (xpRows && kind === 'xp') next.xpRows = xpRows
+  else delete next.xpRows
+  // The rate basis is checked against its own closed union for `normalizeXpRows`' reason: a store
+  // that came back with a third denominator would put a number on screen under an hour no surface
+  // here can name. Unknown ⇒ absent ⇒ `RATE_BASIS_DEFAULT`, which is the honest degrade.
+  const xpBasis = normalizeRateBasis(next.xpBasis)
+  if (xpBasis && kind === 'xp') next.xpBasis = xpBasis
+  else delete next.xpBasis
+  // The zone membership, same rule again (JOS-291): a store naming a membership this build cannot
+  // apply would scope every rate in the window by a rule nothing here implements. Unknown ⇒ absent
+  // ⇒ `ZONE_SCOPE_DEFAULT`, which is every tier — the read this window has always given.
+  const xpZoneScope = normalizeZoneScope(next.xpZoneScope)
+  if (xpZoneScope && kind === 'xp') next.xpZoneScope = xpZoneScope
+  else delete next.xpZoneScope
+  // The slice id is checked against the closed union, never against what the log can currently
+  // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
+  // a store that forgot the user's choice because they happened to relaunch mid-session would be
+  // the same bug from the other direction.
+  const xpSlice = next.xpSlice
+  if (kind === 'xp' && isSliceId(xpSlice)) next.xpSlice = xpSlice
+  else delete next.xpSlice
+}
+
 /** Merge-patch a kind's overlay config (only the provided keys change). Returns the merged value. */
 export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig>): OverlayConfig {
   const next: OverlayConfig = { ...getOverlayConfig(kind), ...patch }
@@ -485,27 +523,7 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds
   // carry this knob" is a fact about.
   applyTimerOverlayKnobs(kind, next)
-  // THE XP WINDOW'S THREE KNOBS (JOS-195, plus the rate basis in JOS-288), rebuilt rather than
-  // trusted — the same argument as the drill and the grouping above: a renderer patch must not be
-  // able to widen what is persisted, and ABSENT is a real answer for all three (every row; the
-  // current zone this session; the elapsed hour). `normalizeXpRows` drops unknown row ids, so a
-  // hand-edited store cannot switch on a row this build does not have.
-  const xpRows = normalizeXpRows(next.xpRows)
-  if (xpRows && kind === 'xp') next.xpRows = xpRows
-  else delete next.xpRows
-  // The rate basis is checked against its own closed union for `normalizeXpRows`' reason: a store
-  // that came back with a third denominator would put a number on screen under an hour no surface
-  // here can name. Unknown ⇒ absent ⇒ `RATE_BASIS_DEFAULT`, which is the honest degrade.
-  const xpBasis = normalizeRateBasis(next.xpBasis)
-  if (xpBasis && kind === 'xp') next.xpBasis = xpBasis
-  else delete next.xpBasis
-  // The slice id is checked against the closed union, never against what the log can currently
-  // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
-  // a store that forgot the user's choice because they happened to relaunch mid-session would be
-  // the same bug from the other direction.
-  const xpSlice = next.xpSlice
-  if (kind === 'xp' && isSliceId(xpSlice)) next.xpSlice = xpSlice
-  else delete next.xpSlice
+  applyXpOverlayKnobs(kind, next)
   const all = store.get('overlays') ?? {}
   all[kind] = next
   store.set('overlays', all)
