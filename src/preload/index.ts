@@ -63,6 +63,12 @@ import type { ShareApplyResult, SharePreview } from '../shared/profiles'
 import type {
   FeedbackDraft,
   FeedbackEnv,
+  // The DUMP preview shape (JOS-296) is taken from the shared contract rather than re-declared
+  // here, unlike its slice sibling below. The slice's preload shape genuinely differs from the
+  // shared one (main adds `windowMinutes`, the window it actually used); the dump's does not, and
+  // a second hand-written copy of an identical shape is a shape that will eventually disagree
+  // with itself.
+  FeedbackInventoryPreview,
   LogSliceMeta,
   SubmitErrorCode
 } from '../shared/feedback'
@@ -134,6 +140,11 @@ export interface FeedbackContext {
   queued: number
   /** Is there a character log to slice at all? */
   logAvailable: boolean
+  /** Is there a `/outputfile inventory` dump on disk? False ⇒ the control is disabled with the
+   *  command as its hint, never hidden (JOS-296). */
+  inventoryAvailable: boolean
+  /** The dump's mtime, epoch ms, or null — the JOS-253 freshness truth, before anything is read. */
+  inventoryUpdatedAt: number | null
 }
 
 /**
@@ -150,7 +161,7 @@ export type FeedbackSlicePreview = LogSliceMeta & {
 
 /** Reply of feedback:submit. NEVER a rejection: a network failure resolves with `queued:true`. */
 export type SubmitResult =
-  | { ok: true; reportId: string; logUploaded: boolean }
+  | { ok: true; reportId: string; logUploaded: boolean; inventoryUploaded: boolean }
   | {
       ok: false
       error: SubmitErrorCode
@@ -166,6 +177,9 @@ export type SubmitResult =
 export interface SubmitOpts {
   attachLog: boolean
   windowMinutes: number
+  /** Attach the current `/outputfile inventory` dump (JOS-296). Default ON for bug reports —
+   *  an owner ruling, and a VISIBLE checkbox: this is per-report consent, never a silent send. */
+  attachInventory: boolean
 }
 
 export type { CharacterRef, EqConfig, EqConfigResult, LogLine, LootEvent, ProgressState }
@@ -185,7 +199,7 @@ export type { PackInstallProgress, PackMutationResult, PackPreviewList, Registry
 export type { AppFocus, UpdateStatus }
 export type { CursorRingPrefs, OverlayAutoHidePrefs }
 export type { ShareApplyResult, SharePreview }
-export type { FeedbackDraft, FeedbackEnv, LogSliceMeta, SubmitErrorCode }
+export type { FeedbackDraft, FeedbackEnv, FeedbackInventoryPreview, LogSliceMeta, SubmitErrorCode }
 export type { TelemetryEvent, TelemetryPayloadView, TelemetryPrefs }
 export type { PerfHudPrefs, PerfSample, StartupProfile }
 // Dev-only triage (above): re-exported for the same reason every other payload shape is — a
@@ -613,6 +627,11 @@ const api = {
    *  that makes "you can see exactly what is sent" literally true, not a claim about a preview. */
   saveFeedbackSlice: (windowMinutes: number): Promise<ShareSaveResult> =>
     ipcRenderer.invoke(IPC.feedbackSaveSlice, windowMinutes),
+  /** Package the CURRENT `/outputfile inventory` dump and return its counts + a capped preview,
+   *  or the named reason there is none (JOS-296). NO ARGUMENT, on purpose: which file is read is
+   *  main's answer through the outputs registry, never a path the renderer supplies. */
+  buildFeedbackInventory: (): Promise<FeedbackInventoryPreview> =>
+    ipcRenderer.invoke(IPC.feedbackBuildInventory),
   /** Submit. NEVER rejects: a network failure resolves `{ok:false, queued:true}` and the report
    *  is retried later; a 4xx resolves `{ok:false, queued:false}` and is not retried. */
   submitFeedback: (draft: FeedbackDraft, opts: SubmitOpts): Promise<SubmitResult> =>
