@@ -1,7 +1,7 @@
-// GEAR TAB — the filter, the sort, the threshold parser and the plus-state wiring (JOS-284,
-// phase 3). Pure model only: `src/renderer/src/features/gear/gearFilter.ts` and `gearColumns.ts`
-// touch no React, no storage and no IPC, so they run under the node runner like `plannerGroups`
-// and `plannerClasses` before them.
+// GEAR TAB — the filter, the sort, the columns and the plus-state wiring (JOS-284, phase 3). Pure
+// model only: `src/renderer/src/features/gear/gearFilter.ts` and `gearColumns.ts` touch no React,
+// no storage and no IPC, so they run under the node runner like `plannerGroups` and
+// `plannerClasses` before them.
 //
 // THE FIXTURES ARE THE TWO ITEMS PHASE 0 IS PINNED ON, with their base vectors copied from
 // `tests/gearIndex.test.mts` (which asserts them against the REAL corpus). That is the point of
@@ -9,10 +9,16 @@
 // numbers for Thelvorn, gearIndex.test.mts goes red FIRST and names the corpus, instead of this
 // file going red and blaming the filter.
 //
-// WHAT THIS FILE IS FOR, in one sentence: the gear table's answers must be the SCALED ones. A
-// threshold, a ratio floor and a sort all read the vector AFTER `scaleAll`, so "weapons at ratio
-// 1.0" under a +5 slider means the weapons that reach 1.0 at +5 — and the test that proves it is
-// `a ratio floor no weapon meets at base is met at the checkpoint`, below.
+// WHAT THIS FILE IS FOR, in one sentence: the gear table's answers must be the SCALED ones. The
+// sort and every number the table draws read the vector AFTER `scaleAll`, so ranking by ratio under
+// a `+5` slider ranks the weapons AS THEY WOULD BE at +5.
+//
+// THAT SENTENCE USED TO SAY "a threshold, a ratio floor and a sort", and JOS-302's fourth owner ask
+// deleted the first two outright. The consequence is stated as its own test below — the plus-state
+// can now move WHAT A ROW READS and never WHICH ROWS ARE SHOWN, because nothing that filters reads
+// a number any more. That is a smaller claim than the one this file used to make, and writing the
+// smaller one down is the point: the parser tests, the `meetsThresholds` tests and the ratio-floor
+// test are GONE rather than weakened, because the code they described is gone.
 //
 // AND SINCE JOS-302 IT CARRIES THE THREE NARROWINGS THE OWNER ASKED FOR, each with its own claim:
 //   * THE CLASS PICKS REMOVE ROWS. They used to chip them and enforce nothing; the owner overruled
@@ -37,14 +43,10 @@ import {
   filterGearRows,
   gearTableRows,
   matchesGear,
-  meetsThresholds,
-  parseThreshold,
   scaleAll,
   slotMatches,
   sortGearRows,
   sortValue,
-  thresholdLabel,
-  withThreshold,
   type GearFilters
 } from '../src/renderer/src/features/gear/gearFilter'
 import {
@@ -60,6 +62,7 @@ import {
 import {
   CORE_COLUMNS,
   MAX_DERIVED_COLUMNS,
+  PICKABLE_COLUMNS,
   columnLabel,
   numericWidth,
   statText,
@@ -168,56 +171,19 @@ function filters(over: Partial<GearFilters> = {}): GearFilters {
 const names = (rows: readonly GearRow[]): string[] => rows.map((r) => r.name)
 
 // =================================================================================
-// THRESHOLD PARSING
-// =================================================================================
-
-test('a threshold is parsed in the spellings a player types, and folded by phase 0', () => {
-  assert.deepEqual(parseThreshold('hp 50'), { key: 'HP', min: 50 })
-  assert.deepEqual(parseThreshold('HP>=50'), { key: 'HP', min: 50 })
-  assert.deepEqual(parseThreshold('  ac  >  20 '), { key: 'AC', min: 20 })
-  assert.deepEqual(parseThreshold('sv magic: 20'), { key: 'SV_MAGIC', min: 20 })
-  // The aliases are `normalizeStatKey`'s, never a second table here — MANA → MP, REGEN → HP_REGEN.
-  assert.deepEqual(parseThreshold('mana 100'), { key: 'MP', min: 100 })
-  assert.deepEqual(parseThreshold('regen 3'), { key: 'HP_REGEN', min: 3 })
-  assert.deepEqual(parseThreshold('mana regen 2'), { key: 'MANA_REGEN', min: 2 })
-  assert.deepEqual(parseThreshold('wt 2.5'), { key: 'WEIGHT', min: 2.5 })
-  assert.deepEqual(parseThreshold('backstab 9'), { key: 'BACKSTAB', min: 9 })
-  assert.deepEqual(parseThreshold('str -5'), { key: 'STR', min: -5 })
-})
-
-test('a threshold the vector cannot compare is REFUSED, never half-understood', () => {
-  assert.equal(parseThreshold(''), null)
-  assert.equal(parseThreshold('hp'), null, 'no number is not a threshold')
-  assert.equal(parseThreshold('50'), null, 'no key is not a threshold')
-  assert.equal(parseThreshold('sparkle 5'), null, 'an unknown stat')
-  // CHARGES / COOLDOWN / CAST TIME / REQUIRED LEVEL are deliberately out of the vector (gear.ts),
-  // so the table has no column to show them in and no value to compare — refused, not silently on.
-  assert.equal(parseThreshold('charges 5'), null)
-  assert.equal(parseThreshold('required level 40'), null)
-})
-
-test('one key carries one minimum, and the chip says which', () => {
-  const first = withThreshold([], { key: 'HP', min: 20 })
-  const second = withThreshold(first, { key: 'HP', min: 50 })
-  assert.deepEqual(second, [{ key: 'HP', min: 50 }], 'the newer number replaces the older')
-  assert.equal(withThreshold(second, { key: 'AC', min: 10 }).length, 2)
-  assert.equal(thresholdLabel({ key: 'SV_MAGIC', min: 20 }), 'SV MAGIC >= 20')
-})
-
-// =================================================================================
 // THE PREDICATES — absent is not zero
 // =================================================================================
 
-test('a threshold is met only by a row that STATES the stat', () => {
-  assert.equal(meetsThresholds(THELVORN, [{ key: 'WIS', min: 15 }]), true)
-  assert.equal(meetsThresholds(THELVORN, [{ key: 'WIS', min: 16 }]), false)
-  // THE RULE THIS WHOLE FILE EXISTS FOR: an item with no HASTE line is not an item with 0% haste.
-  assert.equal(meetsThresholds(THELVORN, [{ key: 'HASTE', min: 0 }]), false)
-  assert.equal(meetsThresholds(CLUB, [{ key: 'HASTE', min: 0 }]), true)
-  // …and thresholds AND: the club states both, Thelvorn neither.
-  assert.equal(meetsThresholds(CLUB, [{ key: 'HASTE', min: 10 }, { key: 'HP_REGEN', min: 2 }]), true)
-  assert.equal(meetsThresholds(CLUB, [{ key: 'HASTE', min: 10 }, { key: 'HP_REGEN', min: 3 }]), false)
-  assert.equal(meetsThresholds(PLAIN, []), true, 'no thresholds is not a filter')
+test('NOTHING THE TABLE FILTERS ON IS A NUMBER any more - the JOS-302 removal, as a claim', () => {
+  // The owner's fourth ask deleted the min-ratio box and the stat-at-least chips outright. There
+  // is no assertion to make about a parser that no longer exists, so what is pinned instead is the
+  // SHAPE that replaced it: every field of `GearFilters` is a set membership or a flag, and none of
+  // them reads `row.stats`. A field added here that DID read a number would fail this.
+  const keys = Object.keys(DEFAULT_GEAR_FILTERS).sort()
+  assert.deepEqual(keys, ['classes', 'effect', 'eraOnly', 'ownedOnly', 'slots', 'text', 'weaponTypes'])
+  // …and "absent is not zero" now lives entirely in the SORT, which is where the tests for it are.
+  assert.equal(sortValue(THELVORN, 'HASTE'), undefined, 'no HASTE line is not 0% haste')
+  assert.equal(sortValue(CLUB, 'HASTE'), 10)
 })
 
 test('a class list nobody stated is an unknown, and an unknown is never a mismatch', () => {
@@ -247,18 +213,19 @@ test('every filter is ANDed, and each is inert at its empty value', () => {
   assert.deepEqual(names(filterGearRows(ALL, filters({ text: 'blade' }))), ['Thelvorn, Blade of Light'])
   assert.deepEqual(names(filterGearRows(ALL, filters({ effect: 'proc' }))), ['Thelvorn, Blade of Light'])
 
-  // Five at once: slot AND class AND weapon type AND threshold AND search.
+  // Five at once: slot AND class AND weapon type AND effect kind AND search.
   const narrow = filters({
     slots: ['PRIMARY'],
     classes: ['PAL'],
     weaponTypes: ['1HS'],
-    thresholds: [{ key: 'WIS', min: 10 }],
+    effect: 'proc',
     text: 'thelvorn'
   })
   assert.deepEqual(names(filterGearRows(ALL, narrow)), ['Thelvorn, Blade of Light'])
   // …and one contradiction empties it, without any of the others being wrong.
-  assert.deepEqual(filterGearRows(ALL, { ...narrow, thresholds: [{ key: 'WIS', min: 99 }] }), [])
+  assert.deepEqual(filterGearRows(ALL, { ...narrow, effect: 'worn' }), [])
   assert.deepEqual(filterGearRows(ALL, { ...narrow, weaponTypes: ['2HS'] }), [], 'and so does the wrong weapon type')
+  assert.deepEqual(filterGearRows(ALL, { ...narrow, slots: ['SECONDARY'] }), [], 'and so does the wrong slot')
 })
 
 // =================================================================================
@@ -313,9 +280,9 @@ test('several slots are a UNION, and the union still ANDs with everything else',
   ])
   // …and clearing it returns the whole corpus, which is the acceptance line the ticket spells out.
   assert.deepEqual(names(filterGearRows(ALL, filters({ slots: [] }))), names(ALL))
-  // AND it still ANDs: PRIMARY-or-SECONDARY, that a Paladin can use, that states WIS.
+  // AND it still ANDs: PRIMARY-or-SECONDARY, that a Paladin can use, that carries a proc.
   assert.deepEqual(
-    names(filterGearRows(ALL, filters({ slots: ['PRIMARY', 'SECONDARY'], classes: ['PAL'], thresholds: [{ key: 'WIS', min: 1 }] }))),
+    names(filterGearRows(ALL, filters({ slots: ['PRIMARY', 'SECONDARY'], classes: ['PAL'], effect: 'proc' }))),
     ['Thelvorn, Blade of Light']
   )
 })
@@ -395,21 +362,22 @@ test('the weapon filter keeps the kinds asked for, and nothing that is not a wea
   assert.deepEqual(only({}), names(ARMS))
 })
 
-test('the weapon type ANDs with the slot, the class picks and a threshold', () => {
+test('the weapon type ANDs with the slot and with the class picks', () => {
   // IN ADDITION TO THE SLOT, which is the ticket's own words — a one-hander that can go in the
-  // off hand, that states damage. The Thelvorn is PRIMARY only, so it drops out of this one.
+  // off hand. The Thelvorn is PRIMARY only, so it drops out of this one.
   assert.deepEqual(
     names(filterGearRows(ARMS, filters({ weaponTypes: ['ONE_HAND'], slots: ['SECONDARY'] }))),
     ['Wooden Club', 'Rusty Dagger', 'Faydark Champions Long Sword']
   )
-  assert.deepEqual(
-    names(filterGearRows(ARMS, filters({ weaponTypes: ['ONE_HAND'], slots: ['SECONDARY'], thresholds: [{ key: 'DMG', min: 5 }] }))),
-    ['Wooden Club', 'Faydark Champions Long Sword']
-  )
-  // …and the class picks narrow it again, on the same AND.
+  // …and the class picks narrow it again, on the same AND. The Greatsword and the Bow are dropped
+  // by the weapon type, not by the classes: every fixture but two states no class list at all.
   assert.deepEqual(
     names(filterGearRows(ARMS, filters({ weaponTypes: ['ONE_HAND'], classes: ['PAL'] }))),
     ['Thelvorn, Blade of Light', 'Wooden Club', 'Rusty Dagger', 'Faydark Champions Long Sword']
+  )
+  assert.deepEqual(
+    names(filterGearRows(ARMS, filters({ weaponTypes: ['ONE_HAND'], classes: ['CLR'] }))),
+    ['Rusty Dagger', 'Faydark Champions Long Sword']
   )
 })
 
@@ -420,14 +388,8 @@ test('the era verdict is INJECTED, and only applies while the toggle is on', () 
   assert.equal(matchesGear(CROWN, filters({ eraOnly: true }), {}), true, 'no verdict hides nothing')
 })
 
-test('a ratio floor excludes everything that is not a weapon', () => {
-  const weapons = filterGearRows(ALL, filters({ minRatio: 0.1 }))
-  assert.deepEqual(names(weapons), ['Thelvorn, Blade of Light', 'Wooden Club'])
-  assert.deepEqual(names(filterGearRows(ALL, filters({ minRatio: 0.7 }))), ['Thelvorn, Blade of Light'])
-})
-
 // =================================================================================
-// THE SORT
+// THE SORT — where "absent is not zero" lives now that the numeric filters are gone
 // =================================================================================
 
 test('an absent stat sorts LAST in BOTH directions, and never as a zero', () => {
@@ -478,25 +440,34 @@ test('the table reproduces the owner screenshot at the checkpoint', () => {
   assert.equal(thelvorn.stats.WEIGHT, 2.3) // ceil-to-one-decimal of 2.2420…
   assert.equal(thelvorn.stats.DELAY, 26) // delay never scales — which is why the ratio moves
   assert.equal(sortValue(thelvorn, 'RATIO')?.toFixed(2), '0.96')
-  // The synthetic save is the one fact the vector cannot re-derive, so the row's cached answer
-  // has to survive the scaling stage too — a filter on SV VOID must see it.
+  // The synthetic save is the one fact the vector cannot re-derive, so the row's cached answer has
+  // to survive the scaling stage too — a COLUMN on SV VOID, and a sort by it, must see it.
   const [crown] = scaleAll([CROWN], CHECKPOINT)
   assert.equal(crown.stats.SV_VOID, 2)
-  assert.equal(meetsThresholds(crown, [{ key: 'SV_VOID', min: 1 }]), true)
-  assert.equal(meetsThresholds(CROWN, [{ key: 'SV_VOID', min: 1 }]), false, 'not at base, it does not')
+  assert.equal(sortValue(crown, 'SV_VOID'), 2)
+  assert.equal(sortValue(CROWN, 'SV_VOID'), undefined, 'at base the item states no SV VOID at all')
 })
 
-test('a ratio floor no weapon meets at base IS met at the checkpoint', () => {
-  // THE LOAD-BEARING PROPERTY of the whole phase: filters and sorts read the SCALED vector, so the
-  // answer to "ratio at least 0.9" depends on where the global selector is standing.
-  const wanted = filters({ minRatio: 0.9 })
-  assert.deepEqual(names(gearTableRows(ALL, BASE, { filters: wanted })), [])
-  assert.deepEqual(names(gearTableRows(ALL, CHECKPOINT, { filters: wanted })), ['Thelvorn, Blade of Light'])
+test('the plus-state moves WHAT A ROW READS, and since JOS-302 never WHICH ROWS are shown', () => {
+  // THE LOAD-BEARING PROPERTY OF THE PHASE, restated at its true size. It used to be that filters
+  // AND sorts read the scaled vector, so the selector could change the row SET ("ratio at least
+  // 0.9" was met by nothing at base and by Thelvorn at the checkpoint). The fourth owner ask
+  // deleted both numeric filters, so the row set is now a function of the pickers alone and the
+  // selector is a pure restatement of the numbers on the rows that were already there.
+  const wanted = filters({ slots: ['PRIMARY'] })
+  assert.deepEqual(
+    names(gearTableRows(ALL, BASE, { filters: wanted })),
+    names(gearTableRows(ALL, CHECKPOINT, { filters: wanted })),
+    'the same rows, in the same order, at both ends of the slider'
+  )
 
-  // …and the same for a threshold: nothing has WIS 19 at base, Thelvorn does at the checkpoint.
-  const wis19 = filters({ thresholds: [{ key: 'WIS', min: 19 }] })
-  assert.deepEqual(names(gearTableRows(ALL, BASE, { filters: wis19 })), [])
-  assert.deepEqual(names(gearTableRows(ALL, CHECKPOINT, { filters: wis19 })), ['Thelvorn, Blade of Light'])
+  // …and the numbers on those same rows DID move, which is the half that survives and the reason
+  // the scale still runs BEFORE the sort.
+  const [atBase] = gearTableRows([THELVORN], BASE, { filters: filters() })
+  const [atPlus] = gearTableRows([THELVORN], CHECKPOINT, { filters: filters() })
+  assert.equal(sortValue(atBase, 'RATIO')?.toFixed(2), '0.77')
+  assert.equal(sortValue(atPlus, 'RATIO')?.toFixed(2), '0.96')
+  assert.equal(atPlus.stats.WIS, 19)
 })
 
 test('a sort reads the SCALED numbers, non-linear curve and float artifact included', () => {
@@ -517,44 +488,43 @@ test('a sort reads the SCALED numbers, non-linear curve and float artifact inclu
 })
 
 // =================================================================================
-// THE COLUMNS — asking about a stat is already saying you want to see it
+// THE COLUMNS — ranking by a stat is saying you want to see it
 // =================================================================================
 
-test('the columns are the core, plus whatever is being filtered or sorted on', () => {
-  const base = visibleColumns(filters(), DEFAULT_GEAR_SORT)
+test('the columns are the core, plus whatever is being SORTED on', () => {
+  const base = visibleColumns(DEFAULT_GEAR_SORT)
   assert.deepEqual(base.map((c) => c.key), [...CORE_COLUMNS], 'the core, and only the core')
 
-  const withRegen = visibleColumns(filters({ thresholds: [{ key: 'HP_REGEN', min: 2 }] }), DEFAULT_GEAR_SORT)
-  assert.deepEqual(withRegen.map((c) => c.key), [...CORE_COLUMNS, 'HP_REGEN'])
-  assert.equal(withRegen[withRegen.length - 1].label, 'HP REGEN')
+  // A sort key brings its own column — and one that is already core adds nothing. Stat THRESHOLDS
+  // used to be the derivation's other source (`hp regen 2` conjured an HP REGEN column); JOS-302
+  // deleted them, so the sort key is the whole of it and `visibleColumns` no longer takes filters.
+  const byRegen = visibleColumns({ key: 'HP_REGEN', dir: 'desc' })
+  assert.deepEqual(byRegen.map((c) => c.key), [...CORE_COLUMNS, 'HP_REGEN'])
+  assert.equal(byRegen[byRegen.length - 1].label, 'HP REGEN')
 
-  // A sort key brings its own column — and one that is already core adds nothing.
-  const byBackstab = visibleColumns(filters(), { key: 'BACKSTAB', dir: 'desc' })
+  const byBackstab = visibleColumns({ key: 'BACKSTAB', dir: 'desc' })
   assert.deepEqual(byBackstab.map((c) => c.key), [...CORE_COLUMNS, 'BACKSTAB'])
-  assert.deepEqual(visibleColumns(filters(), { key: 'AC', dir: 'asc' }).map((c) => c.key), [...CORE_COLUMNS])
-  assert.deepEqual(visibleColumns(filters(), { key: 'name', dir: 'asc' }).map((c) => c.key), [...CORE_COLUMNS])
+  assert.deepEqual(visibleColumns({ key: 'AC', dir: 'asc' }).map((c) => c.key), [...CORE_COLUMNS])
+  assert.deepEqual(visibleColumns({ key: 'name', dir: 'asc' }).map((c) => c.key), [...CORE_COLUMNS])
 })
 
-test('the derived columns are capped, and the widths always fit the pane', () => {
-  const many = filters({
-    thresholds: [
-      { key: 'STR', min: 1 },
-      { key: 'STA', min: 1 },
-      { key: 'AGI', min: 1 },
-      { key: 'DEX', min: 1 },
-      { key: 'WIS', min: 1 },
-      { key: 'INT', min: 1 },
-      { key: 'CHA', min: 1 },
-      { key: 'HASTE', min: 1 }
-    ]
-  })
-  const cols = visibleColumns(many, DEFAULT_GEAR_SORT)
-  assert.equal(cols.length, CORE_COLUMNS.length + MAX_DERIVED_COLUMNS)
-  // …and the eighth threshold still FILTERS, it just stops drawing a column of its own.
-  assert.equal(matchesGear(THELVORN, many), false)
+test('the derivation can add at most ONE column, and the widths always fit the pane', () => {
+  // The cap became a CONSTANT with the thresholds (gearColumns.ts): a list whose only source is the
+  // sort key cannot exceed core+1, so there is nothing left to cap. This asserts the new ceiling
+  // over the WHOLE vocabulary rather than over one example — no sort key can widen it past five.
+  for (const key of PICKABLE_COLUMNS) {
+    const cols = visibleColumns({ key, dir: 'desc' })
+    assert.ok(
+      cols.length <= CORE_COLUMNS.length + MAX_DERIVED_COLUMNS,
+      `sorting by ${key} derived ${String(cols.length)} columns`
+    )
+  }
+  assert.equal(visibleColumns({ key: 'STR', dir: 'desc' }).length, CORE_COLUMNS.length + MAX_DERIVED_COLUMNS)
+  assert.equal(MAX_DERIVED_COLUMNS, 1, 'the derivation adds the sort key and nothing else')
 
-  const pct = Number(numericWidth(cols.length).replace('%', ''))
-  assert.ok(pct * cols.length <= 60, `${String(cols.length)} columns at ${String(pct)}% overflow the table`)
+  const widest = CORE_COLUMNS.length + MAX_DERIVED_COLUMNS
+  const pct = Number(numericWidth(widest).replace('%', ''))
+  assert.ok(pct * widest <= 60, `${String(widest)} columns at ${String(pct)}% overflow the table`)
   // The ceiling: a small set never fattens its numeric columns - the item name takes the slack.
   assert.equal(numericWidth(4), '8%')
   assert.equal(numericWidth(1), '8%')

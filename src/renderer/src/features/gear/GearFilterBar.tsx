@@ -3,13 +3,20 @@
 // TWO ROWS, EACH `nowrap`, AND THAT IS THE flexWrap LAW rather than a layout preference: wrapping
 // converts content overflow into HEIGHT, so a bar that wraps turns a toolbar into a growing block
 // and pushes the table it filters off the bottom of the pane. Two DELIBERATE rows is not wrapping
-// — it is a stated shape, and each of them holds controls that never shrink beside exactly one
-// thing that may (the search box on the first, the threshold chips on the second).
+// — it is a stated shape, and the first holds controls that never shrink beside exactly one thing
+// that may (the search box).
 //
 // THE SPLIT IS BY QUESTION, not by fit. The first row asks WHICH ITEMS — name, slots, weapon type,
-// classes, effect kind, era. The second asks WHAT THEY READ — the plus-state being simulated, the
-// weapon ratio floor, and the stat thresholds. That is also the order the two get used in: you
-// narrow to a slot and then you ask what the good ones have.
+// classes, effect kind, era, owned. The second asks WHAT THEY READ, and since JOS-302 that is one
+// control: the plus-state being simulated.
+//
+// THE SECOND ROW USED TO CARRY TWO MORE (owner ruling 2026-08-13: *drop the min-ratio and
+// stat-at-least filters completely - sorting services that need without spending toolbar real
+// estate*). A `Min ratio` box and a `Stat at least` box that grew a row of removable chips are
+// DELETED, controls and predicates both — `gearFilter.ts`'s header states why a sort answers the
+// question better, and `gearColumns.ts` states where the chips' second job (conjuring the column)
+// went. The row survives because the plus-state slider is still on it and is still a statement
+// about what the numbers READ rather than about which rows they belong to.
 //
 // NO POPPER ON ANY OF IT (JOS-143). The hints are native `title`s: these controls sit directly
 // above a dense windowed table, and an interactive MUI Tooltip opened from a chip up here lands on
@@ -39,7 +46,7 @@
 // every control is hidden is not RENDERED — an empty `Stack` is still a gap, and the two rows'
 // whole contract is that they cost fixed height rather than growing (the `flexWrap` law above).
 
-import { type JSX, useState } from 'react'
+import type { JSX } from 'react'
 import { Chip, MenuItem, Stack, TextField } from '@mui/material'
 import { CLASS_ABBRS } from '@shared/classCombo'
 import type { ItemUpgradeState } from '@shared/itemUpgrade'
@@ -49,13 +56,7 @@ import ChipMultiSelect from '../../components/ChipMultiSelect'
 import { CURRENT_ERA_LABEL } from '../planner/plannerData'
 import { SOCKET_LABEL } from '../planner/plannerGroups'
 import UpgradeSlider from './UpgradeSlider'
-import {
-  parseThreshold,
-  thresholdLabel,
-  withThreshold,
-  type EffectFilter,
-  type GearFilters
-} from './gearFilter'
+import type { EffectFilter, GearFilters } from './gearFilter'
 import type { GearControl } from './gearPrefs'
 import type { GearClasses } from './gearData'
 
@@ -94,74 +95,6 @@ function ToggleChip({
       onClick={onToggle}
       sx={{ flexShrink: 0 }}
     />
-  )
-}
-
-/**
- * THE THRESHOLD INPUT — one text box that speaks the stat vocabulary. `hp 50`, `sv magic >= 20`,
- * `mana regen 3`. It commits on Enter and REFUSES anything that does not fold to an indexed column
- * (`parseThreshold`), because a typo must add no chip rather than a chip filtering on something
- * else; the box turns red and keeps the text, so the fix is one keystroke rather than a re-type.
- */
-function ThresholdInput({ filters, onChange }: { filters: GearFilters; onChange: (f: GearFilters) => void }): JSX.Element {
-  const [text, setText] = useState('')
-  const [bad, setBad] = useState(false)
-  const commit = (): void => {
-    const parsed = parseThreshold(text)
-    if (parsed === null) {
-      setBad(text.trim() !== '')
-      return
-    }
-    onChange({ ...filters, thresholds: withThreshold(filters.thresholds, parsed) })
-    setText('')
-    setBad(false)
-  }
-  return (
-    <TextField
-      size="small"
-      label="Stat at least"
-      placeholder="hp 50"
-      value={text}
-      error={bad}
-      data-testid="gear-threshold-input"
-      title="A stat and a minimum - hp 50, sv magic >= 20, mana regen 3. Enter adds it."
-      onChange={(e) => {
-        setText(e.target.value)
-        setBad(false)
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') commit()
-      }}
-      sx={{ width: 150, flexShrink: 0 }}
-    />
-  )
-}
-
-/** The committed thresholds, each removable. Their own scroller — wide content never widens a bar. */
-function ThresholdChips({ filters, onChange }: { filters: GearFilters; onChange: (f: GearFilters) => void }): JSX.Element {
-  return (
-    <Stack
-      direction="row"
-      spacing={0.5}
-      alignItems="center"
-      sx={{ flexWrap: 'nowrap', overflowX: 'auto', minWidth: 0, flexShrink: 1, py: 0.25 }}
-    >
-      {filters.thresholds.map((t) => (
-        <Chip
-          key={t.key}
-          size="small"
-          color="primary"
-          variant="outlined"
-          label={thresholdLabel(t)}
-          data-testid="gear-threshold-chip"
-          title="Only items that STATE this stat at or above the number - an absent stat is not a zero."
-          onDelete={() =>
-            onChange({ ...filters, thresholds: filters.thresholds.filter((x) => x.key !== t.key) })
-          }
-          sx={{ flexShrink: 0 }}
-        />
-      ))}
-    </Stack>
   )
 }
 
@@ -306,41 +239,24 @@ function IdentityRow({ filters, setFilters, text, setText, classes, visible }: O
   )
 }
 
-/** WHAT THEY READ: the simulated plus-state, the ratio floor, the stat thresholds. */
-function NumbersRow({ filters, setFilters, upgrade, visible }: Omit<GearFilterBarProps, 'text' | 'setText' | 'classes'>): JSX.Element {
+/** WHAT THEY READ: the simulated plus-state, and — since JOS-302 — nothing else. */
+function NumbersRow({ upgrade }: Pick<GearFilterBarProps, 'upgrade'>): JSX.Element {
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
-      {visible.has('upgrade') && <UpgradeSlider state={upgrade.state} onChange={upgrade.set} />}
-
-      {visible.has('ratio') && (
-        <TextField
-          size="small"
-          label="Min ratio"
-          placeholder="1.0"
-          value={filters.minRatio === null ? '' : String(filters.minRatio)}
-          data-testid="gear-min-ratio"
-          title="Weapon damage ratio (DMG / delay) at the simulated upgrade state. Non-weapons state none, so they never pass it."
-          onChange={(e) => {
-            const raw = e.target.value.trim()
-            const n = Number(raw)
-            setFilters({ ...filters, minRatio: raw === '' || !Number.isFinite(n) ? null : n })
-          }}
-          sx={{ width: 110, flexShrink: 0 }}
-        />
-      )}
-
-      {visible.has('thresholds') && (
-        <>
-          <ThresholdInput filters={filters} onChange={setFilters} />
-          <ThresholdChips filters={filters} onChange={setFilters} />
-        </>
-      )}
+      <UpgradeSlider state={upgrade.state} onChange={upgrade.set} />
     </Stack>
   )
 }
 
-/** Does the WHAT THEY READ row have anything left to draw? An empty row is height with no content. */
-const NUMBERS_CONTROLS: readonly GearControl[] = ['upgrade', 'ratio', 'thresholds']
+/**
+ * Does the WHAT THEY READ row have anything left to draw? An empty row is height with no content.
+ *
+ * It is a one-entry list now that the ratio and threshold controls are gone, and it stays a LIST
+ * rather than collapsing into `visible.has('upgrade')` at the call site: the row is a place, and
+ * the next control that belongs to "what they read" should join a named set rather than have to
+ * re-derive that a row can be empty.
+ */
+const NUMBERS_CONTROLS: readonly GearControl[] = ['upgrade']
 
 export default function GearFilterBar(props: GearFilterBarProps): JSX.Element {
   const { filters, setFilters, text, setText, classes, upgrade, visible } = props
@@ -354,9 +270,7 @@ export default function GearFilterBar(props: GearFilterBarProps): JSX.Element {
         classes={classes}
         visible={visible}
       />
-      {NUMBERS_CONTROLS.some((c) => visible.has(c)) && (
-        <NumbersRow filters={filters} setFilters={setFilters} upgrade={upgrade} visible={visible} />
-      )}
+      {NUMBERS_CONTROLS.some((c) => visible.has(c)) && <NumbersRow upgrade={upgrade} />}
     </Stack>
   )
 }

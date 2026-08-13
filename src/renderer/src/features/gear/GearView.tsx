@@ -161,7 +161,7 @@ function useTableRows(
   const { sort, deps, chosen } = opts
   const scaled = useMemo(() => scaleAll(rows, state), [rows, state])
   const filtered = useMemo(() => filterGearRows(scaled, filters, deps), [scaled, filters, deps])
-  const columns = useMemo(() => columnsFor(chosen, filters, sort), [chosen, filters, sort])
+  const columns = useMemo(() => columnsFor(chosen, sort), [chosen, sort])
   const inForce = useMemo(() => sortWithin(sort, columns), [sort, columns])
   const sorted = useMemo(() => sortGearRows(filtered, inForce), [filtered, inForce])
   // WHY THE LIST IS EMPTY, when it is (the JOS-67 law: a filter that can hide everything must be

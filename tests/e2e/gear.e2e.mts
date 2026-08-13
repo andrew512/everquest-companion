@@ -9,10 +9,10 @@
  * WHAT IT ASSERTS, against the REAL committed item corpus and through the REAL IPC: the nav row
  * mounts a table with no set, no plan and no selection first (search is the default surface —
  * owner ruling); the list is its own bounded scroller; the search box narrows it and finds a named
- * item; the era toggle actually holds rows back; a stat threshold and a MULTI-SELECT slot filter
- * COMBINE, and the threshold brings its own column with it; a header click sorts by ratio and the
- * order is monotone; and — the one this phase exists for — moving the GLOBAL plus-state selector
- * makes the table state the numbers `scaleGearRow` states at that state.
+ * item; the era toggle actually holds rows back; a MULTI-SELECT slot filter and a weapon type
+ * COMBINE; a header click sorts by ratio and the order is monotone; and — the one this phase exists
+ * for — moving the GLOBAL plus-state selector makes the table state the numbers `scaleGearRow`
+ * states at that state.
  *
  * AND SINCE JOS-302 IT ASSERTS THE THREE NARROWINGS THE OWNER ASKED FOR. The class picks REMOVE
  * rows rather than chipping them (and a search row no longer wears `planner-mismatch-chip` at all),
@@ -20,6 +20,12 @@
  * exactly the union of their member types — measured as an identity between two counts, never as a
  * number. The class and weapon steps live in `gearFilterSteps.mts`; the slot half is this file's
  * own slot step, grown.
+ *
+ * WHAT IT NO LONGER ASSERTS, because the code is gone: the stat-threshold chip flow, the
+ * threshold-derives-its-own-column rule, and the min-ratio box (JOS-302's fourth owner ask). Those
+ * three steps were REMOVED rather than weakened; what replaced them is the slot/weapon combination
+ * above, and an upgrade step that names its three columns in the picker instead of conjuring two of
+ * them out of a filter it never actually wanted.
  *
  * THE FIXTURE IS THELVORN, and its numbers are not written here. The spec imports phase 0's own
  * scaler and asks it, so this file can never drift from the arithmetic it is checking: what it
@@ -77,10 +83,18 @@ import {
   stepGearSetsRelaunched,
   type GearSetFixture
 } from './gearSetSteps.mjs'
-// JOS-297's steps are a module for the same reason phase 5's are.
-import { stepGearColumns, stepGearColumnsRelaunched, type GearColumnFixture } from './gearColumnSteps.mjs'
+// JOS-297's steps are a module for the same reason phase 5's are. `pickColumns`/`resetColumns` come
+// from it too: since JOS-302 deleted the stat thresholds, naming a column in the picker is the only
+// way to put one on the table, and the upgrade step below needs three of them.
+import {
+  pickColumns,
+  resetColumns,
+  stepGearColumns,
+  stepGearColumnsRelaunched,
+  type GearColumnFixture
+} from './gearColumnSteps.mjs'
 // JOS-302's class, slot-union and weapon-type steps, likewise.
-import { stepGearClassFilter, stepGearSlotPicks, stepGearWeaponTypes } from './gearFilterSteps.mjs'
+import { clearPicks, pickIn, stepGearClassFilter, stepGearSlotPicks, stepGearWeaponTypes } from './gearFilterSteps.mjs'
 // Phase 0's scaler and phase 2's ratio, so the EXPECTED numbers are computed rather than typed.
 import { gearRatio, scaleGearRow } from '../../src/shared/planner/gearScale'
 import type { GearRow } from '../../src/shared/planner/gear'
@@ -96,8 +110,7 @@ const SEARCH = '[data-testid="gear-search"] input'
 const ERA_TOGGLE = '[data-testid="gear-era-toggle"]'
 // The slot picker's own selector moved to `gearFilterSteps.mts` with the step that drives it. It is
 // still `gear-slot` — a ChipMultiSelect wearing a single-select's testid, on purpose (JOS-302).
-const THRESHOLD = '[data-testid="gear-threshold-input"] input'
-const THRESHOLD_CHIP = '[data-testid="gear-threshold-chip"]'
+const WEAPON_PICKER = '[data-testid="gear-weapon"]'
 const SORT_RATIO = '[data-testid="gear-sort-RATIO"]'
 const TIER_SLIDER = '[data-testid="gear-tier-slider"] input[type="range"]'
 const FRACTION_SLIDER = '[data-testid="gear-fraction-slider"] input[type="range"]'
@@ -382,40 +395,38 @@ async function stepSearch(page: Page): Promise<boolean> {
 }
 
 /**
- * 5. A STAT THRESHOLD AND A SLOT FILTER COMBINE — and the threshold brings its column with it.
+ * 5. THE SLOT PICKER, AND A SECOND FILTER ON TOP OF IT.
  *
- * Asking about a stat is already saying you want to see it (gearColumns.ts), so `wis 10` must put
- * a WIS column on the table. Both filters are left ON for the sort step below.
+ * IT USED TO BE "a stat threshold and a slot filter combine", and the fourth owner ask (JOS-302)
+ * deleted the threshold half outright — the typed-chip step, the "every surviving row states the
+ * stat" step and the "the stat asked about gets a column" step with it. The replacement is the same
+ * claim over controls that still exist: the slot picks AND with the weapon type, and the picker
+ * (not a threshold) is what puts a stat on the table.
  *
- * THE SLOT FILTER IS A MULTI-SELECT SINCE JOS-302 and the union half of that lives in
- * `gearFilterSteps.stepGearSlotPicks` — a module for the line budget, not because it is a different
- * subject. It leaves exactly one slot picked, which is the state the steps below were written
- * against, and returns the count that narrowing produced.
+ * The union half of the slot picker lives in `gearFilterSteps.stepGearSlotPicks` — a module for the
+ * line budget, not because it is a different subject. It leaves exactly one slot picked, which is
+ * the state the steps below were written against, and returns the count that narrowing produced.
  */
 async function stepFilters(page: Page): Promise<void> {
   await typeAndSettle(page, SEARCH, '')
   const all = (await counts(page)).shown
   const afterSlot = await stepGearSlotPicks(page, all)
 
-  await page.fill(THRESHOLD, 'wis 10', { timeout: 15_000 })
-  await page.press(THRESHOLD, 'Enter', { timeout: 15_000 })
-  const chipped = (await settleCount(page, THRESHOLD_CHIP, 1, { timeoutMs: 10_000 })) > 0
-  check('a typed stat threshold becomes a chip', chipped, await textOf(page, THRESHOLD_CHIP))
+  await pickIn(page, WEAPON_PICKER, 'One-handed')
+  const combined = await until(async () => (await counts(page)).shown < afterSlot, 15_000)
   const afterBoth = (await counts(page)).shown
   check(
-    'the two filters COMBINE — slot AND threshold, never one replacing the other',
-    afterBoth > 0 && afterBoth < afterSlot,
-    `${String(afterSlot)} primaries → ${String(afterBoth)} of them stating WIS 10+`
+    'two filters COMBINE — slot AND weapon type, never one replacing the other',
+    combined && afterBoth > 0,
+    `${String(afterSlot)} primaries → ${String(afterBoth)} that are also one-handers, of ${String(all)}`
   )
+  // …and the second one comes back off, leaving the PRIMARY narrowing the steps below expect.
+  await clearPicks(page, WEAPON_PICKER)
   check(
-    '…and the stat asked about gets a column of its own',
-    (await countOf(page, '[data-testid="gear-sort-WIS"]')) === 1
+    '…and dropping the second leaves the first exactly as it was',
+    await until(async () => (await counts(page)).shown === afterSlot, 15_000),
+    `${String((await counts(page)).shown)} of ${String(afterSlot)}`
   )
-  // A threshold is met only by a row that STATES the stat, so every visible cell carries a number.
-  const blanks = await page.evaluate(
-    () => [...document.querySelectorAll('[data-testid="gear-cell-WIS"]')].filter((c) => (c as HTMLElement).innerText.trim() === '').length
-  )
-  check('every row that survived a WIS threshold states a WIS — absent is not zero', blanks === 0, `${String(blanks)} blanks`)
 }
 
 /** 6. SORTING BY RATIO IS MONOTONE, and it reads `gearRatio` rather than a second opinion. */
@@ -490,20 +501,26 @@ async function setCheckpoint(page: Page): Promise<void> {
 /**
  * 7. THE GLOBAL PLUS-STATE SELECTOR — the one this phase exists for.
  *
- * The table is narrowed to Thelvorn, its DMG and WIS columns are asked for by threshold, and the
- * cells are read TWICE: at base, and at the owner's checkpoint (tier 2 + 3/4). Both readings are
- * compared against `scaleGearRow`'s own answer, computed here — so what is pinned is that the
- * screen and phase 0 agree, not a number somebody typed into a spec.
+ * The table is narrowed to Thelvorn, its three columns are ASKED FOR BY NAME in the columns picker,
+ * and the cells are read TWICE: at base, and at the owner's checkpoint (tier 2 + 3/4). Both
+ * readings are compared against `scaleGearRow`'s own answer, computed here — so what is pinned is
+ * that the screen and phase 0 agree, not a number somebody typed into a spec.
+ *
+ * THE COLUMNS USED TO ARRIVE BY THRESHOLD (`dmg 1`, `wis 10` derived them as a side effect), and
+ * JOS-302 deleted the thresholds. Naming them in the picker is strictly better for this step: it
+ * needed the COLUMNS and never the narrowing, and a floor of `dmg 1` was always a filter that had
+ * to be proved harmless before the assertion could trust it.
  */
 async function stepUpgrade(page: Page): Promise<void> {
-  // A fresh narrowing: the slot filter above is left on (Thelvorn is PRIMARY), and the two
-  // thresholds put DMG and WIS on the table. Both are floors every tier clears, so the row cannot
-  // filter itself out from under the assertion when the slider moves.
-  await page.fill(THRESHOLD, 'dmg 1', { timeout: 15_000 })
-  await page.press(THRESHOLD, 'Enter', { timeout: 15_000 })
+  // ONLY THE TWO THAT ARE NOT ALREADY THERE. The picker's first click PROMOTES the derived seed
+  // (`toggleColumn(base, key)` where base is what the checkboxes were showing), so picking DMG and
+  // WIS adds them to the core four — and picking RATIO, which IS one of the core four, would toggle
+  // it OFF and leave `screenAt` reading a blank ratio cell. Measured, not assumed: that is exactly
+  // what the first run of this step did.
+  await pickColumns(page, ['DMG', 'WIS'])
   await typeAndSettle(page, SEARCH, 'thelvorn')
   const onScreen = (await countOf(page, `${ROW}[data-item-key="${THELVORN_KEY}"]`)) === 1
-  if (!check('the upgrade step has its row', onScreen)) return
+  if (!check('the upgrade step has its row, with the three columns it asked the picker for', onScreen)) return
 
   const base = expectedAt({ full: 0, fraction: 0 })
   const atBase = await screenAt(page)
@@ -529,6 +546,9 @@ async function stepUpgrade(page: Page): Promise<void> {
     want.ratio !== base.ratio,
     `${base.ratio} → ${want.ratio}`
   )
+  // HAND THE COLUMNS BACK TO THE DERIVATION. `stepGearColumns` below starts from whatever choice it
+  // is handed and TOGGLES, so a list left here would silently un-pick two of the keys it picks.
+  await resetColumns(page)
 }
 
 async function steps(page: Page, log: FixtureLog): Promise<void> {

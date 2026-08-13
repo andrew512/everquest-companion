@@ -75,17 +75,7 @@ export function toggleColumn(base: readonly GearSortKey[], key: GearSortKey): Ge
  * that shaped phase 3) — it is the one control that is not a narrowing of the corpus but the way
  * into it, and a Gear tab you cannot type into is not a configuration anyone meant to reach.
  */
-export const GEAR_CONTROLS = [
-  'slot',
-  'weapon',
-  'effect',
-  'classes',
-  'era',
-  'owned',
-  'upgrade',
-  'ratio',
-  'thresholds'
-] as const
+export const GEAR_CONTROLS = ['slot', 'weapon', 'effect', 'classes', 'era', 'owned', 'upgrade'] as const
 
 export type GearControl = (typeof GEAR_CONTROLS)[number]
 
@@ -97,9 +87,7 @@ export const GEAR_CONTROL_LABEL: Record<GearControl, string> = {
   classes: 'Classes',
   era: 'Current era',
   owned: 'Owned or looted',
-  upgrade: 'Upgrade state',
-  ratio: 'Min ratio',
-  thresholds: 'Stat thresholds'
+  upgrade: 'Upgrade state'
 }
 
 const CONTROLS: ReadonlySet<string> = new Set<string>(GEAR_CONTROLS)
@@ -149,8 +137,6 @@ export function inertFilters(filters: GearFilters, visible: ReadonlySet<GearCont
     classes: visible.has('classes') ? filters.classes : [],
     // NOT `d.eraOnly` — that is `true`. Inert is the value that hides nothing.
     eraOnly: visible.has('era') ? filters.eraOnly : false,
-    ownedOnly: visible.has('owned') ? filters.ownedOnly : false,
-    minRatio: visible.has('ratio') ? filters.minRatio : d.minRatio,
-    thresholds: visible.has('thresholds') ? filters.thresholds : []
+    ownedOnly: visible.has('owned') ? filters.ownedOnly : false
   }
 }

@@ -2,9 +2,8 @@
 //
 // THE ORDER IS THE WHOLE DESIGN, and it is not negotiable. The global plus-state selector changes
 // what every row IS — a weapon's ratio improves with every tier because DMG scales and DELAY does
-// not (phase 0's rule, `gearScale.ts`'s header) — so a threshold filter or a sort that ran on BASE
-// numbers under a `+5` slider would be answering a question nobody asked. Everything below reads
-// the SCALED vector:
+// not (phase 0's rule, `gearScale.ts`'s header) — so a sort that ran on BASE numbers under a `+5`
+// slider would be answering a question nobody asked. Everything below reads the SCALED vector:
 //
 //     scaleAll(rows, state) → filterGearRows(…) → sortGearRows(…)
 //
@@ -18,34 +17,35 @@
 // as an injected predicate (`GearFilterDeps.eraHidden`) rather than being restated here, which is
 // also what keeps the gear table and the exaltation browser from ever disagreeing about an era.
 //
-// ABSENT IS NOT ZERO — THE RULE THIS FILE APPLIES THREE TIMES. `GearStats` omits a key the item
-// never stated (gear.ts, law 1), so:
-//   * a THRESHOLD is met only by a row that STATES the key at or above the number. An absent stat
-//     fails even `>= 0`: "no HASTE line" is not "0% haste", and a filter that read the two the same
-//     way would answer "items with at least 0 haste" with the entire corpus.
-//   * a SORT puts absent LAST in both directions. Ascending by haste must not rank six thousand
-//     plain items above the sixty-four that state one; descending must not either.
-//   * a RATIO is `undefined` for anything that is not a weapon (`gearRatio`), so a ratio sort never
-//     ranks 5,000 non-weapons at zero and a ratio FILTER excludes them outright.
+// ABSENT IS NOT ZERO, AND THE SORT IS WHERE THAT NOW LIVES. `GearStats` omits a key the item never
+// stated (gear.ts, law 1), so a SORT puts absent LAST in both directions — ascending by haste must
+// not rank six thousand plain items above the sixty-four that state one, and descending must not
+// either. `gearRatio` is `undefined` for anything that is not a weapon, so a ratio sort never ranks
+// 5,000 non-weapons at zero.
+//
+// THERE IS NO NUMERIC FILTER LEFT IN THIS FILE (owner ruling 2026-08-13, JOS-302, fourth ask:
+// *drop the min-ratio and stat-at-least filters completely - sorting services that need without
+// spending toolbar real estate*). The stat-threshold chips (`hp 50`, `sv magic >= 20`), their
+// parser and their `minRatio` companion are DELETED, not hidden. Their whole job was "show me the
+// items that reach a number", and clicking a column header answers that better: a sort puts the
+// best at the top and still shows you what the next ten look like, where a threshold makes you
+// guess the cutoff and re-type it when you guessed wrong. What used to be a threshold's other job —
+// putting the stat's COLUMN on the table — is the columns picker's now (JOS-297, gearColumns.ts):
+// you ask for the column by name and then you sort it.
+//
+// WHAT SURVIVES IS FIVE CLOSED QUESTIONS ABOUT WHO A ROW IS — its name, its slots, its weapon kind,
+// its classes, its effect kind — plus the two injected verdicts (era, ownership). Every one of them
+// is a set membership rather than a number, which is why none of them needs the plus-state to mean
+// anything and why the whole filter is now cheaper than the scale that precedes it.
 
 import type { ClassAbbr } from '../../../../shared/classCombo'
-import { normalizeStatKey, type ItemUpgradeState } from '../../../../shared/itemUpgrade'
-import {
-  isGearStatKey,
-  type GearRow,
-  type GearStatKey
-} from '../../../../shared/planner/gear'
+import type { ItemUpgradeState } from '../../../../shared/itemUpgrade'
+import type { GearRow, GearStatKey } from '../../../../shared/planner/gear'
 import { gearRatio, scaleGearRow } from '../../../../shared/planner/gearScale'
 import { weaponPicksMatch, type WeaponPick } from '../../../../shared/planner/weaponType'
 import type { EquipSlot, SocketType } from '../../../../shared/planner/types'
 
 // ---- the filter model ---------------------------------------------------------------------
-
-/** One stat threshold: `HP >= 50`. Only `min` — see the header on why `>= 0` is not "everything". */
-export interface StatThreshold {
-  key: GearStatKey
-  min: number
-}
 
 /**
  * The effect filter, in the DONOR vocabulary (`SocketType`) plus the two answers a socket cannot
@@ -56,8 +56,8 @@ export type EffectFilter = 'any' | 'has' | SocketType
 
 /**
  * Everything the table filters on, combinable — every field is ANDed, and each is INERT at its
- * empty value (`''`, `null`, `[]`, `'any'`, `false`). That is what makes "any stat threshold, and
- * a slot, and a class combo, and an effect kind, and an era" one object rather than five modes.
+ * empty value (`''`, `[]`, `'any'`, `false`). That is what makes "a slot, and a weapon kind, and a
+ * class combo, and an effect kind, and an era" one object rather than five modes.
  *
  * THE LIST-VALUED FIELDS ARE UNIONS INSIDE AND AN AND BETWEEN (JOS-302). `slots` and `weaponTypes`
  * each keep a row that matches ANY of their entries, and the two narrowings then AND with each
@@ -98,10 +98,6 @@ export interface GearFilters {
    */
   weaponTypes: WeaponPick[]
   effect: EffectFilter
-  /** minimum weapon damage ratio; non-weapons never pass it */
-  minRatio: number | null
-  /** combinable stat thresholds, ANDed */
-  thresholds: StatThreshold[]
   /** hide rows the era join places outside the current expansion */
   eraOnly: boolean
   /**
@@ -126,8 +122,6 @@ export const DEFAULT_GEAR_FILTERS: GearFilters = {
   classes: [],
   weaponTypes: [],
   effect: 'any',
-  minRatio: null,
-  thresholds: [],
   // ON by default — the same argument the exaltation browser's era toggle carries: more than half
   // the corpus drops in expansions this server has not opened, and a plan built on them is a wish
   // list. `plannerData.eraHides` is the one verdict; this flag only says whether to apply it.
@@ -153,45 +147,6 @@ export interface GearFilterDeps {
    * a control that lies about being on.
    */
   ownedOrLooted?: (row: GearRow) => boolean
-}
-
-// ---- threshold parsing --------------------------------------------------------------------
-
-// `hp 50`, `HP>=50`, `sv magic >= 20`, `mana regen: 3`, `wt 2.5`, `dmg=20`. The key half is
-// matched loosely and then folded by PHASE 0's own `normalizeStatKey` — never by a second alias
-// table here, which is the same discipline `gear.ts` states for the vector's keys (MANA → MP,
-// REGEN → HP_REGEN). A key that does not fold to an indexed column is refused rather than
-// half-understood: the table has no column to show it in and no vector value to compare.
-const THRESHOLD_RE = /^\s*([a-z][a-z_ -]*?)\s*(?:>=|>|:|=)?\s*(-?\d+(?:\.\d+)?)\s*$/i
-
-/**
- * One typed threshold, or `null` when the text is not one. Refusing is the point: a typo must add
- * no chip rather than a chip that silently filters on something else.
- */
-export function parseThreshold(text: string): StatThreshold | null {
-  const m = THRESHOLD_RE.exec(text)
-  if (m === null) return null
-  const key = normalizeStatKey(m[1])
-  if (!isGearStatKey(key)) return null
-  const min = Number(m[2])
-  return Number.isFinite(min) ? { key, min } : null
-}
-
-/**
- * Add a threshold, replacing any existing one on the same key. One key can only carry one minimum
- * — two chips reading `HP >= 20` and `HP >= 50` would draw a contradiction the AND has already
- * resolved, so the newer number wins and the row of chips stays readable.
- */
-export function withThreshold(
-  thresholds: readonly StatThreshold[],
-  next: StatThreshold
-): StatThreshold[] {
-  return [...thresholds.filter((t) => t.key !== next.key), next]
-}
-
-/** The chip's own words: `HP >= 50`, spelled the way the column header is. */
-export function thresholdLabel(t: StatThreshold): string {
-  return `${t.key.replace(/_/g, ' ')} >= ${String(t.min)}`
 }
 
 // ---- the predicates ------------------------------------------------------------------------
@@ -231,49 +186,36 @@ export function effectMatches(row: GearRow, effect: EffectFilter): boolean {
 }
 
 /**
- * Every threshold, ANDed, on the SCALED vector. Absent fails — see the header.
- */
-export function meetsThresholds(row: GearRow, thresholds: readonly StatThreshold[]): boolean {
-  for (const t of thresholds) {
-    const value = row.stats[t.key]
-    if (value === undefined || value < t.min) return false
-  }
-  return true
-}
-
-/**
- * WHO this row is: the name, the slots, the kind of weapon, and the class combo.
+ * WHO THIS ROW IS — the whole local half of the filter since the numeric one was dropped: the name,
+ * the slots, the kind of weapon, the class combo and the effect kind.
  *
- * All four AND, and all four are inert while empty — see `GearFilters`. Two of them are UNIONS
+ * All five AND, and all five are inert while empty — see `GearFilters`. Two of them are UNIONS
  * inside (slots, weapon types), which is the JOS-302 shape: several answers to one question,
  * ANDed against the answers to the others.
+ *
+ * NONE OF THE FIVE READS THE SCALED VECTOR, and that is worth noticing rather than exploiting: the
+ * pipeline still scales BEFORE it filters, because the SORT downstream reads the scaled numbers and
+ * the memo split (GearView) is what keeps a keystroke from re-scaling 6,814 rows. Reordering the
+ * stages to save the scale would trade a correct order for an optimisation nobody has measured a
+ * need for.
  */
 function matchesIdentity(row: GearRow, filters: GearFilters): boolean {
   const needle = filters.text.trim().toLowerCase()
   if (needle !== '' && !row.searchKey.includes(needle)) return false
   if (!slotMatches(row, filters.slots)) return false
   if (!weaponPicksMatch(row.skill, filters.weaponTypes)) return false
+  if (!effectMatches(row, filters.effect)) return false
   return !classMismatch(row.classes, filters.classes)
 }
 
-/** WHAT this row reads AT THE CURRENT PLUS-STATE: its effects, its thresholds, its ratio. */
-function matchesNumbers(row: GearRow, filters: GearFilters): boolean {
-  if (!effectMatches(row, filters.effect)) return false
-  if (!meetsThresholds(row, filters.thresholds)) return false
-  if (filters.minRatio === null) return true
-  const ratio = gearRatio(row.stats)
-  return ratio !== undefined && ratio >= filters.minRatio
-}
-
 /**
- * The whole filter for one row — the three predicates above, ANDed, and the two injected verdicts.
+ * The whole filter for one row — the local predicates above, ANDed, and the two injected verdicts.
  *
  * The two injected ones are LAST on purpose: both reach data outside this module (the mob-catalog
  * inversion, a parsed dump), and a row rejected by a cheap local predicate never pays for them.
  */
 export function matchesGear(row: GearRow, filters: GearFilters, deps: GearFilterDeps = {}): boolean {
   if (!matchesIdentity(row, filters)) return false
-  if (!matchesNumbers(row, filters)) return false
   if (filters.ownedOnly && !(deps.ownedOrLooted?.(row) ?? false)) return false
   return !(filters.eraOnly && (deps.eraHidden?.(row) ?? false))
 }

@@ -36,7 +36,6 @@ const COLUMNS_RESET = '[data-testid="gear-columns-reset"]'
 const FILTERS_TOGGLE = '[data-testid="gear-filters-toggle"]'
 const SLOT_SELECT = '[data-testid="gear-slot"]'
 const EFFECT_SELECT = '[data-testid="gear-effect"]'
-const THRESHOLD_CHIP = '[data-testid="gear-threshold-chip"]'
 
 /** The dense row height GearTable states, and the number `useWindowedRows` is handed. */
 const ROW_HEIGHT = 37
@@ -49,7 +48,7 @@ const ROW_HEIGHT = 37
  * The seven attributes lead it because they are what the owner named: *ALL stats should be there
  * (STR, DEX, etc.)*. `WIS` and `DMG` are at the end for a different reason — the numbers step below
  * reads them off the fixture row, and PICKING them rather than leaning on a threshold to derive
- * them is exactly the independence this ticket adds.
+ * them was the independence JOS-297 added. JOS-302 made it the only way there is.
  */
 const PICK: readonly string[] = [
   'STR',
@@ -152,6 +151,30 @@ async function pick(page: Page, toggle: string, testId: string, keys: readonly s
   }
   await page.keyboard.press('Escape')
   await until(async () => (await countOf(page, `[data-testid="${testId}-option-${keys[0] ?? 'AC'}"]`)) === 0, 10_000)
+}
+
+/**
+ * PUT THESE STAT COLUMNS ON THE TABLE, for a caller outside this module (JOS-302).
+ *
+ * The host spec's upgrade step used to get its DMG and WIS columns by typing two stat THRESHOLDS,
+ * which derived them as a side effect. The fourth owner ask deleted the thresholds, and the picker
+ * is where that job went — so the step names the columns it wants instead of conjuring them, which
+ * is both the honest replacement and a smaller lie than the old one ever was.
+ *
+ * IT MUST BE PAIRED WITH `resetColumns`. A picked list is EXPLICIT and wins outright, and
+ * `toggleColumn` toggles: this module's own `stepPick` starts from whatever it is handed, so a
+ * caller that leaves a choice behind would silently un-pick two of its keys.
+ */
+export async function pickColumns(page: Page, keys: readonly string[]): Promise<void> {
+  await pick(page, COLUMNS_TOGGLE, 'gear-columns', keys)
+}
+
+/** Hand the columns back to the derivation — the state that has no stored key. */
+export async function resetColumns(page: Page): Promise<void> {
+  await page.click(COLUMNS_TOGGLE, { timeout: 15_000 })
+  await page.click(COLUMNS_RESET, { timeout: 15_000 })
+  await page.keyboard.press('Escape')
+  await until(async () => (await page.getAttribute(TABLE, 'data-layout')) === 'percent', 15_000)
 }
 
 // =================================================================================
@@ -303,14 +326,20 @@ async function stepNumbersUnmoved(page: Page, fixture: GearColumnFixture): Promi
  */
 async function stepReset(page: Page): Promise<void> {
   await typeAndSettle(page, '')
-  await page.click(COLUMNS_TOGGLE, { timeout: 15_000 })
-  await page.click(COLUMNS_RESET, { timeout: 15_000 })
-  await page.keyboard.press('Escape')
+  await resetColumns(page)
 
-  const back = await until(async () => (await page.getAttribute(TABLE, 'data-layout')) === 'percent', 15_000)
-  check('resetting the picker returns the columns to following the filters and the sort', back)
+  const back = (await page.getAttribute(TABLE, 'data-layout')) === 'percent'
+  check('resetting the picker returns the columns to following the sort', back)
   const gone = await until(async () => (await countOf(page, '[data-testid="gear-sort-CHA"]')) === 0, 10_000)
-  check('…so a stat nothing is filtering or sorting on stops drawing a column', gone)
+  check('…so a stat nothing is sorting on stops drawing a column', gone)
+  // AND THE ONE THE SORT IS ON SURVIVES THE RESET — which is the whole of the derivation now that
+  // the stat thresholds are gone (JOS-302). `stepSortPicked` above left the table ranked by STR, so
+  // STR is a DERIVED column here even though the explicit choice that first drew it is discarded.
+  check(
+    '…while the column the table is RANKED by stays, derived rather than chosen',
+    (await countOf(page, '[data-testid="gear-sort-STR"]')) === 1,
+    'the sort key is the derivation`s only source'
+  )
   const over = await overflowX(page)
   check(
     '…and the derived set fits the pane again, with no sideways scroll anywhere',
@@ -323,45 +352,42 @@ async function stepReset(page: Page): Promise<void> {
  * 6. THE FILTER BAR IS CONFIGURABLE, AND A HIDDEN CONTROL STOPS FILTERING.
  *
  * The half that is easy to get wrong is not the hiding — it is what happens to the narrowing the
- * hidden control was applying. Leaving it on would hold rows back behind a chip nobody can see,
+ * hidden control was applying. Leaving it on would hold rows back behind a control nobody can see,
  * which is the JOS-67 law's exact failure. So the count must GROW when the control goes and come
  * back down when it returns: the user's own value survives, it simply stops being applied.
  *
- * THE INERTNESS ARM IS PROVEN ON THE THRESHOLDS, NOT ON THE SLOT SELECT — measured, not assumed.
- * The host spec leaves BOTH on, but its two thresholds (`wis 10`, `dmg 1`) already select for
- * weapons, and every weapon in this corpus stating WIS 10+ turns out to be flagged PRIMARY: dropping
- * the slot filter changes the count by zero, so it could never tell an inert filter from a live one.
- * The thresholds are the pair that actually moves the number.
+ * BOTH ARMS RUN ON THE SLOT PICKER NOW, and that is a JOS-302 consequence rather than a shortcut.
+ * They used to be split — visibility on the slot select, inertness on the stat thresholds — because
+ * the host spec's two thresholds (`wis 10`, `dmg 1`) already selected for weapons and every weapon
+ * stating WIS 10+ happened to be PRIMARY, so dropping the slot filter moved the count by zero and
+ * could never tell an inert filter from a live one. With the thresholds deleted, the host spec
+ * leaves the slot picker holding PRIMARY over an otherwise unnarrowed corpus, and hiding it moves
+ * the count by thousands. One control, both claims, and the measurement is in the message.
  */
 async function stepFilterPicker(page: Page): Promise<void> {
   const narrowed = await typeAndSettle(page, '')
   check(
-    'the host spec left a slot filter and two stat thresholds on for this step',
-    (await countOf(page, SLOT_SELECT)) === 1 && (await countOf(page, THRESHOLD_CHIP)) === 2,
-    `${String(await countOf(page, THRESHOLD_CHIP))} chips over ${String(narrowed)} rows`
+    'the host spec left one slot pick on for this step',
+    (await countOf(page, SLOT_SELECT)) === 1,
+    `${String(narrowed)} rows`
   )
 
-  // VISIBILITY, on a control whose narrowing this corpus cannot see: any of them can go, and return.
   await pick(page, FILTERS_TOGGLE, 'gear-filters', ['slot'])
   check('unpicking a filter takes its control off the toolbar', await until(async () => (await countOf(page, SLOT_SELECT)) === 0, 15_000))
-  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['slot'])
-  check('…and picking it again puts it back', await until(async () => (await countOf(page, SLOT_SELECT)) === 1, 15_000))
-
-  // INERTNESS, on the pair that moves the count.
-  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['thresholds'])
   const widened = await until(async () => (await shownCount(page)) > narrowed, 15_000)
   check(
-    'a hidden control STOPS ITS FILTER - nobody may be held back by a chip they cannot see',
-    widened && (await countOf(page, THRESHOLD_CHIP)) === 0,
-    `${String(narrowed)} with the thresholds → ${String(await shownCount(page))} without their control`
+    'a hidden control STOPS ITS FILTER - nobody may be held back by a pick they cannot see',
+    widened,
+    `${String(narrowed)} with the slot pick → ${String(await shownCount(page))} without its control`
   )
 
-  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['thresholds'])
+  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['slot'])
+  check('…and picking it again puts it back', await until(async () => (await countOf(page, SLOT_SELECT)) === 1, 15_000))
   const restored = await until(async () => (await shownCount(page)) === narrowed, 15_000)
   check(
     'putting the control back restores the value it was holding, unchanged',
-    restored && (await countOf(page, THRESHOLD_CHIP)) === 2,
-    `${String(await shownCount(page))} rows and ${String(await countOf(page, THRESHOLD_CHIP))} chips, wanted ${String(narrowed)} and 2`
+    restored,
+    `${String(await shownCount(page))} rows, wanted ${String(narrowed)}`
   )
 }
 
@@ -375,18 +401,17 @@ async function stepFilterPicker(page: Page): Promise<void> {
 export async function stepGearColumns(page: Page, fixture: GearColumnFixture): Promise<void> {
   await stepFilterPicker(page)
 
-  // OPEN THE CORPUS BACK UP, using the feature under test. The host spec left a slot filter and two
-  // stat thresholds on, which between them leave a few dozen rows — too few to say anything about a
-  // ranking. Hiding those two controls is the honest way to widen it, because hiding them is
-  // DEFINED to make them inert; it also means the derived seed is now just the core four, so every
-  // column the picker adds below is unambiguously the picker's doing.
-  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['slot', 'thresholds'])
+  // OPEN THE CORPUS BACK UP, using the feature under test. The host spec left a PRIMARY slot pick
+  // on; hiding that control is the honest way to widen the table, because hiding it is DEFINED to
+  // make it inert. The derived seed is the core four either way now (JOS-302 cut the derivation to
+  // the sort key), so every column the picker adds below is unambiguously the picker's doing.
+  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['slot'])
   if (!(await stepPick(page))) return
   await stepWidth(page)
   await stepSortPicked(page)
   await stepNumbersUnmoved(page, fixture)
   await stepReset(page)
-  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['slot', 'thresholds'])
+  await pick(page, FILTERS_TOGGLE, 'gear-filters', ['slot'])
 
   // The choice the second launch has to find. CHA is never derived here and AC is always derived,
   // so the pair is only explicable as a stored explicit list.

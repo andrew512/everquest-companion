@@ -2,20 +2,27 @@
 //
 // THE PROBLEM THIS SOLVES. `GEAR_STAT_KEYS` is 32 keys wide and the ticket asks to sort by ANY of
 // them, regens and backstab included. Thirty-two columns is not a table anyone can read, so the
-// column list is DERIVED: a small always-on core, plus a column for every stat currently being
-// thresholded and for whatever the table is sorted by. Filter on `HP_REGEN` and the regen column
-// appears; sort by `BACKSTAB` and the backstab column appears; clear them and the table narrows
-// back down.
+// column list is DERIVED: a small always-on core, plus a column for whatever the table is sorted
+// by. Sort by `BACKSTAB` and the backstab column appears; sort by something else and it goes.
 //
-// AND SINCE JOS-297 THAT DERIVATION IS THE SEED, NOT THE ANSWER (owner feedback on the shipped
+// THE DERIVATION USED TO HAVE A SECOND SOURCE — every stat a THRESHOLD was filtering on — and
+// JOS-302 removed it with the thresholds themselves (owner ruling 2026-08-13: sorting services that
+// need without spending toolbar real estate). What is left is the honest remainder of the same
+// sentence: a stat you are RANKING by is a stat you are looking at, so it gets a column. That is a
+// derivation of at most ONE column now, which is why there is no cap on it any more — the old
+// `MAX_DERIVED_COLUMNS` capped a list that could grow with every chip typed, and a list that can
+// never exceed core+1 caps itself.
+//
+// AND SINCE JOS-297 THE DERIVATION IS THE SEED, NOT THE ANSWER (owner feedback on the shipped
 // tab: *ALL stats should be there*). The derivation was a bet that asking about a stat is the only
 // way anyone says they want to see it, and the bet was wrong: a player comparing two breastplates
 // wants the seven attributes on screen without inventing seven thresholds to conjure them. So the
 // picker offers the WHOLE vocabulary (`PICKABLE_COLUMNS` — every `GearStatKey` plus `RATIO`) and
-// an explicit choice WINS; absent a choice the derivation still runs, unchanged, which is what
-// keeps the tab's first screen exactly what it was. The distinction the storage layer has to
-// preserve is therefore ABSENT vs EMPTY: no stored key means "derive", a stored `[]` means "the
-// user asked for no numeric columns at all", and the two must never fold together.
+// an explicit choice WINS; absent a choice the derivation still runs, which is what keeps the tab's
+// first screen what it was. The distinction the storage layer has to preserve is therefore ABSENT
+// vs EMPTY: no stored key means "derive", a stored `[]` means "the user asked for no numeric
+// columns at all", and the two must never fold together. THE PICKER IS ALSO WHERE A THRESHOLD'S
+// OTHER JOB WENT: you name the column you want and then you sort it.
 //
 // EVERY DRAWN NUMERIC COLUMN IS SORTABLE, and that has always been true of the machinery
 // (`sortGearRows` takes any `GearSortKey`) — the gap the owner hit was EXPOSURE: a key with no
@@ -38,11 +45,11 @@
 // that is the whole point of the switch, and `tests/e2e/gearColumnSteps.mts` measures both.
 //
 // PURE AND NODE-TESTABLE (relative value imports, the house law): this file decides the shape of
-// the table, so `tests/gearFilter.test.mts` can assert that a threshold brings its column with it
+// the table, so `tests/gearFilter.test.mts` can assert that a sort key brings its column with it
 // and `tests/gearColumnPrefs.test.mts` that a chosen set of thirty overflows on purpose.
 
 import { GEAR_PERCENT_STAT_KEYS, GEAR_STAT_KEYS, type GearStatKey } from '../../../../shared/planner/gear'
-import type { GearFilters, GearSort, GearSortKey } from './gearFilter'
+import type { GearSort, GearSortKey } from './gearFilter'
 
 /**
  * The columns that are always there: armour, the two pools every class reads, and the weapon
@@ -53,16 +60,17 @@ import type { GearFilters, GearSort, GearSortKey } from './gearFilter'
 export const CORE_COLUMNS: readonly GearSortKey[] = ['AC', 'HP', 'MP', 'RATIO']
 
 /**
- * How many derived columns may join the core before the table stops being readable. Past this the
- * extra thresholds still FILTER — they just stop drawing a column of their own, which is the
- * honest trade: the rows on screen are all answers to those thresholds anyway.
+ * THE MOST THE DERIVATION CAN ADD: one column, for the stat being sorted by (and zero when that is
+ * already a core column, or the item name).
  *
- * THE CAP IS ON THE DERIVATION, NEVER ON THE PICKER. A derived column is one the app decided to
- * add on the user's behalf, and there is a number past which that guessing stops being helpful; a
- * PICKED column was asked for by name, and refusing it would be the app arguing with the person
- * who typed it. Picked sets past `MAX_PERCENT_COLUMNS` pay in horizontal scroll instead.
+ * IT IS A CONSTANT RATHER THAN A CAP NOW (JOS-302). It used to be `MAX_DERIVED_COLUMNS = 6`, a real
+ * ceiling on a list that grew with every stat threshold typed — past six the extra thresholds still
+ * filtered, they just stopped drawing columns. With the thresholds gone the only derived source is
+ * the sort key, so the list cannot exceed core+1 and there is nothing left to cap. The number stays
+ * exported because the width law below is stated against it, and because it is what makes
+ * `MAX_PERCENT_COLUMNS` a fact about the derivation rather than a coincidence.
  */
-export const MAX_DERIVED_COLUMNS = 6
+export const MAX_DERIVED_COLUMNS = 1
 
 /** Percent of the table the numeric columns share between them. */
 const NUMERIC_BUDGET = 52
@@ -80,10 +88,14 @@ const MIN_NUMERIC_WIDTH = 5
 const MAX_NUMERIC_WIDTH = 8
 
 /**
- * The widest numeric set percentages can still serve at that floor — ten, which is exactly the
- * core plus `MAX_DERIVED_COLUMNS`. That is not a coincidence and it is worth saying out loud: the
- * derived cap WAS the percentage budget's floor, so every column set the shipped tab could produce
- * stays in percentage mode and looks precisely as it did. Only a picked set can cross the line.
+ * The widest numeric set percentages can still serve at that floor — ten.
+ *
+ * IT USED TO BE EXACTLY THE CORE PLUS `MAX_DERIVED_COLUMNS`, and that was the point: the derived
+ * cap WAS this floor, so nothing the tab could derive could ever cross into pixel mode. JOS-302 cut
+ * the derivation to core+1 and the two numbers stopped meeting — which is a WIDENING of the same
+ * guarantee rather than a break in it: the derived set is now five at its very widest, half of what
+ * percentages can serve, so it is further inside the budget than it has ever been. Only a PICKED
+ * set can cross the line, exactly as before.
  */
 export const MAX_PERCENT_COLUMNS = Math.floor(NUMERIC_BUDGET / MIN_NUMERIC_WIDTH)
 
@@ -151,24 +163,23 @@ export const PICKABLE_COLUMNS: readonly GearSortKey[] = GEAR_STAT_KEYS.flatMap<G
 )
 
 /**
- * The numeric columns for these filters and this sort: the core, then every thresholded stat, then
- * the sort key — deduped, in that order, capped at `MAX_DERIVED_COLUMNS` derived entries.
+ * The numeric columns for this sort: the core, then the sort key if it is not already one of them.
  *
- * ORDER IS STABLE ON PURPOSE. The core never moves, so adding a threshold appends a column instead
- * of re-arranging the four the eye has already learned; and a sort key that is already a core
- * column adds nothing at all.
+ * ORDER IS STABLE ON PURPOSE. The core never moves, so ranking by a new stat APPENDS a column
+ * instead of re-arranging the four the eye has already learned; and a sort key that is already a
+ * core column adds nothing at all, which is why `AC desc` (the default) draws exactly the core.
+ *
+ * IT TOOK `filters` UNTIL JOS-302, to read the stat thresholds. They are gone, and a parameter that
+ * would now be ignored is worse than no parameter: it would invite the next reader to believe the
+ * columns still follow the filter bar. `sortWithin` is the other half of the pairing and is
+ * unchanged — removing the sorted column moves the lit header, whatever put the column there.
  *
  * THIS IS THE SEED THE PICKER STARTS FROM (JOS-297), and it still runs whenever no explicit choice
  * is stored — see `columnsFor`.
  */
-export function visibleColumns(filters: GearFilters, sort: GearSort): GearColumn[] {
+export function visibleColumns(sort: GearSort): GearColumn[] {
   const keys: GearSortKey[] = [...CORE_COLUMNS]
-  const derived: GearSortKey[] = [...filters.thresholds.map((t) => t.key), sort.key]
-  for (const key of derived) {
-    if (key === 'name' || keys.includes(key)) continue
-    if (keys.length - CORE_COLUMNS.length >= MAX_DERIVED_COLUMNS) break
-    keys.push(key)
-  }
+  if (sort.key !== 'name' && !keys.includes(sort.key)) keys.push(sort.key)
   return keys.map(column)
 }
 
@@ -176,16 +187,13 @@ export function visibleColumns(filters: GearFilters, sort: GearSort): GearColumn
  * THE COLUMNS ON SCREEN. `null` means nothing has been chosen, so the derivation above answers;
  * anything else — INCLUDING an empty array — is the user's own list and wins outright.
  *
- * An explicit list is NOT re-seeded with the core or with the thresholds. That is the whole
- * meaning of "explicit": a player who removed AC removed AC, and an app that quietly put it back
- * whenever a filter mentioned it would be arguing with a checkbox it drew itself.
+ * An explicit list is NOT re-seeded with the core or with the sort key. That is the whole meaning
+ * of "explicit": a player who removed AC removed AC, and an app that quietly put it back whenever
+ * something mentioned it would be arguing with a checkbox it drew itself. (`sortWithin` handles the
+ * consequence — a sort on a column the user removed falls to one that is drawn.)
  */
-export function columnsFor(
-  chosen: readonly GearSortKey[] | null,
-  filters: GearFilters,
-  sort: GearSort
-): GearColumn[] {
-  return chosen === null ? visibleColumns(filters, sort) : chosen.map(column)
+export function columnsFor(chosen: readonly GearSortKey[] | null, sort: GearSort): GearColumn[] {
+  return chosen === null ? visibleColumns(sort) : chosen.map(column)
 }
 
 /**
