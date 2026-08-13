@@ -204,6 +204,31 @@ export const IPC = {
   // all overlay kinds; a window with no fight-scoped surface simply has no listener.
   onFightSelection: 'fightSelection:changed',
 
+  // ---- THE APP-WIDE SCOPE SELECTION (JOS-332) ----
+  // WHICH TIERS of the current camp count, and WHICH HOUR every rate divides by. One answer for the
+  // main window and the XP overlay together, because they are separate renderer processes showing
+  // the same two words to the same reader — the owner read `elapsed 27m` off the tab with *this
+  // tier* on screen and the two states were simply not the same state (shared/scopeSelection.ts
+  // carries the measured story). Main holds it EPHEMERALLY (src/main/scopeSelection.ts — the
+  // opening at every launch, never stored) and is the only process that can reach every window,
+  // which is the fight-selection argument above, verbatim, for the second fact to need it.
+  //
+  // THE SLICE IS NOT HERE, on purpose: which STRETCH a floating window measures stays its own
+  // persisted `xpSlice` (shared/types.ts states why). These two channels carry the pair that must
+  // agree, and nothing else.
+  //
+  // renderer(any window) -> main: read the current selection, for hydrating a window that mounted
+  // after the last change. Returns a whole `ScopeSelection`.
+  scopeSelectionGet: 'scopeSelection:get',
+  // renderer(any window) -> main, FIRE-AND-FORGET: "the user moved one of these knobs". The payload
+  // is a PARTIAL — each control sets one half and must not restate the other — and is REBUILT AT
+  // THE HANDLER against the shared model (`normalizeScopePatch`): an unknown key, a missing one or
+  // a value this build cannot name is dropped rather than fanned out.
+  scopeSelectionSet: 'scopeSelection:set',
+  // main -> EVERY window: the selection changed. Payload is the whole `ScopeSelection`. Sent to the
+  // main window and all overlay kinds; a window with no scoped surface simply has no listener.
+  onScopeSelection: 'scopeSelection:changed',
+
   // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
   // Both blobs are main-owned (electron-store), so Preferences has no other door. The setters
   // are MERGE-PATCHES and every field is re-validated + clamped AT THE HANDLER through

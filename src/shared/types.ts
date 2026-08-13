@@ -14,9 +14,7 @@ import type { TimerGrouping } from './buffTimers'
 // close (both files import from here) are erased at compile time, and each union lives beside the
 // code that gives it meaning rather than in this file, which is at its factoring ceiling.
 import type { XpRowId } from './xpOverlay'
-import type { RateBasis } from './rateBasis'
 import type { SliceId } from './timeslice'
-import type { ZoneScope } from './zoneScope'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -216,39 +214,24 @@ export interface OverlayConfig {
    * re-scoping a window floating over the game.
    */
   xpSlice?: SliceId
-  /**
-   * WHICH HOUR THAT WINDOW'S RATES ARE PER (JOS-288) — `elapsed` or `active`, the loot ledger's own
-   * two words (`shared/rateBasis.ts` owns the vocabulary and the ruling).
-   *
-   * ABSENT MEANS `elapsed`, which is the default the owner ruled for and also the denominator the
-   * next-level ETA in this very window has always divided by. The toggle lives in the footer beside
-   * the row checklist, so the other reading is one click away and the window never shows a number
-   * without naming the hour under it.
-   *
-   * Present only on the 'xp' kind; `setOverlayConfig` deletes it everywhere else, exactly as it does
-   * for `xpRows` and `xpSlice`.
-   */
-  xpBasis?: RateBasis
-  /**
-   * WHICH TIERS OF THE CURRENT ZONE THAT WINDOW COUNTS (JOS-291) — `allTiers` or `exactTier`
-   * (`shared/zoneScope.ts` owns the vocabulary and the argument).
-   *
-   * ABSENT MEANS `allTiers`, the behaviour every number in this window had before the option
-   * existed: the zone fold strips EQ Legends' difficulty spelling, so `Befallen 2 (Adaptive)` and
-   * plain `Befallen` are one camp. `exactTier` narrows to the tier the log last named — the tiers
-   * do not pay alike, and a floating pace read is the surface most likely to be asked which one it
-   * means.
-   *
-   * The toggle sits in the footer beside the denominator, and it is drawn ONLY while the slice
-   * carries a zone at all (`Zone` / `Zone + Session`): a membership with no subject is not a
-   * control. The stored value survives a slice that has no zone, exactly as `xpSlice` survives a
-   * record that cannot define it — forgetting a choice because of a passing state is the same bug
-   * from the other direction.
-   *
-   * Present only on the 'xp' kind; `setOverlayConfig` deletes it everywhere else, exactly as it
-   * does for `xpRows`, `xpSlice` and `xpBasis`.
-   */
-  xpZoneScope?: ZoneScope
+  // THE XP WINDOW'S DENOMINATOR AND ITS TIER MEMBERSHIP USED TO BE TWO MORE KEYS HERE (`xpBasis`,
+  // JOS-288; `xpZoneScope`, JOS-291) AND THEY ARE GONE (JOS-332).
+  //
+  // Not because the window stopped having them — it still draws both toggles in its footer — but
+  // because they were never this window's facts to remember. The Leveling tab shows the same two
+  // controls, and while each side kept its own copy the reader had no way to tell which one the
+  // numbers in front of them obeyed: the owner had *this tier* on screen over the game and read the
+  // every-tier `elapsed 27m` off the tab. They are now ONE app-wide selection held in main and
+  // fanned out to every window (`shared/scopeSelection.ts`), EPHEMERAL like the global fight
+  // selection beside it, because both halves were already session-lifetime in the app and one fact
+  // cannot have two lifetimes.
+  //
+  // A store written by an older build may still carry the two keys; `setOverlayConfig` no longer
+  // preserves them, so the first patch of any kind drops them. One dead scalar (two, here) is not
+  // worth a schema bump — the same verdict `topN` got in `getOverlayConfig`.
+  //
+  // `xpSlice` deliberately STAYED: which stretch a floating window measures is its own business
+  // (its doc above says why), and it is not a knob the tab also shows.
 }
 
 // The overlays TEXT SIZE (owner feedback 2026-08-05) lives in ./overlayTextScale.ts and is
