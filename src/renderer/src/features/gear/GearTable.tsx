@@ -20,6 +20,14 @@
 // NO MUI TOOLTIP ANYWHERE (JOS-143). These are dense rows under a toolbar full of selects and a
 // slider; an interactive popper opened from the first row lands on those controls and eats the
 // clicks aimed at them. Every explanation is a native `title`.
+//
+// AND SINCE JOS-297 THE COLUMN SET CAN BE WIDER THAN THE PANE. Nothing above changes: the table is
+// still `tableLayout: fixed`, the row is still exactly `ROW_HEIGHT` tall with one clipped line per
+// cell, and the windowing hook's contract does not know that widths exist. What changes is where
+// the widths come from — `gearTableLayout` states percentages while they fit and stated pixels plus
+// a table `minWidth` once they do not, so a thirty-column set overflows the table's OWN scroller
+// (GearView's `gear-list` box, already `overflow: auto`) and never the page. Both halves are
+// measured in `tests/e2e/gearColumnSteps.mts`, container-scroll and page-no-scroll in one step.
 
 import { type JSX, memo, useMemo } from 'react'
 import { IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
@@ -27,22 +35,13 @@ import AddIcon from '@mui/icons-material/Add'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName, MismatchChip } from '../planner/PlannerChips'
-import {
-  CLASS_COLUMN_WIDTH,
-  OWNED_COLUMN_WIDTH,
-  SLOT_COLUMN_WIDTH,
-  numericWidth,
-  statText,
-  type GearColumn
-} from './gearColumns'
+import { gearTableLayout, statText, type GearColumn } from './gearColumns'
 import { classMismatch, sortValue, type GearSort, type GearSortKey } from './gearFilter'
 import { ownedCellText, ownedCellTitle, ownershipFor, type GearOwnershipMap } from './gearOwnership'
 import type { ClassAbbr } from '@shared/classCombo'
 
 /** Dense row height (px), MUI `size="small"` — the number the windowing hook is handed. */
 export const ROW_HEIGHT = 37
-
-const FIXED_TABLE = { tableLayout: 'fixed' } as const
 
 const FIXED_ROW = {
   height: ROW_HEIGHT,
@@ -206,26 +205,37 @@ export default function GearTable({
   onAssign
 }: GearTableProps): JSX.Element {
   const span = columns.length + (ownership === null ? 3 : 4)
-  const width = numericWidth(columns.length)
+  const layout = gearTableLayout(columns.length, ownership !== null)
   // ONE object for the row's two callbacks, memoized on the callbacks themselves: `GearLine` is
   // `memo`'d and a fresh literal per render would defeat it on every keystroke.
   const handlers = useMemo(() => ({ openLoot: onOpenLoot, assign: onAssign }), [onOpenLoot, onAssign])
   return (
-    <Table size="small" stickyHeader sx={FIXED_TABLE}>
+    <Table
+      size="small"
+      stickyHeader
+      data-testid="gear-table"
+      data-layout={layout.mode}
+      // `minWidth`, never `width`: a pane wider than the set still fills it, a narrower one scrolls
+      // the table sideways inside its own box. 0 in percentage mode means the table IS the pane.
+      sx={{ tableLayout: 'fixed', minWidth: layout.minWidth === 0 ? undefined : layout.minWidth }}
+    >
       <TableHead>
         <TableRow>
-          {/* No width: the item NAME takes whatever the stated columns leave (LootTables.tsx). */}
-          <SortHeader column={{ key: 'name', label: 'Item' }} sort={sort} onSort={onSort} />
-          <TableCell sx={{ width: SLOT_COLUMN_WIDTH }}>Slot</TableCell>
-          <TableCell sx={{ width: CLASS_COLUMN_WIDTH }}>Classes</TableCell>
+          {/* In percentage mode the item NAME states no width and takes whatever the stated columns
+              leave (LootTables.tsx); in pixel mode every column is stated, because the SUM is what
+              makes the table wider than the pane. */}
+          <SortHeader column={{ key: 'name', label: 'Item' }} sort={sort} width={layout.name} onSort={onSort} />
+          <TableCell sx={{ width: layout.slot }}>Slot</TableCell>
+          <TableCell sx={{ width: layout.classes }}>Classes</TableCell>
           {columns.map((c) => (
-            <SortHeader key={c.key} column={c} sort={sort} width={width} align="right" onSort={onSort} />
+            <SortHeader key={c.key} column={c} sort={sort} width={layout.numeric} align="right" onSort={onSort} />
           ))}
           {/* The one column that is not a number and not sortable: it reports a live file, and the
               header carries the two things a reader has to know about it — that a `+N` is its own
-              copy, and which key rings the fold left out. */}
+              copy, and which key rings the fold left out. It stays LAST whatever the picker shows
+              (JOS-297): the numerics are what an item reads, this is what you have. */}
           {ownership !== null && (
-            <TableCell sx={{ width: OWNED_COLUMN_WIDTH }} title={ownedHint} data-testid="gear-owned-header">
+            <TableCell sx={{ width: layout.owned }} title={ownedHint} data-testid="gear-owned-header">
               Owned
             </TableCell>
           )}

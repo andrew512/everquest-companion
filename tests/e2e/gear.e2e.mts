@@ -70,6 +70,8 @@ import {
   stepGearSetsRelaunched,
   type GearSetFixture
 } from './gearSetSteps.mjs'
+// JOS-297's steps are a module for the same reason phase 5's are.
+import { stepGearColumns, stepGearColumnsRelaunched, type GearColumnFixture } from './gearColumnSteps.mjs'
 // Phase 0's scaler and phase 2's ratio, so the EXPECTED numbers are computed rather than typed.
 import { gearRatio, scaleGearRow } from '../../src/shared/planner/gearScale'
 import type { GearRow } from '../../src/shared/planner/gear'
@@ -141,13 +143,17 @@ const CHECKPOINT: ItemUpgradeState = { full: 2, fraction: 3 }
 /** WHAT PHASE 5's STEPS ARE TOLD (gearSetSteps.mts) — the same row, and the Owned column's words. */
 const SET_FIXTURE: GearSetFixture = { row: THELVORN_BASE, owned: THELVORN_OWNED }
 
-function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
-  return settle(fn, (ok) => ok, { timeoutMs: ms })
-}
+/**
+ * WHAT JOS-297's STEPS ARE TOLD (gearColumnSteps.mts) — the same row again, plus the plus-state the
+ * upgrade step leaves the global selector at, so the picker's own numbers assertion can compute its
+ * expectation from `scaleGearRow` exactly as `expectedAt` does below.
+ */
+const COLUMNS: GearColumnFixture = { row: THELVORN_BASE, state: CHECKPOINT }
 
-function textOf(page: Page, sel: string): Promise<string> {
-  return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
-}
+const until = (fn: () => Promise<boolean>, ms: number): Promise<boolean> => settle(fn, (ok) => ok, { timeoutMs: ms })
+
+const textOf = (page: Page, sel: string): Promise<string> =>
+  page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
 
 /** Box + scroll geometry — enough to prove a growing list is a BOUNDED scroller. */
 function boxOf(page: Page, sel: string): Promise<{ h: number; scrollH: number; clientH: number } | null> {
@@ -442,12 +448,8 @@ async function driveSlider(page: Page, sel: string, keys: readonly string[]): Pr
 
 /** What `scaleGearRow` says this row reads at one state — the expectation, computed not typed. */
 function expectedAt(state: ItemUpgradeState): { dmg: string; wis: string; ratio: string } {
-  const scaled = scaleGearRow(THELVORN_BASE, state)
-  return {
-    dmg: String(scaled.stats.DMG),
-    wis: String(scaled.stats.WIS),
-    ratio: gearRatio(scaled.stats)?.toFixed(2) ?? ''
-  }
+  const s = scaleGearRow(THELVORN_BASE, state).stats
+  return { dmg: String(s.DMG), wis: String(s.WIS), ratio: gearRatio(s)?.toFixed(2) ?? '' }
 }
 
 /** The three cells this step is about, read off the screen. */
@@ -537,6 +539,10 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
     await stepSort(page)
     await stepUpgrade(page)
     await stepGearSetsIndependent(page, SET_FIXTURE)
+    // JOS-297 runs LAST of the first launch, and deliberately: it needs the global selector already
+    // at the checkpoint (so the picked columns can be re-read against `scaleGearRow` at a plus
+    // nobody is about to move), and it parks a column choice for the second launch to find.
+    await stepGearColumns(page, COLUMNS)
   }
   const over = await pageOverflow(page)
   check(
@@ -585,7 +591,9 @@ async function main(): Promise<void> {
   try {
     const page = await mainWindow(second.app)
     watch(page, consoleErrors)
-    if (await stepMount(page)) await stepGearSetsRelaunched(page, SET_FIXTURE)
+    const up = await stepMount(page)
+    if (up) await stepGearSetsRelaunched(page, SET_FIXTURE)
+    if (up) await stepGearColumnsRelaunched(page)
     if (failures.length) await dumpArtifacts(page, 'gear-relaunch-FAIL')
   } finally {
     await second.close()
