@@ -357,7 +357,10 @@ test('the derived columns are capped, and the widths always fit the pane', () =>
 
   const pct = Number(numericWidth(cols.length).replace('%', ''))
   assert.ok(pct * cols.length <= 60, `${String(cols.length)} columns at ${String(pct)}% overflow the table`)
-  assert.equal(numericWidth(4), '13%')
+  // The ceiling: a small set never fattens its numeric columns - the item name takes the slack.
+  assert.equal(numericWidth(4), '8%')
+  assert.equal(numericWidth(1), '8%')
+  assert.equal(numericWidth(10), '5.2%')
 })
 
 test('a cell states what the item states - blank is "states none", never a zero', () => {

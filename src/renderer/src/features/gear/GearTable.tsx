@@ -55,6 +55,15 @@ const FIXED_ROW = {
   }
 } as const
 
+/**
+ * The numeric columns' halved side padding — the other half of `MAX_NUMERIC_WIDTH`'s bargain
+ * (gearColumns.ts). The ceiling only holds if a sortable header (label + arrow, ~60px for
+ * `Ratio`) fits the cell it states: a label wider than its sticky cell slides under the NEXT
+ * header, which then intercepts the click aimed at it — gear.e2e.mts measured exactly that.
+ * MUI's default 16px a side spends 32px of a ~60px cell on air; 8px keeps the header its own.
+ */
+const NUMERIC_PAD = { px: 1 } as const
+
 /** Sixteen classes is `Class: ALL`, and sixteen chips would be the widest cell in the table. */
 function classText(classes: readonly ClassAbbr[]): string {
   if (classes.length === 0) return ''
@@ -150,7 +159,7 @@ const GearLine = memo(function GearLine({
       <TableCell title={row.slots.join(' ')}>{row.slots.join(' ')}</TableCell>
       <TableCell title={row.classes.join(' ')}>{classText(row.classes)}</TableCell>
       {columns.map((c) => (
-        <TableCell key={c.key} align="right" data-testid={`gear-cell-${c.key}`}>
+        <TableCell key={c.key} align="right" data-testid={`gear-cell-${c.key}`} sx={NUMERIC_PAD}>
           {statText(sortValue(row, c.key), c.key)}
         </TableCell>
       ))}
@@ -179,7 +188,7 @@ function SortHeader({
 }): JSX.Element {
   const active = sort.key === column.key
   return (
-    <TableCell align={align} sx={width === undefined ? undefined : { width }}>
+    <TableCell align={align} sx={{ ...(width === undefined ? {} : { width }), ...(align === 'right' ? NUMERIC_PAD : {}) }}>
       <TableSortLabel
         active={active}
         direction={active ? sort.dir : 'desc'}

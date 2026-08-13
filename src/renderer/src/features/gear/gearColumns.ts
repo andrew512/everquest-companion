@@ -27,8 +27,10 @@
 // re-measure per slice moves its row heights under a hook whose every index assumes they cannot —
 // LootTables.tsx states the full argument). Under percentages the numeric columns SHARE a fixed
 // budget: N columns each take `NUMERIC_BUDGET / N`, the identity columns take a constant, and the
-// NAME column states no width at all so it absorbs the slack. That budget has a FLOOR
-// (`MIN_NUMERIC_WIDTH`), and the floor is what used to cap the derived count — past ten numeric
+// NAME column states no width at all so it absorbs the slack. Each share is CLAMPED both ways —
+// a CEILING (`MAX_NUMERIC_WIDTH`) because a stat cell holds at most `-12345` and handing four
+// columns 13% apiece starves the one column that actually ellipsises, the item name; and a FLOOR
+// (`MIN_NUMERIC_WIDTH`), which is what used to cap the derived count — past ten numeric
 // columns a percentage can only be bought by making every column illegible, because percentages
 // cannot make a fixed table wider than its box. So past ten the layout switches to STATED PIXELS
 // plus a `minWidth` on the table: the table becomes wider than the pane and the pane, which is
@@ -66,6 +68,16 @@ export const MAX_DERIVED_COLUMNS = 6
 const NUMERIC_BUDGET = 52
 /** …and the floor one column may shrink to, which is what caps the derived count above. */
 const MIN_NUMERIC_WIDTH = 5
+/**
+ * …and the CEILING one column may grow to. A numeric cell holds at most `-12345` or `41%`; every
+ * point of budget a small set does not need belongs to the item name, the only column whose
+ * content actually runs out of room. The number is bounded from BELOW by the header, not the
+ * cell: a sortable header is its label plus the arrow (~60px for `Ratio`), and a label wider
+ * than its sticky cell slides under the NEXT header, which then eats the click aimed at it —
+ * measured in gear.e2e.mts at 6.5%. 8% of the narrowest pane the 900px window minimum can
+ * produce clears that with the tightened numeric padding GearTable pairs with this ceiling.
+ */
+const MAX_NUMERIC_WIDTH = 8
 
 /**
  * The widest numeric set percentages can still serve at that floor — ten, which is exactly the
@@ -81,7 +93,7 @@ export const MAX_PERCENT_COLUMNS = Math.floor(NUMERIC_BUDGET / MIN_NUMERIC_WIDTH
  * holds a name that ellipsises. Their SUM is what makes the table wider than the pane, which is
  * what makes the pane scroll it.
  */
-const PX = { name: 260, slot: 120, classes: 110, numeric: 78, owned: 150 } as const
+const PX = { name: 340, slot: 120, classes: 110, numeric: 78, owned: 150 } as const
 
 export const SLOT_COLUMN_WIDTH = '13%'
 export const CLASS_COLUMN_WIDTH = '11%'
@@ -193,7 +205,8 @@ export function sortWithin(sort: GearSort, columns: readonly GearColumn[]): Gear
 /** One numeric column's width, as the percentage string the header cell states. */
 export function numericWidth(count: number): string {
   const each = count > 0 ? NUMERIC_BUDGET / count : NUMERIC_BUDGET
-  return `${String(Math.max(MIN_NUMERIC_WIDTH, Math.round(each * 10) / 10))}%`
+  const clamped = Math.min(MAX_NUMERIC_WIDTH, Math.max(MIN_NUMERIC_WIDTH, each))
+  return `${String(Math.round(clamped * 10) / 10)}%`
 }
 
 /**
