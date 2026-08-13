@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ClassAbbr } from '@shared/classCombo'
 import { resolvedClasses } from '@shared/classCombo'
-import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
+import type { ItemUpgradeState } from '@shared/itemUpgrade'
 import { GEAR_INDEX_VERSION, type GearBuildStats, type GearRow } from '@shared/planner/gear'
 import { NO_OWNERSHIP, type OwnershipPayload } from '@shared/planner/ownership'
 import { useLootHistory } from '../loot/useLootHistory'
@@ -34,6 +34,9 @@ import { eraChip, eraHides, type EraChipInfo } from '../planner/plannerData'
 import { sourceIndex } from '../planner/sourceIndex'
 import { sameClasses } from '../planner/plannerClasses'
 import { gearOwnershipMap, ownershipFor, type GearOwnershipMap } from './gearOwnership'
+// JOS-329: the two pieces of state below survive a tab switch now — see each one's own comment.
+import { sanitizeGearClasses, sanitizeUpgrade } from './areaMemory'
+import { useRemembered } from './useAreaMemory'
 
 // ---- the fetch ----------------------------------------------------------------------
 
@@ -206,21 +209,42 @@ export function gearEraChip(row: GearRow): EraChipInfo | null {
 // ---- the global plus-state ------------------------------------------------------------
 
 /**
- * THE UPGRADE SIMULATION'S STATE, and the one design decision in it: IT IS NOT PERSISTED.
+ * THE UPGRADE SIMULATION'S STATE — AND THE ONE DESIGN DECISION IN IT, NOW REVERSED BY THE OWNER.
  *
- * Every other planner preference is remembered machine-side (`eq.planner.*`) because every other
- * one is a way of READING the corpus. This one changes what the corpus SAYS — at `+5` the table
- * states numbers no item in your bags has — so a tab that silently reopened at +5 would be lying
- * quietly, and the lie would be invisible precisely because the slider is the thing you stopped
- * looking at. It resets to base on every mount, which is the state the data is actually in.
+ * THE OLD LAW (JOS-284, and it stood until 2026-08-13): IT IS NOT PERSISTED. Every other planner
+ * preference is remembered machine-side (`eq.planner.*`) because every other one is a way of
+ * READING the corpus. This one changes what the corpus SAYS — at `+5` the table states numbers no
+ * item in your bags has — so a tab that silently reopened at +5 would be lying quietly, and the lie
+ * would be invisible precisely because the slider is the thing you stopped looking at. It reset to
+ * base on every mount, which is the state the data is actually in.
+ *
+ * THE OWNER RULING OF 2026-08-13 (JOS-329) OVERRIDES THAT LAW. The report named the slider in the
+ * same breath as the filters and the sort — *we're losing everything right now* — and the slider
+ * was losing its position on every tab switch along with them, which is the half of the old law
+ * nobody had priced: the argument above is about what a NEW SESSION should open on, and it was
+ * being paid for by a control that also forgot itself when you glanced at the Loot tab.
+ *
+ * THE OLD ARGUMENT IS ANSWERED, NOT MERELY OUTVOTED, and it is worth writing down which premise
+ * failed: **the lie was never quiet.** `UpgradeSlider` renders a permanent label saying exactly what
+ * is being simulated, in the item window's own words — `Tier 2  3/4  +27.5%` — and it is on screen
+ * from the first paint of every mount (`gear-upgrade-label`, which the e2e reads). A restored
+ * plus-state ANNOUNCES itself. What the old law was really defending against was state you could
+ * not see, and this control is the opposite of that; the two remaining ways to be at a non-base
+ * plus without knowing are both closed already, because hiding the control via the JOS-297 filters
+ * picker puts the corpus back at base (`GearView`'s `visible.has('upgrade')` clamp) and the value
+ * is validated back to a legal state on every read.
+ *
+ * SO IT JOINS THE REST OF THE FORM, on the RESTART tier (`areaMemory.ts` states the split and
+ * `sanitizeUpgrade` states the validation, which is `normalizeUpgradeState` and never a second
+ * opinion).
  */
 export function useUpgradeState(): {
   state: ItemUpgradeState
   /** the value the CONTROL echoes — see GearView on why the table reads a deferred copy */
   set: (next: ItemUpgradeState) => void
 } {
-  const [state, setState] = useState<ItemUpgradeState>(ITEM_UPGRADE_BASE)
-  return { state, set: setState }
+  const [state, set] = useRemembered<ItemUpgradeState>('eq.gear.upgrade', sanitizeUpgrade)
+  return { state, set }
 }
 
 // ---- the class combo -------------------------------------------------------------------
@@ -246,6 +270,20 @@ export function useUpgradeState(): {
  * default, so an untouched Gear tab opens NARROWED to the classes the app infers you are running.
  * That is the reading a gear planner wants, and it is visible in three places at once — the chips
  * in the picker, the "N of 6,814 items" count line, and `GearView.emptyText` when it goes to zero.
+ *
+ * AND SINCE JOS-329 THE PIN SURVIVES THE TAB SWITCH THAT USED TO ERASE IT. `pinned` was `useState`,
+ * so every visit to another module handed the filter back to detection — silently, and looking
+ * exactly like the app changing its mind about your loadout. It is on the RESTART tier now
+ * (`eq.gear.classes`), and the THREE-VALUED shape is what needed the care: `null` is FOLLOWING and
+ * an empty list is PINNED TO NOTHING, which are different statements and are stored differently
+ * (the key is absent for the first). `sanitizeGearClasses` owns that distinction and the closed
+ * allowlist; this hook only decides what to write.
+ *
+ * IT IS DELIBERATELY *NOT* SHARED WITH `eq.planner.classes`, the Exaltations browser's own trio.
+ * Two surfaces, two questions: the browse filter is "who am I collecting exaltations for" and this
+ * one is "who am I reading the gear table for", and JOS-302 made this one NARROW the corpus while
+ * that one still only lights chips. Folding them onto one key would make a click on either tab
+ * silently re-filter the other.
  */
 export interface GearClasses {
   /** the classes the filter is reading for */
@@ -268,14 +306,19 @@ export function useGearClasses(): GearClasses {
   // An unresolved slot contributes nothing, so a half-known combo yields the classes it does know
   // and nothing it does not (law 1) — the same read PlannerView makes.
   const detected = useMemo(() => (current === null ? [] : resolvedClasses(current)), [current])
-  const [pinned, setPinned] = useState<ClassAbbr[] | null>(null)
+  const [pinned, setPinned] = useRemembered<ClassAbbr[] | null>('eq.gear.classes', sanitizeGearClasses)
 
-  const set = useCallback((next: ClassAbbr[]) => {
-    setPinned(next)
-  }, [])
+  const set = useCallback(
+    (next: ClassAbbr[]) => {
+      setPinned(next)
+    },
+    [setPinned]
+  )
+  // ADOPTING THE OFFER PINS, and always did: taking today's detection is accepting one answer, not
+  // handing the filter back to inference forever (the `useBrowseClasses.adopt` rule, stated there).
   const adopt = useCallback(() => {
     setPinned(detected)
-  }, [detected])
+  }, [detected, setPinned])
 
   const classes = pinned ?? detected
   const offer = pinned !== null && detected.length > 0 && !sameClasses(pinned, detected) ? detected : null

@@ -47,13 +47,22 @@
 // 67 procs, which are poisons and coatings. Turning it on shows them chipped `no slot`, because an
 // empty slot list is "the page stated none" (law 1) and just occasionally that is a wiki gap.
 //
+// AND SINCE JOS-329 THE BROWSER REMEMBERS WHERE YOU LEFT IT. Four things here were `useState` and
+// were therefore erased by every tab and module switch — the socket/slot/trio FORM, the search box,
+// JOS-210's item narrowing and which groups were expanded — while the era toggle, the
+// non-equippable toggle and the group-by axis sitting right beside them on the same bar survived,
+// because those three happened to have been written down. That inconsistency IS the bug the owner
+// reported area-wide (*we're losing everything right now*): the bar looked like one row of controls
+// and behaved like two. All four now go through the area's one mechanism (`gear/areaMemory.ts`),
+// which also states why the item narrowing is session-scoped while the form is not.
+//
 // …AND WHEN THE TWO OF THEM EMPTY THE LIST, THE LIST SAYS SO (JOS-67). A player searched for a
 // click effect that was real, legal and hidden by the slot filter, and got "No effects match these
 // filters" — a true sentence that told them nothing (feedback 01KZCGXY8WC6YCD8W44W7EAS5H). An empty
 // result now counts what the two view toggles are holding back and names them, because a filter
 // that can hide everything must be able to admit it (`hiddenByView`, plannerData.ts).
 
-import { type JSX, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { type JSX, useCallback, useDeferredValue, useEffect, useMemo, useRef } from 'react'
 import { Box, Typography } from '@mui/material'
 import type { ClassAbbr } from '@shared/classCombo'
 import type { SocketType } from '@shared/planner/types'
@@ -77,6 +86,16 @@ import {
 import { browserRows, groupDonors, type BrowserRow, type GroupAxis } from './plannerGroups'
 import { itemFits, type ItemFocus } from './plannerPreset'
 import { sourceIndex } from './sourceIndex'
+// JOS-329 — the gear area's one form-memory mechanism. It lives beside the Gear tab because the
+// four tabs are ONE area (appViews.GEAR_AREA_VIEWS) and the rule they share had to have one home;
+// this file already reaches across the same seam for `useGearIndex`'s siblings.
+import {
+  sanitizeBrowseForm,
+  sanitizeItemFocus,
+  sanitizeOpenGroups,
+  type BrowseFormMemory
+} from '../gear/areaMemory'
+import { useRemembered, useRememberedSearch } from '../gear/useAreaMemory'
 
 // ---- the row pipeline ------------------------------------------------------------------
 
@@ -267,19 +286,38 @@ export default function EffectBrowser({
   const { donors, ready } = useDonors()
   const era = useEraOnly()
   const nonEquip = useNonEquip()
-  const [own, setOwn] = useState<DonorFilters>(DEFAULT_FILTERS)
+  // JOS-329. Four pieces of this browser's state used to be `useState` and were therefore destroyed
+  // by every tab and module switch (the JOS-90/97/116 law, reported area-wide). Each is now on the
+  // tier `areaMemory.AREA_FORM_TIER` assigns it: the FORM (socket tab, slot, "usable by these
+  // classes") survives a restart with the era/non-equippable/group-by keys it sits beside; the
+  // search box, the item narrowing and the expanded groups last the session. `DEFAULT_FILTERS` is
+  // passed IN rather than imported by the sanitizer, so "proc leads" has exactly one home.
+  const [storedForm, setStoredForm] = useRemembered<BrowseFormMemory>('eq.planner.filters', (raw) =>
+    sanitizeBrowseForm(raw, DEFAULT_FILTERS)
+  )
   // The item the browser is narrowed to (JOS-210's filter-bar picker). It was the second of two
   // doors into one narrowing; with the Inventory tab's preset gone it is the only one, so the
   // merge that used to arbitrate between them (`useItemFocus`) is gone with it and this state IS
   // the focus.
-  const [picked, setPicked] = useState<ItemFocus | null>(null)
+  const [picked, setPicked] = useRemembered<ItemFocus | null>('eq.planner.item', sanitizeItemFocus)
   const focus = picked
-  const filters = own
+  // `DonorFilters` carries `text` and the stored form does not (different tiers), so the two are
+  // recombined here — the same shape every control below has always been handed.
+  const filters = useMemo<DonorFilters>(() => ({ ...DEFAULT_FILTERS, ...storedForm }), [storedForm])
+  const setOwn = useCallback(
+    (next: DonorFilters) => {
+      setStoredForm({ socket: next.socket, slot: next.slot, trioOnly: next.trioOnly })
+    },
+    [setStoredForm]
+  )
   // The three filter-bar writes — `filterWrites` above.
   const { change, setSocket, pickItem } = filterWrites({ filters, setOwn, setPicked })
   const groupBy = useGroupBy(filters.socket)
-  const [text, setText] = useState('')
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const [text, setText] = useRememberedSearch('eq.planner.search')
+  const [openIds, setOpenIds] = useRemembered<string[]>('eq.planner.open', sanitizeOpenGroups)
+  // The row flattener wants a Set and the store wants a list; the memo is the seam, and it keys on
+  // the stored array so `browserRows` re-runs when a group opens and never merely because we drew.
+  const open = useMemo<ReadonlySet<string>>(() => new Set(openIds), [openIds])
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Warm the source index AFTER mount, not on the render path: the first donor row to ask for a
@@ -305,12 +343,11 @@ export default function EffectBrowser({
   })
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT, scrollRef })
 
+  // Toggling reads the CURRENT list rather than taking a functional update, because the stored
+  // value is the source of truth and `useRemembered`'s setter writes what it is given — there is no
+  // "previous state" the store has not already seen.
   const toggle = (id: string): void => {
-    setOpen((prev) => {
-      const next = new Set(prev)
-      if (!next.delete(id)) next.add(id)
-      return next
-    })
+    setOpenIds(openIds.includes(id) ? openIds.filter((k) => k !== id) : [...openIds, id])
   }
 
   return (

@@ -64,8 +64,21 @@
 //     the same order, at the same plus-state.
 //
 // The plus-state is the one control on both sides of that line: hiding it does not merely remove a
-// slider, it puts the corpus back at base, because a simulation nobody can see or cancel is the
-// quiet lie `useUpgradeState` refuses to persist for exactly the same reason.
+// slider, it puts the corpus back at base, because a simulation nobody can see or cancel is a quiet
+// lie. THAT CLAUSE USED TO END "…the quiet lie `useUpgradeState` refuses to persist for exactly the
+// same reason", and the second half of it is retired: JOS-329's owner ruling persists the slider.
+// The clamp above is untouched and is now the whole of that defence — a plus-state you cannot see
+// is put back to base, and a plus-state you CAN see says what it is (`gearData.useUpgradeState`
+// carries the overruled law and the argument that answers it).
+//
+// AND SINCE JOS-329 NOTHING ON THIS TAB IS LOST TO A TAB SWITCH (owner report 2026-08-13: *we're
+// losing everything right now*). A view unmounts on every switch, and until this ticket only the
+// two JOS-297 chips were written down — the filters, the search box, the class pin, the sort and
+// the slider were all `useState`, so a glance at the Loot tab reset the whole form. All five go
+// through `useAreaMemory` now, on the tier `areaMemory.AREA_FORM_TIER` assigns them: the structural
+// picks survive a restart, the search box lasts the session. THE PIPELINE ABOVE DID NOT CHANGE FOR
+// IT — the three memos, both deferrals and both JOS-297 meeting points are byte-for-byte what they
+// were, because where a field is STORED is not a question the filter model has ever asked.
 //
 // AND SINCE JOS-302 THE FIRST TOOLBAR ROW NARROWS HARDER, in three ways the pipeline above did not
 // change one line for. The CLASS picks remove rows instead of chipping them (the owner's ruling —
@@ -76,7 +89,7 @@
 // the thresholds exactly as everything else does — the only thing this file had to learn is that a
 // third filter can now be the reason the table is empty (`emptyText`, and the pass that counts it).
 
-import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
+import { type JSX, useCallback, useDeferredValue, useMemo, useRef } from 'react'
 import { Box, Stack, Typography } from '@mui/material'
 import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
 import type { GearRow } from '@shared/planner/gear'
@@ -86,6 +99,8 @@ import GearFilterBar from './GearFilterBar'
 import GearPicker from './GearPickers'
 import GearTable, { ROW_HEIGHT } from './GearTable'
 import { useGearPrefs, type GearPrefs } from './useGearPrefs'
+import { sanitizeGearForm, sanitizeGearSort, type GearFormMemory } from './areaMemory'
+import { useRemembered, useRememberedSearch } from './useAreaMemory'
 import {
   GEAR_CONTROLS,
   GEAR_CONTROL_LABEL,
@@ -106,7 +121,6 @@ import {
 import { uncountedNote, type GearOwnershipMap } from './gearOwnership'
 import {
   DEFAULT_GEAR_FILTERS,
-  DEFAULT_GEAR_SORT,
   filterGearRows,
   scaleAll,
   sortGearRows,
@@ -328,10 +342,37 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const ownership = useGearOwnership()
   // JOS-297. A view unmounts on every tab switch, so both choices are localStorage-backed.
   const prefs = useGearPrefs()
-  const [own, setOwn] = useState<GearFilters>(DEFAULT_GEAR_FILTERS)
-  const [text, setText] = useState('')
-  const [sort, setSort] = useState<GearSort>(DEFAULT_GEAR_SORT)
+  // JOS-329, and the same law one level up: EVERY field of this form outlives the tab now. The five
+  // structural filters and the sort are on the RESTART tier, the search box is on the SESSION tier
+  // — `areaMemory.ts` states the rule and owns both sanitizers.
+  const [form, setForm] = useRemembered<GearFormMemory>('eq.gear.filters', sanitizeGearForm)
+  const [text, setText] = useRememberedSearch('eq.gear.search')
+  const [sort, setSort] = useRemembered<GearSort>('eq.gear.sort', sanitizeGearSort)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * THE BAR'S OWN `GearFilters`, REBUILT FROM THE STORED FORM.
+   *
+   * `GearFilters` has seven fields and only five of them belong to this key: `text` and `classes`
+   * are remembered separately (different tier, and a provenance respectively) and are merged in
+   * below, exactly as they always were. Keeping the bar's prop a whole `GearFilters` is what lets
+   * `GearFilterBar` stay unchanged — it writes back a whole object and `setOwn` projects the five
+   * fields worth storing out of it, which is also what stops the deferred text and the detected
+   * trio from being written into a key that would only overwrite them on the next render.
+   */
+  const own = useMemo<GearFilters>(() => ({ ...DEFAULT_GEAR_FILTERS, ...form }), [form])
+  const setOwn = useCallback(
+    (next: GearFilters) => {
+      setForm({
+        slots: next.slots,
+        weaponTypes: next.weaponTypes,
+        effect: next.effect,
+        eraOnly: next.eraOnly,
+        ownedOnly: next.ownedOnly
+      })
+    },
+    [setForm]
+  )
 
   // Both deferrals, and nothing else deferred: the two controls whose every movement re-derives
   // six thousand rows (see the header).
