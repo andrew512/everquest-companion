@@ -77,9 +77,9 @@ export function toggleColumn(base: readonly GearSortKey[], key: GearSortKey): Ge
  */
 export const GEAR_CONTROLS = [
   'slot',
+  'weapon',
   'effect',
   'classes',
-  'classOnly',
   'era',
   'owned',
   'upgrade',
@@ -91,10 +91,10 @@ export type GearControl = (typeof GEAR_CONTROLS)[number]
 
 /** The picker's words for each control — the control's own label, so the list reads as the bar does. */
 export const GEAR_CONTROL_LABEL: Record<GearControl, string> = {
-  slot: 'Slot',
+  slot: 'Slots',
+  weapon: 'Weapon type',
   effect: 'Effect',
   classes: 'Classes',
-  classOnly: 'Usable by these',
   era: 'Current era',
   owned: 'Owned or looted',
   upgrade: 'Upgrade state',
@@ -134,18 +134,19 @@ export function toggleControl(base: readonly GearControl[], key: GearControl): G
  * the value that does not filter. See the header on why this is inert-not-default, and on why the
  * caller keeps its own unforced copy.
  *
- * `classes` goes empty rather than keeping the detected trio, because the class list and the
- * "Usable by these" toggle are one question with two controls — an empty list also silences the
- * mismatch chip, which is the same statement made on the rows.
+ * `classes` GOING EMPTY IS THE LOAD-BEARING ONE NOW (JOS-302). The class list narrows the corpus on
+ * this surface, and the view fills it from DETECTION rather than from a click — so a hidden Classes
+ * control would otherwise hold rows back on the strength of an inference the user never made and
+ * cannot see. Empty is the only honest value for a picker that is not on screen.
  */
 export function inertFilters(filters: GearFilters, visible: ReadonlySet<GearControl>): GearFilters {
   const d = DEFAULT_GEAR_FILTERS
   return {
     ...filters,
-    slot: visible.has('slot') ? filters.slot : d.slot,
+    slots: visible.has('slot') ? filters.slots : d.slots,
+    weaponTypes: visible.has('weapon') ? filters.weaponTypes : d.weaponTypes,
     effect: visible.has('effect') ? filters.effect : d.effect,
     classes: visible.has('classes') ? filters.classes : [],
-    classOnly: visible.has('classOnly') ? filters.classOnly : false,
     // NOT `d.eraOnly` — that is `true`. Inert is the value that hides nothing.
     eraOnly: visible.has('era') ? filters.eraOnly : false,
     ownedOnly: visible.has('owned') ? filters.ownedOnly : false,

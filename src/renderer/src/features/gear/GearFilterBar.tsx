@@ -6,19 +6,30 @@
 // — it is a stated shape, and each of them holds controls that never shrink beside exactly one
 // thing that may (the search box on the first, the threshold chips on the second).
 //
-// THE SPLIT IS BY QUESTION, not by fit. The first row asks WHICH ITEMS — name, slot, classes,
-// effect kind, era. The second asks WHAT THEY READ — the plus-state being simulated, the weapon
-// ratio floor, and the stat thresholds. That is also the order the two get used in: you narrow to
-// a slot and then you ask what the good ones have.
+// THE SPLIT IS BY QUESTION, not by fit. The first row asks WHICH ITEMS — name, slots, weapon type,
+// classes, effect kind, era. The second asks WHAT THEY READ — the plus-state being simulated, the
+// weapon ratio floor, and the stat thresholds. That is also the order the two get used in: you
+// narrow to a slot and then you ask what the good ones have.
 //
 // NO POPPER ON ANY OF IT (JOS-143). The hints are native `title`s: these controls sit directly
 // above a dense windowed table, and an interactive MUI Tooltip opened from a chip up here lands on
 // the header row and eats the sort click aimed at it.
 //
-// THE CLASS FILTER IS A FILTER AND NEVER A RULE (V2, plannerClasses.ts). It shows what the app
-// currently infers you are running; touching it PINS your choice, and detection may then only
-// OFFER — the "detected: …" chip, one click and reversible. A row outside the filter is hidden
-// only while "Usable by these" is on, and a row shown anyway is chipped rather than removed.
+// THREE OF THE FIRST ROW'S CONTROLS ARE THE SAME CONTROL (JOS-302). Slots, weapon types and classes
+// are all "pick several from a closed list, and the picks UNION" — so all three are
+// `components/ChipMultiSelect`, with the same keyboard behaviour and the same chips-in-the-field
+// shape. The slot control used to be a single-pick select and the owner asked for the classes
+// control's behaviour instead; giving it literally that control is the cheapest way to keep the
+// promise.
+//
+// THE CLASS FILTER NARROWS THE CORPUS HERE (owner ruling 2026-08-13, JOS-302) — it is no longer the
+// "filter and never a rule" the V2 law describes, and there is no "Usable by these" toggle and no
+// off-filter chip on a search row any more. It still shows what the app currently infers you are
+// running; touching it PINS your choice, and detection may then only OFFER — the "detected: …"
+// chip, one click and reversible. The V2 law is untouched where it was written for: a donor already
+// PLACED in a build still gets `MismatchChip` (PlanCell, FarmList), because there the row is a
+// decision you made and removing it would be deleting it. `gearFilter.ts GearFilters.classes` holds
+// the full argument.
 //
 // AND SINCE JOS-297 THE BAR IS CONFIGURABLE (owner feedback: *we should be able to customize which
 // filters we see*). `visible` is the set of controls to draw — the whole vocabulary while the user
@@ -32,7 +43,8 @@ import { type JSX, useState } from 'react'
 import { Chip, MenuItem, Stack, TextField } from '@mui/material'
 import { CLASS_ABBRS } from '@shared/classCombo'
 import type { ItemUpgradeState } from '@shared/itemUpgrade'
-import { EQUIP_SLOTS, type EquipSlot } from '@shared/planner/types'
+import { EQUIP_SLOTS } from '@shared/planner/types'
+import { WEAPON_PICKS, WEAPON_PICK_LABEL } from '@shared/planner/weaponType'
 import ChipMultiSelect from '../../components/ChipMultiSelect'
 import { CURRENT_ERA_LABEL } from '../planner/plannerData'
 import { SOCKET_LABEL } from '../planner/plannerGroups'
@@ -165,27 +177,41 @@ export interface GearFilterBarProps {
   visible: ReadonlySet<GearControl>
 }
 
-/** The slot and effect selects — the two closed-list narrowings of WHO a row is. */
+/** The three closed-list narrowings of WHO a row is: its slots, its weapon kind, its effect kind. */
 function SelectRow({ filters, setFilters, visible }: Pick<GearFilterBarProps, 'filters' | 'setFilters' | 'visible'>): JSX.Element {
   return (
     <>
+      {/* MULTI-SELECT SINCE JOS-302, and it KEPT its testid: `gear-slot` is the handle the e2e slot
+          step and JOS-297's control-visibility step both read, and a rename would have been churn
+          in two specs to say the same thing. What changed is the semantics the step asserts —
+          several slots at once, and the table shows rows matching ANY of them. */}
       {visible.has('slot') && (
-        <TextField
-          select
-          size="small"
-          label="Slot"
-          value={filters.slot ?? 'ALL'}
-          data-testid="gear-slot"
-          onChange={(e) => setFilters({ ...filters, slot: e.target.value === 'ALL' ? null : (e.target.value as EquipSlot) })}
-          sx={{ minWidth: 120, flexShrink: 0 }}
-        >
-          <MenuItem value="ALL">All slots</MenuItem>
-          {EQUIP_SLOTS.map((s) => (
-            <MenuItem key={s} value={s} data-testid={`gear-slot-${s}`}>
-              {s}
-            </MenuItem>
-          ))}
-        </TextField>
+        <ChipMultiSelect
+          options={EQUIP_SLOTS}
+          value={filters.slots}
+          onChange={(slots) => setFilters({ ...filters, slots })}
+          label="Slots"
+          placeholder="every slot"
+          minWidth={190}
+          testId="gear-slot"
+        />
+      )}
+
+      {/* JOS-302's third ask. The options are the CATEGORIES first and then the nine types
+          (`WEAPON_PICKS`), because "the two-handers" is the common question and a category is only
+          ever a union of its members — shared/planner/weaponType.ts states the whole vocabulary and
+          the corpus census it was measured from. */}
+      {visible.has('weapon') && (
+        <ChipMultiSelect
+          options={WEAPON_PICKS}
+          value={filters.weaponTypes}
+          onChange={(weaponTypes) => setFilters({ ...filters, weaponTypes })}
+          label="Weapon type"
+          placeholder="every kind"
+          minWidth={190}
+          optionLabel={(pick) => WEAPON_PICK_LABEL[pick]}
+          testId="gear-weapon"
+        />
       )}
 
       {visible.has('effect') && (
@@ -225,7 +251,9 @@ function IdentityRow({ filters, setFilters, text, setText, classes, visible }: O
       <SelectRow filters={filters} setFilters={setFilters} visible={visible} />
 
       {/* The app's one "pick several from a closed list" control (components/ChipMultiSelect) —
-          the same one the Sky tracker and the exaltation board use for exactly this question. */}
+          the same one the Sky tracker and the exaltation board use for exactly this question.
+          SINCE JOS-302 IT NARROWS (see the header): no companion toggle, no chip on the rows it
+          removes. The placeholder is what says an empty pick is no filter at all. */}
       {visible.has('classes') && (
         <ChipMultiSelect
           options={CLASS_ABBRS}
@@ -235,16 +263,6 @@ function IdentityRow({ filters, setFilters, text, setText, classes, visible }: O
           placeholder="every class"
           minWidth={190}
           testId="gear-classes"
-        />
-      )}
-
-      {visible.has('classOnly') && (
-        <ToggleChip
-          label="Usable by these"
-          testId="gear-class-toggle"
-          on={filters.classOnly}
-          onToggle={() => setFilters({ ...filters, classOnly: !filters.classOnly })}
-          hint="Hide items no class in the filter can use. An item whose page states no class list is kept."
         />
       )}
 

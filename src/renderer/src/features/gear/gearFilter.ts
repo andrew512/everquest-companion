@@ -36,6 +36,7 @@ import {
   type GearStatKey
 } from '../../../../shared/planner/gear'
 import { gearRatio, scaleGearRow } from '../../../../shared/planner/gearScale'
+import { weaponPicksMatch, type WeaponPick } from '../../../../shared/planner/weaponType'
 import type { EquipSlot, SocketType } from '../../../../shared/planner/types'
 
 // ---- the filter model ---------------------------------------------------------------------
@@ -57,21 +58,45 @@ export type EffectFilter = 'any' | 'has' | SocketType
  * Everything the table filters on, combinable — every field is ANDed, and each is INERT at its
  * empty value (`''`, `null`, `[]`, `'any'`, `false`). That is what makes "any stat threshold, and
  * a slot, and a class combo, and an effect kind, and an era" one object rather than five modes.
+ *
+ * THE LIST-VALUED FIELDS ARE UNIONS INSIDE AND AN AND BETWEEN (JOS-302). `slots` and `weaponTypes`
+ * each keep a row that matches ANY of their entries, and the two narrowings then AND with each
+ * other and with everything else — "a PRIMARY or SECONDARY, that is a one-hander, that a Paladin
+ * can wear" is one question, not three modes.
  */
 export interface GearFilters {
   /** the DEFERRED search text (the standing search law — the view owns the `useDeferredValue`) */
   text: string
-  /** `null` = every slot */
-  slot: EquipSlot | null
   /**
-   * The class combo the table is reading for. It is a FILTER AND NEVER A RULE (the V2 law that
-   * `plannerClasses.ts` was written for): an empty list asks for no class filter at all, and a row
-   * outside it is hidden only while `classOnly` is on — never marked invalid, never removed from
-   * the corpus.
+   * The equip slots asked for. `[]` = every slot; several = the UNION (JOS-302, the owner's second
+   * ask: *multiple slots can be chosen at once, e.g. PRIMARY + SECONDARY*). A row occupies several
+   * slots of its own, so the test is "do the two lists intersect", never "is this THE slot".
+   */
+  slots: EquipSlot[]
+  /**
+   * THE CLASS COMBO THE TABLE IS READING FOR — AND ON THIS SURFACE IT NARROWS THE CORPUS
+   * (owner ruling 2026-08-13, JOS-302, verbatim: *gear that does not match the class filter is
+   * tagged with an off-filter chip instead of being filtered out - obviously wrong, it should just
+   * be removed*).
+   *
+   * That OVERRULES the V2 "a filter and never a rule" law FOR THE GEAR SEARCH TABLE, and only for
+   * it. The rest of V2 stands and is untouched: the planner build pane still CHIPS a donor whose
+   * class list has drifted out of the plan's trio (`PlannerChips.MismatchChip`, drawn by PlanCell
+   * and FarmList), because there the row is work you already planned and removing it would delete
+   * a decision. Here the row is a candidate you have not chosen yet, and a candidate your character
+   * cannot equip is not a candidate.
+   *
+   * TWO EMPTIES ARE STILL UNKNOWNS, and neither is a mismatch (`classMismatch`): an empty filter
+   * asks for no class filter at all, and a page that stated NO class list is KEPT — silence is not
+   * a refusal (law 1).
    */
   classes: ClassAbbr[]
-  /** hide rows no class in `classes` can use. A row whose page stated NO class list is KEPT. */
-  classOnly: boolean
+  /**
+   * Weapon skills and the categories that union several of them (JOS-302, the owner's third ask).
+   * `[]` = every kind, non-weapons included; anything picked keeps only rows whose `Skill:` line
+   * folds into the pick list (`shared/planner/weaponType.ts` owns that fold and its census).
+   */
+  weaponTypes: WeaponPick[]
   effect: EffectFilter
   /** minimum weapon damage ratio; non-weapons never pass it */
   minRatio: number | null
@@ -92,12 +117,14 @@ export interface GearFilters {
 
 export const DEFAULT_GEAR_FILTERS: GearFilters = {
   text: '',
-  slot: null,
+  slots: [],
+  // EMPTY, and it stays empty until something says otherwise — but note that the VIEW merges the
+  // detected class combo into this field (`useGearClasses`), so an untouched Gear tab opens reading
+  // for the character the app believes you are running. Since JOS-302 that is a NARROWING rather
+  // than a decoration, which is why `GearView.emptyText` names the class picks when they are the
+  // reason the table is empty, and why the picker's own chips sit in the toolbar saying so.
   classes: [],
-  // OFF by default, unlike the exaltation browser's `trioOnly`. Search IS the default surface here
-  // (owner ruling): the table opens on the whole corpus and every narrowing is one the user chose,
-  // where the browser opens inside a SET whose trio is the question it was created to ask.
-  classOnly: false,
+  weaponTypes: [],
   effect: 'any',
   minRatio: null,
   thresholds: [],
@@ -173,10 +200,27 @@ export function thresholdLabel(t: StatThreshold): string {
  * R2's class half, three-valued — the SAME rule `plannerData.classFit` reads, restated here in the
  * one direction this table needs. Both empties are unknowns and neither is a mismatch: an empty
  * filter asks for no filter, and a page that stated no class list stayed silent (law 1).
+ *
+ * SINCE JOS-302 THIS IS WHAT REMOVES A ROW rather than what chips one — see `GearFilters.classes`.
+ * The three-valued shape is unchanged and is the reason the change is safe to make: the only rows
+ * it can remove are rows that STATED a class list and stated one that excludes every class asked
+ * for. A page the wiki left silent about is never removed by a guess.
  */
 export function classMismatch(rowClasses: readonly ClassAbbr[], filter: readonly ClassAbbr[]): boolean {
   if (rowClasses.length === 0 || filter.length === 0) return false
   return !rowClasses.some((c) => filter.includes(c))
+}
+
+/**
+ * Does this row sit in ANY of the slots asked for? Empty asks for no slot filter (JOS-302).
+ *
+ * Two lists meet here — the slots the item can occupy and the slots the player asked about — so the
+ * question is an intersection, and a two-handed sword that the corpus places in PRIMARY answers
+ * "PRIMARY or SECONDARY" the same way a dagger does.
+ */
+export function slotMatches(row: GearRow, slots: readonly EquipSlot[]): boolean {
+  if (slots.length === 0) return true
+  return slots.some((s) => row.slots.includes(s))
 }
 
 /** Does this row state an effect of the kind asked for? */
@@ -197,12 +241,19 @@ export function meetsThresholds(row: GearRow, thresholds: readonly StatThreshold
   return true
 }
 
-/** WHO this row is: the name, the slot and the class combo. */
+/**
+ * WHO this row is: the name, the slots, the kind of weapon, and the class combo.
+ *
+ * All four AND, and all four are inert while empty — see `GearFilters`. Two of them are UNIONS
+ * inside (slots, weapon types), which is the JOS-302 shape: several answers to one question,
+ * ANDed against the answers to the others.
+ */
 function matchesIdentity(row: GearRow, filters: GearFilters): boolean {
   const needle = filters.text.trim().toLowerCase()
   if (needle !== '' && !row.searchKey.includes(needle)) return false
-  if (filters.slot !== null && !row.slots.includes(filters.slot)) return false
-  return !(filters.classOnly && classMismatch(row.classes, filters.classes))
+  if (!slotMatches(row, filters.slots)) return false
+  if (!weaponPicksMatch(row.skill, filters.weaponTypes)) return false
+  return !classMismatch(row.classes, filters.classes)
 }
 
 /** WHAT this row reads AT THE CURRENT PLUS-STATE: its effects, its thresholds, its ratio. */

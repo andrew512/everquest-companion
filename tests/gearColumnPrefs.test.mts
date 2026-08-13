@@ -257,6 +257,11 @@ test('a stored toolbar choice degrades the same way a column choice does', () =>
   assert.equal(sanitizeControls('era'), null)
   assert.deepEqual(sanitizeControls(['era', 'nope', 'era', 7, 'slot']), ['era', 'slot'])
   assert.deepEqual(sanitizeControls([]), [])
+  // A KEY THIS VERSION DROPPED degrades rather than erroring, and JOS-302 dropped one for real:
+  // `classOnly` was the "Usable by these" toggle, and the class picks narrow on their own now. A
+  // toolbar choice stored by an older build simply loses that entry and keeps the rest.
+  assert.deepEqual(sanitizeControls(['slot', 'classOnly', 'classes']), ['slot', 'classes'])
+  assert.deepEqual(sanitizeControls(['weapon']), ['weapon'], 'and the control it gained is offered')
   assert.deepEqual(toggleControl(['era'], 'slot'), ['slot', 'era'], 'the bar draws slot before era, so the list does too')
   assert.deepEqual(toggleControl(['slot', 'era'], 'era'), ['slot'])
   for (const control of GEAR_CONTROLS) {
@@ -266,10 +271,10 @@ test('a stored toolbar choice degrades the same way a column choice does', () =>
 
 test('a control that is not on screen is not filtering either - every field goes INERT', () => {
   const busy = filters({
-    slot: 'PRIMARY',
+    slots: ['PRIMARY'],
+    weaponTypes: ['ONE_HAND'],
     effect: 'proc',
     classes: ['PAL'],
-    classOnly: true,
     eraOnly: true,
     ownedOnly: true,
     minRatio: 1.5,
@@ -277,10 +282,13 @@ test('a control that is not on screen is not filtering either - every field goes
     text: 'thelvorn'
   })
   const hidden = inertFilters(busy, controlsVisible([]))
-  assert.equal(hidden.slot, null)
+  assert.deepEqual(hidden.slots, [])
+  assert.deepEqual(hidden.weaponTypes, [])
   assert.equal(hidden.effect, 'any')
+  // THE ONE THAT BECAME LOAD-BEARING IN JOS-302: the class picks NARROW the corpus now, and the
+  // view fills them from DETECTION rather than from a click - so a hidden Classes control that
+  // kept filtering would hold rows back on an inference nobody made and nobody can see.
   assert.deepEqual(hidden.classes, [])
-  assert.equal(hidden.classOnly, false)
   assert.equal(hidden.ownedOnly, false)
   assert.equal(hidden.minRatio, null)
   assert.deepEqual(hidden.thresholds, [])
@@ -293,8 +301,15 @@ test('a control that is not on screen is not filtering either - every field goes
 })
 
 test('a control that IS on screen keeps its value untouched, one at a time', () => {
-  const busy = filters({ slot: 'PRIMARY', eraOnly: true, minRatio: 1.5, thresholds: [{ key: 'HP', min: 50 }] })
-  assert.equal(inertFilters(busy, controlsVisible(['slot'])).slot, 'PRIMARY')
+  const busy = filters({
+    slots: ['PRIMARY'],
+    weaponTypes: ['TWO_HAND'],
+    eraOnly: true,
+    minRatio: 1.5,
+    thresholds: [{ key: 'HP', min: 50 }]
+  })
+  assert.deepEqual(inertFilters(busy, controlsVisible(['slot'])).slots, ['PRIMARY'])
+  assert.deepEqual(inertFilters(busy, controlsVisible(['weapon'])).weaponTypes, ['TWO_HAND'])
   assert.equal(inertFilters(busy, controlsVisible(['era'])).eraOnly, true)
   assert.equal(inertFilters(busy, controlsVisible(['ratio'])).minRatio, 1.5)
   assert.deepEqual(inertFilters(busy, controlsVisible(['thresholds'])).thresholds, [{ key: 'HP', min: 50 }])

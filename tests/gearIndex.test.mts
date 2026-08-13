@@ -42,6 +42,13 @@ import {
 } from '../src/shared/planner/gear'
 import { gearRatio, scaleGearRow, scaleGearStats } from '../src/shared/planner/gearScale'
 import {
+  WEAPON_TYPES,
+  weaponPicksMatch,
+  weaponTypeOf,
+  type WeaponPick,
+  type WeaponType
+} from '../src/shared/planner/weaponType'
+import {
   normalizeStatKey,
   scaleStatBlock,
   synthesizesVoidSave,
@@ -286,6 +293,67 @@ test('the unindexed stat keys are exactly the five the corpus states', () => {
     'REQUIRED_LEVEL',
     'REQ_LEVEL'
   ])
+})
+
+// ---- the weapon skill vocabulary (JOS-302) ----------------------------------------------------
+//
+// THE FILTER RESTS ON A FIELD NOBODY HAD HAD TO COMPARE BEFORE. `GearRow.skill` has carried the
+// wiki's `Skill:` line verbatim since phase 2, but nothing read it until the owner asked to search
+// by weapon type — and a verbatim field is only a filter once something folds its spellings
+// together (`shared/planner/weaponType.ts`). These two tests are the honesty half of that fold:
+// what the corpus states, measured here where the bytes are, rather than remembered in the module.
+
+test('every weapon skill the corpus states folds to a type - and the exceptions are named', () => {
+  const spellings = new Map<string, number>()
+  for (const r of rows) {
+    if (r.skill === undefined) continue
+    spellings.set(r.skill, (spellings.get(r.skill) ?? 0) + 1)
+  }
+  const unmapped = [...spellings].filter(([s]) => weaponTypeOf(s) === null).map(([s, n]) => `${s} (${String(n)})`)
+  console.log('weapon skills', Object.fromEntries([...spellings].sort((a, b) => b[1] - a[1])))
+
+  // AN EQUALITY, exactly like `unindexedStatKeys` above and for exactly the same reason: a rescrape
+  // that spells a skill a new way is a whole class of weapon quietly leaving the type filter, and
+  // it should stop the suite instead. `SHIELD` is the one page (Crushbone Fetish, a SECONDARY with
+  // no DMG and no delay) whose `Skill:` names no weapon skill at all — it is not a weapon, and the
+  // fold answers `null` rather than inventing a tenth type for it.
+  assert.deepEqual(unmapped, ['SHIELD (1)'])
+})
+
+test('the weapon type census is deep enough for the filter to be worth having', () => {
+  const byType = new Map<WeaponType, number>()
+  for (const r of rows) {
+    const type = weaponTypeOf(r.skill)
+    if (type !== null) byType.set(type, (byType.get(type) ?? 0) + 1)
+  }
+  console.log('weapon types', Object.fromEntries([...byType].sort((a, b) => b[1] - a[1])))
+
+  // FLOORS, under the 2026-08-13 build (1HS 415 · 1HP 324 · 1HB 321 · 2HS 223 · 2HB 195 ·
+  // ARCHERY 63 · THROWING 37 · 2HP 24 · H2H 11), so a growing corpus stays green. Every one of the
+  // nine is asserted PRESENT: a type with no rows behind it is an option in the picker that can
+  // only ever empty the table.
+  for (const type of WEAPON_TYPES) {
+    assert.ok((byType.get(type) ?? 0) > 0, `no row in the corpus folds to ${type}`)
+  }
+  assert.ok((byType.get('1HS') ?? 0) >= 400, `only ${String(byType.get('1HS'))} 1H slashers`)
+  assert.ok((byType.get('1HP') ?? 0) >= 300, `only ${String(byType.get('1HP'))} piercers`)
+  assert.ok((byType.get('2HS') ?? 0) >= 200, `only ${String(byType.get('2HS'))} 2H slashers`)
+
+  // THE CATEGORIES ARE UNIONS, over the REAL rows and not just over the vocabulary: picking
+  // "one-handed" must select exactly the rows its four member types select, and the three
+  // categories together must select every weapon row and nothing else.
+  const matched = (picks: WeaponPick[]): number => rows.filter((r) => weaponPicksMatch(r.skill, picks)).length
+  assert.equal(matched(['ONE_HAND']), matched(['1HS', '1HB', '1HP', 'H2H']))
+  assert.equal(matched(['TWO_HAND']), matched(['2HS', '2HB', '2HP']))
+  assert.equal(matched(['RANGED']), matched(['ARCHERY', 'THROWING']))
+  assert.equal(
+    matched(['ONE_HAND', 'TWO_HAND', 'RANGED']),
+    rows.filter((r) => weaponTypeOf(r.skill) !== null).length,
+    'the three categories cover every weapon the fold recognizes'
+  )
+  // …and a pick list is a NARROWING: nothing that is not a weapon survives one.
+  assert.ok(rows.some((r) => r.skill === undefined), 'the corpus is mostly armour')
+  assert.ok(matched([]) > matched(['ONE_HAND', 'TWO_HAND', 'RANGED']), 'no pick is not a filter')
 })
 
 test('HASTE is the only key that ever states a percent', () => {

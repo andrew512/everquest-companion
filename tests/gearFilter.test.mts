@@ -13,6 +13,16 @@
 // threshold, a ratio floor and a sort all read the vector AFTER `scaleAll`, so "weapons at ratio
 // 1.0" under a +5 slider means the weapons that reach 1.0 at +5 — and the test that proves it is
 // `a ratio floor no weapon meets at base is met at the checkpoint`, below.
+//
+// AND SINCE JOS-302 IT CARRIES THE THREE NARROWINGS THE OWNER ASKED FOR, each with its own claim:
+//   * THE CLASS PICKS REMOVE ROWS. They used to chip them and enforce nothing; the owner overruled
+//     that for this surface. The test below is the OLD test rewritten rather than deleted, and it
+//     still pins the half that did NOT change — a page stating no class list survives, because
+//     silence is not a refusal.
+//   * SEVERAL SLOTS ARE A UNION, and the union ANDs with everything else.
+//   * A WEAPON TYPE IS A FOLD OF THE CORPUS'S OWN `Skill:` SPELLINGS, and a category is nothing but
+//     a union of types. The spelling census over the REAL corpus lives in tests/gearIndex.test.mts,
+//     where the bytes are; what is pinned here is the vocabulary and the predicate.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -30,12 +40,23 @@ import {
   meetsThresholds,
   parseThreshold,
   scaleAll,
+  slotMatches,
   sortGearRows,
   sortValue,
   thresholdLabel,
   withThreshold,
   type GearFilters
 } from '../src/renderer/src/features/gear/gearFilter'
+import {
+  WEAPON_CATEGORIES,
+  WEAPON_PICKS,
+  WEAPON_PICK_LABEL,
+  WEAPON_TYPES,
+  normalizeSkillToken,
+  weaponPicksMatch,
+  weaponTypeOf,
+  weaponTypesFor
+} from '../src/shared/planner/weaponType'
 import {
   CORE_COLUMNS,
   MAX_DERIVED_COLUMNS,
@@ -96,11 +117,43 @@ const CLUB = row({
   name: 'Wooden Club',
   slots: ['PRIMARY', 'SECONDARY'],
   classes: ['WAR', 'PAL'],
+  skill: '1H Blunt',
   stats: { DMG: 5, DELAY: 30, HASTE: 10, HP_REGEN: 2, WEIGHT: 2 },
   effects: []
 })
 
 const ALL = [THELVORN, CROWN, PLAIN, CLUB]
+
+/**
+ * THE WEAPON-TYPE FIXTURES (JOS-302), and the four spellings are chosen from the corpus census in
+ * `shared/planner/weaponType.ts` rather than invented: a clean `2H Slashing`, an `Archery`, the
+ * bare `Piercing` that 322 pages state for the one-handed skill, and the stray `1H Slashing /` an
+ * editor left a separator on. `PLAIN` (no `Skill:` at all) rides along as the not-a-weapon case.
+ */
+const GREATSWORD = row({
+  key: 'greatsword',
+  name: 'Greatsword',
+  slots: ['PRIMARY'],
+  skill: '2H Slashing',
+  stats: { DMG: 30, DELAY: 45 }
+})
+const BOW = row({ key: 'short bow', name: 'Short Bow', slots: ['RANGE'], skill: 'Archery', stats: { DMG: 6, DELAY: 40 } })
+const DAGGER = row({
+  key: 'rusty dagger',
+  name: 'Rusty Dagger',
+  slots: ['PRIMARY', 'SECONDARY'],
+  skill: 'Piercing',
+  stats: { DMG: 3, DELAY: 22 }
+})
+const SLOPPY = row({
+  key: 'faydark champions long sword',
+  name: 'Faydark Champions Long Sword',
+  slots: ['PRIMARY', 'SECONDARY'],
+  skill: '1H Slashing /',
+  stats: { DMG: 9, DELAY: 27 }
+})
+
+const ARMS = [THELVORN, CLUB, GREATSWORD, BOW, DAGGER, SLOPPY, PLAIN]
 
 /** "Tier 2   3 / 4" — the owner screenshot every phase-0 number in this repo is verified against. */
 const CHECKPOINT: ItemUpgradeState = { full: 2, fraction: 3 }
@@ -190,29 +243,174 @@ test('the effect filter speaks the donor vocabulary, plus "has one at all"', () 
 test('every filter is ANDed, and each is inert at its empty value', () => {
   assert.deepEqual(names(filterGearRows(ALL, filters())), names(ALL), 'the empty filter filters nothing')
 
-  assert.deepEqual(names(filterGearRows(ALL, filters({ slot: 'PRIMARY' }))), ['Thelvorn, Blade of Light', 'Wooden Club'])
+  assert.deepEqual(names(filterGearRows(ALL, filters({ slots: ['PRIMARY'] }))), ['Thelvorn, Blade of Light', 'Wooden Club'])
   assert.deepEqual(names(filterGearRows(ALL, filters({ text: 'blade' }))), ['Thelvorn, Blade of Light'])
   assert.deepEqual(names(filterGearRows(ALL, filters({ effect: 'proc' }))), ['Thelvorn, Blade of Light'])
 
-  // Four at once: slot AND class AND threshold AND search.
+  // Five at once: slot AND class AND weapon type AND threshold AND search.
   const narrow = filters({
-    slot: 'PRIMARY',
+    slots: ['PRIMARY'],
     classes: ['PAL'],
-    classOnly: true,
+    weaponTypes: ['1HS'],
     thresholds: [{ key: 'WIS', min: 10 }],
     text: 'thelvorn'
   })
   assert.deepEqual(names(filterGearRows(ALL, narrow)), ['Thelvorn, Blade of Light'])
   // …and one contradiction empties it, without any of the others being wrong.
   assert.deepEqual(filterGearRows(ALL, { ...narrow, thresholds: [{ key: 'WIS', min: 99 }] }), [])
+  assert.deepEqual(filterGearRows(ALL, { ...narrow, weaponTypes: ['2HS'] }), [], 'and so does the wrong weapon type')
 })
 
-test('the class filter HIDES only while it is on, and never enforces', () => {
-  const wrongClass = filters({ classes: ['ROG'] })
-  assert.equal(filterGearRows(ALL, wrongClass).length, 4, 'off, it hides nothing')
-  const enforced = filterGearRows(ALL, { ...wrongClass, classOnly: true })
-  // The Cloth Cap states NO class list, so it survives: silence is not a refusal (law 1).
-  assert.deepEqual(names(enforced), ['Cloth Cap'])
+// =================================================================================
+// THE CLASS PICKS — a NARROWING since JOS-302, and the owner's own words for why
+// =================================================================================
+
+test('the class picks REMOVE the rows they do not fit, and an unstated class list is never removed', () => {
+  // THE OWNER'S RULING (2026-08-13): *gear that does not match the class filter is tagged with an
+  // off-filter chip instead of being filtered out - obviously wrong, it should just be removed.*
+  // This test is the OLD "hides only while it is on, and never enforces" test rewritten, not a new
+  // one beside it: there is no toggle left to be off, and no chip left to point at a kept row.
+  const rogue = filters({ classes: ['ROG'] })
+  // The Cloth Cap states NO class list, so it survives — silence is not a refusal (law 1), and that
+  // half of the rule did NOT change. Everything that named its classes and did not name ROG is gone.
+  assert.deepEqual(names(filterGearRows(ALL, rogue)), ['Cloth Cap'])
+
+  // A pick the rows DO fit keeps them, and several picks are the union a class list already means.
+  assert.deepEqual(names(filterGearRows(ALL, filters({ classes: ['PAL'] }))), [
+    'Thelvorn, Blade of Light',
+    'Cloth Cap',
+    'Wooden Club'
+  ])
+  assert.deepEqual(names(filterGearRows(ALL, filters({ classes: ['ROG', 'CLR'] }))), [
+    'Crown of King Tranix',
+    'Cloth Cap'
+  ])
+  // …and an EMPTY pick list is still no filter at all.
+  assert.deepEqual(names(filterGearRows(ALL, filters({ classes: [] }))), names(ALL))
+})
+
+// =================================================================================
+// THE SLOT PICKS — several at once, and they UNION (JOS-302's second ask)
+// =================================================================================
+
+test('several slots are a UNION, and the union still ANDs with everything else', () => {
+  assert.equal(slotMatches(CLUB, []), true, 'no slot picked is no slot filter')
+  assert.equal(slotMatches(CLUB, ['SECONDARY']), true)
+  assert.equal(slotMatches(THELVORN, ['SECONDARY']), false)
+  assert.equal(slotMatches(THELVORN, ['SECONDARY', 'PRIMARY']), true, 'ANY of them, never all of them')
+
+  // PRIMARY + SECONDARY is the owner's own example, and it must not become an intersection: the
+  // Crown (HEAD) drops out, both weapons stay, and the Cloth Cap (HEAD) drops out with the Crown.
+  assert.deepEqual(names(filterGearRows(ALL, filters({ slots: ['PRIMARY', 'SECONDARY'] }))), [
+    'Thelvorn, Blade of Light',
+    'Wooden Club'
+  ])
+  assert.deepEqual(names(filterGearRows(ALL, filters({ slots: ['HEAD', 'PRIMARY'] }))), [
+    'Thelvorn, Blade of Light',
+    'Crown of King Tranix',
+    'Cloth Cap',
+    'Wooden Club'
+  ])
+  // …and clearing it returns the whole corpus, which is the acceptance line the ticket spells out.
+  assert.deepEqual(names(filterGearRows(ALL, filters({ slots: [] }))), names(ALL))
+  // AND it still ANDs: PRIMARY-or-SECONDARY, that a Paladin can use, that states WIS.
+  assert.deepEqual(
+    names(filterGearRows(ALL, filters({ slots: ['PRIMARY', 'SECONDARY'], classes: ['PAL'], thresholds: [{ key: 'WIS', min: 1 }] }))),
+    ['Thelvorn, Blade of Light']
+  )
+})
+
+// =================================================================================
+// THE WEAPON TYPES — a fold of the corpus's own spellings, and categories that union
+// =================================================================================
+
+test('the corpus spells one skill several ways, and the fold reads them all as one type', () => {
+  // Every spelling below is one the committed corpus actually states (the census in
+  // shared/planner/weaponType.ts); the equality over that census lives in gearIndex.test.mts.
+  assert.equal(weaponTypeOf('1H Slashing'), '1HS')
+  assert.equal(weaponTypeOf('1H Slash'), '1HS', 'one editor abbreviated the skill')
+  assert.equal(weaponTypeOf('1H Slashing /'), '1HS', 'and one left a separator on the end')
+  assert.equal(weaponTypeOf('2H Slashing'), '2HS')
+  assert.equal(weaponTypeOf('1H Blunt'), '1HB')
+  assert.equal(weaponTypeOf('2H Blunt'), '2HB')
+  // The classic one-handed skill is spelled BARE on 322 pages; `1H Piercing` is the same skill.
+  assert.equal(weaponTypeOf('Piercing'), '1HP')
+  assert.equal(weaponTypeOf('1H Piercing'), '1HP')
+  assert.equal(weaponTypeOf('2H Piercing'), '2HP', 'and the two-handed one is its own skill')
+  assert.equal(weaponTypeOf('Hand to Hand'), 'H2H')
+  assert.equal(weaponTypeOf('Archery'), 'ARCHERY')
+  // The wiki's template-version suffix is a spelling, not three skills.
+  assert.equal(weaponTypeOf('Throwing'), 'THROWING')
+  assert.equal(weaponTypeOf('Throwingv1'), 'THROWING')
+  assert.equal(weaponTypeOf('Throwingv2'), 'THROWING')
+
+  // NORMALIZED, NEVER REPAIRED. The token fold is case and punctuation; a string it does not
+  // reduce to a known key stays unknown rather than being guessed at.
+  assert.equal(normalizeSkillToken('  1h_slashing / '), '1H SLASHING')
+  assert.equal(weaponTypeOf('SHIELD'), null, 'the one page stating a non-weapon skill is not a weapon')
+  assert.equal(weaponTypeOf('Bashing'), null, 'a spelling the corpus has never printed is not invented')
+  assert.equal(weaponTypeOf(undefined), null, 'and armour states no skill at all')
+})
+
+test('a category is nothing but the UNION of its member types', () => {
+  assert.deepEqual(weaponTypesFor(['ONE_HAND']), ['1HS', '1HB', '1HP', 'H2H'])
+  assert.deepEqual(weaponTypesFor(['TWO_HAND']), ['2HS', '2HB', '2HP'])
+  assert.deepEqual(weaponTypesFor(['RANGED']), ['ARCHERY', 'THROWING'])
+  // A category picked beside one of its own members is still just that category.
+  assert.deepEqual(weaponTypesFor(['TWO_HAND', '2HB']), ['2HS', '2HB', '2HP'])
+  // Two picks union, in vocabulary order rather than in click order.
+  assert.deepEqual(weaponTypesFor(['ARCHERY', '1HS']), ['1HS', 'ARCHERY'])
+  assert.deepEqual(weaponTypesFor([]), [], 'nothing picked stands for nothing')
+
+  // Every type belongs to exactly one category — no type is unreachable from the category picks,
+  // and none is double-counted.
+  const covered = WEAPON_CATEGORIES.flatMap((c) => weaponTypesFor([c]))
+  assert.deepEqual([...covered].sort(), [...WEAPON_TYPES].sort())
+  assert.equal(new Set(covered).size, covered.length, 'a type may not sit in two categories')
+  // …and the picker offers all twelve, each with words of its own.
+  assert.equal(WEAPON_PICKS.length, WEAPON_TYPES.length + WEAPON_CATEGORIES.length)
+  for (const pick of WEAPON_PICKS) assert.ok(WEAPON_PICK_LABEL[pick].length > 0, `${pick} has words`)
+})
+
+test('the weapon filter keeps the kinds asked for, and nothing that is not a weapon', () => {
+  assert.equal(weaponPicksMatch('2H Slashing', []), true, 'nothing picked is no filter')
+  assert.equal(weaponPicksMatch(undefined, []), true, '…including for armour')
+  assert.equal(weaponPicksMatch(undefined, ['1HS']), false, 'but armour is not an answer to "1H slashers"')
+
+  const only = (over: Partial<GearFilters>): string[] => names(filterGearRows(ARMS, filters(over)))
+  assert.deepEqual(only({ weaponTypes: ['1HS'] }), ['Thelvorn, Blade of Light', 'Faydark Champions Long Sword'])
+  assert.deepEqual(only({ weaponTypes: ['2HS'] }), ['Greatsword'])
+  // THE CATEGORY, doing exactly what its members do — the club (1HB), the two 1HS and the dagger.
+  assert.deepEqual(only({ weaponTypes: ['ONE_HAND'] }), [
+    'Thelvorn, Blade of Light',
+    'Wooden Club',
+    'Rusty Dagger',
+    'Faydark Champions Long Sword'
+  ])
+  assert.deepEqual(only({ weaponTypes: ['TWO_HAND'] }), ['Greatsword'])
+  assert.deepEqual(only({ weaponTypes: ['RANGED'] }), ['Short Bow'])
+  // A category and a type together are a union, not an intersection.
+  assert.deepEqual(only({ weaponTypes: ['TWO_HAND', 'ARCHERY'] }), ['Greatsword', 'Short Bow'])
+  // Nothing picked leaves even the Cloth Cap, which is not a weapon at all.
+  assert.deepEqual(only({}), names(ARMS))
+})
+
+test('the weapon type ANDs with the slot, the class picks and a threshold', () => {
+  // IN ADDITION TO THE SLOT, which is the ticket's own words — a one-hander that can go in the
+  // off hand, that states damage. The Thelvorn is PRIMARY only, so it drops out of this one.
+  assert.deepEqual(
+    names(filterGearRows(ARMS, filters({ weaponTypes: ['ONE_HAND'], slots: ['SECONDARY'] }))),
+    ['Wooden Club', 'Rusty Dagger', 'Faydark Champions Long Sword']
+  )
+  assert.deepEqual(
+    names(filterGearRows(ARMS, filters({ weaponTypes: ['ONE_HAND'], slots: ['SECONDARY'], thresholds: [{ key: 'DMG', min: 5 }] }))),
+    ['Wooden Club', 'Faydark Champions Long Sword']
+  )
+  // …and the class picks narrow it again, on the same AND.
+  assert.deepEqual(
+    names(filterGearRows(ARMS, filters({ weaponTypes: ['ONE_HAND'], classes: ['PAL'] }))),
+    ['Thelvorn, Blade of Light', 'Wooden Club', 'Rusty Dagger', 'Faydark Champions Long Sword']
+  )
 })
 
 test('the era verdict is INJECTED, and only applies while the toggle is on', () => {
