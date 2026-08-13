@@ -67,6 +67,18 @@ docs/agents-archive.md.
   only (no Backlog), tickets are END-TO-END improvements titled
   `Module / What the user gets`, and In Progress/Done moves carry
   wave-and-commit comments. Only owner-accepted work becomes a ticket.
+- **DISPATCH COMMENT AFTER LAUNCH, NEVER BEFORE (owner, 2026-08-13).** The
+  order of operations at dispatch is: make the Agent call, SEE IT SUCCEED,
+  then move the ticket to In Progress and write the "Dispatched" comment —
+  never the reverse, and never the comment in an earlier message than the
+  launch. A dispatch comment written first turns into a standing lie the
+  moment the launch is skipped (it happened three times on 2026-08-13:
+  JOS-287 and JOS-297 caught in-session, JOS-296 caught by the OWNER after
+  status reports repeated "building" off nothing but the comment). Corollary:
+  fleet status is reported ONLY from evidence — a spawn result in context, a
+  live task, a worktree or branch — never from ticket comments. A
+  "Dispatched" comment found without a matching worker gets the ticket
+  corrected (back to Todo, honest note) immediately.
 - **BRANCH INTEGRATION RULES (owner, 2026-08-05 — one merge behavior, not a
   juggle).** Every worker commits on its OWN worktree branch, never on main.
   Before reporting done, the worker makes the branch MERGE-READY: full checks
