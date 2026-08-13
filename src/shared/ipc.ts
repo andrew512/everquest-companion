@@ -94,6 +94,12 @@ export const IPC = {
   // suggested-alerts wizard (Task #38): a slim, searchable spell catalog derived from
   // the scraped spell DB + live per-spell usage from the buffs module's snapshot.
   spellsCatalog: 'spells:catalog',
+  // ONE spell, in full (JOS-293): every field the committed DB states for it, the derived effect
+  // classes, and the ranks of its line that a source names. The catalog above is the SLIM,
+  // whole-list shape the suggestion wizard filters; this is the deep read behind a hover card, and
+  // it is a separate channel rather than another flag because it takes an argument and answers
+  // about one row. Arg: the display name (VALIDATED at the handler). Never rejects.
+  spellsDetail: 'spells:detail',
 
   // ---- voice alerts / TTS (docs/plans/voice-alerts.md §3) ----
   // The 'system' engine tier needs NO channel at all: Chromium's own `speechSynthesis` lives in
