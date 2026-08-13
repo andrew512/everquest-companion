@@ -31,6 +31,9 @@ import {
   routeProcBuffWearOff,
   routeSelfLandingProc
 } from './procRouting'
+// LEAVING ROGUE BARES THE BLADES (JOS-305) — its own module, because the whole feature is the
+// GATE on when the class model may be consulted, and that reasoning does not belong in a switch.
+import { sweepCoatClass } from './coatClass'
 import {
   QUICK_BUFF_AA,
   isCastlessHeal,
@@ -728,6 +731,13 @@ function ingestOne(st: EngineState, ev: LogEvent, live: boolean): void {
   // …and the pet nudge times out on it too (JOS-258), from here and from snapshot(now), for the
   // reason the other two do: whichever observes the deadline first should be the one that acts.
   st.petNudge.sweep(ev.ts)
+  // …and the BLADE COATS are consulted against the class model on the same log clock (JOS-305):
+  // a character who stopped being a rogue no longer has poison on their blades, and no line says
+  // so. Deliberately NOT in snapshot(now) beside the three above — those are display timers, this
+  // one MUTATES the fold, and a fold that advanced because the UI polled would make a replay
+  // disagree with the live tail. Guarded on two field reads for every non-rogue in the world; the
+  // gate that keeps it cheap for a rogue too is coatClass.ts's whole subject.
+  sweepCoatClass(st, ev)
   if (ingestWorld(st, ev)) return
   if (ingestCombat(st, ev)) return
   if (ingestCast(st, ev)) return
