@@ -8,9 +8,16 @@
 //
 // IT SAYS WHAT YOU ARE LOOKING AT AND NOTHING ABOUT HOW (UI conventions, inherited from SliceBar).
 // The buttons are the two words the loot ledger already uses — `elapsed` and `active` — and the
-// caption states which one the numbers below are on. No tooltip on the buttons themselves, for
-// SliceBar's measured reason (a popper over a control eats the click aimed at it); the DEFINITION
-// of the hour in force rides the caption, which covers nothing.
+// caption states which one the numbers below are on.
+//
+// AND EACH BUTTON EXPLAINS ITSELF ON HOVER (JOS-304, owner feedback 2026-08-13: the toggle is
+// *hard to understand*). What this header used to refuse was a MUI TOOLTIP — an interactive popper
+// over a dense control row lands on the neighbouring buttons and eats the clicks aimed at them
+// (JOS-143's measured reason). A native `title` is the browser's own hover, takes no pointer
+// events, and is the house pattern for this row. The words are `BASIS_BUTTON_TITLE`, which is
+// `BASIS_TITLE` with one clause of effect in front of it — the caption below hovers the SAME
+// definition by the SAME lookup, so the button and the line under it cannot come to disagree about
+// what the hour is.
 //
 // IT IS NOT ON THE LOOT TAB, and that is a decision rather than an omission: the ledger's rate line
 // prints BOTH readings side by side (JOS-261) precisely so neither can pass for the other, and a
@@ -25,7 +32,7 @@
 import { type JSX } from 'react'
 import { Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import { RATE_BASES, type RateBasis } from '@shared/rateBasis'
-import { BASIS_TITLE } from '../leveling/rangeStatsRows'
+import { BASIS_BUTTON_TITLE, BASIS_TITLE } from '../leveling/rangeStatsRows'
 import { useRateBasis } from './useRateBasis'
 
 export interface RateBasisBarProps {
@@ -64,6 +71,9 @@ export function RateBasisControls({ testId }: RateBasisBarProps): JSX.Element {
             key={id}
             value={id}
             data-testid={`${testId}-${id}`}
+            // Every button carries ITS OWN denominator's sentence, selected or not, so the
+            // difference between the two is learnable from whichever one the pointer lands on.
+            title={BASIS_BUTTON_TITLE[id]}
             sx={{ px: 1.1, py: 0.25, fontSize: 11, lineHeight: 1.4, textTransform: 'none' }}
           >
             {id}

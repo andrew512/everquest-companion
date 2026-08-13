@@ -51,6 +51,7 @@ import { TAIL_MS, inSlice, resolveSlice, type SliceId } from '../src/shared/time
 import {
   ZONE_SCOPES,
   ZONE_SCOPE_DEFAULT,
+  ZONE_SCOPE_TITLE,
   isZoneScope,
   normalizeZoneScope,
   resolveZoneScope,
@@ -130,6 +131,44 @@ test('the in-app control is mounted only while the slice carries a zone', () => 
   assert.match(bar, /<RateBasisControls/)
   // The loot ledger mounts `SliceBar` alone and must not pick this up by accident.
   assert.doesNotMatch(code('../src/renderer/src/features/loot/LootChrome.tsx'), /ZoneScopeBar/)
+})
+
+/**
+ * THE BUTTONS SAY WHAT THEY DO (JOS-304, owner feedback 2026-08-13: the toggle is *hard to
+ * understand*).
+ *
+ * Two-word labels plus a caption that only names the pick left the READER to infer what `every
+ * tier` admits, and the answer is this file's own header — which nobody hovering a button can read.
+ * Three things are pinned, because each fails silently:
+ *
+ *   • BOTH memberships have a sentence, and they are the two SIDES of one difference (`every` says
+ *     the tier is folded away, `this` says the other tiers are out). A reader learns the pair from
+ *     whichever button the pointer happens to land on, which is why the unselected one carries its
+ *     own words too.
+ *   • THE SENTENCE IS ZONE-NAME FREE. The caption under the row already prints the zone and the
+ *     clause; a name interpolated here would be a second copy of a fact that line owns.
+ *   • IT IS A NATIVE `title`, NOT A POPPER. JOS-143's measured reason, inherited: an interactive
+ *     tooltip opened over a dense control row lands on the neighbouring buttons and eats the clicks
+ *     aimed at them. That refusal is what these bars have always been documenting, and adding a
+ *     hover is not permission to break it.
+ */
+test('each membership button hovers what picking it does, in the browser own tooltip', () => {
+  for (const scope of ZONE_SCOPES) {
+    const words = ZONE_SCOPE_TITLE[scope]
+    assert.match(words, /^The numbers count /, `${scope}: the sentence is about the reads, not the fold`)
+    assert.doesNotMatch(words, /Befallen|\$\{/, `${scope}: the zone name belongs to the caption`)
+  }
+  // The two sides of the one difference, each stated on its own button.
+  assert.match(ZONE_SCOPE_TITLE.allTiers, /every visit to this camp, at any tier/)
+  assert.match(ZONE_SCOPE_TITLE.allTiers, /folded away/)
+  assert.match(ZONE_SCOPE_TITLE.exactTier, /only the tier you are standing in/)
+  assert.match(ZONE_SCOPE_TITLE.exactTier, /left out/)
+
+  const bar = code('../src/renderer/src/features/timeslice/ZoneScopeBar.tsx')
+  // Per BUTTON and keyed by that button's own id — one `title` on the group would describe the pick
+  // in force from the button that does not make it.
+  assert.match(bar, /title=\{ZONE_SCOPE_TITLE\[id\]\}/)
+  assert.doesNotMatch(bar, /Tooltip/, 'a MUI popper over this row eats the clicks aimed at it')
 })
 
 test('the slice caption is what reads the membership back on the in-app surfaces', () => {
