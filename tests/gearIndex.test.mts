@@ -574,14 +574,19 @@ test('a derived out-of-era row is hidden by the filter and its chip names the ed
   assert.equal(smb.eraDerived?.basis, 'quest')
   assert.match(eraChip(smb)?.tooltip ?? '', /Scaled Mystic Armor Quests, a quest that starts in East Cabilis/)
 
-  // AND THE ONE THAT DOES NOT FLIP. Silver Full Breastplate's only out-of-era reference is a link to
-  // an armour-SET page, which the item corpus does not hold (see the refusal in eraDerive.ts). It
-  // stays era?, visible, and honest about knowing nothing.
+  // AND THE ONE THAT DOES NOT FLIP — BUT HIDES ANYWAY. Silver Full Breastplate's only out-of-era
+  // reference is a link to an armour-SET page, which the item corpus does not hold (see the refusal
+  // in eraDerive.ts), so it keeps its era? chip: the derivation still refuses to GUESS. What changed
+  // is what the FILTER does with that honesty (owner ruling 2026-08-13, the era? escalation —
+  // eraHides in plannerData.ts states the argument): under a filter called "Current era",
+  // uncertainty hides like a positive out-of-era does, until the set/quest-page metadata fetch
+  // gives these rows a real verdict. The chip and the hide are separate claims, asserted separately.
   const sfb = byKey.get('silver full breastplate')
   assert.ok(sfb, 'the third owner example left the gear index')
   assert.equal(sfb.eraDerived, undefined)
-  assert.equal(eraChip(sfb)?.unknown, true, 'it must still say era?')
-  assert.equal(eraHides(sfb, true), false, 'and an era? row is never hidden')
+  assert.equal(eraChip(sfb)?.unknown, true, 'it must still say era? - the derivation never guesses')
+  assert.equal(eraHides(sfb, true), true, 'but the era filter hides uncertainty now')
+  assert.equal(eraHides(sfb, false), false, 'and the filter OFF still shows it, chip and all')
 })
 
 test('layer 3 is counted in the build census and never contradicts a row that had an answer', () => {

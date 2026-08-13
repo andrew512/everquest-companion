@@ -343,9 +343,23 @@ export function eraChip(subject: EraSubject): EraChipInfo | null {
   }
 }
 
-/** Does the current-era filter hide this donor? Only a POSITIVE out-of-era verdict ever does. */
+/**
+ * Does the current-era filter hide this donor?
+ *
+ * TWO VERDICTS HIDE NOW (owner ruling 2026-08-13, the era? escalation): a POSITIVE out-of-era, and
+ * UNCERTAINTY. The old rule — only a positive verdict hides — treated era? as innocent-until-
+ * placed, and the owner's spot checks kept finding that bucket full of gear the wiki itself badges
+ * out of era through pages our corpus does not hold (armor sets, quest hubs — JOS-333's measured
+ * remainder: 824 era? rows pointing at 152 non-item pages). Until the respectful metadata fetch
+ * folds those targets in (the follow-up ticket), a question mark under a filter called "Current
+ * era" is a leak, not a courtesy: the filter's promise is "what you can get", and "we cannot say"
+ * fails that promise the same way "no" does. The chip still says era? on every surface the row IS
+ * shown (filter off), so nothing is dressed up as a verdict — the row is hidden for lacking one.
+ */
 export function eraHides(subject: EraSubject, eraOnly: boolean): boolean {
-  return eraOnly && donorEra(subject).verdict === 'out-of-era'
+  if (!eraOnly) return false
+  const verdict = donorEra(subject).verdict
+  return verdict === 'out-of-era' || verdict === 'unknown'
 }
 
 const ERA_KEY = 'eq.planner.era'
