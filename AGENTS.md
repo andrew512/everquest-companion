@@ -107,6 +107,11 @@ archive. Layout: `src/main` (Node), `src/preload`, `src/renderer`,
     **RESOLVED 9816cd34 (JOS-279)** — order-hardening was a BET;
     `tests/e2e/viewRemount.mts` HOLDS the precondition instead (mark the keyed
     subtree, read before you `check`, discard an attempt that lost its mount).
+  - `sky-filters.e2e` · a SECOND, distinct cause: collapsed-mount/close-panel
+    steps failed once with the remount guard HOLDING ("0 rebuilds seen while
+    settling") · 1 sighting (2026-08-13, JOS-294 worker six-spec sweep; green
+    standalone and in the next full sweep) · NOT the resolved row's signature —
+    unknown mechanism, watch for a second sighting before diagnosing.
   - `combat-dashboard.e2e` · narrow-window resize never lands, settleStable
     settles on stale geometry · 5 sightings (2026-08-10/11/12 full-sweep; 4th
     in the JOS-229 sweep; 5th 2026-08-12 STANDALONE on the JOS-240 merge
