@@ -22,9 +22,13 @@
 //
 // SINCE JOS-333 it also sweeps LAYER 3 — the era read off the acquisition path — for the same
 // reason and with the same shape: another blunt rule (one out-of-era edge is enough, by owner
-// ruling), another 360 rows leaving the default view, and the property that it can only ever speak
-// into `unknown`. The rules themselves are unit-tested in `tests/eraDerive.test.mts`; here it is the
-// committed bytes, and the three rows the owner photographed are asserted by name.
+// ruling) and another shelf of rows leaving the default view. JOS-341 then gave layer 3 the two
+// targets the item corpus cannot hold (a fetched, committed verdict for the non-item pages the
+// era? rows link, and for every dropper mob), which cost that section its two simplest sentences:
+// a derivation may now point IN as well as out, and exactly one edge may overrule a drop zone.
+// Both replacements are asserted as properties below. The rules themselves are unit-tested in
+// `tests/eraDerive.test.mts`; here it is the committed bytes, and the four rows the owner named
+// are asserted by name.
 //
 // No Electron, no fixtures, no game directory ⇒ this suite never skips.
 
@@ -43,7 +47,9 @@ import {
 import { buildEraDerivations } from '../src/main/planner/eraDerive'
 import mobsJson from '../src/renderer/src/data/eqlegends/mobs.json'
 import itemsJson from '../src/main/data/items.json'
+import pageEraJson from '../src/main/data/pageEra.json'
 import { itemKey, type ItemDbFile } from '../src/main/itemsDb'
+import { pageEraKey, type PageEraFile } from '../src/main/pageEraDb'
 import type { MobData } from '../src/shared/types'
 
 const catalog = mobsJson as unknown as MobData
@@ -63,6 +69,27 @@ const CATALOG_ZONES_BY_ITEM = ((): Map<string, Set<string>> => {
   }
   return m
 })()
+
+/** itemKey → every mob the catalog says drops it, by name (JOS-341's dropper edge, rebuilt here
+ *  the way this suite rebuilds every join: from the committed bytes, never imported from the
+ *  module under test, so a drift between the two shows up as a red test rather than as agreement
+ *  with itself). */
+const CATALOG_DROPPERS = ((): Map<string, string[]> => {
+  const m = new Map<string, string[]>()
+  for (const mob of catalog.mobs) {
+    for (const drop of mob.drops ?? []) {
+      const key = itemKey(drop)
+      if (key === '') continue
+      let names = m.get(key)
+      if (!names) m.set(key, (names = []))
+      if (!names.includes(mob.name)) names.push(mob.name)
+    }
+  }
+  return m
+})()
+
+/** The committed answers the fetch brought back (`scripts/scrape-page-era.ts`). */
+const SIDECAR = pageEraJson as PageEraFile
 
 interface CorpusRow {
   key: string
@@ -243,16 +270,23 @@ test('the two out-of-head era claims are read, by name, off the committed corpus
 })
 
 // =================================================================================
-// JOS-333 — LAYER 3: THE ERA THE PAGE NEVER STATES, READ OFF THE ACQUISITION PATH
+// JOS-333 / JOS-341 — LAYER 3: THE ERA THE PAGE NEVER STATES, READ OFF THE ACQUISITION PATH
 // =================================================================================
 //
 // The owner came back with screenshots and the JOS-328 verdict was corrected: the out-of-era pills
 // are real, they are just not ON the page. eqlwiki's own skin walks every LINK and pills the ones
 // whose TARGET is out of era, so an era? item can be covered in them. `main/planner/eraDerive.ts`
-// derives that over the corpus we already ship, and this is what it does to the committed bytes —
-// including the three rows the owner photographed, asserted by name, one of which does NOT flip.
+// derives that, and this is what it does to the committed bytes.
+//
+// JOS-341 GAVE IT THE TWO TARGETS THE ITEM CORPUS CANNOT HOLD, fetched once at data-build time and
+// committed as `src/main/data/pageEra.json` (`scripts/scrape-page-era.ts`, 22 live requests):
+//   `page`     — the 151 non-item titles the era? rows' `|notes` name, 149 distinct keys. This is
+//                what finally answers Silver Full Breastplate, JOS-333's named refusal.
+//   `drop-mob` — 4,981 dropper mobs, of which the wiki badges 2,108 out. This is the owner's
+//                Life's Guard, and it is the one edge allowed to overrule a drop zone.
+// Both are asserted by name below, beside the two rows JOS-333 already flipped.
 
-test('THE THREE OWNER EXAMPLES, by name, off the committed corpus', () => {
+test('THE FOUR OWNER EXAMPLES, by name, off the committed corpus', () => {
   const derivations = buildEraDerivations(corpus)
   const of = (key: string): EraDerivation | undefined => derivations.get(key)
 
@@ -260,6 +294,7 @@ test('THE THREE OWNER EXAMPLES, by name, off the committed corpus', () => {
   //    register calls it out, and the wiki's own `eqlmetadata` endpoint agrees (`outOfEra: true`).
   assert.deepEqual(of('dwarven breastplate (enchanted imbued)'), {
     basis: 'component',
+    verdict: 'out-of-era',
     target: 'Small Breastplate Mold',
     detail: 'Epics'
   })
@@ -270,71 +305,155 @@ test('THE THREE OWNER EXAMPLES, by name, off the committed corpus', () => {
   //    the quest as the item, and the catalog is the thing that knows what the quest is called.
   assert.deepEqual(of('scaled mystic breastplate'), {
     basis: 'quest',
+    verdict: 'out-of-era',
     target: 'Scaled Mystic Armor Quests',
     detail: 'East Cabilis'
   })
 
-  // 3. THE ONE THAT DOES NOT FLIP, pinned as a refusal rather than left as a silence. Silver Full
-  //    Breastplate's page carries exactly one pill and it sits on `[[Cultural Tradeskills: Human]]`
-  //    — the armour-SET page, which `eqlmetadata` confirms is out of era. All seven of its recipe
-  //    components are in era and it has no quests, so there is no edge here to find: the item corpus
-  //    enumerates `embeddedin Template:Itempage` and an armour-set page is not an item page. If a
-  //    later wave teaches the parser to keep `|notes` link targets and commits the wiki's verdict
-  //    for the 152 non-item pages the era? rows reference, THIS is the assertion that should change,
-  //    deliberately and with the census beside it.
-  assert.equal(of('silver full breastplate'), undefined, 'Silver Full Breastplate found an edge we did not measure')
+  // 3. THE ONE JOS-333 COULD NOT ANSWER, and the reason this ticket exists. Silver Full Breastplate's
+  //    page carries exactly one pill and it sits on `[[Cultural Tradeskills: Human]]` — an armour-SET
+  //    page, which is not an `{{Itempage}}` and so is nowhere in the item corpus. All seven of its
+  //    recipe components are in era and it has no quests, so no walk over items could ever reach it.
+  //    The fetched sidecar reaches it: `eqlmetadata` says that set page is out of era, and the row
+  //    finally has a verdict instead of a shrug. Its own page still states no era — that is what
+  //    keeps this a LAYER 3 answer.
+  assert.deepEqual(of('silver full breastplate'), {
+    basis: 'page',
+    verdict: 'out-of-era',
+    target: 'Cultural Tradeskills: Human',
+    detail: 'Epics'
+  })
   const sfb = CORPUS.find((r) => r.key === 'silver full breastplate')
   assert.ok(sfb, 'Silver Full Breastplate left the corpus')
   assert.equal(sfb.tag, undefined, 'its own page states no era')
-  assert.equal(layeredVerdict(sfb.zones, sfb.tag), 'unknown', 'it is still an era? row')
+  assert.equal(layeredVerdict(sfb.zones, sfb.tag), 'unknown', 'layers 1-2 are still silent about it')
+
+  // 4. LIFE'S GUARD — the owner's dropper example, and the correction that came with measuring it.
+  //    It is NOT an era? row: its page opens `{{Classic Era}}` and its one dropper sits under a
+  //    `Plane of Hate` heading, so layers 1-2 rank it in-era and the planner offered it as farmable
+  //    AC 30 loot. The rest of the report is exactly right — the pill on that page is on
+  //    `[[Agent of Innoruuk]]`, a Plane of Hate REVAMP mob the wiki badges out of era — and that is
+  //    why this edge is DEFINITIVE: a revamp replaces a zone's contents without adding a zone.
+  assert.deepEqual(of("life's guard"), {
+    basis: 'drop-mob',
+    verdict: 'out-of-era',
+    definitive: true,
+    target: 'Agent of Innoruuk',
+    detail: 'Agent of Innoruuk'
+  })
+  const guard = CORPUS.find((r) => r.key === "life's guard")
+  assert.ok(guard, "Life's Guard left the corpus")
+  assert.equal(guard.tag, 'Classic', 'its own page claims Classic — which is what the mob overrules')
+  assert.equal(layeredVerdict(guard.zones, guard.tag), 'in-era', 'and layers 1-2 really do call it farmable')
 })
 
-test('layer 3 only ever speaks into silence, and only ever hides', () => {
-  // THE PROPERTY, over every page the derivation answers for: the page's OWN layers 1-2 verdict was
-  // `unknown` before it spoke. The builder enforces this by construction (it skips anything already
-  // decided) and this is the corpus-level proof, because the cost of getting it wrong is a derived
-  // guess overruling a drop zone somebody can actually walk to.
+test('layer 3 speaks into silence — and over it for exactly one edge', () => {
+  // THE PROPERTY, over every page the derivation answers for. It used to be one sentence ("layers
+  // 1-2 were silent"); JOS-341 split it in two, and the split IS the safety argument:
+  //   * a NON-definitive edge may only speak where the page's own layers 1-2 verdict was `unknown`,
+  //     exactly as before, so nothing derived from a recipe or a set page can overrule a drop zone
+  //     somebody can walk to;
+  //   * the ONE definitive edge may speak anywhere, and pays for it by being the wiki's own per-mob
+  //     badge on EVERY dropper the corpus and the catalog know of — asserted here against the
+  //     committed sidecar, mob by mob, because that is the claim doing the overruling.
   const derivations = buildEraDerivations(corpus)
-  assert.ok(derivations.size >= 400, `only ${String(derivations.size)} pages carry a derivation`)
+  assert.ok(derivations.size >= 2500, `only ${String(derivations.size)} pages carry a derivation`)
+  let definitive = 0
   for (const [key, derived] of derivations) {
     const row = CORPUS.find((r) => r.key === key)
     assert.ok(row, `${key} carries a derivation but has no corpus row`)
-    assert.equal(row.tag, undefined, `${row.page} carries BOTH a banner and a derivation`)
-    // Asked with the page's own zones, which is what the builder saw. The catalog can only make the
-    // renderer MORE decided, and `donorEra` applies the derivation only where it is still unknown.
-    const pageZones = (corpus.items[key]?.dropsFrom ?? []).flatMap((s) => (s.zone === undefined ? [] : [s.zone]))
-    assert.equal(layeredVerdict(pageZones, undefined), 'unknown', `${row.page} was already placed by a zone`)
     assert.ok(derived.target.length > 0 && derived.detail.length > 0, `${row.page} derived a nameless edge`)
+    // Asked with the page's own zones, which is what the builder saw. The catalog can only make the
+    // renderer MORE decided, and `donorEra` applies a non-definitive edge only where it is unknown.
+    const pageZones = (corpus.items[key]?.dropsFrom ?? []).flatMap((s) => (s.zone === undefined ? [] : [s.zone]))
+    if (derived.definitive !== true) {
+      assert.equal(row.tag, undefined, `${row.page} carries BOTH a banner and a non-definitive derivation`)
+      assert.equal(layeredVerdict(pageZones, undefined), 'unknown', `${row.page} was already placed by a zone`)
+      continue
+    }
+    definitive++
+    assert.equal(derived.basis, 'drop-mob', `${row.page} claims a definitive ${derived.basis} edge`)
+    const droppers = new Set([
+      ...(corpus.items[key]?.dropsFrom ?? []).map((s) => s.mob),
+      ...(CATALOG_DROPPERS.get(key) ?? [])
+    ])
+    assert.ok(droppers.size > 0, `${row.page} derived a dropper edge with no droppers`)
+    for (const mob of droppers) {
+      assert.equal(SIDECAR.mobs[pageEraKey(mob)], true, `${row.page}: ${mob} is not badged out`)
+    }
   }
+  assert.ok(definitive >= 2000, `only ${String(definitive)} definitive edges`)
+})
+
+test('THE IN-ERA DIRECTION refuses a page that merely failed to be out', () => {
+  // `outOfEra: false` comes back both for a page the wiki files under `Classic Era` and for a page
+  // nobody ever classified — a skill page, an NPC stub — and only the first is evidence. Over the
+  // committed sidecar: 149 pages asked, 23 out, 54 carrying an in-era token, and the rest silent.
+  // Every in-era derivation in the corpus must trace to one of those 54.
+  const derivations = buildEraDerivations(corpus)
+  const inEra = [...derivations.values()].filter((d) => d.verdict === 'in-era')
+  assert.ok(inEra.length >= 50, `only ${String(inEra.length)} in-era derivations`)
+  for (const d of inEra) {
+    assert.equal(d.basis, 'page', `an in-era verdict came from a ${d.basis} edge, which cannot mean in-era`)
+    const target = SIDECAR.pages[pageEraKey(d.target)]
+    assert.ok(target, `${d.target} is not in the committed sidecar`)
+    assert.equal(target.outOfEra, false, `${d.target} is badged out and still argued IN`)
+    assert.ok(target.eraTag !== undefined && eraBadge(target.eraTag) === 'in', `${d.target} states no in-era claim`)
+  }
+
+  // THE NAMED REFUSAL, kept from the fetch: eight of the nine Cultural Tradeskills set hubs come
+  // back out of era and one — Erudite — comes back FALSE with no era token at all. Its 14 rows do
+  // not flip in either direction, and that is the endpoint's answer rather than ours to smooth.
+  const erudite = SIDECAR.pages['cultural tradeskills: erudite']
+  assert.ok(erudite, 'the Erudite set page left the sidecar')
+  assert.equal(erudite.outOfEra, false)
+  assert.equal(erudite.eraTag, undefined, 'if the wiki ever classifies it, this assertion is the notice')
+  assert.equal(
+    [...derivations.values()].filter((d) => d.target === 'Cultural Tradeskills: Erudite').length,
+    0,
+    'the Erudite set page started deciding rows'
+  )
 })
 
 test('THE CENSUS: what layer 3 costs the default era-filtered table', () => {
-  // Measured 2026-08-13. FLOORS, never equalities — a rescrape moves every one of these, and the
-  // number that must not move quietly is the DIRECTION.
-  //   corpus pages with a derivation  463  (component 308 · quest 106 · component-zone 49 · yield 0)
-  //   gear rows in-era                2,319 unchanged
-  //   gear rows era?                  1,128 -> 768
-  //   gear rows out-of-era            3,367 -> 3,727
-  //   default era-filtered table      3,447 -> 3,087 of 6,814
+  // Re-measured 2026-08-13 after JOS-341. FLOORS, never equalities — a rescrape moves every one of
+  // these, and the number that must not move quietly is the DIRECTION.
+  //   corpus pages with a derivation  463 -> 3,221
+  //     drop-mob 2,365 · page 442 · component 308 · quest 102 · component-zone 4 · yield 0
+  //     (component-zone fell 49 -> 4 and quest 106 -> 102 because the DEFINITIVE dropper edge
+  //      outranks them in `BASIS_ORDER`; the verdict on those rows did not change, only which edge
+  //      is reported for it)
+  //   gear rows in-era                2,319 -> 2,343   (+40 derived in-era, -16 to the dropper edge)
+  //   gear rows era?                    770 ->   437
+  //   gear rows out-of-era            3,725 -> 4,034
+  //   default era-filtered table      3,089 -> 2,343 visible of 6,814
+  // The before column is this repo's own measurement of the JOS-333 tip and is two rows off the
+  // number recorded on that ticket (3,727 / 768); the derivation set matches it exactly (463:
+  // component 308 · quest 106 · component-zone 49), so the difference is in how the gear-row
+  // verdicts were counted there, not in the rules.
   const derivations = buildEraDerivations(corpus)
   const byBasis = new Map<string, number>()
   for (const d of derivations.values()) byBasis.set(d.basis, (byBasis.get(d.basis) ?? 0) + 1)
+  assert.ok((byBasis.get('drop-mob') ?? 0) >= 2000, `only ${String(byBasis.get('drop-mob'))} dropper edges`)
+  assert.ok((byBasis.get('page') ?? 0) >= 380, `only ${String(byBasis.get('page'))} page edges`)
   assert.ok((byBasis.get('component') ?? 0) >= 280, `only ${String(byBasis.get('component'))} component edges`)
   assert.ok((byBasis.get('quest') ?? 0) >= 90, `only ${String(byBasis.get('quest'))} quest edges`)
-  assert.ok((byBasis.get('component-zone') ?? 0) >= 40, `only ${String(byBasis.get('component-zone'))} zone edges`)
 
   // EVERY BASIS THE TYPE NAMES IS ACCOUNTED FOR. `yield` legitimately fires for nothing today; the
   // assertion is that no basis appears here that this file has never heard of, which is what would
-  // happen if a fifth edge shipped without a census.
+  // happen if a seventh edge shipped without a census.
   for (const basis of byBasis.keys()) {
-    assert.ok(['component', 'yield', 'quest', 'component-zone'].includes(basis), `unknown basis "${basis}"`)
+    assert.ok(
+      ['drop-mob', 'component', 'yield', 'page', 'quest', 'component-zone'].includes(basis),
+      `unknown basis "${basis}"`
+    )
   }
 
   // THE ERA? ROWS THE DERIVATION RESOLVES, counted the way the app counts them (catalog ∪ page
-  // zones ∪ banner). The one derivation the catalog overrules is the safety valve, not a defect.
+  // zones ∪ banner). The derivations the catalog overrules are the safety valve, not a defect.
   const stillUnknown = CORPUS.filter((r) => layeredVerdict(r.zones, r.tag) === 'unknown')
   const resolved = stillUnknown.filter((r) => derivations.has(r.key))
-  assert.ok(resolved.length >= 400, `layer 3 only resolved ${String(resolved.length)} era? rows`)
+  assert.ok(resolved.length >= 700, `layer 3 only resolved ${String(resolved.length)} era? rows`)
   assert.ok(
     resolved.length < stillUnknown.length,
     'layer 3 resolved EVERY era? row, which means it stopped refusing anything'

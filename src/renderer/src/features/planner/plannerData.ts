@@ -265,14 +265,22 @@ export function donorEra(subject: EraSubject): DonorEra {
   const hit = ERA_CACHE.get(id)
   if (hit) return hit
   const stated = statedEra(subject, eraZones(subject))
-  // LAYER 3 SPEAKS ONLY INTO SILENCE (JOS-333). `unknown` is the only verdict it may touch, so the
-  // strength order above is untouched and this can only ever HIDE a row, never reveal one. The era
-  // stays `null`: the edge names an expansion often enough, but what we know is that the way you
-  // GET this thing is closed, not which expansion the thing itself belongs to.
-  const value: DonorEra =
-    stated.verdict === 'unknown' && subject.eraDerived !== undefined
-      ? { verdict: 'out-of-era', era: null, by: 'derived' }
-      : stated
+  // LAYER 3 SPEAKS INTO SILENCE — and, for exactly one edge, over it.
+  //
+  // JOS-333 shipped this as "unknown is the only verdict layer 3 may touch", which made it a rule
+  // that could only ever HIDE rows. JOS-341 added the two things that break that symmetry, and both
+  // are the wiki's own predicate reaching a page our item corpus does not hold:
+  //   * an edge may now point IN, because an armour-set page filed under `Classic Era` is a claim
+  //     and not an absence — and while `era?` hides (73ad7ec9), refusing to read it is a decision
+  //     to hide gear the wiki says is right here.
+  //   * a DEFINITIVE edge (`drop-mob`) outranks the zones, the way the page's own out-of-era banner
+  //     has since JOS-298: a revamped zone keeps its name while its contents change, so the mob is
+  //     the witness and `Plane of Hate` is not.
+  // The era stays `null` either way: the edge names an expansion often enough, but what we know is
+  // whether the way you GET this thing is open, not which expansion the thing itself belongs to.
+  const derived = subject.eraDerived
+  const speaks = derived !== undefined && (derived.definitive === true || stated.verdict === 'unknown')
+  const value: DonorEra = speaks ? { verdict: derived.verdict, era: null, by: 'derived' } : stated
   ERA_CACHE.set(id, value)
   return value
 }
@@ -312,6 +320,12 @@ function derivedReason(d: EraDerivation | undefined): string {
   if (d.basis === 'component') return `Its recipe needs ${d.target}, which the wiki marks out of era (${d.detail}).`
   if (d.basis === 'yield') return `Its recipe yields ${d.target}, which the wiki marks out of era (${d.detail}).`
   if (d.basis === 'quest') return `It is only awarded by ${d.target}, a quest that starts in ${d.detail}.`
+  if (d.basis === 'drop-mob') return `Every mob that drops it is out of era on the wiki: ${d.detail}.`
+  if (d.basis === 'page') {
+    return d.verdict === 'in-era'
+      ? `Its notes name ${d.target}, which the wiki files as ${d.detail}, in era.`
+      : `Its notes name ${d.target}, which the wiki marks out of era (${d.detail}).`
+  }
   return `Its recipe needs ${d.target}, which only drops in ${d.detail}.`
 }
 
