@@ -28,10 +28,26 @@
 // in the slot grid and in the carry-all ledger. One honest number beats a better one that arrives
 // with the panel's caption silently meaning something new.
 //
-// THE LAYOUT IS A SHEET ON TOP AND A LEDGER UNDERNEATH, and the ledger is the one that grows. The
-// sheet is a fixed twenty-four cells and sizes to its content; `CarryAll` takes the rest of the
-// height with its own scroller (the standing growing-list law), so a character with three hundred
-// rows and a character with thirty produce the same page.
+// ---------------------------------------------------------------------------
+// THE LAYOUT: A SHEET ON TOP, A LEDGER UNDERNEATH, AND A MEASURED REASON THE PAGE SCROLLS
+// ---------------------------------------------------------------------------
+// MEASURED at the default window (1280x860, windowState.ts): identity + freshness line + the slot
+// grid + the gear panel come to about 656px of the ~740px content area. The sheet is not a growing
+// list — it is twenty-four cells and it is that tall on every character — so a ledger sharing the
+// remaining height with `flexGrow` alone got EIGHTY-FIVE PIXELS, which is one row and a scrollbar.
+// That is a worse surface than the one this ticket set out to build, so this tab is a naturally
+// tall page: the root asks for `minHeight: 100%` rather than `height: 100%`, and `CarryAll` takes a
+// FLOOR (`minHeight`) plus `flexGrow`, so it fills a tall window and still gets a usable box on a
+// short one. The app shell scrolls the difference.
+//
+// THE GROWING-LIST LAW IS KEPT, AND KEPT WHERE IT MATTERS. What that law protects against is a page
+// whose height is a function of the DATA — an append-only panel that squeezes its siblings to 0px
+// as it fills. Nothing here does: the ledger is windowed inside its own `overflow: auto` box at a
+// height that does not know how many rows exist, so a character with thirty things and a character
+// with three hundred produce a page of exactly the same height. `tests/e2e/character-sheet.e2e.mts`
+// asserts that identity directly (search the ledger down to four rows; the page must not move) and
+// separately asserts that the WINDOW itself never scrolls, which is the half of the law that has no
+// carve-outs anywhere.
 
 import { type JSX } from 'react'
 import { Box, Paper, Stack, Typography } from '@mui/material'
@@ -86,7 +102,11 @@ export default function CharacterView(): JSX.Element {
   const { sheet, ready } = useCharacterSheet()
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, height: '100%', minHeight: 0, p: 0.5 }}>
+    // `minHeight` rather than `height` — see the layout note in the header. It still FILLS the
+    // content box (so the ledger's `flexGrow` has something to grow into on a tall window) and it no
+    // longer CLAMPS it, so a short window scrolls the page instead of crushing the one panel below
+    // the fold to nothing.
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minHeight: '100%', p: 0.5 }}>
       <CharacterIdentity />
 
       {/* Only once the read has settled: a card that flashes before the dump loads would teach

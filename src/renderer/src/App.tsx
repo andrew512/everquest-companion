@@ -505,24 +505,19 @@ export default function App(): JSX.Element {
   }, [view])
 
   // How long each tab was on screen, reported ON SWITCH (plan §2). `View` and the schema's
-  // `viewDwell` enum are the same set apart from the views the enum has not learned yet, which
-  // report nothing: widening the enum before the ingest Lambda is deployed would 400 the whole
-  // batch and drop every counter with it (JOS-45; `dwellView` states the rule).
-  //
-  // `character` IS ONE OF THOSE TODAY, and deliberately so. JOS-327 released the tab but not the
-  // schema member: the closed-enum DEPLOY ORDER (shared/telemetry.ts) puts the server's learning
-  // of a value strictly before any client that can emit it, and that is a deploy, not a rename.
-  // Until it lands the released tab is silent in the dwell histogram, which costs one number and
-  // risks nothing.
+  // `viewDwell` enum are the SAME SET as of JOS-327, which released the last view that was held out
+  // of it — `dwellView` still folds an unknown id to `null` rather than reporting it, because
+  // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop every
+  // counter with it. `tests/telemetryContract.test.mts` pins the equality in both directions.
   useViewDwell(dwellView(view))
 
   // …and the same fact, kept for the ERROR reporter (JOS-100). It is a separate mechanism on
   // purpose: `useViewDwell` reports the view you LEFT, on a switch, which is exactly the wrong
   // answer for "which tab was open when it broke". This is a plain module variable because its
   // readers — the global error handlers in main.tsx and ErrorBoundary — run at moments when the
-  // React tree is not something to rely on. A view the schema has not learned sets it too and is
-  // folded to `unknown` by main's closed-enum check, which is the right outcome: an error there is
-  // worth reporting even though the view id is not.
+  // React tree is not something to rely on. A view the schema has not learned would set it too and
+  // be folded to `unknown` by main's closed-enum check, which is the right outcome: an error there
+  // is worth reporting even though the view id is not.
   setCurrentView(view)
 
   useEffect(() => {

@@ -101,6 +101,17 @@ export const TELEMETRY_VIEWS = [
   // JOS-326 fills it, and how often anyone opens a placeholder is exactly the sort of thing the
   // dwell histogram is for.
   'wishlist',
+  // The gear area's Character tab (JOS-45, released JOS-327). SAME CLOSED-ENUM DEPLOY ORDER as every
+  // member added since JOS-119 — the ingest Lambda validates through this module, so the server has
+  // to learn the value before a client that can emit it ships, or one dwell on this tab 400s the
+  // whole batch and drops every counter in it.
+  //
+  // IT IS HERE BECAUSE THE GATE CAME OFF, and the two edits are one edit: the tab was held out of
+  // this list from JOS-45 for the reason `tests/telemetryContract.test.mts` states — a surface no
+  // packaged user can reach is not worth the deploy risk — and that test pins the converse just as
+  // hard, so releasing the view without adding it here is a red build. Graduation is both halves at
+  // once, which is exactly what JOS-327 did.
+  'character',
   'preferences',
   'triage'
 ] as const

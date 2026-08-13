@@ -188,7 +188,18 @@ export default function CarryAll({ carry }: { carry: CarryAllData }): JSX.Elemen
     <Paper
       variant="outlined"
       data-testid="character-carry"
-      sx={{ p: 1, display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 240 }}
+      // `flex: 1 0 360px` PLUS `minHeight: 0`, and every term of that is load-bearing on a page
+      // whose height is not clamped (CharacterView's header explains why it is not).
+      //
+      //   360px BASIS — the panel's hypothetical height, which is what makes it independent of the
+      //     data. A flex item's hypothetical size is its CONTENT height when the basis is `auto`,
+      //     and this panel's content is a 123-row table: measured, that produced a 5368px page.
+      //   grow 1     — a tall window has free space after the sheet, and the ledger should have it.
+      //   shrink 0   — a short one does not, and the floor is the whole point.
+      //   minHeight 0 — a flex item's `min-height` defaults to `auto`, i.e. its content, which
+      //     would quietly undo the basis. This is the same clause every windowed box in the app
+      //     carries and the same one whose absence is always the bug.
+      sx={{ p: 1, display: 'flex', flexDirection: 'column', flex: '1 0 360px', minHeight: 0 }}
     >
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }} sx={{ mb: 0.75 }}>
         <Typography variant="subtitle2" sx={{ flexShrink: 0 }}>
