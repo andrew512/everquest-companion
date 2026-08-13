@@ -36,11 +36,15 @@ interface NavRow {
   badge?: JSX.Element
 }
 
-/* State, not process: this tab is unfinished, and the chip says so. */
-const IN_DEV = (
+/* State, not process: this tab is newer than the rest, and the chip says exactly how much.
+ * "beta" replaced "in dev" for the release-hardening pass (owner directive 2026-08-13): Timers,
+ * Buffs and Exaltations graduated with no chip at all, and Gear — the youngest tab — wears the
+ * one remaining caveat. A chip comes OFF by deleting the badge from its row, never by softening
+ * the word. */
+const BETA = (
   <Chip
     size="small"
-    label="in dev"
+    label="beta"
     variant="outlined"
     sx={{ height: 18, fontSize: 10, color: 'text.secondary', '& .MuiChip-label': { px: 0.75 } }}
   />
@@ -61,21 +65,21 @@ const ROWS: NavRow[] = [
   // EXALTATIONS follows Loot for the same reason Loot follows Mobs: it is the third face of one
   // question — what drops it, what did I get, and what am I still farming for. (Its LABEL lives
   // in `VIEW_LABELS`; JOS-42 renamed the tab there, which is also where Back reads it from.)
-  { view: 'planner', icon: <AutoAwesomeIcon />, badge: IN_DEV },
+  { view: 'planner', icon: <AutoAwesomeIcon /> },
   // GEAR (JOS-284) follows Exaltations for the same reason Exaltations follows Loot: it is the
   // fourth face of one question — what drops it, what did I get, what am I farming for, and what
   // should I be wearing. It reads the same committed corpus and links back into the same Loot
   // drill-down.
-  { view: 'gear', icon: <CheckroomIcon />, badge: IN_DEV },
+  { view: 'gear', icon: <CheckroomIcon />, badge: BETA },
   { view: 'maps', icon: <MapIcon /> },
   { view: 'bosses', icon: <EmojiEventsIcon /> },
   { view: 'posky', icon: <ShieldMoonIcon /> },
   { view: 'alerts', icon: <NotificationsActiveIcon /> },
   { view: 'leveling', icon: <TrendingUpIcon /> },
-  { view: 'buffs', icon: <AutoFixHighIcon />, badge: IN_DEV },
+  { view: 'buffs', icon: <AutoFixHighIcon /> },
   // Respawn clocks (JOS-194) sit beside Buffs because both tabs are the same shape of answer —
   // a list of things counting down — and a player checking one is usually checking the other.
-  { view: 'timers', icon: <TimerIcon />, badge: IN_DEV }
+  { view: 'timers', icon: <TimerIcon /> }
 ]
 
 /** Bottom-aligned, outside ROWS — it is not a feature view and never moves. */
