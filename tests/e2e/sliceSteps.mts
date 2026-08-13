@@ -97,6 +97,52 @@ async function checkScopeRow(page: Page): Promise<void> {
   // One LINE, not a paragraph: the caption keeps the compact-bar contract, so a second line of it
   // would be the imbalance coming straight back in the other direction.
   check('…on a single line', caption.h <= 24, `${String(caption.h)}px tall`)
+  await checkToggleTitles(page)
+}
+
+/**
+ * EVERY TOGGLE IN THE SCOPE EXPLAINS ITSELF ON HOVER (JOS-304, owner feedback 2026-08-13: the two
+ * pairs are *hard to understand*).
+ *
+ * The strings themselves are pinned as values next door (`tests/zoneScope.test.mts`,
+ * `tests/rateBasis.test.mts`); what only a render can show is that the attribute survived the trip
+ * through MUI's `ToggleButton` onto the element the pointer actually lands on. It does not: MUI
+ * forwards unknown props to the underlying `button`, and that is precisely the kind of thing a
+ * component-library bump breaks quietly. Measured from inside `checkScopeRow` because this is the
+ * one moment both pairs are on the tab at once.
+ *
+ * Read as ALL FOUR BUTTONS OR NOTHING, since a per-button title is the whole point — a group that
+ * explains only its selected half leaves the reader hovering the button they were thinking of
+ * pressing and learning nothing.
+ */
+async function checkToggleTitles(page: Page): Promise<void> {
+  const titles = await page.evaluate(() =>
+    ['leveling-tier-allTiers', 'leveling-tier-exactTier', 'leveling-basis-elapsed', 'leveling-basis-active'].map(
+      (id) => {
+        const el = document.querySelector(`[data-testid="${id}"]`)
+        return { id, title: el?.getAttribute('title') ?? '' }
+      }
+    )
+  )
+  const bare = titles.filter((t) => t.title.length === 0).map((t) => t.id)
+  check(
+    'every toggle in the scope carries its own native hover, selected or not',
+    bare.length === 0,
+    bare.length > 0 ? `no title on ${bare.join(', ')}` : titles.map((t) => t.id).join(', ')
+  )
+  // And the words are the two SIDES of each difference, not one sentence repeated: the tier pair
+  // talks about which visits count, the basis pair about which hour divides.
+  const by = (id: string): string => titles.find((t) => t.id === id)?.title ?? ''
+  check(
+    '…and the tier pair states the difference from either side',
+    /at any tier/.test(by('leveling-tier-allTiers')) && /only the tier you are standing in/.test(by('leveling-tier-exactTier')),
+    `${by('leveling-tier-allTiers')} || ${by('leveling-tier-exactTier')}`
+  )
+  check(
+    '…as does the basis pair, each carrying the definition of its own hour',
+    /Elapsed time = /.test(by('leveling-basis-elapsed')) && /Active time = /.test(by('leveling-basis-active')),
+    `${by('leveling-basis-elapsed')} || ${by('leveling-basis-active')}`
+  )
 }
 
 /**

@@ -11,14 +11,22 @@
 // "a short history loses the buttons" rule already refuses. The choice itself SURVIVES the slice
 // (it lives in `useTimeslice`'s store), so switching to `All` and back does not silently reset it.
 //
-// IT SAYS WHAT YOU ARE LOOKING AT AND NOTHING ABOUT HOW, and it carries NO TOOLTIP — both are
-// SliceBar's rules, inherited for its measured reason (a popper over a control eats the click aimed
-// at it). What the two words MEAN is stated where it cannot cover anything: in the slice caption
-// beside it, which names the membership in force on every read.
+// IT SAYS WHAT YOU ARE LOOKING AT AND NOTHING ABOUT HOW — SliceBar's rule, and the caption beside
+// it is still where the membership in force is READ BACK on every glance.
+//
+// EACH BUTTON NOW EXPLAINS ITSELF, AND IT IS A NATIVE `title` (JOS-304, owner feedback 2026-08-13:
+// the toggle is *hard to understand*). Two words are not enough to tell a reader what `every tier`
+// admits, and the caption only names which of the two is on. The refusal this header used to carry
+// was of a MUI TOOLTIP specifically — an interactive popper opening over a dense control row lands
+// on the neighbouring buttons and eats the clicks aimed at them (JOS-143's measured reason, and
+// SliceBar's). A native `title` is not a popper: it is the browser's own hover, it takes no
+// pointer events, and it is the house pattern for exactly this row. The words are
+// `ZONE_SCOPE_TITLE`, beside the label they explain, so a reworded button cannot leave its sentence
+// behind.
 
 import { type JSX } from 'react'
 import { Stack, ToggleButton, ToggleButtonGroup } from '@mui/material'
-import { ZONE_SCOPES, ZONE_SCOPE_LABEL, type ZoneScope } from '@shared/zoneScope'
+import { ZONE_SCOPES, ZONE_SCOPE_LABEL, ZONE_SCOPE_TITLE, type ZoneScope } from '@shared/zoneScope'
 import { useZoneScope } from './useTimeslice'
 
 export interface ZoneScopeBarProps {
@@ -56,6 +64,9 @@ export function ZoneScopeBar({ testId }: ZoneScopeBarProps): JSX.Element {
             key={id}
             value={id}
             data-testid={`${testId}-${id}`}
+            // Every button carries ITS OWN membership's sentence, selected or not, so the
+            // difference between the two is learnable from whichever one the pointer lands on.
+            title={ZONE_SCOPE_TITLE[id]}
             sx={{ px: 1.1, py: 0.25, fontSize: 11, lineHeight: 1.4, textTransform: 'none' }}
           >
             {ZONE_SCOPE_LABEL[id]}

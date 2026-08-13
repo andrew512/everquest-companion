@@ -82,6 +82,32 @@ export const ZONE_SCOPE_LABEL: Record<ZoneScope, string> = {
 }
 
 /**
+ * WHAT PICKING A MEMBERSHIP DOES TO THE NUMBERS, on the button that picks it (JOS-304).
+ *
+ * Owner feedback 2026-08-13: *the every tier/this tier toggle is hard to understand*. The two
+ * LABELS above are two words each and the caption beside them only names which of the two is in
+ * force — neither says what the numbers then admit, and a reader who has never read this file's
+ * header has no way to find out. So each membership gets one plain sentence, worded as an effect on
+ * the reads rather than as a definition of a fold, and it is the hover of the button that selects
+ * it.
+ *
+ * IT LIVES HERE WITH THE LABEL AND THE PHRASE because they are the same vocabulary and must move
+ * together: a label reworded without its sentence is a button that promises one thing and does
+ * another. It is deliberately ZONE-NAME FREE — the caption sitting under the row prints the zone
+ * and the clause already, so interpolating it here would be the second copy of a fact the line
+ * below owns. (The XP overlay's own toggle DOES name the zone, because that window has no caption
+ * to carry it; that is a different surface answering the same question, not a drift.)
+ */
+export const ZONE_SCOPE_TITLE: Record<ZoneScope, string> = {
+  allTiers:
+    'The numbers count every visit to this camp, at any tier - the difficulty and instance spelled ' +
+    'into the zone name are folded away.',
+  exactTier:
+    'The numbers count only the tier you are standing in - visits to the same camp under any other ' +
+    'spelling of the zone name are left out.'
+}
+
+/**
  * How the membership is worded INSIDE the slice's caption — the clause appended after the zone's
  * own name (`Befallen 2 (Adaptive), every tier`).
  *
