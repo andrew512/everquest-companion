@@ -36,6 +36,7 @@ import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder'
 import type { ExaltPlan } from '@shared/planner/types'
 import { seedWishes, type WishEntry, type WishList } from '@shared/planner/wishlist'
 import { useGearIndex } from '../gear/gearData'
+import { useRememberedSearch } from '../gear/useAreaMemory'
 import { useBrowseClasses } from '../planner/useBrowseClasses'
 import { CURRENT_ERA_LABEL, eraHides, indexDonors, useDonors, useEraOnly } from '../planner/plannerData'
 import { groupNeeds, type FarmNeed } from '../planner/plannerFarm'
@@ -176,8 +177,13 @@ export default function WishlistView({ onOpenLoot }: WishlistViewProps = {}): JS
   // The SAME class filter the effect browser uses (`eq.planner.classes`) — a wish outside it is
   // chipped, never dropped, which is V2's rule about planned work and a wish is planned work.
   const classes = useBrowseClasses()
+  // THE ERA TOGGLE ALREADY SURVIVED (JOS-329 checked rather than assumed): `useEraOnly` is the
+  // shared `eq.planner.era` key and has been localStorage-backed since V4, so this tab's half of
+  // the ticket was only ever the search box. It is on the SESSION tier — `gear/areaMemory.ts` has
+  // the rule, and a wish-list search is the clearest case for it: the list is one you WROTE, so
+  // "where is that helm on here" is a question you finish, not a lens you keep.
   const [eraOnly, setEraOnly] = useEraOnly()
-  const [text, setText] = useState('')
+  const [text, setText] = useRememberedSearch('eq.wishlist.search')
 
   const index: WishIndices = useMemo(
     () => ({ donors: indexDonors(donorsState.donors), gear: indexGear(gearState.rows) }),
