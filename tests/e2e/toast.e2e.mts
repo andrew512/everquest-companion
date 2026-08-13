@@ -215,6 +215,13 @@ async function stepBossToast(main: Page, toast: Page): Promise<void> {
     (await countOf(toast, '[data-testid="toast-source-label"]')) === 1 &&
       (await countOf(toast, '[data-testid="toast-close"]')) === 1
   )
+  // …AND NO CALL TO ACTION (JOS-334). A boss kill names no destination, so the card offers
+  // nothing: the action is derived from the FOCUS that makes a card clickable, and the negative
+  // is what keeps it from degenerating into decoration every card wears.
+  check(
+    '…and NO action button, because this card goes nowhere',
+    (await countOf(toast, '[data-testid="toast-action"]')) === 0
+  )
 }
 
 /** A refused payload must reach no window at all — the validator is main's, not the overlay's. */
@@ -265,6 +272,11 @@ async function stepQuestToast(main: Page, toast: Page): Promise<void> {
 /**
  * A LEVEL-UP: the third kind (docs/plans/levelup-whats-new.md §2), and the first with no reward
  * block — so the CARD itself is the click target, which the next step exercises.
+ *
+ * AND SINCE JOS-334 IT SAYS SO OUT LOUD. What this step adds is the DISCOVERABILITY half: the
+ * card carries a visible action naming the level it leads to, so the promise is legible before
+ * anybody hovers it. Whether that button actually goes anywhere is the deep-link step's job —
+ * this one only asserts the card makes the offer.
  */
 async function stepLevelUpToast(mainPage: Page, toast: Page): Promise<void> {
   const cards = await sendAndSettle(
@@ -285,6 +297,25 @@ async function stepLevelUpToast(mainPage: Page, toast: Page): Promise<void> {
     return
   }
   check('…subtitled with what the ding unlocked', (card ?? '').includes('new spells'), card ?? '')
+
+  // The action's own text, read from INSIDE the level-up card rather than from the window: the
+  // stack holds three cards by now and "some button exists somewhere" is not the claim.
+  const action = await toast.evaluate((needle) => {
+    const el = [...document.querySelectorAll('[data-testid="toast-card"]')].find((e) =>
+      (e as HTMLElement).innerText.includes(needle)
+    )
+    const cta = el?.querySelector('[data-testid="toast-action"]')
+    return cta ? (cta as HTMLElement).innerText.replace(/\s+/g, ' ').trim() : ''
+  }, `Level ${String(DING_LEVEL)}!`)
+  if (!check('…and carrying a VISIBLE call to action, not just a pointer cursor (JOS-334)', !!action, action)) {
+    return
+  }
+  check('…that NAMES the level it will take you to', action.includes(String(DING_LEVEL)), action)
+  check(
+    '…in the app’s own voice for "go read the thing that changed" (WhatsNewTeaser’s words)',
+    /^See what.s new at/.test(action),
+    action
+  )
 }
 
 /** Does the app have character logs at all? Without them no feature view mounts (App's gate). */

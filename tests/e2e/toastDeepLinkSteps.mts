@@ -10,6 +10,10 @@
  * Read toast.e2e.mts's header first; it carries the frame these steps run inside (no window is
  * ever shown, the overlay has no pointer, `el.click()` is a real DOM click).
  *
+ * WHAT CHANGED IN JOS-334. The level-up card grew a visible call to action, so the roundtrip
+ * clicks THE BUTTON a reader would aim at rather than the invisible card-wide target — and then
+ * clicks the card body too, because the ticket's whole claim is that the two are one link.
+ *
  * WHAT CHANGED IN JOS-330. The roundtrip step used to stop at "the Leveling tab is mounted with
  * the panel set to 24", which was true the entire time the reader was looking at the top of a
  * screen of charts with the panel a screen and a half below the fold (the tab is one tall page
@@ -120,6 +124,36 @@ async function withWindowHeight(app: ElectronApplication, page: Page, height: nu
   }
 }
 
+/**
+ * Click the level-up card in the overlay — either its VISIBLE ACTION or the card body behind it —
+ * and say whether there was anything there to click.
+ *
+ * TWO TARGETS, ONE LINK (JOS-334). The card gained a compact "See what's new at 24" button, and
+ * that button fires the SAME `focusApp` the whole-card click has always fired. Both are exercised
+ * because the ticket's promise is precisely that they are one behaviour: the action is the card's
+ * click made visible, not a second path that could drift from it.
+ *
+ * `'card'` clicks the card ELEMENT itself, so the button inside it is never involved — an
+ * `el.click()` dispatches on that node and React's delegated listener handles it exactly as it
+ * handles a user's. (The overlay is always-on-top and NEVER SHOWN under EQ_E2E; it has no pointer
+ * to move, which is why every click in this file is dispatched inside the page.)
+ */
+function clickLevelUp(toast: Page, target: 'action' | 'card'): Promise<boolean> {
+  return toast.evaluate(
+    (a) => {
+      const card = [...document.querySelectorAll('[data-testid="toast-card"]')].find((e) =>
+        (e as HTMLElement).innerText.includes(a.needle)
+      )
+      if (!card) return false
+      const el = a.target === 'card' ? card : card.querySelector('[data-testid="toast-action"]')
+      if (!el) return false
+      ;(el as HTMLElement).click()
+      return true
+    },
+    { needle: `Level ${String(DING_LEVEL)}!`, target }
+  )
+}
+
 /** The content area's scrollTop, or -1 when there is no content area to read. */
 function contentTop(page: Page): Promise<number> {
   return page.evaluate((s) => {
@@ -144,9 +178,11 @@ function resetContentScroll(page: Page): Promise<number> {
  * view AND the anchor) → the app renderer's `applyDeepLink` → the Leveling tab, with the "New at
  * this level" panel opened ON THE LEVEL THAT DINGED.
  *
- * The click is dispatched inside the page rather than with the mouse because the overlay is
- * always-on-top and NEVER SHOWN under EQ_E2E — it has no pointer to move. `el.click()` is a real
- * DOM click event and React's delegated listener handles it exactly as it handles the user's.
+ * WHAT GETS CLICKED CHANGED IN JOS-334, AND THAT IS THE POINT. The card now carries a visible
+ * "See what's new at 24" action, so the click this step fires is THAT BUTTON — the affordance a
+ * real reader would actually aim at — and the whole-card click it replaced is re-proven at the
+ * end of the step. If the two ever stop meaning the same thing, one of the two halves goes red.
+ * Both go through `clickLevelUp` above, which explains why the clicks are dispatched in-page.
  *
  * AND SINCE JOS-330 IT ASSERTS THE ARRIVAL, not merely the destination. The tab is one tall page
  * (JOS-289) and this panel is the bottom of its left column (JOS-300), so "the Leveling tab is
@@ -157,15 +193,10 @@ function resetContentScroll(page: Page): Promise<number> {
  * pulse. The highlight is also asserted to EXPIRE: a permanent outline is a different feature.
  */
 export async function stepDeepLinkRoundtrip(mainPage: Page, toast: Page): Promise<void> {
-  const clicked = await toast.evaluate((needle) => {
-    const el = [...document.querySelectorAll('[data-testid="toast-card"]')].find((e) =>
-      (e as HTMLElement).innerText.includes(needle)
-    )
-    if (!el) return false
-    ;(el as HTMLElement).click()
-    return true
-  }, `Level ${String(DING_LEVEL)}!`)
-  if (!check('the level-up card is a click target (no reward block ⇒ the card itself)', clicked)) return
+  const clicked = await clickLevelUp(toast, 'action')
+  if (!check('the level-up card’s VISIBLE ACTION is a click target (JOS-334), and it is what fires here', clicked)) {
+    return
+  }
 
   const landed = await mainPage
     .waitForSelector('[data-testid="new-at-level"]', { timeout: 20_000 })
@@ -206,6 +237,24 @@ export async function stepDeepLinkRoundtrip(mainPage: Page, toast: Page): Promis
   // a RE-fire from a panel that is demonstrably dark first.
   const dark = await settle(() => panelHighlight(mainPage), (v) => v === 'false', { timeoutMs: 10_000 })
   check('…and the highlight is a brief cue, not a permanent outline: it comes back off', dark === 'false', dark)
+
+  // THE WHOLE CARD IS STILL THE LINK (JOS-334). The button is the promise becoming visible, and a
+  // reader who clicks the card ANYWHERE — as they have been able to since the kind shipped — must
+  // land in the same place. Armed by the dark panel above: a re-light can only have come from this
+  // click. A card that has aged out of its 25 s hold NOTES rather than fails; the hold is this
+  // spec's fixture, not a claim about the app.
+  if (await clickLevelUp(toast, 'card')) {
+    const relit = await settle(() => panelHighlight(mainPage), (v) => v === 'true', { timeoutMs: 8_000 })
+    check(
+      'clicking the card ITSELF still fires the same link — the action is a promise, not a second path',
+      relit === 'true',
+      relit
+    )
+    // Left dark again on the way out, because the repeat step below arms itself the same way.
+    await settle(() => panelHighlight(mainPage), (v) => v === 'false', { timeoutMs: 10_000 })
+  } else {
+    note('the level-up card aged out before the whole-card click could be re-tested — its hold is the fixture speaking, not a regression')
+  }
 }
 
 /**
