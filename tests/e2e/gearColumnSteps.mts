@@ -104,8 +104,15 @@ async function typeAndSettle(page: Page, value: string): Promise<number> {
   return last
 }
 
-/** One numeric cell of one row, as text. `''` is both "not on screen" and "states none" (by design). */
-function cellText(page: Page, key: string, column: string): Promise<string> {
+/**
+ * One numeric cell of one row, as text. `''` is both "not on screen" and "states none" (by design).
+ *
+ * EXPORTED, and the spec next door imports it instead of keeping the byte-identical copy it used
+ * to (JOS-324). `gear.e2e.mts` sits AT the measured 400-line file ceiling and the rule here is to
+ * split rather than ratchet; a helper that already existed twice is the cheapest honest split, and
+ * "which cell of which row" is this file's own subject.
+ */
+export function cellText(page: Page, key: string, column: string): Promise<string> {
   return page.evaluate(
     ([k, c]) => {
       const cell = document
@@ -121,11 +128,15 @@ function cellText(page: Page, key: string, column: string): Promise<string> {
  * THE THREE BOXES, in one read. `list` is how far the table overflows its own scroller — which is
  * where a wide column set is SUPPOSED to go. `doc` and `content` are the page, which must never
  * move sideways no matter how many columns are asked for.
+ *
+ * `content` is named by its testid rather than taken as `main`'s first child, for the reason
+ * `pageOverflow` states in appHarness.mts: since JOS-324 the gear area's tab bar is that first
+ * child, and measuring it instead would have been a permanent silent pass.
  */
 function overflowX(page: Page): Promise<{ list: number; doc: number; content: number }> {
   return page.evaluate(() => {
     const list = document.querySelector('[data-testid="gear-list"]')
-    const content = document.querySelector('main')?.firstElementChild as HTMLElement | null
+    const content = document.querySelector('[data-testid="app-content"]') as HTMLElement | null
     return {
       list: list === null ? -1 : list.scrollWidth - list.clientWidth,
       doc: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),

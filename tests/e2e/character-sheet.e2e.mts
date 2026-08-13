@@ -13,10 +13,18 @@
  * IPC channel — which is refused in the first run — answer. Absent, then present, on ONE build:
  * that is a gate, and the first run's silence means something.
  *
- * WHAT STAYS ABSENT IN BOTH RUNS: the nav row and the whole renderer tree. The override is a
+ * WHAT STAYS ABSENT IN BOTH RUNS: the character TAB and the whole renderer tree. The override is a
  * MAIN-side door only, and deliberately so — the renderer half is a compile-time strip, so
  * there is nothing in these bytes for any environment variable to reveal. A run that found
- * `nav-character` under the override would mean the strip had stopped working.
+ * `tab-character` under the override would mean the strip had stopped working.
+ *
+ * WHERE THE ABSENCE IS LOOKED FOR, AND WHY IT MOVED (JOS-324). The sheet used to hang off a nav
+ * row of its own and this spec counted `nav-character`. That row is gone in EVERY build now — it
+ * collapsed into the gear area as that area's last TAB — so counting it would have become an
+ * absence that is true for the wrong reason: vacuously, everywhere, gate or no gate. The spec
+ * therefore OPENS the area first (`nav-gear`, which every build has) and waits for the tab bar to
+ * mount before claiming anything. That is a strictly stronger reading than the old one: the bar
+ * whose contents are being enumerated is demonstrably on screen at the moment of the count.
  *
  * Run: `npm run test:e2e -- character-sheet` (or node --import tsx this file).
  */
@@ -24,7 +32,12 @@ import type { Page } from 'playwright-core'
 import { buildIfStale, check, countOf, dumpArtifacts, failures, note, reportRun } from './appHarness.mjs'
 import { launchApp, mainWindow } from './appWindow.mjs'
 
-const NAV = '[data-testid="nav-character"]'
+/** The gear area's one nav row — present in every build, and the way into the tab bar. */
+const NAV_GEAR = '[data-testid="nav-gear"]'
+/** The area's FIRST tab, whose presence proves the bar mounted — the positive half of the check. */
+const TAB_GEAR = '[data-testid="tab-gear"]'
+/** What must not be there. */
+const TAB = '[data-testid="tab-character"]'
 
 /** Does `window.eq.characterSheet()` resolve in this build? Never throws out of the page. */
 function sheetReachable(page: Page): Promise<boolean> {
@@ -58,11 +71,31 @@ function readSheet(page: Page): Promise<{ cells: number; worn: number; counted: 
   })
 }
 
-async function stepStripped(page: Page): Promise<void> {
-  check(
-    'the unreleased Character tab is STRIPPED from a production-shaped build (no nav row)',
-    (await countOf(page, NAV)) === 0
+/**
+ * Open the gear area and wait for its tab bar. Returns whether the bar is up — a `false` makes
+ * every absence claim below vacuous, so it is reported rather than swallowed.
+ */
+async function openGearArea(page: Page): Promise<boolean> {
+  const hasRow = await page.waitForSelector(NAV_GEAR, { timeout: 60_000 }).then(
+    () => true,
+    () => false
   )
+  if (!check('the gear area has its one nav row in a production-shaped build', hasRow)) return false
+  await page.click(NAV_GEAR, { timeout: 15_000 })
+  const barUp = await page.waitForSelector(TAB_GEAR, { timeout: 30_000 }).then(
+    () => true,
+    () => false
+  )
+  return check('…and it opens an area whose tab bar is on screen', barUp)
+}
+
+async function stepStripped(page: Page): Promise<void> {
+  if (await openGearArea(page)) {
+    check(
+      'the unreleased Character tab is STRIPPED from a production-shaped build (the bar is up, and it is not on it)',
+      (await countOf(page, TAB)) === 0
+    )
+  }
   const reachable = await sheetReachable(page)
   check(
     '…and its IPC handler is not registered in this build either',
@@ -76,10 +109,12 @@ async function stepStripped(page: Page): Promise<void> {
  * var can undo it — but main's door opens, so the channel answers.
  */
 async function stepForced(page: Page): Promise<void> {
-  check(
-    'EQ_UNRELEASED=1 does NOT resurrect the nav row — the renderer strip is compile-time',
-    (await countOf(page, NAV)) === 0
-  )
+  if (await openGearArea(page)) {
+    check(
+      'EQ_UNRELEASED=1 does NOT resurrect the Character tab — the renderer strip is compile-time',
+      (await countOf(page, TAB)) === 0
+    )
+  }
   const reachable = await sheetReachable(page)
   check(
     'EQ_UNRELEASED=1 DOES open main’s door — so the first run’s refusal was the gate, not a missing feature',

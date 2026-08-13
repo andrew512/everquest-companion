@@ -16,9 +16,13 @@ export type View =
   | 'loot'
   | 'planner'
   // The GEAR PLANNER's search surface (JOS-284) — the candidate index over every equippable item.
-  // A top-level tab by owner ruling: it needs no set and no selection, so it is not a mode of
-  // Exaltations, it is its own question.
+  // It was a top-level nav row of its own until JOS-324; it is now the FIRST TAB of the gear area
+  // (see `GEAR_AREA_VIEWS` below) and its view id, route and every `gear-*` testid are unchanged.
   | 'gear'
+  // The WISH LIST (JOS-324 shell, JOS-326 content) — the third face of the gear area: the items
+  // you have decided you want, kept as a list rather than derived from a plan. It ships this
+  // ticket as an honest placeholder panel and gains its content in JOS-326.
+  | 'wishlist'
   | 'buffs'
   | 'timers'
   | 'preferences'
@@ -33,7 +37,8 @@ export type View =
   // 'triage' above: the member is a TYPE. What strips is the CODE — the nav row, the content
   // branch and the lazily-imported tree all sit behind `UNRELEASED`, and `KNOWN_VIEWS` drops
   // the string in a build without it, so a persisted 'character' can never leave a shipped app
-  // staring at an empty content area.
+  // staring at an empty content area. Since JOS-324 the code it gates is the area's LAST TAB
+  // rather than a nav row of its own; JOS-327 removes the gate.
   | 'character'
 
 export const VIEW_KEY = 'eq.view'
@@ -64,6 +69,9 @@ export const VIEW_LABELS: Record<View, string> = {
   // tab is named, so the nav row and a drill's Back button rename together by construction.
   planner: 'Exaltations',
   gear: 'Gear',
+  // JOS-324. Two words, as a player writes it — the tab bar says it and, the day a wish-list row
+  // deep-links into Loot, so will that drill's Back button.
+  wishlist: 'Wish list',
   buffs: 'Buffs',
   timers: 'Timers',
   preferences: 'Preferences',
@@ -85,6 +93,7 @@ const KNOWN_VIEWS: View[] = [
   'loot',
   'planner',
   'gear',
+  'wishlist',
   'buffs',
   'timers',
   'preferences',
@@ -102,4 +111,71 @@ export function loadView(): View {
   // instead of silently bouncing them to the default view.
   if (v === 'inventory') return 'loot'
   return v && (KNOWN_VIEWS as string[]).includes(v) ? (v as View) : DEFAULT_VIEW
+}
+
+// ============================================================================
+// THE GEAR AREA — one nav row, four tabs (JOS-324)
+// ============================================================================
+//
+// THE LAW THIS REPLACES. Until JOS-324 the nav drawer's law was one row per view, full stop, and
+// three of those rows were three faces of the SAME question — Gear (what should I be wearing),
+// Exaltations (what am I farming for) and the dev-only Character sheet (what am I wearing right
+// now). Three rows put three answers to one question in a vertical list where nothing said they
+// belonged together, and the third of them hung off the bottom behind a flag. The owner's ruling
+// (2026-08-13, the One Coin Four Faces design) collapses them into ONE nav row with an in-area tab
+// bar — and adds the fourth face the list had no room to grow: a Wish list (what do I want).
+//
+// WHAT DID **NOT** CHANGE, and that is the whole point of this shape. The view ids are untouched
+// (`gear`, `planner`, `character`, plus the new `wishlist`), App still renders exactly ONE view at
+// a time, and every tab switch travels the ordinary `selectView` path a nav row travels. So deep
+// links still land, `viewKey` still unmounts the outgoing view on a switch, and the Back stack
+// (appRouting.ts / navOrigin.ts / backTargets.ts) keeps its semantics to the letter — a tab click
+// is MANUAL navigation and clears the parked trail, which is what a nav-row click always did.
+//
+// THE ORDER IS THE TAB BAR'S ORDER, and Character is LAST on purpose: it is the only member that
+// is not a shopping question, and it is the one the review gate can still take away.
+
+/** Where the area remembers which tab you were last on. Renderer-only, like `VIEW_KEY`. */
+export const GEAR_TAB_KEY = 'eq.gear.tab'
+
+/** The tab the nav row opens when nothing has been remembered — the area's front door. */
+export const DEFAULT_GEAR_TAB: View = 'gear'
+
+/**
+ * The four faces, in tab order — FILTERED BY WHAT THIS BUILD CAN RENDER.
+ *
+ * Deriving the roster from `KNOWN_VIEWS` rather than re-spelling the `UNRELEASED` gate is what
+ * keeps the two lists from disagreeing: the Character tab appears exactly when the build can draw
+ * the Character view, and JOS-327 graduates it by moving `character` out of the gated spread
+ * above — no second edit down here, and no window where the bar offers a tab that mounts nothing.
+ */
+export const GEAR_AREA_VIEWS: readonly View[] = (
+  ['gear', 'planner', 'wishlist', 'character'] as const
+).filter((v) => (KNOWN_VIEWS as readonly View[]).includes(v))
+
+/** Is this view drawn inside the gear area? (⇒ the nav row reads selected, the tab bar is up.) */
+export function isGearAreaView(view: View): boolean {
+  return GEAR_AREA_VIEWS.includes(view)
+}
+
+/**
+ * Which tab the Gear nav row opens.
+ *
+ * A row that always opened the Gear tab would make the other three cost two clicks forever, and a
+ * row that opened whatever you last had would be wrong the first time. So: last-used, defaulting
+ * to Gear — validated against `GEAR_AREA_VIEWS`, so a value written by a build that HAD the
+ * Character tab cannot strand a packaged user on a tab their build does not draw.
+ */
+export function loadGearTab(): View {
+  const v = localStorage.getItem(GEAR_TAB_KEY)
+  return v && (GEAR_AREA_VIEWS as readonly string[]).includes(v) ? (v as View) : DEFAULT_GEAR_TAB
+}
+
+/**
+ * Remember the area tab, if this view is one. Called on EVERY view change rather than from the
+ * tab bar's click handler, because "last-used tab" has to mean the tab you were last standing on
+ * however you got there — a deep link and a Back both count.
+ */
+export function rememberGearTab(view: View): void {
+  if (isGearAreaView(view)) localStorage.setItem(GEAR_TAB_KEY, view)
 }

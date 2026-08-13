@@ -93,6 +93,14 @@ export const TELEMETRY_VIEWS = [
   // validates through this module, so the server has to learn the value before a client that can
   // emit it ships, or one dwell on this tab 400s the whole batch and drops every counter in it.
   'gear',
+  // The gear area's Wish list tab (JOS-324). SAME CLOSED-ENUM DEPLOY ORDER as every member added
+  // since JOS-119 — the ingest Lambda validates through this module, so the server has to learn
+  // the value before a client that can emit it ships, or one dwell on this tab 400s the whole
+  // batch and drops every counter in it. It is here rather than held back with the UNRELEASED
+  // views because it is a REACHABLE tab from the day this ships: it draws a placeholder until
+  // JOS-326 fills it, and how often anyone opens a placeholder is exactly the sort of thing the
+  // dwell histogram is for.
+  'wishlist',
   'preferences',
   'triage'
 ] as const
