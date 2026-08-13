@@ -34,9 +34,9 @@ import { IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow, Ta
 import AddIcon from '@mui/icons-material/Add'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
-import { EraChip, DonorName, MismatchChip } from '../planner/PlannerChips'
+import { EraChip, DonorName } from '../planner/PlannerChips'
 import { gearTableLayout, statText, type GearColumn } from './gearColumns'
-import { classMismatch, sortValue, type GearSort, type GearSortKey } from './gearFilter'
+import { sortValue, type GearSort, type GearSortKey } from './gearFilter'
 import { ownedCellText, ownedCellTitle, ownershipFor, type GearOwnershipMap } from './gearOwnership'
 import type { ClassAbbr } from '@shared/classCombo'
 
@@ -76,8 +76,6 @@ export interface GearTableProps {
   columns: readonly GearColumn[]
   win: WindowedRows
   sort: GearSort
-  /** the class filter the mismatch chip is measured against — never enforced, only pointed at */
-  classes: readonly ClassAbbr[]
   /**
    * The ownership join (JOS-285), keyed by `row.key` — `null` when this character has never
    * written a dump, which removes the column entirely rather than drawing a blank one
@@ -117,17 +115,14 @@ function PadRow({ height, colSpan }: { height: number; colSpan: number }): JSX.E
 const GearLine = memo(function GearLine({
   row,
   columns,
-  classes,
   ownership,
   on
 }: {
   row: GearRow
   columns: readonly GearColumn[]
-  classes: readonly ClassAbbr[]
   ownership: GearOwnershipMap | null
   on: { openLoot?: (item: string) => void; assign?: (row: GearRow) => void }
 }): JSX.Element {
-  const mismatch = classMismatch(row.classes, classes)
   // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
   // already the ownership key — phase 3's seam — so there is nothing to normalise here.
   const owned = ownership === null ? null : ownershipFor(ownership, row)
@@ -149,11 +144,17 @@ const GearLine = memo(function GearLine({
             </IconButton>
           )}
           <DonorName name={row.name} onOpen={on.openLoot} />
-          {/* The two chips a gear row can wear, both of them POINTERS rather than verdicts: the
-              era join's (out of era / era?) and the class filter's. A mismatch is chipped, never
-              removed — the trio is a filter and never a rule (V2, plannerClasses.ts). */}
+          {/* THE ONE CHIP A SEARCH ROW WEARS, and it is a POINTER rather than a verdict: the era
+              join's (out of era / era?), which explains a row you can SEE.
+
+              THE CLASS MISMATCH CHIP IS GONE FROM THIS TABLE (owner ruling 2026-08-13, JOS-302:
+              *obviously wrong, it should just be removed*). A row this character's classes cannot
+              use is no longer chipped here — it is not here at all, because `filterGearRows` now
+              removes it (gearFilter.ts `GearFilters.classes` carries the full argument, including
+              why the planner build pane's own mismatch chip stays exactly where it is). A chip that
+              can only ever appear on a row the filter already removed would be dead code pretending
+              to be a law. */}
           <EraChip subject={row} />
-          {mismatch && <MismatchChip classes={row.classes} />}
         </Stack>
       </TableCell>
       <TableCell title={row.slots.join(' ')}>{row.slots.join(' ')}</TableCell>
@@ -206,7 +207,6 @@ export default function GearTable({
   columns,
   win,
   sort,
-  classes,
   ownership,
   ownedHint,
   onSort,
@@ -253,14 +253,7 @@ export default function GearTable({
       <TableBody>
         <PadRow height={win.topPad} colSpan={span} />
         {rows.slice(win.start, win.end).map((row) => (
-          <GearLine
-            key={row.key}
-            row={row}
-            columns={columns}
-            classes={classes}
-            ownership={ownership}
-            on={handlers}
-          />
+          <GearLine key={row.key} row={row} columns={columns} ownership={ownership} on={handlers} />
         ))}
         <PadRow height={win.bottomPad} colSpan={span} />
       </TableBody>

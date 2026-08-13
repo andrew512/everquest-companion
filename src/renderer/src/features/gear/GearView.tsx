@@ -57,6 +57,15 @@
 // The plus-state is the one control on both sides of that line: hiding it does not merely remove a
 // slider, it puts the corpus back at base, because a simulation nobody can see or cancel is the
 // quiet lie `useUpgradeState` refuses to persist for exactly the same reason.
+//
+// AND SINCE JOS-302 THE FIRST TOOLBAR ROW NARROWS HARDER, in three ways the pipeline above did not
+// change one line for. The CLASS picks remove rows instead of chipping them (the owner's ruling —
+// gearFilter.ts `GearFilters.classes` holds the argument, GearTable.tsx holds the deleted chip's
+// tombstone); the SLOT picker is a multi-select whose picks UNION; and a WEAPON TYPE picker joins
+// it, unioning over the nine skills the corpus states plus the three categories that span them.
+// All three are ordinary fields of `GearFilters`, so they AND with era, owned, effect, ratio and
+// the thresholds exactly as everything else does — the only thing this file had to learn is that a
+// third filter can now be the reason the table is empty (`emptyText`, and the pass that counts it).
 
 import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
 import { Box, Chip, Stack, Typography } from '@mui/material'
@@ -131,6 +140,8 @@ interface TableState {
   hiddenByEra: number
   /** …and the same question for the Owned toggle, which can hide 6,693 of 6,766 rows in one click */
   hiddenByOwned: number
+  /** …and for the class picks, which since JOS-302 REMOVE rows instead of chipping them */
+  hiddenByClasses: number
 }
 
 /**
@@ -150,19 +161,24 @@ function useTableRows(
   const { sort, deps, chosen } = opts
   const scaled = useMemo(() => scaleAll(rows, state), [rows, state])
   const filtered = useMemo(() => filterGearRows(scaled, filters, deps), [scaled, filters, deps])
-  const columns = useMemo(() => columnsFor(chosen, filters, sort), [chosen, filters, sort])
+  const columns = useMemo(() => columnsFor(chosen, sort), [chosen, sort])
   const inForce = useMemo(() => sortWithin(sort, columns), [sort, columns])
   const sorted = useMemo(() => sortGearRows(filtered, inForce), [filtered, inForce])
   // WHY THE LIST IS EMPTY, when it is (the JOS-67 law: a filter that can hide everything must be
-  // able to admit it). Two filters can do it on their own: the era one, which is on by DEFAULT
-  // rather than by choice, and the Owned one, which is one click and removes 99% of the corpus by
-  // design. Each costs one extra pass, and only at the moment there is nothing else to draw.
+  // able to admit it). THREE filters can do it without the user having chosen them in the moment:
+  // the era one, which is on by DEFAULT rather than by choice; the Owned one, which is one click
+  // and removes 99% of the corpus by design; and — since JOS-302 — the CLASS picks, which the view
+  // fills from DETECTION and which now remove rows rather than chipping them. The slot and weapon
+  // pickers are deliberately NOT in this list: both are empty until somebody picks, and both wear
+  // their picks as chips in the toolbar, so an empty table under them already explains itself.
+  // Each costs one extra pass, and only at the moment there is nothing else to draw.
   const hidden = useMemo(() => {
-    if (sorted.length > 0) return { hiddenByEra: 0, hiddenByOwned: 0 }
+    if (sorted.length > 0) return { hiddenByEra: 0, hiddenByOwned: 0, hiddenByClasses: 0 }
     const count = (over: Partial<GearFilters>): number => filterGearRows(scaled, { ...filters, ...over }, deps).length
     return {
       hiddenByEra: filters.eraOnly ? count({ eraOnly: false }) : 0,
-      hiddenByOwned: filters.ownedOnly ? count({ ownedOnly: false }) : 0
+      hiddenByOwned: filters.ownedOnly ? count({ ownedOnly: false }) : 0,
+      hiddenByClasses: filters.classes.length > 0 ? count({ classes: [] }) : 0
     }
   }, [sorted.length, scaled, filters, deps])
   return { rows: sorted, columns, sort: inForce, ...hidden }
@@ -171,8 +187,12 @@ function useTableRows(
 /**
  * The one sentence an empty table says, naming the filter responsible when there is one.
  *
- * OWNED IS NAMED FIRST when both are holding rows back, because it is the one the user just
- * clicked — and because it is the one whose effect is total rather than partial.
+ * OWNED IS NAMED FIRST when several are holding rows back, because it is the one the user just
+ * clicked — and because it is the one whose effect is total rather than partial. THE CLASS LINE IS
+ * LAST for the opposite reason (JOS-302): the class picks are usually the app's own detection
+ * rather than a click, so naming them first would explain an empty table with something the user
+ * did not do while a toggle they DID flip sits unmentioned. Same voice as the other two: the count
+ * that would come back, and the control that is holding it.
  */
 function emptyText(ready: boolean, refused: boolean, table: TableState): string {
   if (refused) return 'This build cannot read the gear index it was served - it states a newer version.'
@@ -182,6 +202,9 @@ function emptyText(ready: boolean, refused: boolean, table: TableState): string 
   }
   if (table.hiddenByEra > 0) {
     return `No gear matches these filters - but ${String(table.hiddenByEra)} items are hidden by the Current era toggle above.`
+  }
+  if (table.hiddenByClasses > 0) {
+    return `No gear matches these filters - but ${String(table.hiddenByClasses)} items match once the Classes picker is cleared. An item whose page states no class list is never hidden by it.`
   }
   return 'No gear matches these filters.'
 }
@@ -390,7 +413,6 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
             columns={table.columns}
             win={win}
             sort={table.sort}
-            classes={classes.classes}
             ownership={ownership.map}
             ownedHint={hint}
             // The base is the sort IN FORCE, not the requested one: after a picker removed the
