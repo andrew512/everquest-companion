@@ -8,13 +8,14 @@
 // meant two different instants on the two charts. The shared domain is the seam the band
 // strip and the drag selection hang off; nothing else about the drawing changed.
 
-import type { CSSProperties, JSX } from 'react'
+import { useSyncExternalStore, type CSSProperties, type JSX } from 'react'
 import type { LevelSegment } from './levelSeries'
 import { CHART_H, CHART_W, xOf, type AaPoint, type ChartScale } from './levelChartGeometry'
 import { LevelHoverLayer } from './LevelHoverLayer'
 import { formatTime } from '../../lib/formatDate'
 import { BAND_H, BAND_PAD, PAD_X, bandRects, type ZoneBand, type ZoneLegend } from './zoneBands'
 import type { ChartSelection, SelectionPointerHandlers } from './useChartSelection'
+import type { DraftStore } from './selectionDraft'
 
 const W = CHART_W
 const H = CHART_H
@@ -27,8 +28,13 @@ const H = CHART_H
 export interface ChartChrome {
   scale: ChartScale
   bands: readonly ZoneBand[]
-  /** live draft or committed selection — the SAME band is drawn on both charts. */
+  /** The COMMITTED selection — the SAME band is drawn on both charts. Since JOS-290 it is only
+   *  the committed one: the live draft arrives on `draft` instead, so a pointermove no longer
+   *  travels through the view that builds this object. */
   range: ChartSelection | null
+  /** The live draft, as a SUBSCRIPTION (JOS-290, selectionDraft.ts). `SelectionBand` is the one
+   *  subscriber in the app and it outranks `range` while it holds a value. */
+  draft: DraftStore
   /** a range drag owns the pointer: the hover tooltip must not render. */
   suppressed: boolean
   pointer: SelectionPointerHandlers
@@ -92,16 +98,25 @@ function ZoneBandStrip({ bands, scale }: { bands: readonly ZoneBand[]; scale: Ch
  *
  * `pointerEvents:'none'` throughout: the band must never steal a hover target, so the
  * tooltip stays fully live over a committed selection.
+ *
+ * THIS IS THE DRAG HANDLE, AND IT IS THE ONLY THING A POINTERMOVE RE-RENDERS (JOS-290). It
+ * subscribes to the draft store directly rather than being handed a value from the view, which
+ * is what took 284 ms of tab re-render off every single move; the precedence is unchanged —
+ * a live draft outranks the committed selection, exactly as the old `draft ?? sel` did.
  */
 function SelectionBand({
   scale,
-  range,
+  committed,
+  draft,
   color
 }: {
   scale: ChartScale
-  range: ChartSelection | null
+  committed: ChartSelection | null
+  draft: DraftStore
   color: string
 }): JSX.Element | null {
+  const live = useSyncExternalStore(draft.subscribe, draft.get, draft.get)
+  const range = live ?? committed
   if (!range) return null
   const l = (xOf(scale, range.t0) / scale.w) * 100
   const r = (xOf(scale, range.t1) / scale.w) * 100
@@ -223,7 +238,7 @@ export function AreaChart({
           </>
         )}
       </svg>
-      <SelectionBand scale={scale} range={chrome.range} color={color} />
+      <SelectionBand scale={scale} committed={chrome.range} draft={chrome.draft} color={color} />
       <LevelHoverLayer
         scale={scale}
         height={H}
@@ -372,7 +387,7 @@ export function LevelStepChart({
           </text>
         )}
       </svg>
-      <SelectionBand scale={scale} range={chrome.range} color={color} />
+      <SelectionBand scale={scale} committed={chrome.range} draft={chrome.draft} color={color} />
       <LevelHoverLayer
         scale={scale}
         height={H}

@@ -84,6 +84,9 @@ import { stepZoneSlice } from './sliceSteps.mjs'
 // The layout contract and the narrow window (JOS-151) — next door for the same reason, and see
 // that file's header for what the reporter's 1073x937 actually did to this tab.
 import { stepNarrowLayout, stepOverflow } from './levelingLayoutSteps.mjs'
+// WHAT A POINTERMOVE COSTS (JOS-290) — the drag-responsiveness pin, next door because this file
+// is at the repo's line budget. It measures inside the same gesture it asserts about.
+import { stepDragCost } from './dragPerfSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -687,6 +690,11 @@ async function main(): Promise<void> {
         // columns the idle classifier walks — so every byte-identical reading above must already
         // be behind us. See dropSteps.mts.
         await stepDrops(page, log)
+        // LAST of all: it PROFILES, so anything that runs after it would be measuring this step's
+        // leftovers, and it wants the tab in the fullest state the spec ever puts it in (the
+        // drops panel is populated by the step above) — which is the state a move used to have
+        // to re-render. It commits its own selection and leaves it; nothing below reads one.
+        await stepDragCost(page, LEVEL_CHART)
       } else {
         // The empty-state half of the headline assertion still holds, and is the honest thing
         // to assert on a log with no chart: there is no domain, so there is no scope, so there
