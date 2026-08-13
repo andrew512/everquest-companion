@@ -89,7 +89,7 @@ import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
 // The in-window drops panel and its round trip into the item drill-down (JOS-78) — next door
 // because this spec sits AT the repo max-lines budget; see that file's header.
 import { stepDrops } from './dropSteps.mjs'
-import { stepZoneSlice } from './sliceSteps.mjs'
+import { stepScopeDefaults, stepZoneSlice } from './sliceSteps.mjs'
 // The layout contract, the spell card in the per-level readout and the narrow window (JOS-289,
 // which inverted JOS-151's claim here) — next door for the same reason, and see that file's header
 // for what the reporter's 1073x937 did to this tab and what the owner overturned afterwards.
@@ -691,6 +691,9 @@ async function main(): Promise<void> {
       await waitReplayed(page)
       const chart = await stepChart(page)
       if (chart) {
+        // FIRST OF THE SCOPE STEPS, and it has to be: it reads what the tab OPENED on (JOS-332,
+        // this tier + elapsed), so anything that presses a control has to come after it.
+        await stepScopeDefaults(page)
         await stepBands(page)
         // The curve itself (JOS-292), read before any gesture has been made: its vertices, its
         // refusals, and the readout standing on one. It leaves no selection and no tooltip.
