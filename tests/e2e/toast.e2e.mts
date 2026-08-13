@@ -25,6 +25,13 @@
  * transform/opacity; what is checked here is that the card, its title and — for a Sky
  * completion — its reward block with the item's name are actually rendered.
  *
+ * WHERE THE DEEP LINKS WENT (JOS-330). The two steps that follow a card's CLICK — the level-up
+ * link's landing on the "New at this level" panel, and the same level asked for twice — live in
+ * tests/e2e/toastDeepLinkSteps.mts, with the geometry instruments they need. The split is the
+ * 400-code-line factoring ceiling doing its job; the claims are unchanged apart from the arrival
+ * measurements the ticket added. `DING_LEVEL` comes from there too, because the payload this spec
+ * sends and the level that step expects to land on are one number.
+ *
  * Run: `npm run test:e2e` (or `node --import tsx tests/e2e/toast.e2e.mts`).
  */
 import type { ElectronApplication, Page } from 'playwright-core'
@@ -41,12 +48,10 @@ import {
 } from './appHarness.mjs'
 import { mainWindow } from './appWindow.mjs'
 import { launchOnFixture } from './logFixture.mjs'
+import { DING_LEVEL, stepDeepLinkRoundtrip, stepRepeatDeepLink } from './toastDeepLinkSteps.mjs'
 
 /** A Sky reward that exists in the committed item DB, so the card resolves with NO network. */
 const REWARD = 'Shining Metallic Robes'
-
-/** The level a synthetic ding celebrates, and the level its click must anchor the panel at. */
-const DING_LEVEL = 24
 
 /** A quest key that exists in the committed Plane of Sky dataset (`Class::Name`, the app's own). */
 const QUEST_KEY = 'Paladin::Paladin Test of Spirit'
@@ -289,44 +294,6 @@ async function hasFeatureViews(page: Page): Promise<boolean> {
 }
 
 /**
- * THE DEEP-LINK ROUNDTRIP, end to end and through the REAL plumbing: a click on the toast card in
- * the overlay window → `eqOverlay.focusApp` → main's `focusView` handler (which re-validates the
- * view AND the anchor) → the app renderer's `applyDeepLink` → the Leveling tab, with the "New at
- * this level" panel opened ON THE LEVEL THAT DINGED.
- *
- * The click is dispatched inside the page rather than with the mouse because the overlay is
- * always-on-top and NEVER SHOWN under EQ_E2E — it has no pointer to move. `el.click()` is a real
- * DOM click event and React's delegated listener handles it exactly as it handles the user's.
- */
-async function stepDeepLinkRoundtrip(mainPage: Page, toast: Page): Promise<void> {
-  const clicked = await toast.evaluate((needle) => {
-    const el = [...document.querySelectorAll('[data-testid="toast-card"]')].find((e) =>
-      (e as HTMLElement).innerText.includes(needle)
-    )
-    if (!el) return false
-    ;(el as HTMLElement).click()
-    return true
-  }, `Level ${String(DING_LEVEL)}!`)
-  if (!check('the level-up card is a click target (no reward block ⇒ the card itself)', clicked)) return
-
-  const landed = await mainPage
-    .waitForSelector('[data-testid="new-at-level"]', { timeout: 20_000 })
-    .then(
-      () => true,
-      () => false
-    )
-  if (!check('…and the click lands the app on the Leveling tab’s "New at this level" panel', landed)) return
-  const value = await mainPage.evaluate(
-    () => (document.querySelector('[data-testid="new-at-level-value"]') as HTMLElement | null)?.innerText ?? ''
-  )
-  check('…anchored at the level that dinged, not at the character’s own', value.includes(String(DING_LEVEL)), value)
-  check(
-    '…with the level stepper mounted (the panel is browsable, not just historical)',
-    (await countOf(mainPage, '[data-testid="new-at-level-next"]')) === 1
-  )
-}
-
-/**
  * THE PER-QUEST ANCHOR (docs/plans/celebration-toasts.md T6, finished in wave O2). Wave L shipped
  * the tab-level half and flagged this as the follow-up: the payload now names a quest, and the
  * Plane of Sky tab must EXPAND and reveal exactly that one.
@@ -395,6 +362,7 @@ async function main(): Promise<void> {
       // CORRECT behaviour and not something these steps can assert through.
       if (await hasFeatureViews(page)) {
         await stepDeepLinkRoundtrip(page, t)
+        await stepRepeatDeepLink(app, page, t)
         await stepQuestAnchor(page, t)
       } else {
         note('no character logs on this machine — the deep-link roundtrips need a mounted feature view, so they are skipped')
