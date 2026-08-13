@@ -450,8 +450,13 @@ export const IPC = {
   // renderer -> main: save the FULL slice to disk via the OS save dialog, so a user who
   // wants to read every byte before sending can. Returns {ok, path?, canceled?}.
   feedbackSaveSlice: 'feedback:saveSlice',
-  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes}). Never rejects;
-  // a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
+  // renderer -> main: package the CURRENT `/outputfile inventory` dump and return its
+  // metadata + a capped preview, or the NAMED reason there is none (JOS-296). No arguments:
+  // which dump belongs to this character is main's answer, never the renderer's. The gz bytes
+  // never cross. Returns FeedbackInventoryPreview.
+  feedbackBuildInventory: 'feedback:buildInventory',
+  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes, attachInventory}). Never
+  // rejects; a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
   feedbackSubmit: 'feedback:submit',
 
   // ---- usage analytics (docs/plans/usage-analytics.md wave A1) ------------------------
