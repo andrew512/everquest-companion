@@ -428,7 +428,9 @@ function ChartsColumn(p: {
           time base, so there is one control for it — and since JOS-75 one scope under it. Since
           JOS-130 it is the APP'S control, not this tab's (features/timeslice). */}
       {/* BOTH halves of one sentence (JOS-288): which stretch, and per hour of what inside it. The
-          prefix is unchanged — `ScopeBar` spells the slice half's testids `leveling-slice…`. */}
+          prefix is unchanged — `ScopeBar` spells the slice half's testids `leveling-slice…`. Since
+          JOS-301 it is ONE row of controls with ONE caption line under it, so this is a single band
+          of the column rather than the three stacked bars the owner called unbalanced. */}
       <ScopeBar available={p.available} slice={p.slice} onPick={p.onPick} onCustom={p.onCustom} testId="leveling" />
       <AaOverTimePanel points={p.aaPoints} drawn={charts.aaVisible} aaEarned={p.aaEarned} chrome={chrome} />
       <LevelOverTimePanel
