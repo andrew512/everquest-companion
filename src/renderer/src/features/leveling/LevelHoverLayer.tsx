@@ -32,6 +32,10 @@ import {
   type LevelAt
 } from './levelChartGeometry'
 import type { LevelSegment } from './levelSeries'
+// The fractional curve the level chart now draws (JOS-292). Read here so the readout and the
+// pixels answer from ONE object: a tooltip that named a bar position the curve refused to draw
+// would be the "picture contradicts the readout" defect the swap arm below already exists for.
+import { curveAt, CURVE_REFUSAL_NOTE, type LevelCurve } from './levelCurve'
 import { zoneAt, zoneColor, type ZoneBand } from './zoneBands'
 
 /** Cursor slack, in CSS px, for "you are on that gain line". */
@@ -82,6 +86,8 @@ export interface LevelHoverLayerProps {
   bands: readonly ZoneBand[]
   /** Present on the LEVEL chart only — its presence selects the level readout. */
   segments?: readonly LevelSegment[]
+  /** The fractional curve that chart draws (JOS-292) — the bar-position row reads it. */
+  curve?: LevelCurve
   /** Drag-select seam (plan §7.2): true while a range drag owns the pointer. */
   suppressed?: boolean
 }
@@ -92,7 +98,30 @@ export interface LevelHoverLayerProps {
  * one the level is genuinely unknown (levelSeries.ts's world model — the same reason the
  * progress feed suppresses the elapsed time across a swap).
  */
-function levelContent(segments: readonly LevelSegment[], aaPoints: readonly AaPoint[], ts: number): Content | null {
+/**
+ * WHERE IN THE BAR, or the reason there is no answer (JOS-292).
+ *
+ * ONE row, and it is the same evidence the curve was drawn from — `curveAt` reads the very
+ * array the polyline's vertices came out of. A refused span prints its reason INSTEAD of a
+ * percentage: `unknown` is not `0%`, and the band under the cursor already says as much in
+ * pixels. Where the curve draws nothing at all (before the first ding) there is no row, which
+ * is the same silence the chart keeps there.
+ */
+function barRow(curve: LevelCurve | undefined, ts: number): { row: TooltipRow; note?: string } | null {
+  const at = curve ? curveAt(curve, ts) : null
+  if (!at) return null
+  if (at.kind === 'refused') {
+    return { row: { label: 'into the bar', value: 'unstated' }, note: CURVE_REFUSAL_NOTE[at.refusal] }
+  }
+  return { row: { label: 'into the bar', value: `${((at.y - at.level) * 100).toFixed(1)}%` } }
+}
+
+function levelContent(
+  segments: readonly LevelSegment[],
+  aaPoints: readonly AaPoint[],
+  ts: number,
+  curve?: LevelCurve
+): Content | null {
   const at = levelAt(segments, ts)
   if (at.kind === 'before-first') return null
   if (at.kind === 'swap-gap') {
@@ -108,10 +137,12 @@ function levelContent(segments: readonly LevelSegment[], aaPoints: readonly AaPo
     }
   }
   const rows: TooltipRow[] = [{ label: 'since', value: formatDateTime(at.sinceTs) }]
+  const bar = barRow(curve, ts)
+  if (bar) rows.push(bar.row)
   rows.push(at.nextTs == null ? { value: 'current level' } : { label: 'held', value: fmtDelta(at.nextTs - at.sinceTs) })
   const cum = cumulativeAt(aaPoints, ts)
   if (cum != null) rows.push({ label: 'AA gained by then', value: cum.toLocaleString() })
-  return { title: `Level ${at.level}`, subtitle: formatDateTime(ts), rows }
+  return { title: `Level ${at.level}`, subtitle: formatDateTime(ts), rows, note: bar?.note }
 }
 
 /**
@@ -186,6 +217,7 @@ export function LevelHoverLayer({
   aaPoints,
   bands,
   segments,
+  curve,
   suppressed = false
 }: LevelHoverLayerProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -238,9 +270,11 @@ export function LevelHoverLayer({
 
   const content = useMemo(() => {
     if (!hov) return null
-    const base = segments ? levelContent(segments, aaPoints, hov.ts) : aaContent(aaPoints, hov.ts, hov.gainIdx)
+    const base = segments
+      ? levelContent(segments, aaPoints, hov.ts, curve)
+      : aaContent(aaPoints, hov.ts, hov.gainIdx)
     return base && withZone(base, bands, hov.ts)
-  }, [hov, segments, aaPoints, bands])
+  }, [hov, segments, aaPoints, bands, curve])
 
   return (
     <div ref={rootRef} style={ROOT} onPointerMove={handleMove} onPointerLeave={handleLeave}>

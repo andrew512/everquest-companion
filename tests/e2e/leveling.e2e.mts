@@ -16,6 +16,10 @@
  * WHAT IT ASSERTS, against whatever the real log holds right now:
  *   1. the nav row mounts the view (or the no-logs empty state honestly explains why not);
  *   2. a chart is drawn, and the ZONE-BAND STRIP is mounted inside it with real bands;
+ *   2b. (JOS-292) the level chart draws the FRACTIONAL CURVE - denser than the ding series it is
+ *      anchored on, inside its own plot, with an uncertainty band over every stretch the log did
+ *      not state, no vertex inside one, and a readout that says so rather than naming a bar
+ *      position there. Step 2b lives in `curveSteps.mts`;
  *   3. the range-stats panel is mounted with the view and scoped to the TIMESCALE'S WINDOW
  *      (JOS-75 — it used to exist only while a drag did);
  *   4. a real pointer DRAG across the chart narrows that scope to the selection, and the panel
@@ -87,6 +91,9 @@ import { stepNarrowLayout, stepOverflow } from './levelingLayoutSteps.mjs'
 // WHAT A POINTERMOVE COSTS (JOS-290) — the drag-responsiveness pin, next door because this file
 // is at the repo's line budget. It measures inside the same gesture it asserts about.
 import { stepDragCost } from './dragPerfSteps.mjs'
+// THE FRACTIONAL CURVE (JOS-292) — the vertices, the uncertainty bands, and the readout standing
+// on one. Next door for the same line-budget reason; see that file's header.
+import { stepLevelCurve } from './curveSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -675,6 +682,9 @@ async function main(): Promise<void> {
       const chart = await stepChart(page)
       if (chart) {
         await stepBands(page)
+        // The curve itself (JOS-292), read before any gesture has been made: its vertices, its
+        // refusals, and the readout standing on one. It leaves no selection and no tooltip.
+        await stepLevelCurve(page, LEVEL_CHART)
         // BEFORE the selection step: that one leaves a range-stats panel mounted in the charts
         // column, and the ledger assertions want the tab in the state a user first sees.
         await stepAaLedger(page)
