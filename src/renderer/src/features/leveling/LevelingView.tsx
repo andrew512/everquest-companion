@@ -1,7 +1,8 @@
 import { type JSX, useMemo } from 'react'
-import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
+import { Box, Paper, Stack, Typography } from '@mui/material'
 import type {
   AAEvent,
+  AASpendEvent,
   LevelingDelta,
   LevelingSnap,
   ProgressionDelta,
@@ -14,7 +15,6 @@ import { aaPace, type AaPace } from '@shared/aaPace'
 // because those two really are questions about the level-up record.
 import { useStatedLevel } from './useStatedLevel'
 import { useModule } from '../../lib/useModule'
-import { formatDate } from '../../lib/formatDate'
 import {
   buildLevelSegments,
   levelFeedEntries,
@@ -56,35 +56,28 @@ import { EMPTY_LEVELING, applyLevelingDelta } from './levelingModule'
 // The four hero cards — split into their own file the day this one reached the measured ceiling.
 import { LevelingHeroes } from './LevelingHeroes'
 import { NewAtLevelPanel } from './NewAtLevelPanel'
-// The per-ability AA ladder — the flat purchases list's replacement in the same slot.
-import { AaLedgerPanel } from './AaLedgerPanel'
+// The RIGHT column, whole: the AA ledger, the in-window drops and the progress feed, plus the
+// `FeedItem` shape `buildFeed` below fills. Split out at the measured max-lines ceiling (JOS-300),
+// on the LevelingHeroes precedent — the column is a composition over a scope and nothing else here
+// reads its internals.
+import { LedgerColumn, type FeedItem } from './LedgerColumn'
 // AA pace (AA/hr, points/hr, next-AA estimate, potion charges) — the tab's answer once the
 // level bar caps out. It used to be pinned to the Overview card's "last hour of LOG time"
 // window; since JOS-75 it reads the tab's own SCOPE, like every other number here, and states
 // which one it got. The Overview card keeps its hour — that surface has no timescale to follow.
 import { AaPacePanel } from './AaPacePanel'
-// What DROPPED in the scope (JOS-78) — the loot half of the same question the rates answer. It
-// takes the whole `ScopedStats` and derives its own rows (pure `shared/lootRates.ts`), so this
-// view stays a composition and no second denominator can ever be assembled here.
-import { WindowDropsPanel } from './WindowDropsPanel'
-
-interface FeedItem {
-  ts: number
-  kind: 'level' | 'aa' | 'swap'
-  label: string
-  detail: string
-}
-
-const FEED_COLOR: Record<FeedItem['kind'], string> = {
-  level: '#d9b25f',
-  aa: '#6fb3d2',
-  swap: SWAP_COLOR
-}
 
 /**
  * Cumulative AA gained. Deliberately NOT the earned headline: this is Σ of the gain
  * lines, so points re-gained after a respec are counted again and the curve runs
- * ahead of `earned` — the caption says so rather than quietly reconciling them.
+ * ahead of `earned`.
+ *
+ * THE CAPTION STATES THE DISAGREEMENT, NOT ITS MECHANISM (owner, 2026-08-13). It used to spell
+ * out the respec clause — "includes points re-gained after a respec, so…" — and the owner ruled
+ * that obvious: a reader who has respecced knows why, and a reader who has not is being taught
+ * accounting they never asked about. So the caption now claims only the observable fact (the
+ * final value can run ahead of the headline) and the WHY lives here, where the next person to
+ * wonder whether this curve is a bug will look. `shared/aa.ts` remains the derivation of record.
  * Nothing is drawn until there are two points to draw a line between.
  */
 function AaOverTimePanel({
@@ -105,8 +98,8 @@ function AaOverTimePanel({
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Typography variant="subtitle2">AA gained over time</Typography>
       <Typography variant="caption" color="text.secondary" gutterBottom display="block">
-        cumulative gain lines - includes points re-gained after a respec, so the final
-        value runs ahead of the {aaEarned.toLocaleString()} earned headline
+        cumulative gain lines - the final value can run ahead of the{' '}
+        {aaEarned.toLocaleString()} earned headline
       </Typography>
       <AreaChart points={drawn} color="#6fb3d2" chrome={chrome} />
     </Paper>
@@ -155,60 +148,6 @@ function LevelOverTimePanel({
       </Typography>
       <LevelStepChart segments={segments} curve={curve} color="#d9b25f" aaPoints={aaPoints} chrome={chrome} />
       <ZoneLegendStrip legend={legend} fmtDuration={fmtDelta} />
-    </Paper>
-  )
-}
-
-/**
- * Interleaved level/AA/swap feed, newest first — SCOPED like every other number on the tab
- * (JOS-75). A feed still listing last week's dings under an hour-wide chart is the same
- * disagreement the rates had.
- *
- * The empty case is STATED. A narrow window legitimately holds no ding and no gain line, and a
- * silently empty box reads as a broken panel rather than as a quiet hour.
- */
-function ProgressFeedPanel({ feed, scopeLabel }: { feed: FeedItem[]; scopeLabel: string }): JSX.Element {
-  return (
-    <Paper variant="outlined" sx={{ p: 2 }} data-testid="leveling-feed">
-      <Typography variant="subtitle2" gutterBottom>
-        Recent progress
-      </Typography>
-      {feed.length === 0 && (
-        <Typography variant="caption" color="text.secondary" data-testid="leveling-feed-empty">
-          no level-ups or AA gains in {scopeLabel}
-        </Typography>
-      )}
-      {/* NO INNER SCROLLER (JOS-289). The feed is already CAPPED at `FEED_MAX` rows, so its
-          honest height is bounded by construction and the page carries it. */}
-      <Box>
-        {feed.map((f, i) => (
-          <Stack
-            key={`${f.ts}-${f.kind}-${i}`}
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            sx={{ py: 0.4 }}
-          >
-            <Chip
-              size="small"
-              label={f.label}
-              sx={{
-                height: 20,
-                bgcolor: `${FEED_COLOR[f.kind]}22`,
-                color: FEED_COLOR[f.kind],
-                fontWeight: 700,
-                minWidth: 68
-              }}
-            />
-            <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1 }} noWrap>
-              {f.detail}
-            </Typography>
-            <Typography variant="caption" color="text.disabled" noWrap>
-              {formatDate(f.ts)}
-            </Typography>
-          </Stack>
-        ))}
-      </Box>
     </Paper>
   )
 }
@@ -399,6 +338,55 @@ function useExtraTs(levels: readonly LevelPoint[], aas: readonly AaPoint[]): num
 }
 
 /**
+ * THE REFUND-PROOF AA HEADLINE (Task #48), in the shape the four hero cards take.
+ *
+ * The identity is NOT Σ gains — a respec refunds points with no log line, they re-enter as fresh
+ * gain lines, so Σ gains double-counts every refunded point. Instead:
+ *   allocated = latest-epoch cost per (ability,rank), cost-0 auto-grants excluded
+ *   unspent   = last authoritative "you now have" − spends after it
+ *   earned    = allocated + unspent   (the identity the user validated)
+ * See src/shared/aa.ts for the full derivation, and `AaOverTimePanel` above for why the cumulative
+ * curve is allowed to disagree with `earned`.
+ *
+ * Its own hook, and its keys are the hero card's prop names on purpose: the view spreads it
+ * straight onto `LevelingHeroes`, which is one fewer place for four numbers to be mis-paired.
+ * `unspent` is null rather than 0 for a character with no AA line at all — an unknown balance and
+ * an empty one are different facts.
+ */
+// Not `readonly`: `computeAAAccounting` declares mutable arrays, and these come straight off the
+// module snapshot that already owns them. Widening here would only move the cast.
+function useAaHeadline(
+  aas: AAEvent[],
+  spends: AASpendEvent[]
+): { aaEarned: number; aaSpent: number; aaUnspent: number | null; boughtCount: number } {
+  const acct = useMemo(() => computeAAAccounting(aas, spends), [aas, spends])
+  return {
+    aaEarned: acct.earned,
+    aaSpent: acct.allocated,
+    aaUnspent: aas.length ? acct.unspent : null,
+    boughtCount: acct.boughtCount
+  }
+}
+
+/**
+ * THE CHARTED GATE, resolved ONCE and named — the three values that only exist together, or null.
+ *
+ * Two separate placements read it now (JOS-300): the left column swaps the charts for the stated
+ * empty sentence, and the right column is present or absent wholesale. Re-testing
+ * `!chrome || !scope || !curve` at each of them is exactly how one arm ends up drawing while the
+ * other does not, so the test is spelled here and both sites read its answer. Returning the three
+ * values in an object rather than a boolean is what carries TypeScript's narrowing across the
+ * seam, so neither call site needs a non-null assertion to prove what this function already knew.
+ */
+function chartedOf(
+  nothing: boolean,
+  charts: LevelingCharts
+): { chrome: ChartChrome; scope: ScopedStats; curve: LevelCurve } | null {
+  const { chrome, scope, curve } = charts
+  return !nothing && chrome && scope && curve ? { chrome, scope, curve } : null
+}
+
+/**
  * The charts column: the AA pace tiles, the timescale control, the two plots, and the window's
  * own read under them. Its own component because the column is where the scope becomes visible —
  * every surface in it describes the SAME stretch of time, and keeping them in one place is what
@@ -410,6 +398,12 @@ function useExtraTs(levels: readonly LevelPoint[], aas: readonly AaPoint[]): num
  * tab: growing the content area is exactly what should happen, and a column-sized porthole in
  * front of two charts and a stats table was the cramping. The column is now a plain natural-height
  * band and `[data-testid="app-content"]` is the one scroller between here and the window.
+ *
+ * IT OWNS NO WIDTH EITHER SINCE JOS-300. The `flex`/`minWidth` that used to live on this Stack
+ * moved UP to the left wrapper in the view, because the wrapper — not this component — is now the
+ * left column: `NewAtLevelPanel` is its second child, and it renders in the chart-less state where
+ * this component does not exist at all. Sizing has to sit on the box that is always there, or the
+ * empty state would lose the two-thirds share and the 320px floor along with the charts.
  */
 function ChartsColumn(p: {
   chrome: ChartChrome
@@ -428,16 +422,7 @@ function ChartsColumn(p: {
 }): JSX.Element {
   const { chrome, scope, charts } = p
   return (
-    <Stack
-      spacing={2}
-      sx={{
-        // Two thirds of the WIDTH while there are two columns to share it; below `lg` it is
-        // simply the first band of a single column, and it drops the 320px floor that would
-        // otherwise push the page sideways. Height is whatever the panels need, at every width.
-        flex: { xs: '0 0 auto', lg: 2 },
-        minWidth: { lg: 320 }
-      }}
-    >
+    <Stack spacing={2}>
       {p.pace && <AaPacePanel pace={p.pace} windowLabel={scope.label} />}
       {/* Directly above the plots it governs, and ABOVE BOTH of them: the two charts draw one
           time base, so there is one control for it — and since JOS-75 one scope under it. Since
@@ -511,18 +496,8 @@ export default function LevelingView({
   const peak = peakLevel(sortedLevels)
   const swaps = swapCount(levelSegments)
 
-  // Refund-proof AA accounting (Task #48). The headline is NOT Σ gains — a respec
-  // refunds points with no log line, they re-enter as fresh gain lines, so Σ gains
-  // double-counts every refunded point. Instead:
-  //   allocated = latest-epoch cost per (ability,rank), cost-0 auto-grants excluded
-  //   unspent   = last authoritative "you now have" − spends after it
-  //   earned    = allocated + unspent   (the identity the user validated)
-  // See src/shared/aa.ts for the full derivation.
-  const acct = useMemo(() => computeAAAccounting(aas, spends), [aas, spends])
-  const aaEarned = acct.earned
-  const aaSpent = acct.allocated
-  const aaUnspent = aas.length ? acct.unspent : null
-  const boughtCount = acct.boughtCount
+  // The refund-proof AA identity, in hero-card shape — derivation and reasoning in `useAaHeadline`.
+  const aa = useAaHeadline(aas, spends)
 
   // The purchases list itself moved into AaLedgerPanel, which regroups the same deduped
   // (ability, rank) purchases into per-ability LADDERS (src/shared/aaLedger.ts) — the model
@@ -546,14 +521,17 @@ export default function LevelingView({
   // why those two coexist under one shared pick.
   const { bounds, available, slice, setId, setCustom } = useTimeslice(useExtraTs(sortedLevels, aaCumulative), 'zoneSession')
   const charts = useLevelingCharts({ prog, aas: aaCumulative, segments: levelSegments, slice, bounds })
-  // `curve` is null on exactly the same condition `chrome` is (no domain ⇒ nothing to draw over),
-  // but the three are read separately below, so all three are tested at the one empty-state gate.
-  const { chrome, scope, curve } = charts
+  // The SCOPE on its own — the only one of the three the reads below need before the charted gate
+  // has been asked. `chrome` and `curve` are null on exactly the same condition it is, and all
+  // three are tested together, once, by `chartedOf`.
+  const { scope } = charts
   // The feed and the AA pace both follow that scope (JOS-75): the pace was its own hour-wide
   // window until the timescale existed, and now the tab has ONE answer to "which stretch".
   const { feed: scopedFeed, pace } = useScopedReads({ scope, feed, state, prog })
 
   const nothing = sortedLevels.length === 0 && sortedAAs.length === 0
+  // ONE GATE, TWO PLACEMENTS — see `chartedOf` for why the test is not spelled inline any more.
+  const charted = chartedOf(nothing, charts)
   // One props object, two placements (see both call sites): the panel is the same surface in the
   // charted and the chart-less state, and spelling its four props twice is how they drift.
   const unlockPanel = {
@@ -586,67 +564,91 @@ export default function LevelingView({
         levelCount={sortedLevels.length}
         peak={peak}
         swaps={swaps}
-        aaEarned={aaEarned}
-        aaSpent={aaSpent}
-        aaUnspent={aaUnspent}
-        boughtCount={boughtCount}
+        {...aa}
       />
 
-      {nothing || !chrome || !scope || !curve ? (
-        <Typography color="text.secondary" sx={{ p: 2 }} data-testid="leveling-empty">
-          No level-ups or AA gains found in this character&apos;s log yet. They&apos;ll appear here live as you play.
-        </Typography>
-      ) : (
-        // THE COLUMNS NEVER SHARE A HEIGHT ANY MORE (JOS-289). JOS-151 fixed the reporter's
-        // 1073x937 collision by taking the scroll into this stack below `lg` — the two bands were
-        // splitting one FIXED height 2:1 and the second one's papers spilled out of it and drew
-        // over "New at this level" (89px ledger, 34px feed, measured). The collision is gone at
-        // the root now: there is no fixed height to split. `flex-start` at `lg` is what says so —
-        // each column is as tall as its own panels, neither is stretched to the other's height,
-        // and no panel inside either one is asked to grow into space it did not earn.
-        <Stack
-          direction={{ xs: 'column', lg: 'row' }}
-          spacing={2}
-          data-testid="leveling-columns"
-          sx={{ alignItems: { xs: 'stretch', lg: 'flex-start' } }}
-        >
-          <ChartsColumn
-            chrome={chrome}
-            scope={scope}
-            curve={curve}
-            charts={charts}
-            pace={pace}
-            aaPoints={aaCumulative}
-            aaEarned={aaEarned}
-            levelCount={sortedLevels.length}
-            swaps={swaps}
-            slice={slice}
-            available={available}
-            onPick={setId}
-            onCustom={setCustom}
-          />
+      {/* THE COLUMNS NEVER SHARE A HEIGHT ANY MORE (JOS-289). JOS-151 fixed the reporter's
+          1073x937 collision by taking the scroll into this stack below `lg` — the two bands were
+          splitting one FIXED height 2:1 and the second one's papers spilled out of it and drew
+          over "New at this level" (89px ledger, 34px feed, measured). The collision is gone at
+          the root now: there is no fixed height to split. `flex-start` at `lg` is what says so —
+          each column is as tall as its own panels, neither is stretched to the other's height,
+          and no panel inside either one is asked to grow into space it did not earn.
 
-          <Stack spacing={2} sx={{ flex: { xs: '0 0 auto', lg: 1 }, minWidth: { lg: 260 } }}>
-            {/* The AA LEDGER stays full-history on purpose: it is an ACCOUNT of what you have
-                bought, and its footer must equal the AA-points-spent hero card. "AA allocated
-                in the last hour" is not a thing anyone owns. */}
-            <AaLedgerPanel spends={spends} allocated={aaSpent} />
-            {/* SCOPED, like the feed below it: the items observed dropping in the stretch the
-                charts are drawing, ordered by how many you saw. Clicking one opens its Loot
-                drill-down through the app's own opener (JOS-43/JOS-78). */}
-            <WindowDropsPanel scope={scope} onOpenItem={onOpenLoot} />
-            <ProgressFeedPanel feed={scopedFeed} scopeLabel={scope.label} />
-          </Stack>
+          THE ROW IS UNCONDITIONAL SINCE JOS-300, and the empty state lives INSIDE it. Two bands
+          when there are charts, one when there are not — `columnsInfo` in
+          tests/e2e/levelingLayoutSteps.mts counts these children and the charted count is still
+          exactly two. */}
+      <Stack
+        direction={{ xs: 'column', lg: 'row' }}
+        spacing={2}
+        data-testid="leveling-columns"
+        sx={{ alignItems: { xs: 'stretch', lg: 'flex-start' } }}
+      >
+        {/* THE LEFT COLUMN, AND IT IS THIS WRAPPER RATHER THAN `ChartsColumn` (JOS-300). It owns
+            the width — two thirds of it while there are two columns to share it; below `lg` it is
+            simply the first band of a single column, and it drops the 320px floor that would
+            otherwise push the page sideways. Height is whatever its panels need, at every width.
+            The sizing had to move up here because this box, unlike the charts, is ALWAYS drawn. */}
+        <Stack spacing={2} sx={{ flex: { xs: '0 0 auto', lg: 2 }, minWidth: { lg: 320 } }}>
+          {charted ? (
+            <ChartsColumn
+              chrome={charted.chrome}
+              scope={charted.scope}
+              curve={charted.curve}
+              charts={charts}
+              pace={pace}
+              aaPoints={aaCumulative}
+              aaEarned={aa.aaEarned}
+              levelCount={sortedLevels.length}
+              swaps={swaps}
+              slice={slice}
+              available={available}
+              onPick={setId}
+              onCustom={setCustom}
+            />
+          ) : (
+            <Typography color="text.secondary" sx={{ p: 2 }} data-testid="leveling-empty">
+              No level-ups or AA gains found in this character&apos;s log yet. They&apos;ll appear here live as you play.
+            </Typography>
+          )}
+
+          {/* ONE MOUNT SITE, AND IT IS THE BOTTOM OF THE LEFT COLUMN (JOS-300, owner directive
+              2026-08-13). Two laws meet here and both are load-bearing:
+
+              STILL ONE POSITION IN THE TREE, whatever the charts do. This is the one surface on
+              the tab that needs no log at all — "what do I get at 30" is answered by the committed
+              DBs — so it renders in the chart-less state too, and it is the wrapper above, not the
+              conditional, that guarantees it. Writing it into both arms of that conditional would
+              remount it every time the charts appeared and drop a level-up toast's deep link
+              (focusLevel/focusNonce) on the way. It is the second child of a box that is always
+              there, so React reconciles it in place across the flip.
+
+              NO LONGER LAST ON THE PAGE. It used to sit outside the row entirely, full width, on
+              the argument that the two plots deserve the top of the tab and a browsable reference
+              panel should not push them down a screen. That argument still holds — this is below
+              the charts, not above them — but the owner ruled its cost worse than its benefit: the
+              charts column ends well short of the ledger/drops/feed column, and a full-width panel
+              underneath left an enormous hole at the bottom left of the tab. Filling that hole is
+              what this placement is for. The consequence, stated so the specs can measure it: the
+              tab's deepest pixel is now usually the RIGHT column's, so scrolling the page to the
+              very bottom no longer guarantees this panel is in frame. */}
+          <NewAtLevelPanel {...unlockPanel} />
         </Stack>
-      )}
 
-      {/* OUTSIDE the branch, and LAST. Outside because it is the one surface here that needs no
-          log at all — "what do I get at 30" is answered by the committed DBs, so a character with
-          too few dings to draw a chart still gets it, and rendering it in both arms would remount
-          it (and drop a deep link's level) every time the charts appeared. Last because the two
-          plots are what this tab is for at a glance; pushing them down a screen for a browsable
-          reference panel would cost the primary surface its position. */}
-      <NewAtLevelPanel {...unlockPanel} />
+        {/* THE RIGHT COLUMN, and only in the charted state — all three of its panels are reads of
+            a SCOPE, and there is no scope without a domain to draw. Its absence is what leaves the
+            left wrapper alone in the row on a log with too few dings to chart. */}
+        {charted && (
+          <LedgerColumn
+            spends={spends}
+            allocated={aa.aaSpent}
+            scope={charted.scope}
+            feed={scopedFeed}
+            onOpenItem={onOpenLoot}
+          />
+        )}
+      </Stack>
     </Stack>
   )
 }

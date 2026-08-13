@@ -147,9 +147,15 @@ function levelContent(
 
 /**
  * AA gained over time. The note is mandatory and repeats the panel's caption: this curve is
- * Σ of the gain LINES, so a respec's re-gained points are counted again and it runs ahead of
- * the earned headline (world-model law 5). A hover readout is read in isolation — calling
- * this "earned" here would contradict `computeAAAccounting`.
+ * Σ of the gain LINES, and a hover readout is read in isolation — calling this "earned" here
+ * would contradict `computeAAAccounting` (world-model law 5).
+ *
+ * IT NAMES THE CURVE, IT NO LONGER EXPLAINS THE GAP (owner, 2026-08-13). The note used to carry
+ * the respec clause verbatim from the caption; the owner ruled the clause obvious in the caption
+ * and it was doubly so in a tooltip, which has one line to spend and had spent it on accounting
+ * trivia. "cumulative gain lines" is the whole claim: these are gains, not the earned balance.
+ * The reason a respec makes the two disagree lives in `AaOverTimePanel`'s header and in
+ * `shared/aa.ts` — the places someone chasing the discrepancy actually reads.
  */
 function aaContent(points: readonly AaPoint[], ts: number, gainIdx: number): Content | null {
   const i = stepIndexAt(points, ts)
@@ -170,7 +176,7 @@ function aaContent(points: readonly AaPoint[], ts: number, gainIdx: number): Con
     title: `${points[i].y.toLocaleString()} AA gained`,
     subtitle: formatDateTime(ts),
     rows,
-    note: 'cumulative gain lines - includes points re-gained after a respec'
+    note: 'cumulative gain lines'
   }
 }
 
