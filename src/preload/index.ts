@@ -4,6 +4,8 @@ import { windowsApi } from './windows'
 import { plannerApi } from './planner'
 import { rosterApi } from './roster'
 import { soundsBridge } from './sounds'
+// "What IS this" — the spell/item/mob lookups, split out at the 400-line ceiling (preload/knowledge.ts).
+import { knowledgeBridge } from './knowledge'
 import type {
   AlertDef,
   AlertPrefs,
@@ -40,9 +42,8 @@ import type {
 } from '../shared/types'
 import type { CombatSnapshot, FightSearchResult, SnapshotOpts } from '../shared/combat'
 import type { ClassAbbr, ComboDelta, ComboSnap } from '../shared/classCombo'
-// "What's new at this level" (docs/plans/levelup-whats-new.md) — the unlock dataset rides the
-// spell-catalog channel with a flag; see the handler in src/main/ipc/knowledge.ts.
-import type { LevelUnlockData } from '../shared/levelUnlocks'
+// The level-unlock and planner types moved with their methods: knowledge.ts (JOS-293) carries
+// the spell/item/mob/unlock lookups, planner.ts (JOS-285) the exaltation + gear reads.
 import type { CharacterSheet } from '../shared/characterSheet'
 // The `/outputfile` registry's one IPC shape (JOS-44) — command, why-clause, and the dump's own
 // mtime, per kind. Every surface fed by an export command reads this and nothing else.
@@ -364,17 +365,8 @@ const api = {
     ipcRenderer.invoke(IPC.setAlertPrefs, prefs),
   /** Sound packs, the openpeon registry and the user's own imports — preload/sounds.ts. */
   ...soundsBridge,
-  /** Suggested-alerts wizard (Task #38): the searchable spell catalog + live usage. */
-  getSpellCatalog: (): Promise<SpellCatalog> => ipcRenderer.invoke(IPC.spellsCatalog),
-  /**
-   * "What's new at this level" (docs/plans/levelup-whats-new.md): every (class, level) unlock the
-   * committed DBs state — spells from spells.json, skills/discs/innates from classes.json.
-   *
-   * The SAME channel as the catalog above, with a flag, because shared/ipc.ts belonged to a
-   * concurrent wave the day this landed. Two questions of one door, both about the spell DB; the
-   * flag is re-validated in main. A dedicated channel is the right shape and is three lines away.
-   */
-  getLevelUnlocks: (): Promise<LevelUnlockData> => ipcRenderer.invoke(IPC.spellsCatalog, { unlocks: true }),
+  /** "What IS this" — spell / item / mob lookups, and the spell catalog: preload/knowledge.ts. */
+  ...knowledgeBridge,
 
   // ---- voice alerts / TTS (docs/plans/voice-alerts.md §3) ----
   // The 'system' tier needs NOTHING here: Chromium's `speechSynthesis` is already in the
@@ -412,19 +404,11 @@ const api = {
   setVoicePrefs: (prefs: VoicePrefs): Promise<VoicePrefs> =>
     ipcRenderer.invoke(IPC.voicePrefsSet, prefs),
 
-  /** Item knowledge (Task #53): "what's this lore/quest item for" — local posky-first,
-   *  then a cached, politely-throttled wiki lookup. Never rejects (degrades to a
-   *  cached-negative/offline record that still carries local posky associations). */
-  lookupItem: (name: string): Promise<ItemKnowledge> => ipcRenderer.invoke(IPC.itemsLookup, name),
-
-  /** Mob knowledge (Task #63): "what does this thing drop" — your own loot history + the local
-   *  quest catalog first, then a cached, politely-throttled wiki lookup. Never rejects. */
-  lookupMob: (name: string): Promise<MobKnowledge> => ipcRenderer.invoke(IPC.mobsLookup, name),
-
   // ---- the planner's slice, in its own file (src/preload/planner.ts) ----
   // The exaltation planner's four reads + one write and the Gear tab's two reads. Split out
   // under the same rule roster.ts/windows.ts/perf.ts state: this file is AT the measured
   // 400-code-line ceiling, and phase 4 (JOS-285) needed one more method than it had room for.
+  // (The item/mob lookups live in knowledge.ts beside the spell lookups — JOS-293's split.)
   ...plannerApi,
 
   // ---- character sheet (JOS-45) ----

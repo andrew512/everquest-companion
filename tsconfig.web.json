@@ -55,6 +55,8 @@
     // …and `respawn.ts` (the respawn watch list, JOS-194), likewise.
     "src/preload/respawn.ts",
     // …and `planner.ts` (the exaltation planner + the Gear tab's reads, JOS-285), likewise.
-    "src/preload/planner.ts"
+    "src/preload/planner.ts",
+    // …and `knowledge.ts` (the spell/item/mob lookups, JOS-293), likewise.
+    "src/preload/knowledge.ts"
   ]
 }
