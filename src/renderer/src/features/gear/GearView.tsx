@@ -41,18 +41,44 @@
 // asked for. The two sliders never read each other — the global one restates the whole corpus so
 // candidates compare fairly, a cell's own one states what that item is planned at. The only thing
 // the table gained is a `+` per row, and only while there is a set for it to add to.
+//
+// AND SINCE JOS-297 YOU CHOOSE WHAT IS ON SCREEN — the columns and the filter controls both, each
+// remembered in `localStorage` (`useGearPrefs`). The two choices meet the pipeline above at two
+// different points, and which point is the whole design:
+//
+//   * the CONTROLS choice meets it FIRST. `inertFilters` forces every hidden control's field to the
+//     value that does not filter, BEFORE the filter memo sees it — so a control that is not on
+//     screen cannot be holding rows back, and the empty state can never name a toggle nobody can
+//     find. The user's own value is kept in `own` and comes back untouched when the control does.
+//   * the COLUMNS choice meets it LAST, at `columnsFor`, which draws either the user's list or the
+//     derived seed. It changes what is DISPLAYED and nothing that is computed — the same rows, in
+//     the same order, at the same plus-state.
+//
+// The plus-state is the one control on both sides of that line: hiding it does not merely remove a
+// slider, it puts the corpus back at base, because a simulation nobody can see or cancel is the
+// quiet lie `useUpgradeState` refuses to persist for exactly the same reason.
 
 import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
 import { Box, Chip, Stack, Typography } from '@mui/material'
-import type { ItemUpgradeState } from '@shared/itemUpgrade'
+import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
 import type { GearRow } from '@shared/planner/gear'
 import OutputKindLine from '../../components/OutputKindLine'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import GearFilterBar from './GearFilterBar'
+import GearPicker from './GearPickers'
 import GearSetsPane from './GearSetsPane'
 import GearTable, { ROW_HEIGHT } from './GearTable'
-import { useGearSets } from './useGearSets'
-import { visibleColumns, type GearColumn } from './gearColumns'
+import { useGearSets, type GearSetsApi } from './useGearSets'
+import { useGearPrefs, type GearPrefs } from './useGearPrefs'
+import {
+  GEAR_CONTROLS,
+  GEAR_CONTROL_LABEL,
+  controlsVisible,
+  inertFilters,
+  toggleColumn,
+  toggleControl
+} from './gearPrefs'
+import { PICKABLE_COLUMNS, columnLabel, columnsFor, sortWithin, type GearColumn } from './gearColumns'
 import {
   useEraHidden,
   useGearClasses,
@@ -96,6 +122,11 @@ function nextSort(sort: GearSort, key: GearSortKey): GearSort {
 interface TableState {
   rows: GearRow[]
   columns: GearColumn[]
+  /**
+   * The sort actually in force — the requested one, unless the column it names is no longer drawn
+   * (`sortWithin`). The table reads THIS so the lit header and the row order can never disagree.
+   */
+  sort: GearSort
   /** how many rows the era filter alone is holding back — only computed when the table is EMPTY */
   hiddenByEra: number
   /** …and the same question for the Owned toggle, which can hide 6,693 of 6,766 rows in one click */
@@ -105,18 +136,23 @@ interface TableState {
 /**
  * The three stages, as three memos (see the header). Split out of the component so the view stays
  * inside the function-length ceiling and so the ORDER is readable in one place.
+ *
+ * THE COLUMNS ARE RESOLVED BEFORE THE SORT IS, and never the other way round: the derived seed
+ * reads the REQUESTED sort key (asking for a ranking is asking to see the number), and the sort is
+ * then confined to what came out. Reversing them would be a cycle.
  */
 function useTableRows(
   rows: readonly GearRow[],
   state: ItemUpgradeState,
   filters: GearFilters,
-  opts: { sort: GearSort; deps: GearFilterDeps }
+  opts: { sort: GearSort; deps: GearFilterDeps; chosen: GearSortKey[] | null }
 ): TableState {
-  const { sort, deps } = opts
+  const { sort, deps, chosen } = opts
   const scaled = useMemo(() => scaleAll(rows, state), [rows, state])
   const filtered = useMemo(() => filterGearRows(scaled, filters, deps), [scaled, filters, deps])
-  const sorted = useMemo(() => sortGearRows(filtered, sort), [filtered, sort])
-  const columns = useMemo(() => visibleColumns(filters, sort), [filters, sort])
+  const columns = useMemo(() => columnsFor(chosen, filters, sort), [chosen, filters, sort])
+  const inForce = useMemo(() => sortWithin(sort, columns), [sort, columns])
+  const sorted = useMemo(() => sortGearRows(filtered, inForce), [filtered, inForce])
   // WHY THE LIST IS EMPTY, when it is (the JOS-67 law: a filter that can hide everything must be
   // able to admit it). Two filters can do it on their own: the era one, which is on by DEFAULT
   // rather than by choice, and the Owned one, which is one click and removes 99% of the corpus by
@@ -129,7 +165,7 @@ function useTableRows(
       hiddenByOwned: filters.ownedOnly ? count({ ownedOnly: false }) : 0
     }
   }, [sorted.length, scaled, filters, deps])
-  return { rows: sorted, columns, ...hidden }
+  return { rows: sorted, columns, sort: inForce, ...hidden }
 }
 
 /**
@@ -162,6 +198,104 @@ function ownedHint(map: GearOwnershipMap | null, uncounted: string | null): stri
   return uncounted === null ? base : `${base} ${uncounted}`
 }
 
+/**
+ * THE TWO PICKERS (JOS-297), on the count line beside the Sets chip — GearPickers.tsx states why
+ * they live here rather than in the toolbar they configure.
+ *
+ * The columns picker's FALLBACK is the derived seed as it stands right now, so opening it while
+ * nothing is chosen shows exactly the columns on screen ticked, and the first click promotes that
+ * list rather than replacing it.
+ */
+function ShapePickers({ prefs, columns }: { prefs: GearPrefs; columns: readonly GearColumn[] }): JSX.Element {
+  const seed = useMemo(() => columns.map((c) => c.key), [columns])
+  return (
+    <>
+      <GearPicker
+        label="Columns"
+        testId="gear-columns"
+        hint="Which stat columns the table draws. Every one of them sorts."
+        options={PICKABLE_COLUMNS}
+        optionLabel={columnLabel}
+        chosen={prefs.columns}
+        fallback={seed}
+        resetLabel="Follow the filters and the sort"
+        toggle={toggleColumn}
+        onChange={prefs.setColumns}
+      />
+      <GearPicker
+        label="Filters"
+        testId="gear-filters"
+        hint="Which filter controls the toolbar shows. A hidden control stops filtering."
+        options={GEAR_CONTROLS}
+        optionLabel={(c) => GEAR_CONTROL_LABEL[c]}
+        chosen={prefs.controls}
+        fallback={GEAR_CONTROLS}
+        resetLabel="Show every filter"
+        toggle={toggleControl}
+        onChange={prefs.setControls}
+      />
+    </>
+  )
+}
+
+/**
+ * THE LINE UNDER THE TOOLBAR: how much of the index is on screen, when the data is from, when the
+ * dump was, and the three chips that are NOT filters — sets, columns, controls.
+ *
+ * They are together because they share the answer to "why is this here rather than in the bar":
+ * both toolbar rows are `nowrap` and full, and none of these narrows the corpus.
+ */
+function CountLine({
+  counts,
+  scrapedAt,
+  ownership,
+  sets,
+  prefs,
+  columns
+}: {
+  counts: { shown: number; total: number }
+  scrapedAt: string | null
+  ownership: { readAt: number | null }
+  sets: GearSetsApi
+  prefs: GearPrefs
+  columns: readonly GearColumn[]
+}): JSX.Element {
+  return (
+    <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mb: 0.5, flexShrink: 0 }}>
+      <Typography variant="caption" color="text.secondary" data-testid="gear-count">
+        {counts.shown.toLocaleString()} of {counts.total.toLocaleString()} items
+      </Typography>
+      {/* WHEN the data is from, never when the index was built — the corpus's own `scrapedAt`. */}
+      {scrapedAt !== null && (
+        <Typography variant="caption" color="text.secondary">
+          · wiki data from {scrapedAt.slice(0, 10)}
+        </Typography>
+      )}
+      {/* THE DUMP'S AGE, SAID ONCE, BY THE THING THAT OWNS IT (JOS-253/268). The Owned column rests
+          on a file the player rewrites, and "when did they write it" / "when did we read it" is
+          exactly what this line answers — so nothing in this feature restates an age, and the
+          looted-not-in-dump wording points here instead of guessing. `loadedAt` is THIS window's
+          own read instant, which is the fact the prop is documented to want. */}
+      <OutputKindLine kind="inventory" quiet loadedAt={ownership.readAt} testId="gear-dump-line" />
+
+      {/* THE SETS TOGGLE (JOS-286). The count is on the chip so the tab says how many loadouts this
+          character has without opening anything. */}
+      <Chip
+        size="small"
+        label={sets.sets.length === 0 ? 'Sets' : `Sets · ${String(sets.sets.length)}`}
+        data-testid="gear-sets-toggle"
+        color={sets.open ? 'primary' : 'default'}
+        variant={sets.open ? 'filled' : 'outlined'}
+        title="Named virtual loadouts - one item per equipment cell, each at its own planned +N, totalled and compared against what you are wearing."
+        onClick={() => sets.setOpen(!sets.open)}
+        sx={{ flexShrink: 0 }}
+      />
+
+      <ShapePickers prefs={prefs} columns={columns} />
+    </Stack>
+  )
+}
+
 export interface GearViewProps {
   /**
    * Deep-link an item name into the Loot tab's drill-down (App's `openLoot`) — where the ItemWindow
@@ -179,6 +313,8 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   // PHASE 5 (JOS-286). Mounted here and only here — two mounts would each hold their own copy of
   // the set array and race each other's debounced saves (usePlans's rule, same failure).
   const sets = useGearSets()
+  // JOS-297. A view unmounts on every tab switch, so both choices are localStorage-backed.
+  const prefs = useGearPrefs()
   const [own, setOwn] = useState<GearFilters>(DEFAULT_GEAR_FILTERS)
   const [text, setText] = useState('')
   const [sort, setSort] = useState<GearSort>(DEFAULT_GEAR_SORT)
@@ -188,20 +324,26 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   // six thousand rows (see the header).
   const deferredText = useDeferredValue(text)
   const deferredState = useDeferredValue(stateKey(upgrade.state))
-  const state = useMemo(() => parseStateKey(deferredState), [deferredState])
+  const visible = useMemo(() => controlsVisible(prefs.controls), [prefs.controls])
+  // NO SLIDER, NO SIMULATION: the corpus reads at base when the control that moves it is hidden.
+  const state = useMemo(
+    () => (visible.has('upgrade') ? parseStateKey(deferredState) : ITEM_UPGRADE_BASE),
+    [deferredState, visible]
+  )
 
   // The class trio lives in its own hook (it FOLLOWS detection until pinned), so it is merged in
   // here rather than stored twice — one answer to "which classes", however it was arrived at.
+  // `inertFilters` is LAST, so a hidden control's field cannot survive into the filter memo.
   const filters = useMemo(
-    () => ({ ...own, text: deferredText, classes: classes.classes }),
-    [own, deferredText, classes.classes]
+    () => inertFilters({ ...own, text: deferredText, classes: classes.classes }, visible),
+    [own, deferredText, classes.classes, visible]
   )
   // The two injected verdicts the pure filter cannot answer for itself, merged into one stable
   // object so `filterGearRows`' memo re-runs when either MOVES and never merely because it rendered.
   const era = useEraHidden()
   const owned = useOwnedOrLooted(ownership.map)
   const deps = useMemo(() => ({ ...era, ...owned }), [era, owned])
-  const table = useTableRows(rows, state, filters, { sort, deps })
+  const table = useTableRows(rows, state, filters, { sort, deps, chosen: prefs.columns })
   const win = useWindowedRows({ count: table.rows.length, rowHeight: ROW_HEIGHT, scrollRef })
   const hint = useMemo(
     () => ownedHint(ownership.map, uncountedNote(ownership.payload.uncounted)),
@@ -217,40 +359,17 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
         setText={setText}
         classes={classes}
         upgrade={upgrade}
+        visible={visible}
       />
 
-      <Stack direction="row" spacing={1} alignItems="baseline" sx={{ mb: 0.5, flexShrink: 0 }}>
-        <Typography variant="caption" color="text.secondary" data-testid="gear-count">
-          {table.rows.length.toLocaleString()} of {rows.length.toLocaleString()} items
-        </Typography>
-        {/* WHEN the data is from, never when the index was built — the corpus's own `scrapedAt`. */}
-        {scrapedAt !== null && (
-          <Typography variant="caption" color="text.secondary">
-            · wiki data from {scrapedAt.slice(0, 10)}
-          </Typography>
-        )}
-        {/* THE DUMP'S AGE, SAID ONCE, BY THE THING THAT OWNS IT (JOS-253/268). The Owned column
-            rests on a file the player rewrites, and "when did they write it" / "when did we read
-            it" is exactly what this line answers — so nothing in this feature restates an age, and
-            the looted-not-in-dump wording points here instead of guessing. `loadedAt` is THIS
-            window's own read instant, which is the fact the prop is documented to want. */}
-        <OutputKindLine kind="inventory" quiet loadedAt={ownership.readAt} testId="gear-dump-line" />
-
-        {/* THE SETS TOGGLE (JOS-286). It lives on the count line rather than in the filter bar
-            because it is not a filter: both toolbar rows are `nowrap` and full, and a set does not
-            narrow the corpus — it collects out of it. The count is on the chip so the tab says how
-            many loadouts this character has without opening anything. */}
-        <Chip
-          size="small"
-          label={sets.sets.length === 0 ? 'Sets' : `Sets · ${String(sets.sets.length)}`}
-          data-testid="gear-sets-toggle"
-          color={sets.open ? 'primary' : 'default'}
-          variant={sets.open ? 'filled' : 'outlined'}
-          title="Named virtual loadouts - one item per equipment cell, each at its own planned +N, totalled and compared against what you are wearing."
-          onClick={() => sets.setOpen(!sets.open)}
-          sx={{ flexShrink: 0 }}
-        />
-      </Stack>
+      <CountLine
+        counts={{ shown: table.rows.length, total: rows.length }}
+        scrapedAt={scrapedAt}
+        ownership={ownership}
+        sets={sets}
+        prefs={prefs}
+        columns={table.columns}
+      />
 
       <Stack direction="row" sx={{ flexGrow: 1, minHeight: 0, flexWrap: 'nowrap' }}>
         <Box
@@ -270,11 +389,13 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
             rows={table.rows}
             columns={table.columns}
             win={win}
-            sort={sort}
+            sort={table.sort}
             classes={classes.classes}
             ownership={ownership.map}
             ownedHint={hint}
-            onSort={(key) => setSort((prev) => nextSort(prev, key))}
+            // The base is the sort IN FORCE, not the requested one: after a picker removed the
+            // sorted column, clicking the header that took over must FLIP it rather than re-open it.
+            onSort={(key) => setSort(nextSort(table.sort, key))}
             onOpenLoot={onOpenLoot}
             // No set ⇒ no `+` on any row. See `GearTableProps.onAssign` on why absent beats disabled.
             onAssign={sets.selected === null ? undefined : sets.assign}

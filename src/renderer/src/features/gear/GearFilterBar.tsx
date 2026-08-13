@@ -19,6 +19,14 @@
 // currently infers you are running; touching it PINS your choice, and detection may then only
 // OFFER — the "detected: …" chip, one click and reversible. A row outside the filter is hidden
 // only while "Usable by these" is on, and a row shown anyway is chipped rather than removed.
+//
+// AND SINCE JOS-297 THE BAR IS CONFIGURABLE (owner feedback: *we should be able to customize which
+// filters we see*). `visible` is the set of controls to draw — the whole vocabulary while the user
+// has not said otherwise, so the shipped bar is what an untouched install still gets. Two rules
+// hold it honest. A control that is not drawn is not FILTERING either: `gearPrefs.inertFilters`
+// forces its field inert upstream, so this file only has to decide what to render. And a row whose
+// every control is hidden is not RENDERED — an empty `Stack` is still a gap, and the two rows'
+// whole contract is that they cost fixed height rather than growing (the `flexWrap` law above).
 
 import { type JSX, useState } from 'react'
 import { Chip, MenuItem, Stack, TextField } from '@mui/material'
@@ -36,6 +44,7 @@ import {
   type EffectFilter,
   type GearFilters
 } from './gearFilter'
+import type { GearControl } from './gearPrefs'
 import type { GearClasses } from './gearData'
 
 /** The effect select's options, in the donor vocabulary plus the two a socket cannot express. */
@@ -152,10 +161,56 @@ export interface GearFilterBarProps {
   setText: (v: string) => void
   classes: GearClasses
   upgrade: { state: ItemUpgradeState; set: (s: ItemUpgradeState) => void }
+  /** which controls to draw (JOS-297) — `gearPrefs.controlsVisible`, the whole set by default */
+  visible: ReadonlySet<GearControl>
 }
 
-/** WHICH ITEMS: name, slot, classes, effect kind, era. */
-function IdentityRow({ filters, setFilters, text, setText, classes }: Omit<GearFilterBarProps, 'upgrade'>): JSX.Element {
+/** The slot and effect selects — the two closed-list narrowings of WHO a row is. */
+function SelectRow({ filters, setFilters, visible }: Pick<GearFilterBarProps, 'filters' | 'setFilters' | 'visible'>): JSX.Element {
+  return (
+    <>
+      {visible.has('slot') && (
+        <TextField
+          select
+          size="small"
+          label="Slot"
+          value={filters.slot ?? 'ALL'}
+          data-testid="gear-slot"
+          onChange={(e) => setFilters({ ...filters, slot: e.target.value === 'ALL' ? null : (e.target.value as EquipSlot) })}
+          sx={{ minWidth: 120, flexShrink: 0 }}
+        >
+          <MenuItem value="ALL">All slots</MenuItem>
+          {EQUIP_SLOTS.map((s) => (
+            <MenuItem key={s} value={s} data-testid={`gear-slot-${s}`}>
+              {s}
+            </MenuItem>
+          ))}
+        </TextField>
+      )}
+
+      {visible.has('effect') && (
+        <TextField
+          select
+          size="small"
+          label="Effect"
+          value={filters.effect}
+          data-testid="gear-effect"
+          onChange={(e) => setFilters({ ...filters, effect: e.target.value as EffectFilter })}
+          sx={{ minWidth: 130, flexShrink: 0 }}
+        >
+          {EFFECT_OPTIONS.map((o) => (
+            <MenuItem key={o.value} value={o.value}>
+              {o.label}
+            </MenuItem>
+          ))}
+        </TextField>
+      )}
+    </>
+  )
+}
+
+/** WHICH ITEMS: name, slot, classes, effect kind, era. Search is always drawn — see the header. */
+function IdentityRow({ filters, setFilters, text, setText, classes, visible }: Omit<GearFilterBarProps, 'upgrade'>): JSX.Element {
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap' }}>
       <TextField
@@ -167,80 +222,57 @@ function IdentityRow({ filters, setFilters, text, setText, classes }: Omit<GearF
         sx={{ minWidth: 150, flexShrink: 1 }}
       />
 
-      <TextField
-        select
-        size="small"
-        label="Slot"
-        value={filters.slot ?? 'ALL'}
-        data-testid="gear-slot"
-        onChange={(e) => setFilters({ ...filters, slot: e.target.value === 'ALL' ? null : (e.target.value as EquipSlot) })}
-        sx={{ minWidth: 120, flexShrink: 0 }}
-      >
-        <MenuItem value="ALL">All slots</MenuItem>
-        {EQUIP_SLOTS.map((s) => (
-          <MenuItem key={s} value={s} data-testid={`gear-slot-${s}`}>
-            {s}
-          </MenuItem>
-        ))}
-      </TextField>
-
-      <TextField
-        select
-        size="small"
-        label="Effect"
-        value={filters.effect}
-        data-testid="gear-effect"
-        onChange={(e) => setFilters({ ...filters, effect: e.target.value as EffectFilter })}
-        sx={{ minWidth: 130, flexShrink: 0 }}
-      >
-        {EFFECT_OPTIONS.map((o) => (
-          <MenuItem key={o.value} value={o.value}>
-            {o.label}
-          </MenuItem>
-        ))}
-      </TextField>
+      <SelectRow filters={filters} setFilters={setFilters} visible={visible} />
 
       {/* The app's one "pick several from a closed list" control (components/ChipMultiSelect) —
           the same one the Sky tracker and the exaltation board use for exactly this question. */}
-      <ChipMultiSelect
-        options={CLASS_ABBRS}
-        value={classes.classes}
-        onChange={classes.set}
-        label="Classes"
-        placeholder="every class"
-        minWidth={190}
-        testId="gear-classes"
-      />
+      {visible.has('classes') && (
+        <ChipMultiSelect
+          options={CLASS_ABBRS}
+          value={classes.classes}
+          onChange={classes.set}
+          label="Classes"
+          placeholder="every class"
+          minWidth={190}
+          testId="gear-classes"
+        />
+      )}
 
-      <ToggleChip
-        label="Usable by these"
-        testId="gear-class-toggle"
-        on={filters.classOnly}
-        onToggle={() => setFilters({ ...filters, classOnly: !filters.classOnly })}
-        hint="Hide items no class in the filter can use. An item whose page states no class list is kept."
-      />
+      {visible.has('classOnly') && (
+        <ToggleChip
+          label="Usable by these"
+          testId="gear-class-toggle"
+          on={filters.classOnly}
+          onToggle={() => setFilters({ ...filters, classOnly: !filters.classOnly })}
+          hint="Hide items no class in the filter can use. An item whose page states no class list is kept."
+        />
+      )}
 
-      <ToggleChip
-        label="Current era"
-        testId="gear-era-toggle"
-        on={filters.eraOnly}
-        onToggle={() => setFilters({ ...filters, eraOnly: !filters.eraOnly })}
-        hint={`Hide items from outside ${CURRENT_ERA_LABEL}`}
-      />
+      {visible.has('era') && (
+        <ToggleChip
+          label="Current era"
+          testId="gear-era-toggle"
+          on={filters.eraOnly}
+          onToggle={() => setFilters({ ...filters, eraOnly: !filters.eraOnly })}
+          hint={`Hide items from outside ${CURRENT_ERA_LABEL}`}
+        />
+      )}
 
       {/* THE OWNER'S CHECKBOX (JOS-285). It belongs on the WHICH ITEMS row, beside era and class:
           all three ask who a row is, none of them asks what it reads. The hint states both
           witnesses and the one thing a player would otherwise have to guess — that "not counted"
           key rings exist; which ones, over their own dump, is on the Owned column's header. */}
-      <ToggleChip
-        label="Owned or looted"
-        testId="gear-owned-toggle"
-        on={filters.ownedOnly}
-        onToggle={() => setFilters({ ...filters, ownedOnly: !filters.ownedOnly })}
-        hint="Keep only what your newest /outputfile inventory dump names or your loot history saw. Some key rings are not counted - see the Owned column."
-      />
+      {visible.has('owned') && (
+        <ToggleChip
+          label="Owned or looted"
+          testId="gear-owned-toggle"
+          on={filters.ownedOnly}
+          onToggle={() => setFilters({ ...filters, ownedOnly: !filters.ownedOnly })}
+          hint="Keep only what your newest /outputfile inventory dump names or your loot history saw. Some key rings are not counted - see the Owned column."
+        />
+      )}
 
-      {classes.offer !== null && (
+      {visible.has('classes') && classes.offer !== null && (
         <Chip
           size="small"
           color="warning"
@@ -257,38 +289,56 @@ function IdentityRow({ filters, setFilters, text, setText, classes }: Omit<GearF
 }
 
 /** WHAT THEY READ: the simulated plus-state, the ratio floor, the stat thresholds. */
-function NumbersRow({ filters, setFilters, upgrade }: Pick<GearFilterBarProps, 'filters' | 'setFilters' | 'upgrade'>): JSX.Element {
+function NumbersRow({ filters, setFilters, upgrade, visible }: Omit<GearFilterBarProps, 'text' | 'setText' | 'classes'>): JSX.Element {
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
-      <UpgradeSlider state={upgrade.state} onChange={upgrade.set} />
+      {visible.has('upgrade') && <UpgradeSlider state={upgrade.state} onChange={upgrade.set} />}
 
-      <TextField
-        size="small"
-        label="Min ratio"
-        placeholder="1.0"
-        value={filters.minRatio === null ? '' : String(filters.minRatio)}
-        data-testid="gear-min-ratio"
-        title="Weapon damage ratio (DMG / delay) at the simulated upgrade state. Non-weapons state none, so they never pass it."
-        onChange={(e) => {
-          const raw = e.target.value.trim()
-          const n = Number(raw)
-          setFilters({ ...filters, minRatio: raw === '' || !Number.isFinite(n) ? null : n })
-        }}
-        sx={{ width: 110, flexShrink: 0 }}
-      />
+      {visible.has('ratio') && (
+        <TextField
+          size="small"
+          label="Min ratio"
+          placeholder="1.0"
+          value={filters.minRatio === null ? '' : String(filters.minRatio)}
+          data-testid="gear-min-ratio"
+          title="Weapon damage ratio (DMG / delay) at the simulated upgrade state. Non-weapons state none, so they never pass it."
+          onChange={(e) => {
+            const raw = e.target.value.trim()
+            const n = Number(raw)
+            setFilters({ ...filters, minRatio: raw === '' || !Number.isFinite(n) ? null : n })
+          }}
+          sx={{ width: 110, flexShrink: 0 }}
+        />
+      )}
 
-      <ThresholdInput filters={filters} onChange={setFilters} />
-      <ThresholdChips filters={filters} onChange={setFilters} />
+      {visible.has('thresholds') && (
+        <>
+          <ThresholdInput filters={filters} onChange={setFilters} />
+          <ThresholdChips filters={filters} onChange={setFilters} />
+        </>
+      )}
     </Stack>
   )
 }
 
+/** Does the WHAT THEY READ row have anything left to draw? An empty row is height with no content. */
+const NUMBERS_CONTROLS: readonly GearControl[] = ['upgrade', 'ratio', 'thresholds']
+
 export default function GearFilterBar(props: GearFilterBarProps): JSX.Element {
-  const { filters, setFilters, text, setText, classes, upgrade } = props
+  const { filters, setFilters, text, setText, classes, upgrade, visible } = props
   return (
     <Stack spacing={1} sx={{ mb: 1, flexShrink: 0 }}>
-      <IdentityRow filters={filters} setFilters={setFilters} text={text} setText={setText} classes={classes} />
-      <NumbersRow filters={filters} setFilters={setFilters} upgrade={upgrade} />
+      <IdentityRow
+        filters={filters}
+        setFilters={setFilters}
+        text={text}
+        setText={setText}
+        classes={classes}
+        visible={visible}
+      />
+      {NUMBERS_CONTROLS.some((c) => visible.has(c)) && (
+        <NumbersRow filters={filters} setFilters={setFilters} upgrade={upgrade} visible={visible} />
+      )}
     </Stack>
   )
 }
