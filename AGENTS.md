@@ -1275,6 +1275,11 @@ the full per-lane evidence lives in docs/agents-archive.md.
   0px. Any append-only panel gets an explicit height + its own
   `overflow:auto`; the panel that must survive gets `flexGrow:1` +
   `minHeight:0`. Verified by the headless e2e harness, which measures it.
+  CARVE-OUT (owner directive 2026-08-13, JOS-289): the LEVELING tab is one
+  naturally-tall page the app shell scrolls — panels take honest heights,
+  and a list is windowed/capped there only when measured row counts demand
+  it (drops: 641 distinct names, generous ceiling; spell readout: max 41
+  rows, unwindowed). Bounded lists elsewhere keep the law.
 - **Hydration is a state, and the UI must show it.** During the startup replay
   every snapshot describes the PAST (an hours-old fight is `current`).
   `CombatSnapshot.hydrating` (engine: true until `setLive()`) gates a quiet
