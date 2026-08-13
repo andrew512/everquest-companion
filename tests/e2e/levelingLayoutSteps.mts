@@ -62,6 +62,30 @@ const SPELL_CARD = '[data-testid="spell-hover-card"]'
  */
 const JUSTIFIED_SCROLLERS = ['leveling-drops-list']
 
+/**
+ * ANSWER THE ANALYTICS FIRST-RUN NOTICE, which a FRESH `userData` always shows and which is a
+ * `position: fixed` Snackbar pinned 16px off the bottom of the WINDOW — over whatever the content
+ * area has scrolled under it.
+ *
+ * MEASURED, and it is JOS-289 that made it matter here. This spec hit-tests and hovers, and both
+ * ask `elementFromPoint`. While the tab was clamped to the viewport, the charts column's own
+ * scroller never parked a plot against the window's bottom edge; now that the PAGE scrolls,
+ * `scrollIntoViewIfNeeded` legitimately lands the level chart at 704..860 in an 860px window and
+ * the notice covers its middle. The curve readout step then hovered the notice and read no card —
+ * a true report about a first-run overlay, and nothing at all about the curve.
+ *
+ * "Turn it off" rather than "dismiss": a spec should not leave a second feature collecting in the
+ * background while it measures a third. perf.e2e.mts, cursor-ring-color and cursor-ring-zoom each
+ * carry their own copy of this; a fourth is a consolidation ticket, not a reason to skip it.
+ */
+export async function dismissFirstRunNotice(page: Page): Promise<void> {
+  const notice = '[data-testid="telemetry-notice"]'
+  await page.waitForSelector(notice, { timeout: 30_000 }).catch(() => undefined)
+  if ((await countOf(page, notice)) === 0) return
+  await page.click('[data-testid="telemetry-notice-off"]')
+  check('the analytics first-run notice can be answered out of the way', await settleGone(page, notice, { timeoutMs: 8_000 }))
+}
+
 /** A top-level panel of the tab, as the user SEES it: clipped by every scroller above it. */
 interface Band {
   /** its first line of text, which is what makes a failure readable */

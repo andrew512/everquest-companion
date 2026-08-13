@@ -434,7 +434,6 @@ function ChartsColumn(p: {
         flex: { xs: '0 0 auto', lg: 2 },
         minWidth: { lg: 320 }
       }}
-      data-testid="leveling-charts-column"
     >
       {p.pace && <AaPacePanel pace={p.pace} windowLabel={scope.label} />}
       {/* Directly above the plots it governs, and ABOVE BOTH of them: the two charts draw one
@@ -624,11 +623,7 @@ export default function LevelingView({
             onCustom={setCustom}
           />
 
-          <Stack
-            spacing={2}
-            sx={{ flex: { xs: '0 0 auto', lg: 1 }, minWidth: { lg: 260 } }}
-            data-testid="leveling-ledger-column"
-          >
+          <Stack spacing={2} sx={{ flex: { xs: '0 0 auto', lg: 1 }, minWidth: { lg: 260 } }}>
             {/* The AA LEDGER stays full-history on purpose: it is an ACCOUNT of what you have
                 bought, and its footer must equal the AA-points-spent hero card. "AA allocated
                 in the last hour" is not a thing anyone owns. */}

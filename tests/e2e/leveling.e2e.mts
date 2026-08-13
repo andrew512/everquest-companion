@@ -93,7 +93,7 @@ import { stepZoneSlice } from './sliceSteps.mjs'
 // The layout contract, the spell card in the per-level readout and the narrow window (JOS-289,
 // which inverted JOS-151's claim here) — next door for the same reason, and see that file's header
 // for what the reporter's 1073x937 did to this tab and what the owner overturned afterwards.
-import { stepNarrowLayout, stepPageScroll, stepSpellCard } from './levelingLayoutSteps.mjs'
+import { dismissFirstRunNotice, stepNarrowLayout, stepPageScroll, stepSpellCard } from './levelingLayoutSteps.mjs'
 // WHAT A POINTERMOVE COSTS (JOS-290) — the drag-responsiveness pin, next door because this file
 // is at the repo's line budget. It measures inside the same gesture it asserts about.
 import { stepDragCost } from './dragPerfSteps.mjs'
@@ -684,6 +684,10 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     if (await stepMount(page)) {
+      // FIRST, because it is a fixed overlay across the bottom of the window and every hover and
+      // hit test below asks `elementFromPoint` (see the helper — since JOS-289 the page scrolls
+      // and a plot can legitimately park underneath it).
+      await dismissFirstRunNotice(page)
       await waitReplayed(page)
       const chart = await stepChart(page)
       if (chart) {
