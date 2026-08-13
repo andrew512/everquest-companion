@@ -7,7 +7,7 @@
  * beside the user's game and dev app.
  *
  * WHAT IT ASSERTS, against the REAL committed item corpus and through the REAL IPC: the nav row
- * mounts a table with no set, no plan and no selection first (search is the default surface —
+ * mounts a table with no plan and no selection first (search is the WHOLE surface since JOS-325 —
  * owner ruling); the list is its own bounded scroller; the search box narrows it and finds a named
  * item; the era toggle actually holds rows back; a MULTI-SELECT slot filter and a weapon type
  * COMBINE; a header click sorts by ratio and the order is monotone; and — the one this phase exists
@@ -47,13 +47,21 @@
  * a second copy), and `Guise of the Deceiver` sits on the `Activated` key ring the fold does not
  * count — the exclusion the header of the Owned column has to admit to.
  *
- * AND SINCE JOS-286 (phase 5) IT ASSERTS THE SETS, which are three transports deep and therefore
- * exactly what an e2e is for. `tests/gearSet.test.mts` owns the model, the arithmetic and the diff
- * without a DOM; what needs a real app is the CHAIN — a `+` on a windowed search row → a cell in
- * a pane → phase 0's uplift applied at THAT cell's own slider → the `sumGear` totals row → a
- * debounced whole-array write over IPC → main's validator → electron-store → A SECOND LAUNCH that
- * reads it all back. Two processes, one document, and the per-item slider proving it does not
- * touch the global one.
+ * WHAT IT NO LONGER ASSERTS, TAKE TWO: THE SETS (JOS-325). JOS-286 added three steps and a whole
+ * step module (`gearSetSteps.mts`) for a chain three transports deep — a `+` on a windowed search
+ * row → a cell in a pane → the `sumGear` totals → a debounced write over IPC → main's validator →
+ * electron-store → a second launch that read it back. The owner retired the sets surface, so those
+ * claims are RETIRED WITH IT rather than weakened: a removal legitimately removes its own
+ * assertions, and a spec that kept asserting a `+` nobody can click would be pinning a bug.
+ *
+ * What did NOT go with them is anything about search, and that is the constraint this ticket was
+ * written under: every step below — mount, rows, era, ownership cells, the owned filter, search,
+ * class picks, slot union, weapon types, ratio sort, the global plus-state, the columns picker and
+ * its relaunch — is exactly the spec JOS-302/JOS-324 left. The SECOND LAUNCH survives too, for the
+ * column choice rather than for the sets: `ProgressState.gearSets` is kept on disk (progressState.
+ * ts) and no longer has a surface to prove itself through, so `tests/gearSetStore.test.mts` is now
+ * the only thing that speaks for it — which is the right level, because the store round trip is
+ * all that is left of the feature.
  *
  * The one thing it deliberately does NOT assert is a row count: the corpus grows (AGENTS.md,
  * "frozen numbers rot"), so every count here is a floor or an identity.
@@ -75,17 +83,10 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
-// Phase 5's steps are a MODULE (the plannerSteps.mts precedent): everything they need is standing
-// here, and this file is at the repo's 400-code-line factoring ceiling.
-import {
-  stepGearSets,
-  stepGearSetsIndependent,
-  stepGearSetsRelaunched,
-  type GearSetFixture
-} from './gearSetSteps.mjs'
-// JOS-297's steps are a module for the same reason phase 5's are. `pickColumns`/`resetColumns` come
-// from it too: since JOS-302 deleted the stat thresholds, naming a column in the picker is the only
-// way to put one on the table, and the upgrade step below needs three of them.
+// JOS-297's steps are a MODULE (the plannerSteps.mts precedent): everything they need is standing
+// here, and this file is at the repo's 400-code-line factoring ceiling. `pickColumns`/`resetColumns`
+// come from it too: since JOS-302 deleted the stat thresholds, naming a column in the picker is the
+// only way to put one on the table, and the upgrade step below needs three of them.
 import {
   cellText,
   pickColumns,
@@ -173,9 +174,6 @@ const THELVORN_BASE: GearRow = {
 /** "Tier 2   3 / 4" — the owner screenshot every phase-0 number in this repo is verified against. */
 const CHECKPOINT: ItemUpgradeState = { full: 2, fraction: 3 }
 
-/** WHAT PHASE 5's STEPS ARE TOLD (gearSetSteps.mts) — the same row, and the Owned column's words. */
-const SET_FIXTURE: GearSetFixture = { row: THELVORN_BASE, owned: THELVORN_OWNED }
-
 /**
  * WHAT JOS-297's STEPS ARE TOLD (gearColumnSteps.mts) — the same row again, plus the plus-state the
  * upgrade step leaves the global selector at, so the picker's own numbers assertion can compute its
@@ -249,7 +247,7 @@ async function stepMount(page: Page): Promise<boolean> {
     if (noLogs) note('no character logs on this machine — the app shows its fresh-machine empty state')
     return false
   }
-  check('clicking the Gear nav row mounts the table with no set and no selection first', mounted)
+  check('clicking the Gear nav row mounts the table with no plan and no selection first', mounted)
   return true
 }
 
@@ -567,10 +565,10 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
   // phase-3 steps below start from the state they were written against.
   await stepOwnedCells(page, log)
   await stepOwnedFilter(page)
-  // Phase 5 runs HERE, on the same unnarrowed table phase 4 left: the set steps put the search box
-  // back to empty when they finish, so the phase-3 steps below still start from the state they
-  // were written against — with the pane open, which is the layout they now have to survive.
-  await stepGearSets(page, SET_FIXTURE)
+  // Phase 5's set steps used to run HERE, between the ownership steps and the phase-3 ones, and
+  // JOS-325 removed them with the surface they drove. The clear-the-box line they were followed by
+  // STAYS, even though `stepOwnedFilter` now leaves the box empty on its own: `stepSearch` measures
+  // its narrowing against the whole corpus, and stating that precondition costs one settled read.
   await typeAndSettle(page, SEARCH, '')
   if (await stepSearch(page)) {
     // JOS-302's weapon-type step runs BEFORE the slot/threshold step, on a table nothing is
@@ -580,7 +578,6 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
     await stepFilters(page)
     await stepSort(page)
     await stepUpgrade(page)
-    await stepGearSetsIndependent(page, SET_FIXTURE)
     // JOS-297 runs LAST of the first launch, and deliberately: it needs the global selector already
     // at the checkpoint (so the picked columns can be re-read against `scaleGearRow` at a plus
     // nobody is about to move), and it parks a column choice for the second launch to find.
@@ -588,7 +585,7 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
   }
   const over = await pageOverflow(page)
   check(
-    'Gear never scrolls the page (its table and its pane clip inside their own boxes)',
+    'Gear never scrolls the page (its table clips inside its own box)',
     over.doc === 0 && over.content === 0,
     `document +${String(over.doc)}px · content area +${String(over.content)}px`
   )
@@ -606,9 +603,12 @@ async function main(): Promise<void> {
   buildIfStale()
   const consoleErrors: string[] = []
 
-  // TWO LAUNCHES OVER ONE userData DIR (the default-sound-pack precedent), because phase 5's last
-  // promise is that a set OUTLIVES the process. The staged install is shared too, so the second
-  // launch tails the same log and reads the same `/outputfile` dump.
+  // TWO LAUNCHES OVER ONE userData DIR (the default-sound-pack precedent). It was phase 5 that
+  // needed the second one — a set had to OUTLIVE the process — and JOS-325 retired that claim with
+  // the sets; the second launch stays because JOS-297's column choice makes the same promise on
+  // the other storage tier, and the relaunch is the only place a `localStorage` preference can be
+  // proved. The staged install is shared too, so the second launch tails the same log and reads
+  // the same `/outputfile` dump.
   //
   // WITH A DUMP IN THE INSTALL ROOT (the `/outputfile` carve-out, logFixture.mts): every launch
   // this suite has ever made was a machine where the command had never been run, which is exactly
@@ -628,13 +628,12 @@ async function main(): Promise<void> {
     await first.close()
   }
 
-  console.log('launch 2: the same userData — do the sets come back?…')
+  console.log('launch 2: the same userData — does the column choice come back?…')
   const second = await launchOnFixture(log, { userData })
   try {
     const page = await mainWindow(second.app)
     watch(page, consoleErrors)
     const up = await stepMount(page)
-    if (up) await stepGearSetsRelaunched(page, SET_FIXTURE)
     if (up) await stepGearColumnsRelaunched(page)
     if (failures.length) await dumpArtifacts(page, 'gear-relaunch-FAIL')
   } finally {

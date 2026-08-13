@@ -2,7 +2,7 @@
 //
 // WHAT IT IS. A searchable, sortable, filterable table over the whole candidate index — 6,766
 // equippable items, every one of them described in numbers (`GearRow`, phase 2). SEARCH IS THE
-// DEFAULT SURFACE (owner ruling): no set, no plan and no selection is needed to use it. You open
+// WHOLE SURFACE (owner ruling, JOS-325): no plan and no selection is needed to use it. You open
 // the tab and you are looking at the corpus.
 //
 // THE PIPELINE IS THREE MEMOS, IN THIS ORDER, AND THE ORDER IS THE FEATURE:
@@ -34,13 +34,22 @@
 // `/outputfile` freshness line owns both instants — JOS-253/268) and the keyring exclusion (the
 // fold owns the roster; this tab only reports what the fold left out of the player's own file).
 //
-// AND SINCE JOS-286 (phase 5) IT CARRIES SETS — ADDITIVELY. A set is a named virtual loadout, one
-// item per equipment cell, each assignment at its own planned +N (`GearSetsPane`). Everything
-// above is UNCHANGED by it: the table still mounts with no set, no plan and no selection, the
-// three memos still run on the GLOBAL plus-state, and the pane is a fixed column that appears when
-// asked for. The two sliders never read each other — the global one restates the whole corpus so
-// candidates compare fairly, a cell's own one states what that item is planned at. The only thing
-// the table gained is a `+` per row, and only while there is a set for it to add to.
+// THE SETS ARE GONE, AND SEARCH IS NOW THE WHOLE TAB (JOS-325, owner ruling 2026-08-13). JOS-286
+// hung a second document off this view — named virtual loadouts in a pane beside the table, a `+`
+// on every row to fill them, a totals block, a diff against the body. It is all removed: the pane,
+// the chip that opened it, the per-row `+` and the `onAssign` plumbing that carried it into
+// `GearTable`. ACQUISITION PLANNING IS THE WISH LIST'S JOB NOW (JOS-326), one tab over in the same
+// gear area, and this view answers exactly one question again — what is out there, and what of it
+// do I already have.
+//
+// NOTHING ABOVE THIS PARAGRAPH CHANGED FOR IT, and that is the shape of the removal rather than a
+// happy accident: the sets were additive from the day they shipped (the tab always mounted with no
+// set, no plan and no selection), so taking them out is a deletion and never a rewrite. The three
+// memos, both deferrals, the windowing, the columns picker, the controls picker, the era/owned/
+// class/slot/weapon filters and the global plus-state slider are byte-for-byte the surface JOS-302
+// and JOS-297 left. THE STORED SETS ARE UNTOUCHED TOO — `ProgressState.gearSets` is retired from
+// the UI and kept on disk (progressState.ts holds the ruling); this view simply no longer asks for
+// it.
 //
 // AND SINCE JOS-297 YOU CHOOSE WHAT IS ON SCREEN — the columns and the filter controls both, each
 // remembered in `localStorage` (`useGearPrefs`). The two choices meet the pipeline above at two
@@ -68,16 +77,14 @@
 // third filter can now be the reason the table is empty (`emptyText`, and the pass that counts it).
 
 import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
-import { Box, Chip, Stack, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import { ITEM_UPGRADE_BASE, type ItemUpgradeState } from '@shared/itemUpgrade'
 import type { GearRow } from '@shared/planner/gear'
 import OutputKindLine from '../../components/OutputKindLine'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import GearFilterBar from './GearFilterBar'
 import GearPicker from './GearPickers'
-import GearSetsPane from './GearSetsPane'
 import GearTable, { ROW_HEIGHT } from './GearTable'
-import { useGearSets, type GearSetsApi } from './useGearSets'
 import { useGearPrefs, type GearPrefs } from './useGearPrefs'
 import {
   GEAR_CONTROLS,
@@ -222,8 +229,8 @@ function ownedHint(map: GearOwnershipMap | null, uncounted: string | null): stri
 }
 
 /**
- * THE TWO PICKERS (JOS-297), on the count line beside the Sets chip — GearPickers.tsx states why
- * they live here rather than in the toolbar they configure.
+ * THE TWO PICKERS (JOS-297), on the count line — GearPickers.tsx states why they live here rather
+ * than in the toolbar they configure.
  *
  * The columns picker's FALLBACK is the derived seed as it stands right now, so opening it while
  * nothing is chosen shows exactly the columns on screen ticked, and the first click promotes that
@@ -263,23 +270,22 @@ function ShapePickers({ prefs, columns }: { prefs: GearPrefs; columns: readonly 
 
 /**
  * THE LINE UNDER THE TOOLBAR: how much of the index is on screen, when the data is from, when the
- * dump was, and the three chips that are NOT filters — sets, columns, controls.
+ * dump was, and the two chips that are NOT filters — columns and controls.
  *
- * They are together because they share the answer to "why is this here rather than in the bar":
- * both toolbar rows are `nowrap` and full, and none of these narrows the corpus.
+ * IT USED TO CARRY A THIRD (JOS-286's Sets toggle, with the loadout count on it), and JOS-325
+ * removed it with the surface it opened. The reason the other two belong here is unchanged: both
+ * toolbar rows are `nowrap` and full, and neither of these narrows the corpus.
  */
 function CountLine({
   counts,
   scrapedAt,
   ownership,
-  sets,
   prefs,
   columns
 }: {
   counts: { shown: number; total: number }
   scrapedAt: string | null
   ownership: { readAt: number | null }
-  sets: GearSetsApi
   prefs: GearPrefs
   columns: readonly GearColumn[]
 }): JSX.Element {
@@ -301,19 +307,6 @@ function CountLine({
           own read instant, which is the fact the prop is documented to want. */}
       <OutputKindLine kind="inventory" quiet loadedAt={ownership.readAt} testId="gear-dump-line" />
 
-      {/* THE SETS TOGGLE (JOS-286). The count is on the chip so the tab says how many loadouts this
-          character has without opening anything. */}
-      <Chip
-        size="small"
-        label={sets.sets.length === 0 ? 'Sets' : `Sets · ${String(sets.sets.length)}`}
-        data-testid="gear-sets-toggle"
-        color={sets.open ? 'primary' : 'default'}
-        variant={sets.open ? 'filled' : 'outlined'}
-        title="Named virtual loadouts - one item per equipment cell, each at its own planned +N, totalled and compared against what you are wearing."
-        onClick={() => sets.setOpen(!sets.open)}
-        sx={{ flexShrink: 0 }}
-      />
-
       <ShapePickers prefs={prefs} columns={columns} />
     </Stack>
   )
@@ -333,9 +326,6 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const classes = useGearClasses()
   const upgrade = useUpgradeState()
   const ownership = useGearOwnership()
-  // PHASE 5 (JOS-286). Mounted here and only here — two mounts would each hold their own copy of
-  // the set array and race each other's debounced saves (usePlans's rule, same failure).
-  const sets = useGearSets()
   // JOS-297. A view unmounts on every tab switch, so both choices are localStorage-backed.
   const prefs = useGearPrefs()
   const [own, setOwn] = useState<GearFilters>(DEFAULT_GEAR_FILTERS)
@@ -389,48 +379,46 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
         counts={{ shown: table.rows.length, total: rows.length }}
         scrapedAt={scrapedAt}
         ownership={ownership}
-        sets={sets}
         prefs={prefs}
         columns={table.columns}
       />
 
-      <Stack direction="row" sx={{ flexGrow: 1, minHeight: 0, flexWrap: 'nowrap' }}>
-        <Box
-          ref={scrollRef}
-          data-testid="gear-list"
-          sx={{
-            flexGrow: 1,
-            minWidth: 0,
-            minHeight: 0,
-            overflow: 'auto',
-            border: 1,
-            borderColor: 'divider',
-            borderRadius: 1
-          }}
-        >
-          <GearTable
-            rows={table.rows}
-            columns={table.columns}
-            win={win}
-            sort={table.sort}
-            ownership={ownership.map}
-            ownedHint={hint}
-            // The base is the sort IN FORCE, not the requested one: after a picker removed the
-            // sorted column, clicking the header that took over must FLIP it rather than re-open it.
-            onSort={(key) => setSort(nextSort(table.sort, key))}
-            onOpenLoot={onOpenLoot}
-            // No set ⇒ no `+` on any row. See `GearTableProps.onAssign` on why absent beats disabled.
-            onAssign={sets.selected === null ? undefined : sets.assign}
-          />
-          {table.rows.length === 0 && (
-            <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>
-              {emptyText(ready, refused, table)}
-            </Typography>
-          )}
-        </Box>
-
-        {sets.open && <GearSetsPane api={sets} rows={rows} ownership={ownership.map} />}
-      </Stack>
+      {/* THE TABLE IS THE WHOLE BODY NOW. Until JOS-325 this was a `nowrap` ROW — the list on the
+          left, the sets pane as a fixed column on the right — and with the pane retired the row has
+          nothing left to lay out. What survives is the part that was never about the pane: the list
+          is its own bounded scroller, so a filter that matches 6,766 rows grows this box's scroll
+          height and never the page (the standing UI law, measured in gear.e2e.mts). */}
+      <Box
+        ref={scrollRef}
+        data-testid="gear-list"
+        sx={{
+          flexGrow: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: 'auto',
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1
+        }}
+      >
+        <GearTable
+          rows={table.rows}
+          columns={table.columns}
+          win={win}
+          sort={table.sort}
+          ownership={ownership.map}
+          ownedHint={hint}
+          // The base is the sort IN FORCE, not the requested one: after a picker removed the
+          // sorted column, clicking the header that took over must FLIP it rather than re-open it.
+          onSort={(key) => setSort(nextSort(table.sort, key))}
+          onOpenLoot={onOpenLoot}
+        />
+        {table.rows.length === 0 && (
+          <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>
+            {emptyText(ready, refused, table)}
+          </Typography>
+        )}
+      </Box>
     </Box>
   )
 }

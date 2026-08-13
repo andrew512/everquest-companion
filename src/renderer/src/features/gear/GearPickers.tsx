@@ -2,9 +2,10 @@
 //
 // ONE CONTROL SHAPE, TWICE. "Which columns" and "which filter controls" are the same gesture over
 // two closed vocabularies, so they are one component opened from two chips. The chips live on the
-// COUNT LINE beside the Sets chip rather than in the filter bar, and for the same reason that one
-// does: both toolbar rows are `nowrap` and full, and neither of these narrows the corpus — they
-// change what the surface LOOKS like, which is a different question from what it shows.
+// COUNT LINE rather than in the filter bar (they shared it with the Sets toggle until JOS-325
+// retired that surface): both toolbar rows are `nowrap` and full, and neither of these narrows the
+// corpus — they change what the surface LOOKS like, which is a different question from what it
+// shows.
 //
 // A MENU, NOT AN INLINE MULTI-SELECT. `ChipMultiSelect` is the house control for picking several
 // from a closed list, and it is the wrong one here: it renders the selection as chips INSIDE the
