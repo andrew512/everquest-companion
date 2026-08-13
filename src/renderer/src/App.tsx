@@ -41,10 +41,12 @@ import FeedbackDialog from './features/feedback/FeedbackDialog'
 // it. WHETHER TO SHOW IT is a second question and a runtime one (`OWNER_TOOLS`, JOS-72). See
 // devTriage.tsx / devFlags.ts.
 import DevTriageView from './devTriage'
-// UNRELEASED (JOS-45). Same shape, different axis: a product surface awaiting the owner's
-// review rather than operator tooling. See unreleasedCharacter.tsx / devFlags.ts.
-import UnreleasedCharacterView from './unreleasedCharacter'
-import { OWNER_TOOLS, UNRELEASED } from './devFlags'
+// The CHARACTER SHEET (JOS-45, released JOS-327). It used to come through `unreleasedCharacter.tsx`
+// — a `UNRELEASED ? lazy(() => import(…)) : null` twin of `devTriage` above, whose whole job was to
+// keep the tree out of packaged bytes. The owner released the tab, so that file is gone and this is
+// an ordinary static import like the eleven views above it.
+import CharacterView from './features/character/CharacterView'
+import { OWNER_TOOLS } from './devFlags'
 import { useFeedbackDialog, type FeedbackPrefill } from './features/feedback/useFeedback'
 // Usage analytics (docs/plans/usage-analytics.md). The notice is mounted unconditionally and
 // renders nothing once it has been answered; `useViewDwell` reports how long each tab was on
@@ -145,12 +147,12 @@ function PlainView({
           by the fold the character switch kicks off. */}
       {view === 'timers' && <TimersView key={viewKey} />}
       {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
-      {/* UNRELEASED (JOS-45). It sits HERE, below the no-characters gate, and not beside the
-          triage branch: unlike triage this tab reads the game log (name, level, loadout) and
-          the character's own inventory dump, so a machine with no EverQuest install has
-          nothing to show it. `UNRELEASED` folds to a literal in every build, so the branch and
-          the lazily-imported tree behind it are deleted from shipped bytes. */}
-      {UNRELEASED && view === 'character' && <UnreleasedCharacterView key={viewKey} />}
+      {/* CHARACTER (JOS-45, released JOS-327). It sits HERE, below the no-characters gate, and not
+          beside the triage branch: unlike triage this tab reads the game log (name, level, loadout)
+          and the character's own inventory dump, so a machine with no EverQuest install has nothing
+          to show it. Keyed like the rest — the sheet and its carry-all ledger are one character's,
+          and the remount is how this app says that. */}
+      {view === 'character' && <CharacterView key={viewKey} />}
     </>
   )
 }
@@ -503,18 +505,19 @@ export default function App(): JSX.Element {
   }, [view])
 
   // How long each tab was on screen, reported ON SWITCH (plan §2). `View` and the schema's
-  // `viewDwell` enum are the same set apart from the UNRELEASED views, which report nothing:
-  // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop
-  // every counter with it (JOS-45; `dwellView` states the rule).
+  // `viewDwell` enum are the SAME SET as of JOS-327, which released the last view that was held out
+  // of it — `dwellView` still folds an unknown id to `null` rather than reporting it, because
+  // widening the enum before the ingest Lambda is deployed would 400 the whole batch and drop every
+  // counter with it. `tests/telemetryContract.test.mts` pins the equality in both directions.
   useViewDwell(dwellView(view))
 
   // …and the same fact, kept for the ERROR reporter (JOS-100). It is a separate mechanism on
   // purpose: `useViewDwell` reports the view you LEFT, on a switch, which is exactly the wrong
   // answer for "which tab was open when it broke". This is a plain module variable because its
   // readers — the global error handlers in main.tsx and ErrorBoundary — run at moments when the
-  // React tree is not something to rely on. An UNRELEASED view sets it too and is folded to
-  // `unknown` by main's closed-enum check, which is the right outcome: an error there is worth
-  // reporting even though the view id is not.
+  // React tree is not something to rely on. A view the schema has not learned would set it too and
+  // be folded to `unknown` by main's closed-enum check, which is the right outcome: an error there
+  // is worth reporting even though the view id is not.
   setCurrentView(view)
 
   useEffect(() => {

@@ -2,7 +2,7 @@
 // persisted "which tab was I on" key all agree on. Lives outside App.tsx so the nav drawer
 // can import it without importing the app itself.
 
-import { OWNER_TOOLS, UNRELEASED } from './devFlags'
+import { OWNER_TOOLS } from './devFlags'
 
 export type View =
   | 'overview'
@@ -33,12 +33,11 @@ export type View =
   // JOS-72), and `KNOWN_VIEWS` below drops the string itself in a build or a checkout without
   // it, so a persisted 'triage' can never leave anyone staring at an empty content area.
   | 'triage'
-  // UNRELEASED view (src/renderer/src/features/character/**, JOS-45). Same erasure argument as
-  // 'triage' above: the member is a TYPE. What strips is the CODE — the nav row, the content
-  // branch and the lazily-imported tree all sit behind `UNRELEASED`, and `KNOWN_VIEWS` drops
-  // the string in a build without it, so a persisted 'character' can never leave a shipped app
-  // staring at an empty content area. Since JOS-324 the code it gates is the area's LAST TAB
-  // rather than a nav row of its own; JOS-327 removes the gate.
+  // The CHARACTER SHEET (src/renderer/src/features/character/**) — the gear area's LAST TAB: what
+  // you are wearing right now, read out of the newest `/outputfile inventory` dump, plus the
+  // searchable ledger of everything else that dump lists. It was UNRELEASED from JOS-45 (a
+  // compile-time strip behind `UNRELEASED`, absent from every packaged build) until the owner
+  // released it in JOS-327; it is an ordinary member of both lists below now.
   | 'character'
 
 export const VIEW_KEY = 'eq.view'
@@ -97,12 +96,14 @@ const KNOWN_VIEWS: View[] = [
   'buffs',
   'timers',
   'preferences',
+  // JOS-327: `character` used to be spliced in behind `UNRELEASED` right here, beside the
+  // owner-tools splice below. It is a plain member now — every build draws it.
+  'character',
   // Compile-time in a BUILD (`false ? [...] : []` folds away, taking the literal with it) and a
   // runtime read of the opt-in on a dev server — so a contributor's checkout, which has no
   // `EQ_OWNER_TOOLS`, bounces a persisted 'triage' to the default view instead of routing to a
   // tab it will not draw.
-  ...(OWNER_TOOLS ? (['triage'] as const) : []),
-  ...(UNRELEASED ? (['character'] as const) : [])
+  ...(OWNER_TOOLS ? (['triage'] as const) : [])
 ]
 
 export function loadView(): View {
@@ -133,7 +134,8 @@ export function loadView(): View {
 // is MANUAL navigation and clears the parked trail, which is what a nav-row click always did.
 //
 // THE ORDER IS THE TAB BAR'S ORDER, and Character is LAST on purpose: it is the only member that
-// is not a shopping question, and it is the one the review gate can still take away.
+// is not a shopping question. (It was also the one the review gate could still take away — JOS-327
+// released it, and the order is unchanged because the first reason was always the real one.)
 
 /** Where the area remembers which tab you were last on. Renderer-only, like `VIEW_KEY`. */
 export const GEAR_TAB_KEY = 'eq.gear.tab'
@@ -144,10 +146,10 @@ export const DEFAULT_GEAR_TAB: View = 'gear'
 /**
  * The four faces, in tab order — FILTERED BY WHAT THIS BUILD CAN RENDER.
  *
- * Deriving the roster from `KNOWN_VIEWS` rather than re-spelling the `UNRELEASED` gate is what
- * keeps the two lists from disagreeing: the Character tab appears exactly when the build can draw
- * the Character view, and JOS-327 graduates it by moving `character` out of the gated spread
- * above — no second edit down here, and no window where the bar offers a tab that mounts nothing.
+ * Deriving the roster from `KNOWN_VIEWS` rather than re-spelling a per-view gate is what keeps the
+ * two lists from disagreeing: a tab appears exactly when the build can draw the view behind it.
+ * JOS-327 is the proof it works — graduating the Character tab was one word moved in `KNOWN_VIEWS`
+ * above, no edit down here, and no window in which the bar offered a tab that mounts nothing.
  */
 export const GEAR_AREA_VIEWS: readonly View[] = (
   ['gear', 'planner', 'wishlist', 'character'] as const
