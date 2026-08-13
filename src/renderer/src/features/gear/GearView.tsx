@@ -80,6 +80,24 @@
 // IT — the three memos, both deferrals and both JOS-297 meeting points are byte-for-byte what they
 // were, because where a field is STORED is not a question the filter model has ever asked.
 //
+// AND SINCE JOS-335 A SEARCH ROW CAN BE WANTED. The sentence three paragraphs up — "ACQUISITION
+// PLANNING IS THE WISH LIST'S JOB NOW" — was true and only half wired: the Exaltations donor rows
+// could write a wish (JOS-326) and the 6,766 rows of this table could not, so the tab that IS the
+// item corpus was the one surface with no way to say "I want that". The gesture is per row and the
+// door is the one every other writer uses (`useWishlist` → `addWish` → the same character-scoped
+// document), so there is no second model, no second dedupe and nothing here that knows how a wish
+// is stored. The pipeline above is untouched again: a wish is not a filter, so the three memos
+// never see it — `wished` is read straight off the loaded document and joined to the rows in the
+// TABLE, by `row.key`, which is `itemKey(name)`, which is `WishEntry.itemKey` (phase 3's seam, for
+// the third time).
+//
+// MOUNTED HERE, ONCE, AND THAT IS SAFE FOR THE SAME REASON `PlannerView` SAYS IT IS: Gear,
+// Exaltations and Wish list are sibling tabs of one nav area and App renders exactly one view at a
+// time (appViews.ts), so two `useWishlist` mounts never coexist and cannot clobber each other's
+// writes. The corollary is what makes the lit state self-correcting — leaving this tab unmounts the
+// hook and coming back re-reads the document, so a wish removed on the Wish list tab is already
+// gone from this table's hearts before the first row is drawn.
+//
 // AND SINCE JOS-302 THE FIRST TOOLBAR ROW NARROWS HARDER, in three ways the pipeline above did not
 // change one line for. The CLASS picks remove rows instead of chipping them (the owner's ruling —
 // gearFilter.ts `GearFilters.classes` holds the argument, GearTable.tsx holds the deleted chip's
@@ -98,6 +116,8 @@ import { useWindowedRows } from '../../lib/useWindowedRows'
 import GearFilterBar from './GearFilterBar'
 import GearPicker from './GearPickers'
 import GearTable, { ROW_HEIGHT } from './GearTable'
+import { useWishlist } from '../wishlist/useWishlist'
+import { wishFromGear } from '../wishlist/wishSearch'
 import { useGearPrefs, type GearPrefs } from './useGearPrefs'
 import { sanitizeGearForm, sanitizeGearSort, type GearFormMemory } from './areaMemory'
 import { useRemembered, useRememberedSearch } from './useAreaMemory'
@@ -326,6 +346,38 @@ function CountLine({
   )
 }
 
+/**
+ * THE WISH JOIN (JOS-335), and both halves of it are one line each because the seam was already
+ * there.
+ *
+ * `wished` is keyed on `WishEntry.itemKey`, which is `row.key`; `onWish` builds the entry through
+ * `wishFromGear` — the SAME builder the wish list's own add control uses for a gear hit
+ * (wishSearch.ts) — so a wish written from this table and one written from that popover are the
+ * same bytes, `source: 'user'` included. `wishlist.add` is a stable callback, so the row handler is
+ * stable too and `GearLine`'s memo survives a keystroke.
+ *
+ * `onWish` IS UNDEFINED UNTIL THE DOCUMENT HAS LOADED, which is the absent-not-disabled rule
+ * arriving at its one real case here (`GearTableProps.onWish` argues it): before `ready` the empty
+ * list is a default rather than an answer, and a heart drawn unlit over an item that IS wished
+ * would be the app contradicting its own store.
+ *
+ * A HOOK RATHER THAN FIVE LINES IN THE VIEW, for the ordinary reason: the component is at the
+ * measured 100-code-line function ceiling and this is a self-contained join with one output.
+ */
+function useGearWishes(): { wished: ReadonlySet<string>; onWish?: (row: GearRow) => void } {
+  const wishlist = useWishlist()
+  const entries = wishlist.list.entries
+  const wished = useMemo(() => new Set(entries.map((e) => e.itemKey)), [entries])
+  const add = wishlist.add
+  const onWish = useCallback(
+    (row: GearRow) => {
+      add(wishFromGear(row, Date.now()))
+    },
+    [add]
+  )
+  return { wished, onWish: wishlist.ready ? onWish : undefined }
+}
+
 export interface GearViewProps {
   /**
    * Deep-link an item name into the Loot tab's drill-down (App's `openLoot`) — where the ItemWindow
@@ -340,6 +392,9 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const classes = useGearClasses()
   const upgrade = useUpgradeState()
   const ownership = useGearOwnership()
+  // JOS-335. The wish list, mounted here so a search row can write to it and so every row knows
+  // whether it is already wanted — see the header for why one mount is the whole story.
+  const wishes = useGearWishes()
   // JOS-297. A view unmounts on every tab switch, so both choices are localStorage-backed.
   const prefs = useGearPrefs()
   // JOS-329, and the same law one level up: EVERY field of this form outlives the tab now. The five
@@ -453,6 +508,11 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
           // sorted column, clicking the header that took over must FLIP it rather than re-open it.
           onSort={(key) => setSort(nextSort(table.sort, key))}
           onOpenLoot={onOpenLoot}
+          // JOS-335 — the per-row wish gesture and the lit state it reads. `onWish` is UNDEFINED
+          // until the document has loaded (`useGearWishes`), which is what draws no control at all
+          // rather than one that would be lying about what is already on the list.
+          onWish={wishes.onWish}
+          wished={wishes.wished}
         />
         {table.rows.length === 0 && (
           <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>

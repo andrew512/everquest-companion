@@ -28,9 +28,19 @@
 // a table `minWidth` once they do not, so a thirty-column set overflows the table's OWN scroller
 // (GearView's `gear-list` box, already `overflow: auto`) and never the page. Both halves are
 // measured in `tests/e2e/gearColumnSteps.mts`, container-scroll and page-no-scroll in one step.
+//
+// AND SINCE JOS-335 A SEARCH ROW HAS A GESTURE AGAIN: it goes on the wish list. The tombstone in
+// the name cell below records that JOS-325 took the sets `+` away and left the table with no
+// per-row action at all, while the Exaltations donor rows kept theirs (JOS-326 re-aimed that button
+// at the wish list). This restores the parity: same door (`useWishlist`), same document, same
+// dedupe. What it deliberately does NOT restore is a COLUMN — the control shares the item name's
+// cell exactly as the `+` did, because `gearTableLayout` states the width of every other column and
+// a new one would be a change to the layout contract for a 22px button. See `WishButton`.
 
 import { type JSX, memo, useMemo } from 'react'
-import { Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
+import { IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
+import FavoriteIcon from '@mui/icons-material/Favorite'
+import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName } from '../planner/PlannerChips'
@@ -96,6 +106,75 @@ export interface GearTableProps {
    * draws plain text rather than a link that goes nowhere.
    */
   onOpenLoot?: (item: string) => void
+  /**
+   * PUT THIS ROW ON THE WISH LIST (JOS-335) — the second per-row action, and the one the general
+   * rule above was waiting for.
+   *
+   * ABSENT, NEVER DISABLED, when the host has no wish list to write to. That is the same house rule
+   * `onOpenLoot` applies one prop up, and here it covers exactly one case: the wish document has not
+   * loaded yet, so `wished` would be a GUESS rather than a fact and a lit state read off an empty
+   * list would be a lie about what is already on it. A button that appears a beat late is honest; a
+   * button that says "not wished" about an item that is, is not.
+   */
+  onWish?: (row: GearRow) => void
+  /**
+   * The item keys already on the wish list — the lit state, and the reason a second click on the
+   * same row is nothing. Keys are `itemKey(name)`, which IS `row.key`: the corpus join key this
+   * whole table is built on, so the membership test is one `Set.has` per rendered row.
+   */
+  wished: ReadonlySet<string>
+}
+
+/**
+ * ADD TO THE WISH LIST, FROM A SEARCH ROW (JOS-335) — the Exaltations donor row's control, shrunk
+ * to what a dense table can carry.
+ *
+ * WHAT IT SHARES WITH `EffectRows.AddButton`, which is everything that matters: one click, the same
+ * `useWishlist` door, the same `WishEntry` dedupe by `itemKey`, no dialog and no menu, and a state
+ * that says on sight whether the item is already wanted.
+ *
+ * WHAT IT CANNOT SHARE IS THE WORDS. That button is a 96px text button reading "Add to wish list" /
+ * "Wished" on a 44px browse row whose name column is free to shrink. This table is `tableLayout:
+ * fixed` at `ROW_HEIGHT` 37 with a stated width for every column but the name, so a text button in
+ * the name cell would take ~100px of it off every one of 6,766 rows, permanently, to say a thing the
+ * lit icon says. The icon is the wish list's OWN mark (`WishlistView`'s empty state draws the same
+ * heart), so the two surfaces still read as one feature.
+ *
+ * IT STAYS ENABLED WHEN IT IS LIT, and that is a deliberate divergence from the donor row rather
+ * than an omission. Two reasons, and they point the same way. The ticket's own rule is that adding
+ * an item that is already wished is a NO-OP — which is what `addWish` does on its own (same list
+ * object back, no write, no re-render), so the model is the enforcement and the button does not
+ * have to be. And this control explains itself only through its native `title` (JOS-143: no popper
+ * anywhere in this table), which Chromium never shows for a disabled control — disabling it would
+ * take the lit state's explanation away at exactly the moment there is something to explain.
+ */
+function WishButton({
+  row,
+  wished,
+  onWish
+}: {
+  row: GearRow
+  wished: boolean
+  onWish: (row: GearRow) => void
+}): JSX.Element {
+  return (
+    <IconButton
+      size="small"
+      data-testid="gear-wish"
+      data-wished={wished ? 'true' : undefined}
+      color={wished ? 'success' : 'default'}
+      aria-label={wished ? `${row.name} is on your wish list` : `Add ${row.name} to your wish list`}
+      title={
+        wished
+          ? 'Already on your wish list. The Wish list tab is where it comes off.'
+          : 'Add to your wish list, where it joins the route grouped by where it drops.'
+      }
+      onClick={() => onWish(row)}
+      sx={{ flexShrink: 0, p: 0.25 }}
+    >
+      {wished ? <FavoriteIcon fontSize="inherit" /> : <FavoriteBorderIcon fontSize="inherit" />}
+    </IconButton>
+  )
 }
 
 /** The spacer rows that reserve the full scroll height — see useWindowedRows. */
@@ -118,24 +197,32 @@ const GearLine = memo(function GearLine({
   row,
   columns,
   ownership,
+  wished,
   on
 }: {
   row: GearRow
   columns: readonly GearColumn[]
   ownership: GearOwnershipMap | null
-  on: { openLoot?: (item: string) => void }
+  /** already on the wish list — a BOOLEAN and not the set, so `memo` can compare it (JOS-335) */
+  wished: boolean
+  on: { openLoot?: (item: string) => void; wish?: (row: GearRow) => void }
 }): JSX.Element {
   // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
   // already the ownership key — phase 3's seam — so there is nothing to normalise here.
   const owned = ownership === null ? null : ownershipFor(ownership, row)
+  const wish = on.wish
   return (
     <TableRow hover data-testid="gear-row" data-item-key={row.key} sx={FIXED_ROW}>
       <TableCell>
-        {/* THE `+` IS GONE FROM THIS CELL (JOS-325). It put the row into the selected gear set, and
-            the sets are retired — see `GearTableProps.onOpenLoot`. The `Stack` stays because the
-            name still shares the cell with the era chip, and the FIXED_ROW contract above is what
-            makes that one clipped line rather than two. */}
+        {/* THE `+` IS GONE FROM THIS CELL (JOS-325) — it put the row into the selected gear set, and
+            the sets are retired. WHAT STANDS IN ITS PLACE IS NOT IT (JOS-335): the heart writes a
+            wish, which is a document that outlives any pane, and it leads the cell for the reason
+            the `+` did — a control column down the left edge of the Item column is one target to
+            aim at, where a control after a variable-width name is a moving one. The `Stack` was
+            always what let the name share this cell with the era chip, and the FIXED_ROW contract
+            above is what keeps all three one clipped line rather than two. */}
         <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
+          {wish !== undefined && <WishButton row={row} wished={wished} onWish={wish} />}
           <DonorName name={row.name} onOpen={on.openLoot} />
           {/* THE ONE CHIP A SEARCH ROW WEARS, and it is a POINTER rather than a verdict: the era
               join's (out of era / era?), which explains a row you can SEE.
@@ -203,14 +290,17 @@ export default function GearTable({
   ownership,
   ownedHint,
   onSort,
-  onOpenLoot
+  onOpenLoot,
+  onWish,
+  wished
 }: GearTableProps): JSX.Element {
   const span = columns.length + (ownership === null ? 3 : 4)
   const layout = gearTableLayout(columns.length, ownership !== null)
   // ONE object for the row's callbacks, memoized on the callbacks themselves: `GearLine` is
   // `memo`'d and a fresh literal per render would defeat it on every keystroke. It held two until
-  // JOS-325 retired the `+`; it stays an object because the wrapper is what the memo depends on.
-  const handlers = useMemo(() => ({ openLoot: onOpenLoot }), [onOpenLoot])
+  // JOS-325 retired the `+`, and holds two again since JOS-335 — which is exactly why it stayed an
+  // object through the year it held one: the wrapper is what the memo depends on.
+  const handlers = useMemo(() => ({ openLoot: onOpenLoot, wish: onWish }), [onOpenLoot, onWish])
   return (
     <Table
       size="small"
@@ -246,7 +336,14 @@ export default function GearTable({
       <TableBody>
         <PadRow height={win.topPad} colSpan={span} />
         {rows.slice(win.start, win.end).map((row) => (
-          <GearLine key={row.key} row={row} columns={columns} ownership={ownership} on={handlers} />
+          <GearLine
+            key={row.key}
+            row={row}
+            columns={columns}
+            ownership={ownership}
+            wished={wished.has(row.key)}
+            on={handlers}
+          />
         ))}
         <PadRow height={win.bottomPad} colSpan={span} />
       </TableBody>
