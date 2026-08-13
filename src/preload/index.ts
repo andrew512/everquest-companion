@@ -427,15 +427,16 @@ const api = {
   ...plannerApi,
 
   // ---- character sheet (JOS-45) ----
-  /** The armory grid + the gear sum for the active character, from their newest
-   *  `/outputfile inventory` dump; `null` when no dump exists.
+  /** The armory grid, the gear sum and the carry-all ledger for the active character, from their
+   *  newest `/outputfile inventory` dump; `null` when no dump exists.
    *
-   *  UNLIKE EVERY OTHER METHOD HERE, THIS ONE CAN REJECT — and that is the design. The handler
-   *  behind it is registered only when `UNRELEASED` (src/main/unreleased.ts) is true, so in a
-   *  packaged build there is nothing on the other side and the invoke fails with Electron's own
-   *  "No handler registered for 'character:sheet'". The bridge is a door; a shipped app has no
-   *  renderer code to open it (the surface is stripped) and no handler if something tried.
-   *  Same shape as the `triage*` methods above. */
+   *  IT USED TO BE THE ONE METHOD HERE THAT COULD REJECT, and JOS-327 ended that: the handler was
+   *  registered only when `UNRELEASED` (src/main/unreleased.ts) was true, so a packaged build had
+   *  nothing on the other side and the invoke failed with Electron's own "No handler registered
+   *  for 'character:sheet'". The owner released the tab; the handler is unconditional. The
+   *  renderer's read still tolerates a rejection (features/character/useCharacterSheet.ts) — a
+   *  transport that answers `null` for "no dump" has no business turning anything into a red box —
+   *  but nothing is expected to produce one now. */
   characterSheet: (): Promise<CharacterSheet | null> => ipcRenderer.invoke(IPC.characterSheet),
 
   /** Report a renderer-detected event into the live event feed (Task #59) — today only quest

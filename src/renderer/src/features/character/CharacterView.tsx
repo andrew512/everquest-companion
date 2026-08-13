@@ -1,19 +1,37 @@
-// character/CharacterView — the Magelo-style character sheet (JOS-45).
+// character/CharacterView — the Magelo-style character sheet (JOS-45), released in JOS-327.
 //
 // Identity across the top, the armory slot grid on the left, what the gear adds up to on the
-// right. Everything on this tab comes from two places and says which: the log (name, level,
-// class loadout) and the newest `/outputfile inventory` dump (every slot, every socket).
+// right, and — since JOS-327 — the whole rest of the dump underneath: every bag slot, every bank
+// slot, every key ring, searchable. Everything on this tab comes from two places and says which:
+// the log (name, level, class loadout) and the newest `/outputfile inventory` dump.
 //
-// UNRELEASED. This whole tree is behind the compile-time `UNRELEASED` flag — it is reachable
-// in a dev build and STRIPPED from every packaged build, pending the owner's review (owner,
-// 2026-08-06). See src/renderer/src/devFlags.ts and src/main/unreleased.ts. It graduates by
-// deleting its gate, not by flipping a setting.
+// IT WAS UNRELEASED, AND THIS PARAGRAPH IS THE LAW IT LIVED UNDER, KEPT ON PURPOSE. From JOS-45
+// (owner, 2026-08-06) this whole tree sat behind the compile-time `UNRELEASED` flag: reachable in
+// a dev build, STRIPPED from every packaged build, pending the owner's review — and it was stated
+// that it would graduate by DELETING its gate rather than by flipping a setting. That is exactly
+// what happened on 2026-08-13: `unreleasedCharacter.tsx` deleted, the `KNOWN_VIEWS` splice made
+// unconditional, the main-side handler registered like any other. The flag machinery survives with
+// no tenant (src/renderer/src/devFlags.ts, src/main/unreleased.ts) because the arrangement is worth
+// more than this one use of it. Nothing about the gate is left in this file but its history.
 //
 // WHAT THIS TAB DOES NOT SHOW, AND WHY THERE IS NO PANEL APOLOGISING FOR IT: your real AC, HP,
 // mana, resists and AA. The JOS-45 spike read the shipped client's own string table — no
 // `/outputfile` variant exports character stats, and no AA export exists at all. So there is no
 // empty "AA" card here to explain a permanent absence; the sheet shows what can be known and
 // the gear panel names its own scope in its heading.
+//
+// AND THE TOTALS STAY BASE-COMPUTED (owner ruling, JOS-327: keep character totals initially).
+// `shared/itemUpgrade.ts scaleStatBlock` now ports the wiki's own ItemLevelSlider arithmetic, so
+// the app COULD scale a worn item's block by its ` +N` — and this tab deliberately does not, this
+// release. The gear panel's numbers are the sum of the BASE blocks, labelled as such, exactly as
+// they shipped; the per-item ` +N` stays visible where the dump spelled it, on the item's own name
+// in the slot grid and in the carry-all ledger. One honest number beats a better one that arrives
+// with the panel's caption silently meaning something new.
+//
+// THE LAYOUT IS A SHEET ON TOP AND A LEDGER UNDERNEATH, and the ledger is the one that grows. The
+// sheet is a fixed twenty-four cells and sizes to its content; `CarryAll` takes the rest of the
+// height with its own scroller (the standing growing-list law), so a character with three hundred
+// rows and a character with thirty produce the same page.
 
 import { type JSX } from 'react'
 import { Box, Paper, Stack, Typography } from '@mui/material'
@@ -22,6 +40,7 @@ import type { SheetCellView } from '@shared/characterSheet'
 // that make the dump complete. This tab never re-types either of them.
 import { outputKind } from '@shared/outputs/kinds'
 import OutputFileLine from '../../components/OutputFileLine'
+import CarryAll from './CarryAll'
 import CharacterIdentity from './CharacterIdentity'
 import GearStats from './GearStats'
 import SlotGrid from './SlotGrid'
@@ -93,7 +112,7 @@ export default function CharacterView(): JSX.Element {
           direction={{ xs: 'column', lg: 'row' }}
           spacing={1}
           alignItems="flex-start"
-          sx={{ minWidth: 0 }}
+          sx={{ minWidth: 0, flexShrink: 0 }}
           data-testid="character-sheet"
         >
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
@@ -105,6 +124,11 @@ export default function CharacterView(): JSX.Element {
           </Stack>
         </Stack>
       )}
+
+      {/* …and the rest of the same dump (JOS-327). It is the one panel here that GROWS with what
+          the player owns, so it is the one that takes the leftover height and scrolls inside
+          itself; everything above is `flexShrink: 0` and sizes to its content. */}
+      {sheet && <CarryAll carry={sheet.carry} />}
     </Box>
   )
 }

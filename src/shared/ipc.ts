@@ -383,13 +383,15 @@ export const IPC = {
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest
   // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB
-  // corpus already lives). Returns CharacterSheet | null — null means no dump, which the tab
-  // answers with its instructions card, never an error.
+  // corpus already lives) — and, since JOS-327, the CARRY-ALL ledger off the same parse
+  // (`CharacterSheet.carry`, shared/carryAll.ts): every non-empty row of every table the dump
+  // carries, with its location path and count. Returns CharacterSheet | null — null means no dump,
+  // which the tab answers with its instructions card, never an error.
   //
-  // THIS CHANNEL IS GATED. Its handler is registered only when `UNRELEASED` (src/main/unreleased.ts)
-  // is true — dev builds, or an explicit EQ_UNRELEASED=1 — because the module has not passed the
-  // owner's review gate. In a packaged build there is no handler and the preload method rejects,
-  // which is the designed outcome: the renderer surface is stripped from those bytes entirely.
+  // IT WAS GATED UNTIL JOS-327. The handler was registered only when `UNRELEASED`
+  // (src/main/unreleased.ts) was true, because the surface had not passed the owner's review gate,
+  // and the preload method below still documents the reject that came of it. The owner released the
+  // tab, so this is an ordinary channel now: registered in every build, answering in every build.
   characterSheet: 'character:sheet',
 
   // ---- map viewer (docs/plans/map-viewer.md §4.2) ----
