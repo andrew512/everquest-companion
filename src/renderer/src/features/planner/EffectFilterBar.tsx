@@ -210,10 +210,13 @@ export default function EffectFilterBar({
         ))}
       </ToggleButtonGroup>
 
+      {/* The testid arrived with JOS-329: the box is remembered now (session tier), and an e2e that
+          asserts a search survived a module switch has to be able to read what is in it. */}
       <TextField
         size="small"
         label="Search effect or item"
         value={text}
+        data-testid="planner-search"
         onChange={(e) => setText(e.target.value)}
         sx={{ minWidth: 140, flexShrink: 1 }}
       />

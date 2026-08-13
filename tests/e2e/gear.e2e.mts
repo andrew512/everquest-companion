@@ -63,6 +63,16 @@
  * the only thing that speaks for it — which is the right level, because the store round trip is
  * all that is left of the feature.
  *
+ * AND SINCE JOS-329 IT ASSERTS THAT THE FORM COMES HOME. The owner's report was that the whole gear
+ * area lost its state on every module switch, so the two round trips he described are steps here:
+ * set six controls to values nothing defaults to, leave for the Loot MODULE and come back; then
+ * drill into the Loot detail from a row and press BACK. Both compare a fingerprint read off the
+ * SCREEN — including the count line, which moves if any narrowing was silently dropped — and both
+ * assert the view UNMOUNTED first, because a spec that skipped that would pass on the one build
+ * where the bug cannot happen (AGENTS.md, JOS-90/97/116). The second launch then proves the
+ * RESTART SPLIT in both directions: the slot pick and the era toggle survive the process, the typed
+ * search does not.
+ *
  * The one thing it deliberately does NOT assert is a row count: the corpus grows (AGENTS.md,
  * "frozen numbers rot"), so every count here is a floor or an identity.
  *
@@ -97,6 +107,9 @@ import {
 } from './gearColumnSteps.mjs'
 // JOS-302's class, slot-union and weapon-type steps, likewise.
 import { clearPicks, pickIn, stepGearClassFilter, stepGearSlotPicks, stepGearWeaponTypes } from './gearFilterSteps.mjs'
+// JOS-329's away-and-back steps, shared with the planner and character specs — one module because
+// the claim is identical on every tab of the area and only the fingerprint differs.
+import { stepGearMemory, stepGearMemoryRelaunched } from './areaMemorySteps.mjs'
 // Phase 0's scaler and phase 2's ratio, so the EXPECTED numbers are computed rather than typed.
 import { gearRatio, scaleGearRow } from '../../src/shared/planner/gearScale'
 import type { GearRow } from '../../src/shared/planner/gear'
@@ -582,6 +595,12 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
     // at the checkpoint (so the picked columns can be re-read against `scaleGearRow` at a plus
     // nobody is about to move), and it parks a column choice for the second launch to find.
     await stepGearColumns(page, COLUMNS)
+    // …and JOS-329 runs after IT, for two reasons. It MOVES the global selector (a Tier 1 label on
+    // the far side of a module switch is the whole point of the overridden law), which every step
+    // above reads; and the choice JOS-297 just parked is untouched by it, because the columns
+    // picker and the filter form are different keys on the same tier. It parks a slot pick and an
+    // era toggle of its own for `stepGearMemoryRelaunched` below.
+    await stepGearMemory(page)
   }
   const over = await pageOverflow(page)
   check(
@@ -634,7 +653,13 @@ async function main(): Promise<void> {
     const page = await mainWindow(second.app)
     watch(page, consoleErrors)
     const up = await stepMount(page)
-    if (up) await stepGearColumnsRelaunched(page)
+    if (up) {
+      await stepGearColumnsRelaunched(page)
+      // THE RESTART HALF OF JOS-329's SPLIT, and the only place it can be proved: a structural pick
+      // comes back across the process and a TYPED search does not. Both directions, because
+      // "persisted everything" is as wrong as "persisted nothing".
+      await stepGearMemoryRelaunched(page)
+    }
     if (failures.length) await dumpArtifacts(page, 'gear-relaunch-FAIL')
   } finally {
     await second.close()

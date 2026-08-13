@@ -107,6 +107,8 @@ import {
   stepWishDeepLink,
   stepZoneGrouping
 } from './wishlistSteps.mjs'
+// JOS-329's away-and-back step for this browser, from the module the gear and character specs share.
+import { stepBrowseMemory } from './areaMemorySteps.mjs'
 
 /** The Loot tab's drill-down, where an item name deep-links to. */
 const LOOT_DETAIL = '[data-testid="loot-detail"]'
@@ -393,6 +395,10 @@ async function exaltationSteps(page: Page): Promise<string | null> {
   await stepNonEquip(page)
   await stepFocusFamilies(page)
   await stepItemFilter(page)
+  // JOS-329. It runs BEFORE the add step and after every measuring step: it needs a browse it can
+  // put into a non-default state (a socket tab, the escape hatch, an expanded group) and it hands
+  // all of that back, so `stepAddWish` still finds the proc tab it was written against.
+  await stepBrowseMemory(page)
   return stepAddWish(page)
 }
 
