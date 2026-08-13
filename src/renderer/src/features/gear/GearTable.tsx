@@ -21,6 +21,17 @@
 // slider; an interactive popper opened from the first row lands on those controls and eats the
 // clicks aimed at them. Every explanation is a native `title`.
 //
+// …AND SINCE JOS-338 THERE IS EXACTLY ONE POPPER, WHICH IS THE NARROWING JOS-181 ALREADY MADE
+// ELSEWHERE. The sentence above was never about the popper existing — it was about an INTERACTIVE
+// card belonging to a row BELOW the toolbar, opening UPWARD across it and holding the pointer while
+// it was up. The owner ruled that trade the other way on the Sky tab (JOS-181) and has now asked for
+// the card here: hovering a row shows what the item would REPLACE. So the rule narrows to what it
+// was always about, and the guarantee is structural rather than a promise — the card is mounted
+// through ONE wrapper (`GearCompareCard.tsx`'s `GearRowCompare`) that always opens it beside the
+// row, never above it, with no pointer events at all and a capture-phase pointerdown close. Every
+// OTHER explanation in this file is still a native `title`, including the two on the wish heart:
+// a caption is not a card, and nothing else here grows a popper.
+//
 // AND SINCE JOS-297 THE COLUMN SET CAN BE WIDER THAN THE PANE. Nothing above changes: the table is
 // still `tableLayout: fixed`, the row is still exactly `ROW_HEIGHT` tall with one clipped line per
 // cell, and the windowing hook's contract does not know that widths exist. What changes is where
@@ -45,6 +56,10 @@ import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName } from '../planner/PlannerChips'
 import { gearTableLayout, statText, type GearColumn } from './gearColumns'
+// JOS-338 — the ONE door a card may reach these rows through (its header states the three
+// guarantees that make it safe over this tab's dropdown toolbar).
+import { GearRowCompare } from './GearCompareCard'
+import type { GearCompareData } from './gearData'
 import { sortValue, type GearSort, type GearSortKey } from './gearFilter'
 import { ownedCellText, ownedCellTitle, ownershipFor, type GearOwnershipMap } from './gearOwnership'
 import type { ClassAbbr } from '@shared/classCombo'
@@ -123,6 +138,17 @@ export interface GearTableProps {
    * whole table is built on, so the membership test is one `Set.has` per rendered row.
    */
   wished: ReadonlySet<string>
+  /**
+   * WHAT A HOVERED ROW IS COMPARED AGAINST (JOS-338) — the equipped-by-cell index, the corpus by
+   * key, and when the dump was exported (`useGearCompare`).
+   *
+   * ABSENT MEANS NO CARD AT ALL, which is the same absent-not-disabled rule `onWish` states one
+   * prop up: a host that cannot answer "what are you wearing" — a surface that draws this table
+   * without the dump seam — should draw no card rather than one whose equipped half is a permanent
+   * blank. Present-but-not-`ready` is a different thing and the CARD handles it: the reader is
+   * hovering, so the card opens and simply says less until the first read lands.
+   */
+  compare?: GearCompareData
 }
 
 /**
@@ -198,6 +224,7 @@ const GearLine = memo(function GearLine({
   columns,
   ownership,
   wished,
+  compare,
   on
 }: {
   row: GearRow
@@ -205,13 +232,15 @@ const GearLine = memo(function GearLine({
   ownership: GearOwnershipMap | null
   /** already on the wish list — a BOOLEAN and not the set, so `memo` can compare it (JOS-335) */
   wished: boolean
+  /** the comparison seam (JOS-338); a STABLE object, or absent for a host with no dump seam */
+  compare: GearCompareData | undefined
   on: { openLoot?: (item: string) => void; wish?: (row: GearRow) => void }
 }): JSX.Element {
   // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
   // already the ownership key — phase 3's seam — so there is nothing to normalise here.
   const owned = ownership === null ? null : ownershipFor(ownership, row)
   const wish = on.wish
-  return (
+  const line = (
     <TableRow hover data-testid="gear-row" data-item-key={row.key} sx={FIXED_ROW}>
       <TableCell>
         {/* THE `+` IS GONE FROM THIS CELL (JOS-325) — it put the row into the selected gear set, and
@@ -250,6 +279,15 @@ const GearLine = memo(function GearLine({
         </TableCell>
       )}
     </TableRow>
+  )
+  // THE CARD HANGS OFF THE WHOLE ROW (JOS-338), which is what the owner asked for — you point at a
+  // candidate, not at a particular cell of it. `GearRowCompare` adds no DOM (MUI's Tooltip renders
+  // its child and portals the popper), so the FIXED_ROW contract at the top of this file is
+  // untouched: same one `<tr>`, same `ROW_HEIGHT`, same windowing arithmetic.
+  return compare === undefined ? line : (
+    <GearRowCompare row={row} data={compare}>
+      {line}
+    </GearRowCompare>
   )
 })
 
@@ -292,7 +330,8 @@ export default function GearTable({
   onSort,
   onOpenLoot,
   onWish,
-  wished
+  wished,
+  compare
 }: GearTableProps): JSX.Element {
   const span = columns.length + (ownership === null ? 3 : 4)
   const layout = gearTableLayout(columns.length, ownership !== null)
@@ -342,6 +381,7 @@ export default function GearTable({
             columns={columns}
             ownership={ownership}
             wished={wished.has(row.key)}
+            compare={compare}
             on={handlers}
           />
         ))}

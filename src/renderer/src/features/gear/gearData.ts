@@ -26,6 +26,11 @@ import { GEAR_INDEX_VERSION, type GearBuildStats, type GearRow } from '@shared/p
 import { NO_OWNERSHIP, type OwnershipPayload } from '@shared/planner/ownership'
 import { useLootHistory } from '../loot/useLootHistory'
 import { useComboSnap } from '../profiles/ClassComboData'
+// JOS-338: the caller `features/planner/plannerInventory.ts` has been asking for since JOS-326 —
+// see `useGearCompare` for why this channel and not the ownership payload beside it.
+import { usePlannerInventory } from '../planner/plannerInventory'
+import { outputUpdatedMillis } from '../../lib/outputFreshness'
+import { equippedIndex, type EquippedIndex } from './gearCompare'
 // ONE era verdict for the whole app: the exaltation browser's, reached through the same three
 // witnesses (mob catalog ∪ the page's own drop list ∪ the era banner). A `GearRow` carries `key`,
 // `wikiSources` and `eraTag`, which is exactly what an `EraSubject` is — so this is a call, never
@@ -180,6 +185,66 @@ export function useGearOwnership(): GearOwnershipState {
   }, [payload.entries, lootedNames])
 
   return { map, payload, readAt }
+}
+
+// ---- the comparison join (JOS-338) ------------------------------------------------------
+
+/**
+ * WHAT THE HOVER CARD IS HANDED: what you are WEARING, the corpus by key, and when you exported.
+ *
+ * THE SEAM IS `plannerInventory`, AND IT IS THE ONE THIS FEATURE WANTED. Two channels could have
+ * answered "what is in that slot": this one, and `gearOwnership`'s payload, whose `OwnershipRow`
+ * carries an equipped row's `slot` too. The ownership payload is keyed BY ITEM (itemKey → rows), so
+ * reading it by slot means inverting the whole index in the renderer — and it stops at the SLOT,
+ * deliberately ("cell assignment is `equippedHosts`' job and is not repeated here"), which is
+ * exactly the half this card needs: two ears are two comparisons. `plannerInventory` already
+ * answers in CELLS, already carries `itemKey` (main's definition, applied in the handler) and
+ * already carries the dump's mtime for the freshness line, so it is one call and no new rule.
+ *
+ * AND IT WAS CALLER-LESS. `features/planner/plannerInventory.ts` has said in writing since JOS-326
+ * that its whole channel — the hook, `IPC.plannerInventory`, the handler and the preload method —
+ * had no reader left and wanted either a caller or a four-file retirement. This is the caller.
+ *
+ * COST: one IPC per mount and one per `inventory:autoReloaded`, which is one parse of a ~300-line
+ * file in main (the handler declines to cache on purpose — its header says why). Nothing here is
+ * per row, per keystroke or per slider tick: the two maps are memos over data that moves only when
+ * the corpus arrives or the player re-exports.
+ */
+export interface GearCompareData {
+  /** cell → the item worn in it, from the newest dump; empty when there is no dump */
+  equipped: EquippedIndex
+  /** the whole corpus by `itemKey`, so a WORN item's numbers are read in the same vocabulary */
+  byKey: ReadonlyMap<string, GearRow>
+  /** the dump's own mtime in epoch ms — when the PLAYER exported. Absent when they never have */
+  exportedAt: number | undefined
+  /** this character has a dump at all. `false` is the run-the-command hint, never "wearing nothing" */
+  hasDump: boolean
+  /** false until the first read settles — the card draws neither half rather than guessing */
+  ready: boolean
+  /** the plus-state the TABLE is simulating, so the card can admit that its item half is one */
+  state: ItemUpgradeState
+}
+
+export function useGearCompare(rows: readonly GearRow[], state: ItemUpgradeState): GearCompareData {
+  const { inventory, ready } = usePlannerInventory()
+  // Keyed on the ARRAY identity, which `useGearIndex` holds stable for the life of the window (the
+  // fetch is cached), so this 6,766-entry map is built once per window and never per hover.
+  const byKey = useMemo(() => new Map(rows.map((row) => [row.key, row])), [rows])
+  const equipped = useMemo(() => equippedIndex(inventory?.hosts ?? []), [inventory])
+  // ONE OBJECT, MEMOIZED, because `GearLine` is `memo`'d and this is one of its props: a fresh
+  // literal per render would defeat the memo on every keystroke of the search box, across a whole
+  // screenful of rows (the `handlers` object in GearTable.tsx is the same bargain).
+  return useMemo(
+    () => ({
+      equipped,
+      byKey,
+      exportedAt: outputUpdatedMillis(inventory?.loadedAt),
+      hasDump: inventory !== null,
+      ready,
+      state
+    }),
+    [equipped, byKey, inventory, ready, state]
+  )
 }
 
 /**
