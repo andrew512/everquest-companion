@@ -37,7 +37,8 @@ import {
   GEAR_INDEX_VERSION,
   GEAR_PERCENT_STAT_KEYS,
   GEAR_STAT_KEYS,
-  isGearStatKey
+  isGearStatKey,
+  type GearRow
 } from '../src/shared/planner/gear'
 import { gearRatio, scaleGearRow, scaleGearStats } from '../src/shared/planner/gearScale'
 import {
@@ -49,6 +50,10 @@ import {
 import { EQUIP_SLOTS } from '../src/shared/planner/types'
 import { isClassAbbr } from '../src/shared/classCombo'
 import type { ItemStatBlock } from '../src/shared/itemStats'
+// The SHIPPED era join, reached the way the Gear tab reaches it — `gearData` calls exactly these
+// two, so the test below asks the screen's own question instead of re-deriving a verdict.
+import { eraChip, eraHides } from '../src/renderer/src/features/planner/plannerData'
+import { eraBadge } from '../src/shared/planner/era'
 
 const file = itemsJson as unknown as ItemDbFile
 const index = buildGearIndex(file)
@@ -263,15 +268,23 @@ test('scaling all rows at one state is fast enough to move a slider', () => {
 // THE CENSUSES — law 1 lives here rather than on the rows
 // =================================================================================
 
-test('the unindexed stat keys are exactly the four the corpus states', () => {
+test('the unindexed stat keys are exactly the five the corpus states', () => {
   // CHARGES / COOLDOWN / CAST TIME / REQUIRED LEVEL are per-item facts, not gear comparisons
-  // (shared/planner/gear.ts says why they are out of the vector). A FIFTH key here is a stat the
-  // gear table would silently not have a column for.
+  // (shared/planner/gear.ts says why they are out of the vector). A key here that is NOT one of
+  // those is a stat the gear table would silently not have a column for.
+  //
+  // `REQ_LEVEL` is the fifth, and it arrived with the 2026-08-13 refresh: 8 pages now abbreviate
+  // the required level that 5 others still spell out. It is the SAME per-item fact under a second
+  // spelling, so nothing on screen changes — both are outside the vector either way — and the
+  // census is updated rather than the alias table, because splitting one fact across two keys is
+  // the wiki's editing, not ours to canonicalize (law 2 canonicalizes at boundaries we own).
+  // This assertion is an EQUALITY on purpose: the sixth spelling should stop the suite too.
   assert.deepEqual(Object.keys(index.stats.unindexedStatKeys).sort(), [
     'CAST_TIME',
     'CHARGES',
     'COOLDOWN',
-    'REQUIRED_LEVEL'
+    'REQUIRED_LEVEL',
+    'REQ_LEVEL'
   ])
 })
 
@@ -369,7 +382,14 @@ test('a key two pages claim is ONE row — the item as the game names it', () =>
   // donor index denormalizes by (key, effect, socket) and so lists all four Holgresh clicks under
   // one key; the gear row carries the canonical page's. Stats could never be merged (the
   // variants disagree), and half-merging would be a row claiming a combination no item has.
-  assert.ok(collidedKeys.size >= 60, `only ${collidedKeys.size} collided keys`)
+  //
+  // THE FLOOR MOVED DOWN with the 2026-08-13 refresh, 70 keys -> 49, and DOWN is the good
+  // direction: the wiki spent the week disambiguating page titles the fold used to collapse (the
+  // Teir`Dal Adamantite set dropped its `(Imbued)` suffix; the Imbued Ogre War pages stopped
+  // claiming the unsuffixed key through `|itemname`). Fewer collisions is fewer items whose
+  // effects the row cannot carry. The floor sits under the new measurement, so the wiki finishing
+  // the job does not turn this red — the two named keys below are what actually holds the shape.
+  assert.ok(collidedKeys.size >= 40, `only ${collidedKeys.size} collided keys`)
   assert.ok(collidedKeys.has('holgresh mojo stick'))
   assert.ok(collidedKeys.has('imbued dwarven chain boots'))
   for (const key of collidedKeys) assert.ok(byKey.has(key), `${key} collapsed into nothing`)
@@ -385,6 +405,77 @@ test('a socketless `Effect:` line is KEPT on a gear row (the donor index drops i
 // =================================================================================
 // THE PAYLOAD
 // =================================================================================
+
+// ---- the era filter, over the shipped rows and the shipped verdict (JOS-298) --------------------
+//
+// THE OWNER REPORT this test exists for, verbatim in JOS-298: "Breastplate of the Righteous tops
+// the breastplate AC list as in-era while its wiki page carries out-of-era markers all over."
+// Sorting CHEST by AC is the first thing anyone does in this tab, and the top of that list was
+// four rows of armour from a revamp this server has not run. So the assertion is the screen: the
+// rows the Gear tab actually surfaces, in the order it surfaces them, through the renderer's own
+// `eraHides` rather than a re-derivation of it.
+//
+// `eraHides` reaches the mob catalog and React; both import fine under the node runner (the
+// `plannerFarm` precedent), and nothing here mounts anything.
+
+test('CHEST by AC surfaces no wiki-badged out-of-era row (the JOS-298 report, as a list)', () => {
+  const ac = (r: GearRow): number => r.stats.AC ?? 0
+  const chest = rows.filter((r) => r.slots.includes('CHEST') && ac(r) > 0).sort((a, b) => ac(b) - ac(a))
+  assert.ok(chest.length >= 200, `only ${String(chest.length)} AC-bearing chest rows`)
+
+  const visible = chest.filter((r) => !eraHides(r, true))
+  assert.ok(visible.length >= 50, `only ${String(visible.length)} chest rows survive the era filter`)
+
+  // THE PROPERTY, over the whole visible list and not just its head: nothing the wiki badges
+  // `Out of Era` may be on screen while the filter is on. One assertion, and it names the row.
+  for (const row of visible) {
+    assert.notEqual(
+      row.eraTag === undefined ? 'in' : eraBadge(row.eraTag),
+      'out',
+      `${row.name} (AC ${String(ac(row))}) is badged ${String(row.eraTag)} and still visible`
+    )
+  }
+
+  // AND THE REPORTED ROWS ARE GONE FROM IT BY NAME. Before this wave these were, in order, #1, #2,
+  // #4 and #7 of the visible list; the two below them were untagged rows that stayed.
+  for (const name of [
+    'Breastplate of the Righteous',
+    'Breastplate of the Untamed',
+    'Legionnaire Scale Breastplate',
+    'Greenmist Breastplate'
+  ]) {
+    const row = chest.find((r) => r.name === name)
+    assert.ok(row, `${name} left the gear index`)
+    assert.equal(row.eraTag, 'FearHateRevamp', name)
+    assert.equal(eraHides(row, true), true, `${name} is still visible with the era filter on`)
+    // …and it is still THERE with the filter off, chip and all. Hiding is a filter, not a delete.
+    assert.equal(eraHides(row, false), false, `${name} vanished with the era filter OFF`)
+  }
+
+  // The filter still leaves a usable table: the best chest a classic-era player can actually farm
+  // is a real row with real AC, not an empty list (the JOS-67 law — an empty table is a bug too).
+  assert.ok(ac(visible[0]) >= 25, `top visible chest is only AC ${String(ac(visible[0]))}`)
+})
+
+test('the era chip names the BANNER when the banner is what decided (never the drop zone)', () => {
+  // The chip is the other half of the fix: a row hidden by its badge must not, with the filter
+  // off, wear a chip reading "Classic" because its drop zone happened to be one. That was the
+  // loudest possible restatement of the bug.
+  const bp = byKey.get('breastplate of the righteous')
+  assert.ok(bp, 'Breastplate of the Righteous left the gear index')
+  const chip = eraChip(bp)
+  assert.ok(chip, 'an out-of-era row must carry a chip')
+  assert.equal(chip.unknown, false)
+  assert.equal(chip.label, 'out of era', 'FearHateRevamp names no expansion, so the chip must not name one')
+  assert.match(chip.tooltip, /FearHateRevamp/, 'the tooltip must quote the banner token')
+  assert.doesNotMatch(chip.tooltip, /sources are in/, 'the zone did not decide and must not be cited')
+
+  // An ordinary Velious row still reads as Velious — the chip only loses its expansion name when
+  // the token genuinely has none.
+  const velious = rows.find((r) => r.eraTag === 'Velious' && eraHides(r, true))
+  assert.ok(velious, 'no Velious-bannered row is hidden — the corpus changed shape')
+  assert.equal(eraChip(velious)?.label, 'Velious')
+})
 
 test('the payload states its version and the corpus it was built from', () => {
   assert.equal(index.version, GEAR_INDEX_VERSION)
