@@ -45,6 +45,12 @@ import { CC_STEMS, CHARM_STEMS } from '../log/rulesets'
 // all see one corrected text. Read that file's header before adding one: it carries the evidence
 // bar, and the reason the fixes live beside the scrape instead of inside it.
 import { applySpellCorrections, type CorrectionsReport } from './spellCorrections'
+// …and the layer BEFORE them (JOS-337): spells the wiki carries that EQ Legends does not have. It
+// runs first because a spell that is not in the game cannot also have a corrected message, and
+// because every table below is derived from whatever list survives it. Its header carries an
+// evidence bar of its own — absence cannot be log-measured, so the bar is a dated owner
+// verification per entry — and it is not the corrections bar. Read it before adding a removal.
+import { applySpellRemovals, type RemovalsReport } from './spellRemovals'
 // The wiki's own duration strings, read by the SAME function the scrape uses (JOS-189). See
 // `fillDerivedDurations` below for why the load path reads them at all.
 import { parseDurationMs } from '../../shared/spellDuration'
@@ -708,6 +714,7 @@ export function applyDerivedDurations(spells: readonly SpellEntry[]): {
 
 let cached: SpellDb | null = null
 let cachedCorrections: CorrectionsReport | null = null
+let cachedRemovals: RemovalsReport | null = null
 
 /**
  * Load + build the spell DB (cached) from the bundled spells.json, with our corrections applied to
@@ -721,14 +728,24 @@ let cachedCorrections: CorrectionsReport | null = null
  * learned overlay, which only ever needs to reach `castOnYou` — would have left the suffix index
  * and the catalog still holding the wiki's text, which is how a spell ends up matching in the
  * parser and missing from the search box.
+ *
+ * AND REMOVALS COME BEFORE ALL OF IT (JOS-337). The three passes are ordered, and the order is
+ * semantics rather than legibility for the first one: a spell EQ Legends does not have must be
+ * gone before anything reads it, so that no duration is derived for it, no correction can claim
+ * it (a correction naming a removed row reports `unknownSpells` and the audit fails, which is the
+ * intended contradiction), and no derived table — parser index, alert catalog, level unlocks —
+ * can offer it to the player.
  */
 export function loadSpellDb(): SpellDb {
   if (cached) return cached
   const file = spellsJson as SpellDbFile
-  // DURATIONS FIRST, then the message overlay. The two never touch the same field, so the order is
-  // legibility rather than semantics: this one reads what the wiki already said and the corrections
-  // state what it got wrong.
-  const dated = applyDerivedDurations(file.spells).spells
+  // REMOVALS FIRST: what the game does not have at all.
+  const present = applySpellRemovals(file.spells)
+  cachedRemovals = present.report
+  // Then DURATIONS, then the message overlay. Those two never touch the same field, so their order
+  // is legibility rather than semantics: one reads what the wiki already said and the other states
+  // what it got wrong.
+  const dated = applyDerivedDurations(present.spells).spells
   const { spells, report } = applySpellCorrections(dated)
   cachedCorrections = report
   cached = buildSpellDb(spells)
@@ -738,6 +755,17 @@ export function loadSpellDb(): SpellDb {
 /** What the committed corrections overlay did on this load (startup line + the audit test). */
 export function spellCorrectionsReport(): CorrectionsReport | null {
   return cachedCorrections
+}
+
+/**
+ * What the committed REMOVALS layer did on this load (startup line + the audit test).
+ *
+ * Reported separately from the corrections rather than folded into their counts, because the two
+ * answer different questions and a boot log that added them together would be lying about both:
+ * `applied` counts sentences rewritten, `removed` counts spells that are not in the game.
+ */
+export function spellRemovalsReport(): RemovalsReport | null {
+  return cachedRemovals
 }
 
 /**
