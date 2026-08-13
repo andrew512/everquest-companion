@@ -107,6 +107,8 @@ import {
 } from './gearColumnSteps.mjs'
 // JOS-302's class, slot-union and weapon-type steps, likewise.
 import { clearPicks, pickIn, stepGearClassFilter, stepGearSlotPicks, stepGearWeaponTypes } from './gearFilterSteps.mjs'
+// JOS-336's EFFECTIVE HP step: pick the derived column, sort it, and move the slider under it.
+import { stepGearEffectiveHp } from './gearEffectiveHpSteps.mjs'
 // JOS-329's away-and-back steps, shared with the planner and character specs — one module because
 // the claim is identical on every tab of the area and only the fingerprint differs.
 import { stepGearMemory, stepGearMemoryRelaunched } from './areaMemorySteps.mjs'
@@ -588,6 +590,12 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
     // narrowing: its whole subject is what one picker does to the whole corpus, and it hands the
     // tab back with both of its pickers empty.
     await stepGearWeaponTypes(page)
+    // JOS-336's EFFECTIVE HP step runs HERE, in the one seam that gives it what it needs: the
+    // weapon-type step clears both of its pickers and empties the search box, and nothing has
+    // touched the global selector yet — so the derived column is measured against the WHOLE corpus
+    // at base and then again at a plus it moves itself. It hands all three back the way it found
+    // them (selector at base, columns derived, box empty) for the steps below.
+    await stepGearEffectiveHp(page)
     await stepFilters(page)
     await stepSort(page)
     await stepUpgrade(page)
