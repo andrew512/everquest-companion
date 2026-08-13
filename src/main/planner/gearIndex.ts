@@ -1,7 +1,7 @@
 // planner/gearIndex.ts — the committed item corpus → the GEAR PLANNER's candidate index
 // (JOS-283, phase 2; the row model and its design rule live in src/shared/planner/gear.ts).
 //
-// One row per EQUIPPABLE item — 6,858 of the corpus's 11,161 pages state a `Slot:`, plus the three
+// One row per EQUIPPABLE item — 6,884 of the corpus's 11,213 pages state a `Slot:`, plus the three
 // the curated layer repairs (JOS-67) — carrying slots, classes, races, era, flags, effects, the
 // weapon block and the NUMERIC BASE VECTOR the whole feature sorts and filters on.
 //

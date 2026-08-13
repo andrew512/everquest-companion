@@ -20,6 +20,13 @@
 // consulted `eraFromTag` ONLY when they came back `unknown`. That is what answers for the quest
 // rewards, the crafted goods and the 126 catalog-orphan donors no zone ever placed.
 //
+// LAYER 2b, ADDED 2026-08-13 (JOS-328): 52 pages state an era through their `[[Category:X Era]]`
+// while carrying no banner at all, and `main/itemLookupParse.ts parseEraCategory` now folds those
+// into the same `eraTag`. Nothing in THIS file changes for them — a token is a token — except the
+// `namesEra` guard below, which exists so a category the register has never heard of stays silent
+// instead of reaching `#default`. The census, and the owner report that produced it, are recorded
+// in the parser beside the reader.
+//
 // AND SINCE 2026-08-13 (JOS-298) THAT BANNER OVERRULES THE ZONES IN ONE DIRECTION. The banner is
 // not only a section heading: `Template:PageEra` carries a machine-readable IN/OUT register, and
 // when it answers `out` the wiki draws a red `Out of Era` box on the page. A zone cannot refute
@@ -305,6 +312,28 @@ const PAGE_ERA: Readonly<Record<string, 'in' | 'out'>> = {
 /** The register's two answers: whether the wiki draws the red `Out of Era` badge on the page. */
 export type EraBadge = 'in' | 'out'
 
+/** The register's key fold: lowercased, spaces and underscores removed. One definition, because
+ *  `eraBadge` and `namesEra` must agree on what "the same token" means. */
+function registerKey(tag: string): string {
+  return tag.trim().toLowerCase().replace(/[\s_]+/g, '')
+}
+
+/**
+ * IS THIS A TOKEN THE ERA TABLES ACTUALLY NAME? — the guard the CATEGORY reader needs (JOS-328),
+ * and the one place outside this file that is allowed to ask.
+ *
+ * `eraBadge` below answers `out` for a token it has never heard of, and that is CORRECT for a
+ * BANNER: `Template:PageEra`'s `#default` is `out`, so the live page really does draw the red box
+ * for a key the switch does not know, and mirroring that is reporting, not guessing. A CATEGORY is
+ * the opposite case. `[[Category:Nov 2000 Era]]` renders nothing at all — it is the filing left
+ * behind by a `{{P99 Era Header|Nov|2000}}` DATE banner, 8 pages of it in the corpus — so reading
+ * `out` off it would be inventing a claim the wiki never made. So the category reader admits a
+ * token only when this says yes, and law 1 keeps the date filings undefined.
+ */
+export function namesEra(tag: string): boolean {
+  return registerKey(tag) in PAGE_ERA
+}
+
 /**
  * WHAT THE WIKI'S OWN BADGE SAYS about a page carrying this banner token.
  *
@@ -314,7 +343,7 @@ export type EraBadge = 'in' | 'out'
  * the live page render.
  */
 export function eraBadge(tag: string): EraBadge {
-  return PAGE_ERA[tag.trim().toLowerCase().replace(/[\s_]+/g, '')] ?? 'out'
+  return PAGE_ERA[registerKey(tag)] ?? 'out'
 }
 
 /**

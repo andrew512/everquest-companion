@@ -1,7 +1,7 @@
 // PLANNER ERA — THE OUT-OF-ERA OVERRIDE, SWEPT OVER THE REAL CORPUS (JOS-298).
 //
 // `tests/plannerEra.test.mts` proves what the rules SAY (zone folds, the tag table, the register
-// mirrored key for key). This file proves what they DO to 11,351 committed item keys, because the
+// mirrored key for key). This file proves what they DO to 11,375 committed item keys, because the
 // rule the owner's report produced is a blunt one — an out-of-era badge overrules the drop zone —
 // and a blunt rule is only safe if the set it hides is a list somebody read.
 //
@@ -183,4 +183,68 @@ test('no banner token in the corpus reaches the register default (the new-templa
     const folded = token.trim().toLowerCase().replace(/[\s_]+/g, '')
     assert.ok(NAMED.has(folded), `banner token "${token}" folds to "${folded}", unknown to the register`)
   }
+})
+
+// =================================================================================
+// JOS-328 — THE ERA CLAIMS THAT ARE NOT IN THE PAGE HEAD, and the report that produced them
+// =================================================================================
+//
+// The owner's spot checks said every gear row we chip `era?` carries a red `Out of Era` badge on
+// its wiki page. It does not reproduce, and the evidence is written out beside `parseEraBodyTag` in
+// `src/main/itemLookupParse.ts`: `Template:Itempage` renders no badge at all, the top era? rows by
+// AC and by DMG render none through `action=parse`, and the wiki's OWN era categories intersect our
+// 1,166 era? gear rows in 38 pages — 36 of them in-era. What the hunt DID find is 44 pages stating
+// an era somewhere other than the head, in two shapes, and this is the corpus-level pin on both of
+// them plus on the negative that the report turned into.
+
+test('the two out-of-head era claims are read, by name, off the committed corpus', () => {
+  // FAMILY 1 — the banner in the BODY: `{{Classic Era}}` inside `|playercrafted`, 36 crafted-plate
+  // pages that the parser header listed as an accepted loss until this wave.
+  const FAMILY = /^(small |large )?fine (plate \w|splinted cloak$)|^(small|large) fine steel breastplate$/
+  const finePlate = CORPUS.filter((r) => FAMILY.test(r.key))
+  assert.ok(finePlate.length >= 36, `only ${String(finePlate.length)} Fine Plate pages in the corpus`)
+  for (const row of finePlate) {
+    assert.equal(row.tag, 'Classic', `${row.page} lost its body banner`)
+    assert.equal(eraBadge(row.tag ?? ''), 'in', `${row.page} is not an in-era claim`)
+  }
+
+  // FAMILY 2 — the hand-written CATEGORY, with no banner template anywhere on the page. These eight
+  // are the whole family: the other 8 category-only pages are `Nov 2000 Era` date filings left by
+  // `{{P99 Era Header}}`, and the reader refuses those on purpose (law 1), so no Illegible Note may
+  // ever arrive here carrying a token.
+  const byCategory: Record<string, string> = {
+    'flowing red silk sash': 'Kunark',
+    'leech husk tunic': 'Kunark',
+    'mantle of fire': 'Kunark',
+    'mucilaginous girdle': 'Kunark',
+    'sash of the dragonborn': 'Kunark',
+    'scaled prowler belt': 'Kunark',
+    'scaled wolf hide belt': 'Kunark',
+    'fist of lightning': 'Velious'
+  }
+  for (const [key, tag] of Object.entries(byCategory)) {
+    const row = CORPUS.find((r) => r.key === key)
+    assert.ok(row, `${key} left the corpus`)
+    assert.equal(row.tag, tag, `${row.page} lost its category claim`)
+    assert.equal(layeredVerdict(row.zones, row.tag), 'out-of-era', `${row.page} is not hidden`)
+  }
+  for (const row of CORPUS) {
+    if (!row.page.startsWith('Illegible Note:')) continue
+    assert.equal(row.tag, undefined, `${row.page} read a P99 DATE filing as an era claim`)
+  }
+})
+
+test('era? means the page said NOTHING — the state carries no token to have misread', () => {
+  // THE NEGATIVE, pinned. `era?` is reached only when no zone resolved AND the page made no era
+  // claim of any of the three kinds, so an `era?` row carrying a token would mean the tables had
+  // silently dropped a claim on the floor. Zero of them do — which is also the reason no era? row
+  // can be carrying a badge this corpus knows about: there is nothing on the page to badge.
+  const unknown = CORPUS.filter((r) => layeredVerdict(r.zones, r.tag) === 'unknown')
+  assert.ok(unknown.length >= 2000, `only ${String(unknown.length)} era? rows — the state vanished`)
+  const withTag = unknown.filter((r) => r.tag !== undefined && r.tag !== '')
+  assert.deepEqual(
+    withTag.map((r) => `${r.page} [${String(r.tag)}]`).slice(0, 5),
+    [],
+    `${String(withTag.length)} era? rows carry a banner token`
+  )
 })

@@ -559,10 +559,12 @@ export interface ItemKnowledge {
   /** where the ITEM PAGE says it drops (`|dropsfrom`) — mob + the zone heading it sat under */
   dropsFrom?: ItemDropSource[]
   /**
-   * The page-top `{{X Era}}` banner's token, VERBATIM ("Velious", "Chardok Revamp", "kunark") —
-   * the wiki's own era claim, and the only one an item page ever makes. It is not an
-   * `{{Itempage}}` field; see `parseEraTag` for the shapes and the census. Absent when the page
-   * opened with no banner. What a token MEANS is decided in `shared/planner/era.ts`, never here.
+   * The wiki's own era claim for this page, VERBATIM ("Velious", "Chardok Revamp", "kunark") —
+   * from the page-top `{{X Era}}` banner (`parseEraTag`), or, on the 52 pages that carry no banner
+   * but file themselves under an era anyway, from the page's `[[Category:X Era]]`
+   * (`parseEraCategory`, JOS-328). The banner wins; the category speaks only into its silence.
+   * Neither is an `{{Itempage}}` field. Absent when the page states no era either way. What a
+   * token MEANS is decided in `shared/planner/era.ts`, never here.
    */
   eraTag?: string
   /** one-line freeform summary (from the wiki `notes` field), trimmed */

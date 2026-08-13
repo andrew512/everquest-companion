@@ -3,7 +3,7 @@
 // THE LOAD-BEARING RULE. The gear table sorts and filters on numbers that change with the upgrade
 // slider, so the renderer needs `rows.map((r) => scaleGearRow(r, state))` to be the whole cost of
 // moving that slider — no index rebuild, no corpus walk, no re-parse. Measured over the shipped
-// index (tests/gearIndex.test.mts prints it every run): all 6,858 rows at one state in a couple of
+// index (tests/gearIndex.test.mts prints it every run): all 6,814 rows at one state in a couple of
 // milliseconds, which is well inside a frame.
 //
 // EVERY RULE HERE IS PHASE 0'S (src/shared/itemUpgrade.ts), CALLED — none is restated. This file
