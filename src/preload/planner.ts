@@ -50,7 +50,7 @@ export const plannerApi = {
 
   // ---- gear planner (JOS-283 phase 2, JOS-285 phase 4) ----
 
-  /** The gear CANDIDATE INDEX: one row per equippable item (~6,858), each carrying its NUMERIC
+  /** The gear CANDIDATE INDEX: one row per equippable item (~6,814), each carrying its NUMERIC
    *  base stat vector plus slots/classes/races/era/flags/effects and the weapon block. Built
    *  lazily in main and memoized there. Fetch ONCE and cache — it is derived from bytes compiled
    *  into the bundle, and every `+N` view of it is a pure map over the rows

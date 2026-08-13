@@ -195,7 +195,7 @@ function boxOf(page: Page, sel: string): Promise<{ h: number; scrollH: number; c
   }, sel)
 }
 
-/** `"212 of 6,766 items"` → `[212, 6766]`. The readout is the only place the total is stated. */
+/** `"212 of 6,814 items"` → `[212, 6766]`. The readout is the only place the total is stated. */
 async function counts(page: Page): Promise<{ shown: number; total: number }> {
   const text = await textOf(page, COUNT)
   const nums = [...text.matchAll(/[\d,]+/g)].map((m) => Number(m[0].replace(/,/g, '')))

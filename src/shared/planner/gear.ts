@@ -5,7 +5,7 @@
 // every sort and filter key must be computable AT ANY PLUS-STATE by a PURE MAP over the rows —
 // `rows.map((r) => scaleGearRow(r, state))` — never by rebuilding the index. So the row carries a
 // NUMERIC BASE VECTOR (`stats`) rather than the item's stat-block text, and `gearScale.ts` maps
-// that vector through phase 0's own rules (src/shared/itemUpgrade.ts). Rebuilding 6,858 rows out
+// that vector through phase 0's own rules (src/shared/itemUpgrade.ts). Rebuilding 6,814 rows out
 // of the 8.6 MB corpus per slider tick is the thing this shape makes impossible.
 //
 // WHAT A ROW IS NOT. It is a SEARCH index, not an item card: the full stat block, the flags prose,
@@ -145,7 +145,7 @@ export interface GearEffect extends EffectFacts {
 
 /**
  * ONE EQUIPPABLE ITEM. "Equippable" is `slots.length > 0` after `normalizeSlotTokens` and the
- * curated slot repair (JOS-67) — 6,858 of the corpus's 11,161 pages state a `Slot:`, and three more
+ * curated slot repair (JOS-67) — 6,884 of the corpus's 11,213 pages state a `Slot:`, and three more
  * arrive from the curated layer. An item the corpus places nowhere is not a gear candidate; it is
  * still in item lookup, and still a `PlannerItemHit` for the exaltation board's host picker.
  */

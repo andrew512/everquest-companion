@@ -7,7 +7,7 @@
 //
 //     scaleAll(rows, state) → filterGearRows(…) → sortGearRows(…)
 //
-// `scaleAll` is measured at ~18 ms for the whole 6,766-row index (tests/gearIndex.test.mts prints
+// `scaleAll` is measured at ~18 ms for the whole 6,814-row index (tests/gearIndex.test.mts prints
 // it every run), which is what lets the selector be a live slider rather than an Apply button.
 //
 // PURE AND NODE-TESTABLE (`tests/gearFilter.test.mts`), the plannerGroups/plannerClasses precedent:
@@ -292,7 +292,7 @@ export function scaleAll<T extends GearRow>(rows: readonly T[], state: ItemUpgra
 /**
  * The three stages composed, for callers that want the answer in one call (the unit test, and any
  * future consumer that is not a React tree). THE VIEW DOES NOT USE THIS: it runs the stages in
- * separate memos so a keystroke re-filters without re-scaling 6,766 rows, and a header click
+ * separate memos so a keystroke re-filters without re-scaling 6,814 rows, and a header click
  * re-sorts without re-filtering them.
  */
 export function gearTableRows<T extends GearRow>(

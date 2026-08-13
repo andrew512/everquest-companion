@@ -123,7 +123,7 @@ export function useEraHidden(): { eraHidden: (row: GearRow) => boolean } {
  * the push). The loot history is already in this window as a module snapshot and moves with every
  * kill. Both feed ONE memo, so the join is rebuilt when either witness moves and NEVER on a
  * keystroke, a sort, or a drag of the plus-state slider — ownership does not depend on any of
- * those, and a 6,766-row table would re-join on all three.
+ * those, and a 6,814-row table would re-join on all three.
  *
  * MAIN MEMOIZES ITS HALF ON THE FILE'S IDENTITY (ipc/planner.ts), so re-asking is a stat and not
  * a re-fold. The two caches answer different questions: main's says "the dump has not moved",

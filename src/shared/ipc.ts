@@ -346,8 +346,8 @@ export const IPC = {
   plannerInventory: 'planner:inventory',
 
   // ---- gear planner (JOS-283, phase 2) ----
-  // renderer -> main: the GEAR CANDIDATE INDEX — one row per equippable item (~6,858 of the
-  // corpus's 11,161 pages), carrying slots/classes/races/era/flags/effects, the weapon block and
+  // renderer -> main: the GEAR CANDIDATE INDEX — one row per equippable item (~6,884 of the
+  // corpus's 11,213 pages), carrying slots/classes/races/era/flags/effects, the weapon block and
   // the NUMERIC BASE stat vector. Returns GearIndexPayload (versioned; see shared/planner/gear.ts).
   // Built in main for the same reason the donor index is — items.json is already inlined here, so
   // shipping the corpus to the renderer would double it — LAZILY on first call and memoized for
