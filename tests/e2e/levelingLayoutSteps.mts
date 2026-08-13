@@ -19,6 +19,20 @@
 // the page. `over.doc === 0` survives untouched — the WINDOW must still never scroll; the shell is
 // `height: 100vh; overflow: hidden` and a document scrollbar would mean the chrome had moved.
 //
+// AND WHERE "New at this level" LIVES NOW (JOS-300, owner directive 2026-08-13). JOS-289 left it
+// full width under both columns, which put a browsable reference panel at the page's own bottom
+// and left an enormous hole beside it: the charts column ends well short of the
+// ledger/drops/feed column. The panel moved into the BOTTOM OF THE LEFT COLUMN to fill that hole,
+// which retires a claim this file used to make. "Deepest" no longer means "last": whichever
+// column is taller owns the page's bottom, and on a log with a long AA ledger that is the RIGHT
+// one, so scrolling the content area to `scrollHeight` can legitimately leave the panel ABOVE the
+// fold. What survives — and what the owner's sentence was ever about — is that the panel is
+// reached by scrolling the PAGE rather than by finding a box to scroll inside it. That is what
+// `stepPageScroll` measures now: a scroll request routed through the content area (the only
+// scroller between this panel and the window) brings it fully into view, and the content area's
+// own scrollTop MOVED to do it. The page-really-grows half is still measured, as its own claim
+// about the page rather than about the panel.
+//
 // WHY THE NARROW CHECKS ARE SHAPED THIS WAY. "Do two panels overlap" is only an honest question
 // about boxes the user can SEE, and a page-tall view has most of itself outside the viewport at
 // any moment — a raw `getBoundingClientRect()` cheerfully reports a panel two screens down sitting
@@ -45,7 +59,13 @@ const MIN_W = 900
 
 /** The app shell's scrolling content area — since JOS-289 the ONE scroller this tab sits inside. */
 const CONTENT = '[data-testid="app-content"]'
-/** The deepest panel on the tab: last child, below everything, and the page's own bottom. */
+/**
+ * The panel furthest down the LEFT column since JOS-300 — below the charts, the plots and the
+ * range read, and below the fold on any tab tall enough to scroll. Deliberately NOT called the
+ * page's bottom any more: the right column is frequently the taller of the two and owns the last
+ * pixel. This is the deep-link target ("New at this level"), which is why reaching it is a claim
+ * worth measuring at all.
+ */
 const DEEPEST = '[data-testid="new-at-level"]'
 /** A spell name in the per-level readout, and the card it opens (lib/SpellCard.tsx). */
 const SPELL_NAME = '[data-testid="unlock-spell-name"]'
@@ -284,6 +304,15 @@ async function scrollContentToBottom(page: Page): Promise<number> {
   )
 }
 
+/** Put the page back at the top and WAIT for it, so the next step measures a known scroll. */
+async function resetContentScroll(page: Page): Promise<void> {
+  await page.evaluate((s) => {
+    const el = document.querySelector(s) as HTMLElement | null
+    if (el) el.scrollTop = 0
+  }, CONTENT)
+  await settle(() => contentScroll(page).then((c) => (c ? Math.round(c.top) : -1)), (v) => v === 0, { timeoutMs: 5_000 })
+}
+
 /** Is `sel` fully inside the content area's visible box right now? */
 function fullyInContent(page: Page, sel: string): Promise<string> {
   return page.evaluate(
@@ -306,8 +335,20 @@ function fullyInContent(page: Page, sel: string): Promise<string> {
  * 7. THE LAYOUT CONTRACT SINCE JOS-289: the app's content area owns the scroll, THE WHOLE VIEW
  * grows into it, and no panel keeps a scroller of its own except the one whose row count earns it.
  *
- * Three claims, and the third is the owner's sentence stated as a measurement — the deepest panel
- * on the tab is reached by scrolling the PAGE, not by finding the right box to scroll inside.
+ * Four claims. The last two are the owner's sentence stated as measurements, and JOS-300 split
+ * them apart on purpose:
+ *
+ *   - THE PAGE GROWS AND SCROLLS. Drive the content area to `scrollHeight` and it lands somewhere
+ *     past zero. That is a fact about the page, and it is no longer tied to any one panel — since
+ *     the reference panel moved into the left column, the bottom of the page belongs to whichever
+ *     column is taller, which is usually the ledger/drops/feed one.
+ *   - THE DEEP-LINK PANEL IS REACHED BY SCROLLING THE PAGE. Ask for it with
+ *     `scrollIntoViewIfNeeded` and it comes fully into the content area's visible box, AND the
+ *     content area's own scrollTop had to move to get there. The second half is what makes this a
+ *     page-scroll claim rather than a tautology: `[data-testid="app-content"]` is the only
+ *     scroller between this panel and the window, so if the panel arrived and something scrolled,
+ *     the page is what scrolled. An inner porthole doing the work would leave scrollTop at 0 —
+ *     and would also have already failed the no-internal-scrollbars claim above.
  */
 export async function stepPageScroll(page: Page): Promise<void> {
   const over = await pageOverflow(page)
@@ -337,19 +378,32 @@ export async function stepPageScroll(page: Page): Promise<void> {
   }
   note(`the tab is ${String(before.height)}px tall in a ${String(before.client)}px window — it grew the page, as JOS-289 asks`)
 
-  // The claim, end to end: the deepest panel is off screen, and PAGE scroll brings it into view.
-  const beforeReach = await fullyInContent(page, DEEPEST)
+  // CLAIM 3, about the PAGE and nothing else: it can be driven to its own bottom. Deliberately
+  // not asserted against any panel since JOS-300 — the deepest pixel belongs to whichever column
+  // ran longer, and tying a panel to it would be measuring this fixture's ledger length.
   const landed = await scrollContentToBottom(page)
   check(
-    'scrolling the PAGE reaches the deepest panel on the tab',
-    (await fullyInContent(page, DEEPEST)) === 'in view',
-    `${beforeReach} → ${await fullyInContent(page, DEEPEST)} at scrollTop ${String(landed)}`
+    'the page scrolls to its own bottom (the content area is the scroller that grew)',
+    landed > 0,
+    `scrollTop ${String(landed)} of ${String(before.height - before.client)}px of travel`
   )
-  await page.evaluate((s) => {
-    const el = document.querySelector(s) as HTMLElement | null
-    if (el) el.scrollTop = 0
-  }, CONTENT)
-  await settle(() => contentScroll(page).then((c) => (c ? Math.round(c.top) : -1)), (v) => v === 0, { timeoutMs: 5_000 })
+  await resetContentScroll(page)
+
+  // CLAIM 4: the deep-link panel is below the fold, and PAGE scroll is what brings it into view.
+  const beforeReach = await fullyInContent(page, DEEPEST)
+  if (beforeReach === 'in view') {
+    note('the "New at this level" panel already sits fully on the first screen of this tab — a short left column is an honest state, and there is no page-scroll reach to measure')
+    return
+  }
+  await page.locator(DEEPEST).first().scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined)
+  const reach = await settle(() => fullyInContent(page, DEEPEST), (v) => v === 'in view', { timeoutMs: 5_000 })
+  const moved = await contentScroll(page)
+  check(
+    'scrolling the PAGE reaches the "New at this level" panel at the bottom of the left column',
+    reach === 'in view' && (moved?.top ?? 0) > 0,
+    `${beforeReach} → ${reach} at scrollTop ${String(Math.round(moved?.top ?? -1))}`
+  )
+  await resetContentScroll(page)
 }
 
 /**
@@ -413,8 +467,12 @@ function checkNarrow(cols: ColumnsInfo, bands: Band[]): void {
 export async function stepNarrowLayout(app: ElectronApplication, page: Page): Promise<void> {
   const win = await app.browserWindow(page)
   const wide = await win.evaluate((w) => w.getBounds())
-  if ((await columnsInfo(page)) === null) {
-    note('this log draws no charts, so the tab renders its empty state and has no two-column stack to narrow')
+  // SINCE JOS-300 THE ROW IS ALWAYS IN THE DOM — the empty-state sentence and the reference panel
+  // live inside its left band now, so "is there a stack" stopped being the same question as "are
+  // there two columns to collide". A one-band row is the chart-less tab, honestly drawn.
+  const present = await columnsInfo(page)
+  if (!present || present.bands.length < 2) {
+    note('this log draws no charts, so the tab renders its empty state and there is no second column to collide with')
     return
   }
 
