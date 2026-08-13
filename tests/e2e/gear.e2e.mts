@@ -9,10 +9,17 @@
  * WHAT IT ASSERTS, against the REAL committed item corpus and through the REAL IPC: the nav row
  * mounts a table with no set, no plan and no selection first (search is the default surface —
  * owner ruling); the list is its own bounded scroller; the search box narrows it and finds a named
- * item; the era toggle actually holds rows back; a stat threshold and a slot filter COMBINE, and
- * the threshold brings its own column with it; a header click sorts by ratio and the order is
- * monotone; and — the one this phase exists for — moving the GLOBAL plus-state selector makes the
- * table state the numbers `scaleGearRow` states at that state.
+ * item; the era toggle actually holds rows back; a stat threshold and a MULTI-SELECT slot filter
+ * COMBINE, and the threshold brings its own column with it; a header click sorts by ratio and the
+ * order is monotone; and — the one this phase exists for — moving the GLOBAL plus-state selector
+ * makes the table state the numbers `scaleGearRow` states at that state.
+ *
+ * AND SINCE JOS-302 IT ASSERTS THE THREE NARROWINGS THE OWNER ASKED FOR. The class picks REMOVE
+ * rows rather than chipping them (and a search row no longer wears `planner-mismatch-chip` at all),
+ * a second slot is a UNION rather than a replacement, and the weapon-type picker's categories are
+ * exactly the union of their member types — measured as an identity between two counts, never as a
+ * number. The class and weapon steps live in `gearFilterSteps.mts`; the slot half is this file's
+ * own slot step, grown.
  *
  * THE FIXTURE IS THELVORN, and its numbers are not written here. The spec imports phase 0's own
  * scaler and asks it, so this file can never drift from the arithmetic it is checking: what it
@@ -72,6 +79,8 @@ import {
 } from './gearSetSteps.mjs'
 // JOS-297's steps are a module for the same reason phase 5's are.
 import { stepGearColumns, stepGearColumnsRelaunched, type GearColumnFixture } from './gearColumnSteps.mjs'
+// JOS-302's class, slot-union and weapon-type steps, likewise.
+import { stepGearClassFilter, stepGearSlotPicks, stepGearWeaponTypes } from './gearFilterSteps.mjs'
 // Phase 0's scaler and phase 2's ratio, so the EXPECTED numbers are computed rather than typed.
 import { gearRatio, scaleGearRow } from '../../src/shared/planner/gearScale'
 import type { GearRow } from '../../src/shared/planner/gear'
@@ -85,7 +94,8 @@ const COUNT = '[data-testid="gear-count"]'
 const EMPTY = '[data-testid="gear-empty"]'
 const SEARCH = '[data-testid="gear-search"] input'
 const ERA_TOGGLE = '[data-testid="gear-era-toggle"]'
-const SLOT_SELECT = '[data-testid="gear-slot"] .MuiSelect-select'
+// The slot picker's own selector moved to `gearFilterSteps.mts` with the step that drives it. It is
+// still `gear-slot` — a ChipMultiSelect wearing a single-select's testid, on purpose (JOS-302).
 const THRESHOLD = '[data-testid="gear-threshold-input"] input'
 const THRESHOLD_CHIP = '[data-testid="gear-threshold-chip"]'
 const SORT_RATIO = '[data-testid="gear-sort-RATIO"]'
@@ -376,16 +386,16 @@ async function stepSearch(page: Page): Promise<boolean> {
  *
  * Asking about a stat is already saying you want to see it (gearColumns.ts), so `wis 10` must put
  * a WIS column on the table. Both filters are left ON for the sort step below.
+ *
+ * THE SLOT FILTER IS A MULTI-SELECT SINCE JOS-302 and the union half of that lives in
+ * `gearFilterSteps.stepGearSlotPicks` — a module for the line budget, not because it is a different
+ * subject. It leaves exactly one slot picked, which is the state the steps below were written
+ * against, and returns the count that narrowing produced.
  */
 async function stepFilters(page: Page): Promise<void> {
   await typeAndSettle(page, SEARCH, '')
   const all = (await counts(page)).shown
-
-  await page.click(SLOT_SELECT, { timeout: 15_000 })
-  await page.click('[data-testid="gear-slot-PRIMARY"]', { timeout: 15_000 })
-  const primaries = await until(async () => (await counts(page)).shown < all, 15_000)
-  const afterSlot = (await counts(page)).shown
-  check('the slot filter narrows the table to one equipment slot', primaries, `${String(afterSlot)} primaries`)
+  const afterSlot = await stepGearSlotPicks(page, all)
 
   await page.fill(THRESHOLD, 'wis 10', { timeout: 15_000 })
   await page.press(THRESHOLD, 'Enter', { timeout: 15_000 })
@@ -523,6 +533,11 @@ async function stepUpgrade(page: Page): Promise<void> {
 
 async function steps(page: Page, log: FixtureLog): Promise<void> {
   if (!(await stepRows(page))) return
+  // JOS-302's class step runs FIRST of the filter steps, and it has to: the picker mounts holding
+  // whatever the combo module inferred off the fixture log, that pick now NARROWS the corpus, and
+  // every step below was written against an unfiltered one. It proves the narrowing and then
+  // clears the picker (gearFilterSteps.mts states the whole argument).
+  await stepGearClassFilter(page)
   await stepEra(page)
   // Phase 4 runs here, on a table narrowed by NOTHING but the era toggle the step above turned
   // off: the ownership steps put the search box back to empty and the checkbox back off, so the
@@ -535,6 +550,10 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
   await stepGearSets(page, SET_FIXTURE)
   await typeAndSettle(page, SEARCH, '')
   if (await stepSearch(page)) {
+    // JOS-302's weapon-type step runs BEFORE the slot/threshold step, on a table nothing is
+    // narrowing: its whole subject is what one picker does to the whole corpus, and it hands the
+    // tab back with both of its pickers empty.
+    await stepGearWeaponTypes(page)
     await stepFilters(page)
     await stepSort(page)
     await stepUpgrade(page)
