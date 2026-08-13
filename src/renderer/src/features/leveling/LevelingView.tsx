@@ -311,6 +311,9 @@ function useLevelingCharts(o: {
             id: fixed ? (slice.id as TimescaleId) : 'full',
             range: fixed ? undefined : slice.range,
             zoneKey: slice.zoneKey,
+            // The TIER half of the same membership (JOS-291) — null unless the reader asked for
+            // this tier alone, so the default is the read this tab has always given.
+            zoneExactKey: slice.zoneExactKey,
             zoneName: slice.zoneName,
             label: slice.caption,
             selection: sel,

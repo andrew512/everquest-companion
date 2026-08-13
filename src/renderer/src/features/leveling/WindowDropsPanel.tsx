@@ -63,7 +63,8 @@ function useScopedDrops(scope: ScopedStats): WindowItemRow[] {
         // BOTH halves of the slice (JOS-130). `spans` above is already the zone's own time when
         // the slice carries a zone, so counting every zone's drops against it would put a rate
         // under a denominator it was never measured over.
-        zoneKey: scope.zoneKey
+        zoneKey: scope.zoneKey,
+        zoneExactKey: scope.zoneExactKey
       }),
     [events, scope]
   )

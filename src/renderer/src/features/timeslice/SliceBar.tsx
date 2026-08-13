@@ -129,8 +129,12 @@ export function SliceBar({ available, slice, onPick, onCustom, testId }: SliceBa
       )}
       {slice.id === 'custom' && <CustomRange range={slice.range} onChange={onCustom} testId={testId} />}
       {/* The control never shrinks; the caption does (the compact-bar contract). It states the
-          slice's ends and, when the slice is restricted to one zone, which zone — the two halves
-          of a slice, in the one place that is allowed to describe it. */}
+          slice's ends and, when the slice is restricted to one zone, which zone AND WHICH OF ITS
+          TIERS (`Timeslice.zoneCaption`, JOS-291) — the halves of a slice, in the one place that is
+          allowed to describe it. The membership clause is printed even under the default, because
+          the default admits visits whose names this line does not print, and a caption that named
+          only the current tier while measuring every one of them is the defect JOS-291 was filed
+          for (JOS-288's honesty rule: the span line IS the denominator). */}
       <Typography
         variant="caption"
         color="text.secondary"
@@ -139,7 +143,7 @@ export function SliceBar({ available, slice, onPick, onCustom, testId }: SliceBa
         data-testid={`${testId}-window`}
       >
         {edge(slice.range.t0)} → {edge(slice.range.t1)}
-        {slice.zoneName ? ` · ${slice.zoneName}` : ''}
+        {slice.zoneCaption ? ` · ${slice.zoneCaption}` : ''}
       </Typography>
     </Stack>
   )
