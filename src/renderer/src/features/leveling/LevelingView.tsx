@@ -268,6 +268,9 @@ function useLevelingCharts(o: {
   const segVisible = useMemo(() => (scale ? visibleSegments(segments, scale.t0) : []), [segments, scale])
   const bands = useMemo(() => (scale ? mergeZoneBands(prog, scale.t0, scale.t1) : []), [prog, scale])
   const legend = useMemo(() => zoneLegend(bands), [bands])
+  // `draft` is a STORE, not a value (JOS-290): it rides down into `ChartChrome` untouched and
+  // this component is never re-rendered by a pointermove again. `sel` and `dragging` are still
+  // ordinary state — they move on pointer-up and once per gesture respectively.
   const { sel, draft, dragging, clear, onPointerDown, onPointerMove, onPointerUp, onPointerCancel } =
     useChartSelection(scale)
   // The combo seam (progressionStats §ComboSource). `rangeStats` declared the SHAPE it needs and
@@ -301,7 +304,7 @@ function useLevelingCharts(o: {
   // Rebuilt narrow, NOT the whole SelectionApi: the charts spread this straight onto a DOM
   // element, so anything else on the object would land there as an unknown attribute.
   const pointer = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
-  const chrome = scale ? { scale, bands, range: draft ?? sel, suppressed: dragging, pointer } : null
+  const chrome = scale ? { scale, bands, range: sel, draft, suppressed: dragging, pointer } : null
   return { chrome, legend, scope, clear, aaVisible, segVisible }
 }
 
