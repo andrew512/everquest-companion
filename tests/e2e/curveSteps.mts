@@ -367,43 +367,67 @@ function unionRect(page: Page, sels: readonly string[], pad = 12): Promise<Clip 
 }
 
 /**
- * The shutter, THROUGH THE MAIN PROCESS.
+ * THE SHUTTER, and the two ways a never-shown window lies to one.
  *
- * `page.screenshot()` is the obvious call and it is the wrong one here: it waits on the RENDERER's
- * compositor, and this window is never shown, so its frame production is throttled to whatever
- * happens to be repainting. Measured on the first run of this step — two of three shots landed and
- * the third timed out after ten seconds waiting for a frame that never came, and the failed call
- * left the device-metrics override behind, so the NEXT shot came out framed on the whole window
- * instead of on its clip. `webContents.capturePage` asks the browser process for the surface it
- * already has, needs no frame and no font wait, and cannot leave an override behind.
+ * `page.screenshot()` is the obvious call and it waits on the RENDERER's compositor. This window is
+ * never shown, so its frame production is throttled to whatever happens to be repainting: measured
+ * on the first capture run, two of three shots landed and the third timed out after ten seconds
+ * waiting for a frame that never came — and the failed call left its device-metrics override
+ * behind, so the NEXT shot came out framed on the whole window instead of on its clip.
  *
- * `page.screenshot` stays as the fallback: capturePage returns an empty image on some platforms
- * for a window that was never shown, and a picture from the slow path beats no picture.
+ * `webContents.capturePage()` asks the BROWSER process for the surface it already holds. It never
+ * hangs and never leaves an override — but it will hand back a STALE surface just as happily,
+ * which is the second run's failure: the 1h shot was a pixel-perfect copy of the 12m one, taken
+ * after the caption had already changed.
+ *
+ * So the shutter does both halves of the job: `invalidate()` schedules a real repaint, a warm-up
+ * capture pulls the new surface across, and the picture is REJECTED IF IT IS BYTE-IDENTICAL TO THE
+ * PREVIOUS WINDOW'S. Three windows of one chart cannot legitimately produce the same pixels, so an
+ * exact repeat is proof of staleness rather than a coincidence worth keeping.
  */
+let lastShot = ''
+
+async function capturePng(app: ElectronApplication, page: Page, clip: Clip): Promise<string> {
+  const win = await app.browserWindow(page)
+  return win
+    .evaluate(async (w, r) => {
+      const wait = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
+      w.webContents.invalidate()
+      await wait(250)
+      await w.webContents.capturePage(r)
+      await wait(150)
+      const img = await w.webContents.capturePage(r)
+      return img.isEmpty() ? '' : img.toPNG().toString('base64')
+    }, clip)
+    .catch(() => '')
+}
+
 async function shoot(app: ElectronApplication, page: Page, window: string): Promise<string | null> {
   await alignToSlice(page)
   const clip = await unionRect(page, [SLICE, AA_CHART, LEVEL_CHART, LEGEND])
   if (!clip) return null
   mkdirSync(ARTIFACTS, { recursive: true })
   const path = join(ARTIFACTS, `${SHOT_TAG}-${window}.png`)
-  const win = await app.browserWindow(page)
-  const b64 = await win
-    .evaluate(async (w, r) => {
-      const img = await w.webContents.capturePage(r)
-      return img.isEmpty() ? '' : img.toPNG().toString('base64')
-    }, clip)
-    .catch(() => '')
-  if (b64) {
-    writeFileSync(path, Buffer.from(b64, 'base64'))
+  let b64 = ''
+  for (let attempt = 0; attempt < 3; attempt++) {
+    b64 = await capturePng(app, page, clip)
+    if (b64 && b64 !== lastShot) break
+    b64 = ''
+  }
+  if (!b64) {
+    // The slow path: a platform where a never-shown window captures empty, or a surface that
+    // refused to move. It waits for a real frame, which is exactly what is missing here.
+    try {
+      await page.screenshot({ path, clip, timeout: 15_000 })
+    } catch (err) {
+      note(`chart shot "${window}" unavailable — ${String(err)}`)
+      return null
+    }
     console.log(`artifact: ${path}`)
     return path
   }
-  try {
-    await page.screenshot({ path, clip, timeout: 15_000 })
-  } catch (err) {
-    note(`chart shot "${window}" unavailable — ${String(err)}`)
-    return null
-  }
+  lastShot = b64
+  writeFileSync(path, Buffer.from(b64, 'base64'))
   console.log(`artifact: ${path}`)
   return path
 }
