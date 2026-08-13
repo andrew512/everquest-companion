@@ -110,64 +110,64 @@ function ClassChips({ donor, planClasses }: { donor: DonorRow; planClasses: read
 export interface DonorLineProps {
   donor: DonorRow
   planClasses: readonly ClassAbbr[]
-  planned: boolean
+  /** this donor is already on the wish list (JOS-326 — it used to mean "already in the set") */
+  wished: boolean
   /** V5 — this row holds the top tier of its focus family among the rows that survived the filters */
   best: boolean
   /** the header above does not name this row's effect (any axis but `effect`), so the row does */
   namesEffect: boolean
   /** the header above did not take this effect's one-liner, so the row still carries it (JOS-42) */
   namesSays: boolean
-  /**
-   * THE ADD CONTROL'S WHOLE TRUTH (JOS-42 refinement 3): null when this donor's effect would land
-   * in an empty socket, and the OUTGOING effect's name when it would land on top of something.
-   * Resolved by the browser, which is the only place that knows both the plan and the target
-   * socket — a preset names one exactly, and a one-slot donor implies one.
-   */
-  replaces: string | null
-  onAdd: (donor: DonorRow, anchor: HTMLElement) => void
+  onAdd: (donor: DonorRow) => void
   /** deep-link this donor into the Loot drill-down; absent when the app wired no router */
   onOpenLoot?: (item: string) => void
 }
 
 /**
- * ADD, OR REPLACE — the button says which, and never both (JOS-42 refinement 3).
+ * ADD TO THE WISH LIST — one click, always, and it can never destroy anything (JOS-326).
  *
- * A socket holds ONE effect, so adding into an occupied one silently discards a decision the user
- * already made. The label changes, the colour moves to the warning family, and the tooltip names
- * the casualty in ONE CLAUSE — "replaces Improved Healing III" — which is the caveat diet's whole
- * allowance: a tooltip may enable an action, and knowing what you are about to overwrite is what
- * makes this one safe to click.
+ * THIS BUTTON USED TO WRITE A SOCKET, and everything complicated about it came from that. It said
+ * "Add to set"; it could open a slot menu when the donor fit more than one cell; and when the
+ * target socket was occupied it turned into a warning-coloured "Replace" naming the effect it was
+ * about to overwrite (JOS-42 refinement 3). All three were consequences of the plan board, which
+ * this ticket removes: there are no cells, so there is nothing to disambiguate, and a wish list
+ * DEDUPES rather than displaces, so there is nothing to overwrite. What is left is the plainest
+ * possible control, which is what a browse surface should have had all along.
+ *
+ * AN ALREADY-WISHED DONOR SAYS SO AND STAYS DISABLED, rather than silently accepting a click that
+ * changes nothing. The row also wears the `wished` chip; the button is what stops the gesture.
+ *
+ * SLOTLESS DONORS STAY DISABLED for the reason they always were — R2 says an effect can only move
+ * into an item sharing its equipment slot, so a donor with none can never donate, and the row is
+ * chipped `no slot` beside this button saying why.
  */
 function AddButton({
   donor,
-  replaces,
+  wished,
   onAdd
-}: Pick<DonorLineProps, 'donor' | 'replaces' | 'onAdd'>): JSX.Element {
-  const button = (
+}: Pick<DonorLineProps, 'donor' | 'wished' | 'onAdd'>): JSX.Element {
+  return (
     <Button
       size="small"
       data-testid="planner-add"
-      data-replaces={replaces ?? undefined}
-      color={replaces === null ? 'primary' : 'warning'}
-      disabled={donor.slots.length === 0}
-      onClick={(e) => onAdd(donor, e.currentTarget)}
-      sx={{ flexShrink: 0, minWidth: 88 }}
+      data-wished={wished ? 'true' : undefined}
+      color="primary"
+      disabled={wished || donor.slots.length === 0}
+      onClick={() => onAdd(donor)}
+      sx={{ flexShrink: 0, minWidth: 96 }}
     >
-      {replaces === null ? 'Add to set' : 'Replace'}
+      {wished ? 'Wished' : 'Add to wish list'}
     </Button>
   )
-  if (replaces === null) return button
-  return <Tooltip title={`replaces ${replaces}`}>{button}</Tooltip>
 }
 
 export function DonorLine({
   donor,
   planClasses,
-  planned,
+  wished,
   best,
   namesEffect,
   namesSays,
-  replaces,
   onAdd,
   onOpenLoot
 }: DonorLineProps): JSX.Element {
@@ -252,8 +252,17 @@ export function DonorLine({
           {src.more}
         </Typography>
       )}
-      {planned && <Chip size="small" color="success" variant="outlined" label="in set" sx={{ height: 18, fontSize: 10, flexShrink: 0 }} />}
-      <AddButton donor={donor} replaces={replaces} onAdd={onAdd} />
+      {wished && (
+        <Chip
+          size="small"
+          color="success"
+          variant="outlined"
+          label="wished"
+          data-testid="planner-wished-chip"
+          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+        />
+      )}
+      <AddButton donor={donor} wished={wished} onAdd={onAdd} />
     </Stack>
   )
 }

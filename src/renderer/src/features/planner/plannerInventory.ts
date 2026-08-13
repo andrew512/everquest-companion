@@ -1,38 +1,38 @@
-// planner/plannerInventory.ts — WHAT YOU ARE WEARING, in the planner (V7, docs/plans/planner-v2.md).
+// planner/plannerInventory.ts — WHAT YOU ARE WEARING, read live from the character's own dump
+// (V7, docs/plans/planner-v2.md).
 //
-// The Board became the Inventory tab, and an Inventory tab that made you retype eighteen items
-// you are already wearing would be a worse form of the character sheet the game already has. So
-// each cell fills its host from the character's newest `/outputfile inventory` dump, joined to
-// the planner's slots by the hand-authored table in shared/planner/inventorySlots.ts (law 12).
+// WHAT THIS WAS FOR, AND WHO READS IT NOW — WHICH IS NOBODY, AND THAT WANTS AN INTEGRATOR'S CALL.
+//
+// It was written for the exaltation planner's Inventory tab, whose cells filled their hosts from
+// the character's newest `/outputfile inventory` dump; the Gear tab's sets pane then took the same
+// read for its "versus what you are wearing" diff. JOS-326 removed the board (and with it the two
+// cell-shaped helpers only the board used, `hostsBySlot` and `effectiveHost`), and JOS-325 retired
+// gear sets in the same wave — so as of that pair of merges this hook has NO CALLER.
+//
+// IT IS LEFT STANDING ON PURPOSE RATHER THAN HALF-REMOVED. Deleting it alone would leave the
+// channel behind it dead end to end — `IPC.plannerInventory`, its handler in src/main/ipc/planner.ts
+// and its preload method — plus a dangling reference in `features/character/useCharacterSheet.ts`,
+// which cites this file by name as the precedent for its own transport. That is one removal across
+// four files owned by three tickets, so it belongs to whoever integrates them, not to either
+// worker. Retire the whole channel or find it a caller; do not delete just this half.
 //
 // LIVE, WITH NO CLICK ANYWHERE (owner, 2026-08-05: "type the command, watch it fill"). Main
 // already watches the dump and pushes `inventory:autoReloaded` when the player rewrites it; this
-// hook re-asks on that push, so running `/outputfile inventory` in game fills the tab while it is
-// on screen. Main's watcher now also covers the FIRST dump a character ever writes (session.ts),
-// which is the case the instructions card is talking to.
+// hook re-asks on that push, so running `/outputfile inventory` in game fills the surface while it
+// is on screen. Main's watcher also covers the FIRST dump a character ever writes (session.ts).
 //
-// AUTO-FILL NEVER TOUCHES THE PLAN. Nothing here writes: the dump answers "what is in that slot
-// right now" at RENDER time, and a hand-picked host in the plan always wins (`effectiveHost`).
-// That is what makes "my hand-picks win" structurally true rather than a precedence rule someone
-// has to maintain — and it also means the auto-filled host follows your gear instead of freezing
-// the day you first opened the tab.
+// IT NEVER WRITES ANYTHING. The dump answers "what is in that slot right now" at RENDER time, so
+// what it says follows your gear instead of freezing the day you first opened a tab — and no
+// stored document can be corrupted by a dump that changed under it.
 
 import { useCallback, useEffect, useState } from 'react'
-import type { PlannerInventory, PlannerInventoryHost } from '@shared/planner/inventorySlots'
-import type { PlanSlot, PlanSlotId } from '@shared/planner/types'
+import type { PlannerInventory } from '@shared/planner/inventorySlots'
 
 export interface PlannerInventoryState {
   /** the parsed dump, or null when this character has never written one */
   inventory: PlannerInventory | null
   /** false until the first read settles — a data-availability flag, not an error */
   ready: boolean
-}
-
-/** `PlanSlotId → the item worn in that CELL`, for the cells to read. Empty when there is no dump. */
-export type HostsBySlot = ReadonlyMap<PlanSlotId, PlannerInventoryHost>
-
-export function hostsBySlot(inventory: PlannerInventory | null): HostsBySlot {
-  return new Map((inventory?.hosts ?? []).map((h) => [h.slot, h]))
 }
 
 /**
@@ -71,27 +71,4 @@ export function usePlannerInventory(): PlannerInventoryState {
   }, [read])
 
   return state
-}
-
-/** One cell's host: what the user PICKED, else what they are wearing. Null when neither. */
-export interface EffectiveHost {
-  key: string
-  name: string
-  /** the ` +N` the dump stated — only ever known for an equipped host; absent means unstated */
-  tier?: number
-  /** true when this came from the dump rather than from the user */
-  equipped: boolean
-}
-
-export function effectiveHost(
-  planSlot: PlanSlot,
-  equipped: PlannerInventoryHost | undefined
-): EffectiveHost | null {
-  if (planSlot.hostKey !== undefined && planSlot.hostName !== undefined) {
-    return { key: planSlot.hostKey, name: planSlot.hostName, equipped: false }
-  }
-  if (!equipped) return null
-  const host: EffectiveHost = { key: equipped.key, name: equipped.name, equipped: true }
-  if (equipped.tier !== undefined) host.tier = equipped.tier
-  return host
 }
