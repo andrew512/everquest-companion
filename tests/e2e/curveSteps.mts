@@ -31,7 +31,7 @@
 //
 // Floors and identities only, never today's numbers (AGENTS.md: frozen numbers rot).
 
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
 import { ARTIFACTS, check, countOf, hoverAt, note, settle, settleCount, settleGone, settleStable } from './appHarness.mjs'
@@ -237,9 +237,20 @@ const SCROLLER = '[data-testid="app-content"]'
  *  note below only DESCRIBES is not worth a second module boundary. */
 const VIEWBOX_W = 720
 
-/** Wide enough that paneWidth/720 is unmistakably greater than 1 — see the header. */
+/**
+ * Wide enough that paneWidth/720 is unmistakably greater than 1 — see the header — and CLAMPED to
+ * the display at run time by `shotSize` below.
+ *
+ * MEASURED THE HARD WAY: asking for 1800x1040 on a 1920x1080 desktop lands within a hair of the
+ * work area, and Windows answers a `setBounds` that big by MAXIMIZING the window. A maximized
+ * window then ignores every later `setBounds` — so the restore silently did nothing and the narrow
+ * layout step ran at 1800px and failed. The clamp and the `unmaximize()` in `resizeTo` are both
+ * that bug; either alone would leave the trap armed on a different-sized desktop.
+ */
 const SHOT_W = 1800
 const SHOT_H = 1040
+/** Kept clear of the work area's edges so the OS never reads the request as "maximize". */
+const SCREEN_MARGIN = 120
 
 const SHOT_TAG = process.env.EQ_E2E_SHOT_TAG ?? 'shot'
 
@@ -259,6 +270,8 @@ function toLocalInput(ts: number): string {
 async function resizeTo(app: ElectronApplication, page: Page, width: number, height: number): Promise<number> {
   const win = await app.browserWindow(page)
   await win.evaluate((w, b) => {
+    // See SHOT_W: a maximized window ignores setBounds, and a wide-enough request maximizes it.
+    if (w.isMaximized()) w.unmaximize()
     w.setBounds({ ...w.getBounds(), width: b.w, height: b.h })
   }, { w: width, h: height })
   const got = await settle(
@@ -268,6 +281,17 @@ async function resizeTo(app: ElectronApplication, page: Page, width: number, hei
   )
   await settleStable(() => plotGeometry(page).then((g) => JSON.stringify(g)), { timeoutMs: 15_000 })
   return got
+}
+
+/** The shot size this desktop can actually hold — see SHOT_W for what happens when it cannot. */
+async function shotSize(app: ElectronApplication): Promise<{ w: number; h: number }> {
+  const area = await app
+    .evaluate(({ screen }) => screen.getPrimaryDisplay().workAreaSize)
+    .catch(() => ({ width: SHOT_W, height: SHOT_H }))
+  return {
+    w: Math.max(1280, Math.min(SHOT_W, area.width - SCREEN_MARGIN)),
+    h: Math.max(800, Math.min(SHOT_H, area.height - SCREEN_MARGIN))
+  }
 }
 
 /** The two plots' boxes — the thing that must stop moving before a shutter opens. */
@@ -342,15 +366,40 @@ function unionRect(page: Page, sels: readonly string[], pad = 12): Promise<Clip 
   }, { sels: [...sels], pad })
 }
 
-/** One shot of the chart column, named for the window it is a picture of. Returns its path. */
-async function shoot(page: Page, window: string): Promise<string | null> {
+/**
+ * The shutter, THROUGH THE MAIN PROCESS.
+ *
+ * `page.screenshot()` is the obvious call and it is the wrong one here: it waits on the RENDERER's
+ * compositor, and this window is never shown, so its frame production is throttled to whatever
+ * happens to be repainting. Measured on the first run of this step — two of three shots landed and
+ * the third timed out after ten seconds waiting for a frame that never came, and the failed call
+ * left the device-metrics override behind, so the NEXT shot came out framed on the whole window
+ * instead of on its clip. `webContents.capturePage` asks the browser process for the surface it
+ * already has, needs no frame and no font wait, and cannot leave an override behind.
+ *
+ * `page.screenshot` stays as the fallback: capturePage returns an empty image on some platforms
+ * for a window that was never shown, and a picture from the slow path beats no picture.
+ */
+async function shoot(app: ElectronApplication, page: Page, window: string): Promise<string | null> {
   await alignToSlice(page)
   const clip = await unionRect(page, [SLICE, AA_CHART, LEVEL_CHART, LEGEND])
   if (!clip) return null
   mkdirSync(ARTIFACTS, { recursive: true })
   const path = join(ARTIFACTS, `${SHOT_TAG}-${window}.png`)
+  const win = await app.browserWindow(page)
+  const b64 = await win
+    .evaluate(async (w, r) => {
+      const img = await w.webContents.capturePage(r)
+      return img.isEmpty() ? '' : img.toPNG().toString('base64')
+    }, clip)
+    .catch(() => '')
+  if (b64) {
+    writeFileSync(path, Buffer.from(b64, 'base64'))
+    console.log(`artifact: ${path}`)
+    return path
+  }
   try {
-    await page.screenshot({ path, clip, timeout: 10_000 })
+    await page.screenshot({ path, clip, timeout: 15_000 })
   } catch (err) {
     note(`chart shot "${window}" unavailable — ${String(err)}`)
     return null
@@ -426,7 +475,8 @@ export async function stepChartShots(app: ElectronApplication, page: Page): Prom
   let from = await windowText(page)
   const shots: string[] = []
   try {
-    const width = await resizeTo(app, page, SHOT_W, SHOT_H)
+    const size = await shotSize(app)
+    const width = await resizeTo(app, page, size.w, size.h)
     const pane = (await plotGeometry(page))[0]?.w ?? 0
     note(
       `chart shots at ${String(width)}px of viewport: the plot pane measures ${String(pane)}px ` +
@@ -440,7 +490,7 @@ export async function stepChartShots(app: ElectronApplication, page: Page): Prom
         continue
       }
       from = landed
-      const path = await shoot(page, plan.name)
+      const path = await shoot(app, page, plan.name)
       if (path) shots.push(path)
       note(`${plan.name} window: ${landed}`)
     }
