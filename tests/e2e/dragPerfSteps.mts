@@ -47,21 +47,31 @@
 import type { Page } from 'playwright-core'
 import { check, hoverAt, note } from './appHarness.mjs'
 
-/** How many moves the drag is made of. Each `mouse.move` costs about a second of round trip in a
- *  never-composited window, so this is a budget as much as a sample size. */
-const MOVES = 12
+/**
+ * How many moves each sweep is made of. Each `mouse.move` costs about a second of round trip in a
+ * never-composited window, so this is a budget as much as a sample size — and it is a sample size
+ * that had to be RAISED: at 12 the hover control came back anywhere between 2.85 and 6.45 ms per
+ * move depending on how loaded the machine was, which put a correctly-fixed run at 2.04 against a
+ * 2x gate. Twenty is what the spec can afford.
+ */
+const MOVES = 20
 /**
  * How much dearer a DRAG move may be than a HOVER move across the same chart.
  *
- * MEASURED on the e2e fixture, with the fix in and then with it stashed back out — the JOS-283
- * discipline, because a gate nobody has watched FAIL is not a gate:
+ * MEASURED on the e2e fixture, with the fix in and then reverted back out — the JOS-283
+ * discipline, because a gate nobody has watched FAIL is not a gate. The FULL observed range, not
+ * the flattering part of it:
  *
- *   fixed    five runs ⇒ ratio 0.66 · 1.15 · 1.19 · 1.26 · 1.34
- *   defect   drag 31.78 ms per move vs hover 6.45 ⇒ ratio 4.93
+ *   at MOVES=12   fixed 0.66 · 1.15 · 1.19 · 1.26 · 1.34 · 2.04     defect 4.93
+ *   at MOVES=20   fixed 0.84 · 1.25 · 1.25                          defect 5.25
  *
- * 2x sits between them with 1.5x of air below the worst good run and 2.5x above it.
+ * Both halves drift with machine load and they do NOT drift together — at twelve moves the hover
+ * control alone ranged 2.85 to 6.45 ms per move — which is how a 2x gate came to be watched
+ * failing a correctly-fixed tree at 2.04. TWENTY MOVES IS HALF THE ANSWER (the spread closed to
+ * 0.84-1.25) and the other half is placing the gate against the worst good run rather than the
+ * median: 3x leaves 2.4x of air under the fixed tree and sits 1.75x under the defect.
  */
-const DRAG_OVER_HOVER = 2
+const DRAG_OVER_HOVER = 3
 
 interface ProfileNode {
   id: number
