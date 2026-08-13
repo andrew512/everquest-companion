@@ -20,6 +20,12 @@
 // suite stays Electron-free and React-free; `tests/gearIndex.test.mts` asks the same question
 // through the shipped renderer path, which is where a drift between the two would show.
 //
+// SINCE JOS-333 it also sweeps LAYER 3 — the era read off the acquisition path — for the same
+// reason and with the same shape: another blunt rule (one out-of-era edge is enough, by owner
+// ruling), another 360 rows leaving the default view, and the property that it can only ever speak
+// into `unknown`. The rules themselves are unit-tested in `tests/eraDerive.test.mts`; here it is the
+// committed bytes, and the three rows the owner photographed are asserted by name.
+//
 // No Electron, no fixtures, no game directory ⇒ this suite never skips.
 
 import { test } from 'node:test'
@@ -31,8 +37,10 @@ import {
   eraVerdict,
   layeredVerdict,
   type Era,
+  type EraDerivation,
   type EraVerdict
 } from '../src/shared/planner/era'
+import { buildEraDerivations } from '../src/main/planner/eraDerive'
 import mobsJson from '../src/renderer/src/data/eqlegends/mobs.json'
 import itemsJson from '../src/main/data/items.json'
 import { itemKey, type ItemDbFile } from '../src/main/itemsDb'
@@ -232,6 +240,139 @@ test('the two out-of-head era claims are read, by name, off the committed corpus
     if (!row.page.startsWith('Illegible Note:')) continue
     assert.equal(row.tag, undefined, `${row.page} read a P99 DATE filing as an era claim`)
   }
+})
+
+// =================================================================================
+// JOS-333 — LAYER 3: THE ERA THE PAGE NEVER STATES, READ OFF THE ACQUISITION PATH
+// =================================================================================
+//
+// The owner came back with screenshots and the JOS-328 verdict was corrected: the out-of-era pills
+// are real, they are just not ON the page. eqlwiki's own skin walks every LINK and pills the ones
+// whose TARGET is out of era, so an era? item can be covered in them. `main/planner/eraDerive.ts`
+// derives that over the corpus we already ship, and this is what it does to the committed bytes —
+// including the three rows the owner photographed, asserted by name, one of which does NOT flip.
+
+test('THE THREE OWNER EXAMPLES, by name, off the committed corpus', () => {
+  const derivations = buildEraDerivations(corpus)
+  const of = (key: string): EraDerivation | undefined => derivations.get(key)
+
+  // 1. The mold. The recipe needs a Small Breastplate Mold; that page carries `{{Epics Era}}`, the
+  //    register calls it out, and the wiki's own `eqlmetadata` endpoint agrees (`outOfEra: true`).
+  assert.deepEqual(of('dwarven breastplate (enchanted imbued)'), {
+    basis: 'component',
+    target: 'Small Breastplate Mold',
+    detail: 'Epics'
+  })
+
+  // 2. The quests. `|relatedquests` names Scaled Mystic Armor Quests, which the committed quest
+  //    catalog starts in East Cabilis — a Kunark city. `eqlmetadata` calls that page out of era too.
+  //    The target is the QUEST's own name, not the item's: the item's `|relatedquests` use spells
+  //    the quest as the item, and the catalog is the thing that knows what the quest is called.
+  assert.deepEqual(of('scaled mystic breastplate'), {
+    basis: 'quest',
+    target: 'Scaled Mystic Armor Quests',
+    detail: 'East Cabilis'
+  })
+
+  // 3. THE ONE THAT DOES NOT FLIP, pinned as a refusal rather than left as a silence. Silver Full
+  //    Breastplate's page carries exactly one pill and it sits on `[[Cultural Tradeskills: Human]]`
+  //    — the armour-SET page, which `eqlmetadata` confirms is out of era. All seven of its recipe
+  //    components are in era and it has no quests, so there is no edge here to find: the item corpus
+  //    enumerates `embeddedin Template:Itempage` and an armour-set page is not an item page. If a
+  //    later wave teaches the parser to keep `|notes` link targets and commits the wiki's verdict
+  //    for the 152 non-item pages the era? rows reference, THIS is the assertion that should change,
+  //    deliberately and with the census beside it.
+  assert.equal(of('silver full breastplate'), undefined, 'Silver Full Breastplate found an edge we did not measure')
+  const sfb = CORPUS.find((r) => r.key === 'silver full breastplate')
+  assert.ok(sfb, 'Silver Full Breastplate left the corpus')
+  assert.equal(sfb.tag, undefined, 'its own page states no era')
+  assert.equal(layeredVerdict(sfb.zones, sfb.tag), 'unknown', 'it is still an era? row')
+})
+
+test('layer 3 only ever speaks into silence, and only ever hides', () => {
+  // THE PROPERTY, over every page the derivation answers for: the page's OWN layers 1-2 verdict was
+  // `unknown` before it spoke. The builder enforces this by construction (it skips anything already
+  // decided) and this is the corpus-level proof, because the cost of getting it wrong is a derived
+  // guess overruling a drop zone somebody can actually walk to.
+  const derivations = buildEraDerivations(corpus)
+  assert.ok(derivations.size >= 400, `only ${String(derivations.size)} pages carry a derivation`)
+  for (const [key, derived] of derivations) {
+    const row = CORPUS.find((r) => r.key === key)
+    assert.ok(row, `${key} carries a derivation but has no corpus row`)
+    assert.equal(row.tag, undefined, `${row.page} carries BOTH a banner and a derivation`)
+    // Asked with the page's own zones, which is what the builder saw. The catalog can only make the
+    // renderer MORE decided, and `donorEra` applies the derivation only where it is still unknown.
+    const pageZones = (corpus.items[key]?.dropsFrom ?? []).flatMap((s) => (s.zone === undefined ? [] : [s.zone]))
+    assert.equal(layeredVerdict(pageZones, undefined), 'unknown', `${row.page} was already placed by a zone`)
+    assert.ok(derived.target.length > 0 && derived.detail.length > 0, `${row.page} derived a nameless edge`)
+  }
+})
+
+test('THE CENSUS: what layer 3 costs the default era-filtered table', () => {
+  // Measured 2026-08-13. FLOORS, never equalities — a rescrape moves every one of these, and the
+  // number that must not move quietly is the DIRECTION.
+  //   corpus pages with a derivation  463  (component 308 · quest 106 · component-zone 49 · yield 0)
+  //   gear rows in-era                2,319 unchanged
+  //   gear rows era?                  1,128 -> 768
+  //   gear rows out-of-era            3,367 -> 3,727
+  //   default era-filtered table      3,447 -> 3,087 of 6,814
+  const derivations = buildEraDerivations(corpus)
+  const byBasis = new Map<string, number>()
+  for (const d of derivations.values()) byBasis.set(d.basis, (byBasis.get(d.basis) ?? 0) + 1)
+  assert.ok((byBasis.get('component') ?? 0) >= 280, `only ${String(byBasis.get('component'))} component edges`)
+  assert.ok((byBasis.get('quest') ?? 0) >= 90, `only ${String(byBasis.get('quest'))} quest edges`)
+  assert.ok((byBasis.get('component-zone') ?? 0) >= 40, `only ${String(byBasis.get('component-zone'))} zone edges`)
+
+  // EVERY BASIS THE TYPE NAMES IS ACCOUNTED FOR. `yield` legitimately fires for nothing today; the
+  // assertion is that no basis appears here that this file has never heard of, which is what would
+  // happen if a fifth edge shipped without a census.
+  for (const basis of byBasis.keys()) {
+    assert.ok(['component', 'yield', 'quest', 'component-zone'].includes(basis), `unknown basis "${basis}"`)
+  }
+
+  // THE ERA? ROWS THE DERIVATION RESOLVES, counted the way the app counts them (catalog ∪ page
+  // zones ∪ banner). The one derivation the catalog overrules is the safety valve, not a defect.
+  const stillUnknown = CORPUS.filter((r) => layeredVerdict(r.zones, r.tag) === 'unknown')
+  const resolved = stillUnknown.filter((r) => derivations.has(r.key))
+  assert.ok(resolved.length >= 400, `layer 3 only resolved ${String(resolved.length)} era? rows`)
+  assert.ok(
+    resolved.length < stillUnknown.length,
+    'layer 3 resolved EVERY era? row, which means it stopped refusing anything'
+  )
+
+  // THE SHELF IT HIDES IS ONE FAMILY, and naming it is the point: a rule this blunt is only safe if
+  // the set it hides is a list somebody read. These five components carry the bulk of it, and each
+  // one's page really does open with an out-of-era banner.
+  // Compared by KEY, not by spelling (law 2): the recipes write `Teir\`Dal Smithy Hammer` while the
+  // page is titled `Teir\`dal Smithy Hammer`, and the edge carries the recipe's spelling verbatim.
+  for (const target of ['Elven Smithy Hammer', 'Teir`dal Smithy Hammer', 'Imbued Emerald', 'Brute Hide']) {
+    const riders = [...derivations.values()].filter((d) => itemKey(d.target) === itemKey(target))
+    assert.ok(riders.length >= 10, `only ${String(riders.length)} pages ride on ${target}`)
+    const page = CORPUS.find((r) => r.key === itemKey(target))
+    assert.ok(page, `${target} is not in the corpus`)
+    assert.equal(eraBadge(page.tag ?? ''), 'out', `${target} [${String(page.tag)}] is not badged out`)
+  }
+})
+
+test('SHIELD OF HATRED: the corpus never lost its page, so the link has one to point at', () => {
+  // The owner reported this row showing NO wiki link in-app while its description mentions GM. The
+  // corpus row is intact — page title, stats, icon and all — and the wiki's `eqlmetadata` says the
+  // page is live and IN era, so nothing here needed repairing. What was missing was the affordance:
+  // `KnowledgeSection` gated the "Source: eqlwiki.com" line behind `hasKnowledge`, and this item has
+  // no quest, no lore flag and no recipe, so the card that carries the link never mounted. Fixed in
+  // the renderer; pinned here because the DATA half of the claim is what a corpus test can hold.
+  const shield = CORPUS.find((r) => r.key === 'shield of hatred')
+  assert.ok(shield, 'Shield of Hatred left the corpus')
+  assert.equal(shield.page, 'Shield of Hatred')
+  assert.equal(shield.ac, 25)
+  const entry = corpus.items['shield of hatred']
+  assert.equal(entry?.lore, undefined, 'it carries no LORE flag')
+  assert.equal(entry?.quest, undefined, 'and no quest flag')
+  assert.deepEqual(entry?.questUses, undefined, 'and no quest uses')
+  assert.equal(entry?.recipes, undefined, 'and no recipe uses')
+  assert.equal(entry?.craftedBy, undefined, 'and no recipe that makes it')
+  // Which is exactly the shape `hasKnowledge` returns false for. The page is nonetheless there.
+  assert.ok((entry?.summary ?? '').includes('GM'), 'the description the owner quoted moved')
 })
 
 test('era? means the page said NOTHING — the state carries no token to have misread', () => {
