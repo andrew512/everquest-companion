@@ -44,6 +44,17 @@
 // corpus is); this file owns only the `EraDerivation` type below and the register the derivation
 // asks. Nothing in the strength order changed: layer 3 speaks ONLY into `unknown`.
 //
+// AND SINCE JOS-341 THAT LAST SENTENCE HAS TWO EXCEPTIONS, both of them the same wiki predicate
+// reaching a page our item corpus does not hold (`src/main/data/pageEra.json`, fetched at data-build
+// time and committed — no runtime wiki calls):
+//   * The `page` edge reads the era of a link target that is not an item at all — an armour-SET
+//     hub, a quest index — and it points BOTH ways. Out is the pill verbatim; IN is a positive
+//     classification (`Category:Classic Era` on the set page), and under the era?-hides rule of
+//     73ad7ec9 declining to read it would hide gear the wiki says is here.
+//   * The `drop-mob` edge is DEFINITIVE and can overrule a drop zone. See `EraDerivation.definitive`
+//     below; the short version is that a revamped zone keeps its name while its contents change,
+//     so the mob is the witness and the zone is not.
+//
 // WHAT MAKES THAT MIRRORING RATHER THAN GUESSING, measured live 2026-08-13: the pill is drawn by
 // eqlwiki's own skin module `skins.EQLImmersive.eraFilter`, which asks a custom `action=eqlmetadata`
 // for each link target's `outOfEra`, and whose documented fallback computes it from the target's
@@ -179,12 +190,12 @@ export type EraVerdict = 'in-era' | 'out-of-era' | 'unknown'
 // (`shared/planner/gear.ts`), the verdict that reads it (`features/planner/plannerData.ts`) and
 // the builder that writes it — and `era.ts` is already the file all three import for era words.
 
-/** Which stated edge made an item out of era. See the module header in `main/planner/eraDerive.ts`. */
-export type EraDerivationBasis = 'component' | 'yield' | 'quest' | 'component-zone'
+/** Which stated edge decided an item's era. See the module header in `main/planner/eraDerive.ts`. */
+export type EraDerivationBasis = 'drop-mob' | 'component' | 'yield' | 'page' | 'quest' | 'component-zone'
 
 /**
- * ONE named reason an item with no era claim of its own is nevertheless out of era: the stated way
- * you would GET it points at something that is.
+ * ONE named reason an item with no era claim of its own nevertheless has one: the stated way you
+ * would GET it points at something the wiki HAS classified.
  *
  * It is deliberately a single edge rather than a list. The chip has one sentence to spend, the
  * owner's ruling makes ONE out-of-era reference sufficient, and a row that lists four of them is
@@ -193,10 +204,31 @@ export type EraDerivationBasis = 'component' | 'yield' | 'quest' | 'component-zo
  */
 export interface EraDerivation {
   basis: EraDerivationBasis
-  /** the item or quest the edge points at, spelled the way the corpus spells it */
+  /**
+   * WHICH WAY THE EDGE POINTS (JOS-341). Layer 3 shipped as an out-of-era-only rule, and the
+   * `page` edge is what made that untenable: an armour-set page the wiki files under `Classic Era`
+   * is a POSITIVE claim about its members, not an absence, and under the era?-hides rule of
+   * 73ad7ec9 a row with no verdict is hidden — so refusing to read an in-era classification is not
+   * neutrality, it is a decision to hide gear the wiki says you can go and get.
+   *
+   * `unknown` is not a member on purpose: a derivation that resolved nothing is `null`, not a
+   * third verdict, so a caller cannot accidentally overwrite a real answer with a shrug.
+   */
+  verdict: Exclude<EraVerdict, 'unknown'>
+  /** the item, quest, page or mob the edge points at, spelled the way the corpus spells it */
   target: string
-  /** WHY that target is out of era: its banner token, or the zone that placed it */
+  /** WHY that target decides: its banner token, the zone that placed it, or the droppers named */
   detail: string
+  /**
+   * TRUE when this edge OUTRANKS layers 1-2 instead of speaking only into their silence.
+   *
+   * Exactly one basis sets it — `drop-mob` — and the argument is JOS-298's, one link further out:
+   * a revamp replaces a classic zone's CONTENTS without adding a zone, so `Plane of Hate` says
+   * nothing about whether this drop table is the one running on this server, while the wiki's
+   * per-MOB verdict is a positive claim about exactly that. Every other edge stays weaker than a
+   * drop zone, which is what keeps the rest of layer 3 unable to hide a row somebody can walk to.
+   */
+  definitive?: boolean
 }
 
 /**

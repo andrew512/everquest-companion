@@ -301,7 +301,17 @@ function optionalFields(
   }
 }
 
-/** What one emitted row contributes to the census. */
+/**
+ * What one KEPT row contributes to the census — run in a final pass over the deduped rows, never
+ * as each row is built.
+ *
+ * IT USED TO RUN AT BUILD TIME AND THAT WAS QUIETLY WRONG (found by JOS-341's sweep). A duplicate
+ * page's row is counted the moment it is built and then thrown away by `remember`, so every one of
+ * these numbers over-reported by however many duplicates happened to have the property. It read as
+ * exact for `eraDerivedRows` only because no duplicated page carried a derivation until layer 3
+ * grew the dropper edge; then eighteen did, and `stats.eraDerivedRows` and the rows themselves
+ * disagreed. The stats are documented as counts of ROWS, so they are taken from the rows.
+ */
 function countRow(acc: Acc, row: GearRow): void {
   if (row.stats.DMG !== undefined || row.stats.DELAY !== undefined) acc.stats.weaponRows++
   if (row.effects.length > 0) acc.stats.effectRows++
@@ -345,7 +355,6 @@ function pageRow(
     effects: block.effects.map((e) => gearEffect(e, spells, acc)),
     ...optionalFields(k, read, synthesizesVoidSave(block, ANY_UPGRADED), acc.derived.get(itemKey(entry.page)))
   }
-  countRow(acc, row)
   return row
 }
 
@@ -389,6 +398,8 @@ export function buildGearIndex(
 ): GearIndexPayload {
   const acc = newAcc(buildEraDerivations(file))
   for (const entry of Object.values(file.items ?? {})) addPage(acc, entry, research, spells)
+  // The census is taken from the KEPT rows, after dedupe (see `countRow`).
+  for (const row of acc.rows.values()) countRow(acc, row)
   return {
     version: GEAR_INDEX_VERSION,
     scrapedAt: file.scrapedAt,

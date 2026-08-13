@@ -641,6 +641,76 @@ function pageEraTag(wikitext: string): string | undefined {
   return parseEraTag(wikitext) ?? parseEraBodyTag(wikitext) ?? parseEraCategory(wikitext)
 }
 
+// ---- the same two questions, asked of a page that is NOT an item (JOS-341) ---------------------
+//
+// LAYER 3 GREW A PAGE EDGE, and the pages it reads are armour-set hubs and quest indexes rather
+// than `{{Itempage}}` transclusions. Those two readers live HERE, beside the item ones, for the
+// reason this file's header already states about the live fallback: there must be no second parser
+// to drift. `scripts/scrape-page-era.ts` is their only caller today, and it commits the answer.
+
+/**
+ * A NON-ITEM page's era claim: the `{{X Era}}` banner it renders, else how it is FILED.
+ *
+ * The item readers above are anchored on `{{Itempage}}` — head means "before the item template" —
+ * and an armour-set page has no such anchor, so neither of them can answer for one (both return
+ * `undefined` on the very first line). This asks the same two questions without the anchor, using
+ * the SAME `ERA_TAG_RE` / `ERA_CATEGORY_RE` and the same `soleToken` agreement rule, so a set page
+ * and an item page that both open `{{Kunark Era}}` produce the identical token.
+ *
+ * AGREEMENT, NOT FIRST-MATCH, for the banner too. On an item page the banner is a page-top header
+ * and there is one; a hub page can render a banner per SECTION (a set page listing a classic and a
+ * Kunark tier), and "the first one wins" would be a coin toss decided by section order. Disagreeing
+ * banners are `undefined` — the page did not make one claim — which is law 1 and is also what
+ * `parseEraBodyTag` already does for the item body.
+ */
+export function parsePageEraTag(wikitext: string): string | undefined {
+  const banners: string[] = []
+  for (const m of wikitext.matchAll(ERA_BODY_RE)) {
+    const token = eraToken(m)
+    if (token !== undefined) banners.push(token)
+  }
+  return soleToken(banners) ?? parseEraCategory(wikitext)
+}
+
+/**
+ * The internal link targets an item page's `|notes` prose names — the LINKS the era pill is drawn
+ * on, kept as titles instead of thrown away.
+ *
+ * `cleanSummary` reduces the same field to one line of prose and DISCARDS the targets (`[[Cultural
+ * Tradeskills: Human|the human cultural set]]` becomes four words), which is why the corpus row of
+ * a set-page member does not even carry the title of the page that decides its era (JOS-333's named
+ * refusal). This reader keeps them, and nothing else about `|notes` changes.
+ *
+ * WHY `|notes` AND NOT THE WHOLE PAGE. eqlwiki's own era filter walks every anchor on the rendered
+ * page, so a whole-page scan would be the more literal mirror — and measured over the 2,292 corpus
+ * pages layers 1-2 leave silent, it finds 1,504 distinct non-item targets against `|notes`'s 151.
+ * The difference is class pages, deity pages, spell pages and infobox furniture: links that say
+ * nothing about how you GET the item, and that would speak loudest in the one direction (IN era)
+ * where being wrong shows a player content that is not there. Every other field of the template is
+ * already parsed into a structured edge — components, yields, quests, drop zones — so `|notes` is
+ * exactly the acquisition prose no other reader sees, and it is the field the owner's screenshots
+ * are of. A whole-page scan is a widening that needs its own evidence, not a default.
+ *
+ * SECTION ANCHORS and PIPED LABELS are folded to the bare title (`[[Kaladim#Smithing|here]]` →
+ * `Kaladim`), underscores to spaces, and the wiki's own excluded namespaces are dropped — the same
+ * `File:`/`Category:`/`Template:`/`Special:` skip list the skin module documents. Order is the
+ * page's, duplicates removed.
+ */
+/** The namespaces eqlwiki's own `eraFilter` skips before it asks about a link target. */
+const EXCLUDED_NS = /^(File|Image|Category|Template|Special|Help|MediaWiki|User|Talk|Media|Portal)\s*:/i
+
+export function notesLinkTargets(wikitext: string): string[] {
+  const notes = templateField(wikitext, 'notes')
+  if (notes === null) return []
+  const out: string[] = []
+  for (const m of notes.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)) {
+    const title = m[1].replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+    if (title === '' || EXCLUDED_NS.test(title) || out.includes(title)) continue
+    out.push(title)
+  }
+  return out
+}
+
 /** Collapse a `notes` field to a single trimmed prose line (strips wiki markup, caps length). */
 export function cleanSummary(notes: string): string | undefined {
   const text = notes
