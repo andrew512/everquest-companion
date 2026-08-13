@@ -26,6 +26,10 @@ import {
 } from './levelSeries'
 import { AreaChart, LevelStepChart, SWAP_COLOR, ZoneLegendStrip, type ChartChrome } from './levelCharts'
 import { CHART_W, fmtDelta, type AaPoint } from './levelChartGeometry'
+// THE FRACTIONAL CURVE (JOS-292): the dings are anchors now, and the percentages the game states
+// between them are the rest of the picture. Derived HERE, in the same memo layer as the bands and
+// the scope, so a pointermove still reaches nothing but the two selection bands (JOS-290).
+import { levelCurve, type LevelCurve } from './levelCurve'
 import { PAD_X, mergeZoneBands, zoneLegend, type DataBounds, type ZoneLegend } from './zoneBands'
 // The window math (JOS-71): the pad, the bucket grid and the two series clips. Since JOS-130 the
 // PICK is no longer this tab's own — it is the app-wide timeslice, and these are the drawing rules
@@ -109,9 +113,17 @@ function AaOverTimePanel({
   )
 }
 
-/** Level over time, with the caption that explains the dashed class-swap breaks. */
+/**
+ * Level over time, with the caption that says what the curve is made of.
+ *
+ * The caption names the two things a reader cannot infer from the picture: that the line between
+ * dings is the game's OWN stated percentages (not a smoothing of them), and that a shaded span is
+ * where it stopped stating them. The class-swap clause is unchanged and still appears only when
+ * this character has one.
+ */
 function LevelOverTimePanel({
   segments,
+  curve,
   levelCount,
   swaps,
   aaPoints,
@@ -120,6 +132,8 @@ function LevelOverTimePanel({
 }: {
   /** the runs inside the chosen timescale (the whole history at `All`). */
   segments: LevelSegment[]
+  /** the fractional curve over the same window, already down-sampled per pixel column. */
+  curve: LevelCurve
   /** dings in the WHOLE series — it decides whether this character has a curve at all. */
   levelCount: number
   swaps: number
@@ -135,19 +149,11 @@ function LevelOverTimePanel({
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Typography variant="subtitle2">Level over time</Typography>
       <Typography variant="caption" color="text.secondary" gutterBottom display="block">
-        {swaps > 0 ? (
-          <>
-            steps hold until the next ding; a{' '}
-            <Box component="span" sx={{ color: SWAP_COLOR }}>
-              dashed break
-            </Box>{' '}
-            is a class swap - the level is re-reported for the new loadout, not lost
-          </>
-        ) : (
-          'steps hold until the next ding'
-        )}
+        the curve is your last level-up plus every percentage the game has stated since; a{' '}
+        <Box component="span" sx={{ color: SWAP_COLOR }}>shaded span</Box> is experience the log did not state
+        {swaps > 0 ? ', and a dashed break is a class swap - the level is re-reported for the new loadout, not lost' : ''}
       </Typography>
-      <LevelStepChart segments={segments} color="#d9b25f" aaPoints={aaPoints} chrome={chrome} />
+      <LevelStepChart segments={segments} curve={curve} color="#d9b25f" aaPoints={aaPoints} chrome={chrome} />
       <ZoneLegendStrip legend={legend} fmtDuration={fmtDelta} />
     </Paper>
   )
@@ -220,6 +226,9 @@ interface LevelingCharts {
   aaVisible: AaPoint[]
   /** The level runs clipped to the same window, with the same one-array rule. */
   segVisible: LevelSegment[]
+  /** The fractional curve over that window — drawn by the chart AND read by its hover layer,
+   *  which is what stops the readout naming a bar position the picture refused to draw. */
+  curve: LevelCurve | null
 }
 
 /**
@@ -266,6 +275,15 @@ function useLevelingCharts(o: {
   // The two windowed series. Both charts and both hover layers read exactly these.
   const aaVisible = useMemo(() => (scale ? visibleFrom(aas, scale.t0) : []), [aas, scale])
   const segVisible = useMemo(() => (scale ? visibleSegments(segments, scale.t0) : []), [segments, scale])
+  // THE CURVE, DERIVED WHERE EVERY OTHER WINDOWED SERIES IS. It is one ascending pass over the
+  // CAPPED exp column (~7k rows for a 1.64M-line log — JOS-290 measured the cap, and this memo
+  // re-measures the pass in tests/levelCurve.test.mts), then a collapse to at most two vertices
+  // per pixel column. It depends on the snapshot and the scale and on NOTHING a pointer does, so
+  // a drag still re-renders the two selection bands and nothing else.
+  const curve = useMemo(
+    () => (scale ? levelCurve({ snap: prog, segments: segVisible, t0: scale.t0, t1: scale.t1 }, scale) : null),
+    [prog, segVisible, scale]
+  )
   const bands = useMemo(() => (scale ? mergeZoneBands(prog, scale.t0, scale.t1) : []), [prog, scale])
   const legend = useMemo(() => zoneLegend(bands), [bands])
   // `draft` is a STORE, not a value (JOS-290): it rides down into `ChartChrome` untouched and
@@ -305,7 +323,7 @@ function useLevelingCharts(o: {
   // element, so anything else on the object would land there as an unknown attribute.
   const pointer = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
   const chrome = scale ? { scale, bands, range: sel, draft, suppressed: dragging, pointer } : null
-  return { chrome, legend, scope, clear, aaVisible, segVisible }
+  return { chrome, legend, scope, clear, aaVisible, segVisible, curve }
 }
 
 /**
@@ -389,6 +407,7 @@ function useExtraTs(levels: readonly LevelPoint[], aas: readonly AaPoint[]): num
 function ChartsColumn(p: {
   chrome: ChartChrome
   scope: ScopedStats
+  curve: LevelCurve
   charts: Pick<LevelingCharts, 'legend' | 'clear' | 'aaVisible' | 'segVisible'>
   pace: AaPace | null
   aaPoints: AaPoint[]
@@ -425,6 +444,7 @@ function ChartsColumn(p: {
       <AaOverTimePanel points={p.aaPoints} drawn={charts.aaVisible} aaEarned={p.aaEarned} chrome={chrome} />
       <LevelOverTimePanel
         segments={charts.segVisible}
+        curve={p.curve}
         levelCount={p.levelCount}
         swaps={p.swaps}
         aaPoints={charts.aaVisible}
@@ -522,7 +542,9 @@ export default function LevelingView({
   // why those two coexist under one shared pick.
   const { bounds, available, slice, setId, setCustom } = useTimeslice(useExtraTs(sortedLevels, aaCumulative), 'zoneSession')
   const charts = useLevelingCharts({ prog, aas: aaCumulative, segments: levelSegments, slice, bounds })
-  const { chrome, scope } = charts
+  // `curve` is null on exactly the same condition `chrome` is (no domain ⇒ nothing to draw over),
+  // but the three are read separately below, so all three are tested at the one empty-state gate.
+  const { chrome, scope, curve } = charts
   // The feed and the AA pace both follow that scope (JOS-75): the pace was its own hour-wide
   // window until the timescale existed, and now the tab has ONE answer to "which stretch".
   const { feed: scopedFeed, pace } = useScopedReads({ scope, feed, state, prog })
@@ -559,7 +581,7 @@ export default function LevelingView({
         boughtCount={boughtCount}
       />
 
-      {nothing || !chrome || !scope ? (
+      {nothing || !chrome || !scope || !curve ? (
         <Typography color="text.secondary" sx={{ p: 2 }} data-testid="leveling-empty">
           No level-ups or AA gains found in this character&apos;s log yet. They&apos;ll appear here live as you play.
         </Typography>
@@ -580,6 +602,7 @@ export default function LevelingView({
           <ChartsColumn
             chrome={chrome}
             scope={scope}
+            curve={curve}
             charts={charts}
             pace={pace}
             aaPoints={aaCumulative}
