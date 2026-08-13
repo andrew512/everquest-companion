@@ -826,6 +826,12 @@ export type HeldCounts = Record<string, number>
  *                 hold is in both.
  * The combination and the turn-in consumption that follows it live in ONE place,
  * renderer/features/inventory/reconcile.ts, which argues both.
+ *
+ * THE DEFAULT IS `both` SINCE JOS-294, and it used to be `log` — which meant a player who ran
+ * `/outputfile inventory`, and whose dump this app loaded by itself, was counted by a source that
+ * reads the file for nothing. The default, the labels the user picks between and the proof that the
+ * flip changes NOTHING for an install with no dump all live in
+ * renderer/features/inventory/countSource.ts.
  */
 export type CountSource = 'log' | 'inventory' | 'both'
 
