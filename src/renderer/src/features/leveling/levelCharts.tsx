@@ -6,7 +6,18 @@
 // Both charts now take ONE `ChartScale` from the view (see ./zoneBands.ts `chartDomain`).
 // They used to compute their own, so a zone band or a range selection at the same pixel
 // meant two different instants on the two charts. The shared domain is the seam the band
-// strip and the drag selection hang off; nothing else about the drawing changed.
+// strip and the drag selection hang off.
+//
+// THE X DOMAIN IS SHARED; THE Y DOMAINS ARE NOT, and since JOS-339 neither of them is "the data,
+// exactly" either. Each chart derives its own vertical axis from levelChartGeometry — `paddedAxis`
+// for the AA total, `levelAxis` for the level bar — because they measure different kinds of thing
+// and a short window is where the difference stops being academic. That module carries the whole
+// argument; this file draws what it decides and states the two bounds beside the plot.
+//
+// AND NOTHING IN THIS FILE PUTS TEXT INSIDE AN SVG. The plots stretch
+// (`preserveAspectRatio="none"`), so a `<text>` node in one is a smeared label at any pane wider
+// than 720px. Both the range band's edge ticks and the y-axis marks are HTML overlays for that one
+// reason — see `AxisLabels` for why the alternatives were worse.
 
 import { useSyncExternalStore, type CSSProperties, type JSX } from 'react'
 import type { LevelSegment } from './levelSeries'
