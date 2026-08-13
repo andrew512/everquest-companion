@@ -21,8 +21,9 @@
 // slider; an interactive popper opened from the first row lands on those controls and eats the
 // clicks aimed at them. Every explanation is a native `title`.
 
-import { type JSX, memo } from 'react'
-import { Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
+import { type JSX, memo, useMemo } from 'react'
+import { IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
+import AddIcon from '@mui/icons-material/Add'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName, MismatchChip } from '../planner/PlannerChips'
@@ -80,6 +81,13 @@ export interface GearTableProps {
   onSort: (key: GearSortKey) => void
   /** deep-link an item into the Loot tab's drill-down, where the ItemWindow draws its tier block */
   onOpenLoot?: (item: string) => void
+  /**
+   * PUT THIS ROW IN THE SELECTED GEAR SET (JOS-286, phase 5) — the natural gesture from a search
+   * row. ABSENT when there is no set to add to, and the `+` is then absent as well rather than
+   * disabled: a button that does nothing is a worse answer than no button, and the pane's own
+   * empty state is where "make a set first" belongs.
+   */
+  onAssign?: (row: GearRow) => void
 }
 
 /** The spacer rows that reserve the full scroll height — see useWindowedRows. */
@@ -103,23 +111,36 @@ const GearLine = memo(function GearLine({
   columns,
   classes,
   ownership,
-  onOpenLoot
+  on
 }: {
   row: GearRow
   columns: readonly GearColumn[]
   classes: readonly ClassAbbr[]
   ownership: GearOwnershipMap | null
-  onOpenLoot?: (item: string) => void
+  on: { openLoot?: (item: string) => void; assign?: (row: GearRow) => void }
 }): JSX.Element {
   const mismatch = classMismatch(row.classes, classes)
   // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
   // already the ownership key — phase 3's seam — so there is nothing to normalise here.
   const owned = ownership === null ? null : ownershipFor(ownership, row)
+  const assign = on.assign
   return (
     <TableRow hover data-testid="gear-row" data-item-key={row.key} sx={FIXED_ROW}>
       <TableCell>
         <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
-          <DonorName name={row.name} onOpen={onOpenLoot} />
+          {assign !== undefined && (
+            <IconButton
+              size="small"
+              data-testid="gear-add"
+              aria-label={`Add ${row.name} to the selected set`}
+              title="Add to the selected gear set. It lands in the first free cell its slot can occupy, displacing what is there when none is free."
+              onClick={() => assign(row)}
+              sx={{ flexShrink: 0, p: 0.25 }}
+            >
+              <AddIcon fontSize="inherit" />
+            </IconButton>
+          )}
+          <DonorName name={row.name} onOpen={on.openLoot} />
           {/* The two chips a gear row can wear, both of them POINTERS rather than verdicts: the
               era join's (out of era / era?) and the class filter's. A mismatch is chipped, never
               removed — the trio is a filter and never a rule (V2, plannerClasses.ts). */}
@@ -181,10 +202,14 @@ export default function GearTable({
   ownership,
   ownedHint,
   onSort,
-  onOpenLoot
+  onOpenLoot,
+  onAssign
 }: GearTableProps): JSX.Element {
   const span = columns.length + (ownership === null ? 3 : 4)
   const width = numericWidth(columns.length)
+  // ONE object for the row's two callbacks, memoized on the callbacks themselves: `GearLine` is
+  // `memo`'d and a fresh literal per render would defeat it on every keystroke.
+  const handlers = useMemo(() => ({ openLoot: onOpenLoot, assign: onAssign }), [onOpenLoot, onAssign])
   return (
     <Table size="small" stickyHeader sx={FIXED_TABLE}>
       <TableHead>
@@ -215,7 +240,7 @@ export default function GearTable({
             columns={columns}
             classes={classes}
             ownership={ownership}
-            onOpenLoot={onOpenLoot}
+            on={handlers}
           />
         ))}
         <PadRow height={win.bottomPad} colSpan={span} />

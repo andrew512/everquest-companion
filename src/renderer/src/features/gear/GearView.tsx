@@ -33,16 +33,25 @@
 // beside the era one. Two things are deliberately NOT restated here: the dump's age (the
 // `/outputfile` freshness line owns both instants — JOS-253/268) and the keyring exclusion (the
 // fold owns the roster; this tab only reports what the fold left out of the player's own file).
-// Sets are phase 5, and are not stubbed, because a stub is a promise this file would have to keep.
+//
+// AND SINCE JOS-286 (phase 5) IT CARRIES SETS — ADDITIVELY. A set is a named virtual loadout, one
+// item per equipment cell, each assignment at its own planned +N (`GearSetsPane`). Everything
+// above is UNCHANGED by it: the table still mounts with no set, no plan and no selection, the
+// three memos still run on the GLOBAL plus-state, and the pane is a fixed column that appears when
+// asked for. The two sliders never read each other — the global one restates the whole corpus so
+// candidates compare fairly, a cell's own one states what that item is planned at. The only thing
+// the table gained is a `+` per row, and only while there is a set for it to add to.
 
 import { type JSX, useDeferredValue, useMemo, useRef, useState } from 'react'
-import { Box, Stack, Typography } from '@mui/material'
+import { Box, Chip, Stack, Typography } from '@mui/material'
 import type { ItemUpgradeState } from '@shared/itemUpgrade'
 import type { GearRow } from '@shared/planner/gear'
 import OutputKindLine from '../../components/OutputKindLine'
 import { useWindowedRows } from '../../lib/useWindowedRows'
 import GearFilterBar from './GearFilterBar'
+import GearSetsPane from './GearSetsPane'
 import GearTable, { ROW_HEIGHT } from './GearTable'
+import { useGearSets } from './useGearSets'
 import { visibleColumns, type GearColumn } from './gearColumns'
 import {
   useEraHidden,
@@ -167,6 +176,9 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const classes = useGearClasses()
   const upgrade = useUpgradeState()
   const ownership = useGearOwnership()
+  // PHASE 5 (JOS-286). Mounted here and only here — two mounts would each hold their own copy of
+  // the set array and race each other's debounced saves (usePlans's rule, same failure).
+  const sets = useGearSets()
   const [own, setOwn] = useState<GearFilters>(DEFAULT_GEAR_FILTERS)
   const [text, setText] = useState('')
   const [sort, setSort] = useState<GearSort>(DEFAULT_GEAR_SORT)
@@ -223,30 +235,59 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
             the looted-not-in-dump wording points here instead of guessing. `loadedAt` is THIS
             window's own read instant, which is the fact the prop is documented to want. */}
         <OutputKindLine kind="inventory" quiet loadedAt={ownership.readAt} testId="gear-dump-line" />
+
+        {/* THE SETS TOGGLE (JOS-286). It lives on the count line rather than in the filter bar
+            because it is not a filter: both toolbar rows are `nowrap` and full, and a set does not
+            narrow the corpus — it collects out of it. The count is on the chip so the tab says how
+            many loadouts this character has without opening anything. */}
+        <Chip
+          size="small"
+          label={sets.sets.length === 0 ? 'Sets' : `Sets · ${String(sets.sets.length)}`}
+          data-testid="gear-sets-toggle"
+          color={sets.open ? 'primary' : 'default'}
+          variant={sets.open ? 'filled' : 'outlined'}
+          title="Named virtual loadouts - one item per equipment cell, each at its own planned +N, totalled and compared against what you are wearing."
+          onClick={() => sets.setOpen(!sets.open)}
+          sx={{ flexShrink: 0 }}
+        />
       </Stack>
 
-      <Box
-        ref={scrollRef}
-        data-testid="gear-list"
-        sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto', border: 1, borderColor: 'divider', borderRadius: 1 }}
-      >
-        <GearTable
-          rows={table.rows}
-          columns={table.columns}
-          win={win}
-          sort={sort}
-          classes={classes.classes}
-          ownership={ownership.map}
-          ownedHint={hint}
-          onSort={(key) => setSort((prev) => nextSort(prev, key))}
-          onOpenLoot={onOpenLoot}
-        />
-        {table.rows.length === 0 && (
-          <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>
-            {emptyText(ready, refused, table)}
-          </Typography>
-        )}
-      </Box>
+      <Stack direction="row" sx={{ flexGrow: 1, minHeight: 0, flexWrap: 'nowrap' }}>
+        <Box
+          ref={scrollRef}
+          data-testid="gear-list"
+          sx={{
+            flexGrow: 1,
+            minWidth: 0,
+            minHeight: 0,
+            overflow: 'auto',
+            border: 1,
+            borderColor: 'divider',
+            borderRadius: 1
+          }}
+        >
+          <GearTable
+            rows={table.rows}
+            columns={table.columns}
+            win={win}
+            sort={sort}
+            classes={classes.classes}
+            ownership={ownership.map}
+            ownedHint={hint}
+            onSort={(key) => setSort((prev) => nextSort(prev, key))}
+            onOpenLoot={onOpenLoot}
+            // No set ⇒ no `+` on any row. See `GearTableProps.onAssign` on why absent beats disabled.
+            onAssign={sets.selected === null ? undefined : sets.assign}
+          />
+          {table.rows.length === 0 && (
+            <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>
+              {emptyText(ready, refused, table)}
+            </Typography>
+          )}
+        </Box>
+
+        {sets.open && <GearSetsPane api={sets} rows={rows} ownership={ownership.map} />}
+      </Stack>
     </Box>
   )
 }

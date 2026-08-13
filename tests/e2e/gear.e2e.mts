@@ -34,6 +34,14 @@
  * a second copy), and `Guise of the Deceiver` sits on the `Activated` key ring the fold does not
  * count — the exclusion the header of the Owned column has to admit to.
  *
+ * AND SINCE JOS-286 (phase 5) IT ASSERTS THE SETS, which are three transports deep and therefore
+ * exactly what an e2e is for. `tests/gearSet.test.mts` owns the model, the arithmetic and the diff
+ * without a DOM; what needs a real app is the CHAIN — a `+` on a windowed search row → a cell in
+ * a pane → phase 0's uplift applied at THAT cell's own slider → the `sumGear` totals row → a
+ * debounced whole-array write over IPC → main's validator → electron-store → A SECOND LAUNCH that
+ * reads it all back. Two processes, one document, and the per-item slider proving it does not
+ * touch the global one.
+ *
  * The one thing it deliberately does NOT assert is a row count: the corpus grows (AGENTS.md,
  * "frozen numbers rot"), so every count here is a floor or an identity.
  *
@@ -52,8 +60,16 @@ import {
   settle,
   settleCount
 } from './appHarness.mjs'
-import { mainWindow } from './appWindow.mjs'
-import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
+import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
+import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
+// Phase 5's steps are a MODULE (the plannerSteps.mts precedent): everything they need is standing
+// here, and this file is at the repo's 400-code-line factoring ceiling.
+import {
+  stepGearSets,
+  stepGearSetsIndependent,
+  stepGearSetsRelaunched,
+  type GearSetFixture
+} from './gearSetSteps.mjs'
 // Phase 0's scaler and phase 2's ratio, so the EXPECTED numbers are computed rather than typed.
 import { gearRatio, scaleGearRow } from '../../src/shared/planner/gearScale'
 import type { GearRow } from '../../src/shared/planner/gear'
@@ -79,7 +95,6 @@ const OWNED_TOGGLE = '[data-testid="gear-owned-toggle"]'
 const OWNED_HEADER = '[data-testid="gear-owned-header"]'
 const OWNED_CELL = '[data-testid="gear-cell-owned"]'
 const DUMP_LINE = '[data-testid="gear-dump-line"]'
-
 /** The row key every index in this app joins on — and, from phase 4, the ownership join key. */
 const THELVORN_KEY = 'thelvorn, blade of light'
 
@@ -122,6 +137,9 @@ const THELVORN_BASE: GearRow = {
 
 /** "Tier 2   3 / 4" — the owner screenshot every phase-0 number in this repo is verified against. */
 const CHECKPOINT: ItemUpgradeState = { full: 2, fraction: 3 }
+
+/** WHAT PHASE 5's STEPS ARE TOLD (gearSetSteps.mts) — the same row, and the Owned column's words. */
+const SET_FIXTURE: GearSetFixture = { row: THELVORN_BASE, owned: THELVORN_OWNED }
 
 function until(fn: () => Promise<boolean>, ms: number): Promise<boolean> {
   return settle(fn, (ok) => ok, { timeoutMs: ms })
@@ -509,47 +527,73 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
   // phase-3 steps below start from the state they were written against.
   await stepOwnedCells(page, log)
   await stepOwnedFilter(page)
+  // Phase 5 runs HERE, on the same unnarrowed table phase 4 left: the set steps put the search box
+  // back to empty when they finish, so the phase-3 steps below still start from the state they
+  // were written against — with the pane open, which is the layout they now have to survive.
+  await stepGearSets(page, SET_FIXTURE)
+  await typeAndSettle(page, SEARCH, '')
   if (await stepSearch(page)) {
     await stepFilters(page)
     await stepSort(page)
     await stepUpgrade(page)
+    await stepGearSetsIndependent(page, SET_FIXTURE)
   }
   const over = await pageOverflow(page)
   check(
-    'Gear never scrolls the page (its table clips inside its own box)',
+    'Gear never scrolls the page (its table and its pane clip inside their own boxes)',
     over.doc === 0 && over.content === 0,
     `document +${String(over.doc)}px · content area +${String(over.content)}px`
   )
 }
 
+/** Watch a page for the console errors this spec fails on. */
+function watch(page: Page, into: string[]): void {
+  page.on('console', (m) => {
+    if (m.type() === 'error') into.push(m.text())
+  })
+  page.on('pageerror', (e) => into.push(String(e)))
+}
+
 async function main(): Promise<void> {
   buildIfStale()
+  const consoleErrors: string[] = []
 
-  console.log('launch: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-planner.log…')
+  // TWO LAUNCHES OVER ONE userData DIR (the default-sound-pack precedent), because phase 5's last
+  // promise is that a set OUTLIVES the process. The staged install is shared too, so the second
+  // launch tails the same log and reads the same `/outputfile` dump.
+  //
   // WITH A DUMP IN THE INSTALL ROOT (the `/outputfile` carve-out, logFixture.mts): every launch
   // this suite has ever made was a machine where the command had never been run, which is exactly
   // the half of phase 4 that would then never be measured.
-  const { app, close, log } = await launchOnFixture('e2e-planner.log', { inventory: DUMP_FIXTURE })
+  const userData = makeUserData()
+  const log = stageFixture('e2e-planner.log', { inventory: DUMP_FIXTURE })
 
-  let page: Page | null = null
+  console.log('launch 1: hidden Electron (EQ_E2E=1) against tests/fixtures/e2e-planner.log…')
+  const first = await launchOnFixture(log, { userData })
   try {
-    page = await mainWindow(app)
-    const consoleErrors: string[] = []
-    page.on('console', (m) => {
-      if (m.type() === 'error') consoleErrors.push(m.text())
-    })
-    page.on('pageerror', (e) => consoleErrors.push(String(e)))
-
+    const page = await mainWindow(first.app)
+    watch(page, consoleErrors)
     if (await stepMount(page)) await steps(page, log)
-
-    check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
-
     if (failures.length) await dumpArtifacts(page, 'gear-FAIL')
     else await dumpArtifacts(page, 'gear-pass')
   } finally {
-    await close()
+    await first.close()
   }
 
+  console.log('launch 2: the same userData — do the sets come back?…')
+  const second = await launchOnFixture(log, { userData })
+  try {
+    const page = await mainWindow(second.app)
+    watch(page, consoleErrors)
+    if (await stepMount(page)) await stepGearSetsRelaunched(page, SET_FIXTURE)
+    if (failures.length) await dumpArtifacts(page, 'gear-relaunch-FAIL')
+  } finally {
+    await second.close()
+    await removeUserData(userData)
+    await log.dispose()
+  }
+
+  check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
   reportRun()
 }
 
