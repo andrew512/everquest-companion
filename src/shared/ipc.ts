@@ -380,6 +380,18 @@ export const IPC = {
   gearGetSets: 'gear:getSets',
   gearSetSets: 'gear:setSets',
 
+  // ---- the flat wish list (JOS-326) ----
+  // The active character's WISH LIST — a flat list of items they have decided they want, with no
+  // cell, socket or host structure at all (shared/planner/wishlist.ts), plus the two facts that
+  // hang off it: the done strip's dismissals and the one-time exaltation-plan seed flag. Read/write
+  // pair over `ProgressState.wishlist`, the same arrangement as the two documents above — the
+  // renderer is UNTRUSTED, so a written list is re-validated entry by entry
+  // (src/main/planner/validate.ts sanitizeWishlist) before a byte of it reaches the store, and the
+  // same validator runs on the way out, so the round trip is a fixed point. WHOLE-DOCUMENT, because
+  // the list and the two facts about it must move together or not at all.
+  wishlistGet: 'wishlist:get',
+  wishlistSet: 'wishlist:set',
+
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest
   // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB
