@@ -3,11 +3,15 @@ import { Box, CssBaseline } from '@mui/material'
 import type { AppFocus, CharacterDelta, CharacterRef, CharacterSnap } from '@shared/types'
 import TitleBar from './components/TitleBar'
 import NavDrawer from './components/NavDrawer'
+// The gear area's in-area tab bar (JOS-324) — four views behind one nav row. It sits ABOVE the
+// scrolling content box rather than inside it, so it stays put under a long table and so the
+// views' own `height: 100%` still means "the content area", not "the content area minus a bar".
+import GearAreaTabs from './components/GearAreaTabs'
 // The two app-wide celebration snackbars — they fire on ANY tab, so they live at app level. Their
 // markup moved into its own file when this one hit the factoring ceiling (see its header).
 import CelebrationToasts from './components/CelebrationToasts'
 import NoLogsEmptyState from './components/NoLogsEmptyState'
-import { VIEW_KEY, loadView, type View } from './appViews'
+import { VIEW_KEY, isGearAreaView, loadView, rememberGearTab, type View } from './appViews'
 // The app's navigation MODEL — the deep-link routers and their nonce contract. See appRouting.ts.
 import { useAppRouting, usePrefsRouting, type AppRouting, type PrefsRouting } from './appRouting'
 // The mouse's Back button (JOS-201): the app-level answer, behind whatever drill is on screen.
@@ -17,6 +21,10 @@ import LootView from './features/loot/LootView'
 import LevelingView from './features/leveling/LevelingView'
 import PlannerView from './features/planner/PlannerView'
 import GearView from './features/gear/GearView'
+// The gear area's third tab (JOS-324). A placeholder panel until JOS-326 fills it, and imported
+// plainly rather than lazily: it is a heading and two sentences, which is cheaper than the code
+// that would defer it.
+import WishlistView from './features/wishlist/WishlistView'
 import BossView from './features/bosses/BossView'
 import MobsView from './features/mobs/MobsView'
 import MapsView from './features/maps/MapsView'
@@ -127,6 +135,10 @@ function PlainView({
           character contract and every item name links OUT to that item's Loot drill-down — which
           is where the per-item tier block is drawn. */}
       {view === 'gear' && <GearView key={viewKey} onOpenLoot={routing.openLoot} />}
+      {/* WISH LIST (JOS-324) — the gear area's third tab, and today a placeholder that says so.
+          It is keyed like the rest so JOS-326 inherits the character contract already wired: a
+          wish list is a character's, and the rebuild counter is how this app says that. */}
+      {view === 'wishlist' && <WishlistView key={viewKey} />}
       {view === 'buffs' && <BuffsView key={viewKey} />}
       {/* Respawn clocks (JOS-194). Character-scoped like the rest: the remount `key` is the
           whole contract, since the watch list lives in the store and the clocks are re-derived
@@ -348,6 +360,45 @@ function useAppCelebrations(
  * A component rather than two lines in App because App is at its factoring ceiling — and because
  * "what may appear along the bottom" is a real thing to be able to read in one place.
  */
+/**
+ * THE CONTENT COLUMN: everything to the right of the nav drawer, in the two pieces it has.
+ *
+ * `app-content` is the app's ONE scroller between a view and the window — every feature view sizes
+ * itself with `height: 100%` against it, and a long list clips inside its own box rather than
+ * growing the page (the Task-#56 law, measured by `pageOverflow` in half the e2e suite).
+ *
+ * ABOVE it, and deliberately OUTSIDE it, sits the gear area's tab bar (JOS-324): four views behind
+ * one nav row need a header, and a header inside the scroller would both slide away under a long
+ * table and silently eat the height that every `height: 100%` is measured against — turning that
+ * page-overflow assertion red across four unrelated specs. Out here it is a fixed band and the
+ * scroll box simply flexes into what is left. Its clicks go through `selectView`, the same MANUAL
+ * navigator the nav rows use, so the Back stack reads a tab switch as exactly what it is.
+ *
+ * A component rather than two nested boxes in App for the reason `BottomStrips` is one: App sits
+ * at the measured 100-code-line function ceiling, and this is a self-contained piece of shell.
+ */
+function MainColumn({
+  view,
+  onSelect,
+  children
+}: {
+  view: View
+  onSelect: (v: View) => void
+  children: JSX.Element
+}): JSX.Element {
+  return (
+    <Box
+      component="main"
+      sx={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+    >
+      {isGearAreaView(view) && <GearAreaTabs view={view} onSelect={onSelect} />}
+      <Box data-testid="app-content" sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
+        {children}
+      </Box>
+    </Box>
+  )
+}
+
 function BottomStrips({ prefs }: { prefs: PrefsRouting }): JSX.Element {
   return (
     <>
@@ -440,9 +491,15 @@ export default function App(): JSX.Element {
 
   useAppCelebrations(setDefeatToast, setQuestToast)
 
-  // Remember the selected tab across launches (renderer-only).
+  // Remember the selected tab across launches (renderer-only) — and, when that tab is one of the
+  // gear area's four, remember it a SECOND time as the area's last-used tab (JOS-324). Two keys
+  // because they answer two questions: `eq.view` is "where was I", which relaunch restores, while
+  // `eq.gear.tab` is "which door does the Gear nav row open", which has to survive visits to every
+  // other tab in the app. Written here rather than in the tab bar's click handler so that arriving
+  // by deep link or by Back counts as using the tab, which is what a reader means by last-used.
   useEffect(() => {
     localStorage.setItem(VIEW_KEY, view)
+    rememberGearTab(view)
   }, [view])
 
   // How long each tab was on screen, reported ON SWITCH (plan §2). `View` and the schema's
@@ -520,23 +577,18 @@ export default function App(): JSX.Element {
             which is not a view, so the destination travels as the router rather than as a tab. */}
         <NavDrawer view={view} onSelect={selectView} prefs={prefsRouting} onSendFeedback={() => feedback.openFeedback()} />
 
-        <Box
-          component="main"
-          sx={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-        >
-          <Box data-testid="app-content" sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
-            <ViewContent
-              view={view}
-              hasCharacters={characters.length > 0}
-              viewKey={viewKey}
-              routing={routing}
-              prefs={prefsRouting}
-              onOpenPreferences={() => selectView('preferences')}
-              onOpenLeveling={() => openLeveling()}
-              onSendFeedback={feedback.openFeedback}
-            />
-          </Box>
-        </Box>
+        <MainColumn view={view} onSelect={selectView}>
+          <ViewContent
+            view={view}
+            hasCharacters={characters.length > 0}
+            viewKey={viewKey}
+            routing={routing}
+            prefs={prefsRouting}
+            onOpenPreferences={() => selectView('preferences')}
+            onOpenLeveling={() => openLeveling()}
+            onSendFeedback={feedback.openFeedback}
+          />
+        </MainColumn>
       </Box>
 
       {/* Always-mounted: plays fired alert sounds regardless of the active tab. */}
