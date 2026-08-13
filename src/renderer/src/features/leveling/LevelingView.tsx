@@ -169,7 +169,7 @@ function LevelOverTimePanel({
  */
 function ProgressFeedPanel({ feed, scopeLabel }: { feed: FeedItem[]; scopeLabel: string }): JSX.Element {
   return (
-    <Paper variant="outlined" sx={{ p: 2, flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+    <Paper variant="outlined" sx={{ p: 2 }} data-testid="leveling-feed">
       <Typography variant="subtitle2" gutterBottom>
         Recent progress
       </Typography>
@@ -178,7 +178,9 @@ function ProgressFeedPanel({ feed, scopeLabel }: { feed: FeedItem[]; scopeLabel:
           no level-ups or AA gains in {scopeLabel}
         </Typography>
       )}
-      <Box sx={{ overflow: 'auto', pr: 0.75 }}>
+      {/* NO INNER SCROLLER (JOS-289). The feed is already CAPPED at `FEED_MAX` rows, so its
+          honest height is bounded by construction and the page carries it. */}
+      <Box>
         {feed.map((f, i) => (
           <Stack
             key={`${f.ts}-${f.kind}-${i}`}
@@ -402,10 +404,12 @@ function useExtraTs(levels: readonly LevelPoint[], aas: readonly AaPoint[]): num
  * every surface in it describes the SAME stretch of time, and keeping them in one place is what
  * makes that reviewable (it also keeps the view inside its measured line budget).
  *
- * It OWNS ITS SCROLL (the standing list law) WHILE IT IS A COLUMN: the papers are intrinsically
- * tall, and without this the column grew the app's content area instead — the one thing a view
- * may never do. Below `lg` there are no columns to share a height, so it hands the scroll up to
- * the stack that holds it (JOS-151) and takes its natural height instead.
+ * IT OWNS NO SCROLL AT ALL SINCE JOS-289. It used to take `overflow: auto` at `lg` on the
+ * standing list law's reasoning — the papers are intrinsically tall, so the column absorbed the
+ * height rather than growing the app's content area. The owner overturned the premise for this
+ * tab: growing the content area is exactly what should happen, and a column-sized porthole in
+ * front of two charts and a stats table was the cramping. The column is now a plain natural-height
+ * band and `[data-testid="app-content"]` is the one scroller between here and the window.
  */
 function ChartsColumn(p: {
   chrome: ChartChrome
@@ -427,14 +431,11 @@ function ChartsColumn(p: {
     <Stack
       spacing={2}
       sx={{
-        // Two thirds of the height while there are two columns to share one; below `lg` it is
-        // simply the first band of a single column, so it takes its natural height, hands the
-        // scroll up, and drops the 320px floor that would otherwise push the page sideways.
+        // Two thirds of the WIDTH while there are two columns to share it; below `lg` it is
+        // simply the first band of a single column, and it drops the 320px floor that would
+        // otherwise push the page sideways. Height is whatever the panels need, at every width.
         flex: { xs: '0 0 auto', lg: 2 },
-        minWidth: { lg: 320 },
-        minHeight: 0,
-        overflow: { xs: 'visible', lg: 'auto' },
-        pr: { lg: 0.5 }
+        minWidth: { lg: 320 }
       }}
     >
       {p.pace && <AaPacePanel pace={p.pace} windowLabel={scope.label} />}
@@ -563,7 +564,14 @@ export default function LevelingView({
   }
 
   return (
-    <Stack spacing={2} sx={{ height: '100%' }} data-testid="leveling-view">
+    // NO HEIGHT, NO SCROLLER — THE PAGE IS THE SCROLLER (JOS-289, owner directive 2026-08-13:
+    // *the entire pane should scroll*). `height: '100%'` used to pin this stack to the viewport,
+    // which is what forced every panel below to fight for a share of one screen and produced the
+    // portholes the ticket removes (the per-level spell readout at 120px was the named one). The
+    // view now takes its honest height and `[data-testid="app-content"]` — the app shell's
+    // `overflow: auto` box — scrolls it, which is the SAME rule as before read the other way
+    // round: there is exactly one scroller between a panel and the window, and it is not here.
+    <Stack spacing={2} data-testid="leveling-view">
       {/* THE FOUR HEROES DO NOT FOLLOW THE SCOPE, and that is a decision rather than an
           omission (JOS-75). Character level is your level RIGHT NOW — a level "as of an hour
           ago" is a different fact wearing this one's label. The three AA figures are the
@@ -589,18 +597,18 @@ export default function LevelingView({
           No level-ups or AA gains found in this character&apos;s log yet. They&apos;ll appear here live as you play.
         </Typography>
       ) : (
-        // THE COLUMNS ONLY SHARE A HEIGHT WHILE THEY ARE SIDE BY SIDE (JOS-151, GitHub issue 14).
-        // Below `lg` the row becomes a column, and a 2:1 split of a FIXED height then crushed the
-        // second band until its papers overflowed and drew straight over "New at this level" —
-        // measured at 1073x937, the reporter's window: the ledger squeezed to 89px and the feed to
-        // 34px, both spilling. Stacked, the bands take their natural heights and THIS becomes the
-        // scroller, which keeps the standing layout law (the view never grows the content area)
-        // and matches what the combat dashboard already does when it collapses to one column.
+        // THE COLUMNS NEVER SHARE A HEIGHT ANY MORE (JOS-289). JOS-151 fixed the reporter's
+        // 1073x937 collision by taking the scroll into this stack below `lg` — the two bands were
+        // splitting one FIXED height 2:1 and the second one's papers spilled out of it and drew
+        // over "New at this level" (89px ledger, 34px feed, measured). The collision is gone at
+        // the root now: there is no fixed height to split. `flex-start` at `lg` is what says so —
+        // each column is as tall as its own panels, neither is stretched to the other's height,
+        // and no panel inside either one is asked to grow into space it did not earn.
         <Stack
           direction={{ xs: 'column', lg: 'row' }}
           spacing={2}
           data-testid="leveling-columns"
-          sx={{ flexGrow: 1, minHeight: 0, overflowY: { xs: 'auto', lg: 'visible' }, pr: { xs: 0.5, lg: 0 } }}
+          sx={{ alignItems: { xs: 'stretch', lg: 'flex-start' } }}
         >
           <ChartsColumn
             chrome={chrome}
@@ -618,7 +626,7 @@ export default function LevelingView({
             onCustom={setCustom}
           />
 
-          <Stack spacing={2} sx={{ flex: { xs: '0 0 auto', lg: 1 }, minWidth: { lg: 260 }, minHeight: 0 }}>
+          <Stack spacing={2} sx={{ flex: { xs: '0 0 auto', lg: 1 }, minWidth: { lg: 260 } }}>
             {/* The AA LEDGER stays full-history on purpose: it is an ACCOUNT of what you have
                 bought, and its footer must equal the AA-points-spent hero card. "AA allocated
                 in the last hour" is not a thing anyone owns. */}

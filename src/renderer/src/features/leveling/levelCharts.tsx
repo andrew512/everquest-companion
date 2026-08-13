@@ -144,10 +144,11 @@ const LEGEND_STYLE: CSSProperties = {
   flexWrap: 'wrap',
   gap: '2px 10px',
   fontSize: 11,
-  // Fixed-height law: a wrapped legend must not push the chart column around as the visible
-  // zone mix changes. Two rows are visible; anything beyond scrolls.
-  maxHeight: 40,
-  overflowY: 'auto',
+  // NO CLAMP SINCE JOS-289. It was `maxHeight: 40` + `overflowY: auto` — two rows visible, the
+  // rest scrolled — on the reasoning that a wrapped legend must not push the chart column around
+  // as the visible zone mix changes. Pushing the column around is now free (the page scrolls), and
+  // a legend is an INDEX of what was drawn: half of it hidden behind a 40px scroller made it a
+  // worse answer than the hover it exists to be independent of. It wraps as far as it needs.
   opacity: 0.85
 }
 const SWATCH: CSSProperties = { width: 9, height: 9, borderRadius: 2, flexShrink: 0 }
