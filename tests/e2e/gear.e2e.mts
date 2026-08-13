@@ -87,6 +87,7 @@ import {
 // from it too: since JOS-302 deleted the stat thresholds, naming a column in the picker is the only
 // way to put one on the table, and the upgrade step below needs three of them.
 import {
+  cellText,
   pickColumns,
   resetColumns,
   stepGearColumns,
@@ -101,6 +102,15 @@ import type { GearRow } from '../../src/shared/planner/gear'
 import type { ItemUpgradeState } from '../../src/shared/itemUpgrade'
 
 const NAV = '[data-testid="nav-gear"]'
+/**
+ * The area's own tab, and why the entry clicks it as well as the row (JOS-324).
+ *
+ * `nav-gear` is now the door to FOUR tabs and it opens the one you last used, which is exactly
+ * what a person wants and exactly what a spec must not depend on — this file's second launch
+ * reuses the first's `userData`, so "whatever was last open" is a value one earlier step could
+ * change. Clicking the tab after the row costs nothing and pins the entry.
+ */
+const TAB = '[data-testid="tab-gear"]'
 const VIEW = '[data-testid="gear-view"]'
 const LIST = '[data-testid="gear-list"]'
 const ROW = '[data-testid="gear-row"]'
@@ -194,22 +204,9 @@ async function counts(page: Page): Promise<{ shown: number; total: number }> {
   return { shown: nums[0] ?? 0, total: nums[1] ?? 0 }
 }
 
-/**
- * One numeric cell of one row, as text. `''` covers both "the row is not on screen" and "the item
- * states none" — the second is what a blank cell MEANS, and a spec that distinguished them would
- * be asserting on the windowing rather than on the number.
- */
-function cellText(page: Page, key: string, column: string): Promise<string> {
-  return page.evaluate(
-    ([k, c]) => {
-      const cell = document
-        .querySelector(`[data-testid="gear-row"][data-item-key="${k}"]`)
-        ?.querySelector(`[data-testid="gear-cell-${c}"]`)
-      return cell instanceof HTMLElement ? cell.innerText.trim() : ''
-    },
-    [key, column]
-  )
-}
+// `cellText` — one numeric cell of one row, as text, where `''` covers both "the row is not on
+// screen" and "the item states none" — now comes from gearColumnSteps.mjs (imported above). It
+// lived here AND there, byte for byte, until JOS-324 needed four lines of budget in this file.
 
 /** Type into a filter box and let the DEFERRED filter land — the count settling IS the condition. */
 async function typeAndSettle(page: Page, sel: string, value: string): Promise<number> {
@@ -238,6 +235,12 @@ async function stepMount(page: Page): Promise<boolean> {
   const label = (await textOf(page, NAV)).replace(/\s+/g, ' ').trim()
   check('…and it is called Gear', label.includes('Gear'), `reads "${label}"`)
   await page.click(NAV, { timeout: 15_000 })
+
+  // …and the area it opens offers Gear as its FIRST tab (JOS-324). See TAB above for why the spec
+  // clicks it rather than trusting the row's last-used memory.
+  const hasTab = await until(async () => (await countOf(page, TAB)) > 0, 30_000)
+  if (!check('…and the row opens an area whose first tab is Gear', hasTab)) return false
+  await page.click(TAB, { timeout: 15_000 })
 
   const mounted = await until(async () => (await countOf(page, VIEW)) > 0, 30_000)
   if (!mounted) {
