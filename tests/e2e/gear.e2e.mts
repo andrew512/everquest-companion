@@ -63,6 +63,13 @@
  * the only thing that speaks for it — which is the right level, because the store round trip is
  * all that is left of the feature.
  *
+ * AND SINCE JOS-338 IT ASSERTS THE COMPARISON CARD, which is the first popper this tab has ever
+ * mounted and therefore the first place the JOS-143 defect could come back. The step
+ * (`gearCompareSteps.mts`) opens the card on a real row, reads the equipped half against the same
+ * staged dump the ownership steps read, and then — with the card OPEN — hit-tests the toolbar, the
+ * row's wish heart and the item name's Loot link. That last part is the regression, stated the way
+ * the owner met it twice: not "is a popper on screen" but "does the click still land".
+ *
  * AND SINCE JOS-329 IT ASSERTS THAT THE FORM COMES HOME. The owner's report was that the whole gear
  * area lost its state on every module switch, so the two round trips he described are steps here:
  * set six controls to values nothing defaults to, leave for the Loot MODULE and come back; then
@@ -112,6 +119,9 @@ import { stepGearEffectiveHp } from './gearEffectiveHpSteps.mjs'
 // JOS-335's wish gesture — a module for the same reason, and it spans two tabs (its header argues
 // why the chain, rather than the fold, is what needs a real app).
 import { stepGearWish } from './gearWishSteps.mjs'
+// JOS-338's comparison card, likewise — and it is the step that hit-tests the JOS-143 regression
+// with a popper open over this tab for the first time since the table shipped.
+import { stepGearCompare } from './gearCompareSteps.mjs'
 // JOS-329's away-and-back steps, shared with the planner and character specs — one module because
 // the claim is identical on every tab of the area and only the fingerprint differs.
 import { stepGearMemory, stepGearMemoryRelaunched } from './areaMemorySteps.mjs'
@@ -589,6 +599,12 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
   // phase-3 steps below start from the state they were written against.
   await stepOwnedCells(page, log)
   await stepOwnedFilter(page)
+  // JOS-338 runs HERE, on the same staged dump the two ownership steps just read: it is the other
+  // half of the same file — that one says whether you own a candidate, this one says what you are
+  // wearing instead of it. It needs the GLOBAL SELECTOR STILL AT BASE (the card admits to a
+  // simulation, and the step asserts it has nothing to admit to yet), which is true anywhere above
+  // `stepUpgrade`. It hands the tab back with the box empty and both pickers clear.
+  await stepGearCompare(page, THELVORN_BASE)
   // Phase 5's set steps used to run HERE, between the ownership steps and the phase-3 ones, and
   // JOS-325 removed them with the surface they drove. The clear-the-box line they were followed by
   // STAYS, even though `stepOwnedFilter` now leaves the box empty on its own: `stepSearch` measures
