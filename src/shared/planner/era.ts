@@ -36,6 +36,24 @@
 // said otherwise, 113 of them slotted, 80 AC-bearing armour, and the top of the Gear tab's
 // CHEST-by-AC list. The register is mirrored below `eraFromTag`, cited to the template it copies.
 //
+// LAYER 3, ADDED 2026-08-13 (JOS-333): AN ERA READ OFF THE ACQUISITION PATH. Everything above asks
+// what THIS page says. The wiki also says something none of it can see — it renders an `OUT OF ERA`
+// pill on every LINK whose TARGET page is out of era — so a page that states no era of its own can
+// still be covered in out-of-era markers, which is exactly what the owner photographed. The rules,
+// the census and the measured refusals are in `src/main/planner/eraDerive.ts` (that is where the
+// corpus is); this file owns only the `EraDerivation` type below and the register the derivation
+// asks. Nothing in the strength order changed: layer 3 speaks ONLY into `unknown`.
+//
+// WHAT MAKES THAT MIRRORING RATHER THAN GUESSING, measured live 2026-08-13: the pill is drawn by
+// eqlwiki's own skin module `skins.EQLImmersive.eraFilter`, which asks a custom `action=eqlmetadata`
+// for each link target's `outOfEra`, and whose documented fallback computes it from the target's
+// CATEGORIES against `mw.config.wgEQLEraOutKeys`. That config, read off a live page the same day,
+// is `[kunark, velious, luclin, chardok, chardokrevamp, holevp, warrensfearhaterevamp,
+// fearhaterevamp, epics, epicquests, unknown]` at `wgEQLEraConfigRevision` 156232 — the SAME eleven
+// keys, the same fold and the same revid as `PAGE_ERA`'s `out` rows below. So `eraBadge(tag) ==
+// 'out'` is not our opinion about a page; it is the wiki's own predicate, and the pill on a link is
+// that predicate applied to the link's target.
+//
 // WHAT IT REFUSES TO DO. The catalog's zone strings include real dirt: initialisms (`BBM`, `WFP`),
 // prose (`Most starting zones`, `Various`), concatenations where a wiki table cell ran two links
 // together (`Everfrost PeaksLake Rathetear`, `DreadlandsEmerald JungleCity of Mist`), hedges
@@ -153,6 +171,33 @@ export function zoneEra(zoneName: string): Era | null {
 
 /** How a donor's drop zones read against the era the server is on. */
 export type EraVerdict = 'in-era' | 'out-of-era' | 'unknown'
+
+// ---- layer 3's vocabulary: an era read off the ACQUISITION PATH ------------------------------
+//
+// The rules and the census live in `src/main/planner/eraDerive.ts`, which is where the corpus is.
+// Only the TYPE is here, because three files have to name it — the corpus row that carries it
+// (`shared/planner/gear.ts`), the verdict that reads it (`features/planner/plannerData.ts`) and
+// the builder that writes it — and `era.ts` is already the file all three import for era words.
+
+/** Which stated edge made an item out of era. See the module header in `main/planner/eraDerive.ts`. */
+export type EraDerivationBasis = 'component' | 'yield' | 'quest' | 'component-zone'
+
+/**
+ * ONE named reason an item with no era claim of its own is nevertheless out of era: the stated way
+ * you would GET it points at something that is.
+ *
+ * It is deliberately a single edge rather than a list. The chip has one sentence to spend, the
+ * owner's ruling makes ONE out-of-era reference sufficient, and a row that lists four of them is
+ * telling the player about our data rather than about the item. The strongest edge is the one kept
+ * (`BASIS_ORDER` in the builder), so which one is reported is deterministic and not a coin toss.
+ */
+export interface EraDerivation {
+  basis: EraDerivationBasis
+  /** the item or quest the edge points at, spelled the way the corpus spells it */
+  target: string
+  /** WHY that target is out of era: its banner token, or the zone that placed it */
+  detail: string
+}
 
 /**
  * Fold a donor's whole zone list into one verdict, against an ARBITRARY era — the testable core,

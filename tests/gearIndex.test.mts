@@ -545,6 +545,59 @@ test('the era chip names the BANNER when the banner is what decided (never the d
   assert.equal(eraChip(velious)?.label, 'Velious')
 })
 
+// ---- layer 3, through the SHIPPED renderer path (JOS-333) ---------------------------------------
+//
+// `tests/eraDerive.test.mts` proves the rules and `tests/plannerEraCorpus.test.mts` sweeps the
+// corpus. What neither can see is the wiring: that the build actually attaches the field, that the
+// renderer's own verdict reads it, and that the chip says WHY. This is that seam, asked through
+// `eraChip`/`eraHides` exactly as the table asks it.
+
+test('a derived out-of-era row is hidden by the filter and its chip names the edge', () => {
+  const bp = byKey.get('dwarven breastplate (enchanted imbued)')
+  assert.ok(bp, 'the owner example left the gear index')
+  assert.equal(bp.eraTag, undefined, 'its own page states no era — that is what makes it layer 3')
+  assert.deepEqual(bp.eraDerived, { basis: 'component', target: 'Small Breastplate Mold', detail: 'Epics' })
+
+  const chip = eraChip(bp)
+  assert.ok(chip, 'a derived out-of-era row must carry a chip')
+  assert.equal(chip.unknown, false, 'it is no longer an era? row')
+  assert.equal(chip.label, 'out of era', 'the derivation names no expansion, so neither may the chip')
+  assert.match(chip.tooltip, /Small Breastplate Mold/, 'the tooltip must name the edge that decided')
+  assert.match(chip.tooltip, /out of era \(Epics\)/, 'and say what made that target out of era')
+  assert.equal(eraHides(bp, true), true, 'the default era filter must hide it')
+  assert.equal(eraHides(bp, false), false, 'and it must still be there with the filter off')
+
+  // THE QUEST EDGE says something different, because it is a different kind of claim: our zone
+  // table applied to the quest's start zone, never "the wiki badged it".
+  const smb = byKey.get('scaled mystic breastplate')
+  assert.ok(smb, 'the second owner example left the gear index')
+  assert.equal(smb.eraDerived?.basis, 'quest')
+  assert.match(eraChip(smb)?.tooltip ?? '', /Scaled Mystic Armor Quests, a quest that starts in East Cabilis/)
+
+  // AND THE ONE THAT DOES NOT FLIP. Silver Full Breastplate's only out-of-era reference is a link to
+  // an armour-SET page, which the item corpus does not hold (see the refusal in eraDerive.ts). It
+  // stays era?, visible, and honest about knowing nothing.
+  const sfb = byKey.get('silver full breastplate')
+  assert.ok(sfb, 'the third owner example left the gear index')
+  assert.equal(sfb.eraDerived, undefined)
+  assert.equal(eraChip(sfb)?.unknown, true, 'it must still say era?')
+  assert.equal(eraHides(sfb, true), false, 'and an era? row is never hidden')
+})
+
+test('layer 3 is counted in the build census and never contradicts a row that had an answer', () => {
+  // Measured 2026-08-13: 361 rows carry a derivation, 360 of which change the verdict. FLOORS.
+  assert.ok(index.stats.eraDerivedRows >= 300, `only ${String(index.stats.eraDerivedRows)} derived rows`)
+  assert.equal(index.stats.eraDerivedRows, rows.filter((r) => r.eraDerived !== undefined).length)
+
+  // THE PROPERTY: nothing that already had an era claim of its own may carry a derivation, and no
+  // derived row may be in-era. The second half is what "it can only hide" means at the row level.
+  for (const row of rows) {
+    if (row.eraDerived === undefined) continue
+    assert.equal(row.eraTag, undefined, `${row.name} carries BOTH a banner and a derivation`)
+    assert.notEqual(eraChip(row)?.unknown, true, `${row.name} derived an edge and still reads era?`)
+  }
+})
+
 test('the payload states its version and the corpus it was built from', () => {
   assert.equal(index.version, GEAR_INDEX_VERSION)
   assert.equal(index.scrapedAt, file.scrapedAt)

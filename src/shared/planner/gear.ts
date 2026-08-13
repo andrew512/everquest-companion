@@ -37,6 +37,7 @@
 import type { ClassAbbr } from '../classCombo'
 import type { ItemEffectKind } from '../itemStats'
 import type { EffectFacts } from './effectText'
+import type { EraDerivation } from './era'
 import type { EquipSlot, ExtractTier, SocketType } from './types'
 
 // ---- the numeric vector ------------------------------------------------------------------
@@ -171,6 +172,13 @@ export interface GearRow {
   races: string[]
   /** the page-top `{{X Era}}` banner's token, VERBATIM — `shared/planner/era.ts` decides meaning */
   eraTag?: string
+  /**
+   * LAYER 3 (JOS-333): the ONE stated acquisition edge that points at out-of-era content, present
+   * only on rows whose own page and own drop zones state no era at all. The rules, the census and
+   * the refusals are in `src/main/planner/eraDerive.ts`; `plannerData.donorEra` reads it, and only
+   * where its own verdict came back `unknown`, so this field can never overrule a witness.
+   */
+  eraDerived?: EraDerivation
   /** the stat block's flag phrases, source order ("Magic Item", "Lore Item", "No Drop") */
   flags: string[]
   quest: boolean
@@ -240,6 +248,8 @@ export interface GearBuildStats {
   percentValues: number
   /** `Range:` values that were not a single number, kept verbatim in `rangeText` */
   rangeTexts: number
+  /** rows carrying a LAYER 3 acquisition-edge verdict (JOS-333, `eraDerive.ts`) */
+  eraDerivedRows: number
   /** stat keys the vector does not index, by normalized key — the law-1 census (see the header) */
   unindexedStatKeys: Record<string, number>
   /** stat values no parse could read, by normalized key */
