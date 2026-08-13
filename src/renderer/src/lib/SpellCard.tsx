@@ -30,8 +30,7 @@ import {
   spellClassLine,
   spellEffectClassLabels,
   spellFactsAreForLine,
-  spellLineageLine,
-  spellLineageMembers,
+  spellLineageLine,
   spellStatRows
 } from '@shared/spellDetail'
 import { CARD_LABEL, CARD_MONO, CARD_TEXT, CardSection, LABEL_STYLE, MoreLine, TEXT_STYLE } from './hoverCards'
@@ -129,31 +128,26 @@ function EffectClasses({ detail }: { detail: SpellDetail }): JSX.Element | null 
 }
 
 /**
- * THE RANK BLOCK - what this spell is a rank OF, and what a source says it replaces.
+ * THE RANK BLOCK - the plain rank of the name you asked about, and nothing more.
  *
- * Absent whenever nothing is known, which is the common case and is the point: a line the DB
- * carries once, whose other ranks you have never cast, gets no block at all rather than a
- * confident "Rank 1 of 1". The members are listed with their source attached (see
- * shared/spellDetail.ts) so a rank that exists only because you cast it says so.
+ * OWNER RULING 2026-08-13 (JOS-293): ranks (the I/II/III upgrade mechanic) are orthogonal to
+ * spell LINES in EQL, and a card saying "replaces <previous rank>" conflates the two - you
+ * rarely keep an older rank, and the users who do are a special case. So the replaces phrase
+ * and the member list came OFF the card; the derivation behind them stays in
+ * shared/spellDetail.ts (tested) for any future power-user surface. The conceptual-LINE
+ * lineage the owner wants lives in un-scraped wiki description prose - a data decision, not
+ * this component's.
  */
 function Lineage({ detail }: { detail: SpellDetail }): JSX.Element | null {
   const line = spellLineageLine(detail)
-  const members = spellLineageMembers(detail)
-  if (line === null && members.length <= 1) return null
+  if (line === null) return null
+  // The composed line reads "Rank III · replaces X"; the card states only the first clause.
+  const rankOnly = line.split(' · ')[0]
   return (
     <CardSection label="Rank:">
-      {line !== null && (
-        <div style={TEXT_STYLE} data-testid="spell-card-lineage">
-          {line}
-        </div>
-      )}
-      {members.length > 1 &&
-        members.slice(0, MAX_LISTED).map((m) => (
-          <div key={m} style={LABEL_STYLE} data-testid="spell-card-rank-member">
-            {m}
-          </div>
-        ))}
-      {members.length > 1 && <MoreLine total={members.length} shown={MAX_LISTED} />}
+      <div style={TEXT_STYLE} data-testid="spell-card-lineage">
+        {rankOnly}
+      </div>
     </CardSection>
   )
 }

@@ -189,24 +189,23 @@ async function checkTheSong(page: Page): Promise<void> {
 }
 
 /**
- * THE LINE'S RANKS, as the picker can show them.
+ * THE RANK STATEMENT, as the picker shows it — the plain rank and NOTHING more.
  *
- * A suggestion row is a LINE, and the name it prints is the line's own row ("Rune I"), so this is
- * where the card lists what the committed DB enumerates: five ranks of one line, out of the DB
- * alone, with no help from anyone's log. It states no "replaces", and correctly so - the anchor
- * names rank I, which replaces nothing. The half that CAN say "replaces" is the Buffs tab below,
- * where the anchor is the rank a cast line actually spelled.
+ * OWNER RULING 2026-08-13: ranks (the upgrade mechanic) are orthogonal to spell LINES, and the
+ * card must not conflate them — so the member list and the "replaces" phrase came off the card
+ * (the derivation survives in shared/spellDetail.ts for any future power-user surface). What the
+ * card states is the bare rank of the name it was asked about.
  */
 async function checkTheLineRanks(page: Page): Promise<void> {
   const card = await openCardFor(page, 'Rune III')
   if (!check('pointing at the Rune line opens its card', card.present, JSON.stringify(card))) return
   check(
-    'the card lists every rank of the line the DB enumerates',
-    ['Rune I', 'Rune II', 'Rune III', 'Rune IV', 'Rune V'].every((r) => card.members.includes(r)),
+    'the card lists NO rank members (owner ruling: ranks are not lines)',
+    card.members.length === 0,
     card.members.join(' | ') || '(none)'
   )
   check(
-    '…and claims no replacement for a rank that replaces nothing',
+    '…and states the bare rank with no replaces phrase',
     card.lineage === 'Rank I',
     card.lineage || '(no lineage line)'
   )
@@ -258,13 +257,13 @@ async function checkTheBuffRowCard(page: Page, log: FixtureLog): Promise<void> {
     `card says ${card.spell || '(nothing)'}`
   )
   check(
-    'a rank the DB has no row for still names what it replaces, because a source names THAT',
-    card.lineage === 'Rank III · replaces Clarity II',
+    'the card states the bare rank the cast line spelled - no replaces phrase (owner ruling)',
+    card.lineage === 'Rank III',
     card.lineage || '(no lineage line)'
   )
   check(
-    '…and the rank only your own log states is listed as your log’s',
-    card.members.includes('Clarity III (your log)'),
+    '…and lists no rank members (ranks are not lines)',
+    card.members.length === 0,
     card.members.join(' | ') || '(none)'
   )
   const note = await page.evaluate(
