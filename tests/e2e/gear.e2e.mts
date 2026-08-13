@@ -109,6 +109,9 @@ import {
 import { clearPicks, pickIn, stepGearClassFilter, stepGearSlotPicks, stepGearWeaponTypes } from './gearFilterSteps.mjs'
 // JOS-336's EFFECTIVE HP step: pick the derived column, sort it, and move the slider under it.
 import { stepGearEffectiveHp } from './gearEffectiveHpSteps.mjs'
+// JOS-335's wish gesture — a module for the same reason, and it spans two tabs (its header argues
+// why the chain, rather than the fold, is what needs a real app).
+import { stepGearWish } from './gearWishSteps.mjs'
 // JOS-329's away-and-back steps, shared with the planner and character specs — one module because
 // the claim is identical on every tab of the area and only the fingerprint differs.
 import { stepGearMemory, stepGearMemoryRelaunched } from './areaMemorySteps.mjs'
@@ -574,6 +577,12 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
   // every step below was written against an unfiltered one. It proves the narrowing and then
   // clears the picker (gearFilterSteps.mts states the whole argument).
   await stepGearClassFilter(page)
+  // JOS-335 runs HERE, and the position is load-bearing in one direction: it needs the era toggle
+  // still at its default ON, so the row it picks is one the app itself calls in-era and the wish it
+  // writes lands in the wish list's ROUTE rather than behind that tab's own era filter. It leaves
+  // the tab exactly as it found it — nothing narrowed, search empty — so the step below still
+  // measures the era toggle against the whole corpus.
+  await stepGearWish(page)
   await stepEra(page)
   // Phase 4 runs here, on a table narrowed by NOTHING but the era toggle the step above turned
   // off: the ownership steps put the search box back to empty and the checkbox back off, so the
