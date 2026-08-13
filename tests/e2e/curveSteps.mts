@@ -35,6 +35,8 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
 import { ARTIFACTS, check, countOf, hoverAt, note, settle, settleCount, settleGone, settleStable } from './appHarness.mjs'
+// The JOS-339 shape tripwires the camera fires at every window — next door, same line budget rule.
+import { checkChartShape } from './chartShapeSteps.mjs'
 
 const CURVE = '[data-testid="leveling-curve-run"]'
 const DING = '[data-testid="leveling-level-ding"]'
@@ -599,6 +601,7 @@ export async function stepChartShots(app: ElectronApplication, page: Page): Prom
       from = landed
       const path = await shoot(app, page, plan.name)
       if (path) shots.push(path)
+      await checkChartShape(page, plan.name)
       note(`${plan.name} window: ${landed}`)
     }
     check(
