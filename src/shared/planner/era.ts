@@ -25,9 +25,9 @@
 // when it answers `out` the wiki draws a red `Out of Era` box on the page. A zone cannot refute
 // that — a revamp replaces a classic zone's contents without adding a zone — so a positive OUT
 // badge now wins outright, while an IN badge still never overrules a zone. Measured over the
-// committed corpus the day it landed: 156 item keys claimed to be farmable while their own page
-// said otherwise, 80 of them AC-bearing armour, and four of the Gear tab's top five chests by AC.
-// The register is mirrored below `eraFromTag`, cited to the template it copies.
+// committed corpus the day it landed: 151 item keys claimed to be farmable while their own page
+// said otherwise, 113 of them slotted, 80 AC-bearing armour, and the top of the Gear tab's
+// CHEST-by-AC list. The register is mirrored below `eraFromTag`, cited to the template it copies.
 //
 // WHAT IT REFUSES TO DO. The catalog's zone strings include real dirt: initialisms (`BBM`, `WFP`),
 // prose (`Most starting zones`, `Various`), concatenations where a wiki table cell ran two links

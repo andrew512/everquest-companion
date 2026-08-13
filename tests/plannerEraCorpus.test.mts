@@ -156,10 +156,12 @@ test('the override is ONE-DIRECTIONAL over the whole corpus: it hides, it never 
     assert.equal(eraBadge(row.tag ?? ''), 'out', `${row.page} [${String(row.tag)}] is not badged out`)
   }
 
-  // Measured 2026-08-13 over the committed scrape: 151 keys, 109 of them slotted, 80 AC-bearing,
-  // spread over 7 banner tokens (FearHateRevamp 53 · Velious 31 · Kunark 26 · EpicQuests 22 ·
-  // Epics 12 · Luclin 5 · Unknown 2). A FLOOR, not a count — this wave's own `--refresh` corrected
-  // 5 stale rows out of the set and a later one will correct more, which must not turn this red.
+  // Measured 2026-08-13 over the refreshed scrape: 151 keys, 113 of them slotted, 80 AC-bearing,
+  // spread over 7 banner tokens (FearHateRevamp 53 · Velious 31 · Kunark 27 · EpicQuests 23 ·
+  // Epics 10 · Luclin 5 · Unknown 2). It read 156 against the 2026-08-05 corpus; this wave's own
+  // `--refresh` corrected 5 stale banners out of the set (Bronze Tanto and the four Torn Pages of
+  // Mastery, all re-bannered Classic upstream). A FLOOR, not a count — a later refresh will
+  // correct more, and that must not turn this red.
   assert.ok(FLIPPED.length >= 140, `only ${String(FLIPPED.length)} verdicts changed`)
   assert.ok(FLIPPED.filter((r) => r.ac > 0).length >= 70, 'the AC-bearing damage stopped reproducing')
 })

@@ -268,15 +268,23 @@ test('scaling all rows at one state is fast enough to move a slider', () => {
 // THE CENSUSES — law 1 lives here rather than on the rows
 // =================================================================================
 
-test('the unindexed stat keys are exactly the four the corpus states', () => {
+test('the unindexed stat keys are exactly the five the corpus states', () => {
   // CHARGES / COOLDOWN / CAST TIME / REQUIRED LEVEL are per-item facts, not gear comparisons
-  // (shared/planner/gear.ts says why they are out of the vector). A FIFTH key here is a stat the
-  // gear table would silently not have a column for.
+  // (shared/planner/gear.ts says why they are out of the vector). A key here that is NOT one of
+  // those is a stat the gear table would silently not have a column for.
+  //
+  // `REQ_LEVEL` is the fifth, and it arrived with the 2026-08-13 refresh: 8 pages now abbreviate
+  // the required level that 5 others still spell out. It is the SAME per-item fact under a second
+  // spelling, so nothing on screen changes — both are outside the vector either way — and the
+  // census is updated rather than the alias table, because splitting one fact across two keys is
+  // the wiki's editing, not ours to canonicalize (law 2 canonicalizes at boundaries we own).
+  // This assertion is an EQUALITY on purpose: the sixth spelling should stop the suite too.
   assert.deepEqual(Object.keys(index.stats.unindexedStatKeys).sort(), [
     'CAST_TIME',
     'CHARGES',
     'COOLDOWN',
-    'REQUIRED_LEVEL'
+    'REQUIRED_LEVEL',
+    'REQ_LEVEL'
   ])
 })
 
@@ -374,7 +382,14 @@ test('a key two pages claim is ONE row — the item as the game names it', () =>
   // donor index denormalizes by (key, effect, socket) and so lists all four Holgresh clicks under
   // one key; the gear row carries the canonical page's. Stats could never be merged (the
   // variants disagree), and half-merging would be a row claiming a combination no item has.
-  assert.ok(collidedKeys.size >= 60, `only ${collidedKeys.size} collided keys`)
+  //
+  // THE FLOOR MOVED DOWN with the 2026-08-13 refresh, 70 keys -> 49, and DOWN is the good
+  // direction: the wiki spent the week disambiguating page titles the fold used to collapse (the
+  // Teir`Dal Adamantite set dropped its `(Imbued)` suffix; the Imbued Ogre War pages stopped
+  // claiming the unsuffixed key through `|itemname`). Fewer collisions is fewer items whose
+  // effects the row cannot carry. The floor sits under the new measurement, so the wiki finishing
+  // the job does not turn this red — the two named keys below are what actually holds the shape.
+  assert.ok(collidedKeys.size >= 40, `only ${collidedKeys.size} collided keys`)
   assert.ok(collidedKeys.has('holgresh mojo stick'))
   assert.ok(collidedKeys.has('imbued dwarven chain boots'))
   for (const key of collidedKeys) assert.ok(byKey.has(key), `${key} collapsed into nothing`)
