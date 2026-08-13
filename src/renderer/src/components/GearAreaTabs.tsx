@@ -14,9 +14,9 @@
 //
 // WHY CHARACTER IS PUSHED RIGHT. Gear, Exaltations and Wish list are three phrasings of "what do I
 // want"; the Character sheet is "what am I wearing", which is the answer rather than the question.
-// The gap says so without a divider or a second bar — and it is also the tab most likely to move
-// again (it is UNRELEASED until JOS-327), so keeping it off the end of the run of three means its
-// arrival and departure disturb nothing.
+// The gap says so without a divider or a second bar. (It was also the last tab to graduate —
+// UNRELEASED until JOS-327 — and sitting off the end of the run of three meant its arrival
+// disturbed nothing.)
 //
 // The bar renders even on a machine with no character logs, where the content underneath is the
 // fresh-machine empty state. That matches the nav drawer, which likewise draws every row on such a
