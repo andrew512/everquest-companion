@@ -1,13 +1,20 @@
 // planner/plannerInventory.ts — WHAT YOU ARE WEARING, read live from the character's own dump
 // (V7, docs/plans/planner-v2.md).
 //
-// WHAT THIS WAS FOR, AND WHO READS IT NOW. It was written for the exaltation planner's Inventory
-// tab, whose cells filled their hosts from the character's newest `/outputfile inventory` dump —
-// an Inventory tab that made you retype eighteen items you are already wearing would be a worse
-// form of the character sheet the game already has. JOS-326 removed that board; the READ survived
-// it because the Gear tab's sets pane needs exactly the same answer for its "versus what you are
-// wearing" diff (`features/gear/GearSetsPane.tsx`), and the two cell-shaped helpers that only the
-// board used (`hostsBySlot`, `effectiveHost`) went with it.
+// WHAT THIS WAS FOR, AND WHO READS IT NOW — WHICH IS NOBODY, AND THAT WANTS AN INTEGRATOR'S CALL.
+//
+// It was written for the exaltation planner's Inventory tab, whose cells filled their hosts from
+// the character's newest `/outputfile inventory` dump; the Gear tab's sets pane then took the same
+// read for its "versus what you are wearing" diff. JOS-326 removed the board (and with it the two
+// cell-shaped helpers only the board used, `hostsBySlot` and `effectiveHost`), and JOS-325 retired
+// gear sets in the same wave — so as of that pair of merges this hook has NO CALLER.
+//
+// IT IS LEFT STANDING ON PURPOSE RATHER THAN HALF-REMOVED. Deleting it alone would leave the
+// channel behind it dead end to end — `IPC.plannerInventory`, its handler in src/main/ipc/planner.ts
+// and its preload method — plus a dangling reference in `features/character/useCharacterSheet.ts`,
+// which cites this file by name as the precedent for its own transport. That is one removal across
+// four files owned by three tickets, so it belongs to whoever integrates them, not to either
+// worker. Retire the whole channel or find it a caller; do not delete just this half.
 //
 // LIVE, WITH NO CLICK ANYWHERE (owner, 2026-08-05: "type the command, watch it fill"). Main
 // already watches the dump and pushes `inventory:autoReloaded` when the player rewrites it; this

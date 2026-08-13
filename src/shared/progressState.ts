@@ -147,7 +147,8 @@ export interface ProgressState {
    *   * `exaltPlans` — which EFFECT goes in which socket of which cell, and which donor supplies
    *     it. Still on disk and still served over its own IPC pair after JOS-326 removed the board
    *     that drew it; the wish list's one-time seed is what reads it now.
-   *   * `gearSets`   — which ITEM goes in which cell, and at what +N.
+   *   * `gearSets`   — which ITEM goes in which cell, and at what +N. Retired from the UI in the
+   *     same wave (JOS-325) and kept on disk for the reason its own block above argues.
    *   * `wishlist`   — which items are WANTED. No cell, no socket, no host, on an owner ruling:
    *     host targeting is an explicitly later addition, and a wish list that grew a cell map
    *     would be the plan board again under a friendlier name.
