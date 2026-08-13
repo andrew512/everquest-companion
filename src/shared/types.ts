@@ -16,6 +16,7 @@ import type { TimerGrouping } from './buffTimers'
 import type { XpRowId } from './xpOverlay'
 import type { RateBasis } from './rateBasis'
 import type { SliceId } from './timeslice'
+import type { ZoneScope } from './zoneScope'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -228,6 +229,26 @@ export interface OverlayConfig {
    * for `xpRows` and `xpSlice`.
    */
   xpBasis?: RateBasis
+  /**
+   * WHICH TIERS OF THE CURRENT ZONE THAT WINDOW COUNTS (JOS-291) — `allTiers` or `exactTier`
+   * (`shared/zoneScope.ts` owns the vocabulary and the argument).
+   *
+   * ABSENT MEANS `allTiers`, the behaviour every number in this window had before the option
+   * existed: the zone fold strips EQ Legends' difficulty spelling, so `Befallen 2 (Adaptive)` and
+   * plain `Befallen` are one camp. `exactTier` narrows to the tier the log last named — the tiers
+   * do not pay alike, and a floating pace read is the surface most likely to be asked which one it
+   * means.
+   *
+   * The toggle sits in the footer beside the denominator, and it is drawn ONLY while the slice
+   * carries a zone at all (`Zone` / `Zone + Session`): a membership with no subject is not a
+   * control. The stored value survives a slice that has no zone, exactly as `xpSlice` survives a
+   * record that cannot define it — forgetting a choice because of a passing state is the same bug
+   * from the other direction.
+   *
+   * Present only on the 'xp' kind; `setOverlayConfig` deletes it everywhere else, exactly as it
+   * does for `xpRows`, `xpSlice` and `xpBasis`.
+   */
+  xpZoneScope?: ZoneScope
 }
 
 // The overlays TEXT SIZE (owner feedback 2026-08-05) lives in ./overlayTextScale.ts and is
