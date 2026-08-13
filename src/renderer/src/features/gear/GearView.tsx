@@ -91,6 +91,13 @@
 // TABLE, by `row.key`, which is `itemKey(name)`, which is `WishEntry.itemKey` (phase 3's seam, for
 // the third time).
 //
+// AND SINCE JOS-338 A ROW SAYS WHAT IT WOULD REPLACE. Phase 4 taught the table whether you OWN a
+// candidate; hovering one now opens a card with the item's numbers, what is in each CELL that item
+// would occupy (`useGearCompare`, over the `plannerInventory` seam — gearData.ts argues the choice),
+// and how old the dump making that claim is. It is outside the three-memo pipeline for the same
+// reason the wish list is: what you are wearing is not a filter. The JOS-143 law the table has
+// carried since it shipped is narrowed rather than broken, and GearTable.tsx's header states how.
+//
 // MOUNTED HERE, ONCE, AND THAT IS SAFE FOR THE SAME REASON `PlannerView` SAYS IT IS: Gear,
 // Exaltations and Wish list are sibling tabs of one nav area and App renders exactly one view at a
 // time (appViews.ts), so two `useWishlist` mounts never coexist and cannot clobber each other's
@@ -133,6 +140,7 @@ import { PICKABLE_COLUMNS, columnLabel, columnsFor, sortWithin, type GearColumn 
 import {
   useEraHidden,
   useGearClasses,
+  useGearCompare,
   useGearIndex,
   useGearOwnership,
   useOwnedOrLooted,
@@ -453,6 +461,12 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
   const owned = useOwnedOrLooted(ownership.map)
   const deps = useMemo(() => ({ ...era, ...owned }), [era, owned])
   const table = useTableRows(rows, state, filters, { sort, deps, chosen: prefs.columns })
+  // JOS-338. The hover card's data, and it is deliberately OUTSIDE the three-memo pipeline above:
+  // what you are wearing is not a filter, not a sort and not a scale, so no keystroke and no slider
+  // tick can reach it. It takes the UNSCALED corpus (the card joins an equipped item by key and
+  // scales it at ITS OWN `+N`) and the state IN FORCE, which is what lets the card admit that its
+  // item half is a simulation while the equipped half is a fact off the player's dump.
+  const compare = useGearCompare(rows, state)
   const win = useWindowedRows({ count: table.rows.length, rowHeight: ROW_HEIGHT, scrollRef })
   const hint = useMemo(
     () => ownedHint(ownership.map, uncountedNote(ownership.payload.uncounted)),
@@ -513,6 +527,10 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
           // rather than one that would be lying about what is already on the list.
           onWish={wishes.onWish}
           wished={wishes.wished}
+          // JOS-338 — hovering a row opens the comparison card. Passed always: the card is useful
+          // with no dump at all (the item half plus the command that fills the other half), and
+          // `GearCompareData.ready` is what keeps it from claiming anything before the first read.
+          compare={compare}
         />
         {table.rows.length === 0 && (
           <Typography variant="body2" color="text.secondary" data-testid="gear-empty" sx={{ p: 2 }}>
