@@ -1,4 +1,8 @@
-// THE FRACTIONAL LEVEL CURVE, ON SCREEN (JOS-292) — the half of that ticket no unit test can
+// WHAT THE TWO LEVELING PLOTS DRAW, ON SCREEN — the assertions (JOS-292) and the photographs
+// (JOS-339). Two exports, called at two different moments of the spec; the second half's own
+// section banner is further down.
+//
+// THE FRACTIONAL LEVEL CURVE (JOS-292) — the half of that ticket no unit test can
 // reach: what is actually in the DOM after a real fold of a real log, and what the readout says
 // when the cursor is standing on a stretch the log refused to state.
 //
@@ -27,8 +31,10 @@
 //
 // Floors and identities only, never today's numbers (AGENTS.md: frozen numbers rot).
 
-import type { Page } from 'playwright-core'
-import { check, countOf, hoverAt, note, settleCount, settleGone } from './appHarness.mjs'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import type { ElectronApplication, Page } from 'playwright-core'
+import { ARTIFACTS, check, countOf, hoverAt, note, settle, settleCount, settleGone, settleStable } from './appHarness.mjs'
 
 const CURVE = '[data-testid="leveling-curve-run"]'
 const DING = '[data-testid="leveling-level-ding"]'
@@ -191,3 +197,263 @@ async function stepCurveRefusals(page: Page, chart: string, geo: CurveGeometry):
   await page.mouse.move(2, 2)
   await settleGone(page, TOOLTIP, { timeoutMs: 5000 })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// THE CAMERA (JOS-339) — the same two plots, PHOTOGRAPHED.
+//
+// WHY A SPEC STEP TAKES PICTURES. JOS-339 reports that these charts regressed as a LOOK at short
+// windows, and its acceptance criterion is the OWNER'S EYE: no assertion in this suite can rule on
+// whether a plot reads as a chart. So the step below produces EVIDENCE rather than a verdict —
+// three PNGs of the chart column at three window shapes, into the same artifacts/<runId>/<spec>/
+// tree every other artifact lands in, so a reviewer can put the before run beside the after run.
+//
+// THREE WINDOWS, AND WHY THOSE THREE (the ticket names them):
+//   • a 12-MINUTE slice — the shape in the owner's screenshot, and the one the geometry got most
+//     wrong: two AA gained, one level's worth of curve, one zone covering the whole domain.
+//   • ~1 HOUR — the narrowest PRESET rung the control offers, where most short sessions land.
+//   • ALL — the full history, the picture that must NOT change character while the short ones are
+//     being fixed.
+// The 12-minute one goes through the CUSTOM range (JOS-332's scope seam): the preset ladder stops
+// at 1h, and twelve minutes is a window only the two datetime fields can say.
+//
+// IT SHOOTS WIDE ON PURPOSE. The plots draw at a fixed 720u viewBox with preserveAspectRatio=none,
+// so everything inside them is scaled by paneWidth/720. The owner's window is far wider than the
+// 1280 the harness launches at, which is why stretched axis text is glaring on their screen and
+// nearly invisible at the default size. The step widens the window for the shots and puts it back.
+//
+// EQ_E2E_SHOT_TAG names the run in the file name (before-12m.png, after-all.png, …). Unset, the
+// shots are just shot-*.png; the run directory already separates runs, the tag is for the human.
+/** The tab's own slice bar and the two plots — the band the shots frame. */
+const SLICE = '[data-testid="leveling-slice"]'
+const SLICE_WINDOW = '[data-testid="leveling-slice-window"]'
+const AA_CHART = '[data-testid="leveling-aa-chart"]'
+const LEVEL_CHART = '[data-testid="leveling-level-chart"]'
+const LEGEND = '[data-testid="leveling-zone-legend"]'
+/** The app shell's ONE scroller (JOS-289) — the charts live inside it, not in the document. */
+const SCROLLER = '[data-testid="app-content"]'
+
+/** The viewBox width both plots draw at (levelChartGeometry.CHART_W). Duplicated rather than
+ *  imported: the e2e tree runs under tsx with no `@renderer` alias, and one number that the
+ *  note below only DESCRIBES is not worth a second module boundary. */
+const VIEWBOX_W = 720
+
+/** Wide enough that paneWidth/720 is unmistakably greater than 1 — see the header. */
+const SHOT_W = 1800
+const SHOT_H = 1040
+
+const SHOT_TAG = process.env.EQ_E2E_SHOT_TAG ?? 'shot'
+
+/** `datetime-local` wants LOCAL wall-clock parts, exactly as SliceBar's own `toLocalInput` writes
+ *  them — `toISOString` here would hand the field a different minute than the app is showing. */
+function toLocalInput(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/**
+ * Resize and WAIT FOR THE CONDITION, the same two-stage wait `levelingLayoutSteps.mts` documents:
+ * the renderer's own viewport first (a resize crosses Electron, the OS, Chromium and React before
+ * any box moves), and only then the drawn geometry settling.
+ */
+async function resizeTo(app: ElectronApplication, page: Page, width: number, height: number): Promise<number> {
+  const win = await app.browserWindow(page)
+  await win.evaluate((w, b) => {
+    w.setBounds({ ...w.getBounds(), width: b.w, height: b.h })
+  }, { w: width, h: height })
+  const got = await settle(
+    () => page.evaluate(() => document.documentElement.clientWidth),
+    (v) => Math.abs(v - width) <= 24,
+    { timeoutMs: 15_000 }
+  )
+  await settleStable(() => plotGeometry(page).then((g) => JSON.stringify(g)), { timeoutMs: 15_000 })
+  return got
+}
+
+/** The two plots' boxes — the thing that must stop moving before a shutter opens. */
+function plotGeometry(page: Page): Promise<{ w: number; h: number }[]> {
+  return page.evaluate((sels) =>
+    sels.flatMap((s) =>
+      Array.from(document.querySelectorAll(s)).map((el) => {
+        const r = el.getBoundingClientRect()
+        return { w: Math.round(r.width), h: Math.round(r.height) }
+      })
+    ), [AA_CHART, LEVEL_CHART])
+}
+
+/**
+ * Scroll the app's content area so the slice bar sits just under its top edge.
+ *
+ * Not `scrollIntoViewIfNeeded`: that promises the element is VISIBLE, and what a shot needs is the
+ * whole band — control, both plots, legend — inside one viewport in a known place. Setting the
+ * scroller's own offset is the only way to ask for that.
+ */
+async function alignToSlice(page: Page): Promise<void> {
+  await page.evaluate(([scrollerSel, sliceSel]) => {
+    const sc = document.querySelector(scrollerSel)
+    const el = document.querySelector(sliceSel)
+    if (!sc || !el) return
+    sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 10
+  }, [SCROLLER, SLICE])
+  await settleStable(() => plotGeometry(page).then((g) => JSON.stringify(g)), { timeoutMs: 8_000 })
+}
+
+interface Clip {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * The union of whichever of `sels` are on screen, clamped to the viewport and given a small margin.
+ *
+ * Clamped because `page.screenshot({clip})` is asked in VIEWPORT coordinates and a clip that runs
+ * off the bottom fails the call outright — and a chart column that does not quite fit is a smaller
+ * picture, never a lost one.
+ */
+function unionRect(page: Page, sels: readonly string[], pad = 12): Promise<Clip | null> {
+  return page.evaluate((arg: { sels: string[]; pad: number }) => {
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const s of arg.sels) {
+      const el = document.querySelector(s)
+      if (!el) continue
+      const r = el.getBoundingClientRect()
+      if (r.width < 1 || r.height < 1) continue
+      x0 = Math.min(x0, r.left)
+      y0 = Math.min(y0, r.top)
+      x1 = Math.max(x1, r.right)
+      y1 = Math.max(y1, r.bottom)
+    }
+    if (!Number.isFinite(x0)) return null
+    const vw = document.documentElement.clientWidth
+    const vh = document.documentElement.clientHeight
+    const x = Math.max(0, Math.floor(x0 - arg.pad))
+    const y = Math.max(0, Math.floor(y0 - arg.pad))
+    return {
+      x,
+      y,
+      width: Math.max(1, Math.min(vw - x, Math.ceil(x1 - x0 + arg.pad * 2))),
+      height: Math.max(1, Math.min(vh - y, Math.ceil(y1 - y0 + arg.pad * 2)))
+    }
+  }, { sels: [...sels], pad })
+}
+
+/** One shot of the chart column, named for the window it is a picture of. Returns its path. */
+async function shoot(page: Page, window: string): Promise<string | null> {
+  await alignToSlice(page)
+  const clip = await unionRect(page, [SLICE, AA_CHART, LEVEL_CHART, LEGEND])
+  if (!clip) return null
+  mkdirSync(ARTIFACTS, { recursive: true })
+  const path = join(ARTIFACTS, `${SHOT_TAG}-${window}.png`)
+  try {
+    await page.screenshot({ path, clip, timeout: 10_000 })
+  } catch (err) {
+    note(`chart shot "${window}" unavailable — ${String(err)}`)
+    return null
+  }
+  console.log(`artifact: ${path}`)
+  return path
+}
+
+/** The caption the slice bar prints — the window in words, and the thing that must CHANGE when a
+ *  different one is picked. */
+function windowText(page: Page): Promise<string> {
+  return page.evaluate((s) => document.querySelector(s)?.textContent?.replace(/\s+/g, ' ').trim() ?? '', SLICE_WINDOW)
+}
+
+/** Pick a preset rung and wait for the caption to move off `from`; null when this log has no such
+ *  rung to offer (the control renders only the windows the record can fill). */
+async function pickPreset(page: Page, id: string, from: string): Promise<string | null> {
+  const button = `[data-testid="leveling-slice-${id}"]`
+  if ((await page.locator(button).count()) === 0) return null
+  await page.click(button, { timeout: 10_000 })
+  return settle(() => windowText(page), (t) => t !== from, { timeoutMs: 10_000 })
+}
+
+/**
+ * A window of exactly `minutes`, ending where the record does, through the CUSTOM fields.
+ *
+ * `custom` with nothing typed into it resolves to the WHOLE record (shared/timeslice.ts), so the
+ * `To` field already holds the last instant this log knows about — the short slice is that value
+ * minus the span, which is precisely how a user reaches the shape in the owner's report.
+ */
+async function pickCustomMinutes(page: Page, minutes: number, from: string): Promise<string | null> {
+  const button = '[data-testid="leveling-slice-custom"]'
+  if ((await page.locator(button).count()) === 0) return null
+  await page.click(button, { timeout: 10_000 })
+  const toField = '[data-testid="leveling-slice-custom-to"] input'
+  const gotTo = await page.locator(toField).first().inputValue().catch(() => '')
+  const t1 = new Date(gotTo).getTime()
+  if (!Number.isFinite(t1)) return null
+  await page.fill('[data-testid="leveling-slice-custom-from"] input', toLocalInput(t1 - minutes * 60_000), { timeout: 10_000 })
+  return settle(() => windowText(page), (t) => t !== from && t.length > 0, { timeoutMs: 10_000 })
+}
+
+/** One window to photograph: what to call the file, and how to get the tab into that window.
+ *  `go` returns the caption it landed on, or null when this log cannot offer that window at all. */
+interface ShotPlan {
+  name: string
+  why: string
+  go: (from: string) => Promise<string | null>
+}
+
+/**
+ * THE THREE, in the order the ticket names them — short FIRST, because it is the reported shape and
+ * the one worth having even if a later window somehow fails to settle.
+ */
+function planFor(page: Page): ShotPlan[] {
+  return [
+    { name: '12m', why: 'no 12-minute custom window this log can define', go: (f) => pickCustomMinutes(page, 12, f) },
+    { name: '1h', why: 'no 1h rung offered for this log', go: (f) => pickPreset(page, 'h1', f) },
+    { name: 'all', why: 'no All rung — impossible, but not assumed', go: (f) => pickPreset(page, 'all', f) }
+  ]
+}
+
+/**
+ * THE STEP. Three shots, then the window and the slice put back exactly as they were found.
+ *
+ * It asserts only what a camera can honestly assert — that there was something to photograph at
+ * each window and that the file landed. The shape of what is in the frame is what the OWNER rules
+ * on; the tripwires that keep the fixed shape from regressing again live in the spec's own steps.
+ */
+export async function stepChartShots(app: ElectronApplication, page: Page): Promise<void> {
+  const win = await app.browserWindow(page)
+  const was = await win.evaluate((w) => w.getBounds())
+  let from = await windowText(page)
+  const shots: string[] = []
+  try {
+    const width = await resizeTo(app, page, SHOT_W, SHOT_H)
+    const pane = (await plotGeometry(page))[0]?.w ?? 0
+    note(
+      `chart shots at ${String(width)}px of viewport: the plot pane measures ${String(pane)}px ` +
+        `against a ${String(VIEWBOX_W)}u viewBox — everything drawn inside it is scaled ` +
+        `${(pane / VIEWBOX_W).toFixed(2)}x horizontally`
+    )
+    for (const plan of planFor(page)) {
+      const landed = await plan.go(from)
+      if (landed === null) {
+        note(`${plan.name} shot skipped — ${plan.why}`)
+        continue
+      }
+      from = landed
+      const path = await shoot(page, plan.name)
+      if (path) shots.push(path)
+      note(`${plan.name} window: ${landed}`)
+    }
+    check(
+      'the chart column was photographed at every window shape the ticket names',
+      shots.length === 3,
+      shots.length === 3 ? shots.map((s) => s.split(/[\\/]/).pop()).join(' · ') : `${String(shots.length)}/3 shots`
+    )
+  } finally {
+    // The window goes back whatever happened above — everything after this step measures boxes.
+    await resizeTo(app, page, was.width, was.height).catch(() => 0)
+    await page.click('[data-testid="leveling-slice-all"]', { timeout: 10_000 }).catch(() => undefined)
+    await settleStable(() => plotGeometry(page).then((g) => JSON.stringify(g)), { timeoutMs: 10_000 }).catch(() => '')
+  }
+}
+
