@@ -37,6 +37,9 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+// The ONE impure thing in this file: the release hold is a claim about three files, and two of
+// them are an Electron listener and a React tree that no node test can call (claim 1).
+import { readFileSync } from 'node:fs'
 import {
   DEFAULT_OVERLAY_SNAP,
   DRAG_RESUME_MS,
@@ -79,6 +82,26 @@ test('THE FEATURE IS HELD OUT OF THIS RELEASE, and a stored `true` is inert', ()
   // The IPC setter normalizes its patch through the same function, so no patch can turn it on
   // either — a renderer that still knew how to ask would be answered `false`.
   assert.deepEqual(normalizeOverlaySnap({ enabled: true }, { enabled: true }), { enabled: false })
+})
+
+test('THE HOLD REACHES ALL THREE PLACES — the store, the drag, and the pane', () => {
+  // A SOURCE PIN, because two of the three are not values this process can call: one is an
+  // Electron listener and one is a React tree. The claim is the same either way — the hold is ONE
+  // constant, and nothing may grow a second opinion about whether this feature is shipping.
+  const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8')
+
+  const drag = read('../src/main/overlaySnapDrag.ts')
+  assert.match(
+    drag,
+    /if \(SNAP_RELEASE_HOLD\) return/,
+    'installOverlaySnap refuses before it hooks will-move — held, not one line of this runs on a drag'
+  )
+
+  const view = read('../src/renderer/src/features/preferences/PreferencesView.tsx')
+  assert.match(view, /if \(SNAP_RELEASE_HOLD\) return \[\]/, 'the card is not built into the Overlays section')
+  // …and it is built by a factory the section SPREADS, so the item is absent from the pane and
+  // from the search index together — a switch a user can find but not have is worse than none.
+  assert.match(view, /\.\.\.snapItems\(\)/, 'the section spreads whatever the hold leaves')
 })
 
 // ---- 2. the machinery under the hold ----------------------------------------------------------
