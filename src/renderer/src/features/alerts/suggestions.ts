@@ -29,7 +29,9 @@ export type TemplateKind =
   | 'wearsOff'
   | 'fade'
   | 'lands'
+  | 'landsOnYou'
   | 'landsOnOther'
+  | 'healsOverTime'
   | 'breaks'
   | 'charmBreaks'
 
@@ -124,6 +126,30 @@ export const SUGGEST_TEMPLATES: Record<
     sound: 'task-acknowledge-task-acknowledge-05',
     where: (name) => ({ spell: name })
   },
+  // Beneficial + cast-on-YOU: the buff landing on the person casting it (JOS-318).
+  //
+  // THE HOLE. `lands` above is DETRIMENTAL-only, because it was written for a debuff landing on a
+  // mob and gates on the cast-on-OTHER sentence. So the whole beneficial half of the game had no
+  // "it landed" chip at all, and a HoT is the family that notices: `Flowering Heal` (report 3JM1ZD)
+  // and `Slugs Healing` (01KZZXVW888E09C088QBRD5HCD) both state no wear-off sentence, so `wearsOff`
+  // is not offered either, and everything the wizard DID offer them was about somebody else's copy
+  // of the buff. The event was there the whole time — `You feel a heal flowering within you.` parses
+  // to `buffApply {target:'self'}` off the DB's own `msgCastOnYou`.
+  //
+  // `target:'self'` IS PART OF THE TRIGGER, not decoration: it is what separates this chip from
+  // `lands`/`landsOnOther` on a spell that offers both, so a shaman who wants "my HoT landed on me"
+  // and "my HoT landed on the tank" can have two sounds. The parser writes the literal string
+  // 'self' for a first-person landing (log/parseCasts.ts), and a `where` key that is not `spell`
+  // keeps its exact-compare semantics (main/modules/alerts.ts) — so this matches that and nothing
+  // else.
+  // "A moment of your time, if you'd be so kind."
+  landsOnYou: {
+    chip: 'When it lands on you',
+    kind: 'buffApply',
+    verb: 'lands on you',
+    sound: 'task-acknowledge-task-acknowledge-05',
+    where: (name) => ({ spell: name, target: 'self' })
+  },
   // THE CAPTURE TEMPLATE (JOS-103) — "who did this land on?", answered out loud.
   //
   // THE REPORTED CASE, and why it cannot be an event trigger. Spirit of the Puma's cast-on-other
@@ -151,6 +177,34 @@ export const SUGGEST_TEMPLATES: Record<
     verb: 'lands on someone',
     sound: 'task-acknowledge-task-acknowledge-05',
     raw: true
+  },
+  // THE HEAL-OVER-TIME TICK (JOS-318) — the one line a HoT cannot fail to print.
+  //
+  // WHY A SEVENTH TEMPLATE RATHER THAN A BETTER GATE ON THE SIX. Every other template rests on a
+  // sentence the WIKI had to get right, and both reports behind this ticket are spells the wiki got
+  // wrong: `Slugs Healing`'s scraped landing and cast-on-other messages are the literal stubs
+  // `You .` / `Someone .`, and it states no wear-off at all. The corrections overlay fixes that one
+  // spell from the reporter's own bytes — but `Sloths Healing`, the next rank up the same shaman
+  // ladder, has the same stubs and NO log anywhere has printed a line of it, so it cannot be
+  // corrected without inventing a sentence (AGENTS.md's awaiting-sample law). This trigger is what
+  // covers it anyway: `You healed Ahyeon over time for 247 hit points by Slugs Healing.` is printed
+  // by the HEALING ENGINE, not by a message table, so it exists for every HoT in the game.
+  //
+  // AND IT IS RANK-LESS AT THE SOURCE, which is the other half of this ticket. The reporter's cast
+  // line says `Slugs Healing VII` and this line says `Slugs Healing` — the alerts matcher folds
+  // both to one line key (JOS-259), but this one needs no folding to begin with.
+  //
+  // THE COOLDOWN IS THE SPELL'S DURATION, not the 3 s default: a HoT prints this line every six
+  // seconds for its whole duration, and a user who asks to be told their heal is working wants one
+  // sound per CAST. `buildDef` reads `entry.durationMs` for it. The wiki figure is a FLOOR in this
+  // app, so the failure direction is an extra sound on a long re-cast, never a swallowed one.
+  // "Consider this my opening move."
+  healsOverTime: {
+    chip: 'While it is healing (once per cast)',
+    kind: 'heal',
+    verb: 'heals over time',
+    sound: 'task-acknowledge-task-acknowledge-05',
+    where: (name) => ({ spell: name })
   },
   // Crowd control: the HOLD ENDING, per spell (JOS-161).
   //
@@ -336,6 +390,20 @@ function buildTrigger(entry: SpellCatalogEntry, template: TemplateKind): AlertDe
   return { type: 'event', kind: t.kind, where }
 }
 
+/**
+ * The cooldown one template authors.
+ *
+ * Every template but one fires on a sentence the game prints ONCE per event, so the 3 s default is
+ * a double-fire guard and nothing more. `healsOverTime` is the exception (JOS-318): its line repeats
+ * every six seconds for the spell's whole duration, so its cooldown is that duration and one CAST
+ * makes one sound. A spell whose duration the wiki never stated falls back to the default rather
+ * than to silence — a chatty alert is a thing the user can see and edit, a missing one is not.
+ */
+function cooldownFor(entry: SpellCatalogEntry, template: TemplateKind): number {
+  if (template !== 'healsOverTime') return DEFAULT_COOLDOWN_MS
+  return Math.max(DEFAULT_COOLDOWN_MS, entry.durationMs ?? 0)
+}
+
 /** Build the AlertDef for one (spell, template) pair, pointed at `packId` (the user's default). */
 function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: string): AlertDef {
   const t = SUGGEST_TEMPLATES[template]
@@ -345,7 +413,7 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: stri
     enabled: true,
     trigger: buildTrigger(entry, template),
     sound: { packId, soundId: t.sound },
-    cooldownMs: DEFAULT_COOLDOWN_MS,
+    cooldownMs: cooldownFor(entry, template),
     note: `Suggested alert (Task #38/#47) - ${template} for ${entry.name}.`
   }
   if (template === 'landsOnOther') {
@@ -404,8 +472,12 @@ export function suggestionsFor(
   if (entry.templates.wearsOff) out.push({ template: 'wearsOff', def: def('wearsOff') })
   if (entry.templates.fade) out.push({ template: 'fade', def: def('fade') })
   if (entry.templates.lands) out.push({ template: 'lands', def: def('lands') })
+  if (entry.templates.landsOnYou) out.push({ template: 'landsOnYou', def: def('landsOnYou') })
   if (entry.templates.landsOnOther) {
     out.push({ template: 'landsOnOther', def: def('landsOnOther') })
+  }
+  if (entry.templates.healsOverTime) {
+    out.push({ template: 'healsOverTime', def: def('healsOverTime') })
   }
   if (entry.templates.breaks) out.push({ template: 'breaks', def: def('breaks') })
   // Disjoint with `breaks` by construction — `charmSpell` is tested first in classifyWornOff, so

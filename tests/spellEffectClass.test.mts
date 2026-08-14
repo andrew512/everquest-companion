@@ -266,9 +266,56 @@ test('JOS-251 R4d: the per-class membership counts, pinned', () => {
     Object.fromEntries(EFFECT_RULES.map((r) => [r.klass, all(r.klass)])),
     {
       charm: 23, summonPet: 102, mez: 16, root: 24, snare: 31, slow: 34, haste: 44, fear: 15,
-      stun: 92, blind: 12, pacify: 12, memblur: 17, invisibility: 19, feignDeath: 2
+      stun: 92, blind: 12, pacify: 12, memblur: 17, invisibility: 19, feignDeath: 2,
+      // JOS-318, the class the alert catalog reads. 67 rows / 66 canonical names.
+      healOverTime: 66
     }
   )
+})
+
+// ── R9: the heal-over-time class (JOS-318) ──────────────────────────────────────────────────────
+
+test('JOS-318 R9: the HoT class reads BOTH wiki phrasings, and no DoT', () => {
+  // The two heads, each on the row that names them, plus the casing/spelling variants the same
+  // scrape carries. See the rule's own note in spellEffectClass.ts for the measurement.
+  assert.equal(classifyEffectLine('Increase Hitpoints by 60 per tick'), 'healOverTime', 'Flowering Heal')
+  assert.equal(classifyEffectLine('Increase Current Hit Points by 160 per Tick'), 'healOverTime', 'Slugs Healing')
+  assert.equal(classifyEffectLine('Increase Hitpoints v2 by 300 per tick'), 'healOverTime', 'Torpor')
+  assert.equal(classifyEffectLine('Increase hitpoints by 4 per tick'), 'healOverTime', 'Natureskin')
+  assert.equal(
+    classifyEffectLine('Increase Hitpoints between 55 and 55 for two additional ticks.'),
+    'healOverTime',
+    'the cleric Echo family'
+  )
+  // THE ANCHOR IS DOING THE WORK, exactly as it does for every rule above. A DoT tick is a DECREASE,
+  // a mana regen is not hit points, a direct heal does not tick, and a delayed lump is not per-tick.
+  assert.equal(classifyEffectLine('Decrease Hitpoints by 30 per tick'), null, 'that is a DoT')
+  assert.equal(classifyEffectLine('Decrease Current Hit Points by 100 per Tick'), null)
+  assert.equal(classifyEffectLine('Increase Mana by 10 per tick'), null, 'mana is not a heal')
+  assert.equal(classifyEffectLine('Increase Hitpoints by 688'), null, "Kragg's Salve is a direct heal")
+  assert.equal(classifyEffectLine('Increase Hitpoints by 197 after 4 ticks'), null, 'a delayed lump')
+})
+
+test('JOS-318 R9b: the roster answers for every HoT the OWNER`S LOG has printed a tick for', () => {
+  // The check that matters for a claim an alert rests on: not "does the regex match the rows I read"
+  // but "does it read the spells the game actually ticks for". These 19 names are every distinct
+  // `<healer> healed <target> over time for N hit points by <Spell>.` spell in the owner's whole log
+  // (eqlog_Primitive_freeport.txt, 1,732,267 lines, measured 2026-08-14), with their counts.
+  const LOGGED: readonly [string, number][] = [
+    ['Snails Healing', 455], ['Tortoises Healing', 314], ['Slugs Healing', 248],
+    ['Ethereal Cleansing', 214], ['Echoing Light', 93], ['Celestial Echo', 57], ['Sacred Echo', 57],
+    ['Renewing Echo', 48], ['Sprouting Heal', 48], ['Efflorescing Heal', 35], ['Celestial Remedy', 34],
+    ['Blossoming Heal', 22], ['Flowering Heal', 16], ['Budding Heal', 6], ['Echo of Health', 4],
+    ['Stoicism', 3], ['Blooming Heal', 3], ['Impassivity', 1]
+  ]
+  const roster = effectRoster(RAW, 'healOverTime', { castableOnly: false, targetOnly: false })
+  const missing = LOGGED.filter(([n]) => !roster.has(n.toLowerCase())).map(([n]) => n)
+  assert.deepEqual(missing, [], 'a spell the log ticks for that the effect read cannot see')
+  // THE ONE THE LOG PRINTS AND NO ROSTER CAN EVER HOLD, stated rather than quietly dropped: five
+  // `Harm Touch IX` ticks. `Harm Touch` is not in spells.json at all, so it is out of every derived
+  // structure, and its alert path is the `healsOverTime` template's own gate refusing to offer a
+  // chip for a spell the catalog does not carry — not a silent miss.
+  assert.equal(RAW.some((s) => s.name.startsWith('Harm Touch')), false, 'absent from the scrape')
 })
 
 // ── R8: the pet-summon class (JOS-258) ──────────────────────────────────────────────────────────

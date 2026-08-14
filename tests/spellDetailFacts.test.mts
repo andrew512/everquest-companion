@@ -133,9 +133,16 @@ test('D8 the derived effect classes come off the effect list, not off the name',
   const charm = buildSpellDetail(db, 'Charm')
   assert.ok(charm.effectClasses.includes('charm'), `Charm effect classes: ${charm.effectClasses.join(',')}`)
   assert.ok(spellEffectClassLabels(charm).includes('charm'))
-  // A pure heal derives no roster at all - and an empty list draws no line.
+  // A pure DIRECT heal derives no roster at all - and an empty list draws no line. `Kragg's Salve`
+  // states `Increase Hitpoints by 688` and nothing else, which is the shape this assertion is about.
+  // (It used to be `Celestial Remedy`, which JOS-318 revealed is not a direct heal at all: its one
+  // effect line is `Increase Hitpoints by 35 per tick`, so it is a heal over time and now says so.)
+  const salve = buildSpellDetail(db, "Kragg's Salve")
+  assert.deepEqual(salve.effectClasses, [])
+  // …and the class the same read DOES derive, on the spell that moved.
   const remedy = buildSpellDetail(db, 'Celestial Remedy')
-  assert.deepEqual(remedy.effectClasses, [])
+  assert.deepEqual(remedy.effectClasses, ['healOverTime'])
+  assert.deepEqual(spellEffectClassLabels(remedy), ['heals over time'])
 })
 
 // ─────────────────────────── 3. the rank lineage, and its boundary ───────────────────────────

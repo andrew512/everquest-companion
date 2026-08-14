@@ -162,7 +162,8 @@ const EFFECT_CLASS_LABEL: Record<string, string> = {
   pacify: 'pacify',
   memblur: 'memory blur',
   invisibility: 'invisibility',
-  feignDeath: 'feign death'
+  feignDeath: 'feign death',
+  healOverTime: 'heals over time'
 }
 
 /** The derived-roster words, in the order main listed them. Empty when nothing was derived. */
