@@ -4,76 +4,24 @@ import {
   Box,
   Button,
   Checkbox,
-  Chip,
   FormControlLabel,
   Stack,
   Tab,
   Tabs,
   Typography
 } from '@mui/material'
-import type { CountSource } from '@shared/types'
+import type { CountSource, ItemCountOverride } from '@shared/types'
+import { OverrideSummaryChip, type SetItemCount } from './ItemOverrides'
 import { useProgress, type QuestProgress } from './useProgress'
 import type { SharedItem, SharedItemsMap } from './sharedItems'
-import { QuestIgnoreButton } from '../favorites/QuestFlagButtons'
+import { IgnoredList } from './IgnoredList'
 import { QuestAccordion } from './QuestAccordion'
-import { TurnInBadge } from './TurnInControls'
 import QuestFilterBar, { InventorySource } from './QuestFilterBar'
 import { countSourcePhrase } from '../inventory/countSource'
 import ClassUnlockList from './ClassUnlockList'
 import { QUEST_PAGE, useQuestList, type QuestListState, type TabKey } from './useQuestList'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
-
-// The Ignored tab: every quest the user hid, in one flat compact list (no accordions —
-// there is nothing to work on here), each row carrying the same button that put it here,
-// now reading "Stop ignoring". Un-ignoring drops the row instantly and the quest
-// reappears under Quests with its favorite state untouched.
-function IgnoredList({
-  quests,
-  onUnignore
-}: {
-  quests: QuestProgress[]
-  onUnignore: (questKey: string) => void
-}): JSX.Element {
-  if (quests.length === 0) {
-    return (
-      <Typography color="text.secondary">
-        No ignored quests - hide one with the eye icon on its row and it lands here.
-      </Typography>
-    )
-  }
-  return (
-    <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        {quests.length} quest{quests.length === 1 ? '' : 's'} hidden from the list, filters and counts.
-      </Typography>
-      <Stack spacing={0.5}>
-        {quests.map((q) => (
-          <Stack
-            key={q.key}
-            direction="row"
-            spacing={2}
-            alignItems="center"
-            sx={{ px: 1, py: 0.5, borderRadius: 1, '&:hover': { bgcolor: 'action.hover' } }}
-          >
-            <QuestIgnoreButton ignored onToggle={() => onUnignore(q.key)} />
-            <Chip label={q.className} size="small" color="secondary" variant="outlined" sx={{ minWidth: 92 }} />
-            <Typography variant="subtitle2" sx={{ minWidth: 220 }}>
-              {q.name}
-            </Typography>
-            {q.reward && (
-              <Typography variant="caption" color="primary.main">
-                → {q.reward}
-              </Typography>
-            )}
-            <Box sx={{ flexGrow: 1 }} />
-            <TurnInBadge count={q.turnIns} />
-          </Stack>
-        ))}
-      </Stack>
-    </Box>
-  )
-}
 
 // The one-line status under the filters. It states which of three situations you are in —
 // there is no Sky data at all, there is data but you ignored every quest, or here are the
@@ -88,16 +36,22 @@ function IgnoredList({
 // The WORDS for each source are `countSourcePhrase` (features/inventory/countSource.ts) since
 // JOS-294: this line and the dropdown's own labels were two hand-written descriptions of one rule,
 // and both of them still described JOS-128's reset semantics that JOS-141 reverted.
+//
+// AND IT CARRIES THE HAND-CORRECTION COUNT SINCE JOS-186. A stated count is the one input to the
+// whole tab that no witness can be asked about, so the line that already names the SOURCE names it
+// too — same argument, one ticket later.
 function CountsLine({
   questCount,
   totalQuests,
   filteredCount,
-  countSource
+  countSource,
+  overrides
 }: {
   questCount: number
   totalQuests: number
   filteredCount: number
   countSource: CountSource
+  overrides: readonly ItemCountOverride[]
 }): JSX.Element {
   if (questCount === 0) {
     return (
@@ -119,6 +73,7 @@ function CountsLine({
     // VISIBLE, so it is what an e2e reads to prove a facet pick actually removed rows.
     <Typography variant="body2" color="text.secondary" data-testid="posky-counts">
       {filteredCount} of {totalQuests} quests · counting from {countSourcePhrase(countSource)}
+      <OverrideSummaryChip overrides={overrides} />
     </Typography>
   )
 }
@@ -144,6 +99,8 @@ interface QuestListProps {
   anchor: QuestAnchor | null
   recordTurnIn: (key: string) => Promise<void>
   undoTurnIn: (key: string) => Promise<void>
+  /** correct one item's held count by hand (JOS-186) — the same bundle on both row-drawing tabs */
+  setItemCount: (name: string, count: number | null) => Promise<void>
   onOpenMob: (t: MobTarget) => void
   onOpenLoot?: (item: string) => void
 }
@@ -218,6 +175,7 @@ function QuestList({
   anchor,
   recordTurnIn,
   undoTurnIn,
+  setItemCount,
   onOpenMob,
   onOpenLoot
 }: QuestListProps): JSX.Element {
@@ -232,6 +190,12 @@ function QuestList({
       void undoTurnIn(questKey)
     },
     [undoTurnIn]
+  )
+  const onSetItemCount = useCallback<SetItemCount>(
+    (name, count) => {
+      void setItemCount(name, count)
+    },
+    [setItemCount]
   )
   return (
     <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
@@ -253,6 +217,7 @@ function QuestList({
           toggleFavorite={list.toggleFavorite}
           onRecordTurnIn={onRecordTurnIn}
           onUndoTurnIn={onUndoTurnIn}
+          onSetItemCount={onSetItemCount}
           onSelectQuest={list.setQuery}
           onOpenMob={onOpenMob}
           onOpenLoot={onOpenLoot}
@@ -362,6 +327,11 @@ function ReadyList(props: ReadyListProps): JSX.Element {
             {readyFirstTimeOnly && readyRefarmCount > 0
               ? ` ${String(readyRefarmCount)} more you have run before ${readyRefarmCount === 1 ? 'is' : 'are'} ready too.`
               : ''}
+            {/* THE WAY OFF A STUCK ROW (JOS-186). A reporter destroyed a quest item and this tab
+                nagged forever, because nothing in a log or a dump records a destruction — so the
+                sentence points at the control that fixes it rather than at a dismiss button this
+                tab deliberately does not have (questCompletion.readyQuests). */}
+            {' Holding something you no longer have? Expand the quest and correct the count beside the item.'}
           </Typography>
           <QuestList {...props} />
         </>
@@ -483,6 +453,8 @@ export default function PoskyView({
     setCountSource,
     recordTurnIn,
     undoTurnIn,
+    setItemOverride,
+    itemOverrides,
     inventoryInfo,
     sharedItems,
     ambiguousQuestNames
@@ -505,6 +477,7 @@ export default function PoskyView({
     anchor,
     recordTurnIn,
     undoTurnIn,
+    setItemCount: setItemOverride,
     onOpenMob,
     onOpenLoot
   }
@@ -553,6 +526,7 @@ export default function PoskyView({
             totalQuests={totalQuests}
             filteredCount={list.filtered.length}
             countSource={countSource}
+            overrides={itemOverrides}
           />
           <QuestList quests={list.filtered} {...rows} />
         </>

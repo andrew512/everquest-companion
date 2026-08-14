@@ -70,17 +70,25 @@ export const MAX_ITEM_OVERRIDES = 500
  */
 export const MAX_OVERRIDE_COUNT = 99999
 
+/** A whole non-negative number, or null for anything that is not one. Deliberately UNBOUNDED —
+ *  it reads both a bag count and an epoch instant, and only the caller knows which is which. */
+function whole(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null
+  return Math.floor(value)
+}
+
 /** Clean one statement, or reject it. Anything unusable is dropped rather than thrown over — a
  *  hand-edited store must not take the character's whole progress record down with it. */
 export function sanitizeItemOverride(value: unknown): ItemCountOverride | null {
   if (typeof value !== 'object' || value === null) return null
   const v = value as Partial<Record<keyof ItemCountOverride, unknown>>
   const key = typeof v.key === 'string' ? v.key.trim() : ''
-  if (!key) return null
-  const count = typeof v.count === 'number' && Number.isFinite(v.count) ? Math.floor(v.count) : NaN
-  if (Number.isNaN(count) || count < 0 || count > MAX_OVERRIDE_COUNT) return null
-  const setAt = typeof v.setAt === 'number' && Number.isFinite(v.setAt) && v.setAt >= 0 ? Math.floor(v.setAt) : 0
-  return { key, name: typeof v.name === 'string' && v.name ? v.name : key, count, setAt }
+  const count = whole(v.count)
+  if (!key || count === null || count > MAX_OVERRIDE_COUNT) return null
+  // An unreadable instant becomes 0 rather than rejecting the statement: the COUNT is the thing
+  // the user said, and a baseline at the epoch simply means every loot line counts forward from it.
+  const name = typeof v.name === 'string' && v.name ? v.name : key
+  return { key, name, count, setAt: whole(v.setAt) ?? 0 }
 }
 
 /**

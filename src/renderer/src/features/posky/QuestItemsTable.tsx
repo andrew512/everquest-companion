@@ -31,6 +31,10 @@ import { SkyItemCard } from './SkyItemCard'
 import type { ItemDropRow } from './poskyDroppers'
 import type { MobTarget } from '../mobs/mobTarget'
 import { FavoriteStar } from '../favorites/FavoriteStar'
+// The hand-correction (JOS-186) draws INSIDE the Have cell, because the number it corrects is
+// the number in that cell. Its own file argues where it lives and why the Ready tab needs no
+// second control of its own.
+import { ItemHaveCell, type SetItemCount } from './ItemOverrides'
 
 /**
  * An item NAME that opens that item's Loot drill-down, and hovers into the item card. The cursor
@@ -99,13 +103,16 @@ export function QuestItemsTable({
   isFavorite,
   toggleFavorite,
   onOpenMob,
-  onOpenLoot
+  onOpenLoot,
+  onSetItemCount
 }: {
   q: QuestProgress
   isFavorite: (name: string) => boolean
   toggleFavorite: (name: string) => void
   onOpenMob: (t: MobTarget) => void
   onOpenLoot?: (item: string) => void
+  /** state or clear one item's held count by hand (JOS-186); absent hides the control */
+  onSetItemCount?: SetItemCount
 }): JSX.Element {
   return (
     <Table size="small">
@@ -133,7 +140,7 @@ export function QuestItemsTable({
                 <ItemNameLink name={it.name} onOpenLoot={onOpenLoot} row={it} stats={it.stats} />
               </TableCell>
               <TableCell>
-                {it.have}/{it.need}
+                <ItemHaveCell it={it} onSetItemCount={onSetItemCount} />
               </TableCell>
               <TableCell sx={{ color: 'text.secondary' }}>
                 <DropperCell droppers={it.droppers} who={it.who} where={it.where} onOpenMob={onOpenMob} />
