@@ -39,7 +39,6 @@ import { buildSpellCatalog, loadSpellDb } from '../src/main/data/spellDb'
 import { AlertsModule } from '../src/main/modules/alerts'
 import { speechTextFor } from '../src/shared/speechText'
 import {
-  OUTPUT_BOTH,
   OUTPUT_SPEECH,
   applyAudioChoice,
   audioChoiceOf,
@@ -100,6 +99,11 @@ test('JOS-360 A1: every phrase-bearing suggestion arrives ALREADY in custom mode
   const speaking = suggestionsFor(entryFor('clarity')).filter((s) => s.def.speech !== undefined)
   assert.ok(speaking.length > 0, 'JOS-353 gave the fade/wearsOff templates a spoken phrase')
   for (const s of speaking) {
+    // These templates used to arrive on the combined 'sound + voice' channel, which is why the
+    // owner's own walk started by switching the row's output to voice before the say picker even
+    // appeared. JOS-362 retired that channel and they now arrive SPOKEN — the say picker is on the
+    // row from the first look, and the re-pick this file is about is one click in.
+    assert.equal(s.def.audio, 'speech', `${s.template}: a template with a phrase speaks it`)
     assert.equal(s.def.speech?.mode, 'custom', `${s.template}: a shipped phrase is a custom phrase`)
     assert.equal(
       audioChoiceOf(s.def).mode,
@@ -170,7 +174,6 @@ test('JOS-360 C1: no row edit puts the template’s default phrase back', () => 
   const edits: readonly [string, (d: AlertDef) => AlertDef][] = [
     ['switch the output to a pack', (d) => applyAudioChoice(d, withOutput(audioChoiceOf(d), A_PACK.id, [A_PACK]))],
     ['switch the output to voice', (d) => applyAudioChoice(d, withOutput(audioChoiceOf(d), OUTPUT_SPEECH, [A_PACK]))],
-    ['switch the output to sound + voice', (d) => applyAudioChoice(d, withOutput(audioChoiceOf(d), OUTPUT_BOTH, [A_PACK]))],
     ['pick another sound', (d) => applyAudioChoice(d, withSoundId(audioChoiceOf(d), 'task-error-task-error-08'))],
     ['say the alert name instead', (d) => applyAudioChoice(d, withSpeechMode(audioChoiceOf(d), 'alertName'))],
     ['…and go back to the custom phrase', (d) => applyAudioChoice(d, withSpeechMode(audioChoiceOf(d), 'custom'))]
@@ -188,13 +191,17 @@ test('JOS-360 C1: no row edit puts the template’s default phrase back', () => 
   assert.equal(speechTextFor(def, fired[0]), 'MY WORDS about Bonbonz')
 })
 
-test('JOS-360 C2: a per-alert voice override survives a phrase rewrite', () => {
-  // The row cannot author a voice (two selects, three dimensions — AudioPicker's header), so it
-  // carries the editor's choice through untouched. Reopening the phrase popover is a row write
-  // like any other and must not be the thing that drops it.
+test('JOS-362 (was JOS-360 C2): a phrase rewrite DROPS a stored per-alert voice', () => {
+  // INVERTED ON PURPOSE. This test used to say the row carried the editor's voice override through
+  // untouched — right while an alert could own a voice, and the owner has since retired the whole
+  // dimension: "our settings shouldn't store which voice per alert, only the preferences should
+  // (within Voice (spoken))". A def carrying one is what made an alert keep speaking in the voice
+  // it was authored under. What survives from the old claim is the part that still matters: the
+  // user's WORDS are untouched by any of this.
   const suggested = suggestedFade()
   const withVoice: AlertDef = { ...suggested, speech: { ...suggested.speech, mode: 'custom', voiceId: 'urn:voice:david' } }
   const mine = applyAudioChoice(withVoice, withPhrase(audioChoiceOf(withVoice), 'gone from {target}'))
-  assert.equal(mine.speech?.voiceId, 'urn:voice:david')
+  assert.equal(mine.speech?.voiceId, undefined, 'the next write of this alert omits the dead key')
   assert.equal(mine.speech?.phrase, 'gone from {target}')
+  assert.equal(withVoice.speech?.voiceId, 'urn:voice:david', 'and reading it changed nothing on disk')
 })
