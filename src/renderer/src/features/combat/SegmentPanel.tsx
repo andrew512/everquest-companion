@@ -13,6 +13,7 @@
 import { useMemo } from 'react'
 import { Box, Paper, Typography } from '@mui/material'
 import { TargetSkillBars } from './CombatDashboard'
+import { DefensePanel } from './DefensePanel'
 import { meterDrill, skillsForTarget, type Drill, type MeterMode, type TargetDetail } from './dashboardData'
 import { HealBody } from './HealPanel'
 import { DrillCrumb, MeterRows, crumbOf } from './MeterRows'
@@ -41,6 +42,22 @@ function IncomingHeals({ seg }: { seg: SegmentView }): React.JSX.Element | null 
       ))}
     </Box>
   )
+}
+
+/**
+ * YOUR DEFENCE (JOS-354), and the two conditions that decide whether it belongs on screen at all:
+ * the panel must be listing what is hitting you (a source's own `missBreakdown` in the OUTGOING
+ * direction is the mob's avoidance of YOUR swings — the opposite fact), and no drill may be open,
+ * because this is a statement about the whole segment and would otherwise sit over one subject's
+ * lanes.
+ *
+ * ITS OWN COMPONENT rather than two more `&&`s in `SegmentContent`'s JSX: that function is at the
+ * measured complexity ceiling, and the house rule there is to split rather than ratchet the
+ * threshold (combatShared.tsx's CopyButton precedent, one file over).
+ */
+function DefenceSummary({ seg, mode, drilled }: { seg: SegmentView; mode: MeterMode; drilled: boolean }): React.JSX.Element | null {
+  if (mode !== 'in' || drilled) return null
+  return <DefensePanel d={seg.defense} />
 }
 
 // ── drill resolution ───────────────────────────────────────────────────────────────────
@@ -120,6 +137,9 @@ function SegmentContent({
   const mob = panel.level === 1 && d.targetDetail && d.targetName
   return (
     <Box data-testid="meter-body" sx={{ overflow: 'auto', flexGrow: 1, minHeight: 0 }}>
+      {/* YOUR DEFENCE (JOS-354) — above the mobs it is derived from; the component owns its own
+          two-condition gate (see DefenceSummary). */}
+      <DefenceSummary seg={seg} mode={mode} drilled={d.crumb !== null} />
       {mob && d.targetName && d.targetDetail ? (
         <TargetSkillBars target={d.targetName} detail={d.targetDetail} seg={seg} />
       ) : (

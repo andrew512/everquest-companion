@@ -25,6 +25,7 @@ import { readFileSync } from 'node:fs'
 import {
   abilityExpandable,
   abilityMultiAttack,
+  abilityRiposte,
   lanesForAbility
 } from '../src/renderer/src/features/combat/abilityStats'
 import type { FlatSkill } from '../src/renderer/src/features/combat/dashboardData'
@@ -83,6 +84,8 @@ function rounds(lanes: RoundLaneView[], over: Partial<SourceRoundsView> = {}): S
     excluded: { frenzy: 0, riposte: 0, flurry: 0, rampage: 0 },
     modifiers: [],
     ripostesGiven: 0,
+    riposteLanded: 0,
+    riposteDamage: 0,
     ripostesTaken: 0,
     rampagesTaken: 0,
     flurries: 0,
@@ -178,6 +181,36 @@ test('FLURRY RIDES THE AUTO-ATTACK ABILITY ALONE — stated once, never split pe
   // Nothing flurried ⇒ no line for anyone, even the auto-attack ability.
   const quiet = source({ categories: [MELEE], roundStats: rounds([lane('slash', 'Slash', [4, 1])]) })
   assert.equal(abilityMultiAttack(quiet, 'Melee', 'melee')?.flurry, null)
+})
+
+test('RIPOSTE DAMAGE RIDES THE AUTO-ATTACK ABILITY, and is a SHARE of the swing damage it is inside (JOS-354)', () => {
+  // 6,200 melee (Melee 5,000 + Bash 1,200) + 800 slay = 7,000 of weapon-swing damage, 700 of it
+  // from riposte counters.
+  const paladin = source({
+    categories: [MELEE, SLAY, SPELL],
+    roundStats: rounds([lane('slash', 'Slash', [18, 10])], {
+      ripostesGiven: 20,
+      riposteLanded: 14,
+      riposteDamage: 700
+    })
+  })
+  const r = abilityRiposte(paladin, 'Melee', 'melee')
+  assert.ok(r)
+  assert.equal(r.swings, 20)
+  assert.equal(r.hits, 14)
+  assert.equal(r.damage, 700)
+  // The denominator is melee + slay together — a `(Riposte Slay Undead)` counter is booked in the
+  // slay category, so dividing by the melee lane alone would over-state the share.
+  assert.equal(r.pct, (700 / 7000) * 100)
+  assert.equal(r.text, '10.0% of swing damage')
+
+  // Not on a named special, not on a spell, and not on the slay row: the engine tallies the
+  // annotation on the SOURCE, so there is no per-lane split to claim.
+  assert.equal(abilityRiposte(paladin, 'Bash', 'melee'), null)
+  assert.equal(abilityRiposte(paladin, 'Bash', 'slay'), null)
+  assert.equal(abilityRiposte(paladin, 'Smiting Strike', 'spell'), null)
+  // A source that never riposted says nothing at all rather than `0 · 0%`.
+  assert.equal(abilityRiposte(PALADIN, 'Melee', 'melee'), null)
 })
 
 test('AN ABILITY THAT OPENED NO ROUNDS HAS NO MULTI — a caster’s spell is null, not a table of zeroes', () => {

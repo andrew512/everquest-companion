@@ -110,6 +110,9 @@ const SEG: SegmentView = {
   incomingHealTotal: 0,
   incomingHealers: [],
   healing: { total: 0, restoredTotal: 0, absorbedTotal: 0 } as unknown as SegmentView['healing'],
+  // Defence (JOS-354) is on every SegmentView and is read by no proc-row derivation — stubbed
+  // exactly like `healing` above, which this file has always done for the same reason.
+  defense: { swings: 0 } as unknown as SegmentView['defense'],
   procs: {
     combatAtEngage: [],
     slowExpected: false,

@@ -11,7 +11,7 @@
 //               own round-lane buckets; a section of the per-ability readout (combatShared).
 
 import { Box, Typography } from '@mui/material'
-import type { AbilityMulti } from './abilityStats'
+import type { AbilityMulti, AbilityRiposte } from './abilityStats'
 import { formatNum as fmt } from '../../lib/formatRate'
 
 /** One labeled figure in a readout: a small uppercase caption over the value. */
@@ -67,6 +67,26 @@ export function MoreRows({ n, onMore }: { n: number; onMore?: () => void }): Rea
  * Flurry (auto-attack ability only, law 6) rides beside these on the SkillReadout, not here.
  * Rendered as StatItems inside the readout's own flex Stack, so it never introduces a second row.
  */
+/**
+ * RIPOSTE DAMAGE, BROKEN OUT INSIDE THE MELEE ABILITY (JOS-354). Two figures and a share, in the
+ * same readout the crit rate and the double-attack rate live in — because that is where "how much
+ * of my melee is riposte" is actually asked.
+ *
+ * THE WORDING CARRIES THE ONE THING A READER COULD GET WRONG: this damage is INCLUDED in the
+ * ability's total above it, not additional to it. `of swing damage` says which denominator the
+ * share is over (melee + slay, the two categories a weapon swing lands in) rather than leaving a
+ * bare percentage to be read against whichever number is nearest.
+ */
+export function RiposteStats({ riposte, a }: { riposte: AbilityRiposte; a: string }): React.JSX.Element | null {
+  if (riposte.swings <= 0) return null
+  return (
+    <>
+      <StatItem label="Riposte swings" value={`${a}${fmt(riposte.swings)} (${a}${fmt(riposte.hits)} landed)`} />
+      <StatItem label="Riposte damage" value={`${a}${fmt(riposte.damage)} · ${riposte.text}`} />
+    </>
+  )
+}
+
 export function MultiAttackStats({ multi, a }: { multi: AbilityMulti; a: string }): React.JSX.Element | null {
   if (multi.rounds <= 0) return null
   const round = (p: number): string => `${a}${Math.round(p)}%`

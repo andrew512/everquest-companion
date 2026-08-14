@@ -354,7 +354,29 @@ export async function stepDrillAcrossFights(page: Page): Promise<void> {
   await page.click(`${TOGGLE} button[value="in"]`, { timeout: 10_000 }).catch(() => undefined)
   const cleared = await settle(() => storedDrill(page), (v) => v === null, { timeoutMs: 10_000 })
   check('switching DIRECTION still un-drills — that boundary did not move', cleared === null, String(cleared))
+
+  // 5. YOUR DEFENCE (JOS-354) rides the Incoming direction, and ONLY it. The step is here rather
+  //    than in a spec of its own because this is the one place the suite already flips direction,
+  //    and the claim is exactly a mount claim: the block a unit test cannot see is on screen, it
+  //    states its own denominator, and it is absent from the direction where a source's avoidance
+  //    breakdown means the opposite thing.
+  const headline = await settle(
+    () => page.evaluate(() => document.querySelector('[data-testid="defense-headline"]')?.textContent ?? ''),
+    (t) => t.length > 0,
+    { timeoutMs: 10_000 }
+  )
+  check('YOUR DEFENCE IS ON SCREEN IN THE INCOMING DIRECTION', headline.length > 0, headline)
+  check(
+    '…and the headline carries its own denominator — a rate with no exposure is a lie',
+    /swings at you|nothing has swung/i.test(headline),
+    headline
+  )
+
   // …and leave the tab the way the steps after this one expect to find it: Outgoing, level 1.
   await page.click(`${TOGGLE} button[value="out"]`, { timeout: 10_000 }).catch(() => undefined)
+  check(
+    '…and it is GONE in Outgoing, where the same numbers would mean the mob’s avoidance of YOUR swings',
+    await settleGone(page, '[data-testid="defense-panel"]', { timeoutMs: 10_000 })
+  )
   await settleStable(() => countOf(page, ROW), { timeoutMs: 10_000 })
 }
