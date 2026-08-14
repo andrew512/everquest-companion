@@ -114,6 +114,30 @@ export function ingestPetClaim(st: EngineState, ev: PetClaimEvent): void {
  * one more field, and for the same reason: a caster-less line is ours only when it resolved one
  * of our own casts.
  *
+ * AND THE RUNG HAS A SILENT PRECONDITION: THE DB MUST BE ABLE TO NAME THE SPELL (JOS-349).
+ *
+ * The candidate test above is the whole gate, and a landing's candidates come from the spell DB's
+ * cast-on-other SUFFIX table — which is keyed on what follows the wiki's `Someone ` subject and
+ * nothing else. So a `targetType: Pet` spell whose scraped third-person message carries some OTHER
+ * subject token is in no table, can never be a candidate for its OWN landing, and this rung cannot
+ * fire for it however correct the arm is. Nothing here is wrong when that happens; the two halves
+ * simply never meet, and from the outside it looks exactly like JOS-188 before the fix.
+ *
+ * MEASURED (report 01M00ACVVFDRVWBXRDCFPHESNZ, a shaman whose re-summoned pet `Zarober` stopped
+ * being attributed): his slice holds the pair four seconds apart — `You begin casting Tiny
+ * Companion.` then `Zarober shrinks.` — and no tell and no leader say anywhere in 6,544 lines.
+ * `Tiny Companion` is one of THREE spells that write ` shrinks.` and the only pet-only one, and the
+ * scrape gave it `Target shrinks.`, so it was absent from the candidate list its own landing
+ * produces. Replayed before the fix: `petDisplayNames() === []` and 142 pet lines attributed to
+ * nobody. The fix is a data row, not a rule change — `spellCorrectionsSubjects.ts`, THE PET-BINDING
+ * HALF — because the rule was right and the evidence it reads was missing a word.
+ *
+ * SIX MORE PET-ONLY SPELLS ARE STILL IN THAT STATE (40 are `targetType: Pet`, 33 key a suffix).
+ * They are named in that file and they wait for a log that prints the pair; a pattern is not a
+ * measurement. If a report says a pet stopped being attributed, CHECK THE CANDIDATE LIST FIRST —
+ * there is no time limit on a summoned pet and no rule here that drops one, so an absent bind is
+ * almost always a bind that never happened.
+ *
  * WHAT IT DOES NOT FIX, stated rather than papered over: a player who casts no pet-only buff
  * still has a pet the log cannot bind until they order it (JOS-49's accepted blind spot). Report
  * 01KZN569YA6T751QCJW99P1ZCA is that case — its pet buffs (`Spirit of the Puma`, `Spiritual

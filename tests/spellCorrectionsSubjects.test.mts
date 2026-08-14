@@ -24,6 +24,13 @@
 // the correction really restores is the landing the learner needs before any observed duration can
 // exist at all.
 //
+// JOS-349 ADDED A FIFTH REPORT and the first whose cost is not a missing BAR: a shaman whose
+// summoned pet stopped being attributed at all (01M00ACVVFDRVWBXRDCFPHESNZ). `Tiny Companion` is the
+// only `targetType: Pet` member of the ` shrinks.` family and the scrape gave it `Target`, so it
+// could not be a CANDIDATE for its own landing — and JOS-188's third binding signal is exactly a
+// membership test on that list. The row is the second JOIN rather than a mint, and the end-to-end
+// acceptance lives with the rung it feeds, in `tests/petBuffBind.test.mts`.
+//
 // FIVE THINGS ARE PINNED HERE:
 //
 //   1. THE SHAPE. Every entry restores a SUBJECT and changes nothing else. Strip the leading
@@ -139,8 +146,10 @@ test('every sweep entry states a measured evidence line and an attribution route
  * The suffixes this sweep JOINS rather than mints (JOS-189) — a row whose family already owns the
  * sentence, so restoring the subject adds candidates and creates no new tail. Named here rather
  * than inferred, so joining stays a decision somebody made per entry.
+ *
+ * ` shrinks.` is the second (JOS-349, Tiny Companion): `Ant Legs` and `Shrink` already own it.
  */
-const JOINS_EXISTING = new Set(['begins to chant.'])
+const JOINS_EXISTING = new Set(['begins to chant.', 'shrinks.'])
 
 test('every restored suffix is NEW to the table, or JOINS one exactly — never partially', () => {
   // The pre-sweep table: the scrape plus the hand-derived corrections, exactly what shipped before
@@ -198,6 +207,52 @@ test('JOS-189: the chant family is FOUR candidates for the one sentence it print
     matchCastOnOtherSuffix('an ice giant begins to chant.', bare)?.entry.cands.map((c) => c.name).sort(),
     ["Tuyen's Chant of Flame", "Tuyen's Chant of Frost"],
     'before the sweep the sentence had exactly the two owners whose subject the scrape got right'
+  )
+})
+
+test('JOS-349: the shrink sentence is THREE candidates, and Tiny Companion is the pet one', () => {
+  // The second JOIN, and the one whose cost is not a bar. `Ant Legs` and `Shrink` carry `Someone`,
+  // `Tiny Companion` carried `Target`, so the only `targetType: Pet` member of the family could not
+  // be a candidate for its own landing — and JOS-188's pet bind tests exactly that membership.
+  const db = loadSpellDb()
+  const hit = matchCastOnOtherSuffix('Dranix shrinks.', db)
+  assert.ok(hit, 'the live sentence must resolve at all')
+  assert.equal(hit.target, 'Dranix')
+  assert.deepEqual(
+    hit.entry.cands.map((c) => c.name).sort(),
+    ['Ant Legs', 'Shrink', 'Tiny Companion'],
+    'the whole family that writes this sentence'
+  )
+  assert.equal(
+    hit.entry.cands.find((c) => c.name === 'Tiny Companion')?.targetType,
+    'Pet',
+    'and the pet-only membership is the DB`s own — charmModel.PET_TARGET_SPELLS reads this field'
+  )
+
+  const bare = buildSpellDb(applySpellCorrections(RAW, HAND_DERIVED).spells)
+  assert.deepEqual(
+    matchCastOnOtherSuffix('Dranix shrinks.', bare)?.entry.cands.map((c) => c.name).sort(),
+    ['Ant Legs', 'Shrink'],
+    'before the row the sentence had exactly the two owners whose subject the scrape got right'
+  )
+})
+
+test('JOS-349: the row moves NO line`s kind and NO line`s first pick — measured whole-log', () => {
+  // THE LAW-8 TRIPWIRE, restated as the assertion it implies. The owner's log parsed TWICE in one
+  // process with and without this one row (1,732,264 lines, 56 event kinds, 2026-08-14): not one
+  // kind count moves, and the 33 ` shrinks.` lines keep `Ant Legs` as the parser's best-effort
+  // first pick. The ONLY thing that changes is the candidate list — 33 lines go
+  // `Ant Legs+Shrink` -> `Ant Legs+Shrink+Tiny Companion` — which is what a JOIN is supposed to
+  // look like from the outside, and it is table ORDER that guarantees it (the joined spell is
+  // appended to a bucket the two siblings already head).
+  installSpellDb(loadSpellDb())
+  const ev = parseEvent('[Mon Jul 20 17:32:01 2026] Demilat shrinks.', 0)
+  assert.equal(ev?.kind, 'buffApply', 'the sentence already parsed, and still does')
+  assert.equal(ev.kind === 'buffApply' ? ev.spell : '', 'Ant Legs', 'the first pick is unchanged')
+  assert.deepEqual(
+    ev.kind === 'buffApply' ? ev.candidates.map((c) => c.name) : [],
+    ['Ant Legs', 'Shrink', 'Tiny Companion'],
+    'world-model law 3: the candidate list carries the truth, and the model resolves it'
   )
 })
 
