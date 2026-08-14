@@ -192,6 +192,8 @@ test('the freshness line is JOS-253’s own words, and says which clock it is', 
 
 const CARD = readFileSync(join(GEAR, 'GearCompareCard.tsx'), 'utf8')
 const TABLE = readFileSync(join(GEAR, 'GearTable.tsx'), 'utf8')
+/** JOS-344's second host: the Exaltations browser's donor rows, through the SAME door. */
+const ROWS = readFileSync(join(ROOT, 'src', 'renderer', 'src', 'features', 'planner', 'EffectRows.tsx'), 'utf8')
 
 test('the gear rows reach a card through ONE door, and the table opens no other popper', () => {
   assert.match(TABLE, /<GearRowCompare\b/, 'the table mounts the wrapper')
@@ -201,11 +203,27 @@ test('the gear rows reach a card through ONE door, and the table opens no other 
   assert.ok(!/<KnownItemTooltip[\s>]/.test(TABLE), 'nor the generic item card, which is interactive')
 })
 
+test('the donor rows reach the SAME door, and grow no card of their own (JOS-344)', () => {
+  assert.match(ROWS, /<GearRowCompare\b/, 'the donor name mounts the wrapper')
+  assert.equal((ROWS.match(/<GearRowCompare\b/g) ?? []).length, 1, 'exactly once')
+  assert.ok(!/from '@mui\/material\/Tooltip'/.test(ROWS), 'never MUI’s Tooltip directly')
+  assert.ok(!/<KnownItemTooltip[\s>]/.test(ROWS), 'nor the generic item card, which is interactive')
+  // The row's OTHER tooltip is the `+N to extract` chip's caption, and it is the shared wrapper —
+  // a caption is not a card. What must never appear is a second COMPARE card built by hand.
+  assert.ok(!/<GearComparePair\b/.test(ROWS), 'the pair is only ever reached through the door')
+})
+
 test('the door still MEANS all three things it was introduced to mean', () => {
-  // 1. it cannot open upward: beside the row, never flipped, never shifted on the vertical axis.
-  assert.match(CARD, /placement="right-start"/)
+  // 1. IT CANNOT OPEN UPWARD, AND IT CANNOT OPEN OFF SCREEN (JOS-344, rewriting JOS-338's spelling
+  //    of this guarantee — read GearCompareCard.tsx's measurement block before touching either
+  //    axis). For a BOTTOM-based placement popper's `mainAxis` is the HORIZONTAL one, so these
+  //    three lines together say: clamped sideways, never moved vertically, never flipped.
+  assert.match(CARD, /placement="bottom-start"/)
   assert.match(CARD, /name: 'flip', enabled: false/)
-  assert.match(CARD, /altAxis: false/)
+  assert.match(CARD, /mainAxis: true, altAxis: false/)
+  // …and the anchor's right edge — the thing that put JOS-338's card 3px inside the window — is
+  // read by nothing. `right-start` off a full-width row IS the bug; it may not come back.
+  assert.ok(!/placement="right-start"/.test(CARD), 'the row’s right edge is never the anchor again')
   // 2. it holds no pointer events — stated, not inherited from MUI's disableInteractive default.
   assert.match(CARD, /pointerEvents: 'none'/)
   assert.match(CARD, /disableInteractive/)
@@ -214,6 +232,25 @@ test('the door still MEANS all three things it was introduced to mean', () => {
   // …and the JOS-293 leave discipline, which is what keeps a dense table from flickering cards.
   assert.match(CARD, /enterDelay=\{\d+\}/)
   assert.match(CARD, /leaveDelay=\{\d+\}/)
+})
+
+test('the comparison is TWO cards, side by side, item first (JOS-344)', () => {
+  // The owner's ruling as a fact about the tree: one row, never wrapping, item card then equipped
+  // card. The x-order is MEASURED in tests/e2e/gearCompareSteps.mts; what is pinned here is that
+  // nothing can reorder them without editing this line.
+  const pair = /<div data-testid="gear-compare-pair"[\s\S]*?<\/div>/.exec(CARD)?.[0] ?? ''
+  assert.ok(pair !== '', 'the pair exists')
+  const item = pair.indexOf('<GearCompareCard')
+  const equipped = pair.indexOf('<EquippedCompareCard')
+  assert.ok(item >= 0 && equipped > item, `item card must come first — got ${item} / ${equipped}`)
+  assert.match(CARD, /flexDirection: 'row'/)
+  assert.match(CARD, /flexWrap: 'nowrap'/)
+  // A pair wider than the window cannot be clamped onto it, so the pair states its own ceiling.
+  assert.match(CARD, /maxWidth: 'calc\(100vw - \d+px\)'/)
+  // THE FRESHNESS LINE STAYS, and it stays on the card whose claim it dates.
+  const equippedCard = CARD.slice(CARD.indexOf('function EquippedCompareCard'))
+  assert.match(equippedCard, /data-testid="gear-compare-freshness"/)
+  assert.match(equippedCard, /dumpFreshnessText\(data\.exportedAt\)/)
 })
 
 test('nothing ELSE in features/gear mounts a popper — least of all the dropdown toolbar', () => {

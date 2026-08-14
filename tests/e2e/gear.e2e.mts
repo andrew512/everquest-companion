@@ -70,6 +70,12 @@
  * row's wish control and the item name's Loot link. That last part is the regression, stated the way
  * the owner met it twice: not "is a popper on screen" but "does the click still land".
  *
+ * …AND SINCE JOS-344 IT ASSERTS THAT A HUMAN CAN SEE IT. The version above shipped a card drawn
+ * three pixels inside the right edge of the window: present, correct, and invisible. So the step
+ * takes the WINDOW now (it narrows it past the app's own minimum and puts it back) and measures the
+ * two cards' boxes against the viewport at both sizes. Its header carries the measurement and the
+ * two traps in taking it.
+ *
  * AND SINCE JOS-329 IT ASSERTS THAT THE FORM COMES HOME. The owner's report was that the whole gear
  * area lost its state on every module switch, so the two round trips he described are steps here:
  * set six controls to values nothing defaults to, leave for the Loot MODULE and come back; then
@@ -85,7 +91,7 @@
  *
  * Run: `npm run test:e2e -- gear`.
  */
-import type { Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import {
   buildIfStale,
   check,
@@ -580,7 +586,7 @@ async function stepUpgrade(page: Page): Promise<void> {
   await resetColumns(page)
 }
 
-async function steps(page: Page, log: FixtureLog): Promise<void> {
+async function steps(app: ElectronApplication, page: Page, log: FixtureLog): Promise<void> {
   if (!(await stepRows(page))) return
   // JOS-302's class step runs FIRST of the filter steps, and it has to: the picker mounts holding
   // whatever the combo module inferred off the fixture log, that pick now NARROWS the corpus, and
@@ -604,7 +610,7 @@ async function steps(page: Page, log: FixtureLog): Promise<void> {
   // wearing instead of it. It needs the GLOBAL SELECTOR STILL AT BASE (the card admits to a
   // simulation, and the step asserts it has nothing to admit to yet), which is true anywhere above
   // `stepUpgrade`. It hands the tab back with the box empty and both pickers clear.
-  await stepGearCompare(page, THELVORN_BASE)
+  await stepGearCompare(app, page, THELVORN_BASE)
   // Phase 5's set steps used to run HERE, between the ownership steps and the phase-3 ones, and
   // JOS-325 removed them with the surface they drove. The clear-the-box line they were followed by
   // STAYS, even though `stepOwnedFilter` now leaves the box empty on its own: `stepSearch` measures
@@ -673,7 +679,7 @@ async function main(): Promise<void> {
   try {
     const page = await mainWindow(first.app)
     watch(page, consoleErrors)
-    if (await stepMount(page)) await steps(page, log)
+    if (await stepMount(page)) await steps(first.app, page, log)
     if (failures.length) await dumpArtifacts(page, 'gear-FAIL')
     else await dumpArtifacts(page, 'gear-pass')
   } finally {

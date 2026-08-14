@@ -50,7 +50,7 @@
  */
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Page } from 'playwright-core'
+import type { ElectronApplication, Page } from 'playwright-core'
 import {
   buildIfStale,
   check,
@@ -109,6 +109,9 @@ import {
 } from './wishlistSteps.mjs'
 // JOS-329's away-and-back step for this browser, from the module the gear and character specs share.
 import { stepBrowseMemory } from './areaMemorySteps.mjs'
+// JOS-344 — the donor names got the Gear tab's comparison pair back. Its own module, and it
+// imports the Gear side's assertions rather than restating them: one card, one instrument.
+import { stepExaltCompare } from './exaltCompareSteps.mjs'
 
 /** The Loot tab's drill-down, where an item name deep-links to. */
 const LOOT_DETAIL = '[data-testid="loot-detail"]'
@@ -521,7 +524,7 @@ async function stepDeepLink(page: Page): Promise<void> {
 }
 
 /** Everything the EXALTATIONS tab owns, in order. */
-async function exaltationSteps(page: Page): Promise<string | null> {
+async function exaltationSteps(app: ElectronApplication, page: Page): Promise<string | null> {
   await stepExplainer(page)
   await stepSearchOnly(page)
   if (!(await stepEffects(page))) return null
@@ -533,6 +536,13 @@ async function exaltationSteps(page: Page): Promise<string | null> {
   // put into a non-default state (a socket tab, the escape hatch, an expanded group) and it hands
   // all of that back, so `stepAddWish` still finds the proc tab it was written against.
   await stepBrowseMemory(page)
+  // JOS-344 runs HERE, before the add step, on a browse nothing has written to yet: it hovers a
+  // donor NAME and hit-tests that row's own wish control with the card up, and reading that control
+  // in the state the surface opens in is the honest reading. (It would survive running after
+  // `stepAddWish` too, since JOS-343 made the control a TOGGLE that stays enabled once lit — but
+  // that is a fact about a sibling ticket's design, not a dependency worth taking.) It resizes the
+  // window and puts it back, parks the pointer, and touches no filter.
+  await stepExaltCompare(app, page)
   return stepAddWish(page)
 }
 
@@ -603,7 +613,7 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     if (await stepMount(page)) {
-      const added = await exaltationSteps(page)
+      const added = await exaltationSteps(app, page)
       const over = await pageOverflow(page)
       check(
         'Exaltations never scrolls the page (its lists clip inside their own boxes)',

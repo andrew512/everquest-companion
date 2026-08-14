@@ -11,6 +11,14 @@
 // never shrink, and world-supplied text in shrinkable ellipsizing groups. `SHRINK` is the whole of
 // the arbitration between those groups, and it is half of the JOS-42 fix — the other half is the
 // one-liner moving up to the header, which is `plannerGroups.says` and arrives here as a flag.
+//
+// AND SINCE JOS-344 THE DONOR NAME HAS ITS HOVER CARD BACK — the same one, this time (owner report
+// 2026-08-13: *item mouseover on the exalt links too*). `PlannerChips.DonorName`'s own comment has
+// recorded for a year that a native `title` is "the one thing the removed card did that nothing
+// else on the row does"; what mounts here now is not that removed card but the GEAR tab's
+// comparison PAIR — the donor item on the left, what you are wearing in its slots on the right —
+// because a donor IS an item and the equipped half applies to it unchanged. One door
+// (`GearCompareCard.tsx`'s `GearRowCompare`), one set of guarantees, two surfaces.
 
 import { type JSX } from 'react'
 import { Box, Chip, IconButton, Stack, Typography } from '@mui/material'
@@ -21,6 +29,11 @@ import { effectOneLiner } from '@shared/planner/effectText'
 import { extractionTier } from '@shared/planner/rules'
 import { itemIconUrl } from '../../lib/ItemWindow'
 import { Tooltip } from '../../lib/Tooltip'
+// JOS-344 — the ONE door a compare card may reach any surface through. Its header states the three
+// guarantees (never upward, no pointer events, gone on pointerdown) and the measured geometry that
+// made the anchoring law what it is.
+import { GearRowCompare } from '../gear/GearCompareCard'
+import type { GearCompareData } from '../gear/gearData'
 import { classFit, isNonEquippable, type DonorRow } from './plannerData'
 import { SOCKET_LABEL, type DonorGroup } from './plannerGroups'
 import { BestChip, DonorName, EraChip, NoSlotChip } from './PlannerChips'
@@ -137,6 +150,14 @@ export interface DonorLineProps {
   onToggleWish?: (donor: DonorRow, wished: boolean) => void
   /** deep-link this donor into the Loot drill-down; absent when the app wired no router */
   onOpenLoot?: (item: string) => void
+  /**
+   * WHAT A HOVERED DONOR NAME IS COMPARED AGAINST (JOS-344) — the same seam the Gear tab's rows
+   * use (`useGearCompare`): the equipped-by-cell index, the corpus by key, and when the dump was
+   * exported. ABSENT MEANS NO CARD, which is the house rule `onOpenLoot` states one prop up: a
+   * host that cannot answer "what are you wearing" should draw no card rather than one whose
+   * equipped half is a permanent blank.
+   */
+  compare?: GearCompareData
 }
 
 /**
@@ -182,6 +203,72 @@ function AddButton({
   )
 }
 
+/**
+ * THE DONOR'S NAME, WITH THE COMPARISON PAIR BEHIND IT (JOS-344).
+ *
+ * THREE THINGS DECIDED HERE, and each is a refusal rather than a feature:
+ *
+ * 1. NO GEAR ROW, NO CARD. The gear index only carries EQUIPPABLE pages (`gearIndex.ts` drops a
+ *    slotless one), and this browser deliberately shows slotless donors under an escape toggle —
+ *    chipped `no slot`, because R2 says their effect can never move. A donor the corpus has no
+ *    vector for gets the plain name it has always had, never an empty card.
+ *
+ * 2. THE ANCHOR IS A PLAIN `<span>` AROUND THE NAME, not `DonorName` itself. MUI's Tooltip needs a
+ *    ref on its child and the shared `Tooltip` clones a className onto it; `DonorName` is a
+ *    function component that forwards neither, and teaching it to would change a component three
+ *    other surfaces draw. An inline span inside an already-`noWrap` Typography is layout-neutral —
+ *    the compact-bar contract at the top of this file is untouched — and its box IS the name's box,
+ *    which is the corner the pair opens from.
+ *
+ * 3. IT IS THE SAME `row.key`. `DonorRow.key` and `GearRow.key` are both `itemKey(name)`, so the
+ *    join is one `Map.get` per rendered row and there is nothing to normalise (the standing rule
+ *    every index in this app is built on).
+ */
+/**
+ * WHERE THIS DONOR COMES FROM, at the right end of the row.
+ *
+ * Lifted out of `DonorLine` when JOS-344's hover pushed that function past the measured
+ * 100-code-line ceiling — a factoring split, byte-for-byte the same two elements, and the seam the
+ * ceiling was pointing at: everything else on the row is a chip or a control, and this is the one
+ * place a whole SENTENCE from the catalog is drawn. `SHRINK.source` stays here with it, which is
+ * the point: the arbitration is one number applied where the text is.
+ */
+function SourceLine({ src }: { src: SourceText }): JSX.Element {
+  return (
+    <>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        noWrap
+        title={src.text}
+        sx={{ minWidth: 0, flexShrink: SHRINK.source, maxWidth: 320 }}
+      >
+        {src.text}
+      </Typography>
+      {src.more !== '' && (
+        <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
+          {src.more}
+        </Typography>
+      )}
+    </>
+  )
+}
+
+function DonorNameCell({
+  donor,
+  compare,
+  onOpenLoot
+}: Pick<DonorLineProps, 'donor' | 'compare' | 'onOpenLoot'>): JSX.Element {
+  const name = <DonorName name={donor.name} bold onOpen={onOpenLoot} />
+  const row = compare?.byKey.get(donor.key)
+  if (compare === undefined || row === undefined) return name
+  return (
+    <GearRowCompare row={row} data={compare}>
+      <span>{name}</span>
+    </GearRowCompare>
+  )
+}
+
 export function DonorLine({
   donor,
   planClasses,
@@ -190,7 +277,8 @@ export function DonorLine({
   namesEffect,
   namesSays,
   onToggleWish,
-  onOpenLoot
+  onOpenLoot,
+  compare
 }: DonorLineProps): JSX.Element {
   const src = sourceText(donor)
   // V6 — "Beneficial · Single Friendly · 27 minutes", or '' when the spell DB never named this
@@ -205,7 +293,10 @@ export function DonorLine({
       direction="row"
       spacing={1}
       alignItems="center"
-      data-testid="planner-donor-row"
+      // JOS-344 — the corpus join key rides the row now, so a spec can point at ONE donor and say
+      // which. Same key the gear table's rows carry (`itemKey`), which is what makes the compare
+      // pair's own `data-item-key` checkable against the row it was opened from.
+      data-testid="planner-donor-row" data-item-key={donor.key}
       sx={{ height: ROW_HEIGHT, pl: 5, pr: 1, flexWrap: 'nowrap', borderBottom: 1, borderColor: 'divider' }}
     >
       {donor.iconId !== undefined && (
@@ -220,7 +311,7 @@ export function DonorLine({
         />
       )}
       <Typography variant="body2" component="div" noWrap sx={{ minWidth: 0, flexShrink: SHRINK.name }}>
-        <DonorName name={donor.name} bold onOpen={onOpenLoot} />
+        <DonorNameCell donor={donor} compare={compare} onOpenLoot={onOpenLoot} />
       </Typography>
       {namesEffect && (
         <Typography
@@ -259,20 +350,7 @@ export function DonorLine({
       {donor.hasteLocked && <Chip size="small" color="warning" label="haste - can't move" sx={{ height: 18, fontSize: 10 }} />}
       <EraChip subject={donor} />
       <Box sx={{ flexGrow: 1, minWidth: 8 }} />
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        noWrap
-        title={src.text}
-        sx={{ minWidth: 0, flexShrink: SHRINK.source, maxWidth: 320 }}
-      >
-        {src.text}
-      </Typography>
-      {src.more !== '' && (
-        <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
-          {src.more}
-        </Typography>
-      )}
+      <SourceLine src={src} />
       {wished && (
         <Chip
           size="small"

@@ -1,46 +1,103 @@
-// gear/GearCompareCard.tsx — HOVER A SEARCH ROW AND SEE WHAT IT WOULD REPLACE (JOS-338).
+// gear/GearCompareCard.tsx — HOVER AN ITEM AND SEE TWO CARDS: the item, and what you wear instead
+// (JOS-338, restructured and REPAIRED by JOS-344).
 //
-// THE ONE DOOR. Every card this table draws comes through `GearRowCompare` below, and that wrapper
-// always passes the safe mode — the `SkyItemCard` pattern (JOS-181), for the same reason: "the gear
-// rows' cards cannot eat a click" has to be a property of ONE file rather than of whoever edits
-// `GearTable` next. `tests/gearCompare.test.mts` derives both halves from the tree.
+// THE ONE DOOR. Every compare card this app draws comes through `GearRowCompare` below — the gear
+// table's rows and, since JOS-344, the Exaltations browser's donor names — and that wrapper always
+// passes the safe mode: the `SkyItemCard` pattern (JOS-181), for the same reason. "These cards
+// cannot eat a click, and cannot open where a human will not see them" has to be a property of ONE
+// file rather than of whoever edits `GearTable` or `EffectRows` next. `tests/gearCompare.test.mts`
+// derives both halves from the tree.
 //
 // ---------------------------------------------------------------------------
-// WHAT IT IS BUILT ON, AND WHY EACH HALF CAME FROM WHERE IT DID
+// THE JOS-344 BUG, MEASURED BEFORE IT WAS FIXED — READ THIS BEFORE TOUCHING THE MODIFIERS
 // ---------------------------------------------------------------------------
 //
-// THE MECHANICS ARE `KnownItemTooltip`'s CLICK-THROUGH MODE (JOS-181), not its card. That mode is
-// the app's measured answer to the JOS-127/JOS-143 defect — a card belonging to a row BELOW a
-// dropdown toolbar, opening upward across it and holding the pointer — and it is three guarantees,
-// restated here rather than imported because the shared file's copies are pinned BY SOURCE REGEX in
-// tests/tooltipCursor.test.mts (hoisting them out of it would turn that suite red and take the pin
-// with it). The three, and this file's spelling of each:
-//   1. IT CANNOT OPEN UPWARD. `right-start` puts the card's top edge at the ROW's top edge, `flip`
-//      is disabled so it can never become `left`/`top`, and `preventOverflow`'s ALT axis — which is
-//      the vertical one for a right-placed popper — is off, so nothing may slide it up. It may
-//      still slide LEFT (main axis) to stay on screen, which lands it over the TABLE, never over
-//      the toolbar above it. The price is JOS-181's price, honestly the same: a card anchored on the
-//      last visible row is clipped by the window bottom rather than flipping above it, which is why
-//      every list on it is capped.
+// The owner's report was that hovering a gear row showed NOTHING. It was not "nothing": the card
+// was in the DOM, fully rendered, with the right words in it — and drawn 3 pixels from the right
+// edge of a 1268px window, 99% of it past the glass. The e2e that shipped it only ever asked
+// whether the node existed and what it said, which is exactly how an off-screen card ships.
+//
+// THE MEASUREMENT (headless run, default window, the Thelvorn row):
+//     viewport            1268 × 848
+//     the anchored <tr>   left 237 → right 1251      (the row is the FULL WIDTH of the table)
+//     the popper          translate(1251px, 255px), 356 wide → right edge 1607
+//     the card itself     left 1265 → right 1520      ⇒ 3px of it inside the window
+//
+// THE MECHANISM, and it is one inverted pair of axis names. Popper's `preventOverflow` calls the
+// axis it slides along the MAIN one, and `getMainAxisFromPlacement` returns `'x'` for `top`/
+// `bottom` placements and `'y'` for everything else. So for the `right-start` card JOS-338 wrote:
+//   * `mainAxis` is the VERTICAL axis, and it was left ENABLED — the opposite of guarantee 1,
+//   * `altAxis` is the HORIZONTAL one, and it was DISABLED — which switched off the only thing
+//     that could have pulled the card back on screen,
+//   * `flip` was off, so it could not escape left either.
+// The old header says the reverse of both in prose ("for a right-placed popper the ALT axis is the
+// vertical one"); the prose was wrong, the code did what the prose said rather than what it meant,
+// and the anchor — a full-width `<TableRow>` whose right edge IS the window's right edge — turned
+// that into a card nobody could see. All three are stated as source-regex pins in
+// tests/gearCompare.test.mts now, so the next edit that flips one turns a unit test red.
+//
+// ---------------------------------------------------------------------------
+// THE ANCHORING LAW THAT REPLACES IT (JOS-344) — three guarantees, all structural
+// ---------------------------------------------------------------------------
+//
+//   1. IT CANNOT OPEN UPWARD, AND IT IS ANCHORED TO AN EDGE THAT IS ALWAYS ON SCREEN.
+//      `bottom-start` — which is JOS-181's own click-through placement, arrived at there for this
+//      same shape of defect — puts the pair's TOP-LEFT corner at the anchor's BOTTOM-LEFT corner.
+//      For a bottom-placed popper `mainAxis` is the HORIZONTAL axis and `altAxis` the vertical, so
+//      `{ mainAxis: true, altAxis: false }` now reads the way the words sound: the pair is CLAMPED
+//      sideways to stay inside the window, and may never be moved vertically at all. With `flip`
+//      off as well, the pair's top edge is ALWAYS its anchor's bottom edge — always below the row,
+//      therefore always below the toolbar above the list. That is the JOS-127/JOS-143 guarantee,
+//      and it is now a fact about the geometry rather than a hope about the axis names.
+//
+//      THE BRIEF ASKED FOR THE NAME CELL OR THE POINTER AS THE ANCHOR; this is neither, and the
+//      reason is worth writing down. What made the card invisible was the row's RIGHT edge, and
+//      `bottom-start` does not read it — it reads the row's LEFT edge, which is the name cell's
+//      left edge, one pixel for one pixel, with no DOM coupling between this file and the table's
+//      cell structure and no virtual-anchor plumbing to keep in step with two host surfaces. The
+//      donor rows get the identical treatment for free: their anchor is the NAME itself.
+//
+//      THE PRICE, unchanged from JOS-181 and stated honestly: a pair anchored on a row near the
+//      window's BOTTOM is clipped by the bottom edge rather than flipping above its row. That is
+//      the trade this app has already made twice, and it is why every list on these cards is
+//      capped (`MAX_STATS`, `MAX_DELTAS`) — the pair is short enough that the clipping costs a
+//      line or two, where a flip would cost the toolbar.
+//
 //   2. IT HOLDS NO POINTER EVENTS. `disableInteractive` already leaves MUI's popper at
 //      `pointer-events: none`; it is written out as well, because a library default is somebody
 //      else's decision and this one IS the defect. It is also what makes the JOS-143 regression
 //      test meaningful: `document.elementFromPoint` skips a pointer-events-none node, so the
-//      toolbar, the wish heart (JOS-335) and the name's Loot link all still answer for their own
-//      centres with the card open.
-//   3. IT CLOSES ON POINTERDOWN, ANYWHERE, IN THE CAPTURE PHASE — so the card is gone before the
+//      toolbar, the wish heart (JOS-335), the name's Loot link and — since JOS-344 — the donor
+//      row's Add button all still answer for their own centres with the pair open.
+//
+//   3. IT CLOSES ON POINTERDOWN, ANYWHERE, IN THE CAPTURE PHASE — so the pair is gone before the
 //      Select the user just aimed at opens its own option list over the same band.
+//
 // Plus the SpellCard leave discipline (JOS-293): `enterDelay` so dragging the pointer across thirty
 // dense rows opens nothing, and a short `leaveDelay` so it goes with the pointer.
 //
+// ---------------------------------------------------------------------------
+// WHY IT IS TWO CARDS AND NOT ONE (owner ruling 2026-08-13, JOS-344)
+// ---------------------------------------------------------------------------
+//
+// JOS-338 drew ONE card with an equipped PANEL stacked inside it, and the owner ruled the other
+// way: the hovered ITEM on the left, the CURRENTLY EQUIPPED on the right, side by side. The
+// argument is the reading — a comparison read top-to-bottom is a list, a comparison read
+// left-to-right is a comparison — and the layout is what makes the distinct treatment mean
+// something: two surfaces, two accents, two borders, and no chance of mistaking what you HAVE for
+// what you are READING ABOUT. The right card keeps everything the panel carried, including the
+// dump freshness line, because that line is a claim about the right card's contents and nowhere
+// else. When the first read has not settled there is NO right card — "we have not looked yet" is
+// not an empty comparison (law 1).
+//
 // THE DRAWING IS `hoverCards.tsx`'s VOCABULARY — the same palette, `CardSection` and `MoreLine`
-// that the mob card and the spell card use, so the three hover cards in this app read as one
-// family. What it deliberately does NOT reuse is `KnownItemTooltip`'s BODY: that card fetches
+// that the mob card and the spell card use, so the hover cards in this app read as one family.
+// What it deliberately does NOT reuse is `KnownItemTooltip`'s BODY: that card fetches
 // `ItemKnowledge` over IPC to draw an EQ-style item window, and this one needs the numeric vector
 // instead — both halves of a comparison have to be in one vocabulary or the delta is a guess. The
 // renderer already holds the whole corpus (`useGearIndex`), so both sides are `GearRow`s joined by
-// `itemKey`, the comparison costs ZERO IPC calls, and the plus-state the table is simulating is
-// already baked into the row this card is handed.
+// `itemKey`, the comparison costs ZERO IPC calls per hover on either surface, and the plus-state
+// the table is simulating is already baked into the row this card is handed.
 //
 // EVERY WORD IS `gearCompare.ts`'s (pure, node-tested). This file owns where a line goes.
 
@@ -50,7 +107,7 @@ import { scaleGearRow } from '@shared/planner/gearScale'
 import { ITEM_MAX_TIER } from '@shared/itemStats'
 import { percentLabel } from '@shared/itemUpgrade'
 import { outputKind } from '@shared/outputs/kinds'
-import { CARD_LABEL, CARD_MONO, CARD_TEXT, CardSection, LABEL_STYLE, MoreLine, TEXT_STYLE } from '../../lib/hoverCards'
+import { CARD_LABEL, CARD_MONO, CARD_TEXT, LABEL_STYLE, MoreLine, TEXT_STYLE } from '../../lib/hoverCards'
 import { Tooltip } from '../../lib/Tooltip'
 import {
   compareStats,
@@ -64,7 +121,7 @@ import {
 } from './gearCompare'
 import type { GearCompareData } from './gearData'
 
-/** How many of the item's own stats the card lists before collapsing to "+N more". */
+/** How many of the item's own stats the left card lists before collapsing to "+N more". */
 const MAX_STATS = 10
 /** …and how many CHANGES one equipped cell lists. Tighter: it is one line per cell, not a block. */
 const MAX_DELTAS = 8
@@ -72,19 +129,52 @@ const MAX_DELTAS = 8
 /** The hovered item's accent — the item green every card in this family gives an item name. */
 const ITEM_ACCENT = '#5fe08a'
 /**
- * THE DISTINCT TREATMENT the ticket asks for: the equipped half wears its own colour, its own
- * tinted panel and its own left rule, so a glance never mistakes what you HAVE for what you are
- * READING ABOUT. Amber rather than another green for exactly that reason — the two halves of this
- * card are the one place in the app where two item names mean opposite things.
+ * THE DISTINCT TREATMENT the ticket asks for, and the reason the pair is legible at a glance: the
+ * equipped card wears its own colour, its own tinted surface and its own border. Amber rather than
+ * another green for exactly that reason — the two cards of this pair are the one place in the app
+ * where two item names mean opposite things.
  */
 const EQUIPPED_ACCENT = '#e0b76a'
 
-const EQUIPPED_PANEL: React.CSSProperties = {
-  marginTop: 4,
-  padding: '3px 5px',
-  borderLeft: `2px solid ${EQUIPPED_ACCENT}`,
-  background: 'rgba(224,183,106,0.08)'
+/** Each card's ceiling. Two of them plus the gap is the pair's natural width (~690px). */
+const CARD_MAX_WIDTH = 340
+
+/**
+ * THE PAIR IS ONE ROW THAT NEVER WRAPS AND NEVER OUTGROWS THE WINDOW.
+ *
+ * `nowrap` is the layout the owner asked for — item left, equipped right — so it is stated rather
+ * than left to the default. The `maxWidth` is the second half of guarantee 1: `preventOverflow`
+ * can only slide a popper that FITS, and a pair wider than the window would be clamped to the left
+ * edge and still hang off the right. Below ~700px of window the two cards shrink together
+ * (`flex: 1 1 auto` with `minWidth: 0` on each) instead of one of them leaving the screen.
+ */
+const PAIR_STYLE: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'row',
+  flexWrap: 'nowrap',
+  alignItems: 'flex-start',
+  gap: 8,
+  maxWidth: 'calc(100vw - 24px)'
 }
+
+/** One card's surface. Same geometry both sides; only the accent and the tint differ. */
+function cardSurface(accent: string, tint: string): React.CSSProperties {
+  return {
+    flex: '1 1 auto',
+    minWidth: 0,
+    maxWidth: CARD_MAX_WIDTH,
+    background: tint,
+    border: `1px solid ${accent}`,
+    borderRadius: 6,
+    padding: 8,
+    fontFamily: CARD_MONO,
+    color: CARD_TEXT,
+    boxShadow: '0 6px 20px rgba(0,0,0,0.6)'
+  }
+}
+
+const ITEM_SURFACE = cardSurface(ITEM_ACCENT, 'rgba(15,16,23,0.98)')
+const EQUIPPED_SURFACE = cardSurface(EQUIPPED_ACCENT, 'rgba(28,23,14,0.98)')
 
 /** The command, from the registry that owns its spelling — never re-typed into a literal. */
 const INVENTORY_COMMAND = outputKind('inventory').command
@@ -92,10 +182,11 @@ const INVENTORY_COMMAND = outputKind('inventory').command
 /**
  * WHAT THE TABLE IS SIMULATING, said on the card too (JOS-284's slider).
  *
- * The row this card is handed is the SCALED one, so at a non-base plus-state the item half states
- * numbers no copy in the world has yet — and the equipped half beside it is a real object off a
+ * The row this card is handed is the SCALED one, so at a non-base plus-state the item card states
+ * numbers no copy in the world has yet — and the equipped card beside it is a real object off a
  * real dump. A comparison between a simulation and a fact has to say which is which; at base there
- * is nothing to say and the line is absent.
+ * is nothing to say and the line is absent, which is also the whole of the Exaltations browser's
+ * case (it hands this card `ITEM_UPGRADE_BASE` and simulates nothing).
  */
 function SimulatedLine({ data }: { data: GearCompareData }): JSX.Element | null {
   const { full, fraction } = data.state
@@ -126,7 +217,8 @@ function ItemStats({ row }: { row: GearRow }): JSX.Element | null {
 }
 
 /**
- * ONE PLACE THIS ITEM WOULD GO, and what is in it.
+ * ONE PLACE THIS ITEM WOULD GO, and what is in it. One of these per cell, STACKED inside the right
+ * card — an earring is two answers and the pair stays two cards.
  *
  * THREE ANSWERS, AND THEY ARE THREE DIFFERENT STATEMENTS (law 1). The dump names a copy and the
  * corpus knows its numbers ⇒ the name and the changes. The dump names a copy the corpus has no page
@@ -143,7 +235,12 @@ function EquippedRow({ cell, row, data }: { cell: EquippedCell; row: GearRow; da
   const changes =
     host === null || worn === undefined ? [] : compareStats(row.stats, scaleGearRow(worn, equippedState(host)).stats)
   return (
-    <div data-testid="gear-compare-slot" data-cell={cell.cell} data-equipped={host === null ? undefined : host.key}>
+    <div
+      style={{ marginTop: 3 }}
+      data-testid="gear-compare-slot"
+      data-cell={cell.cell}
+      data-equipped={host === null ? undefined : host.key}
+    >
       <div style={TEXT_STYLE}>
         <span style={{ color: CARD_LABEL }}>{cell.label}: </span>
         {host === null ? (
@@ -171,55 +268,10 @@ function EquippedRow({ cell, row, data }: { cell: EquippedCell; row: GearRow; da
   )
 }
 
-/**
- * THE EQUIPPED HALF, or the reason there is none.
- *
- * NO DUMP IS NOT AN EMPTY BODY (the ticket's own rule, and law 1's): "you are wearing nothing there"
- * and "this app has never seen your inventory" are different sentences, and only the second one has
- * a fix the player can type. Before the first read settles the card says neither — a card that
- * flashed the command hint at somebody who exported an hour ago would be the JOS-253 failure again.
- */
-function EquippedHalf({ row, data }: { row: GearRow; data: GearCompareData }): JSX.Element | null {
-  if (!data.ready) return null
-  if (!data.hasDump) {
-    return (
-      <CardSection label="Currently equipped:">
-        <div style={{ ...TEXT_STYLE, ...EQUIPPED_PANEL }} data-testid="gear-compare-nodump">
-          No inventory dump for this character yet. Type <span style={{ color: EQUIPPED_ACCENT }}>{INVENTORY_COMMAND}</span> in
-          game and this card fills itself.
-        </div>
-      </CardSection>
-    )
-  }
-  const cells = equippedCells(data.equipped, row.slots)
-  return (
-    <CardSection label="Currently equipped:">
-      <div style={EQUIPPED_PANEL}>
-        {cells.map((cell) => (
-          <EquippedRow key={cell.cell} cell={cell} row={row} data={data} />
-        ))}
-      </div>
-    </CardSection>
-  )
-}
-
-/** The card body. Exported for any surface that draws it somewhere other than this tooltip. */
+/** The left card: the thing the pointer is on. */
 export function GearCompareCard({ row, data }: { row: GearRow; data: GearCompareData }): JSX.Element {
   return (
-    <div
-      data-testid="gear-compare-card"
-      data-item-key={row.key}
-      style={{
-        background: 'rgba(15,16,23,0.98)',
-        border: `1px solid ${ITEM_ACCENT}`,
-        borderRadius: 6,
-        padding: 8,
-        maxWidth: 340,
-        fontFamily: CARD_MONO,
-        color: CARD_TEXT,
-        boxShadow: '0 6px 20px rgba(0,0,0,0.6)'
-      }}
-    >
+    <div data-testid="gear-compare-card" data-item-key={row.key} style={ITEM_SURFACE}>
       <div style={{ color: ITEM_ACCENT, fontSize: 12, fontWeight: 700 }}>{row.name}</div>
       <div style={LABEL_STYLE}>
         {row.slots.join(' ')}
@@ -227,24 +279,71 @@ export function GearCompareCard({ row, data }: { row: GearRow; data: GearCompare
       </div>
       <SimulatedLine data={data} />
       <ItemStats row={row} />
-      <EquippedHalf row={row} data={data} />
-      {data.ready && (
-        <div style={{ ...LABEL_STYLE, marginTop: 4 }} data-testid="gear-compare-freshness">
-          {dumpFreshnessText(data.exportedAt)}
-        </div>
-      )}
     </div>
   )
 }
 
 /**
- * The popper modifiers that make this card unable to reach the toolbar above its row — guarantee 1
- * of the three in the header. Both are the JOS-181 modifiers, re-aimed at a `right-start` card: for
- * a right-placed popper the ALT axis is the vertical one, so it is the one that must not move.
+ * The right card, or the reason there is none.
+ *
+ * NO DUMP IS NOT AN EMPTY BODY (the ticket's own rule, and law 1's): "you are wearing nothing there"
+ * and "this app has never seen your inventory" are different sentences, and only the second one has
+ * a fix the player can type. Before the first read settles the pair is ONE card — a card that
+ * flashed the command hint at somebody who exported an hour ago would be the JOS-253 failure again.
+ *
+ * THE FRESHNESS LINE LIVES HERE, not on the item card, and that is the JOS-344 layout saying
+ * something true: the age is a property of the claim this card makes and of nothing on the other
+ * one.
  */
-const NEVER_UPWARD = [
+export function EquippedCompareCard({ row, data }: { row: GearRow; data: GearCompareData }): JSX.Element | null {
+  if (!data.ready) return null
+  const cells = data.hasDump ? equippedCells(data.equipped, row.slots) : []
+  return (
+    <div data-testid="gear-compare-equipped-card" style={EQUIPPED_SURFACE}>
+      <div style={{ color: EQUIPPED_ACCENT, fontSize: 12, fontWeight: 700 }}>Currently equipped</div>
+      {data.hasDump ? (
+        cells.map((cell) => <EquippedRow key={cell.cell} cell={cell} row={row} data={data} />)
+      ) : (
+        <div style={{ ...TEXT_STYLE, marginTop: 3 }} data-testid="gear-compare-nodump">
+          No inventory dump for this character yet. Type <span style={{ color: EQUIPPED_ACCENT }}>{INVENTORY_COMMAND}</span> in
+          game and this card fills itself.
+        </div>
+      )}
+      <div style={{ ...LABEL_STYLE, marginTop: 4 }} data-testid="gear-compare-freshness">
+        {dumpFreshnessText(data.exportedAt)}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * THE PAIR — the item, and what you wear instead of it, in that x-order.
+ *
+ * Exported for any surface that draws the comparison somewhere other than this tooltip, and it is
+ * what `GearRowCompare` hands MUI as the tooltip's `title`.
+ */
+export function GearComparePair({ row, data }: { row: GearRow; data: GearCompareData }): JSX.Element {
+  return (
+    <div data-testid="gear-compare-pair" style={PAIR_STYLE}>
+      <GearCompareCard row={row} data={data} />
+      <EquippedCompareCard row={row} data={data} />
+    </div>
+  )
+}
+
+/**
+ * The popper modifiers behind guarantee 1 — read the MEASUREMENT block in the header before
+ * touching either of them, because the axis names do not mean what they sound like.
+ *
+ * For a `bottom`-based placement popper's `mainAxis` is the HORIZONTAL one and `altAxis` the
+ * vertical (`getMainAxisFromPlacement` returns `'x'` for top/bottom and `'y'` for left/right). So
+ * this pair of options says, in order: SLIDE SIDEWAYS to stay on screen, NEVER move vertically —
+ * and `flip: false` says it may not jump above its anchor either. The 8px padding keeps a clamped
+ * pair off the glass rather than flush against it.
+ */
+const CLAMP_SIDEWAYS_NEVER_UPWARD = [
   { name: 'flip', enabled: false },
-  { name: 'preventOverflow', options: { mainAxis: true, altAxis: false } }
+  { name: 'preventOverflow', options: { mainAxis: true, altAxis: false, padding: 8 } }
 ]
 
 /**
@@ -252,17 +351,17 @@ const NEVER_UPWARD = [
  * full: a fresh `slotProps` with a nested `sx` per render is real reconciliation cost across a list
  * of anchors, and this card hangs off EVERY mounted row of a windowed 6,766-row table.
  *
- * The tooltip contributes no padding, no background and no 300px cap — `GearCompareCard` draws its
- * own surface. The popper's `pointerEvents: 'none'` is guarantee 2, written out rather than
- * inherited from `disableInteractive`.
+ * The tooltip contributes no padding, no background and no width cap — the pair draws its own two
+ * surfaces and states its own ceiling. The popper's `pointerEvents: 'none'` is guarantee 2, written
+ * out rather than inherited from `disableInteractive`.
  */
 const COMPARE_SLOT_PROPS = {
-  popper: { modifiers: NEVER_UPWARD, sx: { pointerEvents: 'none' } },
+  popper: { modifiers: CLAMP_SIDEWAYS_NEVER_UPWARD, sx: { pointerEvents: 'none' } },
   tooltip: { sx: { p: 0, bgcolor: 'transparent', maxWidth: 'none' } }
 } as const
 
 /**
- * Guarantee 3: the card is gone on the first pointerdown ANYWHERE, capture phase — before the
+ * Guarantee 3: the pair is gone on the first pointerdown ANYWHERE, capture phase — before the
  * control the user aimed at opens its own list. Controlled state is the only way to say that, so
  * this card is controlled and MUI's own hover lifecycle drives `onOpen`/`onClose` as usual.
  */
@@ -287,24 +386,29 @@ function useCloseOnPointerDown(): { open: boolean; onOpen: () => void; onClose: 
 export interface GearRowCompareProps {
   row: GearRow
   data: GearCompareData
-  /** the anchor: the table ROW itself, which is the thing the owner asked to be able to hover */
+  /**
+   * THE ANCHOR, and since JOS-344 there are two shapes of it: the gear table's whole `<TableRow>`,
+   * and the Exaltations browser's donor NAME. Only its bottom-LEFT corner is read (see guarantee
+   * 1), so a full-width row and a 120px name behave identically — both open the pair under the
+   * name the pointer is on.
+   */
   children: ReactElement
 }
 
 /**
- * Hover a gear row → the comparison card. The ONE door (see the header).
+ * Hover an item → the comparison pair. The ONE door (see the header).
  *
- * `enterDelay` is longer than the spell card's 250ms on purpose: the anchor here is a whole 37px row
- * in a dense list, so a pointer crossing the table on its way to the scrollbar passes over a dozen
- * of them and must open none. `enterNextDelay` keeps that true after the first card has opened.
+ * `enterDelay` is longer than the spell card's 250ms on purpose: the anchors here are dense list
+ * rows, so a pointer crossing the list on its way to the scrollbar passes over a dozen of them and
+ * must open none. `enterNextDelay` keeps that true after the first pair has opened.
  */
 export function GearRowCompare({ row, data, children }: GearRowCompareProps): JSX.Element {
   const controlled = useCloseOnPointerDown()
   return (
     <Tooltip
       {...controlled}
-      title={<GearCompareCard row={row} data={data} />}
-      placement="right-start"
+      title={<GearComparePair row={row} data={data} />}
+      placement="bottom-start"
       disableInteractive
       enterDelay={350}
       enterNextDelay={350}
