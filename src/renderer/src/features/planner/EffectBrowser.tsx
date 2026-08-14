@@ -96,6 +96,10 @@ import {
   type BrowseFormMemory
 } from '../gear/areaMemory'
 import { useRemembered, useRememberedSearch } from '../gear/useAreaMemory'
+// JOS-344 — the donor names get the Gear tab's comparison pair. Same two hooks the Gear tab calls,
+// across the same seam the four lines above already cross; see `compare` in the component.
+import { ITEM_UPGRADE_BASE } from '@shared/itemUpgrade'
+import { useGearCompare, useGearIndex, type GearCompareData } from '../gear/gearData'
 
 // ---- the row pipeline ------------------------------------------------------------------
 
@@ -165,6 +169,8 @@ interface RowListProps {
   /** absent until the wish document has loaded — `DonorLineProps.onToggleWish` argues why */
   onToggleWish?: (donor: DonorRow, wished: boolean) => void
   onOpenLoot?: (item: string) => void
+  /** the comparison seam behind the donor-name hover (JOS-344) — a STABLE object, see below */
+  compare: GearCompareData
 }
 
 /**
@@ -191,7 +197,7 @@ function emptyText(ready: boolean, hidden: HiddenByView, item: string | null): s
 
 /** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
 function RowList(props: RowListProps): JSX.Element {
-  const { rows, win, planClasses, wished, ready, hidden, item, onToggle, onToggleWish, onOpenLoot } = props
+  const { rows, win, planClasses, wished, ready, hidden, item, onToggle, onToggleWish, onOpenLoot, compare } = props
   return (
     <>
       <Box sx={{ height: win.topPad }} />
@@ -209,6 +215,7 @@ function RowList(props: RowListProps): JSX.Element {
             namesSays={row.namesSays}
             onToggleWish={onToggleWish}
             onOpenLoot={onOpenLoot}
+            compare={compare}
           />
         )
       )}
@@ -351,6 +358,24 @@ export default function EffectBrowser({
   })
   const win = useWindowedRows({ count: rows.length, rowHeight: ROW_HEIGHT, scrollRef })
 
+  /**
+   * WHAT A HOVERED DONOR NAME IS COMPARED AGAINST (JOS-344) — the Gear tab's own two hooks, called
+   * here for the first time outside `features/gear`.
+   *
+   * THE COST IS TWO CACHED READS PER WINDOW AND NOTHING PER HOVER. `useGearIndex` is cached for the
+   * life of the window (one IPC, shared with the Gear tab, which is the tab next door in this same
+   * area), and `useGearCompare` re-asks `plannerInventory` once per mount and once per
+   * `inventory:autoReloaded`. Both maps are memos over data that moves only when the corpus arrives
+   * or the player re-exports; a hover costs one `Map.get`.
+   *
+   * AT BASE, ALWAYS. `ITEM_UPGRADE_BASE` is a module constant, so the memo inside `useGearCompare`
+   * is stable — and it is the honest state for this surface: the Gear tab has a plus-state slider
+   * and this browser has none, so the item card here states the numbers the corpus states and the
+   * card's "simulated at Tier N" line correctly never appears.
+   */
+  const gear = useGearIndex()
+  const compare = useGearCompare(gear.rows, ITEM_UPGRADE_BASE)
+
   // Toggling reads the CURRENT list rather than taking a functional update, because the stored
   // value is the source of truth and `useRemembered`'s setter writes what it is given — there is no
   // "previous state" the store has not already seen.
@@ -389,6 +414,7 @@ export default function EffectBrowser({
           onToggle={toggle}
           onToggleWish={onToggleWish}
           onOpenLoot={onOpenLoot}
+          compare={compare}
         />
       </Box>
     </Box>
