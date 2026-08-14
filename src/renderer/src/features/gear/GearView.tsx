@@ -91,6 +91,13 @@
 // TABLE, by `row.key`, which is `itemKey(name)`, which is `WishEntry.itemKey` (phase 3's seam, for
 // the third time).
 //
+// AND SINCE JOS-343 THE GESTURE GOES BOTH WAYS, AND IT IS THE EXALTATIONS CONTROL (owner ruling
+// 2026-08-13, one day after JOS-335 shipped a heart). The row's control is the donor row's — the
+// same component, `features/wishlist/WishToggle.tsx` — and a second click on a row already on the
+// list REMOVES the wish through `useWishlist.remove`, the Wish list tab's own deletion. Everything
+// the paragraph above says is still true; what changed is that this table now writes the document
+// in both directions instead of one, and `useGearWishes` is where both doors are.
+//
 // AND SINCE JOS-338 A ROW SAYS WHAT IT WOULD REPLACE. Phase 4 taught the table whether you OWN a
 // candidate; hovering one now opens a card with the item's numbers, what is in each CELL that item
 // would occupy (`useGearCompare`, over the `plannerInventory` seam — gearData.ts argues the choice),
@@ -101,9 +108,9 @@
 // MOUNTED HERE, ONCE, AND THAT IS SAFE FOR THE SAME REASON `PlannerView` SAYS IT IS: Gear,
 // Exaltations and Wish list are sibling tabs of one nav area and App renders exactly one view at a
 // time (appViews.ts), so two `useWishlist` mounts never coexist and cannot clobber each other's
-// writes. The corollary is what makes the lit state self-correcting — leaving this tab unmounts the
-// hook and coming back re-reads the document, so a wish removed on the Wish list tab is already
-// gone from this table's hearts before the first row is drawn.
+// writes. The corollary is what makes the added state self-correcting — leaving this tab unmounts
+// the hook and coming back re-reads the document, so a wish removed on the Wish list tab is already
+// gone from this table's controls before the first row is drawn.
 //
 // AND SINCE JOS-302 THE FIRST TOOLBAR ROW NARROWS HARDER, in three ways the pipeline above did not
 // change one line for. The CLASS picks remove rows instead of chipping them (the owner's ruling —
@@ -355,35 +362,48 @@ function CountLine({
 }
 
 /**
- * THE WISH JOIN (JOS-335), and both halves of it are one line each because the seam was already
- * there.
+ * THE WISH JOIN (JOS-335, made a toggle by JOS-343), and every half of it is one line because the
+ * seam was already there.
  *
- * `wished` is keyed on `WishEntry.itemKey`, which is `row.key`; `onWish` builds the entry through
- * `wishFromGear` — the SAME builder the wish list's own add control uses for a gear hit
+ * `wished` is keyed on `WishEntry.itemKey`, which is `row.key`; the ADD half builds the entry
+ * through `wishFromGear` — the SAME builder the wish list's own add control uses for a gear hit
  * (wishSearch.ts) — so a wish written from this table and one written from that popover are the
- * same bytes, `source: 'user'` included. `wishlist.add` is a stable callback, so the row handler is
- * stable too and `GearLine`'s memo survives a keystroke.
+ * same bytes, `source: 'user'` included.
  *
- * `onWish` IS UNDEFINED UNTIL THE DOCUMENT HAS LOADED, which is the absent-not-disabled rule
- * arriving at its one real case here (`GearTableProps.onWish` argues it): before `ready` the empty
- * list is a default rather than an answer, and a heart drawn unlit over an item that IS wished
- * would be the app contradicting its own store.
+ * AND THE REMOVE HALF IS `wishlist.remove`, WHICH IS NOT A SECOND DELETION (owner ruling
+ * 2026-08-13). It is the identical call `WishlistView` hands its per-row remove button — one
+ * `removeWish` fold over the character's document, one IPC write, one shape. A row that came off
+ * here is off there the moment that tab is opened, for the reason the header states: the tabs are
+ * siblings, so entering one re-reads the store.
+ *
+ * THE HANDLER TAKES THE ROW'S DRAWN STATE rather than consulting `wished`, and that is what keeps
+ * it a STABLE callback: `add` and `remove` are stable, `wished` is a fresh Set on every edit, and a
+ * handler depending on the set would re-render the whole mounted screenful on every click.
+ *
+ * IT IS UNDEFINED UNTIL THE DOCUMENT HAS LOADED, which is the absent-not-disabled rule arriving at
+ * its one real case here (`GearTableProps.onToggleWish` argues it): before `ready` the empty list is
+ * a default rather than an answer, and a control drawn unadded over an item that IS wished would be
+ * the app contradicting its own store — and now it would also offer the wrong ACTION.
  *
  * A HOOK RATHER THAN FIVE LINES IN THE VIEW, for the ordinary reason: the component is at the
  * measured 100-code-line function ceiling and this is a self-contained join with one output.
  */
-function useGearWishes(): { wished: ReadonlySet<string>; onWish?: (row: GearRow) => void } {
+function useGearWishes(): {
+  wished: ReadonlySet<string>
+  onToggleWish?: (row: GearRow, wished: boolean) => void
+} {
   const wishlist = useWishlist()
   const entries = wishlist.list.entries
   const wished = useMemo(() => new Set(entries.map((e) => e.itemKey)), [entries])
-  const add = wishlist.add
-  const onWish = useCallback(
-    (row: GearRow) => {
-      add(wishFromGear(row, Date.now()))
+  const { add, remove } = wishlist
+  const onToggleWish = useCallback(
+    (row: GearRow, wasWished: boolean) => {
+      if (wasWished) remove(row.key)
+      else add(wishFromGear(row, Date.now()))
     },
-    [add]
+    [add, remove]
   )
-  return { wished, onWish: wishlist.ready ? onWish : undefined }
+  return { wished, onToggleWish: wishlist.ready ? onToggleWish : undefined }
 }
 
 export interface GearViewProps {
@@ -522,10 +542,10 @@ export default function GearView({ onOpenLoot }: GearViewProps = {}): JSX.Elemen
           // sorted column, clicking the header that took over must FLIP it rather than re-open it.
           onSort={(key) => setSort(nextSort(table.sort, key))}
           onOpenLoot={onOpenLoot}
-          // JOS-335 — the per-row wish gesture and the lit state it reads. `onWish` is UNDEFINED
-          // until the document has loaded (`useGearWishes`), which is what draws no control at all
-          // rather than one that would be lying about what is already on the list.
-          onWish={wishes.onWish}
+          // JOS-335, JOS-343 — the per-row wish gesture (add, and click again to remove) and the
+          // added state it reads. UNDEFINED until the document has loaded (`useGearWishes`), which
+          // is what draws no control at all rather than one lying about what is already on the list.
+          onToggleWish={wishes.onToggleWish}
           wished={wishes.wished}
           // JOS-338 — hovering a row opens the comparison card. Passed always: the card is useful
           // with no dump at all (the item half plus the command that fills the other half), and

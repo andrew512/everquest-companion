@@ -29,8 +29,9 @@
 // was always about, and the guarantee is structural rather than a promise — the card is mounted
 // through ONE wrapper (`GearCompareCard.tsx`'s `GearRowCompare`) that always opens it beside the
 // row, never above it, with no pointer events at all and a capture-phase pointerdown close. Every
-// OTHER explanation in this file is still a native `title`, including the two on the wish heart:
-// a caption is not a card, and nothing else here grows a popper.
+// OTHER explanation in this file is still a native `title`, including both of the wish control's
+// (JOS-343 kept them native when it took the heart away): a caption is not a card, and nothing else
+// here grows a popper.
 //
 // AND SINCE JOS-297 THE COLUMN SET CAN BE WIDER THAN THE PANE. Nothing above changes: the table is
 // still `tableLayout: fixed`, the row is still exactly `ROW_HEIGHT` tall with one clipped line per
@@ -46,12 +47,26 @@
 // at the wish list). This restores the parity: same door (`useWishlist`), same document, same
 // dedupe. What it deliberately does NOT restore is a COLUMN — the control shares the item name's
 // cell exactly as the `+` did, because `gearTableLayout` states the width of every other column and
-// a new one would be a change to the layout contract for a 22px button. See `WishButton`.
+// a new one would be a change to the layout contract for one small control.
+//
+// …AND SINCE JOS-343 THAT GESTURE IS THE DONOR ROW'S CONTROL, WORD FOR WORD, AND IT TOGGLES (owner
+// ruling 2026-08-13, one day after the heart shipped). Two JOS-335 arguments were overruled and
+// both used to be argued at length right here, so both are named rather than quietly deleted:
+//
+//   * THE HEART. JOS-335 chose an ICON over the donor row's text button and the case was WIDTH —
+//     `tableLayout: fixed`, a name column with no stated width to spare, 6,766 rows. The owner
+//     overruled it for PARITY: the two surfaces are one feature and a reader should not have to
+//     learn it twice. The width was a real measurement, not an excuse, so it is answered rather
+//     than dropped — the shared control takes a `compact` wording for this table, and
+//     `tests/e2e/gearWishSteps.mts` measures what it leaves the item name in the browser.
+//   * THE LIT NO-OP. A lit heart accepted clicks and did nothing, on the reasoning that `addWish`
+//     dedupes so the model was the enforcement. Overruled: the second click REMOVES, through
+//     `useWishlist.remove` — the same entry delete the Wish list tab's own per-row remove calls.
+//
+// The control itself is `features/wishlist/WishToggle.tsx` now; nothing about it is decided here.
 
 import { type JSX, memo, useMemo } from 'react'
-import { IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
-import FavoriteIcon from '@mui/icons-material/Favorite'
-import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder'
+import { Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName } from '../planner/PlannerChips'
@@ -62,6 +77,8 @@ import { GearRowCompare } from './GearCompareCard'
 import type { GearCompareData } from './gearData'
 import { sortValue, type GearSort, type GearSortKey } from './gearFilter'
 import { ownedCellText, ownedCellTitle, ownershipFor, type GearOwnershipMap } from './gearOwnership'
+// JOS-343 — the ONE wish control in the app, shared with the Exaltations donor row by owner ruling.
+import WishToggle from '../wishlist/WishToggle'
 import type { ClassAbbr } from '@shared/classCombo'
 
 /** Dense row height (px), MUI `size="small"` — the number the windowing hook is handed. */
@@ -122,20 +139,25 @@ export interface GearTableProps {
    */
   onOpenLoot?: (item: string) => void
   /**
-   * PUT THIS ROW ON THE WISH LIST (JOS-335) — the second per-row action, and the one the general
-   * rule above was waiting for.
+   * PUT THIS ROW ON THE WISH LIST, OR TAKE IT OFF (JOS-335, made a toggle by JOS-343) — the second
+   * per-row action, and the one the general rule above was waiting for.
+   *
+   * IT TAKES THE STATE THE ROW WAS DRAWN IN, which is what keeps the handler STABLE: the host's
+   * wished set is rebuilt on every edit, so a callback that read the set instead would change
+   * identity on every click and defeat `GearLine`'s `memo` for the whole screenful.
    *
    * ABSENT, NEVER DISABLED, when the host has no wish list to write to. That is the same house rule
    * `onOpenLoot` applies one prop up, and here it covers exactly one case: the wish document has not
-   * loaded yet, so `wished` would be a GUESS rather than a fact and a lit state read off an empty
+   * loaded yet, so `wished` would be a GUESS rather than a fact and an added state read off an empty
    * list would be a lie about what is already on it. A button that appears a beat late is honest; a
    * button that says "not wished" about an item that is, is not.
    */
-  onWish?: (row: GearRow) => void
+  onToggleWish?: (row: GearRow, wished: boolean) => void
   /**
-   * The item keys already on the wish list — the lit state, and the reason a second click on the
-   * same row is nothing. Keys are `itemKey(name)`, which IS `row.key`: the corpus join key this
-   * whole table is built on, so the membership test is one `Set.has` per rendered row.
+   * The item keys already on the wish list — the added state, and since JOS-343 the reason a second
+   * click on the same row REMOVES rather than doing nothing. Keys are `itemKey(name)`, which IS
+   * `row.key`: the corpus join key this whole table is built on, so the membership test is one
+   * `Set.has` per rendered row.
    */
   wished: ReadonlySet<string>
   /**
@@ -152,54 +174,38 @@ export interface GearTableProps {
 }
 
 /**
- * ADD TO THE WISH LIST, FROM A SEARCH ROW (JOS-335) — the Exaltations donor row's control, shrunk
- * to what a dense table can carry.
+ * ADD TO THE WISH LIST FROM A SEARCH ROW, AND TAKE IT BACK OFF (JOS-335, re-shaped by JOS-343) —
+ * the Exaltations donor row's control, in the same component, wearing the short wording.
  *
- * WHAT IT SHARES WITH `EffectRows.AddButton`, which is everything that matters: one click, the same
- * `useWishlist` door, the same `WishEntry` dedupe by `itemKey`, no dialog and no menu, and a state
- * that says on sight whether the item is already wanted.
+ * THE HEART THAT USED TO BE HERE IS GONE, and the argument that put it here is overruled rather
+ * than merely outvoted, so it is written down at the top of this file instead of in this comment.
+ * The short version: JOS-335 traded parity for width; the owner traded it back the next day and
+ * asked that the width be handled honestly instead of used as the reason.
  *
- * WHAT IT CANNOT SHARE IS THE WORDS. That button is a 96px text button reading "Add to wish list" /
- * "Wished" on a 44px browse row whose name column is free to shrink. This table is `tableLayout:
- * fixed` at `ROW_HEIGHT` 37 with a stated width for every column but the name, so a text button in
- * the name cell would take ~100px of it off every one of 6,766 rows, permanently, to say a thing the
- * lit icon says. The icon is the wish list's OWN mark (`WishlistView`'s empty state draws the same
- * heart), so the two surfaces still read as one feature.
- *
- * IT STAYS ENABLED WHEN IT IS LIT, and that is a deliberate divergence from the donor row rather
- * than an omission. Two reasons, and they point the same way. The ticket's own rule is that adding
- * an item that is already wished is a NO-OP — which is what `addWish` does on its own (same list
- * object back, no write, no re-render), so the model is the enforcement and the button does not
- * have to be. And this control explains itself only through its native `title` (JOS-143: no popper
- * anywhere in this table), which Chromium never shows for a disabled control — disabling it would
- * take the lit state's explanation away at exactly the moment there is something to explain.
+ * SO WHAT IS LEFT HERE IS THE ONE THING THIS SURFACE STILL DECIDES: `compact`. `WishToggle` states
+ * both wordings; the dense fixed-layout table asks for the short one because its name column is
+ * shared three ways (control, name, era chip) and is the only column in the table whose content
+ * actually runs out of room. The measurement that keeps that claim honest is a CHECK rather than a
+ * comment — `tests/e2e/gearWishSteps.mts` reads the control's box and the name column's in the real
+ * app and fails if the control is eating the column.
  */
 function WishButton({
   row,
   wished,
-  onWish
+  onToggleWish
 }: {
   row: GearRow
   wished: boolean
-  onWish: (row: GearRow) => void
+  onToggleWish: (row: GearRow, wished: boolean) => void
 }): JSX.Element {
   return (
-    <IconButton
-      size="small"
-      data-testid="gear-wish"
-      data-wished={wished ? 'true' : undefined}
-      color={wished ? 'success' : 'default'}
-      aria-label={wished ? `${row.name} is on your wish list` : `Add ${row.name} to your wish list`}
-      title={
-        wished
-          ? 'Already on your wish list. The Wish list tab is where it comes off.'
-          : 'Add to your wish list, where it joins the route grouped by where it drops.'
-      }
-      onClick={() => onWish(row)}
-      sx={{ flexShrink: 0, p: 0.25 }}
-    >
-      {wished ? <FavoriteIcon fontSize="inherit" /> : <FavoriteBorderIcon fontSize="inherit" />}
-    </IconButton>
+    <WishToggle
+      testId="gear-wish"
+      name={row.name}
+      wished={wished}
+      compact
+      onToggle={() => onToggleWish(row, wished)}
+    />
   )
 }
 
@@ -234,7 +240,7 @@ const GearLine = memo(function GearLine({
   wished: boolean
   /** the comparison seam (JOS-338); a STABLE object, or absent for a host with no dump seam */
   compare: GearCompareData | undefined
-  on: { openLoot?: (item: string) => void; wish?: (row: GearRow) => void }
+  on: { openLoot?: (item: string) => void; wish?: (row: GearRow, wished: boolean) => void }
 }): JSX.Element {
   // ONE MAP LOOKUP PER RENDERED ROW, and only for the screenful the window mounted. `row.key` is
   // already the ownership key — phase 3's seam — so there is nothing to normalise here.
@@ -244,14 +250,14 @@ const GearLine = memo(function GearLine({
     <TableRow hover data-testid="gear-row" data-item-key={row.key} sx={FIXED_ROW}>
       <TableCell>
         {/* THE `+` IS GONE FROM THIS CELL (JOS-325) — it put the row into the selected gear set, and
-            the sets are retired. WHAT STANDS IN ITS PLACE IS NOT IT (JOS-335): the heart writes a
-            wish, which is a document that outlives any pane, and it leads the cell for the reason
-            the `+` did — a control column down the left edge of the Item column is one target to
-            aim at, where a control after a variable-width name is a moving one. The `Stack` was
+            the sets are retired. WHAT STANDS IN ITS PLACE IS NOT IT (JOS-335, re-shaped by JOS-343):
+            a wish control, writing a document that outlives any pane, and it leads the cell for the
+            reason the `+` did — a control column down the left edge of the Item column is one target
+            to aim at, where a control after a variable-width name is a moving one. The `Stack` was
             always what let the name share this cell with the era chip, and the FIXED_ROW contract
             above is what keeps all three one clipped line rather than two. */}
         <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
-          {wish !== undefined && <WishButton row={row} wished={wished} onWish={wish} />}
+          {wish !== undefined && <WishButton row={row} wished={wished} onToggleWish={wish} />}
           <DonorName name={row.name} onOpen={on.openLoot} />
           {/* THE ONE CHIP A SEARCH ROW WEARS, and it is a POINTER rather than a verdict: the era
               join's (out of era / era?), which explains a row you can SEE.
@@ -329,7 +335,7 @@ export default function GearTable({
   ownedHint,
   onSort,
   onOpenLoot,
-  onWish,
+  onToggleWish,
   wished,
   compare
 }: GearTableProps): JSX.Element {
@@ -339,7 +345,7 @@ export default function GearTable({
   // `memo`'d and a fresh literal per render would defeat it on every keystroke. It held two until
   // JOS-325 retired the `+`, and holds two again since JOS-335 — which is exactly why it stayed an
   // object through the year it held one: the wrapper is what the memo depends on.
-  const handlers = useMemo(() => ({ openLoot: onOpenLoot, wish: onWish }), [onOpenLoot, onWish])
+  const handlers = useMemo(() => ({ openLoot: onOpenLoot, wish: onToggleWish }), [onOpenLoot, onToggleWish])
   return (
     <Table
       size="small"

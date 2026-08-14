@@ -20,8 +20,14 @@
 //
 // SO THE ADD BUTTON GOES SOMEWHERE ELSE, AND THAT IS THE WHOLE SEAM BETWEEN THE TWO TABS. A donor
 // row's action used to be "add to set" (which cell? replacing what?); it is now "add to wish list",
-// which is one click, cannot destroy anything, and is deduped by the item — so the browse answers
-// "what do I want" and the Wish list answers "and where do I go and get it".
+// which is one click and is deduped by the item — so the browse answers "what do I want" and the
+// Wish list answers "and where do I go and get it".
+//
+// …AND SINCE JOS-343 IT IS A TOGGLE, which retires the "cannot destroy anything" half of that
+// sentence rather than qualifying it (owner ruling 2026-08-13). A donor already on the list reads
+// REMOVE and a second click takes it off, through `useWishlist.remove` — the Wish list tab's own
+// deletion, not a second one. The control is now literally the same component the gear search row
+// draws (`features/wishlist/WishToggle.tsx`), which is the parity the ruling was about.
 //
 // THE EXALTPLANS STORE IS STILL ON DISK AND STILL SERVED. Nothing in this file reads it any more;
 // the wish list's one-time seed does, which is how the sockets somebody planned survive the board
@@ -139,9 +145,24 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
     () => new Set(wishlist.list.entries.map((e) => e.itemKey)),
     [wishlist.list]
   )
-  const addDonor = (donor: DonorRow): void => {
-    wishlist.add(wishFromDonor(donor, Date.now()))
+  // JOS-343 — ONE GESTURE, BOTH DIRECTIONS. The owner overruled the disabled-when-wished button on
+  // 2026-08-13: a second click on a donor already on the list TAKES IT OFF. The removal door is
+  // `useWishlist.remove`, which is the same `removeWish` fold WishlistView's own per-row remove
+  // calls — there is one deletion in this app and this is not a second copy of it.
+  //
+  // THE ROW HANDS BACK THE STATE IT WAS DRAWN IN rather than this closing over `wished`: the set is
+  // rebuilt on every edit, and a handler that depended on it would change identity on every click.
+  const toggleDonor = (donor: DonorRow, wasWished: boolean): void => {
+    if (wasWished) wishlist.remove(donor.key)
+    else wishlist.add(wishFromDonor(donor, Date.now()))
   }
+  // …AND NOTHING IS HANDED DOWN UNTIL THE DOCUMENT IS LOADED, which is the gear table's rule
+  // (JOS-335) arriving here because the toggle gave this tab the same reason to need it. Until
+  // `ready`, `wished` is an empty DEFAULT rather than an answer — a one-way add survived reading it
+  // wrong (the click was an add either way), a toggle does not: it would send the click the other
+  // way. The e2e caught it on this ticket's first run — a remounted browse offered an unadded
+  // control for a donor that was on the list, and the click removed the wish instead of adding one.
+  const donorToggle = wishlist.ready ? toggleDonor : undefined
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} data-testid="planner-view">
@@ -166,7 +187,7 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
       <EffectBrowser
         classes={classes.classes}
         wished={wished}
-        onAdd={addDonor}
+        onToggleWish={donorToggle}
         onOpenLoot={onOpenLoot}
       />
     </Box>
