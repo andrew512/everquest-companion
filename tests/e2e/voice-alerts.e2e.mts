@@ -55,6 +55,9 @@ import { launchOnFixture } from './logFixture.mjs'
 // because this spec is at its line budget, and here because this is the spec that owns the
 // throttle opt-out that preference overrides. See that file's header for why it is an e2e claim.
 import { stepAlwaysPlayAll } from './alwaysPlayAllSteps.mjs'
+// `{target}` from the PLAIN editor, on a live-tailed line (JOS-353) — next door for the same
+// line-budget reason, and here because §5 below is the declared-capture half of the same claim.
+import { stepTargetToken } from './targetTokenSteps.mjs'
 
 const VOICE_PANEL = '[data-testid="pref-voice"]'
 /** The RETIRED master switch. Asserted to be absent — see the header. */
@@ -563,6 +566,8 @@ async function main(): Promise<void> {
       // against a world it had already changed.
       await stepCaptureAlert(page, log)
       await stepCaptureHint(page)
+      // §6 after §5, same reasoning one step further: it stores a def and appends to the tail too.
+      await stepTargetToken(page, log)
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
