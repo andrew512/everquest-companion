@@ -34,8 +34,21 @@ import type { UpdateStatus } from './types'
 //
 // Manual "Check for updates" in Preferences always bypasses all of this.
 
+//   resume   : ~20s after the machine WAKES (JOS-307). A suspend freezes this process mid-poll,
+//              and whatever was left of a 4h timer is what the user comes back to — so a laptop
+//              that sleeps on the 3h55m mark can go a whole working day without a check while its
+//              chip cheerfully reports an age. Waking RE-ANCHORS the cadence instead of counting
+//              the sleep as a failure. Short, because the machine is demonstrably awake and the
+//              radio is the only thing still settling; jittered, because every install of a hobby
+//              app wakes at about the same time of day for exactly the reason the periodic jitter
+//              exists.
+
 /** Delay from launch to the FIRST check. */
 export const STARTUP_DELAY_MS = 45_000
+/** Delay from a machine WAKING to the re-anchored check (JOS-307). */
+export const RESUME_DELAY_MS = 20_000
+/** Extra uniform jitter [0, n) added to the resume delay. */
+export const RESUME_JITTER_MS = 20_000
 /** Extra uniform jitter [0, n) added to the startup delay. */
 export const STARTUP_JITTER_MS = 30_000
 /** Base spacing between background checks. */
@@ -65,10 +78,16 @@ function jitter(ms: number, rand: () => number): number {
  * exceeds CHECK_INTERVAL_MS * (1 + JITTER_FRACTION).
  */
 export function nextCheckDelayMs(
-  opts: { phase: 'startup' | 'periodic'; consecutiveFailures?: number },
+  opts: { phase: 'startup' | 'periodic' | 'resume'; consecutiveFailures?: number },
   rand: () => number = Math.random
 ): number {
   if (opts.phase === 'startup') return STARTUP_DELAY_MS + Math.round(rand() * STARTUP_JITTER_MS)
+  // A WAKE IGNORES THE BACKOFF ON PURPOSE (JOS-307). The failures that walked the backoff out were
+  // made by a machine that is no longer the machine we have: the radio has been re-associated and
+  // the very error that got us here (`ERR_NETWORK_IO_SUSPENDED`) is a statement about the suspend,
+  // not about the feed. One short check settles it; if the feed really is unhappy, that check
+  // fails and the backoff re-forms from `consecutiveFailures`, which this branch never resets.
+  if (opts.phase === 'resume') return RESUME_DELAY_MS + Math.round(rand() * RESUME_JITTER_MS)
   const fails = Math.max(0, Math.floor(opts.consecutiveFailures ?? 0))
   if (fails === 0) return jitter(CHECK_INTERVAL_MS, rand)
   // 15m, 30m, 1h, 2h, 4h, 4h, ... — capped at the healthy interval.
@@ -202,8 +221,16 @@ export function describeUpdateFailure(err: unknown): string {
 // process can decide whether it belongs in errors.log (and therefore in the fleet's error store)
 // or is somebody else's outage that must not be allowed to file one line per check.
 //
-// FOUR KINDS, AND THE ORDER THEY ARE ASKED IN IS THE DESIGN:
+// FIVE KINDS, AND THE ORDER THEY ARE ASKED IN IS THE DESIGN:
 //
+//   'suspended'   THE MACHINE WENT TO SLEEP UNDER AN IN-FLIGHT REQUEST (JOS-307). Asked FIRST,
+//                 because it is the one kind that is not a failure of anything: Chromium tears
+//                 down network IO on suspend and whatever was mid-flight rejects with
+//                 `net::ERR_NETWORK_IO_SUSPENDED`. MEASURED, and it is why this arm exists rather
+//                 than being imagined: 0.27.0 filed 12 of them on its FIRST DAY
+//                 (fingerprint 36e52c753767490b), every one of them classified 'other' and
+//                 therefore reported to the fleet as an unexplained update failure. Owner ruling
+//                 2026-08-14: a benign transient — retry on resume, never the error store.
 //   'http'        GitHub answered, and it answered 4xx/5xx. THE THING THAT MUST ALWAYS LAND.
 //                 A 403/429 is a throttle we can act on, a 404 means our feed is wrong, a 5xx is
 //                 an outage worth knowing the date of. `HttpError` (builder-util-runtime) carries
@@ -225,8 +252,25 @@ export function describeUpdateFailure(err: unknown): string {
 //                 A TLS/certificate failure is deliberately in here and not in 'unreachable': a
 //                 MITM proxy or an expired root is diagnosable and is not "the network is away".
 
-/** Which of the four kinds a failed check/download was. */
-export type UpdateFailureKind = 'http' | 'parse' | 'unreachable' | 'other'
+/** Which of the five kinds a failed check/download was. */
+export type UpdateFailureKind = 'suspended' | 'http' | 'parse' | 'unreachable' | 'other'
+
+/**
+ * THE SUSPEND CODES, and the list is short because only one of them has ever been MEASURED.
+ *
+ * `ERR_NETWORK_IO_SUSPENDED` is Chromium's own word for "this request died because the machine is
+ * going to sleep" — it is emitted by the network service as it tears down, and there is no other
+ * condition that produces it. The awaiting-sample law applies to everything that is NOT in this
+ * list: `ERR_ABORTED` was the obvious second candidate and is deliberately absent, because it also
+ * covers a request WE cancelled and a renderer navigating away, and a wrong entry here would
+ * silently stop reporting a real failure. A code that is not here falls through to the classifier's
+ * other arms and is REPORTED — the honest failure direction.
+ */
+export const SUSPENDED_ERROR_CODES = ['ERR_NETWORK_IO_SUSPENDED'] as const
+
+/** The same list as one word-bounded alternation — `net::ERR_X` matches on `ERR_X` because `:` is
+ *  not a word character, exactly like `UNREACHABLE_RE` below. */
+const SUSPENDED_RE = new RegExp(`\\b(?:${SUSPENDED_ERROR_CODES.join('|')})\\b`)
 
 /**
  * THE CODES THAT MEAN "THE REQUEST NEVER REACHED GITHUB", spelled out rather than pattern-matched.
@@ -286,6 +330,15 @@ const TRANSPORT_CODE_RE = /^[A-Z][A-Z0-9_]{1,31}$/
  * and is also what survives when the error has been stringified into a log line. Anything outside
  * 4xx/5xx reads as "no status": a 2xx/3xx does not arrive here, and a nonsense number is not a
  * status we are willing to state.
+ *
+ * AND THE THIRD SPELLING IS `HttpError: <status>` IN THE MESSAGE (JOS-307), which is what
+ * electron-updater's OWN wrappers leave behind. `newError` (electron-updater/out/error.js) builds a
+ * plain Error carrying an `ERR_UPDATER_*` code and INTERPOLATES the HttpError into the sentence, so
+ * the object no longer has `statusCode`, `code` no longer matches `HTTP_ERROR_…`, and a real answer
+ * from GitHub was reading as `other`. MEASURED: 0.26.0's
+ * `Cannot find latest-linux.yml in the latest release artifacts (… HttpError: 404` — 7 occurrences,
+ * fingerprint 2e535fdf79476239 — is a 404 on OUR feed (this app ships no Linux artifact) filed
+ * under a class that says we do not understand it. It is a 404, and now it says so.
  */
 export function updateHttpStatus(err: unknown): number | null {
   const e = err as { statusCode?: unknown; code?: unknown } | null | undefined
@@ -294,7 +347,11 @@ export function updateHttpStatus(err: unknown): number | null {
     return direct
   }
   const code = typeof e?.code === 'string' ? e.code : ''
-  const m = /\bHTTP_ERROR_(\d{3})\b/.exec(code) ?? /\bHTTP_ERROR_(\d{3})\b/.exec(failureText(err))
+  const text = failureText(err)
+  const m =
+    /\bHTTP_ERROR_(\d{3})\b/.exec(code) ??
+    /\bHTTP_ERROR_(\d{3})\b/.exec(text) ??
+    /\bHttpError:\s*(\d{3})\b/.exec(text)
   if (m === null) return null
   const status = Number(m[1])
   return status >= 400 && status <= 599 ? status : null
@@ -306,6 +363,21 @@ export function isHttpFailure(err: unknown): boolean {
   if (err == null) return false
   if (updateHttpStatus(err) !== null) return true
   return (err as { name?: unknown }).name === 'HttpError'
+}
+
+/**
+ * True when the request died because the MACHINE SUSPENDED (see `SUSPENDED_ERROR_CODES`).
+ *
+ * Both spellings are covered for the same reason `isUnreachableFailure` covers both: the code can
+ * arrive as a `code` property from one executor and inside the message from the other.
+ */
+export function isSuspendedFailure(err: unknown): boolean {
+  if (err == null) return false
+  const code = (err as { code?: unknown }).code
+  if (typeof code === 'string' && (SUSPENDED_ERROR_CODES as readonly string[]).includes(code)) {
+    return true
+  }
+  return SUSPENDED_RE.test(failureText(err))
 }
 
 /** True when the request never left the machine (see `UNREACHABLE_ERROR_CODES`). */
@@ -326,12 +398,18 @@ export function isUnreachableFailure(err: unknown): boolean {
 export function updateFailureCode(err: unknown): string | null {
   const code = (err as { code?: unknown } | null | undefined)?.code
   if (typeof code === 'string' && TRANSPORT_CODE_RE.test(code)) return code
-  return UNREACHABLE_RE.exec(failureText(err))?.[0] ?? null
+  const text = failureText(err)
+  return UNREACHABLE_RE.exec(text)?.[0] ?? SUSPENDED_RE.exec(text)?.[0] ?? null
 }
 
-/** Which of the four kinds this failure is. Asked in the order the block above argues. */
+/** Which of the five kinds this failure is. Asked in the order the block above argues. */
 export function classifyUpdateFailure(err: unknown): UpdateFailureKind {
   if (err == null) return 'other'
+  // FIRST, and the position is the point: a suspend is the one kind that is not a failure, so
+  // nothing else may claim it. Nothing else can, either — `ERR_NETWORK_IO_SUSPENDED` carries no
+  // status and is in neither the unreachable list nor the parse patterns — and asking it first
+  // means a future widening of those two cannot quietly start reporting sleeps again.
+  if (isSuspendedFailure(err)) return 'suspended'
   if (isHttpFailure(err)) return 'http'
   if (isFeedParseError(err)) return 'parse'
   if (isUnreachableFailure(err)) return 'unreachable'
@@ -486,5 +564,72 @@ export function updateChipState(status: UpdateStatus, currentVersion?: string): 
     case 'idle':
     default:
       return { kind: 'quiet', checkedAt, failed: false, disabled: status.disabled }
+  }
+}
+
+// ------------------------------------------------- WHAT THE CHIP SAYS OUT LOUD (JOS-307)
+//
+// THE LINE THAT WAS NOT TRUE. Until this ticket a failed check rendered CHARACTER FOR CHARACTER
+// like a successful one — `v0.26.0 · checked 2h ago` — with the failure admitted only in a native
+// `title` nobody hovers and in a Preferences panel nobody opens. The worst shape of it is the one
+// the user ASKED about: click the chip, the check fails, and the cooldown window then reads
+// `checked just now`, which is a sentence about a check that did not happen. GitHub issue 29 is a
+// user who watched that line for six versions.
+//
+// WHAT CHANGES IS THE WORDS, NOT THE VOLUME. The product rule stands and is not this ticket's to
+// move: the ONLY loud state is 'ready' — no badge, no red, no modal, no repeat. A failed check is
+// still not the user's problem. It is, however, a FACT, and the chip is where this app states
+// facts about itself. So the resting line says which of the two things happened, stays muted, and
+// stays one click from trying again. The detail (the message, the exact timestamp) is still
+// Preferences' job.
+//
+// `age` is passed IN rather than computed: `formatAge` is a renderer concern and this file is
+// imported by the main process. `null` means never checked.
+
+/** What the chip's muted line needs to know that `UpdateChipState` does not carry. */
+export interface UpdateChipLineCtx {
+  /** The INSTALLED version (`app.getVersion()`), or '' before it has been read. */
+  readonly version: string
+  /** `formatAge(checkedAt, now)`, or null when nothing has ever been checked. */
+  readonly age: string | null
+  /** A manual check is in flight right now. */
+  readonly busy: boolean
+  /** Inside the post-manual-check window (an answer this recent is still THE answer). */
+  readonly cooldown: boolean
+}
+
+/** The muted line's text, its hover title, and whether it is stating a failure. */
+export interface UpdateChipLine {
+  readonly label: string
+  readonly tip: string
+  /** True when the line is stating a failed check — the renderer's cue to lift it out of
+   *  `text.disabled`. Never a colour and never an icon: the caller decides how muted is muted. */
+  readonly failed: boolean
+}
+
+/**
+ * The ONE producer of the quiet/working line. Pure, so `tests/updateCadence.test.mts` can pin the
+ * sentence the user actually reads — which is the only artefact issue 29 ever produced.
+ */
+export function updateChipLine(ui: UpdateChipState, ctx: UpdateChipLineCtx): UpdateChipLine {
+  const vPrefix = ctx.version ? `v${ctx.version} · ` : ''
+  const failed = ui.kind === 'quiet' && ui.failed
+  const message = ui.kind === 'quiet' ? ui.message : undefined
+  const tip = failed
+    ? `Last check didn't complete${message ? ` - ${message}` : ''}. Click to try again.`
+    : 'Click to check for updates'
+
+  // Transient work speaks for itself, and a check in flight outranks whatever the last one said —
+  // including a failure, which the click is in the middle of retrying.
+  if (ui.kind === 'working') return { label: ui.label, tip, failed: false }
+  if (ctx.busy) return { label: 'Checking for updates…', tip, failed: false }
+  // THE FAILURE BRANCH COMES BEFORE THE COOLDOWN, and that ordering IS the fix: the cooldown's
+  // "up to date" and the age line are both claims that a check completed.
+  if (failed) return { label: `${vPrefix}update check failed`, tip, failed: true }
+  if (ctx.cooldown) return { label: `${vPrefix}up to date`, tip, failed: false }
+  return {
+    label: ctx.age === null ? `${vPrefix}not checked yet` : `${vPrefix}checked ${ctx.age}`,
+    tip,
+    failed: false
   }
 }

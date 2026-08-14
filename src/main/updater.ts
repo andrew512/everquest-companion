@@ -139,7 +139,7 @@
 // per-process and gives no cross-restart protection), rate limiting (jittered
 // backoff).
 
-import { app, ipcMain, type BrowserWindow } from 'electron'
+import { app, ipcMain, powerMonitor, type BrowserWindow } from 'electron'
 import electronUpdater from 'electron-updater'
 import { IPC } from '../shared/ipc'
 import type { UpdateChannel, UpdateStatus } from '../shared/types'
@@ -147,6 +147,7 @@ import {
   MAX_DOWNLOAD_ATTEMPTS,
   describeUpdateFailure,
   isStaleVersion,
+  isSuspendedFailure,
   nextCheckDelayMs,
   shouldRetryCheck
 } from '../shared/update'
@@ -293,19 +294,29 @@ function noteUpdate(step: 'check' | 'download' | 'apply', err?: unknown): void {
   recordEvent({ t: 'updateOutcome', step, ok: false, failureClass: classifyFailure(err) })
 }
 
-/** The two status sinks the electron-updater event handlers write through. */
+/** The status sinks the electron-updater event handlers write through. */
 interface StatusSinks {
   /** Record + broadcast a status. */
   push: (status: UpdateStatus) => void
   /** A check finished (whatever the verdict) — stamp + PERSIST the time, then push. */
   checkDone: (status: UpdateStatus) => void
+  /**
+   * A check DID NOT finish because the machine suspended (JOS-307) — re-anchor the cadence to a
+   * short post-wake delay. Deliberately NOT `checkDone`: stamping `lastCheckedAt` here would make
+   * the chip claim a check that never completed, which is the exact dishonesty this ticket is
+   * about at the other end of the same wire.
+   */
+  retryOnResume: () => void
 }
 
 /**
  * Wire up the electron-updater events. Lifted out of `initUpdater` for size only — every
  * handler below is unchanged, and they all read/write the module-level counters.
  */
-function registerUpdaterEvents(currentVersion: string, { push, checkDone }: StatusSinks): void {
+function registerUpdaterEvents(
+  currentVersion: string,
+  { push, checkDone, retryOnResume }: StatusSinks
+): void {
   autoUpdater.on('checking-for-update', () => push({ state: 'checking' }))
 
   autoUpdater.on('update-available', (info) => {
@@ -392,6 +403,29 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // we had a download in flight. Getting it wrong would put CDN failures in the check row.
     const step = downloading !== null ? 'download' : 'check'
     downloading = null
+    // A SUSPEND IS NOT A FAILED CHECK (JOS-307, owner ruling 2026-08-14). Chromium tears down
+    // network IO as the machine sleeps and whatever was in flight rejects with
+    // `ERR_NETWORK_IO_SUSPENDED`; treating that as a verdict was costing three separate lies at
+    // once — a fleet error report about a laptop's lid, a `consecutiveFailures` tick that walked
+    // the backoff out to four hours, and a `checkedAt` stamp for a check that never completed.
+    //
+    // FOUR THINGS HAPPEN, AND THE ONE THAT DOES NOT IS THE POINT:
+    //   * `logUpdateFailure` routes it (warn once per code per session, never the error store);
+    //   * `noteUpdate` still counts ONE bounded telemetry outcome, because the law that one
+    //     logical check produces exactly one of those is not this ticket's to bend;
+    //   * the resting status is re-pushed so the chip leaves 'checking' — carrying the OLD
+    //     `checkedAt`, which keeps ageing and is the honest thing for it to say;
+    //   * `consecutiveFailures` is NOT touched, and `checkDone` is NOT called.
+    // Clearing `checkInFlight` here is what marks the failure ACCOUNTED, so `runCheck`'s catch
+    // leaves it alone — the same handshake `checkDone` performs on every other path.
+    if (isSuspendedFailure(err)) {
+      logUpdateFailure(step, 'final', err, LOG_SINKS)
+      noteUpdate(step, err)
+      checkInFlight = false
+      push({ state: 'idle' })
+      retryOnResume()
+      return
+    }
     // JOS-211: an unreadable feed body is swallowed ONCE — no verdict, no telemetry, no
     // backoff tick, because one logical check must produce exactly one of each. `runCheck`
     // reads `retryPending` and goes round again; the second failure takes the path below.
@@ -515,7 +549,14 @@ export function initUpdater(
   autoUpdater.disableWebInstaller = true
   applyChannel(getUpdateChannel())
 
-  registerUpdaterEvents(currentVersion, { push, checkDone })
+  // `schedule` is a `const` further down and is only ever REACHED from a timer, an IPC call or an
+  // updater event — all of them after this function has finished running — so the arrow closing
+  // over it can never observe the temporal dead zone.
+  registerUpdaterEvents(currentVersion, {
+    push,
+    checkDone,
+    retryOnResume: () => schedule('resume')
+  })
 
   // renderer -> main: apply the downloaded update NOW.
   //
@@ -598,7 +639,16 @@ export function initUpdater(
         // UNACCOUNTED: an accounted one was already routed by the 'error' handler above, from the
         // same error, so logging here too would file every update failure twice.
         const unaccounted = checkInFlight && !retryPending
-        if (unaccounted && shouldRetryCheck(err, checkAttempts)) {
+        if (unaccounted && isSuspendedFailure(err)) {
+          // The SAME ruling as the event handler above, on the path where the event handler never
+          // ran. Spelled out rather than shared because the two differ in what they may touch:
+          // this one holds no `step` latch and can only ever be a check.
+          logUpdateFailure('check', 'final', err, LOG_SINKS)
+          noteUpdate('check', err)
+          checkInFlight = false
+          push({ state: 'idle' })
+          schedule('resume')
+        } else if (unaccounted && shouldRetryCheck(err, checkAttempts)) {
           logUpdateFailure('check', 'retrying', err, LOG_SINKS)
           retryPending = true
         } else if (unaccounted) {
@@ -616,7 +666,7 @@ export function initUpdater(
   }
 
   /** Self-rescheduling poll loop — a setInterval can't carry jitter or backoff. */
-  const schedule = (phase: 'startup' | 'periodic'): void => {
+  const schedule = (phase: 'startup' | 'periodic' | 'resume'): void => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       void runCheck(false).finally(() => schedule('periodic'))
@@ -633,6 +683,24 @@ export function initUpdater(
   })
 
   schedule('startup')
+
+  // THE OTHER HALF OF "RETRY ON RESUME" (JOS-307), and it is the half that covers the common case.
+  //
+  // The error handler above only learns about a suspend when a request happened to be IN FLIGHT as
+  // the machine went down — which is a few seconds out of every four hours, so most sleeps produce
+  // no error at all. What they DO produce is a frozen `setTimeout`: a machine that sleeps at the
+  // 3h55m mark wakes with five minutes left on paper, but Windows does not credit the sleep, so the
+  // remaining wait is the whole of what is left of a four-hour timer measured in a clock that
+  // stopped. A laptop that is closed every night therefore checks far less often than the cadence
+  // says it does, and the chip's "checked Nh ago" is the only place that shows it.
+  //
+  // Waking RE-ANCHORS the poll: ~20s (jittered) and then the ordinary cadence resumes from there.
+  // It is one extra feed request per wake — three plain github.com GETs, on a machine whose user
+  // has just sat down — against a poll that could otherwise sleep through a whole release.
+  // Registered here rather than in the composition root because it belongs to the cadence, and it
+  // is inside the packaged-only path for the same reason everything else here is.
+  powerMonitor.on('resume', () => schedule('resume'))
+
   app.on('will-quit', () => {
     if (timer) clearTimeout(timer)
     timer = null
