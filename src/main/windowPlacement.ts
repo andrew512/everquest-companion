@@ -49,6 +49,18 @@ function displayAreas(): DisplayArea[] {
   }
 }
 
+/**
+ * Every display's WORK AREA — the rectangles an overlay drag may snap its edges to (JOS-217).
+ *
+ * The work area rather than `bounds`, deliberately, and it is the same distinction displayFit.ts
+ * draws for a different reason: a window a user PARKS over the taskbar is a legitimate placement
+ * and is left alone, but a window the app is helping them line up should land beside the taskbar,
+ * not under it. Empty when there is no screen information, which makes the snap a no-op.
+ */
+export function displayWorkAreas(): Rect[] {
+  return displayAreas().map((d) => d.workArea)
+}
+
 /** The primary display's work area, or null when there is no screen information (see above). */
 function primaryWorkArea(): Rect | null {
   try {

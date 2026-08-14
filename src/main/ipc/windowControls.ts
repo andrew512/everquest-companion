@@ -9,6 +9,7 @@ import { logError } from '../errorLog'
 import { getFightSelection, setFightSelection } from '../fightSelection'
 import { getScopeSelection, setScopeSelection } from '../scopeSelection'
 import { getOverlayConfig, setOverlayConfig } from '../store'
+import { getOverlaySnap, setOverlaySnap } from '../storeOverlaySnap'
 import { noteCurrentView } from '../telemetry/errorReports'
 
 /** What the preload's `RendererErrorReport` puts on the wire. Every field is optional here
@@ -143,6 +144,15 @@ export function registerWindowIpc(): void {
     setOverlayIgnoreMouse(kind, ignore)
   })
   ipcMain.on(IPC.overlayClose, (_e, kind: OverlayKind) => setOverlayOpen(kind, false))
+
+  // ---- overlay snapping (JOS-217) ----
+  // The one preference behind `installOverlaySnap` (src/main/overlaySnapDrag.ts). It needs no
+  // apply step and no echo: the drag listener reads the store on every move, so flipping this
+  // switch takes effect on the very next drag of an already-open overlay. The patch is renderer
+  // input and is re-validated inside `setOverlaySnap` through the shared normalizer, so a
+  // hand-edited file and a renderer cannot disagree about what this setting is.
+  ipcMain.handle(IPC.overlaySnapGet, () => getOverlaySnap())
+  ipcMain.handle(IPC.overlaySnapSet, (_e, patch: unknown) => setOverlaySnap(patch))
 
   // ---- global fight selection (docs/plans/combat-overlay-parity.md P4) ----
   // A read for a surface that mounted after the last change, and a fire-and-forget write that

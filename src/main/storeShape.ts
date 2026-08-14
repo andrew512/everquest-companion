@@ -7,6 +7,7 @@
 
 import type { AlertDef, AlertPrefs, OverlayConfig, OverlayKind, ProgressState, UpdateChannel, VoicePrefs } from '../shared/types'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '../shared/presencePrefs'
+import type { OverlaySnapPrefs } from '../shared/overlaySnap'
 import type { TelemetryPrefs } from '../shared/telemetry'
 import type { PerfHudPrefs } from '../shared/perf'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
@@ -138,6 +139,14 @@ export interface StoreShape {
    * running / not focused. Two independent switches, defaults {true, false}.
    */
   overlayAutoHide?: OverlayAutoHidePrefs
+  /**
+   * OVERLAY SNAPPING (JOS-217; shared/overlaySnap.ts) — magnetize an overlay drag to the other
+   * windows and the screen edges. ABSENT MEANS OFF, which is exactly how every build before this
+   * one dragged, so it is another additive optional key on the carve-out above: no schema bump, no
+   * migration, `normalizeOverlaySnap` defaults every field. The accessors live in
+   * `storeOverlaySnap.ts` because store.ts is at the 400-code-line ceiling.
+   */
+  overlaySnap?: OverlaySnapPrefs
   /**
    * Usage-analytics prefs (schema migration 5→6; docs/plans/usage-analytics.md). Opt-OUT
    * (`enabled:true`) but `noticeShown:false` — the network gate requires BOTH — and no

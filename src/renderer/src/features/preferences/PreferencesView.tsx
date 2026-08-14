@@ -39,7 +39,8 @@
 //             pet's damage sits. Lives in ./CombatSection.tsx, descriptor and all.
 //   Overlays — when the floating meters get out of the way: hide them while EverQuest isn't
 //             running (on by default) and/or while it isn't the window you're in (off).
-//             Lives in ./OverlayAutoHideSetting.tsx.
+//             Lives in ./OverlayAutoHideSetting.tsx. Plus the opt-in drag magnetism (JOS-217,
+//             ./OverlaySnapSetting.tsx — OFF by default) and the celebration toast's controls.
 //   Graphics — the two compatibility switches for a machine whose graphics driver dislikes what
 //             this app draws: software rendering (next launch) and solid, non-transparent
 //             overlays (next overlay open). Lives in ./GraphicsSetting.tsx, descriptor and all.
@@ -92,6 +93,7 @@ import { combatSection } from './CombatSection'
 import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
 import { VoiceSetting } from './VoiceSetting'
 import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
+import { OverlaySnapSetting } from './OverlaySnapSetting'
 import { ToastSetting } from './ToastSetting'
 // Cursor ring: another descriptor that lives beside its own card, same ceiling, same answer.
 import { cursorRingSection } from './CursorRingSetting'
@@ -178,7 +180,8 @@ function voiceSection(): PrefSection {
 }
 
 /**
- * The floating overlays' auto-hide rules. Its own factory for the same reason `voiceSection` is
+ * The floating overlays' own rules: when they get out of the way, whether a drag snaps them into
+ * line (JOS-217), and the celebration toast. Its own factory for the same reason `voiceSection` is
  * one — `buildSections` sits against the 100-code-line ceiling — and, like that one, it depends
  * on none of buildSections' inputs.
  */
@@ -194,6 +197,13 @@ function overlaysSection(): PrefSection {
         keywords:
           'overlay overlays meter meters hide auto autohide show running focus focused unfocused alt tab background desktop game closed floating',
         content: <OverlayAutoHideSetting />
+      },
+      {
+        id: 'overlay-snap',
+        label: 'Snap overlays while dragging',
+        keywords:
+          'snap snapping magnet align alignment grid edge edges side abut stack line up lined tidy position drag move overlay overlays meter meters screen monitor match matching sizes equal',
+        content: <OverlaySnapSetting />
       },
       {
         id: 'toast',

@@ -57,6 +57,7 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     getGraphicsPrefs: answer('getGraphicsPrefs', { safeMode: 'auto', opaqueOverlays: 'auto' }),
     getGraphicsEnvironment: answer('getGraphicsEnvironment', { wine: false, auto: { safeMode: false, opaqueOverlays: false } }),
     getOverlayAutoHide: answer('getOverlayAutoHide', { hideWhenNotRunning: false, hideWhenUnfocused: true }),
+    getOverlaySnap: answer('getOverlaySnap', { enabled: true }),
     getOverlayState: answer('getOverlayState', { toast: true }),
     getToastConfig: answer('getToastConfig', { locked: false }),
     getBuffTrust: answer('getBuffTrust', { externals: ['Faelin'] }),
@@ -78,14 +79,16 @@ test('one read answers every card in the pane, and it snaps the text size to the
   const { reader, calls } = stubReader()
   const snap = await readPrefsSnapshot(reader)
 
-  // SIXTEEN reads, one batch. The number is not the claim; the claim is that the gate asks each
+  // SEVENTEEN reads, one batch. The number is not the claim; the claim is that the gate asks each
   // question exactly once, so a pane that mounts does not stampede the store.
-  assert.equal(calls(), 16, 'every read fires exactly once')
+  assert.equal(calls(), 17, 'every read fires exactly once')
 
   // A sample across the KINDS of value, because the defect was never boolean-only: two switches
   // that disagree with their defaults, a ladder stop, a slider pair, and two counts.
   assert.equal(snap.overlayAutoHide.hideWhenNotRunning, false)
   assert.equal(snap.overlayAutoHide.hideWhenUnfocused, true)
+  // Another switch whose stored value disagrees with its compiled-in default (JOS-217 ships OFF).
+  assert.equal(snap.overlaySnap.enabled, true)
   assert.equal(snap.uiScale, 1.1, 'the ladder value arrives snapped, so the cache cannot hold an off-rung number')
   assert.equal(snap.cursorRing.sizePx, 60)
   assert.equal(snap.alertCount, 3, 'a count, not the list - the Profiles caption is the only reader')
@@ -122,7 +125,7 @@ test('two mounts in one frame share ONE batch', async () => {
   resetPrefsSnapshotForTests()
   const { reader, calls } = stubReader()
   const [a, b] = await Promise.all([loadPrefsSnapshot(reader), loadPrefsSnapshot(reader)])
-  assert.equal(calls(), 16, 'not thirty-two')
+  assert.equal(calls(), 17, 'not thirty-four')
   assert.equal(a, b)
   resetPrefsSnapshotForTests()
 })
@@ -182,6 +185,7 @@ test('every Preferences card seeds from the gate, and none of them re-reads main
   const dir = new URL('../src/renderer/src/features/preferences/', import.meta.url)
   const cards = [
     'OverlayAutoHideSetting.tsx',
+    'OverlaySnapSetting.tsx',
     'GraphicsSetting.tsx',
     'CursorRingSetting.tsx',
     'PerfSetting.tsx',
