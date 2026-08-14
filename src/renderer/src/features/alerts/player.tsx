@@ -37,7 +37,7 @@ import type {
 } from '@shared/types'
 import { playSound } from './soundCache'
 import { currentVoicePrefs, loadVoicePrefs, speak, speechPlan } from '../../lib/speech'
-import { coalesceAudio } from './audioThrottle'
+import { audioIdentity, coalesceAudio, type AudioWindow } from './audioThrottle'
 import { previewDef } from './preview'
 
 // ---- shared, module-level alert state (so fireAppSignal works outside React) ----
@@ -47,11 +47,13 @@ let prefs: AlertPrefs = { globalVolume: 0.7, muted: false }
 const appCooldown = new Map<string, number>()
 const DEFAULT_COOLDOWN_MS = 2000
 /**
- * When the audio channel was last occupied (audioThrottle.ts). One cell for the whole app on
- * purpose: coalescing is CROSS-alert — three different alerts landing together is the case it
- * exists for — so a per-def cell would gate nothing that `cooldownMs` doesn't already gate.
+ * The audio channel's current occupancy — when it was last opened, and everything already heard
+ * inside that window (audioThrottle.ts). One cell for the whole app on purpose: coalescing is
+ * CROSS-alert — three different alerts landing together is the case it exists for — so a per-def
+ * cell would gate nothing that `cooldownMs` doesn't already gate. What makes it per-def-SAFE is
+ * that the window folds by what would be HEARD (JOS-347), not by which def said it.
  */
-let lastAudioMs: number | null = null
+let audioWindow: AudioWindow | null = null
 
 const subscribers = new Set<() => void>()
 /** Subscribe to defs/prefs changes (AlertsView re-reads after it saves). */
@@ -108,8 +110,17 @@ export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>):
   const voice = currentVoicePrefs()
   const plan = speechPlan(def, firing ?? null, prefs.muted)
   if (!plan.sound && !plan.speak) return
-  const gate = coalesceAudio(def, Date.now(), lastAudioMs, prefs.alwaysPlayAll === true)
-  lastAudioMs = gate.lastAudioMs
+  // The plan is resolved FIRST because the throttle folds by what would be heard, not by which
+  // def is speaking: two alerts pointed at one sound with nothing to say are one audio alert,
+  // and two alerts with different voice lines are two things to hear (JOS-347).
+  const gate = coalesceAudio(
+    def,
+    Date.now(),
+    audioWindow,
+    prefs.alwaysPlayAll === true,
+    audioIdentity(def, plan)
+  )
+  audioWindow = gate.window
   if (!gate.play) return
   const gain = effectiveVolume(def)
   const say = (): void => {

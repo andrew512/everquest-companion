@@ -15,11 +15,37 @@
 // out of. An `audio:'both'` alert is ONE occupancy, not two: its sound + queued utterance are a
 // single unit by design (voice-alerts D5), so charging it twice would let it silence itself.
 //
-// FIRST ARRIVAL WINS, and a suppressed firing does NOT extend the window. A rolling window would
-// let a steady stream of alerts mute the app indefinitely; a fixed one always reopens.
+// THE WINDOW COALESCES BY WHAT WOULD BE HEARD, NOT BY OCCUPANCY (JOS-347). It used to hold a
+// single timestamp, so the FIRST firing in a burst silenced every other firing in it whatever
+// they had to say. That is right for the case the rule was written for and wrong for the case
+// that reported it, and the difference is the whole cut:
+//   * THREE BUFFS FADING is three `wearsOff` alerts, and the suggestion builder gives every
+//     alert of one template the SAME pack sound with no speech — three firings that would be
+//     heard as the same 0.8 seconds of audio. Playing it three times says nothing the first
+//     playing did not. Still ONE audio alert, exactly as the owner asked.
+//   * A BARD'S FOUR TUYEN CHANTS resisting in one song pulse is four alerts the user
+//     deliberately gave four DIFFERENT voice lines, precisely so they could be told apart —
+//     and MEASURED against the owner's own log, a bard's songs all re-apply in the SAME
+//     six-second tick, so their resist lines arrive in one batch, in one delta, in one
+//     synchronous play loop. Under a timestamp window that is not a burst, it is a permanent
+//     mute: the earliest-created def is evaluated first, wins the channel every pulse, and the
+//     other three are never audible once. The reporter's words were "only the first alert is
+//     ever played, and it seems to play for any spell or song that I cast and gets resisted"
+//     (report 01KZZD3DF8V9XNFGQKGVB5562J) — which is what that mechanism sounds like from the
+//     outside, because the firings themselves were always correct.
+// So the window remembers the audible IDENTITIES already heard inside it (`audioIdentity` — the
+// pack sound that would play plus the words that would be spoken). A firing repeating one of
+// them is swallowed; a firing that would say something new is heard, ONCE, and joins the set.
+// Nothing repeats inside a window and nothing distinct is lost — the smear the throttle exists
+// to prevent is a stack of the SAME sound, and that is still exactly one sound.
+//
+// FIRST ARRIVAL OWNS THE CLOCK, and a suppressed firing does NOT extend the window. A rolling
+// window would let a steady stream of alerts mute the app indefinitely; a fixed one always
+// reopens. A firing that is heard for being distinct joins the set without moving `at`, so the
+// window it is heard in still expires when the one that opened it does.
 //
 // PURE, so the whole policy is node-tested with no DOM and no clock: the caller owns the
-// `lastAudioMs` cell and the `now` reading, this file owns the decision.
+// `AudioWindow` cell and the `now` reading, this file owns the decision.
 
 import type { AlertDef } from '@shared/types'
 
@@ -38,14 +64,60 @@ import type { AlertDef } from '@shared/types'
  */
 export const AUDIO_COALESCE_MS = 1500
 
+/**
+ * How many DISTINCT audible identities one window will hold before it stops admitting new ones.
+ *
+ * A backstop, not a policy: the window is 1.5 seconds wide and a firing has to say something no
+ * other firing in it said, so reaching eight means eight different things genuinely happened at
+ * once — at which point more audio carries less, which is the throttle's whole premise. It also
+ * bounds the cell, which is carried across firings by the caller.
+ */
+export const AUDIO_DISTINCT_CAP = 8
+
 /** The def fields the throttle reads. Any AlertDef satisfies it. */
-export type ThrottledDef = Pick<AlertDef, 'alwaysPlay'>
+export type ThrottledDef = Pick<AlertDef, 'alwaysPlay' | 'sound'>
+
+/**
+ * What a firing would actually be HEARD as, resolved by the caller (`speechPlan` has already
+ * decided both halves by the time the throttle is asked). `sound` is false when the plan is
+ * speech-only; `speak` is absent when nothing is spoken.
+ */
+export interface AudioPlanLike {
+  sound: boolean
+  speak?: string | null
+}
+
+/**
+ * THE IDENTITY OF WHAT WOULD BE HEARD — the pack sound that would play and the words that would
+ * be spoken, and nothing else.
+ *
+ * NOT the alert id, deliberately: two different alerts pointed at one sound with no speech are
+ * indistinguishable to the person in the room, and folding them is the owner's rule. NOT the
+ * alert NAME either — an unspoken name is not audio. The two halves are joined with a NUL, which
+ * can appear in no pack id, no sound id and no spoken phrase, so no pair of identities can
+ * collide by concatenation.
+ */
+export function audioIdentity(def: ThrottledDef, plan: AudioPlanLike): string {
+  const sound = plan.sound ? `${def.sound.packId}\u0000${def.sound.soundId}` : ''
+  return `${sound}\u0000${plan.speak ?? ''}`
+}
+
+/**
+ * The audio channel's occupancy: when the current window opened, and everything already heard
+ * inside it. `null` is an open channel.
+ */
+export interface AudioWindow {
+  /** when the window OPENED. It expires AUDIO_COALESCE_MS after this, never later. */
+  at: number
+  /** every audible identity already played inside it, oldest first. */
+  heard: readonly string[]
+}
 
 export interface ThrottleDecision {
   /** may this firing make a sound (and/or speak)? */
   play: boolean
-  /** the caller's new `lastAudioMs` cell — write it back verbatim. */
-  lastAudioMs: number | null
+  /** the caller's new window cell — write it back verbatim. */
+  window: AudioWindow | null
 }
 
 /**
@@ -65,16 +137,24 @@ export interface ThrottleDecision {
  * window is ever opened and none is ever consulted — the throttle is off, not loosened. It is
  * `false` by default at this signature too, so a caller that has not been taught about the
  * preference still gets the shipped behavior rather than a silent bypass.
+ *
+ * `heard` is what this firing would sound like (`audioIdentity`). It defaults to the empty
+ * identity so a caller that has not been taught about it gets the pre-JOS-347 behavior — one
+ * identity for everything, therefore one audio alert per window — rather than a silent bypass.
  */
 export function coalesceAudio(
   def: ThrottledDef,
   now: number,
-  lastAudioMs: number | null,
-  allAlwaysPlay = false
+  window: AudioWindow | null,
+  allAlwaysPlay = false,
+  heard = ''
 ): ThrottleDecision {
-  if (allAlwaysPlay || def.alwaysPlay === true) return { play: true, lastAudioMs }
-  if (lastAudioMs !== null && now - lastAudioMs < AUDIO_COALESCE_MS) {
-    return { play: false, lastAudioMs }
+  if (allAlwaysPlay || def.alwaysPlay === true) return { play: true, window }
+  if (window === null || now - window.at >= AUDIO_COALESCE_MS) {
+    return { play: true, window: { at: now, heard: [heard] } }
   }
-  return { play: true, lastAudioMs: now }
+  if (window.heard.includes(heard) || window.heard.length >= AUDIO_DISTINCT_CAP) {
+    return { play: false, window }
+  }
+  return { play: true, window: { at: window.at, heard: [...window.heard, heard] } }
 }
