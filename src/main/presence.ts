@@ -538,7 +538,7 @@ function handleWatcherGone(w: Worker, code: number | null): void {
   // deliberately left alone: a teardown is not evidence either way. The dead watcher's facts still
   // go, so nothing it said can be read back as its successor's.
   if (listeners.size === 0) {
-    restartCause('exited', code)
+    forgetWatcherFacts()
     return
   }
   // An exit while consumers remain is a real failure (the loop threw, or the native surface will
