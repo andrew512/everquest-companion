@@ -2,15 +2,14 @@
 
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
-import { logError } from '../errorLog'
 import {
   fetchPackSounds,
   fetchPreviewSound,
   fetchRegistry,
   findRegistryPack,
-  installPack,
   uninstallPack
 } from '../packRegistry'
+import { installPackWithRetry } from '../packInstallRun'
 import { isSafePackId } from '../security'
 import { getSoundData, listPacks } from '../sounds'
 import {
@@ -69,19 +68,23 @@ export function registerSoundsIpc(): void {
     const emit = (p: PackInstallProgress): void => {
       sendToMain(IPC.onPackProgress, p)
     }
-    try {
-      await installPack(pack, emit)
-      // INSTALLING IS HOW A DELETION IS TAKEN BACK (JOS-273). Clearing the stone here rather than
-      // in installPack keeps the pure installer pure, and covers the only path that matters: the
-      // registry browser, which is where the ruling says the user asks for the pack again.
-      clearPackRemoved(name)
-      return { ok: true as const }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      logError('main:packRegistry', { message: `install '${name}' failed`, err })
+    // RETRIED, ROUTED AND NAMED — all three by `installPackWithRetry` (JOS-307). This path used to
+    // have no retry at all while startup provisioning had one, and it filed `install '<name>'
+    // failed` with the cause dropped by `caughtFields`' outer-wins rule — which is why sixty-odd
+    // rows of that family across eight builds say nothing about what went wrong. The runner logs
+    // (warn while it will retry, error when it will not) and hands back the bounded cause; the only
+    // thing left here is what to do with the result.
+    const res = await installPackWithRetry(pack, emit)
+    if (!res.ok) {
+      const message = res.error ?? 'install failed'
       emit({ name, phase: 'error', message })
       return { ok: false as const, error: message }
     }
+    // INSTALLING IS HOW A DELETION IS TAKEN BACK (JOS-273). Clearing the stone here rather than
+    // in installPack keeps the pure installer pure, and covers the only path that matters: the
+    // registry browser, which is where the ruling says the user asks for the pack again.
+    clearPackRemoved(name)
+    return { ok: true as const }
   })
   ipcMain.handle(IPC.packsUninstall, (_e, name: string) => {
     const ok = uninstallPack(name)
