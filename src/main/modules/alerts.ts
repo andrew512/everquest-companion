@@ -66,15 +66,16 @@ import {
 // The pure field readers, split out of this file so it stays under its factoring ceiling — the
 // `where` matcher's two (`fieldText`, `spellCandidateNames`) and the firing payload's one
 // (`firingSpell`). Their arguments live with them in alertsFields.ts.
-import { fieldText, firingSpell, spellCandidateNames } from './alertsFields'
+import { fieldText, firingSpell, spellCandidateNames, withAutoCaptures } from './alertsFields'
 import { idKey } from '../log/parseCommon'
-import { MAX_CAPTURE_GROUPS, harvestCaptures } from '../../shared/alertCaptures'
+import { harvestCaptures } from '../../shared/alertCaptures'
 // `{target}` — the ONE token the app fills in without a declared capture group (JOS-353). The
 // table of which field of which kind names the entity, the sentinel rendering ('self' → "you"),
-// and the security argument for the exemption all live there; this file is the other enforcement
-// point and does exactly two things with it: compile the WANTED set from the def's own phrase, and
-// merge the resolved value UNDER the pattern's own captures.
-import { autoTokensWanted, resolveTarget, type AutoTokenName } from '../../shared/alertTargets'
+// and the security argument for the exemption all live in shared/alertTargets.ts; this file is the
+// other enforcement point and does exactly two things with it: compile the WANTED set from the
+// def's own phrase, and merge the resolved value UNDER the pattern's own captures
+// (`withAutoCaptures`, which lives beside the other pure field readers in alertsFields.ts).
+import { autoTokensWanted, type AutoTokenName } from '../../shared/alertTargets'
 import type { BuffTimerRow } from '../../shared/buffTimers'
 import {
   breakProbes,
@@ -476,35 +477,6 @@ function compileAlert(def: AlertDef): CompiledAlert {
     }
   }
   return { def, composite: 'single', conditions: [compileCondition(t)], breakKinds, autoTokens }
-}
-
-/**
- * The captures a firing carries: what the def's own pattern named, plus the auto tokens its phrase
- * asked for (JOS-353) — and the pattern ALWAYS WINS.
- *
- * A def that declared `(?<target>…)` is a def whose author said what they meant that word to be,
- * and control 4 of the threat model is that a declaration is readable off the pattern. So the
- * derived value fills a HOLE and never overwrites one; a user who wants the parser's answer simply
- * does not name a group `target`.
- *
- * MAX_CAPTURE_GROUPS still bounds the map. A pattern that already named eight things has spent the
- * budget, and the auto token renders literally rather than pushing the payload past the cap — the
- * same visible degradation `harvestCaptures` chose for the ninth named group.
- */
-function withAutoCaptures(
-  captures: Record<string, string> | undefined,
-  autoTokens: readonly AutoTokenName[],
-  ev: LogEvent
-): Record<string, string> | undefined {
-  if (autoTokens.length === 0) return captures
-  let out = captures
-  for (const name of autoTokens) {
-    if (out && (name in out || Object.keys(out).length >= MAX_CAPTURE_GROUPS)) continue
-    const value = name === 'target' ? resolveTarget(ev) : null
-    if (value === null) continue
-    out = { ...(out ?? {}), [name]: value }
-  }
-  return out
 }
 
 export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {

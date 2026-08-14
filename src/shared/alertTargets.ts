@@ -207,7 +207,9 @@ export function resolveTarget(ev: LogEvent): string | null {
   if (!spec) return null
   const raw = (ev as unknown as Record<string, unknown>)[spec.field]
   const text = typeof raw === 'string' ? raw.trim() : ''
-  const value = text || spec.absent || ''
+  // `||` on the left, deliberately: an EMPTY field is as absent as a missing one, and the fallback
+  // has to answer for both. `??` would let a whitespace-only target win over the stated meaning.
+  const value = text || (spec.absent ?? '')
   if (!value) return null
   // Sanitize AFTER the sentinel read, so a sentinel is matched against exactly what the parser
   // wrote, and BEFORE anything can speak it — this is the boundary alertCaptures.ts's control 1
