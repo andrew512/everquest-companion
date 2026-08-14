@@ -16,6 +16,7 @@
 // runtime dependency to anything that reads it.
 
 import type { ComboProgress } from './classCombo'
+import type { ItemCountOverride } from './itemOverrides'
 import type { InventorySource } from './outputs/baseline'
 import type { ExaltPlan } from './planner/types'
 import type { GearSet } from './planner/gearSet'
@@ -37,8 +38,15 @@ export type HeldCounts = Record<string, number>
  * - 'both'      : `max(log, dump)` per item — whichever witness can vouch for more copies. A
  *                 maximum and not a sum, because the two OVERLAP: an item you looted and still
  *                 hold is in both.
+ * - 'rebaseline': THE FOURTH MODE (JOS-186, owner ruling 2026-08-14) — the dump is your STARTING
+ *                 POINT and the log is trusted only FORWARD from the instant it was generated.
+ *                 Every log line older than the dump is discarded for counting; every drop after
+ *                 it adds. This is the one source that can LOWER a count from log evidence, and it
+ *                 is opt-in for exactly that reason: it is JOS-128's reverted reset offered as a
+ *                 CHOICE rather than imposed as the default, so the banked items a closed bank
+ *                 window kept out of the file are the user's own accepted cost, not a surprise.
  * The combination and the turn-in consumption that follows it live in ONE place,
- * renderer/features/inventory/reconcile.ts, which argues both.
+ * renderer/features/inventory/reconcile.ts, which argues all four.
  *
  * THE DEFAULT IS `both` SINCE JOS-294, and it used to be `log` — which meant a player who ran
  * `/outputfile inventory`, and whose dump this app loaded by itself, was counted by a source that
@@ -46,7 +54,7 @@ export type HeldCounts = Record<string, number>
  * flip changes NOTHING for an install with no dump all live in
  * renderer/features/inventory/countSource.ts.
  */
-export type CountSource = 'log' | 'inventory' | 'both'
+export type CountSource = 'log' | 'inventory' | 'both' | 'rebaseline'
 
 /** Persisted user progress (inventory + quest completion). */
 export interface ProgressState {
@@ -84,6 +92,18 @@ export interface ProgressState {
   questTurnIns?: Record<string, number[]>
   /** metadata about the last inventory load */
   inventorySource?: InventorySource
+  /**
+   * HAND-STATED HELD COUNTS (JOS-186) — the escape hatch for an item the witnesses cannot see the
+   * truth about: one destroyed, given away, or otherwise gone in a way no log line and no dump
+   * records. One statement per counting key, each carrying the instant it was made, because loot
+   * after a statement still counts forward (`shared/itemOverrides.ts` argues the whole model, and
+   * `renderer/features/inventory/reconcile.ts` applies it).
+   *
+   * ADDITIVE and OPTIONAL — no schema bump and no migration, the `exaltPlans` precedent exactly:
+   * every reader defaults on a missing key, so a store written by any older build loads unchanged
+   * and one written here still opens in a build that predates the override.
+   */
+  itemOverrides?: ItemCountOverride[]
   /**
    * Class-combo user corrections (docs/plans/class-combo-inference.md § 7). Character-scoped,
    * because a loadout is. This is the ONLY durable combo state: intervals are re-derived from

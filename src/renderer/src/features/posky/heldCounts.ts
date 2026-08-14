@@ -33,15 +33,63 @@ import { itemCountKey } from '../../lib/itemName'
  * for a window. The log is the record; it only grows.
  */
 export function computeHeldCounts(lootHistory: readonly LootEvent[]): Record<string, number> {
+  return foldHeld(lootHistory, () => true)
+}
+
+/**
+ * The fold, with a window on it. ONE implementation so the disposition rule above cannot be stated
+ * twice and drift: a windowed count is the same count over fewer rows, never a second opinion about
+ * what "held" means.
+ */
+function foldHeld(
+  lootHistory: readonly LootEvent[],
+  keep: (e: LootEvent, key: string) => boolean
+): Record<string, number> {
   const c: Record<string, number> = {}
   for (const e of lootHistory) {
     if (e.disposition === 'sold' || e.disposition === 'combined') continue
     // Fold +N variants onto the base counting key (Task #42): `Sphinx Claw` and
     // `Sphinx Claw +1` are two of the same held item for quest purposes.
     const k = itemCountKey(e.item)
+    if (!keep(e, k)) continue
     c[k] = (c[k] ?? 0) + (e.count ?? 1)
   }
   return c
+}
+
+/**
+ * WHAT THE LOG HAS SEEN DROP SINCE AN INSTANT (JOS-186) — the forward half of a baseline.
+ *
+ * The `rebaseline` count source reads this: an inventory dump is an OBSERVATION of what you were
+ * holding when it was written, so the honest accumulation on top of it is the loot that arrived
+ * afterwards, and the log older than the dump is discarded rather than added (reconcile.ts argues
+ * the whole rule and states its cost). Strictly AFTER, because a dump's generation instant is
+ * floored to the second and a drop stamped in the same second is as likely to be inside the file
+ * as outside it — counting it would double an item the dump already reported.
+ *
+ * This is JOS-128's `since` window, returning as an OPT-IN mode rather than as the default it was
+ * reverted for being.
+ */
+export function computeHeldCountsAfter(
+  lootHistory: readonly LootEvent[],
+  after: number
+): Record<string, number> {
+  return foldHeld(lootHistory, (e) => e.ts > after)
+}
+
+/**
+ * The same window, PER KEY (JOS-186) — one instant for each item a hand-stated count speaks about.
+ *
+ * A hand-stated count is a statement about one item at one moment, so each key gets its own
+ * window and a key nobody has stated anything about contributes NOTHING: an absent entry means
+ * "no baseline here", which is why the default is `Infinity` rather than 0. The result therefore
+ * only ever mentions keys that carry a statement.
+ */
+export function computeHeldCountsAfterPerKey(
+  lootHistory: readonly LootEvent[],
+  afterByKey: Record<string, number>
+): Record<string, number> {
+  return foldHeld(lootHistory, (e, k) => e.ts > (afterByKey[k] ?? Infinity))
 }
 
 /**

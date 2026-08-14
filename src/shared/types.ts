@@ -813,6 +813,9 @@ export interface FeedReport {
 // SPLIT rather than to widen a threshold (windows.ts → windowErrors.ts, store.ts → storePlans.ts
 // are the precedents). Re-exported here so every importer keeps the door it already used.
 export type { CountSource, HeldCounts, PetClaimEdit, ProgressState, RosterEdit } from './progressState'
+// The hand-stated held count (JOS-186) lives in ./itemOverrides.ts with the rules that govern it,
+// and comes back through this door for the same reason the five names above do.
+export type { ItemCountOverride } from './itemOverrides'
 
 // ----- Cross-window deep link ("take me to this in the app", Task #64) -----
 //

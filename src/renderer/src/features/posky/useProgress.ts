@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   CountSource,
+  ItemCountOverride,
   LootDelta,
   LootEvent,
   LootSnap,
@@ -11,10 +12,15 @@ import type {
 } from '@shared/types'
 import { getPoskyData } from '../../data'
 import { itemCountKey, normalizeItemName } from '../../lib/itemName'
-import { computeHeldCounts, computeLastLootedAt } from './heldCounts'
+import {
+  computeHeldCounts,
+  computeHeldCountsAfter,
+  computeHeldCountsAfterPerKey,
+  computeLastLootedAt
+} from './heldCounts'
 import { useModule } from '../../lib/useModule'
 import { reconcile, type InventoryRow } from '../inventory/reconcile'
-import { COUNT_SOURCE_KEY, resolveCountSource } from '../inventory/countSource'
+import { COUNT_SOURCE_KEY, rebaselineInstant, resolveCountSource } from '../inventory/countSource'
 import { questKey } from './keys'
 import { ambiguousQuestNames, computeSharedItems, type SharedItemsMap } from './sharedItems'
 import { skyDroppersFor, type DropperMob } from './poskyDroppers'
@@ -29,6 +35,14 @@ import {
   type QuestTurnIns,
   type TurnInInstants
 } from '../../../../shared/questTurnIns'
+// The hand-stated held counts (JOS-186) — same deal, same relative-import rule: the fold that
+// turns a stored list into the counting path's inputs is shared with main's store, so the two
+// cannot disagree about what a statement is.
+import {
+  itemOverrideInstants,
+  itemOverridesByKey,
+  sanitizeItemOverrides
+} from '../../../../shared/itemOverrides'
 
 const applyLootDelta = (s: LootSnap, d: LootDelta): LootSnap => [...s, ...d.appended]
 const applyTurnInDelta = (s: TurnInSnap, d: TurnInDelta): TurnInSnap => [...s, ...d.appended]
@@ -91,10 +105,23 @@ export interface ItemProgress {
   droppers: DropperMob[]
   need: number
   have: number
+  /**
+   * What the app counts you as HOLDING of this item, UNCAPPED (JOS-186). `have` is that number
+   * clamped to `need` for the progress bar; this is the one the hand-correction control edits and
+   * pre-fills, because clamping it would turn "I hold seven" into "I hold five" the moment the
+   * user opened the box.
+   */
+  held: number
   stats?: string
   page?: string
   /** epoch ms this item last dropped (computeLastLootedAt); absent = never seen dropping. */
   lastLootedAt?: number
+  /**
+   * The hand-stated count in force for this item, when there is one (JOS-186). Present is what
+   * makes the correction VISIBLY manual on the row — the ticket's first design constraint — and it
+   * carries the instant, so the row can say when the statement was made.
+   */
+  override?: ItemCountOverride
 }
 
 export interface QuestProgress {
@@ -141,17 +168,30 @@ export interface QuestTurnInCounts {
   log: Record<string, number>
 }
 
+/**
+ * The per-item facts that are NOT the held count — recency and the hand statements. One bag rather
+ * than two more positional parameters, which is also what keeps this function inside the measured
+ * `max-params 4`.
+ */
+export interface QuestItemFacts {
+  /** counting key → epoch ms that item last dropped (`computeLastLootedAt`) */
+  lastLootedAt?: Record<string, number>
+  /** counting key → the hand-stated count in force (JOS-186) */
+  overrides?: Record<string, ItemCountOverride>
+}
+
 export function computeQuestProgress(
   quest: PoskyQuest,
   held: Record<string, number>,
   turnIns: QuestTurnInCounts,
-  lastLootedAt: Record<string, number> = {}
+  facts: QuestItemFacts = {}
 ): QuestProgress {
   const key = questKey(quest)
   const items: ItemProgress[] = quest.items.map((it) => {
     const need = it.count > 0 ? it.count : 1
     const countKey = itemCountKey(it.name)
-    const have = Math.min(need, held[countKey] ?? 0)
+    const holding = held[countKey] ?? 0
+    const have = Math.min(need, holding)
     return {
       name: it.name,
       who: it.who,
@@ -161,9 +201,11 @@ export function computeQuestProgress(
       droppers: skyDroppersFor(it.name, it.who),
       need,
       have,
+      held: holding,
       stats: it.stats,
       page: it.page,
-      lastLootedAt: lastLootedAt[countKey]
+      lastLootedAt: facts.lastLootedAt?.[countKey],
+      override: facts.overrides?.[countKey]
     }
   })
   const needCount = items.reduce((s, i) => s + i.need, 0)
@@ -211,6 +253,14 @@ export interface UseProgress {
    * says it does not apply.
    */
   undoTurnIn: (key: string) => Promise<void>
+  /**
+   * STATE ONE ITEM'S HELD COUNT BY HAND, or take the statement back with `count: null` (JOS-186).
+   * Takes the item's DISPLAY name — the counting key is this module's business, not a control's —
+   * and the statement is dated in main at the instant it lands.
+   */
+  setItemOverride: (name: string, count: number | null) => Promise<void>
+  /** Every statement in force, oldest first — what the tab's status line counts. */
+  itemOverrides: ItemCountOverride[]
   inventoryInfo: ProgressState['inventorySource']
   /** questKey → contested items (other quests sharing each required item). */
   sharedItems: SharedItemsMap
@@ -257,19 +307,37 @@ interface HeldItems {
  * covers what was open when it was written, so the reset was eating banked Sky items. The fold is
  * the all-time one again, and the combination rule (reconcile.ts) is fully additive.
  */
-function useHeldItems(
-  lootHistory: LootEvent[],
-  progress: ProgressState | null,
-  countSource: CountSource,
+function useHeldItems(x: {
+  lootHistory: LootEvent[]
+  progress: ProgressState | null
+  countSource: CountSource
   turnIns: QuestTurnIns
-): HeldItems {
+  /** the hand statements in force, already sanitized (JOS-186) */
+  overrides: ItemCountOverride[]
+}): HeldItems {
+  const { lootHistory, progress, countSource, turnIns, overrides } = x
   const logCounts = useMemo(() => computeHeldCounts(lootHistory), [lootHistory])
   const lootNames = useMemo(() => deriveLootNames(lootHistory), [lootHistory])
   // Per-item drop recency, same counting key as the held counts — the whole plumbing the
   // "most recent drop" sort needs, folded from the loot history that is already here.
   const lastLootedAt = useMemo(() => computeLastLootedAt(lootHistory), [lootHistory])
+  // THE TWO FORWARD WINDOWS (JOS-186). Each is the same loot fold over fewer rows: what has
+  // dropped since the dump was generated (only asked for under `rebaseline`, so an unused mode
+  // costs nothing), and what has dropped since each hand statement was made.
+  const rebaselineAt = rebaselineInstant(progress?.inventorySource)
+  const lootSinceRebaseline = useMemo(
+    () =>
+      countSource === 'rebaseline' && rebaselineAt !== null
+        ? computeHeldCountsAfter(lootHistory, rebaselineAt)
+        : {},
+    [lootHistory, countSource, rebaselineAt]
+  )
+  const lootSinceOverride = useMemo(
+    () => computeHeldCountsAfterPerKey(lootHistory, itemOverrideInstants(overrides)),
+    [lootHistory, overrides]
+  )
   // Reconcile held items (log + inventory), subtracting anything consumed by quests that have
-  // been turned in.
+  // been turned in, and letting a hand statement answer for the items it speaks about.
   const { net, rows: inventoryRows } = useMemo(
     () =>
       reconcile({
@@ -278,9 +346,24 @@ function useHeldItems(
         lootNames,
         countSource,
         turnIns: turnIns.all,
-        quests: posky.quests
+        turnInInstants: turnIns.instants,
+        quests: posky.quests,
+        overrides: itemOverridesByKey(overrides),
+        lootSinceOverride,
+        rebaselineAt,
+        lootSinceRebaseline
       }),
-    [logCounts, lootNames, progress, countSource, turnIns]
+    [
+      logCounts,
+      lootNames,
+      progress,
+      countSource,
+      turnIns,
+      overrides,
+      lootSinceOverride,
+      rebaselineAt,
+      lootSinceRebaseline
+    ]
   )
   return { net, inventoryRows, lastLootedAt }
 }
@@ -450,13 +533,41 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
     return res.error ?? 'Failed to load inventory'
   }, [])
 
-  const { net, inventoryRows, lastLootedAt } = useHeldItems(lootHistory, progress, countSource, turnIns)
+  // The statements in force, cleaned on the way out of the store the same way main cleans them on
+  // the way in. Memoized on the stored array so the two folds below (and the reconcile memo they
+  // feed) do not see a new list on every render.
+  const itemOverrides = useMemo(
+    () => sanitizeItemOverrides(progress?.itemOverrides),
+    [progress?.itemOverrides]
+  )
 
+  /**
+   * State (or take back) one item's held count. The counting key is derived HERE — a control hands
+   * over the name it drew, and `itemCountKey` is the same normalization the counts themselves are
+   * keyed by, so a statement about `Sphinx Claw +1` lands on the row that counts Sphinx Claws.
+   */
+  const setItemOverride = useCallback(
+    async (name: string, count: number | null): Promise<void> => {
+      setProgress(await window.eq.setItemOverride(itemCountKey(name), name, count))
+    },
+    []
+  )
+
+  const { net, inventoryRows, lastLootedAt } = useHeldItems({
+    lootHistory,
+    progress,
+    countSource,
+    turnIns,
+    overrides: itemOverrides
+  })
+
+  const overridesByKey = useMemo(() => itemOverridesByKey(itemOverrides), [itemOverrides])
   const quests = useMemo<QuestProgress[]>(() => {
     if (!progress) return []
     const counts = { all: turnIns.all, log: logCounts }
-    return posky.quests.map((q) => computeQuestProgress(q, net, counts, lastLootedAt))
-  }, [progress, net, lastLootedAt, turnIns, logCounts])
+    const facts = { lastLootedAt, overrides: overridesByKey }
+    return posky.quests.map((q) => computeQuestProgress(q, net, counts, facts))
+  }, [progress, net, lastLootedAt, turnIns, logCounts, overridesByKey])
 
   const classes = useMemo(() => [...new Set(posky.quests.map((q) => q.className))].sort(), [])
 
@@ -472,6 +583,8 @@ export function useProgress(opts?: UseProgressOptions): UseProgress {
     reloadInventory,
     recordTurnIn,
     undoTurnIn,
+    setItemOverride,
+    itemOverrides,
     inventoryInfo: progress?.inventorySource,
     sharedItems: sharedItemsMap,
     ambiguousQuestNames: ambiguousNames

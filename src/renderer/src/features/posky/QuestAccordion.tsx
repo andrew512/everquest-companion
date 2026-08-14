@@ -55,6 +55,7 @@ import { skyQuestPage, wikiPageUrl } from '@shared/wiki'
 import { TurnInBadge, TurnInCounter } from './TurnInControls'
 import type { QuestProgress } from './useProgress'
 import { ItemNameLink, QuestItemsTable } from './QuestItemsTable'
+import type { SetItemCount } from './ItemOverrides'
 import { KillTargetCaption } from './DropperCell'
 import { questKillTargets, type KillTarget } from './poskyDroppers'
 import { SkyItemCard } from './SkyItemCard'
@@ -369,6 +370,7 @@ function QuestAccordionRow({
   onSelectQuest,
   onOpenMob,
   onOpenLoot,
+  onSetItemCount,
   anchored = false
 }: {
   q: QuestProgress
@@ -390,6 +392,11 @@ function QuestAccordionRow({
   onOpenMob: (t: MobTarget) => void
   /** an item name → the Loot tab's drill-down for it (App-level routing, `openLoot`) */
   onOpenLoot?: (item: string) => void
+  /**
+   * State or clear one item's held count by hand (JOS-186). ONE stable reference from the list,
+   * taking the item name — the memo contract this block argues, same as the two turn-in actions.
+   */
+  onSetItemCount?: SetItemCount
   /**
    * A deep link landed on THIS quest (a celebration toast's reward card,
    * docs/plans/celebration-toasts.md T6): mount expanded and scroll into view.
@@ -467,6 +474,7 @@ function QuestAccordionRow({
           toggleFavorite={toggleFavorite}
           onOpenMob={onOpenMob}
           onOpenLoot={onOpenLoot}
+          onSetItemCount={onSetItemCount}
         />
       </AccordionDetails>
     </Accordion>

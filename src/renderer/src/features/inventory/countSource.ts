@@ -42,6 +42,20 @@
 // tab (QuestFilterBar) and the Loot ledger (LootChrome) off the same stored key, and they had
 // drifted into two hand-maintained copies of the same wrong sentence.
 
+// THE FOURTH SOURCE (JOS-186, owner ruling 2026-08-14). `rebaseline` is the reporter's own ask,
+// almost verbatim: *manually load/correct the record with loading the exported inventory, and then
+// have it only pay attention to the log changes going FORWARD*. Mechanically it is JOS-128's
+// reverted reset — the dump as a baseline, the log accumulating from the generation instant — and
+// the ONE thing that changes is consent: it is a fourth entry in this table rather than the
+// behaviour everybody gets. The arithmetic and the cost live in reconcile.ts beside the other
+// three; what lives here is the label, and the label has to state the cost, because a source that
+// can LOWER a count is the only one of the four that can hide an item you really own.
+//
+// IT NEEDS AN INSTANT TO ANCHOR TO, and that is `rebaselineInstant` at the bottom of this file.
+// With no dump — or with a dump this app could not date — there is no baseline, and the mode falls
+// back to `both` rather than to a baseline of zero (which would be the cost with none of the ask).
+
+import type { InventorySource } from '@shared/outputs/baseline'
 import type { CountSource } from '@shared/types'
 
 /** Where the pick is stored. One key, read by the Sky tab and the Loot ledger alike. */
@@ -57,7 +71,7 @@ export const COUNT_SOURCE_KEY = 'eq.countSource'
  */
 export const DEFAULT_COUNT_SOURCE: CountSource = 'both'
 
-const KNOWN: readonly string[] = ['log', 'inventory', 'both']
+const KNOWN: readonly string[] = ['log', 'inventory', 'both', 'rebaseline']
 
 /**
  * A stored pick, or the default. `null` (never chosen) and an unreadable value both mean "this user
@@ -98,6 +112,16 @@ export const COUNT_SOURCE_OPTIONS: readonly CountSourceOption[] = [
     value: 'both',
     label: 'Both (higher of the two)',
     phrase: 'the log and the inventory export, whichever holds more of each item'
+  },
+  {
+    // LAST, because it is the widening that goes the other way: the first three each ADD a witness,
+    // and this one throws evidence away on purpose. The label says both halves of what it does —
+    // where it starts, and what it discards — because it is the only option that can make a number
+    // go DOWN, and a player who lands on it by accident has to be able to read why their count fell.
+    value: 'rebaseline',
+    label: 'Rebaseline (export, then log forward)',
+    phrase:
+      'the inventory export as the starting point, plus everything looted since it was written - older log lines are discarded'
   }
 ]
 
@@ -116,3 +140,19 @@ export function countSourcePhrase(s: CountSource): string {
  * as offered — every option is always offered, which would make the gate a no-op.
  */
 export const countsFromInventory = (s: CountSource): boolean => s !== 'log'
+
+/**
+ * THE INSTANT A REBASELINE ANCHORS TO, or null when nothing can anchor one (JOS-186).
+ *
+ * `generatedAt` first — it is when the PLAYER dumped, which is the moment the file describes, and
+ * shared/outputs/baseline.ts spends its whole header establishing it from the log's own receipt or
+ * the file's mtime. `readAt` is the fallback and it is a LATER instant (when this app read the
+ * file), so falling back to it can only discard MORE log evidence, never less: the same direction
+ * of error the mode itself is chosen for, rather than a silent over-count.
+ *
+ * Null for a store that has never loaded a dump, and for one written before either field existed.
+ * Every caller treats null as "no baseline" — reconcile.ts then answers as `both`.
+ */
+export function rebaselineInstant(source: InventorySource | undefined): number | null {
+  return source?.generatedAt ?? source?.readAt ?? null
+}
