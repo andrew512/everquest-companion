@@ -54,12 +54,18 @@ const SEARCH = '[data-testid="posky-search"]'
 const COUNTS = '[data-testid="posky-counts"]'
 const ROW = '[data-testid="posky-quest-row"]'
 const SUMMARY = `${ROW} .MuiAccordionSummary-root`
-/** The item table row for the item under test — the only row in the app that names it. */
+/**
+ * The item table row for the item under test — the only row in the app that names it. `:has-text`
+ * is a PLAYWRIGHT selector engine, so it may be handed to `page.click`/`page.fill` and never to a
+ * `document.querySelector` inside `page.evaluate`; the two chips below are therefore named by their
+ * bare testid, which is unambiguous here because this spec narrows the list to one quest and states
+ * exactly one count.
+ */
 const ITEM_ROW = 'tr:has-text("Azarack Skin")'
 const EDIT = `${ITEM_ROW} [data-testid="posky-item-count-edit"]`
 const INPUT = `${ITEM_ROW} [data-testid="posky-item-count-input"] input`
 const SAVE = `${ITEM_ROW} [data-testid="posky-item-count-save"]`
-const CHIP = `${ITEM_ROW} [data-testid="posky-item-override"]`
+const CHIP = '[data-testid="posky-item-override"]'
 const CHIP_CLEAR = `${CHIP} .MuiChip-deleteIcon`
 const SUMMARY_CHIP = '[data-testid="posky-overrides-active"]'
 
@@ -76,16 +82,20 @@ function filteredCount(page: Page): Promise<number | null> {
 }
 
 /**
- * The `have/need` text in the item row's Have cell — read as the THIRD cell of the row that names
- * the item, because that is where the number lives whatever the control around it is doing. `null`
- * when the expanded panel is not mounted (a collapsed accordion draws nothing at all, JOS-206).
+ * The `have/need` NUMBER in the item row's Have cell — read as the third cell of the row that names
+ * the item, because that is where it lives whatever the control around it is doing. The cell also
+ * carries the provenance chip once a statement is made ("0/1By hand: 0" as one text run), so the
+ * pair is matched rather than trimmed: the chip is asserted separately, by its own `data-count`.
+ * `null` when the expanded panel is not mounted (a collapsed accordion draws nothing, JOS-206) or
+ * when the cell holds no pair at all.
  */
 function haveText(page: Page, item: string): Promise<string | null> {
   return page.evaluate((name) => {
     const row = [...document.querySelectorAll('tr')].find((tr) =>
       (tr.cells[1]?.textContent ?? '').trim().startsWith(name)
     )
-    return row ? (row.cells[2]?.textContent ?? '').trim() : null
+    if (!row) return null
+    return /^\s*(\d+\/\d+)/.exec(row.cells[2]?.textContent ?? '')?.[1] ?? null
   }, item)
 }
 
