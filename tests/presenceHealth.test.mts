@@ -17,21 +17,36 @@
 // same population of machines (a locked-down enterprise desktop, a Wine prefix) that produced the
 // bug in the first place.
 //
+// AND SINCE JOS-310 IT ALSO COVERS THE DEMOTION. The went-silent restart is the EXPECTED,
+// self-healing half of this same watchdog and is no longer reported as an error; what every
+// restart carries instead — the cause — is pinned at the bottom of this file, along with the
+// source pin that says which of the four sites is `logInfo` and which three are still `logError`.
+//
 // PURE, and it never skips.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   NEW_WATCHER_EXIT_TRAIL,
   WATCHER_EXIT_LOOP_ERROR_NAME,
   WATCHER_QUICK_EXIT_STREAK,
   WATCHER_STALE_MS,
+  describeRestartCause,
   parsePresenceLine,
   watcherExitStep,
   type WatcherExitLog,
-  type WatcherExitTrail
+  type WatcherExitTrail,
+  type WatcherRestartCause
 } from '../src/main/presenceProtocol'
 import { errorFingerprint, errorNameOf, parseStackFrames } from '../src/shared/errorReport'
+
+const TEST_ROOT = join(import.meta.dirname, '..')
+
+/** The two facts an exit's cause carries beyond what JOS-164 recorded, spelled once so every
+ *  fixture below reads as "an exit" rather than as seven fields. */
+const CAUSE_TAIL = { trigger: 'exited', lastRecord: 'exit', silentMs: 3, attempt: 1 } as const
 
 test('the EXIT line is the watcher’s last word, and its shape is narrow on purpose', () => {
   // JOS-164. From main, an exit used to be a code and nothing else — which is how 245 reports
@@ -74,7 +89,12 @@ function exitRun(
   let trail = NEW_WATCHER_EXIT_TRAIL
   const logs: (WatcherExitLog | null)[] = []
   for (const e of exits) {
-    const step = watcherExitStep(trail, { code: e.code, lifetimeMs: e.lifetimeMs, reason: e.reason ?? null })
+    const step = watcherExitStep(trail, {
+      ...CAUSE_TAIL,
+      code: e.code,
+      lifetimeMs: e.lifetimeMs,
+      reason: e.reason ?? null
+    })
     trail = step.trail
     logs.push(step.log)
   }
@@ -91,21 +111,39 @@ test('THE WATCHER’S REASON REACHES THE LOG — every exit carries it, and its 
   // a reader of errors.log sees "it chose to stop, 900 ms in, because the surface would not load"
   // instead of "code 0".
   const first = watcherExitStep(NEW_WATCHER_EXIT_TRAIL, {
+    ...CAUSE_TAIL,
     code: 0,
     lifetimeMs: 900,
     reason: 'native-unavailable'
   })
+  // AND SINCE JOS-310 THE WHOLE CAUSE RIDES ALONG (the exit paths are the rows that SURVIVE the
+  // went-silent demotion, so they are the rows that have to answer on their own). Nothing was
+  // dropped: the three JOS-164 fields are still there, byte for byte, next to the four new ones.
   assert.deepEqual(first.log, {
     message: 'presence watcher exited unexpectedly',
-    code: 0,
+    trigger: 'exited',
+    lastRecord: 'exit',
+    silentMs: 3,
     lifetimeMs: 900,
-    reason: 'native-unavailable'
+    code: 0,
+    reason: 'native-unavailable',
+    attempt: 1
   })
   // A watcher that was terminated, threw or was starved never got to say anything, and the entry
   // says so rather than inventing a reason.
-  const silentDeath = watcherExitStep(NEW_WATCHER_EXIT_TRAIL, { code: 1, lifetimeMs: 40, reason: null })
+  const silentDeath = watcherExitStep(NEW_WATCHER_EXIT_TRAIL, {
+    ...CAUSE_TAIL,
+    lastRecord: null,
+    code: 1,
+    lifetimeMs: 40,
+    reason: null
+  })
   assert.equal(silentDeath.log?.reason, null)
   assert.equal(silentDeath.log?.lifetimeMs, 40)
+  // `lastRecord:null` is not a missing field, it is the DIAGNOSIS: this watcher never got a record
+  // out at all, i.e. it died before `loadPresenceNative()` answered. A watcher that had been
+  // beating happily until it died is a different machine and now says so.
+  assert.equal(silentDeath.log?.lastRecord, null)
 })
 
 test('N CONSECUTIVE IMMEDIATE EXITS COLLAPSE INTO ONE ENTRY, AND THEN THE STORE GOES QUIET', () => {
@@ -178,6 +216,103 @@ test('ONLY A CLEAN, IMMEDIATE EXIT COUNTS — a throw and a long healthy run bot
     'never diagnosed — the pattern was broken before it completed, twice'
   )
   assert.equal(interrupted.logs.filter((l) => l !== null).length, 2 * (n - 1) + 1)
+})
+
+// ------------------------------------------------- the demotion, and its cause (JOS-310)
+//
+// THE OWNER'S RULING (2026-08-13, triage item A4): the went-silent -> restarting path is EXPECTED
+// and self-healing, so it stops being an error; what every restart carries instead is a CAUSE, so
+// the rows that stay errors are diagnosable on their own rather than by their sheer number. These
+// pin both halves — the sentence, and which of the four sites is allowed to be quiet.
+
+/** A cause with everything present, so each test below can vary the one field it is about. */
+const FULL_CAUSE: WatcherRestartCause = {
+  trigger: 'went-silent',
+  lastRecord: 'beat',
+  silentMs: 30_012,
+  lifetimeMs: 184_000,
+  code: null,
+  reason: null,
+  attempt: 2
+}
+
+test('THE CAUSE IS THE WHOLE POINT OF THE DEMOTION - every restart says why, in one sentence', () => {
+  // The three facts the ticket named: what the watcher last reported, how long it was silent, and
+  // the exit code WHEN THERE IS ONE. A wall of identical lines could answer none of them.
+  const silent = describeRestartCause(FULL_CAUSE)
+  assert.match(silent, /went-silent/)
+  assert.match(silent, /last said `beat`/, 'what the watcher last reported')
+  assert.match(silent, /silent for 30012 ms/, 'how long it was silent')
+  assert.match(silent, /attempt 2/)
+  // No exit and no last word, so neither is claimed. A restart line that printed `exit code null`
+  // would be inventing a fact about a thread that is still sitting there wedged.
+  assert.doesNotMatch(silent, /exit code/, 'the watchdog path has no exit code, so it says none')
+  assert.doesNotMatch(silent, /reason/)
+
+  // The exit path has both, and both appear.
+  const exited = describeRestartCause({
+    ...FULL_CAUSE,
+    trigger: 'exited',
+    lastRecord: 'exit',
+    silentMs: 2,
+    lifetimeMs: 900,
+    code: 0,
+    reason: 'native-unavailable'
+  })
+  assert.match(exited, /exit code 0/, 'the exit code when there is one')
+  assert.match(exited, /reason `native-unavailable`/, 'and the watcher’s own last word')
+
+  // A watcher that never spoke is the OTHER machine, and the sentence must not read as though a
+  // record were merely missing from the line.
+  const mute = describeRestartCause({ ...FULL_CAUSE, trigger: 'start-failed', lastRecord: null })
+  assert.match(mute, /never said anything/)
+  assert.doesNotMatch(mute, /last said/)
+
+  // Code 0 is a code. A falsy-check here would silently drop the ONE value the exit-loop fold
+  // treats as its whole signature.
+  assert.match(describeRestartCause({ ...FULL_CAUSE, code: 0 }), /exit code 0/)
+})
+
+test('THE WENT-SILENT RESTART IS INFO AND THE THREE REAL FAILURES ARE STILL ERRORS', () => {
+  // A SOURCE PIN, in the style of tests/healthCounters.test.mts's wiring test. The demotion lives
+  // in a module-level watchdog timer inside `presence.ts`, which needs Electron and a real worker
+  // thread to drive — so what is asserted is that the four call sites log where the ruling says
+  // they do. This is the assertion that fails if somebody "fixes" the quiet by restoring an error.
+  const presence = readFileSync(join(TEST_ROOT, 'src/main/presence.ts'), 'utf8')
+  const section = (from: string, to: string): string =>
+    presence.slice(presence.indexOf(from), presence.indexOf(to))
+
+  // 1. THE DEMOTED ONE. The watchdog's own body: info, with the cause, and no error anywhere in it.
+  const watchdog = section('function armStaleWatchdog', 'function scheduleRestart')
+  assert.ok(watchdog.includes('logInfo('), 'the expected restart narrates')
+  assert.ok(!watchdog.includes('logError('), 'and it is NOT an error - that is the whole ticket')
+  assert.ok(watchdog.includes("restartCause('went-silent'"))
+  assert.ok(
+    !presence.includes('presence watcher went silent; assuming it is wedged'),
+    'the old error sentence is gone rather than merely re-routed'
+  )
+
+  // 2. THE FATAL ONE, in the same function that refuses to keep replacing threads. Three wedged
+  //    and unrecoverable is the genuinely fatal shape and stays loud.
+  const surrender = section('function scheduleRestart', 'function handleWatcherGone')
+  assert.ok(surrender.includes('lostWatchers >= LOST_WATCHER_LIMIT'))
+  assert.ok(surrender.includes('logError('), 'the surrender stays an error')
+
+  // 3. AN EXIT. Still an error, and now handed the whole cause rather than three of its fields.
+  const gone = section('function handleWatcherGone', 'function startWatcher')
+  assert.ok(gone.includes("watcherExitStep(exitTrail, restartCause('exited'"))
+  assert.ok(gone.includes("logError('main:presence', step.log)"))
+
+  // 4. A START THAT THREW. Still an error, and it carries the cause too.
+  const start = section('function startWatcher', 'function stopWatcher')
+  assert.ok(start.includes('could not start the presence watcher'))
+  assert.ok(start.includes("...restartCause('start-failed'"))
+
+  // AND THE COUNT STILL LANDS SOMEWHERE HONEST, which is what makes a demotion different from a
+  // silencing: `notePresenceRestart` is the one funnel all three causes reach, so a fleet where
+  // this starts happening shows it as `presenceRestarts` rather than as a defect in the build.
+  assert.equal(presence.match(/notePresenceRestart\(\)/g)?.length, 1)
+  assert.ok(section('function scheduleRestart', 'function handleWatcherGone').includes('notePresenceRestart()'))
 })
 
 test('A COLLAPSED RUN STARTS REPORTING AGAIN THE MOMENT THE PATTERN BREAKS', () => {

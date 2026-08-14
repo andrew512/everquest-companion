@@ -48,10 +48,13 @@ import {
   type PresenceRecord,
   type PresenceWorkerInit,
   type WatcherExitTrail,
+  type WatcherRestartCause,
+  type WatcherRestartTrigger,
   NEW_WATCHER_EXIT_TRAIL,
   WATCHER_HEARTBEAT_MS,
   WATCHER_STALE_MS,
   WATCHER_STOP_MESSAGE,
+  describeRestartCause,
   eqRootPrefix,
   focusCountsAsEq,
   focusDebounceStep,
@@ -115,6 +118,16 @@ let staleTimer: NodeJS.Timeout | null = null
 /** The current watcher's last word, if it managed one (`X|native-unavailable`). Cleared at every
  *  start, so it can only ever describe the watcher whose exit is being handled. */
 let lastExitReason: string | null = null
+/**
+ * The KIND of the last well-formed record this watcher sent, or null while it has said nothing
+ * (JOS-310).
+ *
+ * One token, set where `noteSignal` already runs, and it is the difference between the two
+ * machines the went-silent restarts used to be indistinguishable on: a watcher whose last word was
+ * a `beat` was looping happily until it wedged, and a watcher that never spoke at all never got
+ * out of `loadPresenceNative()`. The restart line says which.
+ */
+let lastRecordKind: PresenceRecord['t'] | null = null
 /** How many immediate-exit-shaped exits in a row, and whether the diagnosis has been written —
  *  the whole reason 245 identical error reports become three (presenceProtocol.ts, JOS-164). */
 let exitTrail: WatcherExitTrail = NEW_WATCHER_EXIT_TRAIL
@@ -259,10 +272,60 @@ function applyRecord(rec: PresenceRecord): void {
  * Resetting on the first record instead would make one that dies right after its first line
  * retry at 1 s forever — a restart storm dressed up as a recovery.
  */
-function noteSignal(): void {
+function noteSignal(kind: PresenceRecord['t']): void {
   const now = Date.now()
   lastSignalAt = now
+  lastRecordKind = kind
   if (restartFailures > 0 && now - watcherStartedAt >= WATCHER_STALE_MS) restartFailures = 0
+}
+
+/**
+ * Close the book on a watcher: everything below is a fact about ONE thread, and none of it may be
+ * read back as its successor's (JOS-310).
+ *
+ * Called from `restartCause` — which is the only reader of these fields — and from the two
+ * DELIBERATE ends (a stop, a cursor-setting replacement), where nothing is going to be reported at
+ * all and the point is simply that the next start begins with an empty slate.
+ */
+function forgetWatcherFacts(): void {
+  lastRecordKind = null
+  lastSignalAt = 0
+  watcherStartedAt = 0
+  lastExitReason = null
+}
+
+/**
+ * WHY THIS WATCHER IS BEING REPLACED, and the end of the book on it (JOS-310).
+ *
+ * The one place a `WatcherRestartCause` is built, so the demoted went-silent line and the two error
+ * paths that stay errors all describe a restart with the same facts in the same shape — see the
+ * restart-cause section in presenceProtocol.ts for why a demotion is only honest if it costs
+ * nothing diagnostically.
+ *
+ * IT ALSO CLEARS THE PER-WATCHER FACTS, which is not a side effect bolted on but the reason it can
+ * be called from all three sites. A start that THREW has no watcher of its own to describe, and
+ * reading the anchors of the previous one would report its lifetime as this failure's — a number
+ * that looks like a measurement and is not. Cleared, the same call answers `lastRecord:null`,
+ * `silentMs:0`, `lifetimeMs:0`, which is exactly the truth about a thread that never existed.
+ * `startWatcher` re-seeds both anchors, so a live watcher is never described by a cleared one.
+ *
+ * `attempt` is read AFTER `restartFailures` has been incremented at every call site, so it counts
+ * this failure rather than the ones before it.
+ */
+function restartCause(trigger: WatcherRestartTrigger, code: number | null): WatcherRestartCause {
+  const now = Date.now()
+  const since = (at: number): number => (at === 0 ? 0 : Math.max(0, now - at))
+  const cause: WatcherRestartCause = {
+    trigger,
+    lastRecord: lastRecordKind,
+    silentMs: since(lastSignalAt),
+    lifetimeMs: since(watcherStartedAt),
+    code,
+    reason: lastExitReason,
+    attempt: restartFailures
+  }
+  forgetWatcherFacts()
+  return cause
 }
 
 /**
@@ -285,7 +348,7 @@ function pumpMessage(chunk: unknown): void {
     // KEPT, NOT LOGGED HERE. The thread ends a moment later and the `'exit'` handler is the one
     // place that knows the code and the lifetime, so the reason waits there for its sentence.
     if (rec.t === 'exit') lastExitReason = rec.reason
-    noteSignal()
+    noteSignal(rec.t)
     applyRecord(rec)
   }
 }
@@ -373,21 +436,33 @@ function clearStaleWatchdog(): void {
  *
  * The interval exists only while a watcher does, and is unref'd: it can never be the reason the
  * app stays alive at quit.
+ *
+ * THIS RESTART IS NOT AN ERROR AND SINCE JOS-310 IT DOES NOT SAY IT IS (owner ruling 2026-08-13).
+ * The watchdog firing IS this feature working: it noticed a wedge nothing else can see, threw the
+ * thread away and started another, and the user's overlays came back on their own. Reported as an
+ * error, it and its restart family were the TOP LINE of the fleet's error store on every version
+ * through 0.26.0 — a wall of identical, true, unactionable rows that buried the ones that were
+ * neither. It is `logInfo` now (dev stdout, never errors.log, never the error store), it carries
+ * the whole cause rather than one number, and the OCCURRENCE is still counted where a handled
+ * self-healing condition belongs: `notePresenceRestart` in `scheduleRestart`, i.e. the
+ * `presenceRestarts` health counter. A machine that starts doing this is still visible; it is
+ * simply no longer visible as a defect in the build.
+ *
+ * The genuinely fatal version of this same condition is untouched and is still an error: three
+ * threads wedged and never recovered surrenders the feature for the session, loudly, in
+ * `scheduleRestart`.
  */
 function armStaleWatchdog(): void {
   clearStaleWatchdog()
   staleTimer = setInterval(() => {
     const w = watcher
     if (!w || !watcherIsStale(lastSignalAt, Date.now())) return
-    logError('main:presence', {
-      message: 'presence watcher went silent; assuming it is wedged and restarting',
-      silentMs: Date.now() - lastSignalAt
-    })
     watcher = null
     clearStaleWatchdog()
     retire(w, true)
     resetPresence()
     restartFailures++
+    logInfo('[everquest-companion]', describeRestartCause(restartCause('went-silent', null)))
     scheduleRestart()
   }, WATCHER_HEARTBEAT_MS)
   staleTimer.unref?.()
@@ -447,25 +522,33 @@ function scheduleRestart(): void {
  * 900 ms, again" are different facts and only the second one is a diagnosis; and a run of those is
  * collapsed into ONE distinctly-named error rather than one entry per restart forever. The
  * fold is pure and lives beside the protocol, so the whole sequence is a unit test.
+ *
+ * AN EXIT STAYS AN ERROR (JOS-310). Only the went-silent watchdog was demoted; a watcher that
+ * ENDED did not heal anything, and these are the residual rows the demotion is meant to leave
+ * readable. So the fold is handed the whole `WatcherRestartCause` rather than three of its fields,
+ * and the store's exemplar now carries what the watcher last reported and how long it was quiet
+ * before it went.
  */
 function handleWatcherGone(w: Worker, code: number | null): void {
   if (watcher !== w) return
   watcher = null
   clearStaleWatchdog()
   retire(w)
-  const lifetimeMs = Date.now() - watcherStartedAt
-  const reason = lastExitReason
-  lastExitReason = null
+  // With no consumers left there is nothing to report and nothing to restart, and the trail is
+  // deliberately left alone: a teardown is not evidence either way. The dead watcher's facts still
+  // go, so nothing it said can be read back as its successor's.
+  if (listeners.size === 0) {
+    restartCause('exited', code)
+    return
+  }
   // An exit while consumers remain is a real failure (the loop threw, or the native surface will
   // not load on this machine). Report it, fall back to "nothing known", and try again on the
-  // backoff. With no consumers left there is nothing to report and nothing to restart, and the
-  // trail is deliberately left alone: a teardown is not evidence either way.
-  if (listeners.size === 0) return
-  const step = watcherExitStep(exitTrail, { code, lifetimeMs, reason })
+  // backoff.
+  restartFailures++
+  const step = watcherExitStep(exitTrail, restartCause('exited', code))
   exitTrail = step.trail
   if (step.log) logError('main:presence', step.log)
   resetPresence()
-  restartFailures++
   scheduleRestart()
 }
 
@@ -483,13 +566,21 @@ function startWatcher(): void {
   try {
     w = new Worker(WORKER_PATH, { workerData: init })
   } catch (err) {
-    logError('main:presence', { message: 'could not start the presence watcher', err })
     // A start that throws is as much a failure as an exit, and it is the one most likely to be
     // transient (a machine momentarily out of thread handles). Back off and try again — and fall
     // back to "nothing known" on the way, for the same reason an exit does: whatever is on screen
     // was decided by a watcher that no longer exists.
-    resetPresence()
+    //
+    // IT STAYS AN ERROR (JOS-310) and it carries the cause like the other two: there is no thread
+    // to describe, so `restartCause` answers with zeros and a null last record, and `attempt` is
+    // the number that matters — one refusal is a machine having a moment, the fifth is not.
     restartFailures++
+    logError('main:presence', {
+      message: 'could not start the presence watcher',
+      err,
+      ...restartCause('start-failed', null)
+    })
+    resetPresence()
     scheduleRestart()
     return
   }
@@ -500,6 +591,7 @@ function startWatcher(): void {
   lastSignalAt = watcherStartedAt
   logInfo('[everquest-companion] presence watcher started')
   lastExitReason = null
+  lastRecordKind = null
   w.on('message', pumpMessage)
   w.on('error', (err) => {
     logError('main:presence', err)
@@ -527,7 +619,7 @@ function stopWatcher(): void {
   // exit trail: whatever the last run was doing, the next one gets to report it fresh.
   restartFailures = 0
   exitTrail = NEW_WATCHER_EXIT_TRAIL
-  lastExitReason = null
+  forgetWatcherFacts()
   const w = watcher
   watcher = null
   if (!w) return
@@ -574,7 +666,7 @@ export function setCursorWatch(enabled: boolean): void {
   // A deliberate replacement is not a failure and must not be counted as one.
   restartFailures = 0
   exitTrail = NEW_WATCHER_EXIT_TRAIL
-  lastExitReason = null
+  forgetWatcherFacts()
   startWatcher()
 }
 
