@@ -103,9 +103,20 @@ function useMobKnowledge(
   return { data, loading }
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }): JSX.Element {
+function StatCard({
+  label,
+  value,
+  hint,
+  testId
+}: {
+  label: string
+  value: string
+  hint?: string
+  /** Only the Kills card carries one — it is the number JOS-350 was about, so a spec can read it. */
+  testId?: string
+}): JSX.Element {
   return (
-    <Paper variant="outlined" sx={{ p: 1.5, flex: 1, minWidth: 110 }}>
+    <Paper variant="outlined" data-testid={testId} sx={{ p: 1.5, flex: 1, minWidth: 110 }}>
       <Typography variant="h5" sx={{ color: 'primary.main', lineHeight: 1.1 }}>
         {value}
       </Typography>
@@ -202,6 +213,7 @@ function MobStats({
       <StatCard label="Looted by you" value={String(seenCount)} hint="distinct items" />
       <StatCard
         label="Kills"
+        testId="mob-stat-kills"
         value={String(kill?.count ?? 0)}
         hint={kill?.lastTs ? `last ${formatDate(kill.lastTs)}` : undefined}
       />
