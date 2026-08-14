@@ -430,6 +430,13 @@ export class CharmModel {
    * CONSUMES the arm on a hit, for charm's reason: a pet spell is single-target, so a second
    * landing inside the same window is a different spell's business (a Quick Buff burst prints
    * eleven landings in one second — one cast, one bind).
+   *
+   * `spellKeys` COMES FROM THE DB, WHICH MAKES THIS TEST ONLY AS GOOD AS THE SCRAPE (JOS-349). A
+   * pet-only spell whose third-person message carries a subject token the suffix table cannot key
+   * is in no candidate list, so this returns false forever and the pet is never bound — measured on
+   * `Tiny Companion` (`Target shrinks.`), which cost a reporter his whole pet. The rule is right;
+   * the DB row was not. See `petClaims.bindPetBuffLanding` for the full characterization and the six
+   * pet-only spells still in that state.
    */
   petBuffLanding(spellKeys: readonly string[], ts: number): boolean {
     const a = this.arm
