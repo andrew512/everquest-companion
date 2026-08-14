@@ -18,6 +18,7 @@
 import { existsSync } from 'fs'
 import { logError, logInfo } from './errorLog'
 import {
+  chromiumFlagsFor,
   detectWine,
   graphicsEnvironmentOf,
   type GraphicsEnvironment,
@@ -66,6 +67,18 @@ export function wineDetection(): WineDetection {
  *  `resolveGraphics` folds against the stored prefs. */
 export function graphicsAuto(): GraphicsAuto {
   return graphicsEnvironmentOf(wineDetection()).auto
+}
+
+/**
+ * The Chromium command-line flags this machine needs — empty on every ordinary Windows install
+ * (JOS-352). Read once, from the composition root, before Electron is ready.
+ *
+ * It goes THROUGH this file for the same reason `graphicsAuto()` does: graphics.ts appends what it
+ * is handed and still does not know what a Wine prefix is. The decision is in shared/wineDetect.ts
+ * where a test can ask it about a machine it is not running on.
+ */
+export function graphicsChromiumFlags(): readonly string[] {
+  return chromiumFlagsFor(wineDetection())
 }
 
 /** The detection plus its recommendation, for the Preferences card (ipc/graphics.ts). */

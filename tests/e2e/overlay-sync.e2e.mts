@@ -517,10 +517,10 @@ async function stepOpaqueOverlays(app: ElectronApplication, page: Page): Promise
  * between attempts, so asking again once the loop is free is asking the same question, not a
  * different one.
  */
-async function hasDisableGpuSwitch(app: ElectronApplication): Promise<boolean> {
+async function hasCommandLineSwitch(app: ElectronApplication, name: string): Promise<boolean> {
   for (let i = 0; i < 4; i++) {
     try {
-      return await app.evaluate(({ app: a }) => a.commandLine.hasSwitch('disable-gpu'))
+      return await app.evaluate(({ app: a }, sw) => a.commandLine.hasSwitch(sw), name)
     } catch {
       await sleep(2_000)
     }
@@ -539,8 +539,21 @@ async function checkSafeModeLaunch(log: FixtureLog): Promise<void> {
     await waitHydrated(page)
     check(
       '…and the launch really is in software rendering (Chromium has --disable-gpu)',
-      await hasDisableGpuSwitch(app)
+      await hasCommandLineSwitch(app, 'disable-gpu')
     )
+    // JOS-352, and the only machine that can make this statement is this one: the two Wine flags
+    // are gated on the DETECTION, so a real Windows launch must append neither — not even the
+    // launch that has every other compatibility path engaged. `--in-process-gpu` in particular
+    // trades away GPU crash containment for every user it reaches, so "reaches nobody here" is
+    // the claim worth proving in Chromium's own terms rather than in a unit test's. (A negative
+    // read is only as good as the channel it came over, which is why it follows the positive one
+    // above: that check having passed is what says `hasCommandLineSwitch` is answering at all.)
+    for (const flag of ['disable-direct-composition', 'in-process-gpu']) {
+      check(
+        `…and this Windows machine appends none of the Wine flags (--${flag})`,
+        !(await hasCommandLineSwitch(app, flag))
+      )
+    }
   } finally {
     await close()
   }
