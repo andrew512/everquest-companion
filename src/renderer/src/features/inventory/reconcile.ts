@@ -1,4 +1,5 @@
-import type { CountSource, PoskyQuest } from '@shared/types'
+import type { CountSource, ItemCountOverride, PoskyQuest } from '@shared/types'
+import type { TurnInInstants } from '@shared/questTurnIns'
 import { itemCountKey } from '../../lib/itemName'
 import { questKey } from '../posky/keys'
 
@@ -23,6 +24,13 @@ export interface InventoryRow {
    *  Empty whenever `consumed` is 0, so it never blames a quest for a subtraction that did not
    *  happen. */
   consumedBy: string[]
+  /**
+   * The HAND-STATED count in force for this row, when there is one (JOS-186). Present means the
+   * user told us what they hold and `base`/`net` are built from that statement plus everything
+   * looted since it — so a surface drawing this row can say the number is theirs, and say when.
+   * Absent is the ordinary case: nobody has stated anything about this item.
+   */
+  override?: ItemCountOverride
 }
 
 export interface ReconcileInput {
@@ -40,6 +48,28 @@ export interface ReconcileInput {
    */
   turnIns: Record<string, number>
   quests: PoskyQuest[]
+  /**
+   * THE TURN-IN LEDGER'S OWN INSTANTS (JOS-131's list, not its tally). Read only by the two
+   * windowed sources below, which have to ask how many of a quest's turn-ins happened AFTER a
+   * baseline; `turnIns` above stays the all-time count every other path uses. Absent means no
+   * window can be computed, and both windowed paths degrade rather than guess.
+   */
+  turnInInstants?: TurnInInstants
+  /** JOS-186 — the hand-stated held counts in force, by counting key. */
+  overrides?: Record<string, ItemCountOverride>
+  /**
+   * JOS-186 — loot folded per counting key counting ONLY drops after that key's statement
+   * (`computeHeldCountsAfterPerKey`). A key with no statement is absent from both maps.
+   */
+  lootSinceOverride?: Record<string, number>
+  /**
+   * JOS-186 — the instant the loaded dump was GENERATED, or null when nothing can anchor a
+   * rebaseline (no dump, or a dump whose age this app could not establish). Read only under the
+   * `rebaseline` source; null there makes it behave exactly as `both`.
+   */
+  rebaselineAt?: number | null
+  /** JOS-186 — loot folded counting ONLY drops after `rebaselineAt` (`computeHeldCountsAfter`). */
+  lootSinceRebaseline?: Record<string, number>
 }
 
 export interface ReconcileResult {
@@ -72,7 +102,30 @@ function foldInventoryByKey(
 }
 
 /**
- * Base held count per key, per the active count source.
+ * ONE ITEM'S WITNESSES — everything any source could read about a single counting key, gathered
+ * before anything decides which of them answers.
+ *
+ * The two optional members are the WINDOWED witnesses (JOS-186). Each is a baseline (a count
+ * somebody vouched for at an instant, plus everything the log has seen drop since) paired with the
+ * turn-in consumption owed since that same instant — so each is a complete little world with the
+ * same shape as the all-time pair above it, and `witnessNet` never has to mix a windowed base with
+ * an all-time subtraction.
+ */
+interface Witnesses {
+  /** all-time looted (`computeHeldCounts`) */
+  log: number
+  /** the dump, as written */
+  inv: number
+  /** what every turn-in ever recorded ate of this item */
+  consumed: number
+  /** the dump-anchored baseline, present only under `rebaseline` with an instant to anchor to */
+  rebaseline?: { base: number; consumed: number }
+  /** the hand-stated baseline, present only where the user has stated this item's count */
+  override?: { statement: ItemCountOverride; base: number; consumed: number }
+}
+
+/**
+ * Base held count for one key, per the active count source.
  *
  * ============================================================================
  * A DUMP ADDS, IT NEVER SUBTRACTS (JOS-141, owner ruling 2026-08-09).
@@ -102,19 +155,34 @@ function foldInventoryByKey(
  * told apart from a dump that never looked. The owner weighed that against banked items vanishing
  * and chose this one: a count that is too high is a wrong number the user can see and reason
  * about, and a count that is too low is work the user redoes for nothing.
+ *
+ * ============================================================================
+ * AND SINCE JOS-186 THERE ARE TWO WAYS TO SAY "NO, IT IS GONE" — BOTH OPT-IN.
+ * ============================================================================
+ *
+ * The paragraph above is not softened: it is still the rule for the three sources it was written
+ * for, and it is still the DEFAULT behaviour. What the owner's 2026-08-14 ruling adds is that the
+ * accepted cost now has a way out, and that the way out is always something the USER asked for.
+ *
+ *   'rebaseline' the dump is the STARTING POINT and the log counts only FORWARD from the instant
+ *                the dump was generated: `dump + looted since`. Every log line older than the file
+ *                is discarded. This IS JOS-128's reverted reset — offered as a fourth option
+ *                instead of imposed as the default, which is the entire difference. Its cost is
+ *                the one field-testing found: a dump only covers what was OPEN when it was
+ *                written, so a banked item the file never saw reads zero until you loot another.
+ *                With nothing to anchor it (no dump, or no generation instant), it falls back to
+ *                `both` — never to a baseline of zero, which would be that cost with none of the
+ *                consent.
+ *   an OVERRIDE  a hand-stated count for ONE item, which wins over whichever source is selected.
+ *                Same forward rule at item scale: the statement plus everything looted since it
+ *                (shared/itemOverrides.ts argues why a pin would rot).
  */
-function baseCounts(
-  log: Record<string, number>,
-  invByKey: Record<string, number>,
-  countSource: CountSource
-): Record<string, number> {
-  const base: Record<string, number> = {}
-  for (const k of new Set([...Object.keys(log), ...Object.keys(invByKey)])) {
-    const l = log[k] ?? 0
-    const i = invByKey[k] ?? 0
-    base[k] = countSource === 'log' ? l : countSource === 'inventory' ? i : Math.max(l, i)
-  }
-  return base
+function witnessBase(w: Witnesses, countSource: CountSource): number {
+  if (w.override) return w.override.base
+  if (countSource === 'log') return w.log
+  if (countSource === 'inventory') return w.inv
+  if (countSource === 'rebaseline' && w.rebaseline) return w.rebaseline.base
+  return Math.max(w.log, w.inv)
 }
 
 /**
@@ -124,24 +192,57 @@ function baseCounts(
  * mechanism behind "hand it in and the quest drops back to 0/5, ready to farm again". The
  * `consumedBy` caption says the count too, so a row reading `-10 Sphinx Claw` can be traced to
  * one quest run twice rather than looking like a bug.
+ *
+ * HOW MANY TIMES IS A PARAMETER SINCE JOS-186, because a windowed base owes only the turn-ins made
+ * after it: `timesAfter` answers the same question over the ledger's instants instead of its tally.
+ * The all-time caller passes the tally and reads exactly what it always did.
  */
-function questConsumption(
-  quests: PoskyQuest[],
-  turnIns: Record<string, number>
-): { consumed: Record<string, number>; consumedBy: Record<string, string[]> } {
+function questConsumption(quests: PoskyQuest[], times: (key: string) => number): Consumption {
   const consumed: Record<string, number> = {}
   const consumedBy: Record<string, string[]> = {}
   for (const q of quests) {
-    const times = turnIns[questKey(q)] ?? 0
-    if (times <= 0) continue
+    const count = times(questKey(q))
+    if (count <= 0) continue
     for (const it of q.items) {
       const k = itemCountKey(it.name)
       const need = it.count > 0 ? it.count : 1
-      consumed[k] = (consumed[k] ?? 0) + need * times
-      ;(consumedBy[k] ??= []).push(times > 1 ? `${q.name} x${String(times)}` : q.name)
+      consumed[k] = (consumed[k] ?? 0) + need * count
+      ;(consumedBy[k] ??= []).push(count > 1 ? `${q.name} x${String(count)}` : q.name)
     }
   }
   return { consumed, consumedBy }
+}
+
+/** What one pass of `questConsumption` produces: the counts, and who to blame for each. */
+interface Consumption {
+  consumed: Record<string, number>
+  consumedBy: Record<string, string[]>
+}
+
+/** How many of a quest's turn-ins happened strictly after an instant (JOS-186's window). An
+ *  undated legacy completion contributes none, which is right: it predates any statement made now. */
+function timesAfter(instants: TurnInInstants, at: number): (key: string) => number {
+  return (key) => (instants[key] ?? []).filter((ts) => ts > at).length
+}
+
+/**
+ * Consumption windowed to an instant, MEMOIZED per instant — every hand-stated count carries its
+ * own `setAt`, and a rebaseline carries the dump's, so the distinct instants are few and each one
+ * costs a single pass over the quest set.
+ */
+function windowedConsumption(
+  quests: PoskyQuest[],
+  instants: TurnInInstants
+): (at: number) => Consumption {
+  const cache = new Map<number, Consumption>()
+  return (at: number): Consumption => {
+    let hit = cache.get(at)
+    if (!hit) {
+      hit = questConsumption(quests, timesAfter(instants, at))
+      cache.set(at, hit)
+    }
+    return hit
+  }
 }
 
 /**
@@ -210,39 +311,105 @@ function questItemNames(quests: PoskyQuest[]): Record<string, string> {
  * not the gross `required x times`. Those differ exactly when a witness had less than the
  * turn-ins ate, or when the dump floor rescued the row, and reporting the gross figure there
  * would describe a subtraction that did not happen. `net === base - consumed` always.
+ *
+ * ============================================================================
+ * A WINDOWED WITNESS IS DISCOUNTED IN ITS OWN WINDOW (JOS-186).
+ * ============================================================================
+ *
+ * The two baselines added by JOS-186 owe only the turn-ins made AFTER them, for exactly the reason
+ * a dump owes none: the baseline already reflects everything that happened before it. A dump
+ * generated on Tuesday has Monday's turn-in taken out of it by the game itself; a user who says
+ * "I hold two claws" is telling us what is in the bag right now, turn-ins and all. Subtracting the
+ * whole history from either would be double-subtraction — the failure this rule exists to stop.
+ *
+ *   'rebaseline'  max(0, (dump + looted since it) - turn-ins recorded since it)
+ *   an OVERRIDE   max(0, (stated + looted since it) - turn-ins recorded since it), and it WINS
+ *                 over the selected source, because it is the only witness that is a person.
+ *
+ * The override wins over a NEWER DUMP too, and that is deliberate rather than overlooked: a hand
+ * statement sits at the top of the provenance ladder (the `RosterEdit` precedent — a later log
+ * line can neither undo it nor be undone by it), and a dump reports only what a window happened to
+ * be showing. Loot is different, and that is the one thing the statement does bend to: a drop is a
+ * thing that demonstrably happened to this item after the statement was made, so it adds.
  */
-function netCount(
-  countSource: CountSource,
-  log: number,
-  inv: number,
-  consumed: number
-): number {
-  const fromLog = Math.max(0, log - consumed)
+function witnessNet(w: Witnesses, countSource: CountSource): number {
+  if (w.override) return Math.max(0, w.override.base - w.override.consumed)
+  const fromLog = Math.max(0, w.log - w.consumed)
   if (countSource === 'log') return fromLog
-  if (countSource === 'inventory') return inv
-  return Math.max(inv, fromLog)
+  if (countSource === 'inventory') return w.inv
+  if (countSource === 'rebaseline' && w.rebaseline) {
+    return Math.max(0, w.rebaseline.base - w.rebaseline.consumed)
+  }
+  return Math.max(w.inv, fromLog)
 }
 
 /** Everything the row build reads, gathered so it travels as one argument. */
 interface RowInputs {
   log: Record<string, number>
   invByKey: Record<string, number>
-  base: Record<string, number>
-  consumed: Record<string, number>
-  consumedBy: Record<string, string[]>
   nameByKey: Record<string, string>
   countSource: CountSource
+  /** all-time turn-in consumption, and who to blame for it */
+  all: Consumption
+  /** the dump-anchored window, or null when the source is not `rebaseline` or nothing anchors it */
+  rebaseline: { since: Record<string, number>; consumption: Consumption } | null
+  /** the hand-stated counts and the loot that landed after each of them */
+  overrides: Record<string, ItemCountOverride>
+  overrideSince: Record<string, number>
+  /** consumption windowed to any instant, memoized (`windowedConsumption`) */
+  windowed: (at: number) => Consumption
 }
 
-/** Apply `netCount` per key and emit the table rows, sorted by what you actually hold. */
+/** Gather one key's witnesses, building only the windows that actually apply to it. */
+function witnessesFor(k: string, x: RowInputs): Witnesses {
+  const w: Witnesses = {
+    log: x.log[k] ?? 0,
+    inv: x.invByKey[k] ?? 0,
+    consumed: x.all.consumed[k] ?? 0
+  }
+  if (x.rebaseline) {
+    w.rebaseline = {
+      base: w.inv + (x.rebaseline.since[k] ?? 0),
+      consumed: x.rebaseline.consumption.consumed[k] ?? 0
+    }
+  }
+  const statement = x.overrides[k]
+  if (statement) {
+    w.override = {
+      statement,
+      base: statement.count + (x.overrideSince[k] ?? 0),
+      consumed: x.windowed(statement.setAt).consumed[k] ?? 0
+    }
+  }
+  return w
+}
+
+/** Which pass of `questConsumption` explains THIS row's subtraction — the one its base came from. */
+function blameFor(k: string, w: Witnesses, x: RowInputs): string[] {
+  if (w.override) return x.windowed(w.override.statement.setAt).consumedBy[k] ?? []
+  if (w.rebaseline && x.rebaseline) return x.rebaseline.consumption.consumedBy[k] ?? []
+  return x.all.consumedBy[k] ?? []
+}
+
+/** Apply `witnessNet` per key and emit the table rows, sorted by what you actually hold. */
 function buildRows(x: RowInputs): ReconcileResult {
   const net: Record<string, number> = {}
   const rows: InventoryRow[] = []
-  for (const k of new Set([...Object.keys(x.base), ...Object.keys(x.consumed)])) {
-    const l = x.log[k] ?? 0
-    const i = x.invByKey[k] ?? 0
-    const b = x.base[k] ?? 0
-    const n = netCount(x.countSource, l, i, x.consumed[k] ?? 0)
+  const keys = new Set([
+    ...Object.keys(x.log),
+    ...Object.keys(x.invByKey),
+    ...Object.keys(x.all.consumed),
+    // A statement about an item nobody has ever looted or dumped is still a statement, and the
+    // quest counting reads `net` — so its key has to be in this set or the count it states would
+    // simply never be computed.
+    ...Object.keys(x.overrides)
+  ])
+  for (const k of keys) {
+    const w = witnessesFor(k, x)
+    const l = w.log
+    const i = w.inv
+    const b = witnessBase(w, x.countSource)
+    const n = witnessNet(w, x.countSource)
     // What the turn-ins actually cost this row. Zero under a dump-reading source the dump itself
     // answered, which is the whole point of the rule above.
     const spent = b - n
@@ -263,7 +430,11 @@ function buildRows(x: RowInputs): ReconcileResult {
     // What changes is only which rows the TABLE can see, and each row already reports its witnesses
     // separately (`log`, `inv`, `base`, `net`), so a `log`-source row for a dump-only item reads
     // `log: 0, inv: 3, net: 0` — every number honest to its own source.
-    if (l === 0 && i === 0 && spent === 0) continue
+    //
+    // A HAND STATEMENT IS A WITNESS TOO (JOS-186), so a row the user has spoken about is drawn
+    // whatever the log and the dump say — including the "I have none of these" that is the whole
+    // point of the feature, which every other witness reports as silence.
+    if (l === 0 && i === 0 && spent === 0 && !w.override) continue
     rows.push({
       key: k,
       name: x.nameByKey[k] ?? k,
@@ -272,7 +443,8 @@ function buildRows(x: RowInputs): ReconcileResult {
       base: b,
       consumed: spent,
       net: n,
-      consumedBy: spent > 0 ? (x.consumedBy[k] ?? []) : []
+      consumedBy: spent > 0 ? blameFor(k, w, x) : [],
+      ...(w.override ? { override: w.override.statement } : {})
     })
   }
   rows.sort((a, b) => b.net - a.net || a.name.localeCompare(b.name))
@@ -284,16 +456,41 @@ function buildRows(x: RowInputs): ReconcileResult {
  * everything consumed by the quest turn-ins — so a drop that was handed in for one quest no
  * longer counts toward another quest that needs it, and a quest handed in twice has eaten its
  * items twice.
+ *
+ * EVERY JOS-186 INPUT IS OPTIONAL AND DEFAULTS TO ABSENT, which is what makes the fourth source and
+ * the overrides a pure ADDITION: a caller that passes none of them gets the three-source arithmetic
+ * unchanged, key for key and row order included, and `tests/countSourceDefault.test.mts` still
+ * proves the `both`/`log` reduction over the same generated space it always did.
  */
 export function reconcile(input: ReconcileInput): ReconcileResult {
   const { log, inv, lootNames, countSource, quests } = input
 
   // Display-name precedence, highest first: what a loot line called it, then what the quest data
-  // calls it, then the export's lowercased key (JOS-160 — see questItemNames).
+  // calls it, then the export's lowercased key (JOS-160 — see questItemNames). A hand statement's
+  // spelling sits BELOW all of those and above the bare key: it is what one surface called the item
+  // once, not what the game calls it.
   const nameByKey: Record<string, string> = { ...questItemNames(quests), ...lootNames }
   const invByKey = foldInventoryByKey(inv, nameByKey)
-  const base = baseCounts(log, invByKey, countSource)
-  const { consumed, consumedBy } = questConsumption(quests, input.turnIns)
+  const overrides = input.overrides ?? {}
+  for (const [k, o] of Object.entries(overrides)) nameByKey[k] ??= o.name
 
-  return buildRows({ log, invByKey, base, consumed, consumedBy, nameByKey, countSource })
+  const windowed = windowedConsumption(quests, input.turnInInstants ?? {})
+  const all = questConsumption(quests, (k) => input.turnIns[k] ?? 0)
+  // Anchored only where the user asked for it AND something can date the dump. `null` there is the
+  // fallback to `both` the base/net rules spell out, never a baseline of zero.
+  const at = countSource === 'rebaseline' ? (input.rebaselineAt ?? null) : null
+  const rebaseline =
+    at === null ? null : { since: input.lootSinceRebaseline ?? {}, consumption: windowed(at) }
+
+  return buildRows({
+    log,
+    invByKey,
+    nameByKey,
+    countSource,
+    all,
+    rebaseline,
+    overrides,
+    overrideSince: input.lootSinceOverride ?? {},
+    windowed
+  })
 }

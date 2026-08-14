@@ -13,6 +13,9 @@ export const IPC = {
   // renderer -> main: this quest's turn-ins, as the instants they happened at (JOS-131). It
   // replaced `progress:setQuestComplete` when completion became a COUNT rather than a flag.
   setQuestTurnIns: 'progress:setQuestTurnIns',
+  // renderer -> main: state (count) or take back (null) ONE item's held count by hand — the
+  // correction for an item the log and the dump cannot see the truth about (JOS-186).
+  setItemOverride: 'progress:setItemOverride',
   // main -> renderer: progress changed (quest completion / inventory), so every
   // view that shows progress stays consistent without re-fetching on a timer.
   onProgress: 'progress:changed',

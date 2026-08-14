@@ -357,6 +357,13 @@ const api = {
    */
   setQuestTurnIns: (questKey: string, instants: number[]): Promise<ProgressState> =>
     ipcRenderer.invoke(IPC.setQuestTurnIns, questKey, instants),
+  /**
+   * State ONE item's held count by hand, or take the statement back with `count: null` (JOS-186).
+   * `key` is the normalized counting key; `name` is only ever a spelling. Main dates the statement
+   * and sanitizes it (shared/itemOverrides.ts owns both rules).
+   */
+  setItemOverride: (key: string, name: string, count: number | null): Promise<ProgressState> =>
+    ipcRenderer.invoke(IPC.setItemOverride, key, name, count),
   getCombatSnapshot: (opts: SnapshotOpts): Promise<CombatSnapshot> =>
     ipcRenderer.invoke(IPC.getCombatSnapshot, opts),
   /** Fuzzy-search the whole fight history + the live fight by name/zone (Task #61). An
