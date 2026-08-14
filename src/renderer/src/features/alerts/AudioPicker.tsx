@@ -7,32 +7,31 @@
 // every other property of it is visible.
 //
 // THE TWO SELECTS, EXACTLY:
-//   1. OUTPUT — every installed sound pack (as before), a divider, then "Voice (spoken)" and
-//      "Sound + voice". Choosing a pack means `audio:'sound'`; the two voice entries mean
-//      'speech' and 'both' and keep the pack/sound the def already had. The select DISPLAYS the
-//      def's actual state, so a def with `audio:'speech'` reads "Voice (spoken)" — there is no
-//      hidden mode a row can be in without saying so.
-//   2. CONTEXTUAL — the pack's sound list for 'sound' and 'both'; for 'speech' the speak-what
-//      modes as plain sentences ("Speak: alert name"), with the custom entry drawn as the EDIT
-//      ACTION it is ("✎ Edit spoken phrase… “<phrase>”", JOS-362 — SayPicker's header). Custom
-//      opens a small popover anchored on the select itself, never a navigation: the whole point
-//      of this change is that the row is where you configure an alert.
+//   1. OUTPUT — every installed sound pack (as before), a divider, then "Voice (spoken)".
+//      Choosing a pack means `audio:'sound'`; the voice entry means 'speech' and keeps the
+//      pack/sound the def already had. The select DISPLAYS the def's actual state, so a def with
+//      `audio:'speech'` reads "Voice (spoken)" — there is no hidden mode a row can be in without
+//      saying so.
+//   2. CONTEXTUAL — the pack's sound list for 'sound'; for 'speech' the speak-what modes as plain
+//      sentences ("Speak: alert name"), with the custom entry drawn as the EDIT ACTION it is
+//      ("✎ Edit spoken phrase… “<phrase>”", JOS-362 — SayPicker's header). Custom opens a small
+//      popover anchored on the select itself, never a navigation: the whole point of this change
+//      is that the row is where you configure an alert.
 //
-// WHY 'both' KEEPS ITS FINE-TUNING IN THE EDITOR. An alert has three audio dimensions (channel,
-// which sound, what it says) and this row has two selects. For 'sound' and 'speech' two is
-// enough — the third dimension does not exist. For 'both' it is not, so the row shows the sound
-// (the thing you are most likely to change) and the editor's SpeechBlock stays the place to
-// change what a 'both' alert says. The row owns the 90% case; the editor stays complete.
-// The editor is also authoritative for the per-alert VOICE override, which this row preserves
-// without ever authoring (audioChoice.ts) — two selects cannot show three dimensions, and
-// silently dropping a voice the user chose would be the worst way to admit it.
+// TWO SELECTS ARE NOW THE WHOLE MODEL, not a compromise (JOS-362). There used to be a third
+// channel ("Sound + voice") and a per-alert VOICE override, which together made three dimensions
+// the row could not show — so 'both' kept its fine-tuning in the editor and the row carried a
+// voice it could not author. The owner retired both: "also remove sound + spoken - too much
+// garbage", and "our settings shouldn't store which voice per alert, only the preferences
+// should". A def now has a channel, a sound and a sentence; the row shows all of them, and
+// Preferences > Voice (spoken) owns who says it, for every alert at once.
 //
 // PREVIEW IS NOT REBUILT HERE. The row's ▶ routes through `previewAlertNow` → `playAlertNow`,
 // whose `speechPlan` decides sound vs speech from the very fields these selects write — so a def
 // switched to "Voice (spoken)" SPEAKS when previewed, through the same seam that fires it for
 // real. There is no second preview path and there must not be one.
 //   That claim was written here before it was TRUE: a global voice switch (retired 2026-08-04)
-//   sat inside `speechPlan` and degraded 'speech'/'both' back to the pack sound whenever it was
+//   sat inside `speechPlan` and degraded a speaking def back to the pack sound whenever it was
 //   off — which it was by default — so pressing ▶ on a row you had just switched to voice played
 //   the old sound and looked like this picker had not saved. One seam, one path, and now one
 //   pinned equality: features/alerts/preview.ts + tests/alertPreview.test.mts.
@@ -62,7 +61,6 @@ import { autoTokenNamesFor } from '@shared/alertTargets'
 import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
 import { autoTokenLine } from './SpeechBlock'
 import {
-  OUTPUT_BOTH,
   OUTPUT_SPEECH,
   applyAudioChoice,
   audioChoiceOf,
@@ -378,7 +376,6 @@ export default function AudioPicker({
           ))}
           <Divider />
           <MenuItem value={OUTPUT_SPEECH}>Voice (spoken){voiceNote}</MenuItem>
-          <MenuItem value={OUTPUT_BOTH}>Sound + voice{voiceNote}</MenuItem>
         </Select>
         {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-row-voice-setup" />}
         <SoundNoticeLine text={notice} />

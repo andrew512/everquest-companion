@@ -32,11 +32,12 @@ import {
 } from '@mui/material'
 import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
-import type { AlertAudio, AlertDef, AlertSpeech, SpeechMode } from '@shared/types'
+import type { AlertAudioChoice, AlertDef, AlertSpeech, SpeechMode } from '@shared/types'
 import {
-  ALERT_AUDIO_ACTIONS,
+  ALERT_AUDIO_CHOICES,
   MAX_SPEECH_CHARS,
   SPEECH_MODES,
+  resolveAlertAudio,
   speechTextFor
 } from '@shared/speechText'
 import { tokensIn } from '@shared/alertCaptures'
@@ -44,11 +45,14 @@ import { currentVoicePrefs, speak } from '../../lib/speech'
 import { useVoiceOptions } from '../../lib/useVoices'
 import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
 
-/** Human labels for the audio-action selector. Keyed off the closed union, never free text. */
-const AUDIO_LABELS: Record<AlertAudio, string> = {
+/**
+ * Human labels for the audio-action selector. Keyed off the closed union of what a user may
+ * CHOOSE (`AlertAudioChoice`), never free text — the retired 'both' has no label because it has no
+ * entry (JOS-362).
+ */
+const AUDIO_LABELS: Record<AlertAudioChoice, string> = {
   sound: 'Play a sound',
-  speech: 'Speak it',
-  both: 'Sound, then speak'
+  speech: 'Speak it'
 }
 
 /** Human labels for the mode picker, in the order SPEECH_MODES declares. */
@@ -61,8 +65,8 @@ const MODE_LABELS: Record<SpeechMode, string> = {
 
 /** The sub-form AlertDialog holds and this block renders. */
 export interface SpeechForm {
-  audio: AlertAudio
-  setAudio: (v: AlertAudio) => void
+  audio: AlertAudioChoice
+  setAudio: (v: AlertAudioChoice) => void
   mode: SpeechMode
   setMode: (v: SpeechMode) => void
   phrase: string
@@ -76,7 +80,7 @@ export interface SpeechForm {
 
 /** The four fields + the opt-out, read off a def (edit) or at their defaults (add). */
 function speechDefaults(initial: AlertDef | null): {
-  audio: AlertAudio
+  audio: AlertAudioChoice
   mode: SpeechMode
   phrase: string
   voiceId: string
@@ -84,7 +88,9 @@ function speechDefaults(initial: AlertDef | null): {
 } {
   const speech = initial?.speech
   return {
-    audio: initial?.audio ?? 'sound',
+    // Through `resolveAlertAudio`, so a def still storing the retired 'both' opens on the channel
+    // it will actually be heard on rather than on a value this select has no entry for (JOS-362).
+    audio: initial ? resolveAlertAudio(initial) : 'sound',
     mode: speech?.mode ?? 'alertName',
     phrase: speech?.phrase ?? '',
     voiceId: speech?.voiceId ?? '',
@@ -94,7 +100,7 @@ function speechDefaults(initial: AlertDef | null): {
 
 /** Hydrate the speech sub-form from `initial` (edit) or its defaults (add), on every open. */
 export function useSpeechForm(open: boolean, initial: AlertDef | null): SpeechForm {
-  const [audio, setAudio] = useState<AlertAudio>('sound')
+  const [audio, setAudio] = useState<AlertAudioChoice>('sound')
   const [mode, setMode] = useState<SpeechMode>('alertName')
   const [phrase, setPhrase] = useState('')
   const [voiceId, setVoiceId] = useState('')
@@ -178,9 +184,9 @@ function AudioActionRow({ form, allAlwaysPlay }: { form: SpeechForm; allAlwaysPl
           fullWidth
           data-testid="alert-audio-action"
           value={form.audio}
-          onChange={(e) => form.setAudio(e.target.value as AlertAudio)}
+          onChange={(e) => form.setAudio(e.target.value as AlertAudioChoice)}
         >
-          {ALERT_AUDIO_ACTIONS.map((a) => (
+          {ALERT_AUDIO_CHOICES.map((a) => (
             <MenuItem key={a} value={a}>
               {AUDIO_LABELS[a]}
             </MenuItem>

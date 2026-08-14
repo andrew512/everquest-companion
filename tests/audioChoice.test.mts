@@ -21,7 +21,6 @@ import assert from 'node:assert/strict'
 import type { AlertDef, SoundPack } from '../src/shared/types'
 import { MAX_SPEECH_CHARS, speechTextFor } from '../src/shared/speechText'
 import {
-  OUTPUT_BOTH,
   OUTPUT_SPEECH,
   applyAudioChoice,
   audioChoiceOf,
@@ -75,7 +74,32 @@ test('a def with no audio fields flattens to the sound-only defaults', () => {
 test('the OUTPUT select shows the def’s actual channel, never a hidden mode', () => {
   assert.equal(outputValueOf(audioChoiceOf(def())), 'alan-rickman')
   assert.equal(outputValueOf(audioChoiceOf(def({ audio: 'speech' }))), OUTPUT_SPEECH)
-  assert.equal(outputValueOf(audioChoiceOf(def({ audio: 'both' }))), OUTPUT_BOTH)
+})
+
+test("JOS-362: a def still storing the retired 'both' is shown on the channel it resolves to", () => {
+  // The combined output is gone from the select, so a def that still says 'both' would otherwise
+  // give the Select a value with no entry — it renders blank and warns. The resolution rule
+  // (`resolveAlertAudio`) runs on the way IN: a phrase means the words were the point, and
+  // anything else keeps the sound it was guaranteed to be heard on.
+  const spoken = def({ audio: 'both', speech: { mode: 'custom', phrase: 'Charm broke' } })
+  assert.equal(audioChoiceOf(spoken).audio, 'speech')
+  assert.equal(outputValueOf(audioChoiceOf(spoken)), OUTPUT_SPEECH)
+  const played = def({ audio: 'both' })
+  assert.equal(audioChoiceOf(played).audio, 'sound')
+  assert.equal(outputValueOf(audioChoiceOf(played)), 'alan-rickman', 'a pack entry, which exists')
+})
+
+test("JOS-362: the resolution is a READ — the def keeps saying 'both' until it is edited", () => {
+  // The owner's constraint: nobody's settings change except the alerts that used the option, and
+  // even those change only when the user touches them. No store walk, no migration, so a
+  // downgrade and every exported/shared def stay readable.
+  const stored = def({ audio: 'both', speech: { mode: 'custom', phrase: 'Charm broke' } })
+  audioChoiceOf(stored)
+  assert.equal(stored.audio, 'both', 'reading a def does not rewrite it')
+  // …and the first row edit writes the resolved channel, like any other edit.
+  const edited = applyAudioChoice(stored, withSoundId(audioChoiceOf(stored), 'charm-break'))
+  assert.equal(edited.audio, 'speech')
+  assert.equal(edited.speech?.phrase, 'Charm broke', 'and the words the user wrote are untouched')
 })
 
 // ------------------------------------------------------------------ the byte-identical floor
@@ -111,17 +135,11 @@ test('choosing a pack IS choosing sound-only, and re-seeds a sound that pack has
   assert.equal(other.soundId, 'ready', 'peon has no charm-break — take its first sound')
 })
 
-test('the two voice outputs keep the pack sound the alert already had', () => {
-  const c = audioChoiceOf(def())
-  for (const [value, audio] of [
-    [OUTPUT_SPEECH, 'speech'],
-    [OUTPUT_BOTH, 'both']
-  ] as const) {
-    const next = withOutput(c, value, PACKS)
-    assert.equal(next.audio, audio)
-    assert.equal(next.packId, 'alan-rickman')
-    assert.equal(next.soundId, 'attention', "'both' needs it, and a change of mind must be free")
-  }
+test('the voice output keeps the pack sound the alert already had', () => {
+  const next = withOutput(audioChoiceOf(def()), OUTPUT_SPEECH, PACKS)
+  assert.equal(next.audio, 'speech')
+  assert.equal(next.packId, 'alan-rickman')
+  assert.equal(next.soundId, 'attention', 'a change of mind must be free')
 })
 
 // ------------------------------------------------------------------ what it says
@@ -194,12 +212,12 @@ test('the editor-owned voice override survives every row edit', () => {
 
 test('an alert’s unrelated fields are never touched by an audio edit', () => {
   const d = def({ volume: 0.4, cooldownMs: 30_000, alwaysPlay: true, note: 'from a share string' })
-  const next = applyAudioChoice(d, withOutput(audioChoiceOf(d), OUTPUT_BOTH, PACKS))
+  const next = applyAudioChoice(d, withOutput(audioChoiceOf(d), OUTPUT_SPEECH, PACKS))
   assert.equal(next.volume, 0.4)
   assert.equal(next.cooldownMs, 30_000)
   assert.equal(next.alwaysPlay, true)
   assert.equal(next.note, 'from a share string')
-  assert.equal(next.audio, 'both')
+  assert.equal(next.audio, 'speech')
 })
 
 // ------------------------------------------- what the row SAYS about a pack that is not there
@@ -229,7 +247,8 @@ test('nothing installed at all says the alert is silent', () => {
 test('a spoken-only alert is not nagged about a pack it never plays', () => {
   const d = def({ audio: 'speech', sound: { packId: 'portal-turret', soundId: 'gone' } })
   assert.equal(soundNotice(audioChoiceOf(d), PACKS, { defaultPackId: 'alan-rickman' }), null)
-  // …but a 'both' alert DOES play the sound, so it is told.
+  // …but a def that still stores the retired 'both' with nothing to say resolves to its SOUND, and
+  // a sound alert whose pack is gone is told (JOS-362 + JOS-273 together).
   const both = def({ audio: 'both', sound: { packId: 'portal-turret', soundId: 'gone' } })
   assert.notEqual(soundNotice(audioChoiceOf(both), PACKS, { defaultPackId: 'alan-rickman' }), null)
 })

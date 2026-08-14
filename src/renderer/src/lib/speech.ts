@@ -36,7 +36,7 @@
 // for anything node:test loads (AGENTS.md toolchain gotchas, the mobSearch.ts precedent).
 
 import type {
-  AlertAudio,
+  AlertAudioChoice,
   AlertDef,
   FiredAlert,
   SpeechEngine,
@@ -49,6 +49,7 @@ import {
   DEFAULT_VOICE_PREFS,
   MAX_SPEECH_RATE,
   MIN_SPEECH_RATE,
+  resolveAlertAudio,
   speechTextFor
 } from '../../../shared/speechText'
 
@@ -60,17 +61,19 @@ import {
  *
  *  - `sound`  play the def's pack sound.
  *  - `speak`  the utterance, or null for "say nothing".
- *  - `after`  the 'both' contract (D5): the sound plays FIRST and the speech is queued behind
- *             it, so the two never talk over each other. Only ever true when both are set.
+ *
+ * EXACTLY ONE OF THEM IS EVER SET (JOS-362). There used to be a third field, `after`: the 'both'
+ * contract (D5) played the sound FIRST and queued the utterance behind it. That channel is retired
+ * — "also remove sound + spoken - too much garbage" (owner, 2026-08-14) — so a plan is now one
+ * channel or none, and `resolveAlertAudio` is where a def still storing 'both' picks its side.
  */
 export interface SpeechPlan {
   sound: boolean
   speak: string | null
-  after: boolean
 }
 
-const SILENT: SpeechPlan = { sound: false, speak: null, after: false }
-const SOUND_ONLY: SpeechPlan = { sound: true, speak: null, after: false }
+const SILENT: SpeechPlan = { sound: false, speak: null }
+const SOUND_ONLY: SpeechPlan = { sound: true, speak: null }
 
 /**
  * Resolve a def + firing into what to play.
@@ -89,6 +92,11 @@ const SOUND_ONLY: SpeechPlan = { sound: true, speak: null, after: false }
  * There is still exactly one way a speaking alert falls back to its sound: nothing truthful to
  * say (`speechTextFor` resolved to null — a nameless def with an empty phrase). Silence is never
  * the answer for an alert the user can see is enabled.
+ *
+ * THE RETIRED 'both' RESOLVES HERE TOO, through the same `resolveAlertAudio` the two pickers read
+ * (JOS-362). That shared call is the point: a def whose row says "Voice (spoken)" must not play a
+ * sound, and one shown on a pack must not talk — the split-brain that a second interpretation of
+ * `audio` in the firing path would create is exactly the bug class the global voice switch was.
  */
 export function speechPlan(
   def: Pick<AlertDef, 'name' | 'audio' | 'speech'>,
@@ -96,11 +104,11 @@ export function speechPlan(
   muted: boolean
 ): SpeechPlan {
   if (muted) return SILENT
-  const action: AlertAudio = def.audio ?? 'sound'
+  const action: AlertAudioChoice = resolveAlertAudio(def)
   if (action === 'sound') return SOUND_ONLY
   const text = speechTextFor(def, firing)
   if (!text) return SOUND_ONLY
-  return action === 'both' ? { sound: true, speak: text, after: true } : { sound: false, speak: text, after: false }
+  return { sound: false, speak: text }
 }
 
 /** The minimum a voice has to state for `pickVoice` to match it (a `SpeechSynthesisVoice` does). */

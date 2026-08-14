@@ -21,9 +21,12 @@
  * seam's utterance ring — is already standing in voice-alerts.e2e.mts, and that spec is at its
  * 400-line budget. A second Electron launch to type one sentence would buy nothing but 40 seconds.
  *
- * THE DEF IS SHAPED LIKE A SUGGESTION, because that is the def the owner had in his hands: an
- * `audio:'both'` fade alert carrying the template's own `{target}` phrase (suggestions.ts). The
- * walk is his: switch the row's output to "Voice (spoken)", open the say picker, try to reword it.
+ * THE DEF IS SHAPED LIKE A SUGGESTION AS AN OLDER BUILD SAVED IT: an `audio:'both'` fade alert
+ * carrying the template's own `{target}` phrase (suggestions.ts). That was the def the owner had
+ * in his hands, and it is now also the MIGRATION case — JOS-362 retired the combined channel, so
+ * a stored 'both' has to resolve on read (`resolveAlertAudio`: a phrase means spoken). The walk
+ * therefore starts one step earlier than his did: the row must already read "Voice (spoken)" and
+ * show the say picker, with no channel switch available to make it do so.
  *
  * THE LINE IS EQ'S OWN `Your <Spell> spell has worn off of <mob>.`, which the parser reads as a
  * `buffFade` naming the mob — the same family the fade suggestion watches. Restamped to now by the
@@ -71,6 +74,11 @@ function storedSpeech(page: Page): Promise<{ mode?: string; phrase?: string } | 
   ) as Promise<{ mode?: string; phrase?: string } | null>
 }
 
+/** Rendered text of the first match; '' when the node isn't mounted (the plannerSteps helper). */
+function textOf(page: Page, sel: string): Promise<string> {
+  return page.evaluate((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '', sel)
+}
+
 /** The value a MUI Select is holding, read off the hidden native input it renders. */
 function selectValueOf(page: Page, selector: string): Promise<string> {
   return page.evaluate(
@@ -102,14 +110,6 @@ function settledPhrase(page: Page, want: string): Promise<string> {
     (v) => v === want,
     { timeoutMs: 10_000 }
   ).catch(() => page.inputValue('[data-testid="alert-speech-phrase"] input'))
-}
-
-/** Pick a value out of a MUI Select (its popup renders `li[data-value=…]`). */
-async function selectIn(page: Page, selector: string, value: string): Promise<void> {
-  await page.click(selector)
-  await page.waitForSelector(`li[data-value="${value}"]`, { timeout: 10_000 })
-  await page.click(`li[data-value="${value}"]`)
-  await settleGone(page, '.MuiMenu-root', { timeoutMs: 8_000 })
 }
 
 /**
@@ -146,12 +146,23 @@ async function seedSuggestedDef(page: Page): Promise<number> {
 
 /** THE REGRESSION: reword a suggestion's phrase from the row, without opening the editor. */
 async function rewordFromTheRow(page: Page): Promise<boolean> {
-  // The owner's own walk: an installed suggestion plays sound + voice, so the second select is the
-  // sound list. Switching the output to voice is what brings the say picker up.
-  await selectIn(page, `${ROW} [data-testid="alert-output"]`, 'output:speech')
+  // JOS-362, in the real app: the def on disk still says `audio:'both'`, a channel this build no
+  // longer offers. It carries a phrase, so it resolves to SPOKEN — the output select reads
+  // "Voice (spoken)" and the say picker is the second column, with no switch to make first. A
+  // Select holding a value none of its items carry renders BLANK, so this also proves the
+  // resolution happens on the way in rather than being papered over in the label.
   if (
     !check(
-      'switching a suggested alert to voice shows the say picker, already on the template’s phrase',
+      'a def stored on the retired sound+voice channel opens on the voice output, not blank',
+      (await selectValueOf(page, `${ROW} [data-testid="alert-output"]`)) === 'output:speech',
+      await selectValueOf(page, `${ROW} [data-testid="alert-output"]`)
+    )
+  ) {
+    return false
+  }
+  if (
+    !check(
+      'a suggested alert shows the say picker, already on the template’s phrase',
       (await countOf(page, `${ROW} [data-testid="alert-say"]`)) === 1 &&
         (await selectValueOf(page, `${ROW} [data-testid="alert-say"]`)) === 'custom',
       await selectValueOf(page, `${ROW} [data-testid="alert-say"]`)
@@ -160,10 +171,27 @@ async function rewordFromTheRow(page: Page): Promise<boolean> {
     return false
   }
 
+  // THE COLLAPSED VALUE IS A READOUT (JOS-362): closed, the picker says what the alert will SAY,
+  // not what clicking it would do.
+  check(
+    'the closed say picker states the phrase the alert speaks',
+    (await textOf(page, `${ROW} [data-testid="alert-say"]`)).includes(TEMPLATE_PHRASE),
+    await textOf(page, `${ROW} [data-testid="alert-say"]`)
+  )
+
   // …and THIS is the click that did nothing. The entry is the mode the def is already in, so the
   // Select fires no `onChange` — the popover has to be opened by the MenuItem's own onClick.
   await page.click(`${ROW} [data-testid="alert-say"]`)
   await page.waitForSelector('li[data-value="custom"]', { timeout: 10_000 })
+  // THE OPEN ENTRY IS AN ACTION (JOS-362, the owner's report: "it reads as a status, not an
+  // affordance - selecting it edits the phrase but nothing says so"). Both halves in one claim:
+  // the entry names the edit, and it still shows the phrase that edit would act on.
+  const entry = await textOf(page, 'li[data-value="custom"]')
+  check(
+    'the custom entry reads as an edit action, alongside the phrase it would edit',
+    entry.includes('Edit spoken phrase') && entry.includes(TEMPLATE_PHRASE),
+    entry
+  )
   await page.click('li[data-value="custom"]')
   const opened = await settle(() => countOf(page, PHRASE_BOX), (n) => n === 1, { timeoutMs: 10_000 }).catch(
     () => 0
@@ -183,6 +211,12 @@ async function rewordFromTheRow(page: Page): Promise<boolean> {
     (await page.inputValue(PHRASE_BOX)) === TEMPLATE_PHRASE,
     await page.inputValue(PHRASE_BOX)
   )
+
+  // …and it TEACHES the token, in the dialog's own words (owner, mid-JOS-362: "add a small bit of
+  // explanatory text ... around {target} and what it can do"). The names come from this alert's own
+  // trigger, so this is also the claim that the row is not promising a token the def cannot fill.
+  const hint = await textOf(page, '[data-testid="alert-row-phrase-tokens"]')
+  check('the phrase box says which token the app fills in for this alert', hint.includes('{target}'), hint)
 
   await page.fill(PHRASE_BOX, ROW_PHRASE)
   await page.press(PHRASE_BOX, 'Enter')

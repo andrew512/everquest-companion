@@ -39,7 +39,6 @@ import { buildSpellCatalog, loadSpellDb } from '../src/main/data/spellDb'
 import { AlertsModule } from '../src/main/modules/alerts'
 import { speechTextFor } from '../src/shared/speechText'
 import {
-  OUTPUT_BOTH,
   OUTPUT_SPEECH,
   applyAudioChoice,
   audioChoiceOf,
@@ -100,6 +99,11 @@ test('JOS-360 A1: every phrase-bearing suggestion arrives ALREADY in custom mode
   const speaking = suggestionsFor(entryFor('clarity')).filter((s) => s.def.speech !== undefined)
   assert.ok(speaking.length > 0, 'JOS-353 gave the fade/wearsOff templates a spoken phrase')
   for (const s of speaking) {
+    // These templates used to arrive on the combined 'sound + voice' channel, which is why the
+    // owner's own walk started by switching the row's output to voice before the say picker even
+    // appeared. JOS-362 retired that channel and they now arrive SPOKEN — the say picker is on the
+    // row from the first look, and the re-pick this file is about is one click in.
+    assert.equal(s.def.audio, 'speech', `${s.template}: a template with a phrase speaks it`)
     assert.equal(s.def.speech?.mode, 'custom', `${s.template}: a shipped phrase is a custom phrase`)
     assert.equal(
       audioChoiceOf(s.def).mode,
@@ -170,7 +174,6 @@ test('JOS-360 C1: no row edit puts the template’s default phrase back', () => 
   const edits: readonly [string, (d: AlertDef) => AlertDef][] = [
     ['switch the output to a pack', (d) => applyAudioChoice(d, withOutput(audioChoiceOf(d), A_PACK.id, [A_PACK]))],
     ['switch the output to voice', (d) => applyAudioChoice(d, withOutput(audioChoiceOf(d), OUTPUT_SPEECH, [A_PACK]))],
-    ['switch the output to sound + voice', (d) => applyAudioChoice(d, withOutput(audioChoiceOf(d), OUTPUT_BOTH, [A_PACK]))],
     ['pick another sound', (d) => applyAudioChoice(d, withSoundId(audioChoiceOf(d), 'task-error-task-error-08'))],
     ['say the alert name instead', (d) => applyAudioChoice(d, withSpeechMode(audioChoiceOf(d), 'alertName'))],
     ['…and go back to the custom phrase', (d) => applyAudioChoice(d, withSpeechMode(audioChoiceOf(d), 'custom'))]
