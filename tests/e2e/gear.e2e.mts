@@ -67,7 +67,7 @@
  * mounted and therefore the first place the JOS-143 defect could come back. The step
  * (`gearCompareSteps.mts`) opens the card on a real row, reads the equipped half against the same
  * staged dump the ownership steps read, and then — with the card OPEN — hit-tests the toolbar, the
- * row's wish heart and the item name's Loot link. That last part is the regression, stated the way
+ * row's wish control and the item name's Loot link. That last part is the regression, stated the way
  * the owner met it twice: not "is a popper on screen" but "does the click still land".
  *
  * AND SINCE JOS-329 IT ASSERTS THAT THE FORM COMES HOME. The owner's report was that the whole gear

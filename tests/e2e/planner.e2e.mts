@@ -304,14 +304,27 @@ async function stepEffectSays(page: Page): Promise<void> {
   )
 }
 
+/** The wish control of the donor row bearing a given name — `DonorName` puts it in the `title`. */
+const controlOfDonor = (name: string): string =>
+  `${DONOR_ROW}:has([data-testid="planner-donor-name"][title="${name}"]) [data-testid="planner-add"]`
+
 /**
- * 5. ADDING A DONOR IS ONE CLICK, AND IT WRITES A WISH (JOS-326).
+ * 5. ADDING A DONOR IS ONE CLICK, AND IT WRITES A WISH (JOS-326) — AND CLICKING IT AGAIN TAKES THE
+ *    WISH BACK OFF (JOS-343, owner ruling 2026-08-13).
  *
  * The button used to say "Add to set", could open a slot menu when the donor fit more than one
  * cell, and turned into a warning-coloured "Replace" over an occupied socket. All three came from
- * the plan board. What is asserted now is what is left: one click, no menu, and the row's own
- * button goes quiet — a wish list dedupes by item, so a second click would change nothing and the
- * control must say so rather than swallow it.
+ * the plan board, and all three are gone.
+ *
+ * WHAT THIS STEP USED TO CLAIM AND NO LONGER DOES: "the add control goes quiet rather than
+ * accepting a click that would change nothing". That was true of a one-way add and the owner
+ * overruled the one-way add. The control is enabled in both states now and a second click REMOVES,
+ * so the claim it is replaced by is the opposite one — the toggle flips, both ways, in place.
+ *
+ * THE RE-ADD AT THE END IS NOT DECORATION. Everything downstream (`wishlistSteps`) reads this
+ * donor's row off the ROUTE, which is what proves the ADD reached the store; the store half of the
+ * REMOVE is proven at the end of the run by `stepUnwishFromBrowse`, where taking it off costs
+ * nothing. Toggling here and putting it back is what lets both be asserted in one launch.
  *
  * Returns the donor's NAME so the wish-list half can find the row it just made.
  */
@@ -333,10 +346,131 @@ async function stepAddWish(page: Page): Promise<string | null> {
   const marked = await until(async () => (await countOf(page, WISHED_CHIP)) > 0, 10_000)
   check(`adding "${name}" chips its own row as wished`, marked)
   check(
-    '…and the add control goes quiet rather than accepting a click that would change nothing',
+    '…and the control reads its added state rather than staying an add (JOS-343)',
     (await countOf(page, ADD_WISHED)) > 0
   )
-  return marked ? name : null
+  if (!marked) return null
+
+  // THE TOGGLE, IN PLACE. Same control, same row, no tab in between: the second click is a REMOVE.
+  const control = controlOfDonor(name)
+  if (!check(`the wished donor's own control is findable by name — "${name}"`, (await countOf(page, control)) === 1)) {
+    return name
+  }
+  await page.click(control, { timeout: 15_000 })
+  check(
+    'a second click on a wished donor removes the wish — the lit no-op is overruled',
+    await until(async () => (await countOf(page, `${control}[data-wished="true"]`)) === 0, 10_000)
+  )
+  check('…and its row drops the wished chip with it', (await countOf(page, `${DONOR_ROW}:has([data-testid="planner-donor-name"][title="${name}"]) ${WISHED_CHIP}`)) === 0)
+
+  // …and back on, because the route half of the run is built on this wish existing.
+  await page.click(control, { timeout: 15_000 })
+  const readded = await until(async () => (await countOf(page, `${control}[data-wished="true"]`)) === 1, 10_000)
+  check('a third click puts it back — the toggle is a toggle, not a one-shot', readded)
+  return readded ? name : null
+}
+
+/**
+ * Two donor rows on screen, unadded, whose names are unique among the mounted rows — so a selector
+ * built from either name addresses exactly one control.
+ *
+ * NO NAMED INNER FUNCTION IN THE `evaluate` BODY, deliberately. tsx's esbuild transform keeps
+ * function names by wrapping them in a `__name` helper that exists in the SPEC's module scope and
+ * not in the page's, so a `const nameOf = …` inside here dies with `__name is not defined` the
+ * moment the browser runs it. Measured on the first run of this step.
+ */
+function pickTwoUnwished(page: Page): Promise<[string, string] | null> {
+  return page.evaluate((rowSel) => {
+    const names = Array.from(document.querySelectorAll(rowSel)).map((row) => ({
+      row,
+      name: (row.querySelector('[data-testid="planner-donor-name"]') as HTMLElement | null)?.innerText.trim() ?? ''
+    }))
+    const seen = new Map<string, number>()
+    for (const n of names) seen.set(n.name, (seen.get(n.name) ?? 0) + 1)
+    const picked: string[] = []
+    for (const n of names) {
+      const control = n.row.querySelector('[data-testid="planner-add"]')
+      if (n.name === '' || seen.get(n.name) !== 1) continue
+      if (control === null || control.hasAttribute('disabled') || control.hasAttribute('data-wished')) continue
+      picked.push(n.name)
+      if (picked.length === 2) return [picked[0], picked[1]] as [string, string]
+    }
+    return null
+  }, DONOR_ROW)
+}
+
+/**
+ * 9. THE BROWSE'S TOGGLE REACHES THE DOCUMENT, BOTH WAYS (JOS-343) — the half `stepAddWish` cannot
+ *    see, because a control's own state is not a store.
+ *
+ * IT IS A DIFFERENTIAL, AND THE SHAPE IS THE WHOLE POINT. Two donors are picked off the screen. One
+ * is ADDED and left. The other is ADDED and then CLICKED AGAIN. Then the Wish list tab is opened
+ * ONCE and asked about both: the first is on it, the second is not. "Add then remove leaves nothing
+ * behind" on its own would also pass a build where neither click did anything at all — the donor
+ * that stayed is what rules that out, in the same launch, off the same document.
+ *
+ * WHY IT IS SHAPED THIS WAY RATHER THAN AS A ROUND TRIP. The obvious version — add, go look, come
+ * back, click again, go look again — needs the SAME donor row to still be windowed after two
+ * remounts of a virtualised list whose era filter `stepEraOff` has since changed underneath it. It
+ * was written that way first and it skipped itself on the first run ("Bloodclaw Battle Axe is not
+ * windowed on the way out"), which is a spec measuring `useWindowedRows` rather than the toggle.
+ * One trip, taken after both clicks, needs nothing to survive anything.
+ *
+ * RUNS LAST for the reason every destructive step in this spec runs last: nothing after it needs
+ * the wishes it leaves behind, and it ends on the Wish list tab.
+ */
+async function stepBrowseToggleReachesStore(page: Page): Promise<void> {
+  if (!(await ensureDonorRow(page))) {
+    note('no donor rows on screen on the way out — the browse-side store step is skipped this run')
+    return
+  }
+  // THE PRECONDITION THE FIRST DRAFT OF THIS STEP DID NOT HAVE, and it cost a red run. The browse
+  // was remounted by the trip through Loot, and its controls used to render BEFORE the wish
+  // document came back — so every row read unadded and the pick chose a donor that was on the list.
+  // The product answer is `PlannerView`'s `donorToggle` (no control at all until `ready`); this is
+  // the spec's half of the same fact, and it is a real claim rather than a wait: the run reaches
+  // here with wishes on the list, so a browse showing none of them has not re-read the store.
+  if (!check(
+    'the remounted browse has re-read the wish document before a row is picked off it',
+    await until(async () => (await countOf(page, ADD_WISHED)) > 0, 20_000)
+  )) return
+  const pair = await pickTwoUnwished(page)
+  if (!check('two unwished donor rows are on screen to toggle against each other', pair !== null)) return
+  const [kept, undone] = pair as [string, string]
+
+  const keptControl = controlOfDonor(kept)
+  const undoneControl = controlOfDonor(undone)
+  await page.click(keptControl, { timeout: 15_000 })
+  if (!check(`"${kept}" is added and stays added`, await until(async () => (await countOf(page, `${keptControl}[data-wished="true"]`)) === 1, 10_000))) return
+
+  await page.click(undoneControl, { timeout: 15_000 })
+  if (!check(`"${undone}" is added too`, await until(async () => (await countOf(page, `${undoneControl}[data-wished="true"]`)) === 1, 10_000))) return
+  await page.click(undoneControl, { timeout: 15_000 })
+  if (!check(`…and a second click on "${undone}" reads as removed`, await until(async () => (await countOf(page, `${undoneControl}[data-wished="true"]`)) === 0, 10_000))) return
+
+  await page.click(WISH_TAB, { timeout: 15_000 })
+  if (!check('the Wish list tab mounts to be asked about both', await until(async () => (await countOf(page, '[data-testid="wishlist-view"]')) > 0, 20_000))) return
+  // Both row kinds, because a wish the progress join calls fulfilled is filed in the done strip
+  // rather than the route and is still very much ON the list.
+  const WISH_ROWS = '[data-testid="wishlist-row"], [data-testid="wishlist-done-row"]'
+  const readNames = (): Promise<string[]> =>
+    page.evaluate(
+      (s) => Array.from(document.querySelectorAll(s)).map((e) => (e as HTMLElement).innerText.split('\n')[0].trim()),
+      WISH_ROWS
+    )
+  // AND THE MOUNT IS NOT THE ROWS. The route is a fold over BOTH corpus indices and the progress
+  // join, so a freshly mounted pane draws its shell with nothing under it for a beat — read at the
+  // mount, this step got an EMPTY list and reported the added donor missing (its first red run).
+  // So it waits for the condition rather than for the pane (AGENTS.md), and reads the final list
+  // afterwards either way — a list that never fills fails on the claim below, not on a timeout.
+  await until(async () => (await readNames()).includes(kept), 20_000)
+  const listed = await readNames()
+  check(`the donor left added is on the wish list — "${kept}"`, listed.includes(kept), listed.slice(0, 6).join(', '))
+  check(
+    `…and the one clicked twice is not — the browse's second click used the wish list's own delete — "${undone}"`,
+    !listed.includes(undone),
+    listed.slice(0, 6).join(', ')
+  )
 }
 
 /**
@@ -488,6 +622,9 @@ async function main(): Promise<void> {
       await page.click(TAB, { timeout: 15_000 })
       await until(async () => (await countOf(page as Page, VIEW)) > 0, 20_000)
       await stepDeepLink(page)
+      // …and then the claim the browse's toggle owns (JOS-343): that both of its clicks reach the
+      // document. It ends on the Wish list tab, which is why nothing follows it.
+      await stepBrowseToggleReachesStore(page)
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
