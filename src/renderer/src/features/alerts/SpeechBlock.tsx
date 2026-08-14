@@ -217,6 +217,20 @@ function tokenList(names: readonly string[]): string {
 }
 
 /**
+ * THE ONE SENTENCE that names the tokens the app fills in by itself for a trigger, or null when it
+ * fills in none (JOS-353's ruling, rendered).
+ *
+ * EXPORTED BECAUSE THERE ARE NOW TWO PLACES A PHRASE IS WRITTEN (JOS-362): this dialog, and the
+ * alert row's own phrase popover (AudioPicker's `PhrasePopover`). Both take their names from
+ * `autoTokenNamesFor(trigger)` so neither can name a token this alert cannot fill, and both say it
+ * in the SAME words — a second hand-written copy of this sentence is a drift waiting to happen.
+ */
+export function autoTokenLine(names: readonly string[]): string | null {
+  if (names.length === 0) return null
+  return `Companion fills in ${tokenList(names)} for you - who the spell is affecting. No pattern needed.`
+}
+
+/**
  * WHAT `{tokens}` THIS ALERT MAY WRITE, and which ones nothing will fill in (JOS-103, JOS-353).
  *
  * The readable form of control 4 in shared/alertCaptures.ts's threat model: the set of values this
@@ -247,12 +261,13 @@ function CaptureHint({
 }): JSX.Element | null {
   const used = tokensIn(phrase)
   const unknown = used.filter((t) => !captureNames.includes(t) && !autoNames.includes(t))
+  const autoLine = autoTokenLine(autoNames)
   if (captureNames.length === 0 && autoNames.length === 0 && unknown.length === 0) return null
   return (
     <Box data-testid="alert-speech-captures">
-      {autoNames.length > 0 && (
+      {autoLine !== null && (
         <Typography variant="caption" color="text.secondary" display="block" data-testid="alert-speech-auto-tokens">
-          {`Companion fills in ${tokenList(autoNames)} for you - who the spell is affecting. No pattern needed.`}
+          {autoLine}
         </Typography>
       )}
       {captureNames.length > 0 && (

@@ -13,9 +13,10 @@
 //      def's actual state, so a def with `audio:'speech'` reads "Voice (spoken)" — there is no
 //      hidden mode a row can be in without saying so.
 //   2. CONTEXTUAL — the pack's sound list for 'sound' and 'both'; for 'speech' the speak-what
-//      modes as plain sentences ("Speak: alert name", "Speak: custom…"). Custom opens a small
-//      popover anchored on the select itself, never a navigation: the whole point of this change
-//      is that the row is where you configure an alert.
+//      modes as plain sentences ("Speak: alert name"), with the custom entry drawn as the EDIT
+//      ACTION it is ("✎ Edit spoken phrase… “<phrase>”", JOS-362 — SayPicker's header). Custom
+//      opens a small popover anchored on the select itself, never a navigation: the whole point
+//      of this change is that the row is where you configure an alert.
 //
 // WHY 'both' KEEPS ITS FINE-TUNING IN THE EDITOR. An alert has three audio dimensions (channel,
 // which sound, what it says) and this row has two selects. For 'sound' and 'speech' two is
@@ -54,9 +55,12 @@ import {
   TextField,
   Typography
 } from '@mui/material'
+import EditIcon from '@mui/icons-material/Edit'
 import type { AlertDef, SoundPack, SpeechMode } from '@shared/types'
 import { MAX_SPEECH_CHARS, SPEECH_MODES } from '@shared/speechText'
+import { autoTokenNamesFor } from '@shared/alertTargets'
 import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
+import { autoTokenLine } from './SpeechBlock'
 import {
   OUTPUT_BOTH,
   OUTPUT_SPEECH,
@@ -93,6 +97,26 @@ const SAY_LABELS: Record<SpeechMode, string> = {
   custom: 'Speak: custom…'
 }
 
+/**
+ * What the CUSTOM entry says as a menu ITEM — an action, in the app's own "…opens something"
+ * spelling ("Add from suggestion…", "Choose log file…"). Two of them because there is a real
+ * difference between rewording a phrase and writing the first one, and a menu that offers to
+ * "edit" nothing is a small lie.
+ */
+const EDIT_PHRASE_LABEL = 'Edit spoken phrase…'
+const WRITE_PHRASE_LABEL = 'Write a spoken phrase…'
+
+/**
+ * What the COLLAPSED select shows — what this alert will SAY, never what clicking it would do.
+ *
+ * The closed control is a readout of the def (AudioPicker's header: no hidden mode a row can be in
+ * without saying so), so the custom entry's action wording must not leak into it; `renderValue` is
+ * what keeps the two texts independent, the same seam TitleBar's character select uses.
+ */
+function sayValueLabel(mode: SpeechMode, phrase: string): string {
+  return mode === 'custom' && phrase ? `Speak: “${phrase}”` : SAY_LABELS[mode]
+}
+
 /** A grid item must be allowed to shrink below its content for text-overflow to ever kick in. */
 const GRID_SX = {
   minWidth: 0,
@@ -126,12 +150,48 @@ function SoundNoticeLine({ text }: { text: string | null }): JSX.Element | null 
 }
 
 /**
+ * The custom entry's own label — the pencil, the action, and the phrase it acts on.
+ *
+ * THE PENCIL IS THE APP'S EXISTING EDIT MARK, not a new control style: `EditIcon` at `fontSize: 14`
+ * is what the loadout override, the class-combo row, the item-count correction and the respawn row
+ * all wear (JOS-362's constraint was "match the app's existing menu idioms"). The phrase rides
+ * ALONGSIDE the action rather than replacing it — the user still needs to see which sentence they
+ * are about to rewrite — and it is `noWrap` under a `maxWidth` so a long phrase ellipsizes instead
+ * of stretching the menu wider than the row it dropped out of.
+ */
+function EditPhraseEntry({ phrase }: { phrase: string }): JSX.Element {
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
+      <EditIcon sx={{ fontSize: 14 }} />
+      <span>{phrase ? EDIT_PHRASE_LABEL : WRITE_PHRASE_LABEL}</span>
+      {phrase ? (
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          noWrap
+          sx={{ minWidth: 0, maxWidth: 220 }}
+        >{`“${phrase}”`}</Typography>
+      ) : null}
+    </Stack>
+  )
+}
+
+/**
  * The speak-what select — the CONTEXTUAL column for a def whose output is 'speech'.
  *
  * THE CUSTOM ENTRY IS A BUTTON, NOT A VALUE (JOS-360, and this component exists to say so where it
  * happens). Three of the four modes are values: picking one is a write, and `onChange` is the right
  * seam. 'custom' is not — it needs a value FROM the user, so it opens the phrase popover, and it
  * has to do that on every click INCLUDING a click on the mode the def is already in.
+ *
+ * …AND NOW IT LOOKS LIKE ONE (JOS-362). It behaved as a button while reading as a status: the entry
+ * was the phrase itself ("Speak: “Tortoises wore off {target}”"), so the one control that rewords a
+ * spoken alert announced nothing about being clickable — "it reads as a status, not an affordance -
+ * selecting it edits the phrase but nothing says so" (owner, hands-on). The ITEM is now the action
+ * (`EditPhraseEntry`) and the COLLAPSED value stays the readout (`renderValue` → `sayValueLabel`),
+ * which is the only split that satisfies both halves: a menu you have to open cannot be where the
+ * row states what it will say, and a readout cannot be where an action announces itself. Behavior
+ * is untouched — same `onClick` seam, same `onChange` guard, same tests.
  *
  * A MUI Select fires `onChange` only when the value CHANGES (SelectInput's `if (value !== newValue)`
  * guard), so an `onChange`-driven custom entry is DEAD for any def already at `mode:'custom'`. That
@@ -162,6 +222,7 @@ function SayPicker({
       ref={selectRef}
       data-testid="alert-say"
       value={mode}
+      renderValue={() => sayValueLabel(mode, phrase)}
       onChange={(e) => {
         const next = e.target.value as SpeechMode
         if (next !== 'custom') onMode(next)
@@ -175,22 +236,35 @@ function SayPicker({
           data-testid={`alert-say-${m}`}
           {...(m === 'custom' ? { onClick: onCustom } : {})}
         >
-          {m === 'custom' && phrase ? `Speak: “${phrase}”` : SAY_LABELS[m]}
+          {m === 'custom' ? <EditPhraseEntry phrase={phrase} /> : SAY_LABELS[m]}
         </MenuItem>
       ))}
     </Select>
   )
 }
 
-/** The custom-phrase popover: capped, confirmable, and anchored on the select that opened it. */
+/**
+ * The custom-phrase popover: capped, confirmable, and anchored on the select that opened it.
+ *
+ * IT SAYS WHICH TOKEN THE APP FILLS IN (owner, 2026-08-14, mid-JOS-362: "add a small bit of
+ * explanatory text… around {target} and what it can do"). The row is now a real authoring surface —
+ * a user who never opens the editor would otherwise never learn that `{target}` exists — so the
+ * dialog's own sentence is rendered here too, from the SAME `autoTokenNamesFor(trigger)` answer and
+ * the SAME words (`autoTokenLine`, SpeechBlock.tsx). Naming the tokens THIS alert can actually fill
+ * is the point: a hardcoded `{target}` would promise one to the triggers that never carry it.
+ * One quiet caption, in the helper-text idiom — a hint, not documentation.
+ */
 function PhrasePopover({
   anchorEl,
   initial,
+  tokenHint,
   onCancel,
   onCommit
 }: {
   anchorEl: HTMLElement | null
   initial: string
+  /** The auto-token sentence for this alert's trigger, or null when it fills in none. */
+  tokenHint: string | null
   onCancel: () => void
   onCommit: (phrase: string) => void
 }): JSX.Element {
@@ -218,6 +292,17 @@ function PhrasePopover({
           slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
           helperText={`${String(text.length)} / ${String(MAX_SPEECH_CHARS)}`}
         />
+        {tokenHint !== null && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            data-testid="alert-row-phrase-tokens"
+            sx={{ mt: -0.5 }}
+          >
+            {tokenHint}
+          </Typography>
+        )}
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button size="small" onClick={onCancel}>
             Cancel
@@ -328,6 +413,7 @@ export default function AudioPicker({
           key={phraseOpen}
           anchorEl={sayRef.current}
           initial={view.phrase}
+          tokenHint={autoTokenLine(autoTokenNamesFor(def.trigger))}
           onCancel={() => setPhraseOpen(0)}
           onCommit={(phrase) => {
             commit(withPhrase(base, phrase))
