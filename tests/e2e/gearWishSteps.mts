@@ -1,6 +1,15 @@
 /**
  * THE GEAR TAB'S WISH GESTURE (JOS-335) — a search row goes on the wish list, exactly as an
- * Exaltations donor row has since JOS-326.
+ * Exaltations donor row has since JOS-326 — AND COMES BACK OFF IT (JOS-343, owner ruling
+ * 2026-08-13, revising JOS-335 the day after it shipped).
+ *
+ * WHAT THE REVISION REVISED, because a spec that quietly re-words its own claims is worse than one
+ * that never made them. JOS-335 shipped a HEART that LIT and, lit, did nothing; this file asserted
+ * exactly that, in the sentence "a second click leaves it lit rather than toggling the wish away".
+ * The owner overruled both halves. The control is now the donor row's text control (one component,
+ * `features/wishlist/WishToggle.tsx`, in its compact wording) and the second click REMOVES the
+ * wish. So the old claim is not softened here — it is REPLACED by its opposite, and the removal is
+ * proven where the add was: on the OTHER tab, in the route.
  *
  * A MODULE RATHER THAN MORE OF `gear.e2e.mts`, the `gearColumnSteps.mts` / `gearFilterSteps.mts`
  * precedent: everything this needs is already standing in the host spec, and that file sits at the
@@ -8,11 +17,18 @@
  *
  * WHAT NEEDS A REAL APP HERE, given `tests/wishlist.test.mts` owns every fold and
  * `tests/wishSearch.test.mts` owns `wishFromGear` without a DOM: the CHAIN, and nothing else. A
- * click on a windowed table row → `useWishlist.add` → the pure `addWish` → an IPC write → main's
- * validator → electron-store → a SECOND VIEW, on a sibling tab, that unmounted the first one and
- * re-read the document from disk to draw its route. Four of those five links are invisible to a
- * unit test, and the fifth — the dedupe — is only interesting once the document is real: "clicking
- * twice writes one row" is a claim about what came back off the store, not about a fold.
+ * click on a windowed table row → `useWishlist.add`/`.remove` → the pure `addWish`/`removeWish` →
+ * an IPC write → main's validator → electron-store → a SECOND VIEW, on a sibling tab, that
+ * unmounted the first one and re-read the document from disk to draw its route. Four of those five
+ * links are invisible to a unit test, and the fifth — that the REMOVE half is the same entry delete
+ * the Wish list's own remove button calls — is only interesting once the document is real.
+ *
+ * …AND THE WIDTH, which is the other thing only a launched app can answer. JOS-335 chose an icon
+ * over the donor row's words on the grounds that a text button would eat the item name in a
+ * `tableLayout: fixed` column; the owner overruled the conclusion and asked for the measurement to
+ * be handled honestly instead of asserted. So it is MEASURED, here, in the browser, against the
+ * cell it actually shares (`stepGearWishWidth`) — the same discipline JOS-338 applied to the
+ * compare card.
  *
  * THE ROW IS CHOSEN OFF THE SCREEN, NEVER TYPED IN (AGENTS.md, "frozen numbers rot" — and a frozen
  * ITEM NAME rots the same way when the corpus is rescraped). Two properties are wanted and both are
@@ -26,10 +42,10 @@
  *     wrong half of the tab to be asserting a route entry in. An EMPTY Owned cell is the table's own
  *     statement that neither witness has seen the item, so the pick reads it and moves on.
  *
- * THE LIT STATE IS ASSERTED IN BOTH DIRECTIONS, which is the half a "does the add work" spec would
- * skip: it comes ON at the click, and — after the wish is removed on the OTHER tab — it is OFF when
- * this tab is walked back into. A control that could only ever light up would pass a build where
- * the join is a one-way latch.
+ * THE ADDED STATE IS ASSERTED IN BOTH DIRECTIONS, which is the half a "does the add work" spec
+ * would skip: it comes ON at the click, SURVIVES a trip to the other tab and back (so it is a fact
+ * about the store rather than about React state), and goes OFF at the second click. A control that
+ * could only ever light up would pass a build where the join is a one-way latch.
  */
 import type { Page } from 'playwright-core'
 import { check, countOf, note, settle } from './appHarness.mjs'
@@ -41,14 +57,12 @@ const GEAR_TAB = '[data-testid="tab-gear"]'
 const WISH_TAB = '[data-testid="tab-wishlist"]'
 const WISH_VIEW = '[data-testid="wishlist-view"]'
 
-/** The heart on one row, and the same heart once it is lit. `row.key` is the corpus join key. */
+/** The wish control on one row, and the same control once it reads ADDED. `row.key` is the join key. */
 const wishOf = (key: string): string => `${ROW}[data-item-key="${key}"] [data-testid="gear-wish"]`
-const litOf = (key: string): string => `${wishOf(key)}[data-wished="true"]`
+const addedOf = (key: string): string => `${wishOf(key)}[data-wished="true"]`
 /** The wish, on the OTHER tab, inside a route group — never merely somewhere on the page. */
 const groupRowOf = (key: string): string =>
   `[data-testid="wishlist-group"] [data-testid="wishlist-row"][data-item="${key}"]`
-const removeOf = (key: string): string =>
-  `[data-testid="wishlist-row"][data-item="${key}"] [data-testid="wishlist-remove"]`
 
 const until = (fn: () => Promise<boolean>, ms: number): Promise<boolean> => settle(fn, (ok) => ok, { timeoutMs: ms })
 
@@ -68,21 +82,72 @@ function pickUnowned(page: Page): Promise<Pick | null> {
       const owned = row.querySelector('[data-testid="gear-cell-owned"]')
       if (owned !== null && (owned as HTMLElement).innerText.trim() !== '') continue
       const key = row.getAttribute('data-item-key')
-      const cell = row.querySelector('td')
-      if (key === null || cell === null) continue
-      return { key, name: (cell as HTMLElement).innerText.split('\n')[0].trim() }
+      // THE NAME ELEMENT, NOT THE CELL'S FIRST LINE (JOS-343). The Item cell holds the wish control
+      // as well as the name, and the control now has WORDS — reading the cell's `innerText` reported
+      // the donor "WISH" for one run of this spec before this line was corrected.
+      const named = row.querySelector('[data-testid="planner-donor-name"]')
+      if (key === null || named === null) continue
+      return { key, name: (named as HTMLElement).innerText.trim() }
     }
     return null
   }, ROW)
 }
 
+interface CellWidths {
+  /** the Item column's own width, whatever `gearTableLayout` decided it is this run */
+  cell: number
+  /** the wish control's box */
+  control: number
+  /** what is left for the item name after the control and the era chip have taken theirs */
+  name: number
+  /** the words on it right now, so the report says which wording was measured */
+  label: string
+}
+
+function measureWishCell(page: Page, key: string): Promise<CellWidths | null> {
+  return page.evaluate((sel) => {
+    const control = document.querySelector(sel)
+    const cell = control?.closest('td') ?? null
+    const name = cell?.querySelector('[data-testid="planner-donor-name"]') ?? null
+    if (control === null || cell === null || name === null) return null
+    return {
+      cell: Math.round(cell.getBoundingClientRect().width),
+      control: Math.round(control.getBoundingClientRect().width),
+      name: Math.round(name.getBoundingClientRect().width),
+      label: (control as HTMLElement).innerText.replace(/\s+/g, ' ').trim()
+    }
+  }, wishOf(key))
+}
+
 /**
- * ADD FROM A SEARCH ROW → THE ROUTE → REMOVE → THE ROW GOES DARK.
+ * THE WIDTH, MEASURED RATHER THAN ARGUED (JOS-343).
+ *
+ * The bound is a THIRD of the Item column, and it is a ceiling on the CONTROL rather than a floor
+ * under the name, because the name's share also depends on how long the picked item's name is —
+ * "Cloak of Flames" would leave slack a 40-character name would not, and a spec that failed on the
+ * long one would be measuring the corpus. What this pins is the thing the owner's ruling put at
+ * risk: that swapping the heart for words did not turn the Item column into a button column.
+ */
+function stepGearWishWidth(w: CellWidths | null): void {
+  if (w === null) {
+    check('the wish control shares the Item cell with the name, so both can be measured', false)
+    return
+  }
+  note(`wish control "${w.label}" — ${String(w.control)}px of a ${String(w.cell)}px Item column · name ${String(w.name)}px`)
+  check(
+    'the words cost the Item column less than a third of it — the heart’s width argument, answered rather than denied',
+    w.control * 3 < w.cell,
+    `${String(w.control)}px of ${String(w.cell)}px`
+  )
+}
+
+/**
+ * ADD FROM A SEARCH ROW → THE ROUTE → CLICK AGAIN → OFF THE ROUTE.
  *
  * Runs on a table narrowed by NOTHING: the class picker has just been cleared by
  * `stepGearClassFilter`, the era toggle is still at its default ON, and the search box is empty.
- * It hands the tab back in exactly that state — the trip to the Wish list tab and back remounts the
- * view, and JOS-329's area memory is what makes the return a no-op rather than a reset.
+ * It hands the tab back in exactly that state, and with the wish list as it found it — the toggle
+ * is its own cleanup, which is a property the one-way version did not have.
  */
 export async function stepGearWish(page: Page): Promise<void> {
   // The Owned column is the instrument the pick reads, so wait for the join rather than racing it.
@@ -96,22 +161,19 @@ export async function stepGearWish(page: Page): Promise<void> {
   const { key, name } = pick
   note(`wishing "${name}" (${key})`)
 
-  // 1. THE CONTROL EXISTS AT ALL — the parity this ticket is: the donor rows have had one since
-  //    JOS-326 and the 6,766 rows of the corpus had none.
+  // 1. THE CONTROL EXISTS AT ALL — the parity JOS-335 was, now in the shape JOS-343 made it: the
+  //    Exaltations donor rows have had this control since JOS-326 and the 6,766 rows of the corpus
+  //    had none.
   const present = await until(async () => (await countOf(page, wishOf(key))) === 1, 20_000)
   if (!check('every gear search row carries an add-to-wish-list control', present)) return
-  check('…and it starts dark, because nothing is wished yet', (await countOf(page, litOf(key))) === 0)
+  check('…and it reads UNADDED, because nothing is wished yet', (await countOf(page, addedOf(key))) === 0)
+  stepGearWishWidth(await measureWishCell(page, key))
 
-  // 2. ONE CLICK, NO DIALOG. The lit state is the whole acknowledgement.
+  // 2. ONE CLICK, NO DIALOG. The control's own state is the whole acknowledgement.
   await page.click(wishOf(key), { timeout: 15_000 })
-  check('clicking it lights the row up on the spot', await until(async () => (await countOf(page, litOf(key))) === 1, 15_000))
+  check('clicking it adds the wish and the control says so on the spot', await until(async () => (await countOf(page, addedOf(key))) === 1, 15_000))
 
-  // 3. …AND CLICKING IT AGAIN IS NOTHING. Proven on the other tab, where a second entry would show:
-  //    the model dedupes by `itemKey`, so the store cannot be holding two.
-  await page.click(wishOf(key), { timeout: 15_000 })
-  check('a second click leaves it lit rather than toggling the wish away', (await countOf(page, litOf(key))) === 1)
-
-  // 4. THE OTHER TAB. A sibling of this one, so the trip is a click — and it unmounts this view,
+  // 3. THE OTHER TAB. A sibling of this one, so the trip is a click — and it unmounts this view,
   //    which is what makes the row it draws a fact about the STORE rather than about React state.
   await page.click(WISH_TAB, { timeout: 15_000 })
   if (!check('the Wish list tab mounts', await until(async () => (await countOf(page, WISH_VIEW)) > 0, 30_000))) return
@@ -121,20 +183,36 @@ export async function stepGearWish(page: Page): Promise<void> {
     routed,
     `${String(await countOf(page, groupRowOf(key)))} route rows for ${key}`
   )
-  check('…exactly once, whatever the second click did', (await countOf(page, `[data-testid="wishlist-row"][data-item="${key}"]`)) === 1)
+  check('…exactly once — the document dedupes by item key', (await countOf(page, `[data-testid="wishlist-row"][data-item="${key}"]`)) === 1)
 
-  // 5. REMOVE IT HERE, and the lit state on the OTHER tab has to follow.
-  if (routed) {
-    await page.click(removeOf(key), { timeout: 15_000 })
-    check('removing it from the wish list takes the row off the route', await until(async () => (await countOf(page, removeOf(key))) === 0, 15_000))
-  }
-
+  // 4. BACK, AND THE CONTROL STILL READS ADDED. The view was destroyed and rebuilt in between, so
+  //    this is the store answering, not a component remembering.
   await page.click(GEAR_TAB, { timeout: 15_000 })
   if (!check('the Gear tab comes back', await until(async () => (await countOf(page, GEAR_VIEW)) > 0, 30_000))) return
-  const back = await until(async () => (await countOf(page, wishOf(key))) === 1, 20_000)
-  check('…with the row it was left on', back, `looking for ${key}`)
+  const back = await until(async () => (await countOf(page, addedOf(key))) === 1, 20_000)
+  if (!check('…with the row it was left on, still reading ADDED after the remount', back, `looking for ${key}`)) return
+  note(`added-state wording: "${(await measureWishCell(page, key))?.label ?? '(gone)'}"`)
+
+  // 5. THE SECOND CLICK REMOVES IT (JOS-343). This is the claim that replaced JOS-335's "a second
+  //    click leaves it lit rather than toggling the wish away" — the owner overruled the lit no-op.
+  await page.click(wishOf(key), { timeout: 15_000 })
   check(
-    'and the control is dark again, because the wish it was reporting is gone',
-    back && (await countOf(page, litOf(key))) === 0
+    'a second click takes the wish off, and the control reads UNADDED again',
+    await until(async () => (await countOf(page, addedOf(key))) === 0, 15_000)
   )
+
+  // 6. …AND IT REALLY LEFT THE DOCUMENT, proven where the add was proven: the route no longer has
+  //    a row for it. `removeWish` is the Wish list tab's own delete, so this is one deletion shape.
+  if (!routed) return
+  await page.click(WISH_TAB, { timeout: 15_000 })
+  if (!check('the Wish list tab mounts again', await until(async () => (await countOf(page, WISH_VIEW)) > 0, 30_000))) return
+  check(
+    'the row the second click removed is gone from the route entirely',
+    await until(async () => (await countOf(page, `[data-testid="wishlist-row"][data-item="${key}"]`)) === 0, 20_000),
+    `${String(await countOf(page, groupRowOf(key)))} route rows left for ${key}`
+  )
+
+  // Hand the Gear tab back the way the host spec expects to find it.
+  await page.click(GEAR_TAB, { timeout: 15_000 })
+  await until(async () => (await countOf(page, GEAR_VIEW)) > 0, 30_000)
 }

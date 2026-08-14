@@ -13,7 +13,7 @@
 // one-liner moving up to the header, which is `plannerGroups.says` and arrives here as a flag.
 
 import { type JSX } from 'react'
-import { Box, Button, Chip, IconButton, Stack, Typography } from '@mui/material'
+import { Box, Chip, IconButton, Stack, Typography } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import type { ClassAbbr } from '@shared/classCombo'
@@ -25,6 +25,9 @@ import { classFit, isNonEquippable, type DonorRow } from './plannerData'
 import { SOCKET_LABEL, type DonorGroup } from './plannerGroups'
 import { BestChip, DonorName, EraChip, NoSlotChip } from './PlannerChips'
 import { sourcesFor } from './sourceIndex'
+// JOS-343 — the one control both this row and the gear search row draw. It used to be a local
+// `AddButton` here and a heart over there; the owner ruled them into one on 2026-08-13.
+import WishToggle from '../wishlist/WishToggle'
 
 /** Every row in the list is this tall — the windowing hook's whole contract. */
 export const ROW_HEIGHT = 44
@@ -118,46 +121,64 @@ export interface DonorLineProps {
   namesEffect: boolean
   /** the header above did not take this effect's one-liner, so the row still carries it (JOS-42) */
   namesSays: boolean
-  onAdd: (donor: DonorRow) => void
+  /**
+   * PUT THIS DONOR ON THE WISH LIST, OR TAKE IT OFF (JOS-343). It was `onAdd` until the owner
+   * overruled the one-way version on 2026-08-13; the host reads `wished` back out of the argument
+   * so the handler can stay a stable callback and this row's `memo`-shaped neighbours with it.
+   *
+   * ABSENT — NOT DISABLED — UNTIL THE WISH DOCUMENT HAS LOADED, which is the gear table's rule
+   * (JOS-335, `GearTableProps.onToggleWish`) arriving here because JOS-343 gave this row the same
+   * reason to need it. A one-way add could survive drawing itself unadded over an item that was
+   * already on the list: the click was an add either way and `addWish` deduped it. A TOGGLE cannot
+   * — an unadded reading taken off an empty default sends the click the WRONG DIRECTION. The e2e
+   * caught exactly that (planner.e2e.mts, JOS-343's first run: a remounted browse offered an
+   * unadded control for a donor that was on the list, and the click removed it).
+   */
+  onToggleWish?: (donor: DonorRow, wished: boolean) => void
   /** deep-link this donor into the Loot drill-down; absent when the app wired no router */
   onOpenLoot?: (item: string) => void
 }
 
 /**
- * ADD TO THE WISH LIST — one click, always, and it can never destroy anything (JOS-326).
+ * ADD TO THE WISH LIST — AND, SINCE JOS-343, TAKE IT BACK OFF.
  *
  * THIS BUTTON USED TO WRITE A SOCKET, and everything complicated about it came from that. It said
  * "Add to set"; it could open a slot menu when the donor fit more than one cell; and when the
  * target socket was occupied it turned into a warning-coloured "Replace" naming the effect it was
  * about to overwrite (JOS-42 refinement 3). All three were consequences of the plan board, which
- * this ticket removes: there are no cells, so there is nothing to disambiguate, and a wish list
- * DEDUPES rather than displaces, so there is nothing to overwrite. What is left is the plainest
- * possible control, which is what a browse surface should have had all along.
+ * JOS-326 removed: there are no cells, so there is nothing to disambiguate, and a wish list DEDUPES
+ * rather than displaces, so there is nothing to overwrite.
  *
- * AN ALREADY-WISHED DONOR SAYS SO AND STAYS DISABLED, rather than silently accepting a click that
- * changes nothing. The row also wears the `wished` chip; the button is what stops the gesture.
+ * "AN ALREADY-WISHED DONOR STAYS DISABLED" WAS THE RULE HERE UNTIL 2026-08-13, AND THE OWNER
+ * OVERRULED IT. The argument had been that a click which changes nothing should be refused rather
+ * than swallowed — true of an ADD, and the mistake was assuming the second click had to be an add.
+ * It is a REMOVE now: the same `useWishlist.remove` → `removeWish` fold the Wish list tab's own
+ * per-row remove calls, so there is one deletion in the app and no second shape of it. The row
+ * still wears the `wished` chip; the button now states what a click would DO about it.
  *
  * SLOTLESS DONORS STAY DISABLED for the reason they always were — R2 says an effect can only move
  * into an item sharing its equipment slot, so a donor with none can never donate, and the row is
- * chipped `no slot` beside this button saying why.
+ * chipped `no slot` beside this button saying why. That is the one remaining disabled case, and it
+ * is about the CORPUS rather than about the document.
+ *
+ * THE CONTROL ITSELF LIVES IN `wishlist/WishToggle.tsx` NOW, shared byte-for-byte with the gear
+ * search row's — the owner's parity ruling, made unbreakable by there being one component.
  */
 function AddButton({
   donor,
   wished,
-  onAdd
-}: Pick<DonorLineProps, 'donor' | 'wished' | 'onAdd'>): JSX.Element {
+  onToggleWish
+}: Pick<DonorLineProps, 'donor' | 'wished'> & {
+  onToggleWish: (donor: DonorRow, wished: boolean) => void
+}): JSX.Element {
   return (
-    <Button
-      size="small"
-      data-testid="planner-add"
-      data-wished={wished ? 'true' : undefined}
-      color="primary"
-      disabled={wished || donor.slots.length === 0}
-      onClick={() => onAdd(donor)}
-      sx={{ flexShrink: 0, minWidth: 96 }}
-    >
-      {wished ? 'Wished' : 'Add to wish list'}
-    </Button>
+    <WishToggle
+      testId="planner-add"
+      name={donor.name}
+      wished={wished}
+      disabled={donor.slots.length === 0}
+      onToggle={() => onToggleWish(donor, wished)}
+    />
   )
 }
 
@@ -168,7 +189,7 @@ export function DonorLine({
   best,
   namesEffect,
   namesSays,
-  onAdd,
+  onToggleWish,
   onOpenLoot
 }: DonorLineProps): JSX.Element {
   const src = sourceText(donor)
@@ -262,7 +283,8 @@ export function DonorLine({
           sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
         />
       )}
-      <AddButton donor={donor} wished={wished} onAdd={onAdd} />
+      {/* Nothing at all until the host can answer "is this already wished" — see the prop. */}
+      {onToggleWish !== undefined && <AddButton donor={donor} wished={wished} onToggleWish={onToggleWish} />}
     </Stack>
   )
 }

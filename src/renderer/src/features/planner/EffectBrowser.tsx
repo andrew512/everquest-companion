@@ -154,7 +154,7 @@ interface RowListProps {
   rows: readonly BrowserRow[]
   win: { start: number; end: number; topPad: number; bottomPad: number }
   planClasses: readonly ClassAbbr[]
-  /** the item keys already on the wish list — the `wished` chip and the disabled add */
+  /** the item keys already on the wish list — the `wished` chip and the control's REMOVE state */
   wished: ReadonlySet<string>
   ready: boolean
   /** what the two view toggles are holding back — only consulted when `rows` is empty (JOS-67) */
@@ -162,7 +162,8 @@ interface RowListProps {
   /** the item the list is narrowed to, so an empty list can name it (JOS-210) */
   item: string | null
   onToggle: (id: string) => void
-  onAdd: (donor: DonorRow) => void
+  /** absent until the wish document has loaded — `DonorLineProps.onToggleWish` argues why */
+  onToggleWish?: (donor: DonorRow, wished: boolean) => void
   onOpenLoot?: (item: string) => void
 }
 
@@ -190,7 +191,7 @@ function emptyText(ready: boolean, hidden: HiddenByView, item: string | null): s
 
 /** The bounded scroll box (AGENTS.md UI conventions) and the window of rows inside it. */
 function RowList(props: RowListProps): JSX.Element {
-  const { rows, win, planClasses, wished, ready, hidden, item, onToggle, onAdd, onOpenLoot } = props
+  const { rows, win, planClasses, wished, ready, hidden, item, onToggle, onToggleWish, onOpenLoot } = props
   return (
     <>
       <Box sx={{ height: win.topPad }} />
@@ -206,7 +207,7 @@ function RowList(props: RowListProps): JSX.Element {
             best={row.best}
             namesEffect={row.namesEffect}
             namesSays={row.namesSays}
-            onAdd={onAdd}
+            onToggleWish={onToggleWish}
             onOpenLoot={onOpenLoot}
           />
         )
@@ -271,8 +272,15 @@ export interface EffectBrowserProps {
   classes: readonly ClassAbbr[]
   /** the item keys already on the wish list — `itemKey`, which is `DonorRow.key` */
   wished: ReadonlySet<string>
-  /** put this donor on the wish list (`useWishlist`'s `add`, wrapped by PlannerView) */
-  onAdd: (donor: DonorRow) => void
+  /**
+   * Put this donor on the wish list, or take it off (JOS-343 — `useWishlist`'s `add` and `remove`,
+   * wrapped by PlannerView). The row hands back the state it was drawn in, so the handler never has
+   * to close over the wished set and can stay a stable callback across an edit.
+   *
+   * UNDEFINED UNTIL THE DOCUMENT HAS LOADED, and every row draws NO control rather than a wrong one
+   * while it is (`EffectRows.DonorLineProps.onToggleWish` states the failure it prevents).
+   */
+  onToggleWish?: (donor: DonorRow, wished: boolean) => void
   /** deep-link a donor into the Loot tab's item drill-down (App's `openLoot`) */
   onOpenLoot?: (item: string) => void
 }
@@ -280,7 +288,7 @@ export interface EffectBrowserProps {
 export default function EffectBrowser({
   classes,
   wished,
-  onAdd,
+  onToggleWish,
   onOpenLoot
 }: EffectBrowserProps): JSX.Element {
   const { donors, ready } = useDonors()
@@ -379,7 +387,7 @@ export default function EffectBrowser({
           hidden={hidden}
           item={focus?.name ?? null}
           onToggle={toggle}
-          onAdd={onAdd}
+          onToggleWish={onToggleWish}
           onOpenLoot={onOpenLoot}
         />
       </Box>

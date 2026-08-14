@@ -43,11 +43,25 @@ export const TAB = '[data-testid="tab-planner"]'
 export const VIEW = '[data-testid="planner-view"]'
 export const EFFECT_LIST = '[data-testid="planner-effect-list"]'
 export const ERA_TOGGLE = '[data-testid="planner-era-toggle"]'
-/** The add control on a donor row. Since JOS-326 it writes a WISH, not a socket. */
-export const ADD_BUTTON = '[data-testid="planner-add"]:not([disabled])'
-/** A donor already on the wish list — the button goes quiet and the row wears the chip. */
+/**
+ * The wish control on a donor row. Since JOS-326 it writes a WISH, not a socket; since JOS-343 it
+ * TOGGLES, which is why this selector had to grow a second exclusion.
+ *
+ * `:not([data-wished])` IS NOT COSMETIC. Until JOS-343 an already-wished donor's button was
+ * DISABLED, so `:not([disabled])` alone meant "a control that would ADD something". A toggle is
+ * enabled in both states, and the seed puts wishes on the list before this spec's first click — so
+ * without the second exclusion the add step could pick a wished row and REMOVE instead. What this
+ * names is the unadded control; `ADD_WISHED` names the other state, and `ANY_ADD` names both.
+ */
+export const ADD_BUTTON = '[data-testid="planner-add"]:not([disabled]):not([data-wished])'
+/** Either state, for the "is a donor row on screen at all" question. */
+export const ANY_ADD = '[data-testid="planner-add"]'
+/** A donor already on the wish list — the control reads REMOVE and the row wears the chip. */
 export const ADD_WISHED = '[data-testid="planner-add"][data-wished="true"]'
 export const WISHED_CHIP = '[data-testid="planner-wished-chip"]'
+/** The REMOVE half of the toggle, on the row that is wearing the wished chip (JOS-343). */
+export const ADD_ON_WISHED_ROW =
+  '[data-testid="planner-donor-row"]:has([data-testid="planner-wished-chip"]) [data-testid="planner-add"]'
 export const CLASS_FILTER = '[data-testid="planner-classes"]'
 
 /** JOS-210's item narrowing — the filter bar's own picker, and the chip that names what it found. */
