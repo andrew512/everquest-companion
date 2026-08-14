@@ -28,6 +28,7 @@ import {
   blankCondition,
   type CombineMode,
   type ConditionDraft,
+  conditionFieldKeyErr,
   conditionFieldValErr,
   conditionRawErr,
   draftFromPrimitive,
@@ -239,8 +240,13 @@ export function triggerFromForm(mode: CombineMode, conditions: ConditionDraft[])
 }
 
 export function formCanSave(f: AlertForm): boolean {
+  // `conditionFieldKeyErr` is the third of these for a reason of its own (JOS-348): the other two
+  // say a pattern will not COMPILE, this one says a value the user typed has nowhere to be stored
+  // and would be dropped by `primitiveFromDraft`. An unsaveable form is the only spelling of "we
+  // are not going to quietly lose this" the dialog has.
   const conditionsValid = f.conditions.every(
-    (c) => conditionRawErr(c) == null && conditionFieldValErr(c) == null
+    (c) =>
+      conditionRawErr(c) == null && conditionFieldValErr(c) == null && conditionFieldKeyErr(c) == null
   )
   return (
     f.name.trim().length > 0 &&
