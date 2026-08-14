@@ -167,7 +167,15 @@ export interface AlertSpeech {
   mode: SpeechMode
   /** Required iff mode === 'custom'; capped at MAX_SPEECH_CHARS (shared/speechText.ts). */
   phrase?: string
-  /** Voice override for this alert; absent ⇒ the global default voice (VoicePrefs.voiceId). */
+  /**
+   * RETIRED (JOS-362) — a per-alert voice override, now IGNORED everywhere it is read.
+   *
+   * The owner's ruling: "our settings shouldn't store which voice per alert, only the preferences
+   * should (within Voice (spoken))". A stored id is tolerated so old stores, exports and share
+   * strings still load, and it is dropped the next time that alert is saved (`speechFieldsFor`,
+   * `speechFieldsOf` — both rebuild this block without it). Nothing reads it: the voice comes from
+   * `VoicePrefs.voiceId` at speak time. Do not re-introduce a reader.
+   */
   voiceId?: string
 }
 

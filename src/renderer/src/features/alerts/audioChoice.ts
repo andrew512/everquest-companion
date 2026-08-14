@@ -15,10 +15,11 @@
 // That is what keeps every pre-voice def, every share string and the import de-duplication
 // fingerprint stable (shared/alertTypes.ts: absent `audio` ⇒ 'sound', by construction).
 //
-// VOICEID IS PRESERVED, NEVER AUTHORED. The row cannot pick a voice — two selects cannot show
-// three dimensions — so the editor's SpeechBlock stays authoritative for it. Every write here
-// carries the def's existing `speech.voiceId` through untouched; a row edit must not silently
-// drop an override the user set in the editor.
+// THERE IS NO PER-ALERT VOICE ANY MORE (JOS-362). This module used to carry a def's
+// `speech.voiceId` through every write untouched, because the editor could author one and a row
+// edit must not silently drop it. The owner retired the whole dimension — "our settings shouldn't
+// store which voice per alert, only the preferences should (within Voice (spoken))" — so the id is
+// neither read nor written here, and Preferences owns who speaks, for every alert at once.
 //
 // Value imports from `shared/` are RELATIVE, never `@shared/*` — the repo-wide rule for anything
 // node:test loads (AGENTS.md toolchain gotchas, the mobSearch.ts precedent). Type-only imports
@@ -82,15 +83,17 @@ export function outputValueOf(choice: AudioChoice): string {
 /**
  * The `speech` block a choice implies, or undefined for "omit the key".
  *
- * `prev` is the def's current block, read for ONE thing: the voiceId the editor owns.
+ * IT USED TO CARRY A voiceId THROUGH, and deliberately: the row could not author a per-alert
+ * voice, so it preserved the one the editor had written. JOS-362 removed the per-alert voice
+ * outright (owner: "our settings shouldn't store which voice per alert, only the preferences
+ * should"), so there is nothing to preserve — a def that still carries one is not read, and the
+ * first row edit rebuilds the block without it. That is the "drop on next write" half of the rule.
  */
-function speechFieldsOf(choice: AudioChoice, prev: AlertSpeech | undefined): AlertSpeech | undefined {
+function speechFieldsOf(choice: AudioChoice): AlertSpeech | undefined {
   const speech: AlertSpeech = { mode: choice.mode }
   const phrase = choice.phrase.trim().slice(0, MAX_SPEECH_CHARS)
   if (phrase) speech.phrase = phrase
-  if (prev?.voiceId) speech.voiceId = prev.voiceId
-  const configured =
-    speech.mode !== 'alertName' || speech.phrase !== undefined || speech.voiceId !== undefined
+  const configured = speech.mode !== 'alertName' || speech.phrase !== undefined
   return configured ? speech : undefined
 }
 
@@ -105,7 +108,7 @@ export function applyAudioChoice(def: AlertDef, choice: AudioChoice): AlertDef {
   const next: AlertDef = { ...def, sound: { packId: choice.packId, soundId: choice.soundId } }
   if (choice.audio === 'sound') delete next.audio
   else next.audio = choice.audio
-  const speech = speechFieldsOf(choice, def.speech)
+  const speech = speechFieldsOf(choice)
   if (speech) next.speech = speech
   else delete next.speech
   return next

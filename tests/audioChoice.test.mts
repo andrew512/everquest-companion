@@ -192,22 +192,37 @@ test('with a pack resolved, the display normalizes a sound that pack does not ca
   assert.deepEqual(writeBase(c, PACKS[0]), displayedChoice(c, PACKS[0]))
 })
 
-// ------------------------------------------------------------------ what the row cannot see
+// ------------------------------------------------------ the retired per-alert voice (JOS-362)
+//
+// This section used to say the opposite — "the editor-owned voice override survives every row
+// edit" — and it was right for as long as an alert could own a voice. The owner retired that
+// dimension ("our settings shouldn't store which voice per alert, only the preferences should
+// (within Voice (spoken))"), because a def carrying a voice id outlives the preference: an alert
+// authored under one voice kept speaking in it after the user chose another, which is exactly
+// what he reported. The rule is now: not read, not written, dropped on the next save.
 
-test('the editor-owned voice override survives every row edit', () => {
+test('a stored voice id is DROPPED by the first row edit — nothing carries it forward', () => {
   const d = def({ audio: 'speech', speech: { mode: 'spellName', voiceId: 'Microsoft David' } })
   const c = audioChoiceOf(d)
 
   const modeChanged = applyAudioChoice(d, withSpeechMode(c, 'alertName'))
-  assert.deepEqual(modeChanged.speech, { mode: 'alertName', voiceId: 'Microsoft David' })
+  assert.deepEqual(modeChanged.speech, undefined, 'nothing left to configure ⇒ the key goes too')
+
+  const rephrased = applyAudioChoice(d, withPhrase(c, 'Mez broke on {target}'))
+  assert.deepEqual(rephrased.speech, { mode: 'custom', phrase: 'Mez broke on {target}' })
+  assert.equal('voiceId' in (rephrased.speech ?? {}), false, 'no voice rides along')
 
   const backToSound = applyAudioChoice(d, withOutput(c, 'peon', PACKS))
   assert.equal(backToSound.audio, undefined, 'sound-only again…')
-  assert.deepEqual(
-    backToSound.speech,
-    { mode: 'spellName', voiceId: 'Microsoft David' },
-    '…but the voice the user chose in the editor is still there if they come back'
-  )
+  assert.deepEqual(backToSound.speech, { mode: 'spellName' }, '…and the voice is not stored at all')
+})
+
+test('an UNEDITED def keeps its dead voice key — this is a read rule, not a store rewrite', () => {
+  // The owner's standing constraint on every removal in this ticket: normalize on read, and touch
+  // nobody's settings until they touch that alert. Reading a def must not mutate it.
+  const d = def({ audio: 'speech', speech: { mode: 'spellName', voiceId: 'Microsoft David' } })
+  audioChoiceOf(d)
+  assert.equal(d.speech?.voiceId, 'Microsoft David')
 })
 
 test('an alert’s unrelated fields are never touched by an audio edit', () => {

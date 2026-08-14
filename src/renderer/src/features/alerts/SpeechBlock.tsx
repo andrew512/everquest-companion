@@ -42,7 +42,6 @@ import {
 } from '@shared/speechText'
 import { tokensIn } from '@shared/alertCaptures'
 import { currentVoicePrefs, speak } from '../../lib/speech'
-import { useVoiceOptions } from '../../lib/useVoices'
 import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
 
 /**
@@ -71,19 +70,15 @@ export interface SpeechForm {
   setMode: (v: SpeechMode) => void
   phrase: string
   setPhrase: (v: string) => void
-  /** '' = use the global default voice. */
-  voiceId: string
-  setVoiceId: (v: string) => void
   alwaysPlay: boolean
   setAlwaysPlay: (v: boolean) => void
 }
 
-/** The four fields + the opt-out, read off a def (edit) or at their defaults (add). */
+/** The three fields + the opt-out, read off a def (edit) or at their defaults (add). */
 function speechDefaults(initial: AlertDef | null): {
   audio: AlertAudioChoice
   mode: SpeechMode
   phrase: string
-  voiceId: string
   alwaysPlay: boolean
 } {
   const speech = initial?.speech
@@ -93,7 +88,8 @@ function speechDefaults(initial: AlertDef | null): {
     audio: initial ? resolveAlertAudio(initial) : 'sound',
     mode: speech?.mode ?? 'alertName',
     phrase: speech?.phrase ?? '',
-    voiceId: speech?.voiceId ?? '',
+    // `speech.voiceId` is deliberately NOT read (JOS-362): a def may still carry one, and it is
+    // ignored rather than migrated — the next save of this alert simply omits it.
     alwaysPlay: initial?.alwaysPlay === true
   }
 }
@@ -103,7 +99,6 @@ export function useSpeechForm(open: boolean, initial: AlertDef | null): SpeechFo
   const [audio, setAudio] = useState<AlertAudioChoice>('sound')
   const [mode, setMode] = useState<SpeechMode>('alertName')
   const [phrase, setPhrase] = useState('')
-  const [voiceId, setVoiceId] = useState('')
   const [alwaysPlay, setAlwaysPlay] = useState(false)
 
   useEffect(() => {
@@ -112,7 +107,6 @@ export function useSpeechForm(open: boolean, initial: AlertDef | null): SpeechFo
     setAudio(d.audio)
     setMode(d.mode)
     setPhrase(d.phrase)
-    setVoiceId(d.voiceId)
     setAlwaysPlay(d.alwaysPlay)
   }, [open, initial])
 
@@ -123,8 +117,6 @@ export function useSpeechForm(open: boolean, initial: AlertDef | null): SpeechFo
     setMode,
     phrase,
     setPhrase,
-    voiceId,
-    setVoiceId,
     alwaysPlay,
     setAlwaysPlay
   }
@@ -134,13 +126,17 @@ export function useSpeechForm(open: boolean, initial: AlertDef | null): SpeechFo
  * The def keys this block owns. Each is OMITTED at its default, so an alert that never asked to
  * speak saves byte-identically to how it always did — which is what keeps every pre-voice def,
  * every share string and the import de-duplication fingerprint stable.
+ *
+ * AND `speech.voiceId` IS NEVER AMONG THEM (JOS-362). The block is rebuilt from the form, and the
+ * form has no voice field any more, so saving an alert that still carries a stored voice DROPS it
+ * — the "normalize on read, drop on next write" half of retiring the per-alert override. It is
+ * not read on the way in either, so an unedited def keeps the dead key and behaves identically.
  */
 export function speechFieldsFor(f: SpeechForm): Pick<AlertDef, 'audio' | 'speech' | 'alwaysPlay'> {
   const speech: AlertSpeech = { mode: f.mode }
   const phrase = f.phrase.trim().slice(0, MAX_SPEECH_CHARS)
   if (phrase) speech.phrase = phrase
-  if (f.voiceId) speech.voiceId = f.voiceId
-  const configured = f.mode !== 'alertName' || speech.phrase !== undefined || speech.voiceId !== undefined
+  const configured = f.mode !== 'alertName' || speech.phrase !== undefined
   return {
     ...(f.audio === 'sound' ? {} : { audio: f.audio }),
     ...(configured ? { speech } : {}),
@@ -351,40 +347,30 @@ function SaysRow({
   )
 }
 
-/** Per-alert voice override + the ▶ that speaks the preview through the real engine. */
+/**
+ * The ▶ that speaks the preview through the real engine — and NOTHING about which voice says it.
+ *
+ * THE PER-ALERT VOICE IS GONE (JOS-362, owner: "our settings shouldn't store which voice per
+ * alert, only the preferences should (within Voice (spoken))"). A picker sat here, and what it
+ * produced was a def carrying a voice id that outlived the preference — an alert authored while
+ * one voice was selected kept speaking in it forever, which is the symptom the owner reported as
+ * "alerts … don't change when you select a new voice". The remedy is not a better default, it is
+ * having no second place for the answer to live: the voice comes from `currentVoicePrefs()` at
+ * speak time, here and in the firing path, so Preferences > Voice (spoken) moves every alert at
+ * once. The Test button therefore auditions with exactly what a real firing will use.
+ */
 function VoiceRow({ name, form }: { name: string; form: SpeechForm }): JSX.Element {
   const prefs = currentVoicePrefs()
-  const voices = useVoiceOptions(prefs.engine)
   const preview = previewTextFor(name, form)
   return (
     <Stack direction="row" spacing={1.5} alignItems="flex-end" flexWrap="wrap" useFlexGap>
-      <Box sx={{ minWidth: 240, flexGrow: 1 }}>
-        <Typography variant="caption" color="text.secondary">
-          Voice
-        </Typography>
-        <Select
-          size="small"
-          fullWidth
-          displayEmpty
-          data-testid="alert-speech-voice"
-          value={voices.some((v) => v.id === form.voiceId) ? form.voiceId : ''}
-          onChange={(e) => form.setVoiceId(e.target.value)}
-        >
-          <MenuItem value="">Default voice</MenuItem>
-          {voices.map((v) => (
-            <MenuItem key={v.id} value={v.id}>
-              {v.label}
-            </MenuItem>
-          ))}
-        </Select>
-      </Box>
       <Button
         size="small"
         startIcon={<PlayArrowIcon />}
         data-testid="alert-speech-test"
         disabled={!preview}
         onClick={() => {
-          if (preview) void speak(preview, prefs, { ...(form.voiceId ? { voiceId: form.voiceId } : {}) })
+          if (preview) void speak(preview, prefs)
         }}
       >
         Test

@@ -440,10 +440,17 @@ function isE2E(): boolean {
 
 // ------------------------------------------------------------------ speaking
 
-/** Extra knobs on one utterance. `gain` is the alerts module's own effective volume (§2). */
+/**
+ * Extra knobs on one utterance. `gain` is the alerts module's own effective volume (§2).
+ *
+ * WHICH VOICE IS NOT ONE OF THEM (JOS-362). There used to be a `voiceId` here — the per-alert
+ * override (`AlertSpeech.voiceId`), passed by the firing path and by the editor's preview. The
+ * owner retired the whole idea: "our settings shouldn't store which voice per alert, only the
+ * preferences should (within Voice (spoken))". Every utterance now takes its voice from the prefs
+ * blob it is handed, so changing the voice in Preferences changes every spoken alert at once —
+ * structurally, not by convention: there is no argument left with which to say otherwise.
+ */
 export interface SpeakOptions {
-  /** per-alert voice override (`AlertSpeech.voiceId`); absent ⇒ the global default. */
-  voiceId?: string
   /** 0..1 multiplier applied on top of `VoicePrefs.volume` — the alerts master × per-alert volume. */
   gain?: number
 }
@@ -473,7 +480,7 @@ function warnKokoroFallback(reason: string): void {
 export async function speak(text: string, voicePrefs: VoicePrefs, opts: SpeakOptions = {}): Promise<void> {
   const said = text.trim()
   if (!said) return
-  const voiceId = opts.voiceId ?? voicePrefs.voiceId
+  const voiceId = voicePrefs.voiceId
   const uttered = !isE2E()
   record({ text: said, engine: voicePrefs.engine, voiceId, uttered, ts: Date.now() })
   if (!uttered) return
@@ -494,7 +501,7 @@ async function sayThroughEngine(
 ): Promise<boolean> {
   let result: SpeechSayResult
   try {
-    const voiceId = opts.voiceId ?? voicePrefs.voiceId
+    const voiceId = voicePrefs.voiceId
     result = await window.eq.speechSay({ text, ...(voiceId ? { voiceId } : {}) })
   } catch {
     warnKokoroFallback('the speech channel is unavailable')
@@ -528,7 +535,7 @@ function speakSystem(text: string, voicePrefs: VoicePrefs, opts: SpeakOptions): 
   // The voice list may still be loading on the very first alert of a session; in that case the
   // utterance goes out in the engine's default voice rather than waiting (an alert is late or
   // it is not an alert), and every later one gets the chosen voice.
-  const voice = pickVoice(s.getVoices(), opts.voiceId ?? voicePrefs.voiceId)
+  const voice = pickVoice(s.getVoices(), voicePrefs.voiceId)
   if (voice) {
     utterance.voice = voice
     if (voice.lang) utterance.lang = voice.lang

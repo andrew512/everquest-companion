@@ -120,9 +120,11 @@ export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>):
   audioWindow = gate.window
   if (!gate.play) return
   const gain = effectiveVolume(def)
-  // One channel or the other, never both (JOS-362): a plan carries a sound or an utterance.
+  // One channel or the other, never both (JOS-362): a plan carries a sound or an utterance. WHICH
+  // VOICE says it is `voice` — the live prefs copy, read at firing time — and nothing off the def:
+  // a stored `speech.voiceId` is ignored, so changing the preference changes every alert at once.
   if (plan.speak) {
-    void speak(plan.speak, voice, { ...(def.speech?.voiceId ? { voiceId: def.speech.voiceId } : {}), gain })
+    void speak(plan.speak, voice, { gain })
     return
   }
   void playSound(def.sound.packId, def.sound.soundId, gain)

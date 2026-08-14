@@ -191,13 +191,17 @@ test('JOS-360 C1: no row edit puts the template’s default phrase back', () => 
   assert.equal(speechTextFor(def, fired[0]), 'MY WORDS about Bonbonz')
 })
 
-test('JOS-360 C2: a per-alert voice override survives a phrase rewrite', () => {
-  // The row cannot author a voice (two selects, three dimensions — AudioPicker's header), so it
-  // carries the editor's choice through untouched. Reopening the phrase popover is a row write
-  // like any other and must not be the thing that drops it.
+test('JOS-362 (was JOS-360 C2): a phrase rewrite DROPS a stored per-alert voice', () => {
+  // INVERTED ON PURPOSE. This test used to say the row carried the editor's voice override through
+  // untouched — right while an alert could own a voice, and the owner has since retired the whole
+  // dimension: "our settings shouldn't store which voice per alert, only the preferences should
+  // (within Voice (spoken))". A def carrying one is what made an alert keep speaking in the voice
+  // it was authored under. What survives from the old claim is the part that still matters: the
+  // user's WORDS are untouched by any of this.
   const suggested = suggestedFade()
   const withVoice: AlertDef = { ...suggested, speech: { ...suggested.speech, mode: 'custom', voiceId: 'urn:voice:david' } }
   const mine = applyAudioChoice(withVoice, withPhrase(audioChoiceOf(withVoice), 'gone from {target}'))
-  assert.equal(mine.speech?.voiceId, 'urn:voice:david')
+  assert.equal(mine.speech?.voiceId, undefined, 'the next write of this alert omits the dead key')
   assert.equal(mine.speech?.phrase, 'gone from {target}')
+  assert.equal(withVoice.speech?.voiceId, 'urn:voice:david', 'and reading it changed nothing on disk')
 })
