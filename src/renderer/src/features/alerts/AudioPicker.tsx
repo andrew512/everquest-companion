@@ -42,7 +42,7 @@
 // instead of from whichever pack/line/phrase happens to be selected — every row lands its
 // selects at the same x, and each one ellipsizes its displayed value rather than growing.
 
-import { type JSX, useRef, useState } from 'react'
+import { type JSX, type Ref, useRef, useState } from 'react'
 import {
   Box,
   Button,
@@ -122,6 +122,63 @@ function SoundNoticeLine({ text }: { text: string | null }): JSX.Element | null 
     >
       {text}
     </Typography>
+  )
+}
+
+/**
+ * The speak-what select — the CONTEXTUAL column for a def whose output is 'speech'.
+ *
+ * THE CUSTOM ENTRY IS A BUTTON, NOT A VALUE (JOS-360, and this component exists to say so where it
+ * happens). Three of the four modes are values: picking one is a write, and `onChange` is the right
+ * seam. 'custom' is not — it needs a value FROM the user, so it opens the phrase popover, and it
+ * has to do that on every click INCLUDING a click on the mode the def is already in.
+ *
+ * A MUI Select fires `onChange` only when the value CHANGES (SelectInput's `if (value !== newValue)`
+ * guard), so an `onChange`-driven custom entry is DEAD for any def already at `mode:'custom'`. That
+ * was survivable while `landsOnOther` was the only suggestion template shipping a phrase; JOS-347
+ * and JOS-353 gave six more templates a default one, so every suggestion a user installs now
+ * arrives in custom mode — and the one control that rewords a spoken alert from the row stopped
+ * working on all of them ("we lost the ability to write custom spoken alerts", owner, 2026-08-14).
+ * `onClick` on the MenuItem is called by the SAME handler, unconditionally and BEFORE that guard,
+ * so it is the seam that survives a re-pick. Pinned by tests/e2e/customPhraseSteps.mts.
+ */
+function SayPicker({
+  selectRef,
+  mode,
+  phrase,
+  onMode,
+  onCustom
+}: {
+  selectRef: Ref<HTMLDivElement>
+  mode: SpeechMode
+  /** The def's current phrase — shown as the custom entry's own label, so the row says what it says. */
+  phrase: string
+  onMode: (mode: SpeechMode) => void
+  onCustom: () => void
+}): JSX.Element {
+  return (
+    <Select
+      size="small"
+      ref={selectRef}
+      data-testid="alert-say"
+      value={mode}
+      onChange={(e) => {
+        const next = e.target.value as SpeechMode
+        if (next !== 'custom') onMode(next)
+      }}
+      sx={{ gridArea: 'line', ...GRID_SX }}
+    >
+      {SPEECH_MODES.map((m) => (
+        <MenuItem
+          key={m}
+          value={m}
+          data-testid={`alert-say-${m}`}
+          {...(m === 'custom' ? { onClick: onCustom } : {})}
+        >
+          {m === 'custom' && phrase ? `Speak: “${phrase}”` : SAY_LABELS[m]}
+        </MenuItem>
+      ))}
+    </Select>
   )
 }
 
@@ -243,26 +300,13 @@ export default function AudioPicker({
       </Box>
 
       {speaksOnly ? (
-        <Select
-          size="small"
-          ref={sayRef}
-          data-testid="alert-say"
-          value={view.mode}
-          onChange={(e) => {
-            const mode = e.target.value as SpeechMode
-            // Custom is the one mode that needs a value from the user, so it asks for it right
-            // here instead of sending them to the editor.
-            if (mode === 'custom') setPhraseOpen((n) => n + 1)
-            else commit(withSpeechMode(base, mode))
-          }}
-          sx={{ gridArea: 'line', ...GRID_SX }}
-        >
-          {SPEECH_MODES.map((m) => (
-            <MenuItem key={m} value={m}>
-              {m === 'custom' && view.phrase ? `Speak: “${view.phrase}”` : SAY_LABELS[m]}
-            </MenuItem>
-          ))}
-        </Select>
+        <SayPicker
+          selectRef={sayRef}
+          mode={view.mode}
+          phrase={view.phrase}
+          onMode={(mode) => commit(withSpeechMode(base, mode))}
+          onCustom={() => setPhraseOpen((n) => n + 1)}
+        />
       ) : (
         <Select
           size="small"
