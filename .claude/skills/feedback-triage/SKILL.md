@@ -95,6 +95,17 @@ slices never reach a public issue (the CLI enforces this; don't fight it).
      net-new gets the suspicion test (fit / real-time / performative).
    - Quote the users' own words for color; flag thank-yous too (the owner
      likes to see them), and self-resolved reports.
+   - A LOW-INFORMATION REPORT IS NOT ACTIONABLE (owner directive 2026-08-14:
+     "you need to not take every single report at face value"). A claim with
+     no specifics, no repro, and no discriminating evidence ("not all damage
+     is showing up") gets flagged AS insufficient in the readout with a
+     recommend-decline — never dressed up as a corroboration or a ticket
+     candidate. Say plainly: this report gives us nothing to go on.
+   - EVERY LINEAR TICKET MENTIONED IS LINKED AND DESCRIBED (owner directive
+     2026-08-14): write it as a markdown link —
+     `[JOS-N](https://linear.app/joshs-maker-space/issue/JOS-N)` — followed by
+     a phrase saying what the ticket is ("the presence-demotion hardening
+     ticket"), so the owner never has to look a number up to rule on it.
 4. **DISCUSS — do not skip to tickets.** Present the readout and STOP. The
    owner decides per item: fix now, investigate first, characterize before
    trusting, gate behind design, decline for now. Capture their exact
