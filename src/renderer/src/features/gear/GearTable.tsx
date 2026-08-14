@@ -26,9 +26,10 @@
 // card belonging to a row BELOW the toolbar, opening UPWARD across it and holding the pointer while
 // it was up. The owner ruled that trade the other way on the Sky tab (JOS-181) and has now asked for
 // the card here: hovering a row shows what the item would REPLACE. So the rule narrows to what it
-// was always about, and the guarantee is structural rather than a promise — the card is mounted
-// through ONE wrapper (`GearCompareCard.tsx`'s `GearRowCompare`) that always opens it beside the
-// row, never above it, with no pointer events at all and a capture-phase pointerdown close. Every
+// was always about, and the guarantee is structural rather than a promise — the cards are mounted
+// through ONE wrapper (`GearCompareCard.tsx`'s `GearRowCompare`) that always opens them BELOW the
+// row and clamped inside the window, never above it, with no pointer events at all and a
+// capture-phase pointerdown close (JOS-344 rewrote that geometry; read its header). Every
 // OTHER explanation in this file is still a native `title`, including both of the wish control's
 // (JOS-343 kept them native when it took the heart away): a caption is not a card, and nothing else
 // here grows a popper.
@@ -293,10 +294,16 @@ const GearLine = memo(function GearLine({
       )}
     </TableRow>
   )
-  // THE CARD HANGS OFF THE WHOLE ROW (JOS-338), which is what the owner asked for — you point at a
+  // THE CARDS HANG OFF THE WHOLE ROW (JOS-338), which is what the owner asked for — you point at a
   // candidate, not at a particular cell of it. `GearRowCompare` adds no DOM (MUI's Tooltip renders
   // its child and portals the popper), so the FIXED_ROW contract at the top of this file is
   // untouched: same one `<tr>`, same `ROW_HEIGHT`, same windowing arithmetic.
+  //
+  // WHAT CHANGED UNDER THIS SEAM IN JOS-344, because it is the reason the row is STILL the anchor:
+  // the pair opens from the row's bottom-LEFT corner now, not beside its right edge. The old
+  // placement read the one edge of a full-width row that is off the screen, and drew the card 3px
+  // inside a 1268px window — present in the DOM, invisible to a human. `GearCompareCard.tsx`'s
+  // header carries the measurement and the new law; nothing here had to move for it.
   return compare === undefined ? line : (
     <GearRowCompare row={row} data={compare}>
       {line}
