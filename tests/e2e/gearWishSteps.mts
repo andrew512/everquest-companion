@@ -23,12 +23,21 @@
  * links are invisible to a unit test, and the fifth — that the REMOVE half is the same entry delete
  * the Wish list's own remove button calls — is only interesting once the document is real.
  *
- * …AND THE WIDTH, which is the other thing only a launched app can answer. JOS-335 chose an icon
- * over the donor row's words on the grounds that a text button would eat the item name in a
- * `tableLayout: fixed` column; the owner overruled the conclusion and asked for the measurement to
- * be handled honestly instead of asserted. So it is MEASURED, here, in the browser, against the
- * cell it actually shares (`stepGearWishWidth`) — the same discipline JOS-338 applied to the
- * compare card.
+ * THE WIDTH ASSERTION IS GONE (JOS-346), AND SAYING SO IS THE POINT. This file used to measure the
+ * control's box against the Item column and fail if it took more than a third — the honest handling
+ * of JOS-335's width argument, when the answer to that argument was a SHORTER pair of words on this
+ * surface (`compact`: Wish / Remove). The owner overruled the short wording on 2026-08-13: the gear
+ * row says "Add to wish list" / "Remove from wish list" exactly as the donor row does, and the width
+ * cost is ACCEPTED. A ceiling that only the deleted wording could clear is not a test of the
+ * shipped app, so it is deleted rather than loosened to a number the new label happens to fit.
+ * What survives is the `note`: the run reports the wording and the boxes, so a reader can see the
+ * cost the ruling accepted without a spec pretending to have a limit it does not have.
+ *
+ * THE REMOVAL IS PROVEN FROM THE OTHER TAB TOO (JOS-346). Step 5 removes from the gear row itself,
+ * which only ever asked whether ONE mount can undo its own edit. The owner's bug was the other
+ * direction — take the wish off on the Wish list tab, come back to Gear, and the control still read
+ * ADDED — so step 4b does exactly that: the wish list's own per-row remove, then the trip back, then
+ * the reading. It is the same claim the whole hook is about, made across two views instead of one.
  *
  * THE ROW IS CHOSEN OFF THE SCREEN, NEVER TYPED IN (AGENTS.md, "frozen numbers rot" — and a frozen
  * ITEM NAME rots the same way when the corpus is rescraped). Two properties are wanted and both are
@@ -120,25 +129,18 @@ function measureWishCell(page: Page, key: string): Promise<CellWidths | null> {
 }
 
 /**
- * THE WIDTH, MEASURED RATHER THAN ARGUED (JOS-343).
+ * WHAT THE WORDS COST, REPORTED AND NOT CAPPED (JOS-346 — the header says why the cap went).
  *
- * The bound is a THIRD of the Item column, and it is a ceiling on the CONTROL rather than a floor
- * under the name, because the name's share also depends on how long the picked item's name is —
- * "Cloak of Flames" would leave slack a 40-character name would not, and a spec that failed on the
- * long one would be measuring the corpus. What this pins is the thing the owner's ruling put at
- * risk: that swapping the heart for words did not turn the Item column into a button column.
+ * The control still has to SHARE the cell with the name for either box to exist, so that much is
+ * still a check: a run where the name element vanished from the Item cell is a run where the
+ * placement broke. The three numbers go in the report as a `note`, which is where an accepted cost
+ * belongs — visible on every run, failing none of them.
  */
 function stepGearWishWidth(w: CellWidths | null): void {
-  if (w === null) {
-    check('the wish control shares the Item cell with the name, so both can be measured', false)
+  if (!check('the wish control shares the Item cell with the name, so both can be measured', w !== null) || w === null) {
     return
   }
   note(`wish control "${w.label}" — ${String(w.control)}px of a ${String(w.cell)}px Item column · name ${String(w.name)}px`)
-  check(
-    'the words cost the Item column less than a third of it — the heart’s width argument, answered rather than denied',
-    w.control * 3 < w.cell,
-    `${String(w.control)}px of ${String(w.cell)}px`
-  )
 }
 
 /**
@@ -214,5 +216,43 @@ export async function stepGearWish(page: Page): Promise<void> {
 
   // Hand the Gear tab back the way the host spec expects to find it.
   await page.click(GEAR_TAB, { timeout: 15_000 })
-  await until(async () => (await countOf(page, GEAR_VIEW)) > 0, 30_000)
+  if (!(await until(async () => (await countOf(page, GEAR_VIEW)) > 0, 30_000))) return
+
+  await stepRemovedOnTheOtherTab(page, key)
+}
+
+/**
+ * THE OWNER'S BUG (JOS-346): REMOVE IT OVER THERE, AND THE CONTROL OVER HERE MUST KNOW.
+ *
+ * Every claim above removes the wish through the SAME control that added it, so all of them pass on
+ * a build where each view holds its own copy of the document and only ever re-reads its own edits.
+ * This one cannot: the deletion is the Wish list tab's own per-row remove, and the reading is taken
+ * on the Gear tab afterwards. The two are different mounts of `useWishlist`, which is the seam.
+ *
+ * IT RE-ADDS FIRST, because the step it follows deliberately hands the list back empty. The add is
+ * setup rather than a claim — the claim above already proved it — but it is still checked, since a
+ * setup that silently did nothing would make the assertion below pass for the wrong reason.
+ *
+ * Runs LAST and leaves the Gear tab up with the wish list as it found it, exactly as its caller did.
+ */
+async function stepRemovedOnTheOtherTab(page: Page, key: string): Promise<void> {
+  await page.click(wishOf(key), { timeout: 15_000 })
+  if (!check('the row goes back on the wish list, so there is something to remove from the other tab', await until(async () => (await countOf(page, addedOf(key))) === 1, 15_000))) {
+    return
+  }
+
+  await page.click(WISH_TAB, { timeout: 15_000 })
+  if (!check('the Wish list tab mounts for the cross-tab removal', await until(async () => (await countOf(page, groupRowOf(key))) === 1, 30_000))) return
+  await page.click(`[data-testid="wishlist-row"][data-item="${key}"] [data-testid="wishlist-remove"]`, { timeout: 15_000 })
+  if (!check("the wish list's own remove takes the row off the route", await until(async () => (await countOf(page, `[data-testid="wishlist-row"][data-item="${key}"]`)) === 0, 15_000))) {
+    return
+  }
+
+  await page.click(GEAR_TAB, { timeout: 15_000 })
+  if (!check('the Gear tab comes back after the cross-tab removal', await until(async () => (await countOf(page, GEAR_VIEW)) > 0, 30_000))) return
+  check(
+    '…and the gear row reads UNADDED — a wish removed on the other tab is removed on this one',
+    await until(async () => (await countOf(page, wishOf(key))) === 1 && (await countOf(page, addedOf(key))) === 0, 20_000),
+    `${String(await countOf(page, addedOf(key)))} added-state controls left for ${key}`
+  )
 }

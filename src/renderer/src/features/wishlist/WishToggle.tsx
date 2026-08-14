@@ -14,10 +14,16 @@
 //
 //   * "THE GEAR ROW MUST BE AN ICON" (JOS-335, GearTable.tsx `WishButton`). The case was width: a
 //     `tableLayout: fixed` name column against a ~130px text button on 6,766 rows. OVERRULED for
-//     parity — the two surfaces are one feature and must read as one. The width was real, so it is
-//     handled honestly rather than denied: `compact` states a shorter pair of words for the dense
-//     table, MEASURED in `tests/e2e/gearWishSteps.mts` against the column it shares, and the words
-//     it drops are the ones the native `title` says in full anyway.
+//     parity — the two surfaces are one feature and must read as one.
+//   * "…AND THE GEAR ROW GETS SHORTER WORDS" (JOS-343, the `compact` prop this file used to carry:
+//     Wish / Remove for the dense table, measured against the Item column in the e2e). OVERRULED
+//     IN TURN by the owner on 2026-08-13 (JOS-346): same words both places, and the width cost is
+//     ACCEPTED rather than measured around. Half-parity was the worst of the two — a reader who
+//     learns the control on one tab meets a different pair of words on the other and has to work
+//     out that they are the same thing. The measurement that pinned the short wording went with
+//     it: an assertion that a control fits under a third of its column is an assertion that the
+//     SHORT wording is in force, so keeping it would have failed on the ruling rather than
+//     testing it.
 //   * "LIT IS A NO-OP" / "WISHED IS DISABLED". Both surfaces used to answer a second click with
 //     nothing — the donor row by refusing it, the gear row by swallowing it. OVERRULED: a second
 //     click REMOVES the wish, through `useWishlist.remove`, which is the same `removeWish` fold the
@@ -44,26 +50,17 @@ export const WISH_ADD_TITLE = 'Add to the wish list, where it joins the route gr
 export const WISH_REMOVE_TITLE = 'Remove from the wish list. It comes off the route with it.'
 
 /**
- * The words on the button. FULL is the browse row's, which has the space; COMPACT is the gear
- * table's, which does not (see the width note in the header and the measurement in the e2e step).
- *
- * COMPACT KEEPS THE NOUN AND DROPS THE PREPOSITIONS. A bare "Add" was rejected: on a table of
- * 6,766 candidate items it does not say add to WHAT, and the point of the ruling is that a reader
- * recognises this as the control the Exaltations tab has. "Wish" is the noun that list is named
- * for, so the word survives the cut; the `title` says the sentence in full either way.
+ * The words on the button — ONE PAIR, on every surface (JOS-346). There is no per-host wording any
+ * more: the owner's parity ruling is about what the control SAYS, and a second pair of words is
+ * exactly the drift the shared component was made to stop.
  */
-const LABEL = {
-  full: { add: 'Add to wish list', remove: 'Remove from wish list' },
-  compact: { add: 'Wish', remove: 'Remove' }
-} as const
+const LABEL = { add: 'Add to wish list', remove: 'Remove from wish list' } as const
 
 export interface WishToggleProps {
   /** the item's name — the accessible label says which row this control belongs to */
   name: string
   /** already on the wish list; the control reads its added state, and a click REMOVES */
   wished: boolean
-  /** the dense-table wording (see `LABEL`) */
-  compact?: boolean
   /**
    * The control cannot act at all — the Exaltations donor with no equipment slot, which can never
    * donate (R2) and is chipped `no slot` beside this button saying so. NOT used for "already
@@ -84,12 +81,10 @@ export interface WishToggleProps {
 export default function WishToggle({
   name,
   wished,
-  compact = false,
   disabled = false,
   testId,
   onToggle
 }: WishToggleProps): JSX.Element {
-  const words = LABEL[compact ? 'compact' : 'full']
   return (
     <Button
       size="small"
@@ -101,11 +96,11 @@ export default function WishToggle({
       title={wished ? WISH_REMOVE_TITLE : WISH_ADD_TITLE}
       onClick={onToggle}
       // `minWidth` is stated so the button does not RESIZE when it is clicked: both surfaces sit in
-      // a `nowrap` row where a control that grew mid-click would shove the text beside it. The two
-      // numbers are the wider label of each pair, measured in the browser (gearWishSteps.mts).
-      sx={{ flexShrink: 0, minWidth: compact ? 72 : 168, px: compact ? 0.5 : undefined }}
+      // a `nowrap` row where a control that grew mid-click would shove the text beside it. ONE
+      // number now that there is one pair of words — the wider of the two, "Remove from wish list".
+      sx={{ flexShrink: 0, minWidth: 168 }}
     >
-      {wished ? words.remove : words.add}
+      {wished ? LABEL.remove : LABEL.add}
     </Button>
   )
 }
