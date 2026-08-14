@@ -25,6 +25,7 @@ import type { BuffTrustPrefs } from '@shared/buffTrust'
 import type { GraphicsPrefs } from '@shared/graphicsPrefs'
 import type { GraphicsEnvironment } from '@shared/wineDetect'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '@shared/presencePrefs'
+import type { OverlaySnapPrefs } from '@shared/overlaySnap'
 import type { PerfHudPrefs, StartupProfile } from '@shared/perf'
 import type { TelemetryPayloadView } from '@shared/telemetry'
 import type { AlertDef, EqConfig, OverlayConfig, OverlayKind, UpdateStatus, VoicePrefs } from '@shared/types'
@@ -55,6 +56,8 @@ export interface PrefsSnapshot {
   graphicsEnv: GraphicsEnvironment
   /** Overlays — the two auto-hide switches. */
   overlayAutoHide: OverlayAutoHidePrefs
+  /** Overlays — the opt-in drag magnetism (JOS-217). */
+  overlaySnap: OverlaySnapPrefs
   /** Overlays — the celebration toast's open-state and its lock. */
   toast: ToastSeed
   /** Buff trust — the external-caster allowlist. */
@@ -89,6 +92,7 @@ export interface PrefsReader {
   getGraphicsPrefs: () => Promise<GraphicsPrefs>
   getGraphicsEnvironment: () => Promise<GraphicsEnvironment>
   getOverlayAutoHide: () => Promise<OverlayAutoHidePrefs>
+  getOverlaySnap: () => Promise<OverlaySnapPrefs>
   getOverlayState: () => Promise<Record<OverlayKind, boolean>>
   getToastConfig: () => Promise<OverlayConfig>
   getBuffTrust: () => Promise<BuffTrustPrefs>
@@ -117,6 +121,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     graphics,
     graphicsEnv,
     overlayAutoHide,
+    overlaySnap,
     overlayState,
     toastConfig,
     buffTrust,
@@ -134,6 +139,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getGraphicsPrefs(),
     eq.getGraphicsEnvironment(),
     eq.getOverlayAutoHide(),
+    eq.getOverlaySnap(),
     eq.getOverlayState(),
     eq.getToastConfig(),
     eq.getBuffTrust(),
@@ -153,6 +159,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     graphics,
     graphicsEnv,
     overlayAutoHide,
+    overlaySnap,
     toast: { open: overlayState.toast, locked: toastConfig.locked },
     buffTrust,
     cursorRing,
