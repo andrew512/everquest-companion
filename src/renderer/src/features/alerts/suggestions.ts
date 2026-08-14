@@ -468,22 +468,23 @@ export function suggestionsFor(
   packId: string = DEFAULT_PACK_ID
 ): Suggestion[] {
   const out: Suggestion[] = []
-  const def = (t: TemplateKind): AlertDef => buildDef(entry, t, packId)
-  if (entry.templates.wearsOff) out.push({ template: 'wearsOff', def: def('wearsOff') })
-  if (entry.templates.fade) out.push({ template: 'fade', def: def('fade') })
-  if (entry.templates.lands) out.push({ template: 'lands', def: def('lands') })
-  if (entry.templates.landsOnYou) out.push({ template: 'landsOnYou', def: def('landsOnYou') })
-  if (entry.templates.landsOnOther) {
-    out.push({ template: 'landsOnOther', def: def('landsOnOther') })
-  }
-  if (entry.templates.healsOverTime) {
-    out.push({ template: 'healsOverTime', def: def('healsOverTime') })
-  }
-  if (entry.templates.breaks) out.push({ template: 'breaks', def: def('breaks') })
-  // Disjoint with `breaks` by construction — `charmSpell` is tested first in classifyWornOff, so
-  // the two rosters cannot both claim a spell (tests/charmCcRoster.test.mts pins that).
-  if (entry.templates.charmBreaks) {
-    out.push({ template: 'charmBreaks', def: def('charmBreaks') })
+  // The rank-LESS chips, in the order they are offered — one entry per flag, walked rather than
+  // branched. It was eight `if`s until JOS-318 added the seventh and eighth and pushed the function
+  // past its complexity ceiling; the order is the record's own and the list is the whole of it.
+  // (`charmBreaks` is disjoint with `breaks` by construction — `charmSpell` is tested first in
+  // classifyWornOff, so the two rosters cannot both claim a spell; tests/charmCcRoster pins it.)
+  const RANKLESS: readonly TemplateKind[] = [
+    'wearsOff',
+    'fade',
+    'lands',
+    'landsOnYou',
+    'landsOnOther',
+    'healsOverTime',
+    'breaks',
+    'charmBreaks'
+  ]
+  for (const t of RANKLESS) {
+    if (entry.templates[t]) out.push({ template: t, def: buildDef(entry, t, packId) })
   }
   // Rank-pinned chips are offered only for a rank we have actually SEEN cast: a rank the log
   // has never printed cannot be confirmed to exist for this character, and an alert on a

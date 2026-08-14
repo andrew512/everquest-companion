@@ -434,3 +434,105 @@ test('JOS-276 D7: the wizard dedupes rank chips by LINE, not by rank', () => {
     assert.equal(suggestionCoverageId(id), id)
   }
 })
+
+// ── JOS-318 — THE SAME LAW, ON THE SECOND REPORTER'S LINES ────────────────────────────────────
+//
+// Report 01KZZXVW888E09C088QBRD5HCD (v0.27.0, a shaman): "Slugs healing audio trigger not working.
+// Tortoise Healing works, but even when manually changing the spell name regex to Slugs, the audio
+// trigger doesn't go off." The owner's 2026-08-14 ruling asked for two things — that alerts be
+// immune to spell upgrade ranks, and that temporary/HoT spells work end to end — so the rank half
+// is pinned HERE, beside the law it belongs to, and the HoT half in tests/suggestedAlertsFire.
+//
+// THE RANK WAS NOT THE CAUSE, and that is worth a test rather than a sentence: the reporter's cast
+// line carries `VII` while every other line of the same spell carries the bare name, which is
+// exactly the JOS-259 shape, and the fold above already handled it. What was actually broken was
+// the DB — the scrape stubs `You .` / `Someone .`, corrected in spellCorrectionsList.ts — so these
+// assertions are the ones that would have shown a diagnosis of "it must be the rank" to be wrong.
+//
+// The lines are quoted from the reporter's slice, never committed, per the rule at the top.
+
+const SLUGS = {
+  cast: '[Fri Aug 14 03:12:15 2026] You begin casting Slugs Healing VII.',
+  landed: '[Fri Aug 14 03:12:16 2026] You being to feel healed by the slug.',
+  wore: '[Fri Aug 14 03:12:19 2026] You feel the slug spirit depart.',
+  tick: '[Fri Aug 14 03:14:25 2026] You healed Ahyeon over time for 247 hit points by Slugs Healing.',
+  otherCast: '[Fri Aug 14 03:31:17 2026] Tekno begins casting Slugs Healing VII.'
+}
+
+test('JOS-318 E1: ONE unranked def answers every line the reporter`s spell prints', () => {
+  // Four kinds, two spellings of the same spell, one trigger each pinned to the BARE name — which
+  // is what the wizard authors and what a user types. The cast line is the only one carrying `VII`,
+  // and it is the one the rank fold is for.
+  const fired = fire(
+    [
+      def('slugs:cast', 'castBegin', { spell: 'Slugs Healing' }),
+      def('slugs:landed', 'buffApply', { spell: 'Slugs Healing' }),
+      def('slugs:wore', 'buffWearOff', { spell: 'Slugs Healing' }),
+      def('slugs:tick', 'heal', { spell: 'Slugs Healing' })
+    ],
+    [SLUGS.cast, SLUGS.landed, SLUGS.wore, SLUGS.tick]
+  )
+  assert.deepEqual(
+    fired.map((f) => f.alertId),
+    ['slugs:cast', 'slugs:landed', 'slugs:wore', 'slugs:tick']
+  )
+  // …and the fire REPORTS the display name the line carried, rank intact where there was one.
+  assert.deepEqual(fired.map((f) => f.spell), [
+    'Slugs Healing VII',
+    'Slugs Healing',
+    'Slugs Healing',
+    'Slugs Healing'
+  ])
+})
+
+test('JOS-318 E2: and a def pinned to the RANK answers the rank-less lines too', () => {
+  // The other direction, which is the widening JOS-259 shipped: a user who typed what their cast
+  // line says still hears the tick and the wear-off, which say something else.
+  const fired = fire(
+    [
+      def('slugs:vii-tick', 'heal', { spell: 'Slugs Healing VII' }),
+      def('slugs:vii-wore', 'buffWearOff', { spell: 'Slugs Healing VII' })
+    ],
+    [SLUGS.tick, SLUGS.wore]
+  )
+  assert.deepEqual(fired.map((f) => f.alertId).sort(), ['slugs:vii-tick', 'slugs:vii-wore'])
+})
+
+test('JOS-318 E3: the evidence — which of the reporter`s lines carry the rank at all', () => {
+  // Pinned so the diagnosis cannot rot. The cast lines keep the suffix; the landing, the wear-off
+  // and the heal tick print the bare name, and the tick prints it because the HEALING ENGINE names
+  // the spell rather than a message table — which is the whole reason the `healsOverTime` template
+  // is rank-proof by construction.
+  // `spell` is the field every one of these kinds names it (alertsFields.ts SPELL_FIELD_BY_KIND),
+  // so one dynamic read keeps this a table rather than four narrowings.
+  const kindAndSpell = (line: string, seq: number): [string | undefined, unknown] => {
+    const ev = parseEvent(line, seq)
+    return [ev?.kind, (ev as unknown as Record<string, unknown> | null)?.spell]
+  }
+  assert.deepEqual(kindAndSpell(SLUGS.cast, 0), ['castBegin', 'Slugs Healing VII'])
+  assert.deepEqual(kindAndSpell(SLUGS.otherCast, 1), ['otherCastBegin', 'Slugs Healing VII'])
+  // No suffix on any of these three — they are the lines an alert can always match.
+  assert.deepEqual(kindAndSpell(SLUGS.tick, 2), ['heal', 'Slugs Healing'])
+  assert.deepEqual(kindAndSpell(SLUGS.wore, 3), ['buffWearOff', 'Slugs Healing'])
+  assert.deepEqual(kindAndSpell(SLUGS.landed, 4), ['buffApply', 'Slugs Healing'])
+  const tick = parseEvent(SLUGS.tick, 5)
+  assert.equal(tick?.kind === 'heal' ? tick.overTime : null, true, 'and it is a HoT tick')
+})
+
+test('JOS-318 E4: the hand-edited REGEX the reporter tried works now, and says why it did not', () => {
+  // "even when manually changing the spell name regex to Slugs, the audio trigger doesn't go off."
+  // A `/regex/` spec is left alone by the rank fold on purpose (B2 above) and never needed it: it
+  // matches the ranked and unranked spellings alike. It could not fire because there was no EVENT —
+  // the DB stated no landing or wear-off sentence for the spell at all, so nothing was ever emitted
+  // for any matcher to test. With the correction in place the same pattern fires on all four lines.
+  const fired = fire(
+    [
+      def('slugs:re-cast', 'castBegin', { spell: '/Slugs/' }),
+      def('slugs:re-landed', 'buffApply', { spell: '/Slugs/' }),
+      def('slugs:re-wore', 'buffWearOff', { spell: '/Slugs/' }),
+      def('slugs:re-tick', 'heal', { spell: '/Slugs/' })
+    ],
+    [SLUGS.cast, SLUGS.landed, SLUGS.wore, SLUGS.tick]
+  )
+  assert.equal(fired.length, 4, 'one per line — the pattern was never the problem')
+})
