@@ -413,6 +413,12 @@ const SUBJECT_DRIFTS: readonly SubjectDrift[] = [
     from: 'speaks with the voice of darkness.',
     to: 'Someone speaks with the voice of darkness.',
     hits: 1 },
+  { spells: ['Tortoises Healing'],
+    from: 'is healed by the spirit of the tortoise.',
+    to: 'Someone is healed by the spirit of the tortoise.',
+    hits: 1,
+    evidence:
+      'JOS-318, and the row is here for symmetry rather than for its count. The shaman heal-over-time ladder is Snails 14 → Tortoises 28 → Slugs 42 → Sloths 50, and the wiki filled the messages in for this rank only — which is exactly why the reporter of 01KZZXVW888E09C088QBRD5HCD saw Tortoise Healing work and Slugs Healing not. The other two rows are corrected in spellCorrectionsList.ts (their fields are the scrape`s `Someone .` stub, not a subject drift); THIS one lost only its subject, so it belongs in this sweep and its restored tail is byte-identical in shape to the two minted there. Owner log: 1 line of `<T> is healed by the spirit of the tortoise.`, 0 of the wiki form, beside 49 of his own `You begin casting Tortoises Healing.` casts — the count is low because a shaman casting a HoT on HIMSELF prints the first-person landing instead, and that field was never wrong.' },
   {
     spells: ['Vengeance of the Wild'],
     from: 'Target has been consumed in the flames of the wild.',

@@ -60,6 +60,10 @@ import {
 // evidence bar of its own — absence cannot be log-measured, so the bar is a dated owner
 // verification per entry — and it is not the corrections bar. Read it before adding a removal.
 import { applySpellRemovals, type RemovalsReport } from './spellRemovals'
+// WHAT THE SPELL DOES, read off the wiki's own effect list (JOS-251). The suggestion catalog uses
+// exactly one class of it — `healOverTime`, which is what makes the `healsOverTime` template a
+// claim about a mechanic rather than about a message somebody typed into a wiki table.
+import { spellHasEffect } from './spellEffectClass'
 // The wiki's own duration strings, read by the SAME function the scrape uses (JOS-189). See
 // `fillDerivedDurations` below for why the load path reads them at all.
 import { parseDurationMs } from '../../shared/spellDuration'
@@ -562,6 +566,18 @@ function suggestionTemplates(s: SpellEntry): SpellCatalogEntry['templates'] {
   return {
     wearsOff: beneficial && !!s.msgWearsOff,
     fade: beneficial,
+    // THE BENEFICIAL LANDING (JOS-318) — the `lands` gate's mirror, one field over. `castOnYou` is
+    // an EXACT-TEXT map keyed by this message (buildSpellDb below), so "the DB states one" is the
+    // whole of "the parser can emit a buffApply for it"; no suffix question arises, because a
+    // first-person sentence has no target name spliced into it. See SpellTemplateFlags.landsOnYou
+    // for the report this was missing from.
+    landsOnYou: beneficial && !!s.msgCastOnYou,
+    // THE HEAL-OVER-TIME TICK (JOS-318). Read off the wiki's EFFECT list rather than its type
+    // column or its message fields — the argument, the two heads and the log measurement are on
+    // the `healOverTime` rule in spellEffectClass.ts. The beneficial gate keeps out the one
+    // Detrimental member of the class (`Sebilite Pox`, a DoT that also regenerates), for which no
+    // log has ever printed a heal line.
+    healsOverTime: beneficial && spellHasEffect(s, 'healOverTime'),
     lands:
       detrimental &&
       !!s.msgCastOnOther &&
@@ -620,7 +636,16 @@ export function searchTextFor(s: SpellEntry, rankNames: readonly string[] | unde
  * JOS-103 was filed for.
  */
 function offersAnyTemplate(t: SpellCatalogEntry['templates']): boolean {
-  return t.wearsOff || t.fade || t.lands || t.landsOnOther || t.breaks || t.charmBreaks
+  return (
+    t.wearsOff ||
+    t.fade ||
+    t.lands ||
+    t.landsOnYou ||
+    t.landsOnOther ||
+    t.healsOverTime ||
+    t.breaks ||
+    t.charmBreaks
+  )
 }
 
 export function buildSpellCatalog(
@@ -646,6 +671,9 @@ export function buildSpellCatalog(
       illusion: s.illusion,
       templates,
       ...(templates.landsOnOther && capture ? { castOnOtherCapture: capture } : {}),
+      // The wiki's stated duration, carried so the `healsOverTime` suggestion can author a cooldown
+      // of one CAST rather than one TICK — see SpellCatalogEntry.durationMs.
+      ...(s.durationMs != null ? { durationMs: s.durationMs } : {}),
       usageCount: usage.get(key) ?? 0,
       lastSeenMs: lastSeen?.get(key) ?? null,
       classLevels: parseSpellClassLevels(s.classes),

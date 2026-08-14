@@ -203,7 +203,24 @@ function nulledRows(): string[] {
   return report.rows.map((r) => `${r.spell}/${r.field} = ${JSON.stringify(r.text)}`)
 }
 
-test('THE CENSUS: exactly ten stub fields, on five spells, in two shapes', () => {
+/**
+ * The stub fields a COMMITTED CORRECTION now answers, as `spell/field`.
+ *
+ * THE PASS ORDER IS WHY THIS LIST EXISTS (JOS-318). `loadSpellDb` runs the corrections overlay
+ * BEFORE the placeholder pass, precisely so that OUR stated truth about a sentence wins over the
+ * scrape's stub — spellDb.ts's load order says so, and said so while no correction named any of the
+ * five placeholder spells. Four of the ten now do, so the census below is the stubs the pass still
+ * blanks and this is the rest of the original ten: nothing left the population, two fields moved
+ * from "blanked" to "answered".
+ */
+const CORRECTED_STUBS = [
+  'Slugs Healing/msgCastOnYou',
+  'Slugs Healing/msgCastOnOther',
+  'Snails Healing/msgCastOnYou',
+  'Snails Healing/msgCastOnOther'
+]
+
+test('THE CENSUS: the stub fields no correction answers, verbatim', () => {
   // Listed VERBATIM rather than counted, because the whole risk of this pass is swallowing a real
   // sentence. A re-scrape that changes what it folds has to change this list and argue for it.
   assert.deepEqual(nulledRows(), [
@@ -213,32 +230,37 @@ test('THE CENSUS: exactly ten stub fields, on five spells, in two shapes', () =>
     'FireBomb/msgCastOnOther = "N/A"',
     'FireBomb/msgWearsOff = "N/A"',
     'Nature\'s Holy Wrath/msgWearsOff = "N/A"',
-    // SHAPE A — a subject with no predicate. The three shaman heal-over-times whose wiki pages
-    // state the sentence's subject and then state nothing else.
+    // SHAPE A — a subject with no predicate. It was three shaman heal-over-times; JOS-318 evidenced
+    // two of them out of this list from the owner's own log, and `Sloths Healing` is the one no log
+    // anywhere has ever printed a line of. It stays blanked rather than extrapolated, which is the
+    // awaiting-sample law — and the `healsOverTime` alert template covers it anyway, off the healing
+    // engine's tick line instead of off a message the wiki never wrote.
     'Sloths Healing/msgCastOnYou = "You ."',
-    'Sloths Healing/msgCastOnOther = "Someone ."',
-    'Slugs Healing/msgCastOnYou = "You ."',
-    'Slugs Healing/msgCastOnOther = "Someone ."',
-    'Snails Healing/msgCastOnYou = "You ."',
-    'Snails Healing/msgCastOnOther = "Someone ."'
+    'Sloths Healing/msgCastOnOther = "Someone ."'
   ])
-  assert.equal(spellPlaceholdersReport()?.nulled, 10)
+  assert.equal(spellPlaceholdersReport()?.nulled, 6)
 })
 
 test('…and an INDEPENDENT count finds the same ten: they are the DB\'s only one-word messages', () => {
   // Two directions on one population. The rule was derived from SHAPES; a word count knows nothing
-  // about shapes and lands on exactly the same ten fields. Every other one of the 3,847 non-empty
-  // message fields the scrape ships carries two or more words.
+  // about shapes and lands on exactly the same ten fields of the RAW scrape. Every other one of the
+  // 3,847 non-empty message fields the scrape ships carries two or more words.
+  //
+  // The comparison is against blanked ∪ CORRECTED, because a stub a correction answers never reaches
+  // the placeholder pass — see CORRECTED_STUBS. The union is what has to equal the word count; a
+  // stub that fell out of BOTH would be the pass quietly failing to notice one.
   const single: string[] = []
   for (const s of (spellsJson as unknown as SpellDbFile).spells) {
     for (const field of ['msgCastOnYou', 'msgCastOnOther', 'msgWearsOff'] as const) {
       const text = s[field]
       if (!text) continue
       const words = text.trim().split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w))
-      if (words.length <= 1) single.push(`${s.name}/${field} = ${JSON.stringify(text)}`)
+      if (words.length <= 1) single.push(`${s.name}/${field}`)
     }
   }
-  assert.deepEqual(single.sort(), [...nulledRows()].sort())
+  const handled = [...nulledRows().map((r) => r.split(' = ')[0]), ...CORRECTED_STUBS]
+  assert.deepEqual(single.sort(), handled.sort())
+  assert.equal(single.length, 10, 'the population is still the same ten fields')
 })
 
 test('THE BOUNDARY: a short sentence is still a sentence and survives the pass', () => {
@@ -260,30 +282,40 @@ test('THE BOUNDARY: a short sentence is still a sentence and survives the pass',
   }
 })
 
-test('THE REPORTED SPELL: Snails Healing carries no stub anywhere downstream', () => {
+test('THE REPORTED SPELL: Sloths Healing carries no stub anywhere downstream', () => {
   // The defect really was authored. Left in place, `Someone .` produces a raw trigger that fires on
   // any line ending in a name-shaped run and a period — offered to the user as coverage for a
   // spell landing, which is precisely the guessed trigger alertGroups.ts's law forbids.
+  //
+  // THE SPELL MOVED (JOS-318). JOS-342 wrote this against `Snails Healing`, which now carries the
+  // three sentences the owner's log proves it prints. `Sloths Healing` is the rank above it and the
+  // one nothing anywhere has witnessed, so it is the row that still exercises the pass — and it is a
+  // better one, because a stub with no correction behind it is exactly the state the pass is for.
   assert.notEqual(
     subjectCapturePattern('Someone .'),
     null,
     'the stub really did author a pattern — this is what the pass exists to remove'
   )
 
-  const spell = db.byKey.get('snails healing')
+  const spell = db.byKey.get('sloths healing')
   assert.ok(spell, 'the row is still in the DB — the pass blanks fields, it never drops a spell')
   assert.equal(spell.msgCastOnYou, undefined, 'absent, rather than the string "You ."')
   assert.equal(spell.msgCastOnOther, undefined, 'absent, rather than the string "Someone ."')
 
-  const entry = byKey.get('snails healing')
+  const entry = byKey.get('sloths healing')
   assert.ok(entry, 'and still in the catalog: Heal Over Time is Beneficial, so `fade` stands')
-  assert.equal(entry.templates.fade, true, 'the one template it honestly earns')
+  assert.equal(entry.templates.fade, true)
   assert.equal(entry.templates.landsOnOther, false, 'the junk capture is gone')
   assert.equal(entry.castOnOtherCapture, undefined)
   assert.equal(entry.templates.wearsOff, false, 'the DB states no wear-off sentence for it')
+  assert.equal(entry.templates.landsOnYou, false, '…nor a landing sentence')
+  // …and the template that does not need one. THE ANSWER TO A ROW NOBODY CAN CORRECT (JOS-318): the
+  // heal-over-time tick line is printed by the healing engine and names the spell itself, so this
+  // spell is alertable with no message table entry of any kind.
+  assert.equal(entry.templates.healsOverTime, true)
   assert.equal(
     entry.searchText,
-    'snails healing snails healing',
+    'sloths healing sloths healing',
     'the search surface is the name and its rank list — no stub text joined into it'
   )
 
@@ -294,6 +326,38 @@ test('THE REPORTED SPELL: Snails Healing carries no stub anywhere downstream', (
   assert.equal(db.castOnYou.has('You .'), false)
   assert.equal(db.castOnYou.has('N/A'), false)
   assert.equal(db.wearsOff.has('N/A'), false)
+})
+
+test('JOS-318: the corrected ladder rungs carry real sentences, and earn the chips they name', () => {
+  // The other side of the row that moved. Snails and Slugs are the two rungs the owner's log can
+  // witness, so their stubs are ANSWERED rather than blanked, and the template flags follow from the
+  // sentences without anything being taught a new rule.
+  for (const [key, animal] of [['snails healing', 'snail'], ['slugs healing', 'slug']] as const) {
+    const s = db.byKey.get(key)
+    assert.ok(s, `${key} must still be in the DB`)
+    assert.equal(s.msgCastOnYou, `You being to feel healed by the ${animal}.`)
+    assert.equal(s.msgCastOnOther, `Someone is healed by the spirit of the ${animal}.`)
+    assert.equal(s.msgWearsOff, `You feel the ${animal} spirit depart.`)
+
+    const e = byKey.get(key)
+    assert.ok(e)
+    assert.equal(e.templates.landsOnYou, true, 'the landing sentence exists now')
+    assert.equal(e.templates.wearsOff, true, 'and so does the wear-off')
+    assert.equal(e.templates.landsOnOther, true, 'and the third-person one, with a real subject')
+    assert.equal(e.templates.healsOverTime, true)
+    // The minted tail is the spell's own and nothing else in the table shares it.
+    assert.equal(
+      db.castOnOtherSuffix.get(`is healed by the spirit of the ${animal}.`)?.length,
+      1,
+      `${key}: the restored sentence resolves to exactly one spell`
+    )
+  }
+  // …including the rung the wiki DID fill in, whose only fault was a dropped subject.
+  assert.equal(
+    db.castOnOtherSuffix.get('is healed by the spirit of the tortoise.')?.length,
+    1,
+    'Tortoises Healing keys the table now too'
+  )
 })
 
 test('poison Strike procs are excluded from BOTH landing templates', () => {

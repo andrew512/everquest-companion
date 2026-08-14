@@ -121,6 +121,12 @@ import type { SpellCorrection } from './spellCorrections'
 // subject stripper, which sentence it still refuses, and — for the one sentence it stopped
 // refusing — what taking a line off another classifier costs, measured (JOS-189).
 import { SUBJECT_PLACEHOLDER_CORRECTIONS } from './spellCorrectionsSubjects'
+// THE SHAMAN HEAL-OVER-TIME LADDER (JOS-318), appended below. Also one of this header's drift
+// classes — the SCRAPE STUB, which is the fourth (an absent field) wearing a placeholder — and also
+// held to this file's evidence bar. It lives next door because its argument is long and this file's
+// code-mass ceiling is shared with none of it; that file's header carries the report, the four rungs
+// of the ladder and the reason the fourth rung is deliberately left uncorrected.
+import { HEALING_LADDER_CORRECTIONS } from './spellCorrectionsHealing'
 
 /**
  * The hand-derived overlay. Ordered by the drift it fixes, not by spell name, because the drifts
@@ -581,7 +587,8 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
 ]
 
 /**
- * THE COMMITTED OVERLAY: the hand-derived entries above, then the subject-placeholder sweep.
+ * THE COMMITTED OVERLAY: the hand-derived entries above, then the subject-placeholder sweep, then
+ * the shaman heal-over-time ladder.
  *
  * ORDER IS NOT SIGNIFICANT HERE and the suite proves it: `applySpellCorrections` matches each
  * entry against the CURRENT text of the spell it names, and `tests/spellCorrections.test.mts`
@@ -591,5 +598,6 @@ const HAND_DERIVED_CORRECTIONS: readonly SpellCorrection[] = [
  */
 export const SPELL_CORRECTIONS: readonly SpellCorrection[] = [
   ...HAND_DERIVED_CORRECTIONS,
-  ...SUBJECT_PLACEHOLDER_CORRECTIONS
+  ...SUBJECT_PLACEHOLDER_CORRECTIONS,
+  ...HEALING_LADDER_CORRECTIONS
 ]

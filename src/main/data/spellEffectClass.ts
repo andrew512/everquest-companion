@@ -79,6 +79,7 @@ export type SpellEffectClass =
   | 'memblur'
   | 'invisibility'
   | 'feignDeath'
+  | 'healOverTime'
 
 interface EffectRule {
   klass: SpellEffectClass
@@ -176,6 +177,36 @@ const EFFECT_RULES: readonly EffectRule[] = [
     klass: 'feignDeath',
     test: /^feign death\b/i,
     note: 'Two spells (Death Peace, Feign Death). Kept because it is unambiguous, not because anything reads it yet.'
+  },
+  {
+    klass: 'healOverTime',
+    // JOS-318. THE HEAL OVER TIME, and it is the first class here whose consumer is an ALERT rather
+    // than a parser roster: `templates.healsOverTime` (spellDb.ts) offers a chip on the one line a
+    // HoT is guaranteed to print — `<healer> healed <target> over time for N hit points by <Spell>.`
+    // — which names the spell VERBATIM and RANK-LESS, whatever the wiki says about its landing and
+    // wear-off sentences. That independence is the point: the two reports behind this ticket are
+    // both spells whose wiki MESSAGES are missing or wrong, and this line does not depend on them.
+    //
+    // TWO HEADS, both measured, because EQ's two heal-over-time mechanics are worded differently:
+    //   `Increase Hitpoints by 60 per tick`               the classic regen/HoT (58 rows)
+    //   `Increase Hitpoints between 55 and 55 for two additional ticks.`
+    //                                                     the cleric ECHO family (5 rows), whose
+    //                                                     first effect line is a direct heal and
+    //                                                     whose second is the tail that ticks
+    // plus the `Increase Current Hit Points by 160 per Tick` casing the three shaman Healing rows
+    // use and the `Increase Hitpoints v2 by 300 per tick` spelling Torpor/Celestial Healing use.
+    //
+    // ANCHORED AT THE HEAD like every rule above, and the anchor is doing the same work: the head
+    // must be an INCREASE of hit points, so the 140-odd `Decrease Hitpoints by N per tick` DoT lines
+    // are not heals, and `Increase Mana by N per tick` is not one either.
+    //
+    // MEASURED against the committed catalog and then against the LOG, which is the check that
+    // matters for a claim an alert rests on: 67 rows / 66 canonical names carry one of the two
+    // heads, and of the 19 distinct spells the owner's whole log prints a `healed … over time … by
+    // <Spell>.` tick for (1,732,267 lines, 2026-08-14) this reads 18. The one miss is `Harm Touch`,
+    // which is not in spells.json at all and so cannot be in any roster derived from it.
+    test: /^increase\s+(?:current\s+)?hit\s?points?\b.*\b(?:per\s+tick|additional\s+ticks)\b/i,
+    note: 'Two heads: "Increase Hitpoints by N per tick" (the regen/HoT family, incl. the "Current Hit Points"/"Hitpoints v2" spellings) and "Increase Hitpoints between N and N for two additional ticks." (the cleric Echo family). 67 rows, 66 canonical names. Decrease-headed DoT lines and mana regen are excluded by the anchor.'
   }
 ]
 
