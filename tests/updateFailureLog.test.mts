@@ -46,9 +46,11 @@ import {
   type UpdateLogSinks
 } from '../src/main/updateLog'
 import {
+  INTERRUPTED_ERROR_CODES,
   UNREACHABLE_ERROR_CODES,
   classifyUpdateFailure,
   describeUpdateFailure,
+  isInterruptedFailure,
   updateFailureCode,
   updateHttpStatus
 } from '../src/shared/update'
@@ -178,6 +180,92 @@ test('an answer OUTRANKS a socket word in the same message, and the unknown is R
   assert.equal(classifyUpdateFailure(new Error('something nobody has seen yet')), 'other')
   assert.equal(classifyUpdateFailure(null), 'other')
   assert.equal(classifyUpdateFailure('a thrown string'), 'other')
+})
+
+// ------------------------------------------------------------------ the interruption (JOS-307)
+//
+// THE MEASUREMENT THIS ARM EXISTS FOR, and it is a reading rather than a theory: 0.27.0's first day
+// in the fleet produced twelve copies of fingerprint 36e52c753767490b —
+// `update check failed (final, other): net::ERR_NETWORK_IO_SUSPENDED` — every one of them a laptop
+// closing its lid under an in-flight request, filed as an unexplained update failure. Owner ruling
+// 2026-08-14, verbatim: *classify IO-suspended / network-change as a benign transient: retry on
+// resume, never error-store it.*
+
+/** Chromium's shapes, both ways they can arrive: a `code` property, or inside the message. */
+const suspendedByMessage = new Error('net::ERR_NETWORK_IO_SUSPENDED')
+const suspendedByCode = Object.assign(new Error('net::ERR_NETWORK_IO_SUSPENDED (-61)'), {
+  code: 'ERR_NETWORK_IO_SUSPENDED'
+})
+const networkChanged = new Error('net::ERR_NETWORK_CHANGED')
+
+test('AN INTERRUPTION IS ITS OWN KIND, and it is asked FIRST', () => {
+  for (const err of [suspendedByMessage, suspendedByCode]) {
+    assert.ok(isInterruptedFailure(err))
+    assert.equal(classifyUpdateFailure(err), 'interrupted')
+    assert.equal(updateFailureCode(err), 'ERR_NETWORK_IO_SUSPENDED')
+  }
+  // THE OWNER NAMED TWO. A Wi-Fi-to-dock handover is the same event as a lid closing as far as this
+  // app is concerned, and it gets the same answer: wait for the machine to settle and ask again.
+  assert.ok(isInterruptedFailure(networkChanged))
+  assert.equal(classifyUpdateFailure(networkChanged), 'interrupted')
+  // …which means it is no longer in the unreachable list. It was there, it was already bounded
+  // there, and what it was NOT earning there was the re-anchored retry.
+  assert.ok(!(UNREACHABLE_ERROR_CODES as readonly string[]).includes('ERR_NETWORK_CHANGED'))
+  // Neither carries a status and neither is in the parse patterns, so nothing could steal them
+  // today — asking first is what keeps that true if the other arms ever widen.
+  assert.equal(updateHttpStatus(suspendedByCode), null)
+  // AWAITING-SAMPLE: only the codes that have been MEASURED or named are in the list. `ERR_ABORTED`
+  // also covers a request we cancelled ourselves, so it stays out and stays reported.
+  assert.deepEqual([...INTERRUPTED_ERROR_CODES], ['ERR_NETWORK_IO_SUSPENDED', 'ERR_NETWORK_CHANGED'])
+  assert.equal(classifyUpdateFailure(new Error('net::ERR_ABORTED')), 'other')
+  // …and a machine that moved is not an offline one: the two must not be conflated, because only
+  // one of them is fixed by waiting a moment.
+  assert.equal(isInterruptedFailure(chromiumOffline), false)
+  assert.equal(isInterruptedFailure(null), false)
+})
+
+test('AN INTERRUPTION NEVER REACHES THE ERROR STORE — one console line per session', () => {
+  resetUpdateLogWarnings()
+  const r = recorder()
+  // A laptop that is opened and closed all day, for a week.
+  for (let i = 0; i < 5_000; i++) logUpdateFailure('check', 'final', suspendedByCode, r)
+  assert.equal(r.filed.length, 0, 'twelve reports on day one becomes none')
+  assert.equal(r.warned.length, 1)
+  assert.match(String(r.warned[0][1]), /cut short by the machine suspending or changing network/)
+  assert.match(String(r.warned[0][1]), /\(ERR_NETWORK_IO_SUSPENDED\)/)
+  assert.match(String(r.warned[0][1]), /re-anchored/)
+  // A network change is a DIFFERENT story about the machine and earns its own line — and still not
+  // a report.
+  for (let i = 0; i < 500; i++) logUpdateFailure('check', 'final', networkChanged, r)
+  assert.equal(r.warned.length, 2)
+  assert.equal(r.filed.length, 0)
+  // It shares the unreachable budget — same claim ("this is about the machine"), same ceiling.
+  for (const code of UNREACHABLE_ERROR_CODES.slice(0, MAX_WARNED_UPDATE_CODES)) {
+    logUpdateFailure('check', 'final', offlineError(code), r)
+  }
+  assert.equal(r.warned.length, MAX_WARNED_UPDATE_CODES)
+  assert.equal(r.filed.length, 0)
+  resetUpdateLogWarnings()
+})
+
+test('THE THIRD SPELLING OF A STATUS: `HttpError: <n>` interpolated into a sentence', () => {
+  // MEASURED: 0.26.0's fingerprint 2e535fdf79476239, x7. electron-updater's own `newError` builds a
+  // plain Error with an `ERR_UPDATER_*` code and puts the HttpError in the TEXT, so `statusCode` is
+  // gone and `code` no longer matches `HTTP_ERROR_…`. It was reading as 'other' — a class that says
+  // we do not understand a 404 on our own release feed.
+  const linux = Object.assign(
+    new Error(
+      'Cannot find latest-linux.yml in the latest release artifacts ' +
+        '(https://github.com/jmoyers/everquest-companion/releases/latest): HttpError: 404 Not Found'
+    ),
+    { code: 'ERR_UPDATER_LATEST_VERSION_NOT_FOUND' }
+  )
+  assert.equal(updateHttpStatus(linux), 404)
+  assert.equal(classifyUpdateFailure(linux), 'http')
+  assert.match(updateFailureLine('check', 'final', 'http', linux), /\(final, http 404\)/)
+  // The other two spellings are untouched, and a number that is not a status is still not one.
+  assert.equal(updateHttpStatus(new Error('HttpError: 302 Found')), null)
+  assert.equal(updateHttpStatus(new Error('downloaded 404 bytes')), null)
 })
 
 // --------------------------------------------------------------------------------- the bounding
@@ -351,15 +439,19 @@ test('THE WIRING: the raw error is routed BEFORE the sanitizer, on every path', 
     handler.indexOf("logUpdateFailure(step, 'final', err, LOG_SINKS)") <
       handler.indexOf('describeUpdateFailure(err)')
   )
-  // The rejection path in `runCheck` — the failures the event handler did NOT account for — takes
-  // the same rule, and only for the unaccounted ones (or every failure would be filed twice).
+  // The rejection path — the failures the event handler did NOT account for — takes the same rule,
+  // and only for the unaccounted ones (or every failure would be filed twice). It lives in
+  // `routeCheckRejection` since JOS-307 lifted it out of `runCheck`'s catch; the gate stays at the
+  // call site, which is where "did the event already handle this?" is answerable.
   const runCheck = src.slice(src.indexOf('const runCheck ='))
-  assert.ok(
-    runCheck.indexOf("logUpdateFailure('check', 'final', err, LOG_SINKS)") <
-      runCheck.indexOf('describeUpdateFailure(err)')
-  )
   assert.match(runCheck, /const unaccounted = checkInFlight && !retryPending/)
-  assert.match(runCheck, /if \(unaccounted && shouldRetryCheck\(err, checkAttempts\)\) \{\s+logUpdateFailure\('check', 'retrying'/)
+  assert.match(runCheck, /if \(unaccounted\) routeCheckRejection\(err, sinks\)/)
+  const route = src.slice(src.indexOf('function routeCheckRejection('))
+  assert.ok(
+    route.indexOf("logUpdateFailure('check', 'final', err, LOG_SINKS)") <
+      route.indexOf('describeUpdateFailure(err)')
+  )
+  assert.match(route, /shouldRetryCheck\(err, checkAttempts\)\) \{\s+logUpdateFailure\('check', 'retrying'/)
   // NEVER the sanitized text as a payload: the whole ticket is that the sentence is not the error.
   assert.doesNotMatch(src, /logUpdateFailure\([^)]*describeUpdateFailure/)
   // The bounded telemetry signal is NOT gated on any of this: `noteUpdate` still records one
@@ -369,6 +461,41 @@ test('THE WIRING: the raw error is routed BEFORE the sanitizer, on every path', 
     handler.indexOf("logUpdateFailure(step, 'final', err, LOG_SINKS)") <
       handler.indexOf("noteUpdate(step, err ?? 'unknown error')")
   )
+})
+
+test('THE WIRING: an interruption counts no failure, stamps no check, and re-anchors (JOS-307)', () => {
+  const src = read('src/main/updater.ts')
+  // ONE function for both call sites, because they are one ruling.
+  const note = src.slice(src.indexOf('function noteInterrupted('))
+  const body = note.slice(0, note.indexOf('\n}'))
+  assert.ok(body.length > 0, 'found noteInterrupted')
+  // The four things that DO happen…
+  assert.match(body, /logUpdateFailure\(step, 'final', err, LOG_SINKS\)/)
+  assert.match(body, /noteUpdate\(step, err\)/)
+  assert.match(body, /sinks\.push\(\{ state: 'idle' \}\)/)
+  assert.match(body, /sinks\.retryOnResume\(\)/)
+  // …and the ones that must not. A `checkDone` here would stamp `lastCheckedAt` for a check that
+  // never completed — the same dishonesty the chip half of this ticket is about.
+  assert.doesNotMatch(body, /checkDone\(/)
+  assert.doesNotMatch(body, /consecutiveFailures/)
+  assert.doesNotMatch(body, /state: 'error'/)
+  // Clearing the in-flight latch is what marks the failure ACCOUNTED, so `runCheck`'s catch does
+  // not file it a second time.
+  assert.match(body, /checkInFlight = false/)
+
+  // BOTH call sites ask it FIRST, before the JOS-211 retry swallow and before the final verdict.
+  const handler = src.slice(src.indexOf("autoUpdater.on('error'"))
+  assert.ok(
+    handler.indexOf('isInterruptedFailure(err)') > 0 &&
+      handler.indexOf('isInterruptedFailure(err)') < handler.indexOf('shouldRetryCheck(err, checkAttempts)')
+  )
+  const route = src.slice(src.indexOf('function routeCheckRejection('))
+  assert.ok(route.indexOf('isInterruptedFailure(err)') < route.indexOf('shouldRetryCheck(err, checkAttempts)'))
+
+  // AND THE HALF THAT COVERS THE COMMON CASE: most sleeps produce no error at all, they just
+  // freeze a setTimeout. The wake itself has to re-anchor the poll.
+  assert.match(src, /powerMonitor\.on\('resume', \(\) => \{?\s*schedule\('resume'\)/)
+  assert.match(src, /const schedule = \(phase: 'startup' \| 'periodic' \| 'resume'\)/)
 })
 
 test("THE WIRING: the library's logger is ours, at the levels errorLog.ts allows", () => {

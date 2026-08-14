@@ -223,14 +223,20 @@ export function describeUpdateFailure(err: unknown): string {
 //
 // FIVE KINDS, AND THE ORDER THEY ARE ASKED IN IS THE DESIGN:
 //
-//   'suspended'   THE MACHINE WENT TO SLEEP UNDER AN IN-FLIGHT REQUEST (JOS-307). Asked FIRST,
-//                 because it is the one kind that is not a failure of anything: Chromium tears
-//                 down network IO on suspend and whatever was mid-flight rejects with
-//                 `net::ERR_NETWORK_IO_SUSPENDED`. MEASURED, and it is why this arm exists rather
-//                 than being imagined: 0.27.0 filed 12 of them on its FIRST DAY
-//                 (fingerprint 36e52c753767490b), every one of them classified 'other' and
-//                 therefore reported to the fleet as an unexplained update failure. Owner ruling
-//                 2026-08-14: a benign transient — retry on resume, never the error store.
+//   'interrupted' THE MACHINE MOVED UNDER AN IN-FLIGHT REQUEST (JOS-307). Asked FIRST, because it
+//                 is the one kind that is not a failure of anything: Chromium tears down network
+//                 IO when the host suspends (`ERR_NETWORK_IO_SUSPENDED`) or when the active
+//                 interface changes underneath it (`ERR_NETWORK_CHANGED` — Wi-Fi to Ethernet, a
+//                 VPN coming up, a hotspot handover), and whatever was mid-flight rejects. MEASURED,
+//                 and it is why this arm exists rather than being imagined: 0.27.0 filed 12 of the
+//                 first on its FIRST DAY (fingerprint 36e52c753767490b), every one of them
+//                 classified 'other' and therefore reported to the fleet as an unexplained update
+//                 failure. Owner ruling 2026-08-14, verbatim: *classify IO-suspended /
+//                 network-change as a benign transient: retry on resume, never error-store it*.
+//                 The two are one kind because the ANSWER is one answer — wait for the machine to
+//                 settle and ask again — even though only the first has a `powerMonitor` event to
+//                 hang that on (there is no main-process network-change event in Electron, so the
+//                 network case re-anchors on the same short timer and nothing more).
 //   'http'        GitHub answered, and it answered 4xx/5xx. THE THING THAT MUST ALWAYS LAND.
 //                 A 403/429 is a throttle we can act on, a 404 means our feed is wrong, a 5xx is
 //                 an outage worth knowing the date of. `HttpError` (builder-util-runtime) carries
@@ -253,24 +259,33 @@ export function describeUpdateFailure(err: unknown): string {
 //                 MITM proxy or an expired root is diagnosable and is not "the network is away".
 
 /** Which of the five kinds a failed check/download was. */
-export type UpdateFailureKind = 'suspended' | 'http' | 'parse' | 'unreachable' | 'other'
+export type UpdateFailureKind = 'interrupted' | 'http' | 'parse' | 'unreachable' | 'other'
 
 /**
- * THE SUSPEND CODES, and the list is short because only one of them has ever been MEASURED.
+ * THE INTERRUPTION CODES, and the list is TWO long because two is what the owner named.
  *
- * `ERR_NETWORK_IO_SUSPENDED` is Chromium's own word for "this request died because the machine is
- * going to sleep" — it is emitted by the network service as it tears down, and there is no other
- * condition that produces it. The awaiting-sample law applies to everything that is NOT in this
- * list: `ERR_ABORTED` was the obvious second candidate and is deliberately absent, because it also
- * covers a request WE cancelled and a renderer navigating away, and a wrong entry here would
- * silently stop reporting a real failure. A code that is not here falls through to the classifier's
- * other arms and is REPORTED — the honest failure direction.
+ * Both are Chromium's own words for "this request died because the machine moved out from under
+ * it", and neither can be produced by anything else: `ERR_NETWORK_IO_SUSPENDED` comes from the
+ * network service tearing down for a suspend, `ERR_NETWORK_CHANGED` from the active interface
+ * being replaced mid-request.
+ *
+ * THE AWAITING-SAMPLE LAW APPLIES TO EVERYTHING THAT IS NOT HERE. `ERR_ABORTED` was the obvious
+ * third candidate and is deliberately absent: it also covers a request WE cancelled, so a wrong
+ * entry would silently stop reporting a real failure. A code that is not in this list falls through
+ * to the classifier's other arms and is REPORTED — the honest direction for the cost of forgetting
+ * one.
+ *
+ * `ERR_NETWORK_CHANGED` MOVED HERE OUT OF `UNREACHABLE_ERROR_CODES`, which is the one behavioural
+ * change in that reshuffle: it was already never reaching the error store (unreachable is bounded
+ * to a console warn), but it was not earning the re-anchored retry, so a laptop that switched from
+ * Wi-Fi to a dock could sit out the rest of a four-hour timer over an event that resolved in two
+ * seconds.
  */
-export const SUSPENDED_ERROR_CODES = ['ERR_NETWORK_IO_SUSPENDED'] as const
+export const INTERRUPTED_ERROR_CODES = ['ERR_NETWORK_IO_SUSPENDED', 'ERR_NETWORK_CHANGED'] as const
 
 /** The same list as one word-bounded alternation — `net::ERR_X` matches on `ERR_X` because `:` is
  *  not a word character, exactly like `UNREACHABLE_RE` below. */
-const SUSPENDED_RE = new RegExp(`\\b(?:${SUSPENDED_ERROR_CODES.join('|')})\\b`)
+const INTERRUPTED_RE = new RegExp(`\\b(?:${INTERRUPTED_ERROR_CODES.join('|')})\\b`)
 
 /**
  * THE CODES THAT MEAN "THE REQUEST NEVER REACHED GITHUB", spelled out rather than pattern-matched.
@@ -302,7 +317,9 @@ export const UNREACHABLE_ERROR_CODES = [
   'ERR_INTERNET_DISCONNECTED',
   'ERR_NAME_NOT_RESOLVED',
   'ERR_NAME_RESOLUTION_FAILED',
-  'ERR_NETWORK_CHANGED',
+  // `ERR_NETWORK_CHANGED` USED TO BE HERE and is now an INTERRUPTION (JOS-307) — the list above
+  // says why. Left as a note rather than silently removed: it is the only entry this list has ever
+  // lost, and the next reader deserves to know it was a move rather than an omission.
   'ERR_CONNECTION_REFUSED',
   'ERR_CONNECTION_RESET',
   'ERR_CONNECTION_ABORTED',
@@ -343,18 +360,26 @@ const TRANSPORT_CODE_RE = /^[A-Z][A-Z0-9_]{1,31}$/
 export function updateHttpStatus(err: unknown): number | null {
   const e = err as { statusCode?: unknown; code?: unknown } | null | undefined
   const direct = e?.statusCode
-  if (typeof direct === 'number' && Number.isInteger(direct) && direct >= 400 && direct <= 599) {
-    return direct
-  }
-  const code = typeof e?.code === 'string' ? e.code : ''
-  const text = failureText(err)
+  if (typeof direct === 'number' && isFailureStatus(direct)) return direct
+  return statusFromText(typeof e?.code === 'string' ? e.code : '', failureText(err))
+}
+
+/** The ONE opinion about which numbers are statuses we are willing to state. */
+function isFailureStatus(n: number): boolean {
+  return Number.isInteger(n) && n >= 400 && n <= 599
+}
+
+/** The three ways a status survives as TEXT once the error object has lost its properties: the
+ *  `code` `HTTP_ERROR_<n>`, that same code inside a stringified copy, and electron-updater's own
+ *  `HttpError: <n>` interpolation (the JOS-307 case argued above). */
+function statusFromText(code: string, text: string): number | null {
   const m =
     /\bHTTP_ERROR_(\d{3})\b/.exec(code) ??
     /\bHTTP_ERROR_(\d{3})\b/.exec(text) ??
     /\bHttpError:\s*(\d{3})\b/.exec(text)
   if (m === null) return null
   const status = Number(m[1])
-  return status >= 400 && status <= 599 ? status : null
+  return isFailureStatus(status) ? status : null
 }
 
 /** True when GitHub ANSWERED and the answer was a failure status - the class that must always be
@@ -366,18 +391,19 @@ export function isHttpFailure(err: unknown): boolean {
 }
 
 /**
- * True when the request died because the MACHINE SUSPENDED (see `SUSPENDED_ERROR_CODES`).
+ * True when the request died because the MACHINE MOVED under it — a suspend or a network change
+ * (see `INTERRUPTED_ERROR_CODES`).
  *
  * Both spellings are covered for the same reason `isUnreachableFailure` covers both: the code can
  * arrive as a `code` property from one executor and inside the message from the other.
  */
-export function isSuspendedFailure(err: unknown): boolean {
+export function isInterruptedFailure(err: unknown): boolean {
   if (err == null) return false
   const code = (err as { code?: unknown }).code
-  if (typeof code === 'string' && (SUSPENDED_ERROR_CODES as readonly string[]).includes(code)) {
+  if (typeof code === 'string' && (INTERRUPTED_ERROR_CODES as readonly string[]).includes(code)) {
     return true
   }
-  return SUSPENDED_RE.test(failureText(err))
+  return INTERRUPTED_RE.test(failureText(err))
 }
 
 /** True when the request never left the machine (see `UNREACHABLE_ERROR_CODES`). */
@@ -399,17 +425,17 @@ export function updateFailureCode(err: unknown): string | null {
   const code = (err as { code?: unknown } | null | undefined)?.code
   if (typeof code === 'string' && TRANSPORT_CODE_RE.test(code)) return code
   const text = failureText(err)
-  return UNREACHABLE_RE.exec(text)?.[0] ?? SUSPENDED_RE.exec(text)?.[0] ?? null
+  return UNREACHABLE_RE.exec(text)?.[0] ?? INTERRUPTED_RE.exec(text)?.[0] ?? null
 }
 
 /** Which of the five kinds this failure is. Asked in the order the block above argues. */
 export function classifyUpdateFailure(err: unknown): UpdateFailureKind {
   if (err == null) return 'other'
-  // FIRST, and the position is the point: a suspend is the one kind that is not a failure, so
-  // nothing else may claim it. Nothing else can, either — `ERR_NETWORK_IO_SUSPENDED` carries no
-  // status and is in neither the unreachable list nor the parse patterns — and asking it first
-  // means a future widening of those two cannot quietly start reporting sleeps again.
-  if (isSuspendedFailure(err)) return 'suspended'
+  // FIRST, and the position is the point: an interruption is the one kind that is not a failure, so
+  // nothing else may claim it. Nothing else can, either — neither code carries a status and neither
+  // is in the parse patterns — and asking it first means a future widening of the other arms cannot
+  // quietly start reporting sleeps and Wi-Fi handovers again.
+  if (isInterruptedFailure(err)) return 'interrupted'
   if (isHttpFailure(err)) return 'http'
   if (isFeedParseError(err)) return 'parse'
   if (isUnreachableFailure(err)) return 'unreachable'

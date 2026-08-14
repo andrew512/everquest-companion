@@ -139,7 +139,16 @@ function UpdateProgress({
   )
 }
 
-/** The failure message the quiet nav chip deliberately swallows — this is where it survives. */
+/**
+ * The failure DETAIL. Since JOS-307 the nav chip no longer swallows the fact of a failure — it
+ * says "update check failed" in its own line — but it still carries only the fact; this is where
+ * the sentence lives, at full width and without a hover.
+ *
+ * `status.message` has exactly one producer (`describeUpdateFailure`), which is what guarantees the
+ * two surfaces read the same words. For the JSON-parse family (GitHub issue 29, in-app report
+ * 01KZYN843T99R2JHYDTF9TS8AK) that sentence is deliberately not the parser's: `Unexpected end of
+ * JSON input` is what a user was left staring at on 0.20, and it is neither true nor actionable.
+ */
 function UpdateError({ status }: { status: UpdateStatus }): JSX.Element | null {
   if (status.state !== 'error' || !status.message) return null
   return (
