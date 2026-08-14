@@ -1,11 +1,22 @@
-# Spell-line research (Ranger / Shaman / Paladin / Cleric test case)
+# Spell-line research (all 13 spell-casting classes)
 
-Produced 2026-08-13 by four parallel research agents (one per class), each grounded in the
-class's Legends spell list (dumped from `src/main/data/spells.json` into `class-spells.json`
-here) and researching CLASSIC sources for line membership and stacking semantics:
-`wiki.project1999.com` (especially its `Buff_Lines` slot table) and `everquest.allakhazam.com`.
-eqlwiki.com was deliberately NOT fetched — the repo already mirrors it under
+Produced 2026-08-13 by thirteen parallel research agents (one per class; Berserker/Monk/Warrior
+have no spells on Legends), each grounded in the class's Legends spell list (dumped from
+`src/main/data/spells.json` into `class-spells.json` here — 2,001 class-spell rows total) and
+researching CLASSIC/LIVE sources for line membership and stacking semantics:
+`wiki.project1999.com` (especially its `Buff_Lines` slot table; note the .net mirror is dead and
+.com serves a broken cert chain), `everquest.allakhazam.com`, Lucy stacking dumps, and
+eqresource. eqlwiki.com was deliberately NOT fetched — the repo already mirrors it under
 `scripts/sources/cache/spells/`, and it stays the sole authority for what exists on Legends.
+Coverage was verified programmatically per class AND at merge: every input spell placed exactly
+once (modulo genuine DB duplicate rows, folded and flagged), zero unexplained cross-agent
+stacking contradictions.
+
+`log-blocked-pairs.json` is the MEASURED evidence tier: 33 distinct stacking conflicts mined
+from the owner's own log ("Your X spell did not take hold. (Blocked by Y.)" — game messages
+only, no player speech). Several independently confirm the P99 slot model on Legends itself
+(Center vs Skin like Rock; Arch Shielding vs Talisman of Altuna; Augmentation vs Celerity).
+The parser could capture these live — a per-user measured stacking tier for the overlay.
 
 ## Files
 
