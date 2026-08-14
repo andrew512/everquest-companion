@@ -625,6 +625,30 @@ minimal `eqOverlay` bridge (transparent alwaysOnTop, click-through pin).
   loose `raw` pattern can still MATCH a chat line — which is why
   `subjectCapturePattern` anchors `^\[[^\]]*\] `, never a bare `\] `). Full
   threat analysis: docs/agents-archive.md.
+  **`{target}` IS THE ONE TOKEN THE APP FILLS IN ITSELF, AND THE EXEMPTION IS
+  ONE NAME WIDE** (JOS-353, owner ruling 2026-08-14: Companion parses which mob
+  a spell is affecting and exposes it as a variable — `haste {target}` — and it
+  MUST NOT require heavy regex or custom intervention). `src/shared/
+  alertTargets.ts` is the mechanism AND the argument; read its header before
+  adding a second such token. It gives up exactly control 4 of the capture
+  threat model ("a token is a declaration") and keeps everything else: ONE name,
+  never a namespace; a value from a CLOSED TABLE of parser-extracted ENTITY
+  fields on the SAME event the def matched (`target` on the buff/combat lanes,
+  `mob` on the hold lanes — a user must never have to know which), so a `raw`
+  trigger that matched a chat line gets nothing; the same sanitizer and 48-char
+  cap as every other capture; and the editor prints it beside the pattern's own
+  groups, so a shared def is still a readable finite list. The parser's
+  SENTINELS are read as English (`self` → "you", `pet` → "your pet"; an ABSENT
+  `buffFade.target` IS the self form) and matched case-SENSITIVELY, so a player
+  named `Self` stays `Self`. It adds no exposure — a def could already have
+  written `(?<target>…)` over the same line with a looser class. THE VALUE ONLY
+  LEAVES MAIN IF THE PHRASE ASKED FOR IT: the wanted set compiles from the def's
+  own phrase, so every alert that does not say `{target}` has a byte-identical
+  delta, and a DECLARED group of that name always wins. Five suggestion
+  templates ship a phrase carrying it (`lands`, `fade`, `wearsOff`, `breaks`,
+  `charmBreaks` — `landsOnYou`/`healsOverTime` would be tautologies). Pinned:
+  tests/alertTargetToken.test.mts, whose audit re-reads shared/logEvents.ts and
+  fails when a new kind grows an entity field without a ruling.
   **A TEMPLATE FLAG IS A CLAIM THE ALERT CAN FIRE, AND THREE OF THEM WERE
   LYING** (JOS-103). `suggestionTemplates` is an exhaustive table over the
   DB's 33 observed `spellType`s — a spell with no template is DROPPED from
