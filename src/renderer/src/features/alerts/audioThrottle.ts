@@ -132,24 +132,31 @@ export interface ThrottleDecision {
  * window was already open exactly as it found it (a burst of ordinary alerts is still coalesced
  * around it).
  *
- * `allAlwaysPlay` is the GLOBAL preference (JOS-222, `AlertPrefs.alwaysPlayAll`) and it is the
- * SAME rule with a wider subject: while it is on, every firing takes the opt-out's branch, so no
- * window is ever opened and none is ever consulted — the throttle is off, not loosened. It is
+ * `opts.allAlwaysPlay` is the GLOBAL preference (JOS-222, `AlertPrefs.alwaysPlayAll`) and it is
+ * the SAME rule with a wider subject: while it is on, every firing takes the opt-out's branch, so
+ * no window is ever opened and none is ever consulted — the throttle is off, not loosened. It is
  * `false` by default at this signature too, so a caller that has not been taught about the
  * preference still gets the shipped behavior rather than a silent bypass.
  *
- * `heard` is what this firing would sound like (`audioIdentity`). It defaults to the empty
+ * `opts.heard` is what this firing would sound like (`audioIdentity`). It defaults to the empty
  * identity so a caller that has not been taught about it gets the pre-JOS-347 behavior — one
  * identity for everything, therefore one audio alert per window — rather than a silent bypass.
  */
+export interface CoalesceOptions {
+  /** the global always-play preference (JOS-222). Absent ⇒ off, which is where it starts. */
+  allAlwaysPlay?: boolean
+  /** this firing's audible identity (`audioIdentity`). Absent ⇒ the empty one. */
+  heard?: string
+}
+
 export function coalesceAudio(
   def: ThrottledDef,
   now: number,
   window: AudioWindow | null,
-  allAlwaysPlay = false,
-  heard = ''
+  opts: CoalesceOptions = {}
 ): ThrottleDecision {
-  if (allAlwaysPlay || def.alwaysPlay === true) return { play: true, window }
+  const heard = opts.heard ?? ''
+  if (opts.allAlwaysPlay === true || def.alwaysPlay === true) return { play: true, window }
   if (window === null || now - window.at >= AUDIO_COALESCE_MS) {
     return { play: true, window: { at: now, heard: [heard] } }
   }

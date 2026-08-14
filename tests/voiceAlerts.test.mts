@@ -140,7 +140,7 @@ test('three alerts firing in the same instant produce ONE audio alert', () => {
   let win: AudioWindow | null = null
   const played: boolean[] = []
   for (let i = 0; i < 3; i++) {
-    const gate = coalesceAudio(def(), now + i, win, false, heardAs(def()))
+    const gate = coalesceAudio(def(), now + i, win, { heard: heardAs(def()) })
     win = gate.window
     played.push(gate.play)
   }
@@ -151,13 +151,13 @@ test('three alerts firing in the same instant produce ONE audio alert', () => {
 
 test('the window expires — the next burst is heard', () => {
   const t0 = 5_000
-  const first = coalesceAudio(def(), t0, null, false, heardAs(def()))
+  const first = coalesceAudio(def(), t0, null, { heard: heardAs(def()) })
   assert.equal(first.play, true)
   assert.equal(
-    coalesceAudio(def(), t0 + AUDIO_COALESCE_MS - 1, first.window, false, heardAs(def())).play,
+    coalesceAudio(def(), t0 + AUDIO_COALESCE_MS - 1, first.window, { heard: heardAs(def()) }).play,
     false
   )
-  const later = coalesceAudio(def(), t0 + AUDIO_COALESCE_MS, first.window, false, heardAs(def()))
+  const later = coalesceAudio(def(), t0 + AUDIO_COALESCE_MS, first.window, { heard: heardAs(def()) })
   assert.equal(later.play, true)
   assert.equal(later.window?.at, t0 + AUDIO_COALESCE_MS)
   assert.deepEqual(later.window?.heard, [heardAs(def())], 'a reopened window starts empty')
@@ -165,7 +165,7 @@ test('the window expires — the next burst is heard', () => {
 
 test('alwaysPlay BYPASSES the window and does NOT occupy it', () => {
   const t0 = 42
-  const opened = coalesceAudio(def(), t0, null, false, heardAs(def()))
+  const opened = coalesceAudio(def(), t0, null, { heard: heardAs(def()) })
   // Bypasses an open window…
   const critical = coalesceAudio(def({ alwaysPlay: true }), t0 + 10, opened.window)
   assert.equal(critical.play, true)
@@ -191,7 +191,7 @@ test('FOUR DIFFERENT VOICE LINES IN ONE INSTANT ARE FOUR THINGS TO HEAR', () => 
   const spoken: string[] = []
   for (const line of lines) {
     const d = def({ audio: 'both', speech: { mode: 'custom', phrase: line } })
-    const gate = coalesceAudio(d, now, win, false, heardAs(d, line))
+    const gate = coalesceAudio(d, now, win, { heard: heardAs(d, line) })
     win = gate.window
     if (gate.play) spoken.push(line)
   }
@@ -204,9 +204,9 @@ test('a distinct line is heard ONCE inside its window, not once per firing', () 
   // resists of the same song 200ms apart are one utterance, exactly as before.
   const d = def({ audio: 'both', speech: { mode: 'custom', phrase: 'Frost resisted' } })
   const other = def({ audio: 'both', speech: { mode: 'custom', phrase: 'Flame resisted' } })
-  const first = coalesceAudio(d, 0, null, false, heardAs(d, 'Frost resisted'))
-  const second = coalesceAudio(other, 100, first.window, false, heardAs(other, 'Flame resisted'))
-  const repeat = coalesceAudio(d, 200, second.window, false, heardAs(d, 'Frost resisted'))
+  const first = coalesceAudio(d, 0, null, { heard: heardAs(d, 'Frost resisted') })
+  const second = coalesceAudio(other, 100, first.window, { heard: heardAs(other, 'Flame resisted') })
+  const repeat = coalesceAudio(d, 200, second.window, { heard: heardAs(d, 'Frost resisted') })
   assert.deepEqual([first.play, second.play, repeat.play], [true, true, false])
 })
 
@@ -230,7 +230,7 @@ test('the distinct-identity cap bounds one window', () => {
   let played = 0
   for (let i = 0; i < AUDIO_DISTINCT_CAP + 3; i++) {
     const d = def({ audio: 'both', speech: { mode: 'custom', phrase: `line ${i}` } })
-    const gate = coalesceAudio(d, 10, win, false, heardAs(d, `line ${i}`))
+    const gate = coalesceAudio(d, 10, win, { heard: heardAs(d, `line ${i}`) })
     win = gate.window
     if (gate.play) played += 1
   }
@@ -239,18 +239,18 @@ test('the distinct-identity cap bounds one window', () => {
 
 // ---------------------------------------------------- the GLOBAL always-play preference (JOS-222)
 
-test('the global preference STARTS OFF — an omitted 4th argument throttles exactly as before', () => {
+test('the global preference STARTS OFF — an omitted options bag throttles exactly as before', () => {
   // The regression that would be invisible: a default of `true` (or a caller that forgets to pass
   // the flag through as a boolean) silently deletes the throttle for everyone. The owner's spec is
-  // that it starts off, so the ABSENCE of the argument must mean off. The 5th argument defaults
-  // the same way and for the same reason (JOS-347): an omitted identity is one identity for
-  // everything, which is the pre-JOS-347 window, never a bypass.
+  // that it starts off, so the ABSENCE of the option must mean off. `heard` defaults the same way
+  // and for the same reason (JOS-347): an omitted identity is one identity for everything, which
+  // is the pre-JOS-347 window, never a bypass.
   const t0 = 7_000
   const first = coalesceAudio(def(), t0, null)
   assert.equal(first.play, true)
   assert.equal(coalesceAudio(def(), t0 + 10, first.window).play, false)
-  // …and passing it explicitly false is the same answer, not a different code path.
-  assert.deepEqual(coalesceAudio(def(), t0 + 10, first.window, false), {
+  // …and an empty bag is the same answer, not a different code path.
+  assert.deepEqual(coalesceAudio(def(), t0 + 10, first.window, {}), {
     play: false,
     window: first.window
   })
@@ -261,7 +261,7 @@ test('the global preference plays EVERY alert in a burst, and opens no window do
   let win: AudioWindow | null = null
   const played: boolean[] = []
   for (let i = 0; i < 3; i++) {
-    const gate = coalesceAudio(def(), now + i, win, true, heardAs(def()))
+    const gate = coalesceAudio(def(), now + i, win, { allAlwaysPlay: true, heard: heardAs(def()) })
     win = gate.window
     played.push(gate.play)
   }
@@ -272,14 +272,14 @@ test('the global preference plays EVERY alert in a burst, and opens no window do
 test('the global preference is the SAME branch as the per-alert opt-out, not a second one', () => {
   // It bypasses an already-open window and leaves it exactly as it found it — the property that
   // makes the per-alert opt-out safe, asserted for the global one so the two cannot drift.
-  const opened = coalesceAudio(def(), 500, null, false, heardAs(def()))
-  const gate = coalesceAudio(def(), 510, opened.window, true, heardAs(def()))
+  const opened = coalesceAudio(def(), 500, null, { heard: heardAs(def()) })
+  const gate = coalesceAudio(def(), 510, opened.window, { allAlwaysPlay: true, heard: heardAs(def()) })
   assert.deepEqual(gate, { play: true, window: opened.window })
   // And it is a bypass laid OVER the defs, never a rewrite of them: a def that already opted out
   // reads identically with the preference on or off.
   assert.deepEqual(
-    coalesceAudio(def({ alwaysPlay: true }), 510, opened.window, true),
-    coalesceAudio(def({ alwaysPlay: true }), 510, opened.window, false)
+    coalesceAudio(def({ alwaysPlay: true }), 510, opened.window, { allAlwaysPlay: true }),
+    coalesceAudio(def({ alwaysPlay: true }), 510, opened.window, { allAlwaysPlay: false })
   )
 })
 
@@ -287,7 +287,7 @@ test("'both' is ONE occupancy — its sound+speech pair cannot silence itself", 
   // The caller charges the window once per FIRING, whatever the plan contains; this pins that
   // the throttle has no per-channel notion at all.
   const d = def({ audio: 'both' })
-  const gate = coalesceAudio(d, 100, null, false, heardAs(d, 'Charm break'))
+  const gate = coalesceAudio(d, 100, null, { heard: heardAs(d, 'Charm break') })
   assert.deepEqual(gate, { play: true, window: { at: 100, heard: [heardAs(d, 'Charm break')] } })
 })
 

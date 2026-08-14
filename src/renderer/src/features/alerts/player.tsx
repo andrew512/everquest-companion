@@ -113,13 +113,10 @@ export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell'>):
   // The plan is resolved FIRST because the throttle folds by what would be heard, not by which
   // def is speaking: two alerts pointed at one sound with nothing to say are one audio alert,
   // and two alerts with different voice lines are two things to hear (JOS-347).
-  const gate = coalesceAudio(
-    def,
-    Date.now(),
-    audioWindow,
-    prefs.alwaysPlayAll === true,
-    audioIdentity(def, plan)
-  )
+  const gate = coalesceAudio(def, Date.now(), audioWindow, {
+    allAlwaysPlay: prefs.alwaysPlayAll === true,
+    heard: audioIdentity(def, plan)
+  })
   audioWindow = gate.window
   if (!gate.play) return
   const gain = effectiveVolume(def)
