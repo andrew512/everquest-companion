@@ -536,11 +536,12 @@ async function exaltationSteps(app: ElectronApplication, page: Page): Promise<st
   // put into a non-default state (a socket tab, the escape hatch, an expanded group) and it hands
   // all of that back, so `stepAddWish` still finds the proc tab it was written against.
   await stepBrowseMemory(page)
-  // JOS-344 runs HERE, and the seam is load-bearing in one direction: it must be BEFORE the add
-  // step, because it hit-tests the hovered row's own Add button and a row `stepAddWish` has
-  // already wished carries a DISABLED one — which Chromium refuses to hit-test at all (a disabled
-  // MUI button takes no pointer events), so the assertion would fail on a control that is doing
-  // exactly what it should. It restores the window size and the pointer, and touches no filter.
+  // JOS-344 runs HERE, before the add step, on a browse nothing has written to yet: it hovers a
+  // donor NAME and hit-tests that row's own wish control with the card up, and reading that control
+  // in the state the surface opens in is the honest reading. (It would survive running after
+  // `stepAddWish` too, since JOS-343 made the control a TOGGLE that stays enabled once lit — but
+  // that is a fact about a sibling ticket's design, not a dependency worth taking.) It resizes the
+  // window and puts it back, parks the pointer, and touches no filter.
   await stepExaltCompare(app, page)
   return stepAddWish(page)
 }

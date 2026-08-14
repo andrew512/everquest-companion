@@ -23,7 +23,7 @@
  *      ticket, and the anchor here is the one most likely to expose the old failure differently: a
  *      short name near the LEFT of a wide row.
  *   4. IT DOES NOT EAT THE ROW'S CONTROLS. The JOS-143 hit-test, re-asked on this surface: with the
- *      pair open, the row's own Add button, the toolbar's socket tab and the search box must all
+ *      pair open, the row's own wish control, the toolbar's socket tab and the search box must all
  *      still be the thing at their own centre.
  *
  * It hands the browser back the way it found it: no pair open, the window at the size and minimum
@@ -136,16 +136,16 @@ async function stepDonorHover(page: Page): Promise<string> {
 /**
  * 2. THE JOS-143 HIT-TEST, ON THIS SURFACE.
  *
- * Three controls: the hovered row's OWN Add button (the one JOS-343 is re-aiming and this ticket
- * must not disturb), the socket tab in the toolbar above the list, and the search box. The pair
- * opens BELOW the name, so the row's own control is the interesting one — it sits on the same band
- * the card's top edge starts at.
+ * Three controls: the hovered row's OWN wish control (`WishToggle`, which JOS-343 made the one
+ * control both surfaces share and which this ticket must not disturb), the socket tab in the
+ * toolbar above the list, and the search box. The pair opens BELOW the name, so the row's own
+ * control is the interesting one — it sits on the same band the card's top edge starts at.
  */
 async function stepStillClickable(page: Page, key: string): Promise<void> {
   const card = await openPairOn(page, `${rowOf(key)} ${DONOR_NAME}`, key)
   if (!check('the pair is open for the exalt hit test', card.present)) return
   for (const [what, selector] of [
-    ['the row’s own Add button', `${rowOf(key)} ${ADD}`],
+    ['the row’s own wish control', `${rowOf(key)} ${ADD}`],
     ['the socket tab in the toolbar above', SOCKET_TAB],
     ['the browse search box', SEARCH]
   ] as const) {

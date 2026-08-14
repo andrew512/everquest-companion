@@ -224,6 +224,36 @@ function AddButton({
  *    join is one `Map.get` per rendered row and there is nothing to normalise (the standing rule
  *    every index in this app is built on).
  */
+/**
+ * WHERE THIS DONOR COMES FROM, at the right end of the row.
+ *
+ * Lifted out of `DonorLine` when JOS-344's hover pushed that function past the measured
+ * 100-code-line ceiling — a factoring split, byte-for-byte the same two elements, and the seam the
+ * ceiling was pointing at: everything else on the row is a chip or a control, and this is the one
+ * place a whole SENTENCE from the catalog is drawn. `SHRINK.source` stays here with it, which is
+ * the point: the arbitration is one number applied where the text is.
+ */
+function SourceLine({ src }: { src: SourceText }): JSX.Element {
+  return (
+    <>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        noWrap
+        title={src.text}
+        sx={{ minWidth: 0, flexShrink: SHRINK.source, maxWidth: 320 }}
+      >
+        {src.text}
+      </Typography>
+      {src.more !== '' && (
+        <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
+          {src.more}
+        </Typography>
+      )}
+    </>
+  )
+}
+
 function DonorNameCell({
   donor,
   compare,
@@ -320,20 +350,7 @@ export function DonorLine({
       {donor.hasteLocked && <Chip size="small" color="warning" label="haste - can't move" sx={{ height: 18, fontSize: 10 }} />}
       <EraChip subject={donor} />
       <Box sx={{ flexGrow: 1, minWidth: 8 }} />
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        noWrap
-        title={src.text}
-        sx={{ minWidth: 0, flexShrink: SHRINK.source, maxWidth: 320 }}
-      >
-        {src.text}
-      </Typography>
-      {src.more !== '' && (
-        <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
-          {src.more}
-        </Typography>
-      )}
+      <SourceLine src={src} />
       {wished && (
         <Chip
           size="small"
