@@ -431,6 +431,22 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: stri
  * Build the AlertDef for one (rank, rank-template) pair. The trigger pins the DISPLAY name
  * with its suffix, which is exactly what makes the def go stale on a level-up — and exactly
  * what `detectRankUpgrades` (shared/spellLines.ts) looks for.
+ *
+ * THE RESIST CHIP SAYS WHICH SPELL (JOS-347). Every resist suggestion draws the same pack sound,
+ * which is right for a player who owns one of them and useless for the player who reported this:
+ * a bard clicked the chip on all four Tuyen chants and got four alerts that were, to the ear, one
+ * alert. And a bard is exactly the case that produces them at once — measured against the owner's
+ * own log, a bard's songs all re-apply in the SAME six-second pulse, so the four resist lines
+ * arrive together. Four identical sounds in one instant is one sound (audioThrottle.ts, and it is
+ * right to fold them); four DIFFERENT lines are four facts, and the throttle now keeps them all.
+ * So the def the wizard authors names its own spell out loud, in the same shape and for the same
+ * reasons as `landsOnOther`: `audio:'both'` rather than 'speech', because a suggestion the APP
+ * authors must be audible on a machine with no speech voices at all, and the spoken half rides
+ * behind the guaranteed sound. The phrase is editable like any other — this is the DEFAULT that
+ * the reporter had to build by hand four times.
+ *
+ * `castRank` is deliberately left alone: its lines are one per cast, not one per song pulse, and
+ * a chip that starts talking because its twin had to is a change nobody asked for.
  */
 function buildRankDef(
   entry: SpellCatalogEntry,
@@ -443,7 +459,7 @@ function buildRankDef(
   // the same spell never fires the alert (the parser sets caster='you' for your own — Task #51).
   const where: Record<string, string> =
     template === 'resistRank' ? { caster: 'you', spell: rank } : { spell: rank }
-  return {
+  const def: AlertDef = {
     id: `suggest:${entry.key}:${template}:${spellIdFragment(rank)}`,
     name: `${rank} ${t.verb}`,
     enabled: true,
@@ -452,6 +468,15 @@ function buildRankDef(
     cooldownMs: DEFAULT_COOLDOWN_MS,
     note: `Suggested alert - ${template} for ${rank}.`
   }
+  if (template === 'resistRank') {
+    def.audio = 'both'
+    // The SHORT name, the way every other spoken default in this file says a spell: "Tuyen's
+    // Chant of Frost V" is four syllables of preamble before the one word that tells the four
+    // chants apart. `spellShortName` strips the rank first, so the phrase survives a level-up
+    // the same way the rank-blind matcher does.
+    def.speech = { mode: 'custom', phrase: `${spellShortName(rank)} resisted` }
+  }
+  return def
 }
 
 /**

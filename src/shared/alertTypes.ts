@@ -327,6 +327,9 @@ export interface AlertDef {
    *
    * By default every alert's audio is throttled ACROSS alerts — three buffs fading at once is
    * one audio alert, not three — because a smear of simultaneous sounds carries less than one.
+   * Since JOS-347 that window folds by what would be HEARD (the pack sound plus the spoken
+   * words), so the three buffs are still one sound while four alerts carrying four different
+   * voice lines are four things to hear, each heard once inside the window.
    * `true` marks an alert that must never be swallowed by that window (a charm break, a raid
    * call): it always plays, and it does not itself occupy the window. Absent ⇒ throttled,
    * which is the default the owner asked for and the meaning every def written before this
@@ -377,9 +380,10 @@ export interface AlertPrefs {
    *
    * It is the SAME bypass, applied to every def rather than to the ones the user ticked: the
    * cross-alert coalescing window (renderer/features/alerts/audioThrottle.ts) is skipped and
-   * nothing occupies it, so four buffs fading together are four sounds. That IS the smear the
-   * throttle exists to prevent — which is why it STARTS OFF and stays off unless the user says
-   * otherwise. Someone who would rather hear everything twice than miss one thing gets to say
+   * nothing occupies it, so four buffs fading together are four sounds — four copies of the SAME
+   * sound, which the window would have folded into one whatever they were named (JOS-347). That
+   * IS the smear the throttle exists to prevent — which is why it STARTS OFF and stays off
+   * unless the user says otherwise. Someone who would rather hear everything twice than miss one thing gets to say
    * so in one place instead of ticking a box on every alert they ever add.
    *
    * Absent ⇒ false ⇒ today's behavior, which is why this is additive: the key is written only
