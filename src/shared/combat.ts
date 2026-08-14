@@ -94,6 +94,99 @@ export interface MissBreakdown {
   absorb: number
 }
 
+// ---------------------------------------------------------------------------
+// DEFENSIVE STATS (JOS-354) — "how often am I blocking, dodging, parrying, riposting?"
+//
+// EVERY NUMBER HERE IS A COUNT OR A RATIO OF COUNTS, exactly like the attack-round block
+// below it: an avoided swing carries no amount, so nothing in `DefenseView` can move a damage
+// total. The ONE amount in the neighbourhood is `RiposteView.damage`, and it is an INDEX over
+// damage the melee lanes already counted — never a second accumulation of it (law 8).
+//
+// WHAT THE LOG SUPPORTS, MEASURED (whole-log sweep of eqlog_Primitive_freeport.txt, 2026-08-14):
+//   `<mob> tries to <verb> YOU, but YOU block!`    10,553   ← your block
+//   `… but YOU dodge!`                              8,070   ← your dodge
+//   `… but YOU parry!`                              5,773   ← your parry
+//   `… but YOU riposte!`                            4,171   ← your riposte (the AVOIDANCE half)
+//   `… but misses!`                                        ← the mob's own to-hit failure, NOT a
+//                                                            defensive skill of yours — its own row
+//   `… but YOUR magical skin absorbs the blow!`            ← a rune ate it; likewise not a skill
+//   `You <verb> <mob> for N points of damage. (Riposte)`   ← your riposte COUNTER-swing, 1,847
+//                                                            plain + the `(Riposte …)` compounds
+// All of these already reach the engine (parseCombat.MISS_RE / the melee battery's paren
+// modifiers); this view is the READING of them, not new parsing.
+//
+// WHAT THE LOG DOES *NOT* SUPPORT, and is therefore absent rather than guessed:
+//   - Shield block vs staff/weapon block, or which hand parried: the line names no equipment.
+//   - "How often COULD I have blocked": there is no swing-eligibility signal, so every rate here
+//     is over the swings that were actually aimed at you and nothing else.
+//   - A defensive rate per MOB-skill (was I better against a kick than a bash): the avoidance
+//     line names the attacker's verb, but the engine lanes every avoided swing under 'Melee' by
+//     construction (routing.missFold) — a per-verb defensive split is a separate change.
+//   - Riposte counters that were themselves avoided are counted (`RiposteView.swings`) but the
+//     mob's own riposte AVOIDANCE (`but <mob> ripostes!`) does not exist in 1.35M lines — the
+//     annotated counter is the only evidence there is, which is the asymmetry
+//     `SourceRoundsView.ripostesTaken` already documents.
+// ---------------------------------------------------------------------------
+
+/**
+ * YOUR RIPOSTE, both halves, because the log prints them as two different facts and they need
+ * not be 1:1 (Double Riposte fires more counters than events).
+ *
+ * `events` is the DEFENSIVE half — a swing at you that your riposte turned aside (`but YOU
+ * riposte!`). `swings`/`hits`/`damage` are the OFFENSIVE half — the free counter-swing that
+ * follows, which the game annotates `(Riposte)` on an ordinary weapon damage line.
+ */
+export interface RiposteView {
+  /** `but YOU riposte!` — swings your riposte avoided. */
+  events: number
+  /** `(Riposte)`-annotated swings of YOURS: landed AND avoided. */
+  swings: number
+  /** …of those, the ones that landed damage. */
+  hits: number
+  /**
+   * Damage those landed counters dealt. ALREADY INSIDE your melee/slay totals — this is an index
+   * over damage already counted, so surfacing it moves nothing and it must never be added to a
+   * total beside them.
+   */
+  damage: number
+  /** `damage` as a percentage of your melee + slay damage; 0 when you swung no weapon. */
+  pctOfSwingDamage: number
+  /** `(Riposte)` counter-swings mobs made AT you — the other end of the same annotation. */
+  taken: number
+}
+
+/**
+ * WHAT HAPPENED TO THE SWINGS AIMED AT YOU in one segment (JOS-354).
+ *
+ * The denominator is MELEE swing attempts at You and nothing else: landed melee/slay hits on you
+ * plus every avoided swing. Spells, DoTs and damage shields are not swings and are excluded, so
+ * a caster mob nuking you can never dilute your block rate.
+ */
+export interface DefenseView {
+  /** melee swing attempts aimed at You: `hits + avoidedTotal`. The denominator of every rate. */
+  swings: number
+  /** …of those, the ones that landed damage on you. */
+  hits: number
+  /** avoided swings by outcome — the same six buckets a source's `missBreakdown` uses. */
+  avoided: MissBreakdown
+  /** Σ `avoided`. */
+  avoidedTotal: number
+  /** `avoidedTotal / swings * 100`; 0 when nothing swung at you. */
+  avoidedPct: number
+  /**
+   * The four ACTIVE defenses — block + parry + dodge + riposte. Separated from the total because
+   * a mob's own miss and your rune are not skills of yours, and folding them in would flatter
+   * every one of these rates.
+   */
+  defended: number
+  /** `defended / swings * 100`. */
+  defendedPct: number
+  /** per-outcome rate over `swings`, same keys as `avoided` (so a renderer never re-divides). */
+  rates: MissBreakdown
+  /** your riposte, both halves. */
+  riposte: RiposteView
+}
+
 /** A taxonomy-category rollup within a source (Task #51 drill-down level 2). Carries
  *  its own per-skill/per-spell breakdown (level 3). */
 export interface CategoryView {
@@ -198,6 +291,16 @@ export interface SourceRoundsView {
    * Equals the source's own Riposte modifier tally.
    */
   ripostesGiven: number
+  /** …of those, how many LANDED (the rest were avoided). `ripostesGiven - riposteLanded` is the
+   *  count that whiffed, which is why neither is derivable from the other alone. */
+  riposteLanded: number
+  /**
+   * Damage those landed counter-swings dealt (JOS-354). An INDEX over damage the source's melee
+   * and slay lanes have already counted — it is inside `SourceView.total`, never beside it — so
+   * it moves no total and must never be summed with one. Amount-free everywhere else in this
+   * block; this is the single exception and it is a re-reading, not a measurement.
+   */
+  riposteDamage: number
   /**
    * `(Riposte)` counter-swings made AT you — the mobs' annotated counters, summed over the
    * segment's incoming rows. Present on the 'you' row only, and 0 elsewhere: an incoming line's
@@ -275,6 +378,13 @@ export interface SegmentView {
   inTotal: number
   inDps: number
   incoming: SourceView[]
+  /**
+   * YOUR DEFENSE against everything in `incoming` (JOS-354). On the SEGMENT rather than on a
+   * source row because it is one fact about YOU read off many mobs' rows: the engine books an
+   * avoided swing on the mob that swung it, and "how often did I block" is that same evidence
+   * summed from the other end — exactly the shape `SourceRoundsView.ripostesTaken` already has.
+   */
+  defense: DefenseView
   /** Total healing received by engaged HOSTILE instances in this segment
    *  (self-heals + heals cast on them) — "effective DPS" context. */
   enemyHealTotal: number

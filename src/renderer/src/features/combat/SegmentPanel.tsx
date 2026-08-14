@@ -13,6 +13,7 @@
 import { useMemo } from 'react'
 import { Box, Paper, Typography } from '@mui/material'
 import { TargetSkillBars } from './CombatDashboard'
+import { DefensePanel } from './DefensePanel'
 import { meterDrill, skillsForTarget, type Drill, type MeterMode, type TargetDetail } from './dashboardData'
 import { HealBody } from './HealPanel'
 import { DrillCrumb, MeterRows, crumbOf } from './MeterRows'
@@ -120,6 +121,10 @@ function SegmentContent({
   const mob = panel.level === 1 && d.targetDetail && d.targetName
   return (
     <Box data-testid="meter-body" sx={{ overflow: 'auto', flexGrow: 1, minHeight: 0 }}>
+      {/* YOUR DEFENCE (JOS-354) — above the mobs it is derived from, and only in the direction
+          where "what is hitting me" is the question being asked. Not while a drill is open: the
+          panel is a statement about the whole segment and would sit over one subject's lanes. */}
+      {mode === 'in' && !d.crumb && <DefensePanel d={seg.defense} />}
       {mob && d.targetName && d.targetDetail ? (
         <TargetSkillBars target={d.targetName} detail={d.targetDetail} seg={seg} />
       ) : (

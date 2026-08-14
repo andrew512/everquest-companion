@@ -23,7 +23,7 @@
 // RELATIVE value import, like procRows.ts and mobSearch.ts: this module is imported by node
 // tests (tests/combatPerMobGhosts.test.mts), which resolve no `@shared/*` alias for values.
 import { LIVE_FIGHT } from '../../../../shared/fightSelection'
-import { abilityMultiAttack, type AbilityMulti } from './abilityStats'
+import { abilityMultiAttack, abilityRiposte, type AbilityMulti, type AbilityRiposte } from './abilityStats'
 import { groupSpellComponents, mergeGroup, rankRows } from './skillGroups'
 import type {
   DamageCategory,
@@ -47,6 +47,9 @@ export type FlatSkill = SkillView & { category: DamageCategory }
 export type SkillRow = FlatSkill & {
   children?: FlatSkill[]
   multi?: AbilityMulti | null
+  /** The share of this ability's damage that came from riposte counter-swings (JOS-354). Present
+   *  on the auto-attack ability only — see `abilityRiposte` for why it is a subset, not a row. */
+  riposte?: AbilityRiposte | null
   /** What a GROUP row's children are, for the two labels that name them ("· 2 skills" on the bar
    *  face, "By skill" over the expansion). Absent ⇒ 'skill', which is what the Slay Undead group
    *  has always said. A spell group's children are the message SHAPES one cast printed, not
@@ -145,7 +148,15 @@ export function flattenSkills(e: SourceView): SkillRow[] {
   // weapon verbs; a named special is its own lane). groupSlay spreads it through onto any child.
   return groupSlay(
     groupSpellComponents(
-      rows.map((r) => ({ ...r, pct: (r.total / max) * 100, multi: abilityMultiAttack(e, r.name, r.category) }))
+      rows.map((r) => ({
+        ...r,
+        pct: (r.total / max) * 100,
+        multi: abilityMultiAttack(e, r.name, r.category),
+        // Riposte damage is a SUBSET of the ability it rides (JOS-354): stated inside the
+        // auto-attack row's expansion, never given a bar of its own, because the damage is
+        // already in that bar's total.
+        riposte: abilityRiposte(e, r.name, r.category)
+      }))
     )
   )
 }
