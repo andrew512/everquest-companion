@@ -66,7 +66,7 @@
 // The control itself is `features/wishlist/WishToggle.tsx` now; nothing about it is decided here.
 
 import { type JSX, memo, useMemo } from 'react'
-import { Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
+import { Box, Stack, Table, TableBody, TableCell, TableHead, TableRow, TableSortLabel } from '@mui/material'
 import type { GearRow } from '@shared/planner/gear'
 import type { WindowedRows } from '../../lib/useWindowedRows'
 import { EraChip, DonorName } from '../planner/PlannerChips'
@@ -182,12 +182,11 @@ export interface GearTableProps {
  * The short version: JOS-335 traded parity for width; the owner traded it back the next day and
  * asked that the width be handled honestly instead of used as the reason.
  *
- * SO WHAT IS LEFT HERE IS THE ONE THING THIS SURFACE STILL DECIDES: `compact`. `WishToggle` states
- * both wordings; the dense fixed-layout table asks for the short one because its name column is
- * shared three ways (control, name, era chip) and is the only column in the table whose content
- * actually runs out of room. The measurement that keeps that claim honest is a CHECK rather than a
- * comment — `tests/e2e/gearWishSteps.mts` reads the control's box and the name column's in the real
- * app and fails if the control is eating the column.
+ * AND THIS SURFACE NOW DECIDES NOTHING ABOUT IT AT ALL (JOS-346). It used to pass `compact` for a
+ * shorter pair of words, on the grounds that the Item column is shared three ways (control, name,
+ * era chip) and is the only column in the table whose content actually runs out of room. The owner
+ * overruled that on 2026-08-13: same words on both surfaces, width cost accepted. So the call is a
+ * name, a state and a door — every decision about how the control reads lives in one file.
  */
 function WishButton({
   row,
@@ -203,7 +202,6 @@ function WishButton({
       testId="gear-wish"
       name={row.name}
       wished={wished}
-      compact
       onToggle={() => onToggleWish(row, wished)}
     />
   )
@@ -251,13 +249,19 @@ const GearLine = memo(function GearLine({
       <TableCell>
         {/* THE `+` IS GONE FROM THIS CELL (JOS-325) — it put the row into the selected gear set, and
             the sets are retired. WHAT STANDS IN ITS PLACE IS NOT IT (JOS-335, re-shaped by JOS-343):
-            a wish control, writing a document that outlives any pane, and it leads the cell for the
-            reason the `+` did — a control column down the left edge of the Item column is one target
-            to aim at, where a control after a variable-width name is a moving one. The `Stack` was
-            always what let the name share this cell with the era chip, and the FIXED_ROW contract
-            above is what keeps all three one clipped line rather than two. */}
+            a wish control, writing a document that outlives any pane.
+
+            IT SITS AT THE RIGHT EDGE OF THE CELL NOW (JOS-346), which is DONOR-ROW PARITY and not a
+            new opinion: `planner/EffectRows.tsx` DonorLine ends with a `flexGrow` spacer and then
+            the same control, so on the Exaltations tab the wish button is the last thing in the row.
+            JOS-335 led the cell with it instead, on the argument that a control down the left edge
+            is one target to aim at where a control after a variable-width name is a moving one —
+            true of a NAKED name, and answered here by the spacer: the growing box between the name
+            and the control is what pins the control to the cell's right edge whatever the name
+            costs, so it is a fixed target on this surface too. The `Stack` was always what let the
+            name share this cell with the era chip, and the FIXED_ROW contract above is what keeps
+            all three one clipped line rather than two. */}
         <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexWrap: 'nowrap', minWidth: 0 }}>
-          {wish !== undefined && <WishButton row={row} wished={wished} onToggleWish={wish} />}
           <DonorName name={row.name} onOpen={on.openLoot} />
           {/* THE ONE CHIP A SEARCH ROW WEARS, and it is a POINTER rather than a verdict: the era
               join's (out of era / era?), which explains a row you can SEE.
@@ -270,6 +274,9 @@ const GearLine = memo(function GearLine({
               can only ever appear on a row the filter already removed would be dead code pretending
               to be a law. */}
           <EraChip subject={row} />
+          {/* The spacer that puts the control on the right edge — DonorLine's, to the property. */}
+          <Box sx={{ flexGrow: 1, minWidth: 8 }} />
+          {wish !== undefined && <WishButton row={row} wished={wished} onToggleWish={wish} />}
         </Stack>
       </TableCell>
       <TableCell title={row.slots.join(' ')}>{row.slots.join(' ')}</TableCell>

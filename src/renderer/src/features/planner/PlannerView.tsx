@@ -122,8 +122,8 @@ export default function PlannerView({ onOpenLoot }: PlannerViewProps = {}): JSX.
   const combo = useComboSnap()
   const explainer = useExplainer()
   // The wish list is mounted HERE only so the browse can add to it and mark what is already on it.
-  // Two mounts of `useWishlist` never coexist: Exaltations and Wish list are sibling tabs of one
-  // area and App renders exactly one view at a time (appViews.ts).
+  // Coexisting mounts stopped mattering in JOS-346: the hook holds ONE document for the window, so
+  // every surface is looking at the same object rather than at its own copy of it.
   const wishlist = useWishlist()
 
   // What the app currently believes this character is running. An unresolved slot contributes

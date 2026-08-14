@@ -105,12 +105,13 @@
 // reason the wish list is: what you are wearing is not a filter. The JOS-143 law the table has
 // carried since it shipped is narrowed rather than broken, and GearTable.tsx's header states how.
 //
-// MOUNTED HERE, ONCE, AND THAT IS SAFE FOR THE SAME REASON `PlannerView` SAYS IT IS: Gear,
-// Exaltations and Wish list are sibling tabs of one nav area and App renders exactly one view at a
-// time (appViews.ts), so two `useWishlist` mounts never coexist and cannot clobber each other's
-// writes. The corollary is what makes the added state self-correcting — leaving this tab unmounts
-// the hook and coming back re-reads the document, so a wish removed on the Wish list tab is already
-// gone from this table's controls before the first row is drawn.
+// MOUNTED HERE, AND WHAT MAKES THAT SAFE IS THE HOOK RATHER THAN THE ROUTER (JOS-346). This used
+// to read: the three tabs are siblings, App renders one view at a time, so two `useWishlist` mounts
+// never coexist and the remount is what re-reads a wish removed on another tab. The premise held
+// and the promise did not — a per-mount copy made the refresh depend on view lifecycle and on a
+// fire-and-forget write beating the next view's read. `useWishlist` holds ONE document for the
+// window now, so this table's controls are reading the same object the Wish list tab edits, and
+// they were correct before this view was ever rebuilt.
 //
 // AND SINCE JOS-302 THE FIRST TOOLBAR ROW NARROWS HARDER, in three ways the pipeline above did not
 // change one line for. The CLASS picks remove rows instead of chipping them (the owner's ruling —
