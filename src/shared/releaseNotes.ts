@@ -203,6 +203,10 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       {
         kind: 'fixed',
         text: 'A re-announced level can no longer draw your progress emptying. When the game restates the level you already hold, the curve refuses the span instead of inventing a descent.'
+      },
+      {
+        kind: 'changed',
+        text: 'The favorite star column left the loot ledger. Item stars still work where they earn their keep - the Plane of Sky quest tables - and starred items still travel in share bundles.'
       }
     ]
   },
