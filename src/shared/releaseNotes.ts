@@ -130,19 +130,19 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     entries: [
       {
         kind: 'new',
-        text: 'Exaltations, Gear and your character now live in one place: a single Gear entry in the sidebar with four tabs - gear search, exaltation search, your wish list, and Character. Three navigation rows asked three versions of one question; the answer has one home now.'
+        text: 'Exaltations, Gear and your character now live in one place: a single Gear entry in the sidebar with four tabs - gear search, exaltation search, your wish list, and Character.'
       },
       {
         kind: 'new',
-        text: "The Wish list is that home's new center: a flat list of the gear and exaltations you are going after, added or removed with one click from either search tab or from the list itself. It groups wishes by the zone that feeds them - a farming route, not a checklist - with merge costs for exaltations and an also-drops-in line beside each."
+        text: 'The Wish list is new: a flat list of the gear and exaltations you are going after, added or removed with one click from either search tab or from the list itself. It groups wishes by the zone that feeds them, with merge costs for exaltations and an also-drops-in line beside each.'
       },
       {
         kind: 'new',
-        text: 'The wish list checks itself off. When your inventory dump or your loot history shows a wish fulfilled, it moves to a done strip on its own - there is no box to tick. Anything you had planned on the old exaltation board was imported once, labeled as an import, and deletable.'
+        text: 'The wish list marks wishes done on its own: when your inventory dump or your loot history shows one fulfilled, it moves to a done strip - there is no box to tick. Anything you had planned on the old exaltation board was imported once, labeled as an import, and deletable.'
       },
       {
         kind: 'new',
-        text: 'The Character tab is your sheet as your own dump states it: every worn slot at its upgrade level with any socketed exaltations shown, and a searchable ledger of everything you carry - bags, bank, depot, key rings - each place its own lane.'
+        text: 'The Character tab shows your worn gear as your dump states it - every slot at its upgrade level with any socketed exaltations - plus a searchable ledger of everything you carry: bags, bank, depot, key rings, each place its own lane.'
       },
       {
         kind: 'new',
@@ -162,19 +162,19 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'changed',
-        text: 'Era honesty grew teeth. Gear the record cannot place in the current era is hidden by the era filter instead of shown with a question mark, and the verdicts the wiki keeps on armor-set, quest and monster pages now count: an item whose only mold, awarding quest or dropper is out of era reads out of era, with the reason named in its chip.'
+        text: 'The era filter now hides gear the record cannot place in the current era instead of showing it with a question mark, and the verdicts the wiki keeps on armor-set, quest and monster pages now count: an item whose only mold, awarding quest or dropper is out of era reads out of era, with the reason named in its chip.'
       },
       {
         kind: 'changed',
-        text: 'The gear filters filter. Class picks remove non-matching rows instead of tagging them, slots are a multi-select, weapon types - and one-handed versus two-handed - are filters of their own, and the stat-threshold boxes are gone: sorting answers that question. The item name gets the column width the numbers never needed.'
+        text: 'Class picks on the gear table now remove non-matching rows instead of tagging them, slots are a multi-select, weapon types - and one-handed versus two-handed - are filters of their own, and the stat-threshold boxes are gone: sorting covers that. The item name column is wider, the stat columns smaller.'
       },
       {
         kind: 'changed',
-        text: 'This tier means this tier, everywhere. The tier and elapsed/active choices are one setting shared by the app and the XP overlay - flip either side and both move - and Leveling opens on this tier and elapsed time. Both toggles explain themselves on hover, in the words of the math they change.'
+        text: 'The tier and elapsed/active choices are one setting shared by the app and the XP overlay - flip either side and both move - and Leveling opens on this tier and elapsed time. Both toggles explain themselves on hover.'
       },
       {
         kind: 'changed',
-        text: 'The leveling charts read as charts again at short windows: headroom above the curve instead of a line welded to the frame, your level and the next as the level chart range, a quieter zone strip, and axis labels that can never stretch.'
+        text: 'The leveling charts scale their axes properly at short windows: headroom above the curve instead of a line against the frame, your level and the next as the level chart range, a quieter zone strip, and axis labels that no longer stretch.'
       },
       {
         kind: 'changed',
@@ -182,15 +182,15 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
       },
       {
         kind: 'changed',
-        text: 'A spell the game does not have no longer appears anywhere the app offers spells. Invigor - a classic-era leftover on the wiki - is the first removal, and the machinery remembers why, so a wiki edit cannot bring it back unnoticed.'
+        text: 'Invigor - a classic-era spell the game does not have - no longer appears in the unlock list or alert suggestions, and the removal is recorded so a wiki edit cannot bring it back unnoticed.'
       },
       {
         kind: 'fixed',
-        text: 'The gear area remembers itself. Filters, sorts, searches and the upgrade slider survive drilling into an item and switching modules; the structural picks survive a restart, and what you typed lasts the session.'
+        text: 'Gear-area filters, sorts, searches and the upgrade slider now survive drilling into an item and switching modules; the structural picks survive a restart, and what you typed lasts the session.'
       },
       {
         kind: 'fixed',
-        text: 'Rogue poison coats stop haunting you. They clear when you die and when your loadout stops being a rogue, instead of surviving untouched from your last rogue session.'
+        text: 'Rogue poison coats now clear when you die and when your loadout stops being a rogue, instead of surviving untouched from your last rogue session.'
       },
       {
         kind: 'fixed',
