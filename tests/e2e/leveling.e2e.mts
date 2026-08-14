@@ -99,7 +99,9 @@ import { dismissFirstRunNotice, stepNarrowLayout, stepPageScroll, stepSpellCard 
 import { stepDragCost } from './dragPerfSteps.mjs'
 // THE FRACTIONAL CURVE (JOS-292) — the vertices, the uncertainty bands, and the readout standing
 // on one. Next door for the same line-budget reason; see that file's header.
-import { stepLevelCurve } from './curveSteps.mjs'
+// …and (JOS-339) THE CAMERA beside them: three PNGs of the chart column at three window shapes,
+// for an owner who has to rule on how the plots LOOK. Same file — same two plots.
+import { stepChartShots, stepLevelCurve } from './curveSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -705,6 +707,9 @@ async function main(): Promise<void> {
         // AFTER the selection step, which proves the panel works on the default (full-history)
         // window — this one then proves the same gestures survive a wholesale window change.
         await stepTimescale(page, chart)
+        // STRAIGHT AFTER IT (JOS-339): that step leaves the tab on `All` with no selection, which
+        // is the state the shots open from. It puts the window size and the slice back itself.
+        await stepChartShots(app, page)
         // The other half of the same control (JOS-130, sliceSteps.mts): the preset that moves the
         // arithmetic and not the window. It runs AFTER stepTimescale, which leaves the tab on
         // `All`, and takes the spec's own dashboard readout so "byte for byte" means one thing.
