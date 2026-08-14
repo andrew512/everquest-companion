@@ -33,6 +33,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import type { AlertDef, SoundPack } from '@shared/types'
 import { captureNamesIn } from '@shared/alertCaptures'
+import { autoTokenNamesFor } from '@shared/alertTargets'
 import { MAX_EARLY_WARN_SEC, breakTriggerKinds } from '@shared/earlyWarning'
 import { blankCondition, type CombineMode, type ConditionDraft } from './conditionDraft'
 import {
@@ -343,12 +344,15 @@ export default function AlertDialog({
           <Divider />
           {/* Recomputed from the LIVE form, not from `initial`: the user can add `(?<player>…)`
               to the pattern and the token list has to follow them, in the same dialog, before
-              they type the phrase that uses it. */}
+              they type the phrase that uses it. `autoNames` follows the same live trigger for the
+              same reason (JOS-353) — switching a condition's event kind is exactly how a user
+              discovers that `{target}` is available here and not there. */}
           <SpeechBlock
             name={f.name}
             form={f.speech}
             voiceSetup={voiceSetup}
             captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
+            autoNames={autoTokenNamesFor(triggerFromForm(f.mode, f.conditions))}
             allAlwaysPlay={allAlwaysPlay}
           />
         </Stack>

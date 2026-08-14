@@ -415,6 +415,12 @@ export interface FiredAlert {
    * NAMED REGEX CAPTURES from the condition that matched (JOS-103) — the values a `custom`
    * phrase's `{token}`s resolve to, so a spoken alert can say "Puma on Fail".
    *
+   * PLUS THE ONE AUTO TOKEN (JOS-353): `target`, the entity the matched event says the spell is
+   * affecting, filled in with no capture group declared and no regex written. It is carried ONLY
+   * when the def's own phrase writes `{target}`, and a group the pattern declared under that name
+   * always wins. The closed table of which field of which event kind answers it, and the security
+   * argument for the one exemption to "a token is a declaration", are in shared/alertTargets.ts.
+   *
    * ATTACKER-INFLUENCED BY CONSTRUCTION, and already defanged. The keys come from the def's own
    * pattern (`(?<player>…)`) but the VALUES come out of a log line, which carries other players'
    * chosen names and, for the chat families, text a stranger typed. Everything here has been

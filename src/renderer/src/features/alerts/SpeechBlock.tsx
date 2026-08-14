@@ -211,33 +211,58 @@ function AudioActionRow({ form, allAlwaysPlay }: { form: SpeechForm; allAlwaysPl
   )
 }
 
+/** Render a token list the way the user writes it: `{player} {target}`. */
+function tokenList(names: readonly string[]): string {
+  return names.map((n) => `{${n}}`).join(' ')
+}
+
 /**
- * WHAT `{tokens}` THIS ALERT MAY WRITE, and which ones its pattern does not actually declare
- * (JOS-103).
+ * WHAT `{tokens}` THIS ALERT MAY WRITE, and which ones nothing will fill in (JOS-103, JOS-353).
  *
- * The readable form of control 4 in shared/alertCaptures.ts's threat model: a token resolves ONLY
- * if the def's own pattern declared a matching named group, so the set of values this alert can
- * ever speak is a finite list that can be printed. It matters most for a def that arrived in
- * somebody else's share string — you can see what it is able to say without reading the regex.
+ * The readable form of control 4 in shared/alertCaptures.ts's threat model: the set of values this
+ * alert can ever speak is a FINITE LIST that can be printed. It matters most for a def that
+ * arrived in somebody else's share string — you can see what it is able to say without reading the
+ * regex.
+ *
+ * TWO LISTS, BECAUSE THERE ARE TWO KINDS OF TOKEN AND THE DIFFERENCE IS THE FEATURE. The first is
+ * what the def's own PATTERN declared (`captureNamesIn`) — the JOS-103 story, and it needs a
+ * regex. The second is what the app fills in BY ITSELF from the event kinds this trigger watches
+ * (`autoTokenNamesFor`), which is the whole of JOS-353's owner ruling: `{target}` has to be
+ * reachable from the plain editor, so the plain editor is where it is announced. Printing them
+ * separately is also what keeps control 4 honest — a reader can still see which values came from a
+ * declaration they can inspect.
  *
  * The unknown-token line is a WARNING, never a save block: an unresolved token renders literally,
  * which is a legible sentence rather than a broken alert, and a user mid-edit should not be
  * stopped from typing `{pl` on the way to `{player}`.
  */
-function CaptureHint({ phrase, captureNames }: { phrase: string; captureNames: string[] }): JSX.Element | null {
+function CaptureHint({
+  phrase,
+  captureNames,
+  autoNames
+}: {
+  phrase: string
+  captureNames: string[]
+  autoNames: string[]
+}): JSX.Element | null {
   const used = tokensIn(phrase)
-  const unknown = used.filter((t) => !captureNames.includes(t))
-  if (captureNames.length === 0 && unknown.length === 0) return null
+  const unknown = used.filter((t) => !captureNames.includes(t) && !autoNames.includes(t))
+  if (captureNames.length === 0 && autoNames.length === 0 && unknown.length === 0) return null
   return (
     <Box data-testid="alert-speech-captures">
+      {autoNames.length > 0 && (
+        <Typography variant="caption" color="text.secondary" display="block" data-testid="alert-speech-auto-tokens">
+          {`Companion fills in ${tokenList(autoNames)} for you - who the spell is affecting. No pattern needed.`}
+        </Typography>
+      )}
       {captureNames.length > 0 && (
         <Typography variant="caption" color="text.secondary" display="block">
-          {`This alert’s pattern captures: ${captureNames.map((n) => `{${n}}`).join(' ')} - write one in the phrase to speak it.`}
+          {`This alert’s pattern captures: ${tokenList(captureNames)} - write one in the phrase to speak it.`}
         </Typography>
       )}
       {unknown.length > 0 && (
         <Typography variant="caption" color="warning.main" display="block">
-          {`${unknown.map((n) => `{${n}}`).join(' ')} ${unknown.length === 1 ? 'is not' : 'are not'} captured by this alert’s pattern - spoken as written.`}
+          {`${tokenList(unknown)} ${unknown.length === 1 ? 'is not' : 'are not'} filled in by this alert - spoken as written.`}
         </Typography>
       )}
     </Box>
@@ -248,11 +273,13 @@ function CaptureHint({ phrase, captureNames }: { phrase: string; captureNames: s
 function SaysRow({
   name,
   form,
-  captureNames
+  captureNames,
+  autoNames
 }: {
   name: string
   form: SpeechForm
   captureNames: string[]
+  autoNames: string[]
 }): JSX.Element {
   const preview = previewTextFor(name, form)
   return (
@@ -287,7 +314,7 @@ function SaysRow({
             slotProps={{ htmlInput: { maxLength: MAX_SPEECH_CHARS } }}
             helperText={`${String(form.phrase.length)} / ${String(MAX_SPEECH_CHARS)}`}
           />
-          <CaptureHint phrase={form.phrase} captureNames={captureNames} />
+          <CaptureHint phrase={form.phrase} captureNames={captureNames} autoNames={autoNames} />
         </>
       )}
 
@@ -356,6 +383,7 @@ export default function SpeechBlock({
   form,
   voiceSetup,
   captureNames = [],
+  autoNames = [],
   allAlwaysPlay = false
 }: {
   name: string
@@ -368,6 +396,13 @@ export default function SpeechBlock({
    * them — and then the hint renders nothing at all rather than an empty label.
    */
   captureNames?: string[]
+  /**
+   * The tokens the app fills in ITSELF for this trigger (`autoTokenNamesFor`, JOS-353) — today
+   * exactly `{target}`, and only for the event kinds whose line names an entity. Recomputed from
+   * the live form like `captureNames`, so switching the condition's kind updates the hint in the
+   * same dialog.
+   */
+  autoNames?: string[]
   /**
    * `AlertPrefs.alwaysPlayAll` — the GLOBAL always-play preference (JOS-222). When it is on, this
    * alert's own opt-out is greyed out and says why on hover, because the global one already
@@ -391,7 +426,7 @@ export default function SpeechBlock({
             off in Preferences"): choosing 'Speak it' above IS the switch. The only thing left to
             say is that the chosen tier has nothing to speak with — and it says it with a LINK. */}
         {speaks && <VoiceSetupLink notice={voiceSetup} testId="alert-speech-setup" />}
-        {speaks && <SaysRow name={name} form={form} captureNames={captureNames} />}
+        {speaks && <SaysRow name={name} form={form} captureNames={captureNames} autoNames={autoNames} />}
         {speaks && <VoiceRow name={name} form={form} />}
       </Stack>
     </Box>

@@ -2,11 +2,17 @@
 // matcher does and what a spoken alert needs to name the spell that set it off.
 //
 // Split out of modules/alerts.ts unchanged (JOS-235, purely to keep that file under its factoring
-// ceiling): these four are the file's PURE half — no compiled defs, no module state, no cooldowns
-// — and they are the half two other readers want. `fieldText` and `spellCandidateNames` are the
+// ceiling): these are the file's PURE half — no compiled defs, no module state, no cooldowns —
+// and they are the half two other readers want. `fieldText` and `spellCandidateNames` are the
 // matcher's; `SPELL_FIELD_BY_KIND` and `firingSpell` are the firing payload's. Every line of the
 // argument for each of them travelled with it; nothing about what they compute changed.
+//
+// `withAutoCaptures` (JOS-353) joined them for the same reason and by the same cut: it turns one
+// matched LogEvent into one field of the firing payload, exactly like `firingSpell`, and adding it
+// to alerts.ts put that file three lines past the same ceiling.
 
+import { MAX_CAPTURE_GROUPS } from '../../shared/alertCaptures'
+import { resolveTarget, type AutoTokenName } from '../../shared/alertTargets'
 import type { LogEvent } from '../../shared/logEvents'
 
 /**
@@ -142,4 +148,44 @@ export function firingSpell(ev: LogEvent): string | undefined {
   const name = value.trim()
   // 'unknown' is what a poisonCoat says when the line deliberately hides which poison it was.
   return name && name !== 'unknown' ? name : undefined
+}
+
+// ---- the auto token on the firing payload (JOS-353) ----
+
+/**
+ * The captures a firing carries: what the def's own pattern named, plus the auto tokens its phrase
+ * asked for — and THE PATTERN ALWAYS WINS.
+ *
+ * A def that declared `(?<target>…)` is a def whose author said what they meant that word to be,
+ * and control 4 of shared/alertCaptures.ts's threat model is that a declaration is readable off
+ * the pattern. So the derived value fills a HOLE and never overwrites one; a user who wants the
+ * parser's answer simply does not name a group `target`.
+ *
+ * MAX_CAPTURE_GROUPS still bounds the map. A pattern that already named eight things has spent the
+ * budget, and the auto token renders literally rather than pushing the payload past the cap — the
+ * same visible degradation `harvestCaptures` chose for the ninth named group.
+ *
+ * `autoTokens` is EMPTY for nearly every alert (modules/alerts.ts compiles it from the def's own
+ * phrase), and this returns its argument untouched when it is — so a firing that asked for nothing
+ * is not even reallocated, and the `module:delta` stays byte-identical to what it was before the
+ * token existed.
+ *
+ * It lives here, beside `firingSpell`, because it is the same kind of thing: a PURE reader that
+ * turns one matched LogEvent into one field of the firing payload. modules/alerts.ts holds the
+ * compiled defs and the cooldowns; this file holds the readers.
+ */
+export function withAutoCaptures(
+  captures: Record<string, string> | undefined,
+  autoTokens: readonly AutoTokenName[],
+  ev: LogEvent
+): Record<string, string> | undefined {
+  if (autoTokens.length === 0) return captures
+  let out = captures
+  for (const name of autoTokens) {
+    if (out && (name in out || Object.keys(out).length >= MAX_CAPTURE_GROUPS)) continue
+    const value = name === 'target' ? resolveTarget(ev) : null
+    if (value === null) continue
+    out = { ...(out ?? {}), [name]: value }
+  }
+  return out
 }

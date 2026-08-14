@@ -7,9 +7,14 @@
 //
 // ID CONVENTION:  `suggest:<spellKey>:<template>`
 //   spellKey = the catalog entry's canonical (lowercased, rank-stripped) key.
-//   template ∈ 'wearsOff' | 'fade' | 'lands' | 'landsOnOther' | 'breaks' | 'charmBreaks'.
+//   template ∈ the `TemplateKind` union below (the record is the list; keep them in step).
 //   Illusion is the SHARED, deduped suggestion `suggest:illusion:fade` (one alert for the
 //   generic `Your illusion fades.` line, which names no spell — see logEvents.ts IllusionFade).
+//
+// AND SINCE JOS-353 MOST OF THEM SAY WHO. Five templates ship a spoken phrase carrying `{target}`,
+// which the app fills from the matched event's own entity field with no regex anywhere
+// (shared/alertTargets.ts) — the owner's ruling that naming the affected mob must not require the
+// user to write a pattern. The `speaks` field on each template is the whole of it.
 //
 // Each template's trigger was validated to actually fire in the AlertsModule against a
 // matching synthetic LogEvent (scripts/_task38_harness.mts): the `where.spell` matcher tests
@@ -63,6 +68,25 @@ export const SUGGEST_TEMPLATES: Record<
      * comes off the catalog entry (`castOnOtherCapture`). See `landsOnOther`.
      */
     raw?: true
+    /**
+     * THE SPOKEN PHRASE THIS TEMPLATE SHIPS, given the spell's distinctive word — and the whole of
+     * JOS-353's "suggested alerts can emit it" (owner ruling 2026-08-14).
+     *
+     * A template with one gets `audio:'both'` and a `custom` speech mode. 'both' rather than
+     * 'speech', for the reason `landsOnOther` stated first: a suggestion the APP authors has to be
+     * audible on a machine with no speech voices at all, and `speechPlan` (lib/speech.ts) falls
+     * back to the pack sound only when the TEXT is empty, never when the engine is missing. The
+     * sound is the guaranteed half; the spoken sentence rides behind it.
+     *
+     * `{target}` needs NO PATTERN — the app fills it from the event's own entity field
+     * (shared/alertTargets.ts). `{player}` is `landsOnOther`'s declared capture group and is the
+     * one phrase here that depends on a regex, because that family has no typed event to read.
+     *
+     * A template with NO phrase is one where the answer would be a tautology: `landsOnYou` already
+     * says "on you" in its own trigger, and `healsOverTime` is a question about whether your heal
+     * is working rather than about whom.
+     */
+    speaks?: (short: string) => string
   }
 > = {
   // Beneficial: the DUAL-DEFAULT expiry (Task #47). The user's directive — "the wears off for
@@ -95,7 +119,11 @@ export const SUGGEST_TEMPLATES: Record<
     // "A moment of your time, if you'd be so kind."
     sound: 'input-required-input-required-01',
     where: (name) => ({ spell: name }),
-    alsoKind: 'buffWearOff'
+    alsoKind: 'buffWearOff',
+    // BOTH conditions name who: `buffExpired.target` is 'self' or the bound entity, and the raw
+    // `buffWearOff.target` is always 'self' — which speaks as "you", because the wears-off emote
+    // is printed to the holder. So this chip answers the reporters' question on the self side too.
+    speaks: (short) => `${short} wore off {target}`
   },
   // Beneficial: JUST the pet/named-target fade side (target-only), for users who want to
   // separate it from the self-side. Uses the raw buffFade the parser already emits.
@@ -105,7 +133,11 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'buffFade',
     verb: 'fades',
     sound: 'resource-limit-resource-limit-09',
-    where: (name) => ({ spell: name })
+    where: (name) => ({ spell: name }),
+    // `buffFade.target` is the named mob, the literal 'pet', or ABSENT for the self form — and the
+    // resolver reads all three (absence is what `Your <Spell> spell has worn off.` means, so it
+    // speaks "you"). This is the "Soothe has worn off a Fire Giant" sentence for every non-hold buff.
+    speaks: (short) => `${short} faded on {target}`
   },
   // Detrimental + cast-on-other: the debuff landing on a target.
   //
@@ -124,7 +156,12 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'buffApply',
     verb: 'lands',
     sound: 'task-acknowledge-task-acknowledge-05',
-    where: (name) => ({ spell: name })
+    where: (name) => ({ spell: name }),
+    // THE LANDING ALERT THE REPORTS ASKED FOR (JOS-353). `buffApply.target` is the mob the debuff
+    // landed on, so this says "Shiftless on Coercer T`vala" with no regex anywhere — the same
+    // sentence `landsOnOther` had to author a capture pattern to reach, now available to every
+    // spell that has a typed landing event.
+    speaks: (short) => `${short} on {target}`
   },
   // Beneficial + cast-on-YOU: the buff landing on the person casting it (JOS-318).
   //
@@ -176,7 +213,12 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'buffApply', // unused for this template — see `raw`; kept so the record shape is total.
     verb: 'lands on someone',
     sound: 'task-acknowledge-task-acknowledge-05',
-    raw: true
+    raw: true,
+    // `{player}` — the group `subjectCapturePattern` declares, NOT the auto token. This family has
+    // no typed event to read an entity field off (that is the whole reason it is a `raw` trigger),
+    // so the declared capture is the only thing that can answer. If the two ever disagree the token
+    // renders literally, which is visible in the editor's preview rather than silent.
+    speaks: (short) => `${short} on {player}`
   },
   // THE HEAL-OVER-TIME TICK (JOS-318) — the one line a HoT cannot fail to print.
   //
@@ -229,7 +271,11 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'cc',
     verb: 'broke',
     sound: 'task-error-task-error-08',
-    where: (name) => ({ spell: name, refresh: 'true' })
+    where: (name) => ({ spell: name, refresh: 'true' }),
+    // "Mez has dropped on a ghoul" — the reporters' own sentence, and the `cc` break spells its
+    // entity `mob` rather than `target`, which is exactly why the resolver is a table and the user
+    // never has to know (shared/alertTargets.ts).
+    speaks: (short) => `${short} broke on {target}`
   },
   // The CHARM breaking, per spell (JOS-200) — `breaks`'s twin, and a different EVENT.
   //
@@ -257,7 +303,10 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'uncharm',
     verb: 'charm broke',
     sound: 'input-required-input-required-02',
-    where: (name) => ({ spell: name })
+    where: (name) => ({ spell: name }),
+    // Same sentence as `breaks`, same `mob` field, different event — and naming the mob matters
+    // MORE here: a broken charm is a pet turning on you, and which one is the whole question.
+    speaks: (short) => `${short} charm broke on {target}`
   }
 }
 
@@ -416,13 +465,13 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: stri
     cooldownMs: cooldownFor(entry, template),
     note: `Suggested alert (Task #38/#47) - ${template} for ${entry.name}.`
   }
-  if (template === 'landsOnOther') {
-    // The shipped demonstration of capture substitution (JOS-103): the phrase names the group the
-    // pattern declares, so this def SAYS "Puma on Fail". `{player}` matches the group name
-    // `subjectCapturePattern` authors; if the two ever disagree the token renders literally,
-    // which is visible in the editor's preview rather than silent.
+  // THE TEMPLATES THAT SAY WHO (JOS-103 for `{player}`, JOS-353 for `{target}`). One branch for
+  // all of them now: the phrase is the template's own (`speaks`), and every template that has one
+  // gets the same 'both' channel for the reason argued on that field.
+  const phrase = t.speaks?.(spellShortName(entry.name))
+  if (phrase !== undefined) {
     def.audio = 'both'
-    def.speech = { mode: 'custom', phrase: `${spellShortName(entry.name)} on {player}` }
+    def.speech = { mode: 'custom', phrase }
   }
   return def
 }

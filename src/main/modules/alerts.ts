@@ -46,6 +46,14 @@
 // There is no path to another event, another alert, or app state, and there are no ambient
 // tokens. Every value leaves through `harvestCaptures`, which sanitizes it and caps both its
 // length and the number of groups; nothing downstream is trusted to do that for us.
+//
+// …AND SINCE JOS-353 THERE IS EXACTLY ONE TOKEN THE APP FILLS IN ITSELF: `{target}`, the entity
+// the matched event says the spell is affecting. It is not a general ambient facility and the
+// exemption is argued in full in shared/alertTargets.ts. What this file enforces is the SHAPE of
+// it: the wanted set is compiled from the def's OWN PHRASE (so a def that never says `{target}`
+// carries none, and its delta is byte-identical to before), the value is resolved from the SAME
+// event the alert just fired on, and a group the pattern declared always wins over the derived
+// one — see `withAutoCaptures`.
 
 import type { EqModule } from './types'
 import {
@@ -58,9 +66,16 @@ import {
 // The pure field readers, split out of this file so it stays under its factoring ceiling — the
 // `where` matcher's two (`fieldText`, `spellCandidateNames`) and the firing payload's one
 // (`firingSpell`). Their arguments live with them in alertsFields.ts.
-import { fieldText, firingSpell, spellCandidateNames } from './alertsFields'
+import { fieldText, firingSpell, spellCandidateNames, withAutoCaptures } from './alertsFields'
 import { idKey } from '../log/parseCommon'
 import { harvestCaptures } from '../../shared/alertCaptures'
+// `{target}` — the ONE token the app fills in without a declared capture group (JOS-353). The
+// table of which field of which kind names the entity, the sentinel rendering ('self' → "you"),
+// and the security argument for the exemption all live in shared/alertTargets.ts; this file is the
+// other enforcement point and does exactly two things with it: compile the WANTED set from the
+// def's own phrase, and merge the resolved value UNDER the pattern's own captures
+// (`withAutoCaptures`, which lives beside the other pure field readers in alertsFields.ts).
+import { autoTokensWanted, type AutoTokenName } from '../../shared/alertTargets'
 import type { BuffTimerRow } from '../../shared/buffTimers'
 import {
   breakProbes,
@@ -347,6 +362,16 @@ interface CompiledAlert {
    * the end, and arming on it silenced the alert entirely.
    */
   breakKinds: BreakTriggerKind[]
+  /**
+   * The auto tokens THIS DEF'S PHRASE writes (JOS-353) — empty for every alert that does not
+   * speak `{target}`, which is nearly all of them.
+   *
+   * COMPILED FROM THE PHRASE, NOT FROM THE TRIGGER, and that is the bound on the whole feature:
+   * a def that never says `{target}` carries no target on its firing, so its `module:delta` is
+   * byte-identical to what it was before the token existed. Resolving one costs a table lookup
+   * and a sanitize per FIRE; deciding whether to is done once, here, at compile time.
+   */
+  autoTokens: AutoTokenName[]
 }
 
 /** Compile one PRIMITIVE trigger into a matcher condition. */
@@ -439,10 +464,19 @@ function cooldownKey(def: AlertDef, ev: LogEvent): string {
 function compileAlert(def: AlertDef): CompiledAlert {
   const t: AlertTrigger = def.trigger
   const breakKinds = breakTriggerKinds(t)
+  // Only a 'custom' phrase can carry a token at all — the other three speech modes resolve to
+  // values the app owns and have no template to substitute into (shared/speechText.ts).
+  const autoTokens = autoTokensWanted(def.speech?.mode === 'custom' ? def.speech.phrase : undefined)
   if ('conditions' in t) {
-    return { def, composite: t.type, conditions: t.conditions.map(compileCondition), breakKinds }
+    return {
+      def,
+      composite: t.type,
+      conditions: t.conditions.map(compileCondition),
+      breakKinds,
+      autoTokens
+    }
   }
-  return { def, composite: 'single', conditions: [compileCondition(t)], breakKinds }
+  return { def, composite: 'single', conditions: [compileCondition(t)], breakKinds, autoTokens }
 }
 
 export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
@@ -612,10 +646,12 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
       // Omitted rather than set to undefined: the delta is JSON over IPC, and an absent key
       // is the honest encoding of "this family names no spell".
       if (spell !== undefined) fired.spell = spell
-      // Likewise absent when the trigger declared no named group — which is nearly every alert,
-      // so the delta stays byte-identical for them. The values are already sanitized and capped
-      // (shared/alertCaptures.ts `harvestCaptures`); nothing downstream re-derives them.
-      if (match.captures) fired.captures = match.captures
+      // Likewise absent when the trigger declared no named group AND the phrase asked for no auto
+      // token — which is nearly every alert, so the delta stays byte-identical for them. The
+      // values are already sanitized and capped (shared/alertCaptures.ts `harvestCaptures`,
+      // shared/alertTargets.ts `resolveTarget`); nothing downstream re-derives them.
+      const captures = withAutoCaptures(match.captures, c.autoTokens, ev)
+      if (captures) fired.captures = captures
       if (this.earlyWarnTakesIt(c, ev, key, fired)) continue
       if (this.onCooldown(key, c.def, ev.ts)) continue
       this.noteFire(key, ev.ts)
@@ -706,7 +742,10 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
         const match = this.matches(c, p.ev)
         if (!match) continue
         const fired: FiredAlert = { alertId: c.def.id, ts: nowMs, matchedText: match.text, spell: p.spell }
-        if (match.captures) fired.captures = match.captures
+        // The probe's hypothetical event carries the ROW's subject, so an early warning speaks the
+        // same mob name the real break would have (`breakProbes`, shared/earlyWarning.ts).
+        const captures = withAutoCaptures(match.captures, c.autoTokens, p.ev)
+        if (captures) fired.captures = captures
         return { fired, cooldownKey: cooldownKey(c.def, p.ev) }
       }
     }
