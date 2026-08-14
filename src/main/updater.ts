@@ -139,13 +139,14 @@
 // per-process and gives no cross-restart protection), rate limiting (jittered
 // backoff).
 
-import { app, ipcMain, type BrowserWindow } from 'electron'
+import { app, ipcMain, powerMonitor, type BrowserWindow } from 'electron'
 import electronUpdater from 'electron-updater'
 import { IPC } from '../shared/ipc'
 import type { UpdateChannel, UpdateStatus } from '../shared/types'
 import {
   MAX_DOWNLOAD_ATTEMPTS,
   describeUpdateFailure,
+  isInterruptedFailure,
   isStaleVersion,
   nextCheckDelayMs,
   shouldRetryCheck
@@ -156,7 +157,8 @@ import {
   UPDATER_LOG_PREFIX,
   logUpdateFailure,
   routeUpdaterLibraryError,
-  type UpdateLogSinks
+  type UpdateLogSinks,
+  type UpdateStep
 } from './updateLog'
 import { getUpdateChannel, getUpdateLastCheckedAt, setUpdateLastCheckedAt } from './store'
 import { classifyFailure, recordEvent } from './telemetry'
@@ -293,19 +295,121 @@ function noteUpdate(step: 'check' | 'download' | 'apply', err?: unknown): void {
   recordEvent({ t: 'updateOutcome', step, ok: false, failureClass: classifyFailure(err) })
 }
 
-/** The two status sinks the electron-updater event handlers write through. */
+/** The status sinks the electron-updater event handlers write through. */
 interface StatusSinks {
   /** Record + broadcast a status. */
   push: (status: UpdateStatus) => void
   /** A check finished (whatever the verdict) — stamp + PERSIST the time, then push. */
   checkDone: (status: UpdateStatus) => void
+  /**
+   * A check DID NOT finish because the machine suspended (JOS-307) — re-anchor the cadence to a
+   * short post-wake delay. Deliberately NOT `checkDone`: stamping `lastCheckedAt` here would make
+   * the chip claim a check that never completed, which is the exact dishonesty this ticket is
+   * about at the other end of the same wire.
+   */
+  retryOnResume: () => void
+}
+
+/**
+ * AN INTERRUPTED REQUEST IS NOT A FAILED CHECK (JOS-307, owner ruling 2026-08-14).
+ *
+ * Chromium tears down network IO when the host suspends or its interface changes, and whatever was
+ * in flight rejects; treating that as a verdict was costing three separate lies at once — a fleet
+ * error report about a laptop's lid, a `consecutiveFailures` tick that walked the backoff out to
+ * four hours, and a `checkedAt` stamp for a check that never completed.
+ *
+ * FOUR THINGS HAPPEN, AND THE ONES THAT DO NOT ARE THE POINT:
+ *   * `logUpdateFailure` routes it — warn once per code per session, NEVER the error store;
+ *   * `noteUpdate` still counts ONE bounded telemetry outcome, because the law that one logical
+ *     check produces exactly one of those is not this ticket's to bend;
+ *   * the resting status is re-pushed so the chip leaves 'checking' — carrying the OLD `checkedAt`,
+ *     which keeps ageing and is the honest thing for it to say;
+ *   * `retryOnResume` re-anchors the cadence.
+ *   * `consecutiveFailures` is NOT touched, and `checkDone` is NOT called.
+ *
+ * Clearing `checkInFlight` is what marks the failure ACCOUNTED, so `runCheck`'s catch leaves it
+ * alone — the same handshake `checkDone` performs on every other path. ONE function for both call
+ * sites (the event and the rejection), because they are one ruling.
+ */
+function noteInterrupted(step: UpdateStep, err: unknown, sinks: StatusSinks): void {
+  logUpdateFailure(step, 'final', err, LOG_SINKS)
+  noteUpdate(step, err)
+  checkInFlight = false
+  sinks.push({ state: 'idle' })
+  sinks.retryOnResume()
+}
+
+/**
+ * ROUTE A `checkForUpdates()` REJECTION THAT THE 'error' EVENT DID NOT ALREADY ACCOUNT FOR.
+ *
+ * Both paths fire for the same failure, so only an UNACCOUNTED one may be routed here — the caller
+ * owns that test. Everything below mirrors the event handler's three verdicts in the same order,
+ * and the RAW-FIRST rule (JOS-295) holds on every one of them: `describeUpdateFailure` is a one-way
+ * door and nothing durable may be taken after it opens.
+ */
+function routeCheckRejection(err: unknown, sinks: StatusSinks): void {
+  if (isInterruptedFailure(err)) {
+    noteInterrupted('check', err, sinks)
+    return
+  }
+  if (shouldRetryCheck(err, checkAttempts)) {
+    logUpdateFailure('check', 'retrying', err, LOG_SINKS)
+    retryPending = true
+    return
+  }
+  logUpdateFailure('check', 'final', err, LOG_SINKS)
+  consecutiveFailures++
+  sinks.checkDone({ state: 'error', message: describeUpdateFailure(err) })
+}
+
+/**
+ * HAND THE PROCESS TO THE INSTALLER. Lifted out of `initUpdater` for size only.
+ *
+ * quitAndInstall(isSilent=TRUE, isForceRunAfter=TRUE) is NOT optional styling: `/S` is the only
+ * thing standing between the user and a visible NSIS SpiderBanner + INSTFILES window (research §1),
+ * and `--force-run` is what relaunches us into the new build. Bare quitAndInstall() shows the
+ * installer. The single-instance lock in index.ts makes the relaunch focus cleanly.
+ *
+ * THE STORE SETTLES FIRST, AND THE ORDER IS THE POINT (JOS-272). `quitAndInstall(true, true)` does
+ * not merely quit: it SPAWNS the installer and then quits, and the installer — because we pass
+ * `--updated` — sleeps about a second and taskkills whatever is still running (research §1,
+ * allowOnlyOneInstallerInstance.nsh:50-79). Everything this process still owes the settings file
+ * therefore used to be written INSIDE that window, from `before-quit`, racing a kill. A store write
+ * torn by that kill is unparseable on the next boot, which is a quarantine-and-defaults launch:
+ * every alert, preference and character gone, in the one launch a user most associates with the app
+ * having changed something. Doing the writes here makes the race unnecessary rather than
+ * survivable; `before-quit` still runs them a moment later, idempotently.
+ *
+ * A FAILING SETTLE MAY NOT VETO THE UPDATE. Each step inside `flushStore` already has its own
+ * try/catch (index.ts `teardownStep`); this one is for anything the list itself could throw.
+ */
+function applyStagedUpdate(flushStore: () => void): void {
+  try {
+    flushStore()
+  } catch (err) {
+    logError('main:updateSettle', err)
+  }
+  try {
+    autoUpdater.quitAndInstall(true, true)
+    // RECORDED AFTER THE CALL AND BEFORE THE PROCESS DIES, which works because the ring is written
+    // synchronously (telemetry/ring.ts) and `quitAndInstall` only *initiates* the quit. The event
+    // therefore survives on disk and is sent by the NEW build's first flush — which is the only
+    // process that could ever report it.
+    noteUpdate('apply')
+  } catch (err) {
+    noteUpdate('apply', err)
+    throw err
+  }
 }
 
 /**
  * Wire up the electron-updater events. Lifted out of `initUpdater` for size only — every
  * handler below is unchanged, and they all read/write the module-level counters.
  */
-function registerUpdaterEvents(currentVersion: string, { push, checkDone }: StatusSinks): void {
+function registerUpdaterEvents(
+  currentVersion: string,
+  { push, checkDone, retryOnResume }: StatusSinks
+): void {
   autoUpdater.on('checking-for-update', () => push({ state: 'checking' }))
 
   autoUpdater.on('update-available', (info) => {
@@ -392,6 +496,10 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // we had a download in flight. Getting it wrong would put CDN failures in the check row.
     const step = downloading !== null ? 'download' : 'check'
     downloading = null
+    if (isInterruptedFailure(err)) {
+      noteInterrupted(step, err, { push, checkDone, retryOnResume })
+      return
+    }
     // JOS-211: an unreadable feed body is swallowed ONCE — no verdict, no telemetry, no
     // backoff tick, because one logical check must produce exactly one of each. `runCheck`
     // reads `retryPending` and goes round again; the second failure takes the path below.
@@ -515,52 +623,20 @@ export function initUpdater(
   autoUpdater.disableWebInstaller = true
   applyChannel(getUpdateChannel())
 
-  registerUpdaterEvents(currentVersion, { push, checkDone })
+  // THE SINKS, BUILT ONCE. Both the event handlers and `runCheck`'s rejection path route through
+  // the same three, which is what makes "one failure counts exactly once" checkable rather than
+  // remembered. `schedule` is a `const` further down and is only ever REACHED from a timer, an IPC
+  // call or an updater event — all of them after this function has finished running — so the arrow
+  // closing over it can never observe the temporal dead zone.
+  const sinks: StatusSinks = { push, checkDone, retryOnResume: () => schedule('resume') }
+  registerUpdaterEvents(currentVersion, sinks)
 
-  // renderer -> main: apply the downloaded update NOW.
-  //
-  // quitAndInstall(isSilent=TRUE, isForceRunAfter=TRUE) is NOT optional styling:
-  // `/S` is the only thing standing between the user and a visible NSIS
-  // SpiderBanner + INSTFILES window (research §1), and `--force-run` is what
-  // relaunches us into the new build. Bare quitAndInstall() shows the installer.
-  // The single-instance lock in index.ts makes the relaunch focus cleanly.
-  //
-  // Guarded on 'ready' because BaseUpdater latches `quitAndInstallCalled` on the
-  // first call and ignores every later one — we get exactly one shot, so we do
-  // not spend it on a stale click.
+  // renderer -> main: apply the downloaded update NOW. Guarded on 'ready' because BaseUpdater
+  // latches `quitAndInstallCalled` on the first call and ignores every later one — we get exactly
+  // one shot, so we do not spend it on a stale click.
   ipcMain.handle(IPC.installUpdate, () => {
     if (lastStatus.state !== 'ready') return
-    // THE STORE SETTLES FIRST, AND THE ORDER IS THE POINT (JOS-272).
-    //
-    // `quitAndInstall(true, true)` does not merely quit: it SPAWNS the installer and then quits, and
-    // the installer — because we pass `--updated` — sleeps about a second and taskkills whatever is
-    // still running (research §1, allowOnlyOneInstallerInstance.nsh:50-79). Everything this process
-    // still owes the settings file therefore used to be written INSIDE that window, from
-    // `before-quit`, racing a kill. A store write torn by that kill is unparseable on the next boot,
-    // which is a quarantine-and-defaults launch: every alert, preference and character gone, in the
-    // one launch a user most associates with the app having changed something.
-    //
-    // Doing the writes here makes the race unnecessary rather than survivable. `before-quit` still
-    // runs them a moment later — they are idempotent, so that is one repeat of identical bytes.
-    //
-    // A FAILING SETTLE MAY NOT VETO THE UPDATE. Each step inside `flushStore` already has its own
-    // try/catch (index.ts `teardownStep`); this one is for anything the list itself could throw.
-    try {
-      flushStore()
-    } catch (err) {
-      logError('main:updateSettle', err)
-    }
-    try {
-      autoUpdater.quitAndInstall(true, true)
-      // RECORDED AFTER THE CALL AND BEFORE THE PROCESS DIES, which works because the ring is
-      // written synchronously (telemetry/ring.ts) and `quitAndInstall` only *initiates* the quit.
-      // The event therefore survives on disk and is sent by the NEW build's first flush — which
-      // is the only process that could ever report it.
-      noteUpdate('apply')
-    } catch (err) {
-      noteUpdate('apply', err)
-      throw err
-    }
+    applyStagedUpdate(flushStore)
   })
 
   /**
@@ -592,20 +668,10 @@ export function initUpdater(
         // so a still-set flag here means the event handler did NOT run and this
         // failure is uncounted — that way one failure counts exactly once.
         // `retryPending` is the same idea for the case where it DID run and
-        // deliberately withheld the verdict.
-        //
-        // THE SAME RAW-FIRST RULE APPLIES TO BOTH BRANCHES (JOS-295), and only when the failure is
-        // UNACCOUNTED: an accounted one was already routed by the 'error' handler above, from the
-        // same error, so logging here too would file every update failure twice.
+        // deliberately withheld the verdict. An ACCOUNTED failure was already routed by the
+        // 'error' handler, from the same error, so routing here too would file it twice.
         const unaccounted = checkInFlight && !retryPending
-        if (unaccounted && shouldRetryCheck(err, checkAttempts)) {
-          logUpdateFailure('check', 'retrying', err, LOG_SINKS)
-          retryPending = true
-        } else if (unaccounted) {
-          logUpdateFailure('check', 'final', err, LOG_SINKS)
-          consecutiveFailures++
-          checkDone({ state: 'error', message: describeUpdateFailure(err) })
-        }
+        if (unaccounted) routeCheckRejection(err, sinks)
       }
       checkInFlight = false
       checkAttempts++
@@ -616,7 +682,7 @@ export function initUpdater(
   }
 
   /** Self-rescheduling poll loop — a setInterval can't carry jitter or backoff. */
-  const schedule = (phase: 'startup' | 'periodic'): void => {
+  const schedule = (phase: 'startup' | 'periodic' | 'resume'): void => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       void runCheck(false).finally(() => schedule('periodic'))
@@ -633,6 +699,24 @@ export function initUpdater(
   })
 
   schedule('startup')
+
+  // THE OTHER HALF OF "RETRY ON RESUME" (JOS-307), and it is the half that covers the common case.
+  //
+  // The error handler above only learns about a suspend when a request happened to be IN FLIGHT as
+  // the machine went down — which is a few seconds out of every four hours, so most sleeps produce
+  // no error at all. What they DO produce is a frozen `setTimeout`: a machine that sleeps at the
+  // 3h55m mark wakes with five minutes left on paper, but Windows does not credit the sleep, so the
+  // remaining wait is the whole of what is left of a four-hour timer measured in a clock that
+  // stopped. A laptop that is closed every night therefore checks far less often than the cadence
+  // says it does, and the chip's "checked Nh ago" is the only place that shows it.
+  //
+  // Waking RE-ANCHORS the poll: ~20s (jittered) and then the ordinary cadence resumes from there.
+  // It is one extra feed request per wake — three plain github.com GETs, on a machine whose user
+  // has just sat down — against a poll that could otherwise sleep through a whole release.
+  // Registered here rather than in the composition root because it belongs to the cadence, and it
+  // is inside the packaged-only path for the same reason everything else here is.
+  powerMonitor.on('resume', () => schedule('resume'))
+
   app.on('will-quit', () => {
     if (timer) clearTimeout(timer)
     timer = null

@@ -29,6 +29,14 @@
 //   * SOMEBODY ELSE'S OUTAGE IS A WARN, ONCE PER CODE PER SESSION. Console only, never
 //     errors.log, never the wire. `ENOTFOUND` and `ERR_PROXY_CONNECTION_FAILED` are two different
 //     stories about the machine; the second copy of either says nothing the first did not.
+//   * AND AN INTERRUPTION TAKES THE SAME DOOR (JOS-307, owner ruling 2026-08-14). A laptop closing
+//     its lid — or switching from Wi-Fi to a dock — under an in-flight request is not an outage and
+//     is not a failure of anything; it is the most ordinary event in the life of a desktop app, and
+//     0.27.0 filed twelve of them on its first day. It is warned about exactly like an unreachable
+//     network, on the SAME budget (one line per code per session, `MAX_WARNED_UPDATE_CODES` wide),
+//     because the two are the same claim: this failure is about the machine, and the second copy
+//     adds nothing. What is NOT the same is what happens next — `updater.ts` re-anchors the cadence
+//     instead of counting a failure, which is the "retry on resume" half of the ruling.
 //   * AN ANSWER FROM GITHUB IS AN ERROR, EVERY TIME. A 403/429/451/5xx and the parse-masked
 //     failure that hides one are the entire point of the ticket and are never withheld here. What
 //     bounds THEM is what bounds every other error in the app: `errorRepeat`'s five identical
@@ -171,15 +179,19 @@ export function logUpdateFailure(
   sinks: UpdateLogSinks
 ): UpdateFailureKind {
   const kind = classifyUpdateFailure(err)
-  if (kind === 'unreachable') {
-    // SOMEBODY ELSE'S NETWORK. One line per code per session, on the console only; the per-check
-    // signal that survives is `updateOutcome`'s failureClass, which the caller records either way.
-    const code = updateFailureCode(err) ?? 'unreachable'
+  if (kind === 'unreachable' || kind === 'interrupted') {
+    // SOMEBODY ELSE'S NETWORK, OR A MACHINE THAT MOVED. One line per code per session, on the
+    // console only; the per-check signal that survives is `updateOutcome`'s failureClass, which the
+    // caller records either way. The two share a budget on purpose (see the header).
+    const code = updateFailureCode(err) ?? kind
     if (takeUnreachableWarning(code)) {
       sinks.warn(
         UPDATER_LOG_PREFIX,
-        `update ${step} could not reach the update service (${code}); ` +
-          'further unreachable attempts this session are counted, not logged'
+        kind === 'interrupted'
+          ? `update ${step} was cut short by the machine suspending or changing network (${code}); ` +
+              'the next check is re-anchored'
+          : `update ${step} could not reach the update service (${code}); ` +
+              'further unreachable attempts this session are counted, not logged'
       )
     }
     return kind

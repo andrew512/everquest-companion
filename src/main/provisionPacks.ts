@@ -35,14 +35,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError } from './errorLog'
 import { listPacks, userPacksRoot } from './sounds'
-import { installPack } from './packRegistry'
+import { installPackWithRetry } from './packInstallRun'
 import { DEFAULT_PACKS, REQUIRED_SOUND_IDS } from './data/defaultPacks'
 import type { RegistryPack, SoundPackManifest } from '../shared/types'
 
-/** Attempts per pack before giving up until the next startup. */
-const MAX_ATTEMPTS = 3
-/** Base backoff between attempts (doubled each retry). */
-const RETRY_BASE_MS = 2_000
 /** Spacing between packs when more than one is missing. */
 const BETWEEN_PACKS_MS = 1_000
 
@@ -81,25 +77,23 @@ const swallowProgress = (): void => {
   /* silence on purpose — provisioning is invisible by design */
 }
 
-/** Install one default pack, retrying with exponential backoff. True on success. */
+/**
+ * Install one default pack. True on success.
+ *
+ * THE LOOP MOVED OUT (JOS-307). It used to live here — three attempts, exponential backoff, and a
+ * `logError` per attempt — while the registry browser's install path had no retry at all and its
+ * own logging. Two behaviours, written months apart, disagreeing about the same failure. They are
+ * one now (`packInstallRun.ts`), which also means this path stops filing three fleet reports per
+ * failed launch: an attempt that will be retried is a warn, and a machine that simply cannot reach
+ * GitHub warns once per code per session instead of reporting at every startup forever.
+ *
+ * Progress is swallowed: provisioning is invisible by design (no UI surface).
+ */
 async function provisionPack(pack: RegistryPack, packsRoot: string): Promise<boolean> {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      // Progress is swallowed: provisioning is invisible by design (no UI surface).
-      await installPack(pack, swallowProgress, packsRoot)
-      verifyRequiredSounds(packsRoot, pack.name)
-      return true
-    } catch (err) {
-      const last = attempt === MAX_ATTEMPTS
-      logError('main:provisionPacks', {
-        message: `provisioning '${pack.name}' failed (attempt ${attempt}/${MAX_ATTEMPTS})${last ? '' : ' - backing off'}`,
-        err
-      })
-      if (last) return false
-      await sleep(RETRY_BASE_MS * 2 ** (attempt - 1))
-    }
-  }
-  return false
+  const res = await installPackWithRetry(pack, swallowProgress, { targetRoot: packsRoot })
+  if (!res.ok) return false
+  verifyRequiredSounds(packsRoot, pack.name)
+  return true
 }
 
 /**
