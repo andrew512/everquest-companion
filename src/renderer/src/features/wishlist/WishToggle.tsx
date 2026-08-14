@@ -39,7 +39,7 @@
 // owner granted it (the hover compare card, which is not interactive and never opens upward).
 
 import { type JSX } from 'react'
-import { Button } from '@mui/material'
+import { Box, Button } from '@mui/material'
 
 /**
  * The two sentences, in ONE place, so the parity the owner ruled for cannot drift apart again.
@@ -95,12 +95,23 @@ export default function WishToggle({
       aria-label={wished ? `Remove ${name} from your wish list` : `Add ${name} to your wish list`}
       title={wished ? WISH_REMOVE_TITLE : WISH_ADD_TITLE}
       onClick={onToggle}
-      // `minWidth` is stated so the button does not RESIZE when it is clicked: both surfaces sit in
-      // a `nowrap` row where a control that grew mid-click would shove the text beside it. ONE
-      // number now that there is one pair of words — the wider of the two, "Remove from wish list".
-      sx={{ flexShrink: 0, minWidth: 168 }}
+      // ONE STATED WIDTH FOR BOTH LABELS, so the button does not RESIZE when it is clicked: both
+      // surfaces sit in a `nowrap` row where a control that grew mid-click would shove the text
+      // beside it. 168 is the wider of the pair, "Remove from wish list".
+      //
+      // …AND IT SHRINKS, WHICH IS THE WIDTH COST BEING PAID RATHER THAN PASSED ON (JOS-346). The
+      // control used to refuse to shrink at all, which was free while the gear table had the short
+      // wording and is not free now: the Item column is a share of a fixed table, and at a narrow
+      // pane with the era chip up, an unshrinkable 168px control took the whole cell and left the
+      // ITEM NAME at zero width — an unreadable, unclickable row (caught by gear.e2e.mts's Back
+      // round trip, which clicks that name). So both give: the flex line shrinks the name and this
+      // control in proportion, each keeps a legible share, and the label clips with the full
+      // sentence still in `title`. Same width for both states either way, so a click never resizes.
+      sx={{ flexShrink: 1, width: 168, minWidth: 0 }}
     >
-      {wished ? LABEL.remove : LABEL.add}
+      <Box component="span" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {wished ? LABEL.remove : LABEL.add}
+      </Box>
     </Button>
   )
 }
