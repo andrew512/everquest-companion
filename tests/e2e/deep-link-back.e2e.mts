@@ -44,6 +44,7 @@ import {
   failures,
   note,
   reportRun,
+  settle,
   settleCount,
   settleGone,
   settleStable,
@@ -64,6 +65,9 @@ const LOOT_ROW = '[data-testid="loot-row"]'
 const LOOT_BACK = '[data-testid="loot-back"]'
 const LOOT_CRUMB = '[data-testid="loot-breadcrumb-root"]'
 const MOBS_BACK = '[data-testid="mobs-back"]'
+/** The mob page's Kills tally — the number JOS-350 reported as 0 on a mob the Mobs tab counted.
+ *  Its first text line is the value; the label and the "last <date>" hint follow it. */
+const KILL_STAT = '[data-testid="mob-stat-kills"]'
 
 /** Wait for a selector to be mounted; false rather than a throw, so a step can report instead. */
 function appears(page: Page, sel: string, ms = 20_000): Promise<boolean> {
@@ -189,6 +193,28 @@ async function stepMobRoundTrip(page: Page): Promise<void> {
   }
   await page.click(KILL_LINK, { timeout: 15_000 })
   if (!check('a recent-kill name opens the Mobs tab’s creature page', await appears(page, MOBS_BACK, 30_000))) return
+  // JOS-350. The row that opened this page IS a kill of this mob, so the page's own Kills tally
+  // cannot read 0 — and reading 0 is exactly what it did before the page joined the kills module
+  // for itself (the caller attached no record, and the combat-fed name carries a ` (N)` suffix no
+  // record is keyed by). Asserted on the page reached from the KILL FEED, which is the surface the
+  // report came from; the arrival is already proven above, so a missing tally is a red, not a note.
+  // WAIT FOR THE CONDITION, NEVER FOR THE CLOCK: the page mounts before the kills module's
+  // snapshot has crossed IPC, so the tally is legitimately '0' for one paint. `settle` re-reads
+  // until it is not — a real miss simply burns the timeout and reports the 0 it kept reading.
+  if (await appears(page, KILL_STAT, 20_000)) {
+    const tally = await settle(
+      async () => Number((await textOf(page, KILL_STAT)).split('\n')[0]?.trim()),
+      (n) => Number.isFinite(n) && n >= 1,
+      { timeoutMs: 15_000 }
+    )
+    check(
+      'the mob page opened from a kill row counts that kill (JOS-350: it read 0)',
+      Number.isFinite(tally) && tally >= 1,
+      String(tally)
+    )
+  } else {
+    check('the mob page shows its Kills tally', false)
+  }
   // Rendered text, not the source string: MUI buttons carry `text-transform: uppercase`, so the
   // DOM says OVERVIEW where the code says Overview. The identity is the word, not its casing.
   const label = (await textOf(page, MOBS_BACK)).replace(/\s+/g, ' ').trim()
