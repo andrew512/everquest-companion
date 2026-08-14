@@ -37,7 +37,7 @@ import { saveUserOverlay } from './data/overlayPersistence'
 import { startQueueFlush, stopQueueFlush } from './feedback'
 import { startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
-import { applyGraphicsSafeMode } from './graphics'
+import { applyGraphicsCompatibilityFlags, applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
 // The wiki art this build SHIPS (JOS-198). Pure path probing — Electron's three path facts are
 // passed in below, so the module itself imports nothing from electron.
@@ -81,6 +81,13 @@ registerAppSchemes(protocol)
 // without any UI, which is the case it exists for: you cannot open Preferences in a window you
 // cannot see. All of the reasoning lives in graphics.ts.
 applyGraphicsSafeMode()
+
+// …and the flags this MACHINE needs, on the same before-`ready` law (JOS-352). `appendSwitch` is
+// read while Electron assembles the GPU process and ignored afterwards, so it belongs in this
+// statement and not in `whenReady`. On real Windows the list is EMPTY and this is a no-op; under a
+// detected Wine prefix it is the two flags that let the app keep the GPU instead of white-screening
+// on a software renderer Wine does not implement (shared/wineDetect.ts WINE_CHROMIUM_FLAGS).
+applyGraphicsCompatibilityFlags()
 
 // Cold-start stopwatch: module scope is the earliest this process can measure from, and the
 // number is bucketed (never sent raw) into `sessionStart` when the window exists. See

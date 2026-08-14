@@ -19,6 +19,12 @@
 // way. So each caption states WHO decided — the honesty convention, applied to a decision the app
 // made about the user rather than the other way round.
 //
+// …AND SINCE JOS-352 THE DETECTION SAYS THE OPPOSITE THING ABOUT THE FIRST SWITCH. A Wine prefix
+// asks for opaque overlays and asks safe mode to stay OFF: on Windows, "draw without the graphics
+// card" means Chromium's D3D11 WARP renderer, which Wine does not implement at all — the reported
+// symptom is a white client area, from the compatibility path itself. So under Wine this card
+// warns about the switch it used to set (SAFE_MODE_WINE_COPY below) instead of explaining it.
+//
 // THE TOGGLE IS THEIRS EITHER WAY. What each Switch shows is the EFFECTIVE state, and flipping one
 // writes an EXPLICIT 'on'/'off' that outranks the detection in both directions (the stored value is
 // three-state — shared/graphicsPrefs.ts). So the Wine user who prefers see-through overlays turns
@@ -126,14 +132,35 @@ export function graphicsSection(): PrefSection {
   }
 }
 
-/** The safe-mode caption in all four states. "Wine detected" leads, because it is the fact that
- *  explains everything after it. */
+/**
+ * The safe-mode caption in all four states, on an ordinary machine.
+ *
+ * TWO OF THESE ARE CURRENTLY UNREACHABLE AND THAT IS ON PURPOSE (JOS-352). Nothing recommends safe
+ * mode any more — the Wine recommendation was INVERTED, because drawing without the graphics card
+ * on Windows means D3D11 WARP and Wine does not implement it — so `auto` and `overridden` can only
+ * be reached by some future detection. They are written for that reader rather than deleted: the
+ * resolver still has four states, and copy that describes three of them would be the next reader's
+ * bug.
+ */
 const SAFE_MODE_COPY: GraphicsCopy = {
   on: 'On from the next launch. Try this first if the app itself flickers, goes black, or will not paint.',
   off: 'Off. The app draws with your graphics card, which is what you want unless it is misbehaving.',
-  auto: 'Wine detected - the app draws without the graphics card. Under Wine that path is what leaves windows blank. Turn this off to use the graphics card anyway, from the next launch.',
+  auto: 'The app turned this on for this machine - it draws without the graphics card. Turn it off to use the graphics card anyway, from the next launch.',
   overridden:
-    'Off, because you turned it off. Wine was detected, where drawing with the graphics card can leave windows blank.'
+    'Off, because you turned it off, on a machine where the app would have drawn without the graphics card.'
+}
+
+/**
+ * …and the two states that read differently under Wine, where this switch is a TRAP rather than a
+ * remedy (JOS-352). The old advice for a window that will not paint was "turn safe mode on", and
+ * under Wine that is precisely what produces the white window: safe mode pins Chromium to a
+ * software renderer Wine cannot provide, while the graphics card path works. Anyone arriving here
+ * from that advice reads the sentence that matches their machine.
+ */
+const SAFE_MODE_WINE_COPY: GraphicsCopy = {
+  ...SAFE_MODE_COPY,
+  on: 'On, because you turned it on - and under Wine this is the setting that leaves the window blank or white. Turn it back off if nothing paints.',
+  off: 'Off. The app draws with your graphics card, which is the path that works under Wine.'
 }
 
 /** The opaque-overlay caption in all four states — the one JOS-31 exists for. */
@@ -168,7 +195,11 @@ export function GraphicsSetting(): JSX.Element {
           }
         />
         <Typography variant="caption" color="text.secondary" data-testid="pref-graphics-safe-mode-note">
-          {caption(resolved.safeMode, env.auto.safeMode, SAFE_MODE_COPY)}
+          {caption(
+            resolved.safeMode,
+            env.auto.safeMode,
+            env.wine ? SAFE_MODE_WINE_COPY : SAFE_MODE_COPY
+          )}
         </Typography>
       </Stack>
 

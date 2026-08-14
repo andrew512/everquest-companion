@@ -1715,7 +1715,7 @@ plumbing proven). Reuses the tier-2 lifecycle via
   cursor ring is NEVER opaque. Neither switch joins the shared settings
   profile — they describe one machine's driver. Proven end-to-end in
   `tests/e2e/overlay-sync.e2e.mts`. Full story: docs/agents-archive.md.
-- **…AND UNDER WINE THE APP TAKES THAT PATH BY ITSELF (JOS-31).** The
+- **…AND UNDER WINE THE APP COMPENSATES BY ITSELF (JOS-31).** The
   switches are THREE-STATE (`'auto' | 'on' | 'off'`, store v11) and
   `shared/wineDetect.ts` decides what `auto` means. **PRECEDENCE, one
   function, three rungs**: `EQ_DISABLE_GPU` > an explicit user choice >
@@ -1726,9 +1726,26 @@ plumbing proven). Reuses the tier-2 lifecycle via
   filenames, never a `wine*` pattern), and the env vars Wine's own ntdll
   injects (WINEHOMEDIR et al — NOT `WINEPREFIX`, which is launcher-set).
   Gated on `platform === 'win32'`. The 10→11 migration reads a stored
-  `false` as 'auto' and `true` as 'on'. **NOTHING HERE WAS VERIFIED UNDER
-  WINE** — the tests pin the NEGATIVE exhaustively and the reporter is the
-  verification path. Rejected signals and why: docs/agents-archive.md.
+  `false` as 'auto' and `true` as 'on'. Rejected signals and why:
+  docs/agents-archive.md.
+- **AND THE CONCLUSION IT DREW WAS BACKWARDS: SAFE MODE IS THE ONE PATH WINE
+  CANNOT DO (JOS-352, GitHub issue 28 — the first Wine measurement this repo
+  has ever had).** JOS-31 shipped unverified and the report inverted it:
+  `disableHardwareAcceleration()` on Windows does not mean "no GPU", it pins
+  ANGLE to **D3D11 WARP**, a Microsoft binary Wine does not implement, so the
+  compatibility path was the only one that could not paint (white client area;
+  `eglInitialize D3D11Warp failed`, `all (1) EGL display types failed`) while
+  hardware D3D11 works in a modern bottle. `WINE_GRAPHICS_AUTO` is
+  `{safeMode:false, opaqueOverlays:true}` now, and the hardware path is paid
+  for with two Chromium flags — `WINE_CHROMIUM_FLAGS` =
+  `--disable-direct-composition` (DComp is `E_NOTIMPL`) and `--in-process-gpu`
+  (the GPU process takes a `0xC0000005` in init that DComp is NOT the cause
+  of), appended before `ready` by `applyGraphicsCompatibilityFlags()`. GATED ON
+  THE DETECTION, NEVER ON A PREFERENCE — `--in-process-gpu` trades away crash
+  containment, so real Windows appends nothing whatever the user has stored,
+  and an explicit `safeMode:'on'` still wins for the Wine user who wants it
+  (the card WARNS there rather than explaining). The access violation is
+  unidentified: this is a workaround to re-measure when Wine or Electron moves.
 
 ## Cloud (feedback backend + future web) — state as of 2026-08-04
 
