@@ -240,6 +240,12 @@ export const IPC = {
   // renderer(main app) -> main: read / patch the overlay auto-hide prefs. Returns OverlayAutoHidePrefs.
   overlayAutoHideGet: 'overlayAutoHide:get',
   overlayAutoHideSet: 'overlayAutoHide:set',
+  // ---- overlay snapping (JOS-217; shared/overlaySnap.ts) ----
+  // renderer(main app) -> main: read / patch the snap preference. Returns OverlaySnapPrefs.
+  // The patch is re-validated AT THE HANDLER through the same normalizer the store reader uses,
+  // and it is OFF unless somebody has turned it on — an absent key drags exactly as it always did.
+  overlaySnapGet: 'overlaySnap:get',
+  overlaySnapSet: 'overlaySnap:set',
   // main -> renderer(ring window ONLY): the ring's size/thickness changed. Payload CursorRingPrefs.
   onCursorRingConfig: 'cursorRing:config',
   // main -> renderer(ring window ONLY): one cursor sample, in the ring window's own CSS px.
