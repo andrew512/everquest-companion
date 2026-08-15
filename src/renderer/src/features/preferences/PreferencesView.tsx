@@ -219,7 +219,7 @@ function overlaysSection(): PrefSection {
         id: 'overlay-autohide',
         label: 'Hide overlays automatically',
         keywords:
-          'overlay overlays meter meters hide auto autohide show running focus focused unfocused alt tab background desktop game closed floating fullscreen full screen exclusive windowed borderless display mode flash flicker stutter freeze hitch',
+          'overlay overlays meter meters hide auto autohide show running focus focused unfocused alt tab background desktop game closed floating',
         content: <OverlayAutoHideSetting />
       },
       ...snapItems(),

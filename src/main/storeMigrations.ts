@@ -81,7 +81,7 @@ export const SCHEMA_VERSION_KEY = 'schemaVersion'
  * The schema the code running right now expects. Bump by exactly one whenever a persisted
  * shape changes, and add the matching MIGRATIONS entry in the same commit.
  */
-export const CURRENT_SCHEMA_VERSION = 12
+export const CURRENT_SCHEMA_VERSION = 13
 
 export interface Migration {
   /** Version this step produces. Steps run in ascending `to` order, contiguously. */
@@ -582,6 +582,33 @@ const migrateToV12: Migration = {
   }
 }
 
+// ------------------------------- 12 → 13: the exclusive-fullscreen note's memory (JOS-375)
+//
+// ONE key deleted: `eqExclusiveNoticeDismissedVersion`, the app version at which an install
+// dismissed the JOS-368 Preferences note about EverQuest running in exclusive fullscreen.
+//
+// THE NOTE WAS WRONG, NOT MERELY UNWANTED. It told a player their game was in an EXCLUSIVE
+// display mode — the one an always-on-top overlay cannot share — on the strength of
+// `Fullscreen=1` in `eqclient.ini`. On the current client that setting is a BORDERLESS
+// fullscreen WINDOW, which shares the screen with an overlay perfectly well, so the sentence
+// could never be true for anybody it was shown to. It was removed rather than reworded, and its
+// memory has nothing left to remember.
+//
+// A STEP RATHER THAN A TOLERATED ORPHAN, which is this file's standing answer for a key whose
+// reader is gone (1 → 2's `liveLoot`, verbatim): a dead key left in the file is a thing a future
+// reader has to look up before they can rule it out, and the whole point of a versioned chain is
+// that the file on disk matches the shape the code believes in. `delete` on a key that is not
+// there is a no-op, so this is a no-op for every install that never dismissed the note — which,
+// since JOS-368 shipped in no release at all, is every install outside the dev cohort.
+const migrateToV13: Migration = {
+  to: 13,
+  describe: "drop eqExclusiveNoticeDismissedVersion (the note it remembered is gone)",
+  migrate(data) {
+    delete data.eqExclusiveNoticeDismissedVersion
+    return data
+  }
+}
+
 /**
  * The chain, ascending. APPEND ONLY — never renumber, never edit a shipped step (a store
  * out there was migrated by the old text and will never run it again), never delete one:
@@ -598,7 +625,8 @@ export const MIGRATIONS: readonly Migration[] = [
   migrateToV9,
   migrateToV10,
   migrateToV11,
-  migrateToV12
+  migrateToV12,
+  migrateToV13
 ]
 
 /** Version recorded in `data`; anything absent, non-integer or < 1 means "pre-framework" ⇒ 1. */

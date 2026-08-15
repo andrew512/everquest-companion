@@ -35,15 +35,8 @@
  *   2. A COLD RENDERER. After a reload nothing is cached at all, so the pane's very first paint is
  *      the one the hydration gate has to hold. Same claim, from zero.
  *
- * AND ONE PASSENGER (JOS-368): the exclusive-fullscreen note, which is a Preferences card that
- * paints from the same snapshot and whose whole claim — appears only when it is earned, and only
- * once per install — needs a cold renderer twice. That is the manoeuvre this file already owns, so
- * it rides here rather than paying a second launch for it. See `stepExclusiveNote`.
- *
  * Run: `npm run test:e2e -- prefs-first-paint`
  */
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type { Page } from 'playwright-core'
 import {
   buildIfStale,
@@ -53,7 +46,6 @@ import {
   failures,
   note,
   reportRun,
-  settle,
   settleGone
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
@@ -196,111 +188,6 @@ async function stepColdRenderer(page: Page): Promise<void> {
   )
 }
 
-// ---------------------------------------------------- the exclusive-fullscreen note (JOS-368)
-
-const NOTE = '[data-testid="pref-eq-exclusive-note"]'
-
-/** The open-state map straight from main, so the arrange below rests on the store and not the UI. */
-function overlayState(page: Page): Promise<Record<string, boolean>> {
-  return page.evaluate(() =>
-    (window as unknown as { eq: { getOverlayState: () => Promise<Record<string, boolean>> } }).eq.getOverlayState()
-  )
-}
-
-/**
- * THE NOTE APPEARS ONLY WHEN IT IS EARNED, AND ONLY ONCE PER INSTALL (JOS-368).
- *
- * It rides in this spec rather than its own because it is a Preferences card that paints from the
- * hydration snapshot, which is exactly what this file already owns — and because the claim needs a
- * COLD renderer twice, which is the one manoeuvre this spec is already set up for.
- *
- * WHAT IS ARRANGED. The staged install gets an `eqclient.ini` saying `WindowedMode=FALSE`, which
- * is EverQuest's spelling of exclusive fullscreen. That alone must not be enough: the note is
- * about a collision between an overlay and the game, so with EVERY overlay closed there is nothing
- * to warn anybody about. Opening one completes the condition, and the two halves are asserted in
- * that order so a build that showed the note to every exclusive-fullscreen player — overlays or
- * not — fails here rather than in the field.
- *
- * CLOSING THEM ALL IS AN EXPLICIT STEP, and the first draft of this spec got it wrong by assuming
- * a fresh install has none open. The CELEBRATION TOAST is the one kind that defaults ON (store.ts,
- * owner 2026-08-05), which is also why the note is right to count it: a card that pops over an
- * exclusive-fullscreen game for a few seconds is exactly the z-order change this whole ticket is
- * about. So the silent half of the claim has to be arranged rather than assumed.
- *
- * WHY EACH ASSERTION IS BEHIND A RELOAD. The pane's snapshot is a per-renderer cache (JOS-340), so
- * the state that matters is what a FRESH renderer is told. A reload is also the strongest form of
- * the "remembered" claim: the dismissal has to be on disk, not in a React state or a warm cache.
- */
-async function stepExclusiveNote(page: Page, installDir: string): Promise<void> {
-  writeFileSync(join(installDir, 'eqclient.ini'), '[Defaults]\r\nWindowedMode=FALSE\r\n')
-
-  // Exclusive fullscreen, every overlay closed: the game's mode alone earns nobody a sentence.
-  // E2E never SHOWS a window (src/main/e2e.ts) and does not need to — the note reads the persisted
-  // open-state, which is what a toggle writes.
-  await page.evaluate(async () => {
-    const eq = (window as unknown as {
-      eq: {
-        getOverlayState: () => Promise<Record<string, boolean>>
-        toggleOverlay: (k: string) => Promise<boolean>
-      }
-    }).eq
-    for (const [kind, open] of Object.entries(await eq.getOverlayState())) {
-      if (open) await eq.toggleOverlay(kind)
-    }
-  })
-  // SETTLED, not read once. `setOverlayOpen` closes the WINDOW and Electron's `closed` follows on
-  // its own turn of the loop, so an immediate read of the open-state map can still see the window
-  // that is on its way out — measured here as a one-in-a-run failure of this very line.
-  const openState = await settle(
-    () => overlayState(page),
-    (s) => Object.values(s).every((open) => !open),
-    { timeoutMs: 8_000 }
-  )
-  check(
-    'arrange: every overlay kind is closed, the toast included (it is the one that ships on)',
-    Object.values(openState).every((open) => !open),
-    JSON.stringify(openState)
-  )
-
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
-  await dismissFirstRunNotice(page)
-  await openPrefs(page)
-  await openSection(page, 'overlays', OVERLAYS)
-  check(
-    'exclusive fullscreen with NO overlay open says nothing - the note is about a collision, not a setting',
-    (await countOf(page, NOTE)) === 0
-  )
-
-  // …now open one.
-  await page.evaluate(() =>
-    (window as unknown as { eq: { toggleOverlay: (k: string) => Promise<boolean> } }).eq.toggleOverlay('fight')
-  )
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
-  await dismissFirstRunNotice(page)
-  await openPrefs(page)
-  await openSection(page, 'overlays', OVERLAYS)
-  check('an open overlay over an exclusive-fullscreen game gets the note', (await countOf(page, NOTE)) === 1)
-
-  // DISMISS IT. The close control is the Alert's own, so this is the affordance a player uses.
-  await page.click(`${NOTE} button`, { timeout: 15_000 })
-  await settleGone(page, NOTE, { timeoutMs: 8_000 })
-
-  // A rail click is a fresh MOUNT against the warm cache; a reload is a fresh RENDERER against the
-  // store. Both have to stay quiet, and only the second one proves the dismissal was written down.
-  await openSection(page, 'game', GAME)
-  await openSection(page, 'overlays', OVERLAYS)
-  check('a section switch does not bring it back - the warm snapshot took main’s answer', (await countOf(page, NOTE)) === 0)
-
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 })
-  await dismissFirstRunNotice(page)
-  await openPrefs(page)
-  await openSection(page, 'overlays', OVERLAYS)
-  check(
-    'and a COLD renderer does not either: dismissed is remembered per install, on disk',
-    (await countOf(page, NOTE)) === 0
-  )
-}
-
 async function main(): Promise<void> {
   buildIfStale()
   const consoleErrors: string[] = []
@@ -328,9 +215,6 @@ async function main(): Promise<void> {
     await stepArrange(page)
     await stepSectionSwitch(page)
     await stepColdRenderer(page)
-    // LAST, and deliberately so: it reloads twice more and writes to the staged install, so
-    // running it ahead of the first-paint steps would move the ground under them.
-    await stepExclusiveNote(page, log.installDir)
     if (failures.length) await dumpArtifacts(page, 'prefs-first-paint-FAIL')
   } finally {
     await app.close()

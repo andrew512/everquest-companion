@@ -10,7 +10,7 @@
 //
 // TWO HALVES, AND THIS FILE IS THE ONE A NODE TEST CAN SEE.
 //
-//   1. HERE: the snapshot mechanics. That the batch is ONE batch (a gate that fired nineteen reads
+//   1. HERE: the snapshot mechanics. That the batch is ONE batch (a gate that fired eighteen reads
 //      per mount would be a different bug), that concurrent mounts share it, that a failure does
 //      not become permanent, and — the load-bearing one — that a WRITE updates the cache, because
 //      that is what makes the SECOND mount of a card correct after the user has changed something.
@@ -60,10 +60,6 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     getOverlaySnap: answer('getOverlaySnap', { enabled: true }),
     getOverlayState: answer('getOverlayState', { toast: true }),
     getToastConfig: answer('getToastConfig', { locked: false }),
-    // The exclusive-fullscreen note (JOS-368). It is in the BATCH rather than read by the card,
-    // for the same reason every switch above is: a sentence that appears a frame after the pane
-    // is the same defect as a switch that paints the wrong way and corrects itself.
-    getEqWindowNotice: answer('getEqWindowNotice', { mode: 'exclusive', show: true }),
     getBuffTrust: answer('getBuffTrust', { externals: ['Faelin'] }),
     getCursorRing: answer('getCursorRing', { enabled: true, sizePx: 60, thicknessPx: 5, color: 'white' }),
     getVoicePrefs: answer('getVoicePrefs', { engine: 'system', voice: 'x', rate: 1, volume: 1 }),
@@ -86,9 +82,9 @@ test('one read answers every card in the pane, and it snaps the text size to the
   const { reader, calls } = stubReader()
   const snap = await readPrefsSnapshot(reader)
 
-  // NINETEEN reads, one batch. The number is not the claim; the claim is that the gate asks each
+  // EIGHTEEN reads, one batch. The number is not the claim; the claim is that the gate asks each
   // question exactly once, so a pane that mounts does not stampede the store.
-  assert.equal(calls(), 19, 'every read fires exactly once')
+  assert.equal(calls(), 18, 'every read fires exactly once')
 
   // A sample across the KINDS of value, because the defect was never boolean-only: two switches
   // that disagree with their defaults, a ladder stop, a slider pair, and two counts.
@@ -132,7 +128,7 @@ test('two mounts in one frame share ONE batch', async () => {
   resetPrefsSnapshotForTests()
   const { reader, calls } = stubReader()
   const [a, b] = await Promise.all([loadPrefsSnapshot(reader), loadPrefsSnapshot(reader)])
-  assert.equal(calls(), 19, 'not thirty-eight')
+  assert.equal(calls(), 18, 'not thirty-six')
   assert.equal(a, b)
   resetPrefsSnapshotForTests()
 })
