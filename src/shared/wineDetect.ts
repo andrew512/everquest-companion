@@ -7,7 +7,14 @@
 // restarted. That is the JOS-40 family exactly: a transparent, frameless, always-on-top window is
 // the one window shape whose correctness rests entirely on the compositor doing per-pixel alpha,
 // and Wine's is a translation layer over somebody else's. So the app stops waiting to be asked and
-// takes the safe path when it finds itself inside a Wine prefix.
+// compensates when it finds itself inside a Wine prefix.
+//
+// WHAT THE PREFIX IS COMPENSATED WITH CHANGED IN JOS-352; THE DETECTION DID NOT. The conclusion
+// this module drew — turn safe mode on — was itself the one graphics path Wine cannot do (safe
+// mode pins ANGLE to D3D11 WARP), so it now recommends the OPPOSITE and pays for the hardware path
+// with two Chromium flags instead. The signals below, and the false-positive standard they are
+// held to, are untouched: `WINE_GRAPHICS_AUTO` and `WINE_CHROMIUM_FLAGS` are the policy, and
+// everything above them is the evidence for the question "is this Wine", which never changed.
 //
 // THE WHOLE DESIGN IS "CONSERVATIVE OR NOTHING". A false negative costs a Wine user the automatic
 // fallback — they still have both switches, the env var and a support reply. A false positive
@@ -190,27 +197,75 @@ export function detectWine(probe: WineProbe): WineDetection {
 /**
  * WHAT A DETECTED WINE PREFIX ASKS FOR — the policy, in one place, stated rather than implied.
  *
- * BOTH switches, and each has its own argument rather than the second riding along with the first:
+ *   safeMode — **FALSE SINCE JOS-352, AND THE INVERSION IS THE WHOLE TICKET.** It shipped `true`
+ *     on WineHQ bug 48618 ("Multiple applications show black client area on startup (… Electron
+ *     based apps) ('--disable-gpu' command line parameter is a workaround)"), reasoning that
+ *     Electron's cross-process GL into another process's HWND is what winex11.drv cannot do. That
+ *     reasoning was about a Wine and an Electron that have both moved. MEASURED under CrossOver on
+ *     macOS with D3D Metal (github.com/jmoyers/everquest-companion issue 28, Electron 43 /
+ *     Chromium 140), `disableHardwareAcceleration()` on WINDOWS does not mean "no GPU" — it pins
+ *     ANGLE to **D3D11 WARP**, Microsoft's software rasteriser, which Wine does not implement at
+ *     all. The reporter's log is unambiguous: `eglInitialize D3D11Warp failed`, `ANGLE
+ *     Display::initialize error 12289: No available renderers`, `all (1) EGL display types
+ *     failed`, GPU process gone — the safe path pinned the ONE backend that cannot exist here and
+ *     left nothing to fall back to. Meanwhile HARDWARE D3D11 is real in a modern bottle (DXVK /
+ *     D3D Metal), so the compatibility path was the only broken one: a white client area, in an
+ *     app whose log tailing, parsing and replay were all healthy in the same run.
+ *     The two remaining GPU-process faults on the hardware path are handled by
+ *     `WINE_CHROMIUM_FLAGS` below rather than by giving up on the GPU.
+ *   opaqueOverlays — UNCHANGED at `true`, and independently argued: the reported symptom is a
+ *     transparent frameless overlay stuck on screen as a black box. Wine's layered-window path
+ *     needs a compositing WM to produce real per-pixel alpha, and Electron's own docs already
+ *     require `--enable-transparent-visuals` for transparency on Linux — a flag this app does not
+ *     pass. An opaque window never enters that path at all. NOTE, honestly: there is no bug report
+ *     stating "Electron `transparent:true` is opaque black under Wine" — the user's report IS the
+ *     evidence, and the mechanism above is why it is believable.
  *
- *   safeMode — the older, broader half of this ticket: blank windows under Wine. This one is not a
- *     guess. WineHQ bug 48618 is titled, in part, "Multiple applications show black client area on
- *     startup (… Electron based apps) ('--disable-gpu' command line parameter is a workaround)",
- *     and the mechanism named on it is exactly this app's shape: Electron renders GL from its
- *     separate GPU PROCESS into an HWND owned by the browser process, and winex11.drv does not
- *     implement cross-process GL into another process's window. `disableHardwareAcceleration()`
- *     is `--disable-gpu`, i.e. the documented workaround, applied without asking. The trade is not
- *     close: software rendering costs frames, a window that never paints costs the whole app.
- *   opaqueOverlays — the reported symptom (a transparent frameless overlay stuck on screen as a
- *     black box). Wine's layered-window path needs a compositing WM to produce real per-pixel
- *     alpha, and Electron's own docs already require `--enable-transparent-visuals` alongside
- *     `--disable-gpu` for transparency on Linux — flags this app does not pass and which fight the
- *     one above. An opaque window never enters that path at all. NOTE, honestly: unlike safe mode
- *     there is no bug report stating "Electron `transparent:true` is opaque black under Wine" —
- *     the user's report IS the evidence, and the mechanism above is why it is believable.
- *
- * Either can be turned off by the user in one click, and that answer outranks this one for good.
+ * Either can be turned ON by the user in one click, and that answer outranks this one for good —
+ * including the Wine user who wants software rendering back (`resolveGraphicsSwitch`, and the
+ * flags below are gated on the PREFIX, never on this recommendation).
  */
-export const WINE_GRAPHICS_AUTO: GraphicsAuto = { safeMode: true, opaqueOverlays: true }
+export const WINE_GRAPHICS_AUTO: GraphicsAuto = { safeMode: false, opaqueOverlays: true }
+
+/**
+ * CHROMIUM COMMAND-LINE FLAGS A WINE PREFIX NEEDS, appended (via `app.commandLine.appendSwitch`)
+ * before `ready` — the second half of JOS-352, and the price of keeping the GPU.
+ *
+ * With safe mode off the WARP errors go away entirely and two NEW faults surface, both measured on
+ * the same report:
+ *
+ *   disable-direct-composition — `DCompositionCreateDevice3 failed: Not implemented.
+ *     (0x80004001)`. `E_NOTIMPL`: Wine has no DirectComposition. This one silences a real error
+ *     and is the honest fit for the environment; it is NOT, on its own, what makes the app paint.
+ *   in-process-gpu — `GPU process exited unexpectedly: exit_code=-1073741819` (`0xC0000005`, an
+ *     access violation), three times, then Chromium gives up. Disabling DComp does not stop it, so
+ *     DComp is a red herring and the fault is elsewhere in GPU-process init. Running the GPU
+ *     in-process avoids it, and the app then renders correctly and is fully usable.
+ *
+ * TWO THINGS STATED PLAINLY, because both are the kind of thing a future reader will otherwise
+ * have to rediscover. (1) `--in-process-gpu` gives up crash CONTAINMENT: a GPU fault takes the
+ * whole app down instead of being restarted behind your back. Under Wine that beats a guaranteed
+ * white window; on real Windows it would be a bad trade for nothing, which is exactly why this
+ * list is gated on the detection and empty everywhere else. (2) The underlying access violation is
+ * UNIDENTIFIED — this is a workaround, not a fix, and it is the first thing to re-measure when
+ * Wine or Electron moves.
+ *
+ * `--no-sandbox` was tried by the reporter and turned out NOT to be required; it is not here.
+ */
+export const WINE_CHROMIUM_FLAGS: readonly string[] = ['disable-direct-composition', 'in-process-gpu']
+
+/**
+ * The Chromium flags this machine needs, given the detection — empty on anything that is not a
+ * Wine prefix, which is every real Windows install and every native build (`detectWine` gates on
+ * `win32` first, so a Linux or macOS build can never reach this list either).
+ *
+ * A FUNCTION RATHER THAN THE CONSTANT so the caller in main/ appends what it is handed and holds
+ * no opinion about when: "which flags" is a fact about the machine and belongs beside the module
+ * that decided what the machine is.
+ */
+export function chromiumFlagsFor(detection: WineDetection): readonly string[] {
+  return detection.wine ? WINE_CHROMIUM_FLAGS : []
+}
 
 /**
  * The detection plus what it recommends — the payload the Preferences card hydrates, so the

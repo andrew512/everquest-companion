@@ -24,7 +24,7 @@ import { EpochDetector } from './log/epochDetector'
 import { SessionDetector } from './log/sessionDetector'
 import { baselineOverlay, loadUserSources } from './data/overlayPersistence'
 import { BASELINE_SOURCE } from './data/messageOverlay'
-import { spellCorrectionsReport } from './data/spellDb'
+import { spellCorrectionsReport, spellPlaceholdersReport, spellRemovalsReport } from './data/spellDb'
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
 import { createModules } from './modules/wiring'
@@ -199,6 +199,33 @@ logInfo(
     )
   }
 }
+// The REMOVALS layer (JOS-337), counted on its own line rather than folded into the corrections
+// numbers — the two answer different questions and adding them would misreport both. `removed`
+// counts DB rows dropped for spells EQ Legends does not have; a `satisfied` entry is a TOMBSTONE,
+// an entry whose page a re-scrape already dropped, and it is NAMED rather than counted so a dead
+// entry is visible in a boot log instead of merely cheap.
+{
+  const r = spellRemovalsReport()
+  if (r) {
+    const tombstones = r.satisfied.length > 0 ? ` Tombstones: ${r.satisfied.join(', ')}.` : ''
+    logInfo(
+      `[everquest-companion] Spell removals: ${r.removed} row${r.removed === 1 ? '' : 's'} dropped (absent from EQ Legends), ${r.satisfied.length} already absent upstream.${tombstones}`
+    )
+  }
+}
+// The PLACEHOLDER pass (JOS-342) — the scrape's stub messages (`You .`, `Someone .`, `N/A`) blanked
+// so the absent-field rules downstream read them as the nothing they are. NAMED rather than
+// counted, like the tombstones above: this pass DELETES text, so a boot log that only said "10"
+// would give a reader no way to notice it had started deleting something else.
+{
+  const p = spellPlaceholdersReport()
+  if (p) {
+    const which = p.rows.map((r) => `${r.spell}/${r.field}`).join(', ')
+    logInfo(
+      `[everquest-companion] Spell placeholders: ${p.nulled} stub message${p.nulled === 1 ? '' : 's'} read as absent${which ? ` (${which})` : ''}.`
+    )
+  }
+}
 logInfo(`[everquest-companion] Spell DB: ${spellDb.spells.length} spells (${spellDb.castOnYou.size} unique cast-on-you msgs).`)
 logInfo(
   `[everquest-companion] Mob catalog: ${MOB_CATALOG_SIZE} mobs (scraped drop tables; the live wiki lookup is the fallback).`
@@ -232,6 +259,14 @@ registry.attach(bus)
 // already consumed the event the engine is about to. A pull rather than a copy, because a user
 // edit made between two log lines must be visible to the very next one.
 combat.setRoster(rosterModule)
+// THE CLASS-COMBO SEAM (JOS-305), installed on the same principle and in the same place: the
+// combo module is FIRST in the registration order above, so by the time the engine folds a line
+// the combo model has already consumed it. Its one consumer is the blade-coat clear — a character
+// who stopped being a rogue keeps no poison on their blades, and the log prints nothing when that
+// happens. A pull, so a `/who` row typed between two log lines reaches the very next one; the
+// engine gates HOW OFTEN it pulls (combat/coatClass.ts), because unlike the roster this answer
+// costs a rebuild.
+combat.setCombo(comboModule)
 bus.subscribe((ev, live) => combat.ingestEvent(ev, live))
 // Item-knowledge prefetch (Task #53): when a LIVE loot event arrives, warm the
 // "what's this for" cache in the background (throttled by itemLookup's serialized queue

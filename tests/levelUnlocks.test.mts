@@ -239,20 +239,43 @@ test('the innates the structure derived are placed: PAL Lay on Hands @1, SHD Har
   assert.ok(innates.includes('Harm Touch'), innates.join(', '))
 })
 
-test('every non-Rogue discipline row is LABELED disputed; every Rogue one is not', () => {
+/** Rows a player has confirmed in EQ Legends — `CONFIRMED_UNLOCKS` in src/main/data/levelUnlocks.ts. */
+const CONFIRMED = new Set(['RNG:Disrupting Shot'])
+
+test('every UNCONFIRMED non-Rogue discipline row is LABELED disputed; every Rogue one is not', () => {
   let disputed = 0
   for (const [cls, rows] of Object.entries(REAL.skills)) {
     for (const row of rows ?? []) {
       if (row.kind !== 'disc') continue
       if (cls === 'ROG') assert.equal(row.dispute, undefined, `ROG ${row.name} must carry no dispute`)
-      else {
+      else if (CONFIRMED.has(`${cls}:${row.name}`)) {
+        assert.equal(row.dispute, undefined, `${cls} ${row.name} was confirmed in game — no chip`)
+      } else {
         assert.match(row.dispute ?? '', /only Rogue poison disciplines/, `${cls} ${row.name}`)
         disputed++
       }
     }
   }
-  // BER 2 + MNK 10 + RNG 1 = 13 today; a floor, since a re-scrape may find more.
-  assert.ok(disputed >= 13, `disputed discipline rows: ${String(disputed)}`)
+  // BER 2 + MNK 10 = 12 today (RNG's one row is confirmed); a floor, a re-scrape may find more.
+  assert.ok(disputed >= 12, `disputed discipline rows: ${String(disputed)}`)
+})
+
+test('Disrupting Shot reads level 20 for a Ranger, with NO disputed chip (JOS-351)', () => {
+  // The reporter and the owner both have it at 20 on Legends, so the wiki's whole-table strike
+  // through of RNG disciplines is overridden for this row — and RNG's table is only this row.
+  const rng = comboClassesOf(interval(0, null, [slot(['RNG']), slot(['RNG'])]))
+  const u = unlocksAtLevel(REAL, rng, 20)
+  const row = u.skills.find((r) => r.name === 'Disrupting Shot')
+  assert.ok(row, `no Disrupting Shot at RNG 20: ${u.skills.map((r) => r.name).join(', ')}`)
+  assert.equal(row.kind, 'disc')
+  assert.equal(row.level, 20)
+  assert.equal(row.dispute, undefined, 'Disrupting Shot must not wear the disputed chip')
+  // And it appears at NO other level — a confirmation that also moved the row would be a new claim.
+  for (let level = 1; level <= 65; level++) {
+    if (level === 20) continue
+    const other = unlocksAtLevel(REAL, rng, level).skills.find((r) => r.name === 'Disrupting Shot')
+    assert.equal(other, undefined, `Disrupting Shot also placed at ${String(level)}`)
+  }
 })
 
 test('a real ding produces a real subtitle — the exact string the toast would print', () => {

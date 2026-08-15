@@ -13,6 +13,9 @@ export const IPC = {
   // renderer -> main: this quest's turn-ins, as the instants they happened at (JOS-131). It
   // replaced `progress:setQuestComplete` when completion became a COUNT rather than a flag.
   setQuestTurnIns: 'progress:setQuestTurnIns',
+  // renderer -> main: state (count) or take back (null) ONE item's held count by hand — the
+  // correction for an item the log and the dump cannot see the truth about (JOS-186).
+  setItemOverride: 'progress:setItemOverride',
   // main -> renderer: progress changed (quest completion / inventory), so every
   // view that shows progress stays consistent without re-fetching on a timer.
   onProgress: 'progress:changed',
@@ -73,6 +76,12 @@ export const IPC = {
   // sound packs (discovery + audio bytes)
   listSoundPacks: 'sounds:listPacks',
   getSoundData: 'sounds:getData',
+  // WHICH PACK IS YOURS (JOS-273): the default-pack preference every picker pre-selects, the
+  // suggestion builder authors against and the seeds are written with, plus the tombstones that
+  // stop startup provisioning putting a deleted shipped pack back. The setter takes a pack id or
+  // null ("use whatever the app ships"); both answer the whole normalized blob.
+  getSoundPackPrefs: 'sounds:getPackPrefs',
+  setDefaultSoundPack: 'sounds:setDefaultPack',
   // "bring your own sound" (JOS-68): the user's OWN audio, in the reserved `my-sounds` pack.
   // NO PATH EVER CROSSES THESE. `importUserSounds` opens the OS picker in MAIN and answers
   // with minted soundIds + display labels; `removeUserSound` takes a manifest KEY, never a
@@ -88,6 +97,12 @@ export const IPC = {
   // suggested-alerts wizard (Task #38): a slim, searchable spell catalog derived from
   // the scraped spell DB + live per-spell usage from the buffs module's snapshot.
   spellsCatalog: 'spells:catalog',
+  // ONE spell, in full (JOS-293): every field the committed DB states for it, the derived effect
+  // classes, and the ranks of its line that a source names. The catalog above is the SLIM,
+  // whole-list shape the suggestion wizard filters; this is the deep read behind a hover card, and
+  // it is a separate channel rather than another flag because it takes an argument and answers
+  // about one row. Arg: the display name (VALIDATED at the handler). Never rejects.
+  spellsDetail: 'spells:detail',
 
   // ---- voice alerts / TTS (docs/plans/voice-alerts.md §3) ----
   // The 'system' engine tier needs NO channel at all: Chromium's own `speechSynthesis` lives in
@@ -192,6 +207,31 @@ export const IPC = {
   // all overlay kinds; a window with no fight-scoped surface simply has no listener.
   onFightSelection: 'fightSelection:changed',
 
+  // ---- THE APP-WIDE SCOPE SELECTION (JOS-332) ----
+  // WHICH TIERS of the current camp count, and WHICH HOUR every rate divides by. One answer for the
+  // main window and the XP overlay together, because they are separate renderer processes showing
+  // the same two words to the same reader — the owner read `elapsed 27m` off the tab with *this
+  // tier* on screen and the two states were simply not the same state (shared/scopeSelection.ts
+  // carries the measured story). Main holds it EPHEMERALLY (src/main/scopeSelection.ts — the
+  // opening at every launch, never stored) and is the only process that can reach every window,
+  // which is the fight-selection argument above, verbatim, for the second fact to need it.
+  //
+  // THE SLICE IS NOT HERE, on purpose: which STRETCH a floating window measures stays its own
+  // persisted `xpSlice` (shared/types.ts states why). These two channels carry the pair that must
+  // agree, and nothing else.
+  //
+  // renderer(any window) -> main: read the current selection, for hydrating a window that mounted
+  // after the last change. Returns a whole `ScopeSelection`.
+  scopeSelectionGet: 'scopeSelection:get',
+  // renderer(any window) -> main, FIRE-AND-FORGET: "the user moved one of these knobs". The payload
+  // is a PARTIAL — each control sets one half and must not restate the other — and is REBUILT AT
+  // THE HANDLER against the shared model (`normalizeScopePatch`): an unknown key, a missing one or
+  // a value this build cannot name is dropped rather than fanned out.
+  scopeSelectionSet: 'scopeSelection:set',
+  // main -> EVERY window: the selection changed. Payload is the whole `ScopeSelection`. Sent to the
+  // main window and all overlay kinds; a window with no scoped surface simply has no listener.
+  onScopeSelection: 'scopeSelection:changed',
+
   // ---- cursor ring + overlay auto-hide (presence-driven settings) ----
   // Both blobs are main-owned (electron-store), so Preferences has no other door. The setters
   // are MERGE-PATCHES and every field is re-validated + clamped AT THE HANDLER through
@@ -203,6 +243,12 @@ export const IPC = {
   // renderer(main app) -> main: read / patch the overlay auto-hide prefs. Returns OverlayAutoHidePrefs.
   overlayAutoHideGet: 'overlayAutoHide:get',
   overlayAutoHideSet: 'overlayAutoHide:set',
+  // ---- overlay snapping (JOS-217; shared/overlaySnap.ts) ----
+  // renderer(main app) -> main: read / patch the snap preference. Returns OverlaySnapPrefs.
+  // The patch is re-validated AT THE HANDLER through the same normalizer the store reader uses,
+  // and it is OFF unless somebody has turned it on — an absent key drags exactly as it always did.
+  overlaySnapGet: 'overlaySnap:get',
+  overlaySnapSet: 'overlaySnap:set',
   // main -> renderer(ring window ONLY): the ring's size/thickness changed. Payload CursorRingPrefs.
   onCursorRingConfig: 'cursorRing:config',
   // main -> renderer(ring window ONLY): one cursor sample, in the ring window's own CSS px.
@@ -333,16 +379,65 @@ export const IPC = {
   // typing the command in game fills the tab with no click anywhere.
   plannerInventory: 'planner:inventory',
 
+  // ---- gear planner (JOS-283, phase 2) ----
+  // renderer -> main: the GEAR CANDIDATE INDEX — one row per equippable item (~6,884 of the
+  // corpus's 11,213 pages), carrying slots/classes/races/era/flags/effects, the weapon block and
+  // the NUMERIC BASE stat vector. Returns GearIndexPayload (versioned; see shared/planner/gear.ts).
+  // Built in main for the same reason the donor index is — items.json is already inlined here, so
+  // shipping the corpus to the renderer would double it — LAZILY on first call and memoized for
+  // the process. Fetched ONCE by the renderer: the rows are derived from committed bytes and
+  // cannot change while the app runs, and every plus-state the user asks for is a PURE MAP over
+  // them (shared/planner/gearScale.ts), never another round trip.
+  gearIndex: 'gear:index',
+
+  // ---- gear planner (JOS-285, phase 4) ----
+  // renderer -> main: THE OWNERSHIP INDEX for the active character — every thing their newest
+  // `/outputfile inventory` dump names, filed under the same key the gear index and the loot
+  // history use (shared/planner/ownership.ts), so the Gear tab joins by `row.key` with no
+  // translation. Returns OwnershipPayload; `path: null` means the command has never been run,
+  // which is "there is nothing to read", never "you own nothing".
+  //
+  // MEMOIZED ON THE DUMP'S OWN IDENTITY (path + mtime), not on a signal somebody has to remember
+  // to send: every ask re-stats the file (one readdir + one stat, the registry's own rule) and
+  // re-folds only when it MOVED. So the renderer re-asking on `inventory:autoReloaded` gets the
+  // new dump, and a keystroke that re-renders the table gets the cached fold.
+  gearOwnership: 'gear:ownership',
+
+  // ---- gear planner (JOS-286, phase 5) ----
+  // The active character's saved GEAR SETS — named virtual loadouts, one item per equipment cell,
+  // each assignment carrying its own tracked plus-state (shared/planner/gearSet.ts). Read/write
+  // pair over `ProgressState.gearSets`, exactly the `planner:getPlans` / `planner:setPlans`
+  // arrangement: the renderer is UNTRUSTED, so a written list is re-validated cell by cell against
+  // the closed `PLAN_SLOTS` allowlist and clamped to states the game's item window can be in
+  // (src/main/planner/validate.ts sanitizeGearSets) before a byte of it reaches the store — and
+  // the same validator runs on the way out, so the round trip is a fixed point.
+  gearGetSets: 'gear:getSets',
+  gearSetSets: 'gear:setSets',
+
+  // ---- the flat wish list (JOS-326) ----
+  // The active character's WISH LIST — a flat list of items they have decided they want, with no
+  // cell, socket or host structure at all (shared/planner/wishlist.ts), plus the two facts that
+  // hang off it: the done strip's dismissals and the one-time exaltation-plan seed flag. Read/write
+  // pair over `ProgressState.wishlist`, the same arrangement as the two documents above — the
+  // renderer is UNTRUSTED, so a written list is re-validated entry by entry
+  // (src/main/planner/validate.ts sanitizeWishlist) before a byte of it reaches the store, and the
+  // same validator runs on the way out, so the round trip is a fixed point. WHOLE-DOCUMENT, because
+  // the list and the two facts about it must move together or not at all.
+  wishlistGet: 'wishlist:get',
+  wishlistSet: 'wishlist:set',
+
   // ---- character sheet (JOS-45) ----
   // renderer -> main: the armory grid + the gear sum, built from the active character's newest
   // `/outputfile inventory` dump and joined to the committed item DB in main (where the 8.6 MB
-  // corpus already lives). Returns CharacterSheet | null — null means no dump, which the tab
-  // answers with its instructions card, never an error.
+  // corpus already lives) — and, since JOS-327, the CARRY-ALL ledger off the same parse
+  // (`CharacterSheet.carry`, shared/carryAll.ts): every non-empty row of every table the dump
+  // carries, with its location path and count. Returns CharacterSheet | null — null means no dump,
+  // which the tab answers with its instructions card, never an error.
   //
-  // THIS CHANNEL IS GATED. Its handler is registered only when `UNRELEASED` (src/main/unreleased.ts)
-  // is true — dev builds, or an explicit EQ_UNRELEASED=1 — because the module has not passed the
-  // owner's review gate. In a packaged build there is no handler and the preload method rejects,
-  // which is the designed outcome: the renderer surface is stripped from those bytes entirely.
+  // IT WAS GATED UNTIL JOS-327. The handler was registered only when `UNRELEASED`
+  // (src/main/unreleased.ts) was true, because the surface had not passed the owner's review gate,
+  // and the preload method below still documents the reject that came of it. The owner released the
+  // tab, so this is an ordinary channel now: registered in every build, answering in every build.
   characterSheet: 'character:sheet',
 
   // ---- map viewer (docs/plans/map-viewer.md §4.2) ----
@@ -403,8 +498,13 @@ export const IPC = {
   // renderer -> main: save the FULL slice to disk via the OS save dialog, so a user who
   // wants to read every byte before sending can. Returns {ok, path?, canceled?}.
   feedbackSaveSlice: 'feedback:saveSlice',
-  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes}). Never rejects;
-  // a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
+  // renderer -> main: package the CURRENT `/outputfile inventory` dump and return its
+  // metadata + a capped preview, or the NAMED reason there is none (JOS-296). No arguments:
+  // which dump belongs to this character is main's answer, never the renderer's. The gz bytes
+  // never cross. Returns FeedbackInventoryPreview.
+  feedbackBuildInventory: 'feedback:buildInventory',
+  // renderer -> main: submit. Args (draft, {attachLog, windowMinutes, attachInventory}). Never
+  // rejects; a network failure resolves with {ok:false, queued:true}. Returns SubmitResult.
   feedbackSubmit: 'feedback:submit',
 
   // ---- usage analytics (docs/plans/usage-analytics.md wave A1) ------------------------

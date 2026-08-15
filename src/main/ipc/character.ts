@@ -17,6 +17,7 @@ import {
   tailCharacter
 } from '../session'
 import { getProgress, setEqInstallDir, setInventory, setQuestTurnIns } from '../store'
+import { setItemOverride } from '../storeItemOverrides'
 import { getMainWindow, sendToMain } from '../windows'
 
 export function registerCharacterIpc(): void {
@@ -117,4 +118,14 @@ export function registerCharacterIpc(): void {
     sendToMain(IPC.onProgress, progress)
     return progress
   })
+  // ONE item's held count, stated (or taken back) by hand — JOS-186. Pushed like every other
+  // progress write, because the Loot ledger and the Sky tab read the same corrected number.
+  ipcMain.handle(
+    IPC.setItemOverride,
+    (_e, key: string, name: string, count: number | null) => {
+      const progress = setItemOverride(activeCharId(), key, name, count)
+      sendToMain(IPC.onProgress, progress)
+      return progress
+    }
+  )
 }

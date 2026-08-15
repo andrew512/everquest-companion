@@ -6,6 +6,7 @@
 // tests/combatRingTruncation.test.mts).
 
 import { sourceViews } from './sourceViews'
+import { buildDefenseView } from './defenseViews'
 import { takenAnnotations } from './roundViews'
 import { sumHeal } from './aggregate'
 import { buildHealingView } from './healing'
@@ -90,7 +91,8 @@ function buildView(spec: ViewSpec): SegmentView {
   // RIPOSTE/RAMPAGE TAKEN (attack-round stats): booked on the MOB that swung the annotated
   // counter, read here from the other end and grafted onto your row. It can only be resolved
   // where both maps are in scope, which is exactly here.
-  const entities = sourceViews(agg.out, durationSec, effectLandings(agg), takenAnnotations(agg.inc))
+  const taken = takenAnnotations(agg.inc)
+  const entities = sourceViews(agg.out, durationSec, effectLandings(agg), taken)
   const incoming = sourceViews(agg.inc, durationSec)
   const outTotal = entities.reduce((s, e) => s + e.total, 0)
   const inTotal = incoming.reduce((s, e) => s + e.total, 0)
@@ -112,6 +114,10 @@ function buildView(spec: ViewSpec): SegmentView {
     inTotal,
     inDps: inTotal / durationSec,
     incoming,
+    // YOUR DEFENCE (JOS-354) — the incoming rows read from the other end, plus your own
+    // `(Riposte)` counter-swings. Built from the SAME frozen aggregate as the bars above it, so a
+    // finalized zone session (which keeps no event ring at all) reports it exactly.
+    defense: buildDefenseView(agg.inc, agg.out.get('you'), taken.riposte),
     enemyHealTotal: sumHeal(agg.enemyHeal),
     incomingHealTotal: incomingHealers.reduce((s, h) => s + h.total, 0),
     incomingHealers,

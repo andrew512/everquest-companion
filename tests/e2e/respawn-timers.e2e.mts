@@ -283,7 +283,14 @@ async function stepLiveKillIsOfferedThenWatched(page: Page, log: FixtureLog): Pr
  * a log seq instead of its own revision, passes every unit test and fails right here.
  */
 async function stepWatchFromRecentKills(page: Page, log: FixtureLog): Promise<void> {
-  const earlier = new Date(Date.now() - 3 * 60_000)
+  // ONE CLOCK READ, TWO STAMPS (flake ledger, 2026-08-13). The gap between the two deaths IS the
+  // thing under test — four checks below spell it `3m 00s` — so it has to be built, not sampled.
+  // Reading the clock twice (`Date.now()` here, a bare `append()` for the second death) let a
+  // single second of wall clock land between the reads: EQ stamps are second-granular, so the
+  // played gap became 181 s and the row printed `3m 01s`. Both deaths are stamped off `now`, which
+  // makes the gap exactly 180 s by construction. The fix belongs HERE and never in the assertions.
+  const now = new Date()
+  const earlier = new Date(now.getTime() - 3 * 60_000)
   log.appendAt(earlier, `You have slain ${OWN_MOB}!`)
   // THE LOOT LINE RIDES THE FIRST CORPSE, AND THE ORDER IS LOAD-BEARING (round 7, measured).
   // `lib/hoverCards.tsx` fetches a mob's knowledge ONCE PER NAME for the window's lifetime, and
@@ -295,7 +302,7 @@ async function stepWatchFromRecentKills(page: Page, log: FixtureLog): Promise<vo
   // other way round: green at 38 s of wall clock, red at 96 s. Realistic, too — you loot the corpse
   // and then kill it again.)
   log.appendAt(earlier, `--You have looted 2 ${LOOTED} from ${OWN_MOB}'s corpse.--`)
-  log.append(`You have slain ${OWN_MOB}!`)
+  log.appendAt(now, `You have slain ${OWN_MOB}!`)
 
   const offered = await settle(
     () => clocks(page, 'respawn-candidate'),
@@ -442,9 +449,15 @@ const LOOTED = 'Bone Chips'
  *   * THE RECENTLY-KILLED ENTRY gets the same card — the owner asked for it where the decision to
  *     watch is actually made — with the shorter note a mob with no clock can honestly carry.
  *   * THE FLOATING WINDOW LOSES IT. The card is 300px wide and the window is about 300px wide, so
- *     it took the window over; the owner ruled it in-app only. Pointing at an overlay row now has
- *     to produce NOTHING, and the provenance sentence is back on the row's native title where
- *     round 5 left it.
+ *     it took the window over; the owner ruled it in-app only. Pointing at an overlay row has to
+ *     produce NOTHING.
+ *
+ * …AND JOS-358 TOOK THE LAST THING THAT ROW COULD SAY ON HOVER. Round 7 left the provenance
+ * sentence on the row's native `title`; the owner ruled from hands-on testing that these windows
+ * keep tooltips ONLY in the title bar (and that a stranded one was surviving the pointer leaving
+ * the window). So the assertion below INVERTS: pointing at an overlay row produces no card AND no
+ * title. The provenance itself is unchanged — the tab's card, asserted above, is built from the
+ * same `respawnProvenance`, which is what keeps the two surfaces from drifting.
  */
 async function stepHoverCard(page: Page, overlay: Page): Promise<void> {
   const before = await settleStable(() => cardText(page))
@@ -481,15 +494,16 @@ async function stepHoverCard(page: Page, overlay: Page): Promise<void> {
   await pointAtOverlayRow(overlay, OWN_MOB, true)
   const over = await settleStable(() => cardText(overlay))
   check('the floating window draws NO card at all - it is in-app only now', over === '', over)
-  // What it draws instead is round 5's shape: the provenance sentence on the row's native title,
-  // the same string the tab's card leads with. Read as a TITLE — if it had merely been deleted with
-  // the card, this fails.
+  // …AND NO TITLE EITHER (JOS-358). Round 7 left the provenance sentence on the row's native title;
+  // the owner's ruling takes it. Read as a TITLE on the ROW specifically — the header count's own
+  // hover is in the title bar and is asserted alive in `stepOverlayShowsClocks`, so a change that
+  // stripped the whole window would fail there instead of passing quietly here.
   const rowTitles = await overlay.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>('[data-testid="respawn-overlay-row"]')].map((e) => e.title)
   )
   check(
-    '…and says what it knows about the respawn on a plain title instead',
-    rowTitles.some((t) => t.includes('Killed') && t.includes('upper bound')),
+    '…and no longer hovers a provenance sentence over the game either',
+    rowTitles.every((t) => t === ''),
     JSON.stringify(rowTitles)
   )
   await pointAtOverlayRow(overlay, OWN_MOB, false)

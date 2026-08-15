@@ -2,11 +2,7 @@
 
 import type { ConsiderFaction, LootDisposition } from './logEvents'
 import type { ItemStatBlock } from './itemStats'
-import type { ComboProgress } from './classCombo'
 import type { MobKnowledge } from './mobTypes'
-// The exaltation planner's model lives in ./planner/ beside its pure normalizer and rules; only
-// the persisted array is named here, on ProgressState.
-import type { ExaltPlan } from './planner/types'
 // The toast overlay's per-kind knobs live beside its payload in ./toast (this file is at its
 // factoring ceiling); OverlayConfig names the blob, that file owns its shape + normalizer.
 import type { ToastOverlayConfig } from './toast'
@@ -19,10 +15,6 @@ import type { TimerGrouping } from './buffTimers'
 // code that gives it meaning rather than in this file, which is at its factoring ceiling.
 import type { XpRowId } from './xpOverlay'
 import type { SliceId } from './timeslice'
-// Same posture for the inventory dump's baseline (JOS-128): ProgressState names the blob, and
-// ./outputs/baseline owns its shape beside the rules that produce and read it. Type-only, so
-// the import is erased and this file keeps no runtime dependency on the outputs engine.
-import type { InventorySource } from './outputs/baseline'
 
 export type { LootDisposition, ItemStatBlock }
 
@@ -207,16 +199,39 @@ export interface OverlayConfig {
    * WHICH STRETCH THAT WINDOW MEASURES (JOS-195) — one id from the app-wide slice vocabulary
    * (shared/timeslice.ts, JOS-130), which is also where JOS-71's duration rungs live now.
    *
-   * ABSENT MEANS `session`, and that default is the ticket's: a floating pace read is something
-   * you glance at while playing, and "how am I doing right now" is this session rather than the
-   * whole record. It DEGRADES rather than sticks — a log that states no logout cannot define a
-   * session, and `resolveSliceId` falls back to `all` exactly as the tab's control does.
+   * ABSENT MEANS `zoneSession` (owner ruling, JOS-288 — it was `session` from JOS-195 until then).
+   * A floating pace read is asking "how am I doing right now", and the audit measured what the
+   * session slice alone does to that answer: across a loadout swap the session's `levelEquiv` sums
+   * straight over the LEVEL-50 leg that preceded it, so the same instant read 7.03 lvl/hr in
+   * `zoneSession` and a diluted figure in `session`, and the scope disagreement against `all` was
+   * 10x. The camp you are standing in, this session, is the stretch the number is about.
+   *
+   * It DEGRADES rather than sticks — a preset this record cannot define is not offered, and
+   * `resolveSliceId` falls back to `all` exactly as the tab's control does.
    *
    * It is remembered per window like position is, not shared with the main app's pick: the two
    * are read at different moments, and a slice chosen on the Loot tab has no business silently
    * re-scoping a window floating over the game.
    */
   xpSlice?: SliceId
+  // THE XP WINDOW'S DENOMINATOR AND ITS TIER MEMBERSHIP USED TO BE TWO MORE KEYS HERE (`xpBasis`,
+  // JOS-288; `xpZoneScope`, JOS-291) AND THEY ARE GONE (JOS-332).
+  //
+  // Not because the window stopped having them — it still draws both toggles in its footer — but
+  // because they were never this window's facts to remember. The Leveling tab shows the same two
+  // controls, and while each side kept its own copy the reader had no way to tell which one the
+  // numbers in front of them obeyed: the owner had *this tier* on screen over the game and read the
+  // every-tier `elapsed 27m` off the tab. They are now ONE app-wide selection held in main and
+  // fanned out to every window (`shared/scopeSelection.ts`), EPHEMERAL like the global fight
+  // selection beside it, because both halves were already session-lifetime in the app and one fact
+  // cannot have two lifetimes.
+  //
+  // A store written by an older build may still carry the two keys; `setOverlayConfig` no longer
+  // preserves them, so the first patch of any kind drops them. One dead scalar (two, here) is not
+  // worth a schema bump — the same verdict `topN` got in `getOverlayConfig`.
+  //
+  // `xpSlice` deliberately STAYED: which stretch a floating window measures is its own business
+  // (its doc above says why), and it is not a knob the tab also shows.
 }
 
 // The overlays TEXT SIZE (owner feedback 2026-08-05) lives in ./overlayTextScale.ts and is
@@ -527,10 +542,12 @@ export interface ItemKnowledge {
   /** where the ITEM PAGE says it drops (`|dropsfrom`) — mob + the zone heading it sat under */
   dropsFrom?: ItemDropSource[]
   /**
-   * The page-top `{{X Era}}` banner's token, VERBATIM ("Velious", "Chardok Revamp", "kunark") —
-   * the wiki's own era claim, and the only one an item page ever makes. It is not an
-   * `{{Itempage}}` field; see `parseEraTag` for the shapes and the census. Absent when the page
-   * opened with no banner. What a token MEANS is decided in `shared/planner/era.ts`, never here.
+   * The wiki's own era claim for this page, VERBATIM ("Velious", "Chardok Revamp", "kunark") —
+   * from the page-top `{{X Era}}` banner (`parseEraTag`), or, on the 52 pages that carry no banner
+   * but file themselves under an era anyway, from the page's `[[Category:X Era]]`
+   * (`parseEraCategory`, JOS-328). The banner wins; the category speaks only into its silence.
+   * Neither is an `{{Itempage}}` field. Absent when the page states no era either way. What a
+   * token MEANS is decided in `shared/planner/era.ts`, never here.
    */
   eraTag?: string
   /** one-line freeform summary (from the wiki `notes` field), trimmed */
@@ -789,138 +806,16 @@ export interface FeedReport {
   reward?: FeedReward
 }
 
-/** Held-item counts keyed by lowercased item name. */
-export type HeldCounts = Record<string, number>
-
-/**
- * How the app decides which items you "have". A DUMP ADDS AND NEVER SUBTRACTS (JOS-141, owner
- * ruling 2026-08-09): loading one cannot lower any count, because a dump only covers what was
- * OPEN when it was generated and reading its silence as zero deleted banked Sky items. JOS-128
- * briefly made a dump load a BASELINE that reset the model; that is reverted.
- * - 'log'       : count everything the character has ever looted (log parsing). Never consults
- *                 a dump, and therefore CANNOT see an item you destroyed, sold to a vendor or
- *                 handed to another player; "ever looted" is exactly what it says.
- * - 'inventory' : the dump, exactly as written. Never consults the log. The only source that can
- *                 show a deletion, and it does so by ignoring the log rather than by resetting.
- * - 'both'      : `max(log, dump)` per item — whichever witness can vouch for more copies. A
- *                 maximum and not a sum, because the two OVERLAP: an item you looted and still
- *                 hold is in both.
- * The combination and the turn-in consumption that follows it live in ONE place,
- * renderer/features/inventory/reconcile.ts, which argues both.
- */
-export type CountSource = 'log' | 'inventory' | 'both'
-
-/** Persisted user progress (inventory + quest completion). */
-export interface ProgressState {
-  /** counts from the last inventory dump, keyed lowercased name */
-  inventory: HeldCounts
-  /**
-   * Quest keys (className::name) turned in AT LEAST ONCE. Since JOS-131 this is the DOWNGRADE
-   * MIRROR of `questTurnIns` rather than the record itself: it is written whenever the ledger is,
-   * carries no count and no instant, and a build that predates JOS-131 still reads it and still
-   * shows those quests as turned in. `questTurnIns` is what this build reads.
-   */
-  completedQuests: string[]
-  /**
-   * EVERY TURN-IN, AS AN EVENT (JOS-131): quest key → the epoch-ms instants it was turned in,
-   * ascending. A Sky quest can be run again, so completion is a count, not a terminal flag, and
-   * the count is the length of this list.
-   *
-   * WHY INSTANTS AND NOT A TALLY. Turn-ins have to be subtractable against an inventory dump,
-   * and the dump already reflects every turn-in made BEFORE it was generated (JOS-128's
-   * baseline). Only a dated turn-in can be placed on the right side of that line, and only exact
-   * instants let the log-detected turn-ins and the persisted ones be MERGED without
-   * double-counting the same event (the detected `ts` is stored verbatim, so the union dedupes
-   * itself).
-   *
-   * WHAT IS IN IT. Both kinds: turn-ins detected in the log (`TurnInEvent.ts`, EQ's own clock)
-   * and turn-ins the user recorded by hand (`Date.now()` at the click). Detected ones are
-   * persisted deliberately, the way the old auto-complete persisted a completion: the log is
-   * re-scanned per character epoch and truncated logs happen, and a turn-in the log can no longer
-   * show is still a thing that happened.
-   *
-   * ADDITIVE and OPTIONAL — no schema bump and no migration (the `exaltPlans` precedent). A store
-   * without this key reads its counts from `completedQuests`: one turn-in, undated, which is all
-   * any reader needs now that consumption is windowed by SOURCE rather than by instant (JOS-141).
-   */
-  questTurnIns?: Record<string, number[]>
-  /** metadata about the last inventory load */
-  inventorySource?: InventorySource
-  /**
-   * Class-combo user corrections (docs/plans/class-combo-inference.md § 7). Character-scoped,
-   * because a loadout is. This is the ONLY durable combo state: intervals are re-derived from
-   * the log on every replay, and persisting them would create a second source of truth that
-   * could disagree with the log. Optional so a store written before this key round-trips.
-   */
-  combo?: ComboProgress
-  /**
-   * Saved exaltation sets (docs/plans/exaltation-planner.md D4). Character-scoped, like every
-   * other key here: a plan is built for one character's loadout.
-   *
-   * ADDITIVE and OPTIONAL — deliberately no schema bump and no migration. Every reader defaults
-   * on a missing key and electron-store rewrites the whole parsed object, so a store written by
-   * any older build loads unchanged and a store written here still opens in one that predates
-   * the planner (`tests/plannerStore.test.mts` pins both halves).
-   */
-  exaltPlans?: ExaltPlan[]
-  /**
-   * GROUP-ROSTER user edits (docs/plans/group-model.md §3). Character-scoped, like everything
-   * else here. The roster itself is re-derived from the log on every replay; an edit is the one
-   * piece of it the log can never tell us again — the member whose join line predates the file,
-   * or the ex-member the game never printed a leave line for.
-   *
-   * TIME-KEYED, for the same reason combo corrections are: the roster module drops any edit
-   * older than the epoch boundary or the last self-leave, because both mean the thing the edit
-   * described is gone. Additive and optional — every reader defaults on a missing key, so no
-   * schema bump and no migration (the `exaltPlans` precedent above).
-   */
-  rosterEdits?: RosterEdit[]
-  /**
-   * PET CLAIMS (JOS-47) — RETIRED AND UNREAD SINCE JOS-49. Nothing writes this key and nothing
-   * reads it; the accessors that did are gone from src/main/store.ts along with the question
-   * they answered ("<Name> — your pet?", cut by the owner: "if you just have to pet attack once,
-   * this is a lot of work we can get wrong").
-   *
-   * IT STAYS ON THE TYPE ON PURPOSE. A v0.4.x user's answers are still in their store file, and
-   * deleting them would be destroying that user's own statements to tidy up our types; a
-   * migration that dropped the key would make going back to a build that reads them lossy.
-   * electron-store rewrites the whole parsed object, so an unread key round-trips for free.
-   * Delete it only if the feature is ever ruled out for good and the data is worth nothing.
-   */
-  petClaims?: PetClaimEdit[]
-}
-
-/**
- * ONE hand-made statement about a pet: "this is mine" or "this is not" — the shape of the
- * RETIRED claim store above. Kept only so `ProgressState.petClaims` can go on describing bytes
- * that are already on disk; nothing constructs one any more (JOS-49).
- */
-export interface PetClaimEdit {
-  /** Canonical identity key — `idKey(name)`. */
-  key: string
-  /** Display name as the log spelled it. */
-  name: string
-  /** 'claim' binds it as your pet everywhere; 'deny' means never ask about this name again. */
-  action: 'claim' | 'deny'
-  /** Wall-clock instant the statement was made — recorded for the reader, never for expiry. */
-  setAt: number
-}
-
-/**
- * ONE hand-made statement about the group roster: "this person is with me" or "this person is
- * not". The provenance ladder's top rung (shared/roster.ts) — a later log line can neither
- * undo it nor be undone by it; only the opposite edit can.
- */
-export interface RosterEdit {
-  /** Canonical identity key — `idKey(name)`. */
-  key: string
-  /** Display name as the user typed it (an add) or as the log spelled it (a remove). */
-  name: string
-  action: 'add' | 'remove'
-  /** Wall-clock instant the edit was made. Compared against the epoch boundary and the last
-   *  self-leave to decide whether it still describes anything. */
-  setAt: number
-}
+// ----- The persisted per-character record (JOS-286: MOVED, not changed) -----
+//
+// `HeldCounts`, `CountSource`, `ProgressState`, `PetClaimEdit` and `RosterEdit` now live in
+// ./progressState.ts. This file was AT the measured 400-code-line ceiling and the repo law is to
+// SPLIT rather than to widen a threshold (windows.ts → windowErrors.ts, store.ts → storePlans.ts
+// are the precedents). Re-exported here so every importer keeps the door it already used.
+export type { CountSource, HeldCounts, PetClaimEdit, ProgressState, RosterEdit } from './progressState'
+// The hand-stated held count (JOS-186) lives in ./itemOverrides.ts with the rules that govern it,
+// and comes back through this door for the same reason the five names above do.
+export type { ItemCountOverride } from './itemOverrides'
 
 // ----- Cross-window deep link ("take me to this in the app", Task #64) -----
 //
@@ -1010,6 +905,7 @@ export type {
   AlertPrefs,
   SpeechMode,
   AlertAudio,
+  AlertAudioChoice,
   AlertSpeech,
   SpeechEngine,
   VoicePrefs,

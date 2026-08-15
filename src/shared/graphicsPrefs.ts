@@ -38,7 +38,9 @@
  * detected Wine prefix they produce opposite windows.
  *
  *   'auto' — the default. The app decides from the environment it finds itself in (today: a Wine
- *            prefix turns both switches on; everywhere else `auto` resolves to OFF).
+ *            prefix turns OPAQUE OVERLAYS on and leaves safe mode off — JOS-352 inverted the
+ *            second half, since safe mode is itself what blanks a window under Wine; everywhere
+ *            else `auto` resolves to OFF).
  *   'on'   — the user asked for the compatibility path, wherever they are running.
  *   'off'  — the user REFUSED it, wherever they are running. This is the state that did not exist
  *            before, and without it detection would be a trap rather than a default: a Wine user

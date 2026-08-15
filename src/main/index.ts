@@ -37,7 +37,7 @@ import { saveUserOverlay } from './data/overlayPersistence'
 import { startQueueFlush, stopQueueFlush } from './feedback'
 import { startTelemetry, stopTelemetry } from './telemetry'
 import { registerAppSchemes } from './appSchemes'
-import { applyGraphicsSafeMode } from './graphics'
+import { applyGraphicsCompatibilityFlags, applyGraphicsSafeMode } from './graphics'
 import { installImageCacheProtocol } from './imageCache'
 // The wiki art this build SHIPS (JOS-198). Pure path probing — Electron's three path facts are
 // passed in below, so the module itself imports nothing from electron.
@@ -48,6 +48,7 @@ import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetect
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
+import { removedPackIds } from './storeSoundPacks'
 import { getActiveCharacter, markTailPosition, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
@@ -80,6 +81,13 @@ registerAppSchemes(protocol)
 // without any UI, which is the case it exists for: you cannot open Preferences in a window you
 // cannot see. All of the reasoning lives in graphics.ts.
 applyGraphicsSafeMode()
+
+// …and the flags this MACHINE needs, on the same before-`ready` law (JOS-352). `appendSwitch` is
+// read while Electron assembles the GPU process and ignored afterwards, so it belongs in this
+// statement and not in `whenReady`. On real Windows the list is EMPTY and this is a no-op; under a
+// detected Wine prefix it is the two flags that let the app keep the GPU instead of white-screening
+// on a software renderer Wine does not implement (shared/wineDetect.ts WINE_CHROMIUM_FLAGS).
+applyGraphicsCompatibilityFlags()
 
 // Cold-start stopwatch: module scope is the earliest this process can measure from, and the
 // number is bucketed (never sent raw) into `sessionStart` when the window exists. See
@@ -308,8 +316,9 @@ if (!gotSingleInstanceLock) {
     // inside `startTelemetry` rather than restated here.
     //
     // WHAT THIS STARTS: an analytics id if the user's switch is on, a `sessionStart` record, a
-    // 5-minute heartbeat into the ring at <userData>/telemetry.json — and, ONLY once every gate
-    // is open, the 60 s flush loop that POSTs to the compiled-in endpoint. The flush timer is
+    // 10-minute heartbeat into the ring at <userData>/telemetry.json — and, ONLY once every gate
+    // is open, the 5-minute flush loop that POSTs to the compiled-in endpoint (JOS-269 stretched
+    // both; flush.ts holds the cost ruling and what it does and does not cost). The flush timer is
     // not created at all under `EQ_E2E=1`, with the switch off, or before the first-run notice
     // has rendered (`telemetryFlushEnabled`, telemetry/net.ts); when the notice is answered
     // mid-session the loop starts then, not next launch. Same predicate discipline as
@@ -322,8 +331,10 @@ if (!gotSingleInstanceLock) {
     // next launch). On success, tell the renderer the pack set changed so it re-lists +
     // invalidates its sound caches and the sound becomes usable live.
     // E2E: skip (fresh temp userData ⇒ it would re-download every pack, off-network noise).
+    // …and NEVER a pack the user deleted (JOS-273): the uninstall handler tombstones shipped ids,
+    // and the set is read here rather than inside provisionPacks so that module stays node-loadable.
     if (!E2E) {
-      void provisionDefaultPacks()
+      void provisionDefaultPacks({ removedIds: removedPackIds() })
         .then((n) => {
           if (n > 0) sendToMain(IPC.onSoundPacksChanged)
         })
@@ -331,7 +342,10 @@ if (!gotSingleInstanceLock) {
     }
     // Auto-update (Task #27): checks GitHub Releases on the selected channel;
     // no-ops in dev. getMainWindow is lazy so status pushes hit the live window.
-    initUpdater(getMainWindow)
+    // …and the settle callback (JOS-272): the updater runs the store's outstanding writes BEFORE it
+    // hands the process to the installer, instead of leaving them to race the installer's taskkill.
+    // See `flushStoreForQuit` below for why that one second is where a torn store comes from.
+    initUpdater(getMainWindow, flushStoreForQuit)
 
     // Restore any floating overlay (Task #52; per-kind in Task #54) that was open when the app
     // last quit. Deferred so the main window's did-finish-load sends its initial state first.
@@ -380,18 +394,38 @@ if (!gotSingleInstanceLock) {
  */
 app.on('before-quit', () => {
   teardownStep('main:stopPresence', stopPresenceEffects)
-  // …and the tail mark, for the same belt-and-braces reason and one more (JOS-57 scope addition):
-  // `app.quit()` does NOT emit `window-all-closed`, so an auto-updater's `quitAndInstall` would
-  // otherwise leave no mark and blind the very next launch — the one right after an update, which
-  // is exactly the launch a startup measurement most wants to see. Writing it on both events is
-  // one store key written twice, and the later write is the better answer.
+  flushStoreForQuit()
+})
+
+/**
+ * EVERY STORE WRITE THIS PROCESS STILL OWES, DONE NOW.
+ *
+ * Both steps were already `before-quit` steps and still are. They are a NAMED function because the
+ * auto-updater has to be able to run them BEFORE it hands this process to the installer (JOS-272 —
+ * `initUpdater`'s second argument is this).
+ *
+ * WHY THAT ORDER IS THE FIX. `quitAndInstall(true, true)` spawns the NSIS installer and only then
+ * quits; the installer sleeps ~1 s and then taskkills whatever is still running
+ * (allowOnlyOneInstallerInstance.nsh — updater.ts's research block quotes it). Every write these two
+ * make would otherwise happen INSIDE that one-second window, racing a kill. Running them first
+ * empties the window rather than trying to survive it.
+ *
+ * Idempotent, so `before-quit` firing straight afterwards costs one repeated write of identical
+ * bytes — which is exactly what the tail-mark note below already relied on.
+ */
+function flushStoreForQuit(): void {
+  // The tail mark, belt-and-braces and one more reason (JOS-57 scope addition): `app.quit()` does
+  // NOT emit `window-all-closed`, so an auto-updater's `quitAndInstall` would otherwise leave no
+  // mark and blind the very next launch — the one right after an update, which is exactly the launch
+  // a startup measurement most wants to see. Writing it on both events is one store key written
+  // twice, and the later write is the better answer.
   teardownStep('main:logTailMark', markTailPosition)
   // …and the window's own size and position (JOS-248), for EXACTLY that reason: the debounced save
   // is flushed by the window's `close`, and `app.quit()` — an auto-updater's `quitAndInstall`, an
   // OS logoff — is not a close. Without this the launch right after an update is the one that comes
   // up at a stale size, which is the launch a user is most likely to be watching.
   teardownStep('main:saveWindowState', flushMainWindowState)
-})
+}
 
 /**
  * One teardown step, isolated. `window-all-closed` runs a LIST of these before `app.quit()`,

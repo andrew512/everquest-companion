@@ -62,19 +62,44 @@ import type { LootEvent, ProgressionSnap } from '@shared/types'
 import type { RangeStats } from '@shared/progressionStats'
 import type { Timeslice } from '@shared/timeslice'
 import { rangeStats } from '../../../shared/progressionStats'
-import { ETA_ABSURD_MS, ETA_BLOCKED_TITLE, atCap, levelEta } from '../../../shared/levelEta'
+import { ETA_ABSURD_MS, atCap, levelEta } from '../../../shared/levelEta'
 // The header's level is the STATED fact now (JOS-192) — the later of your last ding and your own
 // `/who` row — because the ding series says nothing across a loadout swap, which is the one moment
 // the number on a floating window is most likely to be wrong.
 import { currentLevelRead, type LevelStatement } from '../../../shared/currentLevel'
 import { aaEta } from '../../../shared/aaPace'
 import { moteRates, xpRowVisible, type XpRowId } from '../../../shared/xpOverlay'
-import { AA_EST, AA_ETA_BLOCKED_TITLE, aaEtaValue } from '../features/leveling/aaPaceRows'
-import { NONE, activeSpanText } from '../features/leveling/rangeStatsRows'
+// WHICH HOUR (JOS-288). The union, the default and the just-arrived gate live in
+// shared/rateBasis.ts; this file picks halves of pairs and chooses words. The REFUSAL SENTENCE that
+// lives there too is no longer read here — it was a row hover, and JOS-358 took those.
+import {
+  RATE_BASIS_DEFAULT,
+  basisRead,
+  pickRate,
+  type BasisRead,
+  type RateBasis
+} from '../../../shared/rateBasis'
+import { AA_EST, aaEtaValue } from '../features/leveling/aaPaceRows'
+import { NONE, basisSpanText } from '../features/leveling/rangeStatsRows'
 import { fmtDuration } from '../features/leveling/levelChartGeometry'
 import { formatAaRate, formatDropRate, formatLevelRate, formatPointRate } from '../lib/formatRate'
 
-/** One printed row: a label, a number, its unit, and a dim trailing detail. */
+/**
+ * One printed row: a label, a number, its unit, and a dim trailing detail.
+ *
+ * THERE IS NO HOVER FIELD ANY MORE (JOS-358, owner ruling from hands-on testing: the overlay
+ * windows keep tooltips only in the title bar, and the bars get none). Every row here used to carry
+ * a `title` clause — what it measures, or why it was withheld — and this file built four of them.
+ * They are DELETED rather than left unread: a view-model field nothing renders is the "hide it"
+ * the ruling forbids, and the next reader would wire it back.
+ *
+ * WHAT REPLACED THEM, so the honesty is not quietly gone with the strings:
+ *   · a withheld rate is still an EM-DASH and the window still prints `· too short to rate` beside
+ *     the span, in the open (XpOverlay.tsx `xp-too-short`) — the reason a reader can act on;
+ *   · an inferred wait still wears `AA_EST` on the row itself;
+ *   · the full sentences live on the Leveling tab, which is the surface with room for them
+ *     (`ETA_BLOCKED_TITLE` is unchanged and still read by the Overview card).
+ */
 export interface XpOverlayRow {
   /** stable id — the React key and the e2e's handle (`xp-row-<id>`). */
   id: string
@@ -87,8 +112,6 @@ export interface XpOverlayRow {
   unit: string
   /** dim trailing context — 'to 44', '12×'. '' when there is none. */
   detail: string
-  /** One clause: what this row measures, or why it cannot be measured. */
-  title: string
   /** true ⇒ the row wears `AA_EST`. Only ever the AA wait — see the header. */
   inferred: boolean
 }
@@ -96,11 +119,22 @@ export interface XpOverlayRow {
 export interface XpOverlayView {
   rows: XpOverlayRow[]
   /**
-   * 'over 42m active' — ONE span for the whole window, stated once rather than repeated on every
+   * 'over 1h 0m elapsed' — ONE span for the whole window, stated once rather than repeated on every
    * row (the WindowDropsPanel rule). A rate that never stated its span lets one drop in five
    * minutes read as a confident 12/hr.
+   *
+   * IT IS THE TIME SPENT IN THIS SCOPE (owner ruling 2, JOS-288) and it is the DENOMINATOR the rates
+   * above divided by, which are the same number by construction — the window states one hour and
+   * measures over it, rather than showing a span and dividing by something else.
    */
   span: string
+  /** Which hour is in force — what the toggle renders as its state. */
+  basis: RateBasis
+  /**
+   * false ⇒ this stretch is under `RATE_MIN_MS` and every rate on the window is an em-dash with its
+   * reason. Surfaced so the window can say so once, beside the span, instead of leaving four blanks.
+   */
+  measurable: boolean
   /** The level the log last STATED, or null (the header chip is omitted). */
   level: number | null
   /** '/who' or 'Nh ago' beside that number, '' when the bare number is the whole fact. */
@@ -119,23 +153,28 @@ function split(s: string): { value: string; unit: string } {
   return i < 0 ? { value: s, unit: '' } : { value: s.slice(0, i), unit: s.slice(i + 1) }
 }
 
-/** A rate, or the em-dash. Null is "the log did not state it", never zero. */
+/**
+ * A rate, or the em-dash. Null is "the log did not state it", never zero.
+ *
+ * SINCE JOS-288 IT IS ALSO WHERE THE JUST-ARRIVED GATE FIRES, and this is the right seam for it:
+ * `pickRate` returns null when the denominator in force is under `RATE_MIN_MS`, so the em-dash rule
+ * this function already enforced covers the new refusal without a second branch anywhere. The gate
+ * is a DISPLAY decision and stays here — `rangeStats` keeps measuring, and the golden windows keep
+ * pinning what it measured.
+ */
 function rate(n: number | null, fmt: (v: number) => string): string {
   return n == null ? NONE : fmt(n)
 }
 
-// The row hovers stay what they were. JOS-249's definition of ACTIVE TIME rides the window's
-// SPAN line instead (XpOverlay.tsx, `xp-span`) — the one place this window states the
-// denominator, stated once for every row rather than four times over.
-const XP_TITLE =
-  'Levels of progress per hour of active time. The log states a percentage of the current level bar, never experience points.'
-const AA_RATE_TITLE =
-  'AA completions per hour of active time, and the ability points they paid - the read that keeps working at the cap.'
+// JOS-358 DELETED THE ROW HOVERS from this file: `XP_TITLE`, `AA_RATE_TITLE` and the `rowTitle`
+// wrapper that appended the refusal to a withheld row. See `XpOverlayRow` for the argument and for
+// where each of those sentences still lives. The WORD for the hour in force is on the footer's
+// basis toggle, which is where a reader can also change it.
 
 /** The LEVELS pace. Drawn while the game is still stating a level-bar percentage; see the header
  *  for why it is absent at the cap rather than an em-dash. */
-function levelsRow(stats: RangeStats): XpOverlayRow {
-  const r = split(rate(stats.levelsPerHourActive, formatLevelRate))
+function levelsRow(stats: RangeStats, read: BasisRead): XpOverlayRow {
+  const r = split(rate(pickRate(read, stats.levelsPerHourActive, stats.levelsPerHourWall), formatLevelRate))
   return {
     id: 'xp',
     row: 'xp',
@@ -143,7 +182,6 @@ function levelsRow(stats: RangeStats): XpOverlayRow {
     value: r.value,
     unit: r.unit || 'lvl/hr',
     detail: '',
-    title: XP_TITLE,
     inferred: false
   }
 }
@@ -156,16 +194,16 @@ function levelsRow(stats: RangeStats): XpOverlayRow {
  * The detail is empty rather than an em-dash when the slice has no active time to divide by: a
  * dim trailing '-' beside a value that is already an em-dash says the same nothing twice.
  */
-function aaRow(stats: RangeStats): XpOverlayRow {
-  const r = split(rate(stats.aaPerHourActive, formatAaRate))
+function aaRow(stats: RangeStats, read: BasisRead): XpOverlayRow {
+  const r = split(rate(pickRate(read, stats.aaPerHourActive, stats.aaPerHourWall), formatAaRate))
+  const points = pickRate(read, stats.aaPointsPerHourActive, stats.aaPointsPerHourWall)
   return {
     id: 'aa',
     row: 'xp',
     label: 'AA',
     value: r.value,
     unit: r.unit || 'AA/hr',
-    detail: stats.aaPointsPerHourActive == null ? '' : formatPointRate(stats.aaPointsPerHourActive),
-    title: AA_RATE_TITLE,
+    detail: points == null ? '' : formatPointRate(points),
     inferred: false
   }
 }
@@ -175,12 +213,13 @@ function aaRow(stats: RangeStats): XpOverlayRow {
  * bar you are watching first, the bar you are also filling second, and at the cap only the second
  * one exists.
  */
-function paceRows(stats: RangeStats, capped: boolean): XpOverlayRow[] {
+function paceRows(stats: RangeStats, capped: boolean, read: BasisRead): XpOverlayRow[] {
   const rows: XpOverlayRow[] = []
-  if (!capped) rows.push(levelsRow(stats))
+  if (!capped) rows.push(levelsRow(stats, read))
   // UNCONDITIONAL (see the header): a slice holding no completion reads a measured 0.00, never a
-  // missing row. Nothing about the cap enters this decision.
-  rows.push(aaRow(stats))
+  // missing row. Nothing about the cap enters this decision — and nothing about the JOS-288 gate
+  // does either: the row is always DRAWN, and what changes is whether it has earned a number.
+  rows.push(aaRow(stats, read))
   return rows
 }
 
@@ -199,7 +238,6 @@ function aaWaitRow(snap: ProgressionSnap, stats: RangeStats): XpOverlayRow {
     value: value ?? NONE,
     unit: '',
     detail: value === null ? '' : AA_EST,
-    title: eta.blocked === null ? 'Projected from the rhythm of recent completions.' : AA_ETA_BLOCKED_TITLE[eta.blocked],
     inferred: true
   }
 }
@@ -207,16 +245,36 @@ function aaWaitRow(snap: ProgressionSnap, stats: RangeStats): XpOverlayRow {
 /**
  * The PROJECTION row: time to the next level, or (at cap) the wait for the next AA.
  *
- * A blocked estimate is an em-dash WITH ITS REASON on hover — never a number, and never a silence:
- * on a window this small "why is that blank" is the question a blank invites, and the reason is one
- * clause (`ETA_BLOCKED_TITLE`, shared with the Overview card so the two refuse in the same words).
+ * A blocked estimate is an EM-DASH — never a number. The one-clause reason used to ride the row's
+ * hover (`ETA_BLOCKED_TITLE`); JOS-358 took every hover off these rows, and the constant is
+ * untouched and still read by the Overview card, so the two surfaces refuse in the same words
+ * wherever there is room to print them.
  */
 function etaRow(
   snap: ProgressionSnap,
   stats: RangeStats,
-  capped: boolean,
-  level: LevelStatement | null | undefined
+  level: LevelStatement | null | undefined,
+  read: BasisRead
 ): XpOverlayRow {
+  // `capped` is `atCap(stats)`, recomputed rather than passed: this function is at the repo's
+  // measured `max-params` ceiling of 4 and the answer is a pure function of an argument it has.
+  const capped = atCap(stats)
+  // THE PROJECTION IS GATED WITH THE PACE IT IS BUILT ON (JOS-288). `levelEta` divides by
+  // `levelsPerHourWall` — the very rate the row above just refused to quote — so a window showing
+  // an em-dash for the pace and '~4m to 12' underneath it would be refusing and asserting the same
+  // measurement in two lines. The AA wait is projected from completion GAPS rather than from a rate
+  // and keeps its own gates (`AA_ETA_MIN_EVENTS`), so it is deliberately not caught here.
+  if (!capped && !read.measurable) {
+    return {
+      id: 'eta',
+      row: 'eta',
+      label: 'Next level',
+      value: NONE,
+      unit: '',
+      detail: '',
+      inferred: false
+    }
+  }
   if (capped) return aaWaitRow(snap, stats)
   const eta = levelEta(snap, stats, level)
   if (eta.blocked !== null) {
@@ -227,7 +285,6 @@ function etaRow(
       value: NONE,
       unit: '',
       detail: '',
-      title: ETA_BLOCKED_TITLE[eta.blocked],
       inferred: false
     }
   }
@@ -241,9 +298,6 @@ function etaRow(
     value: absurd ? '>1 day' : `~${fmtDuration(eta.ms)}`,
     unit: '',
     detail: `to ${eta.toLevel}`,
-    title:
-      `${Math.round(eta.progress * 100)}% of level ${eta.toLevel - 1} stated since your last level-up, ` +
-      `projected at this stretch's pace.`,
     inferred: false
   }
 }
@@ -259,16 +313,22 @@ function etaRow(
  * section reads as a broken window, and "none here" is a measurement over a span the caption
  * beside it already states.
  */
-function moteRows(loot: readonly LootEvent[], slice: Timeslice, stats: RangeStats): XpOverlayRow[] {
+function moteRows(
+  loot: readonly LootEvent[],
+  slice: Timeslice,
+  stats: RangeStats,
+  read: BasisRead
+): XpOverlayRow[] {
   const rows = moteRates({
     events: loot,
     t0: slice.range.t0,
     t1: slice.range.t1,
-    // BOTH halves of the slice (JOS-130). `activeMs` is already the zone's own active time when
-    // the slice carries a zone, so counting every zone's drops against it would put a rate under
-    // a denominator it was never measured over.
-    activeMs: stats.activeMs,
-    zoneKey: slice.zoneKey
+    // BOTH halves of the slice (JOS-130). `spans` is already the zone's own time when the slice
+    // carries a zone, so counting every zone's drops against it would put a rate under a
+    // denominator it was never measured over.
+    spans: stats,
+    zoneKey: slice.zoneKey,
+    zoneExactKey: slice.zoneExactKey
   })
   if (rows.length === 0) {
     return [
@@ -279,13 +339,15 @@ function moteRows(loot: readonly LootEvent[], slice: Timeslice, stats: RangeStat
         value: NONE,
         unit: '',
         detail: 'none here',
-        title: `No upgrade mote has dropped in ${slice.caption}.`,
         inferred: false
       }
     ]
   }
   return rows.map((m) => {
-    const r = split(rate(m.perHourActive, formatDropRate))
+    const r = split(rate(pickRate(read, m.perHourActive, m.perHourWall), formatDropRate))
+    // THE COUNT IS NEVER GATED, only the rate. "3 looted in Befallen this session" is a fact about
+    // the log that a short stretch does not make less true; "3.00 drops/hr" over ninety seconds is
+    // the extrapolation. So the detail and the hover keep stating what was observed.
     return {
       id: `mote-${m.key}`,
       row: 'motes' as const,
@@ -293,7 +355,6 @@ function moteRows(loot: readonly LootEvent[], slice: Timeslice, stats: RangeStat
       value: r.value,
       unit: r.unit || 'drops/hr',
       detail: `${m.drops.toLocaleString()}×`,
-      title: `${m.item} - ${m.drops.toLocaleString()} looted in ${slice.caption}.`,
       inferred: false
     }
   })
@@ -309,6 +370,8 @@ export interface XpRowsArgs {
   visible: XpRowId[] | undefined
   /** `CharacterSnap.level` — the stated level fact. Absent ⇒ the ding tail stands in. */
   level?: LevelStatement | null
+  /** WHICH HOUR the rates are per (JOS-288). Absent ⇒ `RATE_BASIS_DEFAULT`, which is `elapsed`. */
+  basis?: RateBasis
 }
 
 /**
@@ -318,16 +381,29 @@ export interface XpRowsArgs {
  */
 export function xpOverlayView(args: XpRowsArgs): XpOverlayView {
   const { snap, loot, slice, visible, level } = args
-  const stats = rangeStats({ snap, range: slice.range, zoneKey: slice.zoneKey })
+  // BOTH halves of the zone membership travel (JOS-130 / JOS-291) — the tier key is null unless
+  // the window is on `this tier`, so the default is the read this window has always given.
+  const stats = rangeStats({
+    snap,
+    range: slice.range,
+    zoneKey: slice.zoneKey,
+    zoneExactKey: slice.zoneExactKey
+  })
   const capped = atCap(stats)
+  // ONE BASIS READ FOR THE WHOLE WINDOW, resolved beside the one `rangeStats` call and handed to
+  // every row: the span line under the rows states the denominator, and a row measured over a
+  // different one than the caption claims is the exact drift that line exists to prevent.
+  const basis = basisRead(args.basis ?? RATE_BASIS_DEFAULT, stats)
   const rows: XpOverlayRow[] = []
-  if (xpRowVisible('xp', visible)) rows.push(...paceRows(stats, capped))
-  if (xpRowVisible('eta', visible)) rows.push(etaRow(snap, stats, capped, level))
-  if (xpRowVisible('motes', visible)) rows.push(...moteRows(loot, slice, stats))
+  if (xpRowVisible('xp', visible)) rows.push(...paceRows(stats, capped, basis))
+  if (xpRowVisible('eta', visible)) rows.push(etaRow(snap, stats, level, basis))
+  if (xpRowVisible('motes', visible)) rows.push(...moteRows(loot, slice, stats, basis))
   const read = currentLevelRead(level, snap)
   return {
     rows,
-    span: activeSpanText(stats.activeMs),
+    span: basisSpanText(basis),
+    basis: basis.basis,
+    measurable: basis.measurable,
     level: read?.level ?? null,
     levelCue: read?.cue ?? '',
     levelTitle: read?.title ?? '',

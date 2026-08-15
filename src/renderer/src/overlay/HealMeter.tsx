@@ -8,10 +8,11 @@ import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { HealBars } from './healBars'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
-import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
+import { EMPTY_ROSTER, chipLabel } from '@shared/roster'
 import { ICON_ACCENT_GREEN } from './IconButton'
 import { MeterPane } from './scopeFloor'
 import { TextScaleStepper } from './TextScaleStepper'
+import { FOOTER_ROW } from './overlayScale'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 
@@ -221,10 +222,7 @@ export default function HealMeter(): JSX.Element {
         textScale={textScale}
         locked={locked}
         capture={capture}
-        scope={{
-          label: chipLabel(meterScope, roster),
-          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
-        }}
+        scope={{ label: chipLabel(meterScope, roster) }}
       >
         <HealBars seg={seg} scope={meterScope} roster={roster} drill={drill} setDrill={locked ? null : setDrill} live={live} />
       </MeterPane>
@@ -251,20 +249,15 @@ function HealFooter({
   return (
     <div
       style={{
+        ...FOOTER_ROW,
         ...noDrag,
-        display: 'flex',
-        alignItems: 'center',
         gap: 8,
-        padding: '3px 8px 5px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
         fontSize: 10,
-        color: 'rgba(255,255,255,0.6)',
-        flexShrink: 0
+        color: 'rgba(255,255,255,0.6)'
       }}
     >
-      <span title="Background opacity" style={{ flexShrink: 0 }}>
-        bg
-      </span>
+      {/* The word IS the label (JOS-358) — the footer names its own controls, it does not hover. */}
+      <span style={{ flexShrink: 0 }}>bg</span>
       <input
         type="range"
         min={0.1}

@@ -33,6 +33,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import type { AlertDef, SoundPack } from '@shared/types'
 import { captureNamesIn } from '@shared/alertCaptures'
+import { autoTokenNamesFor } from '@shared/alertTargets'
 import { MAX_EARLY_WARN_SEC, breakTriggerKinds } from '@shared/earlyWarning'
 import { blankCondition, type CombineMode, type ConditionDraft } from './conditionDraft'
 import {
@@ -272,6 +273,7 @@ export default function AlertDialog({
   open,
   initial,
   packs,
+  defaultPackId,
   voiceSetup,
   allAlwaysPlay = false,
   onClose,
@@ -280,6 +282,12 @@ export default function AlertDialog({
   open: boolean
   initial: AlertDef | null
   packs: SoundPack[]
+  /**
+   * The user's default sound pack (JOS-273). A NEW alert opens on it; an EDIT is untouched by it,
+   * because the def already states which pack it plays. Optional so a caller without the prefs
+   * (and every test that mounts this dialog bare) still compiles onto the shipped default.
+   */
+  defaultPackId?: string
   /** Whether there is a voice to speak with, and how to go set one up (VoiceSetupLink.tsx). */
   voiceSetup: VoiceSetupNotice
   /**
@@ -292,7 +300,7 @@ export default function AlertDialog({
   onClose: () => void
   onSave: (def: AlertDef) => void
 }): JSX.Element {
-  const f = useAlertForm(open, initial, packs)
+  const f = useAlertForm(open, initial, packs, defaultPackId)
   const editing = initial != null
 
   return (
@@ -325,6 +333,7 @@ export default function AlertDialog({
               packs={packs}
               packId={f.packId}
               soundId={f.soundId}
+              defaultPackId={defaultPackId}
               onChange={f.setSound}
             />
           </Box>
@@ -335,12 +344,15 @@ export default function AlertDialog({
           <Divider />
           {/* Recomputed from the LIVE form, not from `initial`: the user can add `(?<player>…)`
               to the pattern and the token list has to follow them, in the same dialog, before
-              they type the phrase that uses it. */}
+              they type the phrase that uses it. `autoNames` follows the same live trigger for the
+              same reason (JOS-353) — switching a condition's event kind is exactly how a user
+              discovers that `{target}` is available here and not there. */}
           <SpeechBlock
             name={f.name}
             form={f.speech}
             voiceSetup={voiceSetup}
             captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
+            autoNames={autoTokenNamesFor(triggerFromForm(f.mode, f.conditions))}
             allAlwaysPlay={allAlwaysPlay}
           />
         </Stack>

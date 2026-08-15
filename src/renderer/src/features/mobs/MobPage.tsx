@@ -42,7 +42,8 @@ import {
   Stack,
   Typography
 } from '@mui/material'
-import type { MobDrop, MobEntry, MobKnowledge, MobQuestUse } from '@shared/types'
+import type { KillMap, MobDrop, MobEntry, MobKnowledge, MobQuestUse } from '@shared/types'
+import { killsFor } from '@shared/kills'
 import { CONSIDER_FACTION_COLOR, CONSIDER_FACTION_LABEL, considerDifficultyShort } from '@shared/logEvents'
 import { wikiPageUrl } from '@shared/wiki'
 import { formatDate, formatDateTime } from '../../lib/formatDate'
@@ -102,9 +103,20 @@ function useMobKnowledge(
   return { data, loading }
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }): JSX.Element {
+function StatCard({
+  label,
+  value,
+  hint,
+  testId
+}: {
+  label: string
+  value: string
+  hint?: string
+  /** Only the Kills card carries one — it is the number JOS-350 was about, so a spec can read it. */
+  testId?: string
+}): JSX.Element {
   return (
-    <Paper variant="outlined" sx={{ p: 1.5, flex: 1, minWidth: 110 }}>
+    <Paper variant="outlined" data-testid={testId} sx={{ p: 1.5, flex: 1, minWidth: 110 }}>
       <Typography variant="h5" sx={{ color: 'primary.main', lineHeight: 1.1 }}>
         {value}
       </Typography>
@@ -201,6 +213,7 @@ function MobStats({
       <StatCard label="Looted by you" value={String(seenCount)} hint="distinct items" />
       <StatCard
         label="Kills"
+        testId="mob-stat-kills"
         value={String(kill?.count ?? 0)}
         hint={kill?.lastTs ? `last ${formatDate(kill.lastTs)}` : undefined}
       />
@@ -411,9 +424,24 @@ function dropSections(data: MobKnowledge | null): {
   }
 }
 
-/** The mob page. `target` carries everything the calling surface already knew. */
-export function MobPage({ target }: { target: MobTarget }): JSX.Element {
-  const { mob, seed, entry, con, kill } = target
+/**
+ * The mob page. `target` carries everything the calling surface already knew; `kills` is the
+ * kills module's join index (`shared/kills.killIndex`), which the page reads for ITSELF.
+ *
+ * THE KILL COUNT IS THE PAGE'S OWN JOIN NOW (JOS-350). It used to be `target.kill` and nothing
+ * else, so a surface that forgot to attach one — the Overview's Target card, its Recent-kills
+ * rows, the Sky droppers, the events overlay's deep link — opened this page reading `Kills 0`
+ * for a mob the Mobs tab counted correctly. That is a join every caller had to remember, keyed
+ * four different inline ways; now there is one, and `killsFor` folds the spawn-generation
+ * ` (N)` suffix that the combat-fed names carry and no kill record ever has.
+ *
+ * `target.kill` SURVIVES as an explicit OVERRIDE, for the one caller that resolves a DIFFERENT
+ * identity than this page's name would: the raid roster matches its targets article-insensitively
+ * (bossStatus.ts), so it pins the record it matched, exactly as `entry` pins the identity half.
+ */
+export function MobPage({ target, kills }: { target: MobTarget; kills: KillMap }): JSX.Element {
+  const { mob, seed, entry, con } = target
+  const kill = target.kill ?? killsFor(kills, mob)
   const { data, loading } = useMobKnowledge(mob, seed, entry)
   const [drill, setDrill] = useState<{ item: string; family: boolean } | null>(null)
   const openItem: OpenItem = (item, family) => {

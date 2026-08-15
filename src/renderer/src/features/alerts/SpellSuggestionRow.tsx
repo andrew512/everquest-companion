@@ -30,17 +30,28 @@ import { preferredRank, type SpellLine } from '@shared/spellLines'
 import {
   RANK_TEMPLATES,
   SUGGEST_TEMPLATES,
+  suggestionCoverageId,
   suggestionsFor,
   type Suggestion,
   type TemplateKind
 } from './suggestions'
 import { classLevelChips, type ClassLevelChip } from './lineIntel'
 import { Tooltip } from '../../lib/Tooltip'
+// The rich spell card (JOS-293). The row states what an ALERT can be built on; the card behind
+// the name states what the spell IS - the effect list, the cost, the duration, the rank it
+// replaces - which is the other half of "is this one worth an alert at all".
+import { SpellTooltip } from '../../lib/SpellCard'
 
 /** Everything a row needs beyond the catalog entry itself (line + loadout context). */
 export interface RowContext {
   lines: Map<string, SpellLine>
   resolved: ClassAbbr[]
+  /**
+   * The user's default sound pack (JOS-273), or undefined for "whatever the app ships". Every
+   * suggestion this wizard authors points at it — the owner's ruling names the suggestion builder
+   * as one of the three surfaces the preference has to be honoured by.
+   */
+  defaultPackId?: string
 }
 
 /** How many class-level chips a row shows before folding the rest into "+N". */
@@ -251,13 +262,26 @@ function SpellRow({
   const rank = useMemo(() => preferredRank(ctx.lines.get(entry.key)?.ranks ?? []), [ctx.lines, entry.key])
   // Building the AlertDefs is the row's heaviest work, and it depends only on the entry and the
   // rank — so a re-render that changes neither (a parent re-render, a hover) does none of it.
-  const suggestions = useMemo(() => suggestionsFor(entry, rank), [entry, rank])
+  const suggestions = useMemo(
+    () => suggestionsFor(entry, rank, ctx.defaultPackId),
+    [entry, rank, ctx.defaultPackId]
+  )
   return (
     <Box sx={SUGGEST_ROW_SX} data-testid="suggest-row">
       <Box sx={SUGGEST_ROW_FACTS_SX}>
-        <Typography variant="body2" sx={{ fontWeight: 500, minWidth: 0 }} noWrap>
-          {entry.name}
-        </Typography>
+        {/* The NAME is the card's anchor (JOS-293), and it is the name the row DISPLAYS - never
+            the preferred rank below, which the row may have picked without the user ever having
+            cast it. The card's own rank block lists the line's members anyway. */}
+        <SpellTooltip name={entry.name}>
+          <Typography
+            variant="body2"
+            data-testid="suggest-row-name"
+            sx={{ fontWeight: 500, minWidth: 0 }}
+            noWrap
+          >
+            {entry.name}
+          </Typography>
+        </SpellTooltip>
         {showType && (
           <Chip
             size="small"
@@ -286,7 +310,10 @@ function SpellRow({
           <TemplateChip
             key={s.def.id}
             label={chipLabel(s)}
-            created={existingIds.has(s.def.id)}
+            // The RANK-FOLDED id (JOS-276): a rank chip is created when the line already has this
+            // alert at ANY rank, because since JOS-259 those defs fire on exactly the same lines.
+            // Identity for every other template, so nothing else moved.
+            created={existingIds.has(suggestionCoverageId(s.def.id))}
             onClick={() => onCreate(s)}
           />
         ))}

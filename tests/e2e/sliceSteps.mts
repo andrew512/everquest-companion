@@ -10,6 +10,10 @@
 // arithmetic under it moves. Asserting that asymmetry as a PAIR is the point: a refactor that
 // flattened the zone filter into a time window would still pass every check over there.
 //
+// IT ALSO CARRIES THE BAR'S SHAPE (JOS-301): with `Zone` in force every control of the scope is
+// mounted at once, which is the only state in which "one row of controls, one line under them" can
+// be measured at all — so the layout claim is asserted from inside the step that creates it.
+//
 // WHAT NO UNIT TEST CAN REACH: `tests/timeslice.test.mts` pins the definitions and the partition
 // identity over a hand-built snapshot. It cannot see that the button in the real app resolves the
 // real progression module's last zone line, hands one `zoneKey` down through `scopedStats` into
@@ -19,12 +23,30 @@ import type { Page } from 'playwright-core'
 import { check, countOf, note, settle } from './appHarness.mjs'
 
 const TS_WINDOW = '[data-testid="leveling-slice-window"]'
+/** The ONE caption line under the row of controls (JOS-301) — both clauses live inside it. */
+const CAPTION = '[data-testid="leveling-scope-caption"]'
+/** The two toggle groups of the scope row, read for the pick in force (JOS-332). */
+const TIER = '[data-testid="leveling-tier"]'
+const BASIS = '[data-testid="leveling-basis"]'
+/** The elapsed span the panel says its numbers cover — `RangeStats.durationMs`, which under a zone
+ *  slice is Σ of the ADMITTED VISITS. The number the owner's bug report was about. */
+const DURATION = '[data-testid="leveling-range-duration"]'
 const LOOT_SLICE = '[data-testid="loot-slice"]'
 const LOOT_SUMMARY = '[data-testid="loot-summary"]'
 const LOOT_RATES = '[data-testid="loot-rates"]'
 /** Narrowest first. Any of these is a real cut of the ledger; `custom` is not one until somebody
  *  types two instants into it, so it is deliberately never a candidate. */
 const NARROW_ORDER = ['h1', 'h6', 'h24', 'd7', 'session', 'zone'] as const
+
+/** Where a mounted box sits, in viewport coordinates; null when it isn't mounted. */
+function boxOf(page: Page, sel: string): Promise<{ top: number; bottom: number; h: number } | null> {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }
+  }, sel)
+}
 
 /** Rendered text of the first match; '' when the node isn't mounted. */
 function textOf(page: Page, sel: string): Promise<string> {
@@ -38,6 +60,182 @@ function offeredSlices(page: Page, prefix: string): Promise<string[]> {
     Array.from(document.querySelectorAll(`[data-testid^="${p}-"]`))
       .map((e) => (e.getAttribute('data-testid') ?? '').replace(`${p}-`, ''))
       .filter((id) => id.length > 0 && id !== 'window' && !id.includes('-')), prefix)
+}
+
+/**
+ * THE SCOPE IS ONE ROW OF CONTROLS WITH ONE LINE UNDER IT (JOS-301, owner feedback 2026-08-13).
+ *
+ * The bar used to arrive as three stacked bars — slice buttons and their caption, the tier toggle
+ * alone, the basis toggle and its caption — which the owner called unbalanced from a screenshot of
+ * this tab. The fix is a LAYOUT, so only a real render can hold it: `tests/zoneScope.test.mts` pins
+ * which components `ScopeBar` composes and cannot see what a browser then does with them.
+ *
+ * It is measured with `Zone` in force because that is the only state in which all three controls
+ * are mounted (the tier toggle is drawn exactly while the slice carries a zone), and it is measured
+ * WIDE — the row is allowed to wrap by group at the app's narrow end, which is a degradation rather
+ * than a violation, and `stepNarrowLayout` is what keeps that end honest.
+ */
+async function checkScopeRow(page: Page): Promise<void> {
+  const slice = await boxOf(page, '[data-testid="leveling-slice"]')
+  const tier = await boxOf(page, '[data-testid="leveling-tier"]')
+  const basis = await boxOf(page, '[data-testid="leveling-basis"]')
+  const caption = await boxOf(page, CAPTION)
+  if (!check('the scope draws its three controls and one caption line', !!slice && !!tier && !!basis && !!caption)) return
+  // Rounded tops within a couple of pixels: they are centred in one flex row and the two toggle
+  // groups are the same height, so this is an alignment claim and not a font measurement.
+  const level = Math.max(Math.abs(tier.top - slice.top), Math.abs(basis.top - slice.top))
+  check(
+    'every control sits on ONE level — the buttons are one row, not three stacked bars',
+    level <= 2,
+    `slice y=${String(slice.top)} · tier y=${String(tier.top)} · basis y=${String(basis.top)}`
+  )
+  check(
+    '…and the description is on its own line BELOW them, not inline with the buttons',
+    caption.top >= slice.bottom,
+    `controls end at ${String(slice.bottom)}, caption starts at ${String(caption.top)}`
+  )
+  const words = (await textOf(page, CAPTION)).replace(/\s+/g, ' ')
+  check(
+    '…carrying BOTH clauses as one sentence — which stretch, and per hour of what',
+    words.includes('→') && /rates per hour of (elapsed|active) time/.test(words),
+    words
+  )
+  // One LINE, not a paragraph: the caption keeps the compact-bar contract, so a second line of it
+  // would be the imbalance coming straight back in the other direction.
+  check('…on a single line', caption.h <= 24, `${String(caption.h)}px tall`)
+  await checkToggleTitles(page)
+}
+
+/**
+ * EVERY TOGGLE IN THE SCOPE EXPLAINS ITSELF ON HOVER (JOS-304, owner feedback 2026-08-13: the two
+ * pairs are *hard to understand*).
+ *
+ * The strings themselves are pinned as values next door (`tests/zoneScope.test.mts`,
+ * `tests/rateBasis.test.mts`); what only a render can show is that the attribute survived the trip
+ * through MUI's `ToggleButton` onto the element the pointer actually lands on. It does not: MUI
+ * forwards unknown props to the underlying `button`, and that is precisely the kind of thing a
+ * component-library bump breaks quietly. Measured from inside `checkScopeRow` because this is the
+ * one moment both pairs are on the tab at once.
+ *
+ * Read as ALL FOUR BUTTONS OR NOTHING, since a per-button title is the whole point — a group that
+ * explains only its selected half leaves the reader hovering the button they were thinking of
+ * pressing and learning nothing.
+ */
+async function checkToggleTitles(page: Page): Promise<void> {
+  const titles = await page.evaluate(() =>
+    ['leveling-tier-allTiers', 'leveling-tier-exactTier', 'leveling-basis-elapsed', 'leveling-basis-active'].map(
+      (id) => {
+        const el = document.querySelector(`[data-testid="${id}"]`)
+        return { id, title: el?.getAttribute('title') ?? '' }
+      }
+    )
+  )
+  const bare = titles.filter((t) => t.title.length === 0).map((t) => t.id)
+  check(
+    'every toggle in the scope carries its own native hover, selected or not',
+    bare.length === 0,
+    bare.length > 0 ? `no title on ${bare.join(', ')}` : titles.map((t) => t.id).join(', ')
+  )
+  // And the words are the two SIDES of each difference, not one sentence repeated: the tier pair
+  // talks about which visits count, the basis pair about which hour divides.
+  const by = (id: string): string => titles.find((t) => t.id === id)?.title ?? ''
+  check(
+    '…and the tier pair states the difference from either side',
+    /at any tier/.test(by('leveling-tier-allTiers')) && /only the tier you are standing in/.test(by('leveling-tier-exactTier')),
+    `${by('leveling-tier-allTiers')} || ${by('leveling-tier-exactTier')}`
+  )
+  check(
+    '…as does the basis pair, each carrying the definition of its own hour',
+    /Elapsed time = /.test(by('leveling-basis-elapsed')) && /Active time = /.test(by('leveling-basis-active')),
+    `${by('leveling-basis-elapsed')} || ${by('leveling-basis-active')}`
+  )
+}
+
+/** An element's attribute, or '' when the node is not mounted at all. */
+function attrOf(page: Page, sel: string, attr: string): Promise<string> {
+  return page.evaluate(
+    ([s, a]) => document.querySelector(s)?.getAttribute(a) ?? '',
+    [sel, attr] as const
+  )
+}
+
+/**
+ * 5d. THE SURFACES OPEN ON THIS TIER AND ELAPSED (owner ruling, JOS-332) — read before any control
+ * on the tab has been touched.
+ *
+ * `tests/scopeSelection.test.mts` pins the OPENING as a value and `tests/zoneScope.test.mts` pins
+ * what it does to the numbers. Neither can see what the tab actually comes up on: the opening has
+ * to survive `useScopeSelection`'s hydrate from main, and a hydrate that arrived with the OLD
+ * default would repaint the row a frame after mount and be invisible to every unit test in the
+ * suite.
+ *
+ * The BASIS group is always drawn, so its default is asserted unconditionally. The TIER group is
+ * drawn exactly while the slice carries a zone (`ZoneScopeBar`'s rule), which depends on whether
+ * this log can define `Zone + Session` at all — so it is asserted here when it is up, and again
+ * inside `stepZoneSlice` at the moment picking `Zone` brings it out, which no log can skip.
+ */
+export async function stepScopeDefaults(page: Page): Promise<void> {
+  const basis = await settle(() => attrOf(page, BASIS, 'data-basis'), (b) => b !== '', { timeoutMs: 8000 })
+  check('the tab opens on the ELAPSED hour', basis === 'elapsed', basis)
+  const tier = await attrOf(page, TIER, 'data-scope')
+  if (tier === '') {
+    note('this log defines no zoned slice to open on, so the tier toggle is not drawn yet')
+    return
+  }
+  check('…and on THIS TIER, the tier you are standing in', tier === 'exactTier', tier)
+  const words = (await textOf(page, CAPTION)).replace(/\s+/g, ' ')
+  check('…and the caption says so, over the numbers it is about', words.includes('this tier only'), words)
+}
+
+/**
+ * 5e. THIS TIER NARROWS THE ELAPSED TIME, NOT JUST THE ROWS (JOS-332, the owner's bug report).
+ *
+ * *logged in to base Befallen open world, killed a while, switched to Befallen D2, killed ~5m; the
+ * panel reads elapsed time 27m across all tiers despite this-tier being selected.*
+ *
+ * The arithmetic is pinned over that exact scenario in `tests/zoneScope.test.mts`. What only the
+ * real app can show is that the toggle on this row reaches it: that pressing `every tier` widens
+ * the span the panel prints and pressing `this tier` narrows it back, byte for byte, on a fixture
+ * whose current camp the log genuinely spells more than one way.
+ *
+ * AND THAT THE ROW FOLLOWS A CHANGE MADE SOMEWHERE ELSE. The last two checks write through the
+ * app's own bridge instead of clicking — that is the path the XP overlay's footer button takes, so
+ * this is the main window proving it obeys a flip it did not make. `xp-overlay.e2e.mts` proves the
+ * mirror direction with the overlay's own rendered button.
+ *
+ * e2e-leveling.log is the right fixture by accident of the owner's own play: its last zone line is
+ * plain `Nagafen's Lair`, and the same camp appears as `- Solo`, `- Solo 1 (Awakened)`,
+ * `- Solo 2 (Adaptive)` and `- Solo 3 (Fused)` earlier in the record. So the two memberships have
+ * genuinely different answers here, and `exactTier` is the strictly narrower one.
+ */
+async function checkTierScopedElapsed(page: Page): Promise<void> {
+  const exact = await settle(() => textOf(page, DURATION), (t) => t !== '', { timeoutMs: 8000 })
+  check('the panel states the elapsed span its numbers cover', exact !== '', exact)
+  check('…on THIS TIER, which is what the tab opened on', (await attrOf(page, TIER, 'data-scope')) === 'exactTier')
+
+  await page.click('[data-testid="leveling-tier-allTiers"]', { timeout: 10_000 })
+  const every = await settle(() => textOf(page, DURATION), (t) => t !== exact, { timeoutMs: 8000 })
+  check(
+    'pressing "every tier" WIDENS the elapsed span — the other tiers of the camp are back in',
+    every !== exact,
+    `this tier ${exact} → every tier ${every}`
+  )
+  const captionEvery = (await textOf(page, CAPTION)).replace(/\s+/g, ' ')
+  check('…and the caption says which membership the span belongs to', captionEvery.includes('every tier'), captionEvery)
+
+  // THE BROADCAST PATH, not the click path: this is exactly what the overlay's footer button does.
+  await page.evaluate(() =>
+    (window as unknown as { eq: { setScopeSelection: (p: unknown) => void } }).eq.setScopeSelection({
+      zoneScope: 'exactTier'
+    })
+  )
+  const back = await settle(() => textOf(page, DURATION), (t) => t === exact, { timeoutMs: 8000 })
+  check(
+    'a flip made OUTSIDE this row moves it, and restores the narrowed span byte for byte',
+    back === exact,
+    `${every} → ${back}`
+  )
+  check('…including the buttons themselves', (await attrOf(page, TIER, 'data-scope')) === 'exactTier')
 }
 
 /**
@@ -66,6 +264,20 @@ export async function stepZoneSlice(page: Page, readDashboard: () => Promise<str
     '…while the numbers under it are re-derived for that zone alone',
     (await settle(() => readDashboard(), (t) => t !== allReadout, { timeoutMs: 8000 })) !== allReadout
   )
+
+  // THE OPENING, at the one moment no log can skip: the tier group has just been drawn for the
+  // first time and nothing has pressed it (JOS-332). `stepScopeDefaults` says the same thing at
+  // mount, when the log can define a zoned slice to open on.
+  check(
+    '…and the membership it comes out on is THIS TIER, the owner ruled opening',
+    (await attrOf(page, TIER, 'data-scope')) === 'exactTier',
+    await attrOf(page, TIER, 'data-scope')
+  )
+
+  // Measured HERE because this is the one moment all three controls are on the tab at once.
+  await checkScopeRow(page)
+  // …and so is this: the tier toggle only means something while the slice carries a zone.
+  await checkTierScopedElapsed(page)
 
   await page.click('[data-testid="leveling-slice-all"]', { timeout: 10_000 })
   const restored = await settle(() => readDashboard(), (t) => t === allReadout, { timeoutMs: 8000 })

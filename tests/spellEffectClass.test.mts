@@ -37,6 +37,7 @@ import {
   classifyEffectLine,
   effectRoster,
   holdRoster,
+  petSummonRoster,
   spellEffectClasses,
   spellHasEffect
 } from '../src/main/data/spellEffectClass.ts'
@@ -264,9 +265,126 @@ test('JOS-251 R4d: the per-class membership counts, pinned', () => {
   assert.deepEqual(
     Object.fromEntries(EFFECT_RULES.map((r) => [r.klass, all(r.klass)])),
     {
-      charm: 23, mez: 16, root: 24, snare: 31, slow: 34, haste: 44, fear: 15,
-      stun: 92, blind: 12, pacify: 12, memblur: 17, invisibility: 19, feignDeath: 2
+      charm: 23, summonPet: 102, mez: 16, root: 24, snare: 31, slow: 34, haste: 44, fear: 15,
+      stun: 92, blind: 12, pacify: 12, memblur: 17, invisibility: 19, feignDeath: 2,
+      // JOS-318, the class the alert catalog reads. 67 rows / 66 canonical names.
+      healOverTime: 66
     }
+  )
+})
+
+// ── R9: the heal-over-time class (JOS-318) ──────────────────────────────────────────────────────
+
+test('JOS-318 R9: the HoT class reads BOTH wiki phrasings, and no DoT', () => {
+  // The two heads, each on the row that names them, plus the casing/spelling variants the same
+  // scrape carries. See the rule's own note in spellEffectClass.ts for the measurement.
+  assert.equal(classifyEffectLine('Increase Hitpoints by 60 per tick'), 'healOverTime', 'Flowering Heal')
+  assert.equal(classifyEffectLine('Increase Current Hit Points by 160 per Tick'), 'healOverTime', 'Slugs Healing')
+  assert.equal(classifyEffectLine('Increase Hitpoints v2 by 300 per tick'), 'healOverTime', 'Torpor')
+  assert.equal(classifyEffectLine('Increase hitpoints by 4 per tick'), 'healOverTime', 'Natureskin')
+  assert.equal(
+    classifyEffectLine('Increase Hitpoints between 55 and 55 for two additional ticks.'),
+    'healOverTime',
+    'the cleric Echo family'
+  )
+  // THE ANCHOR IS DOING THE WORK, exactly as it does for every rule above. A DoT tick is a DECREASE,
+  // a mana regen is not hit points, a direct heal does not tick, and a delayed lump is not per-tick.
+  assert.equal(classifyEffectLine('Decrease Hitpoints by 30 per tick'), null, 'that is a DoT')
+  assert.equal(classifyEffectLine('Decrease Current Hit Points by 100 per Tick'), null)
+  assert.equal(classifyEffectLine('Increase Mana by 10 per tick'), null, 'mana is not a heal')
+  assert.equal(classifyEffectLine('Increase Hitpoints by 688'), null, "Kragg's Salve is a direct heal")
+  assert.equal(classifyEffectLine('Increase Hitpoints by 197 after 4 ticks'), null, 'a delayed lump')
+})
+
+test('JOS-318 R9b: the roster answers for every HoT the OWNER`S LOG has printed a tick for', () => {
+  // The check that matters for a claim an alert rests on: not "does the regex match the rows I read"
+  // but "does it read the spells the game actually ticks for". These 19 names are every distinct
+  // `<healer> healed <target> over time for N hit points by <Spell>.` spell in the owner's whole log
+  // (eqlog_Primitive_freeport.txt, 1,732,267 lines, measured 2026-08-14), with their counts.
+  const LOGGED: readonly [string, number][] = [
+    ['Snails Healing', 455], ['Tortoises Healing', 314], ['Slugs Healing', 248],
+    ['Ethereal Cleansing', 214], ['Echoing Light', 93], ['Celestial Echo', 57], ['Sacred Echo', 57],
+    ['Renewing Echo', 48], ['Sprouting Heal', 48], ['Efflorescing Heal', 35], ['Celestial Remedy', 34],
+    ['Blossoming Heal', 22], ['Flowering Heal', 16], ['Budding Heal', 6], ['Echo of Health', 4],
+    ['Stoicism', 3], ['Blooming Heal', 3], ['Impassivity', 1]
+  ]
+  const roster = effectRoster(RAW, 'healOverTime', { castableOnly: false, targetOnly: false })
+  const missing = LOGGED.filter(([n]) => !roster.has(n.toLowerCase())).map(([n]) => n)
+  assert.deepEqual(missing, [], 'a spell the log ticks for that the effect read cannot see')
+  // THE ONE THE LOG PRINTS AND NO ROSTER CAN EVER HOLD, stated rather than quietly dropped: five
+  // `Harm Touch IX` ticks. `Harm Touch` is not in spells.json at all, so it is out of every derived
+  // structure, and its alert path is the `healsOverTime` template's own gate refusing to offer a
+  // chip for a spell the catalog does not carry — not a silent miss.
+  assert.equal(RAW.some((s) => s.name.startsWith('Harm Touch')), false, 'absent from the scrape')
+})
+
+// ── R8: the pet-summon class (JOS-258) ──────────────────────────────────────────────────────────
+
+test('JOS-258 R8: the summon class reads what the spell DOES, not how the wiki FILED it', () => {
+  // THE ARGUMENT FOR THE CLASS EXISTING AT ALL. `spellType === 'Pet'` is the obvious test and it is
+  // NARROWER than the effect list it is supposed to summarise: 83 rows carry that type, 104 rows
+  // say `Summon Pet:` in words. The gap is not noise — it is the magician's top elementals.
+  // PER ROW, not through `names()`: this family has ranked members (Monster Summoning I/II/III) and
+  // the roster is keyed canonically, so a name-vs-key comparison would report a phantom gap.
+  const byType = RAW.filter((s) => s.spellType === 'Pet').map((s) => s.name)
+  const byEffect = RAW.filter((s) => spellHasEffect(s, 'summonPet')).map((s) => s.name)
+  assert.equal(byType.length, 83, 'the type column')
+  assert.equal(byEffect.length, 104, 'the effect lines')
+  // Every typed row is found by the effect read; the reverse is 21 rows the type column misses —
+  // the magician's whole Vocarate/Greater Vocaration top end, and the necromancer's three
+  // differently-spelled pets.
+  assert.deepEqual(byType.filter((n) => !byEffect.includes(n)), [], 'the effect read is a superset')
+  assert.deepEqual(byEffect.filter((n) => !byType.includes(n)).sort(), [
+    'Dyzil`s Deafening Decoy',
+    'Emissary of Thule',
+    'Flaming Sword of Xuzl',
+    'Greater Vocaration: Air',
+    'Greater Vocaration: Earth',
+    'Greater Vocaration: Fire',
+    'Greater Vocaration: Water',
+    'Minion of Shadows',
+    'Mistwalker',
+    'Monster Summoning III',
+    'Nature Walkers Behest',
+    'Rage of Zomm',
+    'Servant of Bones',
+    'Spirit of the Howler',
+    'Summon Golin',
+    'Unswerving Hammer',
+    'Vocarate: Air',
+    'Vocarate: Earth',
+    'Vocarate: Fire',
+    'Vocarate: Water',
+    'Zumaik`s Animation'
+  ])
+})
+
+test('JOS-258 R8b: three heads, and the near-misses the anchor keeps out', () => {
+  // The necromancer's two top pets and the level-59 spectre are spelled differently on the wiki,
+  // so the rule names all three heads rather than assuming one phrasing (JOS-84's lesson, applied
+  // before it costs anything).
+  assert.equal(classifyEffectLine('Summon Pet: Level 19 Skeletal Pet'), 'summonPet')
+  assert.equal(classifyEffectLine('Summon Skeleton Pet: skel_pet_43_'), 'summonPet', 'Minion of Shadows')
+  assert.equal(classifyEffectLine('Summon Spectre Pet'), 'summonPet', 'Emissary of Thule')
+  // …and the things that mention a pet without summoning one. `Call Pet` is Summon Companion, which
+  // TELEPORTS the pet you already have — a nudge armed by it would fire with a pet already bound.
+  assert.equal(classifyEffectLine('Call Pet'), null, 'Summon Companion moves a pet, it does not make one')
+  assert.equal(classifyEffectLine('Pet Power Increase (10)'), null)
+  assert.equal(classifyEffectLine('Decrease Pet Size by 50%'), null, 'Tiny Companion')
+  assert.equal(classifyEffectLine('Summon Item: Bone Chips'), null, '141 rows of conjured objects')
+  assert.equal(classifyEffectLine('Summon Corpse'), null)
+})
+
+test('JOS-258 R8c: the roster gate is INVERTED against the charm one, and on purpose', () => {
+  // `petSummonRoster` turns `targetOnly` OFF. Its consumer is `You begin casting <Spell>.`, a
+  // sentence about the CASTER, and 103 of the 104 rows are `targetType: Self` — the charm reader's
+  // gate would throw away essentially the whole family.
+  assert.equal(petSummonRoster(RAW).size, 99, 'castable, either target type')
+  assert.equal(effectRoster(RAW, 'summonPet').size, 1, 'the default gate keeps only Flaming Sword of Xuzl')
+  // The castable gate stays ON: no player prints a cast line for an NPC-only spell.
+  assert.deepEqual(
+    names('summonPet', { castableOnly: false, targetOnly: false }).filter((n) => !names('summonPet', { targetOnly: false }).includes(n)),
+    ['Manifest Elements', 'Mistwalker', 'Summon Golin']
   )
 })
 

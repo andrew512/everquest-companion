@@ -402,6 +402,42 @@ export interface SpellTemplateFlags {
   /** Beneficial-class → "fades on your pet/target" (kind: buffFade). */
   fade: boolean
   /**
+   * Beneficial-class + a cast-on-YOU message → "lands on you" (kind: buffApply, target 'self').
+   *
+   * THE HOLE IT FILLS (JOS-318). `lands` is DETRIMENTAL-only — it was written for a debuff landing
+   * on a mob and gates on the cast-on-OTHER sentence — so a beneficial spell had no landing chip at
+   * all, even though the parser emits a perfectly good `buffApply {target:'self'}` for it off the
+   * DB's `msgCastOnYou`. A druid who clicked everything the wizard offered for `Flowering Heal` got
+   * `fade` (which needs a wear-off line the spell does not print) and `landsOnOther` (which fires
+   * when it lands on somebody ELSE), and nothing at all for the case they were asking about: the
+   * heal landing on THEM. That is report 3JM1ZD, and it is the same shape as report
+   * 01KZZXVW888E09C088QBRD5HCD one spell along the same shaman ladder.
+   *
+   * The gate is the cast-on-you message and nothing else, because that message IS the parser's key:
+   * `SpellDb.castOnYou` is an exact-text map built from it, so a spell that has one can emit the
+   * event and a spell that does not never can. Placeholder stubs are already `undefined` by the time
+   * this is read (spellDb.ts `applyPlaceholderMessages`), so a `You .` cannot buy a chip.
+   */
+  landsOnYou: boolean
+  /**
+   * The wiki's effect list says the spell HEALS OVER TIME → "while it is healing" (kind: `heal`,
+   * pinned to the spell name).
+   *
+   * THE ONE LINE A HoT CANNOT FAIL TO PRINT (JOS-318). `<healer> healed <target> over time for N hit
+   * points by <Spell>.` names the spell verbatim and WITHOUT its rank, so this trigger is immune to
+   * both failure modes the two reports hit: a wiki row whose landing/wear-off sentences are missing
+   * or wrong (Slugs Healing states neither — its scrape says `You .`), and a spell that has been
+   * upgraded since the alert was written (the cast line says `Slugs Healing VII`, this line says
+   * `Slugs Healing`). Every other spell template rests on a sentence the wiki had to get right.
+   *
+   * Gated on the DERIVED effect class (`spellEffectClass.ts healOverTime`) plus a beneficial nature,
+   * not on `spellType`: the shaman ladder is typed `Heal Over Time` but `Tortoises Healing` and the
+   * whole druid seeded-heal family are typed plain `Beneficial`, and reading what the spell DOES
+   * finds all of them. Measured: of the 19 spells the owner's log prints a tick for, the roster
+   * reads 18 — the miss is not in spells.json at all.
+   */
+  healsOverTime: boolean
+  /**
    * Detrimental-class + a cast-on-other message the parser can actually MATCH → "lands on a
    * target" (kind: buffApply). The second half of that gate is not decoration: the message has
    * to yield a `castOnOtherSuffix`, or no buffApply is ever emitted for the spell and the
@@ -478,6 +514,17 @@ export interface SpellCatalogEntry {
    * rebuilt it from a message would be a second implementation of a security property.
    */
   castOnOtherCapture?: string
+  /**
+   * The DB's stated duration in ms, or absent when the wiki states none / states "Instant".
+   *
+   * ONE READER TODAY, and it is a COOLDOWN rather than a display (JOS-318): the `healsOverTime`
+   * suggestion fires on a tick line that repeats every six seconds for the whole duration, so its
+   * def is authored with a cooldown of the spell's own duration and one cast makes one sound. The
+   * figure is the wiki's and is a FLOOR in this app (spellCorrectionsList.ts's WRONG NUMBER note),
+   * which is the right direction for a cooldown: it can let a re-cast through early, never swallow
+   * one late.
+   */
+  durationMs?: number
   /** How often the buffs model has observed this spell (land→fade sample count `n`); 0 = never. */
   usageCount: number
   /**

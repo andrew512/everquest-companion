@@ -15,6 +15,8 @@ import {
   FEED_PARSE_MESSAGE,
   JITTER_FRACTION,
   MAX_UPDATE_MESSAGE_CHARS,
+  RESUME_DELAY_MS,
+  RESUME_JITTER_MS,
   STARTUP_DELAY_MS,
   STARTUP_JITTER_MS,
   MAX_DOWNLOAD_ATTEMPTS,
@@ -25,6 +27,7 @@ import {
   isStaleVersion,
   nextCheckDelayMs,
   shouldRetryCheck,
+  updateChipLine,
   updateChipState
 } from '../src/shared/update'
 import type { UpdateStatus } from '../src/shared/types'
@@ -363,6 +366,131 @@ test('formatAge is COARSE and user-local, and "never" is the absent case', () =>
   assert.equal(formatAge(now - 3 * 86_400_000, now), '3d ago')
   // Clock skew (a persisted stamp from the future) must not print a negative age.
   assert.equal(formatAge(now + 60_000, now), 'just now')
+})
+
+// ------------------------------------------------------- waking up (JOS-307)
+
+test('a WAKE re-anchors the cadence, short and jittered', () => {
+  assert.equal(nextCheckDelayMs({ phase: 'resume' }, seq(0)), RESUME_DELAY_MS)
+  assert.equal(nextCheckDelayMs({ phase: 'resume' }, seq(1)), RESUME_DELAY_MS + RESUME_JITTER_MS)
+  // Short enough that the user who just sat down gets an answer in the same sitting, and far
+  // shorter than the periodic spacing it is replacing — that IS the fix: a frozen setTimeout can
+  // otherwise leave the remainder of a four-hour wait measured in a clock that stopped.
+  assert.ok(RESUME_DELAY_MS < 60_000, 'a wake check must land in the same sitting')
+  assert.ok(nextCheckDelayMs({ phase: 'resume' }, seq(1)) < CHECK_INTERVAL_MS / 4)
+  // Still jittered: laptops in the same timezone open their lids at the same time of day, which
+  // is the same thundering-herd argument the periodic jitter exists for.
+  const rand = seq(0.1, 0.9, 0.4)
+  const three = [0, 1, 2].map(() => nextCheckDelayMs({ phase: 'resume' }, rand))
+  assert.equal(new Set(three).size, 3)
+})
+
+test('a WAKE IGNORES the backoff, and does not clear it either', () => {
+  // The failures that walked the backoff out were made by a machine that is no longer the machine
+  // we have. But the backoff is not RESET here — if the feed really is unhappy, the short check
+  // fails and the ordinary exponential spacing re-forms from `consecutiveFailures`.
+  for (const fails of [0, 1, 5, 50]) {
+    assert.equal(nextCheckDelayMs({ phase: 'resume', consecutiveFailures: fails }, seq(0)), RESUME_DELAY_MS)
+  }
+  assert.equal(
+    nextCheckDelayMs({ phase: 'periodic', consecutiveFailures: 3 }, seq(0.5)),
+    BACKOFF_BASE_MS * 4,
+    'the periodic phase still reads the same counter'
+  )
+})
+
+// ------------------------------------------- what the chip SAYS out loud (JOS-307)
+
+/** The chip line for a status, at a fixed clock. */
+const line = (
+  status: UpdateStatus,
+  ctx?: Partial<{ version: string; age: string | null; busy: boolean; cooldown: boolean }>
+): { label: string; tip: string; failed: boolean } =>
+  updateChipLine(updateChipState(status, CURRENT), {
+    version: ctx?.version ?? CURRENT,
+    age: ctx?.age === undefined ? '2h ago' : ctx.age,
+    busy: ctx?.busy ?? false,
+    cooldown: ctx?.cooldown ?? false
+  })
+
+test('A FAILED CHECK SAYS SO — the sentence, not just the tooltip', () => {
+  // THE REGRESSION THIS PINS. GitHub issue 29: every check failed on six consecutive versions and
+  // the chip read `v0.23.0 · checked 2h ago` throughout, because errors rendered character for
+  // character like successes. The caption was the only artefact anyone could ever get from that
+  // user, and it was a lie.
+  const failed = line({ state: 'error', message: FEED_PARSE_MESSAGE, checkedAt: 7 })
+  assert.equal(failed.failed, true)
+  assert.equal(failed.label, `v${CURRENT} · update check failed`)
+  assert.doesNotMatch(failed.label, /checked \d|up to date/, 'never a claim that a check completed')
+  // The installed version stays in the line: this chip is the bottom-left "what am I running"
+  // spot in every state, and a failed check does not change what is running.
+  assert.ok(failed.label.startsWith(`v${CURRENT}`))
+  // The detail is still in the title, and it still says the click is worth making.
+  assert.match(failed.tip, /didn't complete/)
+  assert.ok(failed.tip.includes(FEED_PARSE_MESSAGE))
+  assert.match(failed.tip, /try again/)
+})
+
+test('THE COOLDOWN LINE cannot claim a check that failed', () => {
+  // The worst shape of the old bug, and the one a user would actually notice: click the chip, the
+  // check fails, and for ten seconds the line reads "checked just now".
+  const after = line({ state: 'error', message: 'boom', checkedAt: 7 }, { cooldown: true, age: 'just now' })
+  assert.equal(after.label, `v${CURRENT} · update check failed`)
+  // A successful manual check still gets its answer — that behaviour is unchanged.
+  const ok = line({ state: 'idle', checkedAt: 7 }, { cooldown: true, age: 'just now' })
+  assert.equal(ok.label, `v${CURRENT} · up to date`)
+  assert.equal(ok.failed, false)
+})
+
+test('a check IN FLIGHT outranks the failure it is retrying', () => {
+  const busy = line({ state: 'error', message: 'boom', checkedAt: 7 }, { busy: true })
+  assert.equal(busy.label, 'Checking for updates…')
+  assert.equal(busy.failed, false, 'no failure styling while the retry is running')
+  // …and the transient working states speak for themselves.
+  assert.equal(line({ state: 'checking' }).label, 'Checking for updates…')
+  assert.equal(line({ state: 'available', version: '9.9.9' }).label, 'Update found…')
+})
+
+test('the resting line is unchanged for everything that did NOT fail', () => {
+  assert.equal(line({ state: 'idle', checkedAt: 7 }).label, `v${CURRENT} · checked 2h ago`)
+  assert.equal(line({ state: 'idle' }, { age: null }).label, `v${CURRENT} · not checked yet`)
+  // Before `getAppVersion()` answers there is no version to lead with, and the line still reads.
+  assert.equal(line({ state: 'idle', checkedAt: 7 }, { version: '' }).label, 'checked 2h ago')
+  assert.equal(line({ state: 'idle', checkedAt: 7 }).failed, false)
+  assert.equal(line({ state: 'idle', checkedAt: 7 }).tip, 'Click to check for updates')
+})
+
+test('THE JSON-PARSE FAMILY reaches the user as a READABLE TRANSIENT, never the parser', () => {
+  // In-app report 01KZYN843T99R2JHYDTF9TS8AK (0.20.0) is the corroboration the owner folded into
+  // this ticket, and it quotes what the user was looking at, verbatim:
+  //     App updates / check failed / Last checked: 8/13/2026, 5:50:25 PM / Unexpected end of JSON
+  // GitHub issue 29 is the same failure mode on a different install. Two claims are pinned here,
+  // and it takes both to make that screen honest: the parser's words never reach a surface, AND
+  // the sentence that replaces them says it is transient rather than something the user broke.
+  const err = bodyFailure('')
+  const status: UpdateStatus = { state: 'error', message: describeUpdateFailure(err), checkedAt: 7 }
+  const rendered = line(status)
+  for (const text of [rendered.label, rendered.tip]) {
+    assert.doesNotMatch(text, /JSON|SyntaxError|token|position/i, `parser wording leaked: ${text}`)
+  }
+  assert.equal(rendered.failed, true, 'the chip states it rather than swallowing it')
+  assert.ok(rendered.tip.includes(FEED_PARSE_MESSAGE))
+  // "transient" has to be IN the sentence: nothing is wrong with the install, and it is worth
+  // trying again. That is the difference between a shrug and an answer.
+  assert.match(FEED_PARSE_MESSAGE, /Nothing is wrong with your install/i)
+  assert.match(FEED_PARSE_MESSAGE, /again later/i)
+  // And it is the message Preferences renders too — `describeUpdateFailure` is the ONE producer of
+  // `UpdateStatus.message`, so both surfaces read the same sentence by construction.
+  assert.equal(status.message, FEED_PARSE_MESSAGE)
+})
+
+test('STILL QUIET: stating the failure did not promote it to a loud state', () => {
+  // The product rule this ticket deliberately does NOT move: the only loud state is 'ready'. What
+  // changed is the words; `updateChipState` — which is what decides whether the gold chip renders
+  // — must be untouched by any of it.
+  const ui = updateChipState({ state: 'error', message: 'boom', checkedAt: 7 }, CURRENT)
+  assert.equal(ui.kind, 'quiet')
+  assert.notEqual(ui.kind, 'ready')
 })
 
 test('a PERSISTED lastCheckedAt reads truthfully right after a relaunch', () => {

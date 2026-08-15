@@ -35,6 +35,10 @@
  * spec that already opens that dialog, so the claim that its rows never print on top of themselves
  * runs here too. The measurement lives in `suggestRowSteps.mts`.
  *
+ * …AND, FOR THE SAME REASON, THE APOSTROPHE FOLD (JOS-342): the query a user types has to reach a
+ * row through the real box, the real tokenizer and the real IPC-delivered catalog. See
+ * `APOSTROPHE_QUERIES` below for the report it comes from.
+ *
  * Run: `npm run test:e2e -- alert-dialog-focus` (or
  * `node --import tsx tests/e2e/alert-dialog-focus.e2e.mts`).
  */
@@ -59,6 +63,30 @@ import { stepSuggestRowLayout } from './suggestRowSteps.mjs'
 
 const DIALOG = '[data-testid="alert-dialog"]'
 const SUGGEST = '[data-testid="suggest-dialog"]'
+const ROW_NAME = '[data-testid="suggest-row-name"]'
+
+/**
+ * THE APOSTROPHE A PLAYER TYPES (JOS-342), as three queries into the real box.
+ *
+ * THE REPORT (owner, 2026-08-13): `Snails Healing` was invisible in suggested alerts. Nothing was
+ * missing — the row is in the DB, it is catalog-eligible, and the DB and the game log both spell
+ * the name with no apostrophe. The owner typed the possessive he SAYS, the matcher is a substring
+ * test over a prejoined surface, and `snails healing` does not contain `snail's`.
+ *
+ * WHY IT IS HERE AND NOT ONLY A UNIT TEST. `tests/spellSearch.test.mts` proves the pure matcher and
+ * the shipped catalog agree; what it cannot see is the box the user types into. The query crosses a
+ * controlled MUI input, a memoized tokenizer, an IPC-delivered catalog and a sectioned, budgeted
+ * result list before it becomes a row — and the whole report is about a row that did not appear.
+ *
+ * BOTH DIRECTIONS, because the fold has two. The last case is the larger population the report did
+ * not mention: 167 committed names carry an apostrophe, and a user typing the plain spelling of one
+ * of them was missing it just as silently.
+ */
+const APOSTROPHE_QUERIES: readonly (readonly [string, string])[] = [
+  ["snail's healing", 'Snails Healing'], // the reported query, verbatim
+  ['snails healing', 'Snails Healing'], // …and the DB's own spelling still lands
+  ['aanyas animation', "Aanya's Animation"] // the other way: the DB punctuates, the user does not
+]
 
 /** What the user types. Deliberately unlike any default, so a reset cannot look like a survival. */
 const TYPED = {
@@ -82,6 +110,26 @@ function valueOf(page: Page, testid: string): Promise<string> {
 
 function fill(page: Page, testid: string, value: string): Promise<void> {
   return page.fill(`[data-testid="${testid}"] input`, value)
+}
+
+/**
+ * Answer the analytics first-run notice, the character-sheet.e2e.mts idiom.
+ *
+ * A fresh `userData` always shows it and it sits along the BOTTOM EDGE, over the dialog this spec
+ * drives — so a MUI menu item that happens to open down there is unclickable, and the failure
+ * reads as "the audio channel could not be chosen" rather than as "a first-run overlay was in
+ * front of it". It was luck that nothing had landed there before: JOS-362 took the third entry out
+ * of the audio-channel menu, the shorter menu no longer has to be shifted up to fit the viewport,
+ * and its second item now opens exactly where the notice is.
+ */
+async function answerNotice(page: Page): Promise<void> {
+  const notice = '[data-testid="telemetry-notice"]'
+  if ((await countOf(page, notice)) === 0) return
+  await page.click('[data-testid="telemetry-notice-off"]')
+  check(
+    'the analytics first-run notice can be answered out of the way',
+    await settleGone(page, notice, { timeoutMs: 8_000 })
+  )
 }
 
 /** Pick a value out of a MUI Select (its popup renders `li[data-value=…]`). */
@@ -310,6 +358,47 @@ async function checkSuggestSearchSurvived(page: Page): Promise<void> {
   await settleGone(page, SUGGEST, { timeoutMs: 10_000 })
 }
 
+/** Every spell name the picker is currently showing, in row order. */
+function rowNames(page: Page): Promise<string[]> {
+  return page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel)).map((n) => (n.textContent ?? '').trim()),
+    ROW_NAME
+  )
+}
+
+/** THE APOSTROPHE FOLD, through the real search box — see APOSTROPHE_QUERIES for the report. */
+async function checkApostropheSearch(page: Page): Promise<void> {
+  await page.click('[data-testid="nav-alerts"]', { timeout: 60_000 })
+  await page.waitForSelector('[data-testid="alerts-add-suggestion"]', { timeout: 30_000 })
+  await page.click('[data-testid="alerts-add-suggestion"]')
+  await page.waitForSelector(SUGGEST, { timeout: 20_000 })
+  // The catalog arrives over IPC, so the rows appear a beat after the paper does. Without this the
+  // first query would race an empty list and report a miss that is only a timing artefact.
+  const mounted = await settle(() => rowNames(page).then((n) => n.length), (n) => n > 0, {
+    timeoutMs: 20_000
+  })
+  if (!check('the suggestion picker mounted its catalog rows', mounted > 0, `${String(mounted)} rows`)) {
+    return
+  }
+
+  for (const [query, want] of APOSTROPHE_QUERIES) {
+    await fill(page, 'suggest-search', query)
+    const names = await settle(() => rowNames(page), (list) => list.includes(want), {
+      timeoutMs: 15_000
+    })
+    check(
+      `typing "${query}" finds ${want}`,
+      names.includes(want),
+      names.length === 0
+        ? 'the picker showed no rows at all — the query reached nothing'
+        : `${String(names.length)} rows: ${names.slice(0, 4).join(', ')}`
+    )
+  }
+
+  await page.keyboard.press('Escape')
+  await settleGone(page, SUGGEST, { timeoutMs: 10_000 })
+}
+
 async function main(): Promise<void> {
   buildIfStale()
 
@@ -326,6 +415,7 @@ async function main(): Promise<void> {
     page.on('pageerror', (e) => consoleErrors.push(String(e)))
 
     await page.waitForSelector('[data-testid="nav-alerts"]', { timeout: 60_000 })
+    await answerNotice(page)
     if ((await openManualEditor(page)) && (await dirtyTheForm(page))) {
       if (await focusCycle(page, 'e2e:focus-probe-1')) {
         await checkFormSurvived(page)
@@ -333,6 +423,7 @@ async function main(): Promise<void> {
       }
     }
     await checkSuggestSearchSurvived(page)
+    await checkApostropheSearch(page)
     await checkEditSurvives(page)
     // LAST, because it moves the window: it puts the size and the app's minimum back before it
     // returns, but nothing after it should have to trust that (the JOS-151 precedent).

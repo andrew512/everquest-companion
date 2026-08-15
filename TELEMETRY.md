@@ -72,7 +72,7 @@ Once, when the app finishes starting up.
 
 ### `sessionHeartbeat`
 
-Every 5 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
+Every 10 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
 
 | Field | Values | What it means |
 | --- | --- | --- |
@@ -117,7 +117,7 @@ When you switch away from a tab.
 
 | Field | Values | What it means |
 | --- | --- | --- |
-| `view` | `overview` · `combat` · `mobs` · `maps` · `bosses` · `posky` · `alerts` · `leveling` · `loot` · `planner` · `buffs` · `timers` · `preferences` · `triage` | Which tab. A fixed list of tab names. |
+| `view` | `overview` · `combat` · `mobs` · `maps` · `bosses` · `posky` · `alerts` · `leveling` · `loot` · `planner` · `buffs` · `timers` · `gear` · `wishlist` · `character` · `preferences` · `triage` | Which tab. A fixed list of tab names. |
 | `ms` | whole number | How long it was on screen. |
 
 ### `overlayToggle`
@@ -187,6 +187,7 @@ With each session report (every few minutes, and at close): counts of things tha
 | `speechFailures` | whole number | Times an utterance failed to speak. Downloaded voices only. |
 | `imageFetchFailures` | whole number (optional) | Times an item icon or portrait could not be downloaded, usually because the wiki was unreachable. The picture is hidden and the app carries on. Never which picture. |
 | `suppressedErrorLines` | whole number (optional) | The same error line repeating: after the first few, further copies are counted here instead of being written to the local error log again. A count only. |
+| `imageCacheReadFailures` | whole number (optional) | Times a picture the app had already saved could not be read back, so it was downloaded again. The picture is still shown. Never which picture, and never where it was kept. |
 
 ### `updateOutcome`
 
@@ -213,7 +214,7 @@ When the app hits an error: the technical details of the failure, so it can be f
 | `componentPath` | at most 8 names joined with > | For an error in the app’s own interface, which of the app’s screen components it came through — the names in this app’s source code, and nothing from the game. |
 | `fingerprint` | 16 hex characters | A hash used to group identical errors together. |
 | `breadcrumbs` | at most 10 × (kind, offset) | What KINDS of log line the app had just read — `damage`, `loot`, `zone` and so on, from a fixed list — and how long before the error each was. The kind only: not the line, not who or what was in it. |
-| `view` | `overview` · `combat` · `mobs` · `maps` · `bosses` · `posky` · `alerts` · `leveling` · `loot` · `planner` · `buffs` · `timers` · `preferences` · `triage` · `unknown` | Which tab was open. A fixed list. |
+| `view` | `overview` · `combat` · `mobs` · `maps` · `bosses` · `posky` · `alerts` · `leveling` · `loot` · `planner` · `buffs` · `timers` · `gear` · `wishlist` · `character` · `preferences` · `triage` · `unknown` | Which tab was open. A fixed list. |
 | `sessionAgeBucket` | bucket index | How long the app had been running. |
 | `mode` | `live` · `replay` | Was it reading your log history, or following it live. |
 | `count` | whole number | How many times this same error happened since the last report. It stops at a hundred per error per run of the app: something that goes wrong over and over reports itself a hundred times and then goes quiet, so one repeating fault cannot bury everything else. |

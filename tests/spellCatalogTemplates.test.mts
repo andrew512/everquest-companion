@@ -20,9 +20,15 @@ import {
   CLASSIFIED_SPELL_TYPES,
   buildSpellCatalog,
   castOnOtherSuffix,
-  loadSpellDb
+  isPlaceholderMessage,
+  loadSpellDb,
+  spellPlaceholdersReport
 } from '../src/main/data/spellDb'
 import { subjectCapturePattern } from '../src/shared/alertCaptures'
+// The RAW scrape, read directly — the independent count below has to look at the text the pass
+// blanked, which by definition is no longer in the effective DB.
+import spellsJson from '../src/main/data/spells.json'
+import type { SpellDbFile } from '../src/shared/types'
 
 const db = loadSpellDb()
 const catalog = buildSpellCatalog(db, new Map())
@@ -135,12 +141,21 @@ test('the dead-lands gate actually removed something, and the count is measured 
   // is the first entry the sweep admitted on a REPORTER'S SLICE rather than on his own bytes. The
   // rest of this population is still what nobody has evidenced from any log at all, which is what
   // the gate is for.
+  //
+  // AND IT IS 44 SINCE JOS-342, which took one off it WITHOUT correcting anything: `FireBomb`, a
+  // Detrimental NPC spell whose three message fields all say the literal string `N/A`. It was in
+  // this population because `N/A` is a non-empty string that yields no suffix — the same arithmetic
+  // as a real sentence with the wrong subject, for a field that states nothing at all. The
+  // placeholder pass now blanks it at load, so the row no longer has a cast-on-other message to be
+  // counted for, and the remainder is once again only spells whose message is real and unkeyable.
+  // (The wiki page agrees with the pass: FireBomb's own `classes` text reads "There are no messages
+  // in chat when the spell is cast/lands.")
   let dead = 0
   for (const s of db.spells) {
     if (s.spellType !== 'Detrimental' || !s.msgCastOnOther) continue
     if (castOnOtherSuffix(s.msgCastOnOther) === null) dead += 1
   }
-  assert.equal(dead, 45, 'the measured population the `lands` gate now excludes')
+  assert.equal(dead, 44, 'the measured population the `lands` gate now excludes')
 })
 
 test('`landsOnOther` always travels with the pattern it needs', () => {
@@ -168,6 +183,181 @@ test('the authored pattern is derived in MAIN and matches the shared rule exactl
     const expected = s?.msgCastOnOther ? subjectCapturePattern(s.msgCastOnOther) : null
     if (e.templates.landsOnOther) assert.equal(e.castOnOtherCapture, expected)
   }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SCRAPE'S PLACEHOLDER MESSAGES (JOS-342) — the same law, one level down.
+//
+// A template flag is a claim that the alert can fire, and the flag reads `!!s.msgCastOnOther`. A
+// SCRAPE STUB is a non-empty string, so it read as a message the wiki stated, and `Snails Healing`
+// was therefore offered a `landsOnOther` alert whose authored pattern matched any line ending in a
+// name and a period. `applyPlaceholderMessages` blanks those fields at load, and every gate here
+// then does the right thing by its EXISTING absent-field rule — nothing downstream was taught
+// anything new. What has to be pinned is the census: which shapes are folded, and that a short
+// REAL sentence is not among them.
+
+/** Every field the pass blanked, as `spell/field = "text"`, in the order it found them. */
+function nulledRows(): string[] {
+  const report = spellPlaceholdersReport()
+  assert.ok(report, 'loadSpellDb must have run the placeholder pass')
+  return report.rows.map((r) => `${r.spell}/${r.field} = ${JSON.stringify(r.text)}`)
+}
+
+/**
+ * The stub fields a COMMITTED CORRECTION now answers, as `spell/field`.
+ *
+ * THE PASS ORDER IS WHY THIS LIST EXISTS (JOS-318). `loadSpellDb` runs the corrections overlay
+ * BEFORE the placeholder pass, precisely so that OUR stated truth about a sentence wins over the
+ * scrape's stub — spellDb.ts's load order says so, and said so while no correction named any of the
+ * five placeholder spells. Four of the ten now do, so the census below is the stubs the pass still
+ * blanks and this is the rest of the original ten: nothing left the population, two fields moved
+ * from "blanked" to "answered".
+ */
+const CORRECTED_STUBS = [
+  'Slugs Healing/msgCastOnYou',
+  'Slugs Healing/msgCastOnOther',
+  'Snails Healing/msgCastOnYou',
+  'Snails Healing/msgCastOnOther'
+]
+
+test('THE CENSUS: the stub fields no correction answers, verbatim', () => {
+  // Listed VERBATIM rather than counted, because the whole risk of this pass is swallowing a real
+  // sentence. A re-scrape that changes what it folds has to change this list and argue for it.
+  assert.deepEqual(nulledRows(), [
+    // SHAPE B — the literal not-applicable marker. FireBomb's own `classes` text says there are no
+    // chat messages for it at all, which is the wiki agreeing with the fold in prose.
+    'FireBomb/msgCastOnYou = "N/A"',
+    'FireBomb/msgCastOnOther = "N/A"',
+    'FireBomb/msgWearsOff = "N/A"',
+    'Nature\'s Holy Wrath/msgWearsOff = "N/A"',
+    // SHAPE A — a subject with no predicate. It was three shaman heal-over-times; JOS-318 evidenced
+    // two of them out of this list from the owner's own log, and `Sloths Healing` is the one no log
+    // anywhere has ever printed a line of. It stays blanked rather than extrapolated, which is the
+    // awaiting-sample law — and the `healsOverTime` alert template covers it anyway, off the healing
+    // engine's tick line instead of off a message the wiki never wrote.
+    'Sloths Healing/msgCastOnYou = "You ."',
+    'Sloths Healing/msgCastOnOther = "Someone ."'
+  ])
+  assert.equal(spellPlaceholdersReport()?.nulled, 6)
+})
+
+test('…and an INDEPENDENT count finds the same ten: they are the DB\'s only one-word messages', () => {
+  // Two directions on one population. The rule was derived from SHAPES; a word count knows nothing
+  // about shapes and lands on exactly the same ten fields of the RAW scrape. Every other one of the
+  // 3,847 non-empty message fields the scrape ships carries two or more words.
+  //
+  // The comparison is against blanked ∪ CORRECTED, because a stub a correction answers never reaches
+  // the placeholder pass — see CORRECTED_STUBS. The union is what has to equal the word count; a
+  // stub that fell out of BOTH would be the pass quietly failing to notice one.
+  const single: string[] = []
+  for (const s of (spellsJson as unknown as SpellDbFile).spells) {
+    for (const field of ['msgCastOnYou', 'msgCastOnOther', 'msgWearsOff'] as const) {
+      const text = s[field]
+      if (!text) continue
+      const words = text.trim().split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w))
+      if (words.length <= 1) single.push(`${s.name}/${field}`)
+    }
+  }
+  const handled = [...nulledRows().map((r) => r.split(' = ')[0]), ...CORRECTED_STUBS]
+  assert.deepEqual(single.sort(), handled.sort())
+  assert.equal(single.length, 10, 'the population is still the same ten fields')
+})
+
+test('THE BOUNDARY: a short sentence is still a sentence and survives the pass', () => {
+  // Law 1, stated as a test. Only a message with NOTHING BUT a subject, or the literal
+  // not-applicable marker, is a stub.
+  for (const stub of ['You .', 'Someone .', 'N/A', 'n/a', '  You  . ', 'Target .', '   ', '.']) {
+    assert.equal(isPlaceholderMessage(stub), true, `${JSON.stringify(stub)} states nothing`)
+  }
+  for (const real of [
+    'You burn.', // Flames of Ro — two words, and one of them is a verb
+    'You stop.', // Chase the Moon
+    'Someone dies.', // Death Peace
+    'Someone staggers.', // 41 rows share it
+    'fades away.', // 10 rows — the wiki cropped the SUBJECT, not the predicate
+    'starts limping!', // Hobbling Poison
+    "'s limbs move slower!" // Weakening Strike — a possessive fragment IS the parser's suffix
+  ]) {
+    assert.equal(isPlaceholderMessage(real), false, `${JSON.stringify(real)} is a sentence`)
+  }
+})
+
+test('THE REPORTED SPELL: Sloths Healing carries no stub anywhere downstream', () => {
+  // The defect really was authored. Left in place, `Someone .` produces a raw trigger that fires on
+  // any line ending in a name-shaped run and a period — offered to the user as coverage for a
+  // spell landing, which is precisely the guessed trigger alertGroups.ts's law forbids.
+  //
+  // THE SPELL MOVED (JOS-318). JOS-342 wrote this against `Snails Healing`, which now carries the
+  // three sentences the owner's log proves it prints. `Sloths Healing` is the rank above it and the
+  // one nothing anywhere has witnessed, so it is the row that still exercises the pass — and it is a
+  // better one, because a stub with no correction behind it is exactly the state the pass is for.
+  assert.notEqual(
+    subjectCapturePattern('Someone .'),
+    null,
+    'the stub really did author a pattern — this is what the pass exists to remove'
+  )
+
+  const spell = db.byKey.get('sloths healing')
+  assert.ok(spell, 'the row is still in the DB — the pass blanks fields, it never drops a spell')
+  assert.equal(spell.msgCastOnYou, undefined, 'absent, rather than the string "You ."')
+  assert.equal(spell.msgCastOnOther, undefined, 'absent, rather than the string "Someone ."')
+
+  const entry = byKey.get('sloths healing')
+  assert.ok(entry, 'and still in the catalog: Heal Over Time is Beneficial, so `fade` stands')
+  assert.equal(entry.templates.fade, true)
+  assert.equal(entry.templates.landsOnOther, false, 'the junk capture is gone')
+  assert.equal(entry.castOnOtherCapture, undefined)
+  assert.equal(entry.templates.wearsOff, false, 'the DB states no wear-off sentence for it')
+  assert.equal(entry.templates.landsOnYou, false, '…nor a landing sentence')
+  // …and the template that does not need one. THE ANSWER TO A ROW NOBODY CAN CORRECT (JOS-318): the
+  // heal-over-time tick line is printed by the healing engine and names the spell itself, so this
+  // spell is alertable with no message table entry of any kind.
+  assert.equal(entry.templates.healsOverTime, true)
+  assert.equal(
+    entry.searchText,
+    'sloths healing sloths healing',
+    'the search surface is the name and its rank list — no stub text joined into it'
+  )
+
+  // …and the parser's own tables never learned the stubs either. `Someone .` minted the
+  // cast-on-other suffix `.`, a real entry that any line ending in a space and a period would have
+  // matched; `You .` and `N/A` were keys in the landing and wear-off maps.
+  assert.equal(db.castOnOtherSuffix.has('.'), false, 'the one-character suffix is out of the table')
+  assert.equal(db.castOnYou.has('You .'), false)
+  assert.equal(db.castOnYou.has('N/A'), false)
+  assert.equal(db.wearsOff.has('N/A'), false)
+})
+
+test('JOS-318: the corrected ladder rungs carry real sentences, and earn the chips they name', () => {
+  // The other side of the row that moved. Snails and Slugs are the two rungs the owner's log can
+  // witness, so their stubs are ANSWERED rather than blanked, and the template flags follow from the
+  // sentences without anything being taught a new rule.
+  for (const [key, animal] of [['snails healing', 'snail'], ['slugs healing', 'slug']] as const) {
+    const s = db.byKey.get(key)
+    assert.ok(s, `${key} must still be in the DB`)
+    assert.equal(s.msgCastOnYou, `You being to feel healed by the ${animal}.`)
+    assert.equal(s.msgCastOnOther, `Someone is healed by the spirit of the ${animal}.`)
+    assert.equal(s.msgWearsOff, `You feel the ${animal} spirit depart.`)
+
+    const e = byKey.get(key)
+    assert.ok(e)
+    assert.equal(e.templates.landsOnYou, true, 'the landing sentence exists now')
+    assert.equal(e.templates.wearsOff, true, 'and so does the wear-off')
+    assert.equal(e.templates.landsOnOther, true, 'and the third-person one, with a real subject')
+    assert.equal(e.templates.healsOverTime, true)
+    // The minted tail is the spell's own and nothing else in the table shares it.
+    assert.equal(
+      db.castOnOtherSuffix.get(`is healed by the spirit of the ${animal}.`)?.length,
+      1,
+      `${key}: the restored sentence resolves to exactly one spell`
+    )
+  }
+  // …including the rung the wiki DID fill in, whose only fault was a dropped subject.
+  assert.equal(
+    db.castOnOtherSuffix.get('is healed by the spirit of the tortoise.')?.length,
+    1,
+    'Tortoises Healing keys the table now too'
+  )
 })
 
 test('poison Strike procs are excluded from BOTH landing templates', () => {

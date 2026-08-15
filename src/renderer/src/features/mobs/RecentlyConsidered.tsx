@@ -26,7 +26,7 @@
 
 import type { JSX } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
-import type { ConsiderDelta, ConsiderRow, ConsiderSnap, KillMap } from '@shared/types'
+import type { ConsiderDelta, ConsiderRow, ConsiderSnap } from '@shared/types'
 import { CONSIDER_FACTION_LABEL } from '@shared/logEvents'
 import { mobDropNames, splitMobDrops } from '@shared/mobDrops'
 import { KnownItemTooltip } from '../../lib/KnownItemTooltip'
@@ -45,8 +45,16 @@ export function applyConsiderDelta(state: ConsiderSnap, delta: ConsiderDelta): C
   return [...byId.values()].sort((a, b) => a.ts - b.ts)
 }
 
-/** The MobTarget a considered row opens — everything the log line and the enrichment knew. */
-export function considerTarget(r: ConsiderRow, kills: KillMap): MobTarget {
+/**
+ * The MobTarget a considered row opens — everything the log line and the enrichment knew.
+ *
+ * NO KILL FACTS (JOS-350). It used to attach `kills[r.mob.trim().toLowerCase()]` under a comment
+ * claiming that was "the same fold `mobKey` applies" — it was not; it was `idKey`, which folds
+ * neither the spawn-generation ` (N)` suffix nor the three apostrophe glyphs. Rather than fix a
+ * fourth inline copy of a key, the page now joins its OWN name through `shared/kills.killsFor`,
+ * so every surface that opens it reports the same count.
+ */
+export function considerTarget(r: ConsiderRow): MobTarget {
   return {
     mob: r.mob,
     seed: r.knowledge,
@@ -57,10 +65,7 @@ export function considerTarget(r: ConsiderRow, kills: KillMap): MobTarget {
       difficulty: r.difficulty,
       cons: r.cons,
       zone: r.zone
-    },
-    // The KillMap is keyed by the canonical lowercase name (KillInfo.display) — the same fold
-    // `mobKey` applies — so a considered mob finds its kills without a second index.
-    kill: kills[r.mob.trim().toLowerCase()]
+    }
   }
 }
 
@@ -191,12 +196,10 @@ function ConsiderRowView({ r, onOpen }: { r: ConsiderRow; onOpen: (r: ConsiderRo
 
 export function RecentlyConsidered({
   rows,
-  kills,
   onOpen
 }: {
   /** the consider ring, oldest-first (the module's own order) — subscribed by the view */
   rows: ConsiderSnap
-  kills: KillMap
   onOpen: (t: MobTarget) => void
 }): JSX.Element | null {
   if (rows.length === 0) return null
@@ -211,7 +214,7 @@ export function RecentlyConsidered({
       </Typography>
       <Box sx={{ maxHeight: CONSIDER_STRIP_HEIGHT, overflow: 'auto' }}>
         {newestFirst.map((r) => (
-          <ConsiderRowView key={r.id} r={r} onOpen={(row) => onOpen(considerTarget(row, kills))} />
+          <ConsiderRowView key={r.id} r={r} onOpen={(row) => onOpen(considerTarget(row))} />
         ))}
       </Box>
     </Paper>

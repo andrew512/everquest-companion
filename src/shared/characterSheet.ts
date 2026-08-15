@@ -40,15 +40,21 @@
 // `GearTotals` counts the items it could NOT find rather than quietly totalling 21 of 22.
 //
 // TWO THINGS IT REFUSES TO DO:
-//   * It does not apply the ` +N` item-level uplift (`tierBonusPct`, +10% per level). The
-//     wiki states an item's BASE block; how the uplift distributes across individual stats is
-//     not something any source here states, and ItemWindow already prints "+N% stats" on the
-//     item itself. A per-stat multiplication would be arithmetic we invented (law 1).
+//   * It does not apply the ` +N` item-level uplift. The wiki states an item's BASE block,
+//     and ItemWindow already prints "+N% stats" on the item itself.
+//     THE REASON HAS CHANGED, THE BEHAVIOUR HAS NOT (JOS-281, 2026-08-13). It used to be
+//     that no source here stated how the uplift distributes across individual stats, so a
+//     per-stat multiplication would have been arithmetic we invented (law 1). One does now:
+//     `shared/itemUpgrade.ts scaleStatBlock` is the exact port of the wiki's own
+//     ItemLevelSlider calculator. What still blocks this file is EVIDENCE, not arithmetic —
+//     an inventory dump names an item, and only a ` +N` suffix says which state it is in.
+//     Wiring it in is the Gear planner's job, not this sum's.
 //   * It does not SUM percentage values. Two worn items in the real dump carry Haste (+36%
 //     and +21%) and whether worn haste stacks is a game rule no source in this repo states —
 //     so percent-valued stats are reported as the individual values the items state, joined,
 //     and never added together (law 6: say what the sources cannot say).
 
+import type { CarryAll } from './carryAll'
 import type { ItemStat, ItemStatBlock } from './itemStats'
 import { statLabel } from './itemStats'
 import {
@@ -245,6 +251,17 @@ export interface CharacterSheet {
   /** equipped rows the grid has no cell for — empty for every dump seen so far */
   unplaced: SheetCellView[]
   totals: GearTotals
+  /**
+   * EVERYTHING YOU CARRY (JOS-327) — the same dump, flattened: every non-empty row of every
+   * table, with its location path and count. See shared/carryAll.ts.
+   *
+   * IT RIDES THIS ANSWER RATHER THAN A CHANNEL OF ITS OWN, on purpose. Main already has the
+   * parsed dump in hand at exactly this moment, the whole ledger is 123 small rows on the
+   * owner's real 295-line file, and the sheet and the ledger must never describe two different
+   * reads of a file the player rewrites mid-session — one invoke makes that impossible rather
+   * than merely unlikely. It needs no item-DB join, so nothing about it costs what the cells cost.
+   */
+  carry: CarryAll
 }
 
 // ---- the gear sum --------------------------------------------------------------------

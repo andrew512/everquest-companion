@@ -174,7 +174,12 @@ function httpGetBuffer(
       }
       if (status < 200 || status >= 300) {
         res.resume()
-        reject(new Error(`GET ${url} → ${status}`))
+        // `statusCode` RIDES ALONG, and it is not decoration (JOS-307). `shared/packInstall.ts`
+        // reads it to decide whether another attempt could change the answer — 408/429/5xx yes,
+        // 403/404 no — and to name the class in what the fleet's error store files. Parsing the
+        // number back out of this sentence is the FALLBACK for a copy that lost its properties in
+        // a log line; a property is what the code in this process should be reading.
+        reject(Object.assign(new Error(`GET ${url} → ${status}`), { statusCode: status }))
         return
       }
       const totalHeader = res.headers['content-length']

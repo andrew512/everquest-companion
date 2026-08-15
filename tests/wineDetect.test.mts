@@ -18,9 +18,11 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import {
   NO_GRAPHICS_ENVIRONMENT,
+  WINE_CHROMIUM_FLAGS,
   WINE_ENV_VARS,
   WINE_GRAPHICS_AUTO,
   WINE_SYSTEM_BINARIES,
+  chromiumFlagsFor,
   detectWine,
   graphicsEnvironmentOf,
   systemDirectory,
@@ -211,18 +213,44 @@ test('every probed binary name is Wine-exclusive by construction', () => {
   assert.ok(!WINE_SYSTEM_BINARIES.includes('winhlp32.exe'), 'winhlp32 is a real Windows binary too')
 })
 
-test('a detected prefix asks for BOTH switches; an ordinary machine asks for neither', () => {
-  assert.deepEqual(WINE_GRAPHICS_AUTO, { safeMode: true, opaqueOverlays: true })
+test('a detected prefix asks for OPAQUE OVERLAYS AND KEEPS THE GPU; an ordinary machine asks for nothing', () => {
+  // JOS-352, and the inversion is the point: safe mode is `false` under Wine. It shipped `true`,
+  // and safe mode on Windows means Chromium's D3D11 WARP software renderer — which Wine does not
+  // implement, so the compatibility path was the ONLY one that could not paint (issue 28).
+  assert.deepEqual(WINE_GRAPHICS_AUTO, { safeMode: false, opaqueOverlays: true })
   const wine = graphicsEnvironmentOf({ wine: true, signals: ['file:wineboot.exe'] })
   assert.deepEqual(wine, {
     wine: true,
     signals: ['file:wineboot.exe'],
-    auto: { safeMode: true, opaqueOverlays: true }
+    auto: { safeMode: false, opaqueOverlays: true }
   })
   assert.deepEqual(graphicsEnvironmentOf({ wine: false, signals: [] }), NO_GRAPHICS_ENVIRONMENT)
   // The renderer's pre-hydration state is the ordinary machine, so a card that has not heard back
   // from main yet never flashes a claim it has to take back.
   assert.deepEqual(NO_GRAPHICS_ENVIRONMENT.auto, { safeMode: false, opaqueOverlays: false })
+})
+
+test('the Chromium flags are gated on the PREFIX, and real Windows gets an empty list', () => {
+  // The two measured on issue 28: DirectComposition is E_NOTIMPL under Wine, and the GPU process
+  // takes an access violation (0xC0000005) three times before Chromium gives up — running it
+  // in-process is what makes the app paint.
+  assert.deepEqual(WINE_CHROMIUM_FLAGS, ['disable-direct-composition', 'in-process-gpu'])
+  assert.deepEqual(chromiumFlagsFor({ wine: true, signals: ['env:WINELOADER'] }), WINE_CHROMIUM_FLAGS)
+
+  // THE HALF THAT MATTERS TO EVERY OTHER USER. `--in-process-gpu` gives up crash containment, so
+  // it may not reach a machine that has no Wine problem to solve — and the gate is the DETECTION,
+  // never the stored preference, so no combination of settings can conjure it onto real Windows.
+  assert.deepEqual(chromiumFlagsFor({ wine: false, signals: [] }), [])
+  assert.deepEqual(chromiumFlagsFor(detectWine(windows())), [])
+  assert.deepEqual(
+    chromiumFlagsFor(detectWine({ platform: process.platform, env: process.env, fileExists: existsSync })),
+    [],
+    'this machine is real Windows and must append nothing'
+  )
+  // A native build is gated out one level up, so it cannot reach the list either.
+  const loaded = withFiles(WINE_SYSTEM_BINARIES.map((n) => `C:\\Windows\\system32\\${n}`))
+  assert.deepEqual(chromiumFlagsFor(detectWine({ ...loaded, platform: 'linux' })), [])
+  assert.deepEqual(chromiumFlagsFor(detectWine(loaded)), WINE_CHROMIUM_FLAGS)
 })
 
 test('THIS machine, with a real filesystem, is not mistaken for Wine', () => {

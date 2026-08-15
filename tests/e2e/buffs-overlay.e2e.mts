@@ -46,6 +46,7 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, overlayWindow, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture } from './logFixture.mjs'
+import { stepRowsHoverNothing, stepTitleBarOnlyTooltips } from './overlayTooltipSteps.mjs'
 // THE COLD START WITH THE WINDOW ALREADY OPEN (JOS-172) — a second launch with a narrative of its
 // own, so it lives beside the other step modules rather than inside this one's.
 import { seedRestart, stepRestartRehydrate } from './buffRestartSteps.mjs'
@@ -61,6 +62,10 @@ import {
 import { stepDismissBar } from './buffDismissSteps.mjs'
 // THE BUFFS THAT NEVER EXPIRE (JOS-215) — hidden by default, revealed by a per-window preference.
 import { stepPermanentRows } from './buffPermanentSteps.mjs'
+// HOW SMALL THESE TWO WINDOWS GO (JOS-278). The report that lowered the floor was about the DEBUFF
+// window specifically — a player magnifying the screen with Lossless Scaling — and these two carry
+// the busiest footer of any kind, so they are where the floor is proved.
+import { stepMinimumSize } from './overlayMinSizeSteps.mjs'
 import type { FixtureLog } from './logFixture.mjs'
 
 /** The main window's overlay bridge — the same one the title-bar menu calls. */
@@ -414,10 +419,12 @@ async function stepDropFlash(overlay: Page, debuffsOverlay: Page | null, log: Fi
   // past their duration and none of them can stand in for a buff you just cast.
   //
   // THEY ARE STILL ON SCREEN WHILE THIS RUNS, and that is the JOS-134 behaviour rather than a
-  // leak: a log hole no longer wipes the model on sight. It waits (LOGIN_CONFIRM_MS) for a login
-  // to explain it, because the wipe used to beat the `offlineGap` that pauses the buffs EQ froze
-  // with your character. Nothing here appends a `Welcome to EverQuest Legends!`, so the hole is
-  // eventually ruled unexplained and they go — but not before this step reads the rows.
+  // leak: a log hole no longer wipes the model on sight. It waits for a login to explain it,
+  // because the wipe used to beat the `offlineGap` that pauses the buffs EQ froze with your
+  // character. Since JOS-262 the wait ends on EVIDENCE rather than on a timer, and the line
+  // below is evidence — `You begin casting Valor.` could only have been printed for this
+  // character, and no `Welcome to EverQuest Legends!` came first — so the hole is ruled
+  // unexplained as this step appends, and the fixture's pre-hole rows go with it.
   //
   // Which means the fixture's OWN long-dead Valor is sitting in the list beside the one we are
   // about to cast, under the same name, and `find(name === 'Valor')` would happily return it (it
@@ -554,12 +561,20 @@ async function main(): Promise<void> {
         if (m.type() === 'error') consoleErrors.push(`${kind} overlay: ${m.text()}`)
       })
       await stepGeometry(app, o, kind)
+      // BEFORE stepIndependentBounds, which moves these windows and then asserts on where they
+      // ended up: this step resizes and puts the rectangle back, so it must not be interleaved
+      // with the one that owns the positions.
+      await stepMinimumSize(app, o, kind, `the ${kind} window`)
     }
 
     if (buffsOverlay && debuffsOverlay) await stepIndependentBounds(app, buffsOverlay, debuffsOverlay)
 
     if (debuffsOverlay) {
       await stepChainMez(debuffsOverlay, buffsOverlay, log)
+      // JOS-358, on the two rows that step just raised and before anything clears them. One of them
+      // is the ambiguous shape whose shared-landing candidate list used to BE the row's hover.
+      await stepRowsHoverNothing(debuffsOverlay, 'buff-timer-row')
+      await stepTitleBarOnlyTooltips(debuffsOverlay, 'the debuffs window')
       await stepBreakClearsOneTarget(debuffsOverlay, log)
       // …and the bar the break line SPARED is the one the user clears by hand (JOS-203).
       await stepDismissBar(debuffsOverlay, log)

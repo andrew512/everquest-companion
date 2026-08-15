@@ -48,6 +48,19 @@ function missSummary(m: SourceView['missBreakdown']): string {
 }
 
 /**
+ * WHO AVOIDED THOSE SWINGS — the sentence that made the miss breakdown ambiguous until JOS-354.
+ *
+ * The engine books an avoided swing on the source that SWUNG it, so the same six numbers mean
+ * opposite things on the two directions: on an outgoing row they are the MOB's avoidance of your
+ * swings, and on an incoming (enemy) row they are YOURS — the block/parry/dodge/riposte the user
+ * asked about. One tooltip that says "avoided" for both was a coin flip; each direction now names
+ * the defender, and the incoming row points at the panel that states the rates.
+ */
+function missLead(kind: SourceView['kind']): string {
+  return kind === 'enemy' ? 'you avoided' : 'the defender avoided'
+}
+
+/**
  * The two hover badges a row carries when its numbers earn them: the hit rate (only where swings
  * were avoided — a 100% row would be furniture) and the spell-resist rate. Their own function so
  * `EntityRow` stays inside the complexity budget, and so the glance card can drop both with one
@@ -58,7 +71,7 @@ function StatBadges({ e }: { e: SourceView }): React.JSX.Element {
   return (
     <>
       {e.misses > 0 && (
-        <Tooltip title={`${e.hits} landed / ${swings} swings - avoided: ${missSummary(e.missBreakdown)}`}>
+        <Tooltip title={`${e.hits} landed / ${swings} swings - ${missLead(e.kind)}: ${missSummary(e.missBreakdown)}`}>
           <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
             {Math.round(e.hitPct)}% hit
           </Typography>

@@ -7,11 +7,13 @@
 
 import type { AlertDef, AlertPrefs, OverlayConfig, OverlayKind, ProgressState, UpdateChannel, VoicePrefs } from '../shared/types'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '../shared/presencePrefs'
+import type { OverlaySnapPrefs } from '../shared/overlaySnap'
 import type { TelemetryPrefs } from '../shared/telemetry'
 import type { PerfHudPrefs } from '../shared/perf'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { BuffTrustPrefs } from '../shared/buffTrust'
 import type { RespawnPrefs } from '../shared/respawn'
+import type { SoundPackPrefs } from '../shared/soundPacks'
 import type { WindowBounds } from './store'
 
 /**
@@ -93,6 +95,18 @@ export interface StoreShape {
    * per-mob cooldown. Absent ⇒ never migrated; see migrateStoredAlertTriggers().
    */
   alertTriggerMigration?: number
+  /**
+   * WHICH SOUND PACK IS YOURS, AND WHICH SHIPPED ONES YOU THREW AWAY (JOS-273;
+   * shared/soundPacks.ts). Two keys, both absent for almost everybody: the default-pack
+   * PREFERENCE every picker pre-selects and every authored alert points at, and the TOMBSTONES
+   * that stop startup provisioning putting a deleted shipped pack back.
+   *
+   * ABSENT MEANS THE SHIPPED BEHAVIOUR — the app's own default pack, and provisioning as it has
+   * always worked — so it is another additive optional key on the carve-out above: no schema
+   * bump, no migration, `normalizeSoundPackPrefs` defaults every field, and a fresh install is
+   * unaffected by the whole feature (which is exactly what the owner's ruling asked for).
+   */
+  soundPacks?: SoundPackPrefs
   /** auto-update release channel (Task #27): 'main' (bleeding edge) | 'stable' */
   updateChannel?: UpdateChannel
   /**
@@ -125,6 +139,14 @@ export interface StoreShape {
    * running / not focused. Two independent switches, defaults {true, false}.
    */
   overlayAutoHide?: OverlayAutoHidePrefs
+  /**
+   * OVERLAY SNAPPING (JOS-217; shared/overlaySnap.ts) — magnetize an overlay drag to the other
+   * windows and the screen edges. ABSENT MEANS OFF, which is exactly how every build before this
+   * one dragged, so it is another additive optional key on the carve-out above: no schema bump, no
+   * migration, `normalizeOverlaySnap` defaults every field. The accessors live in
+   * `storeOverlaySnap.ts` because store.ts is at the 400-code-line ceiling.
+   */
+  overlaySnap?: OverlaySnapPrefs
   /**
    * Usage-analytics prefs (schema migration 5→6; docs/plans/usage-analytics.md). Opt-OUT
    * (`enabled:true`) but `noticeShown:false` — the network gate requires BOTH — and no

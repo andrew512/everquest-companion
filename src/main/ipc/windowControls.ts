@@ -7,7 +7,9 @@ import { IPC } from '../../shared/ipc'
 import { E2E } from '../e2e'
 import { logError } from '../errorLog'
 import { getFightSelection, setFightSelection } from '../fightSelection'
+import { getScopeSelection, setScopeSelection } from '../scopeSelection'
 import { getOverlayConfig, setOverlayConfig } from '../store'
+import { getOverlaySnap, setOverlaySnap } from '../storeOverlaySnap'
 import { noteCurrentView } from '../telemetry/errorReports'
 
 /** What the preload's `RendererErrorReport` puts on the wire. Every field is optional here
@@ -143,6 +145,15 @@ export function registerWindowIpc(): void {
   })
   ipcMain.on(IPC.overlayClose, (_e, kind: OverlayKind) => setOverlayOpen(kind, false))
 
+  // ---- overlay snapping (JOS-217) ----
+  // The one preference behind `installOverlaySnap` (src/main/overlaySnapDrag.ts). It needs no
+  // apply step and no echo: the drag listener reads the store on every move, so flipping this
+  // switch takes effect on the very next drag of an already-open overlay. The patch is renderer
+  // input and is re-validated inside `setOverlaySnap` through the shared normalizer, so a
+  // hand-edited file and a renderer cannot disagree about what this setting is.
+  ipcMain.handle(IPC.overlaySnapGet, () => getOverlaySnap())
+  ipcMain.handle(IPC.overlaySnapSet, (_e, patch: unknown) => setOverlaySnap(patch))
+
   // ---- global fight selection (docs/plans/combat-overlay-parity.md P4) ----
   // A read for a surface that mounted after the last change, and a fire-and-forget write that
   // fans out to every window. The write's argument is renderer input and is shape-checked inside
@@ -151,6 +162,18 @@ export function registerWindowIpc(): void {
   ipcMain.handle(IPC.fightSelectionGet, () => getFightSelection())
   ipcMain.on(IPC.fightSelectionSet, (_e, id: unknown) => {
     setFightSelection(id)
+  })
+
+  // ---- the app-wide SCOPE selection (JOS-332) ----
+  // The same two-call shape as the fight selection above, for the same reason and by the same
+  // argument: a read for a window that mounted after the last change, and a fire-and-forget PATCH
+  // that fans out to every window. The patch is renderer input and is rebuilt inside
+  // `setScopeSelection` (shared/scopeSelection.ts) — an unknown membership or a denominator this
+  // build cannot name is dropped there, never broadcast, and the half a patch does not mention
+  // never moves. Nothing here can touch a surface's SLICE.
+  ipcMain.handle(IPC.scopeSelectionGet, () => getScopeSelection())
+  ipcMain.on(IPC.scopeSelectionSet, (_e, patch: unknown) => {
+    setScopeSelection(patch)
   })
 
   // Fire-and-forget renderer error reports (window.onerror / unhandledrejection /
