@@ -22,7 +22,11 @@ import {
 
 const port = parentPort
 let due = performance.now() + LIVE_PROBE_INTERVAL_MS
-let foldDue = Date.now() + LIVE_PROBE_FOLD_MS
+// The FIRST fold is due immediately, so the first tick announces this thread rather than a
+// healthy worker staying silent for a minute — main reads "has it ever spoken" as "is there a
+// second clock", and a session that ends before the first fold would otherwise report NO VERDICT
+// when it had two clocks all along. MEASURED: the e2e's ~5 s launch saw exactly that.
+let foldDue = Date.now()
 let ticks = 0
 let maxLateMs = 0
 
