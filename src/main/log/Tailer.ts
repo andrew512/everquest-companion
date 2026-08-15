@@ -122,6 +122,15 @@ export class Tailer extends EventEmitter<TailerEvents> {
   private pendingOpen: TailReopenReason | null = 'first'
   /** The watcher saw the path disappear; the next `add` is a different file. */
   private vanished = false
+  /**
+   * `stop()` has been called. IT GUARDS THE HANDLE, which is new work a stopped tail can now do:
+   * a read already in flight when the watcher closed will finish, and its `pending` re-entry would
+   * schedule one more cycle — a cycle that would OPEN THE FILE AGAIN, after `stop` had closed it
+   * and with nothing left to ever close it. Character switching stops a tail and starts another,
+   * so that is a handle leaked per switch rather than a corner case. It also silences the EBADF
+   * this raced into: a read torn down mid-flight is a shutdown, not something to file as an error.
+   */
+  private stopped = false
 
   constructor(path: string, opts: TailerOptions = {}) {
     super()
@@ -132,6 +141,7 @@ export class Tailer extends EventEmitter<TailerEvents> {
   }
 
   async start(): Promise<void> {
+    this.stopped = false
     try {
       const s = await stat(this.path)
       if (this.startOffset != null) {
@@ -172,6 +182,7 @@ export class Tailer extends EventEmitter<TailerEvents> {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
     await this.watcher?.close()
     this.watcher = undefined
     await this.dropHandle()
@@ -218,6 +229,7 @@ export class Tailer extends EventEmitter<TailerEvents> {
 
   /** Coalesce rapid change events into sequential reads. */
   private scheduleRead(): void {
+    if (this.stopped) return
     if (this.reading) {
       this.pending = true
       return
@@ -237,7 +249,7 @@ export class Tailer extends EventEmitter<TailerEvents> {
       // hidden inside a retry.
       await this.dropHandle()
       this.pendingOpen = 'error'
-      this.emit('error', err)
+      if (!this.stopped) this.emit('error', err)
     } finally {
       // Recorded even when the cycle threw: a read that failed is exactly what this measures.
       noteTailRead({ at: Date.now(), ...m } satisfies TailIoSample)
@@ -325,7 +337,7 @@ export class Tailer extends EventEmitter<TailerEvents> {
 
   /** Read `[offset, size)` in bounded slices, yielding between them. */
   private async readSlices(fh: FileHandle, size: number, m: ReadMetrics): Promise<void> {
-    while (this.offset < size) {
+    while (this.offset < size && !this.stopped) {
       const len = Math.min(TAIL_READ_SLICE_BYTES, size - this.offset)
       const buf = Buffer.allocUnsafe(len)
       const t = performance.now()

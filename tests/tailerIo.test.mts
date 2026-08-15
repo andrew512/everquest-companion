@@ -22,7 +22,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Tailer, TAIL_READ_SLICE_BYTES } from '../src/main/log/Tailer'
@@ -208,6 +208,30 @@ test('a truncation mid-session reopens EXACTLY ONCE and re-reads from byte 0', a
     await t.stop()
     cleanup(dir)
   }
+})
+
+test('a stopped tail opens nothing more — the handle a character switch would otherwise leak', async () => {
+  const { dir, path } = stage()
+  const lines: string[] = []
+  const errs: unknown[] = []
+  writeFileSync(path, 'seed\n')
+  const t = await tailFromStart(path, lines, errs)
+  await waitFor(() => lines.length === 1, 'the seed line')
+  await t.stop()
+
+  const after = peekTailIoTimeline().length
+  // A switch stops one tail and starts another. If a wake could still reach a stopped tail it
+  // would OPEN the file again, with nothing left to ever close it.
+  for (let i = 0; i < 4; i++) {
+    appendFileSync(path, `nobody is reading this ${String(i)}\n`)
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  assert.equal(lines.length, 1, 'a stopped tail emits nothing')
+  assert.equal(peekTailIoTimeline().length, after, 'and reads nothing')
+  assert.deepEqual(errs, [], 'and a shutdown is not an error to file')
+  // Nothing holds the file: on Windows an unclosed handle is a delete that fails.
+  cleanup(dir)
+  assert.equal(existsSync(dir), false)
 })
 
 test('THE SEAM IS PURE DATA: take folds and resets, peek is a ring and is never drained', () => {
