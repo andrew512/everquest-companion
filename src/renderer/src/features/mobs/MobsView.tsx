@@ -54,7 +54,7 @@ import type {
   KillsSnap,
   MobEntry
 } from '@shared/types'
-import { killsBaselineStale, mergeKillsDelta } from '@shared/kills'
+import { killIndex, killsBaselineStale, killsFor, mergeKillsDelta } from '@shared/kills'
 import type { NavBack } from '../../appRouting'
 import { useBackTarget } from '../../appBack'
 import { useModule } from '../../lib/useModule'
@@ -68,9 +68,15 @@ import type { MobTarget } from './mobTarget'
  * The kills module: per-mob WHOLESALE replace plus the shape guard (shared/kills.ts) — a delta
  * written under a different kill-record shape re-hydrates the baseline instead of merging into
  * it, so a stale narrow entry cannot outlive an update in a running window.
+ *
+ * WHAT IT RETURNS IS THE JOIN INDEX, not the raw snapshot map (JOS-350): re-keyed by `mobKey`,
+ * so every reader below — the search row's "N killed", the roster's, and the mob page itself —
+ * looks a mob up through the ONE fold in `shared/kills.killsFor`. Memoized on the snapshot
+ * object, which `useModule` replaces exactly when the map can have changed.
  */
 function useKills(): KillMap {
-  return useModule<KillsSnap, KillsDelta>('kills', mergeKillsDelta, killsBaselineStale)?.mobs ?? {}
+  const snap = useModule<KillsSnap, KillsDelta>('kills', mergeKillsDelta, killsBaselineStale)
+  return useMemo(() => killIndex(snap?.mobs ?? {}), [snap])
 }
 
 /** The character module's delta is a partial merge (see main/modules/character.ts). */
@@ -89,7 +95,9 @@ function MobResultRow({
   onOpen: (t: MobTarget) => void
 }): JSX.Element {
   const drops = entry.drops?.length ?? 0
-  const kill = kills[entry.name.trim().toLowerCase()]
+  // THE ONE JOIN (JOS-350). The catalog spells `Innoruuk's Chosen` with an apostrophe and the log
+  // spells it with a backtick; `killsFor` folds both, so this row and the page it opens agree.
+  const kill = killsFor(kills, entry.name)
   return (
     <Stack
       direction="row"
@@ -97,9 +105,9 @@ function MobResultRow({
       alignItems="baseline"
       role="button"
       tabIndex={0}
-      onClick={() => onOpen({ mob: entry.name, entry, kill })}
+      onClick={() => onOpen({ mob: entry.name, entry })}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') onOpen({ mob: entry.name, entry, kill })
+        if (e.key === 'Enter' || e.key === ' ') onOpen({ mob: entry.name, entry })
       }}
       sx={{
         py: 0.4,
@@ -254,10 +262,12 @@ function NoZoneYet({ hasConsidered }: { hasConsidered: boolean }): JSX.Element {
  */
 function MobDrill({
   target,
+  kills,
   nav,
   onClose
 }: {
   target: MobTarget
+  kills: KillMap
   nav?: NavBack
   onClose: () => void
 }): JSX.Element {
@@ -277,7 +287,7 @@ function MobDrill({
         </Button>
       </Box>
       <Box sx={{ flexGrow: 1, minHeight: 0, overflow: 'auto' }}>
-        <MobPage key={`${target.mob}#${target.entry?.page ?? ''}`} target={target} />
+        <MobPage key={`${target.mob}#${target.entry?.page ?? ''}`} target={target} kills={kills} />
       </Box>
     </Stack>
   )
@@ -340,7 +350,7 @@ export default function MobsView({
   // when you zone, so memoize on the zone string.
   const zoneRows = useMemo(() => (zone ? mobsInZone(zone, MOB_CATALOG) : []), [zone])
 
-  if (drill) return <MobDrill target={drill} nav={nav} onClose={() => setDrill(null)} />
+  if (drill) return <MobDrill target={drill} kills={kills} nav={nav} onClose={() => setDrill(null)} />
 
   return (
     <Stack spacing={1.5} sx={{ height: '100%' }}>
@@ -386,15 +396,15 @@ export default function MobsView({
               <ZoneRoster zone={zone} rows={zoneRows} kills={kills} onOpen={openNative} />
               {zoneRows.length === 0 ? (
                 <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                  <RecentlyConsidered rows={considered} kills={kills} onOpen={openNative} />
+                  <RecentlyConsidered rows={considered} onOpen={openNative} />
                 </Box>
               ) : (
-                <RecentlyConsidered rows={considered} kills={kills} onOpen={openNative} />
+                <RecentlyConsidered rows={considered} onOpen={openNative} />
               )}
             </>
           ) : (
             <>
-              <RecentlyConsidered rows={considered} kills={kills} onOpen={openNative} />
+              <RecentlyConsidered rows={considered} onOpen={openNative} />
               <NoZoneYet hasConsidered={considered.length > 0} />
             </>
           )}

@@ -139,22 +139,64 @@
 // per-process and gives no cross-restart protection), rate limiting (jittered
 // backoff).
 
-import { app, ipcMain, type BrowserWindow } from 'electron'
+import { app, ipcMain, powerMonitor, type BrowserWindow } from 'electron'
 import electronUpdater from 'electron-updater'
 import { IPC } from '../shared/ipc'
 import type { UpdateChannel, UpdateStatus } from '../shared/types'
 import {
   MAX_DOWNLOAD_ATTEMPTS,
   describeUpdateFailure,
+  isInterruptedFailure,
   isStaleVersion,
   nextCheckDelayMs,
   shouldRetryCheck
 } from '../shared/update'
-import { logInfo } from './errorLog'
+import { logError, logInfo, logWarn } from './errorLog'
+import {
+  UPDATER_LIBRARY_SOURCE,
+  UPDATER_LOG_PREFIX,
+  logUpdateFailure,
+  routeUpdaterLibraryError,
+  type UpdateLogSinks,
+  type UpdateStep
+} from './updateLog'
 import { getUpdateChannel, getUpdateLastCheckedAt, setUpdateLastCheckedAt } from './store'
 import { classifyFailure, recordEvent } from './telemetry'
 
 const { autoUpdater } = electronUpdater
+
+/**
+ * THE TWO SINKS `updateLog.ts` ROUTES THROUGH (JOS-295). They are handed over rather than
+ * imported there so the whole routing rule stays drivable from a node test with no Electron in
+ * the process; this is the one place that knows they are `errorLog`'s.
+ */
+const LOG_SINKS: UpdateLogSinks = { error: logError, warn: logWarn }
+
+/**
+ * electron-updater's own narration, mapped onto our sinks (JOS-295). Its default logger is
+ * `console` (AppUpdater.js:179), which in a packaged app prints full stacks to a stdout nobody
+ * captures. `updateLog.ts` carries the whole argument for the mapping — including why `debug` is
+ * deliberately absent and why the constructor's error ECHO is dropped rather than filed twice.
+ */
+const LIBRARY_LOGGER = {
+  info: (message?: unknown): void => {
+    logInfo(UPDATER_LOG_PREFIX, message)
+  },
+  warn: (message?: unknown): void => {
+    logWarn(UPDATER_LOG_PREFIX, message)
+  },
+  error: (message?: unknown): void => {
+    switch (routeUpdaterLibraryError(message)) {
+      case 'drop':
+        return
+      case 'warn':
+        logWarn(UPDATER_LOG_PREFIX, message)
+        return
+      default:
+        logError(UPDATER_LIBRARY_SOURCE, message)
+    }
+  }
+}
 
 let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -253,19 +295,121 @@ function noteUpdate(step: 'check' | 'download' | 'apply', err?: unknown): void {
   recordEvent({ t: 'updateOutcome', step, ok: false, failureClass: classifyFailure(err) })
 }
 
-/** The two status sinks the electron-updater event handlers write through. */
+/** The status sinks the electron-updater event handlers write through. */
 interface StatusSinks {
   /** Record + broadcast a status. */
   push: (status: UpdateStatus) => void
   /** A check finished (whatever the verdict) — stamp + PERSIST the time, then push. */
   checkDone: (status: UpdateStatus) => void
+  /**
+   * A check DID NOT finish because the machine suspended (JOS-307) — re-anchor the cadence to a
+   * short post-wake delay. Deliberately NOT `checkDone`: stamping `lastCheckedAt` here would make
+   * the chip claim a check that never completed, which is the exact dishonesty this ticket is
+   * about at the other end of the same wire.
+   */
+  retryOnResume: () => void
+}
+
+/**
+ * AN INTERRUPTED REQUEST IS NOT A FAILED CHECK (JOS-307, owner ruling 2026-08-14).
+ *
+ * Chromium tears down network IO when the host suspends or its interface changes, and whatever was
+ * in flight rejects; treating that as a verdict was costing three separate lies at once — a fleet
+ * error report about a laptop's lid, a `consecutiveFailures` tick that walked the backoff out to
+ * four hours, and a `checkedAt` stamp for a check that never completed.
+ *
+ * FOUR THINGS HAPPEN, AND THE ONES THAT DO NOT ARE THE POINT:
+ *   * `logUpdateFailure` routes it — warn once per code per session, NEVER the error store;
+ *   * `noteUpdate` still counts ONE bounded telemetry outcome, because the law that one logical
+ *     check produces exactly one of those is not this ticket's to bend;
+ *   * the resting status is re-pushed so the chip leaves 'checking' — carrying the OLD `checkedAt`,
+ *     which keeps ageing and is the honest thing for it to say;
+ *   * `retryOnResume` re-anchors the cadence.
+ *   * `consecutiveFailures` is NOT touched, and `checkDone` is NOT called.
+ *
+ * Clearing `checkInFlight` is what marks the failure ACCOUNTED, so `runCheck`'s catch leaves it
+ * alone — the same handshake `checkDone` performs on every other path. ONE function for both call
+ * sites (the event and the rejection), because they are one ruling.
+ */
+function noteInterrupted(step: UpdateStep, err: unknown, sinks: StatusSinks): void {
+  logUpdateFailure(step, 'final', err, LOG_SINKS)
+  noteUpdate(step, err)
+  checkInFlight = false
+  sinks.push({ state: 'idle' })
+  sinks.retryOnResume()
+}
+
+/**
+ * ROUTE A `checkForUpdates()` REJECTION THAT THE 'error' EVENT DID NOT ALREADY ACCOUNT FOR.
+ *
+ * Both paths fire for the same failure, so only an UNACCOUNTED one may be routed here — the caller
+ * owns that test. Everything below mirrors the event handler's three verdicts in the same order,
+ * and the RAW-FIRST rule (JOS-295) holds on every one of them: `describeUpdateFailure` is a one-way
+ * door and nothing durable may be taken after it opens.
+ */
+function routeCheckRejection(err: unknown, sinks: StatusSinks): void {
+  if (isInterruptedFailure(err)) {
+    noteInterrupted('check', err, sinks)
+    return
+  }
+  if (shouldRetryCheck(err, checkAttempts)) {
+    logUpdateFailure('check', 'retrying', err, LOG_SINKS)
+    retryPending = true
+    return
+  }
+  logUpdateFailure('check', 'final', err, LOG_SINKS)
+  consecutiveFailures++
+  sinks.checkDone({ state: 'error', message: describeUpdateFailure(err) })
+}
+
+/**
+ * HAND THE PROCESS TO THE INSTALLER. Lifted out of `initUpdater` for size only.
+ *
+ * quitAndInstall(isSilent=TRUE, isForceRunAfter=TRUE) is NOT optional styling: `/S` is the only
+ * thing standing between the user and a visible NSIS SpiderBanner + INSTFILES window (research §1),
+ * and `--force-run` is what relaunches us into the new build. Bare quitAndInstall() shows the
+ * installer. The single-instance lock in index.ts makes the relaunch focus cleanly.
+ *
+ * THE STORE SETTLES FIRST, AND THE ORDER IS THE POINT (JOS-272). `quitAndInstall(true, true)` does
+ * not merely quit: it SPAWNS the installer and then quits, and the installer — because we pass
+ * `--updated` — sleeps about a second and taskkills whatever is still running (research §1,
+ * allowOnlyOneInstallerInstance.nsh:50-79). Everything this process still owes the settings file
+ * therefore used to be written INSIDE that window, from `before-quit`, racing a kill. A store write
+ * torn by that kill is unparseable on the next boot, which is a quarantine-and-defaults launch:
+ * every alert, preference and character gone, in the one launch a user most associates with the app
+ * having changed something. Doing the writes here makes the race unnecessary rather than
+ * survivable; `before-quit` still runs them a moment later, idempotently.
+ *
+ * A FAILING SETTLE MAY NOT VETO THE UPDATE. Each step inside `flushStore` already has its own
+ * try/catch (index.ts `teardownStep`); this one is for anything the list itself could throw.
+ */
+function applyStagedUpdate(flushStore: () => void): void {
+  try {
+    flushStore()
+  } catch (err) {
+    logError('main:updateSettle', err)
+  }
+  try {
+    autoUpdater.quitAndInstall(true, true)
+    // RECORDED AFTER THE CALL AND BEFORE THE PROCESS DIES, which works because the ring is written
+    // synchronously (telemetry/ring.ts) and `quitAndInstall` only *initiates* the quit. The event
+    // therefore survives on disk and is sent by the NEW build's first flush — which is the only
+    // process that could ever report it.
+    noteUpdate('apply')
+  } catch (err) {
+    noteUpdate('apply', err)
+    throw err
+  }
 }
 
 /**
  * Wire up the electron-updater events. Lifted out of `initUpdater` for size only — every
  * handler below is unchanged, and they all read/write the module-level counters.
  */
-function registerUpdaterEvents(currentVersion: string, { push, checkDone }: StatusSinks): void {
+function registerUpdaterEvents(
+  currentVersion: string,
+  { push, checkDone, retryOnResume }: StatusSinks
+): void {
   autoUpdater.on('checking-for-update', () => push({ state: 'checking' }))
 
   autoUpdater.on('update-available', (info) => {
@@ -352,6 +496,10 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // we had a download in flight. Getting it wrong would put CDN failures in the check row.
     const step = downloading !== null ? 'download' : 'check'
     downloading = null
+    if (isInterruptedFailure(err)) {
+      noteInterrupted(step, err, { push, checkDone, retryOnResume })
+      return
+    }
     // JOS-211: an unreadable feed body is swallowed ONCE — no verdict, no telemetry, no
     // backoff tick, because one logical check must produce exactly one of each. `runCheck`
     // reads `retryPending` and goes round again; the second failure takes the path below.
@@ -359,9 +507,20 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
     // `checkInFlight` is what makes the swallow safe: only a failure `runCheck` is
     // waiting on may be withheld, so a stray 'error' can never leave a verdict unpushed.
     if (step === 'check' && checkInFlight && !retryPending && shouldRetryCheck(err, checkAttempts)) {
+      // THE SWALLOWED ATTEMPT IS LOGGED ANYWAY (JOS-295), and it is logged as `retrying`. No
+      // verdict, no telemetry and no backoff tick belong to it — but the RAW error does, or the
+      // store would describe a single-shot check and could never answer whether the retry helps.
+      logUpdateFailure(step, 'retrying', err, LOG_SINKS)
       retryPending = true
       return
     }
+    // RAW FIRST, SANITIZED SECOND, AND THE ORDER IS THE TICKET (JOS-295). `describeUpdateFailure`
+    // below is a one-way door: it replaces the parse-masked failure with a sentence for the chip
+    // and throws away the status, the URL and the stack. Everything durable has to be taken from
+    // `err` before it is called. `logUpdateFailure` decides where it goes — an answer from GitHub
+    // is always filed, an unreachable network is bounded to one console line per code per session
+    // (updateLog.ts's header argues both).
+    logUpdateFailure(step, 'final', err, LOG_SINKS)
     consecutiveFailures++
     noteUpdate(step, err ?? 'unknown error')
     checkDone({ state: 'error', message: describeUpdateFailure(err) })
@@ -373,8 +532,17 @@ function registerUpdaterEvents(currentVersion: string, { push, checkDone }: Stat
  * push so we always target the current window (it can be recreated). The update
  * machinery is skipped (and logged) when the app isn't packaged; the IPC surface
  * stays registered so the renderer never has to special-case dev.
+ *
+ * `flushStore` IS THE LAST STORE WRITE, HANDED IN (JOS-272). The composition root owns the list of
+ * things this process still owes the settings file (the tail mark, the window's geometry) and runs
+ * it from `before-quit`; this module needs to run the SAME list one step earlier — see the install
+ * handler. It arrives as a callback rather than an import because index.ts imports this file, and a
+ * `updater → index` edge would close that circle around the composition root.
  */
-export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
+export function initUpdater(
+  getMainWindow: () => BrowserWindow | null,
+  flushStore: () => void
+): void {
   // PERSISTED "last checked" (Task #60): read before anything else so the very
   // first status the renderer pulls already carries a truthful age. An
   // in-memory-only stamp read "never" for the first minute of every launch —
@@ -429,6 +597,12 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
   //   (b) the updated-away guard — never pull a build we already run.
   // Behaviour is otherwise identical: we call downloadUpdate() immediately, so
   // downloads are still fully automatic and silent.
+  // WHERE THE LIBRARY'S OWN DIAGNOSTICS GO (JOS-295). Set before anything else can make it talk:
+  // until now electron-updater logged its whole life — including a full stack for every error
+  // event — to its default logger, which is `console`, which in a packaged app is a stdout nobody
+  // reads. Assigned HERE rather than above the dev guard because that guard is what keeps the
+  // machinery off in dev: nothing runs to narrate.
+  autoUpdater.logger = LIBRARY_LOGGER
   autoUpdater.autoDownload = false
   // THE load-bearing flag for "transparent": a staged update is applied when the
   // app quits, with no window, no prompt and no UAC (it spawns `--updated /S`).
@@ -449,32 +623,20 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
   autoUpdater.disableWebInstaller = true
   applyChannel(getUpdateChannel())
 
-  registerUpdaterEvents(currentVersion, { push, checkDone })
+  // THE SINKS, BUILT ONCE. Both the event handlers and `runCheck`'s rejection path route through
+  // the same three, which is what makes "one failure counts exactly once" checkable rather than
+  // remembered. `schedule` is a `const` further down and is only ever REACHED from a timer, an IPC
+  // call or an updater event — all of them after this function has finished running — so the arrow
+  // closing over it can never observe the temporal dead zone.
+  const sinks: StatusSinks = { push, checkDone, retryOnResume: () => schedule('resume') }
+  registerUpdaterEvents(currentVersion, sinks)
 
-  // renderer -> main: apply the downloaded update NOW.
-  //
-  // quitAndInstall(isSilent=TRUE, isForceRunAfter=TRUE) is NOT optional styling:
-  // `/S` is the only thing standing between the user and a visible NSIS
-  // SpiderBanner + INSTFILES window (research §1), and `--force-run` is what
-  // relaunches us into the new build. Bare quitAndInstall() shows the installer.
-  // The single-instance lock in index.ts makes the relaunch focus cleanly.
-  //
-  // Guarded on 'ready' because BaseUpdater latches `quitAndInstallCalled` on the
-  // first call and ignores every later one — we get exactly one shot, so we do
-  // not spend it on a stale click.
+  // renderer -> main: apply the downloaded update NOW. Guarded on 'ready' because BaseUpdater
+  // latches `quitAndInstallCalled` on the first call and ignores every later one — we get exactly
+  // one shot, so we do not spend it on a stale click.
   ipcMain.handle(IPC.installUpdate, () => {
     if (lastStatus.state !== 'ready') return
-    try {
-      autoUpdater.quitAndInstall(true, true)
-      // RECORDED AFTER THE CALL AND BEFORE THE PROCESS DIES, which works because the ring is
-      // written synchronously (telemetry/ring.ts) and `quitAndInstall` only *initiates* the quit.
-      // The event therefore survives on disk and is sent by the NEW build's first flush — which
-      // is the only process that could ever report it.
-      noteUpdate('apply')
-    } catch (err) {
-      noteUpdate('apply', err)
-      throw err
-    }
+    applyStagedUpdate(flushStore)
   })
 
   /**
@@ -506,14 +668,10 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
         // so a still-set flag here means the event handler did NOT run and this
         // failure is uncounted — that way one failure counts exactly once.
         // `retryPending` is the same idea for the case where it DID run and
-        // deliberately withheld the verdict.
+        // deliberately withheld the verdict. An ACCOUNTED failure was already routed by the
+        // 'error' handler, from the same error, so routing here too would file it twice.
         const unaccounted = checkInFlight && !retryPending
-        if (unaccounted && shouldRetryCheck(err, checkAttempts)) {
-          retryPending = true
-        } else if (unaccounted) {
-          consecutiveFailures++
-          checkDone({ state: 'error', message: describeUpdateFailure(err) })
-        }
+        if (unaccounted) routeCheckRejection(err, sinks)
       }
       checkInFlight = false
       checkAttempts++
@@ -524,7 +682,7 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
   }
 
   /** Self-rescheduling poll loop — a setInterval can't carry jitter or backoff. */
-  const schedule = (phase: 'startup' | 'periodic'): void => {
+  const schedule = (phase: 'startup' | 'periodic' | 'resume'): void => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       void runCheck(false).finally(() => schedule('periodic'))
@@ -541,6 +699,24 @@ export function initUpdater(getMainWindow: () => BrowserWindow | null): void {
   })
 
   schedule('startup')
+
+  // THE OTHER HALF OF "RETRY ON RESUME" (JOS-307), and it is the half that covers the common case.
+  //
+  // The error handler above only learns about a suspend when a request happened to be IN FLIGHT as
+  // the machine went down — which is a few seconds out of every four hours, so most sleeps produce
+  // no error at all. What they DO produce is a frozen `setTimeout`: a machine that sleeps at the
+  // 3h55m mark wakes with five minutes left on paper, but Windows does not credit the sleep, so the
+  // remaining wait is the whole of what is left of a four-hour timer measured in a clock that
+  // stopped. A laptop that is closed every night therefore checks far less often than the cadence
+  // says it does, and the chip's "checked Nh ago" is the only place that shows it.
+  //
+  // Waking RE-ANCHORS the poll: ~20s (jittered) and then the ordinary cadence resumes from there.
+  // It is one extra feed request per wake — three plain github.com GETs, on a machine whose user
+  // has just sat down — against a poll that could otherwise sleep through a whole release.
+  // Registered here rather than in the composition root because it belongs to the cadence, and it
+  // is inside the packaged-only path for the same reason everything else here is.
+  powerMonitor.on('resume', () => schedule('resume'))
+
   app.on('will-quit', () => {
     if (timer) clearTimeout(timer)
     timer = null

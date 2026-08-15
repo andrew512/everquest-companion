@@ -88,6 +88,30 @@ export const TELEMETRY_VIEWS = [
   // JOS-119: the ingest Lambda validates through this module, so the server has to learn the value
   // before a client that can emit it ships, or one dwell on this tab 400s the whole batch.
   'timers',
+  // The gear planner's search surface (JOS-284). SAME CLOSED-ENUM DEPLOY ORDER as every member
+  // added since JOS-119, and it is the reason this comment keeps being written: the ingest Lambda
+  // validates through this module, so the server has to learn the value before a client that can
+  // emit it ships, or one dwell on this tab 400s the whole batch and drops every counter in it.
+  'gear',
+  // The gear area's Wish list tab (JOS-324). SAME CLOSED-ENUM DEPLOY ORDER as every member added
+  // since JOS-119 — the ingest Lambda validates through this module, so the server has to learn
+  // the value before a client that can emit it ships, or one dwell on this tab 400s the whole
+  // batch and drops every counter in it. It is here rather than held back with the UNRELEASED
+  // views because it is a REACHABLE tab from the day this ships: it draws a placeholder until
+  // JOS-326 fills it, and how often anyone opens a placeholder is exactly the sort of thing the
+  // dwell histogram is for.
+  'wishlist',
+  // The gear area's Character tab (JOS-45, released JOS-327). SAME CLOSED-ENUM DEPLOY ORDER as every
+  // member added since JOS-119 — the ingest Lambda validates through this module, so the server has
+  // to learn the value before a client that can emit it ships, or one dwell on this tab 400s the
+  // whole batch and drops every counter in it.
+  //
+  // IT IS HERE BECAUSE THE GATE CAME OFF, and the two edits are one edit: the tab was held out of
+  // this list from JOS-45 for the reason `tests/telemetryContract.test.mts` states — a surface no
+  // packaged user can reach is not worth the deploy risk — and that test pins the converse just as
+  // hard, so releasing the view without adding it here is a red build. Graduation is both halves at
+  // once, which is exactly what JOS-327 did.
+  'character',
   'preferences',
   'triage'
 ] as const
@@ -671,6 +695,16 @@ export interface EvHealthCounters {
    * the whole point of having it: the cap must not be able to make a looping build look healthy.
    */
   suppressedErrorLines?: number
+  /**
+   * Images the app had already cached on disk that could not be READ BACK (JOS-266). Optional for
+   * the same deploy-skew reason as the two fields above — it rides an event kind that has shipped.
+   *
+   * NOT AN ERROR, and for a stronger reason than `imageFetchFailures` has: the cache HEALS. The bad
+   * entry is evicted and the image is re-fetched as though it had never been cached, so the outcome
+   * the user gets is the picture. The field is in `HEALTH_NON_ERROR_FIELDS` — see
+   * ./telemetryRollup.ts — so it is counted and rendered without moving the release error rate.
+   */
+  imageCacheReadFailures?: number
 }
 export interface EvUpdateOutcome {
   t: 'updateOutcome'

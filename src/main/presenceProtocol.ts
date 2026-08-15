@@ -514,6 +514,95 @@ export function watcherRestartDelayMs(consecutiveFailures: number): number {
   return WATCHER_RESTART_BACKOFF_MS[Math.min(Math.max(i, 0), last)]
 }
 
+// ------------------------------------------------------- why a watcher is being replaced (JOS-310)
+//
+// A RESTART IS NOT AN ERROR, AND SAYING IT WAS DROWNED THE ONES THAT WERE.
+//
+// The went-silent path — the staleness watchdog deciding the loop has wedged, retiring the thread
+// and starting another — is the SELF-HEALING one. It is what this watchdog exists to do, and it is
+// the shape the design chose on purpose: `WATCHER_STALE_MS` is six missed heartbeats, deliberately
+// generous, because the cost of a needless restart is a thread and three `LoadLibrary` calls
+// nobody sees. Reporting each one as an error made the fleet's error store read as though the
+// feature were broken on every install: the went-silent and restart families were the TOP LINE on
+// every version through 0.26.0 (fingerprints 511c479e x7, 611d2bc2, 65e667c4, 9c670b6b), all of
+// them saying the same true, unactionable thing.
+//
+// So the owner's ruling (2026-08-13, triage item A4) is DEMOTE, and this section is the other half
+// of it: what a restart carries so the demotion costs nothing diagnostically. Every restart — the
+// demoted one AND the two that stay errors — is described by ONE structured cause, so an error
+// store row is now "the watcher exited 900 ms in, having last said `exit`, after 12 ms of silence,
+// on attempt 3" rather than a 246th copy of a sentence.
+//
+// THE COUNT ALREADY HAS AN HONEST HOME, which is what makes the demotion legitimate rather than a
+// silencing (the `noteImageFetchFailure` argument in telemetry/health.ts, arrived at again):
+// `notePresenceRestart` counts EVERY restart at the one funnel all three causes reach, so a fleet
+// where this starts happening still shows it — as `presenceRestarts`, a health counter, which is
+// what a handled self-healing condition is measured by.
+//
+// WHAT STAYS AN ERROR, stated here so the line is not re-litigated at each call site: a watcher
+// that EXITED (the surface will not load, the loop threw), a watcher that could not be STARTED,
+// the collapsed exit LOOP below, and the surrender at `LOST_WATCHER_LIMIT` in presence.ts — three
+// threads wedged and unrecoverable is the genuinely fatal shape and is the one place this feature
+// gives up for the session.
+
+/**
+ * Which path ended the watcher. `went-silent` is the EXPECTED, self-healing one and the only one
+ * that is not an error; the other two are.
+ */
+export type WatcherRestartTrigger = 'went-silent' | 'exited' | 'start-failed'
+
+/**
+ * Everything known about ONE restart, in the order a reader asks for it.
+ *
+ * The three fields the ticket named are `lastRecord`, `silentMs` and `code`, and each answers a
+ * question the old wall of identical lines could not:
+ *
+ *   * `lastRecord` — WHAT THE WATCHER LAST REPORTED, as a protocol record kind. A watcher that
+ *     went quiet after a `beat` was healthy right up to the moment it wedged; one that has said
+ *     NOTHING (`null`) never got out of `loadPresenceNative()`, which is a different machine and a
+ *     different fix. Those two were indistinguishable before.
+ *   * `silentMs` — HOW LONG IT WAS QUIET. On the watchdog's path this is at least
+ *     `WATCHER_STALE_MS` by construction, and how far past it says whether the watchdog fired on
+ *     its first look or its fifth. On an exit it is usually milliseconds, and a large value there
+ *     means the thread was already wedged before it died.
+ *   * `code` — THE EXIT CODE WHEN THERE IS ONE. Null on both the watchdog's path (the thread is
+ *     still there) and on a start that threw (there never was one), which is itself the fact.
+ */
+export interface WatcherRestartCause {
+  readonly trigger: WatcherRestartTrigger
+  /** The kind of the last well-formed record this watcher sent, or null when it never spoke. */
+  readonly lastRecord: PresenceRecord['t'] | null
+  /** ms since that record - or since the watcher started, when there was none. */
+  readonly silentMs: number
+  /** How long the watcher lived. The number that turns "it exited" into "it exited immediately". */
+  readonly lifetimeMs: number
+  /** The thread's exit code, where an exit is what happened. */
+  readonly code: number | null
+  /** The watcher's own last word (`X|native-unavailable`), when it managed one. */
+  readonly reason: string | null
+  /** Consecutive failures INCLUDING this one - i.e. which restart of the current run this is. */
+  readonly attempt: number
+}
+
+/**
+ * The cause as one sentence, for the log line that carries it.
+ *
+ * It is a function rather than a template at each call site because the demoted path and the two
+ * error paths must describe the same facts the same way - a reader grepping errors.log and a
+ * reader watching dev stdout are reading about one mechanism, and the whole point of the demotion
+ * is that moving a line between sinks does not change what it says.
+ */
+export function describeRestartCause(cause: WatcherRestartCause): string {
+  const said = cause.lastRecord === null ? 'never said anything' : `last said \`${cause.lastRecord}\``
+  const code = cause.code === null ? '' : `, exit code ${String(cause.code)}`
+  const reason = cause.reason === null ? '' : `, reason \`${cause.reason}\``
+  return (
+    `presence watcher restart (${cause.trigger}): ${said}, silent for ` +
+    `${String(cause.silentMs)} ms, alive for ${String(cause.lifetimeMs)} ms${code}${reason}; ` +
+    `attempt ${String(cause.attempt)}`
+  )
+}
+
 // ---------------------------------------------- the immediate-exit loop (JOS-164, JOS-182)
 //
 // A LOOP IS ONE FACT, AND IT WAS BEING REPORTED AS N FACTS. The error store's evidence for JOS-164
@@ -578,22 +667,19 @@ export interface WatcherExitTrail {
 
 export const NEW_WATCHER_EXIT_TRAIL: WatcherExitTrail = { streak: 0, collapsed: false }
 
-/** What main observed about one dead watcher. `reason` is the watcher's own last word
- *  (`X|native-unavailable`) when it managed one, and null when it did not. */
-export interface WatcherExitFacts {
-  readonly code: number | null
-  readonly lifetimeMs: number
-  readonly reason: string | null
-}
-
-/** The payload `presence.ts` hands to `logError`, or null when this exit is inside a run that has
- *  already been diagnosed. Every field is here because a reader of errors.log asked for it. */
-export interface WatcherExitLog {
+/**
+ * The payload `presence.ts` hands to `logError`, or null when this exit is inside a run that has
+ * already been diagnosed. Every field is here because a reader of errors.log asked for it.
+ *
+ * IT IS THE CAUSE PLUS A SENTENCE (JOS-310). The fold used to build its own three-field record
+ * (`code`, `lifetimeMs`, `reason`) out of a `WatcherExitFacts` that carried exactly those three;
+ * the cause above is a superset of it, so the fold now takes and re-emits the whole thing. That is
+ * what puts `lastRecord`, `silentMs` and `attempt` into the error store's exemplar for an exit —
+ * the store's residual presence rows are the ones that survive the demotion, so they are the rows
+ * that have to be diagnosable on their own.
+ */
+export interface WatcherExitLog extends WatcherRestartCause {
   readonly message: string
-  readonly code: number | null
-  /** How long the watcher lived. The number that turns "it exited" into "it exited immediately". */
-  readonly lifetimeMs: number
-  readonly reason: string | null
   /** Set only on the collapsed entry — see `WATCHER_EXIT_LOOP_ERROR_NAME`. */
   readonly name?: string
   /** Set only on the collapsed entry: how many exits in a row got us here. */
@@ -611,8 +697,8 @@ export interface WatcherExitStep {
  * which is a different story and gets the ordinary report; an exit after a long healthy run is a
  * watcher that was running fine until it wasn't.
  */
-function quickCleanExit(facts: WatcherExitFacts, staleMs: number): boolean {
-  return facts.code === 0 && facts.lifetimeMs >= 0 && facts.lifetimeMs < staleMs
+function quickCleanExit(cause: WatcherRestartCause, staleMs: number): boolean {
+  return cause.code === 0 && cause.lifetimeMs >= 0 && cause.lifetimeMs < staleMs
 }
 
 /**
@@ -625,15 +711,14 @@ function quickCleanExit(facts: WatcherExitFacts, staleMs: number): boolean {
  */
 export function watcherExitStep(
   trail: WatcherExitTrail,
-  facts: WatcherExitFacts,
+  cause: WatcherRestartCause,
   streakToCollapse: number = WATCHER_QUICK_EXIT_STREAK,
   staleMs: number = WATCHER_STALE_MS
 ): WatcherExitStep {
-  const base = { code: facts.code, lifetimeMs: facts.lifetimeMs, reason: facts.reason }
-  if (!quickCleanExit(facts, staleMs)) {
+  if (!quickCleanExit(cause, staleMs)) {
     return {
       trail: NEW_WATCHER_EXIT_TRAIL,
-      log: { message: 'presence watcher exited unexpectedly', ...base }
+      log: { message: 'presence watcher exited unexpectedly', ...cause }
     }
   }
   // Already diagnosed: the pattern is unchanged, so there is nothing new to say. The streak is
@@ -643,7 +728,7 @@ export function watcherExitStep(
   if (streak < streakToCollapse) {
     return {
       trail: { streak, collapsed: false },
-      log: { message: 'presence watcher exited unexpectedly', ...base }
+      log: { message: 'presence watcher exited unexpectedly', ...cause }
     }
   }
   return {
@@ -656,7 +741,7 @@ export function watcherExitStep(
         '(see `reason`); overlay auto-hide and the cursor ring are dead for this session. ' +
         'Further identical exits are counted by the restart backoff, not logged.',
       exits: streak,
-      ...base
+      ...cause
     }
   }
 }

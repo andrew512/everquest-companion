@@ -5,8 +5,8 @@
 // pure function — `speechPlan` in lib/speech.ts — rather than by a branch at each call site:
 //   audio:'sound'  (or absent) → unchanged: the pack sound, as it always was.
 //   audio:'speech'            → the utterance INSTEAD of the sound.
-//   audio:'both'              → the sound, then the utterance queued behind it (D5), using
-//                               soundCache's `onEnded` continuation so they never overlap.
+// A def still storing the retired 'both' (JOS-362) resolves to one of those two inside
+// `speechPlan` — see `resolveAlertAudio` — so this path plays ONE channel per firing, always.
 // The alerts module's master MUTE and its volumes govern both halves: mute silences speech
 // too, and the utterance is spoken at VoicePrefs.volume × this alert's effective volume. The
 // engine itself (which tier, which voice, and the fact that the e2e channel never utters)
@@ -37,7 +37,7 @@ import type {
 import type { SpeechFiring } from '@shared/speechText'
 import { playSound } from './soundCache'
 import { currentVoicePrefs, loadVoicePrefs, speak, speechPlan } from '../../lib/speech'
-import { coalesceAudio } from './audioThrottle'
+import { audioIdentity, coalesceAudio, type AudioWindow } from './audioThrottle'
 import { previewDef } from './preview'
 import { showAlertDisplay } from './displayFire'
 
@@ -48,11 +48,13 @@ let prefs: AlertPrefs = { globalVolume: 0.7, muted: false }
 const appCooldown = new Map<string, number>()
 const DEFAULT_COOLDOWN_MS = 2000
 /**
- * When the audio channel was last occupied (audioThrottle.ts). One cell for the whole app on
- * purpose: coalescing is CROSS-alert — three different alerts landing together is the case it
- * exists for — so a per-def cell would gate nothing that `cooldownMs` doesn't already gate.
+ * The audio channel's current occupancy — when it was last opened, and everything already heard
+ * inside that window (audioThrottle.ts). One cell for the whole app on purpose: coalescing is
+ * CROSS-alert — three different alerts landing together is the case it exists for — so a per-def
+ * cell would gate nothing that `cooldownMs` doesn't already gate. What makes it per-def-SAFE is
+ * that the window folds by what would be HEARD (JOS-347), not by which def said it.
  */
-let lastAudioMs: number | null = null
+let audioWindow: AudioWindow | null = null
 
 const subscribers = new Set<() => void>()
 /** Subscribe to defs/prefs changes (AlertsView re-reads after it saves). */
@@ -118,19 +120,24 @@ export function playAlertNow(def: AlertDef, firing?: SpeechFiring): void {
   const voice = currentVoicePrefs()
   const plan = speechPlan(def, firing ?? null, prefs.muted)
   if (!plan.sound && !plan.speak) return
-  const gate = coalesceAudio(def, Date.now(), lastAudioMs, prefs.alwaysPlayAll === true)
-  lastAudioMs = gate.lastAudioMs
+  // The plan is resolved FIRST because the throttle folds by what would be heard, not by which
+  // def is speaking: two alerts pointed at one sound with nothing to say are one audio alert,
+  // and two alerts with different voice lines are two things to hear (JOS-347).
+  const gate = coalesceAudio(def, Date.now(), audioWindow, {
+    allAlwaysPlay: prefs.alwaysPlayAll === true,
+    heard: audioIdentity(def, plan)
+  })
+  audioWindow = gate.window
   if (!gate.play) return
   const gain = effectiveVolume(def)
-  const say = (): void => {
-    if (plan.speak) void speak(plan.speak, voice, { ...(def.speech?.voiceId ? { voiceId: def.speech.voiceId } : {}), gain })
-  }
-  if (!plan.sound) {
-    say()
+  // One channel or the other, never both (JOS-362): a plan carries a sound or an utterance. WHICH
+  // VOICE says it is `voice` — the live prefs copy, read at firing time — and nothing off the def:
+  // a stored `speech.voiceId` is ignored, so changing the preference changes every alert at once.
+  if (plan.speak) {
+    void speak(plan.speak, voice, { gain })
     return
   }
-  // 'both': the utterance is the sound's continuation, so nothing talks over the airhorn.
-  void playSound(def.sound.packId, def.sound.soundId, gain, plan.after ? say : undefined)
+  void playSound(def.sound.packId, def.sound.soundId, gain)
 }
 
 /**

@@ -150,7 +150,13 @@ export type SpeechMode = 'custom' | 'alertName' | 'spellName' | 'spellFirstWord'
  * WHICH audio channel a fired alert uses (decision D5). Absent ⇒ 'sound', which is exactly
  * what every alert written before voice alerts existed meant — so the field is optional and
  * no migration has to touch a def that never asked to speak.
- * 'both' plays the sound first and queues the speech after it; cooldowns are unchanged.
+ *
+ * 'both' IS RETIRED (owner, 2026-08-14: "also remove sound + spoken - too much garbage"). It
+ * stays in the union because it stays READABLE — a store written by an older build, a share
+ * string, an exported def — and `resolveAlertAudio` (shared/speechText.ts) is the one place it
+ * turns back into a channel the app still has. Nothing OFFERS it any more: the two pickers list
+ * `ALERT_AUDIO_CHOICES`, and every write goes through a value of that narrower type. See
+ * `AlertAudioChoice` below for the rule, and never widen a picker back onto this union.
  *
  * 'silent' (docs/plans/alert-text-overlays.md D1) is the member that makes no noise at all. It
  * arrived with TEXT OVERLAYS, because until then every alert had to be audible: an alert whose
@@ -158,16 +164,32 @@ export type SpeechMode = 'custom' | 'alertName' | 'spellName' | 'spellFirstWord'
  * would have been a second, undiscoverable spelling of the same intent. It is a channel and not
  * a fourth flag for exactly that reason — "what does this alert do when it fires" stays ONE
  * question with one answer. NOTE that the `display` block below is INDEPENDENT of this field: a
- * spoken alert may also draw text, and a silent one need not.
+ * spoken alert may also draw text, and a silent one need not. Unlike 'both' it IS offered: a
+ * retired member is one the app stopped having, and this is one it gained.
  */
 export type AlertAudio = 'sound' | 'speech' | 'both' | 'silent'
+
+/**
+ * The channels a user can actually CHOOSE — the union every picker offers and every write
+ * produces (JOS-362). `AlertAudio` minus the retired member, expressed as a subtraction so a
+ * future member of the wider union is offered by default rather than silently dropped.
+ */
+export type AlertAudioChoice = Exclude<AlertAudio, 'both'>
 
 /** Per-alert speech configuration. Absent on a def ⇒ treated as `{ mode: 'alertName' }`. */
 export interface AlertSpeech {
   mode: SpeechMode
   /** Required iff mode === 'custom'; capped at MAX_SPEECH_CHARS (shared/speechText.ts). */
   phrase?: string
-  /** Voice override for this alert; absent ⇒ the global default voice (VoicePrefs.voiceId). */
+  /**
+   * RETIRED (JOS-362) — a per-alert voice override, now IGNORED everywhere it is read.
+   *
+   * The owner's ruling: "our settings shouldn't store which voice per alert, only the preferences
+   * should (within Voice (spoken))". A stored id is tolerated so old stores, exports and share
+   * strings still load, and it is dropped the next time that alert is saved (`speechFieldsFor`,
+   * `speechFieldsOf` — both rebuild this block without it). Nothing reads it: the voice comes from
+   * `VoicePrefs.voiceId` at speak time. Do not re-introduce a reader.
+   */
   voiceId?: string
 }
 
@@ -340,6 +362,9 @@ export interface AlertDef {
    *
    * By default every alert's audio is throttled ACROSS alerts — three buffs fading at once is
    * one audio alert, not three — because a smear of simultaneous sounds carries less than one.
+   * Since JOS-347 that window folds by what would be HEARD (the pack sound plus the spoken
+   * words), so the three buffs are still one sound while four alerts carrying four different
+   * voice lines are four things to hear, each heard once inside the window.
    * `true` marks an alert that must never be swallowed by that window (a charm break, a raid
    * call): it always plays, and it does not itself occupy the window. Absent ⇒ throttled,
    * which is the default the owner asked for and the meaning every def written before this
@@ -448,9 +473,10 @@ export interface AlertPrefs {
    *
    * It is the SAME bypass, applied to every def rather than to the ones the user ticked: the
    * cross-alert coalescing window (renderer/features/alerts/audioThrottle.ts) is skipped and
-   * nothing occupies it, so four buffs fading together are four sounds. That IS the smear the
-   * throttle exists to prevent — which is why it STARTS OFF and stays off unless the user says
-   * otherwise. Someone who would rather hear everything twice than miss one thing gets to say
+   * nothing occupies it, so four buffs fading together are four sounds — four copies of the SAME
+   * sound, which the window would have folded into one whatever they were named (JOS-347). That
+   * IS the smear the throttle exists to prevent — which is why it STARTS OFF and stays off
+   * unless the user says otherwise. Someone who would rather hear everything twice than miss one thing gets to say
    * so in one place instead of ticking a box on every alert they ever add.
    *
    * Absent ⇒ false ⇒ today's behavior, which is why this is additive: the key is written only
@@ -481,6 +507,12 @@ export interface FiredAlert {
   /**
    * NAMED REGEX CAPTURES from the condition that matched (JOS-103) — the values a `custom`
    * phrase's `{token}`s resolve to, so a spoken alert can say "Puma on Fail".
+   *
+   * PLUS THE ONE AUTO TOKEN (JOS-353): `target`, the entity the matched event says the spell is
+   * affecting, filled in with no capture group declared and no regex written. It is carried ONLY
+   * when the def's own phrase writes `{target}`, and a group the pattern declared under that name
+   * always wins. The closed table of which field of which event kind answers it, and the security
+   * argument for the one exemption to "a token is a declaration", are in shared/alertTargets.ts.
    *
    * ATTACKER-INFLUENCED BY CONSTRUCTION, and already defanged. The keys come from the def's own
    * pattern (`(?<player>…)`) but the VALUES come out of a log line, which carries other players'

@@ -17,6 +17,8 @@
 // hand. See world-model law 10: the tier is a fact ABOUT a kill, so it lives with the kill —
 // the combo interval, which is revisable, is still joined at read time and never stamped.
 
+import { mobKey } from './mobKey'
+
 /**
  * How far BACK a kill line may reach for the experience line that credits it. The measured gap
  * is 0 s or 1 s (the full-log sweep quoted in main/modules/progression.ts: the exp line PRECEDES
@@ -267,6 +269,68 @@ export function addTierRun(into: Record<number, KillTierRun>, tier: number, run:
  */
 export function killsBaselineStale(state: KillsSnap, delta: KillsDelta): boolean {
   return state.v !== delta.v
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE JOIN — reading a mob's kills BY NAME (JOS-350)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A KillMap is written by the kills module under `idKey(<the slain line's spelling>)`, which is
+// nothing but trim + lowercase. That is the right WRITE key — it is what the log said — but it is
+// the wrong key to look a mob up WITH, and every surface that wanted a count had spelled its own
+// inline `name.trim().toLowerCase()` against it. Two names miss that way:
+//
+//   · `WorldModel.label()`'s spawn-generation suffix — the Overview Target card names the mob you
+//     just killed as "an elemental capturer (14)", and no record is ever keyed that way (the
+//     suffix appears in NO log line — world-model law 2). THIS is the bug JOS-350 reports: the
+//     Mobs tab, searching the catalog's suffix-free spelling, showed the real total while the
+//     same mob opened from the combat-fed surface read 0.
+//   · the three apostrophe glyphs — the log writes ``Innoruuk`s Chosen`` with a backtick, the
+//     catalog and the wiki write it with `'` or `’`, so a catalog-spelled lookup missed a record
+//     the log had been filing all along.
+//
+// So the join canonicalizes BOTH SIDES with `mobKey`: `killIndex` re-keys the map once (folding
+// any two spellings that were one mob into one record), `killsFor` reads it. Same shape as
+// bosses' `lowerKillMap` — re-key, don't re-implement — and it is the ONE join now, so the mob
+// page cannot disagree with the row that opened it.
+
+/**
+ * Re-key a KillMap by `mobKey(display)` — the canonical mob key — merging any entries that were
+ * one mob spelled two ways. The result is still a KillMap, so consumers read it unchanged.
+ *
+ * The merge is a real fold, not a last-wins overwrite: the per-tier runs union through
+ * `addTierRun` and the scalars are recomputed by `killTotals`, so a mob whose kills were split
+ * across two spellings reports ONE honest total rather than whichever half sorted last. `display`
+ * is the first spelling seen, which keeps law 2's "display raw" intact.
+ *
+ * O(entries) — call it once per snapshot (memoize in a hook), never per row.
+ */
+export function killIndex(kills: KillMap): KillMap {
+  const out: KillMap = {}
+  for (const [rawKey, info] of Object.entries(kills)) {
+    // The stored `display` is the log's own spelling; `rawKey` is the fallback for a record
+    // written before displays existed. Either way the FOLD is the same.
+    const key = mobKey(info.display || rawKey)
+    const prev = out[key]
+    if (!prev) {
+      out[key] = { ...info, tiers: { ...info.tiers } }
+      continue
+    }
+    for (const [tier, run] of Object.entries(info.tiers)) addTierRun(prev.tiers, Number(tier), run)
+    Object.assign(prev, killTotals(prev.tiers))
+  }
+  return out
+}
+
+/**
+ * What the kills module knows about ONE mob, whatever spelling the caller holds — a catalog row,
+ * a con line, or a `WorldModel.label()` with a ` (N)` suffix on it.
+ *
+ * `index` must be a `killIndex` result, not a raw snapshot map: the whole point is that both
+ * sides of the join were folded by the same rule.
+ */
+export function killsFor(index: KillMap, name: string): KillInfo | undefined {
+  return index[mobKey(name)]
 }
 
 /**

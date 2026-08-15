@@ -7,9 +7,14 @@
 //
 // ID CONVENTION:  `suggest:<spellKey>:<template>`
 //   spellKey = the catalog entry's canonical (lowercased, rank-stripped) key.
-//   template ∈ 'wearsOff' | 'fade' | 'lands' | 'landsOnOther' | 'breaks' | 'charmBreaks'.
+//   template ∈ the `TemplateKind` union below (the record is the list; keep them in step).
 //   Illusion is the SHARED, deduped suggestion `suggest:illusion:fade` (one alert for the
 //   generic `Your illusion fades.` line, which names no spell — see logEvents.ts IllusionFade).
+//
+// AND SINCE JOS-353 MOST OF THEM SAY WHO. Five templates ship a spoken phrase carrying `{target}`,
+// which the app fills from the matched event's own entity field with no regex anywhere
+// (shared/alertTargets.ts) — the owner's ruling that naming the affected mob must not require the
+// user to write a pattern. The `speaks` field on each template is the whole of it.
 //
 // Each template's trigger was validated to actually fire in the AlertsModule against a
 // matching synthetic LogEvent (scripts/_task38_harness.mts): the `where.spell` matcher tests
@@ -29,7 +34,9 @@ export type TemplateKind =
   | 'wearsOff'
   | 'fade'
   | 'lands'
+  | 'landsOnYou'
   | 'landsOnOther'
+  | 'healsOverTime'
   | 'breaks'
   | 'charmBreaks'
 
@@ -61,6 +68,26 @@ export const SUGGEST_TEMPLATES: Record<
      * comes off the catalog entry (`castOnOtherCapture`). See `landsOnOther`.
      */
     raw?: true
+    /**
+     * THE SPOKEN PHRASE THIS TEMPLATE SHIPS, given the spell's distinctive word — and the whole of
+     * JOS-353's "suggested alerts can emit it" (owner ruling 2026-08-14).
+     *
+     * A template with one gets `audio:'speech'` and a `custom` speech mode. It used to get the
+     * combined 'both' channel — the pack sound as a guaranteed-audible half with the sentence
+     * riding behind it — and that channel is retired (JOS-362, owner: "also remove sound + spoken
+     * - too much garbage"). These templates exist to SAY something, so 'speech' is the half that
+     * survives; a machine with no voice set up is told so by `VoiceSetupLink` on the row itself,
+     * which is a fix rather than a silent substitution.
+     *
+     * `{target}` needs NO PATTERN — the app fills it from the event's own entity field
+     * (shared/alertTargets.ts). `{player}` is `landsOnOther`'s declared capture group and is the
+     * one phrase here that depends on a regex, because that family has no typed event to read.
+     *
+     * A template with NO phrase is one where the answer would be a tautology: `landsOnYou` already
+     * says "on you" in its own trigger, and `healsOverTime` is a question about whether your heal
+     * is working rather than about whom.
+     */
+    speaks?: (short: string) => string
   }
 > = {
   // Beneficial: the DUAL-DEFAULT expiry (Task #47). The user's directive — "the wears off for
@@ -93,7 +120,11 @@ export const SUGGEST_TEMPLATES: Record<
     // "A moment of your time, if you'd be so kind."
     sound: 'input-required-input-required-01',
     where: (name) => ({ spell: name }),
-    alsoKind: 'buffWearOff'
+    alsoKind: 'buffWearOff',
+    // BOTH conditions name who: `buffExpired.target` is 'self' or the bound entity, and the raw
+    // `buffWearOff.target` is always 'self' — which speaks as "you", because the wears-off emote
+    // is printed to the holder. So this chip answers the reporters' question on the self side too.
+    speaks: (short) => `${short} wore off {target}`
   },
   // Beneficial: JUST the pet/named-target fade side (target-only), for users who want to
   // separate it from the self-side. Uses the raw buffFade the parser already emits.
@@ -103,7 +134,11 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'buffFade',
     verb: 'fades',
     sound: 'resource-limit-resource-limit-09',
-    where: (name) => ({ spell: name })
+    where: (name) => ({ spell: name }),
+    // `buffFade.target` is the named mob, the literal 'pet', or ABSENT for the self form — and the
+    // resolver reads all three (absence is what `Your <Spell> spell has worn off.` means, so it
+    // speaks "you"). This is the "Soothe has worn off a Fire Giant" sentence for every non-hold buff.
+    speaks: (short) => `${short} faded on {target}`
   },
   // Detrimental + cast-on-other: the debuff landing on a target.
   //
@@ -122,7 +157,36 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'buffApply',
     verb: 'lands',
     sound: 'task-acknowledge-task-acknowledge-05',
-    where: (name) => ({ spell: name })
+    where: (name) => ({ spell: name }),
+    // THE LANDING ALERT THE REPORTS ASKED FOR (JOS-353). `buffApply.target` is the mob the debuff
+    // landed on, so this says "Shiftless on Coercer T`vala" with no regex anywhere — the same
+    // sentence `landsOnOther` had to author a capture pattern to reach, now available to every
+    // spell that has a typed landing event.
+    speaks: (short) => `${short} on {target}`
+  },
+  // Beneficial + cast-on-YOU: the buff landing on the person casting it (JOS-318).
+  //
+  // THE HOLE. `lands` above is DETRIMENTAL-only, because it was written for a debuff landing on a
+  // mob and gates on the cast-on-OTHER sentence. So the whole beneficial half of the game had no
+  // "it landed" chip at all, and a HoT is the family that notices: `Flowering Heal` (report 3JM1ZD)
+  // and `Slugs Healing` (01KZZXVW888E09C088QBRD5HCD) both state no wear-off sentence, so `wearsOff`
+  // is not offered either, and everything the wizard DID offer them was about somebody else's copy
+  // of the buff. The event was there the whole time — `You feel a heal flowering within you.` parses
+  // to `buffApply {target:'self'}` off the DB's own `msgCastOnYou`.
+  //
+  // `target:'self'` IS PART OF THE TRIGGER, not decoration: it is what separates this chip from
+  // `lands`/`landsOnOther` on a spell that offers both, so a shaman who wants "my HoT landed on me"
+  // and "my HoT landed on the tank" can have two sounds. The parser writes the literal string
+  // 'self' for a first-person landing (log/parseCasts.ts), and a `where` key that is not `spell`
+  // keeps its exact-compare semantics (main/modules/alerts.ts) — so this matches that and nothing
+  // else.
+  // "A moment of your time, if you'd be so kind."
+  landsOnYou: {
+    chip: 'When it lands on you',
+    kind: 'buffApply',
+    verb: 'lands on you',
+    sound: 'task-acknowledge-task-acknowledge-05',
+    where: (name) => ({ spell: name, target: 'self' })
   },
   // THE CAPTURE TEMPLATE (JOS-103) — "who did this land on?", answered out loud.
   //
@@ -140,17 +204,50 @@ export const SUGGEST_TEMPLATES: Record<
   // are what stop a stranger typing the sentence into guild chat and having their text captured
   // and spoken. Read that module's threat model before touching this.
   //
-  // IT SPEAKS, AND IT ALSO PLAYS. `audio:'both'` rather than 'speech': a suggestion the APP
-  // authors has to be audible on a machine with no speech voices at all, and `speechPlan`
-  // (lib/speech.ts) falls back to the pack sound only when the TEXT is empty — never when the
-  // engine is missing. The sound is the guaranteed half; the spoken name rides behind it.
-  // "Consider this my opening move."
+  // IT SPEAKS, FULL STOP. This template shipped on the combined 'both' channel — the pack sound
+  // as the guaranteed-audible half, the spoken name behind it — until JOS-362 retired that
+  // channel; the point of the template is the NAME it says, so 'speech' is what it keeps. The def
+  // still carries its pack sound, so a user who switches the row's output back to a pack gets a
+  // working sound alert with one click. "Consider this my opening move."
   landsOnOther: {
     chip: 'When it lands on someone (say who)',
     kind: 'buffApply', // unused for this template — see `raw`; kept so the record shape is total.
     verb: 'lands on someone',
     sound: 'task-acknowledge-task-acknowledge-05',
-    raw: true
+    raw: true,
+    // `{player}` — the group `subjectCapturePattern` declares, NOT the auto token. This family has
+    // no typed event to read an entity field off (that is the whole reason it is a `raw` trigger),
+    // so the declared capture is the only thing that can answer. If the two ever disagree the token
+    // renders literally, which is visible in the editor's preview rather than silent.
+    speaks: (short) => `${short} on {player}`
+  },
+  // THE HEAL-OVER-TIME TICK (JOS-318) — the one line a HoT cannot fail to print.
+  //
+  // WHY A SEVENTH TEMPLATE RATHER THAN A BETTER GATE ON THE SIX. Every other template rests on a
+  // sentence the WIKI had to get right, and both reports behind this ticket are spells the wiki got
+  // wrong: `Slugs Healing`'s scraped landing and cast-on-other messages are the literal stubs
+  // `You .` / `Someone .`, and it states no wear-off at all. The corrections overlay fixes that one
+  // spell from the reporter's own bytes — but `Sloths Healing`, the next rank up the same shaman
+  // ladder, has the same stubs and NO log anywhere has printed a line of it, so it cannot be
+  // corrected without inventing a sentence (AGENTS.md's awaiting-sample law). This trigger is what
+  // covers it anyway: `You healed Ahyeon over time for 247 hit points by Slugs Healing.` is printed
+  // by the HEALING ENGINE, not by a message table, so it exists for every HoT in the game.
+  //
+  // AND IT IS RANK-LESS AT THE SOURCE, which is the other half of this ticket. The reporter's cast
+  // line says `Slugs Healing VII` and this line says `Slugs Healing` — the alerts matcher folds
+  // both to one line key (JOS-259), but this one needs no folding to begin with.
+  //
+  // THE COOLDOWN IS THE SPELL'S DURATION, not the 3 s default: a HoT prints this line every six
+  // seconds for its whole duration, and a user who asks to be told their heal is working wants one
+  // sound per CAST. `buildDef` reads `entry.durationMs` for it. The wiki figure is a FLOOR in this
+  // app, so the failure direction is an extra sound on a long re-cast, never a swallowed one.
+  // "Consider this my opening move."
+  healsOverTime: {
+    chip: 'While it is healing (once per cast)',
+    kind: 'heal',
+    verb: 'heals over time',
+    sound: 'task-acknowledge-task-acknowledge-05',
+    where: (name) => ({ spell: name })
   },
   // Crowd control: the HOLD ENDING, per spell (JOS-161).
   //
@@ -175,7 +272,11 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'cc',
     verb: 'broke',
     sound: 'task-error-task-error-08',
-    where: (name) => ({ spell: name, refresh: 'true' })
+    where: (name) => ({ spell: name, refresh: 'true' }),
+    // "Mez has dropped on a ghoul" — the reporters' own sentence, and the `cc` break spells its
+    // entity `mob` rather than `target`, which is exactly why the resolver is a table and the user
+    // never has to know (shared/alertTargets.ts).
+    speaks: (short) => `${short} broke on {target}`
   },
   // The CHARM breaking, per spell (JOS-200) — `breaks`'s twin, and a different EVENT.
   //
@@ -203,7 +304,10 @@ export const SUGGEST_TEMPLATES: Record<
     kind: 'uncharm',
     verb: 'charm broke',
     sound: 'input-required-input-required-02',
-    where: (name) => ({ spell: name })
+    where: (name) => ({ spell: name }),
+    // Same sentence as `breaks`, same `mob` field, different event — and naming the mob matters
+    // MORE here: a broken charm is a pet turning on you, and which one is the whole question.
+    speaks: (short) => `${short} charm broke on {target}`
   }
 }
 
@@ -237,11 +341,16 @@ export interface Suggestion {
 }
 
 /**
- * The default sound pack — the ONE pack the app ships, the pack every picker
- * pre-selects (AlertsView), and the pack the seeded built-ins + these suggestions use.
+ * The SHIPPED sound pack — the ONE pack the app provisions, and the pack every surface here
+ * falls back to when the user has expressed no preference of their own.
  * Mirrors DEFAULT_ALERT_PACK_ID / DEFAULT_ALERT_SOUNDS in src/main/data/defaultPacks.ts
  * — repeated as literals because the renderer bundle can't import from src/main. Keep
  * the two in sync (the ids there carry the spoken line each one is).
+ *
+ * IT IS NO LONGER THE PACK EVERY PICKER PRE-SELECTS (JOS-273). That is now the user's stored
+ * default-pack preference, which arrives as an ARGUMENT (`packId` below) because it is runtime
+ * state and this is a compile-time fact about what the app ships. When the two differ, the
+ * argument wins; when nothing is stored, they are the same thing and nothing has changed.
  */
 export const DEFAULT_PACK_ID = 'alan-rickman'
 /** Default cooldown for a suggested alert (ms). */
@@ -249,6 +358,32 @@ const DEFAULT_COOLDOWN_MS = 3000
 
 function suggestionId(spellKey: string, template: TemplateKind): string {
   return `suggest:${spellKey}:${template}`
+}
+
+/**
+ * THE ID A RANK CHIP IS "ALREADY CREATED" UNDER — the dedupe key, rank-folded (JOS-276).
+ *
+ * THE PROBLEM THE RANK FOLD CREATED. The two rank templates mint one id per RANK
+ * (`suggest:<line>:castRank:mesmerization-iii`), which was exactly right while a def pinned to a
+ * rank only ever fired on that rank: two ranks were two alerts about two different sets of lines.
+ * Since JOS-259 they are not — one def fires on the whole line — so the wizard was offering an
+ * unchecked "Mesmerization IV casts" chip beside a def that already answers every Mesmerization
+ * cast line, and a click on it bought the user a SECOND alert firing on the SAME lines. Two
+ * sounds, no way to see why. `detectRankUpgrades`'s add-alongside clone (`…::rank:<frag>`) folds
+ * here for the same reason and by the same cut.
+ *
+ * THE FOLD IS ON THE ID, NOT ON THE DEF. Ids already stored keep their spelling — nothing is
+ * migrated, nothing is rewritten, and a def the user edited is still their own — so this changes
+ * exactly one thing: whether the chip renders checked. `entry.key` is itself the rank-STRIPPED
+ * line key (buildSpellCatalog), so cutting the id after the template name yields one key per
+ * (line, template), which is precisely the set of lines one of these defs now fires on.
+ *
+ * Every other suggestion id is returned unchanged — they were rank-less by construction already.
+ */
+const RANK_SUGGESTION_ID_RE = /^(suggest:.*:(?:castRank|resistRank))(?::|$)/
+
+export function suggestionCoverageId(id: string): string {
+  return RANK_SUGGESTION_ID_RE.exec(id)?.[1] ?? id
 }
 
 /** Function words a spell name hides its distinctive noun behind. */
@@ -305,25 +440,39 @@ function buildTrigger(entry: SpellCatalogEntry, template: TemplateKind): AlertDe
   return { type: 'event', kind: t.kind, where }
 }
 
-/** Build the AlertDef for one (spell, template) pair. */
-function buildDef(entry: SpellCatalogEntry, template: TemplateKind): AlertDef {
+/**
+ * The cooldown one template authors.
+ *
+ * Every template but one fires on a sentence the game prints ONCE per event, so the 3 s default is
+ * a double-fire guard and nothing more. `healsOverTime` is the exception (JOS-318): its line repeats
+ * every six seconds for the spell's whole duration, so its cooldown is that duration and one CAST
+ * makes one sound. A spell whose duration the wiki never stated falls back to the default rather
+ * than to silence — a chatty alert is a thing the user can see and edit, a missing one is not.
+ */
+function cooldownFor(entry: SpellCatalogEntry, template: TemplateKind): number {
+  if (template !== 'healsOverTime') return DEFAULT_COOLDOWN_MS
+  return Math.max(DEFAULT_COOLDOWN_MS, entry.durationMs ?? 0)
+}
+
+/** Build the AlertDef for one (spell, template) pair, pointed at `packId` (the user's default). */
+function buildDef(entry: SpellCatalogEntry, template: TemplateKind, packId: string): AlertDef {
   const t = SUGGEST_TEMPLATES[template]
   const def: AlertDef = {
     id: suggestionId(entry.key, template),
     name: `${entry.name} ${t.verb}`,
     enabled: true,
     trigger: buildTrigger(entry, template),
-    sound: { packId: DEFAULT_PACK_ID, soundId: t.sound },
-    cooldownMs: DEFAULT_COOLDOWN_MS,
+    sound: { packId, soundId: t.sound },
+    cooldownMs: cooldownFor(entry, template),
     note: `Suggested alert (Task #38/#47) - ${template} for ${entry.name}.`
   }
-  if (template === 'landsOnOther') {
-    // The shipped demonstration of capture substitution (JOS-103): the phrase names the group the
-    // pattern declares, so this def SAYS "Puma on Fail". `{player}` matches the group name
-    // `subjectCapturePattern` authors; if the two ever disagree the token renders literally,
-    // which is visible in the editor's preview rather than silent.
-    def.audio = 'both'
-    def.speech = { mode: 'custom', phrase: `${spellShortName(entry.name)} on {player}` }
+  // THE TEMPLATES THAT SAY WHO (JOS-103 for `{player}`, JOS-353 for `{target}`). One branch for
+  // all of them now: the phrase is the template's own (`speaks`), and every template that has one
+  // gets the same 'speech' channel for the reason argued on that field.
+  const phrase = t.speaks?.(spellShortName(entry.name))
+  if (phrase !== undefined) {
+    def.audio = 'speech'
+    def.speech = { mode: 'custom', phrase }
   }
   return def
 }
@@ -332,53 +481,100 @@ function buildDef(entry: SpellCatalogEntry, template: TemplateKind): AlertDef {
  * Build the AlertDef for one (rank, rank-template) pair. The trigger pins the DISPLAY name
  * with its suffix, which is exactly what makes the def go stale on a level-up — and exactly
  * what `detectRankUpgrades` (shared/spellLines.ts) looks for.
+ *
+ * THE RESIST CHIP SAYS WHICH SPELL (JOS-347). Every resist suggestion draws the same pack sound,
+ * which is right for a player who owns one of them and useless for the player who reported this:
+ * a bard clicked the chip on all four Tuyen chants and got four alerts that were, to the ear, one
+ * alert. And a bard is exactly the case that produces them at once — measured against the owner's
+ * own log, a bard's songs all re-apply in the SAME six-second pulse, so the four resist lines
+ * arrive together. Four identical sounds in one instant is one sound (audioThrottle.ts, and it is
+ * right to fold them); four DIFFERENT lines are four facts, and the throttle now keeps them all.
+ * So the def the wizard authors names its own spell out loud, in the same shape and for the same
+ * reasons as `landsOnOther`: `audio:'speech'`, because the whole value of this suggestion is the
+ * word that tells the four chants apart. (It shipped on the combined 'both' channel until JOS-362
+ * retired that channel.) The phrase is editable like any other — this is the DEFAULT that the
+ * reporter had to build by hand four times.
+ *
+ * `castRank` is deliberately left alone: its lines are one per cast, not one per song pulse, and
+ * a chip that starts talking because its twin had to is a change nobody asked for.
  */
-function buildRankDef(entry: SpellCatalogEntry, rank: string, template: RankTemplateKind): AlertDef {
+function buildRankDef(
+  entry: SpellCatalogEntry,
+  rank: string,
+  template: RankTemplateKind,
+  packId: string
+): AlertDef {
   const t = RANK_TEMPLATES[template]
   // resist carries a caster field: pin it to YOUR casts so a pet's or a bystander's resist of
   // the same spell never fires the alert (the parser sets caster='you' for your own — Task #51).
   const where: Record<string, string> =
     template === 'resistRank' ? { caster: 'you', spell: rank } : { spell: rank }
-  return {
+  const def: AlertDef = {
     id: `suggest:${entry.key}:${template}:${spellIdFragment(rank)}`,
     name: `${rank} ${t.verb}`,
     enabled: true,
     trigger: { type: 'event', kind: t.kind, where },
-    sound: { packId: DEFAULT_PACK_ID, soundId: t.sound },
+    sound: { packId, soundId: t.sound },
     cooldownMs: DEFAULT_COOLDOWN_MS,
     note: `Suggested alert - ${template} for ${rank}.`
   }
+  if (template === 'resistRank') {
+    def.audio = 'speech'
+    // The SHORT name, the way every other spoken default in this file says a spell: "Tuyen's
+    // Chant of Frost V" is four syllables of preamble before the one word that tells the four
+    // chants apart. `spellShortName` strips the rank first, so the phrase survives a level-up
+    // the same way the rank-blind matcher does.
+    def.speech = { mode: 'custom', phrase: `${spellShortName(rank)} resisted` }
+  }
+  return def
 }
 
 /**
  * All suggestions the spell DB supports for this catalog entry (excludes the shared illusion
  * one). When a `rank` is supplied — the MOST RECENTLY CAST rank of the entry's line, per the
  * owner's ordering rule — the two rank-pinned templates are offered as well.
+ *
+ * `packId` is the user's default-pack preference (JOS-273), defaulting to the shipped pack so
+ * every existing caller and test reads exactly as it did.
  */
-export function suggestionsFor(entry: SpellCatalogEntry, rank?: SpellRank | null): Suggestion[] {
+export function suggestionsFor(
+  entry: SpellCatalogEntry,
+  rank?: SpellRank | null,
+  packId: string = DEFAULT_PACK_ID
+): Suggestion[] {
   const out: Suggestion[] = []
-  if (entry.templates.wearsOff) out.push({ template: 'wearsOff', def: buildDef(entry, 'wearsOff') })
-  if (entry.templates.fade) out.push({ template: 'fade', def: buildDef(entry, 'fade') })
-  if (entry.templates.lands) out.push({ template: 'lands', def: buildDef(entry, 'lands') })
-  if (entry.templates.landsOnOther) {
-    out.push({ template: 'landsOnOther', def: buildDef(entry, 'landsOnOther') })
-  }
-  if (entry.templates.breaks) out.push({ template: 'breaks', def: buildDef(entry, 'breaks') })
-  // Disjoint with `breaks` by construction — `charmSpell` is tested first in classifyWornOff, so
-  // the two rosters cannot both claim a spell (tests/charmCcRoster.test.mts pins that).
-  if (entry.templates.charmBreaks) {
-    out.push({ template: 'charmBreaks', def: buildDef(entry, 'charmBreaks') })
+  // The rank-LESS chips, in the order they are offered — one entry per flag, walked rather than
+  // branched. It was eight `if`s until JOS-318 added the seventh and eighth and pushed the function
+  // past its complexity ceiling; the order is the record's own and the list is the whole of it.
+  // (`charmBreaks` is disjoint with `breaks` by construction — `charmSpell` is tested first in
+  // classifyWornOff, so the two rosters cannot both claim a spell; tests/charmCcRoster pins it.)
+  const RANKLESS: readonly TemplateKind[] = [
+    'wearsOff',
+    'fade',
+    'lands',
+    'landsOnYou',
+    'landsOnOther',
+    'healsOverTime',
+    'breaks',
+    'charmBreaks'
+  ]
+  for (const t of RANKLESS) {
+    if (entry.templates[t]) out.push({ template: t, def: buildDef(entry, t, packId) })
   }
   // Rank-pinned chips are offered only for a rank we have actually SEEN cast: a rank the log
   // has never printed cannot be confirmed to exist for this character, and an alert on a
   // spelling we guessed would sit there silently forever.
   if (rank?.lastCastMs != null) {
-    out.push({ template: 'castRank', rank: rank.name, def: buildRankDef(entry, rank.name, 'castRank') })
+    out.push({
+      template: 'castRank',
+      rank: rank.name,
+      def: buildRankDef(entry, rank.name, 'castRank', packId)
+    })
     if (entry.spellType === 'Detrimental') {
       out.push({
         template: 'resistRank',
         rank: rank.name,
-        def: buildRankDef(entry, rank.name, 'resistRank')
+        def: buildRankDef(entry, rank.name, 'resistRank', packId)
       })
     }
   }
@@ -386,7 +582,7 @@ export function suggestionsFor(entry: SpellCatalogEntry, rank?: SpellRank | null
 }
 
 /** The single, shared illusion-fade suggestion (deduped — one alert for any illusion). */
-export function illusionSuggestion(): Suggestion {
+export function illusionSuggestion(packId: string = DEFAULT_PACK_ID): Suggestion {
   return {
     template: 'illusion',
     def: {
@@ -395,7 +591,7 @@ export function illusionSuggestion(): Suggestion {
       enabled: true,
       trigger: { type: 'event', kind: 'illusionFade' },
       // "It has all gone rather pear-shaped."
-      sound: { packId: DEFAULT_PACK_ID, soundId: 'task-error-task-error-08' },
+      sound: { packId, soundId: 'task-error-task-error-08' },
       cooldownMs: DEFAULT_COOLDOWN_MS,
       note: 'Suggested alert (Task #38) - fires when your illusion clicks/wears off.'
     }

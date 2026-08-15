@@ -16,6 +16,16 @@ left `new` after a triage session is an unfinished triage.
 1. **In-app feedback** — the DSQL backlog via the CLI (the PULL step below).
 2. **The error store** — `triage-feedback.mts errors list --days 14 --profile eqc`
    (and `errors show <fingerprint>` for exemplars, `--maps` to symbolicate).
+   LATEST-RELEASE TRACES GET THE HARDENING TREATMENT (owner directive
+   2026-08-13): every error family seen on the newest released version enters
+   the readout as its own numbered item carrying either (a) a concrete
+   hardening proposal — what code change makes this trace impossible or
+   survivable — or (b) an INVESTIGATION framing when the trace alone does not
+   pin the mechanism (say exactly what information is missing and how to get
+   it: `errors show` exemplar, `--maps` symbolication, a repro, the owner's
+   log). "Seen it before, still WATCHing" is a valid disposition only if the
+   ledger says so by fingerprint; a family with no recorded disposition is
+   new work, however familiar it feels.
 3. **GitHub issues** — `gh issue list --repo jmoyers/everquest-companion --state open`,
    then `gh issue view <n>` for bodies (screenshots live there).
 4. **The Reddit threads** — `?sort=new` to surface fresh comments:
@@ -85,6 +95,17 @@ slices never reach a public issue (the CLI enforces this; don't fight it).
      net-new gets the suspicion test (fit / real-time / performative).
    - Quote the users' own words for color; flag thank-yous too (the owner
      likes to see them), and self-resolved reports.
+   - A LOW-INFORMATION REPORT IS NOT ACTIONABLE (owner directive 2026-08-14:
+     "you need to not take every single report at face value"). A claim with
+     no specifics, no repro, and no discriminating evidence ("not all damage
+     is showing up") gets flagged AS insufficient in the readout with a
+     recommend-decline — never dressed up as a corroboration or a ticket
+     candidate. Say plainly: this report gives us nothing to go on.
+   - EVERY LINEAR TICKET MENTIONED IS LINKED AND DESCRIBED (owner directive
+     2026-08-14): write it as a markdown link —
+     `[JOS-N](https://linear.app/joshs-maker-space/issue/JOS-N)` — followed by
+     a phrase saying what the ticket is ("the presence-demotion hardening
+     ticket"), so the owner never has to look a number up to rule on it.
 4. **DISCUSS — do not skip to tickets.** Present the readout and STOP. The
    owner decides per item: fix now, investigate first, characterize before
    trusting, gate behind design, decline for now. Capture their exact
@@ -147,6 +168,16 @@ slices never reach a public issue (the CLI enforces this; don't fight it).
   (`--note "JOS-N ... (2nd report)"`) and the ticket gets a comment adding the
   report ID and any NEW specifics (e.g. a trigger path the first report
   lacked) so the worker building it sees the extra evidence mid-build.
+- **Every disposition is RECORDED the moment it is decided** (owner directive
+  2026-08-13: things have come up more than once). A decision that lives only
+  in the conversation is not a disposition. The record lands where the item
+  lives: DSQL reports get stamped with the note, external items get their
+  ledger line on JOS-153, error families get a ledger line BY FINGERPRINT
+  (WATCH / hardened in JOS-N / investigating), and owner rulings that shape
+  future triage ("parked until a log arrives", "not supporting X for now")
+  get restated in the ledger comment that applied them. BEFORE classifying
+  any item as new, search the ledger and the stamped notes for it — a repeat
+  arrival is corroboration to attach, never a fresh line item.
 - **Triage flows into dispatch.** When the owner says "kick off the work",
   switch to the linear-board skill's loop: move tickets to In Progress with a
   wave comment, respect the 1-5 agent disjoint-file cap (queue overlapping

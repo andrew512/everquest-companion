@@ -67,6 +67,7 @@ import { searchFights } from './fightSearch'
 import { ACTIVE_MS, SLOW_SAMPLE_CAP } from './encounter'
 import type { LogEvent } from '../../shared/logEvents'
 import type { RosterSnap, RosterView } from '../../shared/roster'
+import type { ComboInterval } from '../../shared/classCombo'
 import type {
   BladeCoatState,
   CombatSnapshot,
@@ -208,6 +209,21 @@ export class CombatEngine {
   }
 
   /**
+   * Install the CLASS-COMBO pull (JOS-305, combat/coatClass.ts). pipeline.ts wires this to the
+   * combo module, which is registered FIRST on the bus — so within one delivery the combo state
+   * has already advanced for the line the engine is about to fold, exactly as the roster seam
+   * above relies on.
+   *
+   * Its ONE consumer is the blade-coat clear: a character who is no longer a rogue has no poison
+   * on their blades, and the log never says so. Absent — every test, and any future embedding —
+   * the engine behaves exactly as it did before the seam existed, and the coats are cleared only
+   * by a dry line, a death or a rebirth.
+   */
+  setCombo(access: { currentInterval: () => ComboInterval | null }): void {
+    this.st.comboProvider = () => access.currentInterval()
+  }
+
+  /**
    * THE BENCH'S SUB-ATTRIBUTION SEAM (JOS-59 — see combat/foldProbe.ts for the whole rationale).
    * A PARAMETER, exactly like `ModuleRegistry.attach(bus, timer)`: `tests/bench/foldArm.mts` is
    * the only caller in the tree, there is no environment variable, and with no probe attached
@@ -261,6 +277,9 @@ export class CombatEngine {
       // outlive its own spell, and the deadline must be observed by whichever of the two readers
       // reaches it first.
       this.st.sweepAlly(now)
+      // …and the pet nudge (JOS-258), which is a pure display timer: the log can go quiet for a
+      // minute at a time and a sentence on the screen must still come off it when it said it would.
+      this.st.petNudge.sweep(now)
       evalClosure(this.st, now)
     }
     const st = this.st
@@ -289,7 +308,11 @@ export class CombatEngine {
       // snapshot; teaching the module transport to reach them as well would be a second path to
       // the same five names, and two paths can disagree. The scope chip's label and the rows it
       // filters are then guaranteed to describe one roster, read in one call.
-      roster: st.rosterSnap()
+      roster: st.rosterSnap(),
+      // THE PET NUDGE (JOS-258) — undefined in every state but the one, which is what keeps the
+      // "no persistent banner" promise structural. It reads the SAME `now` the sweep above just
+      // used, so a nudge can never survive the poll that expired it.
+      petNudge: st.petNudge.view(now)
     }
   }
 

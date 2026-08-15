@@ -103,12 +103,15 @@ test('PRECEDENCE: an explicit preference beats detection, in BOTH directions', (
 })
 
 test('…and the two switches resolve INDEPENDENTLY — one override never moves the other', () => {
-  const wine = { safeMode: true, opaqueOverlays: true }
-  assert.deepEqual(resolveGraphics({ safeMode: 'off', opaqueOverlays: 'auto' }, wine), {
+  // A recommendation that asks for BOTH. It is not named `wine` on purpose: no real environment
+  // asks for safe mode any more (JOS-352 inverted that half), and this module's whole promise is
+  // that it takes two booleans and does not know who sent them.
+  const both = { safeMode: true, opaqueOverlays: true }
+  assert.deepEqual(resolveGraphics({ safeMode: 'off', opaqueOverlays: 'auto' }, both), {
     safeMode: { on: false, source: 'user' },
     opaqueOverlays: { on: true, source: 'auto' }
   })
-  assert.deepEqual(resolveGraphics({ safeMode: 'auto', opaqueOverlays: 'off' }, wine), {
+  assert.deepEqual(resolveGraphics({ safeMode: 'auto', opaqueOverlays: 'off' }, both), {
     safeMode: { on: true, source: 'auto' },
     opaqueOverlays: { on: false, source: 'user' }
   })

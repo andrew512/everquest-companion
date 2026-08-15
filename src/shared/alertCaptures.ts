@@ -68,6 +68,13 @@
 //      visible in the pattern printed above it in the editor, and `captureNamesIn` renders exactly
 //      that list. This is why the design is NAMED-ONLY and rejects GINA's positional `{S1}`/`{S2}`
 //      — a positional token cannot be understood without mentally executing a stranger's regex.
+//      **ONE TOKEN IS EXEMPT SINCE JOS-353, AND IT IS A CLOSED LIST OF ONE**: `{target}` is filled
+//      from a parser-extracted entity field of the very event this def matched, with no group
+//      declared, because the owner's ruling is that naming the affected mob must not require the
+//      user to write regex. The exemption's whole argument — why it is one name and not a
+//      namespace, why the value can never be free text, and how the editor keeps the "you can read
+//      what a shared def is able to say" property anyway — lives in shared/alertTargets.ts. Read it
+//      before adding a second such token; the answer is meant to be hard to say yes to.
 //
 //   5. THE TEMPLATE LANGUAGE IS NOT A LANGUAGE. One left-to-right pass, plain substitution, and
 //      that is the entire grammar (see `applyCaptures`): no nesting, no recursion, no re-scan of
@@ -111,10 +118,15 @@
 //
 // THREE DIVERGENCES, each for a stated reason:
 //
-//   A. NO AMBIENT TOKENS. `{C}` and `{L}` are values a stranger's def can read without the
-//      importing user's pattern having declared anything — and `{L}` is precisely the "put the
-//      entire log line into the utterance" primitive that control 2 exists to prevent. Every
-//      value here must be DECLARED by the def's own regex and is bounded to a name's length.
+//   A. NO AMBIENT TOKENS — AND `{target}` IS NOT ONE (JOS-353). `{C}` and `{L}` are APP STATE and
+//      THE WHOLE LINE: values a stranger's def reads without any declaration, and `{L}` is
+//      precisely the "put the entire log line into the utterance" primitive that control 2 exists
+//      to prevent. Neither exists here and neither ever will. `{target}` is a different animal and
+//      the distinction is the whole of shared/alertTargets.ts's header: it is ONE name from a
+//      closed list, resolved from a CLOSED TABLE of parser-extracted entity fields on the ONE
+//      event this def just matched, sanitized and capped by the same two controls as every other
+//      value, and enumerated in the editor for the trigger the user is looking at. It can say a
+//      mob's name; it cannot say a line, a clock, a path, or anything a stranger typed.
 //
 //   B. NAMED ONLY, NEVER POSITIONAL. `{S1}` cannot be understood without mentally executing a
 //      stranger's regex; `{player}` can be read off the pattern. GINA's `{S#}` is additionally an

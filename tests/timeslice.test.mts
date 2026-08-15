@@ -26,6 +26,11 @@
 //      instant is inside the range the xp numbers were measured over — same half-open convention,
 //      same zone fold, or the two halves of one screen describe different stretches of play.
 //
+// WHICH TIERS of the camp that fold admits became the reader's call in JOS-291, and the whole of
+// that question — both folds, the byte-identical default, the caption, the persisted vocabulary
+// and the two surfaces' stances — lives in tests/zoneScope.test.mts, beside the golden-window half
+// in tests/progressionWindows.test.mts. Only the caption assertion below moved with it.
+//
 // Imported RELATIVELY: node tests run through tsx with no `@shared` alias.
 
 import { test } from 'node:test'
@@ -228,8 +233,13 @@ test('every slice has ONE label and ONE in-sentence spelling', () => {
   assert.equal(sliceLabel('zoneSession'), 'Zone + Session')
   assert.equal(resolveSlice({ snap, bounds, id: 'all' }).caption, 'the whole log')
   assert.equal(resolveSlice({ snap, bounds, id: 'session' }).caption, 'this session')
-  assert.equal(resolveSlice({ snap, bounds, id: 'zone' }).caption, 'Lower Guk')
-  assert.equal(resolveSlice({ snap, bounds, id: 'zoneSession' }).caption, 'Lower Guk this session')
+  // THE ZONE HALF NAMES ITS MEMBERSHIP (JOS-291) — see the caption-honesty test below for why the
+  // clause is printed even under the default.
+  assert.equal(resolveSlice({ snap, bounds, id: 'zone' }).caption, 'Lower Guk, every tier')
+  assert.equal(
+    resolveSlice({ snap, bounds, id: 'zoneSession' }).caption,
+    'Lower Guk this session, every tier'
+  )
   // The duration rungs keep the JOS-71 spelling, so `windowScope.timescaleLabel` and this agree.
   assert.equal(resolveSlice({ snap, bounds, id: 'h24' }).caption, 'last 24h of the log')
 })
@@ -386,7 +396,8 @@ const drops: LootEvent[] = [
 ]
 
 test('windowItemRows applies the slice ZONE as well as its range', () => {
-  const args = { events: drops, t0: T0, t1: T0 + DAY, activeMs: HOUR }
+  // JOS-288: the spans travel as one object now (both denominators or neither, lootRates rule 5).
+  const args = { events: drops, t0: T0, t1: T0 + DAY, spans: { durationMs: HOUR, activeMs: HOUR, offlineMs: 0 } }
   const everywhere = windowItemRows(args)
   assert.equal(everywhere.find((r) => r.key === 'mote of potential')?.drops, 5, '1 + 3 + 1, stacks counted')
 
@@ -409,7 +420,7 @@ test('the ledger filter and the stats query agree about which rows are in the sl
       events: drops,
       t0: slice.range.t0,
       t1: slice.range.t1,
-      activeMs: HOUR,
+      spans: { durationMs: HOUR, activeMs: HOUR, offlineMs: 0 },
       zoneKey: slice.zoneKey
     })
     const counted = rows.reduce((n, r) => n + r.events, 0)

@@ -64,9 +64,15 @@ import { stepOverlayScope, stepTitleBarRoom } from './overlayScopeSteps.mjs'
 import { stepTotalOnPanel } from './overlayTotalSteps.mjs'
 // …and the pinned pane's scroll grip (JOS-138), in its own module for the same reason.
 import { stepPinnedScroll } from './overlayScrollSteps.mjs'
+// THE FLOOR A WINDOW CAN BE DRAGGED DOWN TO (JOS-278) — its own module, beside the other steps,
+// because the claim is about the window rather than about this spec's subject.
+import { stepMinimumSize } from './overlayMinSizeSteps.mjs'
 // …and JOS-187's: an overlay whose monitor went away, and the rule that the store keeps the
 // rectangle the user chose while the screen gets the one that fits.
 import { stepOverlayDisplay } from './overlayDisplaySteps.mjs'
+// …and JOS-258's: the one-sentence nudge for a summoned pet nothing has bound, which lives on this
+// same window's content background and takes itself off again.
+import { stepPetNudge } from './overlayPetNudgeSteps.mjs'
 
 /** The overlay open-state this spec's second launch runs against (`overlays.fight` in the store). */
 interface OverlayBridge {
@@ -349,11 +355,22 @@ async function stepOverlayDrill(overlay: Page): Promise<void> {
   check('…and the fight timer is still on the row', /\d+:\d\d/.test(level2), level2)
 
   // NO CATEGORY CHIP (JOS-113). JOS-105 put a damage-type strip here and a third drill level; the
-  // owner rejected the grouping, so the drilled overlay is ONE BAR PER ABILITY with no strip. The
-  // per-ability stats live on each bar's hover title in this window (it is compact and, locked,
-  // click-through — there is no room for an inline expansion), so what is asserted here is that
-  // the rejected chip is gone rather than a new level opening.
+  // owner rejected the grouping, so the drilled overlay is ONE BAR PER ABILITY with no strip. What
+  // is asserted here is that the rejected chip is gone rather than a new level opening.
   check('the drilled overlay shows NO damage-type chip — one bar per ability, flat', (await countOf(overlay, CATEGORY_CHIP)) === 0)
+
+  // …AND NO HOVER ON ANY OF THEM (JOS-358, owner ruling from hands-on testing). The per-ability
+  // stats used to ride each bar's native `title`; the overlay windows keep tooltips only in the
+  // title bar now, and the fully-labeled figures are on the Combat tab. Asserted on the DRILLED
+  // level because that is where the longest of those strings lived.
+  const barTitles = await overlay.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('[data-testid="overlay-bar"]')].map((e) => e.title)
+  )
+  check(
+    '…and no bar hovers a stat run over the game any more',
+    barTitles.length > 0 && barTitles.every((t) => t === ''),
+    JSON.stringify(barTitles.slice(0, 3))
+  )
 
   await overlay.click(CRUMB)
   const back = await settle(() => crumbText(overlay), (t) => t !== level2, { timeoutMs: 8_000 })
@@ -511,10 +528,10 @@ async function stepOpaqueOverlays(app: ElectronApplication, page: Page): Promise
  * between attempts, so asking again once the loop is free is asking the same question, not a
  * different one.
  */
-async function hasDisableGpuSwitch(app: ElectronApplication): Promise<boolean> {
+async function hasCommandLineSwitch(app: ElectronApplication, name: string): Promise<boolean> {
   for (let i = 0; i < 4; i++) {
     try {
-      return await app.evaluate(({ app: a }) => a.commandLine.hasSwitch('disable-gpu'))
+      return await app.evaluate(({ app: a }, sw) => a.commandLine.hasSwitch(sw), name)
     } catch {
       await sleep(2_000)
     }
@@ -533,8 +550,21 @@ async function checkSafeModeLaunch(log: FixtureLog): Promise<void> {
     await waitHydrated(page)
     check(
       '…and the launch really is in software rendering (Chromium has --disable-gpu)',
-      await hasDisableGpuSwitch(app)
+      await hasCommandLineSwitch(app, 'disable-gpu')
     )
+    // JOS-352, and the only machine that can make this statement is this one: the two Wine flags
+    // are gated on the DETECTION, so a real Windows launch must append neither — not even the
+    // launch that has every other compatibility path engaged. `--in-process-gpu` in particular
+    // trades away GPU crash containment for every user it reaches, so "reaches nobody here" is
+    // the claim worth proving in Chromium's own terms rather than in a unit test's. (A negative
+    // read is only as good as the channel it came over, which is why it follows the positive one
+    // above: that check having passed is what says `hasCommandLineSwitch` is answering at all.)
+    for (const flag of ['disable-direct-composition', 'in-process-gpu']) {
+      check(
+        `…and this Windows machine appends none of the Wine flags (--${flag})`,
+        !(await hasCommandLineSwitch(app, flag))
+      )
+    }
   } finally {
     await close()
   }
@@ -630,7 +660,14 @@ async function main(): Promise<void> {
     // and stepOverlayScope leaves it that way.
     await setLocked(ov, false)
     await stepTitleBarRoom(ov)
+    // …and the same header, at the smallest window the app allows. UNLOCKED is the demanding case
+    // and the one this must run in: a locked meter draws no lock/close pair at all, so a floor
+    // measured pinned would be measuring an empty row.
+    await stepMinimumSize(app, ov, 'fight', 'the fight meter')
     await stepTotalOnPanel(ov, await longestFightName(page))
+    // LAST of the steps that APPEND to the tailed log, deliberately: every measurement above is
+    // taken against the staged fixture exactly as committed, and this one writes a line into it.
+    await stepPetNudge(log, ov)
     // Everything below closes and reopens the very window every step above holds `ov` for, so `ov`
     // is dead from here on — both of these find their own overlay page.
     await stepOverlayDisplay(app, page)

@@ -155,6 +155,35 @@
 // pair the wear-off with and no bar to raise.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// THE PET-BINDING HALF: A LOST SUBJECT CAN COST YOU A WHOLE PET, NOT JUST A BAR (JOS-349).
+//
+// Every row above is a missing debuff/buff BAR. `Tiny Companion` is the first whose damage is
+// somewhere else entirely, and the reason is JOS-188's third binding signal: a summoned pet with no
+// `… Master.` tell is bound by YOUR OWN CAST of a `targetType: Pet` spell plus the named landing
+// that resolves it, and `CharmModel.petBuffLanding` requires the armed spell to be AMONG the
+// landing's candidates. A spell in no suffix table is in no candidate list, so the one rung that
+// binds an unordered pet cannot fire for it — the arm is correct, the landing parses, and the two
+// can never meet.
+//
+// THE REPORT (01M00ACVVFDRVWBXRDCFPHESNZ): "Pet is not getting parsed. at the end of the log his
+// name is Zarober." Measured on the reporter's own 6,544-line slice through the real engine, before
+// this row: the shaman re-summons at 16:16:08 (`You summon a guardian spirit.`), buffs the new pet
+// at 16:16:21 (`You begin casting Tiny Companion.`), the landing names it at 16:16:25 (`Zarober
+// shrinks.`) — and `petDisplayNames()` ends `[]`, with all 142 Zarober lines, melee and spell,
+// attributed to nobody. The predecessor `Kastik` is in the same state; the only pet-shaped lines in
+// the whole slice are one inert `petSay` and this pair. That is JOS-188's reported defect reached
+// through a different door: not a missing RULE, a spell the rule's evidence could not name.
+//
+// SIX MORE PET-ONLY SPELLS ARE STILL IN THAT STATE and they get no row here, which is the
+// awaiting-sample law rather than an oversight. Measured over the committed DB: 40 spells are
+// `targetType: Pet`, 33 key a cast-on-other suffix, and 7 do not — `Tiny Companion` (this row),
+// `Ward of Calliav`, `Primal Remedy`, `Refresh Summoning`, `Form of Bleached Bone`, `Form of Chilled
+// Bone` and `Minion of Hate`, the last of which states no third-person message at all and so cannot
+// be corrected by anything. Each of the other five would MINT a tail rather than join one, none is
+// named by any report, and none has a cast in the owner's log; a pattern is not evidence, so they
+// wait for a log that prints the pair.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // WHAT EVERY ROW BELOW IS.
 //
 // The sentence is the WIKI'S OWN, unchanged. Only the subject token is restored, which is why the
@@ -171,11 +200,13 @@
 // A ROW MAY ALSO JOIN A SUFFIX INSTEAD OF MINTING ONE (JOS-189), and the two shapes are held to
 // different halves of the same rule.
 //
-// Every row above MINTS a tail: the restored sentence is new to the table, so nothing it matches
-// was matching anything before and `sole` is the honest attribution. The Tuyen chant pair does not.
+// Most rows MINT a tail: the restored sentence is new to the table, so nothing it matches was
+// matching anything before and `sole` is the honest attribution. The Tuyen chant pair does not.
 // All four of that family write ONE landing sentence and the scrape gave two of them `Someone` and
 // two of them `Target`, so the suffix already exists and is already owned — restoring the subject
 // adds CANDIDATES to a sentence the cast anchor is already narrowing, and mints nothing.
+// `Tiny Companion` (JOS-349) is the second join and the same shape: `Ant Legs` and `Shrink` already
+// own ` shrinks.` with the `Someone` subject.
 //
 // That is the SAFER of the two shapes, not the looser one, and it is the same move the
 // hand-derived list already makes for the twenty-four gates and for Cease/Desist/Sacred Word. No
@@ -237,6 +268,15 @@ const SUBJECT_DRIFTS: readonly SubjectDrift[] = [
     from: 'Target is entombed by elemental ice.',
     to: 'Someone is entombed by elemental ice.',
     hits: 39 },
+  {
+    spells: ['Tiny Companion'],
+    from: 'Target shrinks.',
+    to: 'Someone shrinks.',
+    hits: 33,
+    attribution: 'cast',
+    evidence:
+      'THE REPORTED DEFECT (01M00ACVVFDRVWBXRDCFPHESNZ, JOS-349, a SHM/WAR/BRD): "Pet is not getting parsed. at the end of the log his name is Zarober." THE SECOND SHAPE OF THE JOIN (see THE PET-BINDING HALF in this file`s header): `Ant Legs` and `Shrink` carry the `Someone` subject for the one sentence all three write, `Tiny Companion` carries `Target`, so the pet-shrink spell was in no table and could not be a CANDIDATE for its own landing. Reporter`s slice through the real parser, 6,544 lines: `You begin casting Guardian Spirit.` 16:15:54 -> `You summon a guardian spirit.` 16:16:08 -> `You begin casting Tiny Companion.` 16:16:21 -> `Zarober shrinks.` 16:16:25, four seconds later and inside the DB`s own 4 s cast time — the JOS-188 pet-only pair, exactly, and the ONLY binding line in the whole slice (zero `… Master.` tells, zero `/pet who leader` answers). Replayed before this row: `petDisplayNames() === []` and 142 Zarober lines attributed to nobody. Owner log: 33 lines of ` shrinks.`, all of them already owned by the two `Someone` siblings, and 0 `You begin casting Tiny Companion.` — he bought and scribed the spell and never cast it, which is why his log cannot witness the pair and the slice carries the count.'
+  },
   {
     spells: ['Blooming Heal', 'Blossoming Heal', 'Budding Heal', 'Efflorescing Heal', 'Flowering Heal', 'Sprouting Heal'],
     from: 'Target is seeded with healing energy.',
@@ -373,6 +413,12 @@ const SUBJECT_DRIFTS: readonly SubjectDrift[] = [
     from: 'speaks with the voice of darkness.',
     to: 'Someone speaks with the voice of darkness.',
     hits: 1 },
+  { spells: ['Tortoises Healing'],
+    from: 'is healed by the spirit of the tortoise.',
+    to: 'Someone is healed by the spirit of the tortoise.',
+    hits: 1,
+    evidence:
+      'JOS-318, and the row is here for symmetry rather than for its count. The shaman heal-over-time ladder is Snails 14 → Tortoises 28 → Slugs 42 → Sloths 50, and the wiki filled the messages in for this rank only — which is exactly why the reporter of 01KZZXVW888E09C088QBRD5HCD saw Tortoise Healing work and Slugs Healing not. The other two rows are corrected in spellCorrectionsList.ts (their fields are the scrape`s `Someone .` stub, not a subject drift); THIS one lost only its subject, so it belongs in this sweep and its restored tail is byte-identical in shape to the two minted there. Owner log: 1 line of `<T> is healed by the spirit of the tortoise.`, 0 of the wiki form, beside 49 of his own `You begin casting Tortoises Healing.` casts — the count is low because a shaman casting a HoT on HIMSELF prints the first-person landing instead, and that field was never wrong.' },
   {
     spells: ['Vengeance of the Wild'],
     from: 'Target has been consumed in the flames of the wild.',

@@ -23,6 +23,12 @@
 // booleans, exactly as `resolveGraphics` does, and the knowledge lives in one module that can be
 // tested without an Electron app.
 //
+// JOS-352 ADDED A SECOND BEFORE-READY CALL ON THE SAME SEAM: `applyGraphicsCompatibilityFlags()`
+// appends whatever Chromium command-line flags the MACHINE asks for (`graphicsChromiumFlags()` —
+// a list, not a boolean, and empty on every ordinary Windows install). It is deliberately NOT
+// folded into safe mode: one is a user-facing setting with a stored preference and a precedence
+// order, the other is a fact about the host that no preference speaks to.
+//
 // AND IT IS THE ONE PLACE THE THREE INPUTS MEET. Safe mode, opaque overlays and the Preferences
 // card all resolve through `resolvedGraphics()` below, so "who wins — the user, the detection or
 // the default" is answered once. A second opinion here would be a window built one way and a
@@ -36,7 +42,7 @@
 import { app } from 'electron'
 import { logError, logInfo } from './errorLog'
 import { getGraphicsPrefs } from './store'
-import { graphicsAuto } from './wine'
+import { graphicsAuto, graphicsChromiumFlags } from './wine'
 import {
   DEFAULT_GRAPHICS_PREFS,
   GPU_ENV_VAR,
@@ -112,6 +118,44 @@ export function applyGraphicsSafeMode(): void {
     safeModeActive = source
     logInfo(
       `[everquest-companion] Graphics safe mode is ON for this launch (${SAFE_MODE_REASON[source]}): drawing without hardware acceleration.`
+    )
+  } catch (err) {
+    logError('main:graphics', err)
+  }
+}
+
+/** The flags this launch appended, for the same reason `activeSafeMode()` exists: what was DONE,
+ *  not what a setting says now. Empty on every ordinary Windows launch. */
+let appliedFlags: readonly string[] = []
+
+export function activeChromiumFlags(): readonly string[] {
+  return appliedFlags
+}
+
+/**
+ * Append the Chromium command-line flags this MACHINE needs (JOS-352) — today, the two a Wine
+ * prefix needs to keep the GPU: `--disable-direct-composition` and `--in-process-gpu`.
+ *
+ * SAME TIMING LAW AS SAFE MODE, which is why it lives here and is called from the same statement in
+ * the composition root: `app.commandLine.appendSwitch` is read while Electron assembles the GPU
+ * process and is ignored after `ready`.
+ *
+ * AND IT IS NOT A SECOND OPINION ABOUT SAFE MODE. The list comes from `graphicsChromiumFlags()`,
+ * which asks the machine and not the preference — so a Wine user who explicitly turns safe mode ON
+ * still gets the flags (they cost nothing on a path that has no GPU process to crash), and a real
+ * Windows user gets an empty list whatever they have stored. This file still cannot tell you what a
+ * Wine prefix is; it appends what it is handed and logs what it appended.
+ */
+export function applyGraphicsCompatibilityFlags(): void {
+  try {
+    const flags = graphicsChromiumFlags()
+    if (flags.length === 0) return
+    for (const flag of flags) app.commandLine.appendSwitch(flag)
+    appliedFlags = flags
+    logInfo(
+      `[everquest-companion] Graphics compatibility flags for this launch (detected automatically - see the wine: line above): ${flags
+        .map((f) => `--${f}`)
+        .join(' ')}.`
     )
   } catch (err) {
     logError('main:graphics', err)

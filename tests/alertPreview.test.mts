@@ -36,22 +36,26 @@ const CHANNELS: (AlertAudio | undefined)[] = [undefined, 'sound', 'speech', 'bot
 
 test('▶ on a VOICE row SPEAKS — it does not play the pack sound (the bug)', () => {
   const plan = previewPlan(def({ audio: 'speech' }), false)
-  assert.deepEqual(plan, { sound: false, speak: 'Charm break', after: false })
+  assert.deepEqual(plan, { sound: false, speak: 'Charm break' })
 })
 
-test('▶ on a SOUND + VOICE row plays the sound, then queues the speech behind it', () => {
-  assert.deepEqual(previewPlan(def({ audio: 'both' }), false), {
-    sound: true,
-    speak: 'Charm break',
-    after: true
-  })
+test('▶ on a row still STORING the retired combined channel previews what it will play', () => {
+  // JOS-362 retired "Sound + voice", and the resolution rule (`resolveAlertAudio`) is a READ: the
+  // def keeps saying 'both' until it is next edited. ▶ has to preview the resolution, or the row
+  // auditions a channel the firing will not use — the exact split-brain this file exists for.
+  assert.deepEqual(
+    previewPlan(def({ audio: 'both', speech: { mode: 'custom', phrase: 'Charm break' } }), false),
+    { sound: false, speak: 'Charm break' },
+    'a phrase ⇒ spoken, and nothing plays alongside it'
+  )
+  assert.deepEqual(previewPlan(def({ audio: 'both' }), false), { sound: true, speak: null })
 })
 
 test('▶ on a sound row is unchanged — the pack sound, as it always was', () => {
   for (const audio of [undefined, 'sound'] as const) {
     assert.deepEqual(
       previewPlan(def(audio ? { audio } : {}), false),
-      { sound: true, speak: null, after: false },
+      { sound: true, speak: null },
       `audio:${String(audio)}`
     )
   }
@@ -71,7 +75,7 @@ test('MUTE is not an exception: ▶ makes no noise while the app is muted', () =
   for (const audio of CHANNELS) {
     assert.deepEqual(
       previewPlan(def(audio ? { audio } : {}), true),
-      { sound: false, speak: null, after: false },
+      { sound: false, speak: null },
       `audio:${String(audio)} must be silent while muted`
     )
   }
@@ -131,11 +135,9 @@ test('▶ on a TEXT-ONLY row makes no noise — that is what the channel says', 
   // 'silent' (docs/plans/alert-text-overlays.md D1) is the channel for an alert whose whole job is
   // to put a line on screen. ▶ still SHOWS that line (the display push happens above this plan in
   // player.tsx); what it must not do is fall back to the pack sound the def still carries.
-  assert.deepEqual(previewPlan(def({ audio: 'silent' }), false), {
-    sound: false,
-    speak: null,
-    after: false
-  })
+  // Both fields false/null, and there is no third one to set: `after` went with the retired
+  // 'both' channel (JOS-362), so "no noise" is now the whole of the plan rather than two of three.
+  assert.deepEqual(previewPlan(def({ audio: 'silent' }), false), { sound: false, speak: null })
 })
 
 test('preview carries the DISPLAY block through untouched, so ▶ shows what a firing shows', () => {

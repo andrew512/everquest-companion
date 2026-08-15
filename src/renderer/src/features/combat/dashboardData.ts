@@ -23,7 +23,7 @@
 // RELATIVE value import, like procRows.ts and mobSearch.ts: this module is imported by node
 // tests (tests/combatPerMobGhosts.test.mts), which resolve no `@shared/*` alias for values.
 import { LIVE_FIGHT } from '../../../../shared/fightSelection'
-import { abilityMultiAttack, type AbilityMulti } from './abilityStats'
+import { abilityMultiAttack, abilityRiposte, type AbilityMulti, type AbilityRiposte } from './abilityStats'
 import { groupSpellComponents, mergeGroup, rankRows } from './skillGroups'
 import type {
   DamageCategory,
@@ -47,6 +47,9 @@ export type FlatSkill = SkillView & { category: DamageCategory }
 export type SkillRow = FlatSkill & {
   children?: FlatSkill[]
   multi?: AbilityMulti | null
+  /** The share of this ability's damage that came from riposte counter-swings (JOS-354). Present
+   *  on the auto-attack ability only — see `abilityRiposte` for why it is a subset, not a row. */
+  riposte?: AbilityRiposte | null
   /** What a GROUP row's children are, for the two labels that name them ("· 2 skills" on the bar
    *  face, "By skill" over the expansion). Absent ⇒ 'skill', which is what the Slay Undead group
    *  has always said. A spell group's children are the message SHAPES one cast printed, not
@@ -145,7 +148,15 @@ export function flattenSkills(e: SourceView): SkillRow[] {
   // weapon verbs; a named special is its own lane). groupSlay spreads it through onto any child.
   return groupSlay(
     groupSpellComponents(
-      rows.map((r) => ({ ...r, pct: (r.total / max) * 100, multi: abilityMultiAttack(e, r.name, r.category) }))
+      rows.map((r) => ({
+        ...r,
+        pct: (r.total / max) * 100,
+        multi: abilityMultiAttack(e, r.name, r.category),
+        // Riposte damage is a SUBSET of the ability it rides (JOS-354): stated inside the
+        // auto-attack row's expansion, never given a bar of its own, because the damage is
+        // already in that bar's total.
+        riposte: abilityRiposte(e, r.name, r.category)
+      }))
     )
   )
 }
@@ -693,13 +704,26 @@ export function overallScopeOptions(zoneSessions: ZoneSessionSummary[]): ScopeOp
  * reach is finished: a `zs<n>` zone session you have left, a fight id from history, or the head
  * row between pulls, which is honestly labelled "Last fight — X" and is a finalized encounter.
  *
- * TWO SURFACES READ IT, which is why it lives here beside `scopeOptions` rather than in either
- * one (panel/overlay parity is house law):
- *   - the DPS curve's scrolling window only follows `now` for a live selection — a finished
- *     fight must not scroll as if time were still passing in it;
- *   - the pet-claim OFFER renders only for a live selection (JOS-49) — "is this thing yours?"
- *     is a question about the fight in front of you, and asking it above a meter showing last
- *     Tuesday's zone session is the surface half of the wall the currency gate closed in main.
+ * ONE SURFACE READS IT TODAY: the DPS curve's scrolling window, which follows `now` only for a
+ * live selection — a finished fight must not scroll as if time were still passing in it.
+ *
+ * IT USED TO BE TWO. The second was the pet-claim OFFER ("<Name> — your pet?", with Yes and No),
+ * which rendered only for a live selection because "is this thing yours?" is a question about the
+ * fight in front of you. JOS-49 DELETED THE QUESTION — the owner's ruling was that ordering a pet
+ * once is cheaper than a guess the app can get wrong — and nothing asks the user about a pet
+ * anywhere in the product now (`tests/e2e/combatSteps.mts stepPetNeverAsked` asserts the absence,
+ * including that the snapshot carries no `petClaims` for a surface to render).
+ *
+ * WHAT BINDS A PET INSTEAD lives entirely in main, in `src/main/combat/petClaims.ts`, and never
+ * involves the user: three log lines, one state transition, no UI. The private `… Master.` tell
+ * (JOS-47), the public `/pet who leader` answer (JOS-52), and your own pet-only buff landing
+ * (JOS-188 — the route that costs the player nothing). The accepted blind spot is stated there
+ * rather than papered over here: a player who neither orders nor buffs their pet has one the log
+ * cannot bind, and that is the trade JOS-49 chose over asking.
+ *
+ * This function still lives here beside `scopeOptions` rather than in its one caller, because
+ * panel/overlay parity is house law and "which selection is the live one" is the kind of question
+ * a second surface asks the moment one appears.
  */
 export function isLiveSelection(head: ScopeOption | null, selection: string): boolean {
   return !!head && selection === head.value && head.live

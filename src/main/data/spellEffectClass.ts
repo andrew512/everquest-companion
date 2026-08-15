@@ -66,6 +66,7 @@ import { spellCanonKey } from '../log/parseCommon'
  */
 export type SpellEffectClass =
   | 'charm'
+  | 'summonPet'
   | 'mez'
   | 'root'
   | 'snare'
@@ -78,6 +79,7 @@ export type SpellEffectClass =
   | 'memblur'
   | 'invisibility'
   | 'feignDeath'
+  | 'healOverTime'
 
 interface EffectRule {
   klass: SpellEffectClass
@@ -97,6 +99,24 @@ const EFFECT_RULES: readonly EffectRule[] = [
     klass: 'charm',
     test: /^charm\b/i,
     note: 'Both phrasings: "Charm up to level 25" (17 rows) and "Charm (up to L37)" (7). 24 rows, 23 names, and it is the JOS-250 audit roster exactly.'
+  },
+  {
+    klass: 'summonPet',
+    // JOS-258. THE PET SUMMON, read the same way — and the reason it is a rule here rather than a
+    // `spellType === 'Pet'` test is that the wiki's TYPE column is narrower than its own effect
+    // list: 83 rows are typed Pet, 104 rows say `Summon Pet:` in so many words, and the 18 the type
+    // column misses include every Vocarate/Greater Vocaration (the magician's top elementals) and
+    // `Zumaik\`s Animation`. Reading what the spell DOES finds them; reading how somebody filed it
+    // does not — which is the whole argument of this module, applied one class further.
+    //
+    // THREE HEADS, all measured, because the necromancer's two top pets are spelled differently:
+    // `Summon Pet: Level 19 Skeletal Pet` (98 rows), `Summon Skeleton Pet: skel_pet_43_` (Minion of
+    // Shadows, Servant of Bones) and `Summon Spectre Pet` (Emissary of Thule). DELIBERATELY NOT in
+    // the family: `Call Pet` (Summon Companion — it TELEPORTS the pet you already have and summons
+    // nothing), `Pet Power Increase`, `Decrease Pet Size by 50%` (Tiny Companion) and the whole
+    // `Summon Item` head, which is 141 rows away from anything with a name of its own.
+    test: /^summon (pet|spectre pet|skeleton pet)\b/i,
+    note: '104 rows / 102 canonical names; 101 of the rows (99 names) are player-castable. Both the Self forms and the one Single form (Flaming Sword of Xuzl) count - a summon is a summon whoever the wiki says it targets.'
   },
   {
     klass: 'mez',
@@ -157,6 +177,36 @@ const EFFECT_RULES: readonly EffectRule[] = [
     klass: 'feignDeath',
     test: /^feign death\b/i,
     note: 'Two spells (Death Peace, Feign Death). Kept because it is unambiguous, not because anything reads it yet.'
+  },
+  {
+    klass: 'healOverTime',
+    // JOS-318. THE HEAL OVER TIME, and it is the first class here whose consumer is an ALERT rather
+    // than a parser roster: `templates.healsOverTime` (spellDb.ts) offers a chip on the one line a
+    // HoT is guaranteed to print — `<healer> healed <target> over time for N hit points by <Spell>.`
+    // — which names the spell VERBATIM and RANK-LESS, whatever the wiki says about its landing and
+    // wear-off sentences. That independence is the point: the two reports behind this ticket are
+    // both spells whose wiki MESSAGES are missing or wrong, and this line does not depend on them.
+    //
+    // TWO HEADS, both measured, because EQ's two heal-over-time mechanics are worded differently:
+    //   `Increase Hitpoints by 60 per tick`               the classic regen/HoT (58 rows)
+    //   `Increase Hitpoints between 55 and 55 for two additional ticks.`
+    //                                                     the cleric ECHO family (5 rows), whose
+    //                                                     first effect line is a direct heal and
+    //                                                     whose second is the tail that ticks
+    // plus the `Increase Current Hit Points by 160 per Tick` casing the three shaman Healing rows
+    // use and the `Increase Hitpoints v2 by 300 per tick` spelling Torpor/Celestial Healing use.
+    //
+    // ANCHORED AT THE HEAD like every rule above, and the anchor is doing the same work: the head
+    // must be an INCREASE of hit points, so the 140-odd `Decrease Hitpoints by N per tick` DoT lines
+    // are not heals, and `Increase Mana by N per tick` is not one either.
+    //
+    // MEASURED against the committed catalog and then against the LOG, which is the check that
+    // matters for a claim an alert rests on: 67 rows / 66 canonical names carry one of the two
+    // heads, and of the 19 distinct spells the owner's whole log prints a `healed … over time … by
+    // <Spell>.` tick for (1,732,267 lines, 2026-08-14) this reads 18. The one miss is `Harm Touch`,
+    // which is not in spells.json at all and so cannot be in any roster derived from it.
+    test: /^increase\s+(?:current\s+)?hit\s?points?\b.*\b(?:per\s+tick|additional\s+ticks)\b/i,
+    note: 'Two heads: "Increase Hitpoints by N per tick" (the regen/HoT family, incl. the "Current Hit Points"/"Hitpoints v2" spellings) and "Increase Hitpoints between N and N for two additional ticks." (the cleric Echo family). 67 rows, 66 canonical names. Decrease-headed DoT lines and mana regen are excluded by the anchor.'
   }
 ]
 
@@ -267,6 +317,22 @@ export function charmRoster(spells: readonly SpellEntry[], opts?: RosterOptions)
  * is not a hold, and the whole point of deriving the roster is that this distinction now comes from
  * the effect line rather than from remembering the incident.
  */
+/**
+ * THE PET-SUMMON ROSTER (JOS-258): every spell whose effect list says it summons you a pet.
+ *
+ * `targetOnly` is OFF here and that is the point of the override. The roster the charm reader wants
+ * refuses `targetType: 'Self'` because its consumer is a sentence about a spell you cast on
+ * something else; a pet summon is cast on NOBODY — 103 of the 104 rows are `Self` — and its
+ * consumer is `You begin casting <Spell>.`, a line about the caster. Same data, opposite gate,
+ * which is exactly why the gate is an argument rather than a property of the class.
+ *
+ * The CASTABLE gate stays on: `Manifest Elements`, `Mistwalker` and `Summon Golin` are NPC-only, so
+ * no player ever prints a cast line for one.
+ */
+export function petSummonRoster(spells: readonly SpellEntry[], opts?: RosterOptions): Set<string> {
+  return effectRoster(spells, 'summonPet', { targetOnly: false, ...opts })
+}
+
 export function holdRoster(spells: readonly SpellEntry[], opts?: RosterOptions): Set<string> {
   const out = effectRoster(spells, 'mez', opts)
   for (const k of effectRoster(spells, 'root', opts)) out.add(k)

@@ -2,7 +2,8 @@
 import { join } from 'path'
 import { STORE_NAME, USER_DATA } from './channel'
 import { logError, logInfo } from './errorLog'
-import { CURRENT_SCHEMA_VERSION, migrateStoreFile } from './storeMigrations'
+import { CURRENT_SCHEMA_VERSION } from './storeMigrations'
+import { migrateStoreFile } from './storeFile'
 import type {
   AlertDef,
   AlertPrefs,
@@ -35,21 +36,25 @@ import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPr
 import { normalizeBuffTrustPrefs, type BuffTrustPrefs } from '../shared/buffTrust'
 import { applyTimerOverlayKnobs } from '../shared/buffTimers'
 // The XP overlay's two persisted knobs (JOS-195) — each validated by the module that owns its
-// meaning, never by a predicate written here.
+// meaning, never by a predicate written here. It was four until JOS-332 moved the denominator and
+// the tier membership out of the store entirely (`applyXpOverlayKnobs` says where they went), which
+// is why the two normalizers that validated them are no longer imported.
 import { normalizeXpRows } from '../shared/xpOverlay'
 import { isSliceId } from '../shared/timeslice'
 import type { ComboCorrection } from '../shared/classCombo'
-// The exaltation planner's sets. The validator is main-side and pure; it runs on the way OUT as
-// well as in (see the accessors below), so a hand-edited store cannot poison the renderer.
-import { sanitizeExaltPlans } from './planner/validate'
-import type { ExaltPlan } from '../shared/planner/types'
 import {
   ALERT_SOUND_MIGRATION_VERSION,
   DEFAULT_ALERT_PACK_ID,
   DEFAULT_ALERT_SOUNDS,
+  alertSoundMigrationPending,
   migrateAlertSounds
 } from './data/defaultPacks'
 import { ALERT_TRIGGER_MIGRATION_VERSION, migrateAlertTriggers } from './data/alertDefMigrations'
+// The seeds are written through the DEFAULT-PACK PREFERENCE now (JOS-273). The rule lives in
+// ./alertSeeds.ts and takes the stored value as an argument — the preference's own accessors are
+// in ./storeSoundPacks.ts, which imports `settingsStore` from HERE, so an import in that
+// direction would make the settings store an import cycle.
+import { seedAlertsWith } from './alertSeeds'
 // The persisted SHAPE lives in ./storeShape.ts (this file is at its factoring ceiling). Nothing
 // moved but the declaration; every accessor below is still written against it.
 import type { StoreShape } from './storeShape'
@@ -72,7 +77,13 @@ const emptyProgress: ProgressState = {
  * constructed, so no reader can observe a pre-migration shape. Order of the world at this
  * point: channel.ts already chose `userData` and ran its one-time `eq-tools` seed (it is
  * store.ts's own first import), so whatever file we find here is the one this build will
- * use, whichever build wrote it. Never throws; see storeMigrations.ts for the failure policy.
+ * use, whichever build wrote it. Never throws; the failure policy — including the SALVAGE that
+ * stands between a torn write and a defaults boot (JOS-272) — is in storeFile.ts's header.
+ *
+ * ITS `error` HOOK IS THE ONE FLEET INSTRUMENT FOR A SETTINGS RESET, and it fires from HERE, at
+ * module scope, minutes before `startTelemetry` exists. That is why `telemetry/errorReports.ts`
+ * keeps what it holds across the first session boundary rather than clearing it: until JOS-272 this
+ * line was recorded and then thrown away, every launch, on every install in the fleet.
  */
 const schemaMigration = migrateStoreFile(join(USER_DATA, `${STORE_NAME}.json`), {
   info: (message) => logInfo(`[everquest-companion] ${message}`),
@@ -160,7 +171,13 @@ export function getProgress(charId: string): ProgressState {
   return allProgress()[charId] ?? emptyProgress
 }
 
-function setProgress(charId: string, next: ProgressState): ProgressState {
+/**
+ * Write one character's whole progress record. EXPORTED since JOS-286 for exactly one reader —
+ * `storePlans.ts`, which holds the two planner documents' accessors now that this file has reached
+ * the measured 400-code-line ceiling (the roster.ts/windows.ts/perf.ts rule: SPLIT, never ratchet).
+ * It remains the only write path into `byCharacter`; the split moved code rather than widening it.
+ */
+export function setProgress(charId: string, next: ProgressState): ProgressState {
   const all = allProgress()
   all[charId] = next
   store.set('byCharacter', all)
@@ -236,34 +253,6 @@ export function clearComboCorrections(
     charId,
     getComboCorrections(charId).filter((c) => (c.endTs ?? Infinity) < startTs || c.startTs > hi)
   )
-}
-
-// ----- Exaltation planner sets (docs/plans/exaltation-planner.md D4) -----
-//
-// Per character, like every other key on ProgressState: a plan is built for one character's
-// loadout. Whole-array writes — a set list is small (tens of plans at most) and the renderer
-// edits it as one document.
-//
-// NO SCHEMA BUMP AND NO MIGRATION, DELIBERATELY. `exaltPlans` is an ADDITIVE optional key:
-// nothing that already exists changes meaning, the reader below defaults on a missing key, and
-// electron-store rewrites the whole parsed object so the key survives a round trip through an
-// older build. The store-migration law asks for a step when a persisted shape CHANGES; adding a
-// key that every reader already defaults is the case it explicitly does not cover, and
-// `tests/plannerStore.test.mts` pins that (a pre-planner store loads byte-for-byte unchanged).
-//
-// Both directions run through `sanitizeExaltPlans`, so a hand-edited file cannot hand the
-// renderer a shape it will crash on, and the renderer cannot write one either.
-
-/** This character's saved sets ([] when it has none, or when the stored value is unusable). */
-export function getExaltPlans(charId: string): ExaltPlan[] {
-  return sanitizeExaltPlans(getProgress(charId).exaltPlans)
-}
-
-/** Replace the whole set list for a character. Returns what was actually stored. */
-export function setExaltPlans(charId: string, plans: ExaltPlan[]): ExaltPlan[] {
-  const next = sanitizeExaltPlans(plans)
-  setProgress(charId, { ...getProgress(charId), exaltPlans: next })
-  return next
 }
 
 // ----- Group-roster user edits (docs/plans/group-model.md §3) -----
@@ -438,9 +427,10 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // policy). The schema version is untouched and a store written by this build round-trips through
   // the previous one unchanged.
   //
-  // `xpRows` and `xpSlice` are ABSENT here on purpose rather than spelled out: absent is what each
-  // one's default MEANS (every row; this session), those meanings live beside the code that reads
-  // them, and writing them here would be a second copy of both.
+  // `xpRows`, `xpSlice` and `xpBasis` are ABSENT here on purpose rather than spelled out: absent is
+  // what each one's default MEANS (every row; the current zone this session — JOS-288 moved that
+  // from `session`; the elapsed hour), those meanings live beside the code that reads them, and
+  // writing them here would be a second copy of all three.
   xp: { open: false, locked: false, bgAlpha: 0.72, bounds: undefined, drill: null },
   // RESPAWN CLOCKS (JOS-194). Default off, no migration — the fourth restatement of the same
   // policy, and the argument above holds verbatim: `overlays.respawn` has never been written by
@@ -495,6 +485,45 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   return cfg
 }
 
+/**
+ * THE XP WINDOW'S TWO REMAINING KNOBS (JOS-195 rows + slice), REBUILT RATHER THAN TRUSTED — the
+ * same argument as the drill and the toast blob beside them: a renderer patch must not be able to
+ * widen what is persisted, and ABSENT is a real answer for both (every row; the current zone this
+ * session).
+ *
+ * IT USED TO BE FOUR. The denominator (`xpBasis`, JOS-288) and the tier membership (`xpZoneScope`,
+ * JOS-291) were retired from the store by JOS-332: they are the same two controls the Leveling tab
+ * draws, so keeping a per-window copy meant two states behind one label — see the note where they
+ * used to be declared in `shared/types.ts`. They are now one EPHEMERAL app-wide selection in
+ * `src/main/scopeSelection.ts`, rebuilt at ITS handler by the same not-trusted rule. Both keys are
+ * simply no longer preserved here, so an older store sheds them on its first patch, exactly the way
+ * `getOverlayConfig` sheds `topN`.
+ *
+ * Its own function for `applyTimerOverlayKnobs`' reason, one file over: extra knobs are extra
+ * branches, and `setOverlayConfig` is at the measured complexity ceiling. Both are deleted on every
+ * other kind, so a malformed patch cannot grow an xp knob on a damage meter.
+ */
+function applyXpOverlayKnobs(kind: OverlayKind, next: OverlayConfig): void {
+  // `normalizeXpRows` drops unknown row ids, so a hand-edited store cannot switch on a row this
+  // build does not have.
+  const xpRows = normalizeXpRows(next.xpRows)
+  if (xpRows && kind === 'xp') next.xpRows = xpRows
+  else delete next.xpRows
+  // The retired pair, dropped WHATEVER the kind — a store written by an older build carries them
+  // and nothing reads them any more, so preserving them would leave a dead choice on disk that
+  // silently disagrees with the live one.
+  const retired = next as OverlayConfig & { xpBasis?: unknown; xpZoneScope?: unknown }
+  delete retired.xpBasis
+  delete retired.xpZoneScope
+  // The slice id is checked against the closed union, never against what the log can currently
+  // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
+  // a store that forgot the user's choice because they happened to relaunch mid-session would be
+  // the same bug from the other direction.
+  const xpSlice = next.xpSlice
+  if (kind === 'xp' && isSliceId(xpSlice)) next.xpSlice = xpSlice
+  else delete next.xpSlice
+}
+
 /** Merge-patch a kind's overlay config (only the provided keys change). Returns the merged value. */
 export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig>): OverlayConfig {
   const next: OverlayConfig = { ...getOverlayConfig(kind), ...patch }
@@ -523,20 +552,7 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds
   // carry this knob" is a fact about.
   applyTimerOverlayKnobs(kind, next)
-  // THE XP WINDOW'S TWO KNOBS (JOS-195), rebuilt rather than trusted — the same argument as the
-  // drill and the grouping above: a renderer patch must not be able to widen what is persisted, and
-  // ABSENT is a real answer for both (every row; this session). `normalizeXpRows` drops unknown row
-  // ids, so a hand-edited store cannot switch on a row this build does not have.
-  const xpRows = normalizeXpRows(next.xpRows)
-  if (xpRows && kind === 'xp') next.xpRows = xpRows
-  else delete next.xpRows
-  // The slice id is checked against the closed union, never against what the log can currently
-  // define: `resolveSliceId` in the renderer already degrades a pick this record cannot answer, and
-  // a store that forgot the user's choice because they happened to relaunch mid-session would be
-  // the same bug from the other direction.
-  const xpSlice = next.xpSlice
-  if (kind === 'xp' && isSliceId(xpSlice)) next.xpSlice = xpSlice
-  else delete next.xpSlice
+  applyXpOverlayKnobs(kind, next)
   const all = store.get('overlays') ?? {}
   all[kind] = next
   store.set('overlays', all)
@@ -627,7 +643,9 @@ const SEED_ALERTS: AlertDef[] = [
  * at it keeps that choice. Returns the (possibly rewritten) list.
  */
 function migrateStoredAlertSounds(alerts: AlertDef[]): AlertDef[] {
-  if ((store.get('alertSoundMigration') ?? 0) >= ALERT_SOUND_MIGRATION_VERSION) return alerts
+  // The gate is a pure predicate in data/defaultPacks.ts (JOS-272) so the "already stamped ⇒ never
+  // again" rule can be driven from a node test. Its header says what a bump costs.
+  if (!alertSoundMigrationPending(store.get('alertSoundMigration'))) return alerts
   const { alerts: next, changed } = migrateAlertSounds(alerts)
   if (changed > 0) store.set('alerts', next)
   store.set('alertSoundMigration', ALERT_SOUND_MIGRATION_VERSION)
@@ -664,12 +682,13 @@ function migrateStoredAlertTriggers(alerts: AlertDef[]): AlertDef[] {
 export function getAlerts(): AlertDef[] {
   const existing = store.get('alerts')
   if (existing === undefined) {
-    store.set('alerts', SEED_ALERTS)
-    // Seeds already reference the shipped pack and carry no group def; stamp both so neither
+    const seeded = seedAlertsWith(SEED_ALERTS, store.get('soundPacks'))
+    store.set('alerts', seeded)
+    // Seeds already reference the default pack and carry no group def; stamp both so neither
     // migration ever re-runs against a store that was born current.
     store.set('alertSoundMigration', ALERT_SOUND_MIGRATION_VERSION)
     store.set('alertTriggerMigration', ALERT_TRIGGER_MIGRATION_VERSION)
-    return SEED_ALERTS
+    return seeded
   }
   return migrateStoredAlertTriggers(migrateStoredAlertSounds(existing))
 }
@@ -702,7 +721,7 @@ export function deleteAlert(id: string): AlertDef[] {
 
 /** Restore the seeded built-in alert set, discarding any user edits (Task #22). */
 export function resetAlerts(): AlertDef[] {
-  const next = SEED_ALERTS.map((a) => ({ ...a }))
+  const next = seedAlertsWith(SEED_ALERTS, store.get('soundPacks'))
   store.set('alerts', next)
   return next
 }

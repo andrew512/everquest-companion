@@ -125,6 +125,262 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '0.28.0',
+    date: '2026-08-14',
+    entries: [
+      {
+        kind: 'new',
+        text: 'The meter card grows a Mitigation tab on the incoming side: how often you block, dodge, parry, and riposte - counts and rates over the swings actually aimed at you - with your riposte damage broken out inside your melee total. Damage breakdown stays the first thing you see.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Alert phrases can name the mob a spell landed on or faded from: write {target} in a custom phrase and the name is filled in for you - no pattern to write. Suggested fade and break alerts say it by default, and the phrase editor lists the words each alert can fill.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'A Plane of Sky item count can be stated by hand - a pencil on the quest panel Have cell - and correcting the count is what clears a stuck Ready entry. A by-hand chip states the number came from you, and one click takes it back.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'A fourth Sky counting mode, rebaseline: load an inventory dump and older loot evidence is set aside - the dump is the floor, and only what the log says after it moves the numbers.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Heal-over-time spells raise alerts now: a new trigger fires on the heal itself, so it works for every rank of the spell, and beneficial spells landing on you have their own template too.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Slugs Healing had no log sentences on record, so no trigger could ever fire for it and no timer could learn it - the shaman heal ladder speaks its real sentences now.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Several alerts firing in the same instant all sound now: distinct voice lines each play once instead of the first alert muting the rest - four song resists in one pulse are four spoken facts. Identical sounds still fold into one.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A loot alert no longer silently discards a pattern typed without a field: the editor names its fields and refuses to save half a condition.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A re-summoned pet whose only introduction is its own buff landing binds again - and a summoned pet never times out: it ends when it dies, is dismissed, or you swap loadouts.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The Combat tab and the Mobs tab agree on kill counts: a mob opened from a fight card no longer reads zero kills.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Disrupting Shot reads level 20 without a disputed flag - confirmed in play.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'An update check interrupted by the machine going to sleep retries on wake instead of counting as a failure - and a check that did fail says so instead of looking like success.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Under Wine or Crossover the app no longer forces the one graphics path Wine cannot draw, so the window renders instead of coming up blank. Still unsupported - but no longer broken by default.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'The spoken-phrase entry on an alert row says what it is now - Edit spoken phrase - and opens every time you pick it, not just the first.'
+      },
+      {
+        kind: 'changed',
+        text: 'Overlay bars no longer pop tooltips over the game. The window title bar keeps its hints, and a tooltip never lingers after your mouse leaves the window.'
+      },
+      {
+        kind: 'changed',
+        text: 'Alerts play a sound or speak - the combined sound-plus-voice option is gone. An alert that used it speaks if it has a phrase and plays its sound otherwise; nothing else about your alerts changed.'
+      },
+      {
+        kind: 'changed',
+        text: 'The spoken voice is one setting now: change it in Preferences and every spoken alert changes with it. Alerts no longer keep the voice they happened to be created with.'
+      }
+    ]
+  },
+  {
+    version: '0.27.0',
+    date: '2026-08-13',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Exaltations, Gear and your character now live in one place: a single Gear entry in the sidebar with four tabs - gear search, exaltation search, your wish list, and Character.'
+      },
+      {
+        kind: 'new',
+        text: 'The Wish list is new: a flat list of the gear and exaltations you are going after, added or removed with one click from either search tab or from the list itself. It groups wishes by the zone that feeds them, with merge costs for exaltations and an also-drops-in line beside each.'
+      },
+      {
+        kind: 'new',
+        text: 'The wish list marks wishes done on its own: when your inventory dump or your loot history shows one fulfilled, it moves to a done strip - there is no box to tick. Anything you had planned on the old exaltation board was imported once, labeled as an import, and deletable.'
+      },
+      {
+        kind: 'new',
+        text: 'The Character tab shows your worn gear as your dump states it - every slot at its upgrade level with any socketed exaltations - plus a searchable ledger of everything you carry: bags, bank, depot, key rings, each place its own lane.'
+      },
+      {
+        kind: 'new',
+        text: 'Hover a gear search row and a card compares that item against what you are wearing, cell by cell, differences computed, with the age of your inventory dump stated right on the card.'
+      },
+      {
+        kind: 'new',
+        text: 'Effective HP is a gear column now - raw HP plus stamina, no soft cap - pickable and sortable like Ratio, and the upgrade slider re-ranks it.'
+      },
+      {
+        kind: 'new',
+        text: 'Bug reports can carry your inventory dump, on by default and shown before anything is sent - so a quest item the app does not recognize becomes answerable from the report itself.'
+      },
+      {
+        kind: 'new',
+        text: "Clicking a level-up toast now lands you on the New-at-this-level panel itself - scrolled into view and lit - and the toast says so, with a See-what's-new button naming the level."
+      },
+      {
+        kind: 'changed',
+        text: 'The era filter now hides gear the record cannot place in the current era instead of showing it with a question mark, and the verdicts the wiki keeps on armor-set, quest and monster pages now count: an item whose only mold, awarding quest or dropper is out of era reads out of era, with the reason named in its chip.'
+      },
+      {
+        kind: 'changed',
+        text: 'Class picks on the gear table now remove non-matching rows instead of tagging them, slots are a multi-select, weapon types - and one-handed versus two-handed - are filters of their own, and the stat-threshold boxes are gone: sorting covers that. The item name column is wider, the stat columns smaller.'
+      },
+      {
+        kind: 'changed',
+        text: 'The tier and elapsed/active choices are one setting shared by the app and the XP overlay - flip either side and both move - and Leveling opens on this tier and elapsed time. Both toggles explain themselves on hover.'
+      },
+      {
+        kind: 'changed',
+        text: 'The leveling charts scale their axes properly at short windows: headroom above the curve instead of a line against the frame, your level and the next as the level chart range, a quieter zone strip, and axis labels that no longer stretch.'
+      },
+      {
+        kind: 'changed',
+        text: 'The scope bar above the charts is one row of controls with one caption line beneath it, and the New-at-this-level panel fills the space beside Recent progress instead of hanging below everything.'
+      },
+      {
+        kind: 'changed',
+        text: 'Invigor - a classic-era spell the game does not have - no longer appears in the unlock list or alert suggestions, and the removal is recorded so a wiki edit cannot bring it back unnoticed.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Gear-area filters, sorts, searches and the upgrade slider now survive drilling into an item and switching modules; the structural picks survive a restart, and what you typed lasts the session.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Rogue poison coats now clear when you die and when your loadout stops being a rogue, instead of surviving untouched from your last rogue session.'
+      },
+      {
+        kind: 'fixed',
+        text: 'Preferences show your real settings from the first painted frame - no more toggles flickering from a default onto your stored value.'
+      },
+      {
+        kind: 'fixed',
+        text: "Typing snail's finds Snails Healing. Possessive spellings match every spell name now, in both directions - and a handful of blank wiki message stubs stopped masquerading as trigger sentences."
+      },
+      {
+        kind: 'fixed',
+        text: 'A re-announced level can no longer draw your progress emptying. When the game restates the level you already hold, the curve refuses the span instead of inventing a descent.'
+      },
+      {
+        kind: 'changed',
+        text: 'The favorite star column left the loot ledger. Item stars still work where they earn their keep - the Plane of Sky quest tables - and starred items still travel in share bundles.'
+      }
+    ]
+  },
+  {
+    version: '0.26.0',
+    date: '2026-08-13',
+    entries: [
+      {
+        kind: 'fixed',
+        text: "A group-mate's summoned pet joins the meter. When its owner runs /pet who leader once, the pet gets its own row - Pet (Name) with the owner's name - and its damage stops falling on the floor. Charm pets are untouched: they still bind off the charm itself and still end when it breaks.",
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: "An ally's pet row no longer expires on a clock. It used to vanish after the spell's listed duration even mid-fight - wrong for every AA-extended charm and meaningless for a summon. The row now lives as long as the pet keeps appearing in the log, and only death, zoning, or the log's own break evidence ends it.",
+        fromReport: true
+      },
+      {
+        kind: 'changed',
+        text: "Feedback log slices now keep the one mechanical line where a pet names its leader, even when the leader is a group-mate. It is the sentence that proves whose pet is whose, the same name already appears in every combat line of the slice, and player chat stays scrubbed exactly as before."
+      },
+      {
+        kind: 'new',
+        text: 'Pick your default sound pack once, and it sticks. A star in the sound-pack browser makes any installed pack the default for new and suggested alerts, and deleting a shipped pack now means deleted - the app stops quietly re-downloading it at the next start. Nothing goes silently mute: sounds from a removed pack play through your default with a caption saying so.',
+        fromReport: true
+      }
+    ]
+  },
+  {
+    version: '0.25.0',
+    date: '2026-08-13',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The loot ledger renders everything you scroll to. Opening an item and coming back used to freeze the list at its first screenful - the scrollbar moved, the rows did not - and the dead scroll space above and below the list is gone with it.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The loot summary states its rate both ways - per hour of active time and per hour of elapsed time, side by side, each naming the span it measured. A long regen break stops inflating your motes-per-hour without a word of explanation.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The Plane of Sky tab reads your /outputfile inventory dump by itself the moment the file changes - the reload button is gone because there is nothing left to press. A quiet line under the count-source picker says when the dump was written and when it was read, and turns warning-colored only when your copy is provably stale.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A spell alert survives ranking up. Resist and cast alerts matched the exact name, so an alert on Elemental Maelstrom went silent the day you unlocked II. Every rank of the spell now matches, in both directions.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'Buffs from last night survive a slow login. The app no longer guesses what counts as logging in from a 30-second window - it reads the log lines only an in-world character can produce - so long loading screens, crowded character selects, and starting the app mid-load stop wiping the buff bar.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Summon a pet and never order it, and the meter cannot see it - the game prints nothing that ties the pet to you. The meter now says so once, quietly, on its own overlay: order it once or type /pet who leader. The sentence times out by itself and does not nag.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'Patch notes are one click from the version number - the icon beside it opens What is new, and the panel carries a link to every release on GitHub.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'The DPS-over-time legend answers clicks: hide any line, the scale re-fits what is drawn, and the choice sticks between sessions. Hidden entries stay in the legend, dimmed, so the way back is where the way in was.',
+        fromReport: true
+      },
+      {
+        kind: 'fixed',
+        text: 'A full disk no longer makes the app thrash - the small local telemetry file writes atomically, cleans up after a failed attempt, and backs off instead of retrying every event.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A cached wiki image that fails to read from disk heals itself - evicted and re-fetched - instead of logging an error and showing a blank.'
+      },
+      {
+        kind: 'changed',
+        text: 'The app phones home a fifth as often: usage counters leave in one batch every five minutes instead of every minute, and the idle pulse is every ten. Nothing new is collected - the batches are just bigger and rarer.'
+      }
+    ]
+  },
+  {
     version: '0.24.0',
     date: '2026-08-12',
     entries: [

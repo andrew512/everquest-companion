@@ -39,7 +39,9 @@
 //             pet's damage sits. Lives in ./CombatSection.tsx, descriptor and all.
 //   Overlays — when the floating meters get out of the way: hide them while EverQuest isn't
 //             running (on by default) and/or while it isn't the window you're in (off).
-//             Lives in ./OverlayAutoHideSetting.tsx.
+//             Lives in ./OverlayAutoHideSetting.tsx. Plus the celebration toast's controls — and
+//             the opt-in drag magnetism (JOS-217, ./OverlaySnapSetting.tsx), which is HELD OUT of
+//             this release and therefore not built into the section at all (JOS-359).
 //   Graphics — the two compatibility switches for a machine whose graphics driver dislikes what
 //             this app draws: software rendering (next launch) and solid, non-transparent
 //             overlays (next overlay open). Lives in ./GraphicsSetting.tsx, descriptor and all.
@@ -71,7 +73,7 @@
 //             drawing them asks nobody for anything). Lives in ./ThanksSetting.tsx, descriptor
 //             and all. Last in the rail on purpose — see the table.
 
-import { type JSX, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { type JSX, useCallback, useDeferredValue, useMemo, useState } from 'react'
 import { Box, List, ListItemButton, ListItemText, TextField, Typography } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import SportsEsportsIcon from '@mui/icons-material/SportsEsports'
@@ -92,6 +94,9 @@ import { combatSection } from './CombatSection'
 import { FeedbackSetting, type OpenFeedback } from './FeedbackSetting'
 import { VoiceSetting } from './VoiceSetting'
 import { OverlayAutoHideSetting } from './OverlayAutoHideSetting'
+import { OverlaySnapSetting } from './OverlaySnapSetting'
+// The release hold this card is behind (JOS-359). Imported for the FLAG, not for geometry.
+import { SNAP_RELEASE_HOLD } from '@shared/overlaySnap'
 import { ToastSetting } from './ToastSetting'
 import { AlertOverlaySetting } from './AlertOverlaySetting'
 // Cursor ring: another descriptor that lives beside its own card, same ceiling, same answer.
@@ -119,6 +124,9 @@ import { thanksSection } from './ThanksSetting'
 // The section CARD and the arrival pulse live together in their own file — same ceiling, same
 // answer as PerfSetting's descriptor: split, don't widen the threshold.
 import PrefSectionBlock, { FILL_COLUMN_SX, FILL_ROOT_SX, FILL_ROW_SX, paneFills, useLandedSection } from './PrefSectionBlock'
+// THE HYDRATION GATE (JOS-340) — one batched read of everything this pane paints from main, and
+// nothing renders until it lands. Read that file's header before touching any card's state.
+import { PrefsGate, usePrefsSeed } from './prefsHydration'
 import { normalizeQuery } from '../../lib/search'
 
 // ------------------------------------------------------------------- the view
@@ -176,9 +184,31 @@ function voiceSection(): PrefSection {
 }
 
 /**
- * The floating overlays' auto-hide rules. Its own factory for the same reason `voiceSection` is
- * one — `buildSections` sits against the 100-code-line ceiling — and, like that one, it depends
- * on none of buildSections' inputs.
+ * The drag magnetism card (JOS-217), or nothing at all while the feature is HELD OUT of the
+ * release (JOS-359 — `SNAP_RELEASE_HOLD` carries the ruling and is the one line that lifts it).
+ *
+ * A card whose switch the store would ignore is worse than no card, which is why the hold reaches
+ * up here and not only into the normalizer: the item is not built, so it is not in the pane, not
+ * in the search index, and not a control a user can be told is broken.
+ */
+function snapItems(): PrefItem[] {
+  if (SNAP_RELEASE_HOLD) return []
+  return [
+    {
+      id: 'overlay-snap',
+      label: 'Snap overlays while dragging',
+      keywords:
+        'snap snapping magnet align alignment grid edge edges side abut stack line up lined tidy position drag move overlay overlays meter meters screen monitor match matching sizes equal',
+      content: <OverlaySnapSetting />
+    }
+  ]
+}
+
+/**
+ * The floating overlays' own rules: when they get out of the way, whether a drag snaps them into
+ * line (JOS-217, held out of this release — see `snapItems`), and the celebration toast. Its own
+ * factory for the same reason `voiceSection` is one — `buildSections` sits against the
+ * 100-code-line ceiling — and, like that one, it depends on none of buildSections' inputs.
  */
 function overlaysSection(): PrefSection {
   return {
@@ -193,6 +223,7 @@ function overlaysSection(): PrefSection {
           'overlay overlays meter meters hide auto autohide show running focus focused unfocused alt tab background desktop game closed floating',
         content: <OverlayAutoHideSetting />
       },
+      ...snapItems(),
       {
         id: 'toast',
         label: 'Celebration toasts',
@@ -445,31 +476,27 @@ function PrefSearch({
   )
 }
 
-export default function PreferencesView({
+/**
+ * The pane, INSIDE the hydration gate — every card below this point may assume its value is
+ * already known (JOS-340). Split from the exported component so the gate can be the thing that
+ * decides whether this function runs at all: hooks cannot be conditional, and `usePrefsSeed` has
+ * to be able to say "there is a snapshot" without a null check in thirteen places.
+ */
+function PreferencesPane({
   onSendFeedback,
-  section = null
+  section
 }: {
   onSendFeedback: OpenFeedback
-  /** A deep link's landing section, or null for the usual one. App KEYS this component on it,
-   *  so an arriving link paints its section on the first frame and needs no effect here. */
-  section?: string | null
+  section: string | null
 }): JSX.Element {
   const [query, setQuery] = useState('')
   const deferred = useDeferredValue(query)
   const [active, setActive] = useState(section ?? 'game')
   const landed = useLandedSection(section)
-  const [version, setVersion] = useState('')
+  // Both out of the gate's snapshot now. The version used to start as the EMPTY STRING and fill
+  // in, so the Updates section opened on a Version row with no version on it.
+  const version = usePrefsSeed().version
   const status = useUpdateStatus()
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getAppVersion().then((v) => {
-      if (alive) setVersion(v)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
 
   // A rail click is always an exit from search mode into that one section.
   const pick = useCallback((id: string): void => {
@@ -540,5 +567,35 @@ export default function PreferencesView({
         </Box>
       </Box>
     </Box>
+  )
+}
+
+/**
+ * THE PANE, GATED (JOS-340).
+ *
+ * A control never paints a value it does not know, and every card in here reads a store that
+ * lives in MAIN over a promise-only bridge — so the honest arrangement is that NOTHING in the
+ * pane renders until one batched read has landed. See ./prefsHydration.tsx for why this is a
+ * gate rather than a synchronous preload snapshot, and why the wait is invisible after the first
+ * time: the snapshot is cached for the renderer's life, so every later rail click and every trip
+ * back to this tab paints the right value on its first frame with no wait at all.
+ *
+ * The gate wraps the WHOLE pane, heading and rail included, rather than only the content column.
+ * A rail that appeared a frame before its cards would be a second, smaller version of the same
+ * jump — and there is nothing to look at in an empty pane anyway.
+ */
+export default function PreferencesView({
+  onSendFeedback,
+  section = null
+}: {
+  onSendFeedback: OpenFeedback
+  /** A deep link's landing section, or null for the usual one. App KEYS this component on it,
+   *  so an arriving link paints its section on the first frame and needs no effect here. */
+  section?: string | null
+}): JSX.Element {
+  return (
+    <PrefsGate>
+      <PreferencesPane onSendFeedback={onSendFeedback} section={section} />
+    </PrefsGate>
   )
 }

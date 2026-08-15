@@ -19,6 +19,12 @@
 // way. So each caption states WHO decided — the honesty convention, applied to a decision the app
 // made about the user rather than the other way round.
 //
+// …AND SINCE JOS-352 THE DETECTION SAYS THE OPPOSITE THING ABOUT THE FIRST SWITCH. A Wine prefix
+// asks for opaque overlays and asks safe mode to stay OFF: on Windows, "draw without the graphics
+// card" means Chromium's D3D11 WARP renderer, which Wine does not implement at all — the reported
+// symptom is a white client area, from the compatibility path itself. So under Wine this card
+// warns about the switch it used to set (SAFE_MODE_WINE_COPY below) instead of explaining it.
+//
 // THE TOGGLE IS THEIRS EITHER WAY. What each Switch shows is the EFFECTIVE state, and flipping one
 // writes an EXPLICIT 'on'/'off' that outranks the detection in both directions (the stored value is
 // three-state — shared/graphicsPrefs.ts). So the Wine user who prefers see-through overlays turns
@@ -27,17 +33,17 @@
 // ONE BORDER: PreferencesView already wraps each item in an outlined Paper, so this renders bare
 // Stacks.
 
-import { type JSX, useCallback, useEffect, useState } from 'react'
+import { type JSX, useCallback, useState } from 'react'
 import { FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 import MonitorIcon from '@mui/icons-material/Monitor'
 import {
-  DEFAULT_GRAPHICS_PREFS,
   resolveGraphics,
   type GraphicsPrefs,
   type ResolvedGraphics,
   type ResolvedSwitch
 } from '@shared/graphicsPrefs'
-import { NO_GRAPHICS_ENVIRONMENT, type GraphicsEnvironment } from '@shared/wineDetect'
+import type { GraphicsEnvironment } from '@shared/wineDetect'
+import { recordPref, usePrefsSeed } from './prefsHydration'
 import type { PrefSection } from './PreferencesView'
 
 interface GraphicsState {
@@ -49,34 +55,32 @@ interface GraphicsState {
 }
 
 /**
- * The blob, hydrated once from main and written back on every change — the OverlayAutoHide /
- * VoiceSetting pattern exactly. The local write is optimistic (a switch must not lag an IPC round
- * trip) and main's reply is authoritative, being what was actually stored.
+ * The blob, SEEDED from the pane's hydration snapshot and written back on every change. The local
+ * write is optimistic (a switch must not lag an IPC round trip) and main's reply is authoritative,
+ * being what was actually stored.
  *
- * The ENVIRONMENT is hydrated beside it and never again: it is a fact about this launch (whether
- * this process is running inside a Wine prefix), and nothing the user does in Preferences can
- * change it.
+ * IT USED TO MOUNT ON `DEFAULT_GRAPHICS_PREFS` PLUS `NO_GRAPHICS_ENVIRONMENT` AND CORRECT BOTH
+ * (JOS-340), which made this card the loudest flicker in the pane: on a Wine machine the two
+ * switches painted OFF with an "off, your graphics card draws it" caption, and a moment later
+ * flipped ON with the "Wine detected" one. Two reads, two corrections, one card that appeared to
+ * change its mind about the machine it was running on. Both now arrive in the gate's snapshot
+ * (./prefsHydration.tsx), so the first painted frame is the resolved truth.
+ *
+ * The ENVIRONMENT is still read once and never again: it is a fact about this launch (whether this
+ * process is running inside a Wine prefix), and nothing the user does in Preferences can change it
+ * — which is exactly why it belongs in a load-time snapshot.
  */
 function useGraphicsPrefs(): [GraphicsState, (patch: Partial<GraphicsPrefs>) => void] {
-  const [prefs, setPrefs] = useState<GraphicsPrefs>(DEFAULT_GRAPHICS_PREFS)
-  const [env, setEnv] = useState<GraphicsEnvironment>(NO_GRAPHICS_ENVIRONMENT)
-
-  useEffect(() => {
-    let alive = true
-    void window.eq.getGraphicsPrefs().then((stored) => {
-      if (alive) setPrefs(stored)
-    })
-    void window.eq.getGraphicsEnvironment().then((found) => {
-      if (alive) setEnv(found)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const seed = usePrefsSeed()
+  const [prefs, setPrefs] = useState<GraphicsPrefs>(seed.graphics)
+  const env: GraphicsEnvironment = seed.graphicsEnv
 
   const update = useCallback((patch: Partial<GraphicsPrefs>) => {
     setPrefs((cur) => ({ ...cur, ...patch }))
-    void window.eq.setGraphicsPrefs(patch).then(setPrefs)
+    void window.eq.setGraphicsPrefs(patch).then((stored) => {
+      setPrefs(stored)
+      recordPref('graphics', stored)
+    })
   }, [])
 
   return [{ prefs, env, resolved: resolveGraphics(prefs, env.auto) }, update]
@@ -128,14 +132,35 @@ export function graphicsSection(): PrefSection {
   }
 }
 
-/** The safe-mode caption in all four states. "Wine detected" leads, because it is the fact that
- *  explains everything after it. */
+/**
+ * The safe-mode caption in all four states, on an ordinary machine.
+ *
+ * TWO OF THESE ARE CURRENTLY UNREACHABLE AND THAT IS ON PURPOSE (JOS-352). Nothing recommends safe
+ * mode any more — the Wine recommendation was INVERTED, because drawing without the graphics card
+ * on Windows means D3D11 WARP and Wine does not implement it — so `auto` and `overridden` can only
+ * be reached by some future detection. They are written for that reader rather than deleted: the
+ * resolver still has four states, and copy that describes three of them would be the next reader's
+ * bug.
+ */
 const SAFE_MODE_COPY: GraphicsCopy = {
   on: 'On from the next launch. Try this first if the app itself flickers, goes black, or will not paint.',
   off: 'Off. The app draws with your graphics card, which is what you want unless it is misbehaving.',
-  auto: 'Wine detected - the app draws without the graphics card. Under Wine that path is what leaves windows blank. Turn this off to use the graphics card anyway, from the next launch.',
+  auto: 'The app turned this on for this machine - it draws without the graphics card. Turn it off to use the graphics card anyway, from the next launch.',
   overridden:
-    'Off, because you turned it off. Wine was detected, where drawing with the graphics card can leave windows blank.'
+    'Off, because you turned it off, on a machine where the app would have drawn without the graphics card.'
+}
+
+/**
+ * …and the two states that read differently under Wine, where this switch is a TRAP rather than a
+ * remedy (JOS-352). The old advice for a window that will not paint was "turn safe mode on", and
+ * under Wine that is precisely what produces the white window: safe mode pins Chromium to a
+ * software renderer Wine cannot provide, while the graphics card path works. Anyone arriving here
+ * from that advice reads the sentence that matches their machine.
+ */
+const SAFE_MODE_WINE_COPY: GraphicsCopy = {
+  ...SAFE_MODE_COPY,
+  on: 'On, because you turned it on - and under Wine this is the setting that leaves the window blank or white. Turn it back off if nothing paints.',
+  off: 'Off. The app draws with your graphics card, which is the path that works under Wine.'
 }
 
 /** The opaque-overlay caption in all four states — the one JOS-31 exists for. */
@@ -170,7 +195,11 @@ export function GraphicsSetting(): JSX.Element {
           }
         />
         <Typography variant="caption" color="text.secondary" data-testid="pref-graphics-safe-mode-note">
-          {caption(resolved.safeMode, env.auto.safeMode, SAFE_MODE_COPY)}
+          {caption(
+            resolved.safeMode,
+            env.auto.safeMode,
+            env.wine ? SAFE_MODE_WINE_COPY : SAFE_MODE_COPY
+          )}
         </Typography>
       </Stack>
 

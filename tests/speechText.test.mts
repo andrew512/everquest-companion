@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 import type { AlertDef, SpeechMode } from '../src/shared/alertTypes'
 import {
   ALERT_AUDIO_ACTIONS,
+  ALERT_AUDIO_CHOICES,
   DEFAULT_VOICE_PREFS,
   MAX_SPEECH_CHARS,
   MAX_SPEECH_RATE,
@@ -19,6 +20,7 @@ import {
   SPEECH_ENGINES,
   SPEECH_MODES,
   normalizeVoicePrefs,
+  resolveAlertAudio,
   speechTextFor,
   type SpeechFiring
 } from '../src/shared/speechText'
@@ -69,6 +71,56 @@ test('SPEECH_MODES covers exactly the four documented modes', () => {
   // overlays, D1) belongs after the three that make a sound rather than among them.
   assert.deepEqual([...ALERT_AUDIO_ACTIONS], ['sound', 'speech', 'both', 'silent'])
   assert.deepEqual([...SPEECH_ENGINES], ['system', 'kokoro'])
+})
+
+test('JOS-362: the OFFERED channels exclude the retired one, and the tolerated list keeps it', () => {
+  // The split is the whole shape of the removal: a picker may only offer what a user can choose,
+  // and the store/share validators must keep ACCEPTING what old defs already say. Collapsing these
+  // two lists into one would either put "Sound + voice" back on screen or make a stored 'both'
+  // fail validation and lose the def.
+  //
+  // The two lists differ by 'both' and ONLY by 'both'. 'silent' (alert-text-overlays D1) is in
+  // both of them, and that is the distinction the split is actually drawing: 'both' is a channel
+  // the app stopped having, 'silent' is one it gained, and neither is "the shorter list".
+  assert.deepEqual([...ALERT_AUDIO_CHOICES], ['sound', 'speech', 'silent'])
+  assert.ok(ALERT_AUDIO_ACTIONS.includes('both'), 'still readable, just not offerable')
+  assert.ok(!ALERT_AUDIO_CHOICES.includes('both' as never), 'and never offerable again')
+  assert.deepEqual(
+    ALERT_AUDIO_ACTIONS.filter((a) => a !== 'both'),
+    [...ALERT_AUDIO_CHOICES],
+    'the offered list is the tolerated one minus the retired member, in the same order'
+  )
+})
+
+test('JOS-362: resolveAlertAudio — a phrase makes a stored "both" spoken, everything else plays', () => {
+  // The owner's constraint, as a function: "don't screw up anyone's settings except for the insane
+  // people who use that one option in the process". Only 'both' moves, and it moves toward the
+  // most specific thing the def says about itself.
+  const base: AlertDef = {
+    id: 'a',
+    name: 'Charm break',
+    enabled: true,
+    trigger: { type: 'event', kind: 'uncharm' },
+    sound: { packId: 'alan-rickman', soundId: 'attention' }
+  }
+  assert.equal(resolveAlertAudio(base), 'sound', 'an absent channel is the pre-voice default')
+  assert.equal(resolveAlertAudio({ ...base, audio: 'sound' }), 'sound')
+  assert.equal(resolveAlertAudio({ ...base, audio: 'speech' }), 'speech')
+  assert.equal(resolveAlertAudio({ ...base, audio: 'both' }), 'sound', 'no phrase ⇒ the sound')
+  assert.equal(
+    resolveAlertAudio({ ...base, audio: 'both', speech: { mode: 'alertName' } }),
+    'sound',
+    'a mode is not a phrase — nobody wrote words for this alert'
+  )
+  assert.equal(
+    resolveAlertAudio({ ...base, audio: 'both', speech: { mode: 'custom', phrase: '  ' } }),
+    'sound',
+    'and blank words are not words'
+  )
+  assert.equal(
+    resolveAlertAudio({ ...base, audio: 'both', speech: { mode: 'custom', phrase: 'Charm broke' } }),
+    'speech'
+  )
 })
 
 // --------------------------------------------------------------------------- rank stripping

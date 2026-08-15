@@ -14,6 +14,13 @@
 //
 // THE ANCHOR IS THE TOP-LEFT CORNER, which is why this handle is at the bottom-right: the corner
 // you placed the window by must not move because you made it bigger.
+//
+// AND IT CARRIES NO TOOLTIP (JOS-358). The owner's ruling is that nothing outside a window's title
+// bar hovers, and this grip is as far from the title bar as a control gets — it is drawn ON the
+// game, on a window with no chrome, which is the case the ruling is actually about. It loses
+// nothing: the corner is visibly a resize corner, it only appears while the window is unlocked,
+// and `cursor: nwse-resize` says the same sentence the tooltip did, without waiting a second or
+// risking being left behind when the pointer leaves. tests/overlayTooltipPolicy.test.mts holds it.
 
 import { type CSSProperties, type JSX, type PointerEvent as ReactPointerEvent, useRef } from 'react'
 
@@ -71,7 +78,6 @@ export default function ResizeGrip({
   return (
     <div
       data-testid={testId}
-      title="Drag to resize"
       onPointerDown={begin}
       onPointerMove={move}
       onPointerUp={end}

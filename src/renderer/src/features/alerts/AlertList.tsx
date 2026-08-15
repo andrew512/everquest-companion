@@ -267,6 +267,7 @@ function AlertRow({
   isOpen,
   packs,
   voiceSetup,
+  defaultPackId,
   onToggle,
   handlers
 }: {
@@ -275,6 +276,8 @@ function AlertRow({
   isOpen: boolean
   packs: SoundPack[]
   voiceSetup: VoiceSetupNotice
+  /** The user's default sound pack (JOS-273) — what this row falls back to, and reports. */
+  defaultPackId: string | undefined
   onToggle: (id: string) => void
   handlers: AlertRowHandlers
 }): JSX.Element {
@@ -307,6 +310,7 @@ function AlertRow({
           packs={packs}
           def={def}
           voiceSetup={voiceSetup}
+          defaultPackId={defaultPackId}
           onChange={handlers.onPersist}
         />
 
@@ -343,6 +347,7 @@ export default function AlertList({
   history,
   packs,
   voiceSetup,
+  defaultPackId,
   filtering,
   onAddSuggestion,
   handlers
@@ -353,6 +358,8 @@ export default function AlertList({
   packs: SoundPack[]
   /** One answer for the whole list: is there a voice to speak with, and how to go fix it. */
   voiceSetup: VoiceSetupNotice
+  /** One answer for the whole list: which pack is the user's (JOS-273). */
+  defaultPackId: string | undefined
   /**
    * Is a search narrowing this list right now (JOS-178)? The list itself does nothing differently;
    * it is the EMPTY state that changes — "nothing matches" and "you have no alerts" are two
@@ -391,6 +398,7 @@ export default function AlertList({
             isOpen={expanded.has(def.id)}
             packs={packs}
             voiceSetup={voiceSetup}
+            defaultPackId={defaultPackId}
             onToggle={toggleExpanded}
             handlers={handlers}
           />

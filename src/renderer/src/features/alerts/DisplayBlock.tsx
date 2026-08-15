@@ -56,6 +56,7 @@ import {
   type AlertOverlayKind
 } from '@shared/alertOverlays'
 import { tokensIn } from '@shared/alertCaptures'
+import { autoTokenLine } from './SpeechBlock'
 import { displayFieldsFor, type DisplayForm } from './displayForm'
 
 export { displayFieldsFor, showsText, useDisplayForm, type DisplayForm } from './displayForm'
@@ -83,12 +84,31 @@ export function previewDisplayFor(name: string, f: DisplayForm): string | null {
  * broken alert, and a user mid-edit should not be stopped from typing `{pl` on the way to
  * `{player}`.
  */
-function CaptureHint({ text, captureNames }: { text: string; captureNames: string[] }): JSX.Element | null {
+function CaptureHint({
+  text,
+  captureNames,
+  autoNames
+}: {
+  text: string
+  captureNames: string[]
+  autoNames: string[]
+}): JSX.Element | null {
   const used = tokensIn(text)
-  const unknown = used.filter((t) => !captureNames.includes(t))
-  if (captureNames.length === 0 && unknown.length === 0) return null
+  // THE AUTO TOKENS COUNT AS KNOWN HERE TOO (JOS-353 × text overlays). `{target}` is filled in by
+  // the app rather than by the alert's pattern, so measuring "unknown" against the pattern alone
+  // would warn that the one token the app guarantees "will be drawn as written" — a warning that
+  // is not merely noisy but false. The sentence naming them is `autoTokenLine`'s, borrowed rather
+  // than re-written, so the two authoring surfaces say the same thing about the same token.
+  const unknown = used.filter((t) => !captureNames.includes(t) && !autoNames.includes(t))
+  const autoLine = autoTokenLine(autoNames)
+  if (captureNames.length === 0 && autoNames.length === 0 && unknown.length === 0) return null
   return (
     <Box data-testid="alert-display-captures">
+      {autoLine !== null && (
+        <Typography variant="caption" color="text.secondary" display="block" data-testid="alert-display-auto-tokens">
+          {autoLine}
+        </Typography>
+      )}
       {captureNames.length > 0 && (
         <Typography variant="caption" color="text.secondary" display="block">
           This alert’s pattern captures: {captureNames.map((n) => `{${n}}`).join(' ')}
@@ -163,8 +183,16 @@ function Field({
   )
 }
 
-/** The text field + the tokens its trigger declares. */
-function TextRow({ form, captureNames }: { form: DisplayForm; captureNames: string[] }): JSX.Element {
+/** The text field + the tokens its trigger declares, and the ones the app fills in itself. */
+function TextRow({
+  form,
+  captureNames,
+  autoNames
+}: {
+  form: DisplayForm
+  captureNames: string[]
+  autoNames: string[]
+}): JSX.Element {
   return (
     <>
       <TextField
@@ -177,7 +205,7 @@ function TextRow({ form, captureNames }: { form: DisplayForm; captureNames: stri
         slotProps={{ htmlInput: { maxLength: MAX_DISPLAY_CHARS } }}
         helperText={`${String(form.text.length)} / ${String(MAX_DISPLAY_CHARS)}`}
       />
-      <CaptureHint text={form.text} captureNames={captureNames} />
+      <CaptureHint text={form.text} captureNames={captureNames} autoNames={autoNames} />
     </>
   )
 }
@@ -345,7 +373,8 @@ export default function DisplayBlock({
   name,
   form,
   defaults,
-  captureNames = []
+  captureNames = [],
+  autoNames = []
 }: {
   name: string
   form: DisplayForm
@@ -358,6 +387,13 @@ export default function DisplayBlock({
    * hint renders nothing at all rather than an empty label.
    */
   captureNames?: string[]
+  /**
+   * The tokens the APP fills in for this trigger by itself (`autoTokenNamesFor` — today `{target}`
+   * alone), recomputed from the live trigger like `captureNames`. The same list the Voice section
+   * gets, for the same reason: a token is a token wherever the user writes it, and this section is
+   * the second place they can.
+   */
+  autoNames?: string[]
 }): JSX.Element {
   return (
     <Box data-testid="alert-display-block">
@@ -374,7 +410,7 @@ export default function DisplayBlock({
       />
       {form.on && (
         <Stack spacing={1.5} sx={{ mt: 1 }}>
-          <TextRow form={form} captureNames={captureNames} />
+          <TextRow form={form} captureNames={captureNames} autoNames={autoNames} />
           <TargetRow form={form} defaults={defaults} />
           <StyleRow form={form} defaults={defaults} />
           <DisplayPreview name={name} form={form} defaults={defaults} />

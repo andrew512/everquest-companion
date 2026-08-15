@@ -159,7 +159,7 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
   {
     t: 'sessionHeartbeat',
     when:
-      'Every 5 minutes while the app is open — the "is anyone using it right now" signal. ' +
+      'Every 10 minutes while the app is open — the "is anyone using it right now" signal. ' +
       STARTUP_WHEN,
     fields: [
       { name: 'uptimeMs', type: COUNT, note: 'How long this session has been running.' },
@@ -249,7 +249,7 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
   {
     t: 'healthCounters',
     // The cadence is stated exactly, because it is what a reader would otherwise get wrong: this
-    // rides the session reports (every 5 minutes, and again at close) rather than arriving once,
+    // rides the session reports (every 10 minutes, and again at close) rather than arriving once,
     // and it is sent even when every count is zero. A report with nothing in it is how we know a
     // build is reporting at all — without it, a version that is running fine and a version too old
     // to have this code would look identical.
@@ -281,6 +281,14 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
         name: 'suppressedErrorLines',
         type: `${COUNT} (optional)`,
         note: 'The same error line repeating: after the first few, further copies are counted here instead of being written to the local error log again. A count only.'
+      },
+      // JOS-266. SAID AS SOMETHING THAT FIXED ITSELF, because that is what it is: the picture the
+      // app had saved would not open, so it downloads it again and shows it. The note names the
+      // outcome the user got rather than the machinery, and promises a count and nothing else.
+      {
+        name: 'imageCacheReadFailures',
+        type: `${COUNT} (optional)`,
+        note: 'Times a picture the app had already saved could not be read back, so it was downloaded again. The picture is still shown. Never which picture, and never where it was kept.'
       }
     ]
   },

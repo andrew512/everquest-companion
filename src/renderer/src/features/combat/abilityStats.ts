@@ -139,6 +139,57 @@ export function abilityMultiAttack(source: SourceView, name: string, category: D
 }
 
 /**
+ * RIPOSTE DAMAGE INSIDE THE MELEE BREAKDOWN (JOS-354, user report 01KZYKJPMBZ6G93AM7B2KXN7C3 —
+ * "Can we get our riposte damage broken out inside our Melee damage?").
+ *
+ * IT IS A SUBSET, NEVER A ROW. A riposte counter-swing is an ordinary weapon swing that the game
+ * annotated `(Riposte)`, so its damage is ALREADY inside the auto-attack lane's total — giving it
+ * a bar of its own would double it on screen and make the ranked list add up to more than the
+ * fight. It is stated as a share of the lane it is already in, which is exactly what the reporter
+ * asked for ("broken out INSIDE our Melee damage").
+ *
+ * IT RIDES THE AUTO-ATTACK ABILITY, for the same reason flurry does: the engine tallies the
+ * annotation on the SOURCE, not per lane, so this figure is the source's whole riposte damage and
+ * has no per-verb split to offer. `pctOfSwingDamage` is over melee + slay together — a
+ * `(Riposte Slay Undead)` counter is booked in the slay category — so the denominator matches
+ * what the number is drawn from rather than the one lane it is printed on.
+ */
+export interface AbilityRiposte {
+  /** `(Riposte)` counter-swings — landed AND avoided. */
+  swings: number
+  /** …of those, the ones that landed. */
+  hits: number
+  /** damage they dealt, already inside this ability's total. */
+  damage: number
+  /** that damage as a percentage of your melee + slay damage. */
+  pct: number
+  /** `1,847 hits · 62.3k dmg` is the caller's job; this is the rate run: `7% of swing damage`. */
+  text: string
+}
+
+export function abilityRiposte(source: SourceView, name: string, category: DamageCategory): AbilityRiposte | null {
+  const r = source.roundStats
+  if (!r || r.ripostesGiven <= 0) return null
+  if (name.toLowerCase() !== AUTO_ATTACK.toLowerCase() || category !== 'melee') return null
+  const pct = r.riposteDamage > 0 ? riposteSharePct(source, r.riposteDamage) : 0
+  return {
+    swings: r.ripostesGiven,
+    hits: r.riposteLanded,
+    damage: r.riposteDamage,
+    pct,
+    text: pct > 0 ? `${pct.toFixed(1)}% of swing damage` : 'no damage landed'
+  }
+}
+
+/** `riposteDamage` over the source's melee + slay totals — the categories a swing lands in. */
+function riposteSharePct(source: SourceView, damage: number): number {
+  const base = source.categories
+    .filter((c) => c.category === 'melee' || c.category === 'slay')
+    .reduce((n, c) => n + c.total, 0)
+  return base > 0 ? (damage / base) * 100 : 0
+}
+
+/**
  * DOES THIS ABILITY HAVE STATS TO EXPAND? — the owner's clickability gate (JOS-113): "click an
  * ability THAT HAS STATS; abilities with no such stats (a DoT tick) are not clickable / do
  * nothing."

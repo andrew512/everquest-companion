@@ -307,10 +307,11 @@ test('JOS-103 P2: the suggestion fires on the owner\'s real line and SPEAKS the 
     regex: "^\\[[^\\]]*\\] (?<player>[A-Za-z' `]{1,48}) growls with the spirit of the puma\\."
   })
   assert.deepEqual(lands.speech, { mode: 'custom', phrase: 'Puma on {player}' })
-  // 'both', never 'speech': the pack sound is the half that is guaranteed audible on a machine
-  // with no speech voices, and `speechPlan` falls back to it only for EMPTY TEXT, never for a
-  // missing engine. An app-authored suggestion must not be able to ship silence.
-  assert.equal(lands.audio, 'both')
+  // 'speech': this suggestion exists to say WHO it landed on, and JOS-362 retired the combined
+  // channel it used to ride ("also remove sound + spoken - too much garbage", owner). The def
+  // still names a pack sound, so switching the row's output back to a pack is one click, and a
+  // machine with no voice set up is told by the row's own VoiceSetupLink rather than by silence.
+  assert.equal(lands.audio, 'speech')
 
   const fired = fire([lands], [PUMA.landed])
   assert.equal(fired.length, 1, 'it must fire on the real line')
@@ -550,6 +551,31 @@ test('JOS-200 B5b: `charmBreaks` is offered for the charm roster and nobody else
   for (const key of ['clarity', 'shiftless deeds', 'mesmerization', "sionachie's dreams"]) {
     assert.equal(entryFor(key).templates.charmBreaks, false, `${key} is not a charm`)
   }
+})
+
+test('JOS-273: every suggested alert is authored against the user\'s default pack', () => {
+  // The owner's ruling names the suggestion builder as one of the three surfaces the default-pack
+  // preference must be honoured by. This is the whole of that claim: the pack is an ARGUMENT, it
+  // reaches every def the wizard writes (template chips, rank chips, the illusion chip), and it
+  // defaults to the shipped pack so an install with no preference is unchanged.
+  const mine = 'portal-turret'
+  const suggested = suggestionsFor(entryFor('incapacitate'), rank('Incapacitate V'), mine)
+  assert.ok(suggested.length >= 3, 'the wizard offers this spell several templates')
+  for (const s of suggested) {
+    assert.equal(s.def.sound.packId, mine, `${s.def.id} must point at the chosen pack`)
+  }
+  assert.equal(illusionSuggestion(mine).def.sound.packId, mine)
+
+  // NO PREFERENCE ⇒ EXACTLY WHAT IT ALWAYS WROTE. Same defs, shipped pack, byte for byte — which
+  // is what makes "fresh installs unchanged" true of this surface too.
+  const shipped = suggestedDefs('incapacitate', 'Incapacitate V')
+  for (const d of shipped) assert.equal(d.sound.packId, 'alan-rickman')
+  assert.equal(illusionSuggestion().def.sound.packId, 'alan-rickman')
+  // …and nothing but the pack moved: same ids, same sound LINES.
+  assert.deepEqual(
+    suggested.map((s) => [s.def.id, s.def.sound.soundId]),
+    shipped.map((d) => [d.id, d.sound.soundId])
+  )
 })
 
 test('JOS-84 A7: the reporter\'s cast+land pair fires the cast and the landing alerts', () => {

@@ -43,6 +43,11 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, overlayWindow } from './appWindow.mjs'
 import { launchOnFixture, type FixtureLog } from './logFixture.mjs'
+import {
+  stepRowsHoverNothing,
+  stepTitleBarOnlyTooltips,
+  stepTooltipLeavesWithThePointer
+} from './overlayTooltipSteps.mjs'
 
 /** The main window's overlay bridge — the same one the title-bar menu calls. */
 interface OverlayBridge {
@@ -193,7 +198,10 @@ async function stepHydratesFromTheFold(overlay: Page): Promise<void> {
   const header = await overlay.evaluate(() => document.body.innerText)
   check('…and the header states the level the log last reported', /lvl \d+/.test(header), header.slice(0, 160))
   const caption = await span(overlay)
-  check('…under one span that says what every rate on it divides by', /active/.test(caption), caption)
+  // The span NAMES its hour, whichever one is in force (JOS-288 — it was `active` unconditionally
+  // before the elapsed default). What this step is about is that a wired window states a
+  // denominator at all; which one it opens on is `stepRateBasis`'s claim, below.
+  check('…under one span that says what every rate on it divides by', /elapsed|active/.test(caption), caption)
 }
 
 /**
@@ -232,8 +240,11 @@ async function stepLiveMote(overlay: Page, log: FixtureLog): Promise<void> {
  */
 async function stepRowChecklist(overlay: Page): Promise<void> {
   // One toggle per CHECKLIST ENTRY, which is not one per drawn line: 'xp' covers both paces and
-  // 'motes' covers however many tiers dropped (shared/xpOverlay.ts states the rule).
+  // 'motes' covers however many tiers dropped (shared/xpOverlay.ts states the rule). The
+  // denominator toggle beside them is `xp-basis` and deliberately does NOT share this prefix — it
+  // switches an hour, not a row, and a selector that swept it up would be counting two things.
   check('the checklist offers one toggle per entry', (await countOf(overlay, '[data-testid^="xp-toggle-"]')) === 3)
+  check('…and the denominator toggle sits beside them, outside the row prefix', (await countOf(overlay, '[data-testid="xp-basis"]')) === 1)
 
   await setConfig(overlay, { xpRows: ['xp', 'eta'] })
   const hidden = await settle(() => rows(overlay), (r) => !r.some((x) => x.row === 'motes'), { timeoutMs: 15_000 })
@@ -262,17 +273,28 @@ async function stepRowChecklist(overlay: Page): Promise<void> {
 /**
  * THE SLICE IS THE LEVELING TAB'S, AND ITS DEFAULT DEGRADES HONESTLY.
  *
- * e2e-leveling.log states no logout anywhere, so this record cannot define a session — and the
- * stored default (`session`) must therefore resolve to the whole log rather than to an invented
- * boundary. Then a duration rung proves the pick really re-scopes the numbers rather than only
- * re-labelling them.
+ * THE DEFAULT IS `Zone + Session` SINCE JOS-288 (owner ruling — it was `session` from JOS-195 until
+ * then). e2e-leveling.log states no logout anywhere, so this record can define neither half's
+ * session, and the default must therefore resolve to the whole log rather than to an invented
+ * boundary — which is the SAME observable this step has always asserted, now standing on a
+ * two-part degrade rather than a one-part one. The unit suite pins the offered/degrades pair over a
+ * record that CAN define both halves; what only the real app can show is that the shipped default
+ * travels main's own store and the renderer's own resolve and comes out honest on a first run.
+ *
+ * Then a duration rung proves the pick really re-scopes the numbers rather than only re-labelling.
  */
 async function stepSlice(overlay: Page): Promise<void> {
   const opened = await settleStable(() => span(overlay), { timeoutMs: 15_000 })
   check(
-    'a log that states no logout cannot define a session, so the window opens on the whole log',
+    'a log that states no logout can define neither half of Zone + Session, so the window opens on the whole log',
     opened.includes('the whole log'),
     opened
+  )
+  const stored = await getConfig(overlay)
+  check(
+    '…and the default is ABSENT in the store rather than written out',
+    stored.xpSlice === undefined,
+    JSON.stringify(stored.xpSlice)
   )
 
   await setConfig(overlay, { xpSlice: 'h1' })
@@ -283,6 +305,228 @@ async function stepSlice(overlay: Page): Promise<void> {
   await setConfig(overlay, { xpSlice: 'all' })
   const back = await settle(() => span(overlay), (t) => t === opened, { timeoutMs: 15_000 })
   check('…and going back to the whole log restores it exactly', back === opened, `${narrowed} → ${back}`)
+}
+
+/** The footer's denominator toggle, as the DOM carries it. */
+function basisButton(page: Page): Promise<string> {
+  return page.evaluate(
+    () => document.querySelector('[data-testid="xp-basis"]')?.getAttribute('data-basis') ?? ''
+  )
+}
+
+/** Write through a window's SCOPE bridge — the app-wide pair (JOS-332). Both preloads carry the
+ *  same member under the same name, which is what makes this one helper serve both windows. */
+function setScope(page: Page, patch: Record<string, unknown>, bridge: 'eq' | 'eqOverlay'): Promise<void> {
+  return page.evaluate(
+    ([b, p]) =>
+      (window as unknown as Record<string, { setScopeSelection: (x: unknown) => void }>)[
+        b as string
+      ].setScopeSelection(p),
+    [bridge, patch] as const
+  )
+}
+
+/** Read a window's SCOPE bridge. Same member, same name, either side. */
+function getScope(page: Page, bridge: 'eq' | 'eqOverlay'): Promise<Record<string, string>> {
+  return page.evaluate(
+    (b) =>
+      (window as unknown as Record<string, { getScopeSelection: () => Promise<Record<string, string>> }>)[
+        b
+      ].getScopeSelection(),
+    bridge
+  )
+}
+
+/**
+ * WHICH HOUR THE RATES ARE PER, END TO END (JOS-288, owner ruling 3; re-homed by JOS-332).
+ *
+ * `tests/xpOverlay.test.mts` pins the arithmetic of both readings and `shared/rateBasis.ts` owns the
+ * default. What only the real app can show is that the knob is wired at all: that the window opens
+ * on `elapsed`, that the footer states the hour in force, that flipping it re-measures every rate
+ * AND the span line, and that main's rebuild-not-trust normalizer refuses a denominator this build
+ * cannot name.
+ *
+ * IT IS NO LONGER THIS WINDOW'S PERSISTED KNOB. `xpBasis` was retired with `xpZoneScope` (JOS-332):
+ * the Leveling tab draws the same two controls, and while each side kept a copy the reader had no
+ * way to tell which one the numbers obeyed. So the flips below go through the app-wide bridge — the
+ * same call the footer button now makes — and `stepScopeParity` proves the other window hears them.
+ */
+async function stepRateBasis(overlay: Page): Promise<void> {
+  check('the window opens on the elapsed hour', (await basisButton(overlay)) === 'elapsed')
+  const opened = await settleStable(() => span(overlay), { timeoutMs: 15_000 })
+  check('…and the span line names that hour, once, for every row', opened.includes('elapsed'), opened)
+  const fresh = await getConfig(overlay)
+  check(
+    '…and the retired per-window key is gone from the store, not merely unset',
+    fresh.xpBasis === undefined,
+    JSON.stringify(fresh.xpBasis)
+  )
+
+  await setScope(overlay, { basis: 'active' }, 'eqOverlay')
+  const flipped = await settle(() => span(overlay), (t) => t.includes('active'), { timeoutMs: 15_000 })
+  check('flipping to active time re-words the span', flipped.includes('active'), `${opened} → ${flipped}`)
+  check('…and the footer button follows it', (await basisButton(overlay)) === 'active')
+  check(
+    '…and it never lands in this window’s persisted config',
+    (await getConfig(overlay)).xpBasis === undefined
+  )
+
+  // Nothing can name an hour this build does not have — the closed union, through the real IPC and
+  // the real normalizer in main (the `xpRows` rule, applied to a knob that now crosses a channel).
+  await setScope(overlay, { basis: 'wall' }, 'eqOverlay')
+  const held = await getScope(overlay, 'eqOverlay')
+  check('an unknown denominator is dropped by main rather than applied', held.basis === 'active', JSON.stringify(held))
+  check('…and a rejected patch is a NO-OP, not a reset to the opening', (await basisButton(overlay)) === 'active')
+
+  await setScope(overlay, { basis: 'elapsed' }, 'eqOverlay')
+  const restored = await settle(() => span(overlay), (t) => t === opened, { timeoutMs: 15_000 })
+  check('…and going back to the elapsed hour restores the line exactly', restored === opened, restored)
+}
+
+/** The footer's membership toggle, as the DOM carries it. '' when it is not mounted at all. */
+function tierButton(page: Page): Promise<string> {
+  return page.evaluate(() => document.querySelector('[data-testid="xp-tier"]')?.getAttribute('data-scope') ?? '')
+}
+
+/**
+ * THIS TIER, OR EVERY TIER OF THE ZONE, END TO END (JOS-291).
+ *
+ * `tests/timeslice.test.mts` pins the two folds and `tests/progressionWindows.test.mts` pins them
+ * over the real `The Plane of Hate - Solo 1 (Awakened)` / `- Solo 2 (Adaptive)` pair. What only the
+ * real app can show is the fourth persisted knob wired end to end: that the control is absent while
+ * the slice names no zone, that it appears with the default when one does, that the SPAN LINE names
+ * the membership in force (the honesty rule — a caption reading `Nagafen's Lair` over numbers that
+ * counted `Nagafen's Lair - Solo 3 (Fused)` is the defect this option was filed for), that flipping
+ * it re-measures, and that main's rebuild-not-trust normalizer refuses a membership this build
+ * cannot apply.
+ *
+ * e2e-leveling.log is the right fixture by accident of the owner's own play: it names five
+ * spellings of ONE camp (plain `Nagafen's Lair` plus four `- Solo N (…)` tiers), so the two
+ * memberships have genuinely different answers here.
+ */
+async function stepZoneScope(overlay: Page): Promise<void> {
+  check('a slice that names no zone offers no membership toggle', (await tierButton(overlay)) === '')
+
+  await setConfig(overlay, { xpSlice: 'zone' })
+  const exact = await settle(() => span(overlay), (t) => t.includes('tier'), { timeoutMs: 15_000 })
+  // THE OPENING IS THIS TIER (owner ruling, JOS-332) — it was `allTiers` here until today.
+  check('picking Zone brings the membership toggle out, on THIS TIER', (await tierButton(overlay)) === 'exactTier')
+  check(
+    '…and the span line NAMES what that membership admitted, rather than only the current tier',
+    /this tier only/.test(exact),
+    exact
+  )
+  check(
+    '…while the checklist prefix still selects rows only',
+    (await countOf(overlay, '[data-testid^="xp-toggle-"]')) === 3,
+    'the tier toggle is `xp-tier`, deliberately outside the row prefix'
+  )
+
+  await setScope(overlay, { zoneScope: 'allTiers' }, 'eqOverlay')
+  const every = await settle(() => span(overlay), (t) => t.includes('every tier'), { timeoutMs: 15_000 })
+  check('flipping to every tier re-words the caption', every.includes('every tier'), `${exact} → ${every}`)
+  check('…and the footer button follows it', (await tierButton(overlay)) === 'allTiers')
+  check(
+    '…and the span itself is re-measured, because the other tiers of the camp are back in',
+    every !== exact,
+    `${exact} → ${every}`
+  )
+  check(
+    '…and none of it lands in this window’s persisted config any more',
+    (await getConfig(overlay)).xpZoneScope === undefined
+  )
+
+  // Nothing can name a membership this build cannot apply — the closed union, through the real IPC
+  // and the real normalizer in main (the `xpRows` rule, applied to a knob that crosses a channel).
+  await setScope(overlay, { zoneScope: 'everyTier' }, 'eqOverlay')
+  const held = await getScope(overlay, 'eqOverlay')
+  check('an unknown membership is dropped by main rather than applied', held.zoneScope === 'allTiers', JSON.stringify(held))
+  const restored = await settle(() => span(overlay), (t) => t === every, { timeoutMs: 15_000 })
+  check('…so the window holds the read it had, rather than degrading to a blank', restored === every, restored)
+
+  // Back to the OPENING before leaving: the selection is app-wide now, so a step that walks away
+  // from it having moved it hands the next step a state it did not ask for (this one did exactly
+  // that to `stepScopeParity` on the first run of this file).
+  await setScope(overlay, { zoneScope: 'exactTier' }, 'eqOverlay')
+  await settle(() => tierButton(overlay), (s) => s === 'exactTier', { timeoutMs: 15_000 })
+
+  // Back to the whole log for the steps below, and the toggle goes away with the zone it was about.
+  await setConfig(overlay, { xpSlice: 'all' })
+  const back = await settle(() => tierButton(overlay), (s) => s === '', { timeoutMs: 15_000 })
+  check('…and it leaves again with the zone half it was about', back === '')
+}
+
+/**
+ * THE TWO WINDOWS ARE ONE ANSWER (JOS-332) — the ticket's own third part, and the reason the other
+ * two steps above stopped writing to this window's config.
+ *
+ * THE REPORT: *with this tier selected on Leveling, the numbers still cover every tier* — the owner
+ * had `this tier` on screen and read the every-tier `elapsed 27m`. The arithmetic was never wrong
+ * (tests/zoneScope.test.mts replays his scenario and pins the narrowed denominator); the membership
+ * was simply TWO STATES, one in a module variable in the main renderer and one persisted per
+ * overlay window, with no channel between them.
+ *
+ * `tests/scopeSelection.test.mts` pins the seam in source — main owns it, both preloads carry the
+ * same three members, one hook reads them. What only two real windows can show is the round trip:
+ * a value written in one process reaching the OTHER process's rendered DOM. So this step drives
+ * each direction from a different window and reads the effect in the far one:
+ *
+ *   • MAIN → OVERLAY, read as pixels: the flip is made on the main window's bridge and the
+ *     floating window's own footer button and span line follow it. This is the direction the
+ *     owner's defect ran, and it is the one with a rendered assertion on the receiving end.
+ *   • OVERLAY → MAIN, read as state: the flip is made on the overlay's bridge and the MAIN
+ *     window's bridge reports it. `leveling.e2e.mts` carries the rendered half of this direction
+ *     (`checkTierScopedElapsed` drives the bridge and watches the tab's own row and elapsed span
+ *     move), because this spec never navigates the main window to the Leveling tab.
+ *
+ * It runs on the `zone` slice, because a membership with no zone in it is not a control.
+ */
+async function stepScopeParity(page: Page, overlay: Page): Promise<void> {
+  await setConfig(overlay, { xpSlice: 'zone' })
+  // STATE THE PRECONDITION RATHER THAN INHERIT IT. The selection is app-wide, so what the earlier
+  // steps left behind is not this step's subject — it puts both windows on a known membership and
+  // then measures the round trip. (Inheriting it is the mistake this comment is paying for.)
+  await setScope(overlay, { zoneScope: 'exactTier' }, 'eqOverlay')
+  const opened = await settle(() => tierButton(overlay), (s) => s === 'exactTier', { timeoutMs: 15_000 })
+  check('the floating window is on this tier, with a zone to apply it to', opened === 'exactTier', opened)
+  const mainOpen = await getScope(page, 'eq')
+  check(
+    'and the MAIN window already agrees — there is one value, and main is holding it',
+    mainOpen.zoneScope === 'exactTier',
+    JSON.stringify(mainOpen)
+  )
+
+  // ── MAIN → OVERLAY, on the far window's pixels ──
+  const before = await settleStable(() => span(overlay), { timeoutMs: 15_000 })
+  await setScope(page, { zoneScope: 'allTiers' }, 'eq')
+  const moved = await settle(() => tierButton(overlay), (s) => s === 'allTiers', { timeoutMs: 15_000 })
+  check('a flip in the MAIN window moves the floating window’s own button', moved === 'allTiers', moved)
+  const widened = await settle(() => span(overlay), (t) => t.includes('every tier'), { timeoutMs: 15_000 })
+  check(
+    '…and its span line, which is the number the report was about',
+    widened !== before && widened.includes('every tier'),
+    `${before} → ${widened}`
+  )
+
+  // ── OVERLAY → MAIN, on the far window's state ──
+  await setScope(overlay, { zoneScope: 'exactTier' }, 'eqOverlay')
+  const heard = await settle(() => getScope(page, 'eq'), (s) => s.zoneScope === 'exactTier', { timeoutMs: 15_000 })
+  check('and a flip in the FLOATING window is heard by the main one', heard.zoneScope === 'exactTier')
+  const narrowed = await settle(() => span(overlay), (t) => t === before, { timeoutMs: 15_000 })
+  check('…restoring the narrowed span byte for byte', narrowed === before, `${widened} → ${narrowed}`)
+
+  // THE HOUR TRAVELS THE SAME WIRE, and the halves are independent: moving one must not move the
+  // other, or a reader flipping the tier would silently re-divide every rate on both surfaces.
+  await setScope(page, { basis: 'active' }, 'eq')
+  const hour = await settle(() => basisButton(overlay), (b) => b === 'active', { timeoutMs: 15_000 })
+  check('the DENOMINATOR travels the same wire', hour === 'active')
+  check('…and moving one half leaves the other exactly where it was', (await tierButton(overlay)) === 'exactTier')
+  await setScope(page, { basis: 'elapsed' }, 'eq')
+  await settle(() => basisButton(overlay), (b) => b === 'elapsed', { timeoutMs: 15_000 })
+
+  // Back to the whole log, so the steps after this see the state they expect.
+  await setConfig(overlay, { xpSlice: 'all' })
+  await settle(() => tierButton(overlay), (s) => s === '', { timeoutMs: 15_000 })
 }
 
 /** Close it the way a user would — its own ✕ — and prove main recorded it. */
@@ -321,7 +565,17 @@ async function main(): Promise<void> {
         if (m.type() === 'error') consoleErrors.push(`xp overlay: ${m.text()}`)
       })
       await stepHydratesFromTheFold(overlay)
+      // AFTER the fold, so there are real rows to have (or not have) a hover, and the orphan test
+      // has a live pin tooltip to dismiss (JOS-358).
+      await stepRowsHoverNothing(overlay, 'xp-row-xp')
+      await stepTitleBarOnlyTooltips(overlay, 'the XP window')
+      await stepTooltipLeavesWithThePointer(overlay)
       await stepSlice(overlay)
+      await stepRateBasis(overlay)
+      await stepZoneScope(overlay)
+      // AFTER both knob steps, because it is the claim they now depend on: the two windows are
+      // reading one value (JOS-332). It leaves the slice back on `all`, as they do.
+      await stepScopeParity(page, overlay)
       await stepLiveMote(overlay, log)
       await stepRowChecklist(overlay)
     } else {

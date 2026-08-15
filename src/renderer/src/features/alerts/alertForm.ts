@@ -28,6 +28,7 @@ import {
   blankCondition,
   type CombineMode,
   type ConditionDraft,
+  conditionFieldKeyErr,
   conditionFieldValErr,
   conditionRawErr,
   draftFromPrimitive,
@@ -92,14 +93,26 @@ interface FormSetters {
   setEarlyWarnSec: (v: number) => void
 }
 
-/** Fill the whole form from `initial` (edit) or from blanks + the preset pack (add). */
-function hydrateForm(s: FormSetters, initial: AlertDef | null, packs: SoundPack[]): void {
+/**
+ * Fill the whole form from `initial` (edit) or from blanks + the preset pack (add).
+ *
+ * `defaultPackId` is the user's default-pack preference (JOS-273): a NEW alert opens on the pack
+ * they chose, which is the picker half of "set one and it sticks". An EDIT is untouched by it —
+ * the def already says which pack it plays, and a preference must never rewrite an alert the user
+ * authored earlier.
+ */
+function hydrateForm(
+  s: FormSetters,
+  initial: AlertDef | null,
+  packs: SoundPack[],
+  defaultPackId?: string
+): void {
   if (!initial) {
-    const preset = fallbackPack(packs)
+    const preset = fallbackPack(packs, defaultPackId)
     s.setName('')
     s.setMode('single')
     s.setConditions([blankCondition()])
-    s.setPackId(preset?.id ?? DEFAULT_PACK_ID)
+    s.setPackId(preset?.id ?? defaultPackId ?? DEFAULT_PACK_ID)
     s.setSoundId(firstSoundId(preset))
     s.setVolume(1)
     s.setCooldownMs(DEFAULT_COOLDOWN_MS)
@@ -127,13 +140,15 @@ function hydrateForm(s: FormSetters, initial: AlertDef | null, packs: SoundPack[
 export function useAlertForm(
   open: boolean,
   initial: AlertDef | null,
-  packs: SoundPack[]
+  packs: SoundPack[],
+  /** The user's default-pack preference (JOS-273) — what a NEW alert opens on. */
+  defaultPackId?: string
 ): AlertForm {
   const [name, setName] = useState('')
   const [mode, setMode] = useState<CombineMode>('single')
   const [conditions, setConditions] = useState<ConditionDraft[]>([blankCondition()])
-  const [packId, setPackId] = useState(fallbackPack(packs)?.id ?? DEFAULT_PACK_ID)
-  const [soundId, setSoundId] = useState(firstSoundId(fallbackPack(packs)))
+  const [packId, setPackId] = useState(fallbackPack(packs, defaultPackId)?.id ?? DEFAULT_PACK_ID)
+  const [soundId, setSoundId] = useState(firstSoundId(fallbackPack(packs, defaultPackId)))
   const [volume, setVolume] = useState(1)
   const [cooldownMs, setCooldownMs] = useState(DEFAULT_COOLDOWN_MS)
   const [cooldownScope, setCooldownScope] = useState<CooldownScope>('alert')
@@ -170,17 +185,17 @@ export function useAlertForm(
         setCooldownScope,
         setEarlyWarnSec
       }
-      hydrateForm(setters, initial, packs)
+      hydrateForm(setters, initial, packs, defaultPackId)
       return
     }
     // SAME OPENING, and only the pack list moved under us. Re-hydrating here is the bug; the
     // only honest response is to fill a sound the user could not yet have chosen (see header).
     if (soundId) return
-    const preset = fallbackPack(packs)
+    const preset = fallbackPack(packs, defaultPackId)
     if (!preset) return
     setPackId(preset.id)
     setSoundId(firstSoundId(preset))
-  }, [open, initial, packs, soundId])
+  }, [open, initial, packs, soundId, defaultPackId])
 
   // Switching INTO a composite from single keeps the existing condition and adds a second so
   // the OR/AND is meaningful; switching back to single collapses to the first condition.
@@ -230,8 +245,13 @@ export function triggerFromForm(mode: CombineMode, conditions: ConditionDraft[])
 }
 
 export function formCanSave(f: AlertForm): boolean {
+  // `conditionFieldKeyErr` is the third of these for a reason of its own (JOS-348): the other two
+  // say a pattern will not COMPILE, this one says a value the user typed has nowhere to be stored
+  // and would be dropped by `primitiveFromDraft`. An unsaveable form is the only spelling of "we
+  // are not going to quietly lose this" the dialog has.
   const conditionsValid = f.conditions.every(
-    (c) => conditionRawErr(c) == null && conditionFieldValErr(c) == null
+    (c) =>
+      conditionRawErr(c) == null && conditionFieldValErr(c) == null && conditionFieldKeyErr(c) == null
   )
   // A HIDDEN FIELD MAY NEVER BE THE REASON A DIALOG WILL NOT SAVE. The sound is required only
   // when the alert actually plays one — otherwise a text-only alert (audio:'silent') or a

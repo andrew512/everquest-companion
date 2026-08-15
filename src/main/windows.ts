@@ -35,6 +35,10 @@ import {
   noteNotifierOpacity,
   notifierIdleOpaque
 } from './notifierVisibility'
+// OPT-IN drag magnetism (JOS-217). Its own module — this file is at the 400-code-line ceiling, and
+// the whole feature is one `will-move` listener over pure geometry. It is handed the registry
+// below rather than importing it back out of here; see that file's header.
+import { installOverlaySnap } from './overlaySnapDrag'
 // WHERE A WINDOW MAY GO ON THE SCREENS THAT EXIST NOW (JOS-187). The `screen` module is not
 // consulted here any more: both questions this file asks of it — where an overlay opens, where the
 // main window opens — are decided in windowPlacement.ts over the pure geometry in displayFit.ts,
@@ -667,8 +671,10 @@ export function createOverlayWindow(kind: OverlayKind): void {
   const w = new BrowserWindow({
     ...overlayPlacement(kind),
     focusable: !locked,
-    // PER KIND (overlayLayout.ts): a meter is a panel with a largest useful size, an alert text
-    // lane is a banner with none — it may be stretched across the whole display.
+    // NEITHER THE FLOOR NOR THE CEILING IS A NUMBER THIS FILE OWNS (JOS-278). The floor is
+    // derived from what the overlay chrome can render without losing a control off an edge, and
+    // the ceiling is per kind — a meter is a panel with a largest useful size, an alert text lane
+    // is a banner with none. Both live beside the argument for them, in overlayLayout.ts.
     ...overlaySizeLimits(kind),
     // The toast strip is a fixed-width card LANE, not a resizable panel: the card sizes itself
     // and everything around it is transparent, so resizing that window would only change how
@@ -756,6 +762,13 @@ export function createOverlayWindow(kind: OverlayKind): void {
   }
   w.on('moved', saveOverlayBounds)
   w.on('resized', saveOverlayBounds)
+
+  // A drag that lines this window up with its neighbours and the screen edges — but ONLY for a
+  // user who has turned it on in Preferences (JOS-217). Installed for every overlay so the
+  // preference takes effect on the next drag rather than the next launch; with it off the
+  // listener's first line returns and this window drags exactly as it always has. A snapped
+  // rectangle IS the user's own, so it goes through `saveOverlayBounds` above like any other move.
+  installOverlaySnap(w, kind, overlayWindows, getMainWindow)
 
   w.on('closed', () => {
     overlayWindows[kind] = null

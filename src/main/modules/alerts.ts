@@ -23,6 +23,19 @@
 // Alert defs are owned by the store; the module holds a live copy that main keeps
 // in sync (setDefs) whenever the user saves/deletes an alert.
 //
+// A LITERAL `where.spell` MATCHER IS RANK-BLIND (JOS-259). A spell alert fires for ALL RANKS of
+// that spell — the owner's ruling, and the domain law behind it is that an upgraded spell never
+// downgrades. Both sides of the compare fold through `spellLineKey`, so `Elemental Maelstrom`,
+// `Elemental Maelstrom II` and `Elemental Maelstrom III` are one def's business. `/regex/` specs
+// are untouched. The argument, and its scope, are on `accepts` below.
+//
+// AND SINCE JOS-276 THE DAMAGE LANE FOLDS TOO — `where.skill` on a `damage` trigger, for the
+// dtypes whose `skill` IS a spell name ('spell' | 'dot'). The owner's law is now stated without a
+// carve-out: ranks are not used for ANYTHING in the alert system. `foldsRank` decides at compile
+// time which key can fold and `foldReaches` decides per event whether it does; the melee and
+// damage-shield dtypes are excluded there rather than by measurement. Full argument on
+// `foldReaches`.
+//
 // CAPTURE GROUPS (JOS-103). A trigger's regexes may declare NAMED groups, and what they capture
 // rides out on `FiredAlert.captures` so a spoken alert can say it ("Puma on Fail"). THIS FILE IS
 // ONE OF THE TWO ENFORCEMENT POINTS — read the threat model in shared/alertCaptures.ts before
@@ -33,6 +46,14 @@
 // There is no path to another event, another alert, or app state, and there are no ambient
 // tokens. Every value leaves through `harvestCaptures`, which sanitizes it and caps both its
 // length and the number of groups; nothing downstream is trusted to do that for us.
+//
+// …AND SINCE JOS-353 THERE IS EXACTLY ONE TOKEN THE APP FILLS IN ITSELF: `{target}`, the entity
+// the matched event says the spell is affecting. It is not a general ambient facility and the
+// exemption is argued in full in shared/alertTargets.ts. What this file enforces is the SHAPE of
+// it: the wanted set is compiled from the def's OWN PHRASE (so a def that never says `{target}`
+// carries none, and its delta is byte-identical to before), the value is resolved from the SAME
+// event the alert just fired on, and a group the pattern declared always wins over the derived
+// one — see `withAutoCaptures`.
 
 import type { EqModule } from './types'
 import {
@@ -45,9 +66,16 @@ import {
 // The pure field readers, split out of this file so it stays under its factoring ceiling — the
 // `where` matcher's two (`fieldText`, `spellCandidateNames`) and the firing payload's one
 // (`firingSpell`). Their arguments live with them in alertsFields.ts.
-import { fieldText, firingSpell, spellCandidateNames } from './alertsFields'
+import { fieldText, firingSpell, spellCandidateNames, withAutoCaptures } from './alertsFields'
 import { idKey } from '../log/parseCommon'
 import { harvestCaptures } from '../../shared/alertCaptures'
+// `{target}` — the ONE token the app fills in without a declared capture group (JOS-353). The
+// table of which field of which kind names the entity, the sentinel rendering ('self' → "you"),
+// and the security argument for the exemption all live in shared/alertTargets.ts; this file is the
+// other enforcement point and does exactly two things with it: compile the WANTED set from the
+// def's own phrase, and merge the resolved value UNDER the pattern's own captures
+// (`withAutoCaptures`, which lives beside the other pure field readers in alertsFields.ts).
+import { autoTokensWanted, type AutoTokenName } from '../../shared/alertTargets'
 import type { BuffTimerRow } from '../../shared/buffTimers'
 import {
   breakProbes,
@@ -56,6 +84,10 @@ import {
   type BreakTriggerKind
 } from '../../shared/earlyWarning'
 import type { LogEvent } from '../../shared/logEvents'
+// The repo-wide rank fold (JOS-259). `spellLineKey` is shared/'s mirror of the parser's
+// `spellCanonKey` — tests/spellLines.test.mts pins the two equal — and it is what makes a literal
+// `where.spell` matcher rank-blind; see `accepts`.
+import { spellLineKey } from '../../shared/spellLines'
 import type {
   AlertDef,
   AlertFireRecord,
@@ -93,7 +125,7 @@ const COOLDOWN_KEY_CAP = 500
 
 /**
  * A compiled matcher value: the predicate, plus the RegExp it compiled to when the spec was
- * written in `/regex/` form.
+ * written in `/regex/` form, plus the rank-folded key when it is a LITERAL `spell` matcher.
  *
  * The regex is kept BESIDE the predicate rather than behind it because a named capture group is
  * only readable from the RegExp itself (`exec().groups`) — see `fieldMatches`. Nothing else about
@@ -103,6 +135,31 @@ const COOLDOWN_KEY_CAP = 500
 interface CompiledMatch {
   test: (fieldValue: string) => boolean
   re?: RegExp
+  /**
+   * `spellLineKey(spec)` — set ONLY for a literal matcher on a key that NAMES A SPELL (`spell`
+   * anywhere, and `skill` on a `damage` trigger — `foldsRank`), and only when the fold leaves
+   * something to compare (a spec that is nothing but a roman numeral folds to '' and is left alone
+   * rather than turned into a wildcard). Absent everywhere else, which is what keeps `caster`,
+   * `target`, `refresh` and every `/regex/` spec byte-for-byte what they were.
+   */
+  lineKey?: string
+}
+
+/**
+ * WHICH (kind, key) PAIRS NAME A SPELL — the compile-time half of the rank fold.
+ *
+ * `spell` folds on every kind that has one, which is every kind the alert surface authors
+ * (alertsFields.ts SPELL_FIELD_BY_KIND). `damage.skill` joins it in JOS-276: the typed-nuke and
+ * DoT shapes put the SPELL NAME there (log/parseCombat.ts), and the owner's law leaves no lane
+ * out. Whether that fold actually reaches a given event is a second question, asked per event by
+ * `foldReaches` — a `damage` event's `skill` is only a spell name for two of its four dtypes.
+ *
+ * Nothing else folds, and the two near-misses are provable no-ops rather than judgement calls:
+ * `poisonProc.strike` and `poisonCoat.poison` draw from shared/poisons.ts, whose 40-odd names
+ * carry no roman-numeral rank at all.
+ */
+function foldsRank(kind: string, key: string): boolean {
+  return key === 'spell' || (kind === 'damage' && key === 'skill')
 }
 
 /**
@@ -110,8 +167,12 @@ interface CompiledMatch {
  * is a case-insensitive regex; anything else is a case-insensitive exact match on
  * the stringified field. Invalid regex falls back to literal equality so a bad
  * def degrades gracefully instead of throwing in the hot path.
+ *
+ * A LITERAL SPELL-NAMING MATCHER IS RANK-BLIND (JOS-259, extended by JOS-276) — see `accepts`.
+ * The trigger's kind and the `where` key are both passed in because the fold belongs to the fields
+ * that name a spell and to nothing else (`foldsRank`).
  */
-function compileFieldMatch(spec: string): CompiledMatch {
+function compileFieldMatch(spec: string, key: string, kind: string): CompiledMatch {
   if (spec.length >= 2 && spec.startsWith('/') && spec.endsWith('/')) {
     const body = spec.slice(1, -1)
     try {
@@ -124,7 +185,84 @@ function compileFieldMatch(spec: string): CompiledMatch {
     }
   }
   const lower = spec.toLowerCase()
-  return { test: (v) => v.toLowerCase() === lower }
+  const test = (v: string): boolean => v.toLowerCase() === lower
+  if (!foldsRank(kind, key)) return { test }
+  const lineKey = spellLineKey(spec)
+  return lineKey ? { test, lineKey } : { test }
+}
+
+/**
+ * WHETHER A COMPILED MATCHER ACCEPTS ONE PIECE OF TEXT — exact as it always was, plus the RANK
+ * FOLD for a literal `spell` matcher.
+ *
+ * THE RULE (JOS-259, owner ruling 2026-08-12 — "rank-blind matching, full stop"): a spell alert
+ * fires for ALL RANKS OF THE SPELL. EQ Legends re-tiers the classic spells as roman-numeral ranks
+ * of one base name, and only SOME of the lines a spell prints carry the suffix — `castBegin` and
+ * `resist` keep it (`You begin casting Elemental Maelstrom II.` / `<mob> resisted your Elemental
+ * Maelstrom II!`), while the wear-off/fade family prints the bare name. So a def pinned to one
+ * spelling was an alert that half the spell's own lines could never satisfy: the reporter's
+ * resisted alert for `Elemental Maelstrom` went silent the day they unlocked rank II, while their
+ * fade alert — pinned to the same string, matched against a line that never carried a suffix —
+ * kept working. Folding both sides through `spellLineKey` (the repo-wide rank fold, mirrored from
+ * the parser's `spellCanonKey`) makes every line of one spell answer to one def.
+ *
+ * IT WIDENS ONLY, AND ONLY FOR LITERALS. The fold is a superset of the old case-insensitive
+ * equality it replaces, so a def pinned to `Elemental Maelstrom II` still fires on II — it now
+ * also fires on I and on III, which is the ruling. A `/regex/` spec is USER-AUTHORED PATTERN and
+ * is left exactly alone: someone who wrote `/Maelstrom II$/` asked a narrower question on purpose,
+ * and rewriting their intent is not ours to do.
+ *
+ * SCOPE: EVERY KEY THAT NAMES A SPELL (`foldsRank`). `castBegin`, `castFizzle`,
+ * `castInterrupted`, `resist`, `cc`, `uncharm`, `heal`, `buffApply`, `buffFade`, `buffWearOff` and
+ * the derived `buffExpired` all spell it `spell` (alertsFields.ts SPELL_FIELD_BY_KIND), so one
+ * key folds them all and they cannot disagree about which def owns a line; JOS-276 added
+ * `damage.skill` for the two dtypes whose skill IS a spell name. The two other fields that name a
+ * spell-ish thing are left alone because the fold would be a provable no-op there:
+ * `poisonProc.strike` and `poisonCoat.poison` draw from shared/poisons.ts, whose 40-odd names
+ * carry no roman-numeral rank at all.
+ *
+ * NO UPGRADE-OFFER COMPENSATION. The offer strip (shared/spellLines.ts `detectRankUpgrades`) is
+ * untouched by this: the ruling is that no offer is needed to keep an alert firing, and the
+ * domain law behind it is that once you upgrade a spell it never downgrades, even on a loadout
+ * swap. An offer that still appears is now a convenience, never the thing standing between a user
+ * and a sound.
+ *
+ * `folds` is the per-event gate (`foldReaches`); it is true for every caller that asks about a
+ * `spell` key, which is what keeps this identical to what JOS-259 shipped.
+ */
+function accepts(f: CompiledMatch, text: string, folds = true): boolean {
+  if (f.test(text)) return true
+  return folds && f.lineKey !== undefined && spellLineKey(text) === f.lineKey
+}
+
+/**
+ * WHETHER THE RANK FOLD REACHES THIS EVENT — the runtime half, and it exists for exactly one
+ * field: `damage.skill` (JOS-276).
+ *
+ * `damage` PUTS FOUR DIFFERENT VOCABULARIES IN ONE FIELD (log/parseCombat.ts), and only two of
+ * them are spell names:
+ *   'spell' — the typed nuke, `<A> hits <B> for N points of <class> damage by <Spell>.` A SPELL,
+ *             and it prints the rank when the caster has one: the owner's log carries both
+ *             `… damage by Harm Touch.` (488) and `… damage by Harm Touch III/IV/VI/IX.` (23) —
+ *             one spell, two spellings, in one lane. This is the defect.
+ *   'dot'   — the tick, `<B> has taken N damage from <Spell> by <caster>.` Also a spell, also
+ *             ranked in the wild: `Chords of Dissonance I/III/IV/V` off four different bards.
+ *   'melee' — NOT a log string at all. `meleeSkill(verb)` maps the swing verb onto a CLOSED table
+ *             of ten constants (Backstab, Bash, Kick, Cleave, Smite, Ranged, Strike, Frenzy,
+ *             Flurry, Melee), so no melee skill can ever carry a roman-numeral tail. That is the
+ *             JOS-259 worker's "provably inert" measurement, re-verified for JOS-276 and now
+ *             pinned in tests/rankBlindSpellAlerts.test.mts (D3).
+ *   'ds'    — the damage-shield element, and this one IS free text off the line (DS_RE group 3).
+ *             The owner's whole log spells three of them — flames (17,780), thorns (7,861),
+ *             frost (152) — so it is inert today, but nothing in the parser BOUNDS it. That is
+ *             why this gate is written on the dtype rather than left to the measurement: an
+ *             element the game adds tomorrow cannot quietly start folding.
+ *
+ * Every other key answers true, which is the identity this had before the damage lane existed.
+ */
+function foldReaches(f: CompiledField, ev: LogEvent): boolean {
+  if (f.key !== 'skill') return true
+  return ev.kind === 'damage' && (ev.dtype === 'spell' || ev.dtype === 'dot')
 }
 
 /** One compiled `where` entry: the event field it names and the matcher it compiled to. */
@@ -170,15 +308,21 @@ function mergeCaptures(
  * The JOS-84 spell widening captures from the CANDIDATE NAME that satisfied the matcher, for the
  * same reason `matchedSpellName` reports that name rather than the event's best-effort pick: the
  * text the pattern matched is the text it named.
+ *
+ * The JOS-259 rank fold rides inside `accepts`, so it applies to the field's own value and to
+ * every candidate name alike — a candidate list that spells a rank cannot be a second way for one
+ * spell to have two identities. `foldReaches` is asked ONCE here, because the answer is a property
+ * of this (field, event) pair and both compares below are about the same pair.
  */
 function fieldMatches(ev: LogEvent, f: CompiledField): ConditionHit | null {
   const raw = (ev as unknown as Record<string, unknown>)[f.key]
   if (raw == null) return null
+  const folds = foldReaches(f, ev)
   const text = fieldText(raw)
-  if (f.test(text)) return capturesFrom(f, text)
+  if (accepts(f, text, folds)) return capturesFrom(f, text)
   // Only the `spell` key widens, and only when the event carries candidates (JOS-84).
   if (f.key !== 'spell') return null
-  const hit = spellCandidateNames(ev).find((n) => f.test(n))
+  const hit = spellCandidateNames(ev).find((n) => accepts(f, n, folds))
   return hit === undefined ? null : capturesFrom(f, hit)
 }
 
@@ -218,6 +362,16 @@ interface CompiledAlert {
    * the end, and arming on it silenced the alert entirely.
    */
   breakKinds: BreakTriggerKind[]
+  /**
+   * The auto tokens THIS DEF'S PHRASE writes (JOS-353) — empty for every alert that does not
+   * speak `{target}`, which is nearly all of them.
+   *
+   * COMPILED FROM THE PHRASE, NOT FROM THE TRIGGER, and that is the bound on the whole feature:
+   * a def that never says `{target}` carries no target on its firing, so its `module:delta` is
+   * byte-identical to what it was before the token existed. Resolving one costs a table lookup
+   * and a sanitize per FIRE; deciding whether to is done once, here, at compile time.
+   */
+  autoTokens: AutoTokenName[]
 }
 
 /** Compile one PRIMITIVE trigger into a matcher condition. */
@@ -225,7 +379,7 @@ function compileCondition(t: AlertTriggerPrimitive): CompiledCondition {
   if (t.type === 'event') {
     const fields: CompiledField[] = Object.entries(t.where ?? {}).map(([key, spec]) => ({
       key,
-      ...compileFieldMatch(spec)
+      ...compileFieldMatch(spec, key, t.kind)
     }))
     return { event: { kind: t.kind, fields } }
   }
@@ -255,6 +409,11 @@ function compileCondition(t: AlertTriggerPrimitive): CompiledCondition {
  * and a regex-shaped matcher resolves to the first candidate it accepts — the honest answer when
  * one sentence is five spells, since the log itself does not say which.
  *
+ * IT ASKS THE SAME QUESTION THE MATCH DID (`accepts`, not `test`), so the JOS-259 rank fold cannot
+ * split the two apart: a def pinned to `Elemental Maelstrom` that fired on a line naming
+ * `Elemental Maelstrom II` keeps the event's own pick and SAYS the rank it saw. Announcing the
+ * def's spelling instead would be reporting the alert back to the user rather than the log.
+ *
  * Runs once per FIRE, never per compiled alert per event: firings are rare, matching is not.
  */
 function matchedSpellName(c: CompiledAlert, ev: LogEvent, base: string | undefined): string | undefined {
@@ -264,8 +423,8 @@ function matchedSpellName(c: CompiledAlert, ev: LogEvent, base: string | undefin
   for (const cond of c.conditions) {
     if (cond.event?.kind !== ev.kind) continue
     const f = cond.event.fields.find((x) => x.key === 'spell')
-    if (!f || f.test(base)) continue
-    const hit = names.find((n) => f.test(n))
+    if (!f || accepts(f, base)) continue
+    const hit = names.find((n) => accepts(f, n))
     if (hit !== undefined) return hit
   }
   return base
@@ -287,6 +446,12 @@ function matchedSpellName(c: CompiledAlert, ev: LogEvent, base: string | undefin
  * `idKey` is the repo-wide canonicalization (world-model law 2: names are dirty — damage lines
  * capitalize the article, lifecycle lines lowercase it), so "King Tranix" and "king tranix" are
  * one mob and cannot hold two clocks between them.
+ *
+ * RANK-BLIND BY CONSTRUCTION (JOS-276 sweep) — no spell name enters this key. A clock is
+ * `<alert>` or `<alert, mob>`, so one def firing on rank I and on rank III of its own spell shares
+ * ONE cooldown, which is what the fold above means: they are the same alert about the same spell.
+ * Adding the spelling here would hand the same def two clocks and re-introduce the split JOS-259
+ * closed, one layer down.
  */
 function cooldownKey(def: AlertDef, ev: LogEvent): string {
   if (def.cooldownScope !== 'target') return def.id
@@ -299,10 +464,25 @@ function cooldownKey(def: AlertDef, ev: LogEvent): string {
 function compileAlert(def: AlertDef): CompiledAlert {
   const t: AlertTrigger = def.trigger
   const breakKinds = breakTriggerKinds(t)
+  // BOTH of the def's templates, because either can carry a token. Of the speech block only a
+  // 'custom' phrase can — the other three modes resolve to values the app owns and have no
+  // template to substitute into (shared/speechText.ts) — and the display TEXT always can, since it
+  // is nothing but a template. A silent, text-only alert drawing "{target}" asked for the token
+  // just as plainly as a spoken one, and reading only the phrase would have rendered it literally.
+  const autoTokens = autoTokensWanted(
+    def.speech?.mode === 'custom' ? def.speech.phrase : undefined,
+    def.display?.text
+  )
   if ('conditions' in t) {
-    return { def, composite: t.type, conditions: t.conditions.map(compileCondition), breakKinds }
+    return {
+      def,
+      composite: t.type,
+      conditions: t.conditions.map(compileCondition),
+      breakKinds,
+      autoTokens
+    }
   }
-  return { def, composite: 'single', conditions: [compileCondition(t)], breakKinds }
+  return { def, composite: 'single', conditions: [compileCondition(t)], breakKinds, autoTokens }
 }
 
 export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
@@ -341,6 +521,12 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
    *
    * Recorded for REPLAY events too (unlike firing, which is live-only) so the map is complete
    * the moment the renderer hydrates.
+   *
+   * RANK-SENSITIVE ON PURPOSE, and it is the one map in the alert system that stays so (JOS-276
+   * sweep). It answers "which rank am I actually using", which is a question about ranks; nothing
+   * downstream of it decides whether an alert FIRES. Its readers are the suggestions surface
+   * (which rank a chip is offered for) and the upgrade offers — both now conveniences rather than
+   * the thing between a user and a sound.
    */
   private spellLastCast = new Map<string, number>()
   /** Names whose recency advanced since the last flush (delta payload). */
@@ -466,10 +652,12 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
       // Omitted rather than set to undefined: the delta is JSON over IPC, and an absent key
       // is the honest encoding of "this family names no spell".
       if (spell !== undefined) fired.spell = spell
-      // Likewise absent when the trigger declared no named group — which is nearly every alert,
-      // so the delta stays byte-identical for them. The values are already sanitized and capped
-      // (shared/alertCaptures.ts `harvestCaptures`); nothing downstream re-derives them.
-      if (match.captures) fired.captures = match.captures
+      // Likewise absent when the trigger declared no named group AND the phrase asked for no auto
+      // token — which is nearly every alert, so the delta stays byte-identical for them. The
+      // values are already sanitized and capped (shared/alertCaptures.ts `harvestCaptures`,
+      // shared/alertTargets.ts `resolveTarget`); nothing downstream re-derives them.
+      const captures = withAutoCaptures(match.captures, c.autoTokens, ev)
+      if (captures) fired.captures = captures
       if (this.earlyWarnTakesIt(c, ev, key, fired)) continue
       if (this.onCooldown(key, c.def, ev.ts)) continue
       this.noteFire(key, ev.ts)
@@ -560,7 +748,10 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
         const match = this.matches(c, p.ev)
         if (!match) continue
         const fired: FiredAlert = { alertId: c.def.id, ts: nowMs, matchedText: match.text, spell: p.spell }
-        if (match.captures) fired.captures = match.captures
+        // The probe's hypothetical event carries the ROW's subject, so an early warning speaks the
+        // same mob name the real break would have (`breakProbes`, shared/earlyWarning.ts).
+        const captures = withAutoCaptures(match.captures, c.autoTokens, p.ev)
+        if (captures) fired.captures = captures
         return { fired, cooldownKey: cooldownKey(c.def, p.ev) }
       }
     }

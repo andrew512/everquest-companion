@@ -57,10 +57,13 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parseEvent } from '../src/main/log/parser'
 import { installCharacterName, installSpellDb } from '../src/main/log/rulesets'
-import { loadSpellDb } from '../src/main/data/spellDb'
+import { buildSpellDb, loadSpellDb } from '../src/main/data/spellDb'
+import { applySpellCorrections, SPELL_CORRECTIONS } from '../src/main/data/spellCorrections'
 import { CombatEngine } from '../src/main/combat/engine'
 import { PET_TARGET_SPELLS, isPetOnlySpell } from '../src/main/combat/charmModel'
+import spellsJson from '../src/main/data/spells.json' with { type: 'json' }
 import type { SegmentView } from '../src/shared/combat'
+import type { SpellDbFile } from '../src/shared/types'
 
 installSpellDb(loadSpellDb())
 installCharacterName('Primitive')
@@ -295,6 +298,110 @@ test('a Quick Buff burst binds nothing — it prints landings and NO cast line',
 test('a landing on YOURSELF is never a pet', () => {
   const { eng } = replay([CAST('21:09:55', 'Intensify Death'), GLEAM('21:10:02', 'Primitive')])
   assert.deepEqual(eng.petDisplayNames(), [])
+})
+
+// ── 3b. JOS-349: THE RUNG CAN ONLY FIRE FOR A SPELL THE DB CAN NAME ────────────────────────
+//
+// THE REPORT (01M00ACVVFDRVWBXRDCFPHESNZ, JOS-349, a SHM/WAR/BRD): *"Pet is not getting parsed. at
+// the end of the log his name is Zarober. Not sure when it stopped parsing pet."*
+//
+// THE CHARACTERIZATION, from the reporter's own 6,544-line slice replayed through this engine: the
+// rung above never fired, and NOT because anything dropped the bind. Summoned pets have no time
+// limit — they end by death, loadout swap or dismissal — and nothing in the engine expires a
+// confirmed claim, so there was no binding-DROP rule to fix. There was never a bind at all. The
+// slice's whole ownership evidence is one re-summon and one pet-only buff:
+//
+//   16:15:45  `Kastik says, 'As you wish, oh great one.'`   the outgoing pet (a petSay, inert)
+//   16:15:54  `You begin casting Guardian Spirit.`          the re-summon
+//   16:16:08  `You summon a guardian spirit.`               a SELF landing — arms nothing
+//   16:16:21  `You begin casting Tiny Companion.`           a `targetType: Pet` spell — ARMS
+//   16:16:25  `Zarober shrinks.`                            the landing that NAMES the new pet
+//
+// `… Master.'` tells: ZERO. `/pet who leader` answers: ZERO. So this is JOS-188's reported defect
+// exactly — a re-summon nobody announces — and the pair that was built to catch it is right there
+// in the log, four seconds apart, inside the DB's own 4 s cast time.
+//
+// WHAT WAS WRONG WAS THE DB, ONE SUBJECT TOKEN WIDE. `petBuffLanding` requires the armed spell to be
+// AMONG the landing's candidates (the message is not the gate — ` shrinks.` is also Ant Legs and
+// Shrink), and the scrape wrote Tiny Companion's third-person message as `Target shrinks.` where the
+// suffix table keys on `Someone `. So the one pet-only member of the family was in NO table, could
+// not be a candidate for its own landing, and the two halves of the rung could never meet. That is
+// JOS-174's drift class reaching a surface it had never cost anything on before; the row and the
+// whole-log tripwire live in `src/main/data/spellCorrectionsSubjects.ts` under THE PET-BINDING HALF.
+//
+// WHERE THE BYTES COME FROM. A reporter's slice never becomes a fixture (AGENTS.md), so the window
+// below is hand-built from shapes the OWNER's log prints — `<Name> shrinks.` 33 times (`Dranix`
+// among them), and `Xyldarran begins casting Tiny Companion.` at Sat Aug 01 19:48:21 followed 4 s
+// later by `Konartik shrinks.`, which is an ALLY casting this very pair at this very spacing. The
+// ONE sentence his log lacks is his own cast of it (he bought and scribed the spell and never cast
+// it), and `You begin casting Tiny Companion.` is quoted verbatim from the slice with the pet's name
+// swapped for one of the owner's.
+
+/** The owner's own day for this window (`Konartik shrinks.` is Sat Aug 01 19:48:25). */
+const AUG = (t: string, text: string): string => `[Sat Aug 01 ${t} 2026] ${text}`
+const SHRINK = (t: string, name: string): string => AUG(t, `${name} shrinks.`)
+const AUG_CAST = (t: string, spell: string): string => AUG(t, `You begin casting ${spell}.`)
+const AUG_SWING = (t: string, name: string, n: number): string =>
+  AUG(t, `${name} pierces an ogre guard for ${n} points of damage.`)
+
+test('JOS-349: the pet-shrink pair binds the re-summoned pet', () => {
+  const { eng, lastTs } = replay([
+    // The summon's own landing is `targetType: Self` and lands on YOU, so it arms nothing and names
+    // nobody — which is why the buff two lines later is the only binding evidence in the window.
+    AUG_CAST('19:47:32', 'Guardian Spirit'),
+    AUG('19:47:46', 'You summon a guardian spirit.'),
+    AUG_CAST('19:48:21', 'Tiny Companion'),
+    SHRINK('19:48:25', 'Dranix'),
+    AUG_SWING('19:48:44', 'Dranix', 67)
+  ])
+  assert.deepEqual(eng.petDisplayNames(), ['Dranix'])
+  assert.deepEqual(eng.charmedPetNames(), [], 'a SUMMONED bind — it is a class pet, not a charm')
+  assert.deepEqual(petRows(eng, lastTs).get('Dranix'), { hits: 1, total: 67 })
+})
+
+test('JOS-349: …and with the wiki`s own subject the same window binds NOTHING', () => {
+  // THE DEFECT, stated through the machinery rather than by inspection: strip Tiny Companion back
+  // out of the ` shrinks.` candidate list and the landing is a sentence about somebody again. This
+  // is what the reporter's 142 Zarober lines were up against — the rung is intact, the arm is
+  // correct, and the candidate test can never pass.
+  const bare = buildSpellDb(
+    applySpellCorrections(
+      (spellsJson as SpellDbFile).spells,
+      SPELL_CORRECTIONS.filter((c) => !c.spells.includes('Tiny Companion'))
+    ).spells
+  )
+  installSpellDb(bare)
+  try {
+    const { eng } = replay([AUG_CAST('19:48:21', 'Tiny Companion'), SHRINK('19:48:25', 'Dranix')])
+    assert.deepEqual(eng.petDisplayNames(), [], 'the landing named a spell the armed cast is not among')
+  } finally {
+    installSpellDb(loadSpellDb())
+  }
+})
+
+test('JOS-349: the shrink landing still binds nothing without the own cast behind it', () => {
+  // The negative control, in this family's own sentence. ` shrinks.` is three spells and two of them
+  // are ordinary; a stranger shrinking their own pet beside you must stay their business, and the
+  // owner's log holds 33 of these lines against zero casts of his own.
+  const { eng } = replay([SHRINK('19:48:25', 'Dranix'), AUG_SWING('19:48:44', 'Dranix', 67)])
+  assert.deepEqual(eng.petDisplayNames(), [])
+})
+
+test('JOS-349: a summoned bind is never dropped by the charm sweep — no time limit exists', () => {
+  // THE OWNER'S CONSTRAINT, as an assertion (2026-08-14): summoned pets end only by death, loadout
+  // swap or dismissal. `CharmModel.sweep` demotes PROVISIONAL charm binds only, and a claim goes
+  // straight to `confirmed`, which never auto-expires — so an hour of silence after the bind costs
+  // the pet nothing. Ruled out as a cause here, and pinned so nobody adds one.
+  const { eng, lastTs } = replay([
+    AUG_CAST('19:48:21', 'Tiny Companion'),
+    SHRINK('19:48:25', 'Dranix'),
+    // Well past DEFAULT_CHARM_DURATION_MS + DURATION_SLACK_MS, which is what a CHARM bind would
+    // have expired under.
+    AUG_CAST('20:35:00', 'Greater Healing'),
+    AUG_SWING('20:35:10', 'Dranix', 67)
+  ])
+  assert.deepEqual(eng.petDisplayNames(), ['Dranix'], 'still yours, 47 minutes later')
+  assert.deepEqual(petRows(eng, lastTs).get('Dranix'), { hits: 1, total: 67 })
 })
 
 // ── 4. IT IS THE SAME BIND, NOT A FOURTH MODEL ─────────────────────────────────────────────

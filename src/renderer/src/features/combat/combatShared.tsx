@@ -24,7 +24,7 @@ export { fmtDur } from './copyText'
 // Re-exported so every panel header keeps the import it already had.
 export { CopyButton } from './CopyButton'
 // …and so did the readout atoms, for the same reason and to the same kind of file.
-import { MultiAttackStats, StatItem } from './meterBits'
+import { MultiAttackStats, RiposteStats, StatItem } from './meterBits'
 
 // `member` (a group-mate, docs/plans/group-model.md) is a green in the same muted family as the
 // pet's blue — a friendly, clearly not you, and clearly not the enemy's red.
@@ -214,7 +214,7 @@ function SkillReadout({
   approx,
   after
 }: {
-  s: FlatSkill
+  s: SkillRow
   /** this ability's own multi-attack reading (double/triple/quad/flurry), or null when it has none. */
   multi?: AbilityMulti | null
   approx?: boolean
@@ -257,6 +257,9 @@ function SkillReadout({
         {(s.lands ?? 0) > 0 && <StatItem label="Landed" value={`${a}${s.lands}`} />}
         {resists > 0 && <StatItem label="Resists" value={land.resistText} color={RESIST_COLOR} />}
         {multi && <MultiAttackStats multi={multi} a={a} />}
+        {/* The riposte share of this ability's damage (JOS-354) — a SUBSET of the total above,
+            never a figure to add to it (meterBits.RiposteStats says so in its wording). */}
+        {s.riposte && <RiposteStats riposte={s.riposte} a={a} />}
       </Stack>
       {multi?.flurry != null && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>

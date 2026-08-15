@@ -1,6 +1,6 @@
 import { type JSX, useState } from 'react'
 import type { OverlayKind } from '@shared/types'
-import type { CombatSnapshot, SegmentView } from '@shared/combat'
+import type { CombatSnapshot, PetSummonNudge, SegmentView } from '@shared/combat'
 import { formatRate } from '../lib/formatRate'
 import { formatTime } from '../lib/formatDate'
 import { LIVE_SELECTION, scopeOptions, type ScopeOption } from '../features/combat/dashboardData'
@@ -9,11 +9,13 @@ import { type OverlaySelectRow } from './OverlaySelect'
 import { OverlayHeader } from './OverlayHeader'
 import { MeterBars } from './meterBars'
 import { MeterPane } from './scopeFloor'
+import { PetNudgeCard } from './petNudgeCard'
 import { TextScaleStepper } from './TextScaleStepper'
+import { FOOTER_ROW } from './overlayScale'
 import { useOverlayChrome, type OverlayChrome } from './useOverlayChrome'
 import { useOverlayCombat } from './useOverlayCombat'
 import { useMeterScope } from '../features/combat/useCombatPrefs'
-import { EMPTY_ROSTER, SCOPE_HINT, chipLabel } from '@shared/roster'
+import { EMPTY_ROSTER, chipLabel } from '@shared/roster'
 
 // Palette (matches the app's combat colors; the overlay has no MUI theme).
 const GOLD = '#d9b25f'
@@ -126,6 +128,19 @@ function meterView(
   }
 }
 
+/**
+ * THE PET NUDGE (JOS-258), gated the way every other live signal on this surface is.
+ *
+ * No local state and no dismiss anywhere in the renderer: the engine decides, per poll, whether the
+ * sentence exists — and it stops existing on its own. Suppressed while the log is still folding for
+ * the reason `meterView` blanks everything else then: a summon replayed out of a months-old log is
+ * a historical moment, not something to tell somebody about now.
+ */
+function liveNudge(snap: CombatSnapshot | null): PetSummonNudge | undefined {
+  if (!snap || snap.hydrating) return undefined
+  return snap.petNudge
+}
+
 export default function OverlayMeter(): JSX.Element {
   // `kind` comes from the preload bridge (read from the window's ?kind= query). Fall back to
   // 'fight' if the bridge is momentarily absent (e.g. an HMR reload before the preload re-runs).
@@ -234,10 +249,8 @@ export default function OverlayMeter(): JSX.Element {
         textScale={textScale}
         locked={locked}
         capture={capture}
-        scope={{
-          label: chipLabel(meterScope, roster),
-          title: `${SCOPE_HINT[meterScope]}. Change it in Preferences > Combat.`
-        }}
+        scope={{ label: chipLabel(meterScope, roster) }}
+        notice={<PetNudgeCard nudge={liveNudge(snap)} />}
       >
         <MeterBars
           seg={seg}
@@ -277,20 +290,15 @@ function MeterFooter({
   return (
     <div
       style={{
+        ...FOOTER_ROW,
         ...noDrag,
-        display: 'flex',
-        alignItems: 'center',
         gap: 8,
-        padding: '3px 8px 5px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
         fontSize: 10,
-        color: 'rgba(255,255,255,0.6)',
-        flexShrink: 0
+        color: 'rgba(255,255,255,0.6)'
       }}
     >
-      <span title="Background opacity" style={{ flexShrink: 0 }}>
-        bg
-      </span>
+      {/* The word IS the label (JOS-358) — the footer names its own controls, it does not hover. */}
+      <span style={{ flexShrink: 0 }}>bg</span>
       <input
         type="range"
         min={0.1}
