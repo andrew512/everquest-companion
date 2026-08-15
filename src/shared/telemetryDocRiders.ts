@@ -41,12 +41,12 @@ const LIVE_FIELDS: DocField[] = [
     note:
       'The app sets a timer for a quarter second, over and over, and notes how late each one ' +
       'actually arrived. This is the lateness only one check in twenty exceeded, as a RANGE ' +
-      '(see below) — a reading about the computer, never about anything you did.'
+      '(see below) - a reading about the computer, never about anything you did.'
   },
   {
     name: 'live.maxBucket',
     type: OPT_BUCKET,
-    note: 'The worst single one of those, as a range — the moment you would have felt.'
+    note: 'The worst single one of those, as a range - the moment you would have felt.'
   },
   {
     name: 'live.over100',
@@ -59,7 +59,7 @@ const LIVE_FIELDS: DocField[] = [
     type: OPT_COUNT,
     note:
       'The app runs the same clock check on a second thread that does nothing else. This counts ' +
-      'the moments BOTH went late at once — which means the whole computer paused (memory, a ' +
+      'the moments BOTH went late at once - which means the whole computer paused (memory, a ' +
       'driver, a disk), not this app. It is how a freeze can be blamed correctly instead of ' +
       'guessed at. Not sent when that second check was not running.'
   }
@@ -82,7 +82,7 @@ const TAIL_FIELDS: DocField[] = [
     name: 'tail.p95Bucket',
     type: OPT_BUCKET,
     note:
-      'How long those reads took, at their worse end — the same ranges as the clock check above, ' +
+      'How long those reads took, at their worse end - the same ranges as the clock check above, ' +
       'so the two can be compared. The game writes to that same file, so this is how much of its ' +
       'time the app could be taking.'
   },
@@ -93,13 +93,13 @@ const TAIL_FIELDS: DocField[] = [
     name: 'tail.deltaBytesBucket',
     type: OPT_BUCKET,
     note:
-      'The biggest single chunk of new log read at once — a RANGE (see below), never the amount ' +
+      'The biggest single chunk of new log read at once - a RANGE (see below), never the amount ' +
       'itself, and never any part of what was in it.'
   },
   {
     name: 'tail.logSizeBucket',
     type: OPT_BUCKET,
-    note: 'How big that log is now — a range, never the size itself.'
+    note: 'How big that log is now - a range, never the size itself.'
   }
 ]
 
@@ -124,7 +124,7 @@ const STATE_FIELDS: DocField[] = [
     name: 'state.freeMemBucket',
     type: OPT_BUCKET,
     note:
-      'How much free memory the computer had, as a RANGE — a machine with none left pauses ' +
+      'How much free memory the computer had, as a RANGE - a machine with none left pauses ' +
       'everything, including the game.'
   },
   {
@@ -145,6 +145,6 @@ export const LIVE_RIDER_FIELDS: readonly DocField[] = [
 export const LIVE_RIDER_WHEN =
   'It also carries how smoothly the app itself was running since the previous one: how late its ' +
   'own timers arrived, how long its reads of your log took, and which of its windows and ' +
-  'switches were on. All of it is counts and ranges about this computer — no line of your log, ' +
+  'switches were on. All of it is counts and ranges about this computer - no line of your log, ' +
   'and no part of one, is ever sent. Each group is left out entirely when there is nothing to ' +
   'say (no character attached, or the check was not running).'

@@ -268,7 +268,7 @@ export function LiveSection({ data }: { data: TriageAnalyticsData }): JSX.Elemen
           </Typography>
           <Typography variant="caption" data-testid="analytics-live-verdict">
             {formatNum(l.over100)} ticks over 100 ms · {formatNum(l.over500)} over 500 ms ·{' '}
-            {rate(l.latePerReport)} late/report — of which {formatNum(l.coincident)} were seen by
+            {rate(l.latePerReport)} late/report - of which {formatNum(l.coincident)} were seen by
             BOTH clocks over {formatNum(l.verdicts)} reports that could answer ·{' '}
             {rate(l.machinePerReport)} machine/report
           </Typography>
