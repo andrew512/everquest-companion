@@ -39,6 +39,7 @@ import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import { LOG_WINDOW_CHOICES, MAX_DESCRIPTION, type FeedbackType } from '@shared/feedback'
 import InventoryPreview from './InventoryPreview'
 import LogPreview from './LogPreview'
+import PerfPreview from './PerfPreview'
 import {
   useFeedback,
   useFeedbackContext,
@@ -337,6 +338,9 @@ export default function FeedbackDialog({ open, onClose, prefill }: FeedbackDialo
             <DraftFieldsBlock state={state} />
             <AttachLogSection state={state} />
             <AttachInventorySection state={state} ctx={ctx} />
+            {/* The perf timeline rides `env`, so it is part of EVERY report — feature requests
+                included — and it renders itself away when the rings are empty (JOS-369). */}
+            <PerfPreview perf={ctx?.env.perf ?? null} />
             <ContextLine ctx={ctx} />
           </Stack>
         )}

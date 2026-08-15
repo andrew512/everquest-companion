@@ -25,6 +25,7 @@ import type {
   ReportStatus,
   Severity
 } from './feedback'
+import type { FeedbackPerf } from './feedbackPerf'
 
 // ---- filters --------------------------------------------------------------------------
 
@@ -92,6 +93,11 @@ export interface TriageDetail {
   /** `env_json`, parsed. TEXT-holding-JSON in the schema, so the parse is total: an
    *  unparseable blob yields `{}` rather than throwing across IPC. */
   env: Record<string, string>
+  /** `env_json.perf`, parsed and re-validated (JOS-369) — the ten-minute stall/tail timeline the
+   *  reporter saw before they sent it. Absent on every report from a client that predates the
+   *  field, and on every report composed before the probe started. It is lifted OUT of `env`
+   *  because it is the one key there that is not a one-line string. */
+  perf?: FeedbackPerf
   dupeOf?: string
   issueUrl?: string
   note?: string
