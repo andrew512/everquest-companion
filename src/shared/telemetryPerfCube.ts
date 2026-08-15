@@ -5,7 +5,7 @@
 // WHY A SECOND TABLE AT ALL, when the rule has been "one narrow counter table for everything".
 // `usage_daily` is (day, cohort, metric, dim, n) — ONE dimension per row — so it can answer "how
 // many session reports saw a stall over 500 ms" and it structurally CANNOT answer "is that rate
-// higher on exclusive-fullscreen installs, or on 8 GB boxes, or when a meter is locked". Those
+// higher on fullscreen installs, or on 8 GB boxes, or when a meter is locked". Those
 // are the questions the field reports about ~1 s EverQuest freezes actually pose, and a cross-tab
 // is the only shape that answers one. So: ONE small cube, five closed dims wide, and still no raw
 // event store and still nothing per-install beyond the `analytics_install` row that already

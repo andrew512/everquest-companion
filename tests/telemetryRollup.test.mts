@@ -158,7 +158,7 @@ test('THE MACHINE CLASS folds to one row per field — bucket index or enum memb
         safeMode: true,
         displayCountBucket: 2,
         primaryScaleBucket: 3,
-        eqWindowMode: 'exclusive'
+        eqWindowMode: 'fullscreen'
       }
     ])
   )
@@ -169,7 +169,7 @@ test('THE MACHINE CLASS folds to one row per field — bucket index or enum memb
   assert.equal(c.get(`${USAGE_METRICS.setupSafeMode} on`), 1)
   assert.equal(c.get(`${USAGE_METRICS.setupDisplays} 2`), 1)
   assert.equal(c.get(`${USAGE_METRICS.setupScale} 3`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.setupEqWindowMode} exclusive`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupEqWindowMode} fullscreen`), 1)
 })
 
 const HEALTH: TelemetryEvent = {

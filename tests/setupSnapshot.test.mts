@@ -89,14 +89,14 @@ test('THE COMPOSITING MAP: Chromium’s open vocabulary folded to three states p
 test('THE eqclient.ini PARSE: TRUE, FALSE, missing, garbage — and nothing else from the file', () => {
   // The game writes `WindowedMode=TRUE`; a quarter-century of hand edits produces the rest.
   assert.equal(eqWindowModeOf('[Defaults]\r\nWindowedMode=TRUE\r\nWidth=2560\r\n'), 'windowed')
-  assert.equal(eqWindowModeOf('WindowedMode=FALSE'), 'exclusive')
+  assert.equal(eqWindowModeOf('WindowedMode=FALSE'), 'fullscreen')
   assert.equal(eqWindowModeOf('  windowedmode  =  true  \n'), 'windowed')
   // Missing key, empty file, no file at all — all the same honest answer.
   assert.equal(eqWindowModeOf('[Defaults]\nWidth=2560\n'), 'unknown')
   // THE OTHER SPELLING (JOS-374). The live EverQuest Legends client writes no `WindowedMode` key
   // at all — it writes `Fullscreen=1|0`. Reading only the first spelling left the field dark for
   // every player on the current client.
-  assert.equal(eqWindowModeOf('Fullscreen=1'), 'exclusive')
+  assert.equal(eqWindowModeOf('Fullscreen=1'), 'fullscreen')
   assert.equal(eqWindowModeOf('Fullscreen=0'), 'windowed')
   // The owner's actual file, in miniature: CRLF, no `WindowedMode=`, and the `Fullscreen*` and
   // `WindowedMode*Offset` neighbours that must not be mistaken for either key.
@@ -110,7 +110,7 @@ test('THE eqclient.ini PARSE: TRUE, FALSE, missing, garbage — and nothing else
     'FullscreenRefreshRate=144',
     'Fullscreen=1'
   ].join('\r\n')
-  assert.equal(eqWindowModeOf(legends), 'exclusive')
+  assert.equal(eqWindowModeOf(legends), 'fullscreen')
   // The offsets are a window POSITION, not a mode: alone they answer `unknown`, never `windowed`.
   assert.equal(eqWindowModeOf('WindowedModeXOffset=100\nWindowedModeYOffset=64\n'), 'unknown')
   // Both spellings, disagreeing: a client that writes the explicit mode key is telling us the
@@ -181,7 +181,7 @@ test('a fully answered machine folds to buckets and enums, and the validator acc
   assert.equal(ev.safeMode, false)
   assert.equal(ev.displayCountBucket, 2, `edges ${DISPLAY_COUNT_EDGES.join(',')} ⇒ two monitors`)
   assert.equal(ev.primaryScaleBucket, 3, `edges ${PRIMARY_SCALE_EDGES.join(',')} ⇒ 150%`)
-  assert.equal(ev.eqWindowMode, 'exclusive')
+  assert.equal(ev.eqWindowMode, 'fullscreen')
   // The round trip is what matters: the producer's value is exactly what the wire accepts, so
   // nothing it builds can be refused by the validator it will meet in main and in the Lambda.
   const v = validateTelemetryEvent(ev)

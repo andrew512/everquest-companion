@@ -1,9 +1,14 @@
 // THE Z-ORDER RE-ASSERT, AND THE ONE WINDOW THAT IS EXEMPT FROM IT (JOS-368).
 //
-// `setAlwaysOnTop` is a `SetWindowPos`. Over EverQuest running in EXCLUSIVE fullscreen a z-order
-// change is a display-mode switch — a black flash and about a second of frozen game — and the app
-// was issuing one per overlay per show, five at a time, on every alt-tab. The fix is to ask the
+// `setAlwaysOnTop` is a `SetWindowPos` — compositor work over a running game — and the app was
+// issuing one per overlay per show, five at a time, on every alt-tab. The fix is to ask the
 // window whether it still holds the style before re-stating it.
+//
+// (JOS-368 argued this from a sharper premise that turned out to be wrong: that the game runs in
+// an EXCLUSIVE display mode, where the same call is a mode switch worth a black flash and a
+// frozen second. JOS-375 established that the client's Fullscreen setting is a BORDERLESS
+// fullscreen window. The guard is unchanged and so is every claim below — five calls where zero
+// are needed is five too many either way — but the numbers here are a call count, never a stall.)
 //
 // TWO CLAIMS, and the second is the one that is easy to get wrong:
 //   1. A window that still holds topmost is left alone; a window that lost it is re-asserted. The

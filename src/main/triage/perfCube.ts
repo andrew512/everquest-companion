@@ -11,9 +11,11 @@
 // sessions stalled. This says WHERE, and the three slices are chosen because each one leads
 // somewhere different:
 //
-//   * BY EQ WINDOW MODE — under exclusive fullscreen, showing any topmost window costs a display
-//     mode switch, so "the game froze when the overlay appeared" is a different bug (and possibly
-//     not ours) on an exclusive install than on a windowed one.
+//   * BY EQ WINDOW MODE — how the game presents itself is the other half of every z-order stall
+//     over it, so "the game froze when the overlay appeared" is worth reading separately for a
+//     fullscreen install and a windowed one. (`fullscreen` is the game's own Fullscreen setting,
+//     which on the current client is a BORDERLESS window rather than an exclusive display mode —
+//     JOS-375. If the rate is flat across the two, that hypothesis is dead too.)
 //   * BY MACHINE CLASS — a small box under a game, a browser and this app pages, and paging is
 //     the leading candidate for a whole-system stall. If the rate is flat across classes, that
 //     hypothesis is dead and the next one is ours.

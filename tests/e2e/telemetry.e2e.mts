@@ -397,7 +397,7 @@ async function stepCollects(page: Page): Promise<void> {
   // this suite are properties of THAT box, and frozen numbers rot. What must hold on any machine
   // is that every axis is present and is a bucket index or a member of its own closed enum.
   const ev: Record<string, unknown> = setup[0]?.ev ?? {}
-  const ENUMS = { gpuVendor: 'nvidia amd intel other unknown', gpuCompositing: 'hardware software off unknown', eqWindowMode: 'exclusive windowed unknown' }
+  const ENUMS = { gpuVendor: 'nvidia amd intel other unknown', gpuCompositing: 'hardware software off unknown', eqWindowMode: 'fullscreen windowed unknown' }
   check(
     '…carrying the machine class: four bucket INDICES, three closed enums and a safe-mode flag',
     ['cpuCountBucket', 'totalMemBucket', 'displayCountBucket', 'primaryScaleBucket'].every((k) => typeof ev[k] === 'number') &&

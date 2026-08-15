@@ -270,7 +270,9 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
         type: values(TELEMETRY_EQ_WINDOW_MODES),
         note:
           'Whether EverQuest is set to fullscreen or windowed — one true/false read out of ' +
-          '`eqclient.ini`. Nothing else in that file is read, and nothing from your log.'
+          '`eqclient.ini`. Nothing else in that file is read, and nothing from your log. ' +
+          '`fullscreen` means the game’s own Fullscreen setting is on, which on the current ' +
+          'client is a borderless fullscreen window and not an exclusive display mode.'
       }
     ]
   },

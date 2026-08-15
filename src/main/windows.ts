@@ -456,8 +456,9 @@ export function createMainWindow(): void {
 // ---- Floating overlay DPS meters (Task #52; two kinds in Task #54) ----
 //
 // Separate BrowserWindows that sit transparent + always-on-top over the game. EQ Legends runs
-// windowed/borderless, where an always-on-top overlay composites fine (see AGENTS.md;
-// fullscreen-EXCLUSIVE would defeat it, but that's not the default). No native helper app is
+// windowed/borderless — including under its own Fullscreen setting, which is a BORDERLESS
+// fullscreen window on this client (JOS-375) — and an always-on-top overlay composites fine over
+// either (see AGENTS.md). No native helper app is
 // needed — Electron's transparent/frameless + setAlwaysOnTop('screen-saver') +
 // setIgnoreMouseEvents(forward) covers it.
 //
@@ -731,8 +732,8 @@ export function createOverlayWindow(kind: OverlayKind): void {
 
   // Always-on-top at the screen-saver level so it floats above ordinary windows (and the
   // borderless game). Re-asserted after show for reliability on Windows — but ONLY when the
-  // window says it has lost the style (./topmost.ts): the re-assert is a SetWindowPos, and over a
-  // game in exclusive fullscreen every one of them is a black flash and a stalled second.
+  // window says it has lost the style (./topmost.ts): the re-assert is a SetWindowPos, and every
+  // one of them is compositor work over a running game.
   assertTopmost(w)
   raiseCursorRing()
 
@@ -851,7 +852,7 @@ export function overlayStateMap(): Record<OverlayKind, boolean> {
  * ...AND THE ALWAYS-ON-TOP HALF IS NOW CONDITIONAL (JOS-368). `assertTopmost` re-asserts only when
  * the window itself says the style is gone, so the case that made this call necessary is still
  * covered while the ordinary alt-tab — five windows that never lost it — stops issuing five
- * SetWindowPos calls over a game that may be in exclusive fullscreen. `raiseCursorRing()` below is
+ * SetWindowPos calls over a running game. `raiseCursorRing()` below is
  * deliberately NOT guarded; ./topmost.ts's header is why.
  *
  * AND NOTHING HERE TOUCHES FOCUSABILITY, in either direction (JOS-199). It is a window style that

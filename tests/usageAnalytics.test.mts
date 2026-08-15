@@ -225,7 +225,7 @@ test('THE MACHINE CLASS arrives LABELLED — a bucket index is meaningless to a 
     u(TODAY, M.setupGpuVendor, 'nvidia', 11), u(TODAY, M.setupCompositing, 'software', 2),
     u(TODAY, M.setupSafeMode, 'on', 1), u(TODAY, M.setupDisplays, '2', 6),
     u(TODAY, M.setupScale, '0', 1), u(TODAY, M.setupScale, '2', 4),
-    u(TODAY, M.setupEqWindowMode, 'exclusive', 8)
+    u(TODAY, M.setupEqWindowMode, 'fullscreen', 8)
   ]).adoption
   // A COUNT ladder prints the INCLUSIVE integer span it covers — bucket 4 of [2,4,6,8,12,16,24]
   // holds 8 through 11, and "8 - 12" would be a lie a reader would act on — while the measured
@@ -238,7 +238,7 @@ test('THE MACHINE CLASS arrives LABELLED — a bucket index is meaningless to a 
   assert.deepEqual(d.machine.map((r) => `${r.id} = ${String(r.n)}`), [
     'cpus 8 - 11 = 12', 'cpus ≥ 24 = 3', 'RAM 16 GB - 24 GB = 9', 'gpu nvidia = 11',
     'compositing software = 2', 'safe mode on = 1', 'displays 2 = 6', 'scale < 100% = 1',
-    'scale 125% - 150% = 4', 'EQ exclusive = 8'
+    'scale 125% - 150% = 4', 'EQ fullscreen = 8'
   ])
   // A fleet that has not reported one yet renders NOTHING, never a row of zeros: this ships in a
   // build most installs do not have, and a zeroed section would read as "nobody has a GPU".

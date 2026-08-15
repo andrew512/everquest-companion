@@ -200,9 +200,8 @@ export type TelemetryVoiceEngine = (typeof TELEMETRY_VOICE_ENGINES)[number]
 // app could not answer: "EverQuest freezes for about a second when an overlay shows". Nothing
 // in the fleet said what the machine WAS — how many cores, how much memory, whose GPU, whether
 // Chromium was compositing in hardware at all, how many displays, or whether the game was
-// running exclusive-fullscreen (where showing a topmost window is a display MODE SWITCH and a
-// stall is the expected cost) rather than windowed (where it is a bug). Every reading below is
-// a CLOSED ENUM or a BUCKET INDEX: none of them can carry a path, a device string or a name.
+// running fullscreen rather than windowed. Every reading below is a CLOSED ENUM or a BUCKET
+// INDEX: none of them can carry a path, a device string or a name.
 
 /**
  * Who made the GPU, from `app.getGPUInfo('basic')`'s PCI vendor id — 0x10de, 0x1002, 0x8086 and
@@ -231,18 +230,27 @@ export type TelemetryGpuCompositing = (typeof TELEMETRY_GPU_COMPOSITING)[number]
 
 /**
  * How EverQuest itself is drawing, read ONCE per session from the install's `eqclient.ini`
- * (`WindowedMode=TRUE` ⇒ windowed, `FALSE` ⇒ exclusive; the live Legends client writes no such
+ * (`WindowedMode=TRUE` ⇒ windowed, `FALSE` ⇒ fullscreen; the live Legends client writes no such
  * key and is read from `Fullscreen=1|0` instead — see `eqWindowModeOf`).
+ *
+ * `fullscreen` MEANS THE GAME'S OWN FULLSCREEN SETTING IS ON, AND NOTHING MORE (JOS-375). On the
+ * current client that setting produces a BORDERLESS FULLSCREEN WINDOW, not an exclusive display
+ * mode: an always-on-top window shares the screen with it, and showing one costs no mode switch.
+ * The member was called `exclusive` when this field was written (JOS-364) on the assumption that
+ * it was the DirectX-era exclusive mode, and the name was a claim the reading could not support
+ * — the ini says which setting is on, never which of the two kinds of fullscreen the client
+ * implements. It was renamed rather than kept, because a dimension that lies is worse than one
+ * that is coarse.
  *
  * IT IS A DISPLAY SETTING, NOT GAMEPLAY. Nothing about a character, a server or a log line is
  * involved — the file is read for one boolean and nothing else is retained. The reason it is
- * worth a field at all: under exclusive fullscreen, showing ANY topmost window costs a display
- * mode switch, so "the game froze for a second when the overlay appeared" is a different bug
- * (and possibly not ours) than the same sentence from a windowed install. `unknown` when there
- * is no install dir, no file, or no key — the honest answer, and the common one on a machine
- * where discovery never found EverQuest.
+ * worth a field at all is that it is still the best axis the fleet has for "the game froze for a
+ * second when the overlay appeared": how the game presents itself is the other half of every
+ * z-order stall, whichever kind of fullscreen turns out to be behind it. `unknown` when there is
+ * no install dir, no file, or no key — the honest answer, and the common one on a machine where
+ * discovery never found EverQuest.
  */
-export const TELEMETRY_EQ_WINDOW_MODES = ['exclusive', 'windowed', 'unknown'] as const
+export const TELEMETRY_EQ_WINDOW_MODES = ['fullscreen', 'windowed', 'unknown'] as const
 export type TelemetryEqWindowMode = (typeof TELEMETRY_EQ_WINDOW_MODES)[number]
 
 /** The auto-update release channel. */

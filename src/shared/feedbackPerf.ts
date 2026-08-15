@@ -133,8 +133,9 @@ export interface FeedbackPerfState {
   totalMemGb: number
   gpuVendor: TelemetryGpuVendor
   gpuCompositing: TelemetryGpuCompositing
-  /** Under exclusive fullscreen, showing any topmost window is a display MODE SWITCH and the
-   *  stall is its documented cost. Windowed, the same stall is probably our bug. */
+  /** How the game presents itself, which is the other half of any z-order stall over it.
+   *  `fullscreen` is the game's own Fullscreen setting being on — a BORDERLESS fullscreen window
+   *  on the current client, not an exclusive display mode (JOS-375). */
   eqWindowMode: TelemetryEqWindowMode
 }
 

@@ -1,9 +1,15 @@
 // topmost.ts — ALWAYS-ON-TOP IS RE-ASSERTED ONLY WHEN IT HAS ACTUALLY BEEN LOST (JOS-368).
 //
 // WHAT `setAlwaysOnTop` COSTS. It is a `SetWindowPos` — a Z-ORDER CHANGE, not an attribute write.
-// Over a game running in EXCLUSIVE fullscreen, a topmost window changing z-order is a display-mode
-// switch: the player gets a black flash and roughly a second of frozen game. Field reports of
+// Every one of them is work the compositor has to do over a running game, and field reports of
 // "hitches" on every alt-tab are that call, five windows at a time.
+//
+// THE ORIGINAL ARGUMENT WAS SHARPER AND WRONG (JOS-375). This header used to say that over a game
+// in EXCLUSIVE fullscreen a z-order change is a display-mode switch — a black flash and about a
+// second of frozen game — which is true of DirectX exclusive mode and NOT true here: the live
+// client's Fullscreen setting is a BORDERLESS fullscreen window, which shares the screen with a
+// topmost overlay. The guard stays anyway, and the reason it stays is the plainer one it always
+// also had: five system calls where zero are needed is five too many, whatever they cost.
 //
 // WHY IT WAS UNCONDITIONAL, AND WHY THAT PART IS KEPT. A HIDDEN window can genuinely lose topmost
 // on Windows, so the re-assert after auto-hide (`setOverlaysHidden`) is load-bearing and cannot
