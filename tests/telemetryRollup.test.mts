@@ -129,6 +129,47 @@ test('a setup snapshot becomes one row per FIELD, each dim a bucket index or an 
   assert.equal(c.get(`${USAGE_METRICS.setupAutoHide} off`), 1)
   assert.equal(c.get(`${USAGE_METRICS.setupVoice} kokoro`), 1)
   assert.equal(c.get(`${USAGE_METRICS.setupPacks} ${DIM_NONE}`), 4)
+  // A client that predates the machine class writes NO machine rows at all — not zero-index ones.
+  // Bucket 0 is a real bucket (fewer than two cores, no display), so folding an absent field into
+  // it would invent a population of impossible machines out of old clients.
+  assert.equal(c.get(`${USAGE_METRICS.setupCpu} 0`), undefined)
+  assert.equal(c.get(`${USAGE_METRICS.setupGpuVendor} unknown`), undefined)
+  assert.equal(c.get(`${USAGE_METRICS.setupSafeMode} off`), undefined)
+})
+
+test('THE MACHINE CLASS folds to one row per field — bucket index or enum member (JOS-364)', () => {
+  const c = counters(
+    batchOf([
+      {
+        t: 'setupSnapshot',
+        charCountBucket: 2,
+        logSizeBucket: 3,
+        alertCountBucket: 1,
+        overlaysEnabled: ['fight'],
+        cursorRing: true,
+        autoHide: false,
+        voiceEngine: 'off',
+        soundPackCount: 1,
+        updateChannel: 'main',
+        cpuCountBucket: 4,
+        totalMemBucket: 6,
+        gpuVendor: 'nvidia',
+        gpuCompositing: 'software',
+        safeMode: true,
+        displayCountBucket: 2,
+        primaryScaleBucket: 3,
+        eqWindowMode: 'exclusive'
+      }
+    ])
+  )
+  assert.equal(c.get(`${USAGE_METRICS.setupCpu} 4`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupMem} 6`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupGpuVendor} nvidia`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupCompositing} software`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupSafeMode} on`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupDisplays} 2`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupScale} 3`), 1)
+  assert.equal(c.get(`${USAGE_METRICS.setupEqWindowMode} exclusive`), 1)
 })
 
 const HEALTH: TelemetryEvent = {
