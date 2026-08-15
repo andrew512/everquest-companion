@@ -19,6 +19,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   bucketOf,
   LOG_SIZE_BYTES_EDGES,
@@ -47,6 +48,12 @@ import {
   resetLiveProbe,
   takeLiveProbeReading
 } from '../src/main/livePerfProbe'
+import {
+  liveStallStats,
+  sessionStateStats,
+  tailReadStats
+} from '../src/main/telemetry/liveFacts'
+import type { TailIoSample } from '../src/main/log/tailIoStats'
 
 // ---- the probe's arithmetic ----------------------------------------------------------------
 
@@ -159,6 +166,94 @@ test('the timeline is a bounded ~10-minute ring of PLAIN DATA, and a report does
   assert.equal(peekLiveTimeline(now).main.length, 1)
   resetLiveProbe()
   assert.equal(peekLiveTimeline(now).main.length, 0)
+})
+
+// ---- the facts, bucketed -------------------------------------------------------------------
+
+test('THE MILLISECOND BECOMES A DECADE at exactly one seam, and the counts stay counts', () => {
+  const stats = liveStallStats({ samples: 2400, p95Ms: 14, maxMs: 1_400, over100: 3, over500: 1 })
+  assert.deepEqual(stats, {
+    samples: 2400,
+    p95Bucket: bucketOf(14, LIVE_STALL_MS_EDGES),
+    maxBucket: bucketOf(1_400, LIVE_STALL_MS_EDGES),
+    over100: 3,
+    over500: 1
+  })
+  // Absent stays ABSENT rather than becoming a zero — the contract's own distinction between
+  // "no second clock ran" and "two clocks agreed on nothing".
+  assert.equal('coincident' in stats, false)
+  assert.equal(liveStallStats({ ...stats, p95Ms: 0, maxMs: 0, coincident: 2 }).coincident, 2)
+})
+
+test('the tail rider reads its p95 off the RING and its max off the ACCUMULATOR', () => {
+  const at = 5_000_000
+  const cycle = (readMs: number, bytes: number): TailIoSample => ({
+    at,
+    statMs: 0,
+    openMs: 0,
+    readMs,
+    bytes,
+    slices: 1,
+    reason: 'reused'
+  })
+  const stats = tailReadStats({
+    summary: {
+      reads: 4,
+      reopens: 1,
+      bytes: 5_000,
+      slices: 4,
+      statMs: 1,
+      openMs: 2,
+      readMs: 40,
+      // The worst cycle the ACCUMULATOR saw — deliberately bigger than anything in the window
+      // below, because a ring that has rolled past a stall must not be able to hide it.
+      maxReadMs: 700,
+      maxStatMs: 1,
+      over100: 2,
+      over500: 1,
+      byReason: { reused: 3, first: 1, replaced: 0, shrunk: 0, error: 0 }
+    },
+    window: [cycle(2, 1_000), cycle(3, 300_000), cycle(120, 2_000), cycle(4, 100)],
+    logBytes: 400 * 1024 * 1024
+  })
+  assert.equal(stats.reads, 4)
+  assert.equal(stats.reopens, 1)
+  assert.equal(stats.p95Bucket, bucketOf(120, LIVE_STALL_MS_EDGES))
+  assert.equal(stats.maxBucket, bucketOf(700, LIVE_STALL_MS_EDGES))
+  assert.equal(stats.over100, 2)
+  assert.equal(stats.over500, 1)
+  // The FATTEST SINGLE delta, not the total: the same megabyte in one read and in a hundred are
+  // different events, and only the first can plausibly stall an appender.
+  assert.equal(stats.deltaBytesBucket, bucketOf(300_000, NEW_BYTES_EDGES))
+  assert.equal(stats.logSizeBucket, bucketOf(400 * 1024 * 1024, LOG_SIZE_BYTES_EDGES))
+})
+
+test('the state rider converts the two memory readings from the KIBIBYTES Electron answers in', () => {
+  const stats = sessionStateStats({
+    overlaysOpen: 3,
+    overlaysLocked: 2,
+    presenceOn: true,
+    ringOn: false,
+    // 1.5 GiB free, 640 MiB resident — both arrive as KiB from `getSystemMemoryInfo` and
+    // `getAppMetrics`, and a unit mistake here would be invisible in the aggregate forever.
+    freeMemKb: 1.5 * 1024 * 1024,
+    workingSetKb: 640 * 1024
+  })
+  assert.equal(stats.freeMemBucket, bucketOf(1.5, FREE_MEM_GB_EDGES))
+  assert.equal(stats.workingSetBucket, bucketOf(640, WORKING_SET_MB_EDGES))
+  assert.equal(stats.overlaysLocked, 2)
+  assert.equal(stats.presenceOn, true)
+})
+
+test('BOTH SESSION REPORTS DRAIN THE SAME RIDERS — the startup rider rides both, and so do these', () => {
+  // Read as source rather than driven: `flush.ts` imports Electron, and the property worth pinning
+  // is that neither report can quietly stop carrying the group. A session that ends before its
+  // first heartbeat is the common case, and it is disproportionately the bad one.
+  const flush = readFileSync(new URL('../src/main/telemetry/flush.ts', import.meta.url), 'utf8')
+  const calls = flush.match(/\.\.\.liveRiderFields\(\)/g) ?? []
+  assert.equal(calls.length, 2, 'sessionHeartbeat and sessionEnd both spread the riders')
+  assert.match(flush, /t: 'sessionHeartbeat'[\s\S]*?\.\.\.liveRiderFields\(\)/)
+  assert.match(flush, /t: 'sessionEnd'[\s\S]*?\.\.\.liveRiderFields\(\)/)
 })
 
 // ---- the wire shape ------------------------------------------------------------------------
