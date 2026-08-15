@@ -45,6 +45,11 @@ import {
   bucketRange
 } from '../src/shared/telemetry'
 import {
+  FREE_MEM_GB_EDGES,
+  LIVE_STALL_MS_EDGES,
+  WORKING_SET_MB_EDGES
+} from '../src/shared/telemetryLive'
+import {
   DOC_EVENT_KINDS,
   TELEMETRY_DOC_BUCKETS,
   TELEMETRY_DOC_EVENTS,
@@ -131,7 +136,14 @@ test('SUBSTANCE: the page prints every bucket RANGE, from the schema’s own edg
     CPU_COUNT_EDGES,
     TOTAL_MEM_GB_EDGES,
     DISPLAY_COUNT_EDGES,
-    PRIMARY_SCALE_EDGES
+    PRIMARY_SCALE_EDGES,
+    // JOS-367's live-session riders. THREE ladders for FOUR fields: the stall ladder is printed
+    // once under all four field names that share it (two clock readings, two read latencies),
+    // because four identical tables are four chances to read one of them as a different ladder.
+    LIVE_STALL_MS_EDGES,
+    NEW_BYTES_EDGES,
+    FREE_MEM_GB_EDGES,
+    WORKING_SET_MB_EDGES
   ]
   assert.equal(TELEMETRY_DOC_BUCKETS.length, edgeSets.length, 'every bucket field is documented')
   for (const b of TELEMETRY_DOC_BUCKETS) {
