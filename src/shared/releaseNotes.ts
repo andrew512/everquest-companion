@@ -125,7 +125,7 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
-    version: '0.29.0',
+    version: '1.0.0',
     date: '2026-08-15',
     entries: [
       {
