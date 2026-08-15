@@ -999,12 +999,13 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
   )
   forwardConsoleMessages(wc, 'cursorRing:console')
 
-  w.on('ready-to-show', () => {
-    if (!windowsMayShow()) return
-    w.showInactive()
-    // Unconditional, like every other ring raise — see the creation comment above.
-    raiseTopmost(w)
-  })
+  // ONE SHOW PATH FOR THIS WINDOW, and first paint is just the first time down it. It used to be
+  // a second copy of `setCursorRingVisible`'s body — the same replay/e2e gate, the same
+  // showInactive, the same raise — which is two places to keep the ring's unconditional raise
+  // (JOS-368) correct in. Reading the module-level handle rather than this closure's `w` is also
+  // the more honest of the two: if the ring were torn down and rebuilt before this fired, the
+  // window to show is the one that exists now.
+  w.on('ready-to-show', () => setCursorRingVisible(true))
   w.on('closed', () => {
     cursorRingWindow = null
   })

@@ -30,8 +30,9 @@ import {
 } from '../src/main/topmost'
 
 /** A BrowserWindow as far as these helpers can tell: one style bit and a call log. */
-function fakeWindow(topmost: boolean): TopmostWindow & { calls: ('screen-saver' | string)[] } {
+function fakeWindow(startsTopmost: boolean): TopmostWindow & { calls: string[] } {
   const calls: string[] = []
+  let topmost = startsTopmost
   return {
     calls,
     isAlwaysOnTop: () => topmost,

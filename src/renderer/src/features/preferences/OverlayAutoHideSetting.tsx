@@ -25,6 +25,13 @@
 import { type JSX, useCallback, useState } from 'react'
 import { FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 import type { OverlayAutoHidePrefs } from '@shared/presencePrefs'
+// THE EXCLUSIVE-FULLSCREEN NOTE RIDES ON TOP OF THIS CARD (JOS-368), and that placement is a
+// choice rather than convenience: it is a SECTION-level thing to say, this is the first card in
+// the Overlays section, and so the note lands at the top of the section where a lead-in belongs.
+// The alternative — a `lead` slot on PrefSection — is machinery for one sentence. It renders
+// nothing at all unless main says it should, so the ordinary card is unchanged for everyone whose
+// game is windowed.
+import { EqExclusiveNote } from './EqExclusiveNote'
 import { recordPref, usePrefsSeed } from './prefsHydration'
 
 /**
@@ -59,6 +66,7 @@ export function OverlayAutoHideSetting(): JSX.Element {
   const [prefs, update] = useOverlayAutoHide()
   return (
     <Stack spacing={2} data-testid="pref-overlay-autohide">
+      <EqExclusiveNote />
       <Stack spacing={0.5}>
         <FormControlLabel
           control={

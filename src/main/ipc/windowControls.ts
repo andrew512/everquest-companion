@@ -6,6 +6,7 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc'
 import { E2E } from '../e2e'
 import { logError } from '../errorLog'
+import { dismissEqWindowNotice, getEqWindowNotice } from '../eqWindowMode'
 import { getFightSelection, setFightSelection } from '../fightSelection'
 import { getScopeSelection, setScopeSelection } from '../scopeSelection'
 import { getOverlayConfig, setOverlayConfig } from '../store'
@@ -153,6 +154,15 @@ export function registerWindowIpc(): void {
   // hand-edited file and a renderer cannot disagree about what this setting is.
   ipcMain.handle(IPC.overlaySnapGet, () => getOverlaySnap())
   ipcMain.handle(IPC.overlaySnapSet, (_e, patch: unknown) => setOverlaySnap(patch))
+
+  // ---- the exclusive-fullscreen note (JOS-368) ----
+  // Two reads and no renderer input at all: the first answers "should Preferences be saying this",
+  // the second is the user having read it. Neither takes an argument, which is the whole of what
+  // this boundary has to validate — the dismissal stamps the app's OWN version, never one a window
+  // supplied, so there is no shape in which a renderer can decide the note is answered for a build
+  // that has not shipped. Both live beside the overlay handlers because the note is about overlays.
+  ipcMain.handle(IPC.eqWindowNoticeGet, () => getEqWindowNotice())
+  ipcMain.handle(IPC.eqWindowNoticeDismiss, () => dismissEqWindowNotice())
 
   // ---- global fight selection (docs/plans/combat-overlay-parity.md P4) ----
   // A read for a surface that mounted after the last change, and a fire-and-forget write that

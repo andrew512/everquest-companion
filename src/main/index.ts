@@ -54,6 +54,8 @@ import { removedPackIds } from './storeSoundPacks'
 import { getActiveCharacter, markTailPosition, startTailing, stopSession } from './session'
 import { runSmokeFeedback } from './smokeFeedback'
 import { STORE_READY_MS, getOverlayConfig, getPerfHudPrefs } from './store'
+// The z-order guard's tally, read once at quit (JOS-368; see `logTopmostSavings`).
+import { topmostStats } from './topmost'
 import { initUpdater } from './updater'
 import {
   createMainWindow,
@@ -413,7 +415,24 @@ if (!gotSingleInstanceLock) {
 app.on('before-quit', () => {
   teardownStep('main:stopPresence', stopPresenceEffects)
   flushStoreForQuit()
+  logTopmostSavings()
 })
+
+/**
+ * WHAT THE Z-ORDER GUARD SAVED THIS SESSION, in dev only (JOS-368).
+ *
+ * The guard's whole claim is a count — how many `SetWindowPos` calls over the game did NOT happen
+ * — and a claim like that should be readable rather than argued about. It is logged ONCE, at quit,
+ * because that is the only moment the number is final, and it is gated on `!app.isPackaged`
+ * (main's own dev discriminator, `channel.ts`) because a player has no use for it and a shipped
+ * build should not narrate its own bookkeeping. The counting itself is two integers and runs
+ * everywhere: a counter that only counted in dev could not be checked against a real session.
+ */
+function logTopmostSavings(): void {
+  if (app.isPackaged) return
+  const { issued, avoided } = topmostStats()
+  logInfo(`[everquest-companion] topmost: ${avoided} SetWindowPos avoided, ${issued} issued`)
+}
 
 /**
  * EVERY STORE WRITE THIS PROCESS STILL OWES, DONE NOW.
