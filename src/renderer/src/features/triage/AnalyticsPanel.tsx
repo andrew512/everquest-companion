@@ -66,6 +66,7 @@ import {
   VersionsSection
 } from './AnalyticsBits'
 import { CoverageSection } from './CoverageSection'
+import { PerfSection } from './PerfSection'
 import { ReleaseHealthSection } from './ReleaseHealthSection'
 import {
   durationLabel,
@@ -266,6 +267,11 @@ function Readout({
           (JOS-367): Startup says how the launch went, Live says how the hours after it went, and
           the freeze reports this fleet files are about the hours. */}
       <LiveSection data={data} />
+      {/* …and immediately under it (JOS-372), because it answers the question a reader has the
+          moment they have read one: the section above says how often sessions stalled, this says
+          WHERE — on which window mode, which class of box, and with an overlay locked or not.
+          A daily counter cannot cross two facts; this is the one cube that can. */}
+      <PerfSection data={data} />
       {/*
         JOS-96, and it sits HERE rather than at the end for a reason: Health above says what goes
         wrong across the fleet, and this says which build it started going wrong in. Reading the
