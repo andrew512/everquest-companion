@@ -19,8 +19,11 @@ import {
   MAX_ERROR_FRAMES_WIRE,
   MAX_EXTERNAL_FRAMES_WIRE,
   MAX_REDACTED_MESSAGE_WIRE,
+  TELEMETRY_EQ_WINDOW_MODES,
   TELEMETRY_ERROR_MODES,
   TELEMETRY_FRAME_ORIGINS,
+  TELEMETRY_GPU_COMPOSITING,
+  TELEMETRY_GPU_VENDORS,
   TELEMETRY_ERROR_VIEWS,
   TELEMETRY_FAILURE_CLASSES,
   TELEMETRY_FEATURES,
@@ -229,7 +232,41 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
         note: 'Which speech tier your spoken alerts use — off when no alert is set to speak.'
       },
       { name: 'soundPackCount', type: COUNT, note: 'How many sound packs are installed.' },
-      { name: 'updateChannel', type: values(TELEMETRY_UPDATE_CHANNELS), note: 'Update channel.' }
+      { name: 'updateChannel', type: values(TELEMETRY_UPDATE_CHANNELS), note: 'Update channel.' },
+      {
+        name: 'cpuCountBucket',
+        type: BUCKET,
+        note: 'How many processor cores the machine has — a range, never the number.'
+      },
+      {
+        name: 'totalMemBucket',
+        type: BUCKET,
+        note: 'How much memory the machine has — a range, never the number.'
+      },
+      {
+        name: 'gpuVendor',
+        type: values(TELEMETRY_GPU_VENDORS),
+        note: 'Who made the graphics chip. Never the model, never a driver version.'
+      },
+      {
+        name: 'gpuCompositing',
+        type: values(TELEMETRY_GPU_COMPOSITING),
+        note: 'Whether the app is drawing with the graphics chip or on the processor.'
+      },
+      { name: 'safeMode', type: 'true / false', note: 'Is graphics safe mode on for this launch.' },
+      { name: 'displayCountBucket', type: BUCKET, note: 'How many monitors are attached.' },
+      {
+        name: 'primaryScaleBucket',
+        type: BUCKET,
+        note: 'The main monitor’s display scaling (100%, 125%, …).'
+      },
+      {
+        name: 'eqWindowMode',
+        type: values(TELEMETRY_EQ_WINDOW_MODES),
+        note:
+          'Whether EverQuest is set to fullscreen or windowed — one true/false read out of ' +
+          '`eqclient.ini`. Nothing else in that file is read, and nothing from your log.'
+      }
     ]
   },
   {
@@ -289,6 +326,19 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
         name: 'imageCacheReadFailures',
         type: `${COUNT} (optional)`,
         note: 'Times a picture the app had already saved could not be read back, so it was downloaded again. The picture is still shown. Never which picture, and never where it was kept.'
+      },
+      // JOS-364. NAMED AS THE THING A USER WOULD HAVE NOTICED — a flicker, a black frame — rather
+      // than as a process type, because "the GPU process exited" is not a sentence about their
+      // machine that they can check against what they saw.
+      {
+        name: 'gpuProcessGone',
+        type: `${COUNT} (optional)`,
+        note: 'Times the graphics helper the app draws with died and was restarted — usually seen as a flicker. A count, plus the reason code in the error log.'
+      },
+      {
+        name: 'utilityProcessGone',
+        type: `${COUNT} (optional)`,
+        note: 'The same for a background helper (sound, network, storage). These come and go normally, so this is a count only and is not treated as an error.'
       }
     ]
   },
