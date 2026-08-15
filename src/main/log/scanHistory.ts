@@ -46,8 +46,9 @@ export interface ScanResult {
 
 /** The read stream's high-water mark, and the size of the "first MB" measured above. One constant
  *  so the two can never be given different numbers — the measurement's whole claim is that it
- *  lands on a chunk boundary. */
-const READ_CHUNK_BYTES = 1 << 20
+ *  lands on a chunk boundary. Exported because the boundary test has to place a character AT the
+ *  real one, and a test that guessed the number would silently stop testing anything. */
+export const READ_CHUNK_BYTES = 1 << 20
 
 /** Everything about a scan that is not "which file, which bus, from which seq". */
 export interface ScanOptions {
@@ -79,7 +80,7 @@ const NO_CARRY = Buffer.alloc(0)
  * returned offset lines up exactly with the file for the tailer handoff.
  * `endOffset` advances to just past each newline of a fully-processed line.
  */
-interface SplitState {
+export interface SplitState {
   endOffset: number
   /**
    * The current partial line, AS BYTES — its terminating newline is in the NEXT chunk.
@@ -124,8 +125,14 @@ interface SplitState {
  *
  * The byte accounting, the order and the `handle` calls are byte-for-byte what they were, which is
  * what lets the equivalence test compare the two arms byte for byte.
+ *
+ * EXPORTED FOR THE BOUNDARY TEST (JOS-373) — the real function, not a copy of it. The hazard is a
+ * split at one exact byte INSIDE a multi-byte character, and the only way to put a boundary there
+ * deterministically is to hand the splitter the two halves as separate buffers: a read stream can
+ * be asked for a chunk size, never made to promise one. The end-to-end arm at the real
+ * READ_CHUNK_BYTES runs beside it; neither covers the other.
  */
-async function consumeChunk(
+export async function consumeChunk(
   buf: Buffer,
   st: SplitState,
   handle: (raw: string) => void,
