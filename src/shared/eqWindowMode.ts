@@ -19,7 +19,7 @@ import type { TelemetryEqWindowMode } from './telemetry'
 
 /** What `eq:getWindowNotice` answers, and what a dismissal answers with. */
 export interface EqWindowNotice {
-  /** EverQuest's `WindowedMode`, folded: 'windowed' | 'exclusive' | 'unknown'. */
+  /** EverQuest's `WindowedMode`/`Fullscreen`, folded: 'windowed' | 'exclusive' | 'unknown'. */
   mode: TelemetryEqWindowMode
   /** Should Preferences be showing the note right now? See the header for what it folds. */
   show: boolean

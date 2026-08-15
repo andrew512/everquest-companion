@@ -141,15 +141,34 @@ export function gpuCompositingOf(raw: unknown): TelemetryGpuCompositing {
 
 /** `WindowedMode=TRUE`, case-insensitively, with whatever spacing an INI file has picked up over
  *  twenty-five years. Only the FIRST match is read: an INI with the key twice is a file that has
- *  been hand-edited, and the game reads the first one too. */
+ *  been hand-edited, and the game reads the first one too.
+ *
+ *  The `[ \t]*=` is load-bearing, not decoration: this client family also writes
+ *  `WindowedModeXOffset` / `WindowedModeYOffset`, which are window POSITION, not mode, and a
+ *  prefix match on them would report a windowing decision from a pair of pixel coordinates. */
 const WINDOWED_MODE_RE = /^[ \t]*WindowedMode[ \t]*=[ \t]*(\S+)/im
+
+/** `Fullscreen=1`, the OTHER spelling — see `eqWindowModeOf` for which client writes which. The
+ *  same anchored `=` keeps `FullscreenBitsPerPixel` and `FullscreenRefreshRate` out. */
+const FULLSCREEN_RE = /^[ \t]*Fullscreen[ \t]*=[ \t]*(\S+)/im
 
 /**
  * `eqclient.ini` → one of three words, and NOTHING ELSE FROM THE FILE.
  *
  * The file is EverQuest's own settings, not ours: it holds resolution, gamma, sound devices, UI
- * skin names and more. This function looks at one key and returns an enum member, so there is no
+ * skin names and more. This function looks at two keys and returns an enum member, so there is no
  * shape in which any other line of it could reach the wire even by mistake.
+ *
+ * TWO KEY FAMILIES, BECAUSE TWO CLIENTS (JOS-374). The Titanium-era clients this field was first
+ * written for spell the mode `WindowedMode=TRUE|FALSE`. The live EverQuest Legends client does
+ * not write that key AT ALL — it writes `Fullscreen=1|0` alongside `WindowedWidth`/`WindowedHeight`
+ * and `FullscreenBitsPerPixel`, and its only `WindowedMode*` keys are the `XOffset`/`YOffset`
+ * position pair. Reading only the first spelling made the field dark for every player on the
+ * current client, which is how this was found: a live setup snapshot said `unknown` with the game
+ * installed and running.
+ *
+ * `WindowedMode` WINS WHEN BOTH ARE PRESENT. A client that writes the explicit mode key is
+ * telling us the mode; `Fullscreen=` is the fallback reading, not a second vote.
  *
  * GARBAGE IS `unknown`, NOT A GUESS. `WindowedMode=` with nothing after it, or with a value the
  * game itself would not understand, is a file we cannot read rather than evidence of a mode —
@@ -157,9 +176,12 @@ const WINDOWED_MODE_RE = /^[ \t]*WindowedMode[ \t]*=[ \t]*(\S+)/im
  */
 export function eqWindowModeOf(ini: string | null | undefined): TelemetryEqWindowMode {
   if (typeof ini !== 'string' || ini === '') return 'unknown'
-  const value = WINDOWED_MODE_RE.exec(ini)?.[1]?.trim().toLowerCase()
-  if (value === 'true') return 'windowed'
-  if (value === 'false') return 'exclusive'
+  const windowedMode = WINDOWED_MODE_RE.exec(ini)?.[1]?.trim().toLowerCase()
+  if (windowedMode === 'true') return 'windowed'
+  if (windowedMode === 'false') return 'exclusive'
+  const fullscreen = FULLSCREEN_RE.exec(ini)?.[1]?.trim().toLowerCase()
+  if (fullscreen === '1') return 'exclusive'
+  if (fullscreen === '0') return 'windowed'
   return 'unknown'
 }
 

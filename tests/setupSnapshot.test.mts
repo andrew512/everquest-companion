@@ -93,6 +93,29 @@ test('THE eqclient.ini PARSE: TRUE, FALSE, missing, garbage — and nothing else
   assert.equal(eqWindowModeOf('  windowedmode  =  true  \n'), 'windowed')
   // Missing key, empty file, no file at all — all the same honest answer.
   assert.equal(eqWindowModeOf('[Defaults]\nWidth=2560\n'), 'unknown')
+  // THE OTHER SPELLING (JOS-374). The live EverQuest Legends client writes no `WindowedMode` key
+  // at all — it writes `Fullscreen=1|0`. Reading only the first spelling left the field dark for
+  // every player on the current client.
+  assert.equal(eqWindowModeOf('Fullscreen=1'), 'exclusive')
+  assert.equal(eqWindowModeOf('Fullscreen=0'), 'windowed')
+  // The owner's actual file, in miniature: CRLF, no `WindowedMode=`, and the `Fullscreen*` and
+  // `WindowedMode*Offset` neighbours that must not be mistaken for either key.
+  const legends = [
+    '[Defaults]',
+    'WindowedModeXOffset=100',
+    'WindowedModeYOffset=64',
+    'WindowedWidth=2560',
+    'WindowedHeight=1440',
+    'FullscreenBitsPerPixel=32',
+    'FullscreenRefreshRate=144',
+    'Fullscreen=1'
+  ].join('\r\n')
+  assert.equal(eqWindowModeOf(legends), 'exclusive')
+  // The offsets are a window POSITION, not a mode: alone they answer `unknown`, never `windowed`.
+  assert.equal(eqWindowModeOf('WindowedModeXOffset=100\nWindowedModeYOffset=64\n'), 'unknown')
+  // Both spellings, disagreeing: a client that writes the explicit mode key is telling us the
+  // mode, so `WindowedMode` wins and `Fullscreen=` is only ever the fallback reading.
+  assert.equal(eqWindowModeOf('WindowedMode=TRUE\r\nFullscreen=1\r\n'), 'windowed')
   assert.equal(eqWindowModeOf(''), 'unknown')
   assert.equal(eqWindowModeOf(null), 'unknown')
   assert.equal(eqWindowModeOf(undefined), 'unknown')
