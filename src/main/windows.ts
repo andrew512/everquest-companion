@@ -41,6 +41,10 @@ import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
 import { resolvedGraphics } from './graphics'
+// The z-order guard and its ONE exception (JOS-368). Every re-assert in this file goes through
+// `assertTopmost`; the cursor ring's four raises go through `raiseTopmost` and stay unconditional,
+// for the reason stated in that module's header and restated at each ring call below.
+import { assertTopmost, raiseTopmost } from './topmost'
 import { getOverlayConfig, getWindowBounds, setOverlayConfig } from './store'
 // WHAT THE MAIN WINDOW REMEMBERS ABOUT ITSELF, and when that is written (JOS-248). The policy is
 // pure and node-tested in windowState.ts; the store handle between it and this file is
@@ -529,7 +533,7 @@ function applyOpaqueToastVisibility(kind: OverlayKind, idle: boolean): void {
   // test mode, src/main/e2e.ts) or a historical replay in flight (replayGate.ts).
   if (idle || !windowsMayShow() || w.isVisible()) return
   w.showInactive()
-  w.setAlwaysOnTop(true, 'screen-saver')
+  assertTopmost(w)
   raiseCursorRing()
 }
 
@@ -725,9 +729,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
   })
   overlayWindows[kind] = w
 
-  // Always-on-top at the screen-saver level so it floats above ordinary windows
-  // (and the borderless game). Re-assert after show for reliability on Windows.
-  w.setAlwaysOnTop(true, 'screen-saver')
+  // Always-on-top at the screen-saver level so it floats above ordinary windows (and the
+  // borderless game). Re-asserted after show for reliability on Windows — but ONLY when the
+  // window says it has lost the style (./topmost.ts): the re-assert is a SetWindowPos, and over a
+  // game in exclusive fullscreen every one of them is a black flash and a stalled second.
+  assertTopmost(w)
   raiseCursorRing()
 
   const wc = w.webContents
@@ -758,7 +764,7 @@ export function createOverlayWindow(kind: OverlayKind): void {
     }
     // showInactive so opening the overlay never steals focus from the game.
     w.showInactive()
-    w.setAlwaysOnTop(true, 'screen-saver')
+    assertTopmost(w)
     applyOverlayLocked(kind, getOverlayConfig(kind).locked)
     raiseCursorRing()
   })
@@ -842,6 +848,12 @@ export function overlayStateMap(): Record<OverlayKind, boolean> {
  * the thing that triggered it. Always-on-top and the click-through mode are re-asserted on the
  * way back, because a hidden window can lose both on Windows.
  *
+ * ...AND THE ALWAYS-ON-TOP HALF IS NOW CONDITIONAL (JOS-368). `assertTopmost` re-asserts only when
+ * the window itself says the style is gone, so the case that made this call necessary is still
+ * covered while the ordinary alt-tab — five windows that never lost it — stops issuing five
+ * SetWindowPos calls over a game that may be in exclusive fullscreen. `raiseCursorRing()` below is
+ * deliberately NOT guarded; ./topmost.ts's header is why.
+ *
  * AND NOTHING HERE TOUCHES FOCUSABILITY, in either direction (JOS-199). It is a window style that
  * survives hide/show, so there is nothing to re-assert — and re-asserting it anyway is what made
  * this function grab the foreground on every alt-tab. `applyOverlayLocked` still carries the whole
@@ -874,7 +886,7 @@ export function setOverlaysHidden(hidden: boolean): void {
     // visibility belongs to its queue, and the next card brings it up (JOS-40).
     if (kind === 'toast' && opaqueToastWindow && opaqueToastIdle) continue
     w.showInactive()
-    w.setAlwaysOnTop(true, 'screen-saver')
+    assertTopmost(w)
     applyOverlayLocked(kind, getOverlayConfig(kind).locked)
   }
   // Overlays re-asserting always-on-top just raised them ABOVE the ring (same 'screen-saver'
@@ -968,7 +980,11 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
   // by construction: every overlay show/re-raise path ends with raiseCursorRing(), never by
   // creation-order luck — auto-hide re-shows overlays on every EQ refocus, and before this rule
   // each re-show buried the ring, so the circle slid behind an overlay on mouseover.
-  w.setAlwaysOnTop(true, 'screen-saver')
+  //
+  // WHICH IS WHY THE RING'S RAISES ARE THE ONE THING THE JOS-368 GUARD DOES NOT TOUCH:
+  // `assertTopmost` would skip precisely when the ring is already topmost, and "already topmost"
+  // is the state a re-raise exists to improve on. `raiseTopmost` is the unconditional spelling.
+  raiseTopmost(w)
   // Unconditional and permanent: this window is never a mouse target — and DELIBERATELY not
   // `forward:true`. On Windows, forwarding installs a low-level mouse hook (WH_MOUSE_LL) owned
   // by the MAIN process; every system mouse event then waits on our message loop, so a blocked
@@ -986,7 +1002,8 @@ export function createCursorRingWindow(bounds: ScreenRect): void {
   w.on('ready-to-show', () => {
     if (!windowsMayShow()) return
     w.showInactive()
-    w.setAlwaysOnTop(true, 'screen-saver')
+    // Unconditional, like every other ring raise — see the creation comment above.
+    raiseTopmost(w)
   })
   w.on('closed', () => {
     cursorRingWindow = null
@@ -1023,7 +1040,9 @@ export function setCursorRingVisible(visible: boolean): void {
   }
   if (!windowsMayShow() || w.isVisible()) return
   w.showInactive()
-  w.setAlwaysOnTop(true, 'screen-saver')
+  // Unconditional: a ring coming back from auto-hide has to land ABOVE the overlays that came
+  // back with it, and it can only do that by being the most recent assertion (see below).
+  raiseTopmost(w)
 }
 
 /**
@@ -1031,11 +1050,16 @@ export function setCursorRingVisible(visible: boolean): void {
  * recent assertion wins, so every overlay show/re-raise path calls this last — that ordering IS
  * the "ring above overlays" invariant (see the creation-time comment). A no-op when the ring is
  * absent, destroyed, or hidden: raising a hidden window on Windows can flash it.
+ *
+ * THE ONE CALL THE JOS-368 GUARD DELIBERATELY SKIPS. `assertTopmost` returns early on a window
+ * that already holds WS_EX_TOPMOST, which is every ring this function is ever asked about — so a
+ * guarded version of this line would be a no-op forever and the circle would go back to sliding
+ * behind an overlay on mouseover. It is one window per re-show against the five it saved.
  */
 function raiseCursorRing(): void {
   const w = cursorRingWindow
   if (!w || w.isDestroyed() || !w.isVisible()) return
-  w.setAlwaysOnTop(true, 'screen-saver')
+  raiseTopmost(w)
 }
 
 /** Tear the ring window down (setting switched off, app quitting). */
