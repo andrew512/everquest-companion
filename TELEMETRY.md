@@ -162,6 +162,14 @@ Once per session: what a typical install looks like.
 | `voiceEngine` | `system` · `kokoro` · `off` | Which speech tier your spoken alerts use — off when no alert is set to speak. |
 | `soundPackCount` | whole number | How many sound packs are installed. |
 | `updateChannel` | `main` · `stable` | Update channel. |
+| `cpuCountBucket` | bucket index | How many processor cores the machine has — a range, never the number. |
+| `totalMemBucket` | bucket index | How much memory the machine has — a range, never the number. |
+| `gpuVendor` | `nvidia` · `amd` · `intel` · `other` · `unknown` | Who made the graphics chip. Never the model, never a driver version. |
+| `gpuCompositing` | `hardware` · `software` · `off` · `unknown` | Whether the app is drawing with the graphics chip or on the processor. |
+| `safeMode` | true / false | Is graphics safe mode on for this launch. |
+| `displayCountBucket` | bucket index | How many monitors are attached. |
+| `primaryScaleBucket` | bucket index | The main monitor’s display scaling (100%, 125%, …). |
+| `eqWindowMode` | `exclusive` · `windowed` · `unknown` | Whether EverQuest is set to fullscreen or windowed — one true/false read out of `eqclient.ini`. Nothing else in that file is read, and nothing from your log. |
 
 ### `funnelStep`
 
@@ -188,6 +196,8 @@ With each session report (every few minutes, and at close): counts of things tha
 | `imageFetchFailures` | whole number (optional) | Times an item icon or portrait could not be downloaded, usually because the wiki was unreachable. The picture is hidden and the app carries on. Never which picture. |
 | `suppressedErrorLines` | whole number (optional) | The same error line repeating: after the first few, further copies are counted here instead of being written to the local error log again. A count only. |
 | `imageCacheReadFailures` | whole number (optional) | Times a picture the app had already saved could not be read back, so it was downloaded again. The picture is still shown. Never which picture, and never where it was kept. |
+| `gpuProcessGone` | whole number (optional) | Times the graphics helper the app draws with died and was restarted — usually seen as a flicker. A count, plus the reason code in the error log. |
+| `utilityProcessGone` | whole number (optional) | The same for a background helper (sound, network, storage). These come and go normally, so this is a count only and is not treated as an error. |
 
 ### `updateOutcome`
 
@@ -340,6 +350,52 @@ These are the exact ranges, taken from the schema:
 | 5 | 50 ms – 100 ms |
 | 6 | 100 ms – 250 ms |
 | 7 | ≥ 250 ms |
+
+**`cpuCountBucket`** — How many processor cores the machine has.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | 0 – 1 |
+| 1 | 2 – 3 |
+| 2 | 4 – 5 |
+| 3 | 6 – 7 |
+| 4 | 8 – 11 |
+| 5 | 12 – 15 |
+| 6 | 16 – 23 |
+| 7 | ≥ 24 |
+
+**`totalMemBucket`** — How much memory the machine has.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 4 GB |
+| 1 | 4 GB – 8 GB |
+| 2 | 8 GB – 12 GB |
+| 3 | 12 GB – 16 GB |
+| 4 | 16 GB – 24 GB |
+| 5 | 24 GB – 32 GB |
+| 6 | 32 GB – 64 GB |
+| 7 | ≥ 64 GB |
+
+**`displayCountBucket`** — How many monitors are attached.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | 0 |
+| 1 | 1 |
+| 2 | 2 |
+| 3 | ≥ 3 |
+
+**`primaryScaleBucket`** — The main monitor’s display scaling.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 100% |
+| 1 | 100% – 125% |
+| 2 | 125% – 150% |
+| 3 | 150% – 175% |
+| 4 | 175% – 200% |
+| 5 | ≥ 200% |
 
 ## Turning it off
 

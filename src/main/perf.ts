@@ -63,7 +63,7 @@ import { startupReplayStats } from '../shared/telemetryStartup'
 import { logError, logInfo } from './errorLog'
 // The fleet half of the same measurement (JOS-57). Through the telemetry FAÇADE, like every other
 // producer in this app — the wiring may not reach around it into the ring.
-import { noteStartupReplay } from './telemetry'
+import { noteStartupReplay, scheduleSetupSnapshot } from './telemetry'
 import { sendToMain } from './windows'
 
 const PROFILE_FILE = 'perf-startup.json'
@@ -246,6 +246,15 @@ export function markStartupPhase(phase: StartupPhase, opts: MarkOptions = {}): v
     stopStartupBlockProbe()
     stopStutterProbe()
     reportStartupReplay(at)
+    // …and THIS is where the setup snapshot is armed (JOS-364). It belongs to this mark for the
+    // same reason the probes do: `replayDone` is the one moment the app agrees its launch is
+    // over, and a machine-class reading taken during the replay would both steal from the launch
+    // it is measured beside and describe an app that is still booting. It is armed rather than
+    // taken — the producer waits out a short delay of its own and never blocks this call.
+    //
+    // NOT gated on `replayStats` like the reading above: an install with no log to replay still
+    // has a machine, and it is disproportionately the install something is wrong with.
+    scheduleSetupSnapshot()
   }
   if (startupProfile().complete) writeStartupProfile()
 }

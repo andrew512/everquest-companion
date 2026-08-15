@@ -51,6 +51,9 @@ import type {
   TriageVersionRow
 } from '../../shared/triage'
 import { buildCoverage } from './coverage'
+// JOS-364's machine class, in its own file for the reason that file's header states — this
+// section pushed this one past the 400-line ceiling, and the answer is a split.
+import { buildMachineClass } from './machineClass'
 import { buildReleaseHealth } from './releaseHealth'
 import {
   addDays,
@@ -186,6 +189,7 @@ function buildAdoption(usage: readonly UsageRow[], sessions: number): TriageAnal
     voice: mixRows(dimsOf(usage, USAGE_METRICS.setupVoice)),
     cursorRing: mixRows(dimsOf(usage, USAGE_METRICS.setupCursorRing)),
     autoHide: mixRows(dimsOf(usage, USAGE_METRICS.setupAutoHide)),
+    machine: buildMachineClass(usage),
     alertsFired: sumOf(usage, USAGE_METRICS.alertsFired),
     alertsSpoken: sumOf(usage, USAGE_METRICS.alertsSpoken)
   }

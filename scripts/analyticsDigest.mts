@@ -111,6 +111,11 @@ function adoptionLines(d: TriageAnalyticsData): string[] {
     ...mixBlock(a.overlays),
     '  voice engine',
     ...mixBlock(a.voice),
+    // JOS-364. Sixteen rows is the realistic ceiling here (eight metrics, a couple of populated
+    // buckets each), so the block is given room the other mixes do not need — a GPU vendor list
+    // truncated at ten is a list with the interesting tail cut off.
+    '  machine class (JOS-364 - the axis stall readings get sliced by)',
+    ...mixBlock(a.machine, 24, '(nothing reported yet)'),
     `  alerts fired ${String(a.alertsFired)} · spoken ${String(a.alertsSpoken)}`,
   ]
 }
