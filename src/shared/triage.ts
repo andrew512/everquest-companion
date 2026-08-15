@@ -414,6 +414,59 @@ export interface TriageAnalyticsStartup {
   newBytes: TriageMixRow[]
 }
 
+/**
+ * HOW THE FLEET'S SESSIONS ACTUALLY RAN (JOS-367) — the live half of the section above.
+ *
+ * `startup` asks how launches went; this asks what happened for the hours afterwards, and it is
+ * the readout the ~1 s freeze reports have never had a number to argue with.
+ *
+ * THE VERDICT IS THE POINT. `coincident` counts windows in which BOTH of our clocks — main and a
+ * worker thread that does nothing else — were at least 100 ms late inside the same half second,
+ * i.e. the MACHINE stalled. Read as a rate it separates "this app stalls people" from "this app
+ * runs on machines that stall", and those two readings lead to opposite work.
+ */
+export interface TriageAnalyticsLive {
+  /** Session reports that carried a stall reading — the denominator for the sums below. */
+  reports: number
+  /** Probe ticks behind those reports (about four a second, per reporting session). */
+  samples: number
+  /** p50 / p95 ACROSS REPORTS of each report's own p95 lateness, as bucket ranges. */
+  p50StallLabel: string | null
+  p95StallLabel: string | null
+  /** p95 across reports of each report's WORST tick — the freeze end of the distribution. */
+  maxStallLabel: string | null
+  /** Ticks at least 100 ms / 500 ms late, summed over `reports`. */
+  over100: number
+  over500: number
+  /** `over100` per report — the comparable form, since reports are a fixed interval. */
+  latePerReport: number | null
+  /**
+   * Reports that carried a VERDICT at all (the probe worker was running). A SUBSET of `reports`,
+   * and the divisor for `machinePerReport` — dividing by every report would deflate the rate on
+   * exactly the machines where a second thread would not start, which are not a random sample.
+   */
+  verdicts: number
+  /** Windows both clocks agreed on: the machine, not us. */
+  coincident: number
+  /** `coincident` per report that could answer — read beside `latePerReport`, same interval. */
+  machinePerReport: number | null
+  /** Reports that carried a tail reading (a character was attached and something was read). */
+  tailReports: number
+  tailReads: number
+  tailReopens: number
+  /** p95 across reports of the read leg, and of the worst read — the same ladder as the stalls. */
+  p95TailLabel: string | null
+  maxTailLabel: string | null
+  tailOver100: number
+  tailOver500: number
+  /** The fattest single delta read, and how big the tailed logs are. Bucket LABELS. */
+  tailDeltas: TriageMixRow[]
+  tailLogSizes: TriageMixRow[]
+  /** What was switched on while all of the above was measured — one labelled list, in reading
+   *  order, the shape `adoption.machine` uses for the same reason. */
+  state: TriageMixRow[]
+}
+
 export interface TriageVersionRow {
   version: string
   /** Installs currently ON this version (`analytics_install.app_version`). */
@@ -713,6 +766,8 @@ export interface TriageAnalyticsData {
   health: TriageAnalyticsHealth
   /** How the fleet's launches actually went — the startup replay, per build (JOS-57). */
   startup: TriageAnalyticsStartup
+  /** …and how its SESSIONS went, for the hours after the launch (JOS-367). */
+  live: TriageAnalyticsLive
   /** Error rate per build over time, against adoption and release dates (JOS-96). */
   releaseHealth: TriageAnalyticsReleaseHealth
   /** What this pipeline can and cannot see: opt-out flips, and the reporting base (JOS-109). */

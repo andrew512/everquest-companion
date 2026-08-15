@@ -13,6 +13,11 @@
  * story, and `tests/perf.test.mts`, `tests/telemetryProducers.test.mts` and
  * `tests/usageAnalytics.test.mts` are all at the repo's 400-code-line ceiling.
  *
+ * WHAT IS NOT HERE is the READ half — the counters, the Analytics section and the digest — which
+ * lives in `usageLiveStalls.test.mts` beside the surfaces it renders. The same split
+ * `startupDiscriminators.test.mts` and `usageStartup.test.mts` keep, and for the same reason:
+ * either file alone would be past the repo's 400-code-line ceiling.
+ *
  * Pure: no Electron, no worker thread, no clock, so it never skips. The probe's TIMERS are the one
  * thing not asserted here — a timer that fires is the e2e's job (tests/e2e/perf.e2e.mts); what is
  * asserted here is every decision made about the samples once they exist.
@@ -33,7 +38,6 @@ import {
   WORKING_SET_MB_EDGES
 } from '../src/shared/telemetryLive'
 import { validateTelemetryEvent } from '../src/shared/telemetryValidate'
-import { rollupBatch, USAGE_METRICS } from '../src/shared/telemetryRollup'
 import {
   coincidentWindows,
   foldLiveLateness,
@@ -389,101 +393,6 @@ test('OUT-OF-LADDER VALUES ARE REFUSED, by name — a bucket index is not a mill
   refuse({ live: { p95Bucket: 1 } }, 'live.samples')
   refuse({ tail: { reads: 1 } }, 'tail.reopens')
   refuse({ live: 7 }, 'live')
-})
-
-// ---- the rollup ----------------------------------------------------------------------------
-
-/** One batch of the given events, folded to `metric dim` -> n. */
-function counters(events: TelemetryEvent[]): Map<string, number> {
-  const batch = {
-    v: 1 as const,
-    env: {
-      analyticsId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
-      appVersion: '0.28.0',
-      channel: 'prod' as const,
-      platform: 'win32' as const,
-      tzOffsetBucket: -7
-    },
-    events: events.map((ev, i) => ({ ts: 1_000 + i, ev }))
-  }
-  const roll = rollupBatch(batch, { firstOfDay: false, newInstall: false, upgraded: false })
-  return new Map(roll.counters.map((c) => [`${c.metric} ${c.dim}`, c.n]))
-}
-
-/** Through the validator, because the rollup only ever sees events that have been through it —
- *  which also means every rollup assertion below is a second proof that the shape is legal. */
-function validated(raw: Record<string, unknown>): TelemetryEvent {
-  const result = validateTelemetryEvent(raw)
-  if (!result.ok) throw new Error(result.message)
-  return result.value
-}
-
-const validHeartbeat = (): TelemetryEvent => validated(fullHeartbeat())
-
-test('the riders become counters: sums where a sum means something, histograms where it does not', () => {
-  const c = counters([validHeartbeat()])
-  assert.equal(c.get(`${USAGE_METRICS.liveSamples} -`), 2400)
-  assert.equal(c.get(`${USAGE_METRICS.liveStallP95} 2`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.liveStallMax} 6`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.liveOver100} -`), 4)
-  assert.equal(c.get(`${USAGE_METRICS.liveOver500} -`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.tailReads} -`), 812)
-  assert.equal(c.get(`${USAGE_METRICS.tailReadP95} 1`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.tailDeltaBytes} 3`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.tailLogSize} 3`), 1)
-  // A window count is a dim of three values: past two, how many overlays a person keeps open
-  // describes their desktop rather than a population.
-  assert.equal(c.get(`${USAGE_METRICS.stateOverlaysOpen} 2+`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.stateOverlaysLocked} 1`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.statePresence} on`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.stateRing} off`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.stateFreeMem} 3`), 1)
-  assert.equal(c.get(`${USAGE_METRICS.stateWorkingSet} 2`), 1)
-  // UNVERSIONED, unlike every startup metric: these describe a machine and a session, and a
-  // version in the dim would split each distribution across four releases to answer nothing.
-  for (const key of c.keys()) assert.equal(key.includes('0.28.0'), key.startsWith('version '))
-})
-
-test('A VERDICT OF ZERO IS STILL A VERDICT — liveVerdicts is why the rate is honest', () => {
-  // `add()` refuses a non-positive value, so a report that compared two clocks and found no
-  // coincidence writes no `liveCoincident` row at all. Without a separate denominator that report
-  // would be indistinguishable from one that had no second clock — and those are opposite facts:
-  // the first says the stalls are OURS, the second says nothing.
-  const withWorker = { ...fullHeartbeat(), live: { samples: 10, p95Bucket: 0, maxBucket: 5, over100: 1, over500: 0, coincident: 0 } }
-  const zero = counters([validated(withWorker)])
-  assert.equal(zero.get(`${USAGE_METRICS.liveVerdicts} -`), 1)
-  assert.equal(zero.has(`${USAGE_METRICS.liveCoincident} -`), false)
-
-  const noWorker = { ...fullHeartbeat(), live: { samples: 10, p95Bucket: 0, maxBucket: 5, over100: 1, over500: 0 } }
-  const absent = counters([validated(noWorker)])
-  assert.equal(absent.has(`${USAGE_METRICS.liveVerdicts} -`), false)
-  // …and the machine-stalled reading still counts, over its own denominator.
-  const machine = counters([validated({ ...withWorker, live: { ...withWorker.live, coincident: 3 } })])
-  assert.equal(machine.get(`${USAGE_METRICS.liveCoincident} -`), 3)
-  assert.equal(machine.get(`${USAGE_METRICS.liveVerdicts} -`), 1)
-})
-
-test('AN ABSENT GROUP CONTRIBUTES NOTHING — bucket 0 is a real reading, never a default', () => {
-  // The client that predates these fields must fold exactly as it always did. It matters more
-  // here than for the machine class: bucket 0 of every ladder in this section is a genuine
-  // reading (under 10 ms late, under half a gibibyte free), so a `?? 0` would invent a population
-  // of impossibly healthy machines out of clients that measured nothing.
-  const bare = counters([validated({ t: 'sessionHeartbeat', uptimeMs: 600_000 })])
-  for (const key of bare.keys()) {
-    assert.equal(key.startsWith('live'), false, key)
-    assert.equal(key.startsWith('tail'), false, key)
-    assert.equal(key.startsWith('state'), false, key)
-  }
-  assert.equal(bare.get('heartbeats -'), 1)
-})
-
-test('sessionEnd folds the same rows as the heartbeat — one interval, whichever event carried it', () => {
-  const end = { ...fullHeartbeat(), t: 'sessionEnd', durationMs: 60_000, viewsVisited: 2 }
-  delete end.uptimeMs
-  const c = counters([validated(end)])
-  assert.equal(c.get(`${USAGE_METRICS.liveSamples} -`), 2400)
-  assert.equal(c.get(`${USAGE_METRICS.tailReads} -`), 812)
-  assert.equal(c.get(`${USAGE_METRICS.stateFreeMem} 3`), 1)
 })
 
 test('THE LADDER TOPS OUT PAST A SECOND, which the startup ladder does not', () => {
