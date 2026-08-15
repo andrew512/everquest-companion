@@ -249,13 +249,6 @@ export const IPC = {
   // and it is OFF unless somebody has turned it on — an absent key drags exactly as it always did.
   overlaySnapGet: 'overlaySnap:get',
   overlaySnapSet: 'overlaySnap:set',
-  // ---- the exclusive-fullscreen note (JOS-368; shared/eqWindowMode.ts) ----
-  // renderer(main app) -> main: should Preferences say that EverQuest is set to exclusive
-  // fullscreen, and overlays draw best windowed? Returns EqWindowNotice — the MODE plus the one
-  // boolean the card acts on, folded in main so the renderer never re-derives when to speak.
-  // Its twin remembers the dismissal against this app's version and answers with the new state.
-  eqWindowNoticeGet: 'eqWindowNotice:get',
-  eqWindowNoticeDismiss: 'eqWindowNotice:dismiss',
   // main -> renderer(ring window ONLY): the ring's size/thickness changed. Payload CursorRingPrefs.
   onCursorRingConfig: 'cursorRing:config',
   // main -> renderer(ring window ONLY): one cursor sample, in the ring window's own CSS px.

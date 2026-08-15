@@ -28,9 +28,10 @@
 //   displayCountBucket / primaryScaleBucket — overlay work is done in device pixels; a 4K display
 //     at 150% is 2.25× the pixels of a 100% one, and multi-monitor is where window-manager stalls
 //     live.
-//   eqWindowMode                     — the discriminator the whole ticket turns on. Under
-//     exclusive fullscreen, showing ANY topmost window is a display MODE SWITCH, and the stall is
-//     the documented cost of one. Windowed, the same stall is a bug and probably ours.
+//   eqWindowMode                     — the discriminator the whole ticket turns on: how the game
+//     presents itself is the other half of every z-order stall over it. `fullscreen` is the
+//     game's own Fullscreen setting being on, which on the current client is a BORDERLESS
+//     fullscreen window rather than an exclusive display mode (JOS-375).
 
 import {
   ALERT_COUNT_EDGES,
@@ -170,6 +171,14 @@ const FULLSCREEN_RE = /^[ \t]*Fullscreen[ \t]*=[ \t]*(\S+)/im
  * `WindowedMode` WINS WHEN BOTH ARE PRESENT. A client that writes the explicit mode key is
  * telling us the mode; `Fullscreen=` is the fallback reading, not a second vote.
  *
+ * `fullscreen` IS THE GAME'S SETTING, NOT A DISPLAY MODE (JOS-375). Both spellings answer one
+ * question — is the game's own Fullscreen option on — and on the current client that option
+ * produces a BORDERLESS FULLSCREEN WINDOW, which an always-on-top overlay shares without any
+ * display-mode switch. This member used to be called `exclusive`, and that was a claim about
+ * DirectX-era exclusive mode that neither key can support: the file says which setting is on and
+ * says nothing about how the client implements it. The reading is unchanged; only the honest
+ * name is.
+ *
  * GARBAGE IS `unknown`, NOT A GUESS. `WindowedMode=` with nothing after it, or with a value the
  * game itself would not understand, is a file we cannot read rather than evidence of a mode —
  * and a wrong answer here would misattribute exactly the stalls this field exists to explain.
@@ -178,9 +187,9 @@ export function eqWindowModeOf(ini: string | null | undefined): TelemetryEqWindo
   if (typeof ini !== 'string' || ini === '') return 'unknown'
   const windowedMode = WINDOWED_MODE_RE.exec(ini)?.[1]?.trim().toLowerCase()
   if (windowedMode === 'true') return 'windowed'
-  if (windowedMode === 'false') return 'exclusive'
+  if (windowedMode === 'false') return 'fullscreen'
   const fullscreen = FULLSCREEN_RE.exec(ini)?.[1]?.trim().toLowerCase()
-  if (fullscreen === '1') return 'exclusive'
+  if (fullscreen === '1') return 'fullscreen'
   if (fullscreen === '0') return 'windowed'
   return 'unknown'
 }

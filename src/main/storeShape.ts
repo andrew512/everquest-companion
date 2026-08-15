@@ -148,18 +148,9 @@ export interface StoreShape {
    * `storeOverlaySnap.ts` because store.ts is at the 400-code-line ceiling.
    */
   overlaySnap?: OverlaySnapPrefs
-  /**
-   * THE EXCLUSIVE-FULLSCREEN NOTE, ALREADY READ (JOS-368) — the app VERSION at which this install
-   * dismissed the Preferences note about EverQuest being set to exclusive fullscreen.
-   *
-   * A VERSION AND NOT A BOOLEAN, because "remembered per install" and "say it again after an
-   * update" are the same requirement seen from two sides: a dismissal is the user telling us they
-   * have read THIS build's advice, and a build that has changed how overlays behave has earned one
-   * more sentence. `undefined` means never dismissed, which is every install that has never seen
-   * the note — additive and optional, so it rides the storeShape carve-out with no schema bump and
-   * a store written here still opens in a build that predates the field.
-   */
-  eqExclusiveNoticeDismissedVersion?: string
+  // `eqExclusiveNoticeDismissedVersion` (JOS-368) LIVED HERE and was removed by JOS-375 with the
+  // note it remembered — the game's Fullscreen setting is a borderless window on this client, so
+  // the advice could never be true. Migration 12 → 13 deletes the key from any store that has it.
   /**
    * Usage-analytics prefs (schema migration 5→6; docs/plans/usage-analytics.md). Opt-OUT
    * (`enabled:true`) but `noticeShown:false` — the network gate requires BOTH — and no

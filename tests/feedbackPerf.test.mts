@@ -52,7 +52,7 @@ const STATE: FeedbackPerfState = {
   totalMemGb: 32,
   gpuVendor: 'nvidia',
   gpuCompositing: 'hardware',
-  eqWindowMode: 'exclusive'
+  eqWindowMode: 'fullscreen'
 }
 
 /** Wall clock for the START of bucket `i` — the fold's own grid, restated so a test that

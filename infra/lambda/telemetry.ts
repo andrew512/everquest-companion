@@ -387,7 +387,7 @@ const ERROR_TAIL =
 /**
  * THE PERF CUBE (JOS-372). Additive like every counter here, and keyed on all five dims plus the
  * day and the cohort — the whole row IS the primary key, which is what makes the `ON CONFLICT`
- * target legal and what stops one day's exclusive-fullscreen rows colliding with its windowed
+ * target legal and what stops one day's fullscreen rows colliding with its windowed
  * ones. `src/shared/telemetryPerfCube.ts` holds the vocabulary and the cardinality argument.
  */
 const PERF_HEAD =

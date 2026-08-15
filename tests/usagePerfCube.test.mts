@@ -39,7 +39,7 @@ function validated(raw: Record<string, unknown>): TelemetryEvent {
   return result.value
 }
 
-/** A snapshot from a mid-tier box with a discrete GPU, playing in exclusive fullscreen. */
+/** A snapshot from a mid-tier box with a discrete GPU, with the game set to fullscreen. */
 function snapshot(over: Record<string, unknown> = {}): TelemetryEvent {
   return validated({
     t: 'setupSnapshot',
@@ -55,7 +55,7 @@ function snapshot(over: Record<string, unknown> = {}): TelemetryEvent {
     cpuCountBucket: 3,
     totalMemBucket: 3,
     gpuVendor: 'nvidia',
-    eqWindowMode: 'exclusive',
+    eqWindowMode: 'fullscreen',
     ...over
   })
 }
@@ -131,7 +131,7 @@ test('UNKNOWN IS A CLASS, NOT A GUESS — a missing or unclassable axis takes th
 test('a batch with a snapshot and a heartbeat lands ONE cube row with the right five dims', () => {
   assert.deepEqual(cube([snapshot(), heartbeat()]), [
     {
-      windowMode: 'exclusive',
+      windowMode: 'fullscreen',
       machineClass: 'mid-dgpu',
       locked: 'on',
       stallBucket: '6',
@@ -224,7 +224,7 @@ test('THE LOCAL STACK PROVES THE RESOLUTION: a snapshot launch, then heartbeat-o
   assert.deepEqual(t.perfDaily[0], {
     day: '2026-08-15',
     cohort: 'user',
-    window_mode: 'exclusive',
+    window_mode: 'fullscreen',
     machine_class: 'mid-dgpu',
     locked: 'on',
     stall_bucket: '6',
@@ -233,7 +233,7 @@ test('THE LOCAL STACK PROVES THE RESOLUTION: a snapshot launch, then heartbeat-o
   } as unknown)
   // The two enums are the whole per-install footprint this feature adds.
   assert.equal(t.analyticsInstall[0]?.machine_class, 'mid-dgpu')
-  assert.equal(t.analyticsInstall[0]?.window_mode, 'exclusive')
+  assert.equal(t.analyticsInstall[0]?.window_mode, 'fullscreen')
 })
 
 // ---- the readout ---------------------------------------------------------------------------
@@ -251,14 +251,14 @@ const row = (over: Partial<PerfRow>): PerfRow => ({
 })
 
 /**
- * A fleet in which the LOCKED overlays are where the bad stalls live, on exclusive-fullscreen
+ * A fleet in which the LOCKED overlays are where the bad stalls live, on fullscreen
  * installs, on small boxes — the reading this whole ticket exists to be able to see.
  */
 function lockedStallsFleet(): PerfRow[] {
   return [
     // 80 reports with a locked overlay, 60 of them past the heavy rung (bucket 6 = 500 ms - 1 s).
-    row({ locked: 'on', windowMode: 'exclusive', machineClass: 'low-igpu', stallBucket: 6, n: 60 }),
-    row({ locked: 'on', windowMode: 'exclusive', machineClass: 'low-igpu', stallBucket: 2, n: 20 }),
+    row({ locked: 'on', windowMode: 'fullscreen', machineClass: 'low-igpu', stallBucket: 6, n: 60 }),
+    row({ locked: 'on', windowMode: 'fullscreen', machineClass: 'low-igpu', stallBucket: 2, n: 20 }),
     // 120 with nothing locked, 12 of them heavy.
     row({ locked: 'off', windowMode: 'windowed', machineClass: 'high-dgpu', stallBucket: 7, n: 12 }),
     row({ locked: 'off', windowMode: 'windowed', machineClass: 'high-dgpu', stallBucket: 1, n: 108 })
@@ -301,7 +301,7 @@ test('SORTED BY REPORTS, NOT BY RATE — a four-report slice at 100% is not a fi
     p.byWindowMode.map((s) => [s.id, s.reports]),
     [
       ['windowed', 120],
-      ['exclusive', 80],
+      ['fullscreen', 80],
       ['unknown', 4]
     ]
   )
@@ -326,7 +326,7 @@ test('the digest renders STALLS BY between the Live section and Versions', () =>
   assert.match(text, /LIVE SESSIONS[\s\S]*STALLS BY[\s\S]*VERSIONS/)
   assert.match(text, /fleet: 72 of 200 reports · 36\.0%/)
   assert.match(text, /overlay LOCKED\s+60 \/ 80\s+75\.0%/)
-  assert.match(text, /exclusive\s+60 \/ 80/)
+  assert.match(text, /fullscreen\s+60 \/ 80/)
   assert.match(text, /low-igpu\s+60 \/ 80/)
   // An empty cube says so in words rather than printing a table of zeros.
   assert.match(renderAnalyticsDigest(analytics([])), /perf cube has no rows in this window/)

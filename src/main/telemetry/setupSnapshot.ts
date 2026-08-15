@@ -37,9 +37,9 @@ import { cpus, totalmem } from 'os'
 import { resolveAlertAudio } from '../../shared/speechText'
 import { OVERLAY_KINDS } from '../../shared/types'
 import type { TelemetryOverlayKind, TelemetryVoiceEngine } from '../../shared/telemetry'
-// ONE READER FOR `eqclient.ini` (JOS-368). It was private to this file until Preferences needed
-// the same answer to tell an exclusive-fullscreen player that overlays want windowed mode; a
-// second parse of somebody else's settings file is how two answers to one question get born.
+// ONE READER FOR `eqclient.ini` (JOS-368). It was private to this file until a second consumer
+// arrived — the perf block a feedback report carries (`feedback/perf.ts`) — and a second parse of
+// somebody else's settings file is how two answers to one question get born.
 import { readEqClientIni } from '../eqWindowMode'
 import { activeSafeMode } from '../graphics'
 import { listCharacters, resolveActiveCharacter } from '../log/config'

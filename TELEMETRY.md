@@ -209,7 +209,7 @@ Once per session: what a typical install looks like.
 | `safeMode` | true / false | Is graphics safe mode on for this launch. |
 | `displayCountBucket` | bucket index | How many monitors are attached. |
 | `primaryScaleBucket` | bucket index | The main monitor’s display scaling (100%, 125%, …). |
-| `eqWindowMode` | `exclusive` · `windowed` · `unknown` | Whether EverQuest is set to fullscreen or windowed — one true/false read out of `eqclient.ini`. Nothing else in that file is read, and nothing from your log. |
+| `eqWindowMode` | `fullscreen` · `windowed` · `unknown` | Whether EverQuest is set to fullscreen or windowed — one true/false read out of `eqclient.ini`. Nothing else in that file is read, and nothing from your log. `fullscreen` means the game’s own Fullscreen setting is on, which on the current client is a borderless fullscreen window and not an exclusive display mode. |
 
 ### `funnelStep`
 

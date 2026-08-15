@@ -150,7 +150,7 @@ export function readErrorReports(c: Clients, sinceDay: string): Promise<Row[]> {
  * more than one dimension per row.
  *
  * `usage_daily` can say how many session reports saw a bad stall; only this table can say whether
- * that rate is higher on exclusive-fullscreen installs, on small boxes, or while an overlay is
+ * that rate is higher on fullscreen installs, on small boxes, or while an overlay is
  * locked, because a counter keyed on one `dim` structurally cannot cross two facts.
  *
  * BOUNDED EXACTLY LIKE THE COUNTER READS, and by the same constant: it is `day >= :floor` over the

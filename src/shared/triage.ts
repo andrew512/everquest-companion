@@ -298,7 +298,7 @@ export interface TriageAnalyticsAdoption {
   /**
    * THE MACHINE CLASS (JOS-364) — the eight `setupSnapshot` readings that describe the box rather
    * than the install, already labelled and folded into ONE list (`cpus 4-5`, `gpu nvidia`,
-   * `EQ exclusive`, …).
+   * `EQ fullscreen`, …).
    *
    * One list rather than eight fields because of what it is FOR: nobody asks "what is the GPU
    * mix" on its own — they read the whole shape of the fleet's hardware at once while looking at
@@ -770,7 +770,7 @@ export interface TriageAnalyticsCoverage {
  * `ratio` makes everywhere else in this readout: an unmeasured rate is not a clean bill.
  */
 export interface TriagePerfSlice {
-  /** The dim's value, already labelled: `exclusive`, `low-igpu`, `overlay locked`. */
+  /** The dim's value, already labelled: `fullscreen`, `low-igpu`, `overlay locked`. */
   id: string
   /** Session reports in this slice — the denominator, and the honesty term. */
   reports: number
@@ -787,7 +787,7 @@ export interface TriagePerfSlice {
  *
  * THE THREE LISTS ARE NEVER ADDED TOGETHER. Each is the SAME population of session reports sliced
  * a different way, so summing across two of them would count every report twice; they are read one
- * against another (does the locked-overlay rate exceed the fleet rate? does exclusive fullscreen?)
+ * against another (does the locked-overlay rate exceed the fleet rate? does fullscreen?)
  * and each against `rate` below.
  */
 export interface TriageAnalyticsPerf {
