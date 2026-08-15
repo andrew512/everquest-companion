@@ -1,4 +1,4 @@
-﻿// AlertPlayer — an always-mounted (App-level) component that turns fired alerts
+// AlertPlayer — an always-mounted (App-level) component that turns fired alerts
 // into sound AND SPEECH, and the `fireAppSignal` entry point for renderer-side app triggers.
 //
 // SPEECH (docs/plans/voice-alerts.md §3, wave 2) rides the SAME firing paths, decided by ONE

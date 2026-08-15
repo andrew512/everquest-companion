@@ -1,4 +1,4 @@
-﻿// Default overlay placement (Task #59 follow-up: UNIFORM default size).
+// Default overlay placement (Task #59 follow-up: UNIFORM default size).
 //
 // This is pure geometry — no log, no fixture, so it never skips. It pins the two properties the
 // first-open layout has to have on any display, and the one product rule behind them:

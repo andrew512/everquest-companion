@@ -1,4 +1,4 @@
-﻿import React from 'react'
+import React from 'react'
 import ReactDOM from 'react-dom/client'
 import OverlayMeter from './OverlayMeter'
 import EventLogOverlay from './EventLogOverlay'

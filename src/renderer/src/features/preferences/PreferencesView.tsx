@@ -1,4 +1,4 @@
-﻿// PreferencesView — the app's single settings surface (Task #55).
+// PreferencesView — the app's single settings surface (Task #55).
 //
 // Replaces the old SettingsDialog (EQ install folder) and the drawer's update-channel
 // selector: everything app-level lives here, reached from the drawer's bottom-aligned

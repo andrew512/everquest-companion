@@ -1,4 +1,4 @@
-﻿import Store from 'electron-store'
+import Store from 'electron-store'
 import { join } from 'path'
 import { STORE_NAME, USER_DATA } from './channel'
 import { logError, logInfo } from './errorLog'

@@ -1,4 +1,4 @@
-﻿// IPC: everything the renderer says ABOUT WINDOWS — the frameless title-bar controls, the
+// IPC: everything the renderer says ABOUT WINDOWS — the frameless title-bar controls, the
 // floating overlays' open/config/click-through state, the cross-window deep link, and the
 // renderer's own error reports.
 

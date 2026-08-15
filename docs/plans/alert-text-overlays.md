@@ -1,4 +1,4 @@
-﻿# Alert text overlays
+# Alert text overlays
 
 Design + implementation notes for the alert text overlay.
 

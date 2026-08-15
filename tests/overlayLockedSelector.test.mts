@@ -1,4 +1,4 @@
-﻿// A LOCKED OVERLAY KEEPS ITS SELECTOR — and, since JOS-138, a scroll grip (P3 of
+// A LOCKED OVERLAY KEEPS ITS SELECTOR — and, since JOS-138, a scroll grip (P3 of
 // docs/plans/combat-overlay-parity.md; owner ruling 3: "a LOCKED overlay keeps its top dropdown
 // usable; click-through everywhere else", plus the owner's 2026-08-09 disposition that a pinned
 // overlay must still scroll).

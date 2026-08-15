@@ -1,4 +1,4 @@
-﻿// windows.ts — the slice of the main app's bridge that is about WINDOWS: this window's own
+// windows.ts — the slice of the main app's bridge that is about WINDOWS: this window's own
 // frameless title-bar controls (Task #23), the floating overlays' open-state, and the
 // celebration toast (docs/plans/celebration-toasts.md).
 //

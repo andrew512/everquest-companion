@@ -1,4 +1,4 @@
-﻿// alertForm — the add/edit dialog's FORM MODEL: the fields it owns, how they are hydrated from
+// alertForm — the add/edit dialog's FORM MODEL: the fields it owns, how they are hydrated from
 // the def being edited (or from blanks), and how they turn back into an `AlertDef`.
 //
 // Its own file because AlertDialog.tsx is the RENDERING and this is the state machine behind it;

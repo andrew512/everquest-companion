@@ -1,4 +1,4 @@
-﻿// speech.ts — THE ENGINE SEAM for voice alerts (docs/plans/voice-alerts.md §3).
+// speech.ts — THE ENGINE SEAM for voice alerts (docs/plans/voice-alerts.md §3).
 //
 // `speechText.ts` (shared) answers WHAT is said. This module answers WHO SAYS IT and WHEN —
 // and it is the ONLY place in the renderer that touches a speech engine. Every caller (the

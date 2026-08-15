@@ -1,4 +1,4 @@
-﻿// IPC: the alerts extension (Task #18) and the event-log feed (Task #59) it writes into.
+// IPC: the alerts extension (Task #18) and the event-log feed (Task #59) it writes into.
 // They share a domain because an alert fire IS a feed row — the registry host folds one into
 // the other, and both of the renderer-originated reports below end with the same flushNow.
 

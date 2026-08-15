@@ -1,4 +1,4 @@
-﻿// AlertDialog — the add/EDIT dialog for one alert. Extracted from AlertsView.tsx
+// AlertDialog — the add/EDIT dialog for one alert. Extracted from AlertsView.tsx
 // (Wave D factoring); the form's behavior, validation and saved shape are unchanged.
 //
 // `initial` is null for "add", or an existing def for "edit" (including a seeded

@@ -1,4 +1,4 @@
-﻿// Default overlay window placement (Task #59).
+// Default overlay window placement (Task #59).
 //
 // Overlay windows persist their bounds the moment the user moves/resizes them, so this only
 // ever decides where a kind appears the FIRST time it is opened (or after its stored bounds are

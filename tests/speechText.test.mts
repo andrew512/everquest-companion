@@ -1,4 +1,4 @@
-﻿// Voice alerts — the CONTENT resolver (src/shared/speechText.ts).
+// Voice alerts — the CONTENT resolver (src/shared/speechText.ts).
 //
 // `speechTextFor` decides the literal words a spoken alert says, and it is the single place
 // three surfaces agree: the alert editor's live preview, the renderer's alert player, and any

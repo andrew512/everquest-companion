@@ -1,4 +1,4 @@
-﻿// The alert row's ▶ — pinned at the pure seam that resolves what it does.
+// The alert row's ▶ — pinned at the pure seam that resolves what it does.
 //
 // THE BUG THIS FILE IS THE ANSWER TO. With a row's output set to "Voice (spoken)" and a
 // speak-what chosen, pressing ▶ played the PACK SOUND: the retired global voice switch sat inside

@@ -1,4 +1,4 @@
-﻿// The replay gate (src/main/replayGate.ts) — "nothing rides the mouse or the screen until
+// The replay gate (src/main/replayGate.ts) — "nothing rides the mouse or the screen until
 // parsing is done" (JOS-62), in test form.
 //
 // Everything asserted here is PURE: the three predicates that decide whether a window may be

@@ -1,4 +1,4 @@
-﻿// ToastOverlay — the 'toast' overlay kind (docs/plans/celebration-toasts.md).
+// ToastOverlay — the 'toast' overlay kind (docs/plans/celebration-toasts.md).
 //
 // A transparent strip at the top of the screen that USUALLY RENDERS NOTHING. Main pushes one
 // finished payload per celebration (`toast:card`); this component queues, times and dismisses
