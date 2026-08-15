@@ -46,6 +46,8 @@ import { installSpeechCacheProtocol } from './speech/cache'
 import { registerIpc } from './ipc'
 import { DATA_READY_MS, bus, buffsModule, epoch, sendWorldRebuilt, sessionDetector } from './pipeline'
 import { markStartupPhase, startPerfSampler, stopPerf } from './perf'
+import { initProcessPriority } from './processPriority'
+import { getProcessPriorityPrefs } from './storeProcessPriority'
 import { initPresenceEffects, stopPresenceEffects } from './presenceEffects'
 import { provisionDefaultPacks } from './provisionPacks'
 import { removedPackIds } from './storeSoundPacks'
@@ -226,6 +228,22 @@ if (!gotSingleInstanceLock) {
     // webContents this process will ever create (main window, each overlay, anything a future
     // feature adds), which is the only placement that can't be forgotten later.
     app.on('web-contents-created', (_e, wc) => hardenWebContents(wc))
+    // The companion yields the CPU to the game (JOS-366). Wired HERE, before the first window
+    // exists, for the same reason the line above is: both subscriptions must catch every
+    // webContents this process will ever create. Everything about WHICH processes and WHY the GPU
+    // is not one of them lives in ./processPriority.ts; this is the composition root handing that
+    // mechanism its three Electron facts and the policy (the stored switch). A no-op on any
+    // platform but Windows and under EQ_E2E, decided inside the module.
+    initProcessPriority({
+      mainPid: process.pid,
+      enabled: getProcessPriorityPrefs().yieldToGame,
+      onWebContentsCreated: (cb) => app.on('web-contents-created', (_e, wc) => cb(wc)),
+      onWindowCreated: (cb) => app.on('browser-window-created', (_e, win) => cb(win)),
+      // The read-back line is DEV-ONLY: it is one line per window load, and its whole job is to
+      // make a silent re-raise by Chromium's priority manager visible while someone is watching.
+      debug: app.isPackaged ? undefined : (line) => logInfo(`[everquest-companion] ${line}`),
+      onError: (err: unknown) => logError('main:processPriority', err)
+    })
     // Permissions are a SESSION property; every window here uses the default session (no
     // custom `partition` anywhere — the same fact that lets one eqimg:// handler serve them all).
     hardenSession(session.defaultSession)
