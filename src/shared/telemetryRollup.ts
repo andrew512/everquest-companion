@@ -50,6 +50,7 @@ import {
   type TelemetryEvent,
   type TelemetryRecord
 } from './telemetry'
+import { foldLiveRiders, LIVE_METRICS } from './telemetryRollupLive'
 
 /** `dim` is NOT NULL in the schema; this is what "this metric has no dimension" looks like. */
 export const DIM_NONE = '-'
@@ -332,7 +333,15 @@ export const USAGE_METRICS = {
   /** dim = `<step>:<failureClass>`. */
   updateFailure: 'updateFailure',
   /** dim = `<funnel>:<step>:<failureClass>` — the funnel table has no class column. */
-  funnelFailure: 'funnelFailure'
+  funnelFailure: 'funnelFailure',
+  /**
+   * THE LIVE SESSION (JOS-367) — twenty-one metrics off the two session reports' three new
+   * riders, declared in `./telemetryRollupLive.ts` because this file is at the repo's
+   * 400-code-line ceiling. Each one is documented where it is declared; what belongs HERE is why
+   * they are in this table at all: they are the first numbers this pipeline has ever carried
+   * about a session that was RUNNING, as opposed to one that was starting.
+   */
+  ...LIVE_METRICS
 } as const
 
 export type UsageMetric = (typeof USAGE_METRICS)[keyof typeof USAGE_METRICS]
@@ -591,6 +600,15 @@ function add(bag: Bag, metric: string, dim: string, n: number): void {
 
 const flag = (on: boolean): string => (on ? 'on' : 'off')
 
+/** `add`, bound to one batch's accumulator, for the live riders' fold next door (JOS-367). The
+ *  Bag and `DIM_NONE` stay owned by this file — that is what makes those two files a split and
+ *  not a cycle (`telemetryValidateBase.ts`'s rule, applied to the storage half). */
+const counter =
+  (bag: Bag) =>
+  (metric: string, dim: string, n: number): void => {
+    add(bag, metric, dim, n)
+  }
+
 function foldSetup(bag: Bag, ev: Extract<TelemetryEvent, { t: 'setupSnapshot' }>): void {
   add(bag, USAGE_METRICS.setups, DIM_NONE, 1)
   add(bag, USAGE_METRICS.setupChars, String(ev.charCountBucket), 1)
@@ -737,6 +755,7 @@ function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
       add(bag, USAGE_METRICS.heartbeats, DIM_NONE, 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
+      foldLiveRiders(counter(bag), DIM_NONE, ev)
       return true
     case 'sessionEnd':
       add(bag, USAGE_METRICS.sessionEnds, DIM_NONE, 1)
@@ -744,6 +763,7 @@ function foldSession(bag: Bag, ev: TelemetryEvent, version: string): boolean {
       add(bag, USAGE_METRICS.sessionLenBucket, String(bucketOf(ev.durationMs, SESSION_MS_EDGES)), 1)
       add(bag, USAGE_METRICS.linesParsed, DIM_NONE, ev.linesParsed ?? 0)
       if (ev.startup !== undefined) foldStartup(bag, ev.startup, version)
+      foldLiveRiders(counter(bag), DIM_NONE, ev)
       return true
     default:
       return false
