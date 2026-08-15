@@ -149,6 +149,18 @@ export interface StoreShape {
    */
   overlaySnap?: OverlaySnapPrefs
   /**
+   * THE EXCLUSIVE-FULLSCREEN NOTE, ALREADY READ (JOS-368) — the app VERSION at which this install
+   * dismissed the Preferences note about EverQuest being set to exclusive fullscreen.
+   *
+   * A VERSION AND NOT A BOOLEAN, because "remembered per install" and "say it again after an
+   * update" are the same requirement seen from two sides: a dismissal is the user telling us they
+   * have read THIS build's advice, and a build that has changed how overlays behave has earned one
+   * more sentence. `undefined` means never dismissed, which is every install that has never seen
+   * the note — additive and optional, so it rides the storeShape carve-out with no schema bump and
+   * a store written here still opens in a build that predates the field.
+   */
+  eqExclusiveNoticeDismissedVersion?: string
+  /**
    * Usage-analytics prefs (schema migration 5→6; docs/plans/usage-analytics.md). Opt-OUT
    * (`enabled:true`) but `noticeShown:false` — the network gate requires BOTH — and no
    * `analyticsId` until the collector mints one on its first start.

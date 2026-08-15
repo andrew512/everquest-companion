@@ -12,6 +12,7 @@
 
 import { ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
+import type { EqWindowNotice } from '../shared/eqWindowMode'
 import type { ToastRequest } from '../shared/toast'
 import type { ScopeSelection } from '../shared/scopeSelection'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
@@ -36,6 +37,17 @@ export const windowsApi = {
   toggleOverlay: (kind: OverlayKind): Promise<boolean> => ipcRenderer.invoke(IPC.overlayToggle, kind),
   /** Read the open-state map for all overlay kinds. */
   getOverlayState: (): Promise<Record<OverlayKind, boolean>> => ipcRenderer.invoke(IPC.overlayGetState),
+  // ---- the exclusive-fullscreen note (JOS-368) ----
+  // In THIS slice because it is a fact about how the game's window and ours have to share a
+  // screen. Both methods take no argument on purpose: main folds the mode, the open-overlay
+  // count and the remembered dismissal into one answer, and the dismissal stamps the app's own
+  // version — so this bridge carries a question and an acknowledgement, never a decision.
+  /** Should Preferences show the exclusive-fullscreen note, and what mode is the game in? */
+  getEqWindowNotice: (): Promise<EqWindowNotice> => ipcRenderer.invoke(IPC.eqWindowNoticeGet),
+  /** "I have read it." Resolves to the state the card should now be in. */
+  dismissEqWindowNotice: (): Promise<EqWindowNotice> =>
+    ipcRenderer.invoke(IPC.eqWindowNoticeDismiss),
+
   /** Subscribe to overlay open-state changes (so the TitleBar menu stays in sync). Payload {kind, open}. */
   onOverlayState: (cb: (s: { kind: OverlayKind; open: boolean }) => void): (() => void) => {
     const listener = (_e: unknown, s: { kind: OverlayKind; open: boolean }): void => cb(s)

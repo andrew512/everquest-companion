@@ -24,6 +24,7 @@ import { normalizeUiScale } from '../../../../shared/uiScale'
 import type { BuffTrustPrefs } from '@shared/buffTrust'
 import type { GraphicsPrefs } from '@shared/graphicsPrefs'
 import type { GraphicsEnvironment } from '@shared/wineDetect'
+import type { EqWindowNotice } from '@shared/eqWindowMode'
 import type { CursorRingPrefs, OverlayAutoHidePrefs } from '@shared/presencePrefs'
 import type { OverlaySnapPrefs } from '@shared/overlaySnap'
 import type { PerfHudPrefs, StartupProfile } from '@shared/perf'
@@ -61,6 +62,10 @@ export interface PrefsSnapshot {
   overlaySnap: OverlaySnapPrefs
   /** Overlays — the celebration toast's open-state and its lock. */
   toast: ToastSeed
+  /** Overlays — whether to say that EverQuest is in exclusive fullscreen (JOS-368). It belongs in
+   *  the batch for the membership rule above: a note that appeared a frame after the pane would be
+   *  a sentence arriving late, which is the same defect as a switch painting the wrong way. */
+  eqWindowNotice: EqWindowNotice
   /** Buff trust — the external-caster allowlist. */
   buffTrust: BuffTrustPrefs
   /** Cursor ring — the switch, the two sliders and the colour. */
@@ -100,6 +105,7 @@ export interface PrefsReader {
   getOverlaySnap: () => Promise<OverlaySnapPrefs>
   getOverlayState: () => Promise<Record<OverlayKind, boolean>>
   getToastConfig: () => Promise<OverlayConfig>
+  getEqWindowNotice: () => Promise<EqWindowNotice>
   getBuffTrust: () => Promise<BuffTrustPrefs>
   getCursorRing: () => Promise<CursorRingPrefs>
   getVoicePrefs: () => Promise<VoicePrefs>
@@ -130,6 +136,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     overlaySnap,
     overlayState,
     toastConfig,
+    eqWindowNotice,
     buffTrust,
     cursorRing,
     voice,
@@ -149,6 +156,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getOverlaySnap(),
     eq.getOverlayState(),
     eq.getToastConfig(),
+    eq.getEqWindowNotice(),
     eq.getBuffTrust(),
     eq.getCursorRing(),
     eq.getVoicePrefs(),
@@ -169,6 +177,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     overlayAutoHide,
     overlaySnap,
     toast: { open: overlayState.toast, locked: toastConfig.locked },
+    eqWindowNotice,
     buffTrust,
     cursorRing,
     voice,

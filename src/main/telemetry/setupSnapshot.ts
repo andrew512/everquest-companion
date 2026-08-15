@@ -32,14 +32,17 @@
 // survives the seam between the two files.
 
 import { app, screen } from 'electron'
-import { readFileSync, statSync } from 'fs'
+import { statSync } from 'fs'
 import { cpus, totalmem } from 'os'
-import { join } from 'path'
 import { resolveAlertAudio } from '../../shared/speechText'
 import { OVERLAY_KINDS } from '../../shared/types'
 import type { TelemetryOverlayKind, TelemetryVoiceEngine } from '../../shared/telemetry'
+// ONE READER FOR `eqclient.ini` (JOS-368). It was private to this file until Preferences needed
+// the same answer to tell an exclusive-fullscreen player that overlays want windowed mode; a
+// second parse of somebody else's settings file is how two answers to one question get born.
+import { readEqClientIni } from '../eqWindowMode'
 import { activeSafeMode } from '../graphics'
-import { effectiveEqRoot, listCharacters, resolveActiveCharacter } from '../log/config'
+import { listCharacters, resolveActiveCharacter } from '../log/config'
 import {
   getAlerts,
   getCursorRing,
@@ -215,17 +218,4 @@ async function gpuVendorId(): Promise<number | string | undefined> {
   } catch {
     return undefined
   }
-}
-
-/**
- * EverQuest's own `eqclient.ini`, read whole and handed to a parser that keeps one boolean.
- *
- * The path comes from the install-dir discovery this app already owns (`effectiveEqRoot`) —
- * override, then auto-discovery, then the canonical default — so nothing new is searched for and
- * a machine with no install simply reads a file that is not there and answers `unknown`.
- */
-function readEqClientIni(): string | null {
-  const root = effectiveEqRoot()
-  if (root === '') return null
-  return readFileSync(join(root, 'eqclient.ini'), 'utf8')
 }
