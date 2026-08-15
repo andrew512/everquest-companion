@@ -421,6 +421,34 @@ async function stepCollects(page: Page): Promise<void> {
     `${String(p.buffered.length)} buffered: ${[...new Set(p.buffered.map((r) => String(r.ev.t)))].join(', ')}`
   )
 
+  // THE SETUP SNAPSHOT (JOS-364), on the machine the suite is really running on. It is the one
+  // event in this schema whose producer reads the OS, the GPU process, the screen and the store,
+  // so a unit test can pin every mapping and still not prove that any of those four answer inside
+  // a running Electron app — which is exactly what went wrong for three waves, when the event had
+  // a rollup, a doc section and no producer at all.
+  //
+  // Polled rather than timed: the producer waits out its own delay after the replay finishes, and
+  // a fixed sleep here would be a flake waiting for a slow CI box.
+  const settled = await settle(() => payload(page), (x) => x.buffered.some((r) => r.ev.t === 'setupSnapshot'), { timeoutMs: 30_000 })
+  const setup = settled.buffered.filter((r) => r.ev.t === 'setupSnapshot')
+  check(
+    'the setup snapshot is PRODUCED — once, on the machine this suite is running on',
+    setup.length === 1,
+    `${String(setup.length)} among ${[...new Set(settled.buffered.map((r) => String(r.ev.t)))].join(', ')}`
+  )
+  // The machine class, as SHAPE rather than as values: the cores and the GPU of the box running
+  // this suite are properties of THAT box, and frozen numbers rot. What must hold on any machine
+  // is that every axis is present and is a bucket index or a member of its own closed enum.
+  const ev: Record<string, unknown> = setup[0]?.ev ?? {}
+  const ENUMS = { gpuVendor: 'nvidia amd intel other unknown', gpuCompositing: 'hardware software off unknown', eqWindowMode: 'exclusive windowed unknown' }
+  check(
+    '…carrying the machine class: four bucket INDICES, three closed enums and a safe-mode flag',
+    ['cpuCountBucket', 'totalMemBucket', 'displayCountBucket', 'primaryScaleBucket'].every((k) => typeof ev[k] === 'number') &&
+      Object.entries(ENUMS).every(([k, allowed]) => allowed.split(' ').includes(String(ev[k]))) &&
+      typeof ev.safeMode === 'boolean',
+    JSON.stringify(ev)
+  )
+
   // …AND MAIN DERIVES THE FUNNEL STEP FROM THEM. `firstNonOverviewView` is never sent by the
   // renderer: main watches the `viewDwell` events it already validates and mints the once-ever
   // step itself, so the renderer cannot manufacture a first-run step. This launch is the honest
