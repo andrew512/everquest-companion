@@ -760,6 +760,50 @@ export interface TriageAnalyticsCoverage {
   anyFlips: boolean
 }
 
+/**
+ * ONE SLICE OF THE PERF CUBE (JOS-372) — a dim's value, how many session reports fell in it, and
+ * how many of those reported a bad stall.
+ *
+ * THE RATE IS THE POINT, AND `n` IS WHAT MAKES IT READABLE. A slice of four reports at 100% is
+ * noise and a slice of four hundred at 12% is a lead, so nothing renders the rate without the
+ * count beside it. `rate` is null — never 0 — for a slice with no reports at all, the same refusal
+ * `ratio` makes everywhere else in this readout: an unmeasured rate is not a clean bill.
+ */
+export interface TriagePerfSlice {
+  /** The dim's value, already labelled: `exclusive`, `low-igpu`, `overlay locked`. */
+  id: string
+  /** Session reports in this slice — the denominator, and the honesty term. */
+  reports: number
+  /** …of which this many reported a worst tick at or past the heavy-stall rung. */
+  stalls: number
+  /** stalls / reports, or null when the slice is empty. */
+  rate: number | null
+}
+
+/**
+ * STALLS BY WINDOW MODE, BY MACHINE CLASS, BY LOCKED OVERLAY (JOS-372) — the cross-tab
+ * `usage_daily` structurally cannot answer, because a counter keyed on one `dim` cannot cross two
+ * facts.
+ *
+ * THE THREE LISTS ARE NEVER ADDED TOGETHER. Each is the SAME population of session reports sliced
+ * a different way, so summing across two of them would count every report twice; they are read one
+ * against another (does the locked-overlay rate exceed the fleet rate? does exclusive fullscreen?)
+ * and each against `rate` below.
+ */
+export interface TriageAnalyticsPerf {
+  /** Session reports in the cube for this window — every slice list sums to this. */
+  reports: number
+  /** …of which this many reported a heavy stall. The fleet-wide rate every slice is read against. */
+  stalls: number
+  rate: number | null
+  /** What "a heavy stall" means, as the ladder's own range (`≥ 500 ms`) — rendered here so no
+   *  surface hardcodes a millisecond figure that could drift from the edges in the schema. */
+  stallLabel: string
+  byWindowMode: TriagePerfSlice[]
+  byMachineClass: TriagePerfSlice[]
+  byLocked: TriagePerfSlice[]
+}
+
 export interface TriageAnalyticsData {
   windowDays: number
   /** The day keys the window covers, ascending — the x-axis every series is aligned to. */
@@ -774,6 +818,9 @@ export interface TriageAnalyticsData {
   startup: TriageAnalyticsStartup
   /** …and how its SESSIONS went, for the hours after the launch (JOS-367). */
   live: TriageAnalyticsLive
+  /** …and WHERE those stalls landed: by EQ window mode, machine class and locked overlay
+   *  (JOS-372). Empty until the cube has rows — there is no backfill and cannot be. */
+  perf: TriageAnalyticsPerf
   /** Error rate per build over time, against adoption and release dates (JOS-96). */
   releaseHealth: TriageAnalyticsReleaseHealth
   /** What this pipeline can and cannot see: opt-out flips, and the reporting base (JOS-109). */

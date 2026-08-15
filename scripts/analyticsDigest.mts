@@ -20,6 +20,7 @@ import type {
   TriageFunnelStepRow,
   TriageLiveSessions,
   TriageMixRow,
+  TriagePerfSlice,
   TriageStartupRow
 } from '../src/shared/triage'
 
@@ -255,6 +256,40 @@ function liveStallLines(d: TriageAnalyticsData): string[] {
 }
 
 /**
+ * STALLS BY … (JOS-372) — the cross-tab, printed directly under the Live section whose fleet-wide
+ * rate every row here is read against.
+ *
+ * THREE CUTS OF ONE POPULATION, NEVER SUMMED ACROSS: the same session reports sliced by EQ window
+ * mode, by machine class and by locked overlay, so adding a row from one list to a row from
+ * another counts reports twice. Each row prints its own denominator, because a slice of four
+ * reports at 100% is noise and a slice of four hundred at 12% is a lead — and the lists are
+ * ordered by that denominator rather than by rate for exactly that reason.
+ */
+function perfLines(d: TriageAnalyticsData): string[] {
+  const p = d.perf
+  const head = ['', `STALLS BY … (worst tick ${p.stallLabel}; three cuts of ONE population, never summed)`]
+  if (p.reports === 0) {
+    return [...head, '  (the perf cube has no rows in this window - there is no backfill: JOS-372)']
+  }
+  const block = (title: string, rows: readonly TriagePerfSlice[]): string[] => [
+    `  ${title}`,
+    ...rows.map(
+      (r) =>
+        `  ${r.id.padEnd(22)} ${String(r.stalls).padStart(7)} / ${String(r.reports).padEnd(7)}` +
+        ` ${(r.rate === null ? '-' : pct(r.rate)).padStart(7)}`
+    ),
+  ]
+  return [
+    ...head,
+    `  fleet: ${String(p.stalls)} of ${String(p.reports)} reports · ${p.rate === null ? '-' : pct(p.rate)}` +
+      ' - every rate below is read against this one',
+    ...block('by EQ window mode', p.byWindowMode),
+    ...block('by machine class (tier is the WEAKER of cores/RAM x integrated|discrete GPU)', p.byMachineClass),
+    ...block('by locked overlay (locked = the process-wide mouse hook is ARMED)', p.byLocked),
+  ]
+}
+
+/**
  * THE SECOND LINE OF A BUILD'S ROW (JOS-57 scope addition) — the machine's half of the reading,
  * indented under the process's half so the pair is read together.
  *
@@ -434,6 +469,7 @@ export function renderAnalyticsDigest(
     ...healthLines(d),
     ...startupLines(d),
     ...liveStallLines(d),
+    ...perfLines(d),
     ...versionLines(d),
     ...downloadsLines(downloads),
     ...coverageLines(d, downloads),

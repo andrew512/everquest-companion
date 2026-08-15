@@ -51,6 +51,13 @@ import {
   type TelemetryRecord
 } from './telemetry'
 import { foldLiveRiders, LIVE_METRICS } from './telemetryRollupLive'
+import {
+  foldPerfCube,
+  perfDimsFromEvents,
+  UNKNOWN_PERF_DIMS,
+  type PerfCubeRow,
+  type PerfInstallDims
+} from './telemetryPerfCube'
 
 /** `dim` is NOT NULL in the schema; this is what "this metric has no dimension" looks like. */
 export const DIM_NONE = '-'
@@ -554,6 +561,12 @@ export interface RollupResult {
   funnels: FunnelCounter[]
   /** Empty for every batch that carries no `errorReport` — which is almost all of them. */
   errors: ErrorReportRow[]
+  /**
+   * THE PERF CUBE (JOS-372) — the one cross-tab this pipeline keeps, and empty for every batch
+   * that carries no live stall reading. `./telemetryPerfCube.ts` says what the dims are and why
+   * there are only five of them.
+   */
+  perf: PerfCubeRow[]
 }
 
 /**
@@ -578,6 +591,18 @@ export interface RollupContext {
    * `newInstalls` and `upgrades` are disjoint and can be read side by side.
    */
   upgraded: boolean
+  /**
+   * THE PERF CUBE'S TWO SETUP DIMS AS THE INSTALL ROW HOLDS THEM (JOS-372) — a fourth fact of
+   * exactly the kind the three above are: knowable only from the row the ingest path is already
+   * touching, and knowable nowhere else. A `setupSnapshot` is sent once per LAUNCH while a stall
+   * reading rides every session report for hours, so most batches that need these dims do not
+   * carry them; the install row is where they wait.
+   *
+   * OPTIONAL, so every existing caller and every existing fixture compiles and folds exactly as
+   * it did. Absent (and a batch with no snapshot of its own) means `unknown`, which is a real
+   * class in the cube rather than a missing value — see `./telemetryPerfCube.ts`.
+   */
+  perf?: PerfInstallDims
 }
 
 /**
@@ -913,7 +938,10 @@ export function rollupBatch(batch: TelemetryBatch, ctx: RollupContext): RollupRe
   return {
     counters,
     funnels: foldFunnels(batch.events, batch.env.appVersion),
-    errors: foldErrors(batch.events, batch.env.appVersion)
+    errors: foldErrors(batch.events, batch.env.appVersion),
+    // THIS BATCH'S OWN SNAPSHOT WINS over the install row's stored dims: it is the newer fact,
+    // and a machine that just changed its EQ window mode says so in the launch that noticed.
+    perf: foldPerfCube(batch.events, perfDimsFromEvents(batch.events) ?? ctx.perf ?? UNKNOWN_PERF_DIMS)
   }
 }
 
