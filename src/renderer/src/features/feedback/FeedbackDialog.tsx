@@ -339,8 +339,11 @@ export default function FeedbackDialog({ open, onClose, prefill }: FeedbackDialo
             <AttachLogSection state={state} />
             <AttachInventorySection state={state} ctx={ctx} />
             {/* The perf timeline rides `env`, so it is part of EVERY report — feature requests
-                included — and it renders itself away when the rings are empty (JOS-369). */}
-            <PerfPreview perf={ctx?.env.perf ?? null} />
+                included — and it renders itself away when the rings are empty (JOS-369). It reads
+                the context itself rather than being handed a block, exactly as the inventory
+                section does: a `ctx?.env.perf ?? null` here would be two more branches in a
+                function the complexity budget already has at its ceiling. */}
+            <PerfPreview ctx={ctx} />
             <ContextLine ctx={ctx} />
           </Stack>
         )}

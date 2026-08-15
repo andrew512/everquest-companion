@@ -482,6 +482,14 @@ export function validateDraft(input: unknown): Validated<FeedbackDraft> {
   }
 }
 
+/**
+ * The free-form runtime strings on `env` (`process.platform`, `os.release()`,
+ * `process.versions.*`): present, bounded, and SINGLE-LINE — `lineText` rejects any control or
+ * invisible character outright, because these values are printed straight into the owner's
+ * terminal by the triage CLI and none of them can legitimately carry one.
+ */
+const ENV_LINE_FIELDS = ['platform', 'osRelease', 'arch', 'electron', 'chrome', 'node'] as const
+
 /** What the client says about itself. Every field is required — main always knows all of them. */
 export function validateEnv(input: unknown): Validated<FeedbackEnv> {
   if (!isRecord(input)) return fail('env', 'env is required.')
@@ -502,22 +510,15 @@ export function validateEnv(input: unknown): Validated<FeedbackEnv> {
   )
   if (!updateChannel.ok) return updateChannel
 
-  // The remaining fields are free-form runtime strings (`process.platform`, `os.release()`,
-  // `process.versions.*`): present, bounded, and SINGLE-LINE — `lineText` rejects any control
-  // or invisible character outright, because these values are printed straight into the owner's
-  // terminal by the triage CLI and none of them can legitimately carry one.
-  const platform = lineText(input.platform, 'env.platform', MAX_ENV_FIELD)
-  if (!platform.ok) return platform
-  const osRelease = lineText(input.osRelease, 'env.osRelease', MAX_ENV_FIELD)
-  if (!osRelease.ok) return osRelease
-  const arch = lineText(input.arch, 'env.arch', MAX_ENV_FIELD)
-  if (!arch.ok) return arch
-  const electron = lineText(input.electron, 'env.electron', MAX_ENV_FIELD)
-  if (!electron.ok) return electron
-  const chrome = lineText(input.chrome, 'env.chrome', MAX_ENV_FIELD)
-  if (!chrome.ok) return chrome
-  const node = lineText(input.node, 'env.node', MAX_ENV_FIELD)
-  if (!node.ok) return node
+  // The six free-form runtime strings, read in ONE loop rather than six copies of the same three
+  // lines. They are validated identically by construction, so the loop is not a compression of
+  // six decisions — it is the honest spelling of one decision applied six times.
+  const runtime = {} as Record<(typeof ENV_LINE_FIELDS)[number], string>
+  for (const key of ENV_LINE_FIELDS) {
+    const value = lineText(input[key], `env.${key}`, MAX_ENV_FIELD)
+    if (!value.ok) return value
+    runtime[key] = value.value
+  }
 
   // The perf timeline (JOS-369), validated where its shape is DECLARED. Absent reads as null and
   // the field is then omitted below — the additive spelling, same as both attachments.
@@ -530,12 +531,7 @@ export function validateEnv(input: unknown): Validated<FeedbackEnv> {
       appVersion: appVersion.value,
       channel: channel.value,
       updateChannel: updateChannel.value,
-      platform: platform.value,
-      osRelease: osRelease.value,
-      arch: arch.value,
-      electron: electron.value,
-      chrome: chrome.value,
-      node: node.value,
+      ...runtime,
       ...(perf.value === null ? {} : { perf: perf.value }),
     },
   }

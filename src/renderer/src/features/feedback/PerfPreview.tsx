@@ -19,13 +19,9 @@ import { useState, type JSX } from 'react'
 import { Box, Stack, Typography } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
-import {
-  formatPerfState,
-  formatPerfSummary,
-  perfSparkline,
-  type FeedbackPerf
-} from '@shared/feedbackPerf'
+import { formatPerfState, formatPerfSummary, perfSparkline, type FeedbackPerf } from '@shared/feedbackPerf'
 import { PreviewLines } from './LogPreview'
+import type { FeedbackContext } from './useFeedback'
 
 /** One row per bucket, as fixed-width text — the same vocabulary the triage CLI prints, so the
  *  reporter and the owner are looking at the same table. */
@@ -47,14 +43,16 @@ function rowLines(perf: FeedbackPerf): string[] {
 /**
  * The block, or nothing at all.
  *
- * `null` is the ordinary state for a report composed in the first seconds of a session — the
+ * ABSENT is the ordinary state for a report composed in the first seconds of a session — the
  * probe starts at `replayDone` — and it renders as ABSENCE rather than as "no data recorded".
  * There is no attachment, so there is nothing to disclose, and a row explaining that would be a
- * paragraph about a thing that is not happening.
+ * paragraph about a thing that is not happening. `ctx` being null (still in flight) reads the
+ * same way, for one turn of the render.
  */
-export default function PerfPreview({ perf }: { perf: FeedbackPerf | null }): JSX.Element | null {
+export default function PerfPreview({ ctx }: { ctx: FeedbackContext | null }): JSX.Element | null {
   const [open, setOpen] = useState(false)
-  if (perf === null) return null
+  const perf: FeedbackPerf | undefined = ctx?.env.perf
+  if (perf === undefined) return null
   const minutes = Math.round((perf.rows.length * perf.intervalMs) / 60_000)
   return (
     <Stack spacing={0.5}>

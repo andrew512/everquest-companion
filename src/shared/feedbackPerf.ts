@@ -62,11 +62,17 @@ export const PERF_ROWS = LIVE_TIMELINE_MS / PERF_INTERVAL_MS
  *
  * The block RIDES `env_json` (it is a sub-object of `FeedbackEnv`), which means it shares
  * `MAX_BODY_BYTES` — 32 KB — with the user's 4,000-character description and both attachment
- * metadata blocks. Sixty rows of six small integers MEASURE at ~5.5 KB, so 8 KB is headroom
- * rather than a budget; what it really is, is the line past which a block would stop being a
- * passenger and start being an attachment. The client OMITS an oversize block rather than
- * shrinking it (a half-timeline is a wrong answer that looks like a right one), and the
- * validator refuses one, so a forged payload cannot use this field as a 24 KB free-text channel.
+ * metadata blocks.
+ *
+ * MEASURED (tests/feedbackPerf.test.mts prints the same figures): a quiet window is 5,832 bytes,
+ * a busy one 6,192, and a block with every field at the ceilings below is 7,7xx. The grid is
+ * FIXED, so the size barely varies — which is the property that makes 8 KB a tripwire rather than
+ * a budget: no shape-valid block can exceed it today, and the day someone adds a seventh column
+ * the unit test goes red before the 400s do.
+ *
+ * The client OMITS an oversize block rather than shrinking it (a half-timeline is a wrong answer
+ * that looks like a right one), and the validator refuses one, so a forged payload cannot use
+ * this field as a 24 KB free-text channel either.
  */
 export const MAX_PERF_BYTES = 8 * 1024
 
