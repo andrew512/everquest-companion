@@ -231,7 +231,8 @@ export type TelemetryGpuCompositing = (typeof TELEMETRY_GPU_COMPOSITING)[number]
 
 /**
  * How EverQuest itself is drawing, read ONCE per session from the install's `eqclient.ini`
- * (`WindowedMode=TRUE` ⇒ windowed, `FALSE` ⇒ exclusive fullscreen).
+ * (`WindowedMode=TRUE` ⇒ windowed, `FALSE` ⇒ exclusive; the live Legends client writes no such
+ * key and is read from `Fullscreen=1|0` instead — see `eqWindowModeOf`).
  *
  * IT IS A DISPLAY SETTING, NOT GAMEPLAY. Nothing about a character, a server or a log line is
  * involved — the file is read for one boolean and nothing else is retained. The reason it is
