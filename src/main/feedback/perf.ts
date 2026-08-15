@@ -145,19 +145,20 @@ async function perfState(): Promise<FeedbackPerfState> {
 export async function feedbackPerfBlock(now = Date.now()): Promise<FeedbackPerf | null> {
   try {
     const timeline = peekLiveTimeline(now)
+    // The tail ring is read HERE rather than off `peekLiveTimeline()` because the block wants the
+    // reopen count, and that view drops the reason to keep its own shape narrow.
+    const tail = peekTailIoTimeline().map((s) => ({
+      at: s.at,
+      readMs: s.readMs,
+      reopened: s.reason !== 'reused'
+    }))
+    // THE RINGS ARE CHECKED BEFORE THE MACHINE IS ASKED, and that ordering is the point: a report
+    // composed before `replayDone` has no timeline to carry, and it must not pay a second of GPU
+    // timeout to find that out. `foldFeedbackPerf` would answer `null` anyway — this is the same
+    // decision made one step earlier, where it is still free.
+    if (timeline.main.length === 0 && timeline.worker.length === 0 && tail.length === 0) return null
     const perf = foldFeedbackPerf(
-      {
-        main: timeline.main,
-        worker: timeline.worker,
-        // The tail ring is read HERE rather than off `peekLiveTimeline()` because the block wants
-        // the reopen count, and that view drops the reason to keep its own shape narrow.
-        tail: peekTailIoTimeline().map((s) => ({
-          at: s.at,
-          readMs: s.readMs,
-          reopened: s.reason !== 'reused'
-        })),
-        state: await perfState()
-      },
+      { main: timeline.main, worker: timeline.worker, tail, state: await perfState() },
       now
     )
     return perf !== null && perfBytes(perf) <= MAX_PERF_BYTES ? perf : null
