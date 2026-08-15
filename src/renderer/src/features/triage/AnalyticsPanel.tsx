@@ -57,6 +57,7 @@ import { useTriageCall } from './useTriage'
 import {
   DownloadsSection,
   HealthSection,
+  LiveSection,
   MixList,
   RetentionSection,
   Section,
@@ -261,6 +262,10 @@ function Readout({
       <HealthSection data={data} />
       {/* Beside Health and above Versions: it is a health fact, read per build. */}
       <StartupSection data={data} />
+      {/* …and directly under it, because it is the same question asked of the rest of the session
+          (JOS-367): Startup says how the launch went, Live says how the hours after it went, and
+          the freeze reports this fleet files are about the hours. */}
+      <LiveSection data={data} />
       {/*
         JOS-96, and it sits HERE rather than at the end for a reason: Health above says what goes
         wrong across the fleet, and this says which build it started going wrong in. Reading the

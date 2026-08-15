@@ -54,6 +54,7 @@ import { buildCoverage } from './coverage'
 // JOS-364's machine class, in its own file for the reason that file's header states — this
 // section pushed this one past the 400-line ceiling, and the answer is a split.
 import { buildMachineClass } from './machineClass'
+import { buildLiveStalls } from './liveStalls'
 import { buildReleaseHealth } from './releaseHealth'
 import {
   addDays,
@@ -563,6 +564,11 @@ export function buildAnalytics(input: AnalyticsInput): TriageAnalyticsData {
     funnels: buildFunnels(input.funnels, input.usage),
     health: buildHealth(input.usage),
     startup: buildStartup(input.usage),
+    // …and the same question asked of the hours AFTER the launch (JOS-367): how late our own two
+    // clocks ran, whether they went late together (the machine-or-us verdict), what our reads of
+    // the log cost, and what was switched on while all of it was measured. Its own file, like the
+    // machine class, because this one is at the line ceiling.
+    live: buildLiveStalls(input.usage),
     // Beside Health and Startup, and reading the same rows from the other end: those two ask what
     // goes wrong and how launches went; this one asks WHICH BUILD, over time, against how many
     // people were on it. Its own file (./releaseHealth.ts) — this one is at the line ceiling.

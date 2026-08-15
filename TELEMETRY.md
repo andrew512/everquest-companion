@@ -72,7 +72,7 @@ Once, when the app finishes starting up.
 
 ### `sessionHeartbeat`
 
-Every 10 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
+Every 10 minutes while the app is open — the "is anyone using it right now" signal. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below. It also carries how smoothly the app itself was running since the previous one: how late its own timers arrived, how long its reads of your log took, and which of its windows and switches were on. All of it is counts and ranges about this computer - no line of your log, and no part of one, is ever sent. Each group is left out entirely when there is nothing to say (no character attached, or the check was not running).
 
 | Field | Values | What it means |
 | --- | --- | --- |
@@ -89,10 +89,30 @@ Every 10 minutes while the app is open — the "is anyone using it right now" si
 | `startup.stutter.p95Bucket` | bucket index (optional) | The same measurement at its worse end: the lateness only one beat in twenty exceeded. |
 | `startup.stutter.latePct` | whole number (optional) | What share of those beats were late at all, 0–100. |
 | `startup.firstMbMs` | whole number (optional) | How long the first megabyte of the read took to arrive — how quickly the machine could hand over the file, nothing about what was in it. Not sent for a log under a megabyte. |
+| `live.samples` | whole number (optional) | How many times the app checked its own clock since the last one of these. |
+| `live.p95Bucket` | bucket index (optional) | The app sets a timer for a quarter second, over and over, and notes how late each one actually arrived. This is the lateness only one check in twenty exceeded, as a RANGE (see below) - a reading about the computer, never about anything you did. |
+| `live.maxBucket` | bucket index (optional) | The worst single one of those, as a range - the moment you would have felt. |
+| `live.over100` | whole number (optional) | How many of those checks were more than a tenth of a second late. |
+| `live.over500` | whole number (optional) | How many were more than half a second late. |
+| `live.coincident` | whole number (optional) | The app runs the same clock check on a second thread that does nothing else. This counts the moments BOTH went late at once - which means the whole computer paused (memory, a driver, a disk), not this app. It is how a freeze can be blamed correctly instead of guessed at. Not sent when that second check was not running. |
+| `tail.reads` | whole number (optional) | How many times the app read new lines from your log since the last one of these. |
+| `tail.reopens` | whole number (optional) | How many of those had to re-open the file (normally none). |
+| `tail.p95Bucket` | bucket index (optional) | How long those reads took, at their worse end - the same ranges as the clock check above, so the two can be compared. The game writes to that same file, so this is how much of its time the app could be taking. |
+| `tail.maxBucket` | bucket index (optional) | The slowest single read, as a range. |
+| `tail.over100` | whole number (optional) | Reads that took more than a tenth of a second. |
+| `tail.over500` | whole number (optional) | Reads that took more than half a second. |
+| `tail.deltaBytesBucket` | bucket index (optional) | The biggest single chunk of new log read at once - a RANGE (see below), never the amount itself, and never any part of what was in it. |
+| `tail.logSizeBucket` | bucket index (optional) | How big that log is now - a range, never the size itself. |
+| `state.overlaysOpen` | whole number (optional) | How many floating meters were open. |
+| `state.overlaysLocked` | whole number (optional) | How many of those were locked (click-through). Locking makes Windows route mouse events through this app, so it is the setting most likely to explain a stutter. |
+| `state.presenceOn` | true / false (optional) | Whether the app was watching for the game window (needed by auto-hide and the ring). |
+| `state.ringOn` | true / false (optional) | Whether the cursor ring was on. |
+| `state.freeMemBucket` | bucket index (optional) | How much free memory the computer had, as a RANGE - a machine with none left pauses everything, including the game. |
+| `state.workingSetBucket` | bucket index (optional) | How much memory THIS APP was using, as a range. The honesty half of the row above. |
 
 ### `sessionEnd`
 
-Once, when the app closes. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below.
+Once, when the app closes. Present on the first of these that follows startup, once per launch: how long reading your log history took, and how smoothly. Reading a log after switching character is deliberately not measured. Every number in the group is a count or a duration; several are ranges rather than exact figures, and which is which is stated field by field below. It also carries how smoothly the app itself was running since the previous one: how late its own timers arrived, how long its reads of your log took, and which of its windows and switches were on. All of it is counts and ranges about this computer - no line of your log, and no part of one, is ever sent. Each group is left out entirely when there is nothing to say (no character attached, or the check was not running).
 
 | Field | Values | What it means |
 | --- | --- | --- |
@@ -110,6 +130,26 @@ Once, when the app closes. Present on the first of these that follows startup, o
 | `startup.stutter.p95Bucket` | bucket index (optional) | The same measurement at its worse end: the lateness only one beat in twenty exceeded. |
 | `startup.stutter.latePct` | whole number (optional) | What share of those beats were late at all, 0–100. |
 | `startup.firstMbMs` | whole number (optional) | How long the first megabyte of the read took to arrive — how quickly the machine could hand over the file, nothing about what was in it. Not sent for a log under a megabyte. |
+| `live.samples` | whole number (optional) | How many times the app checked its own clock since the last one of these. |
+| `live.p95Bucket` | bucket index (optional) | The app sets a timer for a quarter second, over and over, and notes how late each one actually arrived. This is the lateness only one check in twenty exceeded, as a RANGE (see below) - a reading about the computer, never about anything you did. |
+| `live.maxBucket` | bucket index (optional) | The worst single one of those, as a range - the moment you would have felt. |
+| `live.over100` | whole number (optional) | How many of those checks were more than a tenth of a second late. |
+| `live.over500` | whole number (optional) | How many were more than half a second late. |
+| `live.coincident` | whole number (optional) | The app runs the same clock check on a second thread that does nothing else. This counts the moments BOTH went late at once - which means the whole computer paused (memory, a driver, a disk), not this app. It is how a freeze can be blamed correctly instead of guessed at. Not sent when that second check was not running. |
+| `tail.reads` | whole number (optional) | How many times the app read new lines from your log since the last one of these. |
+| `tail.reopens` | whole number (optional) | How many of those had to re-open the file (normally none). |
+| `tail.p95Bucket` | bucket index (optional) | How long those reads took, at their worse end - the same ranges as the clock check above, so the two can be compared. The game writes to that same file, so this is how much of its time the app could be taking. |
+| `tail.maxBucket` | bucket index (optional) | The slowest single read, as a range. |
+| `tail.over100` | whole number (optional) | Reads that took more than a tenth of a second. |
+| `tail.over500` | whole number (optional) | Reads that took more than half a second. |
+| `tail.deltaBytesBucket` | bucket index (optional) | The biggest single chunk of new log read at once - a RANGE (see below), never the amount itself, and never any part of what was in it. |
+| `tail.logSizeBucket` | bucket index (optional) | How big that log is now - a range, never the size itself. |
+| `state.overlaysOpen` | whole number (optional) | How many floating meters were open. |
+| `state.overlaysLocked` | whole number (optional) | How many of those were locked (click-through). Locking makes Windows route mouse events through this app, so it is the setting most likely to explain a stutter. |
+| `state.presenceOn` | true / false (optional) | Whether the app was watching for the game window (needed by auto-hide and the ring). |
+| `state.ringOn` | true / false (optional) | Whether the cursor ring was on. |
+| `state.freeMemBucket` | bucket index (optional) | How much free memory the computer had, as a RANGE - a machine with none left pauses everything, including the game. |
+| `state.workingSetBucket` | bucket index (optional) | How much memory THIS APP was using, as a range. The honesty half of the row above. |
 
 ### `viewDwell`
 
@@ -396,6 +436,55 @@ These are the exact ranges, taken from the schema:
 | 3 | 150% – 175% |
 | 4 | 175% – 200% |
 | 5 | ≥ 200% |
+
+**`live.p95Bucket · live.maxBucket · tail.p95Bucket · tail.maxBucket`** — How late the app’s own timers ran, and how long its reads of the log took.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 10 ms |
+| 1 | 10 ms – 25 ms |
+| 2 | 25 ms – 50 ms |
+| 3 | 50 ms – 100 ms |
+| 4 | 100 ms – 250 ms |
+| 5 | 250 ms – 500 ms |
+| 6 | 500 ms – 1 s |
+| 7 | 1 s – 2.5 s |
+| 8 | ≥ 2.5 s |
+
+**`tail.deltaBytesBucket`** — The biggest single chunk of new log read at once.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 64 KB |
+| 1 | 64 KB – 256 KB |
+| 2 | 256 KB – 1 MB |
+| 3 | 1 MB – 4 MB |
+| 4 | 4 MB – 16 MB |
+| 5 | 16 MB – 64 MB |
+| 6 | 64 MB – 256 MB |
+| 7 | ≥ 256 MB |
+
+**`state.freeMemBucket`** — How much free memory the computer had.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 0.5 GB |
+| 1 | 0.5 GB – 1 GB |
+| 2 | 1 GB – 2 GB |
+| 3 | 2 GB – 4 GB |
+| 4 | 4 GB – 8 GB |
+| 5 | ≥ 8 GB |
+
+**`state.workingSetBucket`** — How much memory this app was using.
+
+| Bucket | Range |
+| --- | --- |
+| 0 | < 200 MB |
+| 1 | 200 MB – 400 MB |
+| 2 | 400 MB – 800 MB |
+| 3 | 800 MB – 1200 MB |
+| 4 | 1200 MB – 2000 MB |
+| 5 | ≥ 2000 MB |
 
 ## Turning it off
 

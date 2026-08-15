@@ -213,6 +213,48 @@ function startupLines(d: TriageAnalyticsData): string[] {
 }
 
 /**
+ * THE LIVE SESSION (JOS-367) — the section above asks how launches went; this one asks what
+ * happened for the hours afterwards, and it is the only place the ~1 s freeze reports have a
+ * number to argue with.
+ *
+ * THE TWO RATES ARE THE SECTION. `late/report` and `machine/report` cover the same interval, so
+ * reading them against each other is the whole verdict: late moments a second, idle thread ALSO
+ * saw are the machine (paging, a driver reset, a disk), and the app was a victim beside the game;
+ * late moments only main saw are ours. `machine/report` prints a dash rather than a zero when no
+ * report carried a verdict, because "no second clock ran" and "two clocks never agreed" are
+ * opposite findings and only one of them is an accusation.
+ */
+function liveStallLines(d: TriageAnalyticsData): string[] {
+  const l = d.live
+  const head = ['', 'LIVE SESSIONS (how smoothly the app ran; percentiles are bucket ranges)']
+  if (l.reports === 0) return [...head, '  (no session has reported a stall reading yet)']
+  const rate = (v: number | null): string => (v === null ? '-' : v.toFixed(2))
+  return [
+    ...head,
+    `  ${String(l.reports).padStart(6)} reports · ${String(l.samples)} probe ticks` +
+      ` · lateness p50 ${l.p50StallLabel ?? '-'} p95 ${l.p95StallLabel ?? '-'}` +
+      ` · worst tick p95 ${l.maxStallLabel ?? '-'}`,
+    `  late ticks: ${String(l.over100)} over 100ms · ${String(l.over500)} over 500ms` +
+      ` · ${rate(l.latePerReport)} late/report`,
+    `  VERDICT: ${String(l.coincident)} windows both our clocks saw, over ${String(l.verdicts)}` +
+      ` reports that could answer · ${rate(l.machinePerReport)} machine/report` +
+      ' (read against late/report above: the gap is us)',
+    l.tailReports === 0
+      ? '  tail reads: (no session has reported one yet)'
+      : `  tail reads: ${String(l.tailReads)} over ${String(l.tailReports)} reports` +
+        ` · ${String(l.tailReopens)} reopens · read p95 ${l.p95TailLabel ?? '-'}` +
+        ` worst ${l.maxTailLabel ?? '-'} · ${String(l.tailOver100)} over 100ms` +
+        ` · ${String(l.tailOver500)} over 500ms`,
+    '  fattest single read',
+    ...mixBlock(l.tailDeltas, 10, '(no session has reported one yet)'),
+    '  size of the logs being tailed',
+    ...mixBlock(l.tailLogSizes, 10, '(no session has reported one yet)'),
+    '  what was switched on while all of the above was measured',
+    ...mixBlock(l.state, 24, '(nothing reported yet)'),
+  ]
+}
+
+/**
  * THE SECOND LINE OF A BUILD'S ROW (JOS-57 scope addition) — the machine's half of the reading,
  * indented under the process's half so the pair is read together.
  *
@@ -391,6 +433,7 @@ export function renderAnalyticsDigest(
     ...funnelLines(d),
     ...healthLines(d),
     ...startupLines(d),
+    ...liveStallLines(d),
     ...versionLines(d),
     ...downloadsLines(downloads),
     ...coverageLines(d, downloads),

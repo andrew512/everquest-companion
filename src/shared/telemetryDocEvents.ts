@@ -36,6 +36,9 @@ import {
   TELEMETRY_VOICE_ENGINES,
   type TelemetryEventKind
 } from './telemetry'
+// JOS-367's three live-session groups — twenty more rows on the same two events, in their own
+// file for the reason this file is its own file (the 400-code-line ceiling).
+import { LIVE_RIDER_FIELDS, LIVE_RIDER_WHEN } from './telemetryDocRiders'
 
 export interface DocField {
   name: string
@@ -163,21 +166,23 @@ export const TELEMETRY_DOC_EVENTS: readonly DocEvent[] = [
     t: 'sessionHeartbeat',
     when:
       'Every 10 minutes while the app is open — the "is anyone using it right now" signal. ' +
-      STARTUP_WHEN,
+      `${STARTUP_WHEN} ${LIVE_RIDER_WHEN}`,
     fields: [
       { name: 'uptimeMs', type: COUNT, note: 'How long this session has been running.' },
       { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
-      ...STARTUP_FIELDS
+      ...STARTUP_FIELDS,
+      ...LIVE_RIDER_FIELDS
     ]
   },
   {
     t: 'sessionEnd',
-    when: `Once, when the app closes. ${STARTUP_WHEN}`,
+    when: `Once, when the app closes. ${STARTUP_WHEN} ${LIVE_RIDER_WHEN}`,
     fields: [
       { name: 'durationMs', type: COUNT, note: 'How long the session lasted.' },
       { name: 'viewsVisited', type: COUNT, note: 'How many different tabs were opened.' },
       { name: 'linesParsed', type: `${COUNT} (optional)`, note: LINES_PARSED },
-      ...STARTUP_FIELDS
+      ...STARTUP_FIELDS,
+      ...LIVE_RIDER_FIELDS
     ]
   },
   {
