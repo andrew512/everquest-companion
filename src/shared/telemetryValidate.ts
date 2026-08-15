@@ -211,6 +211,24 @@ function machineClass(
   o: Record<string, unknown>,
   value: EvSetupSnapshot
 ): Validated<TelemetryEvent> {
+  const ladders = machineBuckets(o, value)
+  if (!ladders.ok) return ladders
+  const enums = machineEnums(o, value)
+  if (!enums.ok) return enums
+  if (o.safeMode !== undefined && o.safeMode !== null) {
+    const safe = flag(o.safeMode, 'safeMode')
+    if (!safe.ok) return safe
+    value.safeMode = safe.value
+  }
+  return { ok: true, value }
+}
+
+/** The four ladders. Split from its caller purely to stay under the repo's complexity ceiling —
+ *  a loop with an optional-field guard and a failure return costs three branches per axis. */
+function machineBuckets(
+  o: Record<string, unknown>,
+  value: EvSetupSnapshot
+): Validated<true> {
   const buckets = [
     ['cpuCountBucket', CPU_COUNT_EDGES],
     ['totalMemBucket', TOTAL_MEM_GB_EDGES],
@@ -223,6 +241,11 @@ function machineClass(
     if (!b.ok) return b
     value[field] = b.value
   }
+  return { ok: true, value: true }
+}
+
+/** The three enums, same split for the same reason. */
+function machineEnums(o: Record<string, unknown>, value: EvSetupSnapshot): Validated<true> {
   const enums = [
     ['gpuVendor', TELEMETRY_GPU_VENDORS],
     ['gpuCompositing', TELEMETRY_GPU_COMPOSITING],
@@ -239,12 +262,7 @@ function machineClass(
     else if (field === 'gpuCompositing') value.gpuCompositing = e.value as TelemetryGpuCompositing
     else value.eqWindowMode = e.value as TelemetryEqWindowMode
   }
-  if (o.safeMode !== undefined && o.safeMode !== null) {
-    const safe = flag(o.safeMode, 'safeMode')
-    if (!safe.ok) return safe
-    value.safeMode = safe.value
-  }
-  return { ok: true, value }
+  return { ok: true, value: true }
 }
 
 function vFunnelStep(o: Record<string, unknown>): Validated<TelemetryEvent> {

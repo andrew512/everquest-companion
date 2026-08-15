@@ -75,7 +75,10 @@ export function noteChildProcessGone(
 /** The minimum of `Electron.App` this file needs — narrow on purpose, so the unit test can pass
  *  an EventEmitter and the composition root can pass the real app, and neither is a cast. */
 export interface ChildProcessGoneEmitter {
-  on(event: 'child-process-gone', listener: (e: unknown, details: unknown) => void): unknown
+  on(
+    event: 'child-process-gone',
+    listener: (e: unknown, details: ChildProcessGoneDetails | undefined) => void
+  ): unknown
 }
 
 /**
@@ -84,6 +87,8 @@ export interface ChildProcessGoneEmitter {
  */
 export function watchChildProcessGone(app: ChildProcessGoneEmitter, report?: GpuLossReporter): void {
   app.on('child-process-gone', (_e, details) => {
-    noteChildProcessGone((details ?? {}) as ChildProcessGoneDetails, report)
+    // `?? {}` because the payload arrives from outside our types: a details-less event must cost
+    // a count, not an exception on the app's own crash path.
+    noteChildProcessGone(details ?? {}, report)
   })
 }

@@ -170,6 +170,17 @@ function AdoptionSection({ data }: { data: TriageAnalyticsData }): JSX.Element {
             empty="No setup snapshot recorded."
           />
         </Stack>
+        {/* THE MACHINE CLASS (JOS-364) — cores, memory, GPU, compositing, safe mode, displays,
+            scaling and EverQuest's own window mode, in one block because that is how it is read:
+            not "what is the GPU mix" but "what does this fleet's hardware look like", while
+            holding a stall report. The labels arrive rendered from analytics.ts, which is where
+            the schema's bucket edges live. */}
+        <Stack spacing={0.5}>
+          <Typography variant="caption" color="text.secondary">
+            Machine class
+          </Typography>
+          <MixList rows={a.machine} empty="No machine class reported yet." />
+        </Stack>
       </Box>
       <Typography variant="caption" color="text.secondary">
         Alerts fired {formatNum(a.alertsFired)} · spoken {formatNum(a.alertsSpoken)}

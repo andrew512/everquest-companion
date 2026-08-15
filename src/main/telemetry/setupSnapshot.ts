@@ -149,10 +149,12 @@ function logBytes(): number {
   return path === undefined ? 0 : statSync(path).size
 }
 
-/** The overlay windows this install has OPEN — `OVERLAY_KINDS` is pinned equal to the schema's
- *  own list (tests/telemetryContract.test.mts), so the cast is a fact rather than a hope. */
+/** The overlay windows this install has OPEN. No cast is needed and that is the point:
+ *  `OVERLAY_KINDS` and the schema's `TELEMETRY_OVERLAY_KINDS` are pinned equal
+ *  (tests/telemetryContract.test.mts), so the app's own union assigns straight across — the day
+ *  someone adds an overlay without teaching the schema, this stops compiling. */
 function openOverlays(): TelemetryOverlayKind[] {
-  return OVERLAY_KINDS.filter((kind) => getOverlayConfig(kind).open) as TelemetryOverlayKind[]
+  return OVERLAY_KINDS.filter((kind) => getOverlayConfig(kind).open)
 }
 
 /**
@@ -185,8 +187,9 @@ function voiceEngine(): TelemetryVoiceEngine {
 /** `gpu_compositing` off the feature-status blob, verbatim — the folding into three words is
  *  `gpuCompositingOf`'s job, in the file that can be tested. */
 function compositingStatus(): string | undefined {
-  const status = app.getGPUFeatureStatus() as unknown as Record<string, unknown>
-  const raw = status.gpu_compositing
+  // Read as `unknown` on purpose: Electron's type says this field is a string, and Electron's
+  // type is a promise about a Chromium blob that arrives at runtime from a machine we do not own.
+  const raw: unknown = app.getGPUFeatureStatus().gpu_compositing
   return typeof raw === 'string' ? raw : undefined
 }
 

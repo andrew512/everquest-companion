@@ -289,6 +289,17 @@ export interface TriageAnalyticsAdoption {
   voice: TriageMixRow[]
   cursorRing: TriageMixRow[]
   autoHide: TriageMixRow[]
+  /**
+   * THE MACHINE CLASS (JOS-364) — the eight `setupSnapshot` readings that describe the box rather
+   * than the install, already labelled and folded into ONE list (`cpus 4-5`, `gpu nvidia`,
+   * `EQ exclusive`, …).
+   *
+   * One list rather than eight fields because of what it is FOR: nobody asks "what is the GPU
+   * mix" on its own — they read the whole shape of the fleet's hardware at once while looking at
+   * a stall report, and a panel section is a shape. Each row is already a rendered label, because
+   * a bucket INDEX is meaningless to a reader and the edges live in the schema, not in the UI.
+   */
+  machine: TriageMixRow[]
   alertsFired: number
   alertsSpoken: number
 }

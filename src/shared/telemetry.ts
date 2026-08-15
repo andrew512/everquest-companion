@@ -427,13 +427,9 @@ export const COLD_START_MS_EDGES = [1_000, 2_500, 5_000, 10_000, 20_000] as cons
 /** How many character logs the install can see. 1 is the overwhelming common case. */
 export const CHAR_COUNT_EDGES = [1, 2, 3, 5, 9] as const
 /** Size of the tailed log on disk. A raw byte count is a fingerprint; a decade is not. */
-export const LOG_SIZE_BYTES_EDGES = [
-  1_048_576,
-  10_485_760,
-  104_857_600,
-  536_870_912,
-  2_147_483_648
-] as const
+// (1 MB / 10 MB / 100 MB / 512 MB / 2 GB — spelled on one line so the section stays inside the
+//  repo's 400-code-line ceiling now that JOS-364's four ladders share it. Same numbers.)
+export const LOG_SIZE_BYTES_EDGES = [1_048_576, 10_485_760, 104_857_600, 536_870_912, 2_147_483_648] as const
 /** How many alert definitions the user keeps. */
 export const ALERT_COUNT_EDGES = [1, 5, 10, 25, 50] as const
 /**
@@ -446,15 +442,7 @@ export const ALERT_COUNT_EDGES = [1, 5, 10, 25, 50] as const
  * It is bucketed for the same reason the size is — a raw byte count is a fingerprint of one
  * player's evening; a decade is not.
  */
-export const NEW_BYTES_EDGES = [
-  65_536,
-  262_144,
-  1_048_576,
-  4_194_304,
-  16_777_216,
-  67_108_864,
-  268_435_456
-] as const
+export const NEW_BYTES_EDGES = [65_536, 262_144, 1_048_576, 4_194_304, 16_777_216, 67_108_864, 268_435_456] as const
 /**
  * OBSERVED TIMER DRIFT DURING THE REPLAY (JOS-57 scope addition) — 2 / 5 / 10 / 25 / 50 / 100 /
  * 250 ms ⇒ eight buckets.
