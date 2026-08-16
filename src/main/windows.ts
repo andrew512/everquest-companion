@@ -94,7 +94,8 @@ const opaqueStripWindow: Partial<Record<OverlayKind, boolean>> = {}
 
 /** Is that opaque strip window currently drawing nothing? Only ever consulted while its
  *  `opaqueStripWindow` entry is true — see `applyOpaqueStripVisibility`, which owns this value.
- *  True to start, because an empty window is a strip's resting state. */
+ *  ABSENT READS AS IDLE (hence every check spells `!== false`), because an empty window is a
+ *  strip's resting state and nothing has told us otherwise until its renderer's first signal. */
 const opaqueStripIdle: Partial<Record<OverlayKind, boolean>> = {}
 
 /** The main window while it exists (null before creation / after close). */
@@ -689,10 +690,7 @@ export function createOverlayWindow(kind: OverlayKind): void {
   // machine whose compositor turns a transparent frameless window into a black box, an untouched
   // 'auto' arrives here as `true` without the user having found anything.
   const opaque = resolvedGraphics().opaqueOverlays.on
-  if (isStripKind(kind)) {
-    opaqueStripWindow[kind] = opaque
-    opaqueStripIdle[kind] = true
-  }
+  if (isStripKind(kind)) opaqueStripWindow[kind] = opaque
   // BORN WITH THE RIGHT FOCUSABILITY (JOS-199 — see `setOverlayFocusable`). The lock state is read
   // here, at construction, purely so that the `ready-to-show` apply below has nothing to do:
   // `setFocusable` on Windows moves the FOREGROUND window, and an overlay opened from the
@@ -905,7 +903,7 @@ export function setOverlaysHidden(hidden: boolean): void {
     if (!windowsMayShow() || w.isVisible()) continue
     // An OPAQUE strip with nothing queued must not come back as a solid rectangle: its
     // visibility belongs to its queue, and the next card brings it up (JOS-40).
-    if (isStripKind(kind) && opaqueStripWindow[kind] === true && opaqueStripIdle[kind] === true) continue
+    if (isStripKind(kind) && opaqueStripWindow[kind] === true && opaqueStripIdle[kind] !== false) continue
     w.showInactive()
     assertTopmost(w)
     applyOverlayLocked(kind, getOverlayConfig(kind).locked)

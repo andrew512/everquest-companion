@@ -90,7 +90,8 @@ function PlainView({
   view,
   viewKey,
   routing,
-  onOpenVoicePrefs
+  onOpenVoicePrefs,
+  onOpenOverlayPrefs
 }: {
   view: View
   viewKey: string
@@ -98,6 +99,9 @@ function PlainView({
   /** CONTRACT with the alerts wave: AlertsView's optional "take me to the voice settings" hook.
    *  Spread rather than named so this tree compiles whether or not that prop exists yet. */
   onOpenVoicePrefs: () => void
+  /** The same contract for Preferences → Overlays (JOS-378): the alert editor's on-screen block
+   *  links there when the banner overlay is off. */
+  onOpenOverlayPrefs: () => void
 }): JSX.Element {
   return (
     <>
@@ -149,7 +153,7 @@ function PlainView({
           whole contract, since the watch list lives in the store and the clocks are re-derived
           by the fold the character switch kicks off. */}
       {view === 'timers' && <TimersView key={viewKey} />}
-      {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs }} />}
+      {view === 'alerts' && <AlertsView key={viewKey} {...{ onOpenVoicePrefs, onOpenOverlayPrefs }} />}
       {/* CHARACTER (JOS-45, released JOS-327). It sits HERE, below the no-characters gate, and not
           beside the triage branch: unlike triage this tab reads the game log (name, level, loadout)
           and the character's own inventory dump, so a machine with no EverQuest install has nothing
@@ -203,6 +207,7 @@ function ViewContent({
         viewKey={viewKey}
         routing={routing}
         onOpenVoicePrefs={() => prefs.openSection('voice')}
+        onOpenOverlayPrefs={() => prefs.openSection('overlays')}
       />
       {/* The Mobs tab stays MOUNTED across a deep link (no `key` churn on target
           change) — remounting per character rebuild only, like every other view. */}

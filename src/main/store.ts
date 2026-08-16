@@ -446,14 +446,8 @@ const DEFAULT_OVERLAY_CONFIG: Record<OverlayKind, OverlayConfig> = {
   // default and gets the window off for free. A migration is precisely the thing that could turn
   // something on (migrateToV9 is the one time this repo flipped a stored default, and its comment
   // says that was a one-time correction and never a policy), so there is none.
-  alertBanner: {
-    open: false,
-    locked: true,
-    bgAlpha: 0.72,
-    bounds: undefined,
-    drill: null,
-    alertBanner: { ...DEFAULT_ALERT_BANNER_CONFIG }
-  }
+  // prettier-ignore
+  alertBanner: { open: false, locked: true, bgAlpha: 0.72, bounds: undefined, drill: null, alertBanner: { ...DEFAULT_ALERT_BANNER_CONFIG } }
 }
 
 /** Read a kind's overlay config, filling missing fields with the kind's defaults.
@@ -470,9 +464,8 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   // The banner blob gets the SAME treatment for the same reason (JOS-378): the spread above is
   // shallow, so a stored blob replaces the defaults wholesale, and every reader — including main's
   // relay, which fills a payload's hold from it — must see a complete, clamped one.
-  if (kind === 'alertBanner') {
-    cfg.alertBanner = normalizeAlertBannerConfig({ ...DEFAULT_ALERT_BANNER_CONFIG, ...cfg.alertBanner })
-  }
+  // prettier-ignore
+  if (kind === 'alertBanner') cfg.alertBanner = normalizeAlertBannerConfig({ ...DEFAULT_ALERT_BANNER_CONFIG, ...cfg.alertBanner })
   // Text scale postdates every other field, so it is ABSENT in most stores and out of range in a
   // hand-edited one — both answered here rather than repeated six times above, because the
   // default (1) does not differ per kind. Clamped on the way out as well as in: see
@@ -548,9 +541,9 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   else delete next.toast
   // The banner blob is renderer-writable too (Preferences owns its hold and its line budget), so
   // it is clamped by its own normalizer rather than trusted — the toast blob's rule, one kind over.
-  if (kind === 'alertBanner') {
-    next.alertBanner = normalizeAlertBannerConfig({ ...DEFAULT_ALERT_BANNER_CONFIG, ...next.alertBanner })
-  } else delete next.alertBanner
+  // prettier-ignore
+  if (kind === 'alertBanner') next.alertBanner = normalizeAlertBannerConfig({ ...DEFAULT_ALERT_BANNER_CONFIG, ...next.alertBanner })
+  else delete next.alertBanner
   // THE TWO TIMER WINDOWS' OWN KNOBS — the row arrangement (JOS-140) and the permanent-buff switch
   // (JOS-215). Both are rebuilt rather than trusted, on the same argument as the drill above; the
   // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds
