@@ -153,6 +153,27 @@ export class CasterIndex {
  * different kind of mistake.
  */
 export function isMobTarget(name: string): boolean {
+  const hit = targetVerdicts.get(name)
+  if (hit !== undefined) return hit
+  const verdict = judgeTarget(name)
+  if (targetVerdicts.size >= MAX_TARGET_VERDICTS) targetVerdicts.clear()
+  targetVerdicts.set(name, verdict)
+  return verdict
+}
+
+/**
+ * MEMOISED, for the reason `ResistFold.keyOf` is (that method's comment carries the original
+ * measurement): this runs on every resist line, every spell damage line and every landing sentence
+ * in a two-million-line replay, and the uncached answer is two regexes plus a `mobKey` — itself
+ * three regex replacements and a lower-case — plus a map lookup. Bounded and cleared wholesale
+ * rather than evicted one at a time, because a long session meets thousands of distinct names and
+ * an unbounded map is a slow leak. The verdict is a pure function of the NAME (the catalog is
+ * committed and `isPlayerShapedName` reads nothing), so nothing can invalidate an entry.
+ */
+const targetVerdicts = new Map<string, boolean>()
+const MAX_TARGET_VERDICTS = 4_096
+
+function judgeTarget(name: string): boolean {
   const n = name.trim()
   // The catalog happens to hold an entry that folds to the key `you`, so self is tested first and
   // by identity, exactly as the fold's own `isSelf` does.
