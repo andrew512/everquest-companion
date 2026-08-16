@@ -12,6 +12,7 @@ import {
   DIFFERS_NOTE,
   bandFraction,
   barFraction,
+  NOT_OBSERVABLE_NOTE,
   countText,
   estimateText,
   evidenceByFamily,
@@ -37,6 +38,7 @@ function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
     perSpell: [],
     baselineWeight: 0,
     userOnly: false,
+    droppedUnobservable: 0,
     baselineFit: null,
     userFit: null,
     differsFromShipped: false,
@@ -98,10 +100,36 @@ test('an evidence line prints only the clauses that have a number', () => {
   )
 })
 
-test("a canonical key reads back as a name, apostrophes and all", () => {
+test("a canonical key reads back as a name, apostrophes and small words and all", () => {
   assert.equal(spellDisplayName('chaos flux'), 'Chaos Flux')
   assert.equal(spellDisplayName("denon's disruptive discord"), "Denon's Disruptive Discord")
   assert.equal(spellDisplayName("largo's absonant binding"), "Largo's Absonant Binding")
+  // EQ writes "Condemnation of Nife", never "Condemnation Of Nife".
+  assert.equal(spellDisplayName('condemnation of nife'), 'Condemnation of Nife')
+  assert.equal(spellDisplayName('strength of stone'), 'Strength of Stone')
+  // …unless the small word leads, where it is still the start of the name.
+  assert.equal(spellDisplayName('of the sky'), 'Of the Sky')
+})
+
+test('an evidence line says WHY a spell is not in the number', () => {
+  const ev = {
+    spellKey: "largo's melodic binding",
+    family: 'song' as const,
+    casts: 400,
+    resisted: 400,
+    partial: 0,
+    full: 0,
+    land: 0,
+    fromBaseline: 400,
+    fromYou: 0,
+    landingsNotObservable: true,
+  }
+  assert.equal(
+    evidenceText(ev),
+    "Largo's Melodic Binding: 400 casts, 400 resisted, landings not observable"
+  )
+  assert.equal(NOT_OBSERVABLE_NOTE, 'landings not observable')
+  assert.ok(!/[–—]/.test(NOT_OBSERVABLE_NOTE))
 })
 
 test('songs get their own line, and only when there are any', () => {

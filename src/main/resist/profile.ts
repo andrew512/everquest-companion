@@ -34,12 +34,22 @@ import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import type { MobLevelFact } from './world'
 
 export interface ProfileDeps {
-  /** Every row anyone has filed about this mob, each tagged with its source. */
-  rowsFor: (key: string) => ResistRow[]
+  /**
+   * Every row anyone has filed about this creature, each tagged with its source. Takes the DISPLAY
+   * NAME rather than a key, because one creature can have more than one name: the wiki page says
+   * `Cazic Thule` and every line the game prints says `Cazic-Thule`, and the caller is the half
+   * that knows the verified alias roster (world-model law 12).
+   */
+  rowsFor: (display: string) => ResistRow[]
   /** The client's spell table, or null when `spells_us.txt` could not be read. */
   spells: () => SpellResistTable | null
   /** The mob's level: a `/con` this session beats the catalog beats nothing. */
   levelOf: (key: string, display: string) => MobLevelFact | null
+  /**
+   * Spells whose landings are not observable, decided over the WHOLE ledger rather than over one
+   * mob's rows (resistModel.ts `unobservableSpells` states why the scope matters).
+   */
+  unobservable: () => ReadonlySet<string>
   frozenAt: () => string | null
 }
 
@@ -63,9 +73,9 @@ function axisRow(
   rows: readonly ResistRow[],
   spells: SpellResistTable,
   axis: ResistAxis,
-  mobLevel: number | null
+  ctx: { mobLevel: number | null; unobservable: ReadonlySet<string> }
 ): MobResistAxis {
-  const est = clampFit(estimate(rows, spells, { axis, mobLevel }))
+  const est = clampFit(estimate(rows, spells, { axis, mobLevel: ctx.mobLevel, unobservable: ctx.unobservable }))
   return {
     axis,
     estimate: est,
@@ -78,11 +88,12 @@ function axisRow(
 export function mobResistProfile(displayName: string, deps: ProfileDeps): MobResistProfile {
   const key = mobKey(displayName)
   const spells = deps.spells()
-  const rows = deps.rowsFor(key)
+  const rows = deps.rowsFor(displayName)
   const fact = deps.levelOf(key, displayName)
   const level = fact ? { lo: fact.lo, hi: fact.hi, from: fact.from } : null
+  const ctx = { mobLevel: fact?.level ?? null, unobservable: deps.unobservable() }
   const axes = spells
-    ? RESIST_AXES.map((axis) => axisRow(rows, spells, axis, fact?.level ?? null))
+    ? RESIST_AXES.map((axis) => axisRow(rows, spells, axis, ctx))
     : RESIST_AXES.map((axis) => ({ axis, estimate: null, tag: null, n: 0 }) satisfies MobResistAxis)
   return {
     mobKey: key,
@@ -106,9 +117,11 @@ export function mobResistCell(
   const spells = deps.spells()
   if (!spells) return null
   const key = mobKey(displayName)
-  const rows = deps.rowsFor(key)
+  const rows = deps.rowsFor(displayName)
   const fact = deps.levelOf(key, displayName)
-  const est = clampFit(estimate(rows, spells, { axis, mobLevel: fact?.level ?? null }))
+  const est = clampFit(
+    estimate(rows, spells, { axis, mobLevel: fact?.level ?? null, unobservable: deps.unobservable() })
+  )
   const keep = rows.filter((r) => spells[r.spellKey]?.axis === axis)
   return { mobKey: key, axis, estimate: est, rows: keep }
 }

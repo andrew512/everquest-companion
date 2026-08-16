@@ -77,9 +77,22 @@ export const USER_ONLY_NOTE = 'your log only'
  * ONLY AT A WORD BOUNDARY, and a POSSESSIVE IS NOT ONE. EQ spell names are thick with them
  * ("Denon's Disruptive Discord", "Largo's Absonant Binding", and the backtick spelling the game
  * also uses), and capitalising after the apostrophe turns every one of them into "Denon'S".
+ *
+ * AND THE SMALL WORDS STAY SMALL unless they lead: EQ writes "Condemnation of Nife" and "Strength
+ * of Stone", never "Condemnation Of Nife". Title case is a convention about English, so its
+ * exceptions are English's.
  */
+const SMALL_WORDS = new Set(['of', 'the', 'and', 'in', 'on', 'to', 'a', 'an', 'for'])
+
 export function spellDisplayName(key: string): string {
-  return key.replace(/(^|[\s-])([a-z])/g, (_m, lead: string, ch: string) => lead + ch.toUpperCase())
+  return key
+    .split(' ')
+    .map((word, i) =>
+      i > 0 && SMALL_WORDS.has(word)
+        ? word
+        : word.replace(/(^|-)([a-z])/g, (_m, lead: string, ch: string) => lead + ch.toUpperCase())
+    )
+    .join(' ')
 }
 
 /**
@@ -87,10 +100,18 @@ export function spellDisplayName(key: string): string {
  * a spell with no partials does not get "0 partial", because zero partials and no partial
  * information are different things and only one of them is worth a word.
  */
+/**
+ * A spell every one of whose observations is a resist. Not a mob that resists everything - a spell
+ * whose landings this app cannot see, so its rows are shown and deliberately not counted.
+ */
+export const NOT_OBSERVABLE_NOTE = 'landings not observable'
+
 export function evidenceText(ev: ResistSpellEvidence): string {
   const parts = [`${String(ev.casts)} cast${ev.casts === 1 ? '' : 's'}`]
   if (ev.resisted > 0) parts.push(`${String(ev.resisted)} resisted`)
   if (ev.partial > 0) parts.push(`${String(ev.partial)} partial`)
+  // Say WHY it is not in the number, on the very line the number is missing from.
+  if (ev.landingsNotObservable === true) parts.push(NOT_OBSERVABLE_NOTE)
   return `${spellDisplayName(ev.spellKey)}: ${parts.join(', ')}`
 }
 

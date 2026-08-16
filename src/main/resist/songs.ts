@@ -72,6 +72,9 @@ export interface SongPulse {
   resisted: ReadonlySet<string>
 }
 
+/** How many aura heartbeat instants to remember. A run is 30 s, so five pulses is plenty. */
+const HEARTBEAT_MEMORY = 32
+
 interface Run {
   /** The last witnessed pulse's instant, or null when no run is open. */
   lastWitness: number | null
@@ -91,12 +94,28 @@ interface Open {
 export class SongPulses {
   private runs = new Map<string, Run>()
   private open = new Map<string, Open>()
+  /**
+   * Instants the SYMPHONIC AURA stated outright, from the self-landing sentences it prints once
+   * per pulse. Interior pulses snap to these when the gap contains any: a real instant the log
+   * printed beats six-second arithmetic from the last witness, which drifts as soon as the server
+   * tick does.
+   */
+  private beats: number[] = []
 
   constructor(private readonly emit: (pulse: SongPulse) => void) {}
 
   reset(): void {
     this.runs = new Map()
     this.open = new Map()
+    this.beats = []
+  }
+
+  /** The aura printed one of its own landing sentences: a pulse happened at `ts`. */
+  noteHeartbeat(ts: number): void {
+    const last = this.beats[this.beats.length - 1]
+    if (last !== undefined && ts - last < SONG_WITNESS_JOIN_MS) return
+    this.beats.push(ts)
+    if (this.beats.length > HEARTBEAT_MEMORY) this.beats.splice(0, this.beats.length - HEARTBEAT_MEMORY)
   }
 
   /** `You begin singing S` — a restart, which drops interpolation across the gap it sits in. */
@@ -173,10 +192,23 @@ export class SongPulses {
     if (prev === null) return
     if (ts - prev > SONG_RUN_GAP_MS) return
     const floor = run.reanchor ?? prev
-    for (let at = prev + SONG_PULSE_MS; at < ts - SONG_WITNESS_JOIN_MS; at += SONG_PULSE_MS) {
+    for (const at of this.interiorPulses(prev, ts)) {
       if (at <= floor) continue
       this.emit({ spellKey, ts: at, witnessed: false, resisted: EMPTY })
     }
+  }
+
+  /**
+   * The instants strictly inside a gap. THE AURA'S OWN HEARTBEAT WINS where it has anything to
+   * say: those are instants the log printed rather than arithmetic, so they cannot drift against
+   * the server's tick. Six-second stepping is the fallback for a run with no heartbeat in it.
+   */
+  private interiorPulses(prev: number, ts: number): number[] {
+    const beats = this.beats.filter((b) => b > prev + SONG_WITNESS_JOIN_MS && b < ts - SONG_WITNESS_JOIN_MS)
+    if (beats.length > 0) return beats
+    const out: number[] = []
+    for (let at = prev + SONG_PULSE_MS; at < ts - SONG_WITNESS_JOIN_MS; at += SONG_PULSE_MS) out.push(at)
+    return out
   }
 }
 

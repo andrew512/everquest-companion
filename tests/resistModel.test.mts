@@ -24,6 +24,7 @@ import {
   debuffAmount,
   estimate,
   expectedDamageFraction,
+  unobservableSpells,
   levelMod,
   predict,
   priorResist,
@@ -54,6 +55,7 @@ const SPELLS: SpellResistTable = {
   },
   'test hold': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 5 },
   'test proc': { axis: 'magic', resistAdj: -250, castMs: 0, targetType: 5 },
+  'test hold b': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 5 },
   'test mez': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 8, levelCap: 55 },
   'test malo': {
     axis: null,
@@ -63,6 +65,15 @@ const SPELLS: SpellResistTable = {
     debuffSlots: [{ axis: 'all', base: -20, calc: 101, max: 40 }],
   },
 }
+
+/**
+ * Every test below hands `estimate()` ONE cell's rows. The evidence-symmetry guard is a
+ * whole-ledger verdict (resistModel.ts `unobservableSpells`), and a single simulated cell where a
+ * mob genuinely resisted every cast looks exactly like a spell we cannot see land. So the tests
+ * that are about the MODEL say what the wider ledger knows — that these spells do land elsewhere —
+ * and the guard gets its own tests, which say the opposite on purpose.
+ */
+const LANDS_ELSEWHERE: ReadonlySet<string> = new Set<string>()
 
 /** A fixed-seed generator: the same failure twice, or it is not a test. */
 function rng(seed: number): () => number {
@@ -174,7 +185,7 @@ test('SYNTHETIC ROLLS: the interval covers the true R at least 90% of the time',
         blank({ spellKey: 'test hold', family: 'cast', mobLevel, ...aon }),
         blank({ spellKey: 'test nuke', family: 'cast', mobLevel, resist: dd.resist, dmg: dd.dmg }),
       ]
-      const est = estimate(rows, SPELLS, { axis: 'magic', mobLevel })
+      const est = estimate(rows, SPELLS, { axis: 'magic', mobLevel, unobservable: LANDS_ELSEWHERE })
       trials++
       if (R >= est.lo && R <= est.hi) covered++
       assert.equal(est.n, 600, 'every simulated cast is counted')
@@ -409,11 +420,67 @@ test('expected damage fraction falls off the way the partial formula says it doe
   assert.ok(expectedDamageFraction(50) < 1)
 })
 
+test('EVIDENCE SYMMETRY: a spell we never see land is not a mob that resists everything', () => {
+  // THE GENERAL FORM OF THE BUG THAT SHIPPED. A binomial needs both outcomes; a spell whose every
+  // observation is a resist has a maximum-likelihood rc at the top of the grid, and one such spell
+  // drags a whole axis to "nearly immune" however much honest evidence sits beside it. Two real
+  // causes, one shape: a bard song under the Symphonic Aura whose landing emote nothing joined to
+  // (400 resists, 0 landings), and a proc whose landing prints no line at all (37 resists, 0).
+  const rows: ResistRow[] = [
+    blank({ spellKey: 'test hold', family: 'cast', resist: 200, land: 0 }),
+    blank({ spellKey: 'test hold b', family: 'cast', resist: 10, land: 90 }),
+  ]
+  const blind = unobservableSpells(rows)
+  assert.deepEqual([...blind], ['test hold'])
+
+  const guarded = estimate(rows, SPELLS, { axis: 'magic', mobLevel: 50, unobservable: blind })
+  assert.equal(guarded.n, 100, 'only the spell we can see both halves of is in the number')
+  assert.equal(guarded.droppedUnobservable, 200)
+  assert.ok(guarded.R < 50, `R=${String(guarded.R)} - the blind spell must not decide this`)
+
+  // …and the rows are still THERE, saying why they are not counted.
+  const ev = guarded.perSpell.find((e) => e.spellKey === 'test hold')
+  assert.ok(ev)
+  assert.equal(ev.casts, 200)
+  assert.equal(ev.landingsNotObservable, true)
+  const seen = guarded.perSpell.find((e) => e.spellKey === 'test hold b')
+  assert.equal(seen?.landingsNotObservable, undefined)
+
+  // Unguarded, the SAME evidence describes a different creature. That is the defect, reproduced,
+  // and stated in the units a player reads it in: the word beside the bar changes.
+  const naive = estimate(rows, SPELLS, { axis: 'magic', mobLevel: 50, unobservable: new Set() })
+  assert.ok(naive.R > 100, `R=${String(naive.R)} - without the guard one blind spell decides it`)
+  assert.equal(resistTag(naive.R), 'very resistant')
+  assert.equal(resistTag(guarded.R), 'normal')
+})
+
+test('the verdict is about the SPELL, and the caller decides the scope', () => {
+  // A mob that resisted every cast of a spell that lands elsewhere is REAL evidence, and scoping
+  // the verdict to one mob's rows would throw it away with the blindness it is meant to catch.
+  const everywhere: ResistRow[] = [
+    blank({ mobKey: 'a stubborn mob', spellKey: 'test hold', family: 'cast', resist: 40, land: 0 }),
+    blank({ mobKey: 'an ordinary mob', spellKey: 'test hold', family: 'cast', resist: 5, land: 95 }),
+  ]
+  // Over the WHOLE ledger the spell plainly lands, so nothing is held out…
+  assert.equal(unobservableSpells(everywhere).size, 0)
+  const stubborn = everywhere.filter((r) => r.mobKey === 'a stubborn mob')
+  const est = estimate(stubborn, SPELLS, {
+    axis: 'magic',
+    mobLevel: 50,
+    unobservable: unobservableSpells(everywhere),
+  })
+  assert.equal(est.n, 40, 'the stubborn mob keeps its evidence')
+  assert.ok(est.R > 150, 'and is allowed to be as resistant as it demonstrably is')
+  // …where the same rows judged alone would have been discarded.
+  assert.deepEqual([...unobservableSpells(stubborn)], ['test hold'])
+})
+
 test('a thin cell does not scream immune', () => {
   // Five resists out of five. The maximum-likelihood answer is 200 and that is a confident lie.
   const est = estimate([blank({ spellKey: 'test hold', family: 'cast', resist: 5, land: 0 })], SPELLS, {
     axis: 'magic',
     mobLevel: 50,
+    unobservable: LANDS_ELSEWHERE,
   })
   assert.equal(est.n, 5)
   assert.ok(est.R < 200, `R=${String(est.R)} — the prior has to pull this down`)

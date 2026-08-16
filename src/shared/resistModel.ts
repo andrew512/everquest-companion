@@ -53,6 +53,24 @@
 // and keeps a thin cell honest. The interval is what the UI shows anyway.
 //
 // ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+// AND ONE SPELL CAN POISON A WHOLE AXIS, SO THE ESTIMATOR CHECKS FOR IT (JOS-382, round 2).
+//
+// A binomial needs both outcomes. If every observation this app has of a spell is a RESIST — no
+// landing, no damage number, nothing — then the maximum-likelihood answer is "rc is as large as
+// the grid allows", and one such spell drags the whole axis to "nearly immune" however much honest
+// evidence sits beside it. The cause is never a mob that resists everything; it is a spell whose
+// LANDINGS we cannot see.
+//
+// MEASURED, and this is why the guard is general rather than a fix for one spell: the first
+// shipped baseline carried Largo's Melodic Binding at 400 resists and 0 landings (a bard song
+// under the Symphonic Aura, whose pulses print no cast line for the landing emote to join to) AND
+// 'clumsiness strike' at 37 resists and 0 landings (a proc whose landing prints nothing at all).
+// Two different causes, one shape. 'landingsNotObservable' is that shape: it is decided across the
+// WHOLE ledger for the axis, so a mob that genuinely resisted every cast of a spell that lands
+// elsewhere is untouched, and the rows stay in the per-spell drilldown saying exactly why.
+//
+// ---------------------------------------------------------------------------------------------
 // YOUR OWN LOG BEATS THE FROZEN BASELINE (owner, 2026-08-16 — patch resilience). The shipped
 // baseline is a snapshot of one player's four weeks; a future patch that retunes a mob makes it
 // wrong, and the person who finds out first is the one fighting the mob. So a baseline
@@ -450,6 +468,12 @@ export interface EstimateOpts {
   mobLevel?: number | null
   /** Songs are their own family precisely so they can be excluded from R in ONE place. */
   includeSongs?: boolean
+  /**
+   * Spells whose landings this app cannot see, decided over the WHOLE ledger by the caller. See
+   * `unobservableSpells`; omitted, the estimator falls back to what `rows` alone can say, which is
+   * right for a unit test and too narrow for a mob page.
+   */
+  unobservable?: ReadonlySet<string>
 }
 
 interface Prepared {
@@ -457,6 +481,8 @@ interface Prepared {
   evidence: Map<string, ResistSpellEvidence>
   byFamily: Record<ResistFamily, { n: number; resist: number; land: number }>
   droppedNoLevel: number
+  /** Observations held out of the fit because their spell's landings are not observable. */
+  droppedUnobservable: number
 }
 
 function blankEvidence(row: ResistRow): ResistSpellEvidence {
@@ -471,6 +497,34 @@ function blankEvidence(row: ResistRow): ResistSpellEvidence {
     fromBaseline: 0,
     fromYou: 0,
   }
+}
+
+/**
+ * Which spells have no observable landings ANYWHERE in the rows handed to it.
+ *
+ * PASS IT THE WHOLE LEDGER, not one mob's rows, and the caller that matters does exactly that
+ * (`src/main/ipc/resist.ts`, once per read). The distinction is the difference between two very
+ * different statements: "this app has never seen this spell land on anything", which is a fact
+ * about our own blindness, and "this mob resisted every cast of it", which is a fact about the
+ * mob and is exactly the evidence the estimator exists to use. Scoped to one mob it would throw
+ * the second away with the first.
+ *
+ * Axis-agnostic on purpose: whether we can SEE a spell land has nothing to do with which
+ * resistance it rolls against.
+ */
+export function unobservableSpells(rows: readonly ResistRow[]): Set<string> {
+  const seen = new Map<string, { resist: number; land: number }>()
+  for (const row of rows) {
+    const acc = seen.get(row.spellKey) ?? { resist: 0, land: 0 }
+    acc.resist += row.resist
+    acc.land += row.land + rowCounts(row).dmgTotal
+    seen.set(row.spellKey, acc)
+  }
+  const out = new Set<string>()
+  for (const [key, acc] of seen) {
+    if (acc.resist > 0 && acc.land === 0) out.add(key)
+  }
+  return out
 }
 
 function noteEvidence(prep: Prepared, row: ResistRow, info: SpellResistInfo): void {
@@ -499,11 +553,21 @@ function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: Est
     evidence: new Map(),
     byFamily: { cast: { n: 0, resist: 0, land: 0 }, song: { n: 0, resist: 0, land: 0 } },
     droppedNoLevel: 0,
+    droppedUnobservable: 0,
   }
+  // The caller's whole-ledger verdict when it has one; else what these rows alone can say.
+  const blind = opts.unobservable ?? unobservableSpells(rows)
   for (const row of rows) {
     const info = spells[row.spellKey]
     if (!rowIsEvidence(row, info, opts.axis)) continue
     noteEvidence(prep, row, info)
+    if (blind.has(row.spellKey)) {
+      // Counted in the drilldown, kept out of the number. See the header.
+      prep.droppedUnobservable += row.resist + row.land + rowCounts(row).dmgTotal
+      const ev = prep.evidence.get(row.spellKey + '|' + row.family)
+      if (ev) ev.landingsNotObservable = true
+      continue
+    }
     if (row.family === 'song' && opts.includeSongs === false) continue
     const term = rowTerm(row, info, opts.axis, spells)
     if (!term) {
@@ -548,6 +612,7 @@ export function estimate(
     fromBaseline,
     fromYou,
     droppedNoLevel: prep.droppedNoLevel,
+    droppedUnobservable: prep.droppedUnobservable,
     byFamily: prep.byFamily,
     perSpell: [...prep.evidence.values()].sort((a, b) => b.casts - a.casts),
     baselineWeight,

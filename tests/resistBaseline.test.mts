@@ -15,7 +15,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { estimate } from '../src/shared/resistModel'
+import { estimate, resistTag } from '../src/shared/resistModel'
 import { rowTotal } from '../src/main/resist/ledger'
 import { parseSpellsUs } from '../src/main/resist/spellsUsParse'
 import {
@@ -94,6 +94,46 @@ test('no character name reaches the file', () => {
     assert.ok(!/primitive/i.test(row.spellKey))
   }
   assert.ok(!readFileSync(PATH, 'utf8').includes('Primitive'))
+})
+
+test('NO SONG IN THE SHIPPED BASELINE IS RESIST-ONLY', () => {
+  // The regression guard for the defect that shipped in round one. A bard's songs re-pulse under
+  // the Symphonic Aura with no cast line, so nothing joined their landing emote to anything and
+  // Largo's Melodic Binding was filed as 400 resists with ZERO landings - a spell that is 100%
+  // resisted by construction, dragging magic toward "nearly immune" on every mob a bard sang at.
+  const songs = ROWS.filter((r) => r.family === 'song')
+  assert.ok(songs.length > 100, `only ${String(songs.length)} song rows`)
+  const bySpell = new Map<string, { resist: number; land: number }>()
+  for (const row of songs) {
+    const acc = bySpell.get(row.spellKey) ?? { resist: 0, land: 0 }
+    acc.resist += row.resist
+    acc.land += row.land
+    bySpell.set(row.spellKey, acc)
+  }
+  for (const [key, acc] of bySpell) {
+    assert.ok(acc.land > 0, `${key}: ${String(acc.resist)} resists and no landings at all`)
+  }
+})
+
+test("Largo's is a SONG, with the denominator its pulses printed", () => {
+  const largo = ROWS.filter((r) => r.spellKey === "largo's melodic binding")
+  assert.ok(largo.length > 0)
+  for (const row of largo) assert.equal(row.family, 'song')
+  const land = largo.reduce((a, r) => a + r.land, 0)
+  const resist = largo.reduce((a, r) => a + r.resist, 0)
+  assert.ok(land > resist * 4, `${String(land)} landings against ${String(resist)} resists`)
+  // And the catalog's other spelling of the same song is folded away, never a second row.
+  assert.equal(ROWS.filter((r) => r.spellKey === "largo's assonant binding").length, 0)
+})
+
+test('a mob a bard sang at reads NORMAL, not nearly immune', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {
+  // `soldier of v`zher`, the mob the defect was found on. Before: R 188 [188,226] off 70 resists
+  // and no landings whatever. After: the song's own pulses supply the denominator.
+  const rows = rowsFor("soldier of v'zher")
+  const est = estimate(rows, spells(), { axis: 'magic', mobLevel: 26 })
+  assert.ok(est.byFamily.song.n > 300, `song observations: ${String(est.byFamily.song.n)}`)
+  assert.ok(est.R >= 15 && est.R <= 45, `R=${String(est.R)} outside the 15-45 a 315/70 split implies`)
+  assert.equal(resistTag(est.R), 'normal')
 })
 
 test('only casters the owner ruled admissible are in it', () => {

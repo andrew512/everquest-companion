@@ -178,6 +178,13 @@ export interface ResistSpellEvidence {
   land: number
   fromBaseline: number
   fromYou: number
+  /**
+   * THE EVIDENCE-SYMMETRY VERDICT. Every observation of this spell across the whole ledger is a
+   * RESIST: no landing, no damage number, nothing. That is never a mob that resists 100% of
+   * everything — it is a spell whose landings this app cannot see, and treating it as evidence
+   * drives R to the top of the grid. The rows stay in the drilldown, labelled, and out of the fit.
+   */
+  landingsNotObservable?: boolean
 }
 
 /** One side of the baseline/you split, or the merged answer. */
@@ -194,6 +201,8 @@ export interface ResistEstimate extends ResistFit {
   fromYou: number
   /** Observations dropped because no level was known for both sides of `levelMod`. */
   droppedNoLevel: number
+  /** Observations held out because their spell's landings are not observable (resistModel.ts). */
+  droppedUnobservable: number
   byFamily: Record<ResistFamily, { n: number; resist: number; land: number }>
   perSpell: ResistSpellEvidence[]
   /** The weight one baseline observation carried: K / (K + nUser), 0 once nUser >= 50. */

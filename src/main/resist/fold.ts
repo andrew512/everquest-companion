@@ -34,8 +34,18 @@
 //            therefore DEFERRED and cancelled by any damage line that follows it for the same mob
 //            and spell, which is the log-only way of saying what the brief says with the client
 //            table ("all-or-nothing spells only").
-//   SONG     not counted here at all — see songs.ts. A song's pulses are reconstructed and each
-//            reconstructed pulse becomes an attempt against every mob that was in melee contact.
+//   SONG     A SONG IS DECIDED BY SPELL IDENTITY, NEVER BY A BEGIN LINE (songIdentity.ts states
+//            why at length: EQ Legends bards run under the Symphonic Aura, which re-pulses every
+//            six seconds and prints no cast line, so the owner's two-million-line log carries five
+//            `You begin singing` lines against 4,152 pulses of one song's landing emote). A spell
+//            only the Bard can learn is a song, and a song is NEVER filed as a cast.
+//
+//            For a song whose landing sentence the catalog knows, the denominator is EXACT and
+//            needs no reconstruction at all: every pulse that lands prints the sentence, every
+//            pulse that does not prints a resist, so attempts = lands + resists per (song, mob).
+//            The pulse machinery in songs.ts is reserved for songs with NO usable landing
+//            sentence, where the only witnesses are resist lines, DoT ticks and the aura's own
+//            heartbeat.
 //
 // ── ANOTHER PLAYER'S CASTS ARE RECORDED, AND NEVER ESTIMATED FROM ───────────────────────────────
 //
@@ -52,7 +62,7 @@ import type { LogEvent } from '../../shared/logEvents'
 import type { SpellDb } from '../data/spellDb'
 import type { ResistCasterKind, ResistFamily, ResistRow } from '../../shared/resistTypes'
 import { ResistBucket, type RowSpec } from './ledger'
-import { SONG_CONTACT_MS, SongPulses, type SongPulse } from './songs'
+import { SongFold } from './songFold'
 import {
   CasterIndex,
   DebuffWindows,
@@ -146,10 +156,9 @@ export class ResistFold {
   private readonly casters = new CasterIndex()
   private readonly debuffs = new DebuffWindows()
   private readonly contact = new MeleeContact()
-  private readonly songs: SongPulses
+  private readonly songs: SongFold
   private zone: string | undefined
   private selfLevel: number | null = null
-  private songSpells = new Set<string>()
   private armed: Armed[] = []
   private dotSeen = new Set<string>()
   private deferred: Deferred | null = null
@@ -158,8 +167,16 @@ export class ResistFold {
   private keys = new Map<string, string>()
 
   constructor(private readonly deps: ResistFoldDeps = {}) {
-    this.songs = new SongPulses((pulse) => {
-      this.filePulse(pulse)
+    this.songs = new SongFold(deps.spellDb, {
+      land: (mob, key, ts) => {
+        this.fileSong(mob, key, ts).land += 1
+      },
+      resist: (mob, key, ts) => {
+        this.fileSong(mob, key, ts).resist += 1
+      },
+      keyOf: (display) => this.keyOf(display),
+      displayFor: (key) => this.display.get(key) ?? key,
+      contactsAt: (ts, windowMs) => this.contact.within(ts, windowMs),
     })
   }
 
@@ -211,7 +228,6 @@ export class ResistFold {
     this.songs.reset()
     this.zone = undefined
     this.selfLevel = null
-    this.songSpells = new Set()
     this.armed = []
     this.dotSeen = new Set()
     this.deferred = null
@@ -292,7 +308,8 @@ export class ResistFold {
         this.onMelee(ev.attacker, ev.target, ev.ts)
         return
       case 'buffApply':
-        if (ev.target !== 'self') this.onEmote(ev.target, ev.ts, ev.candidates.map((c) => c.name))
+        if (ev.target === 'self') this.songs.onSelfLanding(ev.ts, ev.candidates.map((c) => c.name))
+        else this.onEmote(ev.target, ev.ts, ev.candidates.map((c) => c.name))
         return
       case 'cc':
       case 'charm':
@@ -358,7 +375,7 @@ export class ResistFold {
    * a song's attempts: the safe direction, and the one rule 3 already errs in.
    */
   private onMelee(attacker: string, target: string, ts: number): void {
-    if (this.songSpells.size === 0) return
+    if (!this.songs.active) return
     if (isSelf(attacker)) {
       this.noteContact(target, ts)
       return
@@ -374,12 +391,15 @@ export class ResistFold {
 
   // ---- casts ---------------------------------------------------------------------------
 
+  /** The row one song pulse belongs to. Songs are never filed as an ordinary cast. */
+  private fileSong(mobDisplay: string, songKey: string, ts: number): ResistRow {
+    this.remember(mobDisplay)
+    return this.rowFor({ mob: mobDisplay, spellKey: songKey, family: 'song', kind: 'self', level: this.selfLevel, ts })
+  }
+
   private onCastBegin(spell: string, ts: number, sung: boolean): void {
     const key = spellCanonKey(spell)
-    if (sung) {
-      this.songSpells.add(key)
-      this.songs.noteSing(key, ts)
-    }
+    if (sung) this.songs.noteSung(key, ts)
     // A fresh cast re-arms the "first tick counts as a landing" memory for this spell.
     for (const seen of [...this.dotSeen]) {
       if (seen.endsWith(SEP + key)) this.dotSeen.delete(seen)
@@ -427,15 +447,14 @@ export class ResistFold {
   }
 
   private onEmote(mobDisplay: string, ts: number, candidates: string[] | undefined): void {
+    // A SONG PULSE NEEDS NO ARMED CAST, and that is the whole point: under the Symphonic Aura
+    // there is no cast line to arm. The sentence itself is the landing.
+    if (this.songs.onEmote(mobDisplay, ts, candidates)) return
     const cast = this.takeArmed(ts, candidates)
     if (!cast) return
     this.remember(mobDisplay)
     const key = this.keyOf(mobDisplay)
     if (isResistDebuff(this.deps.spellDb, cast.display)) this.debuffs.open(key, cast.spellKey, ts)
-    if (this.songSpells.has(cast.spellKey)) {
-      this.songs.witness(cast.spellKey, ts, null)
-      return
-    }
     // ONE CAST IS ONE ROLL. If this cast already printed damage on this mob, the damage line IS
     // the observation and the emote is the same roll saying so twice (see Armed.damaged).
     if (cast.damaged.has(key)) return
@@ -467,10 +486,7 @@ export class ResistFold {
     if (!kind) return
     const spellKey = spellCanonKey(ev.spell)
     this.remember(ev.target)
-    if (kind === 'self' && this.songSpells.has(spellKey)) {
-      this.songs.witness(spellKey, ev.ts, this.keyOf(ev.target))
-      return
-    }
+    if (this.songs.onResist(ev.target, spellKey, kind, ev.ts)) return
     const level = kind === 'self' ? this.selfLevel : null
     this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts }).resist += 1
   }
@@ -501,10 +517,7 @@ export class ResistFold {
     if (kind === 'self') this.casters.noteStruck(ev.target)
     const spellKey = spellCanonKey(ev.skill)
     this.remember(ev.target)
-    if (kind === 'self' && this.songSpells.has(spellKey)) {
-      this.songs.witness(spellKey, ev.ts, null)
-      return
-    }
+    if (this.songs.onDamage(spellKey, kind, ev.ts)) return
     this.cancelDeferred(ev.target, spellKey)
     this.peekArmed(spellKey, ev.ts)?.damaged.add(this.keyOf(ev.target))
     const level = kind === 'self' ? this.selfLevel : null
@@ -531,23 +544,6 @@ export class ResistFold {
   }
 
   // ---- songs ---------------------------------------------------------------------------
-
-  /**
-   * Rule 3: one reconstructed pulse becomes one attempt against every mob that was alive and in
-   * melee contact inside the last pulse interval — plus every mob the log NAMED as resisting it,
-   * which is proof of range that no proximity heuristic can improve on.
-   */
-  private filePulse(pulse: SongPulse): void {
-    const targets = new Set(this.contact.within(pulse.ts, SONG_CONTACT_MS))
-    for (const key of pulse.resisted) targets.add(key)
-    for (const key of targets) {
-      const mob = this.display.get(key) ?? key
-      const spec = { mob, spellKey: pulse.spellKey, family: 'song' as const, kind: 'self' as const }
-      const row = this.rowFor({ ...spec, level: this.selfLevel, ts: pulse.ts })
-      if (pulse.resisted.has(key)) row.resist += 1
-      else row.land += 1
-    }
-  }
 
   // ---- rows ----------------------------------------------------------------------------
 

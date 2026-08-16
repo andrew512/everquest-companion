@@ -30,6 +30,34 @@
 //   * two kills, so the debuff windows and the contact set have something to close on;
 //   * a `/con` line, which is how a mob's level beats the catalog's.
 //
+// ── r2-song-pulses.log ──────────────────────────────────────────────────────────────────────────
+//
+// Hand-read window, Sun Jul 19 2026 16:29:32 to 16:30:02 — six consecutive SYMPHONIC AURA pulses,
+// and the whole reason round two of this ticket exists. There is no cast line anywhere in it: the
+// aura re-pulses every six seconds by itself, and what the log prints is
+//
+//     [16:29:32] Your feet move faster.                                   <- the aura's heartbeat
+//     [16:29:32] Soldier of V`Zher resisted your Largo's Melodic Binding!  <- a pulse that missed
+//     [16:29:32] Baron Telyx V`Zher is bound by strands of solid music.    <- a pulse that landed
+//
+// repeated at :38, :44, :50, :56 and 16:30:02, exactly six seconds apart. So for a song whose
+// landing sentence the catalog knows, attempts are lands plus resists EXACTLY, per mob, with
+// nothing reconstructed — and a fold that files the resists and drops the landings (which is what
+// shipped before this window was cut) reports a mob that resists 100% of everything.
+//
+// It also carries the naming defect this feature has to survive: the catalog files
+// "is bound BY strands of solid music" under Largo's ASSONANT Binding (Bard 51) while every resist
+// line here names Largo's MELODIC Binding (Bard 20), cast by a level-21 character. See
+// src/main/resist/songIdentity.ts.
+//
+// ── r3-song-shared-message.log ──────────────────────────────────────────────────────────────────
+//
+// A second window, cut because ONE SENTENCE CAN BE TWO SONGS. `<mob> winces.` is the catalog's
+// landing message for BOTH Denon's Disruptive Discord (Bard 18) and Chords of Dissonance (Bard 2),
+// so the parser hands over a two-candidate list and the model has to resolve it — against what the
+// log NAMED, which here is Denon's, eight times. Pooling the two instead would smear a -100 resist
+// adjust into a spell that has none, which is the exact thing this model exists to take out.
+//
 // NOTHING IS INJECTED AND NOTHING IS AUTHORED. These are the owner's real bytes.
 
 import { readFileSync, writeFileSync } from 'fs'
@@ -56,3 +84,5 @@ function slice(fromLine, toLine, out) {
 }
 
 slice(213496, 213730, 'r1-kodiak-fight.log')
+slice(50380, 50700, 'r2-song-pulses.log')
+slice(12400, 12660, 'r3-song-shared-message.log')
