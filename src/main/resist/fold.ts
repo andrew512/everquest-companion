@@ -36,6 +36,15 @@
 //            table ("all-or-nothing spells only").
 //   SONG     not counted here at all — see songs.ts. A song's pulses are reconstructed and each
 //            reconstructed pulse becomes an attempt against every mob that was in melee contact.
+//
+// ── ANOTHER PLAYER'S CASTS ARE RECORDED, AND NEVER ESTIMATED FROM ───────────────────────────────
+//
+// The owner's ruling admits `self` and `pc` casters. A stranger's damage lines and resists both
+// print, so both are filed — but nothing in this app's inputs states another player's LEVEL (the
+// parser reads a `/who` row only for the tailed character), and without a level there is no
+// `levelMod` and therefore no rc. Those rows are evidence a drilldown can show and the estimator
+// deliberately drops (`droppedNoLevel`). Filing them costs a little of the baseline's size and
+// buys the per-spell evidence for spells the tailed character does not cast.
 
 import { idKey, spellCanonKey } from '../log/parseCommon'
 import { mobKey } from '../../shared/mobKey'
@@ -101,15 +110,6 @@ export class ResistFold {
   private dotSeen = new Set<string>()
   private deferred: Deferred | null = null
   private display = new Map<string, string>()
-  /** (mob|spell) pairs another player's DAMAGE has been seen for — see `pcResists`. */
-  private pcLands = new Set<string>()
-  /**
-   * Another player's resists, held back. We can see a stranger's damage lines but never their
-   * all-or-nothing landings (their emotes name no caster), so filing their bare resists would
-   * write a row that is 100% resisted by construction. Held here and committed at `finish()` only
-   * for spells whose landing side we could also see.
-   */
-  private pcResists = new Map<string, { spec: RowSpec; ts: number; n: number }>()
 
   constructor(private readonly deps: ResistFoldDeps = {}) {
     this.songs = new SongPulses((pulse) => {
@@ -132,7 +132,6 @@ export class ResistFold {
   finish(): void {
     this.flushDeferred(Number.POSITIVE_INFINITY)
     this.songs.flush()
-    this.commitPcResists()
   }
 
   private resetSession(): void {
@@ -147,8 +146,6 @@ export class ResistFold {
     this.armed = []
     this.dotSeen = new Set()
     this.deferred = null
-    this.pcLands = new Set()
-    this.pcResists = new Map()
   }
 
   onEvent(ev: LogEvent): void {
@@ -327,11 +324,8 @@ export class ResistFold {
       this.songs.witness(spellKey, ts, mobKey(target))
       return
     }
-    if (kind === 'pc') {
-      this.holdPcResist(target, spellKey, ts)
-      return
-    }
-    this.rowFor(target, spellKey, 'cast', kind, this.selfLevel, ts).resist += 1
+    const level = kind === 'self' ? this.selfLevel : null
+    this.rowFor(target, spellKey, 'cast', kind, level, ts).resist += 1
   }
 
   private onDamage(ev: Extract<LogEvent, { kind: 'damage' }>): void {
@@ -353,7 +347,6 @@ export class ResistFold {
       return
     }
     this.cancelDeferred(ev.target, spellKey)
-    if (kind === 'pc') this.pcLands.add(pairKey(mobKey(ev.target), spellKey))
     const level = kind === 'self' ? this.selfLevel : null
     const row = this.rowFor(ev.target, spellKey, 'cast', kind, level, ev.ts)
     if (ev.dtype === 'dot') {
@@ -370,27 +363,6 @@ export class ResistFold {
     if (this.dotSeen.has(key)) return
     this.dotSeen.add(key)
     row.land += 1
-  }
-
-  // ---- other players' resists (see the field comment) -----------------------------------
-
-  private holdPcResist(target: string, spellKey: string, ts: number): void {
-    const spec = this.spec(target, spellKey, 'cast', 'pc', null, ts)
-    const key = [spec.mobKey, spellKey, spec.debuffs, String(spec.mobLevel ?? '')].join(SEP)
-    const held = this.pcResists.get(key)
-    if (held) {
-      held.n += 1
-      return
-    }
-    this.pcResists.set(key, { spec, ts, n: 1 })
-  }
-
-  private commitPcResists(): void {
-    for (const held of this.pcResists.values()) {
-      if (!this.pcLands.has(pairKey(held.spec.mobKey, held.spec.spellKey))) continue
-      this.bucket.row(held.spec, held.ts).resist += held.n
-    }
-    this.pcResists = new Map()
   }
 
   // ---- songs ---------------------------------------------------------------------------

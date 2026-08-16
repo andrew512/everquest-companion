@@ -99,7 +99,19 @@ export const R_STEP = 2
 /** Profile-likelihood cut for a 95% interval: half a chi-square(1) quantile. */
 export const DELTA_LOG_L = 1.92
 
-const EPS = 1e-9
+/**
+ * THE SMALLEST PROBABILITY ANY OUTCOME IS ALLOWED TO HAVE. The roll is a discrete 1..200, so an
+ * outcome that the model says is impossible really is impossible — but a likelihood that answers
+ * -infinity to one stray observation lets a single mis-parsed line decide the whole fit. A
+ * half-count floor (0.5 / 200) is the standard regularisation and it costs nothing: it is applied
+ * uniformly across every rc in an unidentifiable region, so a flat likelihood stays flat.
+ */
+const P_FLOOR = 1 / 400
+
+/** log of a probability, floored at both ends. */
+function lg(p: number): number {
+  return Math.log(p < P_FLOOR ? P_FLOOR : p > 1 - P_FLOOR ? 1 - P_FLOOR : p)
+}
 
 /**
  * `levelMod = sign(d) * d^2 / 2`, d clamped at -9 below and answering IMMUNE at +21.
@@ -216,20 +228,15 @@ function termLogL(term: Term, R: number): number {
   const rc = R + term.offset
   if (term.kind === 'aon') {
     const p = pResistAon(rc)
-    return term.resist * Math.log(p + EPS) + term.land * Math.log(1 - p + EPS)
+    return term.resist * lg(p) + term.land * lg(1 - p)
   }
   if (term.kind === 'ddVar') {
     const p = pResistMessage(rc)
-    return term.resist * Math.log(p + EPS) + term.land * Math.log(1 - p + EPS)
+    return term.resist * lg(p) + term.land * lg(1 - p)
   }
   const full = pFullDamage(rc)
   const msg = pResistMessage(rc)
-  const partial = 1 - full - msg
-  return (
-    term.full * Math.log(full + EPS) +
-    term.partial * Math.log(partial + EPS) +
-    term.resist * Math.log(msg + EPS)
-  )
+  return term.full * lg(full) + term.partial * lg(1 - full - msg) + term.resist * lg(msg)
 }
 
 function totalLogL(terms: Term[], R: number): number {
@@ -238,28 +245,54 @@ function totalLogL(terms: Term[], R: number): number {
   return sum
 }
 
-/** Grid MLE plus a profile-likelihood interval at delta-logL 1.92. */
-function fitGrid(terms: Term[]): { R: number; lo: number; hi: number } {
-  let bestR = 0
+/**
+ * Grid maximum likelihood, plus a profile-likelihood 95% interval at delta-logL 1.92.
+ *
+ * THE NUMBER AND THE INTERVAL COME FROM DIFFERENT PLACES, AND THAT IS THE POINT. The interval is
+ * computed from the EVIDENCE ALONE: it is the app's statement about what the log can and cannot
+ * rule out, and a prior has no business narrowing or moving it. The printed number is the
+ * shrunk estimate — evidence plus the Torven prior — because "five resists out of five" has a
+ * maximum-likelihood answer of 200 that no honest UI should print.
+ *
+ * The split is also what keeps the estimator truthful at the model's two BOUNDARIES, which is
+ * where a naive prior does real damage. Every rc at or below 0 predicts exactly the same thing
+ * (nothing is ever resisted) and every rc at or above 200 predicts exactly the same thing for an
+ * all-or-nothing spell (everything is), so in those regions the likelihood is FLAT and the honest
+ * interval runs off the end of the grid. A prior evaluated inside the fit instead picks a point
+ * out of that flat region and reports a tight interval around it — measured: it turned a mob with
+ * 300 unresisted casts into "R = 2, interval [2, 2]", and a genuinely near-immune mob into
+ * "R = 172" because the prior's pseudo-LANDINGS are impossible at rc >= 200 and it paid any price
+ * to avoid them. Splitting the two answers fixes both, and the shrunk point is clamped into the
+ * evidence's own interval so the two can never contradict each other on screen.
+ */
+function fitGrid(terms: Term[], prior: Term | null): { R: number; lo: number; hi: number } {
+  const values: { R: number; ll: number; post: number }[] = []
   let best = -Infinity
-  const values: { R: number; ll: number }[] = []
+  let bestPost = -Infinity
+  let shrunkR = 0
   for (let R = R_MIN; R <= R_MAX; R += R_STEP) {
     const ll = totalLogL(terms, R)
-    values.push({ R, ll })
-    if (ll > best) {
-      best = ll
-      bestR = R
+    const post = prior ? ll + termLogL(prior, R) : ll
+    values.push({ R, ll, post })
+    if (ll > best) best = ll
+    if (post > bestPost) {
+      bestPost = post
+      shrunkR = R
     }
   }
   const cut = best - DELTA_LOG_L
-  let lo = bestR
-  let hi = bestR
+  let lo = R_MAX
+  let hi = R_MIN
   for (const v of values) {
     if (v.ll < cut) continue
     if (v.R < lo) lo = v.R
     if (v.R > hi) hi = v.R
   }
-  return { R: bestR, lo, hi }
+  if (lo > hi) {
+    lo = shrunkR
+    hi = shrunkR
+  }
+  return { R: shrunkR < lo ? lo : shrunkR > hi ? hi : shrunkR, lo, hi }
 }
 
 /** Fixed-damage spells expose partial information; variable ones do not. See the header. */
@@ -374,8 +407,7 @@ function rowIsEvidence(row: ResistRow, info: SpellResistInfo | undefined, axis: 
 
 function fitFrom(terms: Term[], axis: ResistAxis, mobLevel: number | null): ResistFit {
   const n = terms.reduce((acc, t) => acc + termN(t), 0)
-  const withPrior = [...terms, priorTerm(axis, mobLevel)]
-  const { R, lo, hi } = fitGrid(withPrior)
+  const { R, lo, hi } = fitGrid(terms, priorTerm(axis, mobLevel))
   return { R, lo, hi, n }
 }
 

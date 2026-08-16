@@ -1,0 +1,424 @@
+// THE ESTIMATOR, AGAINST ROLLS IT DID NOT MAKE (JOS-382).
+//
+// Everything this feature shows a player rests on one claim: that `estimate()` recovers a mob's
+// resist stat from what the log prints. The only way to check that claim without a second
+// implementation of EverQuest is to BE the server for a moment — simulate the Live formula for a
+// known R, print what the game would have printed, feed those lines' counts back through the
+// estimator, and ask whether the number it hands back contains the number we started from.
+//
+// So these tests are not "does the code run". They are a calibration: over a grid of true R
+// values, level gaps, resist adjusts and debuff amounts, the reported 95% interval has to cover
+// the truth at least 90% of the time, and the two independent evidence families (all-or-nothing
+// landings, and full-versus-partial damage) have to agree with each other. The random stream is a
+// fixed-seed linear congruential generator, so a failure is reproducible and a regression cannot
+// hide behind "it was unlucky".
+
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  BASELINE_K,
+  DIFFERS_MIN_N,
+  IMMUNE_LEVEL_MOD,
+  USER_ONLY_AT,
+  damageKind,
+  debuffAmount,
+  estimate,
+  expectedDamageFraction,
+  levelMod,
+  predict,
+  priorResist,
+  resistTag,
+} from '../src/shared/resistModel'
+import type { ResistRow, SpellResistTable } from '../src/shared/resistTypes'
+
+// ---------------------------------------------------------------------------------------------
+// The world under test: one fixed-damage nuke, one all-or-nothing hold, one lure with a big
+// negative adjust, and one malo-shaped debuff whose amount the estimator has to join in itself.
+
+const FULL_DAMAGE = 150
+
+const SPELLS: SpellResistTable = {
+  'test nuke': {
+    axis: 'magic',
+    resistAdj: 0,
+    castMs: 3000,
+    targetType: 5,
+    hpSlot: { base: -110, max: FULL_DAMAGE, calc: 103 },
+  },
+  'test lure': {
+    axis: 'fire',
+    resistAdj: -200,
+    castMs: 3000,
+    targetType: 5,
+    hpSlot: { base: -110, max: FULL_DAMAGE, calc: 103 },
+  },
+  'test hold': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 5 },
+  'test proc': { axis: 'magic', resistAdj: -250, castMs: 0, targetType: 5 },
+  'test mez': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 8, levelCap: 55 },
+  'test malo': {
+    axis: null,
+    resistAdj: 0,
+    castMs: 3000,
+    targetType: 5,
+    debuffSlots: [{ axis: 'all', base: -20, calc: 101, max: 40 }],
+  },
+}
+
+/** A fixed-seed generator: the same failure twice, or it is not a test. */
+function rng(seed: number): () => number {
+  let s = seed >>> 0
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0
+    return s / 4294967296
+  }
+}
+
+const roll = (next: () => number): number => 1 + Math.floor(next() * 200)
+
+function blank(spec: Partial<ResistRow> & Pick<ResistRow, 'spellKey' | 'family'>): ResistRow {
+  return {
+    mobKey: 'a test mob',
+    casterKind: 'self',
+    casterLevel: 50,
+    mobLevel: 50,
+    debuffs: '',
+    resist: 0,
+    land: 0,
+    dmg: {},
+    firstTs: 0,
+    lastTs: 0,
+    ...spec,
+  }
+}
+
+/** Play `n` all-or-nothing casts at this rc and report what the log would have shown. */
+function playAon(R: number, offset: number, n: number, next: () => number): { resist: number; land: number } {
+  const rc = R + offset
+  let resist = 0
+  for (let i = 0; i < n; i++) {
+    if (roll(next) <= rc) resist++
+  }
+  return { resist, land: n - resist }
+}
+
+/** Play `n` fixed-damage casts at this rc: the resist message, a silent partial, or full damage. */
+function playDd(R: number, offset: number, n: number, next: () => number): { resist: number; dmg: Record<string, number> } {
+  const rc = R + offset
+  let resist = 0
+  const dmg: Record<string, number> = {}
+  for (let i = 0; i < n; i++) {
+    const r = roll(next)
+    if (r > rc) {
+      dmg[String(FULL_DAMAGE)] = (dmg[String(FULL_DAMAGE)] ?? 0) + 1
+      continue
+    }
+    const resisted = (150 * (rc - r)) / rc
+    if (resisted >= 100) {
+      resist++
+      continue
+    }
+    const value = Math.max(1, Math.floor((FULL_DAMAGE * (100 - resisted)) / 100))
+    dmg[String(value)] = (dmg[String(value)] ?? 0) + 1
+  }
+  return { resist, dmg }
+}
+
+// ---------------------------------------------------------------------------------------------
+
+test('levelMod is the server formula, including both of its cliffs', () => {
+  assert.equal(levelMod(50, 50), 0)
+  // d = 3 -> +4 (integer division, as the server does it), d = -3 -> -4.
+  assert.equal(levelMod(50, 53), 4)
+  assert.equal(levelMod(53, 50), -4)
+  // Below -9 the difference stops helping: a level 1 rat is not infinitely easy to land on.
+  assert.equal(levelMod(50, 41), -40)
+  assert.equal(levelMod(50, 20), levelMod(50, 41))
+  // 21 levels above the caster is immunity, whatever the mob's resist stat says.
+  assert.equal(levelMod(50, 71), IMMUNE_LEVEL_MOD)
+  assert.equal(levelMod(50, 70), 200)
+})
+
+test('the prior is Torven, and it is the only place a number is assumed', () => {
+  assert.equal(priorResist('magic', 20), 25)
+  assert.equal(priorResist('magic', 25), 35)
+  assert.equal(priorResist('fire', 50), 35)
+  assert.equal(priorResist('poison', 50), 15)
+  assert.equal(priorResist('disease', 10), 15)
+})
+
+test('the plain-language tags sit where the rc arithmetic puts them', () => {
+  assert.equal(resistTag(0), 'weak')
+  assert.equal(resistTag(9), 'weak')
+  assert.equal(resistTag(25), 'normal')
+  assert.equal(resistTag(35), 'normal')
+  assert.equal(resistTag(60), 'resistant')
+  assert.equal(resistTag(150), 'very resistant')
+  assert.equal(resistTag(200), 'nearly immune')
+  assert.equal(resistTag(400), 'nearly immune')
+})
+
+test('SYNTHETIC ROLLS: the interval covers the true R at least 90% of the time', () => {
+  const next = rng(20260816)
+  const truths = [-40, -10, 0, 10, 25, 40, 60, 90, 120, 160, 200, 240]
+  const gaps = [0, 3, -3, 8]
+  let trials = 0
+  let covered = 0
+  for (const R of truths) {
+    for (const gap of gaps) {
+      const casterLevel = 50
+      const mobLevel = 50 + gap
+      const offset = levelMod(casterLevel, mobLevel)
+      const aon = playAon(R, offset, 300, next)
+      const dd = playDd(R, offset, 300, next)
+      const rows: ResistRow[] = [
+        blank({ spellKey: 'test hold', family: 'cast', mobLevel, ...aon }),
+        blank({ spellKey: 'test nuke', family: 'cast', mobLevel, resist: dd.resist, dmg: dd.dmg }),
+      ]
+      const est = estimate(rows, SPELLS, { axis: 'magic', mobLevel })
+      trials++
+      if (R >= est.lo && R <= est.hi) covered++
+      assert.equal(est.n, 600, 'every simulated cast is counted')
+    }
+  }
+  const rate = covered / trials
+  assert.ok(rate >= 0.9, `coverage ${String(covered)}/${String(trials)} = ${rate.toFixed(2)}, want >= 0.90`)
+})
+
+test('SYNTHETIC ROLLS: the two evidence families agree with each other', () => {
+  const next = rng(4242)
+  for (const R of [10, 40, 90, 150]) {
+    const aon = playAon(R, 0, 800, next)
+    const dd = playDd(R, 0, 800, next)
+    const aonFit = estimate([blank({ spellKey: 'test hold', family: 'cast', ...aon })], SPELLS, {
+      axis: 'magic',
+      mobLevel: 50,
+    })
+    const ddFit = estimate(
+      [blank({ spellKey: 'test nuke', family: 'cast', resist: dd.resist, dmg: dd.dmg })],
+      SPELLS,
+      { axis: 'magic', mobLevel: 50 }
+    )
+    const overlap = aonFit.lo <= ddFit.hi && ddFit.lo <= aonFit.hi
+    assert.ok(
+      overlap,
+      `R=${String(R)}: all-or-nothing [${String(aonFit.lo)},${String(aonFit.hi)}] vs damage [${String(ddFit.lo)},${String(ddFit.hi)}]`
+    )
+  }
+})
+
+test('SYNTHETIC ROLLS: a resist adjust is modelled out, not absorbed into R', () => {
+  const next = rng(99)
+  const R = 140
+  // THE WHOLE ARGUMENT FOR MODELLING resistAdj, in one test. A -250 proc lands on this mob every
+  // single time while a plain nuke of the same axis is half-resisted; the raw resist RATE of the
+  // two spells therefore disagrees by 60 points and says nothing about the mob. Subtract each
+  // spell's own adjust and both arms describe one creature.
+  const proc = playAon(R, -250, 900, next)
+  const plain = playAon(R, 0, 900, next)
+  const spells: SpellResistTable = {
+    'test proc': { axis: 'fire', resistAdj: -250, castMs: 0, targetType: 5 },
+    'test plain': { axis: 'fire', resistAdj: 0, castMs: 3000, targetType: 5 },
+  }
+  assert.equal(proc.resist, 0, 'the proc is never resisted, which a raw rate would read as R = 0')
+  const est = estimate(
+    [
+      blank({ spellKey: 'test proc', family: 'cast', ...proc }),
+      blank({ spellKey: 'test plain', family: 'cast', ...plain }),
+    ],
+    spells,
+    { axis: 'fire', mobLevel: 50 }
+  )
+  assert.ok(est.R >= R - 20 && est.R <= R + 20, `R=${String(est.R)} for a true ${String(R)}`)
+  assert.ok(R >= est.lo && R <= est.hi, `interval [${String(est.lo)},${String(est.hi)}]`)
+})
+
+test('a debuff the row names is joined back to an amount from the client table', () => {
+  // Malaisement: base 20, formula 101 (base + level/2), capped at 40. A level-60 caster gets 40.
+  assert.equal(debuffAmount('test malo', 'magic', 60, SPELLS), 40)
+  assert.equal(debuffAmount('test malo', 'fire', 40, SPELLS), 40)
+  // A level-20 caster: 20 + 10 = 30, under the cap.
+  assert.equal(debuffAmount('test malo', 'cold', 20, SPELLS), 30)
+  assert.equal(debuffAmount('', 'magic', 60, SPELLS), 0)
+  assert.equal(debuffAmount('not a spell', 'magic', 60, SPELLS), 0)
+})
+
+test('SYNTHETIC ROLLS: a debuffed cell and an undebuffed one describe the same mob', () => {
+  const next = rng(7)
+  const R = 140
+  const clean = playAon(R, 0, 600, next)
+  const maloed = playAon(R, -40, 600, next)
+  const est = estimate(
+    [
+      blank({ spellKey: 'test hold', family: 'cast', ...clean }),
+      blank({ spellKey: 'test hold', family: 'cast', debuffs: 'test malo', casterLevel: 60, ...maloed }),
+    ],
+    SPELLS,
+    { axis: 'magic', mobLevel: 50 }
+  )
+  assert.ok(est.R >= R - 25 && est.R <= R + 25, `R=${String(est.R)} for a true ${String(R)}`)
+})
+
+test('YOUR OWN LOG WINS: 50 of your observations beat 500 contradicting shipped ones', () => {
+  const next = rng(1234)
+  const userTruth = 30
+  const baselineTruth = 190
+  const user = playAon(userTruth, 0, USER_ONLY_AT, next)
+  const base = playAon(baselineTruth, 0, 500, next)
+  const rows: ResistRow[] = [
+    blank({ spellKey: 'test hold', family: 'cast', ...user }),
+    blank({ spellKey: 'test hold', family: 'cast', source: 'baseline', ...base }),
+  ]
+  const est = estimate(rows, SPELLS, { axis: 'magic', mobLevel: 50 })
+  assert.equal(est.userOnly, true, 'at 50 own observations the baseline stops counting')
+  assert.equal(est.baselineWeight, 0)
+  assert.ok(
+    Math.abs(est.R - userTruth) < Math.abs(est.R - baselineTruth),
+    `R=${String(est.R)} should sit on the user's ${String(userTruth)}, not the baseline's ${String(baselineTruth)}`
+  )
+  assert.ok(est.R < 90, `R=${String(est.R)} is not the shipped answer`)
+  assert.equal(est.differsFromShipped, true, 'and it says so')
+  assert.equal(est.fromYou, USER_ONLY_AT)
+  assert.equal(est.fromBaseline, 500)
+})
+
+test('below the user-only threshold the baseline still counts, at exactly K/(K+n)', () => {
+  const next = rng(555)
+  const user = playAon(30, 0, 20, next)
+  const base = playAon(190, 0, 500, next)
+  const est = estimate(
+    [
+      blank({ spellKey: 'test hold', family: 'cast', ...user }),
+      blank({ spellKey: 'test hold', family: 'cast', source: 'baseline', ...base }),
+    ],
+    SPELLS,
+    { axis: 'magic', mobLevel: 50 }
+  )
+  assert.equal(est.userOnly, false)
+  assert.ok(Math.abs(est.baselineWeight - BASELINE_K / (BASELINE_K + 20)) < 1e-9)
+  assert.ok(est.R > 60, 'twenty observations do not yet overturn five hundred')
+})
+
+test('the patch detector needs BOTH sides well populated before it says anything', () => {
+  const next = rng(31337)
+  const thinUser = playAon(30, 0, DIFFERS_MIN_N - 1, next)
+  const base = playAon(190, 0, 500, next)
+  const est = estimate(
+    [
+      blank({ spellKey: 'test hold', family: 'cast', ...thinUser }),
+      blank({ spellKey: 'test hold', family: 'cast', source: 'baseline', ...base }),
+    ],
+    SPELLS,
+    { axis: 'magic', mobLevel: 50 }
+  )
+  assert.equal(est.differsFromShipped, false)
+})
+
+test('a mez resist above the spell level cap is filed nowhere', () => {
+  const rows: ResistRow[] = [
+    // The mob is level 60; Mesmerization says "up to level 55". Every one of these resists is the
+    // level cap talking, and none of them is evidence about magic resistance.
+    blank({ spellKey: 'test mez', family: 'cast', mobLevel: 60, resist: 40, land: 0 }),
+    blank({ spellKey: 'test hold', family: 'cast', mobLevel: 60, resist: 5, land: 45 }),
+  ]
+  const est = estimate(rows, SPELLS, { axis: 'magic', mobLevel: 60 })
+  assert.equal(est.n, 50, 'only the uncapped spell counts')
+  assert.equal(est.perSpell.length, 1)
+  assert.equal(est.perSpell[0].spellKey, 'test hold')
+  assert.ok(est.R < 60, `R=${String(est.R)} — the capped mez must not make it look resistant`)
+})
+
+test('a spell with no resist axis says nothing about any axis', () => {
+  const est = estimate([blank({ spellKey: 'test malo', family: 'cast', resist: 20, land: 0 })], SPELLS, {
+    axis: 'magic',
+  })
+  assert.equal(est.n, 0)
+  assert.equal(est.perSpell.length, 0)
+})
+
+test('an observation with no level on one side cannot enter the likelihood, and says so', () => {
+  const est = estimate(
+    [blank({ spellKey: 'test hold', family: 'cast', casterLevel: null, resist: 9, land: 11 })],
+    SPELLS,
+    { axis: 'magic', mobLevel: 50 }
+  )
+  assert.equal(est.n, 0)
+  assert.equal(est.droppedNoLevel, 20)
+  assert.equal(est.perSpell[0].casts, 20, 'it is still evidence, and the drilldown still shows it')
+})
+
+test('a mob 21 levels above the caster teaches nothing about its resist stat', () => {
+  const est = estimate(
+    [blank({ spellKey: 'test hold', family: 'cast', mobLevel: 75, resist: 60, land: 0 })],
+    SPELLS,
+    { axis: 'magic', mobLevel: 75 }
+  )
+  assert.equal(est.n, 0, 'immune-by-level resists are not resist-stat evidence')
+})
+
+test('songs are their own family and can be excluded in one place', () => {
+  const rows: ResistRow[] = [
+    blank({ spellKey: 'test hold', family: 'cast', resist: 10, land: 90 }),
+    blank({ spellKey: 'test hold', family: 'song', resist: 80, land: 20 }),
+  ]
+  const both = estimate(rows, SPELLS, { axis: 'magic', mobLevel: 50 })
+  const castsOnly = estimate(rows, SPELLS, { axis: 'magic', mobLevel: 50, includeSongs: false })
+  assert.equal(both.byFamily.song.n, 100)
+  assert.equal(both.byFamily.cast.n, 100)
+  assert.equal(castsOnly.byFamily.song.n, 100, 'the evidence line still reports them')
+  assert.equal(castsOnly.n, 100, 'but they are out of the fit')
+  assert.ok(castsOnly.R < both.R, 'and dropping a resistant family lowers the estimate')
+})
+
+test('fixed damage is recognised by the histogram, and a proc is not', () => {
+  const fixed = blank({ spellKey: 'test nuke', family: 'cast', dmg: { '150': 60, '120': 9, '90': 4 } })
+  assert.equal(damageKind(fixed, SPELLS['test nuke']), 'ddFix')
+  // A proc with no hitpoint slot in the client data is variable whatever its histogram looks like.
+  const proc = blank({ spellKey: 'test proc', family: 'cast', dmg: { '392': 20, '388': 20 } })
+  assert.equal(damageKind(proc, SPELLS['test proc']), 'ddVar')
+  // A spread whose largest value is rare is a damage RANGE, not full-plus-partials.
+  const spread = blank({ spellKey: 'test nuke', family: 'cast', dmg: { '150': 1, '120': 40, '90': 40 } })
+  assert.equal(damageKind(spread, SPELLS['test nuke']), 'ddVar')
+  // The row gave up on its histogram, so nothing about it can be read as partial information.
+  const gaveUp = blank({ spellKey: 'test nuke', family: 'cast', variable: true, land: 500 })
+  assert.equal(damageKind(gaveUp, SPELLS['test nuke']), 'ddVar')
+})
+
+test('predict inverts the same model the estimator fits', () => {
+  const even = predict({ R: 100, casterLevel: 50, mobLevel: 50, resistAdj: 0, kind: 'aon' })
+  assert.ok(Math.abs(even.pResistMsg - 0.5) < 1e-9)
+  assert.ok(Math.abs(even.pLand - 0.5) < 1e-9)
+  const nuke = predict({ R: 100, casterLevel: 50, mobLevel: 50, resistAdj: 0, kind: 'dd' })
+  assert.ok(Math.abs((nuke.pFull ?? 0) - 0.5) < 1e-9)
+  assert.ok(Math.abs(nuke.pResistMsg - 100 / 600) < 1e-9)
+  // The lure's adjust is what makes it land: rc drops to -100, so nothing is resisted at all.
+  const lure = predict({ R: 100, casterLevel: 50, mobLevel: 50, resistAdj: -200, kind: 'dd' })
+  assert.equal(lure.pFull, 1)
+  assert.equal(lure.pResistMsg, 0)
+  // A debuff moves it the same way an adjust does.
+  const maloed = predict({ R: 100, casterLevel: 50, mobLevel: 50, resistAdj: 0, debuff: 40, kind: 'aon' })
+  assert.ok(Math.abs(maloed.pLand - 0.7) < 1e-9)
+  // Immune by level, from both directions.
+  const overLevelled = predict({ R: 0, casterLevel: 30, mobLevel: 60, resistAdj: -1000, kind: 'aon' })
+  assert.equal(overLevelled.pLand, 0)
+})
+
+test('expected damage fraction falls off the way the partial formula says it does', () => {
+  assert.equal(expectedDamageFraction(0), 1)
+  assert.ok(expectedDamageFraction(600) < expectedDamageFraction(200))
+  assert.ok(expectedDamageFraction(200) < expectedDamageFraction(50))
+  assert.ok(expectedDamageFraction(50) < 1)
+})
+
+test('a thin cell does not scream immune', () => {
+  // Five resists out of five. The maximum-likelihood answer is 200 and that is a confident lie.
+  const est = estimate([blank({ spellKey: 'test hold', family: 'cast', resist: 5, land: 0 })], SPELLS, {
+    axis: 'magic',
+    mobLevel: 50,
+  })
+  assert.equal(est.n, 5)
+  assert.ok(est.R < 200, `R=${String(est.R)} — the prior has to pull this down`)
+  // And the interval, which comes from the evidence alone, has to admit how little it rules out:
+  // five resists cannot distinguish "resistant" from "immune", so it runs to the top of the grid.
+  assert.ok(est.hi >= 400, `hi=${String(est.hi)} — the evidence rules out nothing above`)
+  assert.equal(est.nearlyImmune, false)
+})
