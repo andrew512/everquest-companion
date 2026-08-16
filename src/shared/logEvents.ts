@@ -638,6 +638,14 @@ export interface PetSayEvent extends LogEventBase {
 export interface CastBeginEvent extends LogEventBase {
   kind: 'castBegin'
   spell: string
+  /**
+   * The line said SINGING, not casting (JOS-382). A bard song re-checks resistance on every
+   * 6-second pulse while a cast rolls once, so the resist engine has to tell them apart — and the
+   * log is the only place the answer exists in this app: the wiki catalog carries no such column,
+   * and the client's own `spells_us.txt` is not ours to redistribute. Additive and optional, so
+   * every consumer that existed before this rides unchanged.
+   */
+  sung?: boolean
 }
 
 /**

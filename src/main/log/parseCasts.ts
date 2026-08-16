@@ -58,7 +58,10 @@ const SAY_KIND_BY_TEXT = new Map<string, PetSayKind>(PET_SAY_LINES.map(([k, s]) 
 // overlap. "You regain your concentration…" is a recovered cast — never treated as an
 // interrupt; it is its own `castResumed` kind (JOS-167), because a cast that recovers still
 // lands and the proc detector has to be able to put back the record the interrupt took away.
-const CAST_BEGIN_RE = /^You begin (?:casting|singing) (.+?)\.$/
+// The verb is CAPTURED, not discarded (JOS-382): "singing" is the only statement anywhere in this
+// app's inputs that a spell is a bard song, and a song re-rolls resistance every 6-second pulse
+// where a cast rolls once. See CastBeginEvent.sung.
+const CAST_BEGIN_RE = /^You begin (casting|singing) (.+?)\.$/
 // THIRD-PERSON cast (JOS-140): "<Name> begins casting <Spell>." — the only line that says who else
 // is casting what, and therefore the only thing that can ANCHOR a landing sentence to an
 // allowlisted external caster. The subject is a name-shaped token (EQ names carry spaces,
@@ -177,7 +180,14 @@ const POISON_PROC_BY_LAST_WORD = ((): ReadonlyMap<string, PoisonProcDef[]> => {
 export function classifyCastLifecycle({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
   if (text.startsWith('You begin ')) {
     const m = CAST_BEGIN_RE.exec(text)
-    if (m) return { kind: 'castBegin', seq, ts, raw, spell: m[1].trim() }
+    // Absent rather than false for a cast: an optional present only when it says something keeps
+    // every existing golden and every existing consumer byte-identical.
+    if (m) {
+      const spell = m[2].trim()
+      return m[1] === 'singing'
+        ? { kind: 'castBegin', seq, ts, raw, spell, sung: true }
+        : { kind: 'castBegin', seq, ts, raw, spell }
+    }
   }
   if (text.includes(' begins casting ') || text.includes(' begins singing ')) {
     const m = OTHER_CAST_BEGIN_RE.exec(text)

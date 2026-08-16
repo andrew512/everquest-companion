@@ -1,0 +1,162 @@
+// The client resist table: load it once per app run, cache it by the source file's identity.
+//
+// TWO LAWS ARE BEING OBEYED HERE AT ONCE.
+//
+//   JOS-371 — nothing multi-megabyte and synchronous happens on the thread that tails the log.
+//     The parse runs on `resistTableWorker.js`, a second rollup input beside index.js, and the
+//     caller gets a promise. Until it resolves the app is in a well-defined state that the UI can
+//     say out loud ("reading spell data"), never a stall.
+//
+//   JOS-208 — only redo work when the source changed. The parsed table is written to
+//     `<userData>/spell-resist-cache.json` keyed by the SIZE and MTIME of the file it came from.
+//     A launch where the player has not patched EverQuest reads a ~1 MB cache instead of a 38 MB
+//     original; a launch after a patch finds the key stale, re-parses, and rewrites. The key is
+//     deliberately not a hash: hashing 38 MB costs most of what parsing it costs.
+//
+// AND ONE THING IT REFUSES TO DO: crash when the file is not there. `EQ_LOG_PATH`-style overrides
+// let a user point this app at a folder of logs with no EverQuest install behind it, and a Wine
+// or trimmed install may lack the file. `spellTable()` then resolves to null, `spellDataAvailable`
+// on every profile goes false, and the mob page says so instead of showing an empty card.
+
+import { app } from 'electron'
+import { readFileSync, statSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
+import { effectiveEqRoot } from '../log/config'
+import { logError } from '../errorLog'
+import type { SpellResistTable } from '../../shared/resistTypes'
+import type { ResistTableWorkerReply } from '../resistTableWorker'
+
+/** Bump to invalidate every cached table in the field (a parser change, not a game patch). */
+export const SPELL_RESIST_CACHE_VERSION = 1
+
+interface CacheFile {
+  version: number
+  size: number
+  mtimeMs: number
+  table: SpellResistTable
+}
+
+/** The client file, as it sits in the install this app resolved. */
+export function spellsUsPath(): string {
+  return join(effectiveEqRoot(), 'spells_us.txt')
+}
+
+function cachePath(): string {
+  return join(app.getPath('userData'), 'spell-resist-cache.json')
+}
+
+function sourceStamp(path: string): { size: number; mtimeMs: number } | null {
+  try {
+    const st = statSync(path)
+    return { size: st.size, mtimeMs: Math.round(st.mtimeMs) }
+  } catch {
+    return null
+  }
+}
+
+function readCache(stamp: { size: number; mtimeMs: number }): SpellResistTable | null {
+  try {
+    const file = JSON.parse(readFileSync(cachePath(), 'utf8')) as CacheFile
+    if (file.version !== SPELL_RESIST_CACHE_VERSION) return null
+    if (file.size !== stamp.size || file.mtimeMs !== stamp.mtimeMs) return null
+    return file.table
+  } catch {
+    return null
+  }
+}
+
+function writeCache(stamp: { size: number; mtimeMs: number }, table: SpellResistTable): void {
+  const path = cachePath()
+  const tmp = `${path}.tmp`
+  const file: CacheFile = { version: SPELL_RESIST_CACHE_VERSION, ...stamp, table }
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(tmp, JSON.stringify(file), 'utf8')
+    renameSync(tmp, path)
+  } catch (err) {
+    // Best-effort: a failed cache write costs one re-parse next launch, nothing else.
+    logError('main:resistTable', { message: 'spell-resist-cache write failed', err })
+  }
+}
+
+function parseOnWorker(path: string): Promise<SpellResistTable | null> {
+  return new Promise((resolve) => {
+    let worker: Worker
+    try {
+      worker = new Worker(join(__dirname, 'resistTableWorker.js'), { workerData: { path } })
+    } catch (err) {
+      logError('main:resistTable', { message: 'resist table worker failed to start', err })
+      resolve(null)
+      return
+    }
+    let settled = false
+    const finish = (table: SpellResistTable | null): void => {
+      if (settled) return
+      settled = true
+      resolve(table)
+      void worker.terminate()
+    }
+    worker.on('message', (reply: ResistTableWorkerReply) => {
+      if (!reply.ok) logError('main:resistTable', { message: reply.error ?? 'parse failed' })
+      finish(reply.table ?? null)
+    })
+    worker.on('error', (err) => {
+      logError('main:resistTable', { message: 'resist table worker error', err })
+      finish(null)
+    })
+    worker.on('exit', () => {
+      finish(null)
+    })
+  })
+}
+
+let pending: Promise<SpellResistTable | null> | null = null
+let loaded: SpellResistTable | null = null
+let sourceMtime: number | null = null
+
+/**
+ * The table, loaded at most once per app run. Null means the client file is unreadable — a
+ * SUPPORTED state (see the header), never an error the caller has to handle.
+ */
+export function spellTable(): Promise<SpellResistTable | null> {
+  const existing = pending
+  if (existing) return existing
+  const created = load()
+  pending = created
+  return created
+}
+
+async function load(): Promise<SpellResistTable | null> {
+  const path = spellsUsPath()
+  const stamp = sourceStamp(path)
+  if (!stamp) return null
+  sourceMtime = stamp.mtimeMs
+  const cached = readCache(stamp)
+  if (cached) {
+    loaded = cached
+    return cached
+  }
+  const parsed = await parseOnWorker(path)
+  if (parsed) {
+    loaded = parsed
+    writeCache(stamp, parsed)
+  }
+  return parsed
+}
+
+/** The table if it is already resolved, else null. For synchronous readers (the fold). */
+export function spellTableNow(): SpellResistTable | null {
+  return loaded
+}
+
+/** The `spells_us.txt` mtime this run's table was read from — stamped into a generated baseline. */
+export function spellsUsMtime(): number | null {
+  return sourceMtime
+}
+
+/** Test seam: install a table without touching the filesystem. */
+export function installSpellTable(table: SpellResistTable | null): void {
+  loaded = table
+  pending = Promise.resolve(table)
+}
