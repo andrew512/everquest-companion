@@ -26,11 +26,13 @@ import { FormControlLabel, Link, Stack, Switch, TextField, Typography } from '@m
 // THE app's Tooltip, never MUI's directly (lib/Tooltip.tsx): a swatch is a hover anchor and has
 // to show the hand before it is hovered. tests/tooltipCursor.test.mts pins the rule.
 import { Tooltip } from '../../lib/Tooltip'
-import type { AlertDef } from '@shared/types'
+import type { AlertDef, AlertTrigger } from '@shared/types'
 import {
   ALERT_BANNER_COLORS,
   ALERT_BANNER_COLOR_HEX,
   MAX_BANNER_CHARS,
+  alertShowsOnScreen,
+  defaultShowOnScreen,
   type AlertBannerColor
 } from '@shared/alertBanner'
 
@@ -57,9 +59,12 @@ export function useBannerForm(open: boolean, initial: AlertDef | null): BannerFo
   const [bannerColor, setBannerColor] = useState<AlertBannerColor>('default')
   useEffect(() => {
     if (!open) return
-    // ABSENT IS TRUE (shared/alertBanner.ts): every def written before this feature existed shows,
-    // which is what makes the overlay useful the moment it is switched on.
-    setShowOnScreen(initial?.showOnScreen !== false)
+    // WHAT AN ABSENT KEY MEANS IS `alertShowsOnScreen`'s to say, never this file's — since JOS-380
+    // it depends on the trigger, and a switch that showed ON for an alert the banner will not draw
+    // is the exact lie a second implementation of a default produces. A NEW alert has no trigger
+    // yet, so it starts on; if the user then picks an app signal and leaves it on, `bannerFieldsFor`
+    // writes that ON explicitly and the def means what the switch said.
+    setShowOnScreen(initial ? alertShowsOnScreen(initial) : true)
     setBannerText(initial?.bannerText ?? '')
     setBannerColor(initial?.bannerColor ?? 'default')
   }, [open, initial])
@@ -79,11 +84,19 @@ export function useBannerForm(open: boolean, initial: AlertDef | null): BannerFo
  * The whole file's rule, and the one `speechFieldsFor` keeps beside it: write a key ONLY when it
  * is not the default, so an alert that asked for none of this saves BYTE-IDENTICALLY to how it
  * always did and import dedupe keeps matching it.
+ *
+ * WHICH IS WHY THE TRIGGER IS A PARAMETER (JOS-380): the switch's default is now the trigger's to
+ * decide, so "not the default" is a question about this def and not a constant. An app-signal alert
+ * the user deliberately turns ON therefore stores an explicit `true` — the one value that used to
+ * be unwritable, and the only way that alert can beat the celebration card it doubles.
  */
-export function bannerFieldsFor(f: BannerForm): Pick<AlertDef, 'showOnScreen' | 'bannerText' | 'bannerColor'> {
+export function bannerFieldsFor(
+  f: BannerForm,
+  trigger: AlertTrigger
+): Pick<AlertDef, 'showOnScreen' | 'bannerText' | 'bannerColor'> {
   const text = f.bannerText.trim()
   return {
-    ...(f.showOnScreen ? {} : { showOnScreen: false as const }),
+    ...(f.showOnScreen === defaultShowOnScreen({ trigger }) ? {} : { showOnScreen: f.showOnScreen }),
     ...(text ? { bannerText: text.slice(0, MAX_BANNER_CHARS) } : {}),
     ...(f.bannerColor === 'default' ? {} : { bannerColor: f.bannerColor })
   }

@@ -229,6 +229,14 @@ export default function AlertPlayer(): null {
     const offDelta = window.eq.onModuleDelta<AlertsDelta>((d: ModuleDelta<AlertsDelta>) => {
       if (d.moduleId !== 'alerts') return
       for (const fire of d.delta.fired) {
+        // AN ECHO IS NOT A FIRING (JOS-380). `origin: 'app'` marks the record main queued because
+        // THIS player told it about a signal it had just played — replaying it here is the same
+        // alert twice. It was inaudible for the life of the feature (audio coalescing swallows a
+        // repeat within 1.5 s) and visible the day the banner arrived: two lines, one raid target.
+        // The record still reaches history and the feed; only playback is skipped, and the play
+        // stays where it is rather than moving into the echo, which would add a flush of latency
+        // to the celebration sound.
+        if (fire.origin === 'app') continue
         const def = defs.find((a) => a.id === fire.alertId)
         // The firing is passed through: it is where the spell context lives (W1), and the
         // speech modes are the only thing that reads it.

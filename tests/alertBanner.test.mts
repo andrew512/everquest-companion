@@ -32,6 +32,8 @@ import {
 import { speechTextFor } from '../src/shared/speechText'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize } from '../src/main/overlayLayout'
+import { AlertsModule } from '../src/main/modules/alerts'
+import { parseEvent } from '../src/main/log/parser'
 import { cardReduce, type CardState } from '../src/renderer/src/overlay/cardQueue'
 import { TOAST_CAP, toastReduce, type ToastCardState } from '../src/renderer/src/overlay/toastQueue'
 import type { AlertDef } from '../src/shared/alertTypes'
@@ -118,7 +120,56 @@ test('nothing truthful to say ⇒ null, and the player sends nothing', () => {
   assert.equal(alertBannerText({ name: '   ' }), null)
 })
 
+// ---- the echo that used to be a second firing -------------------------------------------
+
+test('an app fire round-trips as HISTORY, not a second firing — one signal, one line', () => {
+  const mod = new AlertsModule()
+  mod.setDefs([
+    def({ id: 'boss-defeat', name: 'Raid target defeated', trigger: { type: 'app', signal: 'bossDefeat' } }),
+    def({ id: 'raw-mez', name: 'Raw mez', trigger: { type: 'raw', regex: 'begin casting' }, cooldownMs: 0 })
+  ])
+  mod.reset()
+
+  // The renderer evaluated the signal, PLAYED it, and told main. Main records it and queues the
+  // record onto the same delta the log fires ride — which is where the double came from.
+  mod.appFired('boss-defeat', 'Lord Nagafen')
+  const echoed = mod.flushDelta()?.delta.fired ?? []
+  assert.equal(echoed.length, 1, 'the echo still travels: history is the one source of truth')
+  assert.equal(echoed[0].origin, 'app', 'and it is MARKED, which is how the player knows not to replay it')
+  // The player's rule, restated (player.tsx onModuleDelta): a marked record is skipped, so the one
+  // play is the one the renderer already did. Unmarked, this was two — inaudible under audio
+  // coalescing for the life of the feature, and two banner lines the day the banner shipped.
+  assert.equal(1 + echoed.filter((f) => f.origin !== 'app').length, 1, 'one signal, one play')
+
+  // …and the mark is NARROW: a main-side fire carries no origin, so the skip above can never
+  // silence the alerts that only main can see.
+  const cast = parseEvent('[Sat Aug 02 21:14:03 2026] You begin casting Mesmerization III.', 9)
+  assert.ok(cast)
+  mod.onEvent(cast, true)
+  const real = mod.flushDelta()?.delta.fired ?? []
+  assert.equal(real.length, 1)
+  assert.equal(real[0].origin, undefined, 'a log fire is nobody’s echo')
+})
+
 // ---- the per-alert switch --------------------------------------------------------------
+
+test('an alert on a CELEBRATED app signal defaults OFF — the card is already saying it', () => {
+  const boss = def({ trigger: { type: 'app', signal: 'bossDefeat' } })
+  assert.equal(alertShowsOnScreen(boss), false, 'no banner beside the celebration card')
+  assert.equal(alertShowsOnScreen({ ...boss, showOnScreen: true }), true, 'an explicit true still wins')
+  assert.equal(alertShowsOnScreen(def({ trigger: { type: 'event', kind: 'buffFade' } })), true, 'everything else shows')
+})
+
+test('a composite defaults off only when EVERY branch is a celebrated signal', () => {
+  const both = def({
+    trigger: { type: 'any', conditions: [{ type: 'app', signal: 'bossDefeat' }, { type: 'app', signal: 'questComplete' }] }
+  })
+  assert.equal(alertShowsOnScreen(both), false)
+  const mixed = def({
+    trigger: { type: 'any', conditions: [{ type: 'app', signal: 'bossDefeat' }, { type: 'raw', regex: 'broke' }] }
+  })
+  assert.equal(alertShowsOnScreen(mixed), true, 'it can fire on something nothing celebrates')
+})
 
 test('absent showOnScreen means SHOWN — which is why there is no store migration', () => {
   assert.equal(alertShowsOnScreen(def()), true, 'every def written before JOS-378 shows')

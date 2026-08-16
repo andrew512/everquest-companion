@@ -456,6 +456,21 @@ export interface FiredAlert {
   /** The text that matched (raw line for raw/event triggers), for debugging/UI. */
   matchedText: string
   /**
+   * WHERE THIS FIRE CAME FROM, when it did not come from the log (JOS-380).
+   *
+   * `'app'` marks the ECHO of a renderer-evaluated signal: the player fired the alert itself
+   * (`fireAppSignal`), told main so the recent-fires history stays the one source of truth, and
+   * main queued that record onto the same delta the log fires ride. Absent on every main-side
+   * fire, which is nearly all of them.
+   *
+   * IT EXISTS SO THE ECHO IS NOT A SECOND FIRING. The player skips playback — sound, speech AND
+   * banner — for a marked record, while history and the event feed still see it. Without the mark
+   * every app-signal alert plays twice; audio coalescing (same identity within 1.5 s) swallowed
+   * the second one for the life of the feature, and the banner, which is outside that gate by
+   * ruling, is what finally showed it: two lines for one raid target.
+   */
+  origin?: 'app'
+  /**
    * SPELL CONTEXT for the speech modes (docs/plans/voice-alerts.md §1) — the triggering
    * spell's DISPLAY name with its rank suffix INTACT ("Mesmerization III"), exactly as the
    * log spelled it. Rank-stripping is the resolver's job (`speechTextFor`), not the

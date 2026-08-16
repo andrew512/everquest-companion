@@ -266,12 +266,15 @@ export function formCanSave(f: AlertForm): boolean {
 }
 
 export function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
+  // Built ONCE and shared with the banner fields below: since JOS-380 the on-screen switch's
+  // default depends on the trigger, so the two must be looking at the same one.
+  const trigger = triggerFromForm(f.mode, f.conditions)
   return {
     // Preserve id + note on edit (stable ids for built-ins); mint on add.
     id: initial?.id ?? newId(f.name),
     name: f.name.trim(),
     enabled: initial?.enabled ?? true,
-    trigger: triggerFromForm(f.mode, f.conditions),
+    trigger,
     sound: { packId: f.packId, soundId: f.soundId },
     volume: f.volume,
     cooldownMs: f.cooldownMs,
@@ -289,6 +292,6 @@ export function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
     // showOnScreen / bannerText / bannerColor, on exactly the same terms (BannerBlock.
     // bannerFieldsFor): every one of them is written only when it is not the default, so an alert
     // that never touched the banner saves the bytes it always did.
-    ...bannerFieldsFor(f.banner)
+    ...bannerFieldsFor(f.banner, trigger)
   }
 }

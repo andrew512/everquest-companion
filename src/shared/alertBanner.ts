@@ -27,7 +27,7 @@
 //
 // Pure + dependency-free (types only), so `npm test` exercises every rule here with no Electron.
 
-import type { AlertDef } from './alertTypes'
+import type { AlertDef, AlertTriggerPrimitive, AppSignal } from './alertTypes'
 
 // ---- the kind's own config knobs -------------------------------------------------------
 //
@@ -176,15 +176,53 @@ export function alertBannerText(def: BannerDef): string | null {
 }
 
 /**
+ * Which app signals ALREADY SAY SOMETHING ON SCREEN — each has a celebration card of its own
+ * (shared/toast.ts: 'bossKill' for a defeat, 'skyQuestComplete' for a quest).
+ *
+ * A Record rather than a list so a third `AppSignal` cannot be added without this file failing to
+ * compile. "Does this event already draw a card?" is a question the new signal's author is the
+ * only one who can answer, and silence would default it to exactly the double below.
+ */
+const CELEBRATED_SIGNAL: Record<AppSignal, boolean> = {
+  bossDefeat: true,
+  questComplete: true
+}
+
+const isCelebrated = (t: AlertTriggerPrimitive): boolean => t.type === 'app' && CELEBRATED_SIGNAL[t.signal]
+
+/**
+ * What an alert that has never said means by saying nothing (owner ruling, 2026-08-15, JOS-380).
+ *
+ * ON for everything, EXCEPT an alert that fires on an app signal the app already CELEBRATES. A
+ * raid target going down drew both the celebration card and a banner line saying the same news,
+ * and the card is the better of the two: it is the surface built for that event, with the mob, the
+ * time and the deep link on it. A banner beside it is the same sentence twice on one screen.
+ *
+ * It is a DEFAULT, not a ban: an explicit `showOnScreen: true` still wins, which is what the row
+ * toggle and the editor switch write. And because it is computed rather than stored, every install
+ * that already has the built-in "raid target defeated" alert gets the fix with no migration.
+ *
+ * A composite defaults off only when EVERY condition is such a signal — one raw-line condition in
+ * an 'any' means the alert can fire on something nothing celebrates, and that firing has earned a
+ * line.
+ */
+export function defaultShowOnScreen(def: Pick<AlertDef, 'trigger'>): boolean {
+  const t = def.trigger
+  if ('conditions' in t) return !(t.conditions.length > 0 && t.conditions.every(isCelebrated))
+  return !isCelebrated(t)
+}
+
+/**
  * Does this alert put a line on screen at all?
  *
- * ABSENT MEANS YES (owner ruling 2). Every alert a user already has was written before this
- * existed and none of them carry the key, so "absent = on" is what makes the overlay useful the
- * moment it is switched on — and the per-alert switch is then how you TAME it, which is the
- * ruling's own word. The overlay being off is the other half of the gate and is checked in main.
+ * ABSENT MEANS `defaultShowOnScreen` (owner ruling 2, narrowed by JOS-380). Every alert a user
+ * already has was written before this existed and none of them carry the key, so the absent case
+ * is what makes the overlay useful the moment it is switched on — for every trigger but the ones
+ * that already have a card. The per-alert switch is then how you TAME it, which is the ruling's
+ * own word. The overlay being off is the other half of the gate and is checked in main.
  */
-export function alertShowsOnScreen(def: Pick<AlertDef, 'showOnScreen'>): boolean {
-  return def.showOnScreen !== false
+export function alertShowsOnScreen(def: Pick<AlertDef, 'showOnScreen' | 'trigger'>): boolean {
+  return def.showOnScreen ?? defaultShowOnScreen(def)
 }
 
 // ---- the wire ---------------------------------------------------------------------------
