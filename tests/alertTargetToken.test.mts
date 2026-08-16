@@ -43,6 +43,8 @@ import {
   resolveTarget
 } from '../src/shared/alertTargets'
 import { speechTextFor } from '../src/shared/speechText'
+import { displayTextFor } from '../src/shared/alertDisplay'
+import { DEFAULT_ALERT_OVERLAY } from '../src/shared/alertOverlays'
 import { suggestionsFor } from '../src/renderer/src/features/alerts/suggestions'
 import type { LogEvent } from '../src/shared/logEvents'
 import type { AlertDef, FiredAlert, SpellCatalogEntry } from '../src/shared/types'
@@ -303,10 +305,38 @@ test('JOS-353 D2: a def that never writes the token carries NO captures — the 
   // …and neither does a custom phrase that says something else.
   const other = plainDef('buffApply', { spell: 'Shiftless Deeds' }, 'slowed', 'test:other-phrase')
   assert.equal(fire([other], [line])[0].captures, undefined)
-  // `autoTokensWanted` is the compile-time reader, and it reads the PHRASE.
+  // `autoTokensWanted` is the compile-time reader, and it reads the def's TEMPLATES.
   assert.deepEqual(autoTokensWanted('Mez broke on {target}'), ['target'])
   assert.deepEqual(autoTokensWanted('Mez broke'), [])
   assert.deepEqual(autoTokensWanted(undefined), [])
+  // Every template counts, and it is a union: the token is wanted if ANY of them writes it.
+  assert.deepEqual(autoTokensWanted(undefined, 'Mez broke on {target}'), ['target'])
+  assert.deepEqual(autoTokensWanted('Mez broke', undefined), [])
+  assert.deepEqual(autoTokensWanted(), [])
+})
+
+test('JOS-353 × text overlays: a SILENT alert that DRAWS {target} gets the token filled in', () => {
+  // The second template. `{target}` shipped when a custom speech phrase was the only place a user
+  // could write a token; an alert that makes no sound and puts a line on screen is the case text
+  // overlays added, and compiling the wanted set from the phrase alone would have drawn the token
+  // literally — the one failure mode a user cannot debug, since the def plainly says "{target}".
+  const line = '[Fri Aug 07 09:07:24 2026] Coercer T`vala slows down.'
+  const drawn: AlertDef = {
+    id: 'test:display-token',
+    name: 'slowed',
+    enabled: true,
+    trigger: { type: 'event', kind: 'buffApply', where: { spell: 'Shiftless Deeds' } },
+    cooldownMs: 0,
+    audio: 'silent',
+    display: { overlay: DEFAULT_ALERT_OVERLAY, text: 'Slowed: {target}' }
+  }
+  const fired = fire([drawn], [line])
+  assert.equal(fired.length, 1)
+  assert.deepEqual(fired[0].captures, { target: 'Coercer T`vala' })
+  assert.equal(displayTextFor(drawn, fired[0]), 'Slowed: Coercer T`vala')
+  // And D2's bound still holds on this template too: no token written, no captures carried.
+  const plain = { ...drawn, id: 'test:display-no-token', display: { ...drawn.display!, text: 'Slowed' } }
+  assert.equal(fire([plain], [line])[0].captures, undefined)
 })
 
 test('JOS-353 D3: a kind outside the table resolves to nothing, so the token renders literally', () => {

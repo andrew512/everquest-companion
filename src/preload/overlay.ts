@@ -15,6 +15,7 @@ import type {
 import { OVERLAY_KINDS } from '../shared/types'
 import type { ScopeSelection } from '../shared/scopeSelection'
 import type { ToastPayload } from '../shared/toast'
+import type { AlertTextCard } from '../shared/alertDisplay'
 
 export type { CombatSnapshot, SnapshotOpts, OverlayConfig, OverlayDrill, OverlayKind, MobKnowledge }
 
@@ -210,6 +211,33 @@ const overlayApi = {
    */
   unwatchRespawn: (key: string): Promise<boolean> => ipcRenderer.invoke(IPC.respawnUnwatch, key),
 
+  /**
+   * ALERT TEXT (docs/plans/alert-text-overlays.md): one finished line to draw, pushed by main.
+   * Self-contained by the same law the toast follows - the overlay stacks, times and drops it
+   * locally and fetches nothing.
+   */
+  onAlertText: (cb: (c: AlertTextCard) => void): (() => void) => {
+    const listener = (_e: unknown, c: AlertTextCard): void => cb(c)
+    ipcRenderer.on(IPC.onAlertText, listener)
+    return () => ipcRenderer.removeListener(IPC.onAlertText, listener)
+  },
+  /**
+   * "I am drawing nothing / something right now." Only a NOTIFIER kind has anything to say here
+   * (shared/alertOverlays.ts); main uses it to hide an empty window in the opaque-overlay
+   * compatibility mode. Deliberately NOT the same signal as setIgnoreMouse above: an alert text
+   * lane stays click-through whether or not it is drawing, so its mouse state says nothing about
+   * what is on screen. Fire-and-forget.
+   */
+  setIdle: (idle: boolean): void => ipcRenderer.send(IPC.overlaySetIdle, KIND, idle),
+  /**
+   * "Make this window this big" - the grab handle a notifier draws while it is unlocked, in CSS
+   * pixels of its own content. Main clamps to the kind's limits and persists the result.
+   *
+   * Interactive mode only by the caller's construction (a LOCKED overlay is click-through by law
+   * and has no drags to give), and the numbers are re-checked in main regardless.
+   */
+  resize: (size: { width: number; height: number }): void =>
+    ipcRenderer.send(IPC.overlayResize, KIND, size),
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)
 }

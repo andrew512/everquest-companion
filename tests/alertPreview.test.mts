@@ -30,7 +30,7 @@ function def(over: Partial<AlertDef> = {}): AlertDef {
   }
 }
 
-const CHANNELS: (AlertAudio | undefined)[] = [undefined, 'sound', 'speech', 'both']
+const CHANNELS: (AlertAudio | undefined)[] = [undefined, 'sound', 'speech', 'both', 'silent']
 
 // ------------------------------------------------------------ the semantics, as shipped
 
@@ -129,6 +129,26 @@ test('preview forces exactly two fields — enabled and alwaysPlay — and touch
     { ...original, alwaysPlay: original.alwaysPlay },
     'every other field comes through untouched'
   )
+})
+
+test('▶ on a TEXT-ONLY row makes no noise — that is what the channel says', () => {
+  // 'silent' (docs/plans/alert-text-overlays.md D1) is the channel for an alert whose whole job is
+  // to put a line on screen. ▶ still SHOWS that line (the display push happens above this plan in
+  // player.tsx); what it must not do is fall back to the pack sound the def still carries.
+  // Both fields false/null, and there is no third one to set: `after` went with the retired
+  // 'both' channel (JOS-362), so "no noise" is now the whole of the plan rather than two of three.
+  assert.deepEqual(previewPlan(def({ audio: 'silent' }), false), { sound: false, speak: null })
+})
+
+test('preview carries the DISPLAY block through untouched, so ▶ shows what a firing shows', () => {
+  // The "preview == firing" property, extended to the third thing an alert can do. `previewDef`
+  // forces two fields and copies the rest; if it ever rebuilt the def instead, ▶ would stop being
+  // a way to audition the font/size/colour you just picked.
+  const original = def({
+    audio: 'silent',
+    display: { text: '{mob} incoming', font: 'display', fontSize: 40, color: '#ff0000' }
+  })
+  assert.deepEqual(previewDef(original).display, original.display)
 })
 
 test('preview never mutates the def the row is rendering', () => {

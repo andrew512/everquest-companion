@@ -98,6 +98,7 @@ import { OverlaySnapSetting } from './OverlaySnapSetting'
 // The release hold this card is behind (JOS-359). Imported for the FLAG, not for geometry.
 import { SNAP_RELEASE_HOLD } from '@shared/overlaySnap'
 import { ToastSetting } from './ToastSetting'
+import { AlertOverlaySetting } from './AlertOverlaySetting'
 // Cursor ring: another descriptor that lives beside its own card, same ceiling, same answer.
 import { cursorRingSection } from './CursorRingSetting'
 import { TelemetrySetting } from './TelemetrySetting'
@@ -229,6 +230,13 @@ function overlaysSection(): PrefSection {
         keywords:
           'toast toasts celebrate celebration boss kill raid target defeated quest complete sky plane of sky notification popup card sound silent position move top',
         content: <ToastSetting />
+      },
+      {
+        id: 'alert-overlay',
+        label: 'Alert text',
+        keywords:
+          'alert alerts text overlay on screen display show gina trigger line font size colour color duration stack position move transparent',
+        content: <AlertOverlaySetting />
       }
     ]
   }

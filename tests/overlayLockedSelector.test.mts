@@ -36,7 +36,7 @@ test('NO NEW HOOK: main still decides forwarding per kind, in exactly one place'
   // exemption is unchanged and still lives in exactly one expression.
   assert.match(windows, /forward: overlayMouseForward\(kind\)/)
   const gate = src('../src/main/replayGate.ts')
-  assert.match(gate, /kind !== 'toast' && !replayRunning/)
+  assert.match(gate, /!isNotifierOverlayKind\(kind\) && !replayRunning/)
   // The freeze-hazard note has to survive in BOTH halves: it is the reason the split exists at
   // all, and now also the reason the replay drops the hook entirely.
   assert.match(windows, /WH_MOUSE_LL/)

@@ -14,6 +14,7 @@ import {
   saveAlert,
   setAlertPrefs
 } from '../store'
+import { normalizeAlertDisplay } from '../../shared/alertDisplay'
 import type { AlertDef, AlertPrefs, FeedReport } from '../../shared/types'
 
 /**
@@ -28,6 +29,24 @@ function sanitizeCooldownScope(def: AlertDef): AlertDef {
   if (def.cooldownScope === 'alert' || def.cooldownScope === 'target') return def
   const clean = { ...def }
   delete clean.cooldownScope
+  return clean
+}
+
+/**
+ * Re-validate the TEXT-OVERLAY block (docs/plans/alert-text-overlays.md) — the same rule as its
+ * two neighbours, for a sharper reason: `display` carries five values that end up in another
+ * WINDOW's style attribute, so it goes through the same normalizer the share-import path and the
+ * store both use rather than being trusted because today's only caller is our own dialog.
+ *
+ * A block that survives as nothing at all has its KEY dropped, because the presence of `display`
+ * is what makes an alert draw — and the rest of the def still saves either way.
+ */
+function sanitizeDisplay(def: AlertDef): AlertDef {
+  if (def.display === undefined) return def
+  const display = normalizeAlertDisplay(def.display)
+  const clean = { ...def }
+  if (display) clean.display = display
+  else delete clean.display
   return clean
 }
 
@@ -50,7 +69,7 @@ function sanitizeEarlyWarn(def: AlertDef): AlertDef {
 export function registerAlertsIpc(): void {
   ipcMain.handle(IPC.listAlerts, () => getAlerts())
   ipcMain.handle(IPC.saveAlert, (_e, def: AlertDef) => {
-    const list = saveAlert(sanitizeEarlyWarn(sanitizeCooldownScope(def)))
+    const list = saveAlert(sanitizeDisplay(sanitizeEarlyWarn(sanitizeCooldownScope(def))))
     alertsModule.setDefs(list) // keep the live evaluator in sync
     return list
   })

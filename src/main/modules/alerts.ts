@@ -464,9 +464,15 @@ function cooldownKey(def: AlertDef, ev: LogEvent): string {
 function compileAlert(def: AlertDef): CompiledAlert {
   const t: AlertTrigger = def.trigger
   const breakKinds = breakTriggerKinds(t)
-  // Only a 'custom' phrase can carry a token at all — the other three speech modes resolve to
-  // values the app owns and have no template to substitute into (shared/speechText.ts).
-  const autoTokens = autoTokensWanted(def.speech?.mode === 'custom' ? def.speech.phrase : undefined)
+  // BOTH of the def's templates, because either can carry a token. Of the speech block only a
+  // 'custom' phrase can — the other three modes resolve to values the app owns and have no
+  // template to substitute into (shared/speechText.ts) — and the display TEXT always can, since it
+  // is nothing but a template. A silent, text-only alert drawing "{target}" asked for the token
+  // just as plainly as a spoken one, and reading only the phrase would have rendered it literally.
+  const autoTokens = autoTokensWanted(
+    def.speech?.mode === 'custom' ? def.speech.phrase : undefined,
+    def.display?.text
+  )
   if ('conditions' in t) {
     return {
       def,

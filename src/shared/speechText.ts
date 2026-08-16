@@ -69,15 +69,33 @@ export const SPEECH_MODES = [
  * share importer validates against and what the store migration keeps (`pickLiteral`), so a def
  * carrying the retired 'both' still round-trips instead of being coerced into a guess.
  * Exhaustive by construction.
+ *
+ * 'silent' is LAST because this list is also the order the picker renders what it offers, and
+ * "make no sound" is the answer you reach for after the ones that do (docs/plans/
+ * alert-text-overlays.md D1).
  */
-export const ALERT_AUDIO_ACTIONS = ['sound', 'speech', 'both'] as const satisfies readonly AlertAudio[]
+export const ALERT_AUDIO_ACTIONS = [
+  'sound',
+  'speech',
+  'both',
+  'silent'
+] as const satisfies readonly AlertAudio[]
 
 /**
- * Every audio action a PICKER offers — sound, or spoken (JOS-362, owner: "also remove sound +
- * spoken - too much garbage"). Exhaustive over `AlertAudioChoice` by construction, so retiring or
- * adding a channel is one edit to the type.
+ * Every audio action a PICKER offers — sound, spoken, or nothing at all (JOS-362, owner: "also
+ * remove sound + spoken - too much garbage"). Exhaustive over `AlertAudioChoice` by construction,
+ * so retiring or adding a channel is one edit to the type.
+ *
+ * 'silent' IS OFFERED, and 'both' is not, because they are opposite kinds of member. 'both' is a
+ * channel the app stopped having — readable, never choosable. 'silent' is a channel the app
+ * GAINED with text overlays (docs/plans/alert-text-overlays.md D1): an alert whose whole job is to
+ * put a line on screen has to be able to say so, and the picker is where it says it.
  */
-export const ALERT_AUDIO_CHOICES = ['sound', 'speech'] as const satisfies readonly AlertAudioChoice[]
+export const ALERT_AUDIO_CHOICES = [
+  'sound',
+  'speech',
+  'silent'
+] as const satisfies readonly AlertAudioChoice[]
 
 /**
  * WHAT A STORED `audio` MEANS TODAY — the one place the retired 'both' turns back into a channel

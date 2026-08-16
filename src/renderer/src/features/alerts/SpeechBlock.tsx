@@ -51,7 +51,23 @@ import VoiceSetupLink, { type VoiceSetupNotice } from './VoiceSetupLink'
  */
 const AUDIO_LABELS: Record<AlertAudioChoice, string> = {
   sound: 'Play a sound',
-  speech: 'Speak it'
+  speech: 'Speak it',
+  // Says what the alert does, not what it lacks: the reason to pick this is that the alert shows
+  // TEXT (DisplayBlock, below it in the dialog) and should not also make a noise.
+  silent: 'Nothing (text only)'
+}
+
+/**
+ * DOES THIS ALERT PLAY ITS PACK SOUND? The dialog asks, because it owns the Sound picker and must
+ * not offer one to an alert that will never play it — nor refuse a save for want of it
+ * (docs/plans/alert-text-overlays.md D1).
+ *
+ * Membership rather than `!== 'speech'`, for the reason `speaks` gives below: an unlisted future
+ * channel hides the section instead of showing one that does nothing. The retired 'both' is not
+ * tested for because it cannot reach this form — `speechDefaults` resolves it away on open.
+ */
+export function playsSound(f: Pick<SpeechForm, 'audio'>): boolean {
+  return f.audio === 'sound'
 }
 
 /** Human labels for the mode picker, in the order SPEECH_MODES declares. */
@@ -418,7 +434,12 @@ export default function SpeechBlock({
    */
   allAlwaysPlay?: boolean
 }): JSX.Element {
-  const speaks = form.audio !== 'sound'
+  // STATED POSITIVELY, and that is load-bearing rather than style. This was `!== 'sound'`, which
+  // was the right answer until 'silent' (alert-text-overlays D1) joined the picker: 'silent'
+  // satisfies it, so the Voice section would have opened for an alert that makes no sound.
+  // Written as membership, an unlisted future member hides the section instead of showing it,
+  // which is the safe way round.
+  const speaks = form.audio === 'speech'
   return (
     <Box data-testid="alert-speech-block">
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5 }}>

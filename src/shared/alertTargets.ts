@@ -241,14 +241,20 @@ export function autoTokenNamesFor(trigger: AlertTrigger): AutoTokenName[] {
 }
 
 /**
- * The auto tokens a PHRASE actually writes — the compile-time gate that keeps a target off every
- * firing that never asked for one (see the header's last paragraph).
+ * The auto tokens a def's TEMPLATES actually write — the compile-time gate that keeps a target off
+ * every firing that never asked for one (see the header's last paragraph).
  *
- * Reads the phrase, not the trigger: whether a value is worth carrying is a question about what
- * the def will SAY. A def with no custom phrase wants nothing.
+ * Reads the templates, not the trigger: whether a value is worth carrying is a question about what
+ * the def will actually put in front of the user. A def that writes no token wants nothing.
+ *
+ * IT IS VARIADIC BECAUSE A DEF NOW HAS TWO TEMPLATES, not one. `{target}` shipped when the only
+ * place a user could write a token was a custom speech PHRASE; text overlays added a second
+ * (`display.text`, docs/plans/alert-text-overlays.md), and a token is a token wherever it is
+ * written — an alert that says nothing and draws "Mez broke on {target}" is precisely the alert
+ * this feature is for. Taking every template here rather than at the call site is what keeps the
+ * next surface that lets a user type a token from arriving with the gate already shut against it.
  */
-export function autoTokensWanted(phrase: string | undefined): AutoTokenName[] {
-  if (!phrase) return []
-  const used = new Set(tokensIn(phrase))
+export function autoTokensWanted(...templates: (string | undefined)[]): AutoTokenName[] {
+  const used = new Set(templates.flatMap((t) => (t ? tokensIn(t) : [])))
   return AUTO_TOKEN_NAMES.filter((t) => used.has(t))
 }

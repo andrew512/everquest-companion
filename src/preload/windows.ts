@@ -13,6 +13,8 @@
 import { ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { ToastRequest } from '../shared/toast'
+import type { AlertTextDefaults, AlertTextRequest } from '../shared/alertDisplay'
+import type { AlertOverlayKind } from '../shared/alertOverlays'
 import type { ScopeSelection } from '../shared/scopeSelection'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
 
@@ -87,6 +89,29 @@ export const windowsApi = {
    * card and forwards it to the toast overlay window.
    */
   showToast: (req: ToastRequest): void => ipcRenderer.send(IPC.toastShow, req),
+
+  // ---- alert text overlays (docs/plans/alert-text-overlays.md) ----
+  /**
+   * "Draw this line." Called by the always-mounted AlertPlayer, which already owns "this alert
+   * fired" for every firing path, so the live-only discipline is owned in one place - exactly as
+   * with showToast above. Main re-validates the request, fills in whatever the alert did not
+   * override from the TARGET overlay's own defaults, and routes it; a closed overlay draws nothing.
+   */
+  showAlertText: (req: AlertTextRequest): void => ipcRenderer.send(IPC.alertTextShow, req),
+  /** Read an alert overlay's persisted config (lock, bounds, and its own font/size/colour/seconds). */
+  getAlertOverlayConfig: (kind: AlertOverlayKind): Promise<OverlayConfig> =>
+    ipcRenderer.invoke(IPC.overlayGetConfig, kind),
+  /**
+   * Lock (click-through) / unlock (position it) an alert overlay. Separate from a config patch
+   * because this one is APPLIED to the live window as well as persisted - and because it is the
+   * ONLY route to positioning: a locked lane is empty and click-through, so it has no chrome of
+   * its own to grab.
+   */
+  setAlertOverlayLocked: (kind: AlertOverlayKind, locked: boolean): void =>
+    ipcRenderer.send(IPC.overlaySetLocked, kind, locked),
+  /** Set the LOOK this lane gives a line that does not override it. Returns the clamped result. */
+  setAlertOverlayDefaults: (kind: AlertOverlayKind, alertText: AlertTextDefaults): Promise<OverlayConfig> =>
+    ipcRenderer.invoke(IPC.overlaySetConfig, kind, { alertText }),
 
   // ---- the Preferences panel's door to `overlays.toast` -------------------------------
   // The overlay windows read their own config through the overlay bridge; the MAIN window

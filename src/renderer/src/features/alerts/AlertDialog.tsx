@@ -46,7 +46,9 @@ import {
 } from './alertForm'
 import ConditionEditor from './ConditionEditor'
 import SoundPicker from './SoundPicker'
-import SpeechBlock from './SpeechBlock'
+import SpeechBlock, { playsSound } from './SpeechBlock'
+import DisplayBlock from './DisplayBlock'
+import { useAlertOverlayDefaults } from './useAlertOverlayDefaults'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 
 /** "Fire when…" — the single/any/all combine-mode picker plus the same-event caveat. */
@@ -301,6 +303,10 @@ export default function AlertDialog({
   onSave: (def: AlertDef) => void
 }): JSX.Element {
   const f = useAlertForm(open, initial, packs, defaultPackId)
+  // What each overlay gives a style field this alert does not override. Read here rather than in
+  // DisplayBlock so the section renders the defaults of the overlay currently SELECTED in the
+  // form, which is a fact the dialog owns.
+  const overlayDefaults = useAlertOverlayDefaults()
   const editing = initial != null
 
   return (
@@ -325,18 +331,23 @@ export default function AlertDialog({
           />
 
           <Divider />
-          <Box>
-            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-              Sound
-            </Typography>
-            <SoundPicker
-              packs={packs}
-              packId={f.packId}
-              soundId={f.soundId}
-              defaultPackId={defaultPackId}
-              onChange={f.setSound}
-            />
-          </Box>
+          {/* Shown only when the alert actually plays one. A picker for a sound that will never
+              play is a control that does nothing — and `formCanSave` stops requiring a sound at
+              the same time, because a hidden field may never be the reason a save is refused. */}
+          {playsSound(f.speech) && (
+            <Box data-testid="alert-sound-section">
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                Sound
+              </Typography>
+              <SoundPicker
+                packs={packs}
+                packId={f.packId}
+                soundId={f.soundId}
+                defaultPackId={defaultPackId}
+                onChange={f.setSound}
+              />
+            </Box>
+          )}
 
           <VolumeCooldownSection f={f} />
           <EarlyWarnSection f={f} />
@@ -354,6 +365,20 @@ export default function AlertDialog({
             captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
             autoNames={autoTokenNamesFor(triggerFromForm(f.mode, f.conditions))}
             allAlwaysPlay={allAlwaysPlay}
+          />
+
+          {/* LAST, because it is the last decision: name → when it fires → what it sounds like →
+              what appears on screen. Unconditional, unlike Sound above — showing text is not a
+              CHANNEL, it is an independent thing an alert can do, so it is available whatever the
+              alert sounds like (including "Nothing (text only)"). Same live token list as the
+              phrase field: one namespace, one syntax, both halves of the dialog. */}
+          <Divider />
+          <DisplayBlock
+            name={f.name}
+            form={f.display}
+            defaults={overlayDefaults[f.display.overlay]}
+            captureNames={captureNamesIn(triggerFromForm(f.mode, f.conditions))}
+            autoNames={autoTokenNamesFor(triggerFromForm(f.mode, f.conditions))}
           />
         </Stack>
       </DialogContent>

@@ -214,7 +214,9 @@ test('a sound-only alert is byte-identical after sanitizing (the merge fingerpri
   assert.equal(Object.prototype.hasOwnProperty.call(plain as object, 'audio'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(plain as object, 'alwaysPlay'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(plain as object, 'speech'), false)
+  assert.equal(Object.prototype.hasOwnProperty.call(plain as object, 'display'), false)
 })
+
 
 test('untrusted voice fields are validated against the closed sets, clamped, or dropped', () => {
   const base = {

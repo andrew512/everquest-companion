@@ -219,7 +219,10 @@ const OVERLAY_KIND_LABEL: Record<OverlayKind, string> = {
   // union on purpose, so it is named here rather than letting a future shared field render as a
   // raw kind id. The WATCH LIST is deliberately not shareable either: it names the mobs somebody
   // camps, which is a fact about their play, not a setting.
-  respawn: 'Respawn clocks'
+  respawn: 'Respawn clocks',
+  // …and the alert-text lane, excluded from sharing on the same terms and named for the same
+  // reason (a notifier's bgAlpha is a per-machine legibility call, not shared taste).
+  alert: 'Alert text'
 }
 
 /**

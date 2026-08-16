@@ -67,17 +67,29 @@ test('every mode resolves against a firing with NO spell — by falling back to 
 
 test('SPEECH_MODES covers exactly the four documented modes', () => {
   assert.deepEqual([...SPEECH_MODES].sort(), ['alertName', 'custom', 'spellFirstWord', 'spellName'])
-  assert.deepEqual([...ALERT_AUDIO_ACTIONS], ['sound', 'speech', 'both'])
+  // The channel list is ORDER-SENSITIVE: it is the editor's picker order, and 'silent' (text
+  // overlays, D1) belongs after the three that make a sound rather than among them.
+  assert.deepEqual([...ALERT_AUDIO_ACTIONS], ['sound', 'speech', 'both', 'silent'])
   assert.deepEqual([...SPEECH_ENGINES], ['system', 'kokoro'])
 })
 
-test('JOS-362: the OFFERED channels are two, and the tolerated list still carries the third', () => {
+test('JOS-362: the OFFERED channels exclude the retired one, and the tolerated list keeps it', () => {
   // The split is the whole shape of the removal: a picker may only offer what a user can choose,
   // and the store/share validators must keep ACCEPTING what old defs already say. Collapsing these
   // two lists into one would either put "Sound + voice" back on screen or make a stored 'both'
   // fail validation and lose the def.
-  assert.deepEqual([...ALERT_AUDIO_CHOICES], ['sound', 'speech'])
+  //
+  // The two lists differ by 'both' and ONLY by 'both'. 'silent' (alert-text-overlays D1) is in
+  // both of them, and that is the distinction the split is actually drawing: 'both' is a channel
+  // the app stopped having, 'silent' is one it gained, and neither is "the shorter list".
+  assert.deepEqual([...ALERT_AUDIO_CHOICES], ['sound', 'speech', 'silent'])
   assert.ok(ALERT_AUDIO_ACTIONS.includes('both'), 'still readable, just not offerable')
+  assert.ok(!ALERT_AUDIO_CHOICES.includes('both' as never), 'and never offerable again')
+  assert.deepEqual(
+    ALERT_AUDIO_ACTIONS.filter((a) => a !== 'both'),
+    [...ALERT_AUDIO_CHOICES],
+    'the offered list is the tolerated one minus the retired member, in the same order'
+  )
 })
 
 test('JOS-362: resolveAlertAudio — a phrase makes a stored "both" spoken, everything else plays', () => {

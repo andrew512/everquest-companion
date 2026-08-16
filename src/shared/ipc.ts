@@ -177,6 +177,12 @@ export const IPC = {
   overlaySetIgnoreMouse: 'overlay:setIgnoreMouse',
   // renderer(overlay) -> main: close the overlay from its own close button. Arg: kind.
   overlayClose: 'overlay:close',
+  // renderer(overlay) -> main: "make my window this big" (Args: kind, {width, height}). A window
+  // can already be resized by its OS border, so this is not the only route - it is the one behind
+  // a GRAB HANDLE, for the notifier kinds whose whole surface is a drag region and whose border is
+  // therefore a few invisible pixels the user has to hunt for. Main clamps to the kind's limits
+  // (main/overlayLayout.ts) and persists the result, exactly as a border drag would.
+  overlayResize: 'overlay:resize',
   // renderer(overlay) -> main: read a kind's persisted config. Arg: kind. Returns OverlayConfig.
   overlayGetConfig: 'overlay:getConfig',
   // renderer(overlay) -> main: persist a kind's config (partial merge). Args: kind, patch.
@@ -292,6 +298,26 @@ export const IPC = {
   // (`toast:sound` lived here until 2026-08-05. A toast has no voice of its own: the seeded
   // "Raid target defeated" / "Quest complete" ALERTS speak on the same events, and a second
   // channel could only ever say it twice. Removed with the sound controls it served.)
+
+  // ---- alert text overlays (docs/plans/alert-text-overlays.md) ----
+  // renderer(main app) -> main, FIRE-AND-FORGET: "put this line on an alert overlay"
+  // (AlertTextRequest). The producer is the always-mounted AlertPlayer, which already owns "this
+  // alert fired" for all three firing paths (the module delta, an app signal, the row's ▶) — so
+  // there is no second gate anywhere below this call, exactly as with `toast:show`.
+  // VALIDATED AT THE HANDLER (`validateAlertTextRequest`, shared/alertDisplay.ts): a request with
+  // no text or an unknown target overlay is DROPPED, and an out-of-range size/duration or a
+  // colour that is not #rgb/#rrggbb is REPAIRED. A malformed field must never be why an alert
+  // shows nothing — but nothing unvalidated may reach a window that puts it in CSS.
+  alertTextShow: 'alertText:show',
+  // main -> renderer(ONE alert overlay): one finished line to draw. The overlay stacks, times and
+  // drops it locally and fetches NOTHING — everything it draws is in this payload.
+  onAlertText: 'alertText:card',
+  // renderer(overlay) -> main: "this window is drawing nothing right now". Args: kind, idle.
+  // The OPAQUE-overlay compatibility mode (JOS-40) hides a NOTIFIER window while it is idle, and
+  // this is where it learns when. It used to be inferred from `overlay:setIgnoreMouse`, which
+  // conflated "who owns the mouse" with "is anything on screen" — true of the toast, whose
+  // capture IS its queue, and false of a text overlay that stays click-through by law.
+  overlaySetIdle: 'overlay:setIdle',
 
   // ---- cross-window deep link (Task #64) ----
   // renderer(overlay) -> main: "focus the app on this" (AppFocus). Main shows/restores/focuses
