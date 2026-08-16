@@ -15,6 +15,7 @@ import { ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { ItemKnowledge, MobKnowledge, SpellCatalog } from '../shared/types'
 import type { MobResistCell, MobResistProfile, ResistAxis } from '../shared/resistTypes'
+import type { ResistPrefs } from '../shared/resistPrefs'
 import type { LevelUnlockData } from '../shared/levelUnlocks'
 // The rich spell card's record (JOS-293) — one definition for main's join, this bridge and the card.
 import type { SpellDetail } from '../shared/spellDetail'
@@ -65,5 +66,13 @@ export const knowledgeBridge = {
     ipcRenderer.invoke(IPC.resistProfile, mob),
   /** The evidence behind ONE axis row: the estimate, its per-spell lines, and the rows. */
   resistCell: (mob: string, axis: ResistAxis): Promise<MobResistCell | null> =>
-    ipcRenderer.invoke(IPC.resistCell, mob, axis)
+    ipcRenderer.invoke(IPC.resistCell, mob, axis),
+  /**
+   * Which casters teach those profiles (JOS-385). One boolean today; a blob so the feature can
+   * grow one without a second schema shape.
+   */
+  getResistPrefs: (): Promise<ResistPrefs> => ipcRenderer.invoke(IPC.resistPrefsGet),
+  /** Merge-patch it. Returns what was actually stored, after the shared normalizer had its say. */
+  setResistPrefs: (patch: Partial<ResistPrefs>): Promise<ResistPrefs> =>
+    ipcRenderer.invoke(IPC.resistPrefsSet, patch)
 }

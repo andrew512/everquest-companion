@@ -6,25 +6,10 @@
 // true R lands inside the reported interval. A model that cannot recover a number it generated
 // itself has no business estimating one off the log.
 //
-// ---------------------------------------------------------------------------------------------
-// THE MODEL, in one block (Torven's data analysis + Prathun's leaked pseudocode, as reproduced in
-// EQEmu's `Mob::ResistSpell`; Legends runs the Live client/server, so this is the model until the
-// log contradicts it — and section 3 of the plan is the measurement that says it does not):
-//
-//     d        = mobLevel - casterLevel, clamped to >= -9;  d >= 21 => the mob is IMMUNE
-//     levelMod = sign(d) * d^2 / 2
-//     rc       = R[axis] + levelMod + spell.resistAdj - debuff
-//     roll     = 1..200, uniform
-//
-//   ALL-OR-NOTHING (mez, root, snare, slow, charm, DoTs, debuffs, and every bard song pulse):
-//     lands iff roll > rc.                       P(resist) = rc/200
-//   DIRECT DAMAGE:
-//     roll > rc            -> full damage        P(full)   = (200 - rc)/200
-//     roll <= rc/3         -> the resist MESSAGE P(resist) = rc/600
-//     in between           -> a SILENT partial, `100 - 150*(rc-roll)/rc` percent of full
-//
-// So rc >= 200 means nothing all-or-nothing can ever land, and rc >= 600 means even a nuke is
-// immune — which is why lures carry -300/-1000 resist adjusts.
+// THE FORWARD MODEL IS NEXT DOOR, in `resistFormula.ts` — levelMod, the three roll probabilities,
+// `predict` and the plain-language tag. That file is what the game does with a roll; this one is
+// the inversion of it, and the two were one file until JOS-385 pushed the pair past the repo's
+// 400-code-line ceiling (the rule there is split, never ratchet).
 //
 // ---------------------------------------------------------------------------------------------
 // WHY THREE LIKELIHOODS AND NOT ONE. The log prints three genuinely different things and each
@@ -83,21 +68,27 @@
 
 import {
   LOW_SAMPLE_BELOW,
+  RESIST_CASTER_KINDS,
   type ResistAxis,
+  type ResistCasterKind,
   type ResistEstimate,
   type ResistFamily,
   type ResistFit,
   type ResistRow,
   type ResistSpellEvidence,
-  type ResistTag,
   type SpellResistInfo,
   type SpellResistTable,
 } from './resistTypes'
-
-/** A mob this many levels above the caster is immune, whatever its resist stat is. */
-export const IMMUNE_LEVEL_GAP = 21
-/** What `levelMod` reports for that case: large enough that no R can rescue the roll. */
-export const IMMUNE_LEVEL_MOD = 1000
+import {
+  IMMUNE_LEVEL_MOD,
+  isInformativeSpell,
+  levelMod,
+  pFullDamage,
+  pResistAon,
+  pResistMessage,
+  priorResist,
+} from './resistFormula'
+import { damageKind, damageModeKey, damageModes, splitDamage } from './resistDamage'
 
 /** Baseline down-weighting: one baseline observation weighs K/(K + nUser). */
 export const BASELINE_K = 20
@@ -129,112 +120,6 @@ const P_FLOOR = 1 / 400
 /** log of a probability, floored at both ends. */
 function lg(p: number): number {
   return Math.log(p < P_FLOOR ? P_FLOOR : p > 1 - P_FLOOR ? 1 - P_FLOOR : p)
-}
-
-/**
- * `levelMod = sign(d) * d^2 / 2`, d clamped at -9 below and answering IMMUNE at +21.
- * Integer arithmetic, because the server's is.
- */
-export function levelMod(casterLevel: number, mobLevel: number): number {
-  const raw = mobLevel - casterLevel
-  if (raw >= IMMUNE_LEVEL_GAP) return IMMUNE_LEVEL_MOD
-  const d = raw < -9 ? -9 : raw
-  const mag = Math.trunc((d * d) / 2)
-  return d < 0 ? -mag : mag
-}
-
-/** Torven's typical NPC resist for an axis at a level. The prior, and nothing else. */
-export function priorResist(axis: ResistAxis, mobLevel: number | null): number {
-  if (axis === 'poison' || axis === 'disease') return 15
-  return (mobLevel ?? 40) >= 25 ? 35 : 25
-}
-
-const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
-
-/** P(the all-or-nothing spell is resisted) at this rc. Songs use this too. */
-function pResistAon(rc: number): number {
-  return clamp(rc, 0, 200) / 200
-}
-
-/** P(the game prints the resist message) for a damage spell at this rc. */
-function pResistMessage(rc: number): number {
-  return clamp(rc, 0, 600) / 600
-}
-
-/** P(full, unreduced damage) at this rc. */
-function pFullDamage(rc: number): number {
-  return (200 - clamp(rc, 0, 200)) / 200
-}
-
-/**
- * The whole model, forward. `kind: 'aon'` covers every all-or-nothing spell and every song pulse;
- * `kind: 'dd'` covers direct damage. Shipped tested but not yet surfaced — the con-tooltip
- * follow-up is what consumes it.
- */
-export function predict(input: {
-  R: number
-  casterLevel: number
-  mobLevel: number
-  resistAdj: number
-  debuff?: number
-  kind: 'aon' | 'dd'
-}): { pLand: number; pFull?: number; pResistMsg: number; expectedDmgFrac?: number } {
-  const lm = levelMod(input.casterLevel, input.mobLevel)
-  if (lm === IMMUNE_LEVEL_MOD) {
-    return input.kind === 'aon'
-      ? { pLand: 0, pResistMsg: 1 }
-      : { pLand: 0, pFull: 0, pResistMsg: 1, expectedDmgFrac: 0 }
-  }
-  const rc = input.R + lm + input.resistAdj - (input.debuff ?? 0)
-  if (input.kind === 'aon') {
-    const pr = pResistAon(rc)
-    return { pLand: 1 - pr, pResistMsg: pr }
-  }
-  const full = pFullDamage(rc)
-  const msg = pResistMessage(rc)
-  return {
-    pLand: 1 - msg,
-    pFull: full,
-    pResistMsg: msg,
-    expectedDmgFrac: expectedDamageFraction(rc),
-  }
-}
-
-/**
- * Mean fraction of full damage a cast delivers at this rc, averaged over the 200 rolls. The
- * resist message is a 0; a partial delivers `1 - 1.5*(rc-roll)/rc`.
- */
-export function expectedDamageFraction(rc: number): number {
-  if (rc <= 0) return 1
-  let sum = 0
-  for (let roll = 1; roll <= 200; roll++) {
-    if (roll > rc) {
-      sum += 1
-      continue
-    }
-    const frac = 1 - (1.5 * (rc - roll)) / rc
-    if (frac > 0) sum += frac
-  }
-  return sum / 200
-}
-
-/**
- * The plain-language tag, anchored on the rc arithmetic above (evaluated at an even-level cast of
- * an unadjusted spell, which is the only reading of R that does not need a caster to talk about):
- *
- *   weak            R < 10    under 5% of all-or-nothing casts resisted
- *   normal          R < 45    spans every Torven baseline (15 / 25 / 35); up to ~22% resisted
- *   resistant       R < 100   22% to 50% resisted
- *   very resistant  R < 200   50% to 100% resisted; nukes still land reduced
- *   nearly immune   R >= 200  rc >= 200: nothing all-or-nothing lands at all, and only the
- *                             partial-damage band is left until rc >= 600 closes that too
- */
-export function resistTag(R: number): ResistTag {
-  if (R < 10) return 'weak'
-  if (R < 45) return 'normal'
-  if (R < 100) return 'resistant'
-  if (R < 200) return 'very resistant'
-  return 'nearly immune'
 }
 
 type Term =
@@ -313,24 +198,6 @@ function fitGrid(terms: Term[], prior: Term | null): { R: number; lo: number; hi
   return { R: shrunkR < lo ? lo : shrunkR > hi ? hi : shrunkR, lo, hi }
 }
 
-/** Fixed-damage spells expose partial information; variable ones do not. See the header. */
-export function damageKind(row: ResistRow, info: SpellResistInfo): 'ddFix' | 'ddVar' {
-  if (row.variable) return 'ddVar'
-  if (!info.hpSlot) return 'ddVar'
-  let maxValue = -Infinity
-  let modeValue = -Infinity
-  let modeCount = -Infinity
-  for (const [k, count] of Object.entries(row.dmg)) {
-    const v = Number(k)
-    if (v > maxValue) maxValue = v
-    if (count > modeCount || (count === modeCount && v > modeValue)) {
-      modeCount = count
-      modeValue = v
-    }
-  }
-  return maxValue === modeValue ? 'ddFix' : 'ddVar'
-}
-
 /** The debuff amount one slot delivers on this axis at this caster level. */
 function slotAmount(
   slot: { base: number; calc: number; max: number },
@@ -372,43 +239,47 @@ export function debuffAmount(
   return total
 }
 
-function rowCounts(row: ResistRow): { dmgTotal: number; maxValue: number; maxCount: number } {
-  let dmgTotal = 0
-  let maxValue = -Infinity
-  let maxCount = 0
-  for (const [k, count] of Object.entries(row.dmg)) {
-    dmgTotal += count
-    const v = Number(k)
-    if (v > maxValue) {
-      maxValue = v
-      maxCount = count
-    }
-  }
-  return { dmgTotal, maxValue, maxCount }
+/** How many damage lines a row holds, whatever they were worth. */
+function dmgTotalOf(row: ResistRow): number {
+  let total = 0
+  for (const count of Object.values(row.dmg)) total += count
+  return total
+}
+
+/**
+ * What one row is read against: the client's facts about its spell, the axis being asked about,
+ * the table the debuff amounts come out of, and the full-damage reference for this spell at this
+ * caster level. An OBJECT rather than four more positional parameters — the repo's `max-params`
+ * ceiling is 4 and this is the fifth, but the real reason is that they are one context and read
+ * better named.
+ */
+interface RowCtx {
+  info: SpellResistInfo
+  axis: ResistAxis
+  spells: SpellResistTable
+  /**
+   * The full-damage reference for this (spell, caster level) over the whole ledger
+   * (shared/resistDamage.ts). Undefined means the histogram could not name one, and the row is
+   * then read as variable damage: resist-or-not, no partial information.
+   */
+  mode: number | undefined
 }
 
 /** One row -> one likelihood term, or null when the row cannot say anything about R. */
-function rowTerm(row: ResistRow, info: SpellResistInfo, axis: ResistAxis, spells: SpellResistTable): Term | null {
+function rowTerm(row: ResistRow, ctx: RowCtx): Term | null {
+  const { info, axis, spells, mode } = ctx
   if (row.casterLevel === null || row.mobLevel === null) return null
   const lm = levelMod(row.casterLevel, row.mobLevel)
   if (lm === IMMUNE_LEVEL_MOD) return null
   const offset = lm + info.resistAdj - debuffAmount(row.debuffs, axis, row.casterLevel, spells)
-  const { dmgTotal, maxCount } = rowCounts(row)
-  if (dmgTotal === 0) {
+  const fixed = damageKind(row, info, mode) === 'ddFix'
+  const { total, full, partial } = splitDamage(row, fixed ? mode : undefined)
+  if (total === 0) {
     if (row.resist + row.land === 0) return null
     return { kind: 'aon', offset, resist: row.resist, land: row.land, weight: 1 }
   }
-  if (damageKind(row, info) === 'ddFix') {
-    return {
-      kind: 'ddFix',
-      offset,
-      full: maxCount,
-      partial: dmgTotal - maxCount,
-      resist: row.resist,
-      weight: 1,
-    }
-  }
-  return { kind: 'ddVar', offset, land: dmgTotal + row.land, resist: row.resist, weight: 1 }
+  if (fixed) return { kind: 'ddFix', offset, full, partial, resist: row.resist, weight: 1 }
+  return { kind: 'ddVar', offset, land: total + row.land, resist: row.resist, weight: 1 }
 }
 
 /**
@@ -469,23 +340,46 @@ export interface EstimateOpts {
   /** Songs are their own family precisely so they can be excluded from R in ONE place. */
   includeSongs?: boolean
   /**
+   * Do charmed pets and NPC casters weigh in this number? (JOS-385, `shared/resistPrefs.ts`.)
+   *
+   * THE SWITCH LIVES HERE AND NOWHERE ELSE, which is the same argument `includeSongs` makes: the
+   * ledger folds npc rows unconditionally, so the ONLY place the answer can change is the one line
+   * below that decides whether such a row becomes a likelihood term. Their counts are tallied into
+   * `byCaster` and their per-spell evidence into `perSpell` either way — a switched-off family is
+   * still something the log saw.
+   *
+   * Defaults to TRUE when omitted, matching the shipped preference, so a unit test or a script
+   * that says nothing gets the app's own behaviour.
+   */
+  includeNpcCasters?: boolean
+  /**
    * Spells whose landings this app cannot see, decided over the WHOLE ledger by the caller. See
    * `unobservableSpells`; omitted, the estimator falls back to what `rows` alone can say, which is
    * right for a unit test and too narrow for a mob page.
    */
   unobservable?: ReadonlySet<string>
+  /**
+   * The full-damage reference per (spell, caster level), decided over the WHOLE ledger by the
+   * caller (`shared/resistDamage.ts damageModes`). Omitted, the estimator falls back to what
+   * `rows` alone can say — right for a unit test, and too narrow for a mob page, where a cell with
+   * four hits would be asked to establish a reference the rest of the ledger already knows.
+   */
+  modes?: ReadonlyMap<string, number>
 }
 
 interface Prepared {
   terms: { term: Term; source: 'user' | 'baseline' }[]
   evidence: Map<string, ResistSpellEvidence>
   byFamily: Record<ResistFamily, { n: number; resist: number; land: number }>
+  byCaster: Record<ResistCasterKind, { n: number; resist: number; land: number }>
+  /** Of the observations that entered the fit, the ones that could have gone either way. */
+  nInformative: number
   droppedNoLevel: number
   /** Observations held out of the fit because their spell's landings are not observable. */
   droppedUnobservable: number
 }
 
-function blankEvidence(row: ResistRow): ResistSpellEvidence {
+function blankEvidence(row: ResistRow, info: SpellResistInfo): ResistSpellEvidence {
   return {
     spellKey: row.spellKey,
     family: row.family,
@@ -496,6 +390,8 @@ function blankEvidence(row: ResistRow): ResistSpellEvidence {
     land: 0,
     fromBaseline: 0,
     fromYou: 0,
+    resistAdj: info.resistAdj,
+    informative: isInformativeSpell(info.resistAdj),
   }
 }
 
@@ -517,7 +413,7 @@ export function unobservableSpells(rows: readonly ResistRow[]): Set<string> {
   for (const row of rows) {
     const acc = seen.get(row.spellKey) ?? { resist: 0, land: 0 }
     acc.resist += row.resist
-    acc.land += row.land + rowCounts(row).dmgTotal
+    acc.land += row.land + dmgTotalOf(row)
     seen.set(row.spellKey, acc)
   }
   const out = new Set<string>()
@@ -527,14 +423,14 @@ export function unobservableSpells(rows: readonly ResistRow[]): Set<string> {
   return out
 }
 
-function noteEvidence(prep: Prepared, row: ResistRow, info: SpellResistInfo): void {
+function noteEvidence(prep: Prepared, row: ResistRow, info: SpellResistInfo, mode: number | undefined): void {
   const key = row.spellKey + '|' + row.family
-  const ev = prep.evidence.get(key) ?? blankEvidence(row)
-  const { dmgTotal, maxCount } = rowCounts(row)
-  const fixed = dmgTotal > 0 && damageKind(row, info) === 'ddFix'
+  const ev = prep.evidence.get(key) ?? blankEvidence(row, info)
+  const fixed = damageKind(row, info, mode) === 'ddFix'
+  const { total: dmgTotal, full, partial } = splitDamage(row, fixed ? mode : undefined)
   ev.resisted += row.resist
-  ev.full += fixed ? maxCount : 0
-  ev.partial += fixed ? dmgTotal - maxCount : 0
+  ev.full += full
+  ev.partial += partial
   ev.land += row.land + (fixed ? 0 : dmgTotal)
   const total = row.resist + row.land + dmgTotal
   ev.casts += total
@@ -545,6 +441,47 @@ function noteEvidence(prep: Prepared, row: ResistRow, info: SpellResistInfo): vo
   fam.n += total
   fam.resist += row.resist
   fam.land += row.land + dmgTotal
+  const by = prep.byCaster[row.casterKind]
+  // Defensive: a hand-edited ledger or a row from a future build can carry a kind this build has
+  // never heard of, and a tally is not worth a crash.
+  if (by) {
+    by.n += total
+    by.resist += row.resist
+    by.land += row.land + dmgTotal
+  }
+}
+
+/** A zero tally per caster kind — the shape `byCaster` always has, empty cells included. */
+function blankByCaster(): Record<ResistCasterKind, { n: number; resist: number; land: number }> {
+  const out = {} as Record<ResistCasterKind, { n: number; resist: number; land: number }>
+  for (const kind of RESIST_CASTER_KINDS) out[kind] = { n: 0, resist: 0, land: 0 }
+  return out
+}
+
+/**
+ * THE THREE WAYS A COUNTED OBSERVATION IS KEPT OUT OF THE FIT, in one place so the loop below
+ * stays readable and so a fourth cannot be added without meeting the other three.
+ *
+ * Every one of them is COUNTED first (`noteEvidence` has already run) and weighed never — the
+ * ledger's own rule applied to the estimate: what the log saw is not the same question as what the
+ * number rests on.
+ */
+function isHeldOut(
+  row: ResistRow,
+  opts: EstimateOpts,
+  blind: ReadonlySet<string>,
+  prep: Prepared
+): boolean {
+  if (blind.has(row.spellKey)) {
+    // A spell this app has never seen land ANYWHERE. Shown in the drilldown, labelled there.
+    prep.droppedUnobservable += row.resist + row.land + dmgTotalOf(row)
+    const ev = prep.evidence.get(row.spellKey + '|' + row.family)
+    if (ev) ev.landingsNotObservable = true
+    return true
+  }
+  if (row.family === 'song' && opts.includeSongs === false) return true
+  // THE ONE LINE THE npc SWITCH IS (JOS-385).
+  return row.casterKind === 'npc' && opts.includeNpcCasters === false
 }
 
 function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: EstimateOpts): Prepared {
@@ -552,28 +489,30 @@ function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: Est
     terms: [],
     evidence: new Map(),
     byFamily: { cast: { n: 0, resist: 0, land: 0 }, song: { n: 0, resist: 0, land: 0 } },
+    byCaster: blankByCaster(),
+    nInformative: 0,
     droppedNoLevel: 0,
     droppedUnobservable: 0,
   }
-  // The caller's whole-ledger verdict when it has one; else what these rows alone can say.
+  // The caller's whole-ledger verdicts when it has them; else what these rows alone can say. Both
+  // are deliberately about the LEDGER rather than about this cell — see their own headers.
   const blind = opts.unobservable ?? unobservableSpells(rows)
+  const modes = opts.modes ?? damageModes(rows)
   for (const row of rows) {
     const info = spells[row.spellKey]
     if (!rowIsEvidence(row, info, opts.axis)) continue
-    noteEvidence(prep, row, info)
-    if (blind.has(row.spellKey)) {
-      // Counted in the drilldown, kept out of the number. See the header.
-      prep.droppedUnobservable += row.resist + row.land + rowCounts(row).dmgTotal
-      const ev = prep.evidence.get(row.spellKey + '|' + row.family)
-      if (ev) ev.landingsNotObservable = true
-      continue
-    }
-    if (row.family === 'song' && opts.includeSongs === false) continue
-    const term = rowTerm(row, info, opts.axis, spells)
+    const mode = modes.get(damageModeKey(row.spellKey, row.casterLevel))
+    noteEvidence(prep, row, info, mode)
+    if (isHeldOut(row, opts, blind, prep)) continue
+    const term = rowTerm(row, { info, axis: opts.axis, spells, mode })
     if (!term) {
-      prep.droppedNoLevel += row.resist + row.land + rowCounts(row).dmgTotal
+      prep.droppedNoLevel += row.resist + row.land + dmgTotalOf(row)
       continue
     }
+    // COUNTED SEPARATELY, NOT WEIGHED SEPARATELY (JOS-385): a -250 proc's casts still enter the
+    // likelihood, where they say the one true thing they can ("R is not enormous"), and are kept
+    // out of the number a player reads as this cell's evidence.
+    if (isInformativeSpell(info.resistAdj)) prep.nInformative += termN(term)
     prep.terms.push({ term, source: row.source === 'baseline' ? 'baseline' : 'user' })
   }
   return prep
@@ -609,12 +548,21 @@ export function estimate(
     lo: merged.lo,
     hi: merged.hi,
     n: fromYou + fromBaseline,
+    nInformative: prep.nInformative,
     fromBaseline,
     fromYou,
     droppedNoLevel: prep.droppedNoLevel,
     droppedUnobservable: prep.droppedUnobservable,
     byFamily: prep.byFamily,
-    perSpell: [...prep.evidence.values()].sort((a, b) => b.casts - a.casts),
+    byCaster: prep.byCaster,
+    npcIncluded: opts.includeNpcCasters !== false,
+    // INFORMATIVE SPELLS FIRST, then by volume (JOS-385). The list is read as "what does this app
+    // know about this axis", and a -250 proc with 87 unresisted casts headed it while the eight
+    // casts that actually tested the mob's resistance sat underneath. Sorting is the whole fix
+    // for that: nothing is hidden, and the line that answers the question is the line at the top.
+    perSpell: [...prep.evidence.values()].sort(
+      (a, b) => Number(b.informative) - Number(a.informative) || b.casts - a.casts
+    ),
     baselineWeight,
     userOnly: fromYou >= USER_ONLY_AT,
     baselineFit,
@@ -623,6 +571,9 @@ export function estimate(
     nearlyImmune: merged.R >= 200,
   }
 }
+
+/** Re-exported so a caller needs one import for "read this histogram" and "fit it". */
+export { damageKind, damageModeKey, damageModes, splitDamage } from './resistDamage'
 
 /**
  * Is there ANY answer to give? (owner ruling, 2026-08-16 — see `LOW_SAMPLE_BELOW`.)
@@ -640,7 +591,13 @@ export function hasAnswer(n: number): boolean {
  * full — tag, number, interval, count — and merely says, in words, that it is standing on very
  * little. It is a caveat and never a substitute: the ruling that created this function is exactly
  * that the app stopped withholding the answer.
+ *
+ * IT TAKES THE INFORMATIVE COUNT (JOS-385), and that is the whole of the defect the owner found on
+ * a thunder spirit princess: the cell read `resistant` with no caveat off `n=83`, and 75 of the 83
+ * were casts of procs that could not have been resisted at any R. Counting them here made a cell
+ * standing on eight observations look like one standing on eighty. Callers pass
+ * `estimate().nInformative`; a cell with none at all is as thin as a cell can be and says so.
  */
-export function lowSamples(n: number): boolean {
-  return n > 0 && n < LOW_SAMPLE_BELOW
+export function lowSamples(nInformative: number): boolean {
+  return nInformative < LOW_SAMPLE_BELOW
 }

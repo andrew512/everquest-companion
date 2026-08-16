@@ -20,8 +20,33 @@
 //
 // Run: `npm run gen:resist-baseline` (dev machine only; the log is never committed).
 // Optionally pass log paths: `npm run gen:resist-baseline -- <path> [<path>...]`.
+//
+// ── `--compare`: THE MEASUREMENT THAT SET A DEFAULT (JOS-385) ────────────────────────────────────
+//
+// `npm run gen:resist-baseline -- --compare` writes NOTHING. It folds the same logs and then asks
+// one question the owner posed and only real data can answer: does a charmed pet or an NPC caster
+// get resisted DIFFERENTLY from a player, by the same creature, on the same axis?
+//
+// It matters because the answer decides a shipped default. If pets are tuned soft — resisted far
+// less than players are — then counting their casts drags a mob's number toward "easy" on exactly
+// the axis a player finds hard, and the honest thing is to ship the family OFF. If they are not,
+// the family is ordinary evidence and shipping it off throws away the best-populated cells in the
+// ledger (an NPC caster's level is KNOWN, where another player's never is).
+//
+// RAW RESIST RATES CANNOT SETTLE IT, which is why this mode exists at all rather than a grep. The
+// worry case in the owner's log — a fire giant warrior, fire, players 56% resisted against NPC
+// casters 18% — is a ~level-50 charmed mob throwing Lava Breath beside a level-24 player's arrows,
+// and most of that gap is the level term. So both sides go through the SAME estimator, which
+// removes levelMod and resistAdj, and the comparison is of R against R with intervals attached.
+//
+// THE CELLS IT PRINTS are every (mob, axis) where both populations put at least
+// `COMPARE_MIN_OBSERVATIONS` observations INTO THE FIT (not merely into the ledger — a row with no
+// caster level or a spell whose landings we cannot see is not evidence either side can use). A
+// cell is FLAGGED when the two 95% intervals do not overlap, which is the same disjointness test
+// the patch detector uses one file over: it is the only statement of the form "these two really do
+// disagree" that the evidence can support.
 
-import { createReadStream, statSync, writeFileSync } from 'node:fs'
+import { createReadStream, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -30,7 +55,17 @@ import { installCharacterName, installSpellDb } from '../src/main/log/rulesets'
 import { loadSpellDb } from '../src/main/data/spellDb'
 import { ResistFold } from '../src/main/resist/fold'
 import { rowTotal } from '../src/main/resist/ledger'
-import { BASELINE_SOURCE_KEY, type ResistLedger, type ResistRow } from '../src/shared/resistTypes'
+import { parseSpellsUs } from '../src/main/resist/spellsUsParse'
+import { estimate, unobservableSpells } from '../src/shared/resistModel'
+import {
+  BASELINE_SOURCE_KEY,
+  RESIST_AXES,
+  type ResistAxis,
+  type ResistFit,
+  type ResistLedger,
+  type ResistRow,
+  type SpellResistTable,
+} from '../src/shared/resistTypes'
 
 const DEFAULT_LOG =
   'C:/Users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs/eqlog_Primitive_freeport.txt'
@@ -73,8 +108,145 @@ function spellsUsMtime(): number | null {
   }
 }
 
+// ---------------------------------------------------------------- `--compare` (JOS-385)
+
+/** Both sides need this much evidence IN THE FIT before their disagreement means anything. */
+const COMPARE_MIN_OBSERVATIONS = 20
+
+/** The axes the owner's pet-tuning worry names. Magic is excluded: nothing about it was in doubt. */
+const WORRY_AXES: readonly ResistAxis[] = ['fire', 'cold', 'poison', 'disease']
+
+/** How far BELOW the player number an npc number has to sit before it is the worry rather than noise. */
+const WORRY_GAP = 30
+
+/** The share of flagged cells that has to show the worry before the family ships OFF. */
+const WORRY_SHARE = 1 / 3
+
+interface CompareCell {
+  mobKey: string
+  axis: ResistAxis
+  pc: ResistFit
+  npc: ResistFit
+  /** The 95% intervals do not overlap: the two populations really do disagree here. */
+  flagged: boolean
+  /** Flagged, on a worry axis, and the npc number is `WORRY_GAP` or more BELOW the player one. */
+  worry: boolean
+}
+
+const disjoint = (a: ResistFit, b: ResistFit): boolean => a.hi < b.lo || b.hi < a.lo
+
+/** The level this mob's rows were filed under. The rows already carry it; the mode wins. */
+function mobLevelOf(rows: readonly ResistRow[]): number | null {
+  const counts = new Map<number, number>()
+  for (const row of rows) {
+    if (row.mobLevel === null) continue
+    counts.set(row.mobLevel, (counts.get(row.mobLevel) ?? 0) + rowTotal(row))
+  }
+  let best: number | null = null
+  let bestCount = 0
+  for (const [level, count] of counts) {
+    if (count > bestCount) {
+      bestCount = count
+      best = level
+    }
+  }
+  return best
+}
+
+/**
+ * One (mob, axis) cell measured twice, or null when either side is too thin.
+ *
+ * BOTH SIDES GO THROUGH THE SAME `estimate()` with the same options, which is the whole point:
+ * levelMod and resistAdj come out identically, the prior is the same prior, and what is left is
+ * the comparison the raw rates could not make.
+ */
+function compareCell(
+  rows: readonly ResistRow[],
+  spells: SpellResistTable,
+  axis: ResistAxis,
+  blind: ReadonlySet<string>
+): { pc: ResistFit; npc: ResistFit } | null {
+  const opts = { axis, mobLevel: mobLevelOf(rows), unobservable: blind, includeNpcCasters: true }
+  const pc = estimate(rows.filter((r) => r.casterKind !== 'npc'), spells, opts)
+  if (pc.n < COMPARE_MIN_OBSERVATIONS) return null
+  const npc = estimate(rows.filter((r) => r.casterKind === 'npc'), spells, opts)
+  if (npc.n < COMPARE_MIN_OBSERVATIONS) return null
+  return {
+    pc: { R: pc.R, lo: pc.lo, hi: pc.hi, n: pc.n },
+    npc: { R: npc.R, lo: npc.lo, hi: npc.hi, n: npc.n },
+  }
+}
+
+function compareCells(rows: readonly ResistRow[], spells: SpellResistTable): CompareCell[] {
+  const blind = unobservableSpells(rows)
+  const byMob = new Map<string, ResistRow[]>()
+  for (const row of rows) {
+    const list = byMob.get(row.mobKey)
+    if (list) list.push(row)
+    else byMob.set(row.mobKey, [row])
+  }
+  const out: CompareCell[] = []
+  for (const [mobKey, mobRows] of byMob) {
+    for (const axis of RESIST_AXES) {
+      const fits = compareCell(mobRows, spells, axis, blind)
+      if (!fits) continue
+      const flagged = disjoint(fits.pc, fits.npc)
+      out.push({
+        mobKey,
+        axis,
+        ...fits,
+        flagged,
+        worry: flagged && WORRY_AXES.includes(axis) && fits.npc.R <= fits.pc.R - WORRY_GAP,
+      })
+    }
+  }
+  return out.sort((a, b) => (a.mobKey === b.mobKey ? a.axis.localeCompare(b.axis) : a.mobKey.localeCompare(b.mobKey)))
+}
+
+const pad = (s: string, w: number): string => (s.length >= w ? s : s + ' '.repeat(w - s.length))
+const fit = (f: ResistFit): string => `${String(f.R)} [${String(f.lo)},${String(f.hi)}]`
+
+/** The table, and the decision rule applied to it out loud. Prints; writes nothing. */
+function reportCompare(cells: CompareCell[]): void {
+  const cols = [34, 9, 7, 18, 7, 18, 8]
+  const head = ['mob', 'axis', 'n_pc', 'R_pc [lo,hi]', 'n_npc', 'R_npc [lo,hi]', 'verdict']
+  console.log(head.map((h, i) => pad(h, cols[i])).join(''))
+  console.log(cols.map((w) => '-'.repeat(w - 1) + ' ').join(''))
+  for (const c of cells) {
+    const verdict = c.worry ? 'WORRY' : c.flagged ? 'differs' : ''
+    const cellRow = [
+      c.mobKey,
+      c.axis,
+      String(c.pc.n),
+      fit(c.pc),
+      String(c.npc.n),
+      fit(c.npc),
+      verdict,
+    ]
+    console.log(cellRow.map((v, i) => pad(v, cols[i])).join(''))
+  }
+  const flagged = cells.filter((c) => c.flagged)
+  const worry = cells.filter((c) => c.worry)
+  const share = flagged.length === 0 ? 0 : worry.length / flagged.length
+  console.log('')
+  console.log(
+    `[compare] ${String(cells.length)} comparable cells (both sides >= ${String(COMPARE_MIN_OBSERVATIONS)} ` +
+      `observations in the fit), ${String(flagged.length)} with disjoint intervals.`
+  )
+  console.log(
+    `[compare] Of those, ${String(worry.length)} show the owner's worry (fire/cold/poison/disease, ` +
+      `R_npc at least ${String(WORRY_GAP)} below R_pc) = ${(share * 100).toFixed(1)}%.`
+  )
+  console.log(
+    `[compare] DECISION RULE: over ${String(Math.round(WORRY_SHARE * 100))}% => ship includeNpcCasters OFF. ` +
+      `Measured: ${share > WORRY_SHARE ? 'OFF' : 'ON'}.`
+  )
+}
+
 async function main(): Promise<void> {
-  const logs = process.argv.slice(2).filter((a) => !a.startsWith('-'))
+  const args = process.argv.slice(2)
+  const compare = args.includes('--compare')
+  const logs = args.filter((a) => !a.startsWith('-'))
   const paths = logs.length > 0 ? logs : [DEFAULT_LOG]
 
   installSpellDb(loadSpellDb())
@@ -84,14 +256,26 @@ async function main(): Promise<void> {
 
   const fold = new ResistFold({ spellDb: loadSpellDb() })
   const kept: ResistRow[] = []
+  const all: ResistRow[] = []
   let lines = 0
   for (const path of paths) {
     fold.beginSource()
     lines += await foldLog(fold, path)
     fold.finish()
     for (const row of fold.rows()) {
+      all.push(row)
       if (rowTotal(row) >= MIN_ROW_OBSERVATIONS) kept.push(row)
     }
+  }
+
+  if (compare) {
+    // The CLIENT's table, read straight rather than through the app's worker + cache: this is a dev
+    // script on the dev machine, and 38 MB read once is cheaper than the plumbing.
+    const spellsPath = process.env.EQ_SPELLS_US ?? DEFAULT_SPELLS_US
+    const spells = parseSpellsUs(readFileSync(spellsPath, 'utf8'))
+    console.log(`[compare] ${String(lines)} lines -> ${String(all.length)} rows, spell table ${spellsPath}`)
+    reportCompare(compareCells(all, spells))
+    return
   }
 
   // ZONES AND TIMESTAMPS ARE DROPPED. A baseline row states what a mob does; which zone this

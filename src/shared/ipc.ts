@@ -729,6 +729,14 @@ export const IPC = {
   // renderer -> main: (mobDisplayName, axis) -> the evidence behind one row: the estimate, its
   // per-spell breakdown, and the rows themselves. Null when the client's spell data is missing.
   resistCell: 'resist:cell',
+  // Which casters teach the profiles (JOS-385 — shared/resistPrefs.ts). Returns ResistPrefs.
+  //
+  // A PREFERENCE, NOT A RE-FOLD. `includeNpcCasters` is read when a card is DRAWN, so setting it
+  // writes one boolean and returns; the next `resist:profile` pull is already the new answer. No
+  // ledger is touched, nothing is invalidated, and flipping it back costs the same nothing.
+  resistPrefsGet: 'resist:prefs:get',
+  // Arg: Partial<ResistPrefs>. A malformed value leaves the pref alone. Returns ResistPrefs.
+  resistPrefsSet: 'resist:prefs:set',
 
   // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
   //

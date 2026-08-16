@@ -70,8 +70,26 @@ export function axisFromResistType(resistType: number): ResistAxis | null {
 /** Which evidence family a row belongs to. Songs are separable in exactly one place: here. */
 export type ResistFamily = 'cast' | 'song'
 
-/** Only casters this app is willing to learn from (owner: no NPC and no pet casters at all). */
-export type ResistCasterKind = 'self' | 'pc'
+/**
+ * Who cast the spell this row counts.
+ *
+ *   self  the tailed character. The only caster whose level is always known.
+ *   pc    another player. Filed, never estimated from — nothing states a stranger's level.
+ *   npc   a charmed pet or any other NPC caster, landing or being resisted on ANOTHER NPC
+ *         (JOS-385). Its caster level comes from the mob catalog (a `/con` this session wins) and
+ *         is null when nothing states one, which drops the row out of the fit exactly as a `pc`
+ *         row's null level does.
+ *
+ * `npc` USED TO BE REFUSED OUTRIGHT (JOS-382, owner: "an NPC's spell rolls against a different
+ * table"). The owner revisited that on 2026-08-16: the rows are folded like any other observation
+ * and a SWITCH decides whether the estimator weighs them (`shared/resistPrefs.ts`), because
+ * whether pet tuning skews a mob's number is a measurable question and not one a fold should
+ * answer by throwing the measurement away.
+ */
+export type ResistCasterKind = 'self' | 'pc' | 'npc'
+
+/** Every caster kind, in the order the evidence lines print them. */
+export const RESIST_CASTER_KINDS: readonly ResistCasterKind[] = ['self', 'pc', 'npc']
 
 /** Where a row came from. Absent means the user's own log (the ledger's default). */
 export type ResistSource = 'baseline' | 'user'
@@ -178,6 +196,14 @@ export interface ResistSpellEvidence {
   land: number
   fromBaseline: number
   fromYou: number
+  /** The spell's resist adjust, from the client table. Negative helps the caster. */
+  resistAdj: number
+  /**
+   * COULD THIS SPELL HAVE BEEN RESISTED AT ALL? (JOS-385.) False for the -150/-200/-250 procs and
+   * the lures: their casts are counted and shown, sorted last, and labelled — they say almost
+   * nothing about the mob, and a list they headed was telling the reader the opposite.
+   */
+  informative: boolean
   /**
    * THE EVIDENCE-SYMMETRY VERDICT. Every observation of this spell across the whole ledger is a
    * RESIST: no landing, no damage number, nothing. That is never a mob that resists 100% of
@@ -196,6 +222,14 @@ export interface ResistFit {
 }
 
 export interface ResistEstimate extends ResistFit {
+  /**
+   * OBSERVATIONS THAT COULD HAVE GONE EITHER WAY (JOS-385). `n` counts everything the fit saw;
+   * this counts only the casts of spells that could actually have been resisted
+   * (`isInformativeSpell`). The two differ by an order of magnitude on any cell a proc dominates —
+   * the owner's thunder spirit princess read `n=83` off 8 — so it is `nInformative` that decides
+   * whether the low-samples caveat is owed, and both numbers are printed.
+   */
+  nInformative: number
   /** Observations that entered the likelihood, split by where they came from. */
   fromBaseline: number
   fromYou: number
@@ -204,6 +238,15 @@ export interface ResistEstimate extends ResistFit {
   /** Observations held out because their spell's landings are not observable (resistModel.ts). */
   droppedUnobservable: number
   byFamily: Record<ResistFamily, { n: number; resist: number; land: number }>
+  /**
+   * The same tally, split by WHO CAST IT (JOS-385). Counted for every kind whether or not it
+   * entered the number, so the card can print `npc casters: 98 (not included)` — a family the user
+   * has switched off is still a thing the log saw, and hiding it would make the switch look like a
+   * filter on the ledger rather than on the fit.
+   */
+  byCaster: Record<ResistCasterKind, { n: number; resist: number; land: number }>
+  /** Whether npc-caster rows were weighed in this estimate — `resists.includeNpcCasters`. */
+  npcIncluded: boolean
   perSpell: ResistSpellEvidence[]
   /** The weight one baseline observation carried: K / (K + nUser), 0 once nUser >= 50. */
   baselineWeight: number
@@ -227,6 +270,8 @@ export interface MobResistAxis {
   estimate: ResistEstimate | null
   tag: ResistTag | null
   n: number
+  /** The half of `n` that could have gone either way — see `ResistEstimate.nInformative`. */
+  nInformative: number
 }
 
 export interface MobResistProfile {
@@ -236,6 +281,15 @@ export interface MobResistProfile {
   axes: MobResistAxis[]
   /** False when the client's `spells_us.txt` could not be read; the card says so. */
   spellDataAvailable: boolean
+  /**
+   * WHY it could not be read, as a finished sentence, or null when it could (JOS-385). Two states,
+   * because they are two different problems with two different fixes and the first cut blamed the
+   * install for both: the file is NOT THERE at the resolved root (say the path, so the user can
+   * see which folder the app is looking in), or it is there and did not load (say so, and point at
+   * the error log). Built in `main/resist/profile.ts` — see that file for why the sentence travels
+   * with the profile rather than being rebuilt per surface.
+   */
+  spellDataNote: string | null
   /** When the shipped baseline was mined, for the "shipped data" wording. */
   baselineFrozenAt: string | null
 }
@@ -254,6 +308,11 @@ export interface MobResistProfile {
  * THE SHIPPED BASELINE'S OWN FLOOR IS UNCHANGED and is a different rule entirely: the freeze script
  * drops rows under five observations (`MIN_ROW_OBSERVATIONS`, scripts/gen-resist-baseline.ts) to
  * keep the committed file small. That is about bytes on disk; this is about what a person is shown.
+ *
+ * AND IT IS COUNTED IN INFORMATIVE OBSERVATIONS (JOS-385). The owner's thunder spirit princess read
+ * `resistant` with no caveat off `n=83`, of which 75 were casts of -150/-200/-250 procs that could
+ * not have been resisted whatever the mob's magic resistance is. Eight observations is a thin cell
+ * wearing a fat number, which is the exact thing this threshold exists to catch.
  */
 export const LOW_SAMPLE_BELOW = 10
 

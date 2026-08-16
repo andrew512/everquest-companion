@@ -121,7 +121,14 @@ function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
         {chip.tag}
         {lowSamples(chip.n) && <span style={{ color: DIM }}>{` · ${LOW_SAMPLE_NOTE}`}</span>}
       </div>
-      {/* The number and its interval, with the count beside them — never one without the others. */}
+      {/* The number and its interval, with the count beside them — never one without the others.
+
+          THE COUNT HERE IS THE INFORMATIVE ONE AND ONLY THAT (JOS-385). `chip.n` is the half of the
+          evidence that could have gone either way, which is the number the caveat above keys off
+          and the honest answer to "how much does this rest on". The mob page prints the total
+          beside it because it has a column to print it in; a 9px chip does not, and the two-number
+          sentence wraps to three lines there. The total still crosses the wire (`chip.nTotal`) —
+          this is a layout decision, not a shorter truth. */}
       <div data-testid={`con-chip-detail-${chip.axis}`} style={{ color: DIM, fontSize: 9, marginTop: 1 }}>
         {`${estimateText(chip.fit)} ${countText(chip.n)}`}
       </div>

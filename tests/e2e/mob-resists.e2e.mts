@@ -20,6 +20,12 @@
 // tag, its number, its interval and its count, with a quieter "low samples" caveat below ten, and
 // only an empty axis says "no data". `stepThinRow` is where that shows.
 //
+// AND THE THIRD EVIDENCE FAMILY HAS ITS OWN LINE (JOS-385). Charmed pets and NPC casters are
+// folded like any other observation and a preference decides whether the estimator weighs them, so
+// the two things this spec has to see are the LINE on the drilldown and the SWITCH that changes
+// what it says. The switch is the only claim here no unit test can make: that the preference the
+// card reads is the preference the Preferences pane writes.
+//
 // Run: `npm run test:e2e -- mob-resists`
 
 import type { Page } from 'playwright-core'
@@ -117,11 +123,27 @@ async function stepNumbers(page: Page): Promise<void> {
   check('and the count it rests on', /n=\d+/.test(row), row)
   check('and where the evidence came from', /baseline \d+/.test(row), row)
 
-  // THE HEADLINE: this mob resists cold noticeably more than magic, and the card shows it.
-  const cold = await textOf(page, '[data-testid="resist-value-cold"]')
-  const magicR = Number(/^R (\d+)/.exec(magic)?.[1] ?? '0')
-  const coldR = Number(/^R (\d+)/.exec(cold)?.[1] ?? '0')
-  check(`cold (${cold}) reads above magic (${magic})`, coldR > magicR, `${cold} vs ${magic}`)
+  // AND THE COUNT SAYS HOW MUCH OF IT COULD HAVE GONE EITHER WAY (JOS-385). On this mob the magic
+  // cell is dominated by Smiting Strike, a proc cast 689 times at a -250 resist adjust: casts that
+  // could not have been resisted whatever the mob's magic resistance is. The row printed `n=1295`
+  // and read as the best-evidenced cell on the card; it now prints both numbers.
+  //
+  // (The claim this step used to make — cold reads provably above magic — is GONE, and its
+  // disappearance is the second defect being fixed rather than a regression: most of that
+  // separation was focused Frost Strike hits counted as partials. See the baseline suite's
+  // `THE ZOL GHOUL KNIGHT LOST ITS COLD CLAIM` for the numbers.)
+  check(
+    'the magic count separates what could have been resisted from what could not',
+    /n=\d+ informative · \d+ total/.test(row),
+    row
+  )
+  const counts = /n=(\d+) informative · (\d+) total/.exec(row)
+  if (counts) {
+    check(
+      `  and the informative half is the smaller one (${counts[1]} of ${counts[2]})`,
+      Number(counts[1]) < Number(counts[2])
+    )
+  }
 }
 
 /**
@@ -169,6 +191,84 @@ async function stepEvidence(page: Page): Promise<void> {
   if (!check('the magic row expands', await appears(page, '[data-testid="resist-evidence-magic"]', 10_000))) return
   const text = await textOf(page, '[data-testid="resist-evidence-magic"]')
   check('and lists per-spell evidence', /: \d+ casts?/.test(text), text.slice(0, 120))
+
+  // JOS-385: a spell nothing could have resisted says so, and does not head the list. Smiting
+  // Strike is cast 689 times on this mob at -250; the line that actually tested its magic
+  // resistance is Condemnation of Nife at 184, and that is the one the eye lands on.
+  check(
+    'a spell that could never have been resisted says so',
+    /cannot be resisted at this level: -\d+ adjust/.test(text),
+    text.slice(0, 200)
+  )
+  const first = text.split(/\s(?=[A-Z][a-z]+(?:'s)?[^:]*: \d+ casts?)/)[0]
+  check('…and it is not the first line, however many times it was cast', !first.includes('Smiting Strike'), first)
+}
+
+/**
+ * THE npc EVIDENCE LINE, AND THE SWITCH THAT DECIDES WHETHER IT COUNTS (JOS-385).
+ *
+ * A zol ghoul knight's shipped rows carry 131 observations from creatures rather than people —
+ * frost daggers, ghoul roots and tainted breaths thrown by other undead in the same rooms — spread
+ * across four of the five axes. So this mob can say both halves of the feature on one page.
+ *
+ * The claim is deliberately about the LINE and not about the number: what a user has to be able to
+ * see is how much of a cell came from something that is not a person, and whether it counted. The
+ * arithmetic behind it is pinned in tests/resistNpcFamily.test.mts.
+ */
+async function stepNpcEvidence(page: Page): Promise<string | null> {
+  // Cold is the axis whose npc rows are thickest on this mob (two frost dagger rows).
+  const line = '[data-testid="resist-npc-cold"]'
+  await page.click('[data-testid="resist-expand-cold"]', { timeout: 15_000 })
+  if (!(await appears(page, '[data-testid="resist-evidence-cold"]', 10_000))) {
+    check('the cold row expands', false)
+    return null
+  }
+  if ((await countOf(page, line)) === 0) {
+    note('no creature-cast evidence on cold in this build of the baseline - nothing to check')
+    return null
+  }
+  const text = await textOf(page, line)
+  check('the card names what pets and other creatures contributed', /Pets and other creatures: \d+ casts?/.test(text), text)
+  check('…and does not say it was left out, because the switch ships ON', !text.includes('not included'), text)
+  return await textOf(page, '[data-testid="resist-value-cold"]')
+}
+
+/**
+ * The switch, end to end: Preferences → Combat → off, back to the mob page, and the SAME line now
+ * says the family was not included. This is the one claim no unit test can make — that the
+ * preference the card reads is the preference the pane writes.
+ */
+async function stepSwitchOff(page: Page, before: string | null): Promise<void> {
+  await page.click(NAV_MOBS, { timeout: 15_000 }) // leave the page so the card re-reads on return
+  await page.click('[data-testid="nav-preferences"]', { timeout: 30_000 })
+  if (!(await appears(page, '[data-testid="prefs-rail-combat"]', 20_000))) {
+    check('Preferences offers its Combat section', false)
+    return
+  }
+  await page.click('[data-testid="prefs-rail-combat"]')
+  const toggle = '[data-testid="pref-resist-npc-casters"] input'
+  if (!(await appears(page, toggle, 15_000))) {
+    check('the Combat section carries the resist-evidence switch', false)
+    return
+  }
+  check('the switch ships ON', await page.isChecked(toggle))
+  await page.click('[data-testid="pref-resist-npc-casters"]', { timeout: 15_000 })
+  check('and it can be turned off', !(await page.isChecked(toggle)))
+
+  if (!(await openMobPage(page))) return
+  await settle(() => textOf(page, CARD), (t) => !t.includes('Reading what'), { timeoutMs: 30_000 })
+  await page.click('[data-testid="resist-expand-cold"]', { timeout: 15_000 })
+  if (!(await appears(page, '[data-testid="resist-npc-cold"]', 10_000))) {
+    check('the creature-cast line survives the switch', false)
+    return
+  }
+  const text = await textOf(page, '[data-testid="resist-npc-cold"]')
+  // DECLINED, NOT DELETED: the count is still there and the parenthesis carries the difference.
+  check('with the switch off the same line says the family was not included', text.includes('(not included)'), text)
+  check('…and it still states the count, so the user can see what they turned off', /\d+ casts?/.test(text), text)
+  if (before === null) return
+  const after = await textOf(page, '[data-testid="resist-value-cold"]')
+  check(`the cold number is re-derived from the smaller evidence (${before} -> ${after})`, after !== before, `${before} vs ${after}`)
 }
 
 async function stepNoAcronyms(page: Page, populated: boolean): Promise<void> {
@@ -216,6 +316,10 @@ async function main(): Promise<void> {
         await stepEvidence(page)
       }
       await stepNoAcronyms(page, populated)
+      if (populated) {
+        const coldBefore = await stepNpcEvidence(page)
+        await stepSwitchOff(page, coldBefore)
+      }
     }
 
     check('no renderer console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))

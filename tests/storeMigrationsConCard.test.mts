@@ -14,7 +14,7 @@
 //
 // `overlays.conCard` has never been written by any build. A DEFAULT decides the value of an ABSENT
 // key, so every store on earth — a fresh install, a v1 file from the first commit, and the fully
-// populated v13 fixture below — reads `DEFAULT_OVERLAY_CONFIG.conCard` and gets the card, with
+// populated current-schema fixture below — reads `DEFAULT_OVERLAY_CONFIG.conCard` and gets the card, with
 // nothing rewritten and no stored value reinterpreted. The claims below are that the chain stays
 // out of it entirely, and that the shipped default is the ON the owner asked for.
 //
@@ -37,15 +37,23 @@ const FIXTURES = join(HERE, 'fixtures')
 const fixture = (name: string): StoreData => JSON.parse(readFileSync(join(FIXTURES, name), 'utf8'))
 const src = (rel: string): string => readFileSync(join(HERE, rel), 'utf8')
 
-/** `store-v13-con-card.json` — a store written by the build immediately BEFORE this one: three
- *  overlay kinds configured (a meter, the toast and the alert banner, each with its own blob) and
- *  no `conCard` key anywhere, because no build had one to write. */
-const V13 = 'store-v13-con-card.json'
+/**
+ * `store-v14-con-card.json` — a store at TODAY's schema: three overlay kinds configured (a meter,
+ * the toast and the alert banner, each with its own blob) and no `conCard` key anywhere, because
+ * no build has one to write.
+ *
+ * IT IS RE-PINNED WHENEVER THE SCHEMA MOVES, and the pinning is the point. The first claim below
+ * is that a CURRENT store does not run the chain at all — which is what makes "a new overlay kind
+ * is not a schema change" a fact about this build rather than about the day it was written. When
+ * JOS-385 added the `resists` blob at v14, the v13 copy of this fixture stopped being current and
+ * became what it should be: the input to THAT step's own test (storeMigrationsResists.test.mts).
+ */
+const CURRENT = 'store-v14-con-card.json'
 
 const overlaysOf = (d: StoreData): Record<string, StoreData> => d['overlays'] as Record<string, StoreData>
 
-test('a store from the build before this one is ALREADY current: the chain does not run', () => {
-  const before = fixture(V13)
+test('a store at today’s schema needs nothing: the chain does not run', () => {
+  const before = fixture(CURRENT)
   const out = migrateStoreData(before)
   assert.equal(out.status, 'up-to-date', 'a new kind is not a schema change')
   assert.equal(out.changed, false)
@@ -55,10 +63,10 @@ test('a store from the build before this one is ALREADY current: the chain does 
 })
 
 test('nothing invents an `overlays.conCard` block — the absent key IS the answer', () => {
-  const { data } = migrateStoreData(fixture(V13))
+  const { data } = migrateStoreData(fixture(CURRENT))
   assert.equal('conCard' in overlaysOf(data), false)
   // …and every kind the user HAS configured survives untouched, including the two blobs.
-  const before = fixture(V13)
+  const before = fixture(CURRENT)
   for (const kind of ['fight', 'toast', 'alertBanner']) {
     assert.deepEqual(overlaysOf(data)[kind], overlaysOf(before)[kind], `${kind} must survive untouched`)
   }

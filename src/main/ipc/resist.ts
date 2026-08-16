@@ -21,9 +21,10 @@ import { mobKey } from '../../shared/mobKey'
 import { resolveMobIdentity } from '../mobAliases'
 import { resistModule } from '../pipeline'
 import { mobResistCell, mobResistProfile, type ProfileDeps } from '../resist/profile'
-import { unobservableSpells } from '../../shared/resistModel'
-import { spellTable, spellTableNow } from '../resist/spellTable'
+import { damageModes, unobservableSpells } from '../../shared/resistModel'
+import { spellTable, spellTableNow, spellTableStatus } from '../resist/spellTable'
 import { baselineFrozenAt, resistLedger } from '../resist/store'
+import { getResistPrefs, setResistPrefs } from '../storeResists'
 
 /** A mob name is a display string off the renderer's own catalog; bound it anyway. */
 const MAX_MOB_NAME = 96
@@ -56,6 +57,17 @@ function unobservable(): ReadonlySet<string> {
   return blindCache
 }
 
+/**
+ * The full-damage reference per (spell, caster level), computed once per app run for the same
+ * reason and with the same lifetime as the blindness verdict above. It moves only when the fold
+ * files damage at a value it has not seen before, and the profile reads it on every draw.
+ */
+let modesCache: ReadonlyMap<string, number> | null = null
+function modes(): ReadonlyMap<string, number> {
+  modesCache ??= damageModes(allLedgerRows())
+  return modesCache
+}
+
 function allLedgerRows(): ResistRow[] {
   const out: ResistRow[] = []
   for (const src of resistLedger().toLedger().sources) out.push(...src.rows)
@@ -75,9 +87,14 @@ export function resistProfileDeps(): ProfileDeps {
   return {
     rowsFor: rowsForIdentity,
     unobservable,
+    damageModes: modes,
     spells: () => spellTableNow(),
     levelOf: (key, display) => resistModule.levelOf(key, display),
     frozenAt: () => baselineFrozenAt(),
+    // READ HERE, ON EVERY DRAW (JOS-385). The ledger folded those rows whatever this says; this is
+    // the one place the answer is consulted, which is what makes the switch free to flip.
+    includeNpcCasters: () => getResistPrefs().includeNpcCasters,
+    spellStatus: () => spellTableStatus(),
   }
 }
 
@@ -100,4 +117,12 @@ export function registerResistIpc(): void {
     await spellTable()
     return mobResistCell(mob, axis, resistProfileDeps())
   })
+  ipcMain.handle(IPC.resistPrefsGet, () => getResistPrefs())
+  // The renderer supplies it, so the shared normalizer decides what it meant; a patch with nothing
+  // recognisable in it leaves the stored value exactly where it was.
+  ipcMain.handle(IPC.resistPrefsSet, (_e, patch: unknown) =>
+    typeof patch === 'object' && patch !== null && !Array.isArray(patch)
+      ? setResistPrefs(patch)
+      : getResistPrefs()
+  )
 }

@@ -12,6 +12,7 @@ import type { CloseToTrayPrefs } from '../shared/closeToTray'
 import type { TelemetryPrefs } from '../shared/telemetry'
 import type { PerfHudPrefs } from '../shared/perf'
 import type { ProcessPriorityPrefs } from '../shared/processPriority'
+import type { ResistPrefs } from '../shared/resistPrefs'
 import type { GraphicsPrefs } from '../shared/graphicsPrefs'
 import type { BuffTrustPrefs } from '../shared/buffTrust'
 import type { RespawnPrefs } from '../shared/respawn'
@@ -185,6 +186,17 @@ export interface StoreShape {
    * `false` was a person's decision or yesterday's default written down (the 8→9 / 10→11 lesson).
    */
   processPriority?: ProcessPriorityPrefs
+  /**
+   * WHICH CASTERS TEACH THE RESIST PROFILES (schema migration 13→14; JOS-385,
+   * shared/resistPrefs.ts). `{ includeNpcCasters: true }` — charmed pets and NPC casters count as
+   * evidence about the creature they were cast on, and the switch is read when a card is drawn
+   * rather than when a log is folded, so flipping it never costs a re-fold.
+   *
+   * A MIGRATION rather than the additive-optional carve-out, for the `processPriority` reason
+   * exactly: the default is ON, so "absent" and "stored false" are opposite answers and a v14
+   * store says which one it holds.
+   */
+  resists?: ResistPrefs
   /**
    * Graphics compatibility (schema migrations 9→10 and 10→11; JOS-40, JOS-31). Both switches
    * default to 'auto' — see shared/graphicsPrefs.ts for why a compatibility switch that ships ON

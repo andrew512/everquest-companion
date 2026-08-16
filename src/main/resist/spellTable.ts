@@ -111,9 +111,24 @@ function parseOnWorker(path: string): Promise<SpellResistTable | null> {
   })
 }
 
+/**
+ * WHY THE FAILURE HAS TWO NAMES (JOS-385). "Spell data unavailable — this needs your EverQuest
+ * install's spells_us.txt" was one sentence for two unrelated problems, and it blamed the install
+ * for both. The owner hit the SECOND one after a dev restart (the file was right where it always
+ * is; the worker had not come back) and was told to go find his EverQuest folder.
+ *
+ *   'missing'    — nothing at the resolved path. The user's problem, and the path is the fix, so
+ *                  the message says which folder was looked in.
+ *   'unloadable' — the file is there and the parse did not produce a table (a worker that failed
+ *                  to start, a parse error, a cache write that came back malformed). OUR problem,
+ *                  and the error log is where it is written down.
+ */
+export type SpellTableState = 'loading' | 'ok' | 'missing' | 'unloadable'
+
 let pending: Promise<SpellResistTable | null> | null = null
 let loaded: SpellResistTable | null = null
 let sourceMtime: number | null = null
+let state: SpellTableState = 'loading'
 
 /**
  * The table, loaded at most once per app run. Null means the client file is unreadable — a
@@ -130,11 +145,15 @@ export function spellTable(): Promise<SpellResistTable | null> {
 async function load(): Promise<SpellResistTable | null> {
   const path = spellsUsPath()
   const stamp = sourceStamp(path)
-  if (!stamp) return null
+  if (!stamp) {
+    state = 'missing'
+    return null
+  }
   sourceMtime = stamp.mtimeMs
   const cached = readCache(stamp)
   if (cached) {
     loaded = cached
+    state = 'ok'
     return cached
   }
   const parsed = await parseOnWorker(path)
@@ -142,7 +161,13 @@ async function load(): Promise<SpellResistTable | null> {
     loaded = parsed
     writeCache(stamp, parsed)
   }
+  state = parsed ? 'ok' : 'unloadable'
   return parsed
+}
+
+/** Where the table stands right now, and the path it was looked for at. See `SpellTableState`. */
+export function spellTableStatus(): { state: SpellTableState; path: string } {
+  return { state, path: spellsUsPath() }
 }
 
 /** The table if it is already resolved, else null. For synchronous readers (the fold). */
@@ -156,7 +181,8 @@ export function spellsUsMtime(): number | null {
 }
 
 /** Test seam: install a table without touching the filesystem. */
-export function installSpellTable(table: SpellResistTable | null): void {
+export function installSpellTable(table: SpellResistTable | null, why: SpellTableState = 'unloadable'): void {
   loaded = table
   pending = Promise.resolve(table)
+  state = table ? 'ok' : why
 }

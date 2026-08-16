@@ -18,18 +18,21 @@ import assert from 'node:assert/strict'
 import {
   BASELINE_K,
   DIFFERS_MIN_N,
-  IMMUNE_LEVEL_MOD,
   USER_ONLY_AT,
-  damageKind,
   debuffAmount,
   estimate,
-  expectedDamageFraction,
   unobservableSpells,
+} from '../src/shared/resistModel'
+// The FORWARD half moved to its own module when JOS-385 pushed the pair past the line ceiling.
+// The tests below still read as one subject, because the calibration claim spans both.
+import {
+  IMMUNE_LEVEL_MOD,
+  expectedDamageFraction,
   levelMod,
   predict,
   priorResist,
   resistTag,
-} from '../src/shared/resistModel'
+} from '../src/shared/resistFormula'
 import type { ResistRow, SpellResistTable } from '../src/shared/resistTypes'
 
 // ---------------------------------------------------------------------------------------------
@@ -378,20 +381,6 @@ test('songs are their own family and can be excluded in one place', () => {
   assert.equal(castsOnly.byFamily.song.n, 100, 'the evidence line still reports them')
   assert.equal(castsOnly.n, 100, 'but they are out of the fit')
   assert.ok(castsOnly.R < both.R, 'and dropping a resistant family lowers the estimate')
-})
-
-test('fixed damage is recognised by the histogram, and a proc is not', () => {
-  const fixed = blank({ spellKey: 'test nuke', family: 'cast', dmg: { '150': 60, '120': 9, '90': 4 } })
-  assert.equal(damageKind(fixed, SPELLS['test nuke']), 'ddFix')
-  // A proc with no hitpoint slot in the client data is variable whatever its histogram looks like.
-  const proc = blank({ spellKey: 'test proc', family: 'cast', dmg: { '392': 20, '388': 20 } })
-  assert.equal(damageKind(proc, SPELLS['test proc']), 'ddVar')
-  // A spread whose largest value is rare is a damage RANGE, not full-plus-partials.
-  const spread = blank({ spellKey: 'test nuke', family: 'cast', dmg: { '150': 1, '120': 40, '90': 40 } })
-  assert.equal(damageKind(spread, SPELLS['test nuke']), 'ddVar')
-  // The row gave up on its histogram, so nothing about it can be read as partial information.
-  const gaveUp = blank({ spellKey: 'test nuke', family: 'cast', variable: true, land: 500 })
-  assert.equal(damageKind(gaveUp, SPELLS['test nuke']), 'ddVar')
 })
 
 test('predict inverts the same model the estimator fits', () => {

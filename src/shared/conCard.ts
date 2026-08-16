@@ -167,8 +167,15 @@ export interface ConCardChip {
   axis: ResistAxis
   /** The plain-language tag, or null only when nothing at all has been observed on this axis. */
   tag: ResistTag | null
-  /** Observations behind the cell. Printed at every size, including the thin ones. */
+  /**
+   * OBSERVATIONS THAT COULD HAVE GONE EITHER WAY (JOS-385): the count the chip prints and the count
+   * its low-samples caveat keys off. It is `ResistEstimate.nInformative`, not `n`, and the two are
+   * the same number on most cells — they part company exactly where a proc dominates, which is
+   * where the old chip claimed eighty observations off eight.
+   */
   n: number
+  /** Everything the fit saw, informative or not. Printed beside `n` when they differ. */
+  nTotal: number
   /** The estimate and its interval, present exactly when `tag` is. Wide at a low `n`, which is the
    *  honest display of a thin cell rather than a reason to withhold it. */
   fit: { R: number; lo: number; hi: number } | null
@@ -254,7 +261,11 @@ export function conCardChips(profile: MobResistProfile): ConCardChip[] {
     return {
       axis,
       tag,
-      n: row?.n ?? 0,
+      // THE SAME TWO NUMBERS THE MOB PAGE PRINTS, and taken off the same estimate rather than
+      // recomputed: a chip that counted a -250 proc's casts and a row that did not would be two
+      // surfaces disagreeing about how much this app knows (JOS-385).
+      n: row?.nInformative ?? 0,
+      nTotal: row?.n ?? 0,
       fit: est && tag ? { R: est.R, lo: est.lo, hi: est.hi } : null
     }
   })

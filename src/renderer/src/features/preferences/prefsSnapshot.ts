@@ -33,6 +33,7 @@ import type { OverlaySnapPrefs } from '@shared/overlaySnap'
 import type { CloseToTrayPrefs } from '@shared/closeToTray'
 import type { PerfHudPrefs, StartupProfile } from '@shared/perf'
 import type { ProcessPriorityPrefs } from '@shared/processPriority'
+import type { ResistPrefs } from '@shared/resistPrefs'
 import type { TelemetryPayloadView } from '@shared/telemetry'
 import type { AlertDef, EqConfig, OverlayConfig, OverlayKind, UpdateStatus, VoicePrefs } from '@shared/types'
 
@@ -117,6 +118,10 @@ export interface PrefsSnapshot {
    *  to come through the gate: a switch whose default is `true` flashing OFF is the JOS-340
    *  defect wearing its loudest clothes. */
   processPriority: ProcessPriorityPrefs
+  /** Combat — which casters teach the resist profiles (JOS-385). ON by default, so it is here for
+   *  the `processPriority` reason: a switch whose default is `true` flashing OFF is this gate's
+   *  own defect. */
+  resists: ResistPrefs
   /** Updates — the version row and the status chip's starting value (pushes follow). */
   version: string
   updateStatus: UpdateStatus
@@ -151,6 +156,7 @@ export interface PrefsReader {
   getPerfPrefs: () => Promise<PerfHudPrefs>
   getStartupProfile: () => Promise<StartupProfile>
   getProcessPriority: () => Promise<ProcessPriorityPrefs>
+  getResistPrefs: () => Promise<ResistPrefs>
   getAppVersion: () => Promise<string>
   getUpdateStatus: () => Promise<UpdateStatus>
   listAlerts: () => Promise<AlertDef[]>
@@ -184,6 +190,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     perfHud,
     startup,
     processPriority,
+    resists,
     version,
     updateStatus,
     alerts
@@ -206,6 +213,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getPerfPrefs(),
     eq.getStartupProfile(),
     eq.getProcessPriority(),
+    eq.getResistPrefs(),
     eq.getAppVersion(),
     eq.getUpdateStatus(),
     eq.listAlerts()
@@ -239,6 +247,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     perfHud,
     startup,
     processPriority,
+    resists,
     version,
     updateStatus,
     alertCount: alerts.length

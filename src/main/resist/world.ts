@@ -7,7 +7,9 @@
 
 import { localMobEntry } from '../mobLookupLocal'
 import { idKey, spellCanonKey } from '../log/parseCommon'
+import { isPlayerShapedName } from '../../shared/playerShape'
 import type { SpellDb } from '../data/spellDb'
+import type { ResistCasterKind } from '../../shared/resistTypes'
 
 /** A mob's level, and how sure we are. `/con` is the game telling you; the catalog is the wiki. */
 export interface MobLevelFact {
@@ -63,24 +65,28 @@ export class MobLevels {
 }
 
 /**
- * WHO IS ALLOWED TO TEACH US ANYTHING. Owner ruling, 2026-08-16: only `self` and other PLAYERS.
- * NPC casters and charmed pets are ignored entirely — an NPC's spell rolls against a different
- * table, and a charmed pet's casts are the game's, not a player's.
+ * WHO IS A PERSON AND WHO IS A CREATURE — the one question the whole fold is filed by.
  *
- * The exclusions, in the order they are cheap: a name YOU have landed damage on is a mob (the
+ * Owner ruling, 2026-08-16 (JOS-382): only `self` and other PLAYERS teach us anything. REVISED the
+ * same day (JOS-385): charmed pets and NPC casters are a THIRD kind, `npc`, folded like any other
+ * observation, with a preference deciding whether the estimator weighs them. So this class no
+ * longer answers "may we learn from this name" with a null — it NAMES the caster, and the
+ * weighting argument moved to `shared/resistPrefs.ts` where it can be re-decided without a re-fold.
+ *
+ * The tests, in the order they are cheap: a name YOU have landed damage on is a mob (the
  * behavioural guard `EngineState.everStruck` uses, and it holds for a proper-named guard the
- * catalog never heard of); a name bound as somebody's pet is a pet; a name the committed catalog
- * knows is a mob; a leading article or an interior space is a mob, because EQ player names are one
- * word and never carry one.
+ * catalog never heard of); a name bound as somebody's pet is a pet; a leading article or an
+ * interior space is a mob, because EQ player names are one word and never carry one; a name the
+ * committed catalog knows is a mob.
  *
  * The residual risk is stated rather than hidden: a proper-named NPC that the catalog does not
- * carry, that you never hit, and whose name has no space, is admitted as a player. It contributes
- * evidence counts and — because its level is unknown — never enters the estimate.
+ * carry and that you never hit is called a player. It contributes evidence counts and — because
+ * its level is unknown — never enters the estimate.
  */
 export class CasterIndex {
   private pets = new Set<string>()
   private struck = new Set<string>()
-  private verdicts = new Map<string, 'pc' | null>()
+  private verdicts = new Map<string, 'pc' | 'npc'>()
 
   reset(): void {
     this.pets = new Set()
@@ -101,7 +107,7 @@ export class CasterIndex {
     this.verdicts.delete(key)
   }
 
-  kindOf(name: string): 'self' | 'pc' | null {
+  kindOf(name: string): ResistCasterKind {
     // The identity compare answers almost every call; `idKey` is the fallback. See fold.ts.
     if (name === 'You') return 'self'
     const key = idKey(name)
@@ -113,13 +119,66 @@ export class CasterIndex {
     return verdict
   }
 
-  private judge(key: string, name: string): 'pc' | null {
-    if (this.pets.has(key) || this.struck.has(key)) return null
-    if (/^(?:a|an|the)\s/i.test(name.trim())) return null
-    if (/\s/.test(name.trim())) return null
-    if (localMobEntry(name)) return null
+  private judge(key: string, name: string): 'pc' | 'npc' {
+    if (this.pets.has(key) || this.struck.has(key)) return 'npc'
+    if (/^(?:a|an|the)\s/i.test(name.trim())) return 'npc'
+    if (/\s/.test(name.trim())) return 'npc'
+    if (localMobEntry(name)) return 'npc'
     return 'pc'
   }
+}
+
+/**
+ * MAY A ROW BE FILED ABOUT THIS NAME AS A TARGET? (JOS-385.)
+ *
+ * A resist row is a statement about a CREATURE's resist stat, so its target has to be a creature.
+ * While only players could cast, this question was never asked out loud — and the shipped JOS-382
+ * baseline shows what that cost: rows keyed `you` (your own Cannibalization damages its caster),
+ * rows keyed on GROUPMATES (a Superior Healing landing, a group song's pulse), roughly 2,700
+ * observations under 56 keys that are people's names, in a file this repo publishes. NPC casters
+ * make it acute rather than merely untidy, because mobs cast on the player's group constantly.
+ *
+ * THE TEST IS `conCardIsPlayer`'S, DELIBERATELY, and not `CasterIndex`'s. The two questions look
+ * the same and are not. For a CASTER, "you have landed damage on this name" is a reason to REFUSE
+ * it as a teacher, which is safe in the direction it points. For a TARGET the same fact would
+ * ADMIT the name — and a groupmate can end up in `struck` through a damage shield or an area
+ * effect, which is exactly how the first cut of this guard let `Dranix` back in. So the target
+ * test is the app's standing "is this a person" pair and nothing else: EQ gives players one
+ * capitalized word with no space, and the committed catalog knows the proper-named NPCs that shape
+ * would otherwise refuse.
+ *
+ * THE RESIDUAL IS THE SAME ONE THE CON CARD ALREADY ACCEPTS: a proper-named NPC the catalog has
+ * never heard of is read as a person and teaches us nothing. That is the safe direction — a
+ * creature we decline to learn about costs a cell, and a person's name in a published file is a
+ * different kind of mistake.
+ */
+export function isMobTarget(name: string): boolean {
+  const hit = targetVerdicts.get(name)
+  if (hit !== undefined) return hit
+  const verdict = judgeTarget(name)
+  if (targetVerdicts.size >= MAX_TARGET_VERDICTS) targetVerdicts.clear()
+  targetVerdicts.set(name, verdict)
+  return verdict
+}
+
+/**
+ * MEMOISED, for the reason `ResistFold.keyOf` is (that method's comment carries the original
+ * measurement): this runs on every resist line, every spell damage line and every landing sentence
+ * in a two-million-line replay, and the uncached answer is two regexes plus a `mobKey` — itself
+ * three regex replacements and a lower-case — plus a map lookup. Bounded and cleared wholesale
+ * rather than evicted one at a time, because a long session meets thousands of distinct names and
+ * an unbounded map is a slow leak. The verdict is a pure function of the NAME (the catalog is
+ * committed and `isPlayerShapedName` reads nothing), so nothing can invalidate an entry.
+ */
+const targetVerdicts = new Map<string, boolean>()
+const MAX_TARGET_VERDICTS = 4_096
+
+function judgeTarget(name: string): boolean {
+  const n = name.trim()
+  // The catalog happens to hold an entry that folds to the key `you`, so self is tested first and
+  // by identity, exactly as the fold's own `isSelf` does.
+  if (n === 'You' || idKey(n) === 'you') return false
+  return !isPlayerShapedName(n) || localMobEntry(n) !== null
 }
 
 /**

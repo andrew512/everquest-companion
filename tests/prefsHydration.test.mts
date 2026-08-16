@@ -80,6 +80,9 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     // A switch whose compiled-in default is TRUE (JOS-366), stored FALSE — the flash this gate
     // exists to prevent, in the direction the other switches cannot express.
     getProcessPriority: answer('getProcessPriority', { yieldToGame: false }),
+    // The second of those (JOS-385), and stored FALSE for the same reason: the only person whose
+    // resist-evidence value differs from the shipped one is the person who switched it off.
+    getResistPrefs: answer('getResistPrefs', { includeNpcCasters: false }),
     getAppVersion: answer('getAppVersion', '9.9.9'),
     getUpdateStatus: answer('getUpdateStatus', { state: 'ready' }),
     listAlerts: answer('listAlerts', [{ id: 'a' }, { id: 'b' }, { id: 'c' }])
@@ -93,9 +96,13 @@ test('one read answers every card in the pane, and it snaps the text size to the
   const { reader, calls } = stubReader()
   const snap = await readPrefsSnapshot(reader)
 
-  // TWENTY-ONE reads, one batch. The number is not the claim; the claim is that the gate asks each
+  // TWENTY-TWO reads, one batch. The number is not the claim; the claim is that the gate asks each
   // question exactly once, so a pane that mounts does not stampede the store.
-  assert.equal(calls(), 21, 'every read fires exactly once')
+  assert.equal(calls(), 22, 'every read fires exactly once')
+
+  // The resist-evidence switch (JOS-385), stored against its shipped ON. It is in the batch for
+  // the `processPriority` reason, and it is asserted here for the same one.
+  assert.equal(snap.resists.includeNpcCasters, false)
 
   // A sample across the KINDS of value, because the defect was never boolean-only: two switches
   // that disagree with their defaults, a ladder stop, a slider pair, and two counts.
@@ -151,7 +158,7 @@ test('two mounts in one frame share ONE batch', async () => {
   resetPrefsSnapshotForTests()
   const { reader, calls } = stubReader()
   const [a, b] = await Promise.all([loadPrefsSnapshot(reader), loadPrefsSnapshot(reader)])
-  assert.equal(calls(), 21, 'not forty-two')
+  assert.equal(calls(), 22, 'not forty-four')
   assert.equal(a, b)
   resetPrefsSnapshotForTests()
 })
@@ -217,6 +224,7 @@ test('every Preferences card seeds from the gate, and none of them re-reads main
     'CursorRingSetting.tsx',
     'PerfSetting.tsx',
     'BuffTrustSetting.tsx',
+    'ResistEvidenceSetting.tsx',
     'TextSizeSetting.tsx',
     'ToastSetting.tsx',
     'VoiceSetting.tsx',

@@ -19,13 +19,22 @@ import {
   evidenceText,
   LOW_SAMPLE_NOTE,
   NO_DATA_TEXT,
+  NPC_NOT_INCLUDED_NOTE,
+  cannotBeResistedNote,
+  npcCasterSummary,
   songSummary,
   spellDisplayName,
   splitText
 } from '../src/renderer/src/features/resists/resistRow'
 import { RESIST_AXIS_COLORS } from '../src/renderer/src/features/resists/resistColors'
 import { hasAnswer, lowSamples } from '../src/shared/resistModel'
-import { LOW_SAMPLE_BELOW, RESIST_AXES, RESIST_AXIS_WORDS, type ResistEstimate } from '../src/shared/resistTypes'
+import {
+  LOW_SAMPLE_BELOW,
+  RESIST_AXES,
+  RESIST_AXIS_WORDS,
+  type ResistEstimate,
+  type ResistSpellEvidence
+} from '../src/shared/resistTypes'
 
 function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
   return {
@@ -33,10 +42,17 @@ function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
     lo: 110,
     hi: 144,
     n: 600,
+    nInformative: 600,
     fromBaseline: 480,
     fromYou: 120,
     droppedNoLevel: 0,
     byFamily: { cast: { n: 600, resist: 40, land: 560 }, song: { n: 0, resist: 0, land: 0 } },
+    byCaster: {
+      self: { n: 600, resist: 40, land: 560 },
+      pc: { n: 0, resist: 0, land: 0 },
+      npc: { n: 0, resist: 0, land: 0 }
+    },
+    npcIncluded: true,
     perSpell: [],
     baselineWeight: 0,
     userOnly: false,
@@ -72,6 +88,20 @@ test('THE NUMBER NEVER APPEARS WITHOUT ITS INTERVAL AND ITS COUNT', () => {
   assert.equal(countText(600), 'n=600')
 })
 
+test('the count says how much of it could have gone either way, when that differs (JOS-385)', () => {
+  // The owner's thunder spirit princess: 83 observations, 8 of which were of spells that could
+  // actually have been resisted. One number was a claim about how much this app knew, and it was
+  // wrong by an order of magnitude.
+  assert.equal(countText(8, 83), 'n=8 informative · 83 total')
+  // Where nothing is uninformative - which is most cells - the sentence stays the short one.
+  assert.equal(countText(83, 83), 'n=83')
+  assert.equal(countText(0, 0), 'n=0')
+  // BOTH numbers, never one: the procs did land, and that they landed is real work worth seeing.
+  assert.match(countText(8, 83), /83/)
+  // Copy rules: no acronym, no em dash, and the middle dot is the separator every other row uses.
+  assert.ok(!/[–—]/.test(countText(8, 83)))
+})
+
 test('ALWAYS SHOW THE RESULT: a thin cell is qualified, never replaced (owner, 2026-08-16)', () => {
   // The words themselves, because they are the whole of the ruling as a player meets it: the
   // caveat is a SECOND thing beside the answer, and the only withheld case is the empty one.
@@ -87,12 +117,15 @@ test('the threshold the ruling replaced is gone: an answer exists from one obser
   assert.equal(hasAnswer(0), false, 'nothing observed is the only case with nothing to say')
   assert.equal(hasAnswer(1), true)
   assert.equal(hasAnswer(4), true, 'the old n >= 5 floor no longer withholds anything')
-  // …and the caveat rides exactly the band under LOW_SAMPLE_BELOW, never the empty cell (which
-  // has no tag to qualify in the first place).
-  assert.equal(lowSamples(0), false)
+  // …and the caveat rides the band under LOW_SAMPLE_BELOW, counted in INFORMATIVE observations
+  // (JOS-385). It is the caller that never asks about an empty cell: a cell with no tag has
+  // nothing to qualify, and both surfaces check the tag before they draw the caveat.
   assert.equal(lowSamples(1), true)
   assert.equal(lowSamples(LOW_SAMPLE_BELOW - 1), true)
   assert.equal(lowSamples(LOW_SAMPLE_BELOW), false)
+  // A cell whose casts were ALL of spells that could not be resisted is as thin as a cell gets,
+  // however many of them there were - which is the whole defect this argument came out of.
+  assert.equal(lowSamples(0), true)
 })
 
 test('the row states where its evidence came from, per axis', () => {
@@ -108,15 +141,51 @@ test('the patch-detector note is a plain sentence with no em dash and no acronym
   assert.ok(!/[–—]/.test(DIFFERS_NOTE))
 })
 
+/** One evidence line's fields, with the informative defaults a plain nuke has. */
+function ev(spec: Partial<ResistSpellEvidence> & Pick<ResistSpellEvidence, 'spellKey'>): ResistSpellEvidence {
+  return {
+    family: 'cast',
+    casts: 0,
+    resisted: 0,
+    partial: 0,
+    full: 0,
+    land: 0,
+    fromBaseline: 0,
+    fromYou: 0,
+    resistAdj: 0,
+    informative: true,
+    ...spec
+  }
+}
+
 test('an evidence line prints only the clauses that have a number', () => {
   assert.equal(
-    evidenceText({ spellKey: 'chaos flux', family: 'cast', casts: 155, resisted: 17, partial: 61, full: 77, land: 0, fromBaseline: 155, fromYou: 0 }),
+    evidenceText(ev({ spellKey: 'chaos flux', casts: 155, resisted: 17, partial: 61, full: 77, fromBaseline: 155 })),
     'Chaos Flux: 155 casts, 17 resisted, 61 partial'
   )
   // Zero partials and NO partial information are different things, and only one is worth a word.
   assert.equal(
-    evidenceText({ spellKey: 'smiting strike', family: 'cast', casts: 1, resisted: 0, partial: 0, full: 0, land: 1, fromBaseline: 1, fromYou: 0 }),
-    'Smiting Strike: 1 cast'
+    evidenceText(ev({ spellKey: 'condemnation of nife', casts: 1, land: 1, fromBaseline: 1 })),
+    'Condemnation of Nife: 1 cast'
+  )
+})
+
+test('a spell that could never have been resisted says so, on its own line (JOS-385)', () => {
+  // THE LINE THE OWNER'S PRINCESS ROW NEEDED. Eighty-seven casts of a -250 proc, none of them
+  // resisted, heading the evidence list and reading as eighty-seven pieces of good news about the
+  // mob's magic resistance. They are one piece of news, and the line now says which.
+  assert.equal(
+    evidenceText(ev({ spellKey: 'smiting strike', casts: 87, land: 87, resistAdj: -250, informative: false })),
+    'Smiting Strike: 87 casts, cannot be resisted at this level: -250 adjust'
+  )
+  assert.equal(cannotBeResistedNote(-250), 'cannot be resisted at this level: -250 adjust')
+  // Copy rules: no em dash, no acronym, and the number is the game's own.
+  assert.ok(!/[–—]/.test(cannotBeResistedNote(-1000)))
+  assert.doesNotMatch(cannotBeResistedNote(-200), /\b(rc|MR|FR)\b/)
+  // An ordinary nuke says nothing of the sort.
+  assert.equal(
+    evidenceText(ev({ spellKey: 'chaos flux', casts: 10, resisted: 2, full: 8 })),
+    'Chaos Flux: 10 casts, 2 resisted'
   )
 })
 
@@ -132,20 +201,17 @@ test("a canonical key reads back as a name, apostrophes and small words and all"
 })
 
 test('an evidence line says WHY a spell is not in the number', () => {
-  const ev = {
-    spellKey: "largo's melodic binding",
-    family: 'song' as const,
-    casts: 400,
-    resisted: 400,
-    partial: 0,
-    full: 0,
-    land: 0,
-    fromBaseline: 400,
-    fromYou: 0,
-    landingsNotObservable: true,
-  }
   assert.equal(
-    evidenceText(ev),
+    evidenceText(
+      ev({
+        spellKey: "largo's melodic binding",
+        family: 'song',
+        casts: 400,
+        resisted: 400,
+        fromBaseline: 400,
+        landingsNotObservable: true
+      })
+    ),
     "Largo's Melodic Binding: 400 casts, 400 resisted, landings not observable"
   )
   assert.equal(NOT_OBSERVABLE_NOTE, 'landings not observable')
@@ -186,6 +252,30 @@ test('NO ACRONYMS: every axis label is the word, and every axis has a colour', (
   }
   // Five axes, five distinct colours: a repeated hue would say two axes are one thing.
   assert.equal(new Set(Object.values(RESIST_AXIS_COLORS)).size, RESIST_AXES.length)
+})
+
+test('the pets-and-creatures line says the same count whether or not it counted (JOS-385)', () => {
+  const npc = { n: 98, resist: 41, land: 57 }
+  const on = est({ byCaster: { self: { n: 0, resist: 0, land: 0 }, pc: { n: 0, resist: 0, land: 0 }, npc } })
+  assert.equal(npcCasterSummary(on), 'Pets and other creatures: 98 casts, 41 resisted')
+
+  // Switched off, the SAME sentence with the parenthesis carrying the difference. A line that
+  // disappeared would make the preference look like it deleted evidence rather than declining to
+  // weigh it - and the count is exactly what a user wants to see before deciding to flip it back.
+  const off = est({
+    byCaster: { self: { n: 0, resist: 0, land: 0 }, pc: { n: 0, resist: 0, land: 0 }, npc },
+    npcIncluded: false
+  })
+  assert.equal(npcCasterSummary(off), `Pets and other creatures: 98 casts, 41 resisted (${NPC_NOT_INCLUDED_NOTE})`)
+
+  // NO LINE AT ALL when nothing was cast by one, which is most mobs. "No pet ever cast on this" is
+  // not a fact anybody came to the page for, and a zero on an evidence line reads as a measurement.
+  assert.equal(npcCasterSummary(est()), null)
+  assert.equal(npcCasterSummary(est({ npcIncluded: false })), null)
+
+  // Copy rules, on a string a player reads: no acronyms and no jargon for the thing being counted.
+  const text = npcCasterSummary(off) ?? ''
+  assert.doesNotMatch(text, /\bNPC\b|estimate|ledger|fold/i)
 })
 
 test('the five axis colours clear WCAG AA against the app paper background', () => {

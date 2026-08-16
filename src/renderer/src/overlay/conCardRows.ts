@@ -77,9 +77,13 @@ export interface ConCardNotableChip extends ConCardChip {
  * interval and the `low samples` note are the honest display.
  */
 export function notableChips(chips: readonly ConCardChip[]): ConCardNotableChip[] {
+  // `nTotal`, not `n` (JOS-385): the question here is "has anything ever been observed on this
+  // axis", and `n` is now the narrower count of casts that could have been RESISTED. An axis whose
+  // every cast was a -250 proc has been observed plenty; what it lacks is evidence, which is what
+  // the `low samples` caveat on the surviving chip says.
   return chips.filter(
     (c): c is ConCardNotableChip =>
-      c.n > 0 && c.tag !== null && c.fit !== null && CON_CARD_NOTABLE_TAGS.includes(c.tag)
+      c.nTotal > 0 && c.tag !== null && c.fit !== null && CON_CARD_NOTABLE_TAGS.includes(c.tag)
   )
 }
 
@@ -89,7 +93,9 @@ export function notableChips(chips: readonly ConCardChip[]): ConCardNotableChip[
  * seen a spell land on this". Zero is a real and different answer, and it prints as one.
  */
 export function conCardTotalN(chips: readonly ConCardChip[]): number {
-  return chips.reduce((sum, c) => sum + (Number.isFinite(c.n) ? c.n : 0), 0)
+  // `nTotal` for the same reason `notableChips` reads it: this sentence is about what the app has
+  // SEEN, and a cast that could not have been resisted was still seen (JOS-385).
+  return chips.reduce((sum, c) => sum + (Number.isFinite(c.nTotal) ? c.nTotal : 0), 0)
 }
 
 /** One drop line on the card. */

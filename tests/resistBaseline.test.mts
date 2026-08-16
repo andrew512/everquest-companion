@@ -15,8 +15,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { estimate, resistTag } from '../src/shared/resistModel'
+import { damageModes, estimate } from '../src/shared/resistModel'
+import { resistTag } from '../src/shared/resistFormula'
 import { rowTotal } from '../src/main/resist/ledger'
+import { localMobEntry } from '../src/main/mobLookupLocal'
 import { parseSpellsUs } from '../src/main/resist/spellsUsParse'
 import {
   BASELINE_SOURCE_KEY,
@@ -29,6 +31,13 @@ import {
 const PATH = join(import.meta.dirname, '..', 'src', 'main', 'data', 'resistBaseline.json')
 const LEDGER = JSON.parse(readFileSync(PATH, 'utf8')) as ResistLedger
 const ROWS = LEDGER.sources[0].rows
+
+/**
+ * The full-damage reference per (spell, caster level) over the WHOLE file, which is what the app
+ * hands the estimator (`src/main/ipc/resist.ts`). Every estimate below passes it, so these tests
+ * read the same numbers a mob page does rather than the narrower per-cell fallback.
+ */
+const MODES = damageModes(ROWS)
 
 const SPELLS_US =
   process.env.EQ_SPELLS_US ??
@@ -138,7 +147,63 @@ test('a mob a bard sang at reads NORMAL, not nearly immune', { skip: !HAVE_CLIEN
 
 test('only casters the owner ruled admissible are in it', () => {
   const kinds = new Set(ROWS.map((r) => r.casterKind))
-  for (const kind of kinds) assert.ok(kind === 'self' || kind === 'pc', `caster kind ${kind}`)
+  // JOS-385 added the third: charmed pets and NPC casters, folded like any other observation, with
+  // `resists.includeNpcCasters` deciding at ESTIMATE time whether they weigh. The ruling they were
+  // excluded under (JOS-382) was revisited, not overturned by accident, so this list is still a
+  // closed one and a fourth kind appearing here is a bug rather than a feature.
+  for (const kind of kinds) {
+    assert.ok(kind === 'self' || kind === 'pc' || kind === 'npc', `caster kind ${kind}`)
+  }
+})
+
+test('the npc family is here, it carries LEVELS, and it is never a song (JOS-385)', () => {
+  const npc = ROWS.filter((r) => r.casterKind === 'npc')
+  assert.ok(npc.length > 100, `only ${String(npc.length)} npc rows`)
+  // THE REASON THIS FAMILY IS WORTH MORE THAN A STRANGER'S CASTS: the mob catalog states a caster
+  // level for most of them, so most npc rows carry an rc and can actually reach a number. A `pc`
+  // row never can — nothing in this app's inputs states another player's level.
+  const levelled = npc.filter((r) => r.casterLevel !== null).length
+  assert.ok(levelled / npc.length > 0.6, `only ${String(levelled)} of ${String(npc.length)} npc rows carry a level`)
+  assert.equal(ROWS.filter((r) => r.casterKind === 'pc' && r.casterLevel !== null).length, 0)
+  // Songs are the tailed character's bard, decided by spell identity. An NPC casting a bard song
+  // is refused by `SongFold` before anything is filed, so this set is empty by construction.
+  assert.equal(npc.filter((r) => r.family === 'song').length, 0)
+})
+
+test('EVERY KEY IN THE FILE IS A CREATURE, not a person (JOS-385)', () => {
+  // The regression guard for the defect JOS-385 found in the shipped JOS-382 file: rows keyed
+  // `you` (Cannibalization damages its own caster), a groupmate's name carrying a Superior Healing
+  // landing, and Jonthan's Provocation pulsing on five people — 2,700 observations under 56 keys
+  // that were players, in a file this repo publishes. `isMobTarget` gates every arm of the fold now.
+  //
+  // The test is on the KEY, which is already lowercased, so it asks the question the key can
+  // answer: a single word with no space and no article is the shape EQ gives a player, and the one
+  // that has to be in the committed catalog to earn a place here.
+  for (const row of ROWS) {
+    assert.notEqual(row.mobKey, 'you')
+    if (/[\s'`*-]/.test(row.mobKey)) continue
+    assert.ok(
+      localMobEntry(row.mobKey) !== null,
+      `${row.mobKey} is shaped like a player's name and the catalog has never heard of it`
+    )
+  }
+})
+
+test('the imp protector can finally speak about FIRE, and only because of the npc family', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {
+  // THE CELL THE PREVIOUS ROUND HAD TO GIVE UP ON, named in the test below this one: every fire
+  // observation this log holds for an imp protector is imp protectors throwing Dry Bone Fire Burst
+  // at each other, so under JOS-382's ruling the axis the plan headlines ("FR ~70% resisted") was
+  // a blank row. That is the whole case for the family, and it is one assertion.
+  const rows = rowsFor('an imp protector')
+  const withNpc = estimate(rows, spells(), { axis: 'fire', mobLevel: 45, includeNpcCasters: true })
+  const without = estimate(rows, spells(), { axis: 'fire', mobLevel: 45, includeNpcCasters: false })
+  assert.ok(withNpc.n > 100, `n=${String(withNpc.n)}`)
+  assert.equal(without.n, 0, 'no player ever cast fire at one in this log')
+  assert.equal(resistTag(withNpc.R), 'nearly immune')
+  // AND THE COUNTS SURVIVE THE SWITCH. A family that is not weighed is still a family that was
+  // observed, which is what the mob page prints as "(not included)".
+  assert.equal(without.byCaster.npc.n, withNpc.byCaster.npc.n)
+  assert.equal(without.npcIncluded, false)
 })
 
 test('Lord Nagafen reads the magic resistance the plan predicted', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {
@@ -151,21 +216,49 @@ test('Lord Nagafen reads the magic resistance the plan predicted', { skip: !HAVE
   assert.ok(est.R >= 90 && est.R <= 210, `R=${String(est.R)} outside the predicted [90, 210]`)
 })
 
-test('a ghoul knight is provably COLD-resistant, from the owner\'s own casts', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {
-  // THE HEADLINE CLAIM, on a mob the evidence can actually support. The brief named the imp
-  // protector and the lava guardian; their fire evidence in this log is entirely NPC-vs-NPC (imp
-  // protectors casting Dry Bone Fire Burst at each other), which the owner's own ruling excludes
-  // outright, so neither can speak. The ghoul knights can: the tailed character nuked them with
-  // both axes for weeks.
-  const rows = rowsFor('a zol ghoul knight')
-  const cold = estimate(rows, spells(), { axis: 'cold', mobLevel: 38 })
-  const magic = estimate(rows, spells(), { axis: 'magic', mobLevel: 38 })
-  assert.ok(cold.n >= 60, `cold n=${String(cold.n)}`)
-  assert.ok(magic.n >= 500, `magic n=${String(magic.n)}`)
-  assert.ok(cold.R > magic.R, `cold R=${String(cold.R)} vs magic R=${String(magic.R)}`)
+test('a loathling lich is provably DISEASE-resistant, from the owner\'s own casts', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {
+  // THE HEADLINE CLAIM FROM THE TAILED CHARACTER'S OWN CASTS. The test above is the same shape of
+  // claim standing on the npc family; this one stands on nothing but the player's own nukes, and
+  // it is one the plan predicted by hand before any of this code existed (section 3: a loathling
+  // lich, disease 51% resisted against 1% magic and 2% fire).
+  const rows = rowsFor('a loathling lich')
+  const disease = estimate(rows, spells(), { axis: 'disease', mobLevel: 51, modes: MODES })
+  const magic = estimate(rows, spells(), { axis: 'magic', mobLevel: 51, modes: MODES })
+  assert.ok(disease.nInformative >= 60, `disease n=${String(disease.nInformative)}`)
+  assert.ok(magic.nInformative >= 60, `magic n=${String(magic.nInformative)}`)
+  assert.ok(disease.R > magic.R, `disease R=${String(disease.R)} vs magic R=${String(magic.R)}`)
   // And provably so: the intervals do not overlap, which is what turns "looks higher" into a
   // statement a player can act on.
-  assert.ok(cold.lo > magic.hi, `cold [${String(cold.lo)},${String(cold.hi)}] vs magic [${String(magic.lo)},${String(magic.hi)}]`)
+  assert.ok(
+    disease.lo > magic.hi,
+    `disease [${String(disease.lo)},${String(disease.hi)}] vs magic [${String(magic.lo)},${String(magic.hi)}]`
+  )
+})
+
+test('THE ZOL GHOUL KNIGHT LOST ITS COLD CLAIM, and that is the fix working (JOS-385)', () => {
+  // WORTH A TEST OF ITS OWN, because a claim this suite used to make is gone and the reason is the
+  // whole of defect 2. `a zol ghoul knight` read cold R 60 [40,84] against magic R 30 [24,34] —
+  // provably cold-resistant — and a good part of that 60 was invented: the full-damage reference
+  // was each histogram's largest value, so every focused Frost Dagger and Frost Strike hit counted
+  // as a partial and the mob looked like it was eating cold. Against the ledger-wide mode the same
+  // rows read cold R 26 [10,50] and magic R 26 [22,30]: two axes this log cannot tell apart.
+  //
+  // The honest display of that is an overlap, and a suite that still asserted the separation would
+  // be pinning the defect. What is pinned instead is that the two intervals now MEET.
+  if (!HAVE_CLIENT) return
+  const rows = rowsFor('a zol ghoul knight')
+  const cold = estimate(rows, spells(), { axis: 'cold', mobLevel: 38, modes: MODES })
+  const magic = estimate(rows, spells(), { axis: 'magic', mobLevel: 38, modes: MODES })
+  assert.ok(cold.hi >= magic.lo && magic.hi >= cold.lo, 'the intervals overlap: no separation is claimed')
+  // …and the magic cell is where the OTHER defect shows on this mob: 1,294 observations of which
+  // 606 could have gone either way, because Smiting Strike is a -250 proc cast 689 times.
+  assert.ok(magic.nInformative < magic.n / 2, `${String(magic.nInformative)} of ${String(magic.n)}`)
+  const proc = magic.perSpell.find((e) => e.spellKey === 'smiting strike')
+  assert.equal(proc?.informative, false)
+  assert.equal(proc?.resistAdj, -250)
+  // And it is sorted BELOW every spell that tested the mob, however many times it was cast.
+  const informativeCasts = magic.perSpell.filter((e) => e.informative).length
+  assert.ok(magic.perSpell.slice(0, informativeCasts).every((e) => e.informative), 'informative first')
 })
 
 test('every axis answers for a well-observed mob, and thin ones say so', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {

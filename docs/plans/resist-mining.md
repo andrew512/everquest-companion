@@ -321,6 +321,24 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
 - NPC-on-NPC evidence (owner, 2026-08-16, revised): a switchable family, ON to start; the
   shipped default is decided by the measured player-vs-pet comparison on the owner's log
   (JOS-385). Worry to test: players' fire resisted where pets' fire is not, from pet tuning.
+  **MEASURED, and the default is ON** (JOS-385, `npm run gen:resist-baseline -- --compare`):
+  48 (mob, axis) cells where both populations put 20+ observations into the fit, 28 of them
+  with disjoint 95% intervals, and **5 of the 28 (17.9%)** show the worry — fire/cold/poison/
+  disease with R_npc at least 30 below R_pc. The decision rule the ticket set was "over a
+  third ⇒ ship OFF". The worry case is real and rare (a fire giant warrior's fire reads 410
+  from players against 110 from NPC casters) and is outnumbered four to one by the opposite
+  direction: on 23 of the 28 flagged cells NPC casters are resisted the SAME or MORE (an
+  azarack magic 56 vs 100, Lord Nagafen 106 vs 214, a thunder spirit 18 vs 56), which is the
+  safe direction for a number a player acts on. The switch stays because the answer is the
+  kind a patch can move, and it is read at ESTIMATE time so flipping it never costs a re-fold
+  (`shared/resistPrefs.ts`, store key `resists.includeNpcCasters`, schema v14).
+- A resist row's TARGET has to be a creature (JOS-385, discovered while adding the above): R is
+  a statement about a creature, and nothing checked that the thing being cast ON was one. The
+  first shipped baseline carried rows keyed `you` (Cannibalization damages its own caster), a
+  groupmate's Superior Healing landing, and Jonthan's Provocation pulsing on five people —
+  ~2,700 observations under 56 keys that are players, in a public file. `isMobTarget`
+  (main/resist/world.ts) is the app's standing "is this a person" pair applied to every arm of
+  the fold; the residual it accepts is the con card's, verbatim.
 - Wiki overrides are app-wide (owner, 2026-08-16): a catalog correction (Largo's Melodic
   Binding prints "bound BY strands" on Legends) lives in `spellCorrectionsList*.ts`, never in a
   feature module (JOS-384).
@@ -346,6 +364,28 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   `lands N% · with overchannel M%`. Informative n (spells with adjust > -100) drives the
   low-samples caveat; the fixed-damage full reference is the histogram MODE across mobs, not
   the max (Live focus effects roll a random +1..34%) - both in JOS-385.
+- **What `n` counts** (owner, 2026-08-16, off a live thunder spirit princess reading
+  `R 58 (36-102) n=83 resistant` with no caveat): an observation only counts as evidence if the
+  spell could have been resisted at all. `rc = R + levelMod + resistAdj`, so a -150/-200/-250 proc
+  or a -300/-1000 lure is out of reach of any roll and its casts say only "R is not enormous".
+  Those rows still enter the likelihood; they no longer inflate the count, no longer suppress the
+  low-samples caveat, and no longer head the evidence list. The row prints both
+  (`n=8 informative · 83 total`), the con card chip prints the informative one, the caveat keys off
+  it, and an uninformative line says `cannot be resisted at this level: -250 adjust`. The threshold
+  is `INFORMATIVE_RESIST_ADJ = -100` (shared/resistFormula.ts) and it is drawn where this log's own
+  spells fall: procs at -150 and below, everything else at 0.
+- **The full-damage reference is the MODE, never the max** (owner, same review): Live spell-damage
+  focus effects roll a random bonus per cast, so the largest value a spell ever printed is a
+  focused roll and every ordinary full hit sits below it — read as a partial, which invents
+  resistance out of an item the player is wearing. The reference is the mode of the (spell,
+  casterLevel) histogram pooled over EVERY mob in the ledger, a hit at or above 0.97 x mode is
+  full, and a (spell, level) whose top value holds under 40% of the histogram is treated as
+  variable damage for that level (shared/resistDamage.ts). MEASURED: Discordant Mind is 394 at
+  levels 43-49 (78-93% of each level's hits) and unreadable at 50, where the owner's focus item
+  spreads the same spell across 449-528 and leaves the base at 6%; Scorching Arrow reads 214 / 233
+  / 239 at levels 46 / 47 / 48-up, which are the game's own tiers. Cost of the fix, on the shipped
+  baseline: a zol ghoul knight's cold falls from R 60 [40,84] to R 26 [10,50] as 23 partials become
+  5, and the "provably cold-resistant" claim that stood on them is withdrawn.
 - Presentation: **no acronyms**. Every axis is shown as its word (magic, fire, cold, poison,
   disease) with a stable colour per axis; the colour and the word always appear together.
 
