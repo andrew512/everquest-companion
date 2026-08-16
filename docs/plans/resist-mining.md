@@ -309,9 +309,17 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   inside a <=30 s window without a `You begin singing` line, which the log shows no mechanism
   for; rule 3 under-counts attempts on ranged/rooted mobs (biases R up, i.e. toward "more
   resistant" - the safe direction).
-- Confidence: simple count-based, no big minimums (owner, 2026-08-16). Draw a cell at n >= 5,
-  always print n and the 95% interval next to the number, never hide what we know. No
-  CI-gated "advice" layer for v1.
+- Confidence: simple count-based, no minimums at all for DISPLAY (owner, 2026-08-16, twice):
+  always show the result - tag, R, interval, n - from n >= 1, with a quieter secondary caveat
+  `low samples` under n = 10; only n = 0 says `no data`. Never print "not enough data" in
+  place of the answer. The shipped baseline still drops rows under 5 observations at freeze;
+  that is a file-size rule, not a display rule. No CI-gated "advice" layer for v1.
+- NPC-on-NPC evidence (owner, 2026-08-16, revised): a switchable family, ON to start; the
+  shipped default is decided by the measured player-vs-pet comparison on the owner's log
+  (JOS-385). Worry to test: players' fire resisted where pets' fire is not, from pet tuning.
+- Wiki overrides are app-wide (owner, 2026-08-16): a catalog correction (Largo's Melodic
+  Binding prints "bound BY strands" on Legends) lives in `spellCorrectionsList*.ts`, never in a
+  feature module (JOS-384).
 - Own log beats the frozen baseline (owner, 2026-08-16, patch resilience): the baseline carries
   `frozenAt` + the spells_us.txt mtime it was mined against; per cell, baseline observations
   weigh `K/(K+nUser)` with K = 20, at `nUser >= 50` the user's data stands alone and the
