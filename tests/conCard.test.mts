@@ -23,11 +23,26 @@ import {
   conCardSuppressed,
   normalizeConCardConfig
 } from '../src/shared/conCard'
-import { conCardDropLines } from '../src/renderer/src/overlay/conCardRows'
+import {
+  CON_CARD_NOTABLE_TAGS,
+  conCardDropLines,
+  conCardTotalN,
+  notableChips
+} from '../src/renderer/src/overlay/conCardRows'
+import { fitChanged, overlayFitRequest } from '../src/renderer/src/overlay/overlayFit'
+import { resistTag } from '../src/shared/resistModel'
 import { OVERLAY_KINDS } from '../src/shared/types'
-import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize } from '../src/main/overlayLayout'
-import { RESIST_AXES, type MobResistProfile, type ResistEstimate } from '../src/shared/resistTypes'
-import type { ConCardPayload } from '../src/shared/conCard'
+import {
+  FIT_HEIGHT_KINDS,
+  METER_KINDS,
+  OVERLAY_MIN_SIZE,
+  defaultOverlayBounds,
+  fitsHeightToContent,
+  fittedOverlayHeight,
+  overlayDefaultSize
+} from '../src/main/overlayLayout'
+import { RESIST_AXES, type MobResistProfile, type ResistEstimate, type ResistTag } from '../src/shared/resistTypes'
+import type { ConCardChip, ConCardPayload } from '../src/shared/conCard'
 
 // ---- the kind ---------------------------------------------------------------------------
 
@@ -37,19 +52,84 @@ test('the con card is an overlay kind, appended after every meter, and holds no 
   assert.ok(!METER_KINDS.includes('conCard'), 'a strip is not a meter and must not consume a dock slot')
 })
 
-test('it opens TOP CENTRE, and never on top of the celebration strip', () => {
+test('it opens TOP CENTRE, in the celebration strip’s own band (owner ruling, 2026-08-16)', () => {
   const area = { x: 0, y: 0, width: 1920, height: 1040 }
   const b = defaultOverlayBounds('conCard', area)
   const size = overlayDefaultSize('conCard', area)
   assert.deepEqual({ width: b.width, height: b.height }, size, 'the bounds carry the kind’s own size')
   assert.equal(b.x, Math.round((area.width - b.width) / 2), 'horizontally centred')
-  // "Top centre", with ONE thing above it. BOTH strips ship ON, so a fresh install must not stack
-  // a con card and a celebration card in the same pixels — the card clears the toast's band and
-  // still opens in the upper 40% of the screen, and a persisted position always wins afterwards.
+  // THE TOP, not 384 px down it. The card used to clear the celebration band so two kinds that both
+  // ship ON could never share pixels; the owner overruled that on 2026-08-16 because a card that
+  // far down is over the character. Both strips are transient and both close, so they share a band.
   const toast = defaultOverlayBounds('toast', area)
-  assert.ok(b.y >= toast.y + toast.height, `below the toast (${String(b.y)} vs ${String(toast.y + toast.height)})`)
-  assert.ok(b.y < area.height * 0.4, `still near the top (got ${String(b.y)})`)
+  assert.equal(b.y, toast.y, `the same top edge as the celebration strip (got ${String(b.y)})`)
   assert.ok(b.y + b.height <= area.y + area.height, 'and fully on the screen')
+})
+
+test('a display too short to seat the strip at its gap still opens it on screen', () => {
+  // The clamp every strip kind shares — the top edge gives way, and never above the work area.
+  const shallow = { x: 0, y: 40, width: 800, height: 225 }
+  const b = defaultOverlayBounds('conCard', shallow)
+  assert.ok(b.y >= shallow.y, `never above the work area (got ${String(b.y)})`)
+  assert.equal(b.y + b.height, shallow.y + shallow.height, 'as low as it fits, and no lower')
+})
+
+// ---- the window fits the card (JOS-386) --------------------------------------------------
+
+test('the con card is the kind whose HEIGHT is the content’s, and the meters are not', () => {
+  assert.deepEqual(FIT_HEIGHT_KINDS, ['conCard'])
+  assert.equal(fitsHeightToContent('conCard'), true)
+  for (const kind of ['toast', 'alertBanner', 'fight', 'events'] as const) {
+    assert.equal(fitsHeightToContent(kind), false, `${kind} owns its own height`)
+  }
+})
+
+test('a fitted height is the request, clamped to the floor and to the room BELOW THE TOP EDGE', () => {
+  const area = { x: 0, y: 0, width: 1920, height: 1040 }
+  // The ordinary case: a card asks for what it drew and gets exactly that.
+  assert.equal(fittedOverlayHeight(214, 12, area), 214)
+  assert.equal(fittedOverlayHeight(214.4, 12, area), 214, 'rounded, because a window is whole pixels')
+  assert.equal(fittedOverlayHeight(215.5, 12, area), 216)
+  // THE FLOOR is the one every kind shares — and Electron would clamp `setBounds` against the
+  // window's own minHeight anyway, so main must not believe a number the window cannot wear.
+  assert.equal(fittedOverlayHeight(20, 12, area), OVERLAY_MIN_SIZE.height)
+  assert.equal(fittedOverlayHeight(Number.NaN, 12, area), OVERLAY_MIN_SIZE.height, 'a nonsense request')
+  // THE CEILING IS THE ROOM UNDER THE TOP EDGE, and the position never gives: a card dragged near
+  // the bottom of the screen SHRINKS rather than sliding back up the screen under the user.
+  assert.equal(fittedOverlayHeight(600, 900, area), 140, '1040 - 900')
+  assert.equal(fittedOverlayHeight(600, 1035, area), OVERLAY_MIN_SIZE.height, 'and never past the floor')
+  // A work area that does not start at zero (a second monitor, a taskbar) measures the same way.
+  const second = { x: 2560, y: 100, width: 1920, height: 1000 }
+  assert.equal(fittedOverlayHeight(400, 800, second), 300, '100 + 1000 - 800')
+  assert.equal(fittedOverlayHeight(400, 112, second), 400, 'a card near the top is untouched')
+  // A top edge somehow off the bottom of the work area answers with the floor, never a negative.
+  assert.equal(fittedOverlayHeight(400, 5000, area), OVERLAY_MIN_SIZE.height)
+})
+
+test('the renderer asks for what it MEASURED plus the window’s own padding, and rounds UP', () => {
+  // The measured box is the card and the drag frame; the root's inset is on both sides of it.
+  assert.equal(overlayFitRequest(200, 6), 212)
+  // CEILED, never rounded: a layout height that rounds DOWN is a window one pixel short of its own
+  // content, which on a card with a border shows up as a clipped edge.
+  assert.equal(overlayFitRequest(200.1, 6), 213)
+  assert.equal(overlayFitRequest(199.9, 6), 212)
+  // An unmeasurable or empty box asks for nothing at all rather than for a tiny window.
+  assert.equal(overlayFitRequest(0, 6), 0)
+  assert.equal(overlayFitRequest(-4, 6), 0)
+  assert.equal(overlayFitRequest(Number.NaN, 6), 0)
+})
+
+test('a measurement is only SENT when the window could actually express the difference', () => {
+  // A layout height is a float and a window height is an integer, so without a threshold a card
+  // that never changed would send on every render.
+  assert.equal(fitChanged(null, 212), true, 'the first measurement always goes')
+  assert.equal(fitChanged(212, 212), false)
+  assert.equal(fitChanged(212, 213), false, 'one pixel is not a change a window can express')
+  assert.equal(fitChanged(212, 214), true)
+  assert.equal(fitChanged(212, 190), true, 'shrinking counts exactly as much as growing')
+  // Nothing measured is never a request, whatever was last sent.
+  assert.equal(fitChanged(212, 0), false)
+  assert.equal(fitChanged(null, 0), false)
 })
 
 // ---- the two refusals -------------------------------------------------------------------
@@ -138,6 +218,49 @@ test('ALWAYS SHOW THE RESULT: a three-observation chip carries its answer (owner
   assert.equal(cold.tag, null)
   assert.equal(cold.fit, null)
   assert.equal(cold.n, 0)
+})
+
+test('THE CARD KEEPS ONLY WHAT IT RESISTS (owner ruling, 2026-08-16)', () => {
+  // The payload still carries five - the MOB PAGE draws all five and reads the same profile. The
+  // narrowing is the card's, and it happens here.
+  const chips = conCardChips(profile())
+  const kept = notableChips(chips)
+  assert.deepEqual(kept.map((c) => c.axis), ['magic', 'fire'], 'the two resistant axes, in axis order')
+  // `weak` and `normal` are the answer you would have assumed; they leave.
+  assert.ok(!kept.some((c) => c.axis === 'poison'), 'a weak axis is dropped')
+  // And an axis with nothing behind it leaves too — no `no data` chips on this surface.
+  assert.ok(!kept.some((c) => c.axis === 'cold' || c.axis === 'disease'), 'an empty axis is dropped')
+  // A LOW-SAMPLE RESISTANT AXIS SURVIVES. `fire` is n=3, and JOS-382's ruling is untouched: the
+  // card shows the answer with its wide interval and the quieter caveat, it does not withhold it.
+  const fire = kept.find((c) => c.axis === 'fire')
+  assert.equal(fire?.n, 3)
+  assert.deepEqual(fire?.fit, { R: 180, lo: 40, hi: 200 })
+})
+
+test('every tag at or above the estimator’s own `resistant` cut is kept, and nothing below it', () => {
+  // The cut is `resistTag()`'s boundary rather than a number invented on the card.
+  assert.deepEqual([...CON_CARD_NOTABLE_TAGS], ['resistant', 'very resistant', 'nearly immune'])
+  assert.equal(resistTag(45), 'resistant', 'the estimator draws the line in the same place')
+  assert.equal(resistTag(44), 'normal')
+  const chip = (tag: ResistTag | null, n = 20): ConCardChip => ({
+    axis: 'magic',
+    tag,
+    n,
+    fit: tag === null ? null : { R: 60, lo: 40, hi: 80 }
+  })
+  const kept = notableChips([chip('weak'), chip('normal'), chip('resistant'), chip('very resistant'), chip('nearly immune')])
+  assert.deepEqual(kept.map((c) => c.tag), ['resistant', 'very resistant', 'nearly immune'])
+  // A tag with no observations behind it cannot happen from `conCardChips`, and is refused anyway.
+  assert.deepEqual(notableChips([chip('resistant', 0)]), [], 'n = 0 is never notable')
+  assert.deepEqual(notableChips([chip(null)]), [])
+})
+
+test('the card’s empty state can tell "we looked" from "we have never seen one"', () => {
+  const chips = conCardChips(profile())
+  assert.equal(conCardTotalN(chips), 643, '600 + 3 + 40, the whole profile’s evidence')
+  const nothing = conCardChips(profile({ axes: [] }))
+  assert.deepEqual(notableChips(nothing), [], 'no chips at all')
+  assert.equal(conCardTotalN(nothing), 0, 'and the count says so, which is a different sentence')
 })
 
 // ---- the drops --------------------------------------------------------------------------

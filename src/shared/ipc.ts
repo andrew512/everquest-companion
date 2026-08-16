@@ -177,6 +177,15 @@ export const IPC = {
   overlaySetIgnoreMouse: 'overlay:setIgnoreMouse',
   // renderer(overlay) -> main: close the overlay from its own close button. Arg: kind.
   overlayClose: 'overlay:close',
+  // renderer(overlay) -> main: "what I drew is this tall - make the window fit it" (JOS-386).
+  // Args: kind, height in DIP (content + the overlay's padding + the drag frame while unlocked).
+  //
+  // ONLY THE HEIGHT MOVES, and only for a kind whose height is the content's rather than the
+  // user's (overlayLayout.ts FIT_HEIGHT_KINDS - today the con card alone). x, y and width are the
+  // user's and are never touched by this, which is what makes "the top edge stays put and the
+  // window shrinks instead" true even for a card dragged to the bottom of the screen. Main clamps
+  // the request to the work area and does NOT persist the result as a chosen size.
+  overlayFitHeight: 'overlay:fitHeight',
   // renderer(overlay) -> main: read a kind's persisted config. Arg: kind. Returns OverlayConfig.
   overlayGetConfig: 'overlay:getConfig',
   // renderer(overlay) -> main: persist a kind's config (partial merge). Args: kind, patch.

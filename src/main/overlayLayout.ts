@@ -118,20 +118,29 @@ const BANNER_SIZE: Size = { width: 720, height: 260 }
  * is also where a player's own `/con` output already draws their eye.
  *
  * 520 wide because the widest thing on it is a drop line (`Gnarled Bone Ring  seen by you: 3x ·
- * 0.25 per kill`) and wrapping those turns a five-line card into ten; 300 tall holds the identity
- * line, five resist chips, five drops and a respawn with room to spare. The window is transparent
- * and renders nothing between cons, so unused height costs nothing.
+ * 0.25 per kill`) and wrapping those turns a five-line card into ten.
  *
- * IT DOES NOT SIT ON THE TOAST. The celebration strip is 12 px from the top and 360 tall, so this
- * one starts below it: two strips that both defaulted to the very top would open exactly on top of
- * each other on a fresh install, which is the failure `defaultOverlayBounds` exists to prevent for
- * the meters and would be no less confusing here — and BOTH of these ship on. The alert banner's
- * default band is not dodged for the same reason it does not need to be: that kind ships OFF and
- * its first-run flow is the user dragging it where they want it. Persisted bounds always win.
+ * THE HEIGHT IS A FIRST-OPEN PLACEHOLDER, NOT A SIZE (JOS-386). This window's height FOLLOWS THE
+ * CARD from the moment its renderer has measured one — see `fittedOverlayHeight` below, which is
+ * the only thing that decides how tall this window ever is once a card exists. The number here is
+ * what the window is for the instant between construction and that first measurement, so it is
+ * deliberately no larger than a plausible card: the old 300 was picked as "tall enough for
+ * anything", and since the card is a few lines of chips and drops, most of it was an empty apron —
+ * invisible while the overlay is transparent, a dark box under the card in the JOS-40 opaque mode,
+ * and in BOTH modes a rectangle that captures the mouse for as long as a card is up.
+ *
+ * IT SITS AT THE TOP, IN THE CELEBRATION STRIP'S BAND (owner ruling, 2026-08-16). It used to start
+ * BELOW that band (`TOAST_TOP + TOAST_SIZE.height + 12`, ~384 px down) so that two kinds which both
+ * ship ON could never open in the same pixels. That was a real concern and the owner has overruled
+ * it for a better one: 384 px down is over the character, which is the one place a card you read
+ * before a pull must not be. Both strips are TRANSIENT and both are closable, so a celebration
+ * arriving in the same band as a con card is an overlap the owner accepts; nothing about this
+ * kind's z-order or hit rules changes. The alert banner still keeps its own band a third of the way
+ * down, and persisted bounds still win for everyone who has already moved either window.
  */
-const CON_CARD_SIZE: Size = { width: 520, height: 300 }
-/** Gap from the top of the work area, clearing the celebration strip's reserved band. */
-const CON_CARD_TOP = TOAST_TOP + TOAST_SIZE.height + 12
+const CON_CARD_SIZE: Size = { width: 520, height: 220 }
+/** Gap from the top of the work area — the celebration strip's own, because they share the band. */
+const CON_CARD_TOP = TOAST_TOP
 
 /**
  * How far down the work area the banner's top edge sits, as a fraction of its height: the UPPER
@@ -147,6 +156,14 @@ const BANNER_TOP_FRACTION = 1 / 3
  * `workArea` is optional because one caller genuinely has no display to ask about (windows.ts's
  * headless/e2e path sizes a window before any screen info exists). Without it the answer is the
  * full uniform size, which is what every display large enough for the reserved grid gets anyway.
+ *
+ * FOR A FIT KIND, THE HEIGHT THIS RETURNS IS NOT A CHOICE ANYBODY MADE (JOS-386). Every other kind
+ * gets a first-open size and then the USER owns both numbers — they are what `overlays.<kind>.bounds`
+ * remembers. A fit kind's height is DERIVED FROM ITS CONTENT EVERY TIME (`fittedOverlayHeight`), so
+ * this is only the placeholder the window wears until its renderer has measured a card, and it is
+ * also what `windows.ts` writes into the store in place of whatever height the window happens to be
+ * wearing when the user moves it. Position and WIDTH persist; height never does — otherwise one
+ * tall card would become the size of every empty window from then on.
  */
 export function overlayDefaultSize(kind: OverlayKind, workArea?: Bounds): Size {
   if (kind === 'toast') return { ...TOAST_SIZE }
@@ -156,9 +173,64 @@ export function overlayDefaultSize(kind: OverlayKind, workArea?: Bounds): Size {
 }
 
 /**
- * The con card's first-open placement: horizontally CENTRED, below the celebration strip's band.
- * Clamped like every other kind, so a display too short to hold it under the toast simply gets it
- * as low as it fits rather than off the bottom edge.
+ * THE KINDS WHOSE HEIGHT IS THE CONTENT'S, NEVER THE USER'S (JOS-386).
+ *
+ * The con card is the third answer to "may this window be resized", and the three are worth reading
+ * together (the block beside `resizable:` in windows.ts holds the other two):
+ *
+ *   toast       — neither. A fixed-width card lane; everything around the card is transparent, so
+ *                 resizing would only change how much invisible nothing surrounds it.
+ *   alertBanner — both. Its lines are sentences that WRAP, so width decides whether a raid call
+ *                 reads in one glance, and height decides how many lines survive.
+ *   conCard     — MOVE and WIDTH. The card is a fixed set of rows (identity, the resist chips it
+ *                 has something to say about, up to five drops, a respawn); width decides whether a
+ *                 drop line wraps, and the height that follows from that is arithmetic, not taste.
+ *                 A user-chosen height could only ever be too big (an apron of empty window that
+ *                 still eats the mouse) or too small (a card cut off at the bottom).
+ *
+ * A list rather than a `kind === 'conCard'`, because the alert banner is the obvious next candidate
+ * if the owner ever decides its wrapped height should follow its lines too — and because a caller
+ * that must not fit a meter should be able to ASK rather than remember.
+ */
+export const FIT_HEIGHT_KINDS: OverlayKind[] = ['conCard']
+
+/** Is this a kind whose window height follows what it renders? */
+export function fitsHeightToContent(kind: OverlayKind): boolean {
+  return FIT_HEIGHT_KINDS.includes(kind)
+}
+
+/**
+ * HOW TALL THE WINDOW ACTUALLY GETS when its renderer asks for `requested` px of content (JOS-386).
+ *
+ * The renderer measures what it drew — the card, plus the overlay's own padding, plus the drag
+ * frame while the window is unlocked — and this decides what that request becomes on the display
+ * the window is currently on. Pure, so the whole policy is `npm test`-able and the Electron half is
+ * three lines of `setBounds`.
+ *
+ * THE TOP EDGE NEVER MOVES, WHICH IS THE WHOLE POINT. A card that will not fit between its top edge
+ * and the bottom of the work area SHRINKS THE REQUEST — it does not slide the window up. The card's
+ * position is the user's (dragged, or the top-centre default); its height is ours, so ours is the
+ * one that gives. A window whose top edge is somehow already off the bottom of the work area gets
+ * the floor rather than a negative number.
+ *
+ * THE FLOOR IS `OVERLAY_MIN_SIZE.height`, the same one every kind shares, and it is doing real work
+ * here rather than defending against the renderer: Electron clamps `setBounds` against the window's
+ * own `minHeight` anyway, so a request below the floor that was NOT clamped here would leave main
+ * believing the window is one height while it is another.
+ */
+export function fittedOverlayHeight(requested: number, top: number, workArea: Bounds): number {
+  const floor = OVERLAY_MIN_SIZE.height
+  if (!Number.isFinite(requested)) return floor
+  const room = workArea.y + workArea.height - top
+  const ceiling = Math.max(floor, Math.min(room, workArea.height))
+  return Math.max(floor, Math.min(Math.round(requested), ceiling))
+}
+
+/**
+ * The con card's first-open placement: horizontally CENTRED at the top of the work area, in the
+ * celebration strip's own band (owner ruling, 2026-08-16 — the argument is at CON_CARD_SIZE).
+ * Clamped like every other kind, so a display too short to hold it at the top simply gets it as low
+ * as it fits rather than off the bottom edge.
  */
 function conCardBounds(workArea: Bounds): Bounds {
   const size = { ...CON_CARD_SIZE }

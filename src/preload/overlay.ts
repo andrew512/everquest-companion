@@ -262,6 +262,19 @@ const overlayApi = {
    */
   closeConCard: (mobKey: string): void => ipcRenderer.send(IPC.conCardClosed, mobKey),
 
+  /**
+   * "WHAT I DREW IS THIS TALL" (JOS-386) — the one thing an overlay says about its own GEOMETRY.
+   *
+   * The con card's window height follows the card rather than being a size anybody chose, and the
+   * measurement can only happen here: the card's height is a layout result at whatever text scale
+   * the user picked, and only this process can read it. Main clamps the request to the work area,
+   * moves nothing but the height, and does not write it down as a chosen size.
+   *
+   * Fire-and-forget, and kind-scoped like every channel on this bridge, so a window can only ever
+   * ask about ITSELF. Main ignores it for a kind whose height is the user's business.
+   */
+  fitHeight: (height: number): void => ipcRenderer.send(IPC.overlayFitHeight, KIND, height),
+
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)
 }

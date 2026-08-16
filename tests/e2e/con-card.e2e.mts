@@ -60,9 +60,46 @@ const NAME = '[data-testid="con-card-name"]'
 const FACTS = '[data-testid="con-card-facts"]'
 const DROPS = '[data-testid="con-card-drops"]'
 const CLOSE = '[data-testid="con-card-close"]'
+/** The box the renderer measures for the window fit (JOS-386): the drag frame + the scaled card. */
+const FIT = '[data-testid="con-card-fit"]'
 
-/** Always five, always this order — the whole point of a fixed layout is that the eye learns it. */
+/** The five axes in the order the payload carries them — the survivors still read in this order. */
 const AXES = ['magic', 'fire', 'cold', 'poison', 'disease'] as const
+
+/**
+ * ConCardOverlay's root inset, on each side, spelled out rather than imported: an e2e file loads no
+ * `src` module (overlayMinSizeSteps.mts states that rule for `MIN_W`/`MIN_H`). A change to `PAD`
+ * that forgets this line fails loudly here.
+ */
+const PAD = 6
+/** A window is whole pixels and a layout box is not; the fit rounds UP, so allow a pixel either way. */
+const FIT_SLACK = 2
+
+interface Bounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** The two bridges this spec reaches through, named the way every other e2e names them: the page's
+ *  own globals are not in this file's types, so each call spells the shape it uses. */
+interface OverlayBridge {
+  setConfig: (patch: { textScale: number }) => Promise<unknown>
+}
+interface GraphicsBridge {
+  setGraphicsPrefs: (patch: Record<string, string>) => Promise<{ opaqueOverlays: string }>
+  getOverlayState: () => Promise<Record<string, boolean>>
+  toggleOverlay: (kind: string) => Promise<unknown>
+}
+
+/** Set the con card window's text size through the overlay's own config door — A+'s door. */
+function setTextScale(card: Page, textScale: number): Promise<unknown> {
+  return card.evaluate(
+    (s) => (window as unknown as { eqOverlay: OverlayBridge }).eqOverlay.setConfig({ textScale: s }),
+    textScale
+  )
+}
 
 /**
  * The mob: a catalog hit with 44 listed drops AND 156 rows in the committed resist baseline, and
@@ -146,46 +183,132 @@ async function stepConDrawsTheCard(log: FixtureLog, card: Page): Promise<void> {
 }
 
 /**
- * FIVE CHIPS, ONE ORDER, EACH SAYING A WORD. And no acronym anywhere on the card.
+ * ONLY WHAT IT RESISTS (owner ruling, 2026-08-16 — the second one that day).
+ *
+ * The card used to draw five chips whatever the mob was. It now draws only the axes whose tag is
+ * `resistant` / `very resistant` / `nearly immune`, because the other four routinely said "this is
+ * ordinary" — the answer you would have assumed without reading anything — and each one cost a row
+ * of a window that (this ticket) now literally wears that height. THE MOB PAGE STILL SHOWS ALL FIVE
+ * ROWS and is one click away; tests/e2e/mob-resists.e2e.mts is where that claim lives.
  *
  * IT RUNS AFTER THE DROPS STEP, and that ordering is a finding rather than a preference: the card
  * arrives in TWO passes and the client's 38 MB `spells_us.txt` is read on a worker, so the first
- * pass genuinely has no resist table behind it and draws five honest "no data" chips. Reading the
- * chips before the second pass lands is reading a state the app is only in for a second.
+ * pass genuinely has no resist table behind it. Reading the chips before the second pass lands is
+ * reading a state the app is only in for a second.
  */
-async function stepFiveChips(card: Page): Promise<void> {
-  for (const axis of AXES) {
-    const present = (await countOf(card, `[data-testid="con-chip-${axis}"]`)) === 1
-    if (!check(`the ${axis} chip is on the card, whatever is behind it`, present)) continue
-    const tag = await textOf(card, `[data-testid="con-chip-tag-${axis}"]`)
-    check(`…and says its state in WORDS (${axis}: ${tag})`, tag.length > 0 && /[a-z]/.test(tag), tag)
-  }
+async function stepNotableChips(card: Page): Promise<void> {
   const text = (await cardTexts(card))[0] ?? ''
-  // The axis words themselves, in order, with nothing between them but their own chips.
-  const order = AXES.map((a) => text.indexOf(a)).filter((i) => i >= 0)
-  check('the five axes read in ONE fixed order, so the eye learns the positions',
-    order.length === AXES.length && order.every((v, i) => i === 0 || v > order[i - 1]), text.slice(0, 200))
-  // NO ACRONYMS, EVER (owner ruling, 2026-08-16) — the whole reason the words are the labels.
-  check('no acronym reaches the card', !/\b(MR|FR|CR|DR|PR)\b/.test(text), text.slice(0, 200))
-  // Whatever the machine has, a chip either reports its answer or says it has none — never the
-  // withheld "not enough data" the owner overruled on 2026-08-16.
-  check('and no chip withholds an answer it has', !/not enough data/i.test(text), text.slice(0, 200))
 
-  // THE ESTIMATE ITSELF, on the machine that can join the client table. `a zol ghoul knight` has
-  // 156 rows in the COMMITTED baseline, so on any machine with EverQuest installed this is exact
-  // and not a floor; without one, the spec asserts the app's stated degraded branch instead — the
-  // same carve-out tests/e2e/mob-resists.e2e.mts takes, for the same file this repo may not carry.
+  // THE DEGRADED BRANCH FIRST, on a machine that cannot join the client's spell table: with no
+  // estimates there is nothing to call resistant, so the card's empty state is the whole answer —
+  // and it must still SAY why. The same carve-out tests/e2e/mob-resists.e2e.mts takes.
   if (/spells_us\.txt/.test(text)) {
-    note('no client spell data on this machine - the chips took their stated degraded branch')
+    note('no client spell data on this machine - the resist block took its stated degraded branch')
     check('…and the card SAYS the spell data is missing rather than implying the mob is unknown',
       /Resists need your EverQuest install/.test(text), text.slice(0, 200))
+    check('…and says it looked rather than drawing nothing',
+      (await countOf(card, '[data-testid="con-card-no-resists"]')) === 1, text.slice(0, 200))
     return
   }
-  const detail = await textOf(card, '[data-testid="con-chip-detail-magic"]')
-  check('a chip with evidence behind it prints R, its interval and its count',
-    /R \d+ \(\d+-\d+\) n=\d+/.test(detail), detail)
-  const tag = await textOf(card, '[data-testid="con-chip-tag-magic"]')
-  check('…and the plain-language tag beside them', /(weak|normal|resistant|nearly immune)/.test(tag), tag)
+
+  // WHAT THIS MOB ACTUALLY RESISTS. `a zol ghoul knight` has 156 rows in the COMMITTED baseline, so
+  // on a machine with EverQuest installed this is exact and not a floor: COLD is the one axis of
+  // the five that reaches the `resistant` cut, and the other four leave the card.
+  const shown: string[] = []
+  for (const axis of AXES) {
+    if ((await countOf(card, `[data-testid="con-chip-${axis}"]`)) === 1) shown.push(axis)
+  }
+  check('the card keeps ONLY the axes this creature resists', shown.join(',') === 'cold', shown.join(',') || '(none)')
+  check('…and every chip on it reports its answer in WORDS, with the number and interval and count',
+    /cold resistant/i.test(text.replace(/\s+/g, ' ')) && /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
+  // The survivors still read in the payload's fixed order, so the eye learns the positions.
+  const order = shown.map((a) => text.indexOf(a))
+  check('…in the same fixed order the mob page lists them in',
+    order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])), text.slice(0, 200))
+  // No weak/normal axis, and no "no data" chip: the two things this ruling removed.
+  check('a `weak` or `normal` axis is not on the card at all',
+    !/\b(weak|normal)\b/.test(text), text.slice(0, 240))
+  check('and no chip says "no data" — an empty axis leaves rather than shrugging',
+    !/no data/i.test(text), text.slice(0, 240))
+  // NO ACRONYMS, EVER (the first ruling of 2026-08-16) — the whole reason the words are the labels.
+  check('no acronym reaches the card', !/\b(MR|FR|CR|DR|PR)\b/.test(text), text.slice(0, 200))
+  // Whatever the machine has, a chip either reports its answer or is not there — never the
+  // withheld "not enough data" the owner overruled on 2026-08-16.
+  check('and no chip withholds an answer it has', !/not enough data/i.test(text), text.slice(0, 200))
+}
+
+/** Where the con card's window IS, asked of main. Identified by the `?kind=` it was opened with. */
+function cardWindowBounds(app: ElectronApplication): Promise<Bounds | null> {
+  return app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().includes('kind=conCard'))
+    return w ? w.getBounds() : null
+  })
+}
+
+/** How tall the thing the renderer measures actually is, in the card's own window. */
+function fitBoxHeight(card: Page): Promise<number> {
+  return card.evaluate(
+    (sel) => (document.querySelector(sel) as HTMLElement | null)?.getBoundingClientRect().height ?? 0,
+    FIT
+  )
+}
+
+/**
+ * Poll until the window has caught up with the card. The fit is debounced by a macrotask and
+ * crosses an IPC boundary, so "the window is the card" is a state to settle on, never one to read
+ * once.
+ */
+function settleFit(app: ElectronApplication, card: Page): Promise<{ bounds: Bounds | null; want: number }> {
+  return settle(
+    async () => {
+      const bounds = await cardWindowBounds(app)
+      const want = Math.ceil(await fitBoxHeight(card)) + 2 * PAD
+      return { bounds, want }
+    },
+    (r) => r.bounds !== null && r.want > 2 * PAD && Math.abs(r.bounds.height - r.want) <= FIT_SLACK,
+    { timeoutMs: 20_000 }
+  )
+}
+
+/**
+ * THE WINDOW IS THE CARD (JOS-386), and this is the only place that claim can be made: it spans a
+ * measurement in one renderer, an IPC hop, a clamp in main and a real BrowserWindow.
+ *
+ * WHAT IS NOT ASSERTED IS AS IMPORTANT AS WHAT IS. x, y and width must not move — the top edge is
+ * where the user (or the top-centre default) put it, and only the height is ours.
+ */
+async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise<void> {
+  const before = await settleFit(app, card)
+  const b = before.bounds
+  if (!check('the con card window has bounds to read', b !== null)) return
+  check('the window’s height IS the card plus the overlay’s own padding — no empty apron',
+    Math.abs((b as Bounds).height - before.want) <= FIT_SLACK,
+    `window ${String((b as Bounds).height)} vs card+padding ${String(before.want)}`)
+  // It is genuinely FITTED, not just "some number": the old fixed strip was 300 tall and the card
+  // is a handful of rows. A window that had not moved would sail through the check above only if
+  // the card happened to be exactly that tall.
+  note(`fitted con card window: ${String((b as Bounds).width)}x${String((b as Bounds).height)}`)
+
+  // A TEXT-SCALE BUMP RE-FITS IT. The scale is applied as a CSS `zoom` on the card (overlayScale),
+  // so the measured box really does grow — and the window has to follow, which is acceptance
+  // criterion 3. Written through the overlay's own config door, the same one A+ uses.
+  await setTextScale(card, 1.5)
+  const bigger = await settleFit(app, card)
+  const big = bigger.bounds
+  if (check('a bigger text size re-fits the window', big !== null)) {
+    check('…and the window GREW with the card rather than clipping it',
+      (big as Bounds).height > (b as Bounds).height &&
+        Math.abs((big as Bounds).height - bigger.want) <= FIT_SLACK,
+      `${String((b as Bounds).height)} -> ${String((big as Bounds).height)} (card+padding ${String(bigger.want)})`)
+    // THE POSITION NEVER GIVES. Only the height is the app's to change.
+    check('…while x, y and width stayed exactly where they were',
+      (big as Bounds).x === (b as Bounds).x && (big as Bounds).y === (b as Bounds).y &&
+        (big as Bounds).width === (b as Bounds).width,
+      `${JSON.stringify(b)} -> ${JSON.stringify(big)}`)
+  }
+  // Back to 1.0 so the screenshot below is the card at its shipped size.
+  await setTextScale(card, 1)
+  await settleFit(app, card)
 }
 
 /** THE DROPS: the catalog's table for this mob, at most five lines of it. */
@@ -273,6 +396,77 @@ async function stepCloseAndSuppress(log: FixtureLog, card: Page): Promise<void> 
   check('…while a different creature still draws one — the suppression is per mob', name === MOB, name)
 }
 
+/**
+ * THE SAME FIT IN OPAQUE MODE (JOS-386's "both modes"), which is where the apron was VISIBLE.
+ *
+ * Transparent, an over-tall strip is invisible and only costs the mouse. With `opaqueOverlays` on
+ * (the JOS-40 compatibility switch, and the automatic path on a compositor that turns a transparent
+ * frameless window black) the same window is a solid dark rectangle, so every unused pixel of it is
+ * a box the player looks at over their game. The fit has to be the card in BOTH.
+ *
+ * TRANSPARENCY IS DECIDED AT CONSTRUCTION, so the ceremony is the one overlay-sync.e2e.mts uses:
+ * write the preference, then close and reopen the window. The con card's open-state is its
+ * Preferences toggle, so `toggleOverlay('conCard')` is that close and that reopen.
+ *
+ * It puts the switch back to 'off' and the window back up before returning — the step after this
+ * one is about the preference closing the window, and it needs one to close.
+ */
+async function stepOpaqueModeFitsToo(app: ElectronApplication, page: Page, log: FixtureLog): Promise<void> {
+  const openState = (): Promise<boolean> =>
+    page.evaluate(async () => (await (window as unknown as { eq: GraphicsBridge }).eq.getOverlayState()).conCard)
+  const reopen = async (): Promise<Page | null> => {
+    await page.evaluate(async () => {
+      const eq = (window as unknown as { eq: GraphicsBridge }).eq
+      if ((await eq.getOverlayState()).conCard) await eq.toggleOverlay('conCard')
+    })
+    // THE WINDOW HAS TO BE GONE before it can be built differently, and main is the only side that
+    // knows: the open-state it reports back is the close completing (wave E3 — condition, not
+    // clock). overlay-sync.e2e.mts learned this on the fight overlay; it is the same ceremony.
+    await settle(openState, (open) => open === false, { timeoutMs: 10_000 })
+    await page.evaluate(async () => {
+      const eq = (window as unknown as { eq: GraphicsBridge }).eq
+      if (!(await eq.getOverlayState()).conCard) await eq.toggleOverlay('conCard')
+    })
+    return settle(() => findCardWindow(app), (w) => w !== null, { timeoutMs: 30_000 })
+  }
+  const background = (): Promise<string> =>
+    app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().includes('kind=conCard'))
+      return w ? w.getBackgroundColor() : ''
+    })
+
+  const clearBg = await background()
+  await page.evaluate(() => (window as unknown as { eq: GraphicsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: 'on' }))
+  const opaque = await reopen()
+  if (!check('the con card window reopens in opaque mode', opaque !== null)) return
+  // MEASURED, and spelled out rather than imported (an e2e file loads no src module): a transparent
+  // window reports `#000000` here and an opaque one the solid overlay colour, `OPAQUE_OVERLAY_BG`
+  // in src/shared/graphicsPrefs.ts — the same RGB the page already paints.
+  const opaqueBg = await background()
+  check('…and it really was built differently — the window carries the solid overlay colour',
+    opaqueBg.toLowerCase() === '#0e1115' && opaqueBg !== clearBg, `${clearBg} -> ${opaqueBg}`)
+
+  const card = opaque as Page
+  const name = await conAndWait(log, card, MOB_CON, MOB).catch(() => '')
+  if (check('a `/con` draws the card in opaque mode too', name === MOB, name)) {
+    // The drops arrive on the second pass and change the card's height; settle on the finished card
+    // exactly as the transparent half does, then assert the window is that card and nothing more.
+    await settle(() => textOf(card, DROPS), (t) => t.length > 0 && !/Looking up/.test(t), { timeoutMs: 30_000 })
+    const fit = await settleFit(app, card)
+    const b = fit.bounds
+    if (check('the opaque con card window has bounds to read', b !== null)) {
+      check('IN OPAQUE MODE THE BOX ON SCREEN IS EXACTLY THE CARD — no dark apron under it',
+        Math.abs((b as Bounds).height - fit.want) <= FIT_SLACK,
+        `window ${String((b as Bounds).height)} vs card+padding ${String(fit.want)}`)
+    }
+  }
+
+  // …and back, so the switch is a switch and the next step has a transparent window to close.
+  await page.evaluate(() => (window as unknown as { eq: GraphicsBridge }).eq.setGraphicsPrefs({ opaqueOverlays: 'off' }))
+  const clear = await reopen()
+  check('the con card reopens transparent again', clear !== null && (await background()) === clearBg)
+}
+
 /** THE PREFERENCE: off means off, and the window goes with it. */
 async function stepPreferenceTurnsItOff(app: ElectronApplication, page: Page): Promise<void> {
   await page.click('[data-testid="nav-preferences"]', { timeout: 60_000 })
@@ -315,11 +509,15 @@ async function main(): Promise<void> {
       // The drops step is what WAITS for the second pass; the chips are read after it, so they are
       // read from a settled card rather than from the moment before the spell table landed.
       await stepDrops(card)
-      await stepFiveChips(card)
+      await stepNotableChips(card)
+      // The fit is asserted on the FINISHED card — after the second pass brought the drops in, so
+      // the height under test is the one the user actually looks at rather than a mid-flight one.
+      await stepWindowFitsCard(app, card)
       await stepScreenshot(app, card)
       await stepNextConReplaces(log, card)
       await stepPlayerGetsNothing(log, card)
       await stepCloseAndSuppress(log, card)
+      await stepOpaqueModeFitsToo(app, page, log)
       await stepPreferenceTurnsItOff(app, page)
     } else {
       note('no con card window — every claim below it was skipped')
