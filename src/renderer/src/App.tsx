@@ -34,6 +34,9 @@ import AlertsView from './features/alerts/AlertsView'
 import BuffsView from './features/buffs/BuffsView'
 import TimersView from './features/timers/TimersView'
 import PreferencesView from './features/preferences/PreferencesView'
+// ONE symbol, for ONE preference (JOS-139): the tray menu can change what the X does while the
+// Preferences pane is closed, and the pane's warm snapshot has to hear about it. See the effect.
+import { recordPref } from './features/preferences/prefsSnapshot'
 import FeedbackDialog from './features/feedback/FeedbackDialog'
 // OWNER-ONLY. `devTriage` holds the single `DEV_TOOLS ? lazy(() => import(…)) : null` — the
 // STRIP, which is a compile-time question and stays on `DEV_TOOLS`; in a build without the flag
@@ -550,11 +553,20 @@ export default function App(): JSX.Element {
     const offFocus = window.eq.onFocusView((focus) =>
       applyDeepLink(focus, { openMob, openQuest, openLeveling, selectView })
     )
+    // WHAT THE X DOES CAN CHANGE WHERE THIS PANE CANNOT SEE IT (JOS-139). The tray icon's menu
+    // carries the same checkbox, and it is used precisely while this window is hidden — so the
+    // Preferences pane's warm snapshot is kept current HERE, at the root, rather than only by the
+    // card. Without it a tray-side flip would be invisible until the next launch: the card seeds
+    // from the cache (JOS-340) and the cache is only ever written by a card's own reply.
+    const offTray = window.eq.onCloseToTray((p) => {
+      recordPref('closeToTray', p)
+    })
     return () => {
       offDelta()
       offChar()
       offEqConfig()
       offFocus()
+      offTray()
     }
   }, [openMob, openQuest, openLeveling, selectView])
 

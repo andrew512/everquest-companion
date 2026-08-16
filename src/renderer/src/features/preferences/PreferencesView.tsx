@@ -115,6 +115,9 @@ import { buffTrustSection } from './BuffTrustSetting'
 // Same arrangement again (JOS-123): the main window's text size names its own section beside the
 // card that renders it. See ./TextSizeSetting.tsx.
 import { textSizeSection } from './TextSizeSetting'
+// Same arrangement again (JOS-139): what the X does — the app keeps running in the tray, or it
+// quits — names its own section beside the card that renders it. See ./CloseToTraySetting.tsx.
+import { windowSection } from './CloseToTraySetting'
 // Same arrangement again (JOS-73): the release-notes panel names its own section beside the card
 // that renders it. See features/whatsnew/WhatsNewPanel.tsx for why the notes are a SECTION.
 import { whatsNewSection } from '../whatsnew/WhatsNewPanel'
@@ -301,6 +304,9 @@ function buildSections({ version, status, onSendFeedback, onWhatsNew }: SectionI
     textSizeSection(),
     combatSection(),
     overlaysSection(),
+    // Right after the overlays, because the promise this switch makes is about them: closing the
+    // window keeps them running (JOS-139).
+    windowSection(),
     graphicsSection(),
     buffTrustSection(),
     cursorRingSection(),
