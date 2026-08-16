@@ -335,6 +335,17 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   resistant / very resistant / nearly immune (R >= 45); weak, normal and no-data axes are not
   chips. One quiet "no notable resists" line when nothing qualifies. The mob page keeps the
   full five-row table (JOS-386).
+- The tag is a benchmark, not an R band (owner, 2026-08-16): "will it land if I cast it".
+  Two Legends mechanics enter the model first (JOS-387): spell upgrade ranks are -15 resist
+  adjust per rank (the Roman numeral in the log name; `Scorching Arrow IV` = -60), and the
+  Overchannel invocation is -150 (plus -15 per non-hybrid caster class) on cast spells (Legends
+  wiki, Stances & Invocations, cached in the repo). Then, per viewer level L: `rc0 = R +
+  levelMod(L, mob)`, `pPlain = (200 - rc0)/200`, `pOver` the same at rc0 - 150; tags: lands
+  (>= 80%), usually lands (50-80%), resistant (plain < 50% but overchannel >= 50% - "not without
+  overchannel"), very resistant (overchannel < 50% - "will not land"). Every row/chip prints
+  `lands N% · with overchannel M%`. Informative n (spells with adjust > -100) drives the
+  low-samples caveat; the fixed-damage full reference is the histogram MODE across mobs, not
+  the max (Live focus effects roll a random +1..34%) - both in JOS-385.
 - Presentation: **no acronyms**. Every axis is shown as its word (magic, fire, cold, poison,
   disease) with a stable colour per axis; the colour and the word always appear together.
 
