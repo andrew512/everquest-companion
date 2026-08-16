@@ -15,7 +15,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { estimate } from '../src/shared/resistModel'
+import { damageModes, estimate } from '../src/shared/resistModel'
 import { resistTag } from '../src/shared/resistFormula'
 import { rowTotal } from '../src/main/resist/ledger'
 import { localMobEntry } from '../src/main/mobLookupLocal'
@@ -31,6 +31,13 @@ import {
 const PATH = join(import.meta.dirname, '..', 'src', 'main', 'data', 'resistBaseline.json')
 const LEDGER = JSON.parse(readFileSync(PATH, 'utf8')) as ResistLedger
 const ROWS = LEDGER.sources[0].rows
+
+/**
+ * The full-damage reference per (spell, caster level) over the WHOLE file, which is what the app
+ * hands the estimator (`src/main/ipc/resist.ts`). Every estimate below passes it, so these tests
+ * read the same numbers a mob page does rather than the narrower per-cell fallback.
+ */
+const MODES = damageModes(ROWS)
 
 const SPELLS_US =
   process.env.EQ_SPELLS_US ??
@@ -209,22 +216,49 @@ test('Lord Nagafen reads the magic resistance the plan predicted', { skip: !HAVE
   assert.ok(est.R >= 90 && est.R <= 210, `R=${String(est.R)} outside the predicted [90, 210]`)
 })
 
-test('a ghoul knight is provably COLD-resistant, from the owner\'s own casts', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {
-  // THE HEADLINE CLAIM FROM THE TAILED CHARACTER'S OWN CASTS. The brief named the imp protector
-  // and the lava guardian; their fire evidence in this log is entirely NPC-vs-NPC (imp protectors
-  // casting Dry Bone Fire Burst at each other), which JOS-382's ruling excluded outright — the
-  // test above is that cell speaking now, and this one is the same shape of claim standing on
-  // nothing but the player's own casts. The ghoul knights can carry it: he nuked them with both
-  // axes for weeks.
-  const rows = rowsFor('a zol ghoul knight')
-  const cold = estimate(rows, spells(), { axis: 'cold', mobLevel: 38 })
-  const magic = estimate(rows, spells(), { axis: 'magic', mobLevel: 38 })
-  assert.ok(cold.n >= 60, `cold n=${String(cold.n)}`)
-  assert.ok(magic.n >= 500, `magic n=${String(magic.n)}`)
-  assert.ok(cold.R > magic.R, `cold R=${String(cold.R)} vs magic R=${String(magic.R)}`)
+test('a loathling lich is provably DISEASE-resistant, from the owner\'s own casts', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {
+  // THE HEADLINE CLAIM FROM THE TAILED CHARACTER'S OWN CASTS. The test above is the same shape of
+  // claim standing on the npc family; this one stands on nothing but the player's own nukes, and
+  // it is one the plan predicted by hand before any of this code existed (section 3: a loathling
+  // lich, disease 51% resisted against 1% magic and 2% fire).
+  const rows = rowsFor('a loathling lich')
+  const disease = estimate(rows, spells(), { axis: 'disease', mobLevel: 51, modes: MODES })
+  const magic = estimate(rows, spells(), { axis: 'magic', mobLevel: 51, modes: MODES })
+  assert.ok(disease.nInformative >= 60, `disease n=${String(disease.nInformative)}`)
+  assert.ok(magic.nInformative >= 60, `magic n=${String(magic.nInformative)}`)
+  assert.ok(disease.R > magic.R, `disease R=${String(disease.R)} vs magic R=${String(magic.R)}`)
   // And provably so: the intervals do not overlap, which is what turns "looks higher" into a
   // statement a player can act on.
-  assert.ok(cold.lo > magic.hi, `cold [${String(cold.lo)},${String(cold.hi)}] vs magic [${String(magic.lo)},${String(magic.hi)}]`)
+  assert.ok(
+    disease.lo > magic.hi,
+    `disease [${String(disease.lo)},${String(disease.hi)}] vs magic [${String(magic.lo)},${String(magic.hi)}]`
+  )
+})
+
+test('THE ZOL GHOUL KNIGHT LOST ITS COLD CLAIM, and that is the fix working (JOS-385)', () => {
+  // WORTH A TEST OF ITS OWN, because a claim this suite used to make is gone and the reason is the
+  // whole of defect 2. `a zol ghoul knight` read cold R 60 [40,84] against magic R 30 [24,34] —
+  // provably cold-resistant — and a good part of that 60 was invented: the full-damage reference
+  // was each histogram's largest value, so every focused Frost Dagger and Frost Strike hit counted
+  // as a partial and the mob looked like it was eating cold. Against the ledger-wide mode the same
+  // rows read cold R 26 [10,50] and magic R 26 [22,30]: two axes this log cannot tell apart.
+  //
+  // The honest display of that is an overlap, and a suite that still asserted the separation would
+  // be pinning the defect. What is pinned instead is that the two intervals now MEET.
+  if (!HAVE_CLIENT) return
+  const rows = rowsFor('a zol ghoul knight')
+  const cold = estimate(rows, spells(), { axis: 'cold', mobLevel: 38, modes: MODES })
+  const magic = estimate(rows, spells(), { axis: 'magic', mobLevel: 38, modes: MODES })
+  assert.ok(cold.hi >= magic.lo && magic.hi >= cold.lo, 'the intervals overlap: no separation is claimed')
+  // …and the magic cell is where the OTHER defect shows on this mob: 1,294 observations of which
+  // 606 could have gone either way, because Smiting Strike is a -250 proc cast 689 times.
+  assert.ok(magic.nInformative < magic.n / 2, `${String(magic.nInformative)} of ${String(magic.n)}`)
+  const proc = magic.perSpell.find((e) => e.spellKey === 'smiting strike')
+  assert.equal(proc?.informative, false)
+  assert.equal(proc?.resistAdj, -250)
+  // And it is sorted BELOW every spell that tested the mob, however many times it was cast.
+  const informativeCasts = magic.perSpell.filter((e) => e.informative).length
+  assert.ok(magic.perSpell.slice(0, informativeCasts).every((e) => e.informative), 'informative first')
 })
 
 test('every axis answers for a well-observed mob, and thin ones say so', { skip: !HAVE_CLIENT && 'no client spells_us.txt' }, () => {

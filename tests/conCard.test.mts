@@ -30,7 +30,8 @@ import {
   notableChips
 } from '../src/renderer/src/overlay/conCardRows'
 import { fitChanged, overlayFitRequest } from '../src/renderer/src/overlay/overlayFit'
-import { resistTag } from '../src/shared/resistModel'
+// The forward model moved to its own module when JOS-385 split resistModel.ts (line ceiling).
+import { resistTag } from '../src/shared/resistFormula'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import {
   FIT_HEIGHT_KINDS,
@@ -167,9 +168,15 @@ test('a re-con inside a minute of a CLOSE does not nag, and a minute later it do
 
 function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
   return {
-    R: 126, lo: 110, hi: 144, n: 600, fromBaseline: 480, fromYou: 120,
+    R: 126, lo: 110, hi: 144, n: 600, nInformative: 600, fromBaseline: 480, fromYou: 120,
     droppedNoLevel: 0, droppedUnobservable: 0,
     byFamily: { cast: { n: 600, resist: 40, land: 560 }, song: { n: 0, resist: 0, land: 0 } },
+    byCaster: {
+      self: { n: 600, resist: 40, land: 560 },
+      pc: { n: 0, resist: 0, land: 0 },
+      npc: { n: 0, resist: 0, land: 0 }
+    },
+    npcIncluded: true,
     perSpell: [], baselineWeight: 0, userOnly: false, baselineFit: null, userFit: null,
     differsFromShipped: false, nearlyImmune: false,
     ...spec
@@ -183,12 +190,27 @@ function profile(spec: Partial<MobResistProfile> = {}): MobResistProfile {
     level: null,
     spellDataAvailable: true,
     baselineFrozenAt: null,
+    spellDataNote: null,
     axes: [
-      { axis: 'magic', estimate: est({ n: 600 }), tag: 'very resistant', n: 600 },
-      { axis: 'fire', estimate: est({ R: 180, lo: 40, hi: 200, n: 3 }), tag: 'very resistant', n: 3 },
-      { axis: 'cold', estimate: null, tag: null, n: 0 },
-      { axis: 'poison', estimate: est({ R: 5, lo: 0, hi: 20, n: 40 }), tag: 'weak', n: 40 },
-      { axis: 'disease', estimate: null, tag: null, n: 0 }
+      { axis: 'magic', estimate: est({ n: 600, nInformative: 600 }), tag: 'very resistant', n: 600, nInformative: 600 },
+      {
+        axis: 'fire',
+        estimate: est({ R: 180, lo: 40, hi: 200, n: 3, nInformative: 3 }),
+        tag: 'very resistant',
+        n: 3,
+        nInformative: 3
+      },
+      { axis: 'cold', estimate: null, tag: null, n: 0, nInformative: 0 },
+      // POISON IS THE JOS-385 SHAPE: forty casts, and only six of them of a spell that could have
+      // been resisted at all. The chip prints the six and the mob page prints both numbers.
+      {
+        axis: 'poison',
+        estimate: est({ R: 5, lo: 0, hi: 20, n: 40, nInformative: 6 }),
+        tag: 'weak',
+        n: 40,
+        nInformative: 6
+      },
+      { axis: 'disease', estimate: null, tag: null, n: 0, nInformative: 0 }
     ],
     ...spec
   }
@@ -198,7 +220,9 @@ test('five chips, always, in one order, whatever the profile hands over', () => 
   const chips = conCardChips(profile())
   assert.deepEqual(chips.map((c) => c.axis), [...RESIST_AXES], 'the order the eye learns')
   // A profile missing an axis entirely (an older payload, a future shape) still draws five.
-  const short = conCardChips(profile({ axes: [{ axis: 'fire', estimate: est(), tag: 'resistant', n: 9 }] }))
+  const short = conCardChips(
+    profile({ axes: [{ axis: 'fire', estimate: est(), tag: 'resistant', n: 9, nInformative: 9 }] })
+  )
   assert.equal(short.length, 5)
   assert.deepEqual(short.map((c) => c.axis), [...RESIST_AXES])
   assert.equal(short[2].tag, null, 'an axis with no row is an EMPTY chip, never a missing one')
@@ -246,6 +270,8 @@ test('every tag at or above the estimator’s own `resistant` cut is kept, and n
     axis: 'magic',
     tag,
     n,
+    // A cell whose casts could all have been resisted: the two counts agree, which is most cells.
+    nTotal: n,
     fit: tag === null ? null : { R: 60, lo: 40, hi: 80 }
   })
   const kept = notableChips([chip('weak'), chip('normal'), chip('resistant'), chip('very resistant'), chip('nearly immune')])
@@ -261,6 +287,36 @@ test('the card’s empty state can tell "we looked" from "we have never seen one
   const nothing = conCardChips(profile({ axes: [] }))
   assert.deepEqual(notableChips(nothing), [], 'no chips at all')
   assert.equal(conCardTotalN(nothing), 0, 'and the count says so, which is a different sentence')
+})
+
+test('THE CHIP COUNTS WHAT COULD HAVE BEEN RESISTED, and carries the total beside it (JOS-385)', () => {
+  // The defect the owner found on a thunder spirit princess, on the surface that has the least
+  // room to explain itself: a chip that printed `n=83` off eight observations that tested anything.
+  // The chip's own number is now the informative one, so a caveat can key off it and be right, and
+  // the total rides along so the card and the mob page can print the same sentence.
+  const poison = conCardChips(profile())[RESIST_AXES.indexOf('poison')]
+  assert.equal(poison.n, 6, 'the count the chip prints is the one that could have gone either way')
+  assert.equal(poison.nTotal, 40, 'and the total is still on the wire')
+
+  // Where nothing is uninformative the two are the same number, which is most cells.
+  const magic = conCardChips(profile())[RESIST_AXES.indexOf('magic')]
+  assert.equal(magic.n, magic.nTotal)
+  // An EMPTY chip is zero on both, and the card draws "no data" rather than a caveat.
+  const cold = conCardChips(profile())[RESIST_AXES.indexOf('cold')]
+  assert.equal(cold.n, 0)
+  assert.equal(cold.nTotal, 0)
+
+  // AND THE CARD'S OWN TWO RULES READ THE TOTAL, not the informative half (JOS-386 meeting
+  // JOS-385): "have we ever seen anything on this axis" and "how much is this whole profile
+  // standing on" are questions about observations, and an axis whose every cast was a proc has
+  // still been observed. Only the CAVEAT keys off the informative count.
+  const allUninformative = conCardChips(
+    profile({
+      axes: [{ axis: 'magic', estimate: est({ n: 40, nInformative: 0 }), tag: 'resistant', n: 40, nInformative: 0 }]
+    })
+  )
+  assert.equal(notableChips(allUninformative).length, 1, 'a resistant axis is drawn, and wears the caveat')
+  assert.equal(conCardTotalN(allUninformative), 40, 'and the profile has plainly seen something')
 })
 
 // ---- the drops --------------------------------------------------------------------------

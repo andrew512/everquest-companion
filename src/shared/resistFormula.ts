@@ -53,6 +53,34 @@ export function levelMod(casterLevel: number, mobLevel: number): number {
   return d < 0 ? -mag : mag
 }
 
+/**
+ * A SPELL WITH A RESIST ADJUST BELOW THIS CANNOT BE RESISTED, so watching it land says nothing
+ * about the mob (JOS-385, defect 2's sibling — the owner found both on one card).
+ *
+ * `rc = R + levelMod + resistAdj`, and a resist needs `roll <= rc` out of 1..200. At -250 the mob
+ * would need R above about 250 before a single roll could catch it, which is past the top of the
+ * tag scale — so a proc's 87 unresisted casts are not 87 pieces of evidence that the mob is weak,
+ * they are one sentence: "R is not enormous". Its likelihood is flat across almost the whole grid.
+ *
+ * -100 IS THE LINE, and it is drawn where the log's own spells fall rather than at a round number
+ * that happens to be tidy. This app's procs run -150 (Divine Might Strike), -200 (Lifetap Strike)
+ * and -250 (Smiting Strike); lures run -300 to -1000; ordinary nukes and every all-or-nothing
+ * spell run 0. Nothing in the owner's two-million-line log sits between -100 and -150, so the
+ * threshold separates the two populations without cutting through either.
+ *
+ * WHAT IT CHANGES IS WHAT IS SHOWN, NOT WHAT IS FITTED. Those observations still enter the
+ * likelihood — "R is not enormous" is true and worth having — but they no longer inflate the count
+ * a player reads, no longer suppress the low-samples caveat, and no longer head the evidence list.
+ * A card that said `n=83` off 83 casts that could never have been resisted was overstating what it
+ * knew by an order of magnitude.
+ */
+export const INFORMATIVE_RESIST_ADJ = -100
+
+/** Could this spell have been resisted at all? See `INFORMATIVE_RESIST_ADJ`. */
+export function isInformativeSpell(resistAdj: number): boolean {
+  return resistAdj > INFORMATIVE_RESIST_ADJ
+}
+
 /** Torven's typical NPC resist for an axis at a level. The prior, and nothing else. */
 export function priorResist(axis: ResistAxis, mobLevel: number | null): number {
   if (axis === 'poison' || axis === 'disease') return 15

@@ -42,9 +42,22 @@ export function estimateText(est: Pick<ResistEstimate, 'R' | 'lo' | 'hi'>): stri
   return `R ${String(est.R)} (${String(est.lo)}-${String(est.hi)})`
 }
 
-/** `n=600`. Always printed beside the number, at every sample size. */
-export function countText(n: number): string {
-  return `n=${String(n)}`
+/**
+ * `n=600`, or `n=8 informative · 83 total` when a cell's casts were mostly of spells that could
+ * never have been resisted (JOS-385).
+ *
+ * ONE SENTENCE, TWO SURFACES. The mob page row and the con card chip both print this, so the two
+ * cannot come to disagree about how much this app knows — which is exactly the disagreement the
+ * defect created: the owner's thunder spirit princess said `n=83` while eight of those casts were
+ * the only ones that tested anything.
+ *
+ * BOTH NUMBERS, never one. Dropping the total would hide real work the app did (the procs landed,
+ * and that they landed is worth seeing); dropping the informative count is the defect. The word
+ * "informative" is doing the explaining and the drilldown says which spells they were.
+ */
+export function countText(nInformative: number, nTotal = nInformative): string {
+  if (nInformative === nTotal) return `n=${String(nTotal)}`
+  return `n=${String(nInformative)} informative · ${String(nTotal)} total`
 }
 
 /**
@@ -128,12 +141,23 @@ export function spellDisplayName(key: string): string {
  */
 export const NOT_OBSERVABLE_NOTE = 'landings not observable'
 
+/**
+ * A spell whose resist adjust puts it out of reach of any resist roll (JOS-385). Said on its own
+ * line rather than in a legend, and said QUIETLY: the casts are real and they are shown, they just
+ * cannot be evidence about this mob. The number is in it because the adjust is the reason, and a
+ * reader who knows the game will recognise -250 as a proc immediately.
+ */
+export function cannotBeResistedNote(resistAdj: number): string {
+  return `cannot be resisted at this level: ${String(resistAdj)} adjust`
+}
+
 export function evidenceText(ev: ResistSpellEvidence): string {
   const parts = [`${String(ev.casts)} cast${ev.casts === 1 ? '' : 's'}`]
   if (ev.resisted > 0) parts.push(`${String(ev.resisted)} resisted`)
   if (ev.partial > 0) parts.push(`${String(ev.partial)} partial`)
   // Say WHY it is not in the number, on the very line the number is missing from.
   if (ev.landingsNotObservable === true) parts.push(NOT_OBSERVABLE_NOTE)
+  if (!ev.informative) parts.push(cannotBeResistedNote(ev.resistAdj))
   return `${spellDisplayName(ev.spellKey)}: ${parts.join(', ')}`
 }
 

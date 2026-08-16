@@ -123,11 +123,27 @@ async function stepNumbers(page: Page): Promise<void> {
   check('and the count it rests on', /n=\d+/.test(row), row)
   check('and where the evidence came from', /baseline \d+/.test(row), row)
 
-  // THE HEADLINE: this mob resists cold noticeably more than magic, and the card shows it.
-  const cold = await textOf(page, '[data-testid="resist-value-cold"]')
-  const magicR = Number(/^R (\d+)/.exec(magic)?.[1] ?? '0')
-  const coldR = Number(/^R (\d+)/.exec(cold)?.[1] ?? '0')
-  check(`cold (${cold}) reads above magic (${magic})`, coldR > magicR, `${cold} vs ${magic}`)
+  // AND THE COUNT SAYS HOW MUCH OF IT COULD HAVE GONE EITHER WAY (JOS-385). On this mob the magic
+  // cell is dominated by Smiting Strike, a proc cast 689 times at a -250 resist adjust: casts that
+  // could not have been resisted whatever the mob's magic resistance is. The row printed `n=1295`
+  // and read as the best-evidenced cell on the card; it now prints both numbers.
+  //
+  // (The claim this step used to make — cold reads provably above magic — is GONE, and its
+  // disappearance is the second defect being fixed rather than a regression: most of that
+  // separation was focused Frost Strike hits counted as partials. See the baseline suite's
+  // `THE ZOL GHOUL KNIGHT LOST ITS COLD CLAIM` for the numbers.)
+  check(
+    'the magic count separates what could have been resisted from what could not',
+    /n=\d+ informative · \d+ total/.test(row),
+    row
+  )
+  const counts = /n=(\d+) informative · (\d+) total/.exec(row)
+  if (counts) {
+    check(
+      `  and the informative half is the smaller one (${counts[1]} of ${counts[2]})`,
+      Number(counts[1]) < Number(counts[2])
+    )
+  }
 }
 
 /**
@@ -175,6 +191,17 @@ async function stepEvidence(page: Page): Promise<void> {
   if (!check('the magic row expands', await appears(page, '[data-testid="resist-evidence-magic"]', 10_000))) return
   const text = await textOf(page, '[data-testid="resist-evidence-magic"]')
   check('and lists per-spell evidence', /: \d+ casts?/.test(text), text.slice(0, 120))
+
+  // JOS-385: a spell nothing could have resisted says so, and does not head the list. Smiting
+  // Strike is cast 689 times on this mob at -250; the line that actually tested its magic
+  // resistance is Condemnation of Nife at 184, and that is the one the eye lands on.
+  check(
+    'a spell that could never have been resisted says so',
+    /cannot be resisted at this level: -\d+ adjust/.test(text),
+    text.slice(0, 200)
+  )
+  const first = text.split(/\s(?=[A-Z][a-z]+(?:'s)?[^:]*: \d+ casts?)/)[0]
+  check('…and it is not the first line, however many times it was cast', !first.includes('Smiting Strike'), first)
 }
 
 /**

@@ -364,6 +364,28 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   `lands N% · with overchannel M%`. Informative n (spells with adjust > -100) drives the
   low-samples caveat; the fixed-damage full reference is the histogram MODE across mobs, not
   the max (Live focus effects roll a random +1..34%) - both in JOS-385.
+- **What `n` counts** (owner, 2026-08-16, off a live thunder spirit princess reading
+  `R 58 (36-102) n=83 resistant` with no caveat): an observation only counts as evidence if the
+  spell could have been resisted at all. `rc = R + levelMod + resistAdj`, so a -150/-200/-250 proc
+  or a -300/-1000 lure is out of reach of any roll and its casts say only "R is not enormous".
+  Those rows still enter the likelihood; they no longer inflate the count, no longer suppress the
+  low-samples caveat, and no longer head the evidence list. The row prints both
+  (`n=8 informative · 83 total`), the con card chip prints the informative one, the caveat keys off
+  it, and an uninformative line says `cannot be resisted at this level: -250 adjust`. The threshold
+  is `INFORMATIVE_RESIST_ADJ = -100` (shared/resistFormula.ts) and it is drawn where this log's own
+  spells fall: procs at -150 and below, everything else at 0.
+- **The full-damage reference is the MODE, never the max** (owner, same review): Live spell-damage
+  focus effects roll a random bonus per cast, so the largest value a spell ever printed is a
+  focused roll and every ordinary full hit sits below it — read as a partial, which invents
+  resistance out of an item the player is wearing. The reference is the mode of the (spell,
+  casterLevel) histogram pooled over EVERY mob in the ledger, a hit at or above 0.97 x mode is
+  full, and a (spell, level) whose top value holds under 40% of the histogram is treated as
+  variable damage for that level (shared/resistDamage.ts). MEASURED: Discordant Mind is 394 at
+  levels 43-49 (78-93% of each level's hits) and unreadable at 50, where the owner's focus item
+  spreads the same spell across 449-528 and leaves the base at 6%; Scorching Arrow reads 214 / 233
+  / 239 at levels 46 / 47 / 48-up, which are the game's own tiers. Cost of the fix, on the shipped
+  baseline: a zol ghoul knight's cold falls from R 60 [40,84] to R 26 [10,50] as 23 partials become
+  5, and the "provably cold-resistant" claim that stood on them is withdrawn.
 - Presentation: **no acronyms**. Every axis is shown as its word (magic, fire, cold, poison,
   disease) with a stable colour per axis; the colour and the word always appear together.
 

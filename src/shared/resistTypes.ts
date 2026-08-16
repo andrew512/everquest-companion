@@ -196,6 +196,14 @@ export interface ResistSpellEvidence {
   land: number
   fromBaseline: number
   fromYou: number
+  /** The spell's resist adjust, from the client table. Negative helps the caster. */
+  resistAdj: number
+  /**
+   * COULD THIS SPELL HAVE BEEN RESISTED AT ALL? (JOS-385.) False for the -150/-200/-250 procs and
+   * the lures: their casts are counted and shown, sorted last, and labelled — they say almost
+   * nothing about the mob, and a list they headed was telling the reader the opposite.
+   */
+  informative: boolean
   /**
    * THE EVIDENCE-SYMMETRY VERDICT. Every observation of this spell across the whole ledger is a
    * RESIST: no landing, no damage number, nothing. That is never a mob that resists 100% of
@@ -214,6 +222,14 @@ export interface ResistFit {
 }
 
 export interface ResistEstimate extends ResistFit {
+  /**
+   * OBSERVATIONS THAT COULD HAVE GONE EITHER WAY (JOS-385). `n` counts everything the fit saw;
+   * this counts only the casts of spells that could actually have been resisted
+   * (`isInformativeSpell`). The two differ by an order of magnitude on any cell a proc dominates —
+   * the owner's thunder spirit princess read `n=83` off 8 — so it is `nInformative` that decides
+   * whether the low-samples caveat is owed, and both numbers are printed.
+   */
+  nInformative: number
   /** Observations that entered the likelihood, split by where they came from. */
   fromBaseline: number
   fromYou: number
@@ -254,6 +270,8 @@ export interface MobResistAxis {
   estimate: ResistEstimate | null
   tag: ResistTag | null
   n: number
+  /** The half of `n` that could have gone either way — see `ResistEstimate.nInformative`. */
+  nInformative: number
 }
 
 export interface MobResistProfile {
@@ -290,6 +308,11 @@ export interface MobResistProfile {
  * THE SHIPPED BASELINE'S OWN FLOOR IS UNCHANGED and is a different rule entirely: the freeze script
  * drops rows under five observations (`MIN_ROW_OBSERVATIONS`, scripts/gen-resist-baseline.ts) to
  * keep the committed file small. That is about bytes on disk; this is about what a person is shown.
+ *
+ * AND IT IS COUNTED IN INFORMATIVE OBSERVATIONS (JOS-385). The owner's thunder spirit princess read
+ * `resistant` with no caveat off `n=83`, of which 75 were casts of -150/-200/-250 procs that could
+ * not have been resisted whatever the mob's magic resistance is. Eight observations is a thin cell
+ * wearing a fat number, which is the exact thing this threshold exists to catch.
  */
 export const LOW_SAMPLE_BELOW = 10
 

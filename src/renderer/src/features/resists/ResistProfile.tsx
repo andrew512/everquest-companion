@@ -204,15 +204,17 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
             <Typography variant="caption" sx={{ width: 116, flex: '0 0 auto' }} data-testid={`resist-value-${row.axis}`}>
               {estimateText(est)}
             </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ width: 62, flex: '0 0 auto' }}>
-              {countText(est.n)}
+            {/* Wide enough for the two-number form, which is the honest width: a column sized to
+                `n=83` would push "8 informative · 83 total" onto the tag beside it. */}
+            <Typography variant="caption" color="text.secondary" sx={{ width: 148, flex: '0 0 auto' }}>
+              {countText(est.nInformative, est.n)}
             </Typography>
             {/* The tag and its caveat share one cell, because they are one sentence: the caveat
                 qualifies the tag and would be a different claim sitting anywhere else. The count is
                 already in the column to the left, so it is not repeated here. */}
             <Typography variant="caption" sx={{ color, width: 96, flex: '0 0 auto' }} data-testid={`resist-tag-${row.axis}`}>
               {row.tag}
-              {lowSamples(est.n) && (
+              {lowSamples(est.nInformative) && (
                 <Typography component="span" variant="caption" color="text.disabled" data-testid={`resist-low-${row.axis}`}>
                   {` · ${LOW_SAMPLE_NOTE}`}
                 </Typography>

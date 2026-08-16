@@ -16,12 +16,13 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { estimate } from '../src/shared/resistModel'
+import { estimate, lowSamples } from '../src/shared/resistModel'
 import type { ResistRow, SpellResistTable } from '../src/shared/resistTypes'
 
-/** One all-or-nothing spell on magic, unadjusted: the simplest cell that can say anything. */
+/** One all-or-nothing spell on magic, unadjusted, and one proc that nothing can resist. */
 const SPELLS: SpellResistTable = {
-  'test hold': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 5 }
+  'test hold': { axis: 'magic', resistAdj: 0, castMs: 3000, targetType: 5 },
+  'test proc': { axis: 'magic', resistAdj: -250, castMs: 0, targetType: 5 }
 }
 
 /**
@@ -107,6 +108,49 @@ test('an npc row with no caster level drops out of the fit exactly as another pl
   assert.equal(est.droppedNoLevel, 60)
   // Counted all the same, on the line that says where the evidence came from.
   assert.equal(est.byCaster.npc.n, 60)
+})
+
+// ---------------------------------------------------------------------------------------------
+// WHAT THE COUNT MEANS (JOS-385, defect 1). The owner's thunder spirit princess read
+// `R 58 (36-102) n=83 resistant` with no caveat, and 75 of those 83 were casts of -150/-200/-250
+// procs: spells whose resist adjust puts them out of reach of any roll. Eight observations were
+// wearing an eighty-three-observation number.
+
+test('THE COUNT SEPARATES WHAT COULD HAVE GONE EITHER WAY from what could not', () => {
+  const cell: ResistRow[] = [
+    // The princess's shape: a proc cast eighty-seven times and never resisted, beside eight casts
+    // of a spell that actually tested the mob.
+    blank({ spellKey: 'test proc', family: 'cast', land: 87 }),
+    blank({ spellKey: 'test hold', family: 'cast', resist: 3, land: 5 })
+  ]
+  const est = estimate(cell, SPELLS, { axis: 'magic', mobLevel: 50, unobservable: LANDS_ELSEWHERE })
+
+  assert.equal(est.n, 95, 'everything the fit saw is still counted')
+  assert.equal(est.nInformative, 8, 'and only what could have been resisted is called evidence')
+  // THE CONSEQUENCE THE OWNER ASKED FOR: this row wears the caveat, and the old one did not.
+  assert.equal(lowSamples(est.nInformative), true)
+  assert.equal(lowSamples(est.n), false, 'which is exactly what the count used to say instead')
+
+  // The proc is still IN the fit, because "R is not enormous" is true and worth having. What it is
+  // out of is the number a person reads as this cell's evidence.
+  const withoutProc = estimate([cell[1]], SPELLS, { axis: 'magic', mobLevel: 50, unobservable: LANDS_ELSEWHERE })
+  assert.equal(withoutProc.nInformative, est.nInformative)
+})
+
+test('the evidence list puts the spells that tested the mob FIRST', () => {
+  const cell: ResistRow[] = [
+    blank({ spellKey: 'test proc', family: 'cast', land: 87 }),
+    blank({ spellKey: 'test hold', family: 'cast', resist: 3, land: 5 })
+  ]
+  const est = estimate(cell, SPELLS, { axis: 'magic', mobLevel: 50, unobservable: LANDS_ELSEWHERE })
+  // By volume alone the proc would head the list at 87 casts against 8, which is how a reader was
+  // being told the mob barely resists magic by the one spell that could not have told them.
+  assert.deepEqual(est.perSpell.map((e) => e.spellKey), ['test hold', 'test proc'])
+  assert.equal(est.perSpell[0].informative, true)
+  assert.equal(est.perSpell[1].informative, false)
+  assert.equal(est.perSpell[1].resistAdj, -250, 'and the line carries the reason')
+  // Nothing is hidden: the proc's own casts are all still on its line.
+  assert.equal(est.perSpell[1].casts, 87)
 })
 
 test('THE DEFAULT IS THE SHIPPED ONE, and the store says so in one place', async () => {

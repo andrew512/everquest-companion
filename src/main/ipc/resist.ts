@@ -21,7 +21,7 @@ import { mobKey } from '../../shared/mobKey'
 import { resolveMobIdentity } from '../mobAliases'
 import { resistModule } from '../pipeline'
 import { mobResistCell, mobResistProfile, type ProfileDeps } from '../resist/profile'
-import { unobservableSpells } from '../../shared/resistModel'
+import { damageModes, unobservableSpells } from '../../shared/resistModel'
 import { spellTable, spellTableNow, spellTableStatus } from '../resist/spellTable'
 import { baselineFrozenAt, resistLedger } from '../resist/store'
 import { getResistPrefs, setResistPrefs } from '../storeResists'
@@ -57,6 +57,17 @@ function unobservable(): ReadonlySet<string> {
   return blindCache
 }
 
+/**
+ * The full-damage reference per (spell, caster level), computed once per app run for the same
+ * reason and with the same lifetime as the blindness verdict above. It moves only when the fold
+ * files damage at a value it has not seen before, and the profile reads it on every draw.
+ */
+let modesCache: ReadonlyMap<string, number> | null = null
+function modes(): ReadonlyMap<string, number> {
+  modesCache ??= damageModes(allLedgerRows())
+  return modesCache
+}
+
 function allLedgerRows(): ResistRow[] {
   const out: ResistRow[] = []
   for (const src of resistLedger().toLedger().sources) out.push(...src.rows)
@@ -76,6 +87,7 @@ export function resistProfileDeps(): ProfileDeps {
   return {
     rowsFor: rowsForIdentity,
     unobservable,
+    damageModes: modes,
     spells: () => spellTableNow(),
     levelOf: (key, display) => resistModule.levelOf(key, display),
     frozenAt: () => baselineFrozenAt(),

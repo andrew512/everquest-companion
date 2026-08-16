@@ -81,6 +81,12 @@ export interface ProfileDeps {
    * mob's rows (resistModel.ts `unobservableSpells` states why the scope matters).
    */
   unobservable: () => ReadonlySet<string>
+  /**
+   * The full-damage reference per (spell, caster level), decided over the WHOLE ledger for the same
+   * reason `unobservable` is (`shared/resistDamage.ts` states it): a mob with four hits of a nuke
+   * cannot establish what that nuke hits for, and does not have to.
+   */
+  damageModes: () => ReadonlyMap<string, number>
   frozenAt: () => string | null
   /**
    * Whether charmed pets and NPC casters weigh in the numbers (JOS-385). READ AT ESTIMATE TIME,
@@ -112,6 +118,7 @@ function clampFit(est: ResistEstimate): ResistEstimate {
 interface AxisCtx {
   mobLevel: number | null
   unobservable: ReadonlySet<string>
+  modes: ReadonlyMap<string, number>
   includeNpcCasters: boolean
 }
 
@@ -126,6 +133,7 @@ function axisRow(
       axis,
       mobLevel: ctx.mobLevel,
       unobservable: ctx.unobservable,
+      modes: ctx.modes,
       includeNpcCasters: ctx.includeNpcCasters,
     })
   )
@@ -134,6 +142,7 @@ function axisRow(
     estimate: est,
     tag: hasAnswer(est.n) ? resistTag(est.R) : null,
     n: est.n,
+    nInformative: est.nInformative,
   }
 }
 
@@ -147,11 +156,14 @@ export function mobResistProfile(displayName: string, deps: ProfileDeps): MobRes
   const ctx: AxisCtx = {
     mobLevel: fact?.level ?? null,
     unobservable: deps.unobservable(),
+    modes: deps.damageModes(),
     includeNpcCasters: deps.includeNpcCasters(),
   }
   const axes = spells
     ? RESIST_AXES.map((axis) => axisRow(rows, spells, axis, ctx))
-    : RESIST_AXES.map((axis) => ({ axis, estimate: null, tag: null, n: 0 }) satisfies MobResistAxis)
+    : RESIST_AXES.map(
+        (axis) => ({ axis, estimate: null, tag: null, n: 0, nInformative: 0 }) satisfies MobResistAxis
+      )
   return {
     mobKey: key,
     displayName,
@@ -182,6 +194,7 @@ export function mobResistCell(
       axis,
       mobLevel: fact?.level ?? null,
       unobservable: deps.unobservable(),
+      modes: deps.damageModes(),
       includeNpcCasters: deps.includeNpcCasters(),
     })
   )
