@@ -83,7 +83,9 @@
 
 import {
   LOW_SAMPLE_BELOW,
+  RESIST_CASTER_KINDS,
   type ResistAxis,
+  type ResistCasterKind,
   type ResistEstimate,
   type ResistFamily,
   type ResistFit,
@@ -469,6 +471,19 @@ export interface EstimateOpts {
   /** Songs are their own family precisely so they can be excluded from R in ONE place. */
   includeSongs?: boolean
   /**
+   * Do charmed pets and NPC casters weigh in this number? (JOS-385, `shared/resistPrefs.ts`.)
+   *
+   * THE SWITCH LIVES HERE AND NOWHERE ELSE, which is the same argument `includeSongs` makes: the
+   * ledger folds npc rows unconditionally, so the ONLY place the answer can change is the one line
+   * below that decides whether such a row becomes a likelihood term. Their counts are tallied into
+   * `byCaster` and their per-spell evidence into `perSpell` either way — a switched-off family is
+   * still something the log saw.
+   *
+   * Defaults to TRUE when omitted, matching the shipped preference, so a unit test or a script
+   * that says nothing gets the app's own behaviour.
+   */
+  includeNpcCasters?: boolean
+  /**
    * Spells whose landings this app cannot see, decided over the WHOLE ledger by the caller. See
    * `unobservableSpells`; omitted, the estimator falls back to what `rows` alone can say, which is
    * right for a unit test and too narrow for a mob page.
@@ -480,6 +495,7 @@ interface Prepared {
   terms: { term: Term; source: 'user' | 'baseline' }[]
   evidence: Map<string, ResistSpellEvidence>
   byFamily: Record<ResistFamily, { n: number; resist: number; land: number }>
+  byCaster: Record<ResistCasterKind, { n: number; resist: number; land: number }>
   droppedNoLevel: number
   /** Observations held out of the fit because their spell's landings are not observable. */
   droppedUnobservable: number
@@ -545,6 +561,21 @@ function noteEvidence(prep: Prepared, row: ResistRow, info: SpellResistInfo): vo
   fam.n += total
   fam.resist += row.resist
   fam.land += row.land + dmgTotal
+  const by = prep.byCaster[row.casterKind]
+  // Defensive: a hand-edited ledger or a row from a future build can carry a kind this build has
+  // never heard of, and a tally is not worth a crash.
+  if (by) {
+    by.n += total
+    by.resist += row.resist
+    by.land += row.land + dmgTotal
+  }
+}
+
+/** A zero tally per caster kind — the shape `byCaster` always has, empty cells included. */
+function blankByCaster(): Record<ResistCasterKind, { n: number; resist: number; land: number }> {
+  const out = {} as Record<ResistCasterKind, { n: number; resist: number; land: number }>
+  for (const kind of RESIST_CASTER_KINDS) out[kind] = { n: 0, resist: 0, land: 0 }
+  return out
 }
 
 function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: EstimateOpts): Prepared {
@@ -552,6 +583,7 @@ function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: Est
     terms: [],
     evidence: new Map(),
     byFamily: { cast: { n: 0, resist: 0, land: 0 }, song: { n: 0, resist: 0, land: 0 } },
+    byCaster: blankByCaster(),
     droppedNoLevel: 0,
     droppedUnobservable: 0,
   }
@@ -569,6 +601,8 @@ function prepare(rows: readonly ResistRow[], spells: SpellResistTable, opts: Est
       continue
     }
     if (row.family === 'song' && opts.includeSongs === false) continue
+    // THE ONE LINE THE npc SWITCH IS (JOS-385). Counted above, weighed only here.
+    if (row.casterKind === 'npc' && opts.includeNpcCasters === false) continue
     const term = rowTerm(row, info, opts.axis, spells)
     if (!term) {
       prep.droppedNoLevel += row.resist + row.land + rowCounts(row).dmgTotal
@@ -614,6 +648,8 @@ export function estimate(
     droppedNoLevel: prep.droppedNoLevel,
     droppedUnobservable: prep.droppedUnobservable,
     byFamily: prep.byFamily,
+    byCaster: prep.byCaster,
+    npcIncluded: opts.includeNpcCasters !== false,
     perSpell: [...prep.evidence.values()].sort((a, b) => b.casts - a.casts),
     baselineWeight,
     userOnly: fromYou >= USER_ONLY_AT,

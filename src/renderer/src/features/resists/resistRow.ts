@@ -144,6 +144,26 @@ export function songSummary(est: ResistEstimate): string | null {
   return `Songs: ${String(fam.n)} pulses, ${String(fam.resist)} resisted`
 }
 
+/**
+ * What charmed pets and other creatures contributed on this axis, and whether it counted (JOS-385).
+ *
+ * IT SAYS SO EITHER WAY, and that is the point of printing it at all. A family the user has
+ * switched off is still something the log saw, and a line that vanished when the switch moved
+ * would make the preference look like it deleted evidence rather than declining to weigh it. So
+ * the count is the same sentence in both states and the parenthesis carries the difference.
+ *
+ * Null when nothing was cast by one, which is most mobs: an evidence line with a zero on it is
+ * noise, and "no pet ever cast on this" is not a fact anybody came to the page for.
+ */
+export const NPC_NOT_INCLUDED_NOTE = 'not included'
+
+export function npcCasterSummary(est: ResistEstimate): string | null {
+  const by = est.byCaster.npc
+  if (!by || by.n === 0) return null
+  const tail = est.npcIncluded ? '' : ` (${NPC_NOT_INCLUDED_NOTE})`
+  return `Pets and other creatures: ${String(by.n)} casts, ${String(by.resist)} resisted${tail}`
+}
+
 /** Evidence lines split by family, most-cast first (the estimator already sorted them). */
 export function evidenceByFamily(est: ResistEstimate): {
   casts: ResistSpellEvidence[]

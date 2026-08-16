@@ -41,6 +41,7 @@ import {
   estimateText,
   evidenceByFamily,
   evidenceText,
+  npcCasterSummary,
   songSummary,
   splitText,
 } from './resistRow'
@@ -120,6 +121,7 @@ function EvidencePanel({ row }: { row: MobResistAxis }): JSX.Element {
   if (!est) return <Quiet>Nothing observed on this axis yet.</Quiet>
   const { casts, songs } = evidenceByFamily(est)
   const song = songSummary(est)
+  const npc = npcCasterSummary(est)
   return (
     <Box sx={{ pl: 2.5, pb: 1 }} data-testid={`resist-evidence-${row.axis}`}>
       {casts.length === 0 && <Quiet>Nothing observed on this axis yet.</Quiet>}
@@ -139,6 +141,20 @@ function EvidencePanel({ row }: { row: MobResistAxis }): JSX.Element {
             </Typography>
           ))}
         </>
+      )}
+      {/* Its own line rather than a per-spell one, because the question it answers is about the
+          WHOLE axis: how much of what is behind this number was cast by something that is not a
+          person, and did it count. */}
+      {npc !== null && (
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          display="block"
+          sx={{ mt: 0.5 }}
+          data-testid={`resist-npc-${row.axis}`}
+        >
+          {npc}
+        </Typography>
       )}
       {est.droppedNoLevel > 0 && (
         <Quiet>
@@ -222,7 +238,15 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
 /** The card body, given an already-loaded profile. Split out so the e2e can drive it directly. */
 export function ResistProfileBody({ profile }: { profile: MobResistProfile }): JSX.Element {
   if (!profile.spellDataAvailable) {
-    return <Quiet>Spell data unavailable - this needs your EverQuest install&apos;s spells_us.txt.</Quiet>
+    // TWO STATES, AND MAIN NAMES WHICH ONE (JOS-385). This used to be one sentence for both, and
+    // it blamed the player's install for the case where the file was exactly where it belongs and
+    // our own load had failed. The sentence is built in main/resist/profile.ts, because only main
+    // knows the resolved path and both surfaces have to say the same thing.
+    return (
+      <Quiet>
+        <span data-testid="resist-no-spell-data">{profile.spellDataNote ?? 'Spell data unavailable.'}</span>
+      </Quiet>
+    )
   }
   return (
     <Box data-testid="resist-rows">

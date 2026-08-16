@@ -34,6 +34,34 @@ import {
 import { estimate, hasAnswer, resistTag } from '../../shared/resistModel'
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import type { MobLevelFact } from './world'
+import type { SpellTableState } from './spellTable'
+
+/**
+ * WHY THE TABLE IS NOT THERE, in the reader's words (JOS-385).
+ *
+ * TWO STATES, BECAUSE THEY ARE TWO PROBLEMS. Until this ticket both said "this needs your
+ * EverQuest install's spells_us.txt", which is true advice for one of them and an accusation for
+ * the other: the owner hit the second after a dev restart, with the file exactly where it has
+ * always been, and the app told him to go find his EverQuest folder.
+ *
+ * THE SENTENCE IS BUILT HERE, in main, rather than in each surface. The mob page and the con card
+ * both have to say it, the con card is a self-contained payload that fetches nothing, and only
+ * main knows the resolved path — so a renderer-side copy would either lack the fact or be a second
+ * wording of it. (The card's numbers still cross the wire AS numbers, which is the opposite rule
+ * for the opposite reason: those have a shared derivation and this does not.)
+ *
+ * COPY RULES: no acronyms, no em dashes, and it says what is true and what to do about it.
+ */
+export function spellDataNote(status: { state: SpellTableState; path: string }): string | null {
+  if (status.state === 'ok') return null
+  if (status.state === 'missing') {
+    return `Spell data unavailable - there is no spells_us.txt at ${status.path}. Point the app at your EverQuest folder in Preferences.`
+  }
+  if (status.state === 'unloadable') {
+    return 'Spell data unavailable - spells_us.txt was found but could not be loaded. The error log has the details.'
+  }
+  return 'Reading your EverQuest spell data...'
+}
 
 export interface ProfileDeps {
   /**
@@ -53,6 +81,14 @@ export interface ProfileDeps {
    */
   unobservable: () => ReadonlySet<string>
   frozenAt: () => string | null
+  /**
+   * Whether charmed pets and NPC casters weigh in the numbers (JOS-385). READ AT ESTIMATE TIME,
+   * which is why it is a function on the deps rather than a field on a row: the ledger folds those
+   * rows unconditionally and flipping the preference re-draws every card with no re-fold.
+   */
+  includeNpcCasters: () => boolean
+  /** Why the client's spell table is unavailable, when it is. See `spellDataNote`. */
+  spellStatus: () => { state: SpellTableState; path: string }
 }
 
 /** Display clamp. See the header: the model may go below zero; a card may not. */
@@ -71,13 +107,27 @@ function clampFit(est: ResistEstimate): ResistEstimate {
   }
 }
 
+/** Everything the five axis fits share, resolved once per profile rather than five times. */
+interface AxisCtx {
+  mobLevel: number | null
+  unobservable: ReadonlySet<string>
+  includeNpcCasters: boolean
+}
+
 function axisRow(
   rows: readonly ResistRow[],
   spells: SpellResistTable,
   axis: ResistAxis,
-  ctx: { mobLevel: number | null; unobservable: ReadonlySet<string> }
+  ctx: AxisCtx
 ): MobResistAxis {
-  const est = clampFit(estimate(rows, spells, { axis, mobLevel: ctx.mobLevel, unobservable: ctx.unobservable }))
+  const est = clampFit(
+    estimate(rows, spells, {
+      axis,
+      mobLevel: ctx.mobLevel,
+      unobservable: ctx.unobservable,
+      includeNpcCasters: ctx.includeNpcCasters,
+    })
+  )
   return {
     axis,
     estimate: est,
@@ -93,7 +143,11 @@ export function mobResistProfile(displayName: string, deps: ProfileDeps): MobRes
   const rows = deps.rowsFor(displayName)
   const fact = deps.levelOf(key, displayName)
   const level = fact ? { lo: fact.lo, hi: fact.hi, from: fact.from } : null
-  const ctx = { mobLevel: fact?.level ?? null, unobservable: deps.unobservable() }
+  const ctx: AxisCtx = {
+    mobLevel: fact?.level ?? null,
+    unobservable: deps.unobservable(),
+    includeNpcCasters: deps.includeNpcCasters(),
+  }
   const axes = spells
     ? RESIST_AXES.map((axis) => axisRow(rows, spells, axis, ctx))
     : RESIST_AXES.map((axis) => ({ axis, estimate: null, tag: null, n: 0 }) satisfies MobResistAxis)
@@ -103,6 +157,7 @@ export function mobResistProfile(displayName: string, deps: ProfileDeps): MobRes
     level,
     axes,
     spellDataAvailable: spells !== null,
+    spellDataNote: spells !== null ? null : spellDataNote(deps.spellStatus()),
     baselineFrozenAt: deps.frozenAt(),
   }
 }
@@ -122,7 +177,12 @@ export function mobResistCell(
   const rows = deps.rowsFor(displayName)
   const fact = deps.levelOf(key, displayName)
   const est = clampFit(
-    estimate(rows, spells, { axis, mobLevel: fact?.level ?? null, unobservable: deps.unobservable() })
+    estimate(rows, spells, {
+      axis,
+      mobLevel: fact?.level ?? null,
+      unobservable: deps.unobservable(),
+      includeNpcCasters: deps.includeNpcCasters(),
+    })
   )
   const keep = rows.filter((r) => spells[r.spellKey]?.axis === axis)
   return { mobKey: key, axis, estimate: est, rows: keep }

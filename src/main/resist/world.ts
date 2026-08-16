@@ -8,6 +8,7 @@
 import { localMobEntry } from '../mobLookupLocal'
 import { idKey, spellCanonKey } from '../log/parseCommon'
 import type { SpellDb } from '../data/spellDb'
+import type { ResistCasterKind } from '../../shared/resistTypes'
 
 /** A mob's level, and how sure we are. `/con` is the game telling you; the catalog is the wiki. */
 export interface MobLevelFact {
@@ -63,24 +64,28 @@ export class MobLevels {
 }
 
 /**
- * WHO IS ALLOWED TO TEACH US ANYTHING. Owner ruling, 2026-08-16: only `self` and other PLAYERS.
- * NPC casters and charmed pets are ignored entirely — an NPC's spell rolls against a different
- * table, and a charmed pet's casts are the game's, not a player's.
+ * WHO IS A PERSON AND WHO IS A CREATURE — the one question the whole fold is filed by.
  *
- * The exclusions, in the order they are cheap: a name YOU have landed damage on is a mob (the
+ * Owner ruling, 2026-08-16 (JOS-382): only `self` and other PLAYERS teach us anything. REVISED the
+ * same day (JOS-385): charmed pets and NPC casters are a THIRD kind, `npc`, folded like any other
+ * observation, with a preference deciding whether the estimator weighs them. So this class no
+ * longer answers "may we learn from this name" with a null — it NAMES the caster, and the
+ * weighting argument moved to `shared/resistPrefs.ts` where it can be re-decided without a re-fold.
+ *
+ * The tests, in the order they are cheap: a name YOU have landed damage on is a mob (the
  * behavioural guard `EngineState.everStruck` uses, and it holds for a proper-named guard the
- * catalog never heard of); a name bound as somebody's pet is a pet; a name the committed catalog
- * knows is a mob; a leading article or an interior space is a mob, because EQ player names are one
- * word and never carry one.
+ * catalog never heard of); a name bound as somebody's pet is a pet; a leading article or an
+ * interior space is a mob, because EQ player names are one word and never carry one; a name the
+ * committed catalog knows is a mob.
  *
  * The residual risk is stated rather than hidden: a proper-named NPC that the catalog does not
- * carry, that you never hit, and whose name has no space, is admitted as a player. It contributes
- * evidence counts and — because its level is unknown — never enters the estimate.
+ * carry and that you never hit is called a player. It contributes evidence counts and — because
+ * its level is unknown — never enters the estimate.
  */
 export class CasterIndex {
   private pets = new Set<string>()
   private struck = new Set<string>()
-  private verdicts = new Map<string, 'pc' | null>()
+  private verdicts = new Map<string, 'pc' | 'npc'>()
 
   reset(): void {
     this.pets = new Set()
@@ -101,7 +106,7 @@ export class CasterIndex {
     this.verdicts.delete(key)
   }
 
-  kindOf(name: string): 'self' | 'pc' | null {
+  kindOf(name: string): ResistCasterKind {
     // The identity compare answers almost every call; `idKey` is the fallback. See fold.ts.
     if (name === 'You') return 'self'
     const key = idKey(name)
@@ -113,11 +118,30 @@ export class CasterIndex {
     return verdict
   }
 
-  private judge(key: string, name: string): 'pc' | null {
-    if (this.pets.has(key) || this.struck.has(key)) return null
-    if (/^(?:a|an|the)\s/i.test(name.trim())) return null
-    if (/\s/.test(name.trim())) return null
-    if (localMobEntry(name)) return null
+  /**
+   * MAY A ROW BE FILED ABOUT THIS NAME AS A TARGET? (JOS-385.)
+   *
+   * A resist row is a statement about a CREATURE's resist stat, so its target has to be one. While
+   * only players could cast, this question never had to be asked out loud — and the shipped
+   * baseline shows what that cost: it carries rows keyed `you` (your own Cannibalization, which
+   * damages the caster), rows keyed on GROUPMATES' names (a Superior Healing landing on a friend),
+   * and about 2,700 observations filed under 56 keys that are people. NPC casters make it acute
+   * rather than merely untidy: mobs cast on the player and on the player's group constantly, so
+   * without this test the ledger would fill with rows about the person reading it.
+   *
+   * It is the SAME verdict `kindOf` gives, which is the point — one answer to "person or
+   * creature", used from both ends — plus the explicit self test in front, because the committed
+   * catalog happens to hold an entry that folds to the key `you`.
+   */
+  isMobTarget(name: string): boolean {
+    return this.kindOf(name) === 'npc'
+  }
+
+  private judge(key: string, name: string): 'pc' | 'npc' {
+    if (this.pets.has(key) || this.struck.has(key)) return 'npc'
+    if (/^(?:a|an|the)\s/i.test(name.trim())) return 'npc'
+    if (/\s/.test(name.trim())) return 'npc'
+    if (localMobEntry(name)) return 'npc'
     return 'pc'
   }
 }

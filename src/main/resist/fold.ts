@@ -55,6 +55,38 @@
 // `levelMod` and therefore no rc. Those rows are evidence a drilldown can show and the estimator
 // deliberately drops (`droppedNoLevel`). Filing them costs a little of the baseline's size and
 // buys the per-spell evidence for spells the tailed character does not cast.
+//
+// ── AND SO ARE NPC CASTERS, WITH A LEVEL THIS TIME (JOS-385) ────────────────────────────────────
+//
+// Charmed pets and ordinary NPC casters are the third kind. Two things make them different from a
+// stranger's casts, and both are why the owner asked for them:
+//
+//   THEIR LEVEL IS KNOWN. The committed catalog states it (a range folds to its midpoint) and a
+//   `/con` of that mob this session beats it — the same ladder the TARGET's level already climbs.
+//   So an npc row usually carries both levels and therefore an rc, which a `pc` row never can.
+//   Where nothing states one it is null and the estimator drops the row, no special case.
+//
+//   THEIR SPELLS ARE ORDINARY ROWS in the client's table. `Lava Breath`, `Choking` and
+//   `Dry Bone Fire Burst` sit in `spells_us.txt` with a resist type and a resist adjust like any
+//   other spell, so the estimate joins them exactly as it joins yours. Nothing here reads that
+//   file — see the block at the top — the join happens once, at estimate time.
+//
+// WHAT THEY DO **NOT** GET, deliberately: an armed cast. `onOtherCast` still arms `pc` casts only,
+// so an npc's emote-only landing is never claimed. Two reasons, and the first is enough: the log
+// carries 45k third-party cast-begins against 25k of yours, and arming all of them would put the
+// fold's join window in contention on every landing sentence YOU earned. The second is that an
+// npc's all-or-nothing spell then shows resists with no landings, which the estimator's own
+// blindness guard already recognises and holds out of the number (`landingsNotObservable`) rather
+// than reading as a 100%-resistant mob.
+//
+// ── A ROW'S TARGET HAS TO BE A CREATURE ─────────────────────────────────────────────────────────
+//
+// `CasterIndex.isMobTarget` gates every filing, and it is new here (JOS-385) even though it fixes
+// something older: R is a statement about a creature, and while only players could cast, nothing
+// ever checked that the thing being cast ON was one. The shipped JOS-382 baseline shows the cost —
+// rows keyed `you` (Cannibalization damages its own caster), rows keyed on groupmates (a Superior
+// Healing landing), ~2,700 observations under 56 keys that are people's names, in a file this repo
+// publishes. NPC casters would have made it a flood, because mobs cast on the player constantly.
 
 import { idKey, spellCanonKey } from '../log/parseCommon'
 import { mobKey } from '../../shared/mobKey'
@@ -394,7 +426,11 @@ export class ResistFold {
 
   // ---- casts ---------------------------------------------------------------------------
 
-  /** The row one song pulse belongs to. Songs are never filed as an ordinary cast. */
+  /**
+   * The row one song pulse belongs to. Songs are never filed as an ordinary cast, and NPC casters
+   * are never filed as a song: `SongFold` recognises a song by spell identity and hands back
+   * anything that is not the tailed character's, so `kind` here is always `self` by construction.
+   */
   private fileSong(mobDisplay: string, songKey: string, ts: number): ResistRow {
     this.remember(mobDisplay)
     return this.rowFor({ mob: mobDisplay, spellKey: songKey, family: 'song', kind: 'self', level: this.selfLevel, ts })
@@ -455,6 +491,9 @@ export class ResistFold {
     if (this.songs.onEmote(mobDisplay, ts, candidates)) return
     const cast = this.takeArmed(ts, candidates)
     if (!cast) return
+    // A buff you landed on a GROUPMATE prints the same sentence shape as a debuff on a mob, and
+    // filed as a row it becomes a person's name in the ledger. See the header's target block.
+    if (!this.casters.isMobTarget(mobDisplay)) return
     this.remember(mobDisplay)
     const key = this.keyOf(mobDisplay)
     if (isResistDebuff(this.deps.spellDb, cast.display)) this.debuffs.open(key, cast.spellKey, ts)
@@ -470,7 +509,9 @@ export class ResistFold {
     const d = this.deferred
     if (!d || now - d.ts <= LAND_DEFER_MS) return
     this.deferred = null
-    if (d.kind === 'pc') return
+    // Only YOUR emote-landings are attributable. A stranger's sentence names no caster, and an
+    // npc's cast is never armed in the first place (see the header).
+    if (d.kind !== 'self') return
     this.rowFor({ mob: d.mobDisplay, spellKey: d.spellKey, family: 'cast', kind: d.kind, level: d.level, ts: d.ts }).land += 1
   }
 
@@ -485,13 +526,24 @@ export class ResistFold {
   private onResist(ev: Extract<LogEvent, { kind: 'resist' }>): void {
     // `You resist <mob>'s <Spell>!` is YOUR resist and a different feature entirely.
     if (ev.incoming) return
+    if (!this.casters.isMobTarget(ev.target)) return
     const kind = this.casters.kindOf(ev.caster)
-    if (!kind) return
     const spellKey = spellCanonKey(ev.spell)
     this.remember(ev.target)
     if (this.songs.onResist(ev.target, spellKey, kind, ev.ts)) return
-    const level = kind === 'self' ? this.selfLevel : null
+    const level = this.casterLevel(kind, ev.caster)
     this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts }).resist += 1
+  }
+
+  /**
+   * The CASTER's level, by kind. Self is the session level; another player's is never stated
+   * anywhere this app reads; an NPC's is the same catalog-or-`/con` ladder the target's level
+   * climbs (JOS-385). Null is a first-class answer and simply drops the row from the fit.
+   */
+  private casterLevel(kind: ResistCasterKind, caster: string): number | null {
+    if (kind === 'self') return this.selfLevel
+    if (kind === 'pc') return null
+    return this.levels.levelOf(this.keyOf(caster), caster)?.level ?? null
   }
 
   private onDamage(ev: Extract<LogEvent, { kind: 'damage' }>): void {
@@ -507,8 +559,7 @@ export class ResistFold {
       return
     }
     if (ev.dtype !== 'spell' && ev.dtype !== 'dot') return
-    const kind = this.casters.kindOf(attacker)
-    if (kind) this.onSpellDamage(ev, attacker, kind)
+    this.onSpellDamage(ev, attacker, this.casters.kindOf(attacker))
   }
 
   /** A spell or DoT line from somebody this fold is willing to learn from. */
@@ -517,13 +568,16 @@ export class ResistFold {
     attacker: string,
     kind: ResistCasterKind
   ): void {
+    // BEFORE the target test, not after: this is what makes a proper-named creature you have
+    // nuked a creature, and it is the evidence the catalog most often lacks.
     if (kind === 'self') this.casters.noteStruck(ev.target)
+    if (!this.casters.isMobTarget(ev.target)) return
     const spellKey = spellCanonKey(ev.skill)
     this.remember(ev.target)
     if (this.songs.onDamage(spellKey, kind, ev.ts)) return
     this.cancelDeferred(ev.target, spellKey)
     this.peekArmed(spellKey, ev.ts)?.damaged.add(this.keyOf(ev.target))
-    const level = kind === 'self' ? this.selfLevel : null
+    const level = this.casterLevel(kind, attacker)
     const row = this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts })
     if (ev.dtype === 'dot') this.onDotTick(row, ev.target, spellKey)
     else this.fileHit(row, ev)
