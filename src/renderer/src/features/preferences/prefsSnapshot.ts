@@ -21,6 +21,8 @@
 // that has to load under a plain node test (the mobSearch.ts precedent). Type-only imports may
 // keep the alias, and do.
 import { normalizeUiScale } from '../../../../shared/uiScale'
+import { normalizeAlertBannerConfig } from '../../../../shared/alertBanner'
+import type { AlertBannerOverlayConfig } from '@shared/alertBanner'
 import type { BuffTrustPrefs } from '@shared/buffTrust'
 import type { GraphicsPrefs } from '@shared/graphicsPrefs'
 import type { GraphicsEnvironment } from '@shared/wineDetect'
@@ -36,6 +38,18 @@ import type { AlertDef, EqConfig, OverlayConfig, OverlayKind, UpdateStatus, Voic
 export interface ToastSeed {
   open: boolean
   locked: boolean
+}
+
+/**
+ * The alert banner's three facts (JOS-378): open-state and lock, exactly the toast's pair, plus the
+ * knobs blob (hold, lines). Read together for the reason the toast's are: the card is one control
+ * group and a frame where the switch was right and the hold was still the default is the same
+ * defect on a smaller control.
+ */
+export interface AlertBannerSeed {
+  open: boolean
+  locked: boolean
+  cfg: AlertBannerOverlayConfig
 }
 
 /**
@@ -66,6 +80,10 @@ export interface PrefsSnapshot {
   closeToTray: CloseToTrayPrefs
   /** Overlays — the celebration toast's open-state and its lock. */
   toast: ToastSeed
+  /** Overlays — the alert banner's open-state, lock and knobs. It ships OFF, which is exactly the
+   *  argument its card once used for mounting on defaults — and exactly wrong for anyone who has
+   *  turned it on: their switch was born OFF and rose (owner, hands-on, 2026-08-16). */
+  alertBanner: AlertBannerSeed
   /** Buff trust — the external-caster allowlist. */
   buffTrust: BuffTrustPrefs
   /** Cursor ring — the switch, the two sliders and the colour. */
@@ -106,6 +124,7 @@ export interface PrefsReader {
   getCloseToTray: () => Promise<CloseToTrayPrefs>
   getOverlayState: () => Promise<Record<OverlayKind, boolean>>
   getToastConfig: () => Promise<OverlayConfig>
+  getAlertBannerConfig: () => Promise<OverlayConfig>
   getBuffTrust: () => Promise<BuffTrustPrefs>
   getCursorRing: () => Promise<CursorRingPrefs>
   getVoicePrefs: () => Promise<VoicePrefs>
@@ -137,6 +156,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     closeToTray,
     overlayState,
     toastConfig,
+    bannerConfig,
     buffTrust,
     cursorRing,
     voice,
@@ -157,6 +177,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getCloseToTray(),
     eq.getOverlayState(),
     eq.getToastConfig(),
+    eq.getAlertBannerConfig(),
     eq.getBuffTrust(),
     eq.getCursorRing(),
     eq.getVoicePrefs(),
@@ -178,6 +199,13 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     overlaySnap,
     closeToTray,
     toast: { open: overlayState.toast, locked: toastConfig.locked },
+    // The knobs go through the same normalizer main's store reads with, so the cache can never
+    // hold an out-of-range hold or line count (the `uiScale` argument, on a different blob).
+    alertBanner: {
+      open: overlayState.alertBanner,
+      locked: bannerConfig.locked,
+      cfg: normalizeAlertBannerConfig(bannerConfig.alertBanner)
+    },
     buffTrust,
     cursorRing,
     voice,
