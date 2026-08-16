@@ -39,6 +39,7 @@ import { registerUiScaleIpc } from './uiScale'
 // The celebration toast's producer channel. It lives beside the window it feeds (src/main/toast.ts)
 // rather than in this folder, because everything it does is window fan-out + item resolution.
 import { registerToastIpc } from '../toast'
+import { registerAlertBannerIpc } from '../alertBanner'
 import { registerWindowIpc } from './windowControls'
 import { registerWorldIpc } from './world'
 
@@ -63,6 +64,7 @@ export function registerIpc(): void {
   registerPresenceIpc()
   registerWindowIpc()
   registerToastIpc()
+  registerAlertBannerIpc()
   registerClipboardIpc()
   registerFeedbackIpc()
   registerTelemetryIpc()

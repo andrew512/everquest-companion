@@ -36,6 +36,7 @@ import {
 } from './conditionDraft'
 import { fallbackPack, firstSoundId } from './SoundPicker'
 import { type SpeechForm, speechFieldsFor, useSpeechForm } from './SpeechBlock'
+import { type BannerForm, bannerFieldsFor, useBannerForm } from './BannerBlock'
 import { DEFAULT_PACK_ID } from './suggestions'
 
 export const DEFAULT_COOLDOWN_MS = 2000
@@ -75,6 +76,10 @@ export interface AlertForm {
   setEarlyWarnSec: (v: number) => void
   /** The Speech block's own sub-form (voice-alerts §4) — see SpeechBlock.tsx. */
   speech: SpeechForm
+  /** The Banner block's own sub-form (JOS-378) — see BannerBlock.tsx. Same arrangement as the
+   *  speech sub-form beside it: it hydrates on the `open` edge and folds back through its own
+   *  `bannerFieldsFor`, so this file never learns what a swatch is. */
+  banner: BannerForm
 }
 
 /** The setters hydration writes through, passed as ONE object so `hydrateForm` stays a plain fn. */
@@ -153,6 +158,8 @@ export function useAlertForm(
   // The Speech block hydrates itself on the same `open` edge (its deps are `[open, initial]`,
   // which is why it never carried this bug).
   const speech = useSpeechForm(open, initial)
+  // …and so does the banner block, on the same edge and for the same reason.
+  const banner = useBannerForm(open, initial)
 
   /**
    * WHICH OPENING THIS FORM IS ALREADY HOLDING — null while closed, otherwise a cell naming the
@@ -224,7 +231,8 @@ export function useAlertForm(
     setCooldownScope,
     earlyWarnSec,
     setEarlyWarnSec,
-    speech
+    speech,
+    banner
   }
 }
 
@@ -277,6 +285,10 @@ export function defFromForm(f: AlertForm, initial: AlertDef | null): AlertDef {
     note: initial?.note,
     // audio / speech / alwaysPlay, each omitted at its default so a sound-only alert saves
     // byte-identically to how it always did (SpeechBlock.speechFieldsFor).
-    ...speechFieldsFor(f.speech)
+    ...speechFieldsFor(f.speech),
+    // showOnScreen / bannerText / bannerColor, on exactly the same terms (BannerBlock.
+    // bannerFieldsFor): every one of them is written only when it is not the default, so an alert
+    // that never touched the banner saves the bytes it always did.
+    ...bannerFieldsFor(f.banner)
   }
 }
