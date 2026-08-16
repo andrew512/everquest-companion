@@ -492,6 +492,20 @@ export interface FiredAlert {
    * is nearly all of them).
    */
   captures?: Record<string, string>
+  /**
+   * WHEN THE THING THIS FIRING WARNS ABOUT IS DUE (ms epoch) — the countdown half of JOS-378.
+   *
+   * Present ONLY on an EARLY-WARNING firing (`AlertDef.earlyWarnSec`, JOS-216/235), and it is the
+   * deadline the scheduler counted back from rather than a number computed here: `nowMs + sec`
+   * would be a guess, and the row's own estimated end is what the debuffs overlay is already
+   * drawing. A consumer can therefore say "Celerity fades in 12s" without inventing anything.
+   *
+   * ABSENT on every ordinary firing, which is nearly all of them — and absent on an EARLY BREAK
+   * too (JOS-235: the hold ended before its warning, so the alert fires on its own trigger and
+   * there is no deadline left). That is the honest encoding of "there is nothing to count down",
+   * and it keeps the delta byte-identical for every alert without an offset.
+   */
+  dueAt?: number
 }
 
 /** One recorded fire in an alert's recent-fires ring buffer (Task #22). */

@@ -22,7 +22,10 @@
 // mentions overlay windows, IPC or queues.
 
 import { type Dispatch, type JSX, type SetStateAction, useEffect, useState } from 'react'
-import { FormControlLabel, Link, Stack, Switch, TextField, Tooltip, Typography } from '@mui/material'
+import { FormControlLabel, Link, Stack, Switch, TextField, Typography } from '@mui/material'
+// THE app's Tooltip, never MUI's directly (lib/Tooltip.tsx): a swatch is a hover anchor and has
+// to show the hand before it is hovered. tests/tooltipCursor.test.mts pins the rule.
+import { Tooltip } from '../../lib/Tooltip'
 import type { AlertDef } from '@shared/types'
 import {
   ALERT_BANNER_COLORS,

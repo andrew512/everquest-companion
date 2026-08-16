@@ -119,13 +119,17 @@ function effectiveVolume(def: AlertDef): number {
  * of the same alert stacks a second line rather than re-clocking the first — which is what the
  * reporter asked for: a banner is a short-lived record of what just happened, not a status field.
  */
-function showAlertBanner(def: AlertDef, firing?: Pick<FiredAlert, 'spell' | 'captures'>): void {
+function showAlertBanner(def: AlertDef, firing?: Pick<FiredAlert, 'spell' | 'captures' | 'dueAt'>): void {
   if (!alertShowsOnScreen(def)) return
   const text = alertBannerText(def, firing ?? null)
   if (!text) return
   const ts = Date.now()
   const payload: AlertBannerPayload = { id: `${def.id}:${String(ts)}`, alertId: def.id, ts, text }
   if (def.bannerColor) payload.color = def.bannerColor
+  // The COUNTDOWN, where the firing has one (JOS-216 early warnings): the card prints "… in 12s"
+  // and leaves when it reaches zero instead of on the configured hold. Passed straight through —
+  // this side never computes a deadline, because main is the only place one exists.
+  if (firing?.dueAt !== undefined) payload.dueAt = firing.dueAt
   window.eq.showAlertBanner(payload)
 }
 
@@ -144,7 +148,10 @@ function showAlertBanner(def: AlertDef, firing?: Pick<FiredAlert, 'spell' | 'cap
  * preference (JOS-222) rides the SAME call: it is an argument to the pure decision, read off the
  * prefs copy this module already keeps live, so nothing here branches on it.
  */
-export function playAlertNow(def: AlertDef, firing?: Pick<FiredAlert, 'spell' | 'captures'>): void {
+export function playAlertNow(
+  def: AlertDef,
+  firing?: Pick<FiredAlert, 'spell' | 'captures' | 'dueAt'>
+): void {
   // THE BANNER GOES FIRST, AND OUTSIDE EVERYTHING BELOW (JOS-378). Two rules the owner ruled on
   // are enforced by that one placement:
   //   MUTE IS ABOUT SOUND. A player on Discord runs the app muted precisely so they can still be

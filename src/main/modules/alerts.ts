@@ -767,7 +767,10 @@ export class AlertsModule implements EqModule<AlertsSnap, AlertsDelta> {
     if (this.onCooldown(due.cooldownKey, def, nowMs)) return
     this.noteFire(due.cooldownKey, nowMs)
     this.seq += 1
-    this.pending.push({ ...due.fired, ts: nowMs })
+    // `dueAt` rides the firing so a consumer can COUNT DOWN to the deadline this warning is early
+    // of (JOS-378). It is carried only here, on the early-warning path, because it is only here
+    // that a deadline exists — see FiredAlert.dueAt.
+    this.pending.push({ ...due.fired, ts: nowMs, dueAt: due.dueAt })
     this.record(def.id, nowMs, due.fired.matchedText)
   }
 
