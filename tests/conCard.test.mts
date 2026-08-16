@@ -11,7 +11,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  CON_CARD_MAX_AUTO_HIDE_MS,
   CON_CARD_MAX_DROPS,
+  CON_CARD_MIN_AUTO_HIDE_MS,
   CON_CARD_NEVER_HIDES,
   CON_CARD_REOPEN_SUPPRESS_MS,
   DEFAULT_CON_CARD_AUTO_HIDE_MS,
@@ -329,10 +331,23 @@ test('no knowledge yet is not the same as no drops - the card is handed neither 
 
 // ---- the one knob -----------------------------------------------------------------------
 
-test('the auto-hide clamps, defaults to twenty seconds, and ZERO survives as "never"', () => {
+test('the auto-hide clamps, defaults to FIVE seconds, and ZERO survives as "never"', () => {
   assert.deepEqual(normalizeConCardConfig(undefined), DEFAULT_CON_CARD_CONFIG)
   assert.equal(DEFAULT_CON_CARD_CONFIG.autoHideMs, DEFAULT_CON_CARD_AUTO_HIDE_MS)
-  assert.equal(DEFAULT_CON_CARD_AUTO_HIDE_MS, 20_000, 'the owner’s default')
+  // JOS-388, and the number is the whole ticket: an untouched store and a fresh install both read
+  // THIS, so it is asserted literally rather than through the constant it is compared to above.
+  assert.equal(DEFAULT_CON_CARD_AUTO_HIDE_MS, 5_000, 'the owner’s default (2026-08-16: was 20 s)')
+  // …and it is a value the knob can actually express, above the floor and below the cap, so nobody
+  // arrives at Preferences to find the control showing a duration it does not offer.
+  assert.ok(
+    DEFAULT_CON_CARD_AUTO_HIDE_MS >= CON_CARD_MIN_AUTO_HIDE_MS &&
+      DEFAULT_CON_CARD_AUTO_HIDE_MS <= CON_CARD_MAX_AUTO_HIDE_MS,
+    'the default must survive its own normalizer'
+  )
+  assert.equal(
+    normalizeConCardConfig({ autoHideMs: DEFAULT_CON_CARD_AUTO_HIDE_MS }).autoHideMs,
+    DEFAULT_CON_CARD_AUTO_HIDE_MS
+  )
   assert.equal(normalizeConCardConfig({ autoHideMs: 999_999 }).autoHideMs, 120_000, 'capped')
   assert.equal(normalizeConCardConfig({ autoHideMs: 1 }).autoHideMs, 3_000, 'floored')
   // The one value that is NOT clamped up: it is an answer, not a small duration.

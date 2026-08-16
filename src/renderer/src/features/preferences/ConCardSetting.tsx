@@ -36,8 +36,14 @@ import { recordPref, usePrefsSeed, type ConCardSeed } from './prefsHydration'
  * between 20 s and 22 s is not a decision anybody has. `0` is a real member of the list and reads
  * as words, because "it stays until I close it" is a different KIND of answer from a duration and
  * a slider pinned at one end could never say it.
+ *
+ * FIVE IS ON THE LIST BECAUSE FIVE IS THE DEFAULT (JOS-388). A closed list has one failure mode a
+ * slider does not: a stored value with no member to match is a control that paints nothing, and
+ * after the owner's 2026-08-16 ruling that stored value is what EVERY untouched install has. The
+ * list has to contain the shipped default or this card breaks its own law — a control never paints
+ * a value it does not know (the header above).
  */
-const HIDE_CHOICES_SEC = [10, 15, 20, 30, 45, 60, CON_CARD_NEVER_HIDES]
+const HIDE_CHOICES_SEC = [5, 10, 15, 20, 30, 45, 60, CON_CARD_NEVER_HIDES]
 
 const hideLabel = (sec: number): string =>
   sec === CON_CARD_NEVER_HIDES ? 'until I close it' : `${String(sec)} seconds`

@@ -47,9 +47,10 @@ export interface ConCardOverlayConfig {
   autoHideMs: number
 }
 
-/** Twenty seconds (owner): long enough to read five resist chips and a drop list, gone before the
- *  pull. */
-export const DEFAULT_CON_CARD_AUTO_HIDE_MS = 20_000
+/** FIVE SECONDS (owner, 2026-08-16 — it was twenty). A con is a glance while you decide whether to
+ *  pull, and a card that outlasts the decision is a box sitting on the game. Five is the glance; the
+ *  knob below is there for the reader who wants the drop list, up to and including "never". */
+export const DEFAULT_CON_CARD_AUTO_HIDE_MS = 5_000
 /** The sentinel the owner asked for: 0 = never hides. */
 export const CON_CARD_NEVER_HIDES = 0
 /** Below this a card could not be read at all, so a stored 1 s is a mistake rather than a choice. */

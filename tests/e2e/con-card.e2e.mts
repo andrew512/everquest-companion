@@ -22,7 +22,14 @@
  *   5. A PLAYER GETS NO CARD, from a con line that is the same shape on the same faction rung.
  *   6. THE × CLOSES IT, AND A RE-CON DOES NOT PUT IT BACK. The close is local and the suppression
  *      is main's; only a real round trip can show them agreeing.
- *   7. THE PREFERENCE TURNS IT OFF, and the window goes with it.
+ *   7. THE DEFAULT AUTO-HIDE LEAVES BY ITSELF (JOS-388), in about the five seconds the owner ruled.
+ *   8. THE PREFERENCE TURNS IT OFF, and the window goes with it.
+ *
+ * THE HOLD IS PINNED FOR CLAIMS 2-6 AND ONLY FOR THEM. The shipped auto-hide is 5 s and this
+ * gauntlet takes minutes, so the spec sets the card's own knob to "until I close it" before the
+ * first `/con` (stepPinTheHold) — a real user's setting, written through Preferences' own door,
+ * never an inflated default. Claim 7 puts the knob back and measures what an untouched install
+ * actually does. See stepPinTheHold and stepDefaultHideLeaves for both halves of that argument.
  *
  * NO WINDOW IS EVER SHOWN. `EQ_E2E=1` is the whole test mode (src/main/e2e.ts): the main window
  * never shows and overlays skip `showInactive`, so the card here is created, loaded and driven
@@ -92,6 +99,12 @@ interface GraphicsBridge {
   getOverlayState: () => Promise<Record<string, boolean>>
   toggleOverlay: (kind: string) => Promise<unknown>
 }
+/** The auto-hide's door, and the ONE Preferences writes through (`ConCardSetting.tsx` `setHide`). */
+interface ConCardBridge {
+  setConCardConfig: (patch: {
+    conCard: { autoHideMs: number }
+  }) => Promise<{ conCard?: { autoHideMs: number } }>
+}
 
 /** Set the con card window's text size through the overlay's own config door — A+'s door. */
 function setTextScale(card: Page, textScale: number): Promise<unknown> {
@@ -99,6 +112,41 @@ function setTextScale(card: Page, textScale: number): Promise<unknown> {
     (s) => (window as unknown as { eqOverlay: OverlayBridge }).eqOverlay.setConfig({ textScale: s }),
     textScale
   )
+}
+
+/**
+ * `CON_CARD_NEVER_HIDES` and `DEFAULT_CON_CARD_AUTO_HIDE_MS` from src/shared/conCard.ts, spelled
+ * out rather than imported for the reason `PAD` is: an e2e file loads no `src` module. A change to
+ * the default that forgets this line fails loudly in the last step below.
+ */
+const NEVER_HIDES = 0
+const DEFAULT_HIDE_MS = 5_000
+/**
+ * How long the last step gives a DEFAULT card to leave, from the moment it is fully drawn.
+ *
+ * MEASURED 2026-08-16 on this machine: 5233 ms, against a hold of 5 s plus a 300 ms exit counted by
+ * a 100 ms interval. The ceiling is more than twice that on purpose — this is a FAILURE deadline,
+ * not a schedule, and the suite runs four Electron apps at once. What it has to do is separate five
+ * seconds from the twenty this used to be, and it does, with room on both sides.
+ *
+ * IT WAS NOT OBVIOUS THAT THE COUNT WOULD RUN AT ALL, which is half the value of this step: the
+ * card window in `EQ_E2E=1` is never shown, and a window Chromium is not compositing can have its
+ * timers throttled to a crawl (settle.mts's `nextFrames` exists because rAF is). `useCardTick` is a
+ * `setInterval`, and the measurement above says it keeps real time here.
+ */
+const DEFAULT_HIDE_CEILING_MS = 12_000
+
+/**
+ * Write the con card's auto-hide, through Preferences' own door, and report what main stored.
+ *
+ * MAIN CLAMPS AND MAIN ANSWERS, so the returned value is the assertion: a spec that wrote a number
+ * main rejected would otherwise go on to measure the old one and blame the feature.
+ */
+function setAutoHide(page: Page, autoHideMs: number): Promise<number | undefined> {
+  return page.evaluate(async (ms) => {
+    const eq = (window as unknown as { eq: ConCardBridge }).eq
+    return (await eq.setConCardConfig({ conCard: { autoHideMs: ms } })).conCard?.autoHideMs
+  }, autoHideMs)
 }
 
 /**
@@ -158,6 +206,27 @@ async function stepShipsOn(app: ElectronApplication): Promise<Page | null> {
     check('…and it draws nothing until a con happens', idle.length === 0, `${String(idle.length)} card(s)`)
   }
   return card
+}
+
+/**
+ * PIN THE HOLD BEFORE ANY `/con` — the spec's own precondition, not a claim about the app.
+ *
+ * Every step below this one reads a card that is standing there: the drops arrive on a second pass,
+ * the chips are read after them, the window fit is measured twice with a text-scale bump in
+ * between, the card is screenshotted, and the opaque half re-cons and re-measures. That gauntlet
+ * takes far longer than the shipped auto-hide (5 s since JOS-388), so an untouched card would
+ * vanish out from under it.
+ *
+ * THE FIX IS THE USER'S OWN KNOB, NOT A BIGGER DEFAULT. `autoHideMs: 0` is `CON_CARD_NEVER_HIDES`,
+ * a value a real reader can and does choose, written through the same door `ConCardSetting.tsx`
+ * writes through — so the configuration under test for the rest of this file is a SHIPPED one. The
+ * default gets its own step at the end, with the knob put back, which is the only honest way to
+ * hold both facts in one spec.
+ */
+async function stepPinTheHold(page: Page): Promise<void> {
+  const stored = await setAutoHide(page, NEVER_HIDES)
+  check('the spec pins the card to "until I close it" through Preferences’ own door',
+    stored === NEVER_HIDES, String(stored))
 }
 
 /** A REPLAY DRAWS NOTHING. The fixture's own history is folded before any of this runs. */
@@ -467,6 +536,55 @@ async function stepOpaqueModeFitsToo(app: ElectronApplication, page: Page, log: 
   check('the con card reopens transparent again', clear !== null && (await background()) === clearBg)
 }
 
+/**
+ * THE DEFAULT LEAVES BY ITSELF (JOS-388) — the one step that runs with the knob UNPINNED.
+ *
+ * The owner's ruling is a number, and a number in a source file is a unit test's business
+ * (tests/conCard.test.mts pins 5_000). What only this file can say is that the number is WIRED: it
+ * survives the store, reaches the overlay window through the config echo, becomes the queue's hold
+ * at arrival, and is counted down by a 100 ms interval in a window that is never shown. Four places
+ * where a 5 could quietly become an infinity.
+ *
+ * IT RUNS LAST, AND ON A WINDOW THAT WAS JUST REOPENED. The opaque step ends by rebuilding the card
+ * window transparent again, so the queue here is empty and the card this step watches is one it
+ * drew itself — there is no earlier card whose disappearance could be mistaken for this one's.
+ *
+ * THE CLOCK STARTS WHEN THE CARD IS FINISHED, NOT WHEN IT APPEARS, and that is a fact about the
+ * app rather than a convenience: the card arrives in TWO passes (main/conCard.ts), the second one
+ * re-`show`s the same id with the drops on it, and a re-show restarts the hold (`cardQueue.ts`
+ * `fresh`). Measuring from the first paint would measure the hold PLUS however long the catalog and
+ * the 38 MB spell table took, which is the machine's number and not the app's.
+ */
+async function stepDefaultHideLeaves(app: ElectronApplication, page: Page, log: FixtureLog): Promise<void> {
+  const stored = await setAutoHide(page, DEFAULT_HIDE_MS)
+  if (!check('the auto-hide goes back to the SHIPPED default', stored === DEFAULT_HIDE_MS, String(stored))) return
+  const card = await settle(() => findCardWindow(app), (w) => w !== null, { timeoutMs: 30_000 })
+  if (!check('the con card window is up to receive an untouched card', card !== null)) return
+
+  const name = await conAndWait(log, card as Page, MOB_CON, MOB).catch(() => '')
+  if (!check('a `/con` draws a card with the default hold in force', name === MOB, name)) return
+  // The second pass is what restarts the hold; waiting for the drops is waiting for it to land.
+  await settle(() => textOf(card as Page, DROPS), (t) => t.length > 0 && !/Looking up/.test(t), {
+    timeoutMs: 30_000
+  }).catch(() => '')
+
+  const t0 = Date.now()
+  const gone = await settle(() => cardTexts(card as Page), (c) => c.length === 0, {
+    timeoutMs: DEFAULT_HIDE_CEILING_MS + 6_000,
+    pollMs: 100
+  })
+  const elapsed = Date.now() - t0
+  note(`the default card stood ${String(elapsed)} ms after it finished drawing`)
+  check('AN UNTOUCHED CARD LEAVES ON ITS OWN — nobody closed it and nothing replaced it',
+    gone.length === 0, `${String(gone.length)} card(s) still up after ${String(elapsed)} ms`)
+  check('…in about five seconds, which is the whole of the owner’s ruling',
+    gone.length === 0 && elapsed <= DEFAULT_HIDE_CEILING_MS,
+    `${String(elapsed)} ms (ceiling ${String(DEFAULT_HIDE_CEILING_MS)})`)
+  // …and it was a HOLD, not a card that never really arrived: the tick counts down 5 s of it.
+  check('…and it stood long enough to be read rather than flickering',
+    elapsed >= 2_000, `${String(elapsed)} ms`)
+}
+
 /** THE PREFERENCE: off means off, and the window goes with it. */
 async function stepPreferenceTurnsItOff(app: ElectronApplication, page: Page): Promise<void> {
   await page.click('[data-testid="nav-preferences"]', { timeout: 60_000 })
@@ -478,6 +596,13 @@ async function stepPreferenceTurnsItOff(app: ElectronApplication, page: Page): P
     { timeoutMs: 8_000, stable: 4, pollMs: 150 }
   )
   check('Preferences agrees the card is ON, matching the window that already exists', on === true, String(on))
+  // …AND THE HOLD CONTROL PAINTS THE SHIPPED DEFAULT (JOS-388). A closed list has a failure mode a
+  // slider does not: a stored value with no member to match renders as an EMPTY control, and after
+  // the 5 s ruling that stored value is what every untouched install carries. The step above put
+  // the knob back to the default, so what this reads is exactly what a fresh install would show.
+  const hide = await textOf(page, '[data-testid="pref-con-card-hide"]')
+  check('…and the "a card stays for" control shows the shipped default rather than nothing',
+    /5 seconds/.test(hide), hide || '(empty)')
   await page.click('[data-testid="pref-con-card-enabled"] input')
   const closed = await settle(() => findCardWindow(app), (w) => w === null, { timeoutMs: 20_000 })
   check('turning it off closes the window — off means off', closed === null)
@@ -504,6 +629,9 @@ async function main(): Promise<void> {
 
     const card = await stepShipsOn(app)
     if (card) {
+      // THE PRECONDITION FIRST, before a single `/con` — see stepPinTheHold. Everything from here
+      // to stepDefaultHideLeaves runs on a card the user has told to stay.
+      await stepPinTheHold(page)
       await stepReplayIsSilent(page, card)
       await stepConDrawsTheCard(log, card)
       // The drops step is what WAITS for the second pass; the chips are read after it, so they are
@@ -518,6 +646,8 @@ async function main(): Promise<void> {
       await stepPlayerGetsNothing(log, card)
       await stepCloseAndSuppress(log, card)
       await stepOpaqueModeFitsToo(app, page, log)
+      // …the knob comes OFF here, and the default gets the last word before the window is closed.
+      await stepDefaultHideLeaves(app, page, log)
       await stepPreferenceTurnsItOff(app, page)
     } else {
       note('no con card window — every claim below it was skipped')
