@@ -102,12 +102,23 @@ function setTextScale(card: Page, textScale: number): Promise<unknown> {
 }
 
 /**
- * The mob: a catalog hit with 44 listed drops AND 156 rows in the committed resist baseline, and
- * the same creature tests/e2e/mob-resists.e2e.mts uses for the same reason — the log, the catalog
- * and the ledger all spell it one way, so nothing here depends on the machine it runs on.
+ * The mob: a catalog hit with 11 listed drops AND 33 rows in the committed resist baseline, spelled
+ * one way by the log, the catalog and the ledger, so nothing here depends on the machine it runs on.
+ *
+ * IT USED TO BE `a zol ghoul knight` (the creature tests/e2e/mob-resists.e2e.mts still uses), and
+ * the swap is JOS-385's doing rather than a preference: this spec's central claim is that the card
+ * keeps ONLY the axes a creature resists, which needs a creature with at least one. The ghoul
+ * knight had exactly one — cold, at R 60 [40,84] — and most of that number was focused Frost
+ * Strike hits being counted as partials by the old max-value full-damage reference. Corrected, it
+ * reads R 26 and the mob has no notable axis at all, so the card there is now the honest
+ * "no notable resists" branch and this spec would be asserting a defect.
+ *
+ * A loathling lich carries the claim from the owner's OWN casts, and doubly: poison at R 60 and
+ * disease at R 76, which is also the mob docs/plans/resist-mining.md section 3 predicted by hand
+ * (51% of disease resisted against 1% magic) before any of this code existed.
  */
-const MOB = 'A zol ghoul knight'
-const MOB_CON = `${MOB} scowls at you, ready to attack -- what would you like your tombstone to say? (Lvl: 38)`
+const MOB = 'A loathling lich'
+const MOB_CON = `${MOB} scowls at you, ready to attack -- what would you like your tombstone to say? (Lvl: 51)`
 /** A SECOND creature, to prove the next con replaces the card rather than stacking one. */
 const OTHER = 'A wan ghoul knight'
 const OTHER_CON = `${OTHER} regards you indifferently -- looks like quite a gamble. (Lvl: 35)`
@@ -176,7 +187,7 @@ async function stepConDrawsTheCard(log: FixtureLog, card: Page): Promise<void> {
   const name = await conAndWait(log, card, MOB_CON, MOB)
   if (!check('a `/con` written into the live log draws a card naming the creature', name === MOB, name)) return
   const facts = await textOf(card, FACTS)
-  check('…carrying the LEVEL the con line stated', facts.includes('Level 38'), facts)
+  check('…carrying the LEVEL the con line stated', facts.includes('Level 51'), facts)
   check('…and the zone the character walked into on the line before it', facts.includes(ZONE), facts)
   const cards = await cardTexts(card)
   check('…and exactly one card, never a stack', cards.length === 1, `${String(cards.length)} card(s)`)
@@ -211,16 +222,20 @@ async function stepNotableChips(card: Page): Promise<void> {
     return
   }
 
-  // WHAT THIS MOB ACTUALLY RESISTS. `a zol ghoul knight` has 156 rows in the COMMITTED baseline, so
-  // on a machine with EverQuest installed this is exact and not a floor: COLD is the one axis of
-  // the five that reaches the `resistant` cut, and the other four leave the card.
+  // WHAT THIS MOB ACTUALLY RESISTS. `a loathling lich` has 33 rows in the COMMITTED baseline, so on
+  // a machine with EverQuest installed this is exact and not a floor: POISON and DISEASE are the
+  // two axes of the five that reach the `resistant` cut, and the other three leave the card.
   const shown: string[] = []
   for (const axis of AXES) {
     if ((await countOf(card, `[data-testid="con-chip-${axis}"]`)) === 1) shown.push(axis)
   }
-  check('the card keeps ONLY the axes this creature resists', shown.join(',') === 'cold', shown.join(',') || '(none)')
+  check(
+    'the card keeps ONLY the axes this creature resists',
+    shown.join(',') === 'poison,disease',
+    shown.join(',') || '(none)'
+  )
   check('…and every chip on it reports its answer in WORDS, with the number and interval and count',
-    /cold resistant/i.test(text.replace(/\s+/g, ' ')) && /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
+    /disease resistant/i.test(text.replace(/\s+/g, ' ')) && /R \d+ \(\d+-\d+\) n=\d+/.test(text), text.slice(0, 240))
   // The survivors still read in the payload's fixed order, so the eye learns the positions.
   const order = shown.map((a) => text.indexOf(a))
   check('…in the same fixed order the mob page lists them in',
