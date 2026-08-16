@@ -46,7 +46,7 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, overlayWindow, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture } from './logFixture.mjs'
-import { stepRowsHoverNothing, stepTitleBarOnlyTooltips } from './overlayTooltipSteps.mjs'
+import { stepNoTooltipsAnywhere, stepRowsHoverNothing } from './overlayTooltipSteps.mjs'
 // THE COLD START WITH THE WINDOW ALREADY OPEN (JOS-172) — a second launch with a narrative of its
 // own, so it lives beside the other step modules rather than inside this one's.
 import { seedRestart, stepRestartRehydrate } from './buffRestartSteps.mjs'
@@ -574,7 +574,7 @@ async function main(): Promise<void> {
       // JOS-358, on the two rows that step just raised and before anything clears them. One of them
       // is the ambiguous shape whose shared-landing candidate list used to BE the row's hover.
       await stepRowsHoverNothing(debuffsOverlay, 'buff-timer-row')
-      await stepTitleBarOnlyTooltips(debuffsOverlay, 'the debuffs window')
+      await stepNoTooltipsAnywhere(debuffsOverlay, 'the debuffs window')
       await stepBreakClearsOneTarget(debuffsOverlay, log)
       // …and the bar the break line SPARED is the one the user clears by hand (JOS-203).
       await stepDismissBar(debuffsOverlay, log)
