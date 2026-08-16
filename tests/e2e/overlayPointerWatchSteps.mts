@@ -30,7 +30,7 @@
 // never ratchet (overlayScrollSteps.mts and overlayMinSizeSteps.mts precede it).
 
 import type { ElectronApplication, Page } from 'playwright-core'
-import { check, settle, settleStable } from './appHarness.mjs'
+import { check, note, settle, settleStable } from './appHarness.mjs'
 import type { SetLocked } from './overlayScopeSteps.mjs'
 
 /** A window rectangle, as Electron hands it over. */
@@ -98,6 +98,25 @@ const isWatching = (s: WatchState | null): boolean => s?.watching.includes(KIND)
 const watchList = (s: WatchState | null): string => (s?.watching ?? []).join(', ') || '(none)'
 const exitsSoFar = (s: WatchState | null): number => s?.exits[KIND] ?? 0
 
+/**
+ * WHAT A TICK COSTS, MEASURED ON THIS MACHINE rather than argued.
+ *
+ * A tick is one `getCursorScreenPoint()` — a `GetCursorPos` read — plus four numeric comparisons
+ * against a rectangle main is already holding. This times the syscall half in the real main
+ * process and prints it as a note; there is no assertion, because the number is a property of the
+ * machine and a frozen one would rot (AGENTS.md). At five ticks a captured second, the note is the
+ * whole per-second bill of the feature.
+ */
+async function noteTickCost(app: ElectronApplication): Promise<void> {
+  const us = await app.evaluate(({ screen }) => {
+    const n = 2000
+    const t0 = process.hrtime.bigint()
+    for (let i = 0; i < n; i++) screen.getCursorScreenPoint()
+    return Number(process.hrtime.bigint() - t0) / n / 1000
+  })
+  note(`one watchdog tick reads the cursor in ${us.toFixed(1)}us — ${(us * 5).toFixed(0)}us per captured second at 200ms`)
+}
+
 /** No timer while a locked overlay is IDLE, and none for an unlocked one — the whole of rule 2. */
 async function checkNoTimer(app: ElectronApplication, name: string): Promise<void> {
   const s = await settleStable(() => watchState(app), { timeoutMs: 4_000 })
@@ -160,6 +179,7 @@ export async function stepPointerWatch(
     return
   }
 
+  await noteTickCost(app)
   await setLocked(overlay, true)
   await checkNoTimer(app, 'a LOCKED, idle overlay runs NO cursor timer at all (the owner’s performance rule)')
   await captureTheWindow(app, overlay, rect)
