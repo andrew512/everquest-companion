@@ -18,18 +18,22 @@ import assert from 'node:assert/strict'
 import {
   BASELINE_K,
   DIFFERS_MIN_N,
-  IMMUNE_LEVEL_MOD,
   USER_ONLY_AT,
   damageKind,
   debuffAmount,
   estimate,
-  expectedDamageFraction,
   unobservableSpells,
+} from '../src/shared/resistModel'
+// The FORWARD half moved to its own module when JOS-385 pushed the pair past the line ceiling.
+// The tests below still read as one subject, because the calibration claim spans both.
+import {
+  IMMUNE_LEVEL_MOD,
+  expectedDamageFraction,
   levelMod,
   predict,
   priorResist,
   resistTag,
-} from '../src/shared/resistModel'
+} from '../src/shared/resistFormula'
 import type { ResistRow, SpellResistTable } from '../src/shared/resistTypes'
 
 // ---------------------------------------------------------------------------------------------

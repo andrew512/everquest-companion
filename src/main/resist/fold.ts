@@ -81,12 +81,14 @@
 //
 // ── A ROW'S TARGET HAS TO BE A CREATURE ─────────────────────────────────────────────────────────
 //
-// `CasterIndex.isMobTarget` gates every filing, and it is new here (JOS-385) even though it fixes
+// `isMobTarget` (world.ts, which carries the argument) gates EVERY filing — the resist arm, the
+// damage arm, the emote arm and the song sink. It is new here (JOS-385) even though it fixes
 // something older: R is a statement about a creature, and while only players could cast, nothing
 // ever checked that the thing being cast ON was one. The shipped JOS-382 baseline shows the cost —
 // rows keyed `you` (Cannibalization damages its own caster), rows keyed on groupmates (a Superior
-// Healing landing), ~2,700 observations under 56 keys that are people's names, in a file this repo
-// publishes. NPC casters would have made it a flood, because mobs cast on the player constantly.
+// Healing landing, and Jonthan's Provocation pulsing on five of them), ~2,700 observations under 56
+// keys that are people's names, in a file this repo publishes. NPC casters would have made it a
+// flood, because mobs cast on the player's group constantly.
 
 import { idKey, spellCanonKey } from '../log/parseCommon'
 import { mobKey } from '../../shared/mobKey'
@@ -100,6 +102,7 @@ import {
   DebuffWindows,
   MeleeContact,
   MobLevels,
+  isMobTarget,
   isResistDebuff,
   type MobLevelFact,
 } from './world'
@@ -201,10 +204,12 @@ export class ResistFold {
   constructor(private readonly deps: ResistFoldDeps = {}) {
     this.songs = new SongFold(deps.spellDb, {
       land: (mob, key, ts) => {
-        this.fileSong(mob, key, ts).land += 1
+        const row = this.fileSong(mob, key, ts)
+        if (row) row.land += 1
       },
       resist: (mob, key, ts) => {
-        this.fileSong(mob, key, ts).resist += 1
+        const row = this.fileSong(mob, key, ts)
+        if (row) row.resist += 1
       },
       keyOf: (display) => this.keyOf(display),
       displayFor: (key) => this.display.get(key) ?? key,
@@ -427,11 +432,17 @@ export class ResistFold {
   // ---- casts ---------------------------------------------------------------------------
 
   /**
-   * The row one song pulse belongs to. Songs are never filed as an ordinary cast, and NPC casters
-   * are never filed as a song: `SongFold` recognises a song by spell identity and hands back
-   * anything that is not the tailed character's, so `kind` here is always `self` by construction.
+   * The row one song pulse belongs to, or null when the pulse landed on a PERSON. Songs are never
+   * filed as an ordinary cast, and NPC casters are never filed as a song: `SongFold` recognises a
+   * song by spell identity and hands back anything that is not the tailed character's, so `kind`
+   * here is always `self` by construction.
+   *
+   * The target test is not decoration on this arm — it is the arm it matters most on. A bard's
+   * group songs pulse on GROUPMATES and print a landing sentence naming each of them, so the
+   * JOS-382 baseline carries `jonthan's provocation` filed against five people's names.
    */
-  private fileSong(mobDisplay: string, songKey: string, ts: number): ResistRow {
+  private fileSong(mobDisplay: string, songKey: string, ts: number): ResistRow | null {
+    if (!isMobTarget(mobDisplay)) return null
     this.remember(mobDisplay)
     return this.rowFor({ mob: mobDisplay, spellKey: songKey, family: 'song', kind: 'self', level: this.selfLevel, ts })
   }
@@ -493,7 +504,7 @@ export class ResistFold {
     if (!cast) return
     // A buff you landed on a GROUPMATE prints the same sentence shape as a debuff on a mob, and
     // filed as a row it becomes a person's name in the ledger. See the header's target block.
-    if (!this.casters.isMobTarget(mobDisplay)) return
+    if (!isMobTarget(mobDisplay)) return
     this.remember(mobDisplay)
     const key = this.keyOf(mobDisplay)
     if (isResistDebuff(this.deps.spellDb, cast.display)) this.debuffs.open(key, cast.spellKey, ts)
@@ -526,7 +537,7 @@ export class ResistFold {
   private onResist(ev: Extract<LogEvent, { kind: 'resist' }>): void {
     // `You resist <mob>'s <Spell>!` is YOUR resist and a different feature entirely.
     if (ev.incoming) return
-    if (!this.casters.isMobTarget(ev.target)) return
+    if (!isMobTarget(ev.target)) return
     const kind = this.casters.kindOf(ev.caster)
     const spellKey = spellCanonKey(ev.spell)
     this.remember(ev.target)
@@ -571,7 +582,7 @@ export class ResistFold {
     // BEFORE the target test, not after: this is what makes a proper-named creature you have
     // nuked a creature, and it is the evidence the catalog most often lacks.
     if (kind === 'self') this.casters.noteStruck(ev.target)
-    if (!this.casters.isMobTarget(ev.target)) return
+    if (!isMobTarget(ev.target)) return
     const spellKey = spellCanonKey(ev.skill)
     this.remember(ev.target)
     if (this.songs.onDamage(spellKey, kind, ev.ts)) return

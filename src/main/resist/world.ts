@@ -7,6 +7,7 @@
 
 import { localMobEntry } from '../mobLookupLocal'
 import { idKey, spellCanonKey } from '../log/parseCommon'
+import { isPlayerShapedName } from '../../shared/playerShape'
 import type { SpellDb } from '../data/spellDb'
 import type { ResistCasterKind } from '../../shared/resistTypes'
 
@@ -118,25 +119,6 @@ export class CasterIndex {
     return verdict
   }
 
-  /**
-   * MAY A ROW BE FILED ABOUT THIS NAME AS A TARGET? (JOS-385.)
-   *
-   * A resist row is a statement about a CREATURE's resist stat, so its target has to be one. While
-   * only players could cast, this question never had to be asked out loud — and the shipped
-   * baseline shows what that cost: it carries rows keyed `you` (your own Cannibalization, which
-   * damages the caster), rows keyed on GROUPMATES' names (a Superior Healing landing on a friend),
-   * and about 2,700 observations filed under 56 keys that are people. NPC casters make it acute
-   * rather than merely untidy: mobs cast on the player and on the player's group constantly, so
-   * without this test the ledger would fill with rows about the person reading it.
-   *
-   * It is the SAME verdict `kindOf` gives, which is the point — one answer to "person or
-   * creature", used from both ends — plus the explicit self test in front, because the committed
-   * catalog happens to hold an entry that folds to the key `you`.
-   */
-  isMobTarget(name: string): boolean {
-    return this.kindOf(name) === 'npc'
-  }
-
   private judge(key: string, name: string): 'pc' | 'npc' {
     if (this.pets.has(key) || this.struck.has(key)) return 'npc'
     if (/^(?:a|an|the)\s/i.test(name.trim())) return 'npc'
@@ -144,6 +126,38 @@ export class CasterIndex {
     if (localMobEntry(name)) return 'npc'
     return 'pc'
   }
+}
+
+/**
+ * MAY A ROW BE FILED ABOUT THIS NAME AS A TARGET? (JOS-385.)
+ *
+ * A resist row is a statement about a CREATURE's resist stat, so its target has to be a creature.
+ * While only players could cast, this question was never asked out loud — and the shipped JOS-382
+ * baseline shows what that cost: rows keyed `you` (your own Cannibalization damages its caster),
+ * rows keyed on GROUPMATES (a Superior Healing landing, a group song's pulse), roughly 2,700
+ * observations under 56 keys that are people's names, in a file this repo publishes. NPC casters
+ * make it acute rather than merely untidy, because mobs cast on the player's group constantly.
+ *
+ * THE TEST IS `conCardIsPlayer`'S, DELIBERATELY, and not `CasterIndex`'s. The two questions look
+ * the same and are not. For a CASTER, "you have landed damage on this name" is a reason to REFUSE
+ * it as a teacher, which is safe in the direction it points. For a TARGET the same fact would
+ * ADMIT the name — and a groupmate can end up in `struck` through a damage shield or an area
+ * effect, which is exactly how the first cut of this guard let `Dranix` back in. So the target
+ * test is the app's standing "is this a person" pair and nothing else: EQ gives players one
+ * capitalized word with no space, and the committed catalog knows the proper-named NPCs that shape
+ * would otherwise refuse.
+ *
+ * THE RESIDUAL IS THE SAME ONE THE CON CARD ALREADY ACCEPTS: a proper-named NPC the catalog has
+ * never heard of is read as a person and teaches us nothing. That is the safe direction — a
+ * creature we decline to learn about costs a cell, and a person's name in a published file is a
+ * different kind of mistake.
+ */
+export function isMobTarget(name: string): boolean {
+  const n = name.trim()
+  // The catalog happens to hold an entry that folds to the key `you`, so self is tested first and
+  // by identity, exactly as the fold's own `isSelf` does.
+  if (n === 'You' || idKey(n) === 'you') return false
+  return !isPlayerShapedName(n) || localMobEntry(n) !== null
 }
 
 /**

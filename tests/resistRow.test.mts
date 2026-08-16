@@ -19,6 +19,8 @@ import {
   evidenceText,
   LOW_SAMPLE_NOTE,
   NO_DATA_TEXT,
+  NPC_NOT_INCLUDED_NOTE,
+  npcCasterSummary,
   songSummary,
   spellDisplayName,
   splitText
@@ -37,6 +39,12 @@ function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
     fromYou: 120,
     droppedNoLevel: 0,
     byFamily: { cast: { n: 600, resist: 40, land: 560 }, song: { n: 0, resist: 0, land: 0 } },
+    byCaster: {
+      self: { n: 600, resist: 40, land: 560 },
+      pc: { n: 0, resist: 0, land: 0 },
+      npc: { n: 0, resist: 0, land: 0 }
+    },
+    npcIncluded: true,
     perSpell: [],
     baselineWeight: 0,
     userOnly: false,
@@ -186,6 +194,30 @@ test('NO ACRONYMS: every axis label is the word, and every axis has a colour', (
   }
   // Five axes, five distinct colours: a repeated hue would say two axes are one thing.
   assert.equal(new Set(Object.values(RESIST_AXIS_COLORS)).size, RESIST_AXES.length)
+})
+
+test('the pets-and-creatures line says the same count whether or not it counted (JOS-385)', () => {
+  const npc = { n: 98, resist: 41, land: 57 }
+  const on = est({ byCaster: { self: { n: 0, resist: 0, land: 0 }, pc: { n: 0, resist: 0, land: 0 }, npc } })
+  assert.equal(npcCasterSummary(on), 'Pets and other creatures: 98 casts, 41 resisted')
+
+  // Switched off, the SAME sentence with the parenthesis carrying the difference. A line that
+  // disappeared would make the preference look like it deleted evidence rather than declining to
+  // weigh it - and the count is exactly what a user wants to see before deciding to flip it back.
+  const off = est({
+    byCaster: { self: { n: 0, resist: 0, land: 0 }, pc: { n: 0, resist: 0, land: 0 }, npc },
+    npcIncluded: false
+  })
+  assert.equal(npcCasterSummary(off), `Pets and other creatures: 98 casts, 41 resisted (${NPC_NOT_INCLUDED_NOTE})`)
+
+  // NO LINE AT ALL when nothing was cast by one, which is most mobs. "No pet ever cast on this" is
+  // not a fact anybody came to the page for, and a zero on an evidence line reads as a measurement.
+  assert.equal(npcCasterSummary(est()), null)
+  assert.equal(npcCasterSummary(est({ npcIncluded: false })), null)
+
+  // Copy rules, on a string a player reads: no acronyms and no jargon for the thing being counted.
+  const text = npcCasterSummary(off) ?? ''
+  assert.doesNotMatch(text, /\bNPC\b|estimate|ledger|fold/i)
 })
 
 test('the five axis colours clear WCAG AA against the app paper background', () => {

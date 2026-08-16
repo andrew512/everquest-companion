@@ -58,6 +58,28 @@
 // log NAMED, which here is Denon's, eight times. Pooling the two instead would smear a -100 resist
 // adjust into a spell that has none, which is the exact thing this model exists to take out.
 //
+// ── r4-npc-casters.log ──────────────────────────────────────────────────────────────────────────
+//
+// Hand-read window, Lavastorm, Thu Jul 30 2026 15:44:57 to 15:46:33 — the fight JOS-385 exists for.
+// A pack of imp protectors is throwing Dry Bone Fire Burst at the player AND at each other while
+// the player nukes one of them, so a hundred lines carry all four cases at once:
+//
+//   * `an imp protector hit an imp protector for 12 points of fire damage by Dry Bone Fire Burst.`
+//     — an NPC caster landing on another NPC. THE new family: a fire observation about a creature
+//     the tailed character never once cast fire at, with a caster level the catalog states.
+//   * `An imp protector resisted an imp protector's Dry Bone Fire Burst!` — the other half of the
+//     same binomial, five times, which is what makes the cell estimable rather than a count.
+//   * `an imp protector hit you for 46 points of fire damage by Dry Bone Fire Burst.` — the SAME
+//     spell from the SAME caster, on the player. It must file nothing: a row keyed `you` is a
+//     statement about a creature's resist stat with a person in the creature's place.
+//   * `You hit an imp protector for 147 points of magic damage by Smiting Strike.` — the player's
+//     own casts on the same mob in the same seconds, so the fixture proves the two families land
+//     in separate rows rather than pooling.
+//
+// It also carries `An imp protector begins casting Dry Bone Fire Burst.` a dozen times, which is
+// the line the fold deliberately does NOT arm (fold.ts's header says why), and an
+// `An imp protector has been slain by an imp protector!` to close a debuff window on.
+//
 // NOTHING IS INJECTED AND NOTHING IS AUTHORED. These are the owner's real bytes.
 
 import { readFileSync, writeFileSync } from 'fs'
@@ -86,3 +108,4 @@ function slice(fromLine, toLine, out) {
 slice(213496, 213730, 'r1-kodiak-fight.log')
 slice(50380, 50700, 'r2-song-pulses.log')
 slice(12400, 12660, 'r3-song-shared-message.log')
+slice(490395, 490800, 'r4-npc-casters.log')

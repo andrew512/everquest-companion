@@ -22,7 +22,6 @@ import { resolveMobIdentity } from '../mobAliases'
 import { resistModule } from '../pipeline'
 import { mobResistCell, mobResistProfile, type ProfileDeps } from '../resist/profile'
 import { unobservableSpells } from '../../shared/resistModel'
-import type { ResistPrefs } from '../../shared/resistPrefs'
 import { spellTable, spellTableNow, spellTableStatus } from '../resist/spellTable'
 import { baselineFrozenAt, resistLedger } from '../resist/store'
 import { getResistPrefs, setResistPrefs } from '../storeResists'
@@ -111,7 +110,7 @@ export function registerResistIpc(): void {
   // recognisable in it leaves the stored value exactly where it was.
   ipcMain.handle(IPC.resistPrefsSet, (_e, patch: unknown) =>
     typeof patch === 'object' && patch !== null && !Array.isArray(patch)
-      ? setResistPrefs(patch as Partial<ResistPrefs>)
+      ? setResistPrefs(patch)
       : getResistPrefs()
   )
 }

@@ -31,7 +31,8 @@ import {
   type ResistRow,
   type SpellResistTable,
 } from '../../shared/resistTypes'
-import { estimate, hasAnswer, resistTag } from '../../shared/resistModel'
+import { estimate, hasAnswer } from '../../shared/resistModel'
+import { resistTag } from '../../shared/resistFormula'
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import type { MobLevelFact } from './world'
 import type { SpellTableState } from './spellTable'
