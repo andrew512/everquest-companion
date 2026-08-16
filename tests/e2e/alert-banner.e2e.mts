@@ -15,7 +15,8 @@
  *      quiet line naming Preferences standing in for them while the overlay is off.
  *   3. TURNING IT ON IN PREFERENCES CREATES THE WINDOW AND INTRODUCES IT. The switch, the store,
  *      the window factory and the overlay's own first-run card are four separate parts.
- *   4. A FIRING RENDERS A LINE, and the line says exactly what the alert would speak. The row's ▶
+ *   4. A FIRING RENDERS A LINE, the line carries the alert's NAME, and its text is CENTRED in the
+ *      strip — the last of those is geometry, which is a thing only a laid-out window has. The row's ▶
  *      IS a firing (tests/alertPreview.test.mts pins that equality at the seam), so it is what
  *      this spec presses — and it is also the acceptance criterion in its own right, because
  *      pressing ▶ is how a user positions a strip they have never seen.
@@ -184,11 +185,39 @@ async function stepFiringRendersALine(page: Page, banner: Page): Promise<string>
     return name
   }
   check(
-    '…carrying the sentence that alert would speak (its own name, for a sound-only alert)',
+    '…carrying the alert\'s own NAME, which is what an empty override prints (JOS-380)',
     !!name && lines[0].includes(name),
     `row "${name}" · line "${lines[0]}"`
   )
   return name
+}
+
+/**
+ * THE LINE IS CENTRED (JOS-380) — geometry, so only a real window can claim it.
+ *
+ * It is read at a glance over the game from wherever the eyes already are, and the dismiss button
+ * on the right is exactly the thing that would pull a centred sentence off true. The two claims
+ * below are the two halves of that: the text is centre-aligned, and its box sits on the line's
+ * midpoint rather than half a button to the left of it.
+ */
+async function stepTextIsCentered(banner: Page): Promise<void> {
+  const geom = await banner.evaluate((sel: string[]) => {
+    const line = document.querySelector(sel[0])
+    const text = line?.querySelector(sel[1])
+    if (!line || !text) return null
+    const l = line.getBoundingClientRect()
+    const t = text.getBoundingClientRect()
+    return {
+      align: getComputedStyle(text).textAlign,
+      offset: Math.abs((t.left + t.right) / 2 - (l.left + l.right) / 2)
+    }
+  }, [LINE, '[data-testid="banner-text"]'])
+  check('the banner text is CENTRE-aligned in its line', geom?.align === 'center', JSON.stringify(geom))
+  check(
+    '…and its box sits on the line centre — the dismiss button is balanced, not subtracted',
+    geom !== null && geom.offset <= 2,
+    JSON.stringify(geom)
+  )
 }
 
 /** The row's toggle tames ONE alert: no line, from a control that opened nothing. */
@@ -270,6 +299,7 @@ async function main(): Promise<void> {
       await stepIntroduction(banner)
       await stepControlsAppear(page)
       const name = await stepFiringRendersALine(page, banner)
+      await stepTextIsCentered(banner)
       await stepPerAlertSwitchHides(page, banner)
       await stepMutedStillShows(page, banner, name)
     }

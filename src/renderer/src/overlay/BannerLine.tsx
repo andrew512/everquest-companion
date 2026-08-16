@@ -5,6 +5,11 @@
 // link. The whole point of the surface is that a player mid-pull can read it without stopping, so
 // it is one large, high-contrast sentence on dark glass and nothing else competing for the eye.
 //
+// THE TEXT IS CENTRED, and the dismiss button is balanced against an invisible twin so that
+// centring stays true (JOS-380): this line is read at a glance over the game, from wherever the
+// eyes already are, so a sentence hugging the left edge of a strip that spans a third of the
+// screen reads as misplaced.
+//
 // THE COLOUR COMES FROM THE ALERT, NOT FROM THIS FILE. `ALERT_BANNER_COLOR_HEX` (shared/
 // alertBanner.ts) is the one table, because the alert EDITOR draws the same six swatches and two
 // tables of six colours is two answers to one question.
@@ -25,6 +30,9 @@ import { ALERT_BANNER_COLOR_HEX, type AlertBannerPayload } from '@shared/alertBa
 import { CARD_ENTER_MS, CARD_EXIT_MS } from './cardQueue'
 
 const MUTED = '#a8b0c6'
+
+/** The dismiss button's side, and therefore the balance spacer's — one number, or the text drifts. */
+const BUTTON_PX = 20
 
 /**
  * The enter/exit transition, as a style. `entering` is true for exactly one frame after mount,
@@ -96,9 +104,21 @@ export function BannerLine({
         ...motionStyle(entering, exiting)
       }}
     >
+      {/* THE BUTTON'S INVISIBLE TWIN. Centred text in a row that ends with a 20 px control is not
+          centred at all — it sits half that control off true — so the right edge's width is spent
+          again on the left and the text span lands exactly on the line's midpoint. */}
+      <span aria-hidden="true" style={{ flexShrink: 0, width: BUTTON_PX }} />
       <span
         data-testid="banner-text"
-        style={{ color, fontSize: 22, fontWeight: 700, lineHeight: 1.25, minWidth: 0, flex: '1 1 auto' }}
+        style={{
+          color,
+          fontSize: 22,
+          fontWeight: 700,
+          lineHeight: 1.25,
+          minWidth: 0,
+          flex: '1 1 auto',
+          textAlign: 'center'
+        }}
       >
         {payload.text}
         {/* The deadline, said the way the reporter said it ("Celerity fades in 30 s"): part of the
@@ -119,8 +139,8 @@ export function BannerLine({
         onClick={onDismiss}
         style={{
           flexShrink: 0,
-          width: 20,
-          height: 20,
+          width: BUTTON_PX,
+          height: BUTTON_PX,
           lineHeight: '18px',
           padding: 0,
           borderRadius: 4,

@@ -416,16 +416,17 @@ function applyVoiceFields(def: AlertDef, r: Record<string, unknown>): void {
  * default, so an alert that asked for none of this sanitizes to the byte-identical object it
  * always did and import dedupe keeps matching it.
  *
- * FALSE-ONLY on the switch, which is the mirror of `alwaysPlay`'s true-only rule and comes from
- * the same place: absent MEANS shown (shared/alertBanner.ts), so `false` is the only value that
- * carries information — somebody deliberately tamed this alert, and a share that quietly restored
- * it to shouting on the recipient's screen would be the bug this rule exists to prevent.
+ * EITHER BOOLEAN ON THE SWITCH, and only a boolean. What an absent key means is the trigger's to
+ * decide since JOS-380 (`defaultShowOnScreen`), so BOTH values now carry information: `false` is
+ * somebody deliberately taming an alert, and `true` is somebody deliberately showing one the
+ * default would have hidden. Dropping either would restore the recipient's default over the
+ * sender's decision, which is the bug this rule exists to prevent.
  *
  * The colour goes through the same closed-union normalizer every other inlet uses, so a
  * stranger's bundle cannot name a colour this build would not have offered.
  */
 function applyBannerFields(def: AlertDef, r: Record<string, unknown>): void {
-  if (r.showOnScreen === false) def.showOnScreen = false
+  if (typeof r.showOnScreen === 'boolean') def.showOnScreen = r.showOnScreen
   const bannerText = clampStr(r.bannerText, MAX_BANNER_CHARS).trim()
   if (bannerText) def.bannerText = bannerText
   const bannerColor = normalizeBannerColor(r.bannerColor)

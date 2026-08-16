@@ -20,16 +20,14 @@
 // CONFIG.alertBanner.open` is false, no migration exists, and a store that has never heard of
 // this key reads that default — see main/store.ts, which says the same thing about four kinds.
 //
-// WHAT A LINE SAYS IS NOT DECIDED HERE TWICE. `alertBannerText` resolves the def's optional
-// `bannerText` override and otherwise defers to `speechTextFor` — the SAME function the spoken
-// channel uses, with the same phrase filling, the same `{token}` substitution and the same
-// alertName fallback. A second implementation of "what does this alert say" is exactly how the
-// banner and the voice would come to disagree about one alert.
+// WHAT A LINE SAYS IS THE ALERT'S NAME (owner ruling, 2026-08-15, JOS-380). `alertBannerText`
+// resolves the def's optional `bannerText` override and otherwise prints `def.name`. It does NOT
+// call the speech resolver: the eye and the ear want different sentences, and the name is the one
+// the player wrote and already recognises from the alert list.
 //
 // Pure + dependency-free (types only), so `npm test` exercises every rule here with no Electron.
 
-import type { AlertDef } from './alertTypes'
-import { speechTextFor, type SpeechFiring } from './speechText'
+import type { AlertDef, AlertTriggerPrimitive, AppSignal } from './alertTypes'
 
 // ---- the kind's own config knobs -------------------------------------------------------
 //
@@ -145,44 +143,86 @@ export function normalizeBannerColor(v: unknown): AlertBannerColor | undefined {
 
 // ---- what a line SAYS -------------------------------------------------------------------
 
-/** Longest a banner line may be. The speech cap, for the reason the two share a derivation. */
+/**
+ * Longest a banner line may be. The same 120 as the speech cap, arrived at independently: it is
+ * about as much text as stays ONE glance at this size over a game scene.
+ */
 export const MAX_BANNER_CHARS = 120
 
 /** The def fields the banner text resolver reads. Any AlertDef satisfies it. */
-export type BannerDef = Pick<AlertDef, 'name' | 'speech' | 'bannerText'>
+export type BannerDef = Pick<AlertDef, 'name' | 'bannerText'>
 
 /**
- * THE ONE DERIVATION. What this alert's banner line says for this firing:
+ * THE ONE DERIVATION. What this alert's banner line says:
  *
  *   1. `bannerText`, when the user filled the "On-screen text" field. An override is the only
  *      reason that field exists, so a non-empty one wins outright.
- *   2. otherwise EXACTLY what the audio path would SPEAK — `speechTextFor`, which fills a custom
- *      phrase's `{token}`s from the same firing, strips spell ranks the same way, and falls back
- *      to the alert's own NAME when the mode cannot answer (JOS-353/362).
+ *   2. otherwise the alert's own NAME (owner ruling, 2026-08-15).
  *
- * Step 2 is a CALL, never a copy: a sound-only alert has no speech block, `speechTextFor` defaults
- * it to `{mode:'alertName'}`, and the line is the alert's name — which is the honest answer and
- * the one the user already reads in the list.
+ * IT NO LONGER ASKS THE SPEECH RESOLVER, and that is the ruling's whole point: a spoken phrase is
+ * written for the EAR and reads long on screen ("Mez has dropped on a ghoul"), while the name is
+ * the short thing the player typed themselves and already recognises from the alert list — which
+ * is exactly what a glance mid-pull can resolve. The two channels are free to differ, and the
+ * override field is how you make them differ deliberately.
  *
- * Returns null only when there is nothing truthful to print (a nameless def whose phrase resolved
- * to nothing), in which case no banner is sent at all.
+ * No firing is needed to answer this, so none is taken: the name is the same on every landing, and
+ * a parameter that is never read is a claim that it might be.
+ *
+ * Returns null only when there is nothing truthful to print (a def with a blank name and no
+ * override), in which case no banner is sent at all.
  */
-export function alertBannerText(def: BannerDef, firing?: SpeechFiring | null): string | null {
-  const override = def.bannerText?.replace(/\s+/g, ' ').trim()
-  if (override) return override.slice(0, MAX_BANNER_CHARS)
-  return speechTextFor(def, firing)
+export function alertBannerText(def: BannerDef): string | null {
+  return cappedText(def.bannerText, MAX_BANNER_CHARS) ?? cappedText(def.name, MAX_BANNER_CHARS) ?? null
+}
+
+/**
+ * Which app signals ALREADY SAY SOMETHING ON SCREEN — each has a celebration card of its own
+ * (shared/toast.ts: 'bossKill' for a defeat, 'skyQuestComplete' for a quest).
+ *
+ * A Record rather than a list so a third `AppSignal` cannot be added without this file failing to
+ * compile. "Does this event already draw a card?" is a question the new signal's author is the
+ * only one who can answer, and silence would default it to exactly the double below.
+ */
+const CELEBRATED_SIGNAL: Record<AppSignal, boolean> = {
+  bossDefeat: true,
+  questComplete: true
+}
+
+const isCelebrated = (t: AlertTriggerPrimitive): boolean => t.type === 'app' && CELEBRATED_SIGNAL[t.signal]
+
+/**
+ * What an alert that has never said means by saying nothing (owner ruling, 2026-08-15, JOS-380).
+ *
+ * ON for everything, EXCEPT an alert that fires on an app signal the app already CELEBRATES. A
+ * raid target going down drew both the celebration card and a banner line saying the same news,
+ * and the card is the better of the two: it is the surface built for that event, with the mob, the
+ * time and the deep link on it. A banner beside it is the same sentence twice on one screen.
+ *
+ * It is a DEFAULT, not a ban: an explicit `showOnScreen: true` still wins, which is what the row
+ * toggle and the editor switch write. And because it is computed rather than stored, every install
+ * that already has the built-in "raid target defeated" alert gets the fix with no migration.
+ *
+ * A composite defaults off only when EVERY condition is such a signal — one raw-line condition in
+ * an 'any' means the alert can fire on something nothing celebrates, and that firing has earned a
+ * line.
+ */
+export function defaultShowOnScreen(def: Pick<AlertDef, 'trigger'>): boolean {
+  const t = def.trigger
+  if ('conditions' in t) return !(t.conditions.length > 0 && t.conditions.every(isCelebrated))
+  return !isCelebrated(t)
 }
 
 /**
  * Does this alert put a line on screen at all?
  *
- * ABSENT MEANS YES (owner ruling 2). Every alert a user already has was written before this
- * existed and none of them carry the key, so "absent = on" is what makes the overlay useful the
- * moment it is switched on — and the per-alert switch is then how you TAME it, which is the
- * ruling's own word. The overlay being off is the other half of the gate and is checked in main.
+ * ABSENT MEANS `defaultShowOnScreen` (owner ruling 2, narrowed by JOS-380). Every alert a user
+ * already has was written before this existed and none of them carry the key, so the absent case
+ * is what makes the overlay useful the moment it is switched on — for every trigger but the ones
+ * that already have a card. The per-alert switch is then how you TAME it, which is the ruling's
+ * own word. The overlay being off is the other half of the gate and is checked in main.
  */
-export function alertShowsOnScreen(def: Pick<AlertDef, 'showOnScreen'>): boolean {
-  return def.showOnScreen !== false
+export function alertShowsOnScreen(def: Pick<AlertDef, 'showOnScreen' | 'trigger'>): boolean {
+  return def.showOnScreen ?? defaultShowOnScreen(def)
 }
 
 // ---- the wire ---------------------------------------------------------------------------

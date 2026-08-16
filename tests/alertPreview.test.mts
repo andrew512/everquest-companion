@@ -146,7 +146,7 @@ test('▶ shows the SAME line a real firing would — same words, same swatch, s
     bannerColor: 'red'
   })
   const preview = previewDef(original)
-  assert.equal(alertBannerText(preview, null), alertBannerText(original, null), 'one derivation')
+  assert.equal(alertBannerText(preview), alertBannerText(original), 'one derivation')
   assert.equal(preview.bannerColor, original.bannerColor, 'the swatch is not a preview decision')
   assert.equal(alertShowsOnScreen(preview), alertShowsOnScreen(original))
 })
@@ -158,7 +158,7 @@ test('…and an alert TAMED off the screen previews silently there too — previ
 
 test('an On-screen override is auditioned, not bypassed', () => {
   const original = def({ speech: { mode: 'custom', phrase: 'a long spoken sentence' }, bannerText: 'CHARM' })
-  assert.equal(alertBannerText(previewDef(original), null), 'CHARM')
+  assert.equal(alertBannerText(previewDef(original)), 'CHARM')
 })
 
 test('preview never mutates the def the row is rendering', () => {

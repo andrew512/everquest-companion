@@ -2,9 +2,9 @@
 //
 // The claims under test, stated as the product states them:
 //   * a fresh install shows no banner — the kind ships OFF and holds no slot in the meter grid;
-//   * what a line SAYS is ONE derivation shared with speech: a filled "On-screen text" wins,
-//     otherwise the line is EXACTLY the sentence the alert would speak (phrase, tokens, rank
-//     stripping, alertName fallback and all), and a sound-only alert shows its own name;
+//   * what a line SAYS is ONE derivation, and it is NOT the spoken sentence (JOS-380): a filled
+//     "On-screen text" wins, otherwise the line is the alert's own NAME — the short thing the
+//     player wrote, where the phrase is written for the ear;
 //   * the per-alert switch is absent-means-shown, so no store migration exists and nothing an
 //     existing user already wrote has changed meaning;
 //   * an editor that touched none of this saves the alert BYTE-IDENTICALLY (import dedupe);
@@ -32,6 +32,8 @@ import {
 import { speechTextFor } from '../src/shared/speechText'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize } from '../src/main/overlayLayout'
+import { AlertsModule } from '../src/main/modules/alerts'
+import { parseEvent } from '../src/main/log/parser'
 import { cardReduce, type CardState } from '../src/renderer/src/overlay/cardQueue'
 import { TOAST_CAP, toastReduce, type ToastCardState } from '../src/renderer/src/overlay/toastQueue'
 import type { AlertDef } from '../src/shared/alertTypes'
@@ -87,38 +89,87 @@ test('the introduction names the window, the marking that reaches it, and where 
 
 // ---- what a line SAYS ------------------------------------------------------------------
 
-test('the banner line is EXACTLY what the alert would speak — one derivation, not a copy', () => {
+test('the banner line is the alert NAME, not the spoken sentence — the eye and the ear differ', () => {
   const d = def({ name: 'Mez broke', speech: { mode: 'custom', phrase: 'Mez has dropped on {target}' } })
   const firing = { spell: 'Mesmerization III', captures: { target: 'a ghoul' } }
-  assert.equal(alertBannerText(d, firing), speechTextFor(d, firing), 'the two channels agree by construction')
-  assert.equal(alertBannerText(d, firing), 'Mez has dropped on a ghoul')
+  assert.equal(alertBannerText(d), 'Mez broke')
+  assert.notEqual(alertBannerText(d), speechTextFor(d, firing), 'the channels are free to differ (JOS-380)')
 })
 
-test('a spell mode strips ranks on the banner too, because it is the same resolver', () => {
-  const d = def({ speech: { mode: 'spellName' } })
-  assert.equal(alertBannerText(d, { spell: 'Mesmerization III' }), 'Mesmerization')
+test('a spell mode no longer decides the banner — the name does, on every firing alike', () => {
+  const d = def({ name: 'Mez broke', speech: { mode: 'spellName' } })
+  assert.equal(alertBannerText(d), 'Mez broke', 'not "Mesmerization" — that is the answer the voice gives')
 })
 
-test('a SOUND-ONLY alert shows its own name — the documented fallback, never an invention', () => {
+test('a SOUND-ONLY alert shows its own name — which is now simply the rule, not a fallback', () => {
   assert.equal(alertBannerText(def({ name: 'Charm break' })), 'Charm break')
 })
 
-test('a filled On-screen text REPLACES the spoken sentence, and is capped', () => {
-  const d = def({ speech: { mode: 'custom', phrase: 'a long spoken sentence' }, bannerText: 'MEZ BROKE' })
-  assert.equal(alertBannerText(d, null), 'MEZ BROKE')
+test('a filled On-screen text REPLACES the name, and is capped', () => {
+  const d = def({ name: 'Mez broke', speech: { mode: 'custom', phrase: 'a long spoken sentence' }, bannerText: 'MEZ BROKE' })
+  assert.equal(alertBannerText(d), 'MEZ BROKE')
   const long = def({ bannerText: 'x'.repeat(500) })
-  assert.equal((alertBannerText(long, null) ?? '').length, MAX_BANNER_CHARS, 'capped, never refused')
+  assert.equal((alertBannerText(long) ?? '').length, MAX_BANNER_CHARS, 'capped, never refused')
 })
 
-test('an EMPTY (or whitespace) On-screen text is not an override — it means "say what you speak"', () => {
-  assert.equal(alertBannerText(def({ name: 'Slow fading', bannerText: '   ' }), null), 'Slow fading')
+test('an EMPTY (or whitespace) On-screen text is not an override — it means "print the name"', () => {
+  assert.equal(alertBannerText(def({ name: 'Slow fading', bannerText: '   ' })), 'Slow fading')
 })
 
 test('nothing truthful to say ⇒ null, and the player sends nothing', () => {
-  assert.equal(alertBannerText({ name: '   ', speech: { mode: 'custom', phrase: '' } }, null), null)
+  assert.equal(alertBannerText({ name: '   ' }), null)
+})
+
+// ---- the echo that used to be a second firing -------------------------------------------
+
+test('an app fire round-trips as HISTORY, not a second firing — one signal, one line', () => {
+  const mod = new AlertsModule()
+  mod.setDefs([
+    def({ id: 'boss-defeat', name: 'Raid target defeated', trigger: { type: 'app', signal: 'bossDefeat' } }),
+    def({ id: 'raw-mez', name: 'Raw mez', trigger: { type: 'raw', regex: 'begin casting' }, cooldownMs: 0 })
+  ])
+  mod.reset()
+
+  // The renderer evaluated the signal, PLAYED it, and told main. Main records it and queues the
+  // record onto the same delta the log fires ride — which is where the double came from.
+  mod.appFired('boss-defeat', 'Lord Nagafen')
+  const echoed = mod.flushDelta()?.delta.fired ?? []
+  assert.equal(echoed.length, 1, 'the echo still travels: history is the one source of truth')
+  assert.equal(echoed[0].origin, 'app', 'and it is MARKED, which is how the player knows not to replay it')
+  // The player's rule, restated (player.tsx onModuleDelta): a marked record is skipped, so the one
+  // play is the one the renderer already did. Unmarked, this was two — inaudible under audio
+  // coalescing for the life of the feature, and two banner lines the day the banner shipped.
+  assert.equal(1 + echoed.filter((f) => f.origin !== 'app').length, 1, 'one signal, one play')
+
+  // …and the mark is NARROW: a main-side fire carries no origin, so the skip above can never
+  // silence the alerts that only main can see.
+  const cast = parseEvent('[Sat Aug 02 21:14:03 2026] You begin casting Mesmerization III.', 9)
+  assert.ok(cast)
+  mod.onEvent(cast, true)
+  const real = mod.flushDelta()?.delta.fired ?? []
+  assert.equal(real.length, 1)
+  assert.equal(real[0].origin, undefined, 'a log fire is nobody’s echo')
 })
 
 // ---- the per-alert switch --------------------------------------------------------------
+
+test('an alert on a CELEBRATED app signal defaults OFF — the card is already saying it', () => {
+  const boss = def({ trigger: { type: 'app', signal: 'bossDefeat' } })
+  assert.equal(alertShowsOnScreen(boss), false, 'no banner beside the celebration card')
+  assert.equal(alertShowsOnScreen({ ...boss, showOnScreen: true }), true, 'an explicit true still wins')
+  assert.equal(alertShowsOnScreen(def({ trigger: { type: 'event', kind: 'buffFade' } })), true, 'everything else shows')
+})
+
+test('a composite defaults off only when EVERY branch is a celebrated signal', () => {
+  const both = def({
+    trigger: { type: 'any', conditions: [{ type: 'app', signal: 'bossDefeat' }, { type: 'app', signal: 'questComplete' }] }
+  })
+  assert.equal(alertShowsOnScreen(both), false)
+  const mixed = def({
+    trigger: { type: 'any', conditions: [{ type: 'app', signal: 'bossDefeat' }, { type: 'raw', regex: 'broke' }] }
+  })
+  assert.equal(alertShowsOnScreen(mixed), true, 'it can fire on something nothing celebrates')
+})
 
 test('absent showOnScreen means SHOWN — which is why there is no store migration', () => {
   assert.equal(alertShowsOnScreen(def()), true, 'every def written before JOS-378 shows')
