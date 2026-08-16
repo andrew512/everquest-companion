@@ -321,6 +321,24 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
 - NPC-on-NPC evidence (owner, 2026-08-16, revised): a switchable family, ON to start; the
   shipped default is decided by the measured player-vs-pet comparison on the owner's log
   (JOS-385). Worry to test: players' fire resisted where pets' fire is not, from pet tuning.
+  **MEASURED, and the default is ON** (JOS-385, `npm run gen:resist-baseline -- --compare`):
+  48 (mob, axis) cells where both populations put 20+ observations into the fit, 28 of them
+  with disjoint 95% intervals, and **5 of the 28 (17.9%)** show the worry — fire/cold/poison/
+  disease with R_npc at least 30 below R_pc. The decision rule the ticket set was "over a
+  third ⇒ ship OFF". The worry case is real and rare (a fire giant warrior's fire reads 410
+  from players against 110 from NPC casters) and is outnumbered four to one by the opposite
+  direction: on 23 of the 28 flagged cells NPC casters are resisted the SAME or MORE (an
+  azarack magic 56 vs 100, Lord Nagafen 106 vs 214, a thunder spirit 18 vs 56), which is the
+  safe direction for a number a player acts on. The switch stays because the answer is the
+  kind a patch can move, and it is read at ESTIMATE time so flipping it never costs a re-fold
+  (`shared/resistPrefs.ts`, store key `resists.includeNpcCasters`, schema v14).
+- A resist row's TARGET has to be a creature (JOS-385, discovered while adding the above): R is
+  a statement about a creature, and nothing checked that the thing being cast ON was one. The
+  first shipped baseline carried rows keyed `you` (Cannibalization damages its own caster), a
+  groupmate's Superior Healing landing, and Jonthan's Provocation pulsing on five people —
+  ~2,700 observations under 56 keys that are players, in a public file. `isMobTarget`
+  (main/resist/world.ts) is the app's standing "is this a person" pair applied to every arm of
+  the fold; the residual it accepts is the con card's, verbatim.
 - Wiki overrides are app-wide (owner, 2026-08-16): a catalog correction (Largo's Melodic
   Binding prints "bound BY strands" on Legends) lives in `spellCorrectionsList*.ts`, never in a
   feature module (JOS-384).
