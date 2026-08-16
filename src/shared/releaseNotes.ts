@@ -125,6 +125,17 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.0.1',
+    date: '2026-08-15',
+    entries: [
+      {
+        kind: 'fixed',
+        text: 'The cursor ring lines up with the pointer under Windows display scaling and on multi-monitor setups, and it stays on the monitor the game is on - it no longer shows up offset when the pointer crosses to a second screen.',
+        fromReport: true
+      }
+    ]
+  },
+  {
     version: '1.0.0',
     date: '2026-08-15',
     entries: [
