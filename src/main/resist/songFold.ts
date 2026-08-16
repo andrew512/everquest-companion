@@ -32,7 +32,7 @@ import { spellCanonKey } from '../log/parseCommon'
 import type { SpellDb } from '../data/spellDb'
 import type { ResistCasterKind } from '../../shared/resistTypes'
 import { SONG_CONTACT_MS, SongPulses, type SongPulse } from './songs'
-import { isSongSpell, resolveSongEmote, songFamilyKey, songLandingObservable } from './songIdentity'
+import { isSongSpell, resolveSongEmote, songLandingObservable } from './songIdentity'
 
 /** What the song half needs from the fold that owns it. */
 export interface SongSink {
@@ -45,6 +45,8 @@ export interface SongSink {
   displayFor: (key: string) => string
   /** Mobs in melee contact within the window ending at `ts` — song rule 3. */
   contactsAt: (ts: number, windowMs: number) => string[]
+  /** The tailed character's level, or null until a `/who` has stated one — see `resolveSongEmote`. */
+  casterLevel: () => number | null
 }
 
 export class SongFold {
@@ -116,11 +118,12 @@ export class SongFold {
   onResist(mobDisplay: string, spellKey: string, kind: ResistCasterKind, ts: number): boolean {
     if (!this.isSong(spellKey)) return false
     if (kind !== 'self') return true
-    const songKey = songFamilyKey(spellKey)
+    // A resist line SPELLS THE SONG OUT, so the key it carries is the answer — there is no family
+    // table between the log's word and the ledger's row (JOS-384).
     const mob = this.sink.keyOf(mobDisplay)
-    this.noteNamed(mob, songKey)
-    if (songLandingObservable(this.db, songKey)) this.sink.resist(mobDisplay, songKey, ts)
-    else this.pulses.witness(songKey, ts, mob)
+    this.noteNamed(mob, spellKey)
+    if (songLandingObservable(this.db, spellKey)) this.sink.resist(mobDisplay, spellKey, ts)
+    else this.pulses.witness(spellKey, ts, mob)
     return true
   }
 
@@ -131,7 +134,7 @@ export class SongFold {
   onEmote(mobDisplay: string, ts: number, candidates: readonly string[] | undefined): boolean {
     if (!candidates || candidates.length === 0) return false
     const mob = this.sink.keyOf(mobDisplay)
-    const songKey = resolveSongEmote(this.db, candidates, this.namedFor(mob))
+    const songKey = resolveSongEmote(this.db, candidates, this.namedFor(mob), this.sink.casterLevel())
     if (songKey === null) {
       // Either not a song, or two songs share the sentence and nothing separates them. Pooling two
       // songs would smear their resist adjusts together, so an ambiguous pulse is refused.
@@ -150,8 +153,7 @@ export class SongFold {
   onDamage(spellKey: string, kind: ResistCasterKind, ts: number): boolean {
     if (!this.isSong(spellKey)) return false
     if (kind !== 'self') return true
-    const songKey = songFamilyKey(spellKey)
-    if (!songLandingObservable(this.db, songKey)) this.pulses.witness(songKey, ts, null)
+    if (!songLandingObservable(this.db, spellKey)) this.pulses.witness(spellKey, ts, null)
     return true
   }
 

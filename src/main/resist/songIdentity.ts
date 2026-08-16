@@ -18,46 +18,29 @@
 // (`"* Bard - Level 20"`). The parser's `sung` flag stays as a corroborating signal for the rare
 // song a bard actually starts by hand.
 //
-// ── AND ONE PLACE THE WIKI IS WRONG, WITH THE EVIDENCE ──────────────────────────────────────────
+// ── AND WHERE THE WIKI IS WRONG, THIS FILE NO LONGER SAYS SO (JOS-384) ──────────────────────────
 //
-// The catalog says:
-//     Largo's Melodic Binding    Bard 20    "Someone is bound IN strands of solid music."
-//     Largo's Assonant Binding   Bard 51    "Someone is bound BY strands of solid music."
+// Round 2 shipped a `SONG_FAMILY_OVERRIDES` table here, one row wide: it pooled Largo's Assonant
+// Binding (bard 51) into Largo's Melodic Binding (bard 20), because the catalog files the sentence
+// EQ Legends prints for the level-20 song under the level-51 one. The measurement was right and
+// the PLACE was wrong. Owner ruling 2026-08-16: a correction to wiki data is APP-WIDE or it is
+// nothing — a module-local one leaves the buff overlay, the alerts and the timers reading a catalog
+// the resist page has already decided is wrong, which is two different answers to one question.
 //
-// EQ Legends prints `<mob> is bound BY strands of solid music.` 4,152 times in the owner's log,
-// and `<mob> resisted your Largo's Melodic Binding!` 570 times, interleaved on the same six-second
-// grid, while the character is level 21 to 24. A level-21 bard does not have a level-51 song. The
-// sentence is MELODIC's on this server, and the catalog has it filed under Assonant.
+// So the row moved, with its evidence, to `src/main/data/spellCorrectionsList.ts` (search Largo),
+// where it is applied at load in `spellDb.ts` and every consumer sees it. This file consumes the
+// corrected catalog like any other, and carries no sentence and no spell name of its own —
+// `tests/largoBinding.test.mts` is the guard that keeps it that way for every feature module.
 //
-// That is drift class five — the one `spellCorrectionsList.ts` was built for — and this table is
-// the same shape of answer, kept LOCAL to the resist feature on purpose: correcting the global
-// catalog changes what the parser emits for the buff overlay, the alerts and the timers as well,
-// and that is an owner-level call about a shared table rather than something a resist ticket
-// should smuggle in. A row here says only "for the purpose of pooling resist observations, these
-// two names are one song", which is exactly true and nothing more.
+// WHAT THAT COSTS HERE, stated because it is a real behaviour change and not a refactor: the
+// corrected sentence now has TWO owners, so the emote arrives with two candidates and
+// `resolveSongEmote` has to separate them from the log instead of from a table. It does that the
+// way it already did for `<mob> winces.` — against the songs a resist line has NAMED — which is
+// evidence rather than a claim, and which is silent until the log has named one.
 
 import { parseSpellClassLevels } from '../../shared/spellLines'
 import type { SpellDb } from '../data/spellDb'
 import { spellCanonKey } from '../log/parseCommon'
-
-/**
- * Canonical key -> the key its observations pool under. EVERY ROW IS A CLAIM ABOUT WHAT THE GAME
- * DOES, backed by log lines, and never a way to quiet a number somebody dislikes.
- *
- * `largo's assonant binding` -> `largo's melodic binding`
- *   The catalog's landing sentence for Assonant (Bard 51) is the one Legends prints for Melodic
- *   (Bard 20): 4,152 emotes against 570 `resisted your Largo's Melodic Binding` on one six-second
- *   grid, cast by a level 21-24 character. Both names are one song line, and the resist model
- *   needs the emote (the landing half) and the resist line to meet or the song has no denominator.
- */
-export const SONG_FAMILY_OVERRIDES: Readonly<Record<string, string>> = {
-  "largo's assonant binding": "largo's melodic binding",
-}
-
-/** The key a song's observations pool under. Identity for everything the table does not name. */
-export function songFamilyKey(spellKey: string): string {
-  return SONG_FAMILY_OVERRIDES[spellKey] ?? spellKey
-}
 
 /**
  * MEMOISED, per catalog, and the reason is a measurement. Both answers below are constant for the
@@ -68,10 +51,17 @@ export function songFamilyKey(spellKey: string): string {
  * this cache, on identical input and byte-identical output). A WeakMap so a catalog that goes away
  * takes its cache with it.
  */
-const songCache = new WeakMap<SpellDb, Map<string, { song: boolean; landing: boolean }>>()
+interface SongFacts {
+  song: boolean
+  landing: boolean
+  /** The level the catalog says a bard learns this song at, or null when it names none. */
+  learnedAt: number | null
+}
 
-function facts(db: SpellDb | undefined, spellKey: string): { song: boolean; landing: boolean } {
-  if (!db) return { song: false, landing: false }
+const songCache = new WeakMap<SpellDb, Map<string, SongFacts>>()
+
+function facts(db: SpellDb | undefined, spellKey: string): SongFacts {
+  if (!db) return { song: false, landing: false, learnedAt: null }
   let byKey = songCache.get(db)
   if (!byKey) {
     byKey = new Map()
@@ -85,6 +75,9 @@ function facts(db: SpellDb | undefined, spellKey: string): { song: boolean; land
   const computed = {
     song: levels.length > 0 && levels.every((l) => l.cls === 'BRD'),
     landing: typeof msg === 'string' && msg.length > 0,
+    // `parseSpellClassLevels` already keeps the LOWEST level per class and sorts ascending, so the
+    // first row is the level a bard gets the line at.
+    learnedAt: levels.length > 0 ? levels[0].level : null,
   }
   byKey.set(spellKey, computed)
   return computed
@@ -109,27 +102,63 @@ export function songLandingObservable(db: SpellDb | undefined, spellKey: string)
 }
 
 /**
+ * A song you have not learned yet is not the song you are singing (JOS-384).
+ *
+ * The narrowing this replaces was a hard-coded pair of spell names inside this module. This one is
+ * a FACT the catalog already states — `"* Bard - Level 51"` — read against the level the log states
+ * for the character, and it is the same argument the correction's evidence line makes: the owner's
+ * `bound by strands` pulses are at level 20-25 and Largo's Assonant Binding is a level-51 song, so
+ * it cannot be the song those pulses came from.
+ *
+ * Two guards keep it from ever deciding more than it knows. An UNKNOWN level (no `/who` read yet)
+ * narrows nothing, and a narrowing that would empty the list is discarded whole — a character
+ * singing a song the catalog says is above them means the level is wrong or the catalog is, and
+ * neither is grounds for throwing the observation away.
+ */
+function learnable(
+  db: SpellDb | undefined,
+  keys: readonly string[],
+  casterLevel: number | null
+): readonly string[] {
+  if (casterLevel === null) return keys
+  const kept = keys.filter((k) => {
+    const at = facts(db, k).learnedAt
+    return at === null || at <= casterLevel
+  })
+  return kept.length > 0 ? kept : keys
+}
+
+/**
  * WHICH song a landing sentence belongs to. EQ prints ONE sentence per spell FAMILY (world-model
  * law 3), so the parser hands over a candidate LIST and the model resolves it — here against what
- * the log has NAMED, which for a song is its resist lines.
+ * the CHARACTER could have learned, then against what the log has NAMED, which for a song is its
+ * resist lines.
  *
  * `named` is every song key a resist line has spelled out, best first (this mob, then anywhere in
  * the session). A single candidate needs no resolving; several with nothing to separate them are
  * REFUSED rather than guessed at, because pooling two songs would smear their resist adjusts
  * together and a -100 proc adjust is exactly the thing this model exists to take out.
+ *
+ * THE ORDER OF THE TWO NARROWINGS IS NOT ARBITRARY. `named` is the stronger evidence and would be
+ * first if it were always THERE — but it is a running tally, so it says nothing about the pulses
+ * before the log first spelled the song out, and on the owner's log that is 35 landings (measured:
+ * the first `bound by strands` emote is line 27,355 and the first `resisted your Largo's Melodic
+ * Binding!` is line 30,098). The level is known from the first `/who` and does not move, so it is
+ * what covers the opening of a session; `named` then decides everything the level cannot.
  */
 export function resolveSongEmote(
   db: SpellDb | undefined,
   candidates: readonly string[],
-  named: readonly string[]
+  named: readonly string[],
+  casterLevel: number | null = null
 ): string | null {
   const songs: string[] = []
   for (const name of candidates) {
     const key = spellCanonKey(name)
-    if (isSongSpell(db, key)) songs.push(songFamilyKey(key))
+    if (isSongSpell(db, key)) songs.push(key)
   }
   if (songs.length === 0) return null
-  const unique = [...new Set(songs)]
+  const unique = learnable(db, [...new Set(songs)], casterLevel)
   if (unique.length === 1) return unique[0]
   for (const key of named) {
     if (unique.includes(key)) return key
