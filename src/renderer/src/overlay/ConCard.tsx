@@ -19,22 +19,30 @@
 // in that fixed order, every time — magic, fire, cold, poison, disease — so the eye learns the
 // positions and a red-green colour-blind reader never has to tell poison from disease by hue.
 //
-// AN AXIS IS NEVER OMITTED, AND ITS ANSWER IS NEVER WITHHELD (owner ruling, 2026-08-16). Every chip
-// with an observation behind it carries the tag, the number, the interval and the count — at n = 1
-// exactly as at n = 600, with a quieter `low samples` caveat under ten — because the wide interval
-// IS the honest display of a thin cell. A chip with nothing behind it draws grey and says "no data"
-// rather than disappearing: "we have not seen fire cast on this" and "fire is fine" are different
-// statements, and a missing chip says neither (world-model law 1).
+// AN ANSWER IS NEVER WITHHELD (owner ruling, 2026-08-16). Every chip the card draws carries the
+// tag, the number, the interval and the count — at n = 1 exactly as at n = 600, with a quieter
+// `low samples` caveat under ten — because the wide interval IS the honest display of a thin cell.
+//
+// …BUT ONLY THE AXES IT RESISTS ARE DRAWN AT ALL (second owner ruling, same day — the argument is
+// at `notableChips` in conCardRows.ts). `weak`, `normal` and empty axes leave the card; the mob page
+// keeps all five rows and is one click away, and when nothing qualifies this card says so in one
+// quiet line rather than going silent.
 
 import { type CSSProperties, type JSX, useEffect, useState } from 'react'
-import { CON_CARD_MAX_DROPS, type ConCardChip, type ConCardPayload } from '@shared/conCard'
+import { CON_CARD_MAX_DROPS, type ConCardPayload } from '@shared/conCard'
 import { RESIST_AXIS_WORDS } from '@shared/resistTypes'
 import { lowSamples } from '@shared/resistModel'
-import { RESIST_AXIS_COLORS, RESIST_UNKNOWN_COLOR } from '../features/resists/resistColors'
-import { LOW_SAMPLE_NOTE, NO_DATA_TEXT, countText, estimateText } from '../features/resists/resistRow'
+import { RESIST_AXIS_COLORS } from '../features/resists/resistColors'
+import { LOW_SAMPLE_NOTE, countText, estimateText } from '../features/resists/resistRow'
 import { formatDropsPerKill } from '../lib/formatRate'
 import { CARD_ENTER_MS, CARD_EXIT_MS } from './cardQueue'
-import { conCardDropLines, type ConCardDropLine } from './conCardRows'
+import {
+  conCardDropLines,
+  conCardTotalN,
+  notableChips,
+  type ConCardDropLine,
+  type ConCardNotableChip
+} from './conCardRows'
 
 const MUTED = '#a8b0c6'
 const DIM = '#7c8397'
@@ -78,20 +86,20 @@ function Identity({ payload }: { payload: ConCardPayload }): JSX.Element {
 }
 
 /**
- * ONE AXIS CHIP: colour, word, tag — and, underneath in smaller type, the estimate and its interval
- * for the axes that have one. The number NEVER appears without its interval and its count, which is
- * JOS-382's rule and the difference between "nuke cold" and "we have no idea yet".
+ * ONE AXIS CHIP: colour, word, tag — and, underneath in smaller type, the estimate and its interval.
+ * The number NEVER appears without its interval and its count, which is JOS-382's rule and the
+ * difference between "nuke cold" and "we have no idea yet".
+ *
+ * Every chip that reaches here has an answer: `notableChips` is the only source of them and it
+ * keeps nothing else, so there is no empty branch to draw. A chip with ONE observation still
+ * reports in full — tag, R, interval, count — and wears the quieter `low samples` caveat.
  */
-function Chip({ chip }: { chip: ConCardChip }): JSX.Element {
-  // EMPTY, never "thin" (owner ruling, 2026-08-16): a chip with one observation reports in full —
-  // tag, R, interval, count — and wears the quieter `low samples` caveat. Only a chip with nothing
-  // behind it says "no data", and it still holds its place in the row.
-  const empty = chip.tag === null || chip.fit === null
-  const color = empty ? RESIST_UNKNOWN_COLOR : RESIST_AXIS_COLORS[chip.axis]
+function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
+  const color = RESIST_AXIS_COLORS[chip.axis]
   return (
     <div
       data-testid={`con-chip-${chip.axis}`}
-      data-tag={chip.tag ?? 'none'}
+      data-tag={chip.tag}
       style={{
         flex: '1 1 0',
         minWidth: 0,
@@ -105,42 +113,55 @@ function Chip({ chip }: { chip: ConCardChip }): JSX.Element {
         <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: color, flex: '0 0 auto' }} />
         <span style={{ color, fontSize: 11, fontWeight: 700 }}>{RESIST_AXIS_WORDS[chip.axis]}</span>
       </div>
-      {/* THE TAG IS WORDS, ALWAYS — including "no data", which is a state and not an absence.
-          `overflowWrap` rather than an ellipsis: "very resistant" truncated to "very resis…" is the
-          acronym problem wearing different clothes. */}
+      {/* THE TAG IS WORDS, ALWAYS. `overflowWrap` rather than an ellipsis: "very resistant"
+          truncated to "very resis…" is the acronym problem wearing different clothes. */}
       <div
         data-testid={`con-chip-tag-${chip.axis}`}
-        style={{ color: empty ? DIM : color, fontSize: 11, marginTop: 2, overflowWrap: 'anywhere' }}
+        style={{ color, fontSize: 11, marginTop: 2, overflowWrap: 'anywhere' }}
       >
-        {chip.tag ?? NO_DATA_TEXT}
+        {chip.tag}
         {lowSamples(chip.n) && <span style={{ color: DIM }}>{` · ${LOW_SAMPLE_NOTE}`}</span>}
       </div>
-      {/* The number and its interval, with the count beside them — never one without the others.
-          A chip with nothing behind it has no line here at all rather than a placeholder. */}
-      {chip.fit && (
-        <div data-testid={`con-chip-detail-${chip.axis}`} style={{ color: DIM, fontSize: 9, marginTop: 1 }}>
-          {`${estimateText(chip.fit)} ${countText(chip.n)}`}
-        </div>
-      )}
+      {/* The number and its interval, with the count beside them — never one without the others. */}
+      <div data-testid={`con-chip-detail-${chip.axis}`} style={{ color: DIM, fontSize: 9, marginTop: 1 }}>
+        {`${estimateText(chip.fit)} ${countText(chip.n)}`}
+      </div>
     </div>
   )
 }
 
-/** The five chips, in `RESIST_AXES` order, always all five. */
+/**
+ * The resist block: the axes this creature actually RESISTS, in `RESIST_AXES` order, and a quiet
+ * line when there are none.
+ *
+ * THE EMPTY STATE IS A SENTENCE, NOT AN ABSENCE. "no notable resists" plus the observation count is
+ * the card saying we looked — which is the half of the old five-chips argument that had to survive
+ * the cut (conCardRows.ts `notableChips`). `n = 0` prints as "nothing seen yet" rather than as a
+ * confident all-clear, because those are different answers and the difference is the whole reason
+ * the count is on the line at all.
+ */
 function Chips({ payload }: { payload: ConCardPayload }): JSX.Element {
+  const chips = notableChips(payload.chips)
+  const totalN = conCardTotalN(payload.chips)
   return (
     <div data-testid="con-card-resists">
       {!payload.spellData && (
         <div style={{ color: DIM, fontSize: 10, marginBottom: 3 }}>
-          Resists need your EverQuest install&apos;s spells_us.txt - the axes below are what the log
+          Resists need your EverQuest install&apos;s spells_us.txt - resistance below is what the log
           alone can say.
         </div>
       )}
-      <div style={{ display: 'flex', gap: 4, alignItems: 'stretch' }}>
-        {payload.chips.map((c) => (
-          <Chip key={c.axis} chip={c} />
-        ))}
-      </div>
+      {chips.length === 0 ? (
+        <div data-testid="con-card-no-resists" style={{ color: DIM, fontSize: 11 }}>
+          {totalN > 0 ? `no notable resists · ${countText(totalN)}` : 'no notable resists · nothing seen yet'}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'stretch' }}>
+          {chips.map((c) => (
+            <Chip key={c.axis} chip={c} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

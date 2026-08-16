@@ -23,7 +23,13 @@ import {
   conCardSuppressed,
   normalizeConCardConfig
 } from '../src/shared/conCard'
-import { conCardDropLines } from '../src/renderer/src/overlay/conCardRows'
+import {
+  CON_CARD_NOTABLE_TAGS,
+  conCardDropLines,
+  conCardTotalN,
+  notableChips
+} from '../src/renderer/src/overlay/conCardRows'
+import { resistTag } from '../src/shared/resistModel'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import {
   FIT_HEIGHT_KINDS,
@@ -34,8 +40,8 @@ import {
   fittedOverlayHeight,
   overlayDefaultSize
 } from '../src/main/overlayLayout'
-import { RESIST_AXES, type MobResistProfile, type ResistEstimate } from '../src/shared/resistTypes'
-import type { ConCardPayload } from '../src/shared/conCard'
+import { RESIST_AXES, type MobResistProfile, type ResistEstimate, type ResistTag } from '../src/shared/resistTypes'
+import type { ConCardChip, ConCardPayload } from '../src/shared/conCard'
 
 // ---- the kind ---------------------------------------------------------------------------
 
@@ -185,6 +191,49 @@ test('ALWAYS SHOW THE RESULT: a three-observation chip carries its answer (owner
   assert.equal(cold.tag, null)
   assert.equal(cold.fit, null)
   assert.equal(cold.n, 0)
+})
+
+test('THE CARD KEEPS ONLY WHAT IT RESISTS (owner ruling, 2026-08-16)', () => {
+  // The payload still carries five - the MOB PAGE draws all five and reads the same profile. The
+  // narrowing is the card's, and it happens here.
+  const chips = conCardChips(profile())
+  const kept = notableChips(chips)
+  assert.deepEqual(kept.map((c) => c.axis), ['magic', 'fire'], 'the two resistant axes, in axis order')
+  // `weak` and `normal` are the answer you would have assumed; they leave.
+  assert.ok(!kept.some((c) => c.axis === 'poison'), 'a weak axis is dropped')
+  // And an axis with nothing behind it leaves too — no `no data` chips on this surface.
+  assert.ok(!kept.some((c) => c.axis === 'cold' || c.axis === 'disease'), 'an empty axis is dropped')
+  // A LOW-SAMPLE RESISTANT AXIS SURVIVES. `fire` is n=3, and JOS-382's ruling is untouched: the
+  // card shows the answer with its wide interval and the quieter caveat, it does not withhold it.
+  const fire = kept.find((c) => c.axis === 'fire')
+  assert.equal(fire?.n, 3)
+  assert.deepEqual(fire?.fit, { R: 180, lo: 40, hi: 200 })
+})
+
+test('every tag at or above the estimator’s own `resistant` cut is kept, and nothing below it', () => {
+  // The cut is `resistTag()`'s boundary rather than a number invented on the card.
+  assert.deepEqual([...CON_CARD_NOTABLE_TAGS], ['resistant', 'very resistant', 'nearly immune'])
+  assert.equal(resistTag(45), 'resistant', 'the estimator draws the line in the same place')
+  assert.equal(resistTag(44), 'normal')
+  const chip = (tag: ResistTag | null, n = 20): ConCardChip => ({
+    axis: 'magic',
+    tag,
+    n,
+    fit: tag === null ? null : { R: 60, lo: 40, hi: 80 }
+  })
+  const kept = notableChips([chip('weak'), chip('normal'), chip('resistant'), chip('very resistant'), chip('nearly immune')])
+  assert.deepEqual(kept.map((c) => c.tag), ['resistant', 'very resistant', 'nearly immune'])
+  // A tag with no observations behind it cannot happen from `conCardChips`, and is refused anyway.
+  assert.deepEqual(notableChips([chip('resistant', 0)]), [], 'n = 0 is never notable')
+  assert.deepEqual(notableChips([chip(null)]), [])
+})
+
+test('the card’s empty state can tell "we looked" from "we have never seen one"', () => {
+  const chips = conCardChips(profile())
+  assert.equal(conCardTotalN(chips), 643, '600 + 3 + 40, the whole profile’s evidence')
+  const nothing = conCardChips(profile({ axes: [] }))
+  assert.deepEqual(notableChips(nothing), [], 'no chips at all')
+  assert.equal(conCardTotalN(nothing), 0, 'and the count says so, which is a different sentence')
 })
 
 // ---- the drops --------------------------------------------------------------------------
