@@ -13,10 +13,10 @@
 // VoiceSetupLink shape (a caption plus a link into the Preferences section that fixes it), which
 // is the app's existing answer to "the thing you want is one switch away".
 //
-// THE TEXT FIELD IS AN OVERRIDE, AND ITS PLACEHOLDER SAYS SO. Empty means the line says exactly
-// what the alert would SPEAK — one derivation, shared (shared/alertBanner.ts) — so the field shows
-// that resolved sentence as its placeholder rather than a generic hint. What you see greyed out is
-// literally what will appear on screen if you type nothing.
+// THE TEXT FIELD IS AN OVERRIDE, AND ITS PLACEHOLDER SAYS SO. Empty means the line is the ALERT'S
+// NAME (JOS-380, shared/alertBanner.ts), so the field shows the name being typed in this same
+// dialog as its placeholder rather than a generic hint. What you see greyed out is literally what
+// will appear on screen if you type nothing.
 //
 // STATE, NEVER PROCESS (the repo's UI law): every caption says what is true now. Nothing here
 // mentions overlay windows, IPC or queues.
@@ -157,19 +157,18 @@ function OverlayOffNote({ onOpenPrefs }: { onOpenPrefs?: () => void }): JSX.Elem
 }
 
 export default function BannerBlock({
-  spoken,
+  alertName,
   form,
   enabled,
   onOpenPrefs
 }: {
   /**
-   * What this alert would SAY right now with the field left empty — the Speech block's own live
-   * preview (`previewTextFor`), handed down rather than recomputed, so the placeholder and the
-   * banner cannot disagree about the default. It follows the name and the phrase as they are
-   * typed, in the same dialog, which is the whole point: what you see greyed out is literally
-   * what will appear on screen.
+   * What this alert would PRINT right now with the field left empty — its name, live from the
+   * dialog's own name field rather than from the saved def, so the placeholder follows what is
+   * being typed. That is the whole point: what you see greyed out is literally what will appear
+   * on screen.
    */
-  spoken: string
+  alertName: string
   form: BannerForm
   /** Is the alert banner overlay switched on (useBannerOverlay)? */
   enabled: boolean
@@ -197,12 +196,12 @@ export default function BannerBlock({
             label="On-screen text"
             data-testid="alert-banner-text"
             value={form.bannerText}
-            placeholder={spoken}
+            placeholder={alertName}
             onChange={(e) => form.setBannerText(e.target.value.slice(0, MAX_BANNER_CHARS))}
             slotProps={{ inputLabel: { shrink: true } }}
           />
           <Typography variant="caption" color="text.secondary">
-            Leave it empty and the banner says the same words the alert speaks.
+            Leave it empty and the banner shows the alert&apos;s name.
           </Typography>
           <ColorRow value={form.bannerColor} onChange={form.setBannerColor} />
         </>

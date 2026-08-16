@@ -111,9 +111,8 @@ function effectiveVolume(def: AlertDef): number {
  * and sending an unwanted payload that main then drops would be a wire full of noise.
  *
  * WHAT IT SAYS IS NOT DECIDED HERE. `alertBannerText` resolves the def's optional override and
- * otherwise calls `speechTextFor` — the SAME function the spoken channel uses, on the same firing,
- * so a custom phrase's `{token}`s fill in identically and a sound-only alert shows its own name.
- * Null means there was nothing truthful to print, and nothing is sent.
+ * otherwise prints the alert's NAME (JOS-380) — deliberately not the spoken sentence, which is
+ * written for the ear. Null means there was nothing truthful to print, and nothing is sent.
  *
  * EVERY FIRING IS ITS OWN LINE. The queue's dedupe key carries the timestamp, so a second landing
  * of the same alert stacks a second line rather than re-clocking the first — which is what the
@@ -121,7 +120,7 @@ function effectiveVolume(def: AlertDef): number {
  */
 function showAlertBanner(def: AlertDef, firing?: Pick<FiredAlert, 'spell' | 'captures' | 'dueAt'>): void {
   if (!alertShowsOnScreen(def)) return
-  const text = alertBannerText(def, firing ?? null)
+  const text = alertBannerText(def)
   if (!text) return
   const ts = Date.now()
   const payload: AlertBannerPayload = { id: `${def.id}:${String(ts)}`, alertId: def.id, ts, text }

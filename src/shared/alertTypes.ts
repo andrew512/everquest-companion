@@ -410,10 +410,10 @@ export interface AlertDef {
   /**
    * WHAT THE BANNER PRINTS INSTEAD (JOS-378) — the optional "On-screen text" override.
    *
-   * ABSENT OR EMPTY MEANS "say what you would SPEAK": `alertBannerText` defers to `speechTextFor`,
-   * so the phrase, its `{token}`s and the alertName fallback are one derivation shared with the
-   * voice. This field exists for the case where the two genuinely differ — a spoken line reads
-   * aloud well ("Mez has dropped on a ghoul") and a glanceable one is shorter ("MEZ BROKE").
+   * ABSENT OR EMPTY MEANS "print the alert's NAME" (JOS-380): `alertBannerText` falls back to
+   * `name`, which is the short thing the user wrote and already reads in the list. This field
+   * exists for the case where the name is not what you want on screen — a name written to be
+   * filed under ("Charm break - pet") against a line written to be seen ("CHARM BROKE").
    */
   bannerText?: string
   /**

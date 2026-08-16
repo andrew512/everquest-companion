@@ -46,7 +46,7 @@ import {
 } from './alertForm'
 import ConditionEditor from './ConditionEditor'
 import SoundPicker from './SoundPicker'
-import SpeechBlock, { previewTextFor } from './SpeechBlock'
+import SpeechBlock from './SpeechBlock'
 import BannerBlock from './BannerBlock'
 import type { VoiceSetupNotice } from './VoiceSetupLink'
 
@@ -370,11 +370,11 @@ export default function AlertDialog({
           />
 
           {/* THE ON-SCREEN CHANNEL (JOS-378), beside the spoken one because it is the same
-              question about a third channel. The placeholder is the Speech block's OWN live
-              preview, passed down rather than recomputed, so "leave it empty and it says what it
-              speaks" is one derivation and not a promise two files make separately. */}
+              question about a third channel. The placeholder is the NAME being typed above
+              (JOS-380), because that is what an empty override prints — one derivation, and not a
+              promise two files make separately. */}
           <BannerBlock
-            spoken={previewTextFor(f.name, f.speech) ?? f.name}
+            alertName={f.name}
             form={f.banner}
             enabled={bannerOverlayOn}
             onOpenPrefs={onOpenOverlayPrefs}

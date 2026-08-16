@@ -2,9 +2,9 @@
 //
 // The claims under test, stated as the product states them:
 //   * a fresh install shows no banner — the kind ships OFF and holds no slot in the meter grid;
-//   * what a line SAYS is ONE derivation shared with speech: a filled "On-screen text" wins,
-//     otherwise the line is EXACTLY the sentence the alert would speak (phrase, tokens, rank
-//     stripping, alertName fallback and all), and a sound-only alert shows its own name;
+//   * what a line SAYS is ONE derivation, and it is NOT the spoken sentence (JOS-380): a filled
+//     "On-screen text" wins, otherwise the line is the alert's own NAME — the short thing the
+//     player wrote, where the phrase is written for the ear;
 //   * the per-alert switch is absent-means-shown, so no store migration exists and nothing an
 //     existing user already wrote has changed meaning;
 //   * an editor that touched none of this saves the alert BYTE-IDENTICALLY (import dedupe);
@@ -87,35 +87,35 @@ test('the introduction names the window, the marking that reaches it, and where 
 
 // ---- what a line SAYS ------------------------------------------------------------------
 
-test('the banner line is EXACTLY what the alert would speak — one derivation, not a copy', () => {
+test('the banner line is the alert NAME, not the spoken sentence — the eye and the ear differ', () => {
   const d = def({ name: 'Mez broke', speech: { mode: 'custom', phrase: 'Mez has dropped on {target}' } })
   const firing = { spell: 'Mesmerization III', captures: { target: 'a ghoul' } }
-  assert.equal(alertBannerText(d, firing), speechTextFor(d, firing), 'the two channels agree by construction')
-  assert.equal(alertBannerText(d, firing), 'Mez has dropped on a ghoul')
+  assert.equal(alertBannerText(d), 'Mez broke')
+  assert.notEqual(alertBannerText(d), speechTextFor(d, firing), 'the channels are free to differ (JOS-380)')
 })
 
-test('a spell mode strips ranks on the banner too, because it is the same resolver', () => {
-  const d = def({ speech: { mode: 'spellName' } })
-  assert.equal(alertBannerText(d, { spell: 'Mesmerization III' }), 'Mesmerization')
+test('a spell mode no longer decides the banner — the name does, on every firing alike', () => {
+  const d = def({ name: 'Mez broke', speech: { mode: 'spellName' } })
+  assert.equal(alertBannerText(d), 'Mez broke', 'not "Mesmerization" — that is the answer the voice gives')
 })
 
-test('a SOUND-ONLY alert shows its own name — the documented fallback, never an invention', () => {
+test('a SOUND-ONLY alert shows its own name — which is now simply the rule, not a fallback', () => {
   assert.equal(alertBannerText(def({ name: 'Charm break' })), 'Charm break')
 })
 
-test('a filled On-screen text REPLACES the spoken sentence, and is capped', () => {
-  const d = def({ speech: { mode: 'custom', phrase: 'a long spoken sentence' }, bannerText: 'MEZ BROKE' })
-  assert.equal(alertBannerText(d, null), 'MEZ BROKE')
+test('a filled On-screen text REPLACES the name, and is capped', () => {
+  const d = def({ name: 'Mez broke', speech: { mode: 'custom', phrase: 'a long spoken sentence' }, bannerText: 'MEZ BROKE' })
+  assert.equal(alertBannerText(d), 'MEZ BROKE')
   const long = def({ bannerText: 'x'.repeat(500) })
-  assert.equal((alertBannerText(long, null) ?? '').length, MAX_BANNER_CHARS, 'capped, never refused')
+  assert.equal((alertBannerText(long) ?? '').length, MAX_BANNER_CHARS, 'capped, never refused')
 })
 
-test('an EMPTY (or whitespace) On-screen text is not an override — it means "say what you speak"', () => {
-  assert.equal(alertBannerText(def({ name: 'Slow fading', bannerText: '   ' }), null), 'Slow fading')
+test('an EMPTY (or whitespace) On-screen text is not an override — it means "print the name"', () => {
+  assert.equal(alertBannerText(def({ name: 'Slow fading', bannerText: '   ' })), 'Slow fading')
 })
 
 test('nothing truthful to say ⇒ null, and the player sends nothing', () => {
-  assert.equal(alertBannerText({ name: '   ', speech: { mode: 'custom', phrase: '' } }, null), null)
+  assert.equal(alertBannerText({ name: '   ' }), null)
 })
 
 // ---- the per-alert switch --------------------------------------------------------------

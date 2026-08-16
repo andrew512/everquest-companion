@@ -20,16 +20,14 @@
 // CONFIG.alertBanner.open` is false, no migration exists, and a store that has never heard of
 // this key reads that default — see main/store.ts, which says the same thing about four kinds.
 //
-// WHAT A LINE SAYS IS NOT DECIDED HERE TWICE. `alertBannerText` resolves the def's optional
-// `bannerText` override and otherwise defers to `speechTextFor` — the SAME function the spoken
-// channel uses, with the same phrase filling, the same `{token}` substitution and the same
-// alertName fallback. A second implementation of "what does this alert say" is exactly how the
-// banner and the voice would come to disagree about one alert.
+// WHAT A LINE SAYS IS THE ALERT'S NAME (owner ruling, 2026-08-15, JOS-380). `alertBannerText`
+// resolves the def's optional `bannerText` override and otherwise prints `def.name`. It does NOT
+// call the speech resolver: the eye and the ear want different sentences, and the name is the one
+// the player wrote and already recognises from the alert list.
 //
 // Pure + dependency-free (types only), so `npm test` exercises every rule here with no Electron.
 
 import type { AlertDef } from './alertTypes'
-import { speechTextFor, type SpeechFiring } from './speechText'
 
 // ---- the kind's own config knobs -------------------------------------------------------
 //
@@ -145,32 +143,36 @@ export function normalizeBannerColor(v: unknown): AlertBannerColor | undefined {
 
 // ---- what a line SAYS -------------------------------------------------------------------
 
-/** Longest a banner line may be. The speech cap, for the reason the two share a derivation. */
+/**
+ * Longest a banner line may be. The same 120 as the speech cap, arrived at independently: it is
+ * about as much text as stays ONE glance at this size over a game scene.
+ */
 export const MAX_BANNER_CHARS = 120
 
 /** The def fields the banner text resolver reads. Any AlertDef satisfies it. */
-export type BannerDef = Pick<AlertDef, 'name' | 'speech' | 'bannerText'>
+export type BannerDef = Pick<AlertDef, 'name' | 'bannerText'>
 
 /**
- * THE ONE DERIVATION. What this alert's banner line says for this firing:
+ * THE ONE DERIVATION. What this alert's banner line says:
  *
  *   1. `bannerText`, when the user filled the "On-screen text" field. An override is the only
  *      reason that field exists, so a non-empty one wins outright.
- *   2. otherwise EXACTLY what the audio path would SPEAK — `speechTextFor`, which fills a custom
- *      phrase's `{token}`s from the same firing, strips spell ranks the same way, and falls back
- *      to the alert's own NAME when the mode cannot answer (JOS-353/362).
+ *   2. otherwise the alert's own NAME (owner ruling, 2026-08-15).
  *
- * Step 2 is a CALL, never a copy: a sound-only alert has no speech block, `speechTextFor` defaults
- * it to `{mode:'alertName'}`, and the line is the alert's name — which is the honest answer and
- * the one the user already reads in the list.
+ * IT NO LONGER ASKS THE SPEECH RESOLVER, and that is the ruling's whole point: a spoken phrase is
+ * written for the EAR and reads long on screen ("Mez has dropped on a ghoul"), while the name is
+ * the short thing the player typed themselves and already recognises from the alert list — which
+ * is exactly what a glance mid-pull can resolve. The two channels are free to differ, and the
+ * override field is how you make them differ deliberately.
  *
- * Returns null only when there is nothing truthful to print (a nameless def whose phrase resolved
- * to nothing), in which case no banner is sent at all.
+ * No firing is needed to answer this, so none is taken: the name is the same on every landing, and
+ * a parameter that is never read is a claim that it might be.
+ *
+ * Returns null only when there is nothing truthful to print (a def with a blank name and no
+ * override), in which case no banner is sent at all.
  */
-export function alertBannerText(def: BannerDef, firing?: SpeechFiring | null): string | null {
-  const override = def.bannerText?.replace(/\s+/g, ' ').trim()
-  if (override) return override.slice(0, MAX_BANNER_CHARS)
-  return speechTextFor(def, firing)
+export function alertBannerText(def: BannerDef): string | null {
+  return cappedText(def.bannerText, MAX_BANNER_CHARS) ?? cappedText(def.name, MAX_BANNER_CHARS) ?? null
 }
 
 /**
