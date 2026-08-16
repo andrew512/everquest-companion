@@ -15,6 +15,11 @@
 // degraded branch instead. That branch is a supported configuration in its own right: an
 // install-dir override pointed at a folder of logs has no spell data behind it either.
 //
+// AND THE CARD NO LONGER WITHHOLDS AN ANSWER (owner ruling, 2026-08-16, landed with JOS-383). The
+// n >= 5 floor this spec was first written against is gone: an axis with any observation prints its
+// tag, its number, its interval and its count, with a quieter "low samples" caveat below ten, and
+// only an empty axis says "no data". `stepThinRow` is where that shows.
+//
 // Run: `npm run test:e2e -- mob-resists`
 
 import type { Page } from 'playwright-core'
@@ -119,16 +124,40 @@ async function stepNumbers(page: Page): Promise<void> {
   check(`cold (${cold}) reads above magic (${magic})`, coldR > magicR, `${cold} vs ${magic}`)
 }
 
+/**
+ * THE TWO STATES A ROW CAN BE IN THAT ARE NOT A FULL ANSWER (owner ruling, 2026-08-16, JOS-383).
+ *
+ * The card used to refuse a number under five observations and print "not enough data (n=2)". It
+ * does not any more: an axis with ANY observation reports its tag, its number, its interval and its
+ * count, and merely wears a quieter "low samples" caveat below ten. So there are exactly two things
+ * to check here, and both are about a row that is drawn rather than omitted:
+ *   * an EMPTY axis (nothing ever cast at this mob on it) says "no data" — a real answer, printed
+ *     as one, rather than a missing row or a zero;
+ *   * a THIN axis keeps its whole answer AND says it is standing on very little.
+ * Which of the two this mob offers depends on the committed baseline, so each is checked when it
+ * is there and noted when it is not.
+ */
 async function stepThinRow(page: Page): Promise<void> {
-  // Disease: the tailed character never cast a disease spell at this mob. That is a real answer
-  // and the card prints it as one, rather than omitting the row or drawing a zero.
-  const thin = await countOf(page, '[data-testid^="resist-thin-"]')
-  if (thin === 0) {
-    note('every axis on this mob has data - no thin row to check on this build')
+  const empty = await countOf(page, '[data-testid^="resist-empty-"]')
+  if (empty === 0) note('every axis on this mob has some evidence - no empty row to check on this build')
+  else {
+    const text = await textOf(page, '[data-testid^="resist-empty-"]')
+    check('an axis nothing was ever cast at says so, in two words', text === 'no data', text)
+  }
+  const low = await countOf(page, '[data-testid^="resist-low-"]')
+  if (low === 0) {
+    note('no axis on this mob is under the low-sample line - nothing to caveat on this build')
     return
   }
-  const text = await textOf(page, '[data-testid^="resist-thin-"]')
-  check('a thin cell says how little it has', /^not enough data \(n=\d+\)$/.test(text), text)
+  const caveat = await textOf(page, '[data-testid^="resist-low-"]')
+  check('a thin axis is QUALIFIED, never replaced', /low samples/.test(caveat), caveat)
+  // …and the answer it qualifies is still on the row: the whole point of the ruling.
+  const axis = (await page.evaluate(
+    (sel) => document.querySelector(sel)?.getAttribute('data-testid') ?? '',
+    '[data-testid^="resist-low-"]'
+  )).replace('resist-low-', '')
+  const value = await textOf(page, `[data-testid="resist-value-${axis}"]`)
+  check(`…with its number and interval still printed (${axis})`, /^R \d+ \(\d+-\d+\)$/.test(value), value)
 }
 
 async function stepEvidence(page: Page): Promise<void> {
