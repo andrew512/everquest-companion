@@ -25,7 +25,15 @@ import {
 } from '../src/shared/conCard'
 import { conCardDropLines } from '../src/renderer/src/overlay/conCardRows'
 import { OVERLAY_KINDS } from '../src/shared/types'
-import { METER_KINDS, defaultOverlayBounds, overlayDefaultSize } from '../src/main/overlayLayout'
+import {
+  FIT_HEIGHT_KINDS,
+  METER_KINDS,
+  OVERLAY_MIN_SIZE,
+  defaultOverlayBounds,
+  fitsHeightToContent,
+  fittedOverlayHeight,
+  overlayDefaultSize
+} from '../src/main/overlayLayout'
 import { RESIST_AXES, type MobResistProfile, type ResistEstimate } from '../src/shared/resistTypes'
 import type { ConCardPayload } from '../src/shared/conCard'
 
@@ -37,19 +45,58 @@ test('the con card is an overlay kind, appended after every meter, and holds no 
   assert.ok(!METER_KINDS.includes('conCard'), 'a strip is not a meter and must not consume a dock slot')
 })
 
-test('it opens TOP CENTRE, and never on top of the celebration strip', () => {
+test('it opens TOP CENTRE, in the celebration strip’s own band (owner ruling, 2026-08-16)', () => {
   const area = { x: 0, y: 0, width: 1920, height: 1040 }
   const b = defaultOverlayBounds('conCard', area)
   const size = overlayDefaultSize('conCard', area)
   assert.deepEqual({ width: b.width, height: b.height }, size, 'the bounds carry the kind’s own size')
   assert.equal(b.x, Math.round((area.width - b.width) / 2), 'horizontally centred')
-  // "Top centre", with ONE thing above it. BOTH strips ship ON, so a fresh install must not stack
-  // a con card and a celebration card in the same pixels — the card clears the toast's band and
-  // still opens in the upper 40% of the screen, and a persisted position always wins afterwards.
+  // THE TOP, not 384 px down it. The card used to clear the celebration band so two kinds that both
+  // ship ON could never share pixels; the owner overruled that on 2026-08-16 because a card that
+  // far down is over the character. Both strips are transient and both close, so they share a band.
   const toast = defaultOverlayBounds('toast', area)
-  assert.ok(b.y >= toast.y + toast.height, `below the toast (${String(b.y)} vs ${String(toast.y + toast.height)})`)
-  assert.ok(b.y < area.height * 0.4, `still near the top (got ${String(b.y)})`)
+  assert.equal(b.y, toast.y, `the same top edge as the celebration strip (got ${String(b.y)})`)
   assert.ok(b.y + b.height <= area.y + area.height, 'and fully on the screen')
+})
+
+test('a display too short to seat the strip at its gap still opens it on screen', () => {
+  // The clamp every strip kind shares — the top edge gives way, and never above the work area.
+  const shallow = { x: 0, y: 40, width: 800, height: 225 }
+  const b = defaultOverlayBounds('conCard', shallow)
+  assert.ok(b.y >= shallow.y, `never above the work area (got ${String(b.y)})`)
+  assert.equal(b.y + b.height, shallow.y + shallow.height, 'as low as it fits, and no lower')
+})
+
+// ---- the window fits the card (JOS-386) --------------------------------------------------
+
+test('the con card is the kind whose HEIGHT is the content’s, and the meters are not', () => {
+  assert.deepEqual(FIT_HEIGHT_KINDS, ['conCard'])
+  assert.equal(fitsHeightToContent('conCard'), true)
+  for (const kind of ['toast', 'alertBanner', 'fight', 'events'] as const) {
+    assert.equal(fitsHeightToContent(kind), false, `${kind} owns its own height`)
+  }
+})
+
+test('a fitted height is the request, clamped to the floor and to the room BELOW THE TOP EDGE', () => {
+  const area = { x: 0, y: 0, width: 1920, height: 1040 }
+  // The ordinary case: a card asks for what it drew and gets exactly that.
+  assert.equal(fittedOverlayHeight(214, 12, area), 214)
+  assert.equal(fittedOverlayHeight(214.4, 12, area), 214, 'rounded, because a window is whole pixels')
+  assert.equal(fittedOverlayHeight(215.5, 12, area), 216)
+  // THE FLOOR is the one every kind shares — and Electron would clamp `setBounds` against the
+  // window's own minHeight anyway, so main must not believe a number the window cannot wear.
+  assert.equal(fittedOverlayHeight(20, 12, area), OVERLAY_MIN_SIZE.height)
+  assert.equal(fittedOverlayHeight(Number.NaN, 12, area), OVERLAY_MIN_SIZE.height, 'a nonsense request')
+  // THE CEILING IS THE ROOM UNDER THE TOP EDGE, and the position never gives: a card dragged near
+  // the bottom of the screen SHRINKS rather than sliding back up the screen under the user.
+  assert.equal(fittedOverlayHeight(600, 900, area), 140, '1040 - 900')
+  assert.equal(fittedOverlayHeight(600, 1035, area), OVERLAY_MIN_SIZE.height, 'and never past the floor')
+  // A work area that does not start at zero (a second monitor, a taskbar) measures the same way.
+  const second = { x: 2560, y: 100, width: 1920, height: 1000 }
+  assert.equal(fittedOverlayHeight(400, 800, second), 300, '100 + 1000 - 800')
+  assert.equal(fittedOverlayHeight(400, 112, second), 400, 'a card near the top is untouched')
+  // A top edge somehow off the bottom of the work area answers with the floor, never a negative.
+  assert.equal(fittedOverlayHeight(400, 5000, area), OVERLAY_MIN_SIZE.height)
 })
 
 // ---- the two refusals -------------------------------------------------------------------
