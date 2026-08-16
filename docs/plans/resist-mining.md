@@ -312,6 +312,11 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
 - Confidence: simple count-based, no big minimums (owner, 2026-08-16). Draw a cell at n >= 5,
   always print n and the 95% interval next to the number, never hide what we know. No
   CI-gated "advice" layer for v1.
+- Own log beats the frozen baseline (owner, 2026-08-16, patch resilience): the baseline carries
+  `frozenAt` + the spells_us.txt mtime it was mined against; per cell, baseline observations
+  weigh `K/(K+nUser)` with K = 20, at `nUser >= 50` the user's data stands alone and the
+  baseline is only a faded reference marker, and two well-populated (n >= 30 each) estimates
+  with disjoint intervals raise a "differs from shipped data" note - the patch detector.
 - Presentation: **no acronyms**. Every axis is shown as its word (magic, fire, cold, poison,
   disease) with a stable colour per axis; the colour and the word always appear together.
 
