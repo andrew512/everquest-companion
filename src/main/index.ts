@@ -219,7 +219,8 @@ if (!gotSingleInstanceLock) {
   // to-tray the window they are asking for may be hidden rather than minimized. `show()` is
   // unconditional here, and on a hidden window that IS the restore — so this handler needed no
   // change; the brief's suggested `if (!w.isVisible()) w.show()` would have been the same call
-  // behind a guard. Verified by hand: relaunching while hidden brings the window back focused.
+  // behind a guard. Not something the harness can drive (a second instance is a second launch,
+  // and E2E skips the lock outright), so it is on the hands-on list for the packaged build.
   app.on('second-instance', () => {
     const mainWindow = getMainWindow()
     if (!mainWindow) return

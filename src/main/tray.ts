@@ -103,7 +103,16 @@ export function hideMainWindowToTray(e: Electron.Event): boolean {
     quitting,
     trayAvailable: trayAvailable()
   })
-  if (intent === 'close') return false
+  if (intent === 'close') {
+    // A REAL CLOSE TAKES THE CARD WITH IT, and this line is not tidiness — it is the difference
+    // between quitting and a zombie. The popover is REUSED rather than re-created (it is hidden,
+    // not destroyed, when it is dismissed), and a hidden BrowserWindow is still an OPEN window:
+    // `window-all-closed` does not fire while one exists, so index.ts's whole teardown — and the
+    // `app.quit()` at the end of it — would never run. The sequence that finds it is real: hide to
+    // the tray (card appears, times out), restore, turn the preference OFF, press X.
+    destroyTrayNotice()
+    return false
+  }
   e.preventDefault()
   w.hide()
   maybeShowTrayNotice()

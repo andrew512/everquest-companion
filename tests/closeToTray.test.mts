@@ -251,6 +251,24 @@ test('THE TRAY QUIT RUNS THE SAME TEARDOWN THE X ALWAYS DID', () => {
   assert.match(quit, /destroyTrayNotice\(\)/)
 })
 
+test('A REAL CLOSE TAKES THE CARD WITH IT — a hidden window is still an open one', () => {
+  // The zombie this prevents: the popover is reused rather than re-created, so after one hide it
+  // exists (hidden) for the rest of the session — and `window-all-closed` does not fire while any
+  // window exists. Hide to the tray, restore, turn the preference OFF, press X: without this the
+  // process would sit there with no windows, having run none of index.ts's teardown.
+  const tray = read('../src/main/tray.ts')
+  const intercept = tray.slice(
+    tray.indexOf('export function hideMainWindowToTray'),
+    tray.indexOf('function restoreMainWindow(')
+  )
+  const closes = intercept.indexOf("if (intent === 'close')")
+  assert.ok(closes > 0)
+  assert.ok(
+    intercept.indexOf('destroyTrayNotice()', closes) < intercept.indexOf('return false', closes),
+    'the close branch destroys the card before it hands the close on'
+  )
+})
+
 test('THE POPOVER TAKES THE ONE SHARED SECURITY POSTURE, never a second opinion', () => {
   const tray = read('../src/main/tray.ts')
   assert.match(tray, /webPreferences: WEB_PREFERENCES\(join\(__dirname, '\.\.\/preload\/tray\.js'\)\)/)
