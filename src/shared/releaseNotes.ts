@@ -125,6 +125,37 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '1.2.0',
+    date: '2026-08-16',
+    entries: [
+      {
+        kind: 'new',
+        text: 'Closing the window can keep the companion running in the system tray - your timers, alerts and overlays carry on, and the window is out of the taskbar and out of Alt-Tab. It is off until you turn it on: Preferences, Window, or the row at the foot of the title bar’s Overlay menu.',
+        fromReport: true
+      },
+      {
+        kind: 'new',
+        text: 'With it on, click the tray icon to bring the window back, or right-click it to quit. The first time a close hides the window, a small card above the tray icon says so and offers Quit now, Always quit instead, or Got it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'A locked overlay whose controls came out while the Alt-Tab switcher was open no longer stays that way: it lets go and returns to click-through by itself once your pointer has left it.'
+      },
+      {
+        kind: 'fixed',
+        text: 'The Alert banner switch in Preferences opens showing your real setting instead of flashing off and then on.'
+      },
+      {
+        kind: 'changed',
+        text: 'Overlays show no hover tooltips anywhere, the title bar included, and a locked overlay’s title bar keeps its height when the unlock pin appears.'
+      },
+      {
+        kind: 'changed',
+        text: 'The preferences gear has left the window title bar - Preferences lives in the left navigation.'
+      }
+    ]
+  },
+  {
     version: '1.1.0',
     date: '2026-08-16',
     entries: [
