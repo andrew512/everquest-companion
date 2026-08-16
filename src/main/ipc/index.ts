@@ -40,6 +40,9 @@ import { registerUiScaleIpc } from './uiScale'
 // rather than in this folder, because everything it does is window fan-out + item resolution.
 import { registerToastIpc } from '../toast'
 import { registerAlertBannerIpc } from '../alertBanner'
+// The tray popover's three sends (JOS-139). Beside the window they come from (src/main/tray.ts),
+// like the toast's producer channel above, rather than in a fourth file in this folder.
+import { registerTrayIpc } from '../tray'
 import { registerWindowIpc } from './windowControls'
 import { registerWorldIpc } from './world'
 
@@ -65,6 +68,7 @@ export function registerIpc(): void {
   registerWindowIpc()
   registerToastIpc()
   registerAlertBannerIpc()
+  registerTrayIpc()
   registerClipboardIpc()
   registerFeedbackIpc()
   registerTelemetryIpc()
