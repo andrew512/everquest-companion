@@ -61,8 +61,11 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     // The other switch whose compiled-in default is TRUE (JOS-139), stored FALSE — and the one
     // with a SECOND control (the tray menu's checkbox) that can move it while this pane is closed.
     getCloseToTray: answer('getCloseToTray', { enabled: false, noticeAcknowledged: true }),
-    getOverlayState: answer('getOverlayState', { toast: true }),
+    getOverlayState: answer('getOverlayState', { toast: true, alertBanner: true }),
     getToastConfig: answer('getToastConfig', { locked: false }),
+    // The banner ships OFF and its first card mounted on that default; stored ON here, with an
+    // off-default hold, so the seed has to carry both (owner, hands-on, 2026-08-16).
+    getAlertBannerConfig: answer('getAlertBannerConfig', { locked: false, alertBanner: { holdMs: 8000, maxLines: 4, introduced: true } }),
     getBuffTrust: answer('getBuffTrust', { externals: ['Faelin'] }),
     getCursorRing: answer('getCursorRing', { enabled: true, sizePx: 60, thicknessPx: 5, color: 'white' }),
     getVoicePrefs: answer('getVoicePrefs', { engine: 'system', voice: 'x', rate: 1, volume: 1 }),
@@ -85,9 +88,9 @@ test('one read answers every card in the pane, and it snaps the text size to the
   const { reader, calls } = stubReader()
   const snap = await readPrefsSnapshot(reader)
 
-  // NINETEEN reads, one batch. The number is not the claim; the claim is that the gate asks each
+  // TWENTY reads, one batch. The number is not the claim; the claim is that the gate asks each
   // question exactly once, so a pane that mounts does not stampede the store.
-  assert.equal(calls(), 19, 'every read fires exactly once')
+  assert.equal(calls(), 20, 'every read fires exactly once')
 
   // A sample across the KINDS of value, because the defect was never boolean-only: two switches
   // that disagree with their defaults, a ladder stop, a slider pair, and two counts.
@@ -104,6 +107,13 @@ test('one read answers every card in the pane, and it snaps the text size to the
 
   // The toast's two facts come from two different reads and are one control pair.
   assert.deepEqual(snap.toast, { open: true, locked: false })
+  // The banner's three, likewise — and its knobs arrive normalized, so an off-range hold could
+  // never sit in the cache.
+  assert.deepEqual(snap.alertBanner, {
+    open: true,
+    locked: false,
+    cfg: { holdMs: 8000, maxLines: 4, introduced: true }
+  })
 })
 
 test('an off-ladder text size is snapped rather than stored as it was found', async () => {
@@ -133,7 +143,7 @@ test('two mounts in one frame share ONE batch', async () => {
   resetPrefsSnapshotForTests()
   const { reader, calls } = stubReader()
   const [a, b] = await Promise.all([loadPrefsSnapshot(reader), loadPrefsSnapshot(reader)])
-  assert.equal(calls(), 19, 'not thirty-eight')
+  assert.equal(calls(), 20, 'not forty')
   assert.equal(a, b)
   resetPrefsSnapshotForTests()
 })
