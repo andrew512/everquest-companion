@@ -160,6 +160,25 @@ const overlayApi = {
    */
   setIgnoreMouse: (ignore: boolean): void => ipcRenderer.send(IPC.overlaySetIgnoreMouse, KIND, ignore),
   /**
+   * "THE CURSOR IS NO LONGER OVER YOU" (JOS-381) — the one leave signal that does not come from
+   * this window.
+   *
+   * A locked overlay that has taken the mouse can stop receiving events entirely: while the
+   * Windows task switcher (or a UAC prompt, or any other system popup) owns input, the pointer can
+   * walk off the window without a single event reaching it, and the capture — chrome showing, game
+   * not click-through — never ends. So main watches the cursor while, and only while, a locked
+   * overlay is capturing (src/main/pointerWatch.ts) and pushes this when it is outside.
+   *
+   * Receive-only and payload-free by design: the renderer treats it exactly as it treats a real
+   * leave (renderer/overlay/pointerExit.ts), so nothing new can be asked of this window over it.
+   */
+  onPointerExit: (cb: () => void): (() => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on(IPC.onOverlayPointerExit, listener)
+    return () => ipcRenderer.removeListener(IPC.onOverlayPointerExit, listener)
+  },
+
+  /**
    * DEEP LINK (Task #64): "take me to this mob in the app". Main raises + focuses the main
    * window and forwards the request to its renderer, which switches to the Mobs tab and opens
    * the mob's page. Fire-and-forget — an overlay never waits on the app it just raised.
