@@ -71,20 +71,31 @@ const overlayWindows = Object.fromEntries(OVERLAY_KINDS.map((k) => [k, null])) a
 >
 
 /**
- * Was the LIVE toast window built OPAQUE (the JOS-40 compatibility switch)?
+ * THE STRIP KINDS: the two overlays whose resting state is an EMPTY window — the celebration
+ * toast and the alert banner (JOS-378). Every other kind is a panel that fills its window.
+ *
+ * The distinction earns a name because opacity means something different for them (below) and
+ * because neither pays for a mouse-forwarding hook (replayGate.ts `overlayForwardsMouse`).
+ */
+function isStripKind(kind: OverlayKind): boolean {
+  return kind === 'toast' || kind === 'alertBanner'
+}
+
+/**
+ * Which LIVE strip windows were built OPAQUE (the JOS-40 compatibility switch)?
  *
  * Recorded at construction rather than re-read from the store, because transparency is fixed
  * when a BrowserWindow is created: a user who flips the setting while an overlay is open still
- * has a transparent window on screen, and the behavior that depends on this answer (the toast's
- * idle visibility, below) must describe the window that EXISTS, not the setting. Only the toast
- * needs it — every other kind fills its window and behaves identically either way.
+ * has a transparent window on screen, and the behavior that depends on this answer (a strip's
+ * idle visibility, below) must describe the window that EXISTS, not the setting. Only the strips
+ * need it — every other kind fills its window and behaves identically either way.
  */
-let opaqueToastWindow = false
+const opaqueStripWindow: Partial<Record<OverlayKind, boolean>> = {}
 
-/** Is that opaque toast window currently drawing nothing? Only ever consulted while
- *  `opaqueToastWindow` is true — see `applyOpaqueToastVisibility`, which owns this value.
- *  True to start, because an empty strip is the toast's resting state. */
-let opaqueToastIdle = true
+/** Is that opaque strip window currently drawing nothing? Only ever consulted while its
+ *  `opaqueStripWindow` entry is true — see `applyOpaqueStripVisibility`, which owns this value.
+ *  True to start, because an empty window is a strip's resting state. */
+const opaqueStripIdle: Partial<Record<OverlayKind, boolean>> = {}
 
 /** The main window while it exists (null before creation / after close). */
 export function getMainWindow(): BrowserWindow | null {
@@ -502,32 +513,33 @@ export function setOverlayIgnoreMouse(kind: OverlayKind, ignore: boolean): void 
   if (!w || w.isDestroyed()) return
   if (ignore) w.setIgnoreMouseEvents(true, { forward: overlayMouseForward(kind) })
   else w.setIgnoreMouseEvents(false)
-  applyOpaqueToastVisibility(kind, ignore)
+  applyOpaqueStripVisibility(kind, ignore)
 }
 
 /**
- * THE ONE KIND OPACITY CHANGES THE BEHAVIOR OF (JOS-40): the celebration toast.
+ * THE KINDS OPACITY CHANGES THE BEHAVIOR OF (JOS-40): the two STRIPS.
  *
  * Every other overlay is a panel that fills its window — opaque, it looks like the same meter
- * with its see-through taken away, and nothing else about it moves. The toast is the opposite:
- * it is a mostly-EMPTY strip whose resting state is an invisible window, so building it opaque
- * would park a solid dark rectangle across the top of the game forever. That is not a
- * compatibility mode, it is a new bug.
+ * with its see-through taken away, and nothing else about it moves. A strip is the opposite:
+ * it is a mostly-EMPTY window whose resting state is invisible, so building it opaque
+ * would park a solid dark rectangle across the game forever. That is not a compatibility mode,
+ * it is a new bug.
  *
- * So an opaque toast window is SHOWN ONLY WHEN IT HAS SOMETHING TO SHOW, and this function reads
- * that state off the signal the overlay already sends: `overlay:setIgnoreMouse`. The toast
- * renderer's rule (ToastOverlay.useMouseCapture) is `ignore = !ready ? true : locked ? !hasCards
- * : false` — i.e. it asks to be ignored in exactly the states where it is drawing nothing, and to
- * capture the moment a card is on screen or the user is positioning it unlocked. One signal, one
- * meaning, no second timer in main that could disagree with the queue.
+ * So an opaque strip window is SHOWN ONLY WHEN IT HAS SOMETHING TO SHOW, and this function reads
+ * that state off the signal the overlay already sends: `overlay:setIgnoreMouse`. Both strip
+ * renderers share one rule (`useQueueMouseCapture`, renderer/overlay/cardQueue.ts): `ignore =
+ * !ready ? true : locked ? !hasCards : false` — i.e. they ask to be ignored in exactly the states
+ * where they are drawing nothing, and to capture the moment a card is on screen or the user is
+ * positioning the window unlocked. One signal, one meaning, no second timer in main that could
+ * disagree with the queue.
  *
- * Transparent windows are untouched: the empty transparent strip is already invisible, and
+ * Transparent windows are untouched: an empty transparent strip is already invisible, and
  * hiding/showing it on every card would be churn for no pixel.
  */
-function applyOpaqueToastVisibility(kind: OverlayKind, idle: boolean): void {
-  if (kind !== 'toast' || !opaqueToastWindow) return
-  opaqueToastIdle = idle
-  const w = overlayWindows.toast
+function applyOpaqueStripVisibility(kind: OverlayKind, idle: boolean): void {
+  if (!isStripKind(kind) || opaqueStripWindow[kind] !== true) return
+  opaqueStripIdle[kind] = idle
+  const w = overlayWindows[kind]
   if (!w || w.isDestroyed()) return
   if (idle && w.isVisible()) w.hide()
   // Idle is done here; and nothing shows while a window may not be shown at all — E2E (the whole
@@ -677,7 +689,10 @@ export function createOverlayWindow(kind: OverlayKind): void {
   // machine whose compositor turns a transparent frameless window into a black box, an untouched
   // 'auto' arrives here as `true` without the user having found anything.
   const opaque = resolvedGraphics().opaqueOverlays.on
-  if (kind === 'toast') opaqueToastWindow = opaque
+  if (isStripKind(kind)) {
+    opaqueStripWindow[kind] = opaque
+    opaqueStripIdle[kind] = true
+  }
   // BORN WITH THE RIGHT FOCUSABILITY (JOS-199 — see `setOverlayFocusable`). The lock state is read
   // here, at construction, purely so that the `ready-to-show` apply below has nothing to do:
   // `setFocusable` on Windows moves the FOREGROUND window, and an overlay opened from the
@@ -697,6 +712,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
     // and everything around it is transparent, so resizing that window would only change how
     // much invisible nothing surrounds the card. It still MOVES, and its bounds still persist —
     // position is the knob that matters for a notifier.
+    //
+    // THE ALERT BANNER IS RESIZABLE, and that is not an inconsistency (JOS-378): its lines are
+    // sentences that WRAP, so the window's width is the one thing that decides whether a raid
+    // call reads as one glance or three, and the height is how many lines fit before the oldest
+    // has to go. Both are the user's business.
     resizable: kind !== 'toast',
     show: false,
     frame: false,
@@ -755,11 +775,11 @@ export function createOverlayWindow(kind: OverlayKind): void {
     // would be showing half-parsed state over the game, and the fold's end shows it properly (with
     // its locked mode re-applied) via `applyOverlayReplayGate` + the presence pass beside it.
     if (!windowsMayShow()) return
-    // An OPAQUE toast opens HIDDEN and is brought up by its own queue (see
-    // applyOpaqueToastVisibility). Showing it here would put a solid rectangle over the game for
+    // An OPAQUE strip opens HIDDEN and is brought up by its own queue (see
+    // applyOpaqueStripVisibility). Showing it here would put a solid rectangle over the game for
     // the moment between first paint and the renderer's first capture signal — the very thing
     // this mode exists to avoid.
-    if (kind === 'toast' && opaque) {
+    if (isStripKind(kind) && opaque) {
       applyOverlayLocked(kind, getOverlayConfig(kind).locked)
       return
     }
@@ -883,9 +903,9 @@ export function setOverlaysHidden(hidden: boolean): void {
       continue
     }
     if (!windowsMayShow() || w.isVisible()) continue
-    // An OPAQUE toast with nothing queued must not come back as a solid rectangle: its
+    // An OPAQUE strip with nothing queued must not come back as a solid rectangle: its
     // visibility belongs to its queue, and the next card brings it up (JOS-40).
-    if (kind === 'toast' && opaqueToastWindow && opaqueToastIdle) continue
+    if (isStripKind(kind) && opaqueStripWindow[kind] === true && opaqueStripIdle[kind] === true) continue
     w.showInactive()
     assertTopmost(w)
     applyOverlayLocked(kind, getOverlayConfig(kind).locked)

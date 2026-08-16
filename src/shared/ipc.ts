@@ -293,6 +293,21 @@ export const IPC = {
   // "Raid target defeated" / "Quest complete" ALERTS speak on the same events, and a second
   // channel could only ever say it twice. Removed with the sound controls it served.)
 
+  // ---- the alert banner (JOS-378, shared/alertBanner.ts) ----
+  // renderer(main app) -> main, FIRE-AND-FORGET: "show this alert on screen" (AlertBannerPayload).
+  // ONE channel for every firing path, because there is one producer: the always-mounted
+  // AlertPlayer, which is where a fired alert already becomes sound and speech. Everything that
+  // decides WHETHER an alert fires (enabled, cooldown, target scope) happened upstream in the
+  // alerts module and is not re-asked here.
+  // VALIDATED AT THE HANDLER (`validateAlertBannerPayload`): the payload is rebuilt field by
+  // field, the colour is checked against a closed union and the text is capped, because it
+  // crosses into a window that draws it.
+  alertsBanner: 'alerts:banner',
+  // main -> renderer(alertBanner overlay): one validated line to render. The overlay queues,
+  // times and dismisses it locally and fetches nothing — the celebration toast's contract, on
+  // the kind that shares its queue.
+  onAlertBanner: 'alerts:banner-card',
+
   // ---- cross-window deep link (Task #64) ----
   // renderer(overlay) -> main: "focus the app on this" (AppFocus). Main shows/restores/focuses
   // the MAIN window and forwards the payload on `onFocusView`. Fire-and-forget; the payload's
