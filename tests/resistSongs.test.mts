@@ -32,7 +32,7 @@ import {
   SongPulses,
   type SongPulse
 } from '../src/main/resist/songs'
-import { SONG_FAMILY_OVERRIDES, isSongSpell, resolveSongEmote, songFamilyKey } from '../src/main/resist/songIdentity'
+import { isSongSpell, resolveSongEmote } from '../src/main/resist/songIdentity'
 import { parseEvent } from '../src/main/log/parser'
 import { installCharacterName, installSpellDb } from '../src/main/log/rulesets'
 import { applyOverlayCorrections, loadSpellDb } from '../src/main/data/spellDb'
@@ -103,16 +103,25 @@ test('THE DEFECT THIS FIXTURE EXISTS FOR: no song row is resist-only', () => {
   assert.deepEqual(blind, [], 'a song whose landings we cannot see has no denominator at all')
 })
 
-test('the catalog files the landing sentence under the wrong family member, and we correct it', () => {
-  // The catalog: Melodic (Bard 20) says "bound IN strands", Assonant (Bard 51) says "bound BY".
+test('the catalog files the landing sentence under the wrong family member, and the APP corrects it', () => {
+  // The scrape: Melodic (Bard 20) says "bound IN strands", Assonant (Bard 51) says "bound BY".
   // The log: "bound BY strands" 4,152 times, "resisted your Largo's Melodic Binding" 570 times,
   // interleaved on one six-second grid, cast by a level 21-24 character.
-  assert.equal(SONG_FAMILY_OVERRIDES["largo's assonant binding"], "largo's melodic binding")
-  assert.equal(songFamilyKey("largo's assonant binding"), "largo's melodic binding")
-  assert.equal(songFamilyKey('chaos flux'), 'chaos flux', 'and nothing else is touched')
+  //
+  // JOS-384 moved that correction OUT of this module and into the app-wide overlay, so what this
+  // test now pins is that the resist fold reads the corrected catalog rather than carrying a
+  // private copy of the answer — the whole point of the factoring. `tests/largoBinding.test.mts`
+  // owns the correction itself and the guard that keeps it the only copy.
+  const db = appSpellDb()
+  assert.equal(
+    db.byKey.get("largo's melodic binding")?.msgCastOnOther,
+    'Someone is bound by strands of solid music.',
+    'the level-20 song owns the sentence the game prints, through the shared corrections overlay'
+  )
   // Both halves therefore land on ONE row, which is the only way the song has a denominator.
   const rows = foldFixture('r2-song-pulses.log')
   assert.equal(rows.filter((r) => r.spellKey === "largo's assonant binding").length, 0)
+  assert.ok(rows.some((r) => r.spellKey === "largo's melodic binding" && r.family === 'song'))
 })
 
 test('ONE SENTENCE CAN BE TWO SONGS, and the log says which', () => {
@@ -147,8 +156,32 @@ test('an emote nothing can separate is REFUSED rather than guessed at', () => {
   assert.equal(resolveSongEmote(db, both, ["denon's disruptive discord"]), "denon's disruptive discord")
   assert.equal(resolveSongEmote(db, both, ['chords of dissonance']), 'chords of dissonance')
   // One candidate needs no resolving, and a non-song emote is not this function's business.
-  assert.equal(resolveSongEmote(db, ["Largo's Assonant Binding"], []), "largo's melodic binding")
+  assert.equal(resolveSongEmote(db, ["Largo's Assonant Binding"], []), "largo's assonant binding")
   assert.equal(resolveSongEmote(db, ['Chaos Flux'], []), null)
+})
+
+test('JOS-384: the LEVEL separates the two Largo songs before the log has named either', () => {
+  // The corrected catalog gives ONE sentence two owners, so the emote arrives with two candidates
+  // and the module has to separate them from evidence. `named` is the stronger evidence and is a
+  // running tally, so it is empty for every pulse before the first resist line — 35 landings on
+  // the owner's log. The catalog's own class column covers exactly that window.
+  const db = appSpellDb()
+  const both = ["Largo's Assonant Binding", "Largo's Melodic Binding"]
+  assert.equal(resolveSongEmote(db, both, []), null, 'no level, nothing named: refuse')
+  assert.equal(
+    resolveSongEmote(db, both, [], 24),
+    "largo's melodic binding",
+    'a level-24 bard has the level-20 song and cannot have the level-51 one'
+  )
+  assert.equal(resolveSongEmote(db, both, [], 51), null, 'a level-51 bard has BOTH, so refuse again')
+  assert.equal(
+    resolveSongEmote(db, both, ["largo's assonant binding"], 51),
+    "largo's assonant binding",
+    'and `named` is what decides it for them'
+  )
+  // The empty-narrowing guard: a level BELOW every candidate discards the narrowing whole rather
+  // than throwing the observation away, and resolution falls back to what the log named.
+  assert.equal(resolveSongEmote(db, ["Largo's Assonant Binding"], [], 5), "largo's assonant binding")
 })
 
 // ---------------------------------------------------------------------------------------------

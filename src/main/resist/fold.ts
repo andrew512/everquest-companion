@@ -177,6 +177,9 @@ export class ResistFold {
       keyOf: (display) => this.keyOf(display),
       displayFor: (key) => this.display.get(key) ?? key,
       contactsAt: (ts, windowMs) => this.contact.within(ts, windowMs),
+      // Read live rather than captured: the level moves mid-session and the song half asks about
+      // it per emote, which is the only reason it is a function.
+      casterLevel: () => this.selfLevel,
     })
   }
 
