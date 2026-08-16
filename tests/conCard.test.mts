@@ -29,6 +29,7 @@ import {
   conCardTotalN,
   notableChips
 } from '../src/renderer/src/overlay/conCardRows'
+import { fitChanged, overlayFitRequest } from '../src/renderer/src/overlay/overlayFit'
 import { resistTag } from '../src/shared/resistModel'
 import { OVERLAY_KINDS } from '../src/shared/types'
 import {
@@ -103,6 +104,32 @@ test('a fitted height is the request, clamped to the floor and to the room BELOW
   assert.equal(fittedOverlayHeight(400, 112, second), 400, 'a card near the top is untouched')
   // A top edge somehow off the bottom of the work area answers with the floor, never a negative.
   assert.equal(fittedOverlayHeight(400, 5000, area), OVERLAY_MIN_SIZE.height)
+})
+
+test('the renderer asks for what it MEASURED plus the window’s own padding, and rounds UP', () => {
+  // The measured box is the card and the drag frame; the root's inset is on both sides of it.
+  assert.equal(overlayFitRequest(200, 6), 212)
+  // CEILED, never rounded: a layout height that rounds DOWN is a window one pixel short of its own
+  // content, which on a card with a border shows up as a clipped edge.
+  assert.equal(overlayFitRequest(200.1, 6), 213)
+  assert.equal(overlayFitRequest(199.9, 6), 212)
+  // An unmeasurable or empty box asks for nothing at all rather than for a tiny window.
+  assert.equal(overlayFitRequest(0, 6), 0)
+  assert.equal(overlayFitRequest(-4, 6), 0)
+  assert.equal(overlayFitRequest(Number.NaN, 6), 0)
+})
+
+test('a measurement is only SENT when the window could actually express the difference', () => {
+  // A layout height is a float and a window height is an integer, so without a threshold a card
+  // that never changed would send on every render.
+  assert.equal(fitChanged(null, 212), true, 'the first measurement always goes')
+  assert.equal(fitChanged(212, 212), false)
+  assert.equal(fitChanged(212, 213), false, 'one pixel is not a change a window can express')
+  assert.equal(fitChanged(212, 214), true)
+  assert.equal(fitChanged(212, 190), true, 'shrinking counts exactly as much as growing')
+  // Nothing measured is never a request, whatever was last sent.
+  assert.equal(fitChanged(212, 0), false)
+  assert.equal(fitChanged(null, 0), false)
 })
 
 // ---- the two refusals -------------------------------------------------------------------

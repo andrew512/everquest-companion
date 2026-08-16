@@ -23,6 +23,7 @@ interface RendererErrorPayload {
   name?: string
   view?: string
 }
+import { fitOverlayHeight } from '../overlayBounds'
 import {
   applyOverlayLocked,
   getMainWindow,
@@ -146,6 +147,15 @@ export function registerWindowIpc(): void {
     setOverlayIgnoreMouse(kind, ignore)
   })
   ipcMain.on(IPC.overlayClose, (_e, kind: OverlayKind) => setOverlayOpen(kind, false))
+  // "What I drew is this tall" (JOS-386). ONLY the height moves, only for a kind whose height is
+  // its content's, and never into the store as a chosen size — all three of those rules live in
+  // `fitOverlayHeight` (overlayBounds.ts) beside the window it has to move. The height is
+  // renderer input and is validated there rather than here, for the same reason the snap patch is
+  // validated inside its setter: one door, one normalizer, and a hand-crafted send cannot find a
+  // second one.
+  ipcMain.on(IPC.overlayFitHeight, (_e, kind: OverlayKind, height: unknown) => {
+    fitOverlayHeight(kind, height)
+  })
 
   // ---- overlay snapping (JOS-217) ----
   // The one preference behind `installOverlaySnap` (src/main/overlaySnapDrag.ts). It needs no
