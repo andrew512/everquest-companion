@@ -60,7 +60,10 @@ import { spellTable } from './resist/spellTable'
  * where a node test can drive it; this is the one line that knows where the catalog lives.
  */
 export function looksLikePlayer(name: string): boolean {
-  return conCardIsPlayer(name, (n) => localMobEntry(n) !== undefined)
+  // `localMobEntry` answers NULL for a mob the catalog has never heard of — not undefined. A
+  // `!== undefined` here read as "the catalog knows everything", which is how the first cut of
+  // this drew a card over another player's head in the e2e. One comparison, one measured bug.
+  return conCardIsPlayer(name, (n) => localMobEntry(n) !== null)
 }
 
 /** Which mob the card on screen is about, so a late lookup for a mob that has been replaced by a
@@ -149,12 +152,18 @@ function secondPass(base: ConCardPayload, k: MobKnowledge): ConCardPayload {
  * ONE LIVE `/con`. Returns whether a card was sent, so the tests can drive the whole gate without
  * an overlay window in the way.
  */
-export function noteConsider(ev: ConsiderEvent, zone: string | undefined): boolean {
+export function noteConsider(ev: ConsiderEvent, zone: string | undefined, now = Date.now()): boolean {
   if (!getOverlayConfig('conCard').open) return false
   if (looksLikePlayer(ev.mob)) return false
   const key = mobKey(ev.mob)
   if (!key) return false
-  if (conCardSuppressed(closedAt.get(key), ev.ts)) return false
+  // THE SUPPRESSION IS WALL CLOCK, NOT LOG CLOCK, and the difference is not academic: EQ stamps a
+  // line to the SECOND, so a con played back inside the same second as the close arrives with a `ts`
+  // up to 999 ms EARLIER than the close it is supposed to be suppressed by — which the e2e caught by
+  // putting the card straight back up. "Closed within the last minute" is a fact about the person,
+  // so it is measured on the clock the person lives on. `ev.ts` still stamps the payload, because
+  // WHEN THE CON HAPPENED is a fact about the log.
+  if (conCardSuppressed(closedAt.get(key), now)) return false
   const base = firstPass(ev, zone, key)
   showing = key
   sendToConCardOverlay(base)
