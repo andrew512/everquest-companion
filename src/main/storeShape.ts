@@ -151,7 +151,7 @@ export interface StoreShape {
   overlaySnap?: OverlaySnapPrefs
   /**
    * WHAT THE X ON THE MAIN WINDOW DOES, and whether this install has been told (JOS-139;
-   * shared/closeToTray.ts). `{ enabled, noticeAcknowledged }`, defaulting to `{ true, false }`.
+   * shared/closeToTray.ts). `{ enabled, noticeAcknowledged }`, defaulting to `{ false, false }` (OFF since the owner's same-day reversal, 2026-08-16).
    *
    * ABSENT MEANS THE SHIPPED BEHAVIOUR OF THE FEATURE — the X hides to the tray, and the one-time
    * card has not been acknowledged — so it is another additive optional key on the carve-out

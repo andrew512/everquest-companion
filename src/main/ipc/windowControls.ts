@@ -10,8 +10,8 @@ import { getFightSelection, setFightSelection } from '../fightSelection'
 import { getScopeSelection, setScopeSelection } from '../scopeSelection'
 import { getOverlayConfig, setOverlayConfig } from '../store'
 import { getOverlaySnap, setOverlaySnap } from '../storeOverlaySnap'
-import { getCloseToTray, setCloseToTray } from '../storeCloseToTray'
-import { syncTrayMenu } from '../tray'
+import { getCloseToTray } from '../storeCloseToTray'
+import { applyCloseToTray } from '../tray'
 import { noteCurrentView } from '../telemetry/errorReports'
 
 /** What the preload's `RendererErrorReport` puts on the wire. Every field is optional here
@@ -161,16 +161,14 @@ export function registerWindowIpc(): void {
   // and is re-validated inside `setCloseToTray` through the shared normalizer, so a hand-edited
   // file and a renderer cannot disagree about what this setting is.
   //
-  // THE SETTER HAS AN APPLY STEP, and it is the tray's own checkbox: the menu is rebuilt from
-  // what was STORED, so the two controls can never be two answers to one question. There is no
-  // echo back to this renderer — it is the one that asked — and no apply to the window itself,
-  // because the interceptor reads the store on every close rather than remembering anything.
+  // THE SETTER IS THE TRAY'S OWN APPLY, `applyCloseToTray`: store, rebuild the tray menu's checkbox
+  // from what was STORED, and push the value to the app window. The push goes back to the very
+  // renderer that asked, on purpose — since 2026-08-16 that renderer holds TWO controls for this
+  // one value (the Preferences switch and the title bar's overlay-menu row), and the one that did
+  // not write has to learn what the other did. There is no apply to the window itself, because the
+  // interceptor reads the store on every close rather than remembering anything.
   ipcMain.handle(IPC.closeToTrayGet, () => getCloseToTray())
-  ipcMain.handle(IPC.closeToTraySet, (_e, patch: unknown) => {
-    const next = setCloseToTray(patch)
-    syncTrayMenu(next)
-    return next
-  })
+  ipcMain.handle(IPC.closeToTraySet, (_e, patch: unknown) => applyCloseToTray(patch))
 
   // ---- global fight selection (docs/plans/combat-overlay-parity.md P4) ----
   // A read for a surface that mounted after the last change, and a fire-and-forget write that

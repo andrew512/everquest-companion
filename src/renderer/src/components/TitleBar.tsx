@@ -1,5 +1,5 @@
 import { type JSX, useEffect, useRef, useState } from 'react'
-import { Box, Checkbox, Chip, ListItemText, ListSubheader, Menu, MenuItem, Select, Typography } from '@mui/material'
+import { Box, Checkbox, Chip, Divider, ListItemText, ListSubheader, Menu, MenuItem, Select, Typography } from '@mui/material'
 import CircleIcon from '@mui/icons-material/Circle'
 import MinimizeIcon from '@mui/icons-material/Remove'
 import CropSquareIcon from '@mui/icons-material/CropSquare'
@@ -7,8 +7,8 @@ import FilterNoneIcon from '@mui/icons-material/FilterNone'
 import CloseIcon from '@mui/icons-material/Close'
 import PictureInPictureAltIcon from '@mui/icons-material/PictureInPictureAlt'
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
-import SettingsIcon from '@mui/icons-material/Settings'
 import type { CharacterRef, OverlayKind } from '@shared/types'
+import type { CloseToTrayPrefs } from '@shared/closeToTray'
 import { OVERLAY_KINDS } from '@shared/types'
 import { track } from '../lib/telemetry'
 import PerfChip from './PerfChip'
@@ -121,6 +121,32 @@ const OVERLAY_MENU_ROWS: readonly (readonly [OverlayKind, string, string])[] = [
 ]
 
 /**
+ * The close-to-tray preference as this bar sees it: read once at mount, then kept current by main's
+ * push - which fires for the Preferences switch, the tray icon's checkbox, the popover's buttons,
+ * AND this row's own write (main echoes the renderer's set back to it, so the switch in Preferences
+ * and this checkbox move together without either knowing the other exists). `null` until the first
+ * read answers, so the row can render nothing it does not know (the JOS-340 law, in menu form).
+ */
+function useCloseToTrayMirror(): [CloseToTrayPrefs | null, (patch: Partial<CloseToTrayPrefs>) => void] {
+  const [prefs, setPrefs] = useState<CloseToTrayPrefs | null>(null)
+  useEffect(() => {
+    let alive = true
+    void window.eq.getCloseToTray().then((p) => {
+      if (alive) setPrefs(p)
+    })
+    const off = window.eq.onCloseToTray(setPrefs)
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+  const update = (patch: Partial<CloseToTrayPrefs>): void => {
+    void window.eq.setCloseToTray(patch).then(setPrefs)
+  }
+  return [prefs, update]
+}
+
+/**
  * Floating DPS overlay menu (Task #52; two kinds in Task #54). A compact menu toggles the
  * overlay windows independently; the button is active-tinted when ANY is open so the user
  * knows an overlay is live even off-screen / behind the game. The menu anchor is local
@@ -130,6 +156,7 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const anyOverlayOpen = Object.values(overlayState).some(Boolean)
+  const [tray, setTray] = useCloseToTrayMirror()
 
   /**
    * Toggle one overlay and record WHICH and WHETHER (usage-analytics §2 `overlayToggle`) — the
@@ -197,6 +224,27 @@ function OverlayMenu({ overlayState }: { overlayState: Record<OverlayKind, boole
             <ListItemText primary={primary} secondary={secondary} />
           </MenuItem>
         ))}
+        <Divider />
+        {/* THE THIRD MIRROR of "what the X does" (JOS-139; owner, 2026-08-16: "add a mirror to this
+            preference in the overlay dropdown menu"). It sits in THIS menu because it is the
+            overlays' promise: closing the window keeps them running. Same store, same value as the
+            Preferences switch and the tray icon's checkbox - main pushes every change to all three,
+            so none of them can be a stale answer. Disabled only until the first read lands, which
+            is before anyone can open this menu. */}
+        <MenuItem
+          dense
+          data-testid="overlay-menu-close-to-tray"
+          disabled={tray === null}
+          onClick={() => {
+            if (tray) setTray({ enabled: !tray.enabled })
+          }}
+        >
+          <Checkbox size="small" edge="start" checked={tray?.enabled === true} tabIndex={-1} disableRipple />
+          <ListItemText
+            primary="Keep running in the tray when the window closes"
+            secondary="Overlays stay up; the tray icon brings the window back"
+          />
+        </MenuItem>
       </Menu>
     </Box>
   )
@@ -248,44 +296,6 @@ function CharacterPicker({
   )
 }
 
-/** Preferences gear — opens the Preferences view (EQ folder, updates). */
-function PreferencesButton({ onOpen }: { onOpen: () => void }): JSX.Element {
-  return (
-    <Box data-no-drag sx={{ WebkitAppRegion: 'no-drag', display: 'flex', alignItems: 'center', pr: 0.5 }}>
-      {/* Popper-free with the rest of the bar (JOS-143). The gear shares this row with the
-          character Select, and the UpdateChip beside it lost its popper for exactly this reason
-          in JOS-127 — a title bar whose controls are one rank apart is not a place for cards. */}
-      <Box
-        component="button"
-        type="button"
-        aria-label="Open preferences"
-        title="Preferences"
-        onClick={onOpen}
-        sx={{
-          WebkitAppRegion: 'no-drag',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: 28,
-          width: 28,
-          p: 0,
-          borderRadius: 1,
-          border: 'none',
-          background: 'transparent',
-          color: 'text.secondary',
-          cursor: 'pointer',
-          outline: 'none',
-          transition: 'background-color 120ms, color 120ms',
-          '& svg': { fontSize: 18 },
-          '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: 'text.primary' }
-        }}
-      >
-        <SettingsIcon />
-      </Box>
-    </Box>
-  )
-}
-
 /** Minimize / maximize / close, far right. */
 function WindowControls({ maximized }: { maximized: boolean }): JSX.Element {
   return (
@@ -308,16 +318,13 @@ export interface TitleBarProps {
   character: CharacterRef | null
   characters: CharacterRef[]
   onSelectCharacter: (logPath: string) => void
-  /** Navigate to the Preferences view (EQ install folder, updates) — Task #55. */
-  onOpenPreferences: () => void
 }
 
 export default function TitleBar({
   live,
   character,
   characters,
-  onSelectCharacter,
-  onOpenPreferences
+  onSelectCharacter
 }: TitleBarProps): JSX.Element {
   const [maximized, setMaximized] = useState(false)
   // Per-kind overlay open-state (Task #52; kinds in Task #54/#59): reflected on the compact
@@ -388,8 +395,6 @@ export default function TitleBar({
         characters={characters}
         onSelectCharacter={onSelectCharacter}
       />
-
-      <PreferencesButton onOpen={onOpenPreferences} />
 
       <WindowControls maximized={maximized} />
     </Box>

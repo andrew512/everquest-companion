@@ -58,9 +58,10 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     getGraphicsEnvironment: answer('getGraphicsEnvironment', { wine: false, auto: { safeMode: false, opaqueOverlays: false } }),
     getOverlayAutoHide: answer('getOverlayAutoHide', { hideWhenNotRunning: false, hideWhenUnfocused: true }),
     getOverlaySnap: answer('getOverlaySnap', { enabled: true }),
-    // The other switch whose compiled-in default is TRUE (JOS-139), stored FALSE — and the one
-    // with a SECOND control (the tray menu's checkbox) that can move it while this pane is closed.
-    getCloseToTray: answer('getCloseToTray', { enabled: false, noticeAcknowledged: true }),
+    // Stored ON against a compiled-in default of OFF (JOS-139; OFF since the owner's 2026-08-16
+    // reversal) — and the one with TWO other controls (the tray menu's checkbox and the title bar's
+    // overlay-menu row) that can move it while this pane is closed.
+    getCloseToTray: answer('getCloseToTray', { enabled: true, noticeAcknowledged: true }),
     getOverlayState: answer('getOverlayState', { toast: true, alertBanner: true }),
     getToastConfig: answer('getToastConfig', { locked: false }),
     // The banner ships OFF and its first card mounted on that default; stored ON here, with an
@@ -98,8 +99,8 @@ test('one read answers every card in the pane, and it snaps the text size to the
   assert.equal(snap.overlayAutoHide.hideWhenUnfocused, true)
   // Another switch whose stored value disagrees with its compiled-in default (JOS-217 ships OFF).
   assert.equal(snap.overlaySnap.enabled, true)
-  // …and the same claim the other way up (JOS-139 ships ON).
-  assert.equal(snap.closeToTray.enabled, false)
+  // …and the tray switch, stored ON against its shipped OFF (JOS-139).
+  assert.equal(snap.closeToTray.enabled, true)
   assert.equal(snap.uiScale, 1.1, 'the ladder value arrives snapped, so the cache cannot hold an off-rung number')
   assert.equal(snap.cursorRing.sizePx, 60)
   assert.equal(snap.alertCount, 3, 'a count, not the list - the Profiles caption is the only reader')

@@ -74,9 +74,9 @@ export interface PrefsSnapshot {
   overlayAutoHide: OverlayAutoHidePrefs
   /** Overlays — the opt-in drag magnetism (JOS-217). */
   overlaySnap: OverlaySnapPrefs
-  /** Window — what the X does (JOS-139). ON by default, and it has a SECOND control (the tray
-   *  menu's checkbox), so this entry is kept current by main's pushes as well as by the card's
-   *  own writes — see App.tsx. */
+  /** Window — what the X does (JOS-139). OFF by default (owner reversal, 2026-08-16), and it has
+   *  TWO other controls (the tray menu's checkbox and the title bar's overlay-menu row), so this
+   *  entry is kept current by main's pushes as well as by the card's own writes — see App.tsx. */
   closeToTray: CloseToTrayPrefs
   /** Overlays — the celebration toast's open-state and its lock. */
   toast: ToastSeed
