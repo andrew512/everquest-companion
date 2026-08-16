@@ -53,7 +53,14 @@ import type { SpellDb } from '../data/spellDb'
 import type { ResistCasterKind, ResistFamily, ResistRow } from '../../shared/resistTypes'
 import { ResistBucket, type RowSpec } from './ledger'
 import { SONG_CONTACT_MS, SongPulses, type SongPulse } from './songs'
-import { CasterIndex, DebuffWindows, MeleeContact, MobLevels, isResistDebuff } from './world'
+import {
+  CasterIndex,
+  DebuffWindows,
+  MeleeContact,
+  MobLevels,
+  isResistDebuff,
+  type MobLevelFact,
+} from './world'
 
 /**
  * How long after your own `You begin casting` a landing sentence may still be claimed by it. The
@@ -82,6 +89,18 @@ interface Armed {
   ts: number
   kind: ResistCasterKind
   level: number | null
+}
+
+/** One thing the log said, as this fold names it before the bucket pools it. */
+interface Observation {
+  /** The mob's name as the line spelled it; the key is folded from it (world-model law 2). */
+  mob: string
+  spellKey: string
+  family: ResistFamily
+  kind: ResistCasterKind
+  /** The CASTER's level, or null when nothing has stated it. */
+  level: number | null
+  ts: number
 }
 
 interface Deferred {
@@ -117,21 +136,44 @@ export class ResistFold {
     })
   }
 
-  /** Discard a source's bucket before its log is folded again (JOS-231). */
-  beginSource(): ResistBucket {
-    this.bucket = new ResistBucket()
+  /**
+   * Start folding a source. Pass the ledger's own freshly-discarded bucket so the fold writes
+   * straight into it (JOS-231: the DISCARD is what makes a re-fold idempotent, and it belongs to
+   * whoever owns the ledger). With no argument the fold owns a private bucket, which is what the
+   * baseline generator and the unit tests want.
+   */
+  beginSource(bucket?: ResistBucket): ResistBucket {
+    this.bucket = bucket ?? new ResistBucket()
     this.resetSession()
     return this.bucket
+  }
+
+  /** The mob's level as the fold currently knows it: a `/con` this session, else the catalog. */
+  levelOf(key: string, display: string): MobLevelFact | null {
+    return this.levels.levelOf(key, display)
   }
 
   rows(): ResistRow[] {
     return this.bucket.rows()
   }
 
-  /** Flush everything still buffered. MUST be called before reading the rows. */
+  /**
+   * Everything buffered is now decided, and the runs it belonged to end here. MUST be called
+   * before reading the rows.
+   */
   finish(): void {
     this.flushDeferred(Number.POSITIVE_INFINITY)
     this.songs.flush()
+  }
+
+  /**
+   * The live tail's heartbeat: decide anything the passage of time has settled, and leave open
+   * what is genuinely still open. Unlike `finish()` this does NOT end a song's run — a bard
+   * mid-rotation would forfeit every interpolated pulse across the next gap.
+   */
+  settle(now: number): void {
+    this.flushDeferred(now)
+    this.songs.settle(now)
   }
 
   private resetSession(): void {
@@ -150,42 +192,70 @@ export class ResistFold {
 
   onEvent(ev: LogEvent): void {
     this.flushDeferred(ev.ts)
+    // TWO CASCADES, along the seam the module already has: lines that move the WORLD (where you
+    // are, what level you are, which mob is which, which casts are in flight) and lines that ARE
+    // an outcome. Split because one switch over both was a single method with more branches than
+    // the factoring rules allow, and because the two halves are read for different reasons.
+    if (this.onWorldEvent(ev)) return
+    this.onOutcomeEvent(ev)
+  }
+
+  /** State the outcomes are interpreted against. Returns true when the event was one of these. */
+  private onWorldEvent(ev: LogEvent): boolean {
     switch (ev.kind) {
       case 'zone':
         this.onZone(ev.zone)
-        return
+        return true
       case 'level':
         this.selfLevel = ev.level
-        return
+        return true
       case 'selfWho':
         this.selfLevel ??= ev.level
-        return
+        return true
       case 'consider':
-        this.remember(ev.mob)
-        if (ev.level !== undefined) this.levels.note(mobKey(ev.mob), ev.level)
-        return
+        this.onConsider(ev.mob, ev.level)
+        return true
       case 'death':
         this.onDeath(ev.name)
-        return
+        return true
       case 'petClaim':
       case 'petSay':
         this.casters.notePet(ev.name)
-        return
+        return true
       case 'allyPetLeader':
         this.casters.notePet(ev.pet)
-        return
+        return true
+      default:
+        return this.onCastLifecycle(ev)
+    }
+  }
+
+  /**
+   * The cast lifecycle: what is in flight, and what stopped being in flight. A fizzle or an
+   * interrupt disarms rather than files anything — a cast that never happened is not a resist.
+   */
+  private onCastLifecycle(ev: LogEvent): boolean {
+    switch (ev.kind) {
       case 'castBegin':
         this.onCastBegin(ev.spell, ev.ts, ev.sung === true)
-        return
+        return true
       case 'otherCastBegin':
         this.onOtherCast(ev.caster, ev.spell, ev.ts)
-        return
+        return true
       case 'castFizzle':
       case 'castInterrupted':
         this.disarm(spellCanonKey(ev.spell))
-        return
+        return true
+      default:
+        return false
+    }
+  }
+
+  /** The lines that state what happened to a spell. */
+  private onOutcomeEvent(ev: LogEvent): void {
+    switch (ev.kind) {
       case 'resist':
-        this.onResist(ev.incoming, ev.caster, ev.target, ev.spell, ev.ts)
+        this.onResist(ev)
         return
       case 'damage':
         this.onDamage(ev)
@@ -203,6 +273,11 @@ export class ResistFold {
       default:
         return
     }
+  }
+
+  private onConsider(mob: string, level: number | undefined): void {
+    this.remember(mob)
+    if (level !== undefined) this.levels.note(mobKey(mob), level)
   }
 
   // ---- world housekeeping ---------------------------------------------------------------
@@ -303,7 +378,7 @@ export class ResistFold {
     if (!d || now - d.ts <= LAND_DEFER_MS) return
     this.deferred = null
     if (d.kind === 'pc') return
-    this.rowFor(d.mobDisplay, d.spellKey, 'cast', d.kind, d.level, d.ts).land += 1
+    this.rowFor({ mob: d.mobDisplay, spellKey: d.spellKey, family: 'cast', kind: d.kind, level: d.level, ts: d.ts }).land += 1
   }
 
   private cancelDeferred(mobDisplay: string, spellKey: string): void {
@@ -314,23 +389,26 @@ export class ResistFold {
 
   // ---- outcomes ------------------------------------------------------------------------
 
-  private onResist(incoming: boolean, caster: string, target: string, spell: string, ts: number): void {
-    if (incoming) return
-    const kind = this.casters.kindOf(caster)
+  private onResist(ev: Extract<LogEvent, { kind: 'resist' }>): void {
+    // `You resist <mob>'s <Spell>!` is YOUR resist and a different feature entirely.
+    if (ev.incoming) return
+    const kind = this.casters.kindOf(ev.caster)
     if (!kind) return
-    const spellKey = spellCanonKey(spell)
-    this.remember(target)
+    const spellKey = spellCanonKey(ev.spell)
+    this.remember(ev.target)
     if (kind === 'self' && this.songSpells.has(spellKey)) {
-      this.songs.witness(spellKey, ts, mobKey(target))
+      this.songs.witness(spellKey, ev.ts, mobKey(ev.target))
       return
     }
     const level = kind === 'self' ? this.selfLevel : null
-    this.rowFor(target, spellKey, 'cast', kind, level, ts).resist += 1
+    this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts }).resist += 1
   }
 
   private onDamage(ev: Extract<LogEvent, { kind: 'damage' }>): void {
     const attacker = ev.attacker
     if (!attacker) return
+    // A swing either way is MELEE CONTACT, which is the only proxy for point-blank range a song
+    // pulse gets (songs.ts rule 3). A damage shield firing means the mob hit you, so it counts too.
     if (ev.dtype === 'melee' || ev.dtype === 'ds') {
       this.onMelee(attacker, ev.target, ev.ts)
       if (idKey(attacker) === 'you') this.casters.noteStruck(ev.target)
@@ -338,7 +416,15 @@ export class ResistFold {
     }
     if (ev.dtype !== 'spell' && ev.dtype !== 'dot') return
     const kind = this.casters.kindOf(attacker)
-    if (!kind) return
+    if (kind) this.onSpellDamage(ev, attacker, kind)
+  }
+
+  /** A spell or DoT line from somebody this fold is willing to learn from. */
+  private onSpellDamage(
+    ev: Extract<LogEvent, { kind: 'damage' }>,
+    attacker: string,
+    kind: ResistCasterKind
+  ): void {
     if (kind === 'self') this.casters.noteStruck(ev.target)
     const spellKey = spellCanonKey(ev.skill)
     this.remember(ev.target)
@@ -348,12 +434,17 @@ export class ResistFold {
     }
     this.cancelDeferred(ev.target, spellKey)
     const level = kind === 'self' ? this.selfLevel : null
-    const row = this.rowFor(ev.target, spellKey, 'cast', kind, level, ev.ts)
-    if (ev.dtype === 'dot') {
-      this.onDotTick(row, ev.target, spellKey)
-      return
-    }
-    // A crit is a landing whose NUMBER lies about the spell's full damage; count it, never file it.
+    const row = this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts })
+    if (ev.dtype === 'dot') this.onDotTick(row, ev.target, spellKey)
+    else this.fileHit(row, ev)
+  }
+
+  /**
+   * One landed direct-damage line. A CRITICAL is counted as a landing and kept OUT of the
+   * histogram: its number is not the spell's full damage, and letting it in would invent a second
+   * "full" value for the estimator to read partials against.
+   */
+  private fileHit(row: ResistRow, ev: Extract<LogEvent, { kind: 'damage' }>): void {
     if (ev.crit || (ev.modifiers?.length ?? 0) > 0) row.land += 1
     else this.bucket.addDamage(row, ev.amount)
   }
@@ -376,8 +467,9 @@ export class ResistFold {
     const targets = new Set(this.contact.within(pulse.ts, SONG_CONTACT_MS))
     for (const key of pulse.resisted) targets.add(key)
     for (const key of targets) {
-      const display = this.display.get(key) ?? key
-      const row = this.rowFor(display, pulse.spellKey, 'song', 'self', this.selfLevel, pulse.ts)
+      const mob = this.display.get(key) ?? key
+      const spec = { mob, spellKey: pulse.spellKey, family: 'song' as const, kind: 'self' as const }
+      const row = this.rowFor({ ...spec, level: this.selfLevel, ts: pulse.ts })
       if (pulse.resisted.has(key)) row.resist += 1
       else row.land += 1
     }
@@ -385,24 +477,17 @@ export class ResistFold {
 
   // ---- rows ----------------------------------------------------------------------------
 
-  private spec(
-    mobDisplay: string,
-    spellKey: string,
-    family: ResistFamily,
-    casterKind: ResistCasterKind,
-    casterLevel: number | null,
-    ts: number
-  ): RowSpec {
-    const key = mobKey(mobDisplay)
-    const level = this.levels.levelOf(key, mobDisplay)
+  private spec(obs: Observation): RowSpec {
+    const key = mobKey(obs.mob)
+    const level = this.levels.levelOf(key, obs.mob)
     const spec: RowSpec = {
       mobKey: key,
-      spellKey,
-      family,
-      casterKind,
-      casterLevel,
+      spellKey: obs.spellKey,
+      family: obs.family,
+      casterKind: obs.kind,
+      casterLevel: obs.level,
       mobLevel: level?.level ?? null,
-      debuffs: this.debuffs.active(key, ts),
+      debuffs: this.debuffs.active(key, obs.ts),
     }
     if (this.zone !== undefined) spec.zone = this.zone
     if (level && level.lo !== level.hi) {
@@ -412,14 +497,7 @@ export class ResistFold {
     return spec
   }
 
-  private rowFor(
-    mobDisplay: string,
-    spellKey: string,
-    family: ResistFamily,
-    casterKind: ResistCasterKind,
-    casterLevel: number | null,
-    ts: number
-  ): ResistRow {
-    return this.bucket.row(this.spec(mobDisplay, spellKey, family, casterKind, casterLevel, ts), ts)
+  private rowFor(obs: Observation): ResistRow {
+    return this.bucket.row(this.spec(obs), obs.ts)
   }
 }

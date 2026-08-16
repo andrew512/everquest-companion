@@ -15,6 +15,7 @@
 
 import { registerAlertsIpc } from './alerts'
 import { registerBuffTrustIpc } from './buffTrust'
+import { registerResistIpc } from './resist'
 import { registerRespawnIpc } from './respawn'
 import { registerCharacterIpc } from './character'
 import { registerCharacterSheetIpc } from './characterSheet'
@@ -76,6 +77,7 @@ export function registerIpc(): void {
   registerGraphicsIpc()
   registerBuffTrustIpc()
   registerRespawnIpc()
+  registerResistIpc()
   registerUiScaleIpc()
   registerReleaseNotesIpc()
   // Registered in EVERY build, and a no-op in a packaged one — the refusal lives inside the

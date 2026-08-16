@@ -28,6 +28,7 @@ import { spellCorrectionsReport, spellPlaceholdersReport, spellRemovalsReport } 
 import { CombatEngine } from './combat/engine'
 import { ModuleRegistry } from './modules/registry'
 import { createModules } from './modules/wiring'
+import { resistLedgerSeam } from './resist/store'
 import type { ModuleDelta } from './modules/types'
 import { lookupItem } from './itemLookup'
 import { MOB_CATALOG_SIZE, lookupMob, ownLoot } from './mobLookup'
@@ -148,6 +149,8 @@ export const registry = new ModuleRegistry({
  */
 const modules = createModules({
   alertDefs: getAlerts(),
+  // The one Electron-touching half of the resist module (src/main/resist/module.ts states why).
+  resistLedger: resistLedgerSeam(),
   // WHOSE casts may anchor a landing besides your own (JOS-140). Empty unless the user named
   // somebody in Preferences; ipc/buffTrust.ts keeps it in sync while the app runs.
   buffTrust: getBuffTrustPrefs(),
@@ -184,6 +187,7 @@ export const alertsModule = modules.alerts
 export const buffsModule = modules.buffs
 export const considerModule = modules.consider
 export const eventFeedModule = modules.eventFeed
+export const resistModule = modules.resist
 
 logInfo(
   `[everquest-companion] Message overlay: applied ${modules.overlayCorrections} cast-message corrections over the wiki DB.`

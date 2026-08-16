@@ -164,7 +164,7 @@ export class ResistLedgerStore {
   }
 
   seed(ledger: ResistLedger | null | undefined): void {
-    if (!ledger || ledger.schema !== 1) return
+    if (ledger?.schema !== 1) return
     for (const src of ledger.sources) this.bucket(src.key).seed(src.rows)
   }
 }

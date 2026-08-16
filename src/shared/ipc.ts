@@ -688,6 +688,25 @@ export const IPC = {
   // anything was actually watching that name — false is a no-op, not a failure.
   respawnUnwatch: 'respawn:unwatch',
 
+  // ---- per-mob resist profiles (JOS-382 — docs/plans/resist-mining.md) -------------------
+  //
+  // A PULL, NOT A SUBSCRIPTION, and the reason is the size of the thing being read: the resist
+  // ledger is ~700 kB of pooled observations and the only consumer wants ONE mob out of it at a
+  // time, on a page the user has to navigate to. Mirroring it into the renderer over
+  // `module:delta` would ship the whole ledger to draw five rows. So the module (id `resist`)
+  // pushes no increments, exactly as the combat engine does not, and these two channels answer
+  // the question the screen is actually asking.
+  //
+  // Both DERIVE on every call. Nothing about a resist stat is stored — not R, not the interval,
+  // not "nearly immune" — because a stored verdict is a second opinion waiting to disagree with
+  // the derived one, and because the answer legitimately moves as the user plays.
+  //
+  // renderer -> main: (mobDisplayName) -> MobResistProfile. Five axis rows, always, in one order.
+  resistProfile: 'resist:profile',
+  // renderer -> main: (mobDisplayName, axis) -> the evidence behind one row: the estimate, its
+  // per-spell breakdown, and the rows themselves. Null when the client's spell data is missing.
+  resistCell: 'resist:cell',
+
   // ---- main window text size (JOS-123 — shared/uiScale.ts) ------------------------------
   //
   // The main window's zoom factor: the Preferences control a player asked for after reporting

@@ -176,18 +176,29 @@ const POISON_PROC_BY_LAST_WORD = ((): ReadonlyMap<string, PoisonProcDef[]> => {
   return m
 })()
 
+/**
+ * `You begin casting|singing <Spell>.` — the player's own cast, with the VERB kept (JOS-382).
+ * Its own function because the sung/cast branch is one decision too many for the cascade arm it
+ * used to live in, and because "which verb did the log print" is a question worth a name.
+ */
+function ownCastBegin(c: ClassifyCtx): LogEvent | null {
+  const { text, ts, seq, raw } = c
+  const m = CAST_BEGIN_RE.exec(text)
+  if (!m) return null
+  const spell = m[2].trim()
+  // Absent rather than false for a cast: an optional present only when it says something keeps
+  // every existing golden and every existing consumer byte-identical.
+  return m[1] === 'singing'
+    ? { kind: 'castBegin', seq, ts, raw, spell, sung: true }
+    : { kind: 'castBegin', seq, ts, raw, spell }
+}
+
 /** Cast lifecycle (Task #19): begin / fizzle / interrupt (player's own casts). */
-export function classifyCastLifecycle({ text, ts, seq, raw }: ClassifyCtx): LogEvent | null {
+export function classifyCastLifecycle(c: ClassifyCtx): LogEvent | null {
+  const { text, ts, seq, raw } = c
   if (text.startsWith('You begin ')) {
-    const m = CAST_BEGIN_RE.exec(text)
-    // Absent rather than false for a cast: an optional present only when it says something keeps
-    // every existing golden and every existing consumer byte-identical.
-    if (m) {
-      const spell = m[2].trim()
-      return m[1] === 'singing'
-        ? { kind: 'castBegin', seq, ts, raw, spell, sung: true }
-        : { kind: 'castBegin', seq, ts, raw, spell }
-    }
+    const own = ownCastBegin(c)
+    if (own) return own
   }
   if (text.includes(' begins casting ') || text.includes(' begins singing ')) {
     const m = OTHER_CAST_BEGIN_RE.exec(text)

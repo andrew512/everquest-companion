@@ -123,9 +123,22 @@ export class SongPulses {
     this.open.set(spellKey, fresh)
   }
 
-  /** Flush everything still buffered. Call at a zone change, a death, and at end of fold. */
+  /**
+   * Close any pulse that can no longer gain witnesses, WITHOUT ending the runs they belong to.
+   * This is what the live tail calls on its heartbeat: a bard mid-rotation has an open pulse and
+   * an open run, and ending the run would forfeit every interpolated pulse across the next gap.
+   */
+  settle(now: number): void {
+    for (const key of [...this.open.keys()]) this.closeOpen(key, now)
+  }
+
+  /**
+   * End everything: close the buffered pulses AND end every run, so nothing is interpolated
+   * across the boundary. A zone change and the end of a fold are both real discontinuities — the
+   * song may well have stopped, and rule 2 extrapolates past nothing.
+   */
   flush(): void {
-    for (const key of [...this.open.keys()]) this.closeOpen(key, Number.POSITIVE_INFINITY)
+    this.settle(Number.POSITIVE_INFINITY)
     this.runs = new Map()
   }
 

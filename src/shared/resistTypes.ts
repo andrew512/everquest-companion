@@ -233,3 +233,15 @@ export interface MobResistProfile {
 
 /** Below this the card refuses to draw a number and says how little it has instead. */
 export const MIN_CELL_OBSERVATIONS = 5
+
+/**
+ * The drilldown behind ONE axis row: the estimate, and the rows it was computed from. Lives here
+ * rather than beside the main-process builder because the preload names it, and a preload that
+ * reaches into `src/main` drags the whole main-process type graph into the renderer's program.
+ */
+export interface MobResistCell {
+  mobKey: string
+  axis: ResistAxis
+  estimate: ResistEstimate
+  rows: ResistRow[]
+}

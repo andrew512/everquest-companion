@@ -400,9 +400,21 @@ function rowTerm(row: ResistRow, info: SpellResistInfo, axis: ResistAxis, spells
  * magic-resistant mob out of a level cap (world-model law 1).
  */
 function rowIsEvidence(row: ResistRow, info: SpellResistInfo | undefined, axis: ResistAxis): info is SpellResistInfo {
-  if (!info || info.axis !== axis) return false
+  if (info?.axis !== axis) return false
   if (info.levelCap !== undefined && row.mobLevel !== null && row.mobLevel > info.levelCap) return false
   return true
+}
+
+/**
+ * THE PATCH DETECTOR. Both sides well populated, and 95% intervals that do not overlap: the log in
+ * front of this user says something the shipped data does not, which is what a retuned mob looks
+ * like. It is a statement about the DATA and never a correction of it - by the time it can fire,
+ * the user's own observations already outweigh the baseline entirely.
+ */
+function differs(userFit: ResistFit | null, baselineFit: ResistFit | null): boolean {
+  if (!userFit || !baselineFit) return false
+  if (userFit.n < DIFFERS_MIN_N || baselineFit.n < DIFFERS_MIN_N) return false
+  return disjoint(userFit, baselineFit)
 }
 
 function fitFrom(terms: Term[], axis: ResistAxis, mobLevel: number | null): ResistFit {
@@ -542,12 +554,7 @@ export function estimate(
     userOnly: fromYou >= USER_ONLY_AT,
     baselineFit,
     userFit,
-    differsFromShipped:
-      userFit !== null &&
-      baselineFit !== null &&
-      userFit.n >= DIFFERS_MIN_N &&
-      baselineFit.n >= DIFFERS_MIN_N &&
-      disjoint(userFit, baselineFit),
+    differsFromShipped: differs(userFit, baselineFit),
     nearlyImmune: merged.R >= 200,
   }
 }

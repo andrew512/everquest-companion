@@ -42,6 +42,7 @@ import { BuffsModule } from './buffs'
 import { BuffTimersModule } from './buffTimers'
 import { ConsiderModule, type ConsiderDeps } from './consider'
 import { EventFeedModule, type EventFeedDeps } from './eventFeed'
+import { ResistModule, type ResistLedgerSeam } from '../resist/module'
 import type { EqModule } from './types'
 import { buildTimerRows } from '../../shared/buffTimers'
 import type { LogEvent } from '../../shared/logEvents'
@@ -52,6 +53,8 @@ import type { RespawnPrefs } from '../../shared/respawn'
 /** Everything the module set needs from outside itself. Every field is a seam pipeline.ts fills
  *  from Electron and the bench fills with a stub or an empty list. */
 export interface ModuleWiringDeps extends ConsiderDeps, EventFeedDeps {
+  /** The userData-backed resist ledger. Absent ⇒ an in-memory one that writes nothing. */
+  resistLedger?: ResistLedgerSeam
   /** The user's alert definitions (the store owns them; the module is kept in sync by setDefs). */
   alertDefs?: AlertDef[]
   /**
@@ -104,6 +107,7 @@ export interface ModuleWiring {
   buffTimers: BuffTimersModule
   consider: ConsiderModule
   eventFeed: EventFeedModule
+  resist: ResistModule
   /** REGISTRATION ORDER = BUS DELIVERY ORDER. Load-bearing; see the comments below. */
   ordered: EqModule[]
 }
@@ -216,6 +220,15 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
   const eventFeed = new EventFeedModule({
     ...(deps.lookupItem ? { lookupItem: deps.lookupItem } : {})
   })
+  // Per-mob resist profiles (JOS-382). It reads the WIKI spell catalog to recognise a resist
+  // debuff by its verbatim effect line, and nothing else — the client's spells_us.txt is joined in
+  // at estimate time, never at fold time (src/main/resist/fold.ts states why). The LEDGER is
+  // injected because it is the only Electron-touching part, and this function has to stay
+  // constructible under plain node (the bench and tests/foldDeterminism.test.mts both do it).
+  const resist = new ResistModule({
+    spellDb,
+    ...(deps.resistLedger ? { ledger: deps.resistLedger } : {})
+  })
 
   return {
     spellDb,
@@ -237,6 +250,7 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
     buffTimers,
     consider,
     eventFeed,
+    resist,
     // combo goes FIRST (design § 5.1): within one bus delivery every later module — and the combat
     // engine, which folds the same event afterwards — then sees an already-advanced combo state.
     // roster goes SECOND for the same reason: the engine's admission gate pulls the roster through
@@ -271,6 +285,10 @@ export function createModules(deps: ModuleWiringDeps = {}): ModuleWiring {
       // half-advanced pair would show a mez for one extra flush.
       buffTimers,
       consider,
+      // Position is free: it reads no other module's state and pushes no delta (it is read by
+      // pulling, like the combat engine). AFTER consider so a `/con` that states a mob's level is
+      // already folded when the same delivery files an observation about that mob.
+      resist,
       eventFeed
     ]
   }
