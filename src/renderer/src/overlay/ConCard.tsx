@@ -101,7 +101,6 @@ function Chip({ chip }: { chip: ConCardNotableChip }): JSX.Element {
       data-testid={`con-chip-${chip.axis}`}
       data-tag={chip.tag}
       style={{
-        flex: '1 1 0',
         minWidth: 0,
         padding: '4px 6px',
         borderRadius: 6,
@@ -156,7 +155,19 @@ function Chips({ payload }: { payload: ConCardPayload }): JSX.Element {
           {totalN > 0 ? `no notable resists · ${countText(totalN)}` : 'no notable resists · nothing seen yet'}
         </div>
       ) : (
-        <div style={{ display: 'flex', gap: 4, alignItems: 'stretch' }}>
+        /* A GRID OF AT LEAST THREE COLUMNS, not a flex row that divides itself among however many
+           survived. Once the card stopped drawing all five (above), one chip stretched across the
+           whole card and read as a banner rather than as a chip — which is the horizontal version
+           of exactly the empty apron this ticket is about. Three or more survivors fill the row as
+           they always did. */
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${String(Math.max(3, chips.length))}, 1fr)`,
+            gap: 4,
+            alignItems: 'stretch'
+          }}
+        >
           {chips.map((c) => (
             <Chip key={c.axis} chip={c} />
           ))}
