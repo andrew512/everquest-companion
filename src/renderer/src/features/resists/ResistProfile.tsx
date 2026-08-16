@@ -3,10 +3,15 @@
 // a player meets it.
 //
 // FIVE ROWS, ALWAYS, IN ONE ORDER. Magic, fire, cold, poison, disease - every time, whether or not
-// there is anything behind them. A cell with fewer than five observations draws a grey
-// "not enough data (n=2)" row instead of a number, and is never omitted: "we have not seen fire
-// cast on this" and "fire is fine" are different statements, and a missing row says neither
-// (world-model law 1).
+// there is anything behind them. A row is never omitted: "we have not seen fire cast on this" and
+// "fire is fine" are different statements, and a missing row says neither (world-model law 1).
+//
+// AND THE ANSWER IS ALWAYS SHOWN (owner ruling, 2026-08-16, replacing the first cut's n >= 5
+// floor). A cell with ONE observation draws the same things a cell with six hundred does - the tag,
+// the bar, `R 126 (110-144)` and `n=1` - and adds the quieter caveat `low samples` beside the tag
+// while it is under `LOW_SAMPLE_BELOW`. It does NOT print "not enough data" in place of the answer:
+// the prior keeps a thin estimate sane, the interval comes out wide, and THE WIDE INTERVAL IS THE
+// HONEST DISPLAY. Only a cell with nothing at all behind it says "no data".
 //
 // THE NUMBER NEVER APPEARS WITHOUT ITS INTERVAL AND ITS COUNT. `R 126 (110-144)` and `n=600`
 // travel together, because the whole feature is an estimate off somebody's log and the width of
@@ -24,8 +29,11 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import type { MobResistAxis, MobResistProfile, ResistAxis } from '@shared/resistTypes'
 import { RESIST_AXIS_WORDS } from '@shared/resistTypes'
 import { RESIST_AXIS_COLORS, RESIST_UNKNOWN_COLOR } from './resistColors'
+import { lowSamples } from '@shared/resistModel'
 import {
   DIFFERS_NOTE,
+  LOW_SAMPLE_NOTE,
+  NO_DATA_TEXT,
   USER_ONLY_NOTE,
   bandFraction,
   barFraction,
@@ -33,7 +41,6 @@ import {
   estimateText,
   evidenceByFamily,
   evidenceText,
-  notEnoughText,
   songSummary,
   splitText,
 } from './resistRow'
@@ -146,8 +153,9 @@ function EvidencePanel({ row }: { row: MobResistAxis }): JSX.Element {
 function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
   const [open, setOpen] = useState(false)
   const est = row.estimate
-  const thin = est === null || row.tag === null
-  const color = thin ? RESIST_UNKNOWN_COLOR : RESIST_AXIS_COLORS[row.axis]
+  // EMPTY, not "thin": the only cell that draws no answer is the one with nothing behind it.
+  const empty = est === null || row.tag === null
+  const color = empty ? RESIST_UNKNOWN_COLOR : RESIST_AXIS_COLORS[row.axis]
   return (
     <Box data-testid={`resist-row-${row.axis}`}>
       <Stack
@@ -170,9 +178,9 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
         <Typography variant="body2" sx={{ color, width: 62, flex: '0 0 auto' }}>
           {RESIST_AXIS_WORDS[row.axis]}
         </Typography>
-        {thin || !est ? (
-          <Typography variant="caption" color="text.disabled" data-testid={`resist-thin-${row.axis}`} sx={{ flex: 1 }}>
-            {notEnoughText(row.n)}
+        {empty || !est ? (
+          <Typography variant="caption" color="text.disabled" data-testid={`resist-empty-${row.axis}`} sx={{ flex: 1 }}>
+            {NO_DATA_TEXT}
           </Typography>
         ) : (
           <>
@@ -183,8 +191,16 @@ function AxisRow({ row }: { row: MobResistAxis }): JSX.Element {
             <Typography variant="caption" color="text.secondary" sx={{ width: 62, flex: '0 0 auto' }}>
               {countText(est.n)}
             </Typography>
+            {/* The tag and its caveat share one cell, because they are one sentence: the caveat
+                qualifies the tag and would be a different claim sitting anywhere else. The count is
+                already in the column to the left, so it is not repeated here. */}
             <Typography variant="caption" sx={{ color, width: 96, flex: '0 0 auto' }} data-testid={`resist-tag-${row.axis}`}>
               {row.tag}
+              {lowSamples(est.n) && (
+                <Typography component="span" variant="caption" color="text.disabled" data-testid={`resist-low-${row.axis}`}>
+                  {` · ${LOW_SAMPLE_NOTE}`}
+                </Typography>
+              )}
             </Typography>
           </>
         )}

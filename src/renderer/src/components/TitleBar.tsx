@@ -105,8 +105,12 @@ function CaptionButton({
  *   respawn                    JOS-194 — the respawn clocks, and the window this feature is
  *                              actually read in: the Timers tab is where you choose what to clock.
  *
- * Every kind from `buffs` onward ships DEFAULT OFF and this menu is the ONLY way to meet it. The
- * 'toast' kind is deliberately absent: it is a notifier, not a window a user places.
+ *   conCard                    JOS-383 — the card that appears when you `/con` a creature.
+ *
+ * Every kind from `buffs` through `respawn` ships DEFAULT OFF and this menu is the ONLY way to meet
+ * it; `conCard` is the exception in both directions — it ships ON, so this row is how you turn it
+ * OFF without going through Preferences. The 'toast' kind is deliberately absent: it is a notifier,
+ * not a window a user places.
  */
 const OVERLAY_MENU_ROWS: readonly (readonly [OverlayKind, string, string])[] = [
   ['fight', 'Fight meter', 'Current fight + fight selector'],
@@ -117,7 +121,12 @@ const OVERLAY_MENU_ROWS: readonly (readonly [OverlayKind, string, string])[] = [
   ['buffs', 'Buffs', 'Buffs you have running, with timers'],
   ['debuffs', 'Debuffs', 'Debuffs and mez you are holding, per target'],
   ['xp', 'XP', 'XP per hour, next level, motes per hour'],
-  ['respawn', 'Respawn', 'Countdowns started by your own kills']
+  ['respawn', 'Respawn', 'Countdowns started by your own kills'],
+  // JOS-383, and the first row here for a kind that ships ON. It is in this menu on the owner's
+  // instruction (2026-08-16, the JOS-139 mirroring precedent): a window that appears by itself
+  // needs its off switch within reach of the place you are already looking when you want it gone.
+  // The 'toast' kind stays absent for its own stated reason — nobody places a celebration strip.
+  ['conCard', 'Mob card on con', 'Resists, drops and level when you con']
 ]
 
 /**

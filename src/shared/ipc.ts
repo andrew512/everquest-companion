@@ -332,6 +332,20 @@ export const IPC = {
   // the kind that shares its queue.
   onAlertBanner: 'alerts:banner-card',
 
+  // ---- the con card (JOS-383, shared/conCard.ts) ----
+  // main -> renderer(conCard overlay): one finished card for the creature just `/con`ed. There is
+  // no renderer->main producer on this feature at all, which is what makes it different from the
+  // banner above: the trigger is a LOG LINE, and main owns the log, the resist ledger, the mob
+  // knowledge and the kill counts the card is made of. Nothing is validated on the way out because
+  // nothing untrusted is on the way in — main built it — but it IS capped (shared/conCard.ts), for
+  // the reason every payload that crosses into a window that draws it is.
+  onConCard: 'con:card',
+  // renderer(conCard overlay) -> main, FIRE-AND-FORGET: "I closed the card for this mob."
+  // The overlay dismisses its own card locally; this tells main, whose business the SUPPRESSION is
+  // (`CON_CARD_REOPEN_SUPPRESS_MS` — a re-con inside a minute of a close must not nag). Main
+  // re-validates the key at the handler, because it is a renderer-supplied string.
+  conCardClosed: 'con:card-closed',
+
   // ---- cross-window deep link (Task #64) ----
   // renderer(overlay) -> main: "focus the app on this" (AppFocus). Main shows/restores/focuses
   // the MAIN window and forwards the payload on `onFocusView`. Fire-and-forget; the payload's

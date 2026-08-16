@@ -22,7 +22,9 @@
 // keep the alias, and do.
 import { normalizeUiScale } from '../../../../shared/uiScale'
 import { normalizeAlertBannerConfig } from '../../../../shared/alertBanner'
+import { normalizeConCardConfig } from '../../../../shared/conCard'
 import type { AlertBannerOverlayConfig } from '@shared/alertBanner'
+import type { ConCardOverlayConfig } from '@shared/conCard'
 import type { BuffTrustPrefs } from '@shared/buffTrust'
 import type { GraphicsPrefs } from '@shared/graphicsPrefs'
 import type { GraphicsEnvironment } from '@shared/wineDetect'
@@ -50,6 +52,18 @@ export interface AlertBannerSeed {
   open: boolean
   locked: boolean
   cfg: AlertBannerOverlayConfig
+}
+
+/**
+ * The con card's three facts (JOS-383), the same shape one kind over. It matters MORE here than it
+ * does for the banner: this kind ships ON, so a card that mounted on a shipped default would paint
+ * the switch correctly for a fresh install and wrongly for the only people who have ever touched it
+ * — the ones who turned it off.
+ */
+export interface ConCardSeed {
+  open: boolean
+  locked: boolean
+  cfg: ConCardOverlayConfig
 }
 
 /**
@@ -84,6 +98,10 @@ export interface PrefsSnapshot {
    *  argument its card once used for mounting on defaults — and exactly wrong for anyone who has
    *  turned it on: their switch was born OFF and rose (owner, hands-on, 2026-08-16). */
   alertBanner: AlertBannerSeed
+  /** Overlays — the con card's open-state, lock and auto-hide. It ships ON, which is why it is
+   *  here rather than mounting on a default: the only stored answer that differs from the shipped
+   *  one is somebody having switched it OFF, and that is the one the switch must not get wrong. */
+  conCard: ConCardSeed
   /** Buff trust — the external-caster allowlist. */
   buffTrust: BuffTrustPrefs
   /** Cursor ring — the switch, the two sliders and the colour. */
@@ -125,6 +143,7 @@ export interface PrefsReader {
   getOverlayState: () => Promise<Record<OverlayKind, boolean>>
   getToastConfig: () => Promise<OverlayConfig>
   getAlertBannerConfig: () => Promise<OverlayConfig>
+  getConCardConfig: () => Promise<OverlayConfig>
   getBuffTrust: () => Promise<BuffTrustPrefs>
   getCursorRing: () => Promise<CursorRingPrefs>
   getVoicePrefs: () => Promise<VoicePrefs>
@@ -157,6 +176,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     overlayState,
     toastConfig,
     bannerConfig,
+    conCardConfig,
     buffTrust,
     cursorRing,
     voice,
@@ -178,6 +198,7 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
     eq.getOverlayState(),
     eq.getToastConfig(),
     eq.getAlertBannerConfig(),
+    eq.getConCardConfig(),
     eq.getBuffTrust(),
     eq.getCursorRing(),
     eq.getVoicePrefs(),
@@ -205,6 +226,11 @@ export async function readPrefsSnapshot(eq: PrefsReader): Promise<PrefsSnapshot>
       open: overlayState.alertBanner,
       locked: bannerConfig.locked,
       cfg: normalizeAlertBannerConfig(bannerConfig.alertBanner)
+    },
+    conCard: {
+      open: overlayState.conCard,
+      locked: conCardConfig.locked,
+      cfg: normalizeConCardConfig(conCardConfig.conCard)
     },
     buffTrust,
     cursorRing,

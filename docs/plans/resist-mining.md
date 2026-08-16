@@ -311,9 +311,13 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   resistant" - the safe direction).
 - Confidence: simple count-based, no minimums at all for DISPLAY (owner, 2026-08-16, twice):
   always show the result - tag, R, interval, n - from n >= 1, with a quieter secondary caveat
-  `low samples` under n = 10; only n = 0 says `no data`. Never print "not enough data" in
-  place of the answer. The shipped baseline still drops rows under 5 observations at freeze;
-  that is a file-size rule, not a display rule. No CI-gated "advice" layer for v1.
+  `low samples` under n = 10 (`LOW_SAMPLE_BELOW`); only n = 0 says `no data`. Never print "not
+  enough data" in place of the answer. Why it is not merely a smaller threshold: the estimator
+  is a likelihood over a prior, so it has an answer from n = 1, and what a thin cell produces
+  is a WIDE INTERVAL - which is the honest display of thin evidence rather than a reason to
+  hide it. The shipped baseline still drops rows under 5 observations at freeze
+  (`scripts/gen-resist-baseline.ts`); that is a file-size rule, not a display rule. No
+  CI-gated "advice" layer for v1. Landed in JOS-383, on both surfaces at once.
 - NPC-on-NPC evidence (owner, 2026-08-16, revised): a switchable family, ON to start; the
   shipped default is decided by the measured player-vs-pet comparison on the owner's log
   (JOS-385). Worry to test: players' fire resisted where pets' fire is not, from pet tuning.

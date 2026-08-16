@@ -62,7 +62,16 @@ function allLedgerRows(): ResistRow[] {
   return out
 }
 
-function deps(): ProfileDeps {
+/**
+ * The profile builder's inputs, bound to this process's ledger, catalog and spell table.
+ *
+ * EXPORTED FOR THE CON CARD (JOS-383), which draws the same five axes over the game from the same
+ * profile: `main/conCard.ts` calls `mobResistProfile` with exactly these deps, so the chip on the
+ * card and the row on the mob page are the same estimate rather than two that agree today. It is a
+ * function rather than a constant because two of the four members read live state (the ledger and
+ * the spell table are both filled in after boot).
+ */
+export function resistProfileDeps(): ProfileDeps {
   return {
     rowsFor: rowsForIdentity,
     unobservable,
@@ -84,11 +93,11 @@ export function registerResistIpc(): void {
   ipcMain.handle(IPC.resistProfile, async (_e, mob: unknown) => {
     if (!validMob(mob)) return null
     await spellTable()
-    return mobResistProfile(mob, deps())
+    return mobResistProfile(mob, resistProfileDeps())
   })
   ipcMain.handle(IPC.resistCell, async (_e, mob: unknown, axis: unknown) => {
     if (!validMob(mob) || !validAxis(axis)) return null
     await spellTable()
-    return mobResistCell(mob, axis, deps())
+    return mobResistCell(mob, axis, resistProfileDeps())
   })
 }

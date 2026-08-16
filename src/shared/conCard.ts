@@ -1,0 +1,217 @@
+// conCard.ts — THE CON CARD overlay (JOS-383): its per-kind knobs, the payload one `/con` sends,
+// and the two pure rules that decide whether a card is owed at all.
+//
+// THE ASK (owner, 2026-08-16, following the JOS-321 spike and report STA19Q): when you `/con` a
+// creature a card appears at the top centre of the screen - tooltip-shaped, semi-transparent, over
+// the game - telling you what you want to know in the two seconds before you decide to fight. Its
+// resists, what it drops, its level, its respawn if we know it. Closable, ON by default.
+//
+// IT IS A SEPARATE OVERLAY KIND, and it is a STRIP like the celebration toast and the alert banner:
+// its resting state is an empty, click-through window that draws nothing at all. The three differ in
+// what they are FOR - a toast is a thing you glance at afterwards, a banner is a raid call read
+// mid-pull, and this is a card you READ for a moment before pulling - so each is positioned, sized,
+// held and locked independently, which is what a kind is.
+//
+// ON BY DEFAULT, and unlike the alert banner that is the owner's explicit instruction rather than an
+// inference: a con card answers a question the player just ASKED by typing `/con`, so it is not text
+// over the game nobody wanted. `DEFAULT_OVERLAY_CONFIG.conCard.open` is true and no migration exists
+// - `overlays.conCard` has never been written by any build, so every store reads that default (see
+// main/store.ts, which says the same thing about six kinds and the opposite about this one).
+//
+// WHAT THIS FILE IS NOT. It holds no Electron, no React and no lookup: main builds a payload from
+// the mob knowledge and the resist ledger it already owns (main/conCard.ts) and the overlay draws
+// it. Everything here is a type, a constant or a total function, so `npm test` exercises every rule.
+
+import { RESIST_AXES, type MobResistProfile, type ResistAxis, type ResistTag } from './resistTypes'
+
+// ---- the kind's own config knobs ---------------------------------------------------------
+//
+// They ride `overlays.conCard` (OverlayConfig.conCard) for the reason `ToastOverlayConfig` and
+// `AlertBannerOverlayConfig` ride theirs: this is an overlay KIND in every sense, so it gets one
+// open-state, one persisted bounds and one per-kind config read. `open` IS the design's "enabled".
+
+/**
+ * Timing for the con card. Everything else it needs is standard OverlayConfig.
+ */
+export interface ConCardOverlayConfig {
+  /**
+   * How long a card stays before it leaves by itself, in ms. `0` means IT NEVER LEAVES - the card
+   * then sits there until the next `/con` replaces it or the user closes it, which is a real
+   * preference for someone who reads it while deciding rather than at a glance.
+   */
+  autoHideMs: number
+}
+
+/** Twenty seconds (owner): long enough to read five resist chips and a drop list, gone before the
+ *  pull. */
+export const DEFAULT_CON_CARD_AUTO_HIDE_MS = 20_000
+/** The sentinel the owner asked for: 0 = never hides. */
+export const CON_CARD_NEVER_HIDES = 0
+/** Below this a card could not be read at all, so a stored 1 s is a mistake rather than a choice. */
+export const CON_CARD_MIN_AUTO_HIDE_MS = 3_000
+/** Past two minutes "hides by itself" stops being true in any useful sense; use 0 and mean it. */
+export const CON_CARD_MAX_AUTO_HIDE_MS = 120_000
+
+export const DEFAULT_CON_CARD_CONFIG: ConCardOverlayConfig = {
+  autoHideMs: DEFAULT_CON_CARD_AUTO_HIDE_MS
+}
+
+const asRecord = (v: unknown): Record<string, unknown> =>
+  typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {}
+
+/**
+ * Coerce a stored/patched con-card config into the valid shape (the store's clamp lives here).
+ * The result carries ONLY the field above, so a hand-edited key is dropped the next time this blob
+ * is written rather than honoured.
+ *
+ * ZERO SURVIVES THE CLAMP. It is not a small number that got rounded up to the minimum - it is the
+ * "never" the owner asked for, and a normalizer that quietly turned it into 3 s would be answering
+ * a different question from the one the control asks.
+ */
+export function normalizeConCardConfig(v: unknown): ConCardOverlayConfig {
+  const raw = asRecord(v).autoHideMs
+  const ms = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_CON_CARD_AUTO_HIDE_MS
+  if (ms <= 0) return { autoHideMs: CON_CARD_NEVER_HIDES }
+  return { autoHideMs: Math.min(CON_CARD_MAX_AUTO_HIDE_MS, Math.max(CON_CARD_MIN_AUTO_HIDE_MS, ms)) }
+}
+
+// ---- the two rules about WHEN a card is owed ----------------------------------------------
+
+/**
+ * A RE-CON AFTER A CLOSE MUST NOT NAG (owner scope). Closing the card is a statement about THIS
+ * creature - "I have read it" - and conning the same thing again ten seconds later while lining up
+ * a pull is not a request to read it again. Sixty seconds is the owner's number.
+ *
+ * It is per MOB KEY and it is cleared by nothing: a card the user closed for `a lava guardian` is
+ * suppressed for a minute for every lava guardian, because they are one creature as far as
+ * everything this card shows is concerned (the ledger, the drop table and the catalog all key that
+ * way - world-model law 2).
+ */
+export const CON_CARD_REOPEN_SUPPRESS_MS = 60_000
+
+/** True while a close of this mob's card still suppresses a re-open. Absent close ⇒ never. */
+export function conCardSuppressed(closedAt: number | undefined, now: number): boolean {
+  if (closedAt === undefined) return false
+  return now - closedAt < CON_CARD_REOPEN_SUPPRESS_MS && now >= closedAt
+}
+
+// ---- the wire ------------------------------------------------------------------------------
+
+/**
+ * ONE AXIS CHIP, as the card receives it.
+ *
+ * IT CARRIES NUMBERS, NOT SENTENCES, and that is deliberate: the words on the chip
+ * (`R 126 (110-144)`, `n=32`, `not enough data (n=2)`) are the mob page's own sentences and are
+ * built by the ONE derivation both surfaces read - `features/resists/resistRow.ts`. A payload that
+ * carried finished strings would be a second copy of that vocabulary, and the two would drift the
+ * first time a word changed.
+ *
+ * `tag` IS NULL ONLY WHEN THE CELL IS EMPTY (owner ruling, 2026-08-16): a cell with one observation
+ * carries its tag, its number and its interval exactly as a cell with six hundred does, and the
+ * surfaces add a quieter caveat under `LOW_SAMPLE_BELOW`. All five axes are always here in
+ * `RESIST_AXES` order, because "we have not seen fire cast on this" and "fire is fine" are different
+ * statements and a missing chip says neither (world-model law 1, and JOS-382's card rule verbatim).
+ */
+export interface ConCardChip {
+  axis: ResistAxis
+  /** The plain-language tag, or null only when nothing at all has been observed on this axis. */
+  tag: ResistTag | null
+  /** Observations behind the cell. Printed at every size, including the thin ones. */
+  n: number
+  /** The estimate and its interval, present exactly when `tag` is. Wide at a low `n`, which is the
+   *  honest display of a thin cell rather than a reason to withhold it. */
+  fit: { R: number; lo: number; hi: number } | null
+}
+
+/** One line of the wiki drop table, trimmed to what a five-line card can show. */
+export interface ConCardWikiDrop {
+  item: string
+  /** The page's verbatim rarity ("Rare", "18.4%"), when it stated one. */
+  rarity?: string
+}
+
+/** One item YOUR log has seen off this mob - the shape `foldSeenVariants` folds. */
+export interface ConCardSeenDrop {
+  item: string
+  count: number
+  lastTs: number
+}
+
+/**
+ * ONE `/con`, as the card overlay receives it.
+ *
+ * SELF-CONTAINED BY LAW, the contract the celebration toast wrote and the alert banner kept: the
+ * overlay window fetches NOTHING. Everything on the card is here, because that window has no
+ * knowledge service, no ledger and no store beyond its own config - and a card that had to ask
+ * questions after it appeared would appear half-empty over a running game.
+ *
+ * IT IS SENT TWICE, and the second send is not a correction. The first carries what the log line
+ * itself said plus whatever the ledger already knows (instant, which is the whole point of a card
+ * you read before pulling); the second arrives when the mob knowledge lands - drops, respawn - and
+ * refreshes the SAME `id`, which the queue treats as a refresh of the card on screen rather than a
+ * second card (renderer/overlay/cardQueue.ts).
+ */
+export interface ConCardPayload {
+  /** Queue identity: the mob key. A re-con REFRESHES the card rather than stacking a second one. */
+  id: string
+  /** When the `/con` happened (ms epoch). */
+  ts: number
+  /** The mob's display name, exactly as the log printed it. */
+  name: string
+  /** The level the con line stated. Every con line in the real log states one. */
+  level?: number
+  /** The zone the player was in when they conned. */
+  zone?: string
+  /** The ` - a rare creature - ` infix was on the line. */
+  rare?: boolean
+  /** Always five, always in `RESIST_AXES` order. */
+  chips: ConCardChip[]
+  /** False when the client's `spells_us.txt` could not be read; the card says so instead of
+   *  drawing five identical "not enough data" chips with no explanation. */
+  spellData: boolean
+  /** The wiki drop table, capped. Absent until the knowledge lands (the second send). */
+  dropsWiki?: ConCardWikiDrop[]
+  /** What your own log has looted off it, capped. Folded and ranked by the overlay. */
+  dropsSeen?: ConCardSeenDrop[]
+  /** Your recorded kills of this mob - the perceived rate's DENOMINATOR, absent when unknown. */
+  kills?: number
+  /** The catalog's respawn statement, VERBATIM. Absent when nothing states one. */
+  respawn?: string
+  /** True once the knowledge lookup has answered, so "no drops" can be told from "still asking". */
+  knowledgeIn?: boolean
+}
+
+/** How many drop lines a card may show. Past a handful it stops being a glance. */
+export const CON_CARD_MAX_DROPS = 5
+
+/** How much of each list crosses the wire. Generous enough that the fold and the ranking below
+ *  have something to work with, bounded so a 90-item boss page cannot inflate a card payload. */
+export const CON_CARD_WIRE_DROPS = 24
+
+/**
+ * The five chips for a mob, from the profile JOS-382's IPC already builds.
+ *
+ * ONE call, no second estimator: everything here is a projection of `MobResistProfile`, so the chip
+ * on the card and the row on the mob page can never disagree about what the log has seen.
+ */
+export function conCardChips(profile: MobResistProfile): ConCardChip[] {
+  const byAxis = new Map(profile.axes.map((a) => [a.axis, a]))
+  return RESIST_AXES.map((axis) => {
+    const row = byAxis.get(axis)
+    const est = row?.estimate ?? null
+    const tag = row?.tag ?? null
+    return {
+      axis,
+      tag,
+      n: row?.n ?? 0,
+      fit: est && tag ? { R: est.R, lo: est.lo, hi: est.hi } : null
+    }
+  })
+}
+
+/** Rendering guarantees, not taste: a 40 kB mob name cannot push a card off the screen. */
+const MAX_NAME_CHARS = 96
+
+export function cappedName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME_CHARS)
+}

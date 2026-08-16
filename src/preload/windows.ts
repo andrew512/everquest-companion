@@ -146,5 +146,18 @@ export const windowsApi = {
     ipcRenderer.invoke(IPC.overlaySetConfig, 'alertBanner', patch),
   /** Lock (click-through) / unlock (position it). APPLIED to the live window as well as stored. */
   setAlertBannerLocked: (locked: boolean): void =>
-    ipcRenderer.send(IPC.overlaySetLocked, 'alertBanner', locked)
+    ipcRenderer.send(IPC.overlaySetLocked, 'alertBanner', locked),
+
+  // ---- the con card (JOS-383, shared/conCard.ts) --------------------------------------
+  //
+  // THREE DOORS, NOT FOUR: there is no `showConCard` twin of `showAlertBanner`, because this
+  // feature has no renderer producer at all — the trigger is a log line and main owns the log.
+  /** Read the con card overlay's persisted config (its auto-hide, its lock). Kind-first, like the
+   *  two cards above it, for the reason stated there. */
+  getConCardConfig: (): Promise<OverlayConfig> => ipcRenderer.invoke(IPC.overlayGetConfig, 'conCard'),
+  /** Patch the con card's config (Preferences owns the auto-hide). Main clamps; 0 means never. */
+  setConCardConfig: (patch: Partial<OverlayConfig>): Promise<OverlayConfig> =>
+    ipcRenderer.invoke(IPC.overlaySetConfig, 'conCard', patch),
+  /** Lock (click-through) / unlock (position it). APPLIED to the live window as well as stored. */
+  setConCardLocked: (locked: boolean): void => ipcRenderer.send(IPC.overlaySetLocked, 'conCard', locked)
 }
