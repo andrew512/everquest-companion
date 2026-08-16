@@ -17,13 +17,15 @@ import {
   estimateText,
   evidenceByFamily,
   evidenceText,
-  notEnoughText,
+  LOW_SAMPLE_NOTE,
+  NO_DATA_TEXT,
   songSummary,
   spellDisplayName,
   splitText
 } from '../src/renderer/src/features/resists/resistRow'
 import { RESIST_AXIS_COLORS } from '../src/renderer/src/features/resists/resistColors'
-import { RESIST_AXES, RESIST_AXIS_WORDS, type ResistEstimate } from '../src/shared/resistTypes'
+import { hasAnswer, lowSamples } from '../src/shared/resistModel'
+import { LOW_SAMPLE_BELOW, RESIST_AXES, RESIST_AXIS_WORDS, type ResistEstimate } from '../src/shared/resistTypes'
 
 function est(spec: Partial<ResistEstimate> = {}): ResistEstimate {
   return {
@@ -70,9 +72,27 @@ test('THE NUMBER NEVER APPEARS WITHOUT ITS INTERVAL AND ITS COUNT', () => {
   assert.equal(countText(600), 'n=600')
 })
 
-test('a thin cell says how little it has, and never draws a zero', () => {
-  assert.equal(notEnoughText(2), 'not enough data (n=2)')
-  assert.equal(notEnoughText(0), 'not enough data (n=0)')
+test('ALWAYS SHOW THE RESULT: a thin cell is qualified, never replaced (owner, 2026-08-16)', () => {
+  // The words themselves, because they are the whole of the ruling as a player meets it: the
+  // caveat is a SECOND thing beside the answer, and the only withheld case is the empty one.
+  assert.equal(LOW_SAMPLE_NOTE, 'low samples')
+  assert.equal(NO_DATA_TEXT, 'no data')
+  // It carries no count of its own — every surface prints `n=3` within a few pixels of it.
+  assert.ok(!/\d/.test(LOW_SAMPLE_NOTE), 'the caveat never repeats the count')
+  // No em dash, no acronym: the copy rules apply to a caveat as much as to a row.
+  for (const s of [LOW_SAMPLE_NOTE, NO_DATA_TEXT]) assert.ok(!/[–—]/.test(s), s)
+})
+
+test('the threshold the ruling replaced is gone: an answer exists from one observation', () => {
+  assert.equal(hasAnswer(0), false, 'nothing observed is the only case with nothing to say')
+  assert.equal(hasAnswer(1), true)
+  assert.equal(hasAnswer(4), true, 'the old n >= 5 floor no longer withholds anything')
+  // …and the caveat rides exactly the band under LOW_SAMPLE_BELOW, never the empty cell (which
+  // has no tag to qualify in the first place).
+  assert.equal(lowSamples(0), false)
+  assert.equal(lowSamples(1), true)
+  assert.equal(lowSamples(LOW_SAMPLE_BELOW - 1), true)
+  assert.equal(lowSamples(LOW_SAMPLE_BELOW), false)
 })
 
 test('the row states where its evidence came from, per axis', () => {

@@ -112,6 +112,28 @@ const TOAST_TOP = 12
 const BANNER_SIZE: Size = { width: 720, height: 260 }
 
 /**
+ * THE CON CARD IS THE THIRD STRIP (JOS-383), and it wants the TOP of the screen for the reason the
+ * banner does not: this is a card you read for a moment BEFORE you pull, not a warning you catch
+ * mid-fight, so it belongs out of the way of the fight rather than in the middle of it. Top centre
+ * is also where a player's own `/con` output already draws their eye.
+ *
+ * 520 wide because the widest thing on it is a drop line (`Gnarled Bone Ring  seen by you: 3x ·
+ * 0.25 per kill`) and wrapping those turns a five-line card into ten; 300 tall holds the identity
+ * line, five resist chips, five drops and a respawn with room to spare. The window is transparent
+ * and renders nothing between cons, so unused height costs nothing.
+ *
+ * IT DOES NOT SIT ON THE TOAST. The celebration strip is 12 px from the top and 360 tall, so this
+ * one starts below it: two strips that both defaulted to the very top would open exactly on top of
+ * each other on a fresh install, which is the failure `defaultOverlayBounds` exists to prevent for
+ * the meters and would be no less confusing here — and BOTH of these ship on. The alert banner's
+ * default band is not dodged for the same reason it does not need to be: that kind ships OFF and
+ * its first-run flow is the user dragging it where they want it. Persisted bounds always win.
+ */
+const CON_CARD_SIZE: Size = { width: 520, height: 300 }
+/** Gap from the top of the work area, clearing the celebration strip's reserved band. */
+const CON_CARD_TOP = TOAST_TOP + TOAST_SIZE.height + 12
+
+/**
  * How far down the work area the banner's top edge sits, as a fraction of its height: the UPPER
  * THIRD. Not the top (the toast is there, and so is every game's own chat/target chrome) and not
  * the middle (that is where the player is aiming). A third down is peripheral vision from the
@@ -129,7 +151,23 @@ const BANNER_TOP_FRACTION = 1 / 3
 export function overlayDefaultSize(kind: OverlayKind, workArea?: Bounds): Size {
   if (kind === 'toast') return { ...TOAST_SIZE }
   if (kind === 'alertBanner') return { ...BANNER_SIZE }
+  if (kind === 'conCard') return { ...CON_CARD_SIZE }
   return workArea ? meterSize(workArea) : { ...DEFAULT_SIZE }
+}
+
+/**
+ * The con card's first-open placement: horizontally CENTRED, below the celebration strip's band.
+ * Clamped like every other kind, so a display too short to hold it under the toast simply gets it
+ * as low as it fits rather than off the bottom edge.
+ */
+function conCardBounds(workArea: Bounds): Bounds {
+  const size = { ...CON_CARD_SIZE }
+  const x = workArea.x + Math.round((workArea.width - size.width) / 2)
+  return {
+    ...size,
+    x: Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - size.width)),
+    y: Math.max(workArea.y, Math.min(workArea.y + CON_CARD_TOP, workArea.y + workArea.height - size.height))
+  }
 }
 
 /**
@@ -167,13 +205,13 @@ const MARGIN = 16
 const GUTTER = 10
 
 /**
- * The kinds that dock into the bottom-right stack — every kind except the two STRIPS (the
- * celebration toast at the top, the alert banner a third of the way down). Neither holds a slot in
- * the meter grid, so neither may consume an index either: adding one that did would shift every
- * meter's reserved slot out from under a user who has never opened it.
+ * The kinds that dock into the bottom-right stack — every kind except the three STRIPS (the
+ * celebration toast at the top, the con card below it, the alert banner a third of the way down).
+ * None holds a slot in the meter grid, so none may consume an index either: adding one that did
+ * would shift every meter's reserved slot out from under a user who has never opened it.
  */
 export const METER_KINDS: OverlayKind[] = OVERLAY_KINDS.filter(
-  (k) => k !== 'toast' && k !== 'alertBanner'
+  (k) => k !== 'toast' && k !== 'alertBanner' && k !== 'conCard'
 )
 
 /**
@@ -231,8 +269,9 @@ function meterSize(workArea: Bounds): Size {
 export function defaultOverlayBounds(kind: OverlayKind, workArea: Bounds): Bounds {
   if (kind === 'toast') return toastBounds(workArea)
   if (kind === 'alertBanner') return bannerBounds(workArea)
+  if (kind === 'conCard') return conCardBounds(workArea)
   const size = overlayDefaultSize(kind, workArea)
-  // Neither strip holds a slot in the meter stack, so neither consumes an index (METER_KINDS).
+  // No strip holds a slot in the meter stack, so none consumes an index (METER_KINDS).
   const idx = Math.max(0, METER_KINDS.indexOf(kind))
   // How many uniform slots fit between the bottom and top margins of this work area.
   const perColumn = rowsThatFit(size.height, workArea)
@@ -272,5 +311,6 @@ export const OVERLAY_TITLE: Partial<Record<OverlayKind, string>> = {
   debuffs: 'Debuff Timer Overlay',
   xp: 'XP Overlay',
   respawn: 'Respawn Timer Overlay',
-  alertBanner: 'Alert Banner Overlay'
+  alertBanner: 'Alert Banner Overlay',
+  conCard: 'Mob Card Overlay'
 }

@@ -155,7 +155,12 @@ export const TELEMETRY_OVERLAY_KINDS = [
   // identical reason: the enum is CLOSED, the ingest Lambda validates through this module, and a
   // batch carrying a value the server has not learned yet is refused WHOLE with a 400 the client
   // classes as permanent and drops. The server ships first.
-  'alertBanner'
+  'alertBanner',
+  // JOS-383 added the con card. THE SAME DEPLOY ORDER APPLIES A FIFTH TIME, for the fifth identical
+  // reason: the enum is CLOSED, the ingest Lambda validates through this module, and a batch
+  // carrying a value the server has not learned yet is refused WHOLE with a 400 the client classes
+  // as permanent and drops. The server ships first.
+  'conCard'
 ] as const
 export type TelemetryOverlayKind = (typeof TELEMETRY_OVERLAY_KINDS)[number]
 

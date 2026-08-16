@@ -221,7 +221,7 @@ export interface ResistEstimate extends ResistFit {
 /** The plain-language tag beside the number. Thresholds and their argument: resistModel.ts. */
 export type ResistTag = 'weak' | 'normal' | 'resistant' | 'very resistant' | 'nearly immune'
 
-/** One axis row on the card. `n < MIN_CELL_OBSERVATIONS` draws as "not enough data (n=…)". */
+/** One axis row on the card. `tag` is null ONLY at n = 0, which draws as "no data". */
 export interface MobResistAxis {
   axis: ResistAxis
   estimate: ResistEstimate | null
@@ -240,8 +240,22 @@ export interface MobResistProfile {
   baselineFrozenAt: string | null
 }
 
-/** Below this the card refuses to draw a number and says how little it has instead. */
-export const MIN_CELL_OBSERVATIONS = 5
+/**
+ * ALWAYS SHOW THE ANSWER (owner ruling, 2026-08-16, superseding JOS-382's floor).
+ *
+ * The first cut refused to draw a number under five observations and printed "not enough data
+ * (n=2)" in its place. The owner overruled that: a cell with ANY observation gets the tag, the R,
+ * the interval and the count exactly as a well-populated one does — the prior keeps the estimate
+ * sane, the interval comes out wide, and a WIDE INTERVAL IS THE HONEST DISPLAY of a thin cell. What
+ * a thin cell gets in addition is a quieter CAVEAT beside the tag, not a substitute for it.
+ *
+ * Only n = 0 has nothing to say, and it says "no data".
+ *
+ * THE SHIPPED BASELINE'S OWN FLOOR IS UNCHANGED and is a different rule entirely: the freeze script
+ * drops rows under five observations (`MIN_ROW_OBSERVATIONS`, scripts/gen-resist-baseline.ts) to
+ * keep the committed file small. That is about bytes on disk; this is about what a person is shown.
+ */
+export const LOW_SAMPLE_BELOW = 10
 
 /**
  * The drilldown behind ONE axis row: the estimate, and the rows it was computed from. Lives here

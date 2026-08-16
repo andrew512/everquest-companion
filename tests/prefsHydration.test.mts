@@ -62,11 +62,15 @@ function stubReader(over: Partial<Record<keyof PrefsReader, unknown>> = {}): {
     // reversal) — and the one with TWO other controls (the tray menu's checkbox and the title bar's
     // overlay-menu row) that can move it while this pane is closed.
     getCloseToTray: answer('getCloseToTray', { enabled: true, noticeAcknowledged: true }),
-    getOverlayState: answer('getOverlayState', { toast: true, alertBanner: true }),
+    getOverlayState: answer('getOverlayState', { toast: true, alertBanner: true, conCard: false }),
     getToastConfig: answer('getToastConfig', { locked: false }),
     // The banner ships OFF and its first card mounted on that default; stored ON here, with an
     // off-default hold, so the seed has to carry both (owner, hands-on, 2026-08-16).
     getAlertBannerConfig: answer('getAlertBannerConfig', { locked: false, alertBanner: { holdMs: 8000, maxLines: 4, introduced: true } }),
+    // The con card ships ON (JOS-383) — so the value that can be WRONG for somebody is a stored
+    // OFF, which is what this stub carries. Its auto-hide is stored off-default too, and out of
+    // range, so the seed has to normalize rather than pass it through.
+    getConCardConfig: answer('getConCardConfig', { locked: true, conCard: { autoHideMs: 999_999 } }),
     getBuffTrust: answer('getBuffTrust', { externals: ['Faelin'] }),
     getCursorRing: answer('getCursorRing', { enabled: true, sizePx: 60, thicknessPx: 5, color: 'white' }),
     getVoicePrefs: answer('getVoicePrefs', { engine: 'system', voice: 'x', rate: 1, volume: 1 }),
@@ -89,9 +93,9 @@ test('one read answers every card in the pane, and it snaps the text size to the
   const { reader, calls } = stubReader()
   const snap = await readPrefsSnapshot(reader)
 
-  // TWENTY reads, one batch. The number is not the claim; the claim is that the gate asks each
+  // TWENTY-ONE reads, one batch. The number is not the claim; the claim is that the gate asks each
   // question exactly once, so a pane that mounts does not stampede the store.
-  assert.equal(calls(), 20, 'every read fires exactly once')
+  assert.equal(calls(), 21, 'every read fires exactly once')
 
   // A sample across the KINDS of value, because the defect was never boolean-only: two switches
   // that disagree with their defaults, a ladder stop, a slider pair, and two counts.
@@ -115,6 +119,9 @@ test('one read answers every card in the pane, and it snaps the text size to the
     locked: false,
     cfg: { holdMs: 8000, maxLines: 4, introduced: true }
   })
+  // And the con card's three (JOS-383). The switch is the one that ships ON, so a stored OFF is the
+  // flash this gate exists to prevent; the out-of-range auto-hide arrives clamped.
+  assert.deepEqual(snap.conCard, { open: false, locked: true, cfg: { autoHideMs: 120_000 } })
 })
 
 test('an off-ladder text size is snapped rather than stored as it was found', async () => {
@@ -144,7 +151,7 @@ test('two mounts in one frame share ONE batch', async () => {
   resetPrefsSnapshotForTests()
   const { reader, calls } = stubReader()
   const [a, b] = await Promise.all([loadPrefsSnapshot(reader), loadPrefsSnapshot(reader)])
-  assert.equal(calls(), 20, 'not forty')
+  assert.equal(calls(), 21, 'not forty-two')
   assert.equal(a, b)
   resetPrefsSnapshotForTests()
 })

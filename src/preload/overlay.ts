@@ -16,6 +16,7 @@ import { OVERLAY_KINDS } from '../shared/types'
 import type { ScopeSelection } from '../shared/scopeSelection'
 import type { ToastPayload } from '../shared/toast'
 import type { AlertBannerPayload } from '../shared/alertBanner'
+import type { ConCardPayload } from '../shared/conCard'
 
 export type { CombatSnapshot, SnapshotOpts, OverlayConfig, OverlayDrill, OverlayKind, MobKnowledge }
 
@@ -241,6 +242,25 @@ const overlayApi = {
    * and has no clicks to give), and main re-validates the key regardless.
    */
   unwatchRespawn: (key: string): Promise<boolean> => ipcRenderer.invoke(IPC.respawnUnwatch, key),
+
+  /**
+   * CON CARD (JOS-383): one finished card for the creature just `/con`ed, pushed by main. Same law
+   * as the two above — the overlay times and dismisses it locally and fetches nothing — and its own
+   * member for the same reason: three separate WINDOWS, and none of them may be handed another's
+   * payload.
+   */
+  onConCard: (cb: (c: ConCardPayload) => void): (() => void) => {
+    const listener = (_e: unknown, c: ConCardPayload): void => cb(c)
+    ipcRenderer.on(IPC.onConCard, listener)
+    return () => ipcRenderer.removeListener(IPC.onConCard, listener)
+  },
+
+  /**
+   * "I closed the card for this mob" (JOS-383). The only thing this window sends: the DISMISSAL is
+   * local (the queue drops the card), and this tells main, which owns the one rule the overlay
+   * cannot — a re-con of the same creature inside a minute must not put the card back up.
+   */
+  closeConCard: (mobKey: string): void => ipcRenderer.send(IPC.conCardClosed, mobKey),
 
   /** Close this overlay from its own close button (interactive mode only). */
   close: (): void => ipcRenderer.send(IPC.overlayClose, KIND)

@@ -13,13 +13,15 @@
 //   noise on a card; "R 0" is the same statement in the reader's units. The INTERVAL is clamped
 //   the same way and the underlying estimate is left alone.
 //
-//   A CELL UNDER `MIN_CELL_OBSERVATIONS` GETS NO NUMBER AND NO TAG, but it is never omitted. The
-//   five axes are always five rows in the same order, because "we have not seen fire cast on this"
-//   and "fire is fine" are different statements and a missing row says neither.
+//   EVERY CELL WITH AN OBSERVATION GETS ITS ANSWER (owner ruling, 2026-08-16, replacing this
+//   file's original n >= 5 floor): the tag, the number, the interval and the count, at n = 1 the
+//   same as at n = 600 — the interval simply comes out wide, which IS the honest display. Only the
+//   empty cell has no tag, and the surfaces draw that as "no data". Five axes are always five rows
+//   in the same order, because "we have not seen fire cast on this" and "fire is fine" are
+//   different statements and a missing row says neither.
 
 import { mobKey } from '../../shared/mobKey'
 import {
-  MIN_CELL_OBSERVATIONS,
   RESIST_AXES,
   type MobResistAxis,
   type MobResistCell,
@@ -29,7 +31,7 @@ import {
   type ResistRow,
   type SpellResistTable,
 } from '../../shared/resistTypes'
-import { estimate, hasEnough, resistTag } from '../../shared/resistModel'
+import { estimate, hasAnswer, resistTag } from '../../shared/resistModel'
 import { BASELINE_SOURCE_KEY } from '../../shared/resistTypes'
 import type { MobLevelFact } from './world'
 
@@ -79,7 +81,7 @@ function axisRow(
   return {
     axis,
     estimate: est,
-    tag: hasEnough(est.n) ? resistTag(est.R) : null,
+    tag: hasAnswer(est.n) ? resistTag(est.R) : null,
     n: est.n,
   }
 }
@@ -128,6 +130,3 @@ export function mobResistCell(
 
 /** What the profile builder needs from the ledger, spelled once. */
 export const BASELINE_KEY = BASELINE_SOURCE_KEY
-
-/** Whether a cell has enough behind it to draw a number. Re-exported for the renderer's benefit. */
-export const MIN_OBSERVATIONS = MIN_CELL_OBSERVATIONS

@@ -41,6 +41,9 @@ import { registerUiScaleIpc } from './uiScale'
 // rather than in this folder, because everything it does is window fan-out + item resolution.
 import { registerToastIpc } from '../toast'
 import { registerAlertBannerIpc } from '../alertBanner'
+// The con card's close channel and its trigger seam (JOS-383). Beside the window it feeds
+// (src/main/conCard.ts), like the two producer registrations above it.
+import { registerConCardIpc } from '../conCard'
 // The tray popover's three sends (JOS-139). Beside the window they come from (src/main/tray.ts),
 // like the toast's producer channel above, rather than in a fourth file in this folder.
 import { registerTrayIpc } from '../tray'
@@ -69,6 +72,7 @@ export function registerIpc(): void {
   registerWindowIpc()
   registerToastIpc()
   registerAlertBannerIpc()
+  registerConCardIpc()
   registerTrayIpc()
   registerClipboardIpc()
   registerFeedbackIpc()

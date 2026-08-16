@@ -89,7 +89,28 @@ export class ConsiderModule implements EqModule<ConsiderSnap, ConsiderDelta> {
   /** the first live tick has run ⇒ the historical replay is over (see the header). */
   private backfilled = false
 
+  /**
+   * THE CON-CARD SEAM (JOS-383). One callback, called for LIVE cons only, with the event and the
+   * zone this module is already tracking.
+   *
+   * A SEAM INSTALLED AFTER CONSTRUCTION rather than a constructor dep, for the reason
+   * `alerts.setTimerRows` and `combat.setRoster` are: the consumer (main/conCard.ts) reads the
+   * kill counts and the resist ledger off `pipeline.ts`, and a constructor dep would mean the
+   * pipeline importing the consumer that imports the pipeline. `modules/wiring.ts` also has to stay
+   * Electron-free — `npm run bench:replay` builds these modules under plain node — and a seam that
+   * is simply never installed there costs that bench nothing.
+   *
+   * It is the module's ONLY outward call, and it is on the live path on purpose: a startup replay
+   * of a month of logs folds hundreds of cons into the ring and must draw not one card.
+   */
+  private conCardHook: ((ev: Extract<LogEvent, { kind: 'consider' }>, zone: string | undefined) => void) | null = null
+
   constructor(private deps: ConsiderDeps = {}) {}
+
+  /** Install the con-card seam (see `conCardHook`). Idempotent; the last caller wins. */
+  setConCardHook(hook: (ev: Extract<LogEvent, { kind: 'consider' }>, zone: string | undefined) => void): void {
+    this.conCardHook = hook
+  }
 
   reset(): void {
     this.ring = []
@@ -160,6 +181,9 @@ export class ConsiderModule implements EqModule<ConsiderSnap, ConsiderDelta> {
     // LIVE cons enrich immediately; historical ones wait for the bounded backfill below, so a
     // startup replay of a 1M-line log never becomes a burst of wiki traffic.
     if (live) this.probe(row)
+    // …and a LIVE con is also the moment the card over the game is owed (JOS-383). After the fold,
+    // so the ring is already true if anything the hook calls reads it back.
+    if (live) this.conCardHook?.(ev, this.zone)
   }
 
   /**

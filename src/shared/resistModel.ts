@@ -82,7 +82,7 @@
 // DATA, never an automatic correction of it.
 
 import {
-  MIN_CELL_OBSERVATIONS,
+  LOW_SAMPLE_BELOW,
   type ResistAxis,
   type ResistEstimate,
   type ResistFamily,
@@ -624,7 +624,23 @@ export function estimate(
   }
 }
 
-/** Whether a cell has enough behind it to print a number at all. */
-export function hasEnough(n: number): boolean {
-  return n >= MIN_CELL_OBSERVATIONS
+/**
+ * Is there ANY answer to give? (owner ruling, 2026-08-16 — see `LOW_SAMPLE_BELOW`.)
+ *
+ * One observation is an answer: the estimator is a likelihood over a prior, so a single resist
+ * moves R and widens the interval rather than producing nonsense. The only cell with nothing to
+ * say is the empty one.
+ */
+export function hasAnswer(n: number): boolean {
+  return n > 0
+}
+
+/**
+ * Does this cell's answer need the quieter caveat beside it? A cell in this band is REPORTED in
+ * full — tag, number, interval, count — and merely says, in words, that it is standing on very
+ * little. It is a caveat and never a substitute: the ruling that created this function is exactly
+ * that the app stopped withholding the answer.
+ */
+export function lowSamples(n: number): boolean {
+  return n > 0 && n < LOW_SAMPLE_BELOW
 }

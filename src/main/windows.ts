@@ -81,14 +81,15 @@ const overlayWindows = Object.fromEntries(OVERLAY_KINDS.map((k) => [k, null])) a
 >
 
 /**
- * THE STRIP KINDS: the two overlays whose resting state is an EMPTY window — the celebration
- * toast and the alert banner (JOS-378). Every other kind is a panel that fills its window.
+ * THE STRIP KINDS: the three overlays whose resting state is an EMPTY window — the celebration
+ * toast, the alert banner (JOS-378) and the con card (JOS-383). Every other kind is a panel that
+ * fills its window.
  *
  * The distinction earns a name because opacity means something different for them (below) and
- * because neither pays for a mouse-forwarding hook (replayGate.ts `overlayForwardsMouse`).
+ * because none pays for a mouse-forwarding hook (replayGate.ts `overlayForwardsMouse`).
  */
 function isStripKind(kind: OverlayKind): boolean {
-  return kind === 'toast' || kind === 'alertBanner'
+  return kind === 'toast' || kind === 'alertBanner' || kind === 'conCard'
 }
 
 /**

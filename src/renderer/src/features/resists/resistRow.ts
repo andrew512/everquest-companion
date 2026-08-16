@@ -30,8 +30,15 @@ export function bandFraction(lo: number, hi: number): { left: number; width: num
   return { left, width: Math.max(right - left, 0) }
 }
 
-/** `R 126 (110-144)`. The interval is never hidden - it is the honest half of the number. */
-export function estimateText(est: ResistEstimate): string {
+/**
+ * `R 126 (110-144)`. The interval is never hidden - it is the honest half of the number.
+ *
+ * It takes the THREE FIELDS it reads rather than a whole `ResistEstimate` (JOS-383): the con card
+ * over the game is fed by main and carries the numbers without the evidence behind them, and it has
+ * to print this exact sentence. One derivation, two surfaces - a second `R %d (%d-%d)` written in
+ * the overlay is precisely how the two would come to disagree about a dash.
+ */
+export function estimateText(est: Pick<ResistEstimate, 'R' | 'lo' | 'hi'>): string {
   return `R ${String(est.R)} (${String(est.lo)}-${String(est.hi)})`
 }
 
@@ -40,10 +47,25 @@ export function countText(n: number): string {
   return `n=${String(n)}`
 }
 
-/** The grey row a thin cell draws instead of a number. Never omitted, never a zero. */
-export function notEnoughText(n: number): string {
-  return `not enough data (n=${String(n)})`
-}
+/**
+ * What an EMPTY cell says (owner ruling, 2026-08-16). Two words, and it is the only case left where
+ * a number is withheld: nothing has ever been observed on this axis for this creature, so there is
+ * nothing to be uncertain ABOUT.
+ *
+ * It replaces `not enough data (n=2)`, which used to stand in for the answer at anything under five
+ * observations. The ruling is that the answer is always shown; a thin cell reports in full and
+ * wears `LOW_SAMPLE_NOTE` beside it.
+ */
+export const NO_DATA_TEXT = 'no data'
+
+/**
+ * The quieter caveat a thin cell wears BESIDE its answer — never instead of it.
+ *
+ * It carries no count of its own on purpose: every surface that prints this already prints `n=3`
+ * within a few pixels of it (the mob page in its own column, the con card on the line underneath),
+ * and saying the same number twice on one row reads as two different numbers at a glance.
+ */
+export const LOW_SAMPLE_NOTE = 'low samples'
 
 /**
  * `baseline 480 + you 120` - where the evidence came from, said on the row rather than in a
