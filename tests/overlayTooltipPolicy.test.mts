@@ -145,7 +145,7 @@ test('…and the restore never fights whoever else owns the DOM', () => {
   assert.equal(empty.title, '', 'an empty title draws no popup — it is left exactly as it was')
 })
 
-test('all three leave signals are wired, and the entry installs them for every KIND', () => {
+test('every leave signal is wired, and the entry installs them for every KIND', () => {
   const exit = readFileSync(join(OVERLAY, 'pointerExit.ts'), 'utf8')
   // 1. the pointer leaves the document — the ordinary case, when the window owns the mouse.
   assert.match(exit, /addEventListener\('mouseleave', overlayPointerExited\)/)
@@ -166,6 +166,16 @@ test('all three leave signals are wired, and the entry installs them for every K
   // tooltip is up.
   const toggle = /const toggleLock = [\s\S]*?\n {2}\}/.exec(chrome)?.[0] ?? ''
   assert.match(toggle, /overlayPointerExited\(\)/, 'locking leaves the pin tooltip stranded')
+
+  // 4. MAIN WATCHED THE CURSOR WALK OFF (JOS-381) — the signal for the case none of the first
+  //    three can cover: while the Windows task switcher owns input, a captured overlay is told
+  //    nothing at all until the pointer comes back. It arrives over IPC and means exactly what the
+  //    others mean, so it is installed beside them. The watchdog itself (and the price it is
+  //    allowed to cost) is pinned in tests/pointerWatch.test.mts.
+  assert.match(exit, /window\.eqOverlay\.onPointerExit\(overlayPointerExited\)/)
+  // …and because signal 3 is raised BY a listener of this very fan-out, the fan-out is guarded
+  // against re-entering itself: one departure, one round of listeners.
+  assert.match(exit, /if \(firing\) return/)
 
   // EVERY KIND, including the celebration toast — which has no OverlayHeader and no chrome hook,
   // so the entry point is the only place that reaches all seven.

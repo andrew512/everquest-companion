@@ -184,6 +184,13 @@ export const IPC = {
   // main -> renderer(overlay): the persisted config changed. Payload: {kind, config}. The overlay
   // ignores pushes that aren't its own kind.
   onOverlayConfig: 'overlay:config',
+  // main -> renderer(overlay): "the cursor is no longer over your window" (JOS-381). Payload: kind.
+  // THE FOURTH LEAVE SIGNAL, and the only one that does not come from the window itself: while the
+  // Windows task switcher (or a UAC prompt, or any other system popup) owns input, a captured
+  // overlay never sees the leave that would give the mouse back, so main watches the cursor for it
+  // — but ONLY while a locked overlay is actually capturing (src/main/pointerWatch.ts states the
+  // whole performance contract). The renderer treats it exactly like a real leave.
+  onOverlayPointerExit: 'overlay:pointerExit',
 
   // ---- GLOBAL FIGHT SELECTION (docs/plans/combat-overlay-parity.md P4/P5/P6) ----
   // ONE fight is selected app-wide: picking one in the Combat tab's picker or in ANY

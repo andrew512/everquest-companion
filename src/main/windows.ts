@@ -28,6 +28,12 @@ import { installBackButton } from './appBack'
 import { E2E } from './e2e'
 import { logError } from './errorLog'
 import { OVERLAY_MIN_SIZE, OVERLAY_TITLE, overlayDefaultSize } from './overlayLayout'
+// THE CURSOR WATCHDOG, and it is two modules for the reason this one is (JOS-381): the DECISION is
+// electron-free and node-tested (pointerWatch.ts, which also states the whole performance
+// contract), and overlayPointerWatch.ts is the half that reads `screen` and pushes the leave. It
+// is wired to `setOverlayIgnoreMouse` below — the one place this app changes click-through — so
+// the watch can only exist while a locked overlay is really capturing.
+import { stopOverlayPointerWatch, watchOverlayPointer } from './overlayPointerWatch'
 // OPT-IN drag magnetism (JOS-217). Its own module — this file is at the 400-code-line ceiling, and
 // the whole feature is one `will-move` listener over pure geometry. It is handed the registry
 // below rather than importing it back out of here; see that file's header.
@@ -145,10 +151,11 @@ export function getOverlayWindow(kind: OverlayKind): BrowserWindow | null {
   return overlayWindows[kind]
 }
 
-/** Is this kind's overlay open — i.e. does a live, undestroyed window exist for it? */
+/** Is this kind's overlay open — i.e. does a live, undestroyed window exist for it? Spelled the
+ *  way `getMainWindow` above asks the same question: an absent window and a destroyed one are one
+ *  answer, and the window is asked rather than a remembered flag. */
 export function isOverlayOpen(kind: OverlayKind): boolean {
-  const w = overlayWindows[kind]
-  return w !== null && !w.isDestroyed()
+  return overlayWindows[kind]?.isDestroyed() === false
 }
 
 // ---- Electron runtime trust boundary (webPreferences / navigation / permissions) ----
@@ -458,6 +465,9 @@ export function createMainWindow(): void {
       const w = overlayWindows[kind]
       if (!w || w.isDestroyed()) continue
       w.removeAllListeners('closed')
+      // …including the handler that would have stopped its cursor watch, so this path says it
+      // itself (JOS-381). Idempotent, like every other stop.
+      stopOverlayPointerWatch(kind)
       w.destroy()
       overlayWindows[kind] = null
     }
@@ -526,6 +536,13 @@ export function createMainWindow(): void {
  * the seconds the fold owns the message loop, the hook the meters normally pay for would land
  * squarely on the user's own mouselook — and the window it exists to serve is hidden anyway.
  * Click-through itself is unchanged; only its implementation gets cheaper.
+ *
+ * ...AND IT IS ALSO WHERE THE CURSOR WATCHDOG LIVES OR DIES (JOS-381). This function is the ONE
+ * place an overlay's click-through state changes, so it is the only place that can know when a
+ * locked window has taken the mouse — and therefore when the pointer leaving it might never be
+ * observed from inside (the task-switcher case). `watchOverlayPointer` starts a watch on exactly
+ * that transition and stops it on every path back; nothing about forwarding, focus or z-order is
+ * touched by it. See overlayPointerWatch.ts.
  */
 export function setOverlayIgnoreMouse(kind: OverlayKind, ignore: boolean): void {
   const w = overlayWindows[kind]
@@ -533,6 +550,7 @@ export function setOverlayIgnoreMouse(kind: OverlayKind, ignore: boolean): void 
   if (ignore) w.setIgnoreMouseEvents(true, { forward: overlayMouseForward(kind) })
   else w.setIgnoreMouseEvents(false)
   applyOpaqueStripVisibility(kind, ignore)
+  watchOverlayPointer(kind, w, ignore)
 }
 
 /**
@@ -828,6 +846,10 @@ export function createOverlayWindow(kind: OverlayKind): void {
 
   w.on('closed', () => {
     overlayWindows[kind] = null
+    // A window that is gone is nobody's hover target: the cursor watch would find out on its next
+    // tick anyway (the rectangle it re-reads comes back null), but a closed window should cost
+    // nothing at all, not one more read (JOS-381).
+    stopOverlayPointerWatch(kind)
     setOverlayConfig(kind, { open: false })
     // Tell the main app so the TitleBar overlay menu reflects the closed state.
     sendToMain(IPC.onOverlayState, { kind, open: false })
@@ -855,13 +877,11 @@ export function setOverlayOpen(kind: OverlayKind, open: boolean): boolean {
   return isOpen
 }
 
-/** Current open-state map across all overlay kinds (for the TitleBar menu). */
+/** Current open-state map across all overlay kinds (for the TitleBar menu). Built from
+ *  OVERLAY_KINDS the same way `overlayWindows` above is, so a new kind is never half-covered. */
 export function overlayStateMap(): Record<OverlayKind, boolean> {
-  const out = {} as Record<OverlayKind, boolean>
-  for (const kind of OVERLAY_KINDS) {
-    out[kind] = isOverlayOpen(kind)
-  }
-  return out
+  const open = OVERLAY_KINDS.map((k) => [k, isOverlayOpen(k)] as const)
+  return Object.fromEntries(open) as Record<OverlayKind, boolean>
 }
 
 // ---- overlay AUTO-HIDE (presence-driven; src/main/presence.ts) ----
