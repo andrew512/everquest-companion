@@ -329,6 +329,12 @@ Surfaces (depth-over-surface: hang these on existing places, no new top-level ta
   weigh `K/(K+nUser)` with K = 20, at `nUser >= 50` the user's data stands alone and the
   baseline is only a faded reference marker, and two well-populated (n >= 30 each) estimates
   with disjoint intervals raise a "differs from shipped data" note - the patch detector.
+- Con card display (owner, 2026-08-16, after seeing it): the card sits at the TOP of the screen
+  in the celebration band (it was covering the character), its window fits the card (no empty
+  apron in either overlay mode), and it shows ONLY what the mob resists - axes tagged
+  resistant / very resistant / nearly immune (R >= 45); weak, normal and no-data axes are not
+  chips. One quiet "no notable resists" line when nothing qualifies. The mob page keeps the
+  full five-row table (JOS-386).
 - Presentation: **no acronyms**. Every axis is shown as its word (magic, fire, cold, poison,
   disease) with a stable colour per axis; the colour and the word always appear together.
 
