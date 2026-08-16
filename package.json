@@ -44,6 +44,7 @@
     "fixtures:poison-slow": "node --import tsx tests/extract-poison-slow-fixtures.mjs",
     "fixtures:procs": "node --import tsx tests/extract-proc-fixtures.mjs",
     "fixtures:progression": "node --import tsx tests/extract-progression-fixtures.mjs",
+    "fixtures:resist": "node --import tsx tests/extract-resist-fixtures.mjs",
     "fixtures:session": "node --import tsx tests/extract-session-fixtures.mjs",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/",
     "lint:fix": "eslint . --fix --cache --cache-location node_modules/.cache/eslint/",

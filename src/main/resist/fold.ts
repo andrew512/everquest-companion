@@ -73,6 +73,9 @@ export const CAST_JOIN_MS = 10_000
 /** How long a deferred emote-landing waits to see whether a damage line cancels it. */
 export const LAND_DEFER_MS = 3_000
 
+/** Bound on the display-name -> key cache. Cleared wholesale rather than evicted one at a time. */
+const MAX_KEY_CACHE = 4_096
+
 /**
  * The separator inside every composite key this module builds. A PRINTABLE byte, deliberately:
  * AGENTS.md's rule about raw control bytes in source exists because one makes git classify the
@@ -83,12 +86,34 @@ const SEP = '|'
 
 const pairKey = (mob: string, spell: string): string => mob + SEP + spell
 
+/**
+ * Is this name the player? The parser's `norm` produces exactly `You` for every spelling the log
+ * uses, so the identity compare answers almost every call and `idKey` (a trim plus a lower-case)
+ * is the fallback for the shapes that reach here unnormalised. Worth spelling out because this
+ * runs on every melee swing in a two-million-line replay.
+ */
+const isSelf = (name: string): boolean => name === 'You' || idKey(name) === 'you'
+
 interface Armed {
   spellKey: string
   display: string
   ts: number
   kind: ResistCasterKind
   level: number | null
+  /**
+   * Mobs this cast has already printed a DAMAGE line for. One cast is ONE roll, and a spell that
+   * both damages and emotes prints both for it — so the emote must not also be counted.
+   *
+   * MEASURED, and the reason this is a set on the cast rather than a cancel on the emote: the
+   * game prints the damage FIRST. "You hit a kodiak for 30 points of magic damage by Chaotic
+   * Feedback." then "A kodiak's brain begins to smolder.", in that order, every time. A
+   * cancel-forward rule (an emote's landing, withdrawn when damage follows) therefore never fires
+   * and doubles the count of every nuke in the ledger — which is exactly what
+   * tests/fixtures/r1-kodiak-fight.log caught: seven casts, seven damage lines, seven spurious
+   * landings on top. Both directions are covered now, because a DoT's first tick can land either
+   * side of its emote.
+   */
+  damaged: Set<string>
 }
 
 /** One thing the log said, as this fold names it before the bucket pools it. */
@@ -129,6 +154,8 @@ export class ResistFold {
   private dotSeen = new Set<string>()
   private deferred: Deferred | null = null
   private display = new Map<string, string>()
+  /** display name -> mobKey. See `keyOf`; this is a hot-path cache, not state. */
+  private keys = new Map<string, string>()
 
   constructor(private readonly deps: ResistFoldDeps = {}) {
     this.songs = new SongPulses((pulse) => {
@@ -188,6 +215,7 @@ export class ResistFold {
     this.armed = []
     this.dotSeen = new Set()
     this.deferred = null
+    this.keys = new Map()
   }
 
   onEvent(ev: LogEvent): void {
@@ -277,7 +305,7 @@ export class ResistFold {
 
   private onConsider(mob: string, level: number | undefined): void {
     this.remember(mob)
-    if (level !== undefined) this.levels.note(mobKey(mob), level)
+    if (level !== undefined) this.levels.note(this.keyOf(mob), level)
   }
 
   // ---- world housekeeping ---------------------------------------------------------------
@@ -292,27 +320,56 @@ export class ResistFold {
   }
 
   private onDeath(name: string): void {
-    const key = mobKey(name)
+    const key = this.keyOf(name)
     this.debuffs.clearMob(key)
     // A dead mob stops being a song target immediately (rule 3: alive AND in contact). The song
     // itself keeps running, so nothing here touches the pulse reconstruction.
     this.contact.drop(key)
   }
 
-  private remember(display: string): void {
-    this.display.set(mobKey(display), display)
+  /**
+   * `mobKey`, MEMOISED, and the reason is a measurement. This module sees every one of the two
+   * million events a full replay folds, and the busiest arm by far is melee: two swings a second
+   * for hours, each one asking for a mob key so a song pulse can later know who was in range.
+   * `mobKey` is a trim, three regex replacements and a lower-case — cheap once and not cheap two
+   * million times. MEASURED on the owner's log with `npm run bench:replay`: 1,779 ms of fold with
+   * the naive call, 1,067 ms with this cache, on identical input. The map is bounded because a
+   * long session meets thousands of distinct names and an unbounded one is a slow leak.
+   */
+  private keyOf(display: string): string {
+    const hit = this.keys.get(display)
+    if (hit !== undefined) return hit
+    const key = mobKey(display)
+    if (this.keys.size >= MAX_KEY_CACHE) this.keys.clear()
+    this.keys.set(display, key)
+    return key
   }
 
+  private remember(display: string): void {
+    this.display.set(this.keyOf(display), display)
+  }
+
+  /**
+   * Melee proximity, which exists for ONE reader: song rule 3, which needs to know who was in
+   * range when a pulse fired. So it is not tracked until a `You begin singing` line has been seen
+   * — MEASURED, because this is the busiest arm in the whole fold (two swings a second for hours)
+   * and the owner's two-million-line log contains five sing lines. The priced cost is the contact
+   * from the six seconds before the very first sing line of a session, which can only UNDER-count
+   * a song's attempts: the safe direction, and the one rule 3 already errs in.
+   */
   private onMelee(attacker: string, target: string, ts: number): void {
-    if (idKey(attacker) === 'you') {
-      this.contact.note(mobKey(target), ts)
-      this.remember(target)
+    if (this.songSpells.size === 0) return
+    if (isSelf(attacker)) {
+      this.noteContact(target, ts)
       return
     }
-    if (idKey(target) === 'you') {
-      this.contact.note(mobKey(attacker), ts)
-      this.remember(attacker)
-    }
+    if (isSelf(target)) this.noteContact(attacker, ts)
+  }
+
+  private noteContact(mob: string, ts: number): void {
+    const key = this.keyOf(mob)
+    this.contact.note(key, ts)
+    this.display.set(key, mob)
   }
 
   // ---- casts ---------------------------------------------------------------------------
@@ -327,12 +384,23 @@ export class ResistFold {
     for (const seen of [...this.dotSeen]) {
       if (seen.endsWith(SEP + key)) this.dotSeen.delete(seen)
     }
-    this.arm({ spellKey: key, display: spell, ts, kind: 'self', level: this.selfLevel })
+    this.arm({ spellKey: key, display: spell, ts, kind: 'self', level: this.selfLevel, damaged: new Set() })
   }
 
   private onOtherCast(caster: string, spell: string, ts: number): void {
     if (this.casters.kindOf(caster) !== 'pc') return
-    this.arm({ spellKey: spellCanonKey(spell), display: spell, ts, kind: 'pc', level: null })
+    this.arm({ spellKey: spellCanonKey(spell), display: spell, ts, kind: 'pc', level: null, damaged: new Set() })
+  }
+
+  /** The most recent armed cast this line can belong to, WITHOUT consuming it. */
+  private peekArmed(spellKey: string, ts: number): Armed | null {
+    for (let i = this.armed.length - 1; i >= 0; i--) {
+      const cast = this.armed[i]
+      if (cast.spellKey !== spellKey) continue
+      if (ts < cast.ts || ts - cast.ts > CAST_JOIN_MS) continue
+      return cast
+    }
+    return null
   }
 
   private arm(cast: Armed): void {
@@ -362,12 +430,15 @@ export class ResistFold {
     const cast = this.takeArmed(ts, candidates)
     if (!cast) return
     this.remember(mobDisplay)
-    const key = mobKey(mobDisplay)
+    const key = this.keyOf(mobDisplay)
     if (isResistDebuff(this.deps.spellDb, cast.display)) this.debuffs.open(key, cast.spellKey, ts)
     if (this.songSpells.has(cast.spellKey)) {
       this.songs.witness(cast.spellKey, ts, null)
       return
     }
+    // ONE CAST IS ONE ROLL. If this cast already printed damage on this mob, the damage line IS
+    // the observation and the emote is the same roll saying so twice (see Armed.damaged).
+    if (cast.damaged.has(key)) return
     // DEFERRED: a damage line for the same mob and spell cancels it (see the header).
     this.flushDeferred(Number.POSITIVE_INFINITY)
     this.deferred = { mobDisplay, spellKey: cast.spellKey, ts, kind: cast.kind, level: cast.level }
@@ -384,7 +455,7 @@ export class ResistFold {
   private cancelDeferred(mobDisplay: string, spellKey: string): void {
     const d = this.deferred
     if (!d) return
-    if (d.spellKey === spellKey && mobKey(d.mobDisplay) === mobKey(mobDisplay)) this.deferred = null
+    if (d.spellKey === spellKey && this.keyOf(d.mobDisplay) === this.keyOf(mobDisplay)) this.deferred = null
   }
 
   // ---- outcomes ------------------------------------------------------------------------
@@ -397,7 +468,7 @@ export class ResistFold {
     const spellKey = spellCanonKey(ev.spell)
     this.remember(ev.target)
     if (kind === 'self' && this.songSpells.has(spellKey)) {
-      this.songs.witness(spellKey, ev.ts, mobKey(ev.target))
+      this.songs.witness(spellKey, ev.ts, this.keyOf(ev.target))
       return
     }
     const level = kind === 'self' ? this.selfLevel : null
@@ -411,7 +482,9 @@ export class ResistFold {
     // pulse gets (songs.ts rule 3). A damage shield firing means the mob hit you, so it counts too.
     if (ev.dtype === 'melee' || ev.dtype === 'ds') {
       this.onMelee(attacker, ev.target, ev.ts)
-      if (idKey(attacker) === 'you') this.casters.noteStruck(ev.target)
+      // The behavioural guard runs whatever the songs are doing: a name YOU have landed damage on
+      // is a mob, and that is what keeps a proper-named guard out of the player roster.
+      if (isSelf(attacker)) this.casters.noteStruck(ev.target)
       return
     }
     if (ev.dtype !== 'spell' && ev.dtype !== 'dot') return
@@ -433,6 +506,7 @@ export class ResistFold {
       return
     }
     this.cancelDeferred(ev.target, spellKey)
+    this.peekArmed(spellKey, ev.ts)?.damaged.add(this.keyOf(ev.target))
     const level = kind === 'self' ? this.selfLevel : null
     const row = this.rowFor({ mob: ev.target, spellKey, family: 'cast', kind, level, ts: ev.ts })
     if (ev.dtype === 'dot') this.onDotTick(row, ev.target, spellKey)
@@ -450,7 +524,7 @@ export class ResistFold {
   }
 
   private onDotTick(row: ResistRow, target: string, spellKey: string): void {
-    const key = pairKey(mobKey(target), spellKey)
+    const key = pairKey(this.keyOf(target), spellKey)
     if (this.dotSeen.has(key)) return
     this.dotSeen.add(key)
     row.land += 1
@@ -478,7 +552,7 @@ export class ResistFold {
   // ---- rows ----------------------------------------------------------------------------
 
   private spec(obs: Observation): RowSpec {
-    const key = mobKey(obs.mob)
+    const key = this.keyOf(obs.mob)
     const level = this.levels.levelOf(key, obs.mob)
     const spec: RowSpec = {
       mobKey: key,

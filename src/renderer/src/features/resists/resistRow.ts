@@ -73,9 +73,13 @@ export const USER_ONLY_NOTE = 'your log only'
  * The ledger keys spells canonically (lowercased, rank stripped), which is right for joining and
  * wrong for reading. Title-cased back for display; the rank is genuinely gone, and that is the
  * point - `Scorching Arrow IV` and `Scorching Arrow` are one spell to this model.
+ *
+ * ONLY AT A WORD BOUNDARY, and a POSSESSIVE IS NOT ONE. EQ spell names are thick with them
+ * ("Denon's Disruptive Discord", "Largo's Absonant Binding", and the backtick spelling the game
+ * also uses), and capitalising after the apostrophe turns every one of them into "Denon'S".
  */
 export function spellDisplayName(key: string): string {
-  return key.replace(/(^|[\s'`-])([a-z])/g, (_m, lead: string, ch: string) => lead + ch.toUpperCase())
+  return key.replace(/(^|[\s-])([a-z])/g, (_m, lead: string, ch: string) => lead + ch.toUpperCase())
 }
 
 /**

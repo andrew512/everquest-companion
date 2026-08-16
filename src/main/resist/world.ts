@@ -102,6 +102,8 @@ export class CasterIndex {
   }
 
   kindOf(name: string): 'self' | 'pc' | null {
+    // The identity compare answers almost every call; `idKey` is the fallback. See fold.ts.
+    if (name === 'You') return 'self'
     const key = idKey(name)
     if (key === 'you') return 'self'
     const cached = this.verdicts.get(key)
