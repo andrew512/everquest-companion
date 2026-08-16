@@ -33,13 +33,13 @@ import { IPC } from '../shared/ipc'
 import { logError } from './errorLog'
 import { getOverlayConfig } from './store'
 import { getOverlayWindow } from './windows'
-import { isPlayerShapedName } from '../shared/playerShape'
 import { killsFor } from '../shared/kills'
 import { mobKey } from '../shared/mobKey'
 import {
   CON_CARD_WIRE_DROPS,
   cappedName,
   conCardChips,
+  conCardIsPlayer,
   conCardSuppressed,
   type ConCardPayload,
   type ConCardSeenDrop,
@@ -55,26 +55,12 @@ import { mobResistProfile } from './resist/profile'
 import { spellTable } from './resist/spellTable'
 
 /**
- * IS THE THING THE PLAYER JUST CONNED A PERSON?
- *
- * THE TICKET SAID THE LADDER KNOWS, AND IT DOES NOT — measured against the committed fixtures
- * (tests/fixtures/w22-w24): `Lasershark regards you indifferently -- looks like quite a gamble.
- * (Lvl: 50)` is a player and `Blugurg regards you indifferently -- … (Lvl: 40)` is a mob, and the
- * two lines are the same shape on the same rung. The faction rung is about STANDING, not about
- * species, so nothing in the con line answers this.
- *
- * What does answer it is the pair `CasterIndex.judge` (main/resist/world.ts) already uses, and this
- * is deliberately the same two tests in the same order: EQ gives PLAYERS one capitalized word with
- * no space and gives MOBS an article plus a noun phrase (`shared/playerShape.ts` carries the
- * measurement), and the committed catalog knows the proper-named NPCs that shape would otherwise
- * admit (`Innoruuk`, `Blugurg`, `Sheldon`).
- *
- * THE RESIDUAL, stated rather than hidden: a proper-named NPC the catalog has never heard of gets
- * no card. That is the safe direction — a card that fails to appear costs a keystroke, and a card
- * over another player's head is the thing the owner asked never to happen.
+ * The player refusal, bound to the committed catalog. The RULE (and the measurement that overturned
+ * the ticket's claim that the con ladder answers this) is `conCardIsPlayer` in shared/conCard.ts,
+ * where a node test can drive it; this is the one line that knows where the catalog lives.
  */
 export function looksLikePlayer(name: string): boolean {
-  return isPlayerShapedName(name) && !localMobEntry(name)
+  return conCardIsPlayer(name, (n) => localMobEntry(n) !== undefined)
 }
 
 /** Which mob the card on screen is about, so a late lookup for a mob that has been replaced by a

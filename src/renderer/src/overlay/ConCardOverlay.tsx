@@ -24,7 +24,12 @@
 // nothing to grab, and unlocked the window shows a drag frame carrying the text-size stepper.
 
 import { type JSX, useEffect, useReducer, useRef } from 'react'
-import { DEFAULT_CON_CARD_CONFIG, type ConCardOverlayConfig, type ConCardPayload } from '@shared/conCard'
+import {
+  DEFAULT_CON_CARD_CONFIG,
+  conCardHoldMs,
+  type ConCardOverlayConfig,
+  type ConCardPayload
+} from '@shared/conCard'
 import type { OverlayConfig } from '@shared/types'
 import { ConCard } from './ConCard'
 import { ScaledContent } from './overlayScale'
@@ -45,11 +50,6 @@ type ConState = CardState<ConCardPayload>[]
  *  default main would have filled in. */
 function conCardConfig(config: OverlayConfig | null): ConCardOverlayConfig {
   return config?.conCard ?? DEFAULT_CON_CARD_CONFIG
-}
-
-/** The hold one card gets. Zero on the config is the owner's "never", which is an infinite hold. */
-export function holdFor(cfg: ConCardOverlayConfig): number {
-  return cfg.autoHideMs > 0 ? cfg.autoHideMs : Number.POSITIVE_INFINITY
 }
 
 /**
@@ -122,7 +122,7 @@ function useCardFeed(cfg: ConCardOverlayConfig, dispatch: (a: ConAction) => void
   cfgRef.current = cfg
   useEffect(() => {
     return window.eqOverlay.onConCard((payload: ConCardPayload) => {
-      dispatch({ type: 'show', payload, holdMs: holdFor(cfgRef.current), cap: CAP })
+      dispatch({ type: 'show', payload, holdMs: conCardHoldMs(cfgRef.current), cap: CAP })
     })
   }, [dispatch])
 }

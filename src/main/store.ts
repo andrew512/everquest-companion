@@ -30,7 +30,7 @@ import {
 import { normalizeTelemetryPrefs, type TelemetryPrefs } from '../shared/telemetry'
 import { DEFAULT_TOAST_CONFIG, normalizeToastConfig } from '../shared/toast'
 import { DEFAULT_ALERT_BANNER_CONFIG, normalizeAlertBannerConfig } from '../shared/alertBanner'
-import { DEFAULT_CON_CARD_CONFIG, normalizeConCardConfig } from '../shared/conCard'
+import { DEFAULT_CON_CARD_CONFIG, applyConCardKnob } from '../shared/conCard'
 import { normalizePerfHudPrefs, type PerfHudPrefs } from '../shared/perf'
 import { normalizeGraphicsPrefs, type GraphicsPrefs } from '../shared/graphicsPrefs'
 import { normalizeBuffTrustPrefs, type BuffTrustPrefs } from '../shared/buffTrust'
@@ -480,10 +480,9 @@ export function getOverlayConfig(kind: OverlayKind): OverlayConfig {
   // relay, which fills a payload's hold from it — must see a complete, clamped one.
   // prettier-ignore
   if (kind === 'alertBanner') cfg.alertBanner = normalizeAlertBannerConfig({ ...DEFAULT_ALERT_BANNER_CONFIG, ...cfg.alertBanner })
-  // The con card's one knob, on the same terms (JOS-383): shallow spread, so a stored blob replaces
-  // the default wholesale, and the overlay that reads the auto-hide must see a clamped one.
-  // prettier-ignore
-  if (kind === 'conCard') cfg.conCard = normalizeConCardConfig({ ...DEFAULT_CON_CARD_CONFIG, ...cfg.conCard })
+  // The con card's one knob, on the same terms (JOS-383) — in its own file, beside the kind's own
+  // vocabulary, because this one is at the 400-code-line ceiling (`applyTimerOverlayKnobs`' rule).
+  applyConCardKnob(kind, cfg)
   // Text scale postdates every other field, so it is ABSENT in most stores and out of range in a
   // hand-edited one — both answered here rather than repeated six times above, because the
   // default (1) does not differ per kind. Clamped on the way out as well as in: see
@@ -563,10 +562,8 @@ export function setOverlayConfig(kind: OverlayKind, patch: Partial<OverlayConfig
   if (kind === 'alertBanner') next.alertBanner = normalizeAlertBannerConfig({ ...DEFAULT_ALERT_BANNER_CONFIG, ...next.alertBanner })
   else delete next.alertBanner
   // The con card's knob is renderer-writable too (Preferences owns the auto-hide), so it is clamped
-  // by its own normalizer rather than trusted — the two blobs above, one kind over.
-  // prettier-ignore
-  if (kind === 'conCard') next.conCard = normalizeConCardConfig({ ...DEFAULT_CON_CARD_CONFIG, ...next.conCard })
-  else delete next.conCard
+  // by its own normalizer rather than trusted — the two blobs above, through one shared applier.
+  applyConCardKnob(kind, next)
   // THE TWO TIMER WINDOWS' OWN KNOBS — the row arrangement (JOS-140) and the permanent-buff switch
   // (JOS-215). Both are rebuilt rather than trusted, on the same argument as the drill above; the
   // rule lives beside `isTimerOverlayKind` in shared/buffTimers.ts, which is what "which kinds

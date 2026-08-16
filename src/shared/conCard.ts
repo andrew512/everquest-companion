@@ -22,7 +22,12 @@
 // the mob knowledge and the resist ledger it already owns (main/conCard.ts) and the overlay draws
 // it. Everything here is a type, a constant or a total function, so `npm test` exercises every rule.
 
+import { isPlayerShapedName } from './playerShape'
 import { RESIST_AXES, type MobResistProfile, type ResistAxis, type ResistTag } from './resistTypes'
+// TYPE-ONLY, so the cycle it closes (types.ts names this file's config blob) is erased at compile
+// time. `shared/buffTimers.ts` takes the same shape for the same reason: the knob-applier belongs
+// beside the kind's own vocabulary, not inside a store module at its factoring ceiling.
+import type { OverlayConfig, OverlayKind } from './types'
 
 // ---- the kind's own config knobs ---------------------------------------------------------
 //
@@ -75,6 +80,19 @@ export function normalizeConCardConfig(v: unknown): ConCardOverlayConfig {
   return { autoHideMs: Math.min(CON_CARD_MAX_AUTO_HIDE_MS, Math.max(CON_CARD_MIN_AUTO_HIDE_MS, ms)) }
 }
 
+/**
+ * THE STORE'S ONE LINE ABOUT THIS BLOB, on both sides of it (`applyTimerOverlayKnobs`' arrangement,
+ * one file over): read it complete and clamped, write it clamped, and DELETE it on every other
+ * kind so a malformed patch cannot grow a con-card knob on a damage meter.
+ *
+ * It lives here rather than in main/store.ts because that file is at the repo's 400-code-line
+ * ceiling and because this is a fact about the kind, not about the store.
+ */
+export function applyConCardKnob(kind: OverlayKind, cfg: OverlayConfig): void {
+  if (kind === 'conCard') cfg.conCard = normalizeConCardConfig({ ...DEFAULT_CON_CARD_CONFIG, ...cfg.conCard })
+  else delete cfg.conCard
+}
+
 // ---- the two rules about WHEN a card is owed ----------------------------------------------
 
 /**
@@ -93,6 +111,39 @@ export const CON_CARD_REOPEN_SUPPRESS_MS = 60_000
 export function conCardSuppressed(closedAt: number | undefined, now: number): boolean {
   if (closedAt === undefined) return false
   return now - closedAt < CON_CARD_REOPEN_SUPPRESS_MS && now >= closedAt
+}
+
+/**
+ * IS THE THING THE PLAYER JUST CONNED A PERSON? (owner scope: never a card over another player.)
+ *
+ * THE TICKET SAID THE CON LADDER KNOWS, AND IT DOES NOT — measured against the committed fixtures
+ * (tests/fixtures/w22-w24): `Lasershark regards you indifferently -- looks like quite a gamble.
+ * (Lvl: 50)` is a player and `Blugurg regards you indifferently -- … (Lvl: 40)` is a mob, and the
+ * two lines are the same shape on the same rung. A faction rung is about STANDING, not species, so
+ * nothing the con line prints answers this.
+ *
+ * What does answer it is the pair `CasterIndex.judge` (main/resist/world.ts) already uses, and this
+ * is deliberately the same two tests in the same order: EQ gives PLAYERS one capitalized word with
+ * no space and gives MOBS an article plus a noun phrase (`shared/playerShape.ts` carries the
+ * measurement), and the committed catalog knows the proper-named NPCs that shape would otherwise
+ * admit (`Innoruuk`, `Blugurg`, `Sheldon`) — which is what `knownMob` is asked.
+ *
+ * THE RESIDUAL, stated rather than hidden: a proper-named NPC the catalog has never heard of gets
+ * no card. That is the safe direction — a card that fails to appear costs a keystroke, and a card
+ * over another player's head is the thing the owner asked never to happen.
+ */
+export function conCardIsPlayer(name: string, knownMob: (n: string) => boolean): boolean {
+  return isPlayerShapedName(name) && !knownMob(name)
+}
+
+/**
+ * The hold ONE card gets, from the kind's config. Zero on the config is the owner's "never", which
+ * is an infinite hold: the queue subtracts from it every tick and the card simply never expires.
+ *
+ * Infinity lives here and NEVER on the wire — a payload carrying it would not survive JSON.
+ */
+export function conCardHoldMs(cfg: ConCardOverlayConfig): number {
+  return cfg.autoHideMs > 0 ? cfg.autoHideMs : Number.POSITIVE_INFINITY
 }
 
 // ---- the wire ------------------------------------------------------------------------------
