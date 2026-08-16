@@ -15,6 +15,7 @@ import { IPC } from '../shared/ipc'
 import type { ToastRequest } from '../shared/toast'
 import type { AlertBannerPayload } from '../shared/alertBanner'
 import type { ScopeSelection } from '../shared/scopeSelection'
+import type { CloseToTrayPrefs } from '../shared/closeToTray'
 import type { OverlayConfig, OverlayKind } from '../shared/types'
 
 export const windowsApi = {
@@ -30,6 +31,25 @@ export const windowsApi = {
     const listener = (_e: unknown, maximized: boolean): void => cb(maximized)
     ipcRenderer.on(IPC.onWindowMaximized, listener)
     return () => ipcRenderer.removeListener(IPC.onWindowMaximized, listener)
+  },
+
+  // ---- what the X does (JOS-139; shared/closeToTray.ts) ----
+  // IT LIVES IN THIS SLICE, not in a fourth prefs bridge of its own, for the reason this file
+  // exists: src/preload/index.ts is at the 400-code-line ceiling, and a preference about what
+  // CLOSING THIS WINDOW means is a window control wearing a Switch. The setter is a MERGE-PATCH
+  // and resolves to what was actually stored (main re-validates through the shared normalizer),
+  // so the Preferences card renders main's answer rather than assuming its request landed.
+  /** The close-to-tray preference. ON on every install that has not turned it off. */
+  getCloseToTray: (): Promise<CloseToTrayPrefs> => ipcRenderer.invoke(IPC.closeToTrayGet),
+  /** Merge-patch it; the very next close of this window obeys the new value. */
+  setCloseToTray: (patch: Partial<CloseToTrayPrefs>): Promise<CloseToTrayPrefs> =>
+    ipcRenderer.invoke(IPC.closeToTraySet, patch),
+  /** Subscribe to changes made where this window could not see them — the tray menu's checkbox,
+   *  the popover's `Always quit instead`. This is what keeps the two controls agreeing. */
+  onCloseToTray: (cb: (p: CloseToTrayPrefs) => void): (() => void) => {
+    const listener = (_e: unknown, p: CloseToTrayPrefs): void => cb(p)
+    ipcRenderer.on(IPC.onCloseToTray, listener)
+    return () => ipcRenderer.removeListener(IPC.onCloseToTray, listener)
   },
 
   // ---- the floating overlays' open-state (Task #52; per-kind in Task #54) ----

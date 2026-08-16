@@ -39,6 +39,10 @@ import { installOverlaySnap } from './overlaySnapDrag'
 import { mainWindowBounds, overlayFittedBounds } from './windowPlacement'
 import { overlayMouseForward, windowsMayShow } from './replayGate'
 import { allowedExternalUrl, isInternalPageUrl } from './security'
+// WHAT THE X MEANS (JOS-139). One predicate, asked FIRST by the main window's `close` handler
+// below: it answers whether this close is really a hide to the tray, and does the hiding itself.
+// The policy behind it is pure (shared/closeToTray.ts); the icon and the popover are tray.ts.
+import { hideMainWindowToTray } from './tray'
 import { captureMainWindowErrors, forwardConsoleMessages } from './windowErrors'
 import { resolvedGraphics } from './graphics'
 // The z-order guard and its ONE exception (JOS-368). Every re-assert in this file goes through
@@ -104,8 +108,7 @@ export function getMainWindow(): BrowserWindow | null {
   // `mainWindow`: between `close` and `closed` (and on any teardown path that destroys
   // the window directly) the reference still points at a destroyed native window, and
   // every method on it throws "Object has been destroyed". Callers get null instead.
-  if (mainWindow?.isDestroyed()) return null
-  return mainWindow
+  return mainWindow?.isDestroyed() === true ? null : mainWindow
 }
 
 /**
@@ -183,9 +186,15 @@ export function isOverlayOpen(kind: OverlayKind): boolean {
 // (hardenWebContents), permissions denied wholesale (hardenSession), and a CSP with no
 // script-src escape hatch in either page.
 //
-// Module-private on purpose: every window in this app is created in this file, so there is no
-// legitimate caller elsewhere and "never inline a second opinion" is structural, not a note.
-function WEB_PREFERENCES(preload: string): Electron.WebPreferences {
+// EXPORTED SINCE JOS-139, and the rule it protects is unchanged. It was module-private on the
+// argument that every window in this app is created in this file, which made "never inline a
+// second opinion" structural. The tray popover is the one window that could not be created here:
+// this file sits exactly at the 400-code-line factoring ceiling, and the repo's answer to a
+// ceiling is a split rather than a widened threshold. So the WINDOW moved (src/main/tray.ts) and
+// the POSTURE did not — there is still ONE definition, spread in whole, and the export is
+// read-only. A new window built with anything but this object is still the drift this section
+// exists to prevent; the guard is now the review, not the module boundary.
+export function WEB_PREFERENCES(preload: string): Electron.WebPreferences {
   return {
     preload,
     // The preload runs with Node available; page JS cannot see it or its globals.
@@ -426,23 +435,32 @@ export function createMainWindow(): void {
   // flushes, as does `before-quit` (index.ts) for the quit paths that never close a window.
   mainWindow.on('moved', captureMainWindowState)
   mainWindow.on('resized', captureMainWindowState)
-  mainWindow.on('close', flushMainWindowState)
 
-  // The overlay (Task #52) is an accessory of the main window: tear it down when the
-  // main window closes so it can't keep the app alive on its own. Its persisted
-  // open-state is left intact (open:true) so the next launch restores it — we skip
-  // the 'closed' handler that would otherwise flip open:false.
-  mainWindow.on('close', () => {
+  // ONE `close` HANDLER, AND ITS FIRST QUESTION IS WHETHER THIS IS A CLOSE AT ALL (JOS-139).
+  //
+  // The geometry is written on BOTH paths — a window the user pushed somewhere and then hid is
+  // still a window that was left there — so `flushMainWindowState` runs before the question. It
+  // used to be its own `close` listener; the two are merged because Electron runs `close`
+  // listeners in registration order and a `preventDefault` from one does NOT stop the others from
+  // RUNNING, so the hide path has to be able to RETURN before the teardown below rather than
+  // merely cancel the close. A hidden main window that destroyed the overlays would be the exact
+  // opposite of the feature: the whole promise is that the meters, timers and alerts carry on.
+  //
+  // Then the accessories (Task #52). An overlay is an accessory of the main window: tear it down
+  // when the main window really closes so it can't keep the app alive on its own. Its persisted
+  // open-state is left intact (open:true) so the next launch restores it — we skip the 'closed'
+  // handler that would otherwise flip open:false. Same contract for the ring, whose persisted
+  // `enabled` is likewise untouched.
+  mainWindow.on('close', (e) => {
+    flushMainWindowState()
+    if (hideMainWindowToTray(e)) return
     for (const kind of OVERLAY_KINDS) {
       const w = overlayWindows[kind]
-      if (w && !w.isDestroyed()) {
-        w.removeAllListeners('closed')
-        w.destroy()
-        overlayWindows[kind] = null
-      }
+      if (!w || w.isDestroyed()) continue
+      w.removeAllListeners('closed')
+      w.destroy()
+      overlayWindows[kind] = null
     }
-    // Same contract for the ring: an accessory window must never keep the app alive. Its
-    // persisted `enabled` is untouched, so it comes back on the next launch.
     destroyCursorRingWindow()
   })
 
