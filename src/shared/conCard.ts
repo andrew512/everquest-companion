@@ -6,6 +6,15 @@
 // the game - telling you what you want to know in the two seconds before you decide to fight. Its
 // resists, what it drops, its level, its respawn if we know it. Closable, ON by default.
 //
+// NARROWED TO A LILY PAD (owner, 2026-08-16, JOS-390). The card is the HEADER (name, level, zone),
+// the resist chips - and a click target: clicking it anywhere but the × opens that creature's page
+// in the app, where the drops, the kills, the quests and the full five-axis resist table already
+// live. So the drops and the respawn LEFT this payload rather than being restyled. The argument is
+// the one the resist cut (JOS-386) made about chips, taken one step further: every line on a card
+// you read in two seconds costs window over a running game, and a drop list is a thing you browse
+// rather than glance at. Nothing was deleted from the product - it moved one click away, and the
+// card now says where.
+//
 // IT IS A SEPARATE OVERLAY KIND, and it is a STRIP like the celebration toast and the alert banner:
 // its resting state is an empty, click-through window that draws nothing at all. The three differ in
 // what they are FOR - a toast is a thing you glance at afterwards, a banner is a raid call read
@@ -54,10 +63,14 @@ export interface ConCardOverlayConfig {
   autoHideMs: number
 }
 
-/** FIVE SECONDS (owner, 2026-08-16 — it was twenty). A con is a glance while you decide whether to
- *  pull, and a card that outlasts the decision is a box sitting on the game. Five is the glance; the
- *  knob below is there for the reader who wants the drop list, up to and including "never". */
-export const DEFAULT_CON_CARD_AUTO_HIDE_MS = 5_000
+/** THREE SECONDS (owner, 2026-08-16, JOS-390 — it was five, and twenty before that). A con is a
+ *  glance while you decide whether to pull, and a card that outlasts the decision is a box sitting
+ *  on the game. Three is that glance, and it is what the card is now sized for: the drops and the
+ *  respawn are one click away rather than on it (the header), so there is less to read and no reason
+ *  to hold the screen longer. The knob below is still there for the reader who wants more time, up
+ *  to and including "never" — and it is exactly the FLOOR, which is the same statement read twice:
+ *  below three seconds a card could not be read at all. */
+export const DEFAULT_CON_CARD_AUTO_HIDE_MS = 3_000
 /** The sentinel the owner asked for: 0 = never hides. */
 export const CON_CARD_NEVER_HIDES = 0
 /** Below this a card could not be read at all, so a stored 1 s is a mistake rather than a choice. */
@@ -204,20 +217,6 @@ export interface ConCardChip {
   fit: { R: number; lo: number; hi: number } | null
 }
 
-/** One line of the wiki drop table, trimmed to what a five-line card can show. */
-export interface ConCardWikiDrop {
-  item: string
-  /** The page's verbatim rarity ("Rare", "18.4%"), when it stated one. */
-  rarity?: string
-}
-
-/** One item YOUR log has seen off this mob - the shape `foldSeenVariants` folds. */
-export interface ConCardSeenDrop {
-  item: string
-  count: number
-  lastTs: number
-}
-
 /**
  * ONE `/con`, as the card overlay receives it.
  *
@@ -226,11 +225,15 @@ export interface ConCardSeenDrop {
  * knowledge service, no ledger and no store beyond its own config - and a card that had to ask
  * questions after it appeared would appear half-empty over a running game.
  *
- * IT IS SENT TWICE, and the second send is not a correction. The first carries what the log line
- * itself said plus whatever the ledger already knows (instant, which is the whole point of a card
- * you read before pulling); the second arrives when the mob knowledge lands - drops, respawn - and
- * refreshes the SAME `id`, which the queue treats as a refresh of the card on screen rather than a
- * second card (renderer/overlay/cardQueue.ts).
+ * IT IS STILL SENT TWICE, and the second send is not a correction. The first carries what the log
+ * line itself said plus whatever the resist ledger can already answer (instant, which is the whole
+ * point of a card you read before pulling); the second arrives when the client's own spell table
+ * has been read and refreshes the SAME `id` with the chips filled in, which the queue treats as a
+ * refresh of the card on screen rather than a second card (renderer/overlay/cardQueue.ts).
+ *
+ * WHAT IT NO LONGER CARRIES (JOS-390): the drop table, your looted counts, your kill count and the
+ * respawn. Those are the MOB PAGE's, and the card is now the click that opens it — so the second
+ * pass no longer waits on a mob-knowledge lookup at all (main/conCard.ts).
  */
 export interface ConCardPayload {
   /** Queue identity: the mob key. A re-con REFRESHES the card rather than stacking a second one. */
@@ -250,24 +253,7 @@ export interface ConCardPayload {
   /** False when the client's `spells_us.txt` could not be read; the card says so instead of
    *  drawing five identical "not enough data" chips with no explanation. */
   spellData: boolean
-  /** The wiki drop table, capped. Absent until the knowledge lands (the second send). */
-  dropsWiki?: ConCardWikiDrop[]
-  /** What your own log has looted off it, capped. Folded and ranked by the overlay. */
-  dropsSeen?: ConCardSeenDrop[]
-  /** Your recorded kills of this mob - the perceived rate's DENOMINATOR, absent when unknown. */
-  kills?: number
-  /** The catalog's respawn statement, VERBATIM. Absent when nothing states one. */
-  respawn?: string
-  /** True once the knowledge lookup has answered, so "no drops" can be told from "still asking". */
-  knowledgeIn?: boolean
 }
-
-/** How many drop lines a card may show. Past a handful it stops being a glance. */
-export const CON_CARD_MAX_DROPS = 5
-
-/** How much of each list crosses the wire. Generous enough that the fold and the ranking below
- *  have something to work with, bounded so a 90-item boss page cannot inflate a card payload. */
-export const CON_CARD_WIRE_DROPS = 24
 
 /**
  * The five chips for a mob, from the profile JOS-382's IPC already builds.

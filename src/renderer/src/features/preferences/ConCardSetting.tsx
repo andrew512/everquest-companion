@@ -37,13 +37,14 @@ import { recordPref, usePrefsSeed, type ConCardSeed } from './prefsHydration'
  * as words, because "it stays until I close it" is a different KIND of answer from a duration and
  * a slider pinned at one end could never say it.
  *
- * FIVE IS ON THE LIST BECAUSE FIVE IS THE DEFAULT (JOS-388). A closed list has one failure mode a
- * slider does not: a stored value with no member to match is a control that paints nothing, and
- * after the owner's 2026-08-16 ruling that stored value is what EVERY untouched install has. The
- * list has to contain the shipped default or this card breaks its own law — a control never paints
- * a value it does not know (the header above).
+ * THE SHIPPED DEFAULT IS ALWAYS ON THE LIST, and it has now been the head of it twice (JOS-388's
+ * five, JOS-390's three). A closed list has one failure mode a slider does not: a stored value with
+ * no member to match is a control that paints nothing, and the shipped default is precisely the
+ * value EVERY untouched install carries. The list has to contain it or this card breaks its own
+ * law — a control never paints a value it does not know (the header above). THREE is also the
+ * floor (`CON_CARD_MIN_AUTO_HIDE_MS`), so the list starts exactly where the normalizer does.
  */
-const HIDE_CHOICES_SEC = [5, 10, 15, 20, 30, 45, 60, CON_CARD_NEVER_HIDES]
+const HIDE_CHOICES_SEC = [3, 5, 10, 15, 20, 30, 45, 60, CON_CARD_NEVER_HIDES]
 
 const hideLabel = (sec: number): string =>
   sec === CON_CARD_NEVER_HIDES ? 'until I close it' : `${String(sec)} seconds`
@@ -117,7 +118,7 @@ export function ConCardSetting(): JSX.Element {
         />
         <Typography variant="caption" color="text.secondary">
           {state.open
-            ? 'Con a creature and a card appears over the game with its level, what your logs know about its resists, what it drops and when it respawns. The next con replaces it, and it closes on its own x.'
+            ? 'Con a creature and a card appears over the game with its level and what your logs know about its resists. Click it to open that creature in the app - its drops, your kills and the full resist table. The next con replaces it, and it closes on its own x.'
             : 'Off. Conning a creature does nothing over the game - the mobs you con are still listed on the Overview.'}
         </Typography>
       </Stack>

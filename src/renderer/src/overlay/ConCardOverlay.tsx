@@ -20,8 +20,15 @@
 // it back up (`CON_CARD_REOPEN_SUPPRESS_MS`). An auto-hide is NOT a close and says nothing: the
 // card leaving by itself is not the user saying they have read it.
 //
+// AND CLICKING IT ANYWHERE ELSE OPENS THE MOB PAGE (JOS-390). That is the second thing this window
+// sends, over the deep link every overlay shares (`eqOverlay.focusMob`), and the whole reason a
+// LOCKED strip captures the mouse while a card is up in the first place (`useQueueMouseCapture`) —
+// the × already needed that click, and the card body is the same click aimed one control over.
+//
 // INTERACTIVE MODE IS HOW YOU MOVE IT, exactly as it is for the other two strips: locked there is
-// nothing to grab, and unlocked the window shows a drag frame carrying the text-size stepper.
+// nothing to grab, and unlocked the window shows a drag frame carrying the text-size stepper. It is
+// also why the link is LOCKED-ONLY: a click while positioning is the user dragging the card, not
+// asking to leave the game.
 //
 // AND THE WINDOW IS THE CARD (JOS-386). This is the one strip whose window HEIGHT is not a size
 // anybody chose: it is measured here, every time the card changes, and main resizes to it. The
@@ -251,7 +258,17 @@ export default function ConCardOverlay(): JSX.Element {
               payload={c.payload}
               exiting={c.exitingMs !== null}
               bgAlpha={chrome.bgAlpha}
+              // A CLICK IS A LINK ONLY WHEN THE CARD IS PARKED (JOS-390). Unlocked, this window
+              // wears a drag region and the click the user is making is a MOVE — `chrome.ready`
+              // is in the gate for the toast's reason: acting on the default before the config
+              // lands would make the very first card of a launch guess at its own mode.
+              linked={chrome.ready && chrome.locked}
               onHover={(over) => dispatch({ type: 'hover', id: c.payload.id, over })}
+              // THE DISPLAY NAME, never the queue id: `focusMob` is a lookup key on the app side
+              // (`applyDeepLink` → `openMob({ mob })` → the mob page), and the id is the
+              // article-folded `mobKey`. The same string the con line printed is what the mob
+              // page, the catalog and the toast all speak.
+              onOpen={() => window.eqOverlay.focusMob(c.payload.name)}
               onDismiss={() => {
                 dispatch({ type: 'dismiss', id: c.payload.id })
                 // Main owns the minute-long suppression; this is the only place it can learn that

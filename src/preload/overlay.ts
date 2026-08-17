@@ -184,8 +184,12 @@ const overlayApi = {
    * window and forwards the request to its renderer, which switches to the Mobs tab and opens
    * the mob's page. Fire-and-forget — an overlay never waits on the app it just raised.
    *
-   * Interactive mode only, by the caller's construction: a LOCKED overlay is click-through by
-   * law, so it has no clicks to give.
+   * NOT interactive-mode-only any more (JOS-390). That used to hold for every caller, because a
+   * locked overlay is click-through by law — but a STRIP takes the mouse back for exactly as long
+   * as it has a card on screen (`cardQueue.useQueueMouseCapture`), which is what makes the con
+   * card's × clickable while pinned, and the con card body is now that same click aimed one control
+   * over. The meters' rows still call this only while interactive; the difference is the caller's,
+   * not this bridge's.
    */
   focusMob: (mob: string): void => ipcRenderer.send(IPC.focusView, { view: 'mobs', mob }),
   /**
