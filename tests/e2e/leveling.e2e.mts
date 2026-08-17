@@ -41,6 +41,11 @@
  *      mana, the `already yours (CLS N)` claim naming a level below the one on screen, the spell it
  *      replaces from the shipped line research, and the word `directional` said exactly ONCE on
  *      the panel rather than footnoted per row. Step 6a lives in `unlockRowSteps.mts`;
+ *   6c. (JOS-392) the spell a row says it REPLACES is a hover target of its own, and the card that
+ *      opens is that spell's - carrying the figures main read for it;
+ *   6d. (JOS-392) and typing `27-28 cleric shaman` turns the panel into the matching spells, each
+ *      row's chips stating the level each class gets it at, in any word order - then clearing the
+ *      box gives the level view back. Steps 6c/6d live in `unlockRowSteps.mts` too;
  *   7. (JOS-289) THE WHOLE PAGE SCROLLS AND NO PANEL DOES: the window itself never scrolls, no
  *      panel on the tab shows an internal vertical scrollbar except the drops list whose row count
  *      earns one, and the deepest panel is reached by scrolling the PAGE. No renderer console
@@ -109,7 +114,7 @@ import { stepChartShots, stepLevelCurve } from './curveSteps.mjs'
 // it (step 6a, JOS-391: the figures, `already yours`, `replaces`, and the one `directional` in
 // the header). Next door for the same line-budget reason; the pair is one question about one
 // panel, and this spec still owns the order and the launch.
-import { shootUnlockPanel, stepNewAtLevel } from './unlockRowSteps.mjs'
+import { shootUnlockPanel, stepNewAtLevel, stepUnlockSearch } from './unlockRowSteps.mjs'
 
 const NAV = '[data-testid="nav-leveling"]'
 const VIEW = '[data-testid="leveling-view"]'
@@ -689,6 +694,11 @@ async function main(): Promise<void> {
       // Deliberately OUTSIDE the chart branch: the unlock panel is computed from the committed
       // DBs, so it must be there whether or not this log has enough dings to draw a chart.
       await stepNewAtLevel(page, log)
+      // …and the OTHER question the same panel answers (JOS-392): typing turns it into a spell
+      // finder. It runs here because the step above has resolved the loadout and walked to a level
+      // with rows on it, which is the state "clearing restores the level view" is a claim about;
+      // it puts the box back empty itself, so everything below still sees the level view.
+      await stepUnlockSearch(page)
       // Straight after it, on the level that step walked to: the readout's spell names now carry
       // the full card (JOS-293's `SpellTooltip`), which is only usable because the list stopped
       // being a 120px porthole — the two halves of JOS-289 proving each other.
