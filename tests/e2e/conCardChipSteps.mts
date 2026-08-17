@@ -21,7 +21,7 @@
 // installed and the spec's own `{ spells: true }` carve-out covers the machine without one.
 
 import type { Page } from 'playwright-core'
-import { check, countOf, note } from './appHarness.mjs'
+import { check, countOf, note, settle } from './appHarness.mjs'
 
 const CARD = '[data-testid="con-card"]'
 const AXES = ['magic', 'fire', 'cold', 'poison', 'disease'] as const
@@ -72,9 +72,12 @@ async function degraded(card: Page, text: string): Promise<boolean> {
  * rather than as a fixed axis list: no ordinary axis survives, and when nothing survives the card
  * says it looked. See the header for why this creature now has nothing.
  *
- * IT RUNS AFTER THE DROPS STEP, and that ordering is a finding rather than a preference: the card
- * arrives in TWO passes and the client's 38 MB `spells_us.txt` is read on a worker, so the first
- * pass genuinely has no resist table behind it.
+ * IT RUNS AFTER `stepResistantChip`, and that ordering is a finding rather than a preference: the
+ * card arrives in TWO passes and the client's 38 MB `spells_us.txt` is read on a worker, so the
+ * first pass of a launch genuinely has no resist table behind it. This step's whole claim is an
+ * ABSENCE of chips, which a table that had not landed yet would satisfy for the wrong reason — so
+ * the step that WAITS for a chip to appear has to have run first. (Until JOS-390 the waiting was
+ * done by the drops step, which the same ticket deleted along with the drops.)
  */
 export async function stepNotableChips(card: Page): Promise<void> {
   const text = await cardText(card)
@@ -95,14 +98,27 @@ export async function stepNotableChips(card: Page): Promise<void> {
   check('and no chip withholds an answer it has', !/not enough data/i.test(text), text.slice(0, 200))
 }
 
-/** A creature that really is resistant, and the three parts of its chip (JOS-387). */
+/**
+ * A creature that really is resistant, and the three parts of its chip (JOS-387).
+ *
+ * AND SINCE JOS-390 IT IS ALSO THE SPEC'S WAIT FOR MAIN'S SECOND PASS. The client spell table is
+ * read once per launch on a worker thread and the chips are re-sent when it lands, so this step
+ * SETTLES on a chip appearing rather than reading once — which is both what makes its own three
+ * assertions stable and what lets `stepNotableChips` read an empty card as an answer. The settle
+ * ends early on the degraded branch: a machine with no EverQuest says so on the card, and waiting
+ * for a chip that can never arrive there would burn a timeout to reach a `note`.
+ */
 export async function stepResistantChip(
   card: Page,
   con: (line: string, expect: string) => Promise<string>
 ): Promise<void> {
   const name = await con(NOTABLE_CON, NOTABLE).catch(() => '')
   if (!check(`conning a resistant creature draws its card (${name})`, name === NOTABLE, name)) return
-  const text = await cardText(card)
+  const text = await settle(
+    () => cardText(card),
+    (t) => /spells_us\.txt/.test(t) || /\bR \d+ \(\d+-\d+\)/.test(t),
+    { timeoutMs: 30_000 }
+  ).catch(() => cardText(card))
   if (/spells_us\.txt/.test(text)) {
     note('no client spell data on this machine - the chip’s three parts cannot be asserted here')
     return

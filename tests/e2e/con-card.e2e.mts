@@ -14,21 +14,32 @@
  *      prove the presence.
  *   2. A `/con` WRITTEN INTO THE LIVE LOG DRAWS THE CARD. The line goes down the whole real path
  *      (chokidar → Tailer → parseWorld → ConsiderModule → main/conCard.ts → the overlay window),
- *      and comes out as a named card with the level the line stated, five resist chips and the
- *      mob's drops. Playing the line is the point: nothing in the fixture's history may draw a
- *      card, because a startup replay of a month of logs must not fire hundreds of them.
- *   3. FIVE CHIPS, ONE ORDER, COLOUR AND WORD AND TAG — and NO ACRONYM anywhere on the card.
- *   4. THE NEXT CON REPLACES IT. One card, never a stack.
- *   5. A PLAYER GETS NO CARD, from a con line that is the same shape on the same faction rung.
- *   6. THE × CLOSES IT, AND A RE-CON DOES NOT PUT IT BACK. The close is local and the suppression
+ *      and comes out as a named card with the level the line stated and its resist chips. Playing
+ *      the line is the point: nothing in the fixture's history may draw a card, because a startup
+ *      replay of a month of logs must not fire hundreds of them.
+ *   3. THE CHIPS IT KEEPS, COLOUR AND WORD AND TAG — and NO ACRONYM anywhere on the card.
+ *   4. THE CARD IS A LINK (JOS-390): clicking it anywhere but the × opens that creature's page in
+ *      the APP — a claim that spans two renderers, main's `focusView` and the app's router — and
+ *      the card stays up. Clicking the × instead closes it and navigates NOTHING. And unlocked,
+ *      where a click is the user dragging the window, a click navigates nothing either.
+ *   5. THE NEXT CON REPLACES IT. One card, never a stack.
+ *   6. A PLAYER GETS NO CARD, from a con line that is the same shape on the same faction rung.
+ *   7. THE × CLOSES IT, AND A RE-CON DOES NOT PUT IT BACK. The close is local and the suppression
  *      is main's; only a real round trip can show them agreeing.
- *   7. THE DEFAULT AUTO-HIDE LEAVES BY ITSELF (JOS-388), in about the five seconds the owner ruled.
- *   8. THE PREFERENCE TURNS IT OFF, and the window goes with it.
+ *   8. THE DEFAULT AUTO-HIDE LEAVES BY ITSELF, in about the three seconds the owner ruled
+ *      (JOS-388 measured five here; JOS-390 is the ruling that made it three).
+ *   9. THE PREFERENCE TURNS IT OFF, and the window goes with it.
  *
- * THE HOLD IS PINNED FOR CLAIMS 2-6 AND ONLY FOR THEM. The shipped auto-hide is 5 s and this
+ * WHAT LEFT THIS SPEC IN JOS-390: every drop assertion. The card no longer carries a drop table —
+ * the mob page does, and claim 4 is the click that opens it — so `stepDrops` went with the feature
+ * rather than being rewritten. Its second job is the one thing that had to be replaced: it was the
+ * spec's WAIT for main's second pass (the client spell table arriving), and that wait now lives in
+ * the chip steps next door, on the creature that actually grows chips.
+ *
+ * THE HOLD IS PINNED FOR CLAIMS 2-7 AND ONLY FOR THEM. The shipped auto-hide is 3 s and this
  * gauntlet takes minutes, so the spec sets the card's own knob to "until I close it" before the
  * first `/con` (stepPinTheHold) — a real user's setting, written through Preferences' own door,
- * never an inflated default. Claim 7 puts the knob back and measures what an untouched install
+ * never an inflated default. Claim 8 puts the knob back and measures what an untouched install
  * actually does. See stepPinTheHold and stepDefaultHideLeaves for both halves of that argument.
  *
  * NO WINDOW IS EVER SHOWN. `EQ_E2E=1` is the whole test mode (src/main/e2e.ts): the main window
@@ -50,7 +61,6 @@ import {
   ARTIFACTS,
   buildIfStale,
   check,
-  countOf,
   dumpArtifacts,
   failures,
   note,
@@ -61,15 +71,20 @@ import {
 } from './appHarness.mjs'
 import { mainWindow, makeUserData, removeUserData } from './appWindow.mjs'
 import { launchOnFixture, stageFixture, type FixtureLog } from './logFixture.mjs'
-// The two RESIST-CHIP steps live next door, because this spec is at the repo's max-lines budget and
-// the rule is SPLIT, never ratchet. Their own header carries the argument for the two creatures.
+// The RESIST-CHIP steps and the LINK steps live next door, because this spec is at the repo's
+// max-lines budget and the rule is SPLIT, never ratchet. Each carries its own argument in its
+// header: the chips' two creatures, and the click that made the card a lily pad (JOS-390).
 import { stepNotableChips, stepResistantChip } from './conCardChipSteps.mjs'
+import {
+  stepClickOpensTheMobPage,
+  stepCloseDoesNotNavigate,
+  stepNoDropsOnTheCard,
+  stepUnlockedClickDoesNotNavigate
+} from './conCardLinkSteps.mjs'
 
 const CARD = '[data-testid="con-card"]'
 const NAME = '[data-testid="con-card-name"]'
 const FACTS = '[data-testid="con-card-facts"]'
-const DROPS = '[data-testid="con-card-drops"]'
-const CLOSE = '[data-testid="con-card-close"]'
 /** The box the renderer measures for the window fit (JOS-386): the drag frame + the scaled card. */
 const FIT = '[data-testid="con-card-fit"]'
 
@@ -82,6 +97,24 @@ const FIT = '[data-testid="con-card-fit"]'
 const PAD = 6
 /** A window is whole pixels and a layout box is not; the fit rounds UP, so allow a pixel either way. */
 const FIT_SLACK = 2
+/**
+ * `OVERLAY_MIN_SIZE.height` from src/main/overlayLayout.ts, spelled out for the reason `PAD` is.
+ *
+ * IT STARTED MATTERING IN JOS-390, and that is a finding worth the line: with the drops and the
+ * respawn off the card, a plain "no notable resists" card MEASURES 86px and the smallest window
+ * any overlay kind may be is 90 — it is the BrowserWindow's own `minHeight` (windows.ts), so
+ * Electron clamps `setBounds` whatever main asks for, and `fittedOverlayHeight` clamps to the same
+ * number precisely so main never believes a height the window does not have. So "the window IS the
+ * card" is true down to this floor and no further, and a four-pixel apron under the shortest
+ * possible card is a window-system fact rather than the empty apron JOS-386 was about (that one was
+ * a 300px strip around a handful of rows). Asserted as the floor rather than quietly widened.
+ */
+const MIN_WINDOW_H = 90
+
+/** What the window may actually become for a card that measured `want` px — the floor is real. */
+function fittedTo(want: number): number {
+  return Math.max(want, MIN_WINDOW_H)
+}
 
 interface Bounds {
   x: number
@@ -121,21 +154,28 @@ function setTextScale(card: Page, textScale: number): Promise<unknown> {
  * the default that forgets this line fails loudly in the last step below.
  */
 const NEVER_HIDES = 0
-const DEFAULT_HIDE_MS = 5_000
+const DEFAULT_HIDE_MS = 3_000
 /**
- * How long the last step gives a DEFAULT card to leave, from the moment it is fully drawn.
+ * How long the last step gives a DEFAULT card to leave, from the moment it is drawn.
  *
- * MEASURED 2026-08-16 on this machine: 5233 ms, against a hold of 5 s plus a 300 ms exit counted by
- * a 100 ms interval. The ceiling is more than twice that on purpose — this is a FAILURE deadline,
- * not a schedule, and the suite runs four Electron apps at once. What it has to do is separate five
- * seconds from the twenty this used to be, and it does, with room on both sides.
+ * THE EXPECTED READING IS ~3.3 s: a 3 s hold plus a 300 ms exit counted by a 100 ms interval, which
+ * is the same arithmetic that measured 5233 ms when the hold was five (JOS-388). The ceiling is
+ * more than twice that on purpose — this is a FAILURE deadline, not a schedule, and the suite runs
+ * four Electron apps at once.
+ *
+ * WHAT IT DOES AND DOES NOT SEPARATE, said plainly rather than implied: it separates three seconds
+ * from twenty, from a minute and from "never", which are the ways this can actually break (a hold
+ * that never reaches the window, a config echo that loses the knob, a queue that never counts). It
+ * does NOT separate three from five — the difference between two adjacent choices on the same list
+ * is not a thing to measure under load, and it is pinned literally in tests/conCard.test.mts, where
+ * the number is a source fact rather than a race.
  *
  * IT WAS NOT OBVIOUS THAT THE COUNT WOULD RUN AT ALL, which is half the value of this step: the
  * card window in `EQ_E2E=1` is never shown, and a window Chromium is not compositing can have its
  * timers throttled to a crawl (settle.mts's `nextFrames` exists because rAF is). `useCardTick` is a
  * `setInterval`, and the measurement above says it keeps real time here.
  */
-const DEFAULT_HIDE_CEILING_MS = 12_000
+const DEFAULT_HIDE_CEILING_MS = 8_000
 
 /**
  * Write the con card's auto-hide, through Preferences' own door, and report what main stored.
@@ -297,7 +337,7 @@ function settleFit(app: ElectronApplication, card: Page): Promise<{ bounds: Boun
       const want = Math.ceil(await fitBoxHeight(card)) + 2 * PAD
       return { bounds, want }
     },
-    (r) => r.bounds !== null && r.want > 2 * PAD && Math.abs(r.bounds.height - r.want) <= FIT_SLACK,
+    (r) => r.bounds !== null && r.want > 2 * PAD && Math.abs(r.bounds.height - fittedTo(r.want)) <= FIT_SLACK,
     { timeoutMs: 20_000 }
   )
 }
@@ -314,12 +354,15 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
   const b = before.bounds
   if (!check('the con card window has bounds to read', b !== null)) return
   check('the window’s height IS the card plus the overlay’s own padding — no empty apron',
-    Math.abs((b as Bounds).height - before.want) <= FIT_SLACK,
-    `window ${String((b as Bounds).height)} vs card+padding ${String(before.want)}`)
+    Math.abs((b as Bounds).height - fittedTo(before.want)) <= FIT_SLACK,
+    `window ${String((b as Bounds).height)} vs card+padding ${String(before.want)} (floor ${String(MIN_WINDOW_H)})`)
   // It is genuinely FITTED, not just "some number": the old fixed strip was 300 tall and the card
   // is a handful of rows. A window that had not moved would sail through the check above only if
   // the card happened to be exactly that tall.
   note(`fitted con card window: ${String((b as Bounds).width)}x${String((b as Bounds).height)}`)
+  if (before.want < MIN_WINDOW_H) {
+    note(`the card measured ${String(before.want)}px and the smallest window any overlay may be is ${String(MIN_WINDOW_H)} — since JOS-390 a quiet card is SHORTER than the floor, so the floor is what the window wears`)
+  }
 
   // A TEXT-SCALE BUMP RE-FITS IT. The scale is applied as a CSS `zoom` on the card (overlayScale),
   // so the measured box really does grow — and the window has to follow, which is acceptance
@@ -330,7 +373,7 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
   if (check('a bigger text size re-fits the window', big !== null)) {
     check('…and the window GREW with the card rather than clipping it',
       (big as Bounds).height > (b as Bounds).height &&
-        Math.abs((big as Bounds).height - bigger.want) <= FIT_SLACK,
+        Math.abs((big as Bounds).height - fittedTo(bigger.want)) <= FIT_SLACK,
       `${String((b as Bounds).height)} -> ${String((big as Bounds).height)} (card+padding ${String(bigger.want)})`)
     // THE POSITION NEVER GIVES. Only the height is the app's to change.
     check('…while x, y and width stayed exactly where they were',
@@ -341,20 +384,6 @@ async function stepWindowFitsCard(app: ElectronApplication, card: Page): Promise
   // Back to 1.0 so the screenshot below is the card at its shipped size.
   await setTextScale(card, 1)
   await settleFit(app, card)
-}
-
-/** THE DROPS: the catalog's table for this mob, at most five lines of it. */
-async function stepDrops(card: Page): Promise<void> {
-  const drops = await settle(
-    () => textOf(card, DROPS),
-    (t) => t.length > 0 && !/Looking up/.test(t),
-    { timeoutMs: 30_000 }
-  ).catch(() => '')
-  if (!check('the card answers what it drops once the lookup lands', drops.length > 0, drops)) return
-  const lines = await countOf(card, '[data-testid="con-card-drop"]')
-  check('…as at most five lines', lines > 0 && lines <= 5, `${String(lines)} line(s)`)
-  check('…and it COUNTS the ones that did not fit rather than truncating in silence',
-    /\+\d+ more/.test(drops), drops.slice(0, 160))
 }
 
 /**
@@ -414,11 +443,15 @@ async function stepPlayerGetsNothing(log: FixtureLog, card: Page): Promise<void>
   check('…and never names the player', !after.includes('Lasershark'), after)
 }
 
-/** THE × CLOSES IT, AND THE SAME MOB DOES NOT COME BACK FOR A MINUTE. */
-async function stepCloseAndSuppress(log: FixtureLog, card: Page): Promise<void> {
-  await card.evaluate((sel) => (document.querySelector(sel) as HTMLElement | null)?.click(), CLOSE)
-  const gone = await settle(() => cardTexts(card), (c) => c.length === 0, { timeoutMs: 10_000 })
-  if (!check('clicking the card’s own × closes it', gone.length === 0, `${String(gone.length)} card(s)`)) return
+/**
+ * THE SAME MOB DOES NOT COME BACK FOR A MINUTE after its card was closed.
+ *
+ * THE CLOSE ITSELF IS `stepCloseDoesNotNavigate` (conCardLinkSteps.mts), because since JOS-390 the ×
+ * carries two claims at once — it closes the card, and it is the ONE control on a card-wide link
+ * that must not navigate — and those are one act to assert, not two clicks. This step picks up
+ * where that one leaves off: a card demonstrably closed, and main's suppression to prove.
+ */
+async function stepSuppressAfterClose(log: FixtureLog, card: Page): Promise<void> {
   // The mob whose card was just closed is the one that must not come back.
   log.append(OTHER_CON)
   const still = await settleStable(() => cardTexts(card), { timeoutMs: 8_000, stable: 5, pollMs: 200 })
@@ -481,15 +514,14 @@ async function stepOpaqueModeFitsToo(app: ElectronApplication, page: Page, log: 
   const card = opaque as Page
   const name = await conAndWait(log, card, MOB_CON, MOB).catch(() => '')
   if (check('a `/con` draws the card in opaque mode too', name === MOB, name)) {
-    // The drops arrive on the second pass and change the card's height; settle on the finished card
-    // exactly as the transparent half does, then assert the window is that card and nothing more.
-    await settle(() => textOf(card, DROPS), (t) => t.length > 0 && !/Looking up/.test(t), { timeoutMs: 30_000 })
+    // `settleFit` is the wait now that the drops are gone (JOS-390): it polls until the window and
+    // the measured box AGREE, which is exactly "the card has finished changing shape".
     const fit = await settleFit(app, card)
     const b = fit.bounds
     if (check('the opaque con card window has bounds to read', b !== null)) {
       check('IN OPAQUE MODE THE BOX ON SCREEN IS EXACTLY THE CARD — no dark apron under it',
-        Math.abs((b as Bounds).height - fit.want) <= FIT_SLACK,
-        `window ${String((b as Bounds).height)} vs card+padding ${String(fit.want)}`)
+        Math.abs((b as Bounds).height - fittedTo(fit.want)) <= FIT_SLACK,
+        `window ${String((b as Bounds).height)} vs card+padding ${String(fit.want)} (floor ${String(MIN_WINDOW_H)})`)
     }
   }
 
@@ -500,23 +532,25 @@ async function stepOpaqueModeFitsToo(app: ElectronApplication, page: Page, log: 
 }
 
 /**
- * THE DEFAULT LEAVES BY ITSELF (JOS-388) — the one step that runs with the knob UNPINNED.
+ * THE DEFAULT LEAVES BY ITSELF (JOS-388, re-ruled to three seconds by JOS-390) — the one step that
+ * runs with the knob UNPINNED.
  *
  * The owner's ruling is a number, and a number in a source file is a unit test's business
- * (tests/conCard.test.mts pins 5_000). What only this file can say is that the number is WIRED: it
+ * (tests/conCard.test.mts pins 3_000). What only this file can say is that the number is WIRED: it
  * survives the store, reaches the overlay window through the config echo, becomes the queue's hold
  * at arrival, and is counted down by a 100 ms interval in a window that is never shown. Four places
- * where a 5 could quietly become an infinity.
+ * where a 3 could quietly become an infinity.
  *
  * IT RUNS LAST, AND ON A WINDOW THAT WAS JUST REOPENED. The opaque step ends by rebuilding the card
  * window transparent again, so the queue here is empty and the card this step watches is one it
  * drew itself — there is no earlier card whose disappearance could be mistaken for this one's.
  *
- * THE CLOCK STARTS WHEN THE CARD IS FINISHED, NOT WHEN IT APPEARS, and that is a fact about the
- * app rather than a convenience: the card arrives in TWO passes (main/conCard.ts), the second one
- * re-`show`s the same id with the drops on it, and a re-show restarts the hold (`cardQueue.ts`
- * `fresh`). Measuring from the first paint would measure the hold PLUS however long the catalog and
- * the 38 MB spell table took, which is the machine's number and not the app's.
+ * THE CLOCK STARTS AT THE FIRST PAINT NOW, and that changed with the feature. The card used to
+ * arrive in two passes whose SECOND one re-`show`ed the same id with the drops on it, restarting
+ * the hold (`cardQueue.ts` `fresh`) — so the honest t0 was "the drops landed". Since JOS-390 the
+ * second pass is the spell table alone AND main only re-sends when the chips actually changed, so
+ * by this point in the spec (the table was read cons ago) there is no second send at all and the
+ * card on screen is the whole card. Measuring from the name arriving is measuring the hold.
  */
 async function stepDefaultHideLeaves(app: ElectronApplication, page: Page, log: FixtureLog): Promise<void> {
   const stored = await setAutoHide(page, DEFAULT_HIDE_MS)
@@ -524,26 +558,23 @@ async function stepDefaultHideLeaves(app: ElectronApplication, page: Page, log: 
   const card = await settle(() => findCardWindow(app), (w) => w !== null, { timeoutMs: 30_000 })
   if (!check('the con card window is up to receive an untouched card', card !== null)) return
 
+  const t0 = Date.now()
   const name = await conAndWait(log, card as Page, MOB_CON, MOB).catch(() => '')
   if (!check('a `/con` draws a card with the default hold in force', name === MOB, name)) return
-  // The second pass is what restarts the hold; waiting for the drops is waiting for it to land.
-  await settle(() => textOf(card as Page, DROPS), (t) => t.length > 0 && !/Looking up/.test(t), {
-    timeoutMs: 30_000
-  }).catch(() => '')
 
-  const t0 = Date.now()
   const gone = await settle(() => cardTexts(card as Page), (c) => c.length === 0, {
     timeoutMs: DEFAULT_HIDE_CEILING_MS + 6_000,
     pollMs: 100
   })
   const elapsed = Date.now() - t0
-  note(`the default card stood ${String(elapsed)} ms after it finished drawing`)
+  note(`the default card stood ${String(elapsed)} ms after it was drawn`)
   check('AN UNTOUCHED CARD LEAVES ON ITS OWN — nobody closed it and nothing replaced it',
     gone.length === 0, `${String(gone.length)} card(s) still up after ${String(elapsed)} ms`)
-  check('…in about five seconds, which is the whole of the owner’s ruling',
+  check('…inside the deadline a three-second hold has to beat (the ceiling, not a schedule)',
     gone.length === 0 && elapsed <= DEFAULT_HIDE_CEILING_MS,
     `${String(elapsed)} ms (ceiling ${String(DEFAULT_HIDE_CEILING_MS)})`)
-  // …and it was a HOLD, not a card that never really arrived: the tick counts down 5 s of it.
+  // …and it was a HOLD, not a card that never really arrived: the tick counts down 3 s of it, and
+  // the floor is deliberately under that — this separates a hold from a flicker, nothing finer.
   check('…and it stood long enough to be read rather than flickering',
     elapsed >= 2_000, `${String(elapsed)} ms`)
 }
@@ -559,13 +590,13 @@ async function stepPreferenceTurnsItOff(app: ElectronApplication, page: Page): P
     { timeoutMs: 8_000, stable: 4, pollMs: 150 }
   )
   check('Preferences agrees the card is ON, matching the window that already exists', on === true, String(on))
-  // …AND THE HOLD CONTROL PAINTS THE SHIPPED DEFAULT (JOS-388). A closed list has a failure mode a
-  // slider does not: a stored value with no member to match renders as an EMPTY control, and after
-  // the 5 s ruling that stored value is what every untouched install carries. The step above put
-  // the knob back to the default, so what this reads is exactly what a fresh install would show.
+  // …AND THE HOLD CONTROL PAINTS THE SHIPPED DEFAULT (JOS-388's lesson, JOS-390's number). A closed
+  // list has a failure mode a slider does not: a stored value with no member to match renders as an
+  // EMPTY control, and the shipped default is what every untouched install carries. The step above
+  // put the knob back to the default, so what this reads is exactly what a fresh install would show.
   const hide = await textOf(page, '[data-testid="pref-con-card-hide"]')
   check('…and the "a card stays for" control shows the shipped default rather than nothing',
-    /5 seconds/.test(hide), hide || '(empty)')
+    /3 seconds/.test(hide), hide || '(empty)')
   await page.click('[data-testid="pref-con-card-enabled"] input')
   const closed = await settle(() => findCardWindow(app), (w) => w === null, { timeoutMs: 20_000 })
   check('turning it off closes the window — off means off', closed === null)
@@ -597,19 +628,27 @@ async function main(): Promise<void> {
       await stepPinTheHold(page)
       await stepReplayIsSilent(page, card)
       await stepConDrawsTheCard(log, card)
-      // The drops step is what WAITS for the second pass; the chips are read after it, so they are
-      // read from a settled card rather than from the moment before the spell table landed.
-      await stepDrops(card)
-      await stepNotableChips(card)
+      await stepNoDropsOnTheCard(card)
+      // THE RESISTANT CREATURE COMES FIRST, and the order is a finding rather than a preference.
+      // The card arrives in TWO passes and the client's 38 MB `spells_us.txt` is read on a worker,
+      // so the first pass genuinely has no resist table behind it — the drops step used to be this
+      // spec's wait for that, and since JOS-390 there are no drops to wait on. `stepResistantChip`
+      // SETTLES on a chip appearing, so running it first is what proves the table has landed before
+      // the lich's "nothing is worth a chip" is read as an answer rather than as an empty table.
       await stepResistantChip(card, (line, expect) => conAndWait(log, card, line, expect))
       await stepBackToTheLich(log, card)
-      // The fit is asserted on the FINISHED card — after the second pass brought the drops in, so
-      // the height under test is the one the user actually looks at rather than a mid-flight one.
+      await stepNotableChips(card)
       await stepWindowFitsCard(app, card)
       await stepScreenshot(app, card)
+      // THE LINK (JOS-390), on the lich's card, which is the one on screen: a click opens its page
+      // in the app and leaves the card up; unlocked, the same click navigates nothing.
+      await stepClickOpensTheMobPage(card, page, MOB)
+      await stepUnlockedClickDoesNotNavigate(card, page)
       await stepNextConReplaces(log, card)
       await stepPlayerGetsNothing(log, card)
-      await stepCloseAndSuppress(log, card)
+      // The × is the one control on a card-wide link that must not navigate — it closes, and only
+      // closes. Its suppression half follows, and only runs on a card that demonstrably went.
+      if (await stepCloseDoesNotNavigate(card, page)) await stepSuppressAfterClose(log, card)
       await stepOpaqueModeFitsToo(app, page, log)
       // …the knob comes OFF here, and the default gets the last word before the window is closed.
       await stepDefaultHideLeaves(app, page, log)

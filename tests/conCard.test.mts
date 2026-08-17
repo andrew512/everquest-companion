@@ -388,8 +388,11 @@ test('THE PAYLOAD CARRIES NO DROPS, NO KILLS AND NO RESPAWN — the card is a li
 })
 
 test('the hint the card wears is ONE sentence, said as a destination rather than an instruction', () => {
-  // It is the name's `title` AND the body's, so a hover answers wherever it lands — and it names
-  // where the click goes, which is the repo's state-never-process rule (ConCard.tsx's header).
+  // It names where the click GOES, which is the repo's state-never-process rule. It is the card's
+  // accessible NAME and never a `title` — the brief asked for a native tooltip on the grounds that
+  // this bundle is popper-free, and a popper-free bundle is exactly where the 2026-08-16 ruling
+  // came from (JOS-358: an always-on-top window can strand a native tooltip over the game).
+  // tests/overlayTooltipPolicy.test.mts is the sweep that enforces it across the whole directory.
   assert.equal(CON_CARD_OPEN_HINT, 'Open in the app')
   assert.ok(!/click/i.test(CON_CARD_OPEN_HINT), 'a hint describes the destination, not the gesture')
 })

@@ -102,12 +102,21 @@ export function conCardTotalN(chips: readonly ConCardChip[]): number {
 }
 
 /**
- * WHAT THE CARD SAYS ABOUT ITSELF, in the header, when a click will open the mob page.
+ * WHAT THE CARD IS, said once, for the reader who cannot see the underline.
  *
- * ONE string, here rather than inline in the JSX, because it is said in two places at once: it is
- * the name's own hint AND the body's native `title`, and a card that promised two different things
- * in one hover would be the acronym problem wearing different clothes. It is deliberately a
- * DESTINATION rather than an instruction ("Open in the app", never "click to open"): the repo's UI
- * law is state, never process.
+ * IT IS AN `aria-label`, AND IT MUST NEVER BECOME A `title` (JOS-358, owner ruling of 2026-08-16 —
+ * *let's drop tooltips in the overlays, even in the title bar*). JOS-390's brief asked for a native
+ * `title` on the card body on the grounds that this bundle is popper-free, which it is; what that
+ * reasoning misses is that a popper-free bundle is exactly where the ruling came FROM. An overlay is
+ * always-on-top over a running game and a native tooltip is drawn by the widget rather than by the
+ * page, so the pointer can walk off and strand it over EverQuest — the release-blocking report
+ * behind JOS-358, and `tests/overlayTooltipPolicy.test.mts` is a DERIVED sweep of this whole
+ * directory that fails the moment any file here hands the DOM a tooltip attribute. (It reads the
+ * SOURCE, comments included, which is why this paragraph does not spell the attribute out.) So the
+ * card takes the title bar's own remedy: its controls are NAMED, never hovered.
+ *
+ * The words are a DESTINATION rather than an instruction ("Open in the app", never "click to
+ * open"): the repo's UI law is state, never process. The SEEING reader's hint is the name wearing a
+ * link's underline, which draws no popup and cannot be stranded.
  */
 export const CON_CARD_OPEN_HINT = 'Open in the app'

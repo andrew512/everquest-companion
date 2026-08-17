@@ -14,8 +14,9 @@
 //
 // AND IT IS A LINK ONLY WHILE THE OVERLAY IS LOCKED. Unlocked is positioning mode: the window wears
 // a drag region and a click there is the user moving the card, so navigating would fight the drag.
-// The hint follows the same gate — the name reads as a link, the cursor is a pointer and the body
-// carries its native `title` exactly when a click would actually do something.
+// The hint follows the same gate — the name reads as a link, the cursor is a pointer and the card
+// carries its accessible NAME exactly when a click would actually do something. Never a `title`:
+// this bundle draws no tooltips at all, and the ruling behind that is at `CON_CARD_OPEN_HINT`.
 //
 // CLICKING DOES NOT CLOSE IT, deliberately: the app comes forward, the card is still up behind it,
 // and the next con or the auto-hide takes it. "I read it" is the × and nothing else — which is the
@@ -84,8 +85,8 @@ function motionStyle(entering: boolean, exiting: boolean): CSSProperties {
  * THE NAME IS THE HINT (JOS-390). When a click would open the mob page the name wears a link's
  * underline — quiet, in the card's own gold, at the one place the eye is already reading. That is
  * the whole affordance: no button, no "click to open" instruction, and nothing at all in the mode
- * where a click means drag. The `title` is the same sentence the body carries (`conCardRows.ts`),
- * so the hover answers wherever it lands.
+ * where a click means drag. NOT a `title`: this bundle draws no tooltips at all (the ruling and the
+ * argument are at `CON_CARD_OPEN_HINT`), so the words go on the card as its accessible NAME.
  */
 function Identity({ payload, linked }: { payload: ConCardPayload; linked: boolean }): JSX.Element {
   const facts = [
@@ -98,7 +99,6 @@ function Identity({ payload, linked }: { payload: ConCardPayload; linked: boolea
       <div
         data-testid="con-card-name"
         data-linked={linked ? 'true' : 'false'}
-        title={linked ? CON_CARD_OPEN_HINT : undefined}
         style={{
           color: '#e6ebf5',
           fontSize: 15,
@@ -293,9 +293,10 @@ export function ConCard({
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       onClick={openUnlessClose}
-      /* The overlay bundle is popper-free by law (JOS-378: no overlay hovers a tooltip), so the
-         hint is the NATIVE title — and only while the click means something. */
-      title={linked ? CON_CARD_OPEN_HINT : undefined}
+      /* NAMED, NEVER HOVERED — the title bar's own remedy under the 2026-08-16 tooltip ruling, and
+         the reason there is no `title` anywhere in this bundle (see CON_CARD_OPEN_HINT). Only while
+         the click means something: an unlocked card is a thing you drag, not a link. */
+      aria-label={linked ? CON_CARD_OPEN_HINT : undefined}
       style={{
         display: 'flex',
         flexDirection: 'column',
